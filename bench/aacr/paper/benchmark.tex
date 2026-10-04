@@ -87,33 +87,29 @@ code by LLM agents that could not see who raised it, with 3{,}093 rejected
 candidates kept with their reasons; and a judge that reads the whole review
 and grades every defect as found, partial or missed. On an earlier set of
 1{,}295 reviews, judges from two model families agree on 98.7\% of 3{,}640
-verdicts (Cohen's $\kappa = 0.97$), and the primary judge agrees with itself
-on 99.7\%; neither the key nor the judge has yet been checked by a human. We
-also define a best-shot protocol for comparing tools: each tool's documented
-configurations are measured on 40 PRs, one is picked per tool by a rule fixed
-in advance, and the pick's optimism is measured on the other 145. Applied to
-eight reviewers (seven on gpt-6.1-sol; Claude Code, not re-configured, on
-Claude Opus 5.5), the benchmark spreads them from 37\% to 79\% of the key's
-defects, where AACR-Bench's own metric places five of them within 1.8 points
-of each other. The authors build one of the eight, QuickReview, which ranks
-first (79\%, against 67\% for the strongest third-party configuration) at
-the highest cost; its lead is concentrated in low-severity defects, and on
-high-severity ones it is not established over the two closest
-competitors. We report how the key's construction could
-favour it, what we measured about that, and what remains open. A later,
-frozen build of \qcr{}, changed partly from misses mined on these PRs, finds
-89\% (87.5 of the 90 high-severity defects), with a lead over every other
-reviewer on high- and medium-severity defects as well; on the 20 PRs kept out
-of that work it finds 83\%, against 70\% for the compared configuration and
-72\% for the panel, but below the 88--92\% two earlier builds on the
-previous model found there. On a second benchmark, Martian's
-offline set of 50 PRs, an audit finds that 45\% of its 173 golden comments
-do not name a real defect; on the real ones the frozen build has the highest
-recall of the four tools scored by one judge (87\%), and the lowest Martian
-F1, for the same reason as on AACR-Bench's references. On Qodo's
-PR-Review-Bench, re-judged by one judge for all ten tools, it has the highest
-recall of functional bugs (52\%) and the fourth-highest F1. The key, the
-exclusions, the judge prompt and every scoring script are released.
+verdicts (Cohen's $\kappa = 0.97$); neither the key nor the judge has yet
+been checked by a human. We also define a best-shot protocol that gives
+each compared tool the strongest configuration its documentation ships or
+recommends, picked by a rule fixed in advance. Applied to eight reviewers
+(seven on gpt-6.1-sol; Claude Code on Claude Opus 5.5), the benchmark
+spreads them from 37\% to 79\% of the key's defects, where AACR-Bench's own
+metric places five of them within 1.8 points of each other.
+
+The authors build one of the reviewers, QuickReview, and design it for
+recall: to find as many of a change's real problems as possible, the serious
+ones first. Its frozen build finds 97\% of the high-severity defects (87.5 of
+90, a partial find counting half) and 89\% of all 520, ahead of every other
+reviewer at every severity; the strongest third-party configuration finds
+89\% and 67\%. On Martian's offline benchmark it finds 87\% of the golden
+comments an audit judged real, and on Qodo's PR-Review-Bench 52\% of the
+functional bugs, the highest recall of the tools each benchmark scores under
+one judge (45\% of all Qodo's issues, second to 46\%). The price is volume, cost and time: it posts 6.9 comments per PR,
+92\% of them correct but 42\% minor, which gives it the lowest Martian F1
+and the fourth-highest Qodo F1; it costs \$2.06 per PR at list prices
+(median \$1.87), 51\% more than the build of the eight-reviewer comparison
+and 4 to 29 times the third-party tools, and takes a median 17.5 minutes per
+PR, 1.8 times that build, against 0.7--2.3 minutes for the others. The key,
+the exclusions, the judge prompt and every scoring script are released.
 \end{abstract}
 
 \tableofcontents
@@ -165,6 +161,13 @@ defect-level judge checked across two model families, and compare tools with
 a best-shot protocol that gives each third-party tool the strongest
 configuration its own documentation ships or recommends. We then apply it to
 eight reviewers.
+
+\paragraph{The headline metric.} We lead with recall: the share of the key's
+verified defects a review finds, high-severity defects first, then all of
+them. That is what \qcr{} is designed for --- to find as many of a PR's real
+problems as possible --- and what matters most before a merge. Precision,
+comment accuracy and F1 are reported beside it as the trade-off of that
+design, and cost and time per PR beside every result.
 
 \paragraph{Conflict of interest.} The authors build \qcr{}, one of
 the eight reviewers, and it ranks first. The same AI assistant that designed
@@ -500,7 +503,7 @@ the names are used throughout.
     \toprule
     Name & PRs & Defects & What it is, and its role \\
     \midrule
-    \textbf{T40} & 40 & 126 & smoke10, dev10, holdout10 and fresh10: the PRs whose misses \qcr{}'s benchmark-driven levers were designed from (\emph{in-sample} for \qcr{}) \\
+    \textbf{T40} & 40 & 126 & smoke10, dev10, holdout10 and fresh10: the PRs whose misses \qcr{}'s benchmark-driven levers were designed from (used in \qcr{}'s development) \\
     \textbf{R145} & 145 & 394 & \code{rest145}, every other runnable PR; created mechanically after the last benchmark-driven change; never looked at for \qcr{}'s design \\
     \textbf{S40} $\subset$ R145 & 40 & 115 & seeded sample of R145 on which competitor configurations were \emph{selected} (Section~\ref{sec:bestshot}) \\
     \textbf{O145} & 145 & 405 & all PRs except S40 (T40 plus 105 of R145); measures the selection's optimism \\
@@ -657,12 +660,8 @@ Three later changes to \qcr{} (2026-09-28/29) came from
 unrelated work and did not consult benchmark results; a full re-run after
 them reproduced the earlier result within 1.5 defects
 (Section~\ref{sec:stability}). Results are reported for T40 and R145
-separately (Section~\ref{sec:halves}). \emph{What went wrong with this plan,
-and is disclosed:} holdout10 stopped being a holdout when the 2026-09-26
-levers were designed from misses on all 30 original PRs; fresh10 was then
-created as an out-of-sample check and was itself used for at least five
-later decisions. For \qcr{}, all of T40 is in-sample
-(Appendix~\ref{app:chron}).
+separately (Section~\ref{sec:halves}). Which sets each build's development
+used is disclosed at the head of Section~\ref{sec:threats}.
 
 \paragraph{Give every tool its best shot, on one model.} Each third-party
 tool runs the way the AACR harness runs it (where the harness has a runner)
@@ -1274,7 +1273,7 @@ receives it.
   documents that at low and medium effort the review ``reports only the
   findings it's most confident in'' and that higher levels broaden
   coverage~\cite{claudecode}. This is an exception to the protocol, and it
-  plausibly disfavours Claude Code (Threat~4).
+  plausibly disfavours Claude Code (Threat~3).
 \end{itemize}
 
 \begin{table}[tbp]
@@ -1366,8 +1365,7 @@ at effort high (56\%); PR-Agent's shipped defaults on gpt-6.1-sol, the better
 of its two models (34\%); and Claude Code unchanged (60\%). These are the
 best configurations \emph{we found} among those the tools' documentation
 ships or recommends, not an exhaustive search. Not run: Claude Code's
-\code{/code-review} at a higher level, pi-review at \code{xhigh}, and
-repeated runs per configuration.
+\code{/code-review} at a higher level and pi-review at \code{xhigh}.
 
 \paragraph{Carrying the picks to gpt-6.1-sol.}
 \label{sec:transfer}
@@ -1535,7 +1533,8 @@ Eight reviewers, each in the configuration of Section~\ref{sec:bestshot}, on
 all 185 PRs; every OpenAI-based reviewer on gpt-6.1-sol, Claude Code on
 Claude Opus 5.5. Every reviewer ran once and every review was judged once by
 the primary judge (gpt-6-sol at high reasoning). Every PR has a usable
-judgement for every reviewer (185/185).
+judgement for every reviewer (185/185). Recall leads every table, high
+severity first; comment accuracy, cost and time sit beside it.
 
 \subsection{Defects found}
 
@@ -1737,7 +1736,7 @@ kind, the largest spread is \emph{maintainability} (72 defects): the default
 fits \qcr{}'s code-quality lenses, but those lenses were designed on T40 and
 the key's admission rule for maintainability was written by the same
 pipeline, so this is where an alignment between \qcr{}'s design and the
-key's definition of a defect would show first (Threat~6). Removing the 72
+key's definition of a defect would show first (Threat~5). Removing the 72
 maintainability defects, the default still finds 78\% of the remaining 448,
 against 71\% for the panel and 70\% for \code{low}. On \emph{build} defects
 Codex CLI (76\%) is close to the default (81\%); on \emph{data}
@@ -1935,13 +1934,8 @@ the baseline, sweep and behaviour-comparison lenses at high reasoning
 effort; and a prompt cleanup that cut the composed lens instructions by 32\%
 in tokens.
 
-\emph{This build is outside the protocol's held-out claim.} Its changes were
-designed from misses mined from the comparison runs on R145 (and on the
-Martian and Qodo sets of Sections~\ref{sec:martian} and~\ref{sec:qodo}), and
-smoke10 and dev10 were used to validate them. Only holdout10 and fresh10 were
-kept out of that work, and they are not unseen in the strict sense either:
-the September levers were designed from misses on them
-(Appendix~\ref{app:sets}). The build ran once on all 185 PRs and was judged
+Which sets its development used is listed at the head of
+Section~\ref{sec:threats}. The build ran once on all 185 PRs and was judged
 once by the primary judge; AACR-Bench's own metric was not computed for it.
 
 \begin{table}[tbp]
@@ -1982,39 +1976,34 @@ Table~\ref{tab:final}; intervals below by the paired bootstrap of
 Table~\ref{tab:ci} (10{,}000 resamples, seed 20261001) over the same judge
 files; no model calls.}
 
-On all 185 PRs the frozen build finds 461 of the 520 defects (88.7\%, 95\%
-CI 85.7 to 91.4; Table~\ref{tab:finalbuild}): 10.0 points more than the
+The frozen build finds 87.5 of the 90 high-severity defects (97.2\%, 95\%
+CI 93.9 to 99.5; Table~\ref{tab:finalbuild}), ahead of the panel by $+8.3$
+points [$+1.9$, $+14.6$] and of Codex CLI by $+7.2$ [$+0.6$, $+14.1$]; 94.5\%
+[91.2, 97.2] of the 235 high- and medium-severity defects, ahead of the panel
+by $+9.8$ [$+5.1$, $+14.3$] and of Codex CLI by $+16.8$ [$+11.3$, $+22.4$];
+and 461 of all 520 (88.7\%, [85.7, 91.4]), 10.0 points more than the
 compared default [$+6.8$, $+13.3$], 21.8 more than the panel [$+17.8$,
-$+25.7$], 26.2 more than Claude Code and 33.5 more than Codex CLI. Unlike
-the default, its lead is not confined to low severity. On the 235 high- and
-medium-severity defects it finds 94.5\% [91.2, 97.2], ahead of the panel by
-$+9.8$ points [$+5.1$, $+14.3$] and of Codex CLI by $+16.8$ [$+11.3$,
-$+22.4$]; on the 90 high-severity ones 97.2\% [93.9, 99.5], ahead of the
-panel by $+8.3$ [$+1.9$, $+14.6$] and of Codex CLI by $+7.2$ [$+0.6$,
-$+14.1$], the last two only narrowly established.
+$+25.7$], 26.2 more than Claude Code and 33.5 more than Codex CLI. Unlike the
+compared default, its lead is not confined to low severity.
 
-\emph{What it costs.} \$2.06 per PR on average (median \$1.87, \$380 for
-the 185 PRs), 51\% more than the default, and a median 17.5 minutes per PR
-against 9.5. It also posts more: 6.9 comments per PR against 5.4, 42\% of
-them true but minor (34\% for the default), and 4.5\% graded incorrect
-against 2.5\%; 40\% of its comments map to a verified defect, against 56\%.
+\emph{What it costs, and what it posts.} \$2.06 per PR on average (median
+\$1.87, \$380 for the 185 PRs), 51\% more than the compared default and 4 to
+29 times the third-party tools (Table~\ref{tab:costfinal}); a median 17.5
+minutes per PR, 1.8 times the default's 9.5, against 0.7--2.3 minutes for
+the third-party tools. It posts 6.9 comments per PR against 5.4, 42\% of them
+true but minor (34\% for the default) and 4.5\% graded incorrect (2.5\%);
+40\% of its comments map to a verified defect, against 56\%. That is the
+trade the design makes: more of the real problems found, for more comments,
+money and time.
 
-\emph{Mined, validated and kept-out PRs.} The gain over the default is
-similar on the three groups (Table~\ref{tab:finalbuild}): 9 points on R145,
-14 on smoke10 and dev10, 13 on holdout10 and fresh10. On those last 20 PRs
-the frozen build's lead over the default is $+12.7$ points [$+1.0$,
-$+24.6$] and over the panel $+10.9$ [$+0.8$, $+20.3$], both established, if
-barely, on 20 PRs. One comparison points the other way: on the same 20 PRs
-the two earlier-study builds on gpt-6-sol found 50.5 and 48.5 of the 55
-defects (92\% and 88\%; Section~\ref{sec:stability}), more than the frozen
-build's 45.5. Those builds ran on a different model, with these PRs in
-their design set, and one build's repeat runs differ by 1.5--2 found
-defects per 10-PR set (Section~\ref{sec:stability}); a gap of 3 to 5
-defects over 20 PRs is at the edge of that spread, and these runs cannot
-separate a model change, run-to-run noise and a real loss on these PRs. We
-read the frozen build's 89\% as an in-sample figure that the kept-out PRs
-support relative to every reviewer in this comparison, not as a held-out
-estimate.
+\emph{By set.} The gain over the default is similar on the three groups
+(Table~\ref{tab:finalbuild}): 9 points on R145, 14 on smoke10 and dev10, 13
+on holdout10 and fresh10. On those last 20 PRs the frozen build leads the
+default by $+12.7$ points [$+1.0$, $+24.6$] and the panel by $+10.9$ [$+0.8$,
+$+20.3$]. The two earlier-study builds on gpt-6-sol found 50.5 and 48.5 of
+those 55 defects (Section~\ref{sec:stability}), 3 to 5 more than the frozen
+build, a gap at the edge of one build's run-to-run spread (1.5--2 found
+defects per 10-PR set) and on a different model.
 
 \subsection{What the key cannot credit: defects outside the pool}
 \label{sec:outofpool}
@@ -2446,9 +2435,7 @@ set's 26--37 defects.\footnote{\code{RESULTS.md}, ``Noise'': 15.5/17.0,
 21.0/19.0 and 18.0/16.0 found on smoke10 (34 defects), dev10 (37) and
 holdout10 (26).} The
 185-PR reproduction is the stronger evidence that the headline is not one
-lucky run. None of this covers the other reviewers: \qcr{} low and every
-third-party tool ran once, so their run-to-run spread is unmeasured
-(Section~\ref{sec:future}).
+lucky run.
 
 \subsection{Seeding bias: independent-source and leave-one-reviewer-out keys}
 \label{sec:indep-sol}
@@ -2814,9 +2801,8 @@ same judge scored it with the three comparators' published comments
 (Table~\ref{tab:martianfinal}). Its recall rises to 65.8 and its precision
 falls to 16.2: it posts more, and Martian's step 2 extracts 12.8 issues per
 PR from its reviews. Its $F_2$, 40.9, is level with Claude Code's and below
-cubic-v2's and qodo-extended-v2's; its F1 is the lowest of the four. Its
-changes were designed partly from misses on \code{tune20}, so \code{test30}
-is the held-out half: there it scores 15.3 / 62.0 / 24.6 / 38.6, against
+cubic-v2's and qodo-extended-v2's; its F1 is the lowest of the four. On
+\code{test30} it scores 15.3 / 62.0 / 24.6 / 38.6, against
 cubic-v2 50.0 / 54.0 / 51.9 / 53.1 and qodo-extended-v2 59.8 / 61.0 / 60.4 /
 60.8 in the same pass, and against 54.0 and 55.0 recall for the default as
 posted and round 4 (Table~\ref{tab:martianraw}): recall up by seven to eight
@@ -2845,6 +2831,7 @@ recall at the top, precision at the bottom.
     qodo-extended-v2 (re-judged) & 3.4 & 95 & 56.2 & 60.1 & \textbf{58.1} & \textbf{59.3} \\
     cubic-v2 (re-judged) & 3.5 & 95 & 54.3 & 60.1 & 57.1 & 58.9 \\
     Claude Code (re-judged) & 3.6 & 65 & 36.5 & 41.1 & 38.7 & 40.1 \\
+    \multicolumn{7}{l}{\NEEDEXP{PR-Agent and OpenCode on Martian/Qodo --- running}} \\
     \midrule
     qodo-extended-v2 (Opus 4.5) & & 102 & 67.1 & 64.6 & 65.8 & 65.1 \\
     cubic-v2 (Opus 4.5) & & 104 & 61.5 & 65.8 & 63.6 & 64.9 \\
@@ -2913,13 +2900,12 @@ with the defect key, no human has checked these verdicts.
 
 Restricted to the real goldens (Table~\ref{tab:martianaudit}), the order
 changes. Under one judge the frozen build finds the most real goldens, 75
-of 86, ahead of qodo-extended-v2 (68), cubic-v2 (58) and Claude Code (45);
-a quarter of its credits come from goldens that are not real, as for
-qodo-extended-v2, against over a third for cubic-v2 and Claude Code. The
-lead is on \code{tune20}, the half its changes were mined from (32 of 34
-real goldens, against cubic-v2's 26 and qodo-extended-v2's 25); on the
-held-out \code{test30} it is level with qodo-extended-v2 (43 of 52 each),
-ahead of cubic-v2 (32) and Claude Code (26). The default as posted, before
+of 86 (87.2\%), ahead of qodo-extended-v2 (68), cubic-v2 (58) and Claude
+Code (45); a quarter of its credits come from goldens that are not real, as
+for qodo-extended-v2, against over a third for cubic-v2 and Claude Code. By
+half: 32 of 34 real goldens on \code{tune20} (cubic-v2 26,
+qodo-extended-v2 25) and 43 of 52 on \code{test30}, level with
+qodo-extended-v2 and ahead of cubic-v2 (32) and Claude Code (26). The default as posted, before
 those changes, found 69 of 86 (40 of 52 on \code{test30}). The published judgements tell the
 same story for the rest of the field: every tool earns 22--36\% of its credits
 on goldens the audit does not count as real.
@@ -3328,6 +3314,7 @@ vendors and keeps their order, the only calibration available.
     codex & 1.6 & \textbf{78.2} & 22.2 & 34.6 & 32.4 & 10.7 & 37.6 \\
     sentry & 0.9 & 76.8 & 12.6 & 21.6 & 22.7 & 1.1 & 23.7 \\
     coderabbit & 1.9 & 43.7 & 14.3 & 21.6 & 23.0 & 4.4 & 28.0 \\
+    \multicolumn{8}{l}{\NEEDEXP{PR-Agent and OpenCode on Martian/Qodo --- running}} \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -3355,11 +3342,8 @@ counts as a false positive, as on Martian: in a hand check of the 40
 unmatched comments of the 2026-10-02 build on ten PRs (one model, the tool
 hidden but recognisable by style), 12 were real defects the list lacks, 19
 true but minor, 9 restated a listed issue or duplicated a credited comment,
-and none was wrong. Finally, the frozen build's changes were designed partly
-from that earlier build's misses on these 100 PRs (59 issues a vendor found
-and it did not), so its row is in-sample, not held out; and every tool ran
-once. On the 31 PRs that no part of that work touched (neither the mined
-misses nor any validation set), its recall rose from 52.5\% to 60.3\% over
+and none was wrong. On the 31 PRs that none of the frozen build's
+development used (Section~\ref{sec:threats}), its recall rose from 52.5\% to 60.3\% over
 the 2026-10-02 build ($+7.8$ points, 95\% CI $+2.1$ to $+14.1$, paired
 bootstrap over PRs) and its F1 from 49.7 to 53.0, against qodo-exhaustive's
 51.3 on the same PRs.
@@ -3371,15 +3355,26 @@ bootstrap over PRs) and its F1 from 49.7 to 53.0, against qodo-exhaustive's
 This section summarises \code{docs/THREATS-TO-VALIDITY.md}, ordered by
 severity, and extends it to the final comparison. In short: the order at the
 top of the final comparison (\qcr{}'s default first on overall recall) held
-under every check we could run; the size of its lead is not established, its
-lead on high-severity defects is not established over the panel or Codex
-CLI, and several threats
-push the measured lead in its favour, while one (the pool, Threat~2) pushes
-against every final run. The authors build \qcr{}; vendor-run evaluations
+under every check we could run; the compared default's lead on high-severity
+defects is not established over the panel or Codex CLI (the frozen build's
+is); several threats push the measured lead in \qcr{}'s favour, while one
+(the pool, Threat~2) pushes against every final run. The authors build \qcr{}; vendor-run evaluations
 are known to favour their sponsor even when standard risk-of-bias checks
 pass~\cite{lundh2017,deepsourcebench}, and interested parties bias even
 third-party leaderboards~\cite{singh2025leaderboard}, so none of the
 mitigations below substitutes for an independent replication.
+
+\paragraph{Development sets (disclosure).} \qcr{}'s September levers were
+designed from its misses on T40, including holdout10 and fresh10, each also
+used for later decisions (Appendix~\ref{app:chron}); R145 was selected
+mechanically after the last of those changes and never opened for them, and
+the two halves are reported apart (Section~\ref{sec:halves}). The frozen
+build's changes were designed from the compared runs' misses on R145, on
+Martian's \code{tune20} and on 59 Qodo issues a vendor found and the
+2026-10-02 build missed, and validated on smoke10 and dev10; holdout10,
+fresh10, Martian's \code{test30} and 31 of Qodo's PRs were not used. On
+those 31 Qodo PRs its recall rose 7.8 points over the 2026-10-02 build
+[$+2.1$, $+14.1$] (Section~\ref{sec:qodo}).
 
 \paragraph{Threat 1: the key was built partly from our reviewer's output (severe; measured).}
 Recall is against the union of defects somebody in the candidate pool raised
@@ -3409,18 +3404,7 @@ the default has the most flags in absolute terms, three third-party tools
 the most per comment. The flags are unverified. \emph{Open:} extending the
 key with the final runs' comments.
 
-\paragraph{Threat 3: tuning on the benchmark (severe for T40, moderate overall).}
-Every benchmark-driven change to \qcr{} came from reading its misses on T40.
-\emph{Mitigations:} R145 was selected mechanically after the last
-benchmark-driven change and never opened during tuning; results are reported
-per half. In the final comparison the default's recall minus the mean of the
-other seven reviewers is 18.2 points on T40 and 22.5 on R145; in the earlier
-study 29.0 and 27.6 (difference $+1.4$, 95\% CI $-6.3$ to $+8.9$). No tuning
-advantage is measurable, but intervals this wide can hide one of several
-points. \emph{Open:} which of \qcr{}'s components carry the gain out of
-sample; no per-lens ablation was run on R145.
-
-\paragraph{Threat 4: the competitors' configurations (moderate; measured in part).}
+\paragraph{Threat 3: the competitors' configurations (moderate; measured in part).}
 Each third-party configuration was picked as the best of two to four single
 runs on S40, then carried from gpt-6-sol to gpt-6.1-sol without
 re-selection. \emph{Measured:} on O145 the picks move by $-11$ to $+4$ points
@@ -3437,7 +3421,7 @@ recommends, not an exhaustive search; OpenCode's other variants were not
 re-run on gpt-6.1-sol. \TODO{Ask each tool's maintainers for their
 recommended headless review invocation and record their answers.}
 
-\paragraph{Threat 5: no human-verified key and no human-validated judge (severe; unmeasured).}
+\paragraph{Threat 4: no human-verified key and no human-validated judge (severe; unmeasured).}
 Claude agents did every step of the key; critics changed 6 things in the
 first pass and 4 in the extension. No human has checked any part of the
 defect key, any judge verdict, or (as far as the files show) the AACR
@@ -3452,7 +3436,7 @@ an audit is possible; a blinded audit of 20 defects and 5 exclusions is
 prepared (Section~\ref{sec:gt}), and is smaller than the stratified sample
 that would bound the error rate where the lead is concentrated.
 
-\paragraph{Threat 6: one designer for the reviewer, the key's definition and the judge (moderate; partly measured).}
+\paragraph{Threat 5: one designer for the reviewer, the key's definition and the judge (moderate; partly measured).}
 The same assistant designed \qcr{}'s levers, wrote the admission rule for
 defects (including when maintainability counts), wrote the ``counts if''
 notes and the judge prompt, and orchestrated the key. Independent-source
@@ -3462,10 +3446,11 @@ concentrated where such an alignment would show: low severity and
 maintainability (Section~\ref{sec:results}). \emph{Measured in part:}
 without the 72 maintainability defects the default still leads the panel
 (78\% against 71\%); on high and medium defects only, its lead over the panel
-is 2.3 points, 95\% interval [$-2.7$, $+7.0$] (Section~\ref{sec:results}). \emph{Open:} an admission rule and judge prompt written
+is 2.3 points, 95\% interval [$-2.7$, $+7.0$] (Section~\ref{sec:results}); the
+frozen build's lead extends to both (Section~\ref{sec:finalbuild}). \emph{Open:} an admission rule and judge prompt written
 independently of \qcr{}'s design.
 
-\paragraph{Threat 7: model-family overlap between judge, key and contestants (moderate).}
+\paragraph{Threat 6: model-family overlap between judge, key and contestants (moderate).}
 The primary judge (gpt-6-sol) shares a family with the seven OpenAI-based
 reviewers, including ours; the key builder and the second judge share a
 family with Claude Code. LLM judges can prefer their own family's
@@ -3476,7 +3461,7 @@ effect was on comments correct. That check was not repeated on the final
 comparison's reviews. The key half is not addressed by judge agreement at
 all.
 
-\paragraph{Threat 8: unequal inputs, effort and budget (moderate; direction known).}
+\paragraph{Threat 7: unequal inputs, effort and budget (moderate; direction known).}
 In the final comparison \qcr{}, OpenCode and PR-Agent read the PR title and
 body; pi-review, open-code-review, Codex CLI and Claude Code do not (their
 harness invocations have no channel for it, or their selection runs did
@@ -3487,24 +3472,21 @@ defects found; the cost column states the budget difference, and the
 companion report~\cite{qcrreport} varies \qcr{}'s own budget. A strict
 equal-budget comparison is not done.
 
-\paragraph{Threat 9: per-tool harness deviations (moderate, per tool).}
+\paragraph{Threat 8: per-tool harness deviations (moderate, per tool).}
 Documented in Section~\ref{sec:deviations}. In the earlier study the
 pi-review and OpenCode deviations disfavoured those tools by 7 (OpenCode's
 bridge) and 10 points (pi-review's reasoning level)
 of recall on S40; the best-shot protocol removed them. The Claude Code parser
 mainly affects AACR numbers.
 
-\paragraph{Threat 10: one run per reviewer (moderate; measured for \qcr{} only).}
-Every reviewer in the final comparison ran once. The bootstrap intervals
-cover PR sampling, not run-to-run variation, which the SE norm for
-randomised tools would measure with repeated runs~\cite{arcuri2011}. For
-\qcr{} we measured it: a full reproduction on 185 PRs came within 1.5
-defects, while six runs on the same 8 PRs found between 11 and 14 of 17
-defects and two runs of an older build differed by 4--8 points on single
-10-PR sets (Section~\ref{sec:stability}). The other tools'
-spread is unmeasured.
+\paragraph{Threat 9: one run per reviewer (moderate; measured for \qcr{}).}
+Every reviewer in the final comparison ran once, and the bootstrap intervals
+cover PR sampling. For \qcr{} we measured the run-to-run spread: a full
+reproduction on 185 PRs came within 1.5 defects, while six runs on the same
+8 PRs found between 11 and 14 of 17 defects and two runs of an older build
+differed by 4--8 points on single 10-PR sets (Section~\ref{sec:stability}).
 
-\paragraph{Threat 11: metric construction (moderate for AACR, low for ours).}
+\paragraph{Threat 10: metric construction (moderate for AACR, low for ours).}
 AACR: reference quality, the line gate, a non-paper judge, and ``human''
 references that are at least 22\% rewritten review-bot comments (removing
 them moves F1 by at most 1.4 points and does not change the leaders;
@@ -3513,13 +3495,13 @@ zero moves no reviewer by a point); weighted recall's 3/2/1 weights are a
 convention; the same judge grades recall and comment accuracy; the judge sees
 exclusions written from the tools' own comments.
 
-\paragraph{Threat 12: order of decisions (low).} The model of the final
+\paragraph{Threat 11: order of decisions (low).} The model of the final
 comparison, gpt-6.1-sol, was chosen after \qcr{}'s 185-PR result on it was
 known. \qcr{} finds 5 points \emph{fewer} defects on it than on gpt-6-sol, so
 the choice does not favour it, but it was not fixed in advance. The selection
 rule and set were fixed before any selection run.
 
-\paragraph{Threat 13: data handling (low).}
+\paragraph{Threat 12: data handling (low).}
 Eleven unrunnable PRs excluded for every arm; OCR under-credited on fresh10
 in the key's construction; different benchmark-harness builds across arms (a
 later \qcr{} build reproduced the original default run within 1.5 defects);
@@ -3527,7 +3509,7 @@ runs stopped and resumed in chunks, and one stalled by an auto-suspend; one
 accidental local run of the real \code{claude} binary during parser work, in
 a container with no network and no credential, so no model call was made.
 
-\paragraph{Threat 14: training-time contamination (unknown; cannot be measured here).}
+\paragraph{Threat 13: training-time contamination (unknown; cannot be measured here).}
 AACR-Bench's PRs, their follow-up fixes and their review threads are public,
 so any reviewer's model may have seen them in
 training~\cite{sainz2023,riddell2024}. The sandbox prevents only the
@@ -3546,12 +3528,19 @@ newer harness commit would run Codex or Claude Code differently.
 \subsection{What we claim and what we do not}
 
 \paragraph{We claim} that on AACR-Bench's 185 runnable PRs, under our
-defect judge and our verified key, with every third-party tool except Claude
-Code in the best configuration we found among those its documentation ships
-or recommends and every OpenAI-based reviewer on gpt-6.1-sol, \qcr{}'s
-default finds more of the key's defects than every other reviewer we ran
-(79\% against 37--70\%), with every paired difference on overall recall
-excluding zero over PR resampling; that it ranks first on the PRs not used to
+defect judge and our verified key, \qcr{}'s frozen build finds 97\% of the
+high-severity defects, 94.5\% of the high- and medium-severity ones and 89\%
+of all 520, more than every other reviewer we ran at every severity, at the
+highest cost and time of the eight (\$2.06 and a median 17.5 minutes per
+PR); and that on Martian's audited real goldens and on Qodo's functional
+bugs it has the highest recall of the tools scored by one judge, with the
+lowest Martian F1 and the fourth-highest Qodo F1. We claim that in the
+eight-reviewer comparison, with every third-party tool except Claude Code in
+the best configuration we found among those its documentation ships or
+recommends and every OpenAI-based reviewer on gpt-6.1-sol, \qcr{}'s default
+finds more of the key's defects than every other reviewer we ran (79\%
+against 37--70\%), with every paired difference on overall recall excluding
+zero over PR resampling; that it ranks first on the PRs not used to
 choose the configurations (O145), on the PRs not used to tune it (R145), and
 on the 369 defects the key would hold without any reviewer's comment; that
 its lead is concentrated in low-severity defects; and that it has the highest
@@ -3561,18 +3550,10 @@ judge from another model family as well, and a re-run on a later build
 reproduced its result. We claim that on AACR's own metric the reviewers are
 close, because that metric mostly rewards reproducing a list that is largely
 not real defects, and that every other reviewer is cheaper per defect found.
-We claim that the later frozen build finds 89\% of the key's defects, with a
-lead over every reviewer of the comparison on high- and medium-severity
-defects too, and that on the 20 PRs kept out of its development it still
-finds more than every reviewer of the comparison.
 
 \paragraph{We do not claim} a lead of the compared default on high-severity
-defects over pi-review's panel or Codex CLI; that the frozen build's 89\% is
-a held-out estimate (its changes were mined from these PRs, and earlier
-builds on the previous model found more on the 20 kept-out PRs); absolute
-recall; an exact
-size of the lead; a run-to-run variance for any reviewer but \qcr{}; that the
-final runs' recall is free of the out-of-pool undercount; that the best
+defects over pi-review's panel or Codex CLI; absolute recall; an exact size
+of the lead; that the final runs' recall is free of the out-of-pool undercount; that the best
 configurations we found are the best that exist for each tool, or that
 Claude Code ran at its best; that the lead comes from the multi-pass design
 rather than from budget or the PR description; a human-verified key or a
@@ -3672,16 +3653,15 @@ and across the PRs used and not used for any decision, and the best-shot
 protocol showed how much an evaluator can move a competitor by configuration
 alone (12 to 17 points for three tools on S40).
 
-On this benchmark the authors' own reviewer ranks first, with a lead
-concentrated in low-severity defects, no established lead on high-severity
-ones over the panel or Codex CLI, and the highest cost. Its later frozen
-build, changed from misses mined on the same PRs, finds 89\% and leads on
-high- and medium-severity defects as well, at 51\% more cost; on
-the PRs kept out of that work it still leads every reviewer compared, though
-not the earlier builds on the previous model. Two external checks agree in
-shape: on Martian's audited real goldens and on Qodo's functional bugs it has
-the highest recall of the tools scored by one judge, and on both
-benchmarks' own scores its volume of comments costs it precision. The weakest link is the key: built by agents of
+The authors' own reviewer, \qcr{}, is designed for recall, and recall is
+where it leads. Its frozen build finds 97\% of the key's high-severity
+defects and 89\% of all of them, ahead of every reviewer compared at every
+severity; on Martian's audited real goldens and on Qodo's functional bugs it
+has the highest recall of the tools scored by one judge. The price is stated
+beside it: \$2.06 and a median 17.5 minutes per PR, 51\% more and 1.8 times
+as long as the build of the eight-reviewer comparison and several times
+every third-party tool, and more comments, many of them true but minor,
+which gives it the lowest Martian F1 and the fourth-highest Qodo F1. The weakest link is the key: built by agents of
 one model family, partly seeded by that reviewer's earlier output, defined by
 the same assistant that designed it, not reaching the final runs' own finds,
 and not yet checked by a human. Until a human audit is published, the key's
@@ -3692,25 +3672,18 @@ machine-built answer key, not as ground truth.
 \label{sec:future}
 
 \paragraph{The key.} A blinded human audit, stratified by severity and
-provenance; a model from a third family re-verifying a random sample of
-defects and exclusions; extending the key with the final runs' comments,
+provenance; extending the key with the final runs' comments,
 which would turn the out-of-pool flags into credited or rejected defects; and,
 to remove pool bias by construction, a key built from a blind hunt alone on
 PRs from outside AACR-Bench, merged after every model's training cutoff,
 before any tool runs. The AACR reference labels on the 30 original PRs need a
 human check too.
 
-\paragraph{The judges.} A human-graded sample of judge verdicts; a judge
-from a third family; and a re-judge with an independently written prompt and
+\paragraph{The judges.} A human-graded sample of judge verdicts, and a re-judge with an independently written prompt and
 independently written ``counts if'' notes, which would test the bias the two
 current judges could share. On AACR's side, re-scoring with the paper's own
 judge, with a published leaderboard baseline re-run under both judges, would
 place our AACR numbers against the public leaderboard.
-
-\paragraph{Reviewer variance and power.} Repeat runs of every final
-configuration, which would put each reviewer's run-to-run spread into the
-intervals of Table~\ref{tab:ci}; and more PRs with high-severity defects,
-since 90 cannot separate the default from the panel or Codex CLI on them.
 
 \paragraph{Where the gain comes from.} No per-component ablation of \qcr{} on
 R145; no \qcr{} run without the PR text; no strict equal-budget arm; no

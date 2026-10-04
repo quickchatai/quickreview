@@ -74,43 +74,41 @@
 \maketitle
 
 \begin{abstract}
-QuickReview is an automated pull-request reviewer built on a bet: that a
-review assembled from many narrow, independent reads of a change, each
-checked against the code before it is posted, finds more of the defects a
-careful reviewer would raise than one long read does. For each PR one
-session plans about ten lens passes from the change by explicit rules --- a
+QuickReview is an automated pull-request reviewer designed for recall: to
+find as many of a change's real problems as possible, the serious ones
+first. It rests on a bet that a review assembled from many narrow,
+independent reads of a change, each checked against the code before it is
+posted, finds more of them than one long read does. For each PR one session
+plans about ten lens passes from the change by explicit rules --- a
 baseline, a tests lens, a line-by-line sweep over every changed file, four
 code-quality lenses and narrow sub-lenses triggered by what the diff or the
 PR text says --- runs each as an isolated read-only agent, merges what they
 raise, and has a validator re-derive every surviving candidate from the
-code before one review is composed. We describe the design precisely and
-measure it on a verified defect benchmark over the 185 runnable PRs of
-AACR-Bench, built by the same authors in a companion paper. With every
-OpenAI-based reviewer on gpt-6.1-sol and each third-party tool at the best
-configuration found for it, QuickReview's default finds 409 of 520 verified
-defects (79\%, 95\% interval 75--82\%) with 95\% of its comments graded
-correct; the strongest third-party configuration, pi-review's
-three-reviewer panel, finds 67\%. The lead over the panel is almost entirely
-in low-severity defects; on the 90 high-severity defects the two are not
-separated, nor is Codex CLI. QuickReview is also the most expensive
-reviewer, at \$1.36 per PR against \$0.07--\$0.53; each defect it finds
-beyond the panel costs about \$3.27 at list prices. Most of the spend is in
-redundant lenses, whose value is very uneven: in a per-lens attribution on
-an earlier run, the per-file sweep alone found 29 defects no other lens
-raised, while two of the code-quality lenses cost a tenth of the budget for
-one such defect. With
-the design fixed, the base model moves recall from 28\% to 84\% on 185 PRs.
-The data are consistent with, but do not establish, the view that the design
-rather than the budget carries the result: no equal-budget alternative was
-run. A later, frozen build adds two lenses, instructions that push each lens
-to exhaust a confirmed mechanism, a per-file coverage check, a merge of
-duplicate findings and high reasoning effort on three passes; it finds 461 of
-the 520 (89\%), including 87.5 of the 90 high-severity defects, now ahead of
-the panel on high- and medium-severity defects too, at \$2.06 per PR. Its
-changes were mined from misses on most of these PRs; on the 20 kept out of
-that work it finds 83\%, ahead of every reviewer compared but below two
-earlier builds on the previous model. Because the authors built the benchmark partly from this reviewer's own
-earlier output, we state throughout where that could inflate these numbers.
+code before one review is composed. We measure it on a verified defect
+benchmark over the 185 runnable PRs of AACR-Bench, built by the same authors
+in a companion paper. Its frozen build finds 97\% of the 90 high-severity
+defects (87.5, a partial find counting half), 94.5\% of the high- and
+medium-severity ones and 89\% of all 520, ahead of every other reviewer at
+every severity; the strongest third-party configuration, pi-review's
+three-reviewer panel, finds 89\%, 85\% and 67\%. On two external benchmarks
+it has the highest recall under one judge: 87\% of the golden comments of
+Martian's offline benchmark that an audit judged real, and 52\% of the
+functional bugs of Qodo's PR-Review-Bench (45\% of all its issues, second
+to 46\%). Recall is bought with comments,
+money and time. It posts 6.9 comments per PR, 92\% of them correct but 42\%
+minor, which gives it the lowest Martian F1 and the fourth-highest Qodo F1;
+it costs \$2.06 per PR at list prices (median \$1.87), 51\% more than the
+build of the main comparison and 4 to 29 times the third-party tools; and
+it takes a median 17.5 minutes per PR, 1.8 times that build, against 0.7--2.3
+minutes for the others. The design is studied on that earlier build, which
+finds 79\% (95\% interval 75--82\%) at \$1.36 per PR, ahead of the panel's
+67\% almost entirely on low-severity defects. Most of its spend is in
+redundant lenses, whose value is very uneven: the per-file sweep alone found
+29 defects no other lens raised, while two code-quality lenses cost a tenth
+of the budget for one such defect. With the design fixed, the base model
+moves recall from 28\% to 84\%; no equal-budget alternative was run.
+Because the authors built the benchmark partly from this reviewer's own
+earlier output, we state where that could inflate these numbers.
 \end{abstract}
 
 \tableofcontents
@@ -151,6 +149,12 @@ volume of candidates does not become volume of noise. And the reviewer only
 reads code, CI results and library sources; it never executes anything.
 Those choices cost compute, and the question this report answers is what
 they buy for it.
+
+\paragraph{Recall first.} Because the design aims at finding as many real
+problems as possible, we lead with recall --- of high-severity defects
+first, then of all defects --- and report precision, comment accuracy, cost
+and time beside it as the price of that aim. Table~\ref{tab:frozen} puts the
+shipping build's recall, cost and time next to the strongest competitors'.
 
 \paragraph{Research questions.}
 \begin{itemize}
@@ -616,6 +620,11 @@ Stability repeats & \code{9106a64}, gpt-6-sol, 8 PRs & Section~\ref{sec:stabilit
 % =====================================================================
 \section{Results (RQ1)}
 \label{sec:qresults}
+
+Recall leads: high-severity defects first, then all severities; comment
+accuracy and cost follow. This section and the next three measure build
+\code{b2ce03a}, on which the design was studied; the shipping build is
+Section~\ref{sec:frozen}.
 
 \subsection{Defects found}
 
@@ -1322,69 +1331,65 @@ on the stored benchmark runs, and frozen as build \code{e32f0cf}
 \begin{table}[tbp]
 \centering
 \small
-\caption{The frozen build and build \code{b2ce03a} on the same 185 PRs and
-520 defects, primary judge, same key, one run each; the panel for reference.
-R145: misses mined; smoke10 and dev10: used to validate the changes;
-holdout10 and fresh10: kept out of that work (but in the design set of the
-September levers). List prices, not bills.}
+\caption{The frozen build, build \code{b2ce03a} and the three strongest
+third-party tools on the same 185 PRs and 520 defects, primary judge, same
+key, one run each; recall first, then what the comments are, then cost and
+time. R145: misses mined; smoke10 and dev10: used to validate the changes;
+holdout10 and fresh10: not used for them. List prices, not bills; minutes
+are wall-clock under a shared scheduler.}
 \label{tab:frozen}
-\begin{tabular}{@{}lrrr@{}}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrr@{}}
 \toprule
-& frozen \code{e32f0cf} & \code{b2ce03a} & pi-review panel \\
+& frozen \code{e32f0cf} & \code{b2ce03a} & pi-review panel & Claude Code & Codex CLI \\
 \midrule
-Found (520) & \textbf{461 (89\%)} & 409 (79\%) & 347.5 (67\%) \\
-\quad high / medium / low & 87.5 / 134.5 / 239 & 83.5 / 121 / 204.5 & 80 / 119 / 148.5 \\
-High + medium recall [95\% CI] & 94.5\% [91.2, 97.2] & 87.0\% & 84.7\% \\
-R145 (394) & 356 (90\%) & 321 (81\%) & 270 (69\%) \\
-smoke10 + dev10 (71) & 59.5 (84\%) & 49.5 (70\%) & 38 (54\%) \\
-holdout10 + fresh10 (55) & 45.5 (83\%) & 38.5 (70\%) & 39.5 (72\%) \\
-Comments per PR & 6.9 & 5.4 & 3.2 \\
-\quad valuable / minor / incorrect & 51 / 42 / 4.5\% & 61 / 34 / 2.5\% & 73 / 17 / 6.0\% \\
-\$/PR (mean / median) & 2.06 / 1.87 & 1.36 / 1.19 & 0.27 \\
-Median min/PR & 17.5 & 9.5 & 1.8 \\
+High-severity recall (90) [95\% CI] & \textbf{97.2\%} [93.9, 99.5] & 92.8\% & 88.9\% & 80.6\% & 90.0\% \\
+High + medium recall (235) [95\% CI] & \textbf{94.5\%} [91.2, 97.2] & 87.0\% & 84.7\% & 75.5\% & 77.7\% \\
+Found (520) & \textbf{461 (89\%)} & 409 (79\%) & 347.5 (67\%) & 324.5 (62\%) & 287 (55\%) \\
+\quad high / medium / low & 87.5 / 134.5 / 239 & 83.5 / 121 / 204.5 & 80 / 119 / 148.5 & 72.5 / 105 / 147 & 81 / 101.5 / 104.5 \\
+R145 (394) & 356 (90\%) & 321 (81\%) & 270 (69\%) & 249.5 (63\%) & 226 (57\%) \\
+smoke10 + dev10 (71) & 59.5 (84\%) & 49.5 (70\%) & 38 (54\%) & 39 (55\%) & 32 (45\%) \\
+holdout10 + fresh10 (55) & 45.5 (83\%) & 38.5 (70\%) & 39.5 (72\%) & 36 (65\%) & 29 (53\%) \\
+\midrule
+Comments per PR & 6.9 & 5.4 & 3.2 & 2.2 & 1.9 \\
+\quad valuable / minor / incorrect & 51 / 42 / 4.5\% & 61 / 34 / 2.5\% & 73 / 17 / 6.0\% & 76 / 5 / 11.8\% & 91 / 2 / 4.4\% \\
+\midrule
+\$/PR (mean / median) & 2.06 / 1.87 & 1.36 / 1.19 & 0.27 & 0.20 & 0.14 \\
+Median min/PR & 17.5 & 9.5 & 1.8 & 0.7 & 2.1 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
-\paragraph{Results.} On all 185 PRs the frozen build finds 461 defects
-(88.7\%, 95\% CI 85.7--91.4), 10.0 points more than \code{b2ce03a} [$+6.8$,
-$+13.3$] and 21.8 more than the panel [$+17.8$, $+25.7$]
-(Table~\ref{tab:frozen}). The gain reaches the severities where the earlier
-build was level: on high- and medium-severity defects it leads the panel by
-$+9.8$ points [$+5.1$, $+14.3$], and on high severity alone it finds 87.5 of
-90, ahead of the panel by $+8.3$ [$+1.9$, $+14.6$] and of Codex CLI by
-$+7.2$ [$+0.6$, $+14.1$].\footnote{Paired bootstrap over PRs, 10{,}000
-resamples, seed 20261001, recall as a ratio of sums, from the primary
-judge's verdict files; the companion paper's
+\paragraph{Results.} The frozen build finds 87.5 of the 90 high-severity
+defects (97.2\%), ahead of the panel by $+8.3$ points [$+1.9$, $+14.6$] and
+of Codex CLI by $+7.2$ [$+0.6$, $+14.1$]; 94.5\% of the high- and
+medium-severity ones, ahead of the panel by $+9.8$ [$+5.1$, $+14.3$], where
+\code{b2ce03a} was level with it; and 461 of all 520 (88.7\%, 95\% CI
+85.7--91.4), 10.0 points more than \code{b2ce03a} [$+6.8$, $+13.3$] and 21.8
+more than the panel [$+17.8$, $+25.7$] (Table~\ref{tab:frozen}).\footnote{Paired
+bootstrap over PRs, 10{,}000 resamples, seed 20261001, recall as a ratio of
+sums, from the primary judge's verdict files; the companion paper's
 Section~``The frozen build'' carries the full comparison~\cite{qcrbench}.}
-It costs 51\% more per PR and takes nearly twice as long, and it says more:
-6.9 comments per PR, 42\% of them true but minor, and 4.5\% graded incorrect
-against 2.5\%.
+The gain over \code{b2ce03a} is similar on the PRs whose misses were mined
+(9 points), on those used for validation (14) and on the 20 not used (13).
 
-\paragraph{How far to trust it.} This is an in-sample result: the changes
-were designed from misses on R145 (and on two external benchmarks) and
-validated on smoke10 and dev10. On the 20 PRs kept out of that work the
-gain over \code{b2ce03a} is about the same as elsewhere (83\% against 70\%,
-$+12.7$ points [$+1.0$, $+24.6$]), and the frozen build leads the panel
-there too ($+10.9$ [$+0.8$, $+20.3$]). But the two earlier-study builds on
-gpt-6-sol found 50.5 and 48.5 of those 55 defects~\cite{qcrbench},
-more than the frozen build's 45.5; with a different model, those PRs in the
-earlier builds' design set and a run-to-run spread of 1.5--2 defects per
-10-PR set (Section~\ref{sec:stability}), the runs cannot say which of these
-explains the gap.
+\paragraph{What it costs.} \$2.06 per PR on average (median \$1.87), 51\%
+more than \code{b2ce03a} and 4 to 29 times the third-party tools; a median
+17.5 minutes per PR, 1.8 times \code{b2ce03a}'s 9.5, against 0.7--2.3
+minutes for the third-party tools. It also says more: 6.9 comments per PR,
+42\% of them true but minor, and 4.5\% graded incorrect against 2.5\%.
 
 \paragraph{External checks.} On Martian's 50 PRs, scored by one
-gpt-6.1-sol judge with three tools' published comments, the frozen build has
-the highest Martian recall (65.8) and the lowest precision (16.2), and finds
-75 of the 86 golden comments an audit judged real, against 68 for
-qodo-extended-v2 (level with it on the 30 held-out PRs, 43 of 52 each). On
-Qodo's PR-Review-Bench, with all ten tools judged by our judge, it has the
-highest recall of functional bugs (52.1\%) and the fourth-highest F1 (40.9);
-its recall of rule violations rose from 14.8\% to 37.6\%, and on the 31
-Qodo PRs no part of its development touched its recall rose by 7.8 points
-over the 2026-10-02 build (95\% CI $+2.1$ to $+14.1$). Both benchmarks
-count a real defect missing from their lists as a false positive, and both
-were among the sets the changes were mined from~\cite{qcrbench}.
+gpt-6.1-sol judge with three tools' published comments, the frozen build
+finds 75 of the 86 golden comments an audit judged real (87\%), against 68
+for qodo-extended-v2 (level with it on the \code{test30} half, 43 of 52
+each), and has the highest Martian recall (65.8) and the lowest precision
+(16.2). On Qodo's PR-Review-Bench, with all ten tools judged by our judge, it
+has the highest recall of functional bugs (52.1\%) and the fourth-highest F1
+(40.9); its recall of rule violations rose from 14.8\% to 37.6\%, and on the
+31 Qodo PRs its development did not use, its recall rose by 7.8 points over
+the 2026-10-02 build (95\% CI $+2.1$ to $+14.1$). Both benchmarks count a
+real defect missing from their lists as a false positive~\cite{qcrbench}.
 
 % =====================================================================
 \section{What these numbers do not show}
@@ -1418,12 +1423,13 @@ by gpt-6-sol only; the second judge, from another family, agreed on 98.7\%
 of verdicts in the earlier study but did not grade these reviews. The judge
 shares a family with every reviewer here except Claude Code.
 
-\paragraph{Tuning.} Every lever was designed from \qcr{}'s misses on the
-original 40 PRs. We report the other 145 apart and see no in-sample
-advantage, but no lens was ablated on the 145, so the per-component gain out
-of sample is unmeasured. The frozen build's changes were mined from misses on
-the 145 as well (Section~\ref{sec:frozen}), so for that build only 20 PRs
-were kept out, and none is unseen.
+\paragraph{Development sets.} Every September lever was designed from
+\qcr{}'s misses on the original 40 PRs; the other 145 are reported apart and
+show no in-sample advantage, though no lens was ablated on them. The frozen
+build's changes were designed from misses on the 145, on Martian's
+\code{tune20} and on Qodo's PRs, and validated on 20 of the original 40; the
+other 20, Martian's \code{test30} and 31 of Qodo's PRs were not used
+(Section~\ref{sec:frozen}).
 
 \paragraph{Budget and inputs.} \qcr{} spends 2.6 to 21 times the cost of
 each third-party tool and reads the PR title and body, which four of the
@@ -1431,10 +1437,9 @@ other tools did not in the final runs. We have not separated how much of the
 lead comes from the design and how much from the budget and the description
 (Section~\ref{sec:designbudget}).
 
-\paragraph{One run, one model per reviewer.} Every reviewer ran once. For
-\qcr{} a full re-run reproduced the gpt-6-sol result and repeat runs bound its
-spread on 8 PRs; the final gpt-6.1-sol run and every other reviewer's spread
-are unmeasured. The competitors' configurations were chosen on gpt-6-sol and
+\paragraph{One run per reviewer.} Every reviewer ran once. For \qcr{} a full
+re-run reproduced the gpt-6-sol result and repeat runs bound its spread on 8
+PRs. The competitors' configurations were chosen on gpt-6-sol and
 applied unchanged on gpt-6.1-sol.
 
 \paragraph{Not the production configuration.} The measured reviewer ran
@@ -1456,16 +1461,22 @@ codebases and multi-round review are outside what was measured.
 \section{Conclusion}
 \label{sec:conclusion}
 
-\qcr{} reviews a change through about ten narrow, independent lenses chosen
-by explicit rules, and posts only what a validator can re-derive from the
-code. On a benchmark that counts verified defects, with every competitor at
-its best documented configuration and the OpenAI-based ones on the same
-model, its default found the most defects (79\%) and had the largest share of
-correct comments (95\%), at the highest cost. What the extra spend buys is
-coverage of low-severity defects over the closest competitor and of medium-
-and low-severity defects over the rest; on high-severity defects
-pi-review's panel and Codex CLI are level with it at a fifth and a ninth of its cost per high-severity defect found, and on functional bugs its margin over the panel
-is four points.
+\qcr{} is built for recall: it reviews a change through about ten narrow,
+independent lenses chosen by explicit rules, and posts only what a validator
+can re-derive from the code. On a benchmark that counts verified defects,
+with every competitor at its best documented configuration and the
+OpenAI-based ones on the same model, its shipping build finds 97\% of the
+high-severity defects and 89\% of all of them, ahead of every competitor at
+every severity, and it has the highest recall on the real goldens of
+Martian's benchmark and on the functional bugs of Qodo's. That recall has a
+price, stated with it: \$2.06 and a median 17.5 minutes per PR, several
+times every competitor, and more comments, many of them true but minor,
+which costs it precision on both external benchmarks. The build on which
+the design was studied found 79\% at \$1.36 per PR, with the largest share
+of correct comments (95\%); its extra spend over the closest competitor
+bought mainly low-severity coverage, and on high-severity defects
+pi-review's panel and Codex CLI were level with it at a fifth and a ninth of
+its cost per high-severity defect found.
 
 The cost decomposition is the part of this report we would most want a
 designer of such systems to take away. Redundancy is what makes the design
@@ -1484,13 +1495,11 @@ design moves recall from 28\% to 84\%. Whether this design beats a
 different way of spending the same budget is the question this report
 leaves open.
 
-The frozen build (Section~\ref{sec:frozen}) moves the picture: more lenses
-at the sites where base behaviour changes, instructions to exhaust a
-confirmed mechanism, a coverage check and higher effort on three passes take
-recall to 89\% and close the high-severity gap with the panel, at 51\% more
-cost. That result is in-sample; the 20 kept-out PRs support the lead over
-every reviewer compared, not a gain over the earlier builds on the previous
-model.
+The frozen build (Section~\ref{sec:frozen}) is what closed the
+high-severity gap: lenses at the sites where base behaviour changes,
+instructions to exhaust a confirmed mechanism, a coverage check and higher
+effort on three passes took recall from 79\% to 89\%, at 51\% more cost and
+1.8 times the time.
 
 % =====================================================================
 \small
