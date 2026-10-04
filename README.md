@@ -9,12 +9,10 @@ are merged so that one root cause gets one comment, and then an
 **adversarial validator re-derives every candidate from the code** before
 a single review is posted.
 
-<!-- Demo GIF placeholder: the owner picks the final animation later.
 <p align="center">
   <img src="docs/media/lenses.gif" width="800"
-       alt="A pull request fans out to parallel lens passes (baseline, tests, per-file sweep, quality lenses, triggered sub-lenses); each raises candidate findings, the validator strikes some and keeps others, and the survivors become one posted review.">
+       alt="Animation: nine lens passes sweep the same diff in parallel, each marking the lines where it finds a problem; findings that share a root cause merge, eight candidates into six causes; the validator re-derives each from the code, keeps four and strikes two with a reason (below the bar; refuted); the four survivors become one posted review, three blockers and one question, marked REQUEST_CHANGES.">
 </p>
--->
 
 On a verified-defect benchmark of 185 real PRs it finds **97% of the
 high-severity defects and 89% of all 520**, against 67% for the strongest
