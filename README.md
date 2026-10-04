@@ -1,23 +1,179 @@
-# QuickReview — a sovereign, 24/7 AI code reviewer for your GitHub repo
+# QuickReview — many narrow reviewers, one review
 
-QuickReview reviews pull requests around the clock: a small, deterministic
-TypeScript daemon (no LLM in the hot path) receives GitHub App webhooks, runs
-an authoritative reconcile poll, and drives sticky **pi** coding-agent
-sessions — one conversation per PR, blank-slate "lens" passes per review
-round, an adversarial validator before anything posts, and a continuous
-learning loop your organization owns end to end. Reviews post as *your*
-GitHub App, through one gated mutation path. How long that takes is measured
-rather than asserted: `qcr metrics` reports time-to-first-verdict per PR and
-splits it into a **queue leg** (trigger to round start) and a **review leg**
-(round start to verdict), so you can see which half is yours to tune.
+A single model asked to "review this PR" reads the diff once, from one angle,
+and stops when it has found something worth saying. QuickReview does not ask
+one reviewer. Each round fans the change out to **many narrow, independent
+lens passes**: a dozen or so blank-slate, read-only agents that each look
+for one kind of problem and never see each other's output. Their findings
+are merged so that one root cause gets one comment, and then an
+**adversarial validator re-derives every candidate from the code** before
+a single review is posted.
 
-**Status: honest beta.** This system has run in production continuously
-since mid-August 2026 reviewing a busy commercial repository, and the review
+<!-- Demo GIF placeholder: the owner picks the final animation later.
+<p align="center">
+  <img src="docs/media/lenses.gif" width="800"
+       alt="A pull request fans out to parallel lens passes (baseline, tests, per-file sweep, quality lenses, triggered sub-lenses); each raises candidate findings, the validator strikes some and keeps others, and the survivors become one posted review.">
+</p>
+-->
+
+On a verified-defect benchmark of 185 real PRs it finds **97% of the
+high-severity defects and 89% of all 520**, against 67% for the strongest
+third-party configuration we measured. That recall costs more: about $2 and
+17 minutes per PR, where the other tools take $0.07–0.53 and one to two
+minutes ([Benchmarks](#benchmarks)).
+
+Around the review sits a small, deterministic TypeScript daemon with no LLM
+in its hot path. It receives GitHub App webhooks, runs an authoritative
+reconcile poll, keeps one sticky **pi** coding-agent session per PR, and
+posts as *your* GitHub App through one gated mutation path. It runs on your
+infrastructure, under your keys.
+
+**Status: honest beta.** The reviewer has run in production continuously
+since mid-August 2026 on a busy commercial repository, and its review
 behaviour (severity ladder, CI gate, recheck discipline, feedback loop) is
-battle-tested there. The *packaging* for third parties — this repo — is
-young: expect rough edges in setup, and read the caveats below before
-trusting it with approvals (`dry_run = true` is the shipped default, so a
-fresh install never posts anything).
+battle-tested there. The *packaging* for third parties, this repo, is young:
+expect rough edges in setup. `dry_run = true` is the shipped default, so a
+fresh install never posts anything.
+
+## How a review works
+
+1. **Plan the lenses by explicit rules.** Plain code, not a model, reads the
+   changed files and the PR text and writes the pass plan. Every planned lens
+   carries the reason it was planned (a path, a pattern in the added lines, a
+   size, a claim in the PR description). The PR's session may add a lens or
+   raise one to a higher reasoning tier, with a stated reason; it may never
+   drop one.
+2. **Fan out isolated lenses.** Each pass is a leaf agent with read-only
+   tools, the diff and a worktree at the exact head. None can see another
+   pass, spawn agents, or run your code. A round typically runs a dozen or so:
+   - **on every PR:** `pass-baseline` (correctness, claimed invariants,
+     sibling sites), and on every code change `pass-tests` (tests, mocks and
+     fixtures the change breaks);
+   - **per file:** `pass-sweep`, one pass per group of changed files, reading
+     line by line for local slips, plus a coverage check that sends a
+     targeted sweep to any changed source file no lens commented on;
+   - **base against head:** `pass-behaviour-delta` on modified and deleted
+     lines where existing behaviour is at risk;
+   - **code quality:** `pass-maintainability`, `pass-duplication`,
+     `pass-abstraction` and `pass-consistency`, plus `pass-style` and
+     `pass-lint-conformance` when the repo writes a style guide or CI lints;
+   - **judgment:** `pass-simplicity`, `pass-placement`, `pass-intent` (the
+     diff against what the PR text says), `pass-backcompat`;
+   - **content-triggered sub-lenses**, each a narrow procedure that fills one
+     table: `pass-widened` (every consumer of a changed predicate),
+     `pass-claims` (every checkable claim in the PR text), `pass-bounds`,
+     `pass-concurrency`, `pass-deferred`, `pass-roundtrip`, `pass-rollout`;
+   - **domain lenses by path:** `pass-security`, `pass-data-safety` and
+     `pass-prod-risk` at high reasoning, `pass-contracts`, `pass-delivery`,
+     `pass-ui`, `pass-statelessness`.
+3. **Merge duplicates.** Code groups likely duplicates by file, lines,
+   shared identifiers and fix target; the validator decides merge or split
+   with the code in view. One root cause becomes one comment anchored at its
+   cause, with the other sites listed in its body
+   ([docs/duplicate-merge.md](docs/duplicate-merge.md)).
+4. **Validate.** `pass-validate` receives every candidate and re-derives it
+   by reading the code: it checks the anchor, the severity and the evidence,
+   and keeps, demotes, doubts or kills each one from a closed vocabulary.
+   Lenses are told that a plausible but wrong finding costs more than a
+   missed nit.
+5. **Post one review.** Severities map to tags by fixed rules (any surviving
+   blocker means REQUEST_CHANGES, otherwise APPROVE; a contrived trigger never
+   blocks), and the review posts through the gate. Every candidate, posted or
+   not, lands in a per-finding reasoning record.
+
+The lens catalogue with each lens's trigger and severity cap is in the
+[QuickReview report](bench/aacr/paper/quickreview.pdf) (§3); the selection
+code is `src/heuristics.ts` and `src/dispatch.ts`.
+
+## Benchmarks
+
+Recall is the headline: a review that misses the defect has failed,
+whatever else it does. Precision, cost and time sit beside it, because that
+is where QuickReview pays. Its rows are the frozen build of 2026-10-04
+(`gpt-6.1-sol`, shipped defaults, one review per PR). The third-party tools
+we ran ourselves used the best configuration we found for each, the
+OpenAI-based ones on the same model, under the same judge on the same PRs.
+Costs are list prices; on a ChatGPT plan they are quota, not a bill.
+
+**Verified defects on AACR-Bench (185 PRs, 10 languages, 520 defects each
+verified in the code).** AACR-Bench's own reference comments are mostly
+not real problems (the reviewers of the final comparison score 4–11% recall
+against them), so we built a key of real defects and a judge for it. A
+partly found defect counts ½.
+
+| Reviewer | High (90) | High + medium (235) | All (520) | Comments correct | $/PR | Median min/PR |
+|---|---|---|---|---|---|---|
+| **QuickReview** | **87.5 (97%)** | **222 (94.5%)** | **461 (89%)** | 92% | 2.06 | 17.5 |
+| pi-review panel (high) | 80 (89%) | 199 (85%) | 347.5 (67%) | 89% | 0.27 | 1.8 |
+| Claude Code (Opus 5.5) | 72.5 (81%) | 177.5 (76%) | 324.5 (62%) | 81% | 0.20 | 0.7 |
+| open-code-review (high) | 63.5 (71%) | 165.5 (70%) | 298.5 (57%) | 86% | 0.53 | 1.8 |
+| Codex CLI (high) | 81 (90%) | 182.5 (78%) | 287 (55%) | 93% | 0.14 | 2.1 |
+| OpenCode (+ PR text) | 76 (84%) | 175 (74%) | 263.5 (51%) | 93% | 0.17 | 2.3 |
+| PR-Agent | 55.5 (62%) | 125.5 (53%) | 194 (37%) | 76% | 0.07 | 1.9 |
+
+Against the panel, Claude Code and Codex CLI the lead holds at every
+severity under a paired bootstrap (for example +8.3 points [+1.9, +14.6] on
+high-severity defects over the panel). The price: 6.9 comments per PR, 42%
+of them true but minor, and 1.8 times the time and 51% more cost than the
+build before the last tuning round. That tuning was mined from the misses on
+145 of the PRs; on the 20 PRs kept out of it the frozen build finds 83%.
+
+**Martian's offline benchmark (50 PRs, Core).** Martian scores matches
+against about 3.5 "golden" comments per PR and counts every other comment as
+a false positive. We audited all of the goldens: only 86 describe a real
+defect the PR introduces. One `gpt-6.1-sol` judge scored every row; the
+three vendor rows are their published comments re-judged.
+
+| Tool | Precision | Recall | F1 | F2 | Real goldens (86) | $/PR | min/PR |
+|---|---|---|---|---|---|---|---|
+| **QuickReview** | 16.2 | **65.8** | 26.1 | 40.9 | **75 (87%)** | 2.84 | 26.1 |
+| qodo-extended-v2 | 56.2 | 60.1 | **58.1** | **59.3** | 68 (79%) | – | – |
+| cubic-v2 | 54.3 | 60.1 | 57.1 | 58.9 | 58 (67%) | – | – |
+| open-code-review | 26.7 | 58.9 | 36.8 | 47.4 | 67 (78%) | 0.86 | 3.3 |
+| PR-Agent | 41.9 | 36.1 | 38.8 | 37.1 | 46 (53%) | 0.09 | 1.4 |
+| claude-code | 36.5 | 41.1 | 38.7 | 40.1 | 45 (52%) | – | – |
+| OpenCode | 32.7 | 33.5 | 33.1 | 33.4 | 48 (56%) | 0.19 | 2.4 |
+
+Highest recall and the most real defects found; lowest precision and F1.
+QuickReview posts about 12.8 issues per PR against 3.5 goldens, and Martian
+counts a real bug missing from its list the same as a false claim. Scaled to
+Martian's published judge, its F2 would place 14th–16th of 23. On the 30
+held-out PRs it ties qodo-extended-v2 on real goldens (43 of 52).
+
+**Qodo PR-Review-Bench (100 PRs, 580 injected issues: 309 functional bugs,
+271 violations of rules written in the repo).** Qodo publishes the vendors'
+reviews but no judge, so one `gpt-6.1-sol` judge scored every tool under
+Qodo's stated matching rule.
+
+| Tool | Comments/PR | Precision | Recall | F1 | Functional recall | Rule recall | $/PR | min/PR |
+|---|---|---|---|---|---|---|---|---|
+| qodo-exhaustive | 4.6 | 58.0 | **46.4** | **51.5** | 48.2 | **44.3** | – | – |
+| qodo-precise | 3.1 | 68.0 | 35.9 | 47.0 | 36.2 | 35.4 | – | – |
+| augment | 2.5 | 67.5 | 29.7 | 41.2 | 49.2 | 7.4 | – | – |
+| **QuickReview** | 7.1 | 37.3 | 45.3 | 40.9 | **52.1** | 37.6 | 2.48 | 19.6 |
+| OpenCode | 2.6 | 64.9 | 29.0 | 40.0 | 43.7 | 12.2 | 0.20 | 2.3 |
+| copilot | 4.2 | 46.8 | 33.6 | 39.1 | 46.3 | 19.2 | – | – |
+| open-code-review | 3.5 | 47.1 | 28.1 | 35.2 | 45.6 | 8.1 | 0.46 | 1.9 |
+| PR-Agent | 3.4 | 47.2 | 27.2 | 34.5 | 43.7 | 8.5 | 0.10 | 1.2 |
+
+The highest functional-bug recall of the thirteen tools and the second
+overall recall; fourth on F1. Five more vendors (greptile, cursor, codex,
+sentry, coderabbit) score lower and are in the full table. On the 31 PRs no
+tuning or validation touched, recall is 60.3% and F1 53.0, against 51.3 for
+qodo-exhaustive on the same PRs.
+
+**Read more.** Two papers carry the method, every table and the threats to
+validity: [*Measuring whether a code review finds the real
+defects*](bench/aacr/paper/benchmark.pdf) (the defect key, the judge, eight
+reviewers; the frozen build in §8.7) and [*QuickReview: a multi-pass
+automated code reviewer*](bench/aacr/paper/quickreview.pdf) (design, cost,
+stability). The working records are
+[`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md),
+[`RESULTS.md`](bench/aacr/RESULTS.md) ("The frozen build"),
+[`EXTERNAL-BENCHMARKS.md`](bench/aacr/EXTERNAL-BENCHMARKS.md) (§6),
+[`ext/MARTIAN-CRITIQUE.md`](bench/aacr/ext/MARTIAN-CRITIQUE.md) and
+[`ext/QODO-BENCH.md`](bench/aacr/ext/QODO-BENCH.md). Every run is one review
+per PR, and repeat runs differ by about ±2 found issues per benchmark.
 
 ## Why this exists
 
@@ -33,157 +189,57 @@ fresh install never posts anything).
 > And the whole loop, from the harness to the reviewer's memory to its
 > accumulated learnings, runs on your infrastructure under your keys.
 
-The philosophy — what the human decides, what the machine decides, and the
-beliefs this implementation follows — is in [**MANIFESTO.md**](MANIFESTO.md).
-It is short.
+The philosophy, short, is in [**MANIFESTO.md**](MANIFESTO.md).
 
-## What it does
+## What it does around the review
 
 - **Reviews on trigger, not on every PR**: a label or a team review-request
-  marks a PR for review; everything else is ignored.
+  marks a PR; everything else is ignored, and bot-authored PRs never queue.
 - **One sticky session per PR**: the same conversation follows the PR through
-  pushes, author replies, re-reviews and post-approval rechecks — no
-  cold-start per round, with a pinned findings ledger that survives context
-  compaction.
-- **Blank-slate lens passes**: each round fans out focused single-concern
-  passes (contracts, data safety, concurrency, security, prod risk, intent,
-  placement, simplicity, backcompat, …) selected per diff, then an
-  adversarial validator re-derives every candidate finding from the code
-  before anything posts.
-- **A hard severity contract**: P0–P2 blockers, questions, nits — with a
-  reachability gate (contrived findings never block), a nit-treadmill cap on
-  re-reviews, self-sufficient blocker bodies an AI implementer can fix from
-  the comment alone, and a "For a human to double-check" section instead of
-  ever handing the review off.
-- **Three markers with one meaning each**: `[check this]` (a human should
-  verify — the bot structurally cannot resolve the thread), `[ask your
-  human]` (the author's AI implementer must put it to its person), and
-  `[deferred]` (real finding, not this PR — the reviewer files the tracking
-  issue itself).
+  pushes, author replies, re-reviews and rechecks, with a pinned findings
+  ledger that survives context compaction.
+- **A hard severity contract**: P0–P2 blockers, questions, nits; a
+  reachability gate; a nit-treadmill cap on re-reviews; and a "For a human to
+  double-check" section instead of ever handing the review off. Three markers
+  carry one meaning each: `[check this]` (a human must verify; the bot cannot
+  resolve the thread), `[ask your human]` (the author's AI implementer must
+  ask its person) and `[deferred]` (real, not this PR; the reviewer files it).
 - **CI-aware approvals**: no green CI at the head means approval is withheld
-  (the review posts as a COMMENT) until checks pass — infra failures
-  included; the withheld approval carries forward across upheld rechecks.
-- **Post-approval rechecks**: pushes after an approve are re-audited
-  (uphold-by-default; the only allowed transition is APPROVE →
-  REQUEST_CHANGES, never a silent re-approve); a hand-resolved merge
-  conflict is audited against both merge parents.
+  (the review posts as a COMMENT), infra failures included.
+- **Post-approval rechecks**: pushes, CI completions, base advances and
+  author replies wake the same session. Trivial deltas cost a no-op; the only
+  allowed transition is APPROVE → REQUEST_CHANGES, never a silent
+  re-approve; a hand-resolved merge conflict is audited against both parents.
 - **A learning loop**: `[feedback]`-prefixed PR comments and behavioural
   signals (dismissals, merges over a standing block) bite the same day
   through a demotion-only validator addendum; an end-of-day sweep curates
-  durable learnings; and rubric changes land only via one-click human
-  ratification. Feeding what the reviewer learns *back into your implementing
-  agents' instructions* — so recurring finding classes stop being written at
-  all — is the loop's last leg and is **a human job today**: the evidence
-  accumulates as queryable rows, and nothing in the daemon writes to your
-  agents' instruction files.
+  durable learnings; rubric changes land only by one-click human
+  ratification. Feeding them back into your implementing agents'
+  instructions is **a human job today**.
 - **One mutation gate**: every GitHub write goes through a single gate with
-  posting-time guards; in dry-run mode every would-be mutation is written to
-  `state/dryrun/` instead of executed. There is structurally no code path
-  that dismisses a review. Nominating a human reviewer is possible only
-  through the optional, off-by-default escalation feature, and only towards a
-  login you configured — see below.
-- **Escalation is optional and ships off** (`[escalation]` in
-  `config.example.toml`). The reviewer always decides every PR on the merits
-  and posts its verdict; escalation, if you turn it on, adds a note *beside*
-  that verdict @-mentioning one named person and pointing them at one thing —
-  a file and line range, a migration, a named decision. It never asks anyone
-  to review the pull request, and it never makes a review wait for a person.
+  posting-time guards. In dry-run every would-be mutation is written to
+  `state/dryrun/`. There is structurally no code path that dismisses a review.
+- **Escalation is optional and ships off** (`[escalation]`): if you turn it
+  on, it adds a note *beside* a finished verdict, @-mentioning one configured
+  person about one thing. It never asks anyone to review the pull request.
 - **Sovereign by construction**: self-hosted daemon, your GitHub App, your
-  memory store under your keys, rules as files in your repo. On the shipped
-  default **the only thing that leaves your infrastructure is the model call**,
-  to the provider you configured — reviewer memory embeds *locally*, in the
-  daemon's own container, needing no key and no account. A hosted embedder is
-  an explicit opt-in with its own separate credential
-  ([docs/memory-embeddings.md](docs/memory-embeddings.md)); turn it on and
-  every memory entry's text and every search query go to that provider too.
-  One more leg is on by default: **dependency sources** (`[review]
-  dependency_sources`) fetch the source of the third-party packages a PR
-  imports from the public npm and PyPI registries, so the reviewer can read
-  what a library really does. What leaves is package names and versions,
-  never code or memory; set `dependency_sources = false` to close it (and do,
-  if your package names are themselves private).
-  The remaining legs are the ones you chose yourself: GitHub carries the
-  review, and Slack and the webhook tunnel carry what you configure them to.
+  memory store, rules as files in your repo. On the shipped default the only
+  things that leave your infrastructure are **the model call** and the names
+  and versions of packages a PR imports, fetched from npm and PyPI so the
+  reviewer can read the library's source (`[review] dependency_sources =
+  false` closes that). Reviewer memory embeds locally; a hosted embedder is
+  an explicit opt-in ([docs/memory-embeddings.md](docs/memory-embeddings.md)).
 
 Optional extras that degrade cleanly when unconfigured: an operator TUI
-(`qcr tui`, board + memory management, over ssh or against local Docker), a
-Slack concierge, a local "companion" pi session, and the OpenViking-backed
-reviewer memory engine.
-
-## How well it finds bugs
-
-![Real defects found, by severity — AACR-Bench v1.0, 185 PRs](bench/aacr/charts/defects-by-severity.jpg)
-
-On all 185 runnable PRs of [AACR-Bench](https://github.com/alibaba/aacr-bench)
-(10 languages), with every other reviewer at the best configuration we found
-for it and every OpenAI-based reviewer on the same model (gpt-6.1-sol), the
-default review finds **79% of 520 real defects verified in the code, including
-83.5 of the 90 merge-blocking ones**, and 95% of what it says is true.
-
-The other reviewers find between 37% and 70% of the defects:
-
-- QuickReview's own `low` preset: 70%;
-- pi-review's 3-reviewer panel: 67%;
-- Claude Code on Opus 5.5: 62%;
-- open-code-review at high effort: 57%;
-- Codex CLI at high effort: 55%;
-- OpenCode on its native provider, with the PR text: 51%;
-- PR-Agent: 37%.
-
-The lead is in medium- and low-severity defects: on the high-severity ones
-Codex CLI (81) and pi-review's panel (80) are statistically level with the
-default. The configurations were chosen on a seeded 40-PR subset and the
-order holds on the 145 PRs not used for the choice. The default costs more
-per PR ($1.36 at list prices, against $0.07–$0.53 for the others).
-
-On the benchmark's own reference-comment metric every reviewer scores between
-4% and 11% recall; most of those references are not real problems.
-
-Full results, how each configuration was chosen, the exact commands, charts
-and caveats: [`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md).
-
-## How a review runs
-
-1. **Trigger** — someone labels the PR (or requests the review team).
-   Triggered PRs only; bot-authored PRs never enter the queue. Webhooks are
-   HMAC-verified and deduped; a reconcile poll is the authority behind them,
-   and where local state and GitHub disagree, GitHub wins.
-2. **Dispatch** — the daemon (plain code, no model) resolves the head sha,
-   prepares a worktree at exactly that sha, plans the round — which lenses,
-   at what model tiers, with what gates — runs the deterministic
-   migration-collision pre-check, and delivers a receipt-tokened wake to the
-   PR's own session. A round in flight is never interleaved.
-3. **Fan-out** — the PR's session launches the planned lens passes as
-   blank-slate leaves: no memory, and no ability to spawn — the agent-spawning
-   tools are stripped from every built pass at build time, so a leaf cannot
-   fan out further. A leaf is *instructed* never to post; that half is a frozen,
-   hash-pinned prompt rule, not a structural one. Each returns findings with
-   severity, confidence, reachability, and exact changed-line anchors.
-4. **Validate** — an adversarial validator, never cheaper than the strongest
-   lens in the round, re-derives every claim from the code and kills or
-   downgrades from a closed vocabulary; both sides are recorded. Then the
-   deterministic mapping fires: contrived never blocks; any surviving
-   blocker means REQUEST_CHANGES; otherwise APPROVE. There is no third
-   verdict.
-5. **Post** — through the one gate, guards firing seconds before the write:
-   unchanged head posts nothing; a human approval downgrades a block to a
-   comment; merged/closed is re-checked; no green CI means approval is
-   withheld. The verdict lands as a file the daemon validates — malformed
-   routes to an anomaly, never to an approve.
-6. **Recheck & ping-pong** — pushes, CI completions, base advances and
-   author replies wake the same session. Trivial deltas cost one
-   classification and a no-op. Author replies get at most three exchanges
-   per finding, then concede or hold.
-7. **Learn** — every round leaves a per-finding reasoning record; feedback
-   and behavioural signals land the same day; the nightly curator promotes
-   durable learnings; humans ratify rubric changes with one click.
+(`qcr tui`), a Slack concierge, a local "companion" pi session, and the
+OpenViking-backed reviewer memory engine.
 
 ## Architecture sketch
 
 ```
 GitHub App webhook (HMAC, dedupe) ─┐
 reconcile poll (authoritative) ────┼→ state machine → dispatch (FIFO, lens
-verdict watcher (verdict/*.json) ──┘   selection, caps) → RoundOrder
+verdict watcher (verdict/*.json) ──┘   plan, caps) → RoundOrder
                                           │
                           sessions: tmux + pi, one per PR (+ overseer)
                           worktrees per PR, wake files → inject bridge
@@ -196,26 +252,26 @@ guards, recheck, severity, templates, memory seam); `prompts/` + `agents/`
 are the frozen prompt seeds (integrity-pinned by tests); `profiles/` carries
 repo profiles (house-rule addenda + lens heuristics); `extensions/` are the
 pi extensions the sessions run with; `docker/` + `deploy/` are the two
-deploy paths.
+deploy paths. The full picture is in
+[docs/architecture/README.md](docs/architecture/README.md).
 
 ## Prerequisites
 
 - **Node ≥ 22**, **Docker**, and the **Compose v2 plugin** (`docker compose`).
   The build and the test suite run offline with no secrets.
 - **A GitHub account that can create an App** and install it on the repository
-  you want reviewed. No personal access token is used, anywhere — and you do
-  not register the App by hand: setup creates it from a manifest in one click.
+  you want reviewed. No personal access token is used, anywhere, and setup
+  creates the App from a manifest in one click.
 - **On the server route only**: a Linux machine you already reach as
   `ssh <alias>`, with passwordless sudo there, and `ansible-playbook` installed
   on *your* machine (the deploy runs from here, over your ssh).
 - **On Windows**: run everything inside **WSL2**. There is no Windows-native
   path, and the setup wizard says so if it cannot find a POSIX user id.
 
-Everything else — the GitHub App, the webhook ingress, the secrets, the
-`config.toml`, the memory keys — is something setup *produces*, not something
-you bring. You choose your LLM route during setup; both a ChatGPT subscription
-and an OpenAI API key are first-class
-([docs/llm-setup.md](docs/llm-setup.md)).
+Everything else (the GitHub App, the webhook ingress, the secrets, the
+`config.toml`, the memory keys) is something setup *produces*. You choose your
+LLM route during setup; both a ChatGPT subscription and an OpenAI API key are
+first-class ([docs/llm-setup.md](docs/llm-setup.md)).
 
 ## Quickstart
 
@@ -230,58 +286,34 @@ scripts/qcr onboard                   # the whole setup, guided
 `qcr onboard` is an interactive session: a pi agent talks you through what the
 system is while building it, and every act it performs is a named,
 deterministic tool whose result you see. It never improvises a shell command,
-and it never calls a step done — only the tool's own report does that.
+and it never calls a step done; only the tool's own report does that.
 
-End to end, it:
+End to end, it checks this machine; asks where the reviewer should live and
+which LLM route you want; interviews you for the handful of values only you
+can answer; **creates your GitHub App in one click** from this repo's pinned
+manifest (the credentials land `0600` in your secrets dir without passing
+through your clipboard); wires the webhook ingress; mints and proves the
+memory keys; brings the stack up and verifies it in layers, down to a webhook
+ping in GitHub's own delivery log; and then **watches a real review happen**
+on a PR you label, read out of the dry-run record. Only then does it offer
+the go-live flip, once. Finally it hands off to the TUI, where the companion
+runs a first-run interview about your repo and your review taste.
 
-1. **checks this machine** — Node, Docker, Compose, and your user id (the
-   containers run as you, so files stay yours);
-2. **asks where the reviewer should live** — a VM or server over ssh, or this
-   computer (below), and on the server route proves your ssh alias, agent and
-   passwordless sudo *before* anything is built;
-3. **asks which LLM route you want**, and makes the whole installation
-   consistent with the answer;
-4. **interviews you for the handful of values only you can answer** and derives
-   the rest, patching `config.toml` in place so every comment survives;
-5. **creates your GitHub App in one click** from this repo's pinned manifest —
-   the App id, private key and webhook secret come straight back to the wizard
-   and land `0600` in your secrets dir, so no credential passes through your
-   clipboard — then verifies the install and creates the trigger labels;
-6. **wires the webhook tunnel** you picked, or none at all;
-7. **mints and places the memory keys**, and proves their confinement;
-8. **brings the stack up** (compose here, the real `scripts/deploy.sh` with all
-   its preflights on a server) and **verifies it in layers**: containers, the
-   health endpoint, then a webhook ping in GitHub's own delivery log;
-9. **watches a real review happen.** You label one of your own pull requests,
-   and the wizard follows the round and shows you the review it produced —
-   read out of the dry-run record, while it is still structurally impossible
-   for it to have posted anywhere;
-10. **offers the go-live flip, once, and only then** — the new owner's own
-    ratification act, taking an explicit confirmation phrase. Declining is a
-    complete installation, not a failure;
-11. **hands off to the TUI**, where the companion introduces itself and runs a
-    first-run interview: a repo tour it confirms with you, your review taste,
-    your team's norms — written into memory and distilled into config proposals
-    you accept or reject.
-
-It is resumable and re-runnable. The checklist persists, a step claimed done is
-always **re-verified against reality** before it is believed, and running the
-command again on a finished installation is a diagnostic rather than a repeat.
-
-The full walkthrough — every step, every choice, and what to do when one goes
-red — is in [**docs/onboarding.md**](docs/onboarding.md).
+It is resumable and re-runnable: a step claimed done is always
+**re-verified against reality** before it is believed, and running it again on
+a finished installation is a diagnostic rather than a repeat. Every step, every
+choice, and what to do when one goes red: [**docs/onboarding.md**](docs/onboarding.md).
 
 ### Where the reviewer lives
 
-Both answers are first-class; neither is the advanced one.
+Both answers are first-class.
 
 - **A VM or server over ssh — the recommendation**, because a reviewer that is
-  asleep reviews nothing. You bring any ssh-reachable Linux box; setup rides the
-  same Ansible deploy the maintainers use, with every one of its preflights
+  asleep reviews nothing. Setup rides the same Ansible deploy the maintainers
+  use, with every one of its preflights
   ([deploy/ansible/README.md](deploy/ansible/README.md)).
 - **This computer** — the whole system in Docker on the machine you are sitting
-  at. No server to own, no third-party signup on the default path, and it
-  reviews only while that machine is awake
+  at. No server to own, and it reviews only while that machine is awake
   ([docker/daemon/README.md](docker/daemon/README.md)).
 
 Switching later costs you none of your answers: re-run the topology step, and
@@ -290,7 +322,7 @@ the repo, the App, the labels, the keys and your config are all kept.
 ### Webhook ingress
 
 GitHub needs an HTTPS URL to deliver to. Four shapes, chosen during setup, with
-their honest trade-offs stated in full in
+their trade-offs stated in full in
 [docker/daemon/README.md](docker/daemon/README.md):
 
 | shape | what you get | what it costs |
@@ -300,105 +332,60 @@ their honest trade-offs stated in full in
 | your own **named Cloudflare tunnel** (server default) | a permanent hostname on your domain | a Cloudflare account, a zone, and a connector token |
 | **polling only** | nothing exposed at all | up to one poll interval of trigger latency, and author-reply routing plus the `[feedback]` loop go quiet — both are webhook-driven |
 
-Any other HTTPS proxy or tunnel pointed at the webhook port works too; nothing
-here assumes a vendor.
+Any other HTTPS proxy or tunnel pointed at the webhook port works too.
 
 ### Dry-run, and going live
 
 `dry_run = true` ships as the default: the daemon does everything except
-execute GitHub mutations, and writes each would-be call to `state/dryrun/` for
-you to inspect. The setup wizard raises the question once, at the end, and only
-after you have watched a review land in that record — and accepting takes an
-explicit confirmation phrase, never a default or a "yes". Nothing else in the
-wizard can move that flag in either direction. It is an owner-only surface
-([docs/ownership.md](docs/ownership.md)).
+execute GitHub mutations, and writes each would-be call to `state/dryrun/`.
+The wizard raises the question once, at the end, after you have watched a
+review land in that record, and accepting takes an explicit confirmation
+phrase. Nothing else in the wizard can move that flag. It is an owner-only
+surface ([docs/ownership.md](docs/ownership.md)).
 
-Staying in dry-run is a finished, fully working installation, not a lesser one:
-labelled PRs get reviewed, the reviewer learns, the TUI and the companion work,
-and every review is a file you can read. Flip whenever you like — by running
-that step again, or by editing the one line and restarting the daemon.
+Staying in dry-run is a finished, fully working installation: labelled PRs
+get reviewed, the reviewer learns, and every review is a file you can read.
+Flip whenever you like, by running that step again or by editing the one line
+and restarting the daemon.
 
 ### Slack, later
 
-The Slack concierge is deliberately not part of onboarding — skipping it costs
-nothing. Set it up whenever you like with `npm run slack:setup`, which creates
-the app, collects the tokens, picks the channel and patches your config.
+The Slack concierge is deliberately not part of onboarding. Set it up whenever
+you like with `npm run slack:setup`, which creates the app, collects the
+tokens, picks the channel and patches your config.
 
 ## Configuring the reviewer for *your* repo
 
 - **Repo profile** ([docs/profiles.md](docs/profiles.md)): house-rule addenda
-  packs + lens-selection heuristics. Ship-included: `profiles/default/` (the
-  shipped behaviour, the base to extend), `profiles/example-django/` (a
-  worked Django profile: migration discipline, ORM usage, test doctrine) and
-  `profiles/minimal/` (generic only). Start from `extends = "default"` and
-  write only what differs, or copy the Django example and edit.
+  packs, lens-selection heuristics, and per-lens switches (any lens can be
+  turned off, given a minimum tier or a severity ceiling). Ship-included:
+  `profiles/default/` (the shipped behaviour, the base to extend),
+  `profiles/example-django/` (a worked Django profile) and
+  `profiles/minimal/`. Start from `extends = "default"` and write only what
+  differs.
+- **Presets**: `[review] preset` names the whole configuration in one word:
+  `default`, `max` (every model at its ceiling) or `low` (about half the cost
+  and time, lower recall).
 - **Ecosystem pre-checks**: the Django migration-collision pre-check is
   selected by the profile (`ecosystem = "django"`); every other ecosystem is
-  cleanly off (`"none"`) — no false findings, no degraded-check noise.
-- **Owner identity** (`[owner]` in config): name, chat id, GitHub login —
-  every surface (mentions, tiers, prose) renders identity from config.
-- **Issue sink**: where operational defects and tuning output land is
-  pluggable — GitHub Issues on your repo (gated + capped), a local
+  cleanly off.
+- **Owner identity** (`[owner]` in config): name, chat id, GitHub login.
+- **Issue sink**: GitHub Issues on your repo (gated + capped), a local
   filesystem tracker, or none.
-
-## Roadmap
-
-Direction, honestly stated (the past tells you how we ship: deliberately,
-with the safety rule written first):
-
-1. **The posting boundary moves fully into the daemon** — review assembly
-   and anchor validation onto the live path, retiring the session-side
-   posting scripts.
-2. **Findings telemetry matures into lens tuning** — the per-finding
-   reasoning record already lands as queryable rows; next is closing the
-   loop from measured kill/raise patterns to evidenced rubric proposals.
-3. **The profile ecosystem grows** — more ecosystems beyond Django, and
-   community-authored profile packs as the natural contribution surface.
-4. **The implementer-feedback loop deepens** — review history clustered by
-   author-side root cause, driven into your implementing agents'
-   instructions, measured by fewer late blockers and fewer rounds per PR.
-
-**Non-goals** — refusals recorded so they cannot be silently unrefused: no
-rebuilding GitHub's PR workflow; the reviewer is never asked to run your code;
-no hard round budget; the reviewer never reads the implementing conversation;
-the fixer and the reviewer are never the same system. Each follows from a
-belief in [MANIFESTO.md](MANIFESTO.md) — the reviewer reads and never runs,
-judges what shipped and not how it was made — or, for the workflow and the
-round budget, from the rule that GitHub owns the PR and volume is cut at the
-bottom, never by giving up.
-
-### The exec boundary, stated so you can falsify it
-
-The refusal above is a design position; what *enforces* it is a set of layers,
-and they are worth describing precisely rather than as "the reviewer never
-executes anything". A review session runs with an allowlist of read-only
-programs, a veto over writes to git's configuration and to this system's own
-policy surface (the config, the sanctioned posting scripts, the compiled
-guard, the frozen prompt seeds), a re-parse of `bash -c` payloads at every
-depth, and a round-boundary integrity check that hashes those files when the
-worktree is prepared and again when the round is measured.
-
-Every one of those layers exists because a previous version was **found false
-by running something, not by reading it**. Eight adversarial rounds turned up
-real bypasses — including arbitrary execution straight through the program
-allowlist, which a close reading of the same file had missed. What is
-guaranteed, what is explicitly *not* guaranteed (variable indirection is
-invisible to the command scan by construction; one layer detects rather than
-prevents; none of it is a sandbox — the session runs as the daemon's uid), and
-the exact probes to try are all in
-[**docs/exec-boundary.md**](docs/exec-boundary.md). It is written as claims
-that can be shown false. Please try.
 
 ## What it costs to run
 
 The deterministic daemon is negligible (one small container). The LLM spend
-is per review round and scales with diff size and lens count: a typical round
-runs several lens passes plus a validator over the diff, and a busy repo can
-consume a serious share of a ChatGPT subscription's capacity — or, on the
-API route, real per-token money. Use `qcr spend` / `qcr today` to watch
-usage, start with the trigger label on a few PRs, and widen from there. The
-system's own history is a warning here: undisciplined re-review loops are
-exactly why the recheck/no-op/nit-cap machinery exists.
+is per review round and scales with diff size and the number of lenses
+planned. On the benchmarks above a round averaged $2.06 per PR at list
+prices (median $1.87) and a median 17.5 minutes, 4 to 29 times the cost of
+the third-party tools measured; a busy repo can consume a serious share of a
+ChatGPT subscription's capacity, or real money on the API route. Use
+`qcr spend` / `qcr today` to watch usage and `qcr metrics` for
+time-to-first-verdict split into a queue leg and a review leg. Start with
+the trigger label on a few PRs and widen from there. The recheck, no-op and
+nit-cap machinery exists because undisciplined re-review loops are where the
+money goes.
 
 ## Operating
 
@@ -411,27 +398,53 @@ docker compose logs -f daemon                   # daemon logs (laptop route)
 ```
 
 The TUI reaches the daemon over ssh or against local Docker, per
-`config.toml [tui] target` — setup writes the one that matches your topology.
+`config.toml [tui] target`. Working on the code: `npm run lint` (ESLint with
+type-aware rules) and `npm run format` (Prettier; `format:check` to verify).
+Neither is chained into `npm test` or `npm run build`; CI runs both.
 
-Working on the code: `npm run lint` (ESLint with type-aware rules) and
-`npm run format` (Prettier; `npm run format:check` to verify only). Neither is
-chained into `npm test` or `npm run build`, so the dev loop stays fast — CI
-runs both as their own steps.
+## Roadmap and non-goals
+
+Direction, honestly stated: the posting boundary moves fully into the
+daemon; findings telemetry and per-lens unique yield turn into evidenced
+lens tuning; the profile ecosystem grows beyond Django; and review history,
+clustered by author-side root cause, is driven back into your implementing
+agents' instructions, measured by fewer late blockers and fewer rounds.
+
+**Non-goals**, recorded so they cannot be silently unrefused: no rebuilding
+GitHub's PR workflow; the reviewer is never asked to run your code; no hard
+round budget; the reviewer never reads the implementing conversation; the
+fixer and the reviewer are never the same system. Each follows from a belief
+in [MANIFESTO.md](MANIFESTO.md).
+
+### The exec boundary, stated so you can falsify it
+
+What enforces "the reviewer never runs your code" is a set of layers: an
+allowlist of read-only programs, a veto over writes to git's configuration
+and to this system's own policy surface, a re-parse of `bash -c` payloads at
+every depth, and a round-boundary integrity check over those files. Every
+layer exists because an earlier version was **found false by running
+something, not by reading it**; eight adversarial rounds turned up real
+bypasses. What is guaranteed, what is explicitly *not* (none of it is a
+sandbox; the session runs as the daemon's uid), and the probes to try are in
+[**docs/exec-boundary.md**](docs/exec-boundary.md), written as claims that
+can be shown false. Please try.
 
 ## Documentation map
 
-- [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides, and the beliefs the implementation follows
-- [docs/architecture/README.md](docs/architecture/README.md) — how the system is built: the process map, the review lifecycle, the sessions, the data model, the safety seams
-- [AGENTS.md](AGENTS.md) — orientation for an AI agent editing this codebase: where things live and what must not be changed
-- [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step: what it asks, what it writes, where it can stop
+- [MANIFESTO.md](MANIFESTO.md) — the philosophy: what the human decides, what the machine decides
+- [docs/architecture/README.md](docs/architecture/README.md) — the process map, the review lifecycle, the sessions, the data model, the safety seams
+- [AGENTS.md](AGENTS.md) — orientation for an AI agent editing this codebase
+- [docs/onboarding.md](docs/onboarding.md) — the guided setup, step by step
 - [docs/github-app-setup.md](docs/github-app-setup.md) — what the GitHub App is, and how to register it by hand
 - [docs/llm-setup.md](docs/llm-setup.md) — the two LLM credential routes
 - [docker/daemon/README.md](docker/daemon/README.md) — the plain-Docker route: containers, ingress shapes, image pins
 - [deploy/ansible/README.md](deploy/ansible/README.md) — the VM/server route: provisioning, deploy, verification
-- [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs + heuristics
+- [docs/profiles.md](docs/profiles.md) — repo profiles: addenda packs, heuristics, per-lens tuning
+- [docs/duplicate-merge.md](docs/duplicate-merge.md) — one comment per root cause
 - [docs/ownership.md](docs/ownership.md) — the owner-only surfaces (dry-run flag, frozen seeds, ratification)
-- [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code and writing to GitHub: the layers, the guarantees, and the residual gaps
-- [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, the hosted opt-in, and what changing it does to an existing store
+- [docs/exec-boundary.md](docs/exec-boundary.md) — what stops a review session running your code: the layers, the guarantees, the residual gaps
+- [docs/memory-embeddings.md](docs/memory-embeddings.md) — the embedder: local by default, the hosted opt-in
+- [bench/aacr/README.md](bench/aacr/README.md) — the benchmark harness: run the production reviewer on public PRs in a locked-down local sandbox
 - [docs/provenance.md](docs/provenance.md) — what the FT-#### citations in this codebase mean
 - [CONTRIBUTING.md](CONTRIBUTING.md) — build, test, and the frozen-seed rule
 - [SECURITY.md](SECURITY.md) — reporting vulnerabilities
@@ -439,10 +452,9 @@ runs both as their own steps.
 ## Appendix — setting up by hand
 
 `qcr onboard` composes the tools below rather than replacing any of them, so
-nothing here is a second implementation, and drift between the guided path and
-this one is a bug. Do it yourself if you prefer; the wizard remains useful
-afterwards as a verifier, since re-running it re-checks every step against
-reality without writing anything that already holds.
+drift between the guided path and this one is a bug. Do it yourself if you
+prefer; re-running the wizard afterwards re-checks every step against reality
+without writing anything that already holds.
 
 ```sh
 git clone <this repo> && cd <repo>
@@ -453,8 +465,7 @@ cp config.example.toml config.toml    # ~10 clearly-marked FILL values:
                                       # team/label, owner identity, timezone
 bash deploy/collect-secrets.sh        # interactive: App id + private key,
                                       # webhook secret, tunnel token, OpenAI
-                                      # key (shape-aware — only what your
-                                      # deployment needs)
+                                      # key (only what your deployment needs)
 
 export QCR_UID=$(id -u)
 docker compose up -d --build          # laptop route (docker/daemon/README.md)
@@ -464,30 +475,18 @@ curl -s http://127.0.0.1:8787/health
 # repo, create the trigger label, and label a PR — state/dryrun/ fills up.
 ```
 
-Each piece has its own page:
-
-1. **The GitHub App** — [docs/github-app-setup.md](docs/github-app-setup.md):
-   the manifest, the permission and event tables, where each value lands, the
-   install, the repo-side labels, and the four verification checks.
-2. **LLM credentials** — [docs/llm-setup.md](docs/llm-setup.md): the two routes,
-   the provider-prefix rewrite, the container `/login`, and why memory
-   embeddings need no key (local by default; the hosted opt-in is
-   [docs/memory-embeddings.md](docs/memory-embeddings.md)).
-3. **Ingress** — [docker/daemon/README.md](docker/daemon/README.md): the four
-   shapes, the compose profiles, and the sidecar credentials.
-4. **Memory keys** — the server's root key is any 32 random bytes, written to
-   `<secrets>/openviking_root_key`; the daemon needs it at boot, and without it
-   the memory engine comes up with no per-user confinement. The two *user* keys
-   are issued by the running server, and the setup wizard's memory step is the
-   only implementation that mints, places and proves them — run
-   `scripts/qcr onboard` for that step even if you did everything else by hand.
-   `node scripts/companion-memory-forward.mjs verify` is the confinement check
-   on its own. Declining memory is supported too: the reviewer then runs
-   memory-less, and rounds are unaffected.
-5. **A server instead of a laptop** —
-   [deploy/ansible/README.md](deploy/ansible/README.md): the inventory, the
-   playbook, and `scripts/deploy.sh sync|rebuild|verify`.
-6. **Slack** (optional, any time) — `npm run slack:setup`.
+Each piece has its own page: the GitHub App
+([docs/github-app-setup.md](docs/github-app-setup.md)), LLM credentials
+([docs/llm-setup.md](docs/llm-setup.md)), ingress and sidecars
+([docker/daemon/README.md](docker/daemon/README.md)), and a server instead of
+a laptop ([deploy/ansible/README.md](deploy/ansible/README.md), with
+`scripts/deploy.sh sync|rebuild|verify`). Slack is optional, any time:
+`npm run slack:setup`. **Memory keys**: the server's root key is any 32
+random bytes in `<secrets>/openviking_root_key`; the two *user* keys are
+issued by the running server, and the wizard's memory step is the only
+implementation that mints, places and proves them, so run `scripts/qcr
+onboard` for that step even if you did everything else by hand. Declining
+memory is supported; rounds are unaffected.
 
 `dry_run = true` ships as the default; flipping it is your own act, by hand in
 `config.toml` or through the wizard's go-live step, and the daemon re-reads it
@@ -499,21 +498,19 @@ QuickReview stands on ideas it is glad to name:
 
 - **[Matt Pocock's skills](https://github.com/mattpocock/skills)** — the
   discipline of *processes as versioned files an agent can follow*. This
-  system was not just inspired by that idea; it was **built with it** — the
-  wayfinding, spec-writing, ticketing and grilling skills in that collection
-  drove the development loop that produced this codebase, and the same
-  discipline shaped how the reviewer's own rules are carried as files.
+  system was **built with it**: the wayfinding, spec-writing, ticketing and
+  grilling skills in that collection drove the development loop that produced
+  this codebase, and shaped how the reviewer's own rules are carried as files.
 - **[pi](https://github.com/earendil-works/pi)** — the small-sharp-agent
   philosophy: an agent session is a terminal you can attach to, extensions
-  compose instead of frameworks accreting, and the machinery stays small
-  enough to reason about. QuickReview's review sessions are pi sessions.
+  compose instead of frameworks accreting. QuickReview's review sessions are
+  pi sessions.
 - **[OpenViking](https://github.com/volcengine/OpenViking)** — the memory
   engine behind the reviewer's learning, run on your own infrastructure with
   server-side per-user confinement.
 - **[pr-agent](https://github.com/qodo-ai/pr-agent)** — studied closely in
   [docs/pr-agent-comparison.md](docs/pr-agent-comparison.md); several of its
-  ideas were adopted by conviction and several deliberately not imported,
-  and knowing which is which made this system better.
+  ideas were adopted by conviction and several deliberately not imported.
 
 ## License
 
