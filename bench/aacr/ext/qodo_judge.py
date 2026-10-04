@@ -27,6 +27,11 @@ issues, F1; recall split into functional issues (no rule_name) and rule
 violations (rule_name). With --noise N the first N PRs are judged a second
 time (fresh requests) and the two passes compared.
 
+--run-tool names the run's tool in the scores (default quickreview); a
+third-party bench arm (PR-Agent, OpenCode, …) is read the same way — its
+results/all/<id>.json carries the same `review.comments` view, the one the
+AACR defect judge reads for that arm.
+
 QuickReview's comments are what it would post, as the scored result file has
 them (results/all/<id>.json — inline comments and the body findings that carry
 a path and line), exactly as sweprbench_export.py reads them.
@@ -177,15 +182,18 @@ def main() -> None:
     ap.add_argument("--run", type=Path, help="QuickReview run dir (omit to judge the vendors only)")
     ap.add_argument("--endpoint", required=True)
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--run-tool", default="quickreview", help="the tool name the --run is scored under")
     ap.add_argument("--only-tools", default="")
     ap.add_argument("--noise", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=8)
     a = ap.parse_args()
+    if a.run_tool in VENDORS:
+        sys.exit(f"--run-tool {a.run_tool} is a published vendor's name")
     a.out.mkdir(parents=True, exist_ok=True)
     cases = json.loads(a.set.read_text())["cases"]
     gt = {r["pr_url_to_review"]: r for r in map(json.loads, a.gt.read_text().splitlines()) if r}
     rows = {r["pr_url"]: r for r in json.loads(a.tools.read_text())}
-    tools = (["quickreview"] if a.run else []) + VENDORS
+    tools = ([a.run_tool] if a.run else []) + VENDORS
     if a.only_tools:
         tools = [t for t in tools if t in a.only_tools.split(",")]
 
@@ -193,7 +201,7 @@ def main() -> None:
     for k, c in enumerate(cases):
         issues = gt[c["pr_url"]]["issues"]
         for t in tools:
-            cm = ours(a.run, c["instance_id"]) if t == "quickreview" else vendor(rows.get(c["pr_url"], {}), t)
+            cm = ours(a.run, c["instance_id"]) if a.run and t == a.run_tool else vendor(rows.get(c["pr_url"], {}), t)
             jobs.append((c["pr_url"], t, 1, issues, cm))
             if k < a.noise:
                 jobs.append((c["pr_url"], t, 2, issues, cm))

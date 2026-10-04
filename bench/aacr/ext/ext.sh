@@ -14,6 +14,9 @@
 #   ext.sh sweprbench RUN SET         export + replay + SWE-PRBench's run_eval.py, judge gpt-6.1-sol
 #   ext.sh qodo RUN|none SET          Qodo PR-Review-Bench: QuickReview (RUN) and the nine published
 #                                     vendor runs, ONE judge (gpt-6.1-sol) for all — qodo_judge.py
+#   A RUN of a third-party arm (pragent, opencode, … — its <run>.arm.json) is scored under that
+#   arm's tool name (martian_ingest.py ARM_TOOLS) with the same steps; add `--only-tools <name>`
+#   to qodo and EXT_MARTIAN_REJUDGE= (empty) to martian to judge that tool alone.
 #
 #   QCR_BENCH_RUNS_DIR   where runs live (required; outside any worktree)
 #   EXT_CACHE            the local bare git caches (default $QCR_BENCH_RUNS_DIR/../ext-cache)
@@ -53,6 +56,16 @@ M=openai-codex/gpt-6.1-sol
 DEFAULT="models.default=$M,models.conversation=$M,models.overseer=$M,models.tiers.terra-med=$M:medium,models.tiers.sol-med=$M:medium,models.tiers.sol-high=$M:high"
 
 die() { echo "ext: $*" >&2; exit 1; }
+# The arm that reviewed RUN (its <run>.arm.json; qcr when absent) and the tool
+# name its scores carry — martian_ingest.py ARM_TOOLS is the one table.
+run_arm() { # run
+  python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("arm") or "qcr")
+except FileNotFoundError: print("qcr")' "$QCR_BENCH_RUNS_DIR/$1.arm.json"
+}
+arm_tool() { # arm
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from martian_ingest import ARM_TOOLS; print(ARM_TOOLS[sys.argv[2]])' "$HERE" "$1"
+}
 log() { echo "$(date +%T) ext: $*"; }
 
 HARDEN=(
@@ -183,7 +196,7 @@ PY
     if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-qodo-vendors-$set_name.qodo"
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/results/all" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no finished run $run"
-      work="$QCR_BENCH_RUNS_DIR/$run.qodo"; runargs=(--run /run)
+      work="$QCR_BENCH_RUNS_DIR/$run.qodo"; runargs=(--run /run --run-tool "$(arm_tool "$(run_arm "$run")")")
     fi
     [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
     mkdir -p "$work"   # resumable: qodo_judge.py caches every judgement in $work/judgements.jsonl
@@ -202,12 +215,13 @@ PY
   martian)
     run="${1:?usage: ext.sh martian RUN|none SET}"; set_name="${2:?usage: ext.sh martian RUN|none SET}"
     f="$AACR/sets/$set_name.json"; [[ -f "$f" ]] || die "no set $f"
-    tools="${EXT_MARTIAN_REJUDGE:-qodo-extended-v2,cubic-v2,claude-code}"
+    # Unset: re-judge the three published comparators beside RUN; set empty: none.
+    tools="${EXT_MARTIAN_REJUDGE-qodo-extended-v2,cubic-v2,claude-code}"
     rej=""; for t in ${tools//,/ }; do rej="$rej,rejudged-$t"; done
     if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-calibration-$set_name${EXT_CALIB_TAG:+-$EXT_CALIB_TAG}.martian"; qr=(--no-quickreview)
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/cases" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no run $run"
-      work="$QCR_BENCH_RUNS_DIR/$run.martian"; qr=()
+      work="$QCR_BENCH_RUNS_DIR/$run.martian"; qr=(--arm "$(run_arm "$run")")
     fi
     [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
     [[ ! -e "$work" ]] || die "$work exists — move it away first (scores are never overwritten)"
