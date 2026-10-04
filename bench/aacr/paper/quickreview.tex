@@ -94,11 +94,14 @@ three-reviewer panel, finds 89\%, 85\% and 67\%. On two external benchmarks
 it has the highest recall under one judge: 87\% of the golden comments of
 Martian's offline benchmark that an audit judged real, and 52\% of the
 functional bugs of Qodo's PR-Review-Bench (45\% of all its issues, second
-to 46\%). Recall is bought with comments,
+to 46\%), ahead on both of the same three third-party harnesses run on the
+same model (they find 54--78\% of the real goldens and 44--46\% of the
+functional bugs). Recall is bought with comments,
 money and time. It posts 6.9 comments per PR, 92\% of them correct but 42\%
 minor, which gives it the lowest Martian F1 and the fourth-highest Qodo F1;
-it costs \$2.06 per PR at list prices (median \$1.87), 51\% more than the
-build of the main comparison and 4 to 29 times the third-party tools; and
+it costs \$2.06 per PR at list prices (median \$1.87; \$2.84 and \$2.48 on
+Martian's and Qodo's larger PRs), 51\% more than the build of the main
+comparison and 4 to 29 times the third-party tools; and
 it takes a median 17.5 minutes per PR, 1.8 times that build, against 0.7--2.3
 minutes for the others. The design is studied on that earlier build, which
 finds 79\% (95\% interval 75--82\%) at \$1.36 per PR, ahead of the panel's
@@ -1384,12 +1387,27 @@ gpt-6.1-sol judge with three tools' published comments, the frozen build
 finds 75 of the 86 golden comments an audit judged real (87\%), against 68
 for qodo-extended-v2 (level with it on the \code{test30} half, 43 of 52
 each), and has the highest Martian recall (65.8) and the lowest precision
-(16.2). On Qodo's PR-Review-Bench, with all ten tools judged by our judge, it
+(16.2). On Qodo's PR-Review-Bench, with all thirteen tools judged by our judge, it
 has the highest recall of functional bugs (52.1\%) and the fourth-highest F1
 (40.9); its recall of rule violations rose from 14.8\% to 37.6\%, and on the
 31 Qodo PRs its development did not use, its recall rose by 7.8 points over
 the 2026-10-02 build (95\% CI $+2.1$ to $+14.1$). Both benchmarks count a
 real defect missing from their lists as a false positive~\cite{qcrbench}.
+
+The same three third-party harnesses as in the main comparison
+(open-code-review, PR-Agent and OpenCode, each in its configuration there
+on gpt-6.1-sol) also ran on both benchmarks, which makes those rows a
+comparison of harnesses on one model. On Martian's audited real goldens
+they find 67, 46 and 48 of 86 against the frozen build's 75; on Qodo's
+they find 27--29\% of all issues against 45.3\%, 44--46\% of the
+functional bugs against 52.1\%, and 8--12\% of the rule violations against
+37.6\%. They win on precision and F1: on Martian all three have a higher F1
+than the frozen build's 26.1 (33.1--38.8), and open-code-review a higher
+$F_2$ (47.4 against 40.9) and full coverage of the real Critical and High
+goldens on one more PR (16 of 19 against 15); on Qodo OpenCode's F1, 40.0,
+is within a point of the frozen build's 40.9. They cost \$0.09--0.86 and
+take 1.2--3.3 minutes per PR on these benchmarks, against the frozen
+build's \$2.84 and 26.1 minutes on Martian and \$2.48 and 19.6 on Qodo.
 
 % =====================================================================
 \section{What these numbers do not show}
@@ -1468,7 +1486,8 @@ with every competitor at its best documented configuration and the
 OpenAI-based ones on the same model, its shipping build finds 97\% of the
 high-severity defects and 89\% of all of them, ahead of every competitor at
 every severity, and it has the highest recall on the real goldens of
-Martian's benchmark and on the functional bugs of Qodo's. That recall has a
+Martian's benchmark and on the functional bugs of Qodo's, ahead of the same
+three third-party harnesses on the same model on both. That recall has a
 price, stated with it: \$2.06 and a median 17.5 minutes per PR, several
 times every competitor, and more comments, many of them true but minor,
 which costs it precision on both external benchmarks. The build on which

@@ -103,12 +103,15 @@ reviewer at every severity; the strongest third-party configuration finds
 89\% and 67\%. On Martian's offline benchmark it finds 87\% of the golden
 comments an audit judged real, and on Qodo's PR-Review-Bench 52\% of the
 functional bugs, the highest recall of the tools each benchmark scores under
-one judge (45\% of all Qodo's issues, second to 46\%). The price is volume, cost and time: it posts 6.9 comments per PR,
+one judge (45\% of all Qodo's issues, second to 46\%), and ahead of the same
+three third-party harnesses on the same model on both (they find 54--78\%
+of the real goldens and 44--46\% of the functional bugs). The price is volume, cost and time: it posts 6.9 comments per PR,
 92\% of them correct but 42\% minor, which gives it the lowest Martian F1
 and the fourth-highest Qodo F1; it costs \$2.06 per PR at list prices
-(median \$1.87), 51\% more than the build of the eight-reviewer comparison
-and 4 to 29 times the third-party tools, and takes a median 17.5 minutes per
-PR, 1.8 times that build, against 0.7--2.3 minutes for the others. The key,
+(median \$1.87; \$2.84 and \$2.48 on Martian's and Qodo's larger PRs), 51\%
+more than the build of the eight-reviewer comparison and 4 to 29 times the
+third-party tools, and takes a median 17.5 minutes per PR, 1.8 times that
+build, against 0.7--2.3 minutes for the others. The key,
 the exclusions, the judge prompt and every scoring script are released.
 \end{abstract}
 
@@ -2814,30 +2817,59 @@ Claude Code 65 $\to$ 76); the same shift puts the frozen build at roughly
 sixteenth of 23 on the published leaderboard (Figure~\ref{fig:martianlb}):
 recall at the top, precision at the bottom.
 
+\paragraph{The same third-party harnesses.} The published comparators ran
+on models of their vendors' choosing. To compare harnesses on one model we
+also ran the three third-party harnesses of the eight-reviewer comparison,
+open-code-review, PR-Agent and OpenCode, in exactly their configurations
+there (Table~\ref{tab:reviewers}: gpt-6.1-sol, one review per PR), on all 50
+PRs, and scored each with the same judge and steps; the same three ran on
+Qodo's benchmark (Section~\ref{sec:qodo}). On recall \qcr{} is first and
+open-code-review second, as on AACR: 65.8, 58.9, then PR-Agent 36.1 and
+OpenCode 33.5 (Table~\ref{tab:martianfinal}); on the 86 golden comments the
+audit judged real (Section~\ref{sec:martianaudit}), 87\%, 78\%, 54\% and
+56\%. Precision and F1 order them the other way:
+PR-Agent has the highest F1 of the four (38.8) and \qcr{} the lowest
+(26.1), and open-code-review, which posts about half as many issues as \qcr{}
+at nearly its recall, has the highest $F_2$ of the four (47.4 against 40.9).
+The cost of the recall is as on AACR, only larger: \$2.84 and 26.1
+minutes per PR for \qcr{}, against \$0.09--0.86 and 1.4--3.3 minutes. The
+PRs are larger than AACR's, so \qcr{}'s cost per PR is above its \$2.06
+there (Section~\ref{sec:finalbuild}).
+
 \begin{table}[tbp]
   \centering
   \small
   \caption{Martian, all 50 PRs, Core profile, the frozen build and the three
   comparators' published comments in one pass of the gpt-6.1-sol judge
-  (run \code{final1-martian50}, 2026-10-04); the last three rows are
-  Martian's published Opus 4.5 judgements of the same comments. Issues/PR:
-  what Martian's step 2 extracted.}
+  (run \code{final1-martian50}, 2026-10-04); the middle block is the three
+  third-party harnesses of the eight-reviewer comparison
+  (Table~\ref{tab:reviewers}), run here in that configuration on
+  gpt-6.1-sol (runs \code{final1-\{ocr,pragent,opencode\}-martian50}),
+  each judged alone by the same judge and steps (Martian dedups and matches
+  per PR and tool, so the rows compare); the last three rows are Martian's
+  published Opus 4.5 judgements of the published comments. Issues/PR: what
+  Martian's step 2 extracted. Cost at list prices and mean wall-clock
+  minutes per PR, for the runs we made.}
   \label{tab:martianfinal}
-  \begin{tabular}{lrrrrrr}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lrrrrrrrr}
     \toprule
-    Tool & Issues/PR & Matched / 158 & P & R & F1 & $F_2$ \\
+    Tool & Issues/PR & Matched / 158 & P & R & F1 & $F_2$ & \$/PR & min/PR \\
     \midrule
-    \qcr{} frozen build & 12.8 & 104 & 16.2 & \textbf{65.8} & 26.1 & 40.9 \\
-    qodo-extended-v2 (re-judged) & 3.4 & 95 & 56.2 & 60.1 & \textbf{58.1} & \textbf{59.3} \\
-    cubic-v2 (re-judged) & 3.5 & 95 & 54.3 & 60.1 & 57.1 & 58.9 \\
-    Claude Code (re-judged) & 3.6 & 65 & 36.5 & 41.1 & 38.7 & 40.1 \\
-    \multicolumn{7}{l}{\NEEDEXP{PR-Agent and OpenCode on Martian/Qodo --- running}} \\
+    \qcr{} frozen build & 12.8 & 104 & 16.2 & \textbf{65.8} & 26.1 & 40.9 & 2.84 & 26.1 \\
+    qodo-extended-v2 (re-judged) & 3.4 & 95 & 56.2 & 60.1 & \textbf{58.1} & \textbf{59.3} & --- & --- \\
+    cubic-v2 (re-judged) & 3.5 & 95 & 54.3 & 60.1 & 57.1 & 58.9 & --- & --- \\
+    Claude Code (re-judged) & 3.6 & 65 & 36.5 & 41.1 & 38.7 & 40.1 & --- & --- \\
     \midrule
-    qodo-extended-v2 (Opus 4.5) & & 102 & 67.1 & 64.6 & 65.8 & 65.1 \\
-    cubic-v2 (Opus 4.5) & & 104 & 61.5 & 65.8 & 63.6 & 64.9 \\
-    Claude Code (Opus 4.5) & & 76 & 46.3 & 48.1 & 47.2 & 47.7 \\
+    open-code-review 1.3.1, effort high & 7.0 & 93 & 26.7 & 58.9 & 36.8 & 47.4 & 0.86 & 3.3 \\
+    PR-Agent 0.46.0, medium & 2.7 & 57 & 41.9 & 36.1 & 38.8 & 37.1 & 0.09 & 1.4 \\
+    OpenCode 1.18.33, medium + PR text & 3.2 & 53 & 32.7 & 33.5 & 33.1 & 33.4 & 0.19 & 2.4 \\
+    \midrule
+    qodo-extended-v2 (Opus 4.5) & & 102 & 67.1 & 64.6 & 65.8 & 65.1 & & \\
+    cubic-v2 (Opus 4.5) & & 104 & 61.5 & 65.8 & 63.6 & 64.9 & & \\
+    Claude Code (Opus 4.5) & & 76 & 46.3 & 48.1 & 47.2 & 47.7 & & \\
     \bottomrule
-  \end{tabular}
+  \end{tabular}}
 \end{table}
 
 \begin{figure}[tbp]
@@ -2868,8 +2900,10 @@ with the defect key, no human has checked these verdicts.
   \caption{Recall of the 86 golden comments the audit judged real, and the
   share of each tool's Martian credits that went to the 77 judged not real
   (``Not real'').
-  Left: one judge (gpt-6.1-sol), all 50 PRs, one pass: the frozen build
-  and the comparators' published comments (Table~\ref{tab:martianfinal}).
+  Left: one judge (gpt-6.1-sol), all 50 PRs: the frozen build and the
+  comparators' published comments in one pass, and below the rule the three
+  harnesses run on gpt-6.1-sol, each judged alone
+  (Table~\ref{tab:martianfinal}).
   Right: Martian's published Opus 4.5 judgements, all 50 PRs (\qcr{} was
   not judged by Opus 4.5).}
   \label{tab:martianaudit}
@@ -2880,13 +2914,14 @@ with the defect key, no human has checked these verdicts.
     \cmidrule(r){1-3}\cmidrule(l){4-6}
     Tool & Real recall & Not real & Tool & Real recall & Not real \\
     \midrule
-    \qcr{} frozen & \textbf{87.2\%} & \textbf{25\%} & qodo-extended-v2 & 83.7\% & 28\% \\
+    \qcr{} frozen & \textbf{87.2\%} & 25\% & qodo-extended-v2 & 83.7\% & 28\% \\
     qodo-extended-v2 & 79.1\% & 26\% & copilot-v2 & 82.6\% & 33\% \\
     cubic-v2 & 67.4\% & 37\% & augment & 79.1\% & 30\% \\
     Claude Code & 52.3\% & 34\% & qodo-v2 & 75.6\% & 28\% \\
-    & & & cubic-v2 & 74.4\% & 34\% \\
-    & & & coderabbit & 68.6\% & 35\% \\
-    & & & bugbot & 64.0\% & 22\% \\
+    \cmidrule(r){1-3}
+    open-code-review & 77.9\% & 26\% & cubic-v2 & 74.4\% & 34\% \\
+    OpenCode & 55.8\% & \textbf{11\%} & coderabbit & 68.6\% & 35\% \\
+    PR-Agent & 53.5\% & 23\% & bugbot & 64.0\% & 22\% \\
     & & & sourcery & 64.0\% & 36\% \\
     & & & gitlab & 62.8\% & 35\% \\
     & & & greptile-v4-1 & 61.6\% & 34\% \\
@@ -2906,7 +2941,10 @@ for qodo-extended-v2, against over a third for cubic-v2 and Claude Code. By
 half: 32 of 34 real goldens on \code{tune20} (cubic-v2 26,
 qodo-extended-v2 25) and 43 of 52 on \code{test30}, level with
 qodo-extended-v2 and ahead of cubic-v2 (32) and Claude Code (26). The default as posted, before
-those changes, found 69 of 86 (40 of 52 on \code{test30}). The published judgements tell the
+those changes, found 69 of 86 (40 of 52 on \code{test30}). Of the three
+harnesses run on gpt-6.1-sol, open-code-review finds 67 (77.9\%), OpenCode
+48 and PR-Agent 46; OpenCode earns only 11\% of its credits on goldens
+that are not real, the lowest share of any tool. The published judgements tell the
 same story for the rest of the field: every tool earns 22--36\% of its credits
 on goldens the audit does not count as real.
 
@@ -3180,7 +3218,12 @@ Martian's published Opus judgements, which credit more matches, give 13--15
 of 19 for the best published tools. On real goldens of any severity the
 frozen build found all of a PR's in 26 of 35 PRs, qodo-extended-v2 in 21,
 cubic-v2 in 20 and Claude Code in 10. (The default as posted, before the
-frozen build's changes: 17 of 34, 14 of 19 and 21 of 35.)
+frozen build's changes: 17 of 34, 14 of 19 and 21 of 35.) Of the three
+harnesses run on gpt-6.1-sol (not in the figure), open-code-review does
+better than the frozen build on the real Critical and High goldens, 16 of
+19 against 15, and is level on all labelled ones (19 of 34), with 20 of 35
+on real goldens of any severity; OpenCode has 12, 11 and 13 and PR-Agent 9,
+7 and 11.
 
 \begin{figure}[tbp]
   \centering
@@ -3197,7 +3240,8 @@ benchmark that a reader of its leaderboard should weigh.
 \begin{enumerate}
   \item \emph{The key is half noise.} 77 of 173 golden comments are not
     real PR defects and 10 are disputed (Section~\ref{sec:martianaudit});
-    tools earn 22--37\% of their credit on them, \qcr{} 25\%.
+    tools earn 22--37\% of their credit on them (OpenCode on gpt-6.1-sol
+    11\%), \qcr{} 25\%.
   \item \emph{A real bug off the list is a false positive.} On \code{tune20}
     eight tools found 44 real PR-introduced bugs that the list lacks; every
     one counts against the tool that found it.
@@ -3296,31 +3340,39 @@ vendors and keeps their order, the only calibration available.
   one judgement. The nine vendors are their published January 2026 reviews
   (\code{ext-r6-qodo-pr100}); \qcr{} rows are runs
   \code{final1-qodo-pr100} (frozen build) and \code{ext-r6-qodo-pr100}
-  (2026-10-02 build), all scored by \code{bench/aacr/ext/qodo\_judge.py}.
-  Last column: Qodo's own published F1, judge unpublished.}
+  (2026-10-02 build); the three marked $\dagger$ are the third-party
+  harnesses of the eight-reviewer comparison in that configuration on
+  gpt-6.1-sol (Table~\ref{tab:reviewers}; runs
+  \code{final1-\{opencode,ocr,pragent\}-qodo-pr100}); all scored by
+  \code{bench/aacr/ext/qodo\_judge.py}. Qodo's F1: Qodo's own published
+  F1, judge unpublished. Cost at list prices and mean wall-clock minutes
+  per PR, for the runs we made.}
   \label{tab:qodo}
-  \begin{tabular}{lrrrrrrr}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lrrrrrrrrr}
     \toprule
-    Tool & Comments/PR & P & R & F1 & R functional & R rule & Qodo's F1 \\
+    Tool & Comments/PR & P & R & F1 & R functional & R rule & Qodo's F1 & \$/PR & min/PR \\
     \midrule
-    qodo-exhaustive & 4.6 & 58.0 & \textbf{46.4} & \textbf{51.5} & 48.2 & \textbf{44.3} & 60.1 \\
-    qodo-precise & 3.1 & 68.0 & 35.9 & 47.0 & 36.2 & 35.4 & 55.4 \\
-    augment & 2.5 & 67.5 & 29.7 & 41.2 & 49.2 & 7.4 & 44.1 \\
-    \qcr{} frozen build & 7.1 & 37.3 & 45.3 & 40.9 & \textbf{52.1} & 37.6 & --- \\
-    copilot & 4.2 & 46.8 & 33.6 & 39.1 & 46.3 & 19.2 & 42.8 \\
-    greptile & 2.4 & 64.7 & 26.6 & 37.7 & 37.2 & 14.4 & 39.0 \\
-    cursor & 1.9 & 73.8 & 24.3 & 36.6 & 41.1 & 5.2 & 39.3 \\
-    \qcr{}, 2026-10-02 build & 5.5 & 35.8 & 34.0 & 34.9 & 50.8 & 14.8 & --- \\
-    codex & 1.6 & \textbf{78.2} & 22.2 & 34.6 & 32.4 & 10.7 & 37.6 \\
-    sentry & 0.9 & 76.8 & 12.6 & 21.6 & 22.7 & 1.1 & 23.7 \\
-    coderabbit & 1.9 & 43.7 & 14.3 & 21.6 & 23.0 & 4.4 & 28.0 \\
-    \multicolumn{8}{l}{\NEEDEXP{PR-Agent and OpenCode on Martian/Qodo --- running}} \\
+    qodo-exhaustive & 4.6 & 58.0 & \textbf{46.4} & \textbf{51.5} & 48.2 & \textbf{44.3} & 60.1 & --- & --- \\
+    qodo-precise & 3.1 & 68.0 & 35.9 & 47.0 & 36.2 & 35.4 & 55.4 & --- & --- \\
+    augment & 2.5 & 67.5 & 29.7 & 41.2 & 49.2 & 7.4 & 44.1 & --- & --- \\
+    \qcr{} frozen build & 7.1 & 37.3 & 45.3 & 40.9 & \textbf{52.1} & 37.6 & --- & 2.48 & 19.6 \\
+    OpenCode 1.18.33$^\dagger$ & 2.6 & 64.9 & 29.0 & 40.0 & 43.7 & 12.2 & --- & 0.20 & 2.3 \\
+    copilot & 4.2 & 46.8 & 33.6 & 39.1 & 46.3 & 19.2 & 42.8 & --- & --- \\
+    greptile & 2.4 & 64.7 & 26.6 & 37.7 & 37.2 & 14.4 & 39.0 & --- & --- \\
+    cursor & 1.9 & 73.8 & 24.3 & 36.6 & 41.1 & 5.2 & 39.3 & --- & --- \\
+    open-code-review 1.3.1$^\dagger$ & 3.5 & 47.1 & 28.1 & 35.2 & 45.6 & 8.1 & --- & 0.46 & 1.9 \\
+    \qcr{}, 2026-10-02 build & 5.5 & 35.8 & 34.0 & 34.9 & 50.8 & 14.8 & --- & --- & --- \\
+    codex & 1.6 & \textbf{78.2} & 22.2 & 34.6 & 32.4 & 10.7 & 37.6 & --- & --- \\
+    PR-Agent 0.46.0$^\dagger$ & 3.4 & 47.2 & 27.2 & 34.5 & 43.7 & 8.5 & --- & 0.10 & 1.2 \\
+    sentry & 0.9 & 76.8 & 12.6 & 21.6 & 22.7 & 1.1 & 23.7 & --- & --- \\
+    coderabbit & 1.9 & 43.7 & 14.3 & 21.6 & 23.0 & 4.4 & 28.0 & --- & --- \\
     \bottomrule
-  \end{tabular}
+  \end{tabular}}
 \end{table}
 
 \paragraph{Results.} The frozen build finds the most functional bugs of the
-ten tools (52.1\%, against augment's 49.2\% and qodo-exhaustive's 48.2\%)
+thirteen tools (52.1\%, against augment's 49.2\% and qodo-exhaustive's 48.2\%)
 and the second-most issues overall (45.3\% against qodo-exhaustive's
 46.4\%); it posts the most comments (7.1 per PR) at the lowest precision
 (37.3\%), and its F1, 40.9, is fourth, behind Qodo's two configurations and
@@ -3332,6 +3384,23 @@ the earlier build treated most such items as nits it did not post. The
 sensitivities do not change the order at the top: under ``semantic only''
 the frozen build scores F1 46.7 (P 42.5, R 51.7, functional 61.2), against
 qodo-exhaustive's 56.5 and qodo-precise's 51.2.
+
+\paragraph{The same third-party harnesses.} The vendors' reviews ran on
+models of their choosing. The three third-party harnesses of the
+eight-reviewer comparison ran here in exactly that configuration, on
+gpt-6.1-sol, which makes their rows a comparison of harnesses on one model
+(Table~\ref{tab:qodo}, $\dagger$; the same three ran on Martian,
+Section~\ref{sec:martian}). \qcr{} finds more than any of them: 45.3\% of
+the issues against 27.2--29.0\%, 52.1\% of the functional bugs against
+43.7--45.6\%, and 37.6\% of the rule violations against 8.1--12.2\%. They
+post a third to a half as many comments at higher precision, and OpenCode's
+F1, 40.0 (P 64.9), is within a point of \qcr{}'s 40.9; open-code-review's
+is 35.2 and PR-Agent's 34.5. PR-Agent is Qodo's own open-source reviewer;
+\code{qodo-exhaustive} and \code{qodo-precise} are its commercial product,
+so this is PR-Agent's first row on the benchmark. Each costs \$0.10--0.46
+and takes 1.2--2.3 minutes per PR, against \qcr{}'s \$2.48 and 19.6; these
+PRs are larger than AACR's, so \qcr{}'s cost per PR is above its \$2.06
+there.
 
 \paragraph{Caveats.} Qodo built, injected and validated this benchmark, and
 47\% of its issues are rule compliance, which its own product's rules
@@ -3533,8 +3602,10 @@ high-severity defects, 94.5\% of the high- and medium-severity ones and 89\%
 of all 520, more than every other reviewer we ran at every severity, at the
 highest cost and time of the eight (\$2.06 and a median 17.5 minutes per
 PR); and that on Martian's audited real goldens and on Qodo's functional
-bugs it has the highest recall of the tools scored by one judge, with the
-lowest Martian F1 and the fourth-highest Qodo F1. We claim that in the
+bugs it has the highest recall of the tools scored by one judge, including
+the same three third-party harnesses on the same model, with the lowest
+Martian F1 and the fourth-highest Qodo F1, at \$2.84 and \$2.48 per PR
+against their \$0.09--0.86. We claim that in the
 eight-reviewer comparison, with every third-party tool except Claude Code in
 the best configuration we found among those its documentation ships or
 recommends and every OpenAI-based reviewer on gpt-6.1-sol, \qcr{}'s default
@@ -3657,7 +3728,8 @@ The authors' own reviewer, \qcr{}, is designed for recall, and recall is
 where it leads. Its frozen build finds 97\% of the key's high-severity
 defects and 89\% of all of them, ahead of every reviewer compared at every
 severity; on Martian's audited real goldens and on Qodo's functional bugs it
-has the highest recall of the tools scored by one judge. The price is stated
+has the highest recall of the tools scored by one judge, ahead of the same
+three third-party harnesses on the same model on both. The price is stated
 beside it: \$2.06 and a median 17.5 minutes per PR, 51\% more and 1.8 times
 as long as the build of the eight-reviewer comparison and several times
 every third-party tool, and more comments, many of them true but minor,
