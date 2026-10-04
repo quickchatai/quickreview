@@ -68,7 +68,7 @@
 \title{QuickReview: a multi-pass automated code reviewer,\\
 \large its design, its cost, and how it performs on a verified defect benchmark}
 \author{\TODO{authors and affiliation} \\ Quickchat AI}
-\date{Draft of 2026-10-01}
+\date{Draft of 2026-10-04}
 
 \begin{document}
 \maketitle
@@ -102,7 +102,14 @@ one such defect. With
 the design fixed, the base model moves recall from 28\% to 84\% on 185 PRs.
 The data are consistent with, but do not establish, the view that the design
 rather than the budget carries the result: no equal-budget alternative was
-run. Because the authors built the benchmark partly from this reviewer's own
+run. A later, frozen build adds two lenses, instructions that push each lens
+to exhaust a confirmed mechanism, a per-file coverage check, a merge of
+duplicate findings and high reasoning effort on three passes; it finds 461 of
+the 520 (89\%), including 87.5 of the 90 high-severity defects, now ahead of
+the panel on high- and medium-severity defects too, at \$2.06 per PR. Its
+changes were mined from misses on most of these PRs; on the 20 kept out of
+that work it finds 83\%, ahead of every reviewer compared but below two
+earlier builds on the previous model. Because the authors built the benchmark partly from this reviewer's own
 earlier output, we state throughout where that could inflate these numbers.
 \end{abstract}
 
@@ -1279,6 +1286,105 @@ was repeated.
 \end{table}
 
 % =====================================================================
+\section{The frozen build}
+\label{sec:frozen}
+
+Everything above measures build \code{b2ce03a} (2026-10-01). Over the next
+three days the reviewer was changed once more, from the misses of that build
+on the stored benchmark runs, and frozen as build \code{e32f0cf}
+(2026-10-04), still on gpt-6.1-sol. The changes:
+\begin{itemize}
+  \item \emph{Two lenses.} A behaviour-delta lens compares base and head on
+  every modified or deleted line of non-test code, planned only where base
+  behaviour is at risk (a removed or replaced guard, condition, call,
+  return or default, a reordered statement, existing code wrapped in a new
+  branch, a deleted file). A lint-conformance lens is planned only when a CI
+  job runs a linter or formatter over a changed file.
+  \item \emph{Shared instructions.} Once a mechanism is confirmed, check its
+  sibling sites, its twin, every consequence and the other failures in the
+  same loop; anchor a finding at its cause, not its symptom; report one-token
+  slips on changed lines (an operator, a bound, a loop target, a
+  near-namesake); and no token, time or finding budget applies. The style
+  lens walks every rule the repository writes down.
+  \item \emph{Coverage.} After the lenses, changed non-test source files on
+  which no lens raised anything get a targeted sweep; a wide change's sweep
+  is packed by a line budget rather than capped by file count.
+  \item \emph{One comment per root cause.} A deterministic merge clusters
+  findings that share a site, a named identifier or a fix target, and only
+  across different validator groups, so it never overrules the validator.
+  \item \emph{Effort.} The baseline, the sweep and the behaviour-delta lens
+  run at high reasoning effort.
+  \item \emph{Prompt cleanup.} Contradicting rules resolved in favour of the
+  newer, shared addenda merged and compressed: the composed lens instructions
+  are 32\% shorter in tokens. No lens was removed.
+\end{itemize}
+
+\begin{table}[tbp]
+\centering
+\small
+\caption{The frozen build and build \code{b2ce03a} on the same 185 PRs and
+520 defects, primary judge, same key, one run each; the panel for reference.
+R145: misses mined; smoke10 and dev10: used to validate the changes;
+holdout10 and fresh10: kept out of that work (but in the design set of the
+September levers). List prices, not bills.}
+\label{tab:frozen}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+& frozen \code{e32f0cf} & \code{b2ce03a} & pi-review panel \\
+\midrule
+Found (520) & \textbf{461 (89\%)} & 409 (79\%) & 347.5 (67\%) \\
+\quad high / medium / low & 87.5 / 134.5 / 239 & 83.5 / 121 / 204.5 & 80 / 119 / 148.5 \\
+High + medium recall [95\% CI] & 94.5\% [91.2, 97.2] & 87.0\% & 84.7\% \\
+R145 (394) & 356 (90\%) & 321 (81\%) & 270 (69\%) \\
+smoke10 + dev10 (71) & 59.5 (84\%) & 49.5 (70\%) & 38 (54\%) \\
+holdout10 + fresh10 (55) & 45.5 (83\%) & 38.5 (70\%) & 39.5 (72\%) \\
+Comments per PR & 6.9 & 5.4 & 3.2 \\
+\quad valuable / minor / incorrect & 51 / 42 / 4.5\% & 61 / 34 / 2.5\% & 73 / 17 / 6.0\% \\
+\$/PR (mean / median) & 2.06 / 1.87 & 1.36 / 1.19 & 0.27 \\
+Median min/PR & 17.5 & 9.5 & 1.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Results.} On all 185 PRs the frozen build finds 461 defects
+(88.7\%, 95\% CI 85.7--91.4), 10.0 points more than \code{b2ce03a} [$+6.8$,
+$+13.3$] and 21.8 more than the panel [$+17.8$, $+25.7$]
+(Table~\ref{tab:frozen}). The gain reaches the severities where the earlier
+build was level: on high- and medium-severity defects it leads the panel by
+$+9.8$ points [$+5.1$, $+14.3$], and on high severity alone it finds 87.5 of
+90, ahead of the panel by $+8.3$ [$+1.9$, $+14.6$] and of Codex CLI by
+$+7.2$ [$+0.6$, $+14.1$].\footnote{Paired bootstrap over PRs, 10{,}000
+resamples, seed 20261001, recall as a ratio of sums, from the primary
+judge's verdict files; the companion paper's
+Section~``The frozen build'' carries the full comparison~\cite{qcrbench}.}
+It costs 51\% more per PR and takes nearly twice as long, and it says more:
+6.9 comments per PR, 42\% of them true but minor, and 4.5\% graded incorrect
+against 2.5\%.
+
+\paragraph{How far to trust it.} This is an in-sample result: the changes
+were designed from misses on R145 (and on two external benchmarks) and
+validated on smoke10 and dev10. On the 20 PRs kept out of that work the
+gain over \code{b2ce03a} is about the same as elsewhere (83\% against 70\%,
+$+12.7$ points [$+1.0$, $+24.6$]), and the frozen build leads the panel
+there too ($+10.9$ [$+0.8$, $+20.3$]). But the two earlier-study builds on
+gpt-6-sol found 50.5 and 48.5 of those 55 defects~\cite{qcrbench},
+more than the frozen build's 45.5; with a different model, those PRs in the
+earlier builds' design set and a run-to-run spread of 1.5--2 defects per
+10-PR set (Section~\ref{sec:stability}), the runs cannot say which of these
+explains the gap.
+
+\paragraph{External checks.} On Martian's 50 PRs, scored by one
+gpt-6.1-sol judge with three tools' published comments, the frozen build has
+the highest Martian recall (65.8) and the lowest precision (16.2), and finds
+75 of the 86 golden comments an audit judged real, against 68 for
+qodo-extended-v2 (level with it on the 30 held-out PRs, 43 of 52 each). On
+Qodo's PR-Review-Bench, with all ten tools judged by our judge, it has the
+highest recall of functional bugs (52.1\%) and the fourth-highest F1 (40.9);
+its recall of rule violations rose from 14.8\% to 37.6\%. Both benchmarks
+count a real defect missing from their lists as a false positive, and both
+were among the sets the changes were mined from~\cite{qcrbench}.
+
+% =====================================================================
 \section{What these numbers do not show}
 \label{sec:limits}
 
@@ -1313,7 +1419,9 @@ shares a family with every reviewer here except Claude Code.
 \paragraph{Tuning.} Every lever was designed from \qcr{}'s misses on the
 original 40 PRs. We report the other 145 apart and see no in-sample
 advantage, but no lens was ablated on the 145, so the per-component gain out
-of sample is unmeasured.
+of sample is unmeasured. The frozen build's changes were mined from misses on
+the 145 as well (Section~\ref{sec:frozen}), so for that build only 20 PRs
+were kept out, and none is unseen.
 
 \paragraph{Budget and inputs.} \qcr{} spends 2.6 to 21 times the cost of
 each third-party tool and reads the PR title and body, which four of the
@@ -1330,7 +1438,8 @@ applied unchanged on gpt-6.1-sol.
 \paragraph{Not the production configuration.} The measured reviewer ran
 with the generic repository profile, no memory, no CI gate, and none of the
 production behaviour after a first review; the reviewer's code has changed
-since build \code{b2ce03a}.
+since build \code{b2ce03a}, and the frozen build of Section~\ref{sec:frozen}
+is the one that ships.
 
 \paragraph{Nothing about people.} The judge grades whether a comment is
 true and whether a defect was found. We did not measure whether developers
@@ -1372,6 +1481,14 @@ comparison that adds angles here also adds budget, and the model under the
 design moves recall from 28\% to 84\%. Whether this design beats a
 different way of spending the same budget is the question this report
 leaves open.
+
+The frozen build (Section~\ref{sec:frozen}) moves the picture: more lenses
+at the sites where base behaviour changes, instructions to exhaust a
+confirmed mechanism, a coverage check and higher effort on three passes take
+recall to 89\% and close the high-severity gap with the panel, at 51\% more
+cost. That result is in-sample; the 20 kept-out PRs support the lead over
+every reviewer compared, not a gain over the earlier builds on the previous
+model.
 
 % =====================================================================
 \small
