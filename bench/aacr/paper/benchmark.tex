@@ -32,6 +32,11 @@
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,shapes.geometric,decorations.pathreplacing}
 \usepackage[hidelinks]{hyperref}
+\usepackage{listings}
+\lstset{basicstyle=\scriptsize\ttfamily, breaklines=true, breakindent=0pt,
+  columns=fullflexible, keepspaces=true, upquote=true, frame=single,
+  framesep=4pt, xleftmargin=4pt, xrightmargin=4pt,
+  literate={—}{{\textemdash}}1 {…}{{\ldots}}1}
 
 \newcommand{\NEEDDATA}[1]{\textcolor{red}{\textbf{[NEED DATA: #1]}}}
 \newcommand{\NEEDEXP}[1]{\textcolor{orange}{\textbf{[NEED EXPERIMENT: #1]}}}
@@ -66,7 +71,7 @@
 \title{Measuring whether a code review finds the real defects:\\
 \large a verified defect benchmark on AACR-Bench, applied to eight
 reviewers at their best-shot configurations}
-\author{\TODO{authors and affiliation} \\ Quickchat AI}
+\author{Mateusz Jakubczak \\ Quickchat AI \\ \texttt{mateusz@quickchat.ai}}
 \date{Draft of 2026-10-04}
 
 \begin{document}
@@ -534,11 +539,10 @@ line with another. The correct count is 253.}
 The project has called these ``hand labels'', but the label files' own
 \code{source} fields say they were produced by agents (per-PR analysts with
 a critic on smoke10, ``two labelling agents'' on dev10 and holdout10), so we
-call them \emph{reference labels}. \TODO{Confirm with the operator whether
-any human checked these labels, and correct THREATS-TO-VALIDITY, which calls
-them the project's only human-labelled data.} No human has re-labelled a
-sample blind to the existing labels, although they support one of this
-paper's arguments; that check is listed in Section~\ref{sec:future}.
+call them \emph{reference labels}. No human checked them: they are
+agent-produced and unverified, and no human has re-labelled a sample blind
+to them, although they support one of this paper's arguments; that check is
+listed in Section~\ref{sec:future}.
 
 \begin{figure}[tbp]
 \centering
@@ -1002,8 +1006,8 @@ finds (or none), and correct-valuable, correct-minor, partly-correct,
 incorrect, or unverifiable. Grading each defect separately against a short
 statement of its essential point is the same decomposition that
 fact-level evaluation of long-form text uses~\cite{min2023factscore}. The
-full prompt is in \code{docs/PROMPTS.md} \S2 and summarised in
-Appendix~\ref{app:prompts}.
+full prompt is in \code{docs/PROMPTS.md} \S2 and reproduced verbatim in
+Appendix~\ref{app:judgeprompt}.
 
 \paragraph{Design decisions.}
 \begin{itemize}
@@ -1134,9 +1138,11 @@ finished run, sharded and unsharded results were identical per round,
 average and PR. The AACR judge is noisy (the same pair was judged yes/yes/no
 across three calls in testing), which is why three rounds are averaged.
 \emph{Consequence:} our AACR table is comparable across our own rows, not
-with the published leaderboard. \TODO{State why the paper's judge was not
-used (access, cost, or endpoint). The README describes how to point the shim
-at Qwen3 through an OpenAI-compatible endpoint.}
+with the published leaderboard. We chose this for consistency: every
+benchmark in this paper is graded by our own OpenAI judge rather than by the
+judge each benchmark publishes, so that a score means the same thing on
+AACR, Martian and Qodo. (The README describes how to point the shim at
+Qwen3 through an OpenAI-compatible endpoint.)
 
 % =====================================================================
 \section{Reviewers and the best-shot protocol}
@@ -3487,14 +3493,15 @@ its read-only \code{git} commands were denied on 46 of 185 PRs; and it runs
 on a different model. Its 62\% is therefore not a best-shot figure.
 \emph{Open:} the candidate lists are what each tool's documentation ships or
 recommends, not an exhaustive search; OpenCode's other variants were not
-re-run on gpt-6.1-sol. \TODO{Ask each tool's maintainers for their
-recommended headless review invocation and record their answers.}
+re-run on gpt-6.1-sol. Each configuration is our reading of that tool's
+documentation, not its maintainers' recommendation; corrections from
+maintainers will be published as errata.
 
 \paragraph{Threat 4: no human-verified key and no human-validated judge (severe; unmeasured).}
 Claude agents did every step of the key; critics changed 6 things in the
 first pass and 4 in the extension. No human has checked any part of the
-defect key, any judge verdict, or (as far as the files show) the AACR
-reference labels on the 30 original PRs (Section~\ref{sec:reflimits}). If
+defect key, any judge verdict, or the AACR reference labels on the 30
+original PRs, which agents produced (Section~\ref{sec:reflimits}). If
 the verifier accepted plausible-but-wrong defects, recall is wrong for every
 reviewer, and the reviewers whose comments seeded those defects benefit;
 severity grades, which drive weighted recall and the high-severity results,
@@ -3655,13 +3662,16 @@ judges, our reviewer, each other reviewer, the parsers), and the reports.
 every row; \code{bench/aacr/final/score.sh} recomputes every final table from
 the archived judge files with no model call.
 
-\paragraph{Local only.} Run directories (reviews, transcripts, judge files,
-eval metrics), extracted PR code, and the key-construction analysis scripts.
-AACR-Bench is Apache-2.0, so the derived index, labels and key may ship with
-attribution; code quotes ship with per-repository attribution, and full
-checkouts are not redistributed. \TODO{The scrub policy and host for the run
-directories are being decided; four of the 50 reviewed repositories are
-source-available rather than open source.}
+\paragraph{Run archive.} The full run directories (reviews, transcripts,
+judge files, eval metrics) are published as one archive on Hugging Face
+only, under a Hugging Face DOI
+(\code{huggingface.co/datasets/XXXX/XXXX}, DOI \code{10.57967/hf/XXXX}), % FILL AT SUBMISSION
+with names rewritten to placeholders and model reasoning blobs blanked.
+
+\paragraph{Local only.} Extracted PR code and the key-construction analysis
+scripts. AACR-Bench is Apache-2.0, so the derived index, labels and key may
+ship with attribution; code quotes ship with per-repository attribution, and
+full checkouts are not redistributed.
 
 \paragraph{Key datasheet (summary).} Following the datasheet
 template~\cite{gebru2021datasheets}: \emph{motivation}, an answer key of real
@@ -3771,9 +3781,10 @@ scheduler, never per PR in isolation.
 \small
 \begin{thebibliography}{99}
 \bibitem{qcrreport}
-Quickchat AI.
+Mateusz Jakubczak.
 \newblock QuickReview: a multi-pass automated code reviewer, its design, its cost, and how it performs on a verified defect benchmark.
-\newblock Technical report, companion to this paper, 2026. \TODO{link}
+\newblock Technical report, companion to this paper, 2026.
+\newblock arXiv:XXXX.XXXXX. % FILL AT SUBMISSION
 
 
 % ---------------------------------------------------------------------
@@ -4686,8 +4697,55 @@ scripts, not retyped. Summary:
   \item \textbf{Parsers}: deterministic, no model: per-arm conversion to
   \{path, line range, note\}; the Claude Code prose rules.
 \end{itemize}
-\TODO{Decide whether to include the defect-judge prompt verbatim in this
-appendix (about 70 lines).}
+\subsection*{The defect-judge prompt}
+\label{app:judgeprompt}
+
+The prompt below is the one every scored judgement used (judge label
+\code{v2-gpt-6-sol-high}; \code{judgePrompt} in \code{src/bench/defects.ts},
+unchanged since ground truth v2). It is reproduced verbatim except that each
+interpolated value is shown as an \code{<UPPERCASE>} placeholder. Each
+defect renders as \code{<ID> [<severity>, <kind>] <title>}, then its
+statement, its sites (\code{path:from-to (role)}) and, when present, its
+``counts if'' note; each comment as \code{<ID> [<tag>] path:line}, then its
+text. The rejected-claims block appears only when the PR has rejected
+claims; the body line only when the review has a body.
+
+\begin{lstlisting}
+You are the judge of a code-review benchmark that measures one thing: does a review FIND the real defects in a pull request and point them out, and is what it says true? Wording, tone, tags and exact line numbers do not matter; substance does.
+
+THE PULL REQUEST: <TITLE> — <REPO>, head <HEAD_SHA>, merge base <MERGE_BASE_SHA>. The repository is checked out at the PR head in your working directory. You may read any code (read tool; bash for git diff/show/log/grep, rg, ls, find, sed -n, head, tail, wc). Never run project code.
+
+THE REAL DEFECTS (ground truth — each verified against the code; trust these):
+<DEFECTS, or: (none — this PR has no real defect in the ground truth)>
+
+CLAIMS ALREADY CHECKED AGAINST THE CODE AND REJECTED (not defects — each with the reason it failed). A comment repeating one of these is never a new defect: judge it incorrect, partly-correct or correct-minor as its reason says, reading the code if the comment adds something the reason does not cover:
+<REJECTED CLAIMS, one per line: - <SOURCE>: <REASON>>
+
+THE REVIEW (what the author received):
+Verdict: <VERDICT, or (none)>
+Body:
+<BODY>
+Comments:
+<COMMENTS, or (no comments)>
+
+YOUR TASK
+1. For EACH defect decide whether the review found it:
+   - found: some comment (or the body) identifies THIS defect — the same underlying problem, with its essential point right (see "counts if"), so the author would fix it. It may sit at the cause or the symptom site, or name the site in its text.
+   - partial: the review points at this problem or its site, but with a wrong or missing mechanism or consequence, so the author could fix the wrong thing.
+   - missed: nothing in the review identifies it.
+2. For EACH comment: which defect it finds (its id, or null), and whether it is correct. Check every comment that finds no listed defect against the code:
+   - correct-valuable: true at the head and worth raising before merge;
+   - correct-minor: true but low value (style, a test request, a nice-to-have, a nit);
+   - partly-correct: a real problem, but the mechanism, scope or severity is materially wrong;
+   - incorrect: false at the head (the code does not do what it says, or the scenario cannot happen);
+   - unverifiable: cannot be decided from the repository.
+   A comment that finds a listed defect is correct-valuable, or partly-correct if it found it only partially. Set new_defect true only for a correct-valuable comment that describes a real defect that is neither in the list nor among the rejected claims.
+Be strict both ways: do not credit a comment for sounding plausible, and do not dismiss one without reading the code it cites.
+
+Answer with ONE JSON object and nothing after it:
+{"defects":[{"id":"D1","verdict":"found|partial|missed","comments":["C2"],"why":"one sentence"}],"comments":[{"id":"C1","defect":"D1","verdict":"correct-valuable|correct-minor|partly-correct|incorrect|unverifiable","new_defect":false,"why":"one sentence with file:line"}]}
+Every defect id and every comment id above must appear exactly once.
+\end{lstlisting}
 
 \section{Per-set tables}
 \label{app:sets}

@@ -67,7 +67,7 @@
 
 \title{QuickReview: a multi-pass automated code reviewer,\\
 \large its design, its cost, and how it performs on a verified defect benchmark}
-\author{\TODO{authors and affiliation} \\ Quickchat AI}
+\author{Mateusz Jakubczak \\ Quickchat AI \\ \texttt{mateusz@quickchat.ai}}
 \date{Draft of 2026-10-04}
 
 \begin{document}
@@ -1524,11 +1524,12 @@ effort on three passes took recall from 79\% to 89\%, at 51\% more cost and
 \small
 \begin{thebibliography}{99}
 \bibitem{qcrbench}
-Quickchat AI.
+Mateusz Jakubczak.
 \newblock Measuring whether a code review finds the real defects: a verified
 defect benchmark on AACR-Bench, applied to eight reviewers at their best-shot
 configurations.
-\newblock Companion paper, 2026. \TODO{link}
+\newblock Companion paper, 2026.
+\newblock arXiv:XXXX.XXXXX. % FILL AT SUBMISSION
 
 % --- AACR-Bench and the reviewers benchmarked -------------------------
 \bibitem{aacrbench}
@@ -1772,7 +1773,7 @@ superseded by the full benchmark.
     \toprule
     When & What & Tuned on \\
     \midrule
-    09-25 & Harness wrapper, OCR arm, smoke10/holdout10/dev10, hand labels & --- \\
+    09-25 & Harness wrapper, OCR arm, smoke10/holdout10/dev10, reference labels (agent-produced) & --- \\
     09-25/26 & Review iterations 1--2 (validator premises, sibling sites, judgment lenses) & smoke10 AACR misses (before the defect benchmark existed) \\
     09-26 & Defect judge; ground truth v1/v2 for the 30 & --- \\
     09-26 & Levers: effort, sub-lenses, sweep, dependency sources, restate-not-kill & missed defects on the 30 (holdout10 stops being a holdout) \\

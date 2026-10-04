@@ -186,12 +186,12 @@ basis of a decision.
   verifier, then extension critics.
 - **What the critics changed.** They corrected 6 things in the first pass and
   4 in the extension.
-- **Human review so far.** None confirmed. The only other labelled data is
-  the quality labels on AACR's reference comments for the 30 original PRs
-  (`sets/*.labels.json`, 253 references). Their own `source` fields say
-  agents produced them ("per-PR analysts", "two labelling agents"); whether
-  a human checked them is not confirmed. They label AACR's comments, not our
-  defects.
+- **Human review so far.** None. The only other labelled data is the
+  quality labels on AACR's reference comments for the 30 original PRs
+  (`sets/*.labels.json`, 253 references), and they are not human data
+  either: agents produced them ("per-PR analysts", "two labelling agents",
+  per their own `source` fields) and no human has checked them (confirmed by
+  the owner, 2026-10-04). They label AACR's comments, not our defects.
 
 **Size.** Unknown, which is the point.
 - **If the verifier accepted plausible-but-wrong defects,** every reviewer's
@@ -396,8 +396,9 @@ documented in `../README.md`.
   - 74% of them are AI-written.
   - Of all 1,107 references on the new PRs, only 12.8% are part of a verified
     defect.
-  - On the 30 PRs whose references were hand-labelled, about 11% are real
-    defects and about 8% real maintainability issues.
+  - On the 30 PRs whose references carry (agent-produced, human-unchecked)
+    reference labels, about 11% are real defects and about 8% real
+    maintainability issues.
 - **The "human" references are partly bot output.** AACR marks 362 of the
   references on our 185 PRs as human comments rewritten by an LLM. At
   least 80 of those 362 (22%) are rewrites of comments an AI review bot
