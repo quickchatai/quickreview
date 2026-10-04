@@ -67,7 +67,7 @@
 \large a verified defect benchmark on AACR-Bench, applied to eight
 reviewers at their best-shot configurations}
 \author{\TODO{authors and affiliation} \\ Quickchat AI}
-\date{Draft of 2026-10-01}
+\date{Draft of 2026-10-04}
 
 \begin{document}
 \maketitle
@@ -100,11 +100,19 @@ first (79\%, against 67\% for the strongest third-party configuration) at
 the highest cost; its lead is concentrated in low-severity defects, and on
 high-severity ones it is not established over the two closest
 competitors. We report how the key's construction could
-favour it, what we measured about that, and what remains open. On a second benchmark, Martian's
+favour it, what we measured about that, and what remains open. A later,
+frozen build of \qcr{}, changed partly from misses mined on these PRs, finds
+89\% (87.5 of the 90 high-severity defects), with a lead over every other
+reviewer on high- and medium-severity defects as well; on the 20 PRs kept out
+of that work it finds 83\%, against 70\% for the compared configuration and
+72\% for the panel, but below the 88--92\% two earlier builds on the
+previous model found there. On a second benchmark, Martian's
 offline set of 50 PRs, an audit finds that 45\% of its 173 golden comments
-do not name a real defect; on the real ones \qcr{} has the highest recall of
-the four tools scored by one judge (83\%), and the lowest Martian F1, for
-the same reason as on AACR-Bench's references. The key, the
+do not name a real defect; on the real ones the frozen build has the highest
+recall of the four tools scored by one judge (87\%), and the lowest Martian
+F1, for the same reason as on AACR-Bench's references. On Qodo's
+PR-Review-Bench, re-judged by one judge for all ten tools, it has the highest
+recall of functional bugs (52\%) and the fourth-highest F1. The key, the
 exclusions, the judge prompt and every scoring script are released.
 \end{abstract}
 
@@ -238,9 +246,11 @@ Section~\ref{sec:aacr} describes the dataset and why its reference list is
 not an answer key; Section~\ref{sec:principles} gives the design principles;
 Sections~\ref{sec:gt}--\ref{sec:judging} the key and the judge;
 Section~\ref{sec:setup} the reviewers and the best-shot protocol;
-Section~\ref{sec:results} the comparison; Section~\ref{sec:sol} the
+Section~\ref{sec:results} the comparison and the frozen build
+(Section~\ref{sec:finalbuild}); Section~\ref{sec:sol} the
 robustness checks run on an earlier study; Section~\ref{sec:disagree} why the
-two metrics disagree; Section~\ref{sec:threats} the threats.
+two metrics disagree; Sections~\ref{sec:martian} and~\ref{sec:qodo} two
+external checks; Section~\ref{sec:threats} the threats.
 
 % =====================================================================
 \section{Related work}
@@ -1589,7 +1599,8 @@ a ratio of sums per resample, percentile interval), computed for this check
 by \code{paper-data/factcheck\_analyses.py} from the archived judge files;
 no model calls.} A reader who cares only about merge-blocking defects should
 read this as the default and the panel tied at the top, at very different
-costs (\$1.36 against \$0.27 per PR).
+costs (\$1.36 against \$0.27 per PR). The later frozen build does establish
+a lead there (Section~\ref{sec:finalbuild}).
 
 \emph{Uncertainty.} Table~\ref{tab:ci} gives 95\% bootstrap intervals over
 PRs (10{,}000 resamples, recall recomputed as a ratio of
@@ -1905,6 +1916,105 @@ removed.
   unseen PRs (filled), final comparison.}
   \label{fig:halves}
 \end{figure}
+
+\subsection{The frozen build}
+\label{sec:finalbuild}
+
+The comparison above is \qcr{} as of 2026-10-01 (build \code{b2ce03a}). It
+was then changed for three more days and frozen (build \code{e32f0cf},
+2026-10-04), on the same model, gpt-6.1-sol. The changes, described in the
+companion report~\cite{qcrreport}: two lenses (one compares base and head
+behaviour on every modified or deleted line of non-test code where base
+behaviour is at risk; one is planned only when CI runs a linter or formatter
+over a changed file); shared instructions to check a confirmed mechanism's
+sibling sites and consequences, to anchor a finding at its cause, and that
+no token, time or finding budget applies; a per-file coverage check that
+sends a targeted sweep to changed source files no lens commented on; a
+deterministic merge of duplicate findings into one comment per root cause;
+the baseline, sweep and behaviour-comparison lenses at high reasoning
+effort; and a prompt cleanup that cut the composed lens instructions by 32\%
+in tokens.
+
+\emph{This build is outside the protocol's held-out claim.} Its changes were
+designed from misses mined from the comparison runs on R145 (and on the
+Martian and Qodo sets of Sections~\ref{sec:martian} and~\ref{sec:qodo}), and
+smoke10 and dev10 were used to validate them. Only holdout10 and fresh10 were
+kept out of that work, and they are not unseen in the strict sense either:
+the September levers were designed from misses on them
+(Appendix~\ref{app:sets}). The build ran once on all 185 PRs and was judged
+once by the primary judge; AACR-Bench's own metric was not computed for it.
+
+\begin{table}[tbp]
+  \centering
+  \small
+  \caption{The frozen build against the compared default and the strongest
+  third-party tools, 185 PRs, primary judge, same key; a partly found defect
+  counts $\tfrac12$. Sets: R145, whose misses the frozen build's changes were
+  mined from; smoke10 and dev10, used to validate them; holdout10 and
+  fresh10, kept out of that work. List prices, not bills.\protect\footnotemark}
+  \label{tab:finalbuild}
+  \resizebox{\textwidth}{!}{%
+  \begin{tabular}{lrrrrr}
+    \toprule
+    & \qcr{} frozen & \qcr{} default & pi-review panel & Claude Code & Codex CLI \\
+    \midrule
+    Found, all 185 PRs (520) & \textbf{461 (89\%)} & 409 (79\%) & 347.5 (67\%) & 324.5 (62\%) & 287 (55\%) \\
+    \quad high (90) & \textbf{87.5} & 83.5 & 80 & 72.5 & 81 \\
+    \quad medium (145) & \textbf{134.5} & 121 & 119 & 105 & 101.5 \\
+    \quad low (285) & \textbf{239} & 204.5 & 148.5 & 147 & 104.5 \\
+    Weighted recall & \textbf{91\%} & 82\% & 74\% & 68\% & 65\% \\
+    \midrule
+    R145, mined (394) & \textbf{356 (90\%)} & 321 (81\%) & 270 (69\%) & 249.5 (63\%) & 226 (57\%) \\
+    smoke10 + dev10, validation (71) & \textbf{59.5 (84\%)} & 49.5 (70\%) & 38 (54\%) & 39 (55\%) & 32 (45\%) \\
+    holdout10 + fresh10, kept out (55) & \textbf{45.5 (83\%)} & 38.5 (70\%) & 39.5 (72\%) & 36 (65\%) & 29 (53\%) \\
+    \midrule
+    Comments per PR & 6.9 & 5.4 & 3.2 & 2.2 & 1.9 \\
+    Comments correct & 92\% & 95\% & 89\% & 81\% & 93\% \\
+    \quad of which graded incorrect & 4.5\% & 2.5\% & 6.0\% & 11.8\% & 4.4\% \\
+    \$/PR (mean) & 2.06 & 1.36 & 0.27 & 0.20 & 0.14 \\
+    Median min/PR & 17.5 & 9.5 & 1.8 & 0.7 & 2.1 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+\footnotetext{Runs \code{final1-\{smoke10,dev10,holdout10,fresh10,rest145\}},
+image \code{qcr-bench:final1}, 2026-10-04, with \code{compare.py} as in
+Table~\ref{tab:final}; intervals below by the paired bootstrap of
+Table~\ref{tab:ci} (10{,}000 resamples, seed 20261001) over the same judge
+files; no model calls.}
+
+On all 185 PRs the frozen build finds 461 of the 520 defects (88.7\%, 95\%
+CI 85.7 to 91.4; Table~\ref{tab:finalbuild}): 10.0 points more than the
+compared default [$+6.8$, $+13.3$], 21.8 more than the panel [$+17.8$,
+$+25.7$], 26.2 more than Claude Code and 33.5 more than Codex CLI. Unlike
+the default, its lead is not confined to low severity. On the 235 high- and
+medium-severity defects it finds 94.5\% [91.2, 97.2], ahead of the panel by
+$+9.8$ points [$+5.1$, $+14.3$] and of Codex CLI by $+16.8$ [$+11.3$,
+$+22.4$]; on the 90 high-severity ones 97.2\% [93.9, 99.5], ahead of the
+panel by $+8.3$ [$+1.9$, $+14.6$] and of Codex CLI by $+7.2$ [$+0.6$,
+$+14.1$], the last two only narrowly established.
+
+\emph{What it costs.} \$2.06 per PR on average (median \$1.87, \$380 for
+the 185 PRs), 51\% more than the default, and a median 17.5 minutes per PR
+against 9.5. It also posts more: 6.9 comments per PR against 5.4, 42\% of
+them true but minor (34\% for the default), and 4.5\% graded incorrect
+against 2.5\%; 40\% of its comments map to a verified defect, against 56\%.
+
+\emph{Mined, validated and kept-out PRs.} The gain over the default is
+similar on the three groups (Table~\ref{tab:finalbuild}): 9 points on R145,
+14 on smoke10 and dev10, 13 on holdout10 and fresh10. On those last 20 PRs
+the frozen build's lead over the default is $+12.7$ points [$+1.0$,
+$+24.6$] and over the panel $+10.9$ [$+0.8$, $+20.3$], both established, if
+barely, on 20 PRs. One comparison points the other way: on the same 20 PRs
+the two earlier-study builds on gpt-6-sol found 50.5 and 48.5 of the 55
+defects (92\% and 88\%; Section~\ref{sec:stability}), more than the frozen
+build's 45.5. Those builds ran on a different model, with these PRs in
+their design set, and one build's repeat runs differ by 1.5--2 found
+defects per 10-PR set (Section~\ref{sec:stability}); a gap of 3 to 5
+defects over 20 PRs is at the edge of that spread, and these runs cannot
+separate a model change, run-to-run noise and a real loss on these PRs. We
+read the frozen build's 89\% as an in-sample figure that the kept-out PRs
+support relative to every reviewer in this comparison, not as a held-out
+estimate.
 
 \subsection{What the key cannot credit: defects outside the pool}
 \label{sec:outofpool}
@@ -2696,18 +2806,55 @@ about defects, and silent about most of the real ones rewards posting little.
 same passes gives, on Core with our judge, \qcr{} 19.2 / 57.0 / 28.8 / 40.9
 (precision / recall / F1 / $F_2$; 90 matched, 378 unmatched candidates),
 cubic-v2 55.2 / 60.8 / 57.8 / 59.6, qodo-extended-v2 55.6 / 59.5 / 57.5 /
-58.7 and Claude Code 36.2 / 40.5 / 38.2 / 39.6. \qcr{} has never been judged
-by Opus 4.5. On the same 50 PRs Opus credits 8--12 more matches per tool than
-our judge (cubic-v2 96 $\to$ 104, qodo-extended-v2 94 $\to$ 102, Claude Code
-64 $\to$ 76); the same shift puts \qcr{} at roughly 21--22 precision and 62--65
-recall, $F_2 \approx$ 44.5--46.5, fourteenth or fifteenth of 23 on the
-published leaderboard (Figure~\ref{fig:martianlb}): recall near the top,
-precision near the bottom.
+58.7 and Claude Code 36.2 / 40.5 / 38.2 / 39.6.
+
+\paragraph{The frozen build.} The frozen build of
+Section~\ref{sec:finalbuild} reviewed all 50 PRs once, and one pass of the
+same judge scored it with the three comparators' published comments
+(Table~\ref{tab:martianfinal}). Its recall rises to 65.8 and its precision
+falls to 16.2: it posts more, and Martian's step 2 extracts 12.8 issues per
+PR from its reviews. Its $F_2$, 40.9, is level with Claude Code's and below
+cubic-v2's and qodo-extended-v2's; its F1 is the lowest of the four. Its
+changes were designed partly from misses on \code{tune20}, so \code{test30}
+is the held-out half: there it scores 15.3 / 62.0 / 24.6 / 38.6, against
+cubic-v2 50.0 / 54.0 / 51.9 / 53.1 and qodo-extended-v2 59.8 / 61.0 / 60.4 /
+60.8 in the same pass. \qcr{} has never been judged by Opus 4.5. On the same
+50 PRs Opus credits 7--12 more matches per tool than our judge across our
+passes (in this one cubic-v2 95 $\to$ 104, qodo-extended-v2 95 $\to$ 102,
+Claude Code 65 $\to$ 76); the same shift puts the frozen build at roughly
+17--18 precision and 70--73 recall, $F_2 \approx$ 43.5--45.6, fourteenth to
+sixteenth of 23 on the published leaderboard (Figure~\ref{fig:martianlb}):
+recall at the top, precision at the bottom.
+
+\begin{table}[tbp]
+  \centering
+  \small
+  \caption{Martian, all 50 PRs, Core profile, the frozen build and the three
+  comparators' published comments in one pass of the gpt-6.1-sol judge
+  (run \code{final1-martian50}, 2026-10-04); the last three rows are
+  Martian's published Opus 4.5 judgements of the same comments. Issues/PR:
+  what Martian's step 2 extracted.}
+  \label{tab:martianfinal}
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    Tool & Issues/PR & Matched / 158 & P & R & F1 & $F_2$ \\
+    \midrule
+    \qcr{} frozen build & 12.8 & 104 & 16.2 & \textbf{65.8} & 26.1 & 40.9 \\
+    qodo-extended-v2 (re-judged) & 3.4 & 95 & 56.2 & 60.1 & \textbf{58.1} & \textbf{59.3} \\
+    cubic-v2 (re-judged) & 3.5 & 95 & 54.3 & 60.1 & 57.1 & 58.9 \\
+    Claude Code (re-judged) & 3.6 & 65 & 36.5 & 41.1 & 38.7 & 40.1 \\
+    \midrule
+    qodo-extended-v2 (Opus 4.5) & & 102 & 67.1 & 64.6 & 65.8 & 65.1 \\
+    cubic-v2 (Opus 4.5) & & 104 & 61.5 & 65.8 & 63.6 & 64.9 \\
+    Claude Code (Opus 4.5) & & 76 & 46.3 & 48.1 & 47.2 & 47.7 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \begin{figure}[tbp]
   \centering
   \includegraphics[width=0.78\textwidth]{../charts/martian-leaderboard.pdf}
-  \caption{Martian's leaderboard metric ($F_2$, Core, 50 PRs, published Opus 4.5 judgements). The \qcr{} bar is an estimate, a range scaled from the three tools both judges scored; under our own judge it is 40.9.}
+  \caption{Martian's leaderboard metric ($F_2$, Core, 50 PRs, published Opus 4.5 judgements). The \qcr{} bar is the frozen build's estimate, a range scaled from the three tools both judges scored; under our own judge it is 40.9.}
   \label{fig:martianlb}
 \end{figure}
 
@@ -2732,7 +2879,8 @@ with the defect key, no human has checked these verdicts.
   \caption{Recall of the 86 golden comments the audit judged real, and the
   share of each tool's Martian credits that went to the 77 judged not real
   (``Not real'').
-  Left: one judge (gpt-6.1-sol), all 50 PRs, \qcr{} default as posted.
+  Left: one judge (gpt-6.1-sol), all 50 PRs, one pass: the frozen build
+  and the comparators' published comments (Table~\ref{tab:martianfinal}).
   Right: Martian's published Opus 4.5 judgements, all 50 PRs (\qcr{} was
   not judged by Opus 4.5).}
   \label{tab:martianaudit}
@@ -2743,9 +2891,9 @@ with the defect key, no human has checked these verdicts.
     \cmidrule(r){1-3}\cmidrule(l){4-6}
     Tool & Real recall & Not real & Tool & Real recall & Not real \\
     \midrule
-    \qcr{} default & \textbf{80.2\%} & \textbf{20\%} & qodo-extended-v2 & 83.7\% & 28\% \\
+    \qcr{} frozen & \textbf{87.2\%} & \textbf{25\%} & qodo-extended-v2 & 83.7\% & 28\% \\
     qodo-extended-v2 & 79.1\% & 26\% & copilot-v2 & 82.6\% & 33\% \\
-    cubic-v2 & 69.8\% & 36\% & augment & 79.1\% & 30\% \\
+    cubic-v2 & 67.4\% & 37\% & augment & 79.1\% & 30\% \\
     Claude Code & 52.3\% & 34\% & qodo-v2 & 75.6\% & 28\% \\
     & & & cubic-v2 & 74.4\% & 34\% \\
     & & & coderabbit & 68.6\% & 35\% \\
@@ -2762,12 +2910,15 @@ with the defect key, no human has checked these verdicts.
 \end{table}
 
 Restricted to the real goldens (Table~\ref{tab:martianaudit}), the order
-changes. Under one judge \qcr{} finds the most real goldens, 69 of 86, level
-with qodo-extended-v2 (68), ahead of cubic-v2 (60) and Claude Code (45); and
-a fifth of its credits come from goldens that are not real, against over a
-third for cubic-v2 and Claude Code. On \code{tune20} the same audit gives
-\qcr{} 29 of 34 real goldens, cubic-v2 26 and qodo-extended-v2 25; on
-\code{test30}, 40 of 52, against qodo-extended-v2's 43 and cubic-v2's 34. The published judgements tell the
+changes. Under one judge the frozen build finds the most real goldens, 75
+of 86, ahead of qodo-extended-v2 (68), cubic-v2 (58) and Claude Code (45);
+a quarter of its credits come from goldens that are not real, as for
+qodo-extended-v2, against over a third for cubic-v2 and Claude Code. The
+lead is on \code{tune20}, the half its changes were mined from (32 of 34
+real goldens, against cubic-v2's 26 and qodo-extended-v2's 25); on the
+held-out \code{test30} it is level with qodo-extended-v2 (43 of 52 each),
+ahead of cubic-v2 (32) and Claude Code (26). The default as posted, before
+those changes, found 69 of 86 (40 of 52 on \code{test30}). The published judgements tell the
 same story for the rest of the field: every tool earns 22--36\% of its credits
 on goldens the audit does not count as real.
 
@@ -2780,7 +2931,7 @@ on goldens the audit does not count as real.
 \begin{figure}[tbp]
   \centering
   \includegraphics[width=0.82\textwidth]{../charts/martian-real-vs-trivia.pdf}
-  \caption{Real-golden recall against the share of each tool's golden credits that fall on goldens the audit judged not real (50 PRs). Diamonds: judged by gpt-6.1-sol in our pass (\qcr{} = latest default); circles: Martian's published Opus 4.5 judgements.}
+  \caption{Real-golden recall against the share of each tool's golden credits that fall on goldens the audit judged not real (50 PRs). Diamonds: judged by gpt-6.1-sol in our pass (\qcr{} = the frozen build); circles: Martian's published Opus 4.5 judgements.}
   \label{fig:martianrvt}
 \end{figure}
 
@@ -3031,15 +3182,17 @@ many listed goldens are the minor remarks \qcr{} posts at lower severity.
 Martian's metric does not ask whether a tool caught the problems that would
 block a merge. We count the PRs in which a tool was credited with \emph{all}
 of the PR's Critical and High goldens (Figure~\ref{fig:martianblock}). On
-Martian's own labels (34 PRs have one) \qcr{} does so in 17 (50\%), behind
-cubic-v2 (21) and qodo-extended-v2 (19) in the same pass, and ahead of Claude
-Code (9). Many of those labels sit on goldens the audit found not real; on
-the 19 PRs whose Critical or High goldens include a real one, counting only
-the real ones, \qcr{} found all of them in 14 (74\%), tied with
-qodo-extended-v2 and ahead of cubic-v2 (12) and Claude Code (6). Martian's
-published Opus judgements, which credit more matches, give 13--15 of 19 for
-the best published tools. On real goldens of any severity \qcr{}, cubic-v2 and
-qodo-extended-v2 each found all of a PR's in 21 of 35 PRs.
+Martian's own labels (34 PRs have one) the frozen build does so in 19
+(56\%), level with qodo-extended-v2 (19), behind cubic-v2 (21) in the same
+pass, and ahead of Claude Code (9). Many of those labels sit on goldens the
+audit found not real; on the 19 PRs whose Critical or High goldens include a
+real one, counting only the real ones, the frozen build found all of them in
+15 (79\%), against qodo-extended-v2's 14, cubic-v2's 12 and Claude Code's 6.
+Martian's published Opus judgements, which credit more matches, give 13--15
+of 19 for the best published tools. On real goldens of any severity the
+frozen build found all of a PR's in 26 of 35 PRs, qodo-extended-v2 in 21,
+cubic-v2 in 20 and Claude Code in 10. (The default as posted, before the
+frozen build's changes: 17 of 34, 14 of 19 and 21 of 35.)
 
 \begin{figure}[tbp]
   \centering
@@ -3056,7 +3209,7 @@ benchmark that a reader of its leaderboard should weigh.
 \begin{enumerate}
   \item \emph{The key is half noise.} 77 of 173 golden comments are not
     real PR defects and 10 are disputed (Section~\ref{sec:martianaudit});
-    leading tools earn 26--36\% of their credit on them, \qcr{} 19\%.
+    tools earn 22--37\% of their credit on them, \qcr{} 25\%.
   \item \emph{A real bug off the list is a false positive.} On \code{tune20}
     eight tools found 44 real PR-introduced bugs that the list lacks; every
     one counts against the tool that found it.
@@ -3069,7 +3222,7 @@ benchmark that a reader of its leaderboard should weigh.
   \item \emph{Severity is labelled, inflated and unused.} 24 of the 66
     Critical or High goldens are not real, and missing a Critical golden
     costs the same as missing a Low one.
-  \item \emph{The score depends on the judge.} Opus 4.5 credits 8--12 more
+  \item \emph{The score depends on the judge.} Opus 4.5 credits 7--12 more
     matches per tool than gpt-6.1-sol on the same comments, and one judge
     moves by about three points between passes.
   \item \emph{The sample is small.} 50 PRs from five projects; a posting
@@ -3113,6 +3266,97 @@ per-comment verdicts in \code{golden-audit-full.json}, and the position) and
 critique is \code{MARTIAN-CRITIQUE.md}, and the figures of this section are
 drawn by \code{bench/aacr/martian\_figs.py} from \code{charts/martian-data.json}. Review and judge run
 directories are local, as for the main benchmark (Section~\ref{sec:repro}).
+
+% =====================================================================
+\section{External check: Qodo's PR-Review-Bench}
+\label{sec:qodo}
+
+Qodo's benchmark~\cite{qodobench} (Hugging Face \code{Qodo/PR-Review-Bench}
+at \code{a73957c}, MIT) is 100 PRs from 8 repositories into which an LLM
+injected 580 issues: 309 functional bugs and 271 violations of repository
+rules, which Qodo extracted with an LLM and committed to every fork as an
+\code{AGENTS.md} file. Every vendor's raw review is public on GitHub forks;
+Qodo publishes no judge, prompt or scorer, so its published F1 cannot be
+reproduced. We therefore judged every tool, \qcr{} included, with one judge
+of ours under the matching rule Qodo's description states.
+
+\paragraph{How we ran it.} Each case is the fork's PR rebuilt as two
+synthetic commits, the merge-base tree and the head tree with neutral
+messages, because the fork's branch names and history reveal the injection;
+the \code{AGENTS.md} stays in the tree, as every vendor reviewed with it, and
+the PR text is the upstream PR's own title and description. \qcr{} ran in
+its frozen build (Section~\ref{sec:finalbuild}), \code{default}, on
+gpt-6.1-sol, offline; nothing was posted. The nine vendors' inline review
+comments were read with anonymous public API calls; they are the vendors'
+January 2026 runs at default settings. The judge (gpt-6.1-sol at low
+reasoning) receives, per PR and tool, the PR's issues and the tool's inline
+comments and returns which comment states which issue, one to one; code then
+checks location. The primary rule counts a match when the comment is on the
+issue's file and its lines overlap the issue's within five lines; ``same
+file'' and ``semantic only'' are sensitivities. Only inline comments count,
+as in Qodo's rule; for \qcr{}, its inline comments and the review-body
+findings that carry a path and line. Under ``semantic only'' our judge comes
+within 0.1--1.3 F1 points of Qodo's published figure for six of the nine
+vendors and keeps their order, the only calibration available.
+
+\begin{table}[tbp]
+  \centering
+  \small
+  \caption{Qodo PR-Review-Bench, 100 PRs, 580 injected issues (309
+  functional, 271 rule violations), one gpt-6.1-sol judge for every tool,
+  primary location rule (same file, lines within $\pm 5$); one run per tool,
+  one judgement. The nine vendors are their published January 2026 reviews
+  (\code{ext-r6-qodo-pr100}); \qcr{} rows are runs
+  \code{final1-qodo-pr100} (frozen build) and \code{ext-r6-qodo-pr100}
+  (2026-10-02 build), all scored by \code{bench/aacr/ext/qodo\_judge.py}.
+  Last column: Qodo's own published F1, judge unpublished.}
+  \label{tab:qodo}
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    Tool & Comments/PR & P & R & F1 & R functional & R rule & Qodo's F1 \\
+    \midrule
+    qodo-exhaustive & 4.6 & 58.0 & \textbf{46.4} & \textbf{51.5} & 48.2 & \textbf{44.3} & 60.1 \\
+    qodo-precise & 3.1 & 68.0 & 35.9 & 47.0 & 36.2 & 35.4 & 55.4 \\
+    augment & 2.5 & 67.5 & 29.7 & 41.2 & 49.2 & 7.4 & 44.1 \\
+    \qcr{} frozen build & 7.1 & 37.3 & 45.3 & 40.9 & \textbf{52.1} & 37.6 & --- \\
+    copilot & 4.2 & 46.8 & 33.6 & 39.1 & 46.3 & 19.2 & 42.8 \\
+    greptile & 2.4 & 64.7 & 26.6 & 37.7 & 37.2 & 14.4 & 39.0 \\
+    cursor & 1.9 & 73.8 & 24.3 & 36.6 & 41.1 & 5.2 & 39.3 \\
+    \qcr{}, 2026-10-02 build & 5.5 & 35.8 & 34.0 & 34.9 & 50.8 & 14.8 & --- \\
+    codex & 1.6 & \textbf{78.2} & 22.2 & 34.6 & 32.4 & 10.7 & 37.6 \\
+    sentry & 0.9 & 76.8 & 12.6 & 21.6 & 22.7 & 1.1 & 23.7 \\
+    coderabbit & 1.9 & 43.7 & 14.3 & 21.6 & 23.0 & 4.4 & 28.0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Results.} The frozen build finds the most functional bugs of the
+ten tools (52.1\%, against augment's 49.2\% and qodo-exhaustive's 48.2\%)
+and the second-most issues overall (45.3\% against qodo-exhaustive's
+46.4\%); it posts the most comments (7.1 per PR) at the lowest precision
+(37.3\%), and its F1, 40.9, is fourth, behind Qodo's two configurations and
+augment (Table~\ref{tab:qodo}). The change from the 2026-10-02 build is
+almost all in rule violations, 14.8\% to 37.6\%, second to
+qodo-exhaustive's 44.3\%: the frozen build checks every rule the repository
+writes down and plans a lint-conformance lens when CI runs a linter, where
+the earlier build treated most such items as nits it did not post. The
+sensitivities do not change the order at the top: under ``semantic only''
+the frozen build scores F1 46.7 (P 42.5, R 51.7, functional 61.2), against
+qodo-exhaustive's 56.5 and qodo-precise's 51.2.
+
+\paragraph{Caveats.} Qodo built, injected and validated this benchmark, and
+47\% of its issues are rule compliance, which its own product's rules
+feature targets; the bugs are LLM-injected into real PRs, not organic. The
+vendor reviews are January 2026 versions; \qcr{} is a build of October 2026.
+The judge is ours, not Qodo's. A real defect that is not in the issue list
+counts as a false positive, as on Martian: in a hand check of the 40
+unmatched comments of the 2026-10-02 build on ten PRs (one model, the tool
+hidden but recognisable by style), 12 were real defects the list lacks, 19
+true but minor, 9 restated a listed issue or duplicated a credited comment,
+and none was wrong. Finally, the frozen build's changes were designed partly
+from that earlier build's misses on these 100 PRs (59 issues a vendor found
+and it did not), so its row is in-sample, not held out; and every tool ran
+once.
 
 % =====================================================================
 \section{Threats to validity}
@@ -3311,9 +3555,16 @@ judge from another model family as well, and a re-run on a later build
 reproduced its result. We claim that on AACR's own metric the reviewers are
 close, because that metric mostly rewards reproducing a list that is largely
 not real defects, and that every other reviewer is cheaper per defect found.
+We claim that the later frozen build finds 89\% of the key's defects, with a
+lead over every reviewer of the comparison on high- and medium-severity
+defects too, and that on the 20 PRs kept out of its development it still
+finds more than every reviewer of the comparison.
 
-\paragraph{We do not claim} a lead on high-severity defects over pi-review's
-panel or Codex CLI; absolute recall; an exact
+\paragraph{We do not claim} a lead of the compared default on high-severity
+defects over pi-review's panel or Codex CLI; that the frozen build's 89\% is
+a held-out estimate (its changes were mined from these PRs, and earlier
+builds on the previous model found more on the 20 kept-out PRs); absolute
+recall; an exact
 size of the lead; a run-to-run variance for any reviewer but \qcr{}; that the
 final runs' recall is free of the out-of-pool undercount; that the best
 configurations we found are the best that exist for each tool, or that
@@ -3417,7 +3668,14 @@ alone (12 to 17 points for three tools on S40).
 
 On this benchmark the authors' own reviewer ranks first, with a lead
 concentrated in low-severity defects, no established lead on high-severity
-ones over the panel or Codex CLI, and the highest cost. The weakest link is the key: built by agents of
+ones over the panel or Codex CLI, and the highest cost. Its later frozen
+build, changed from misses mined on the same PRs, finds 89\% and leads on
+high- and medium-severity defects as well, at 51\% more cost; on
+the PRs kept out of that work it still leads every reviewer compared, though
+not the earlier builds on the previous model. Two external checks agree in
+shape: on Martian's audited real goldens and on Qodo's functional bugs it has
+the highest recall of the tools scored by one judge, and on both
+benchmarks' own scores its volume of comments costs it precision. The weakest link is the key: built by agents of
 one model family, partly seeded by that reviewer's earlier output, defined by
 the same assistant that designed it, not reaching the final runs' own finds,
 and not yet checked by a human. Until a human audit is published, the key's

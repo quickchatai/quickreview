@@ -262,7 +262,7 @@ def fig_allfound():
     fig.suptitle("PRs where the tool found every listed blocking problem", x=0.01, ha="left",
                  fontweight="bold", fontsize=13)
     fig.text(0.01, -0.02, "* = gpt-6.1-sol judge, same pass (dark); others: Martian's published Opus 4.5 "
-             "judgements, which credit 8–12 more matches per tool than ours", fontsize=8.5, color=MUTED)
+             "judgements, which credit 7–12 more matches per tool than ours", fontsize=8.5, color=MUTED)
     save(fig, "all-blocking")
 
 
@@ -273,7 +273,7 @@ OPUS50 = [("qodo-extended-v2", 65.1), ("cubic-v2", 64.9), ("augment", 64.0), ("q
           ("claude-code", 47.7), ("devin", 44.8), ("greptile-v5", 44.5), ("kodus-v2", 41.5),
           ("codeant-v2", 40.9), ("copilot", 40.6), ("baz", 40.5), ("claude", 38.9), ("kg", 18.4),
           ("graphite", 9.3)]
-QR_EST = (44.0, 45.6)  # final build (2026-10-04): our-judge F2 40.9, scaled by the Opus 4.5 judge's +8..+12 matches per tool
+QR_EST = (43.5, 45.6)  # final build (2026-10-04): our-judge 104 matches / 640 candidates (F2 40.9), plus the 7..12 extra matches per tool the Opus 4.5 judge credited across our passes
 
 
 def fig_leaderboard():
@@ -299,7 +299,7 @@ def fig_leaderboard():
     ax.set_xlabel("Martian Core F2, 50 PRs, Opus 4.5 judge")
     ax.set_title("Martian's leaderboard metric: QuickReview mid-table")
     ax.text(0.99, 0.02, "QuickReview was never judged by Opus: range estimated from the three tools\n"
-            "both judges scored (Opus credits 8–12 more matches each). Our own judge: F2 40.9.",
+            "both judges scored (Opus credits 7–12 more matches each). Our own judge: F2 40.9.",
             transform=ax.transAxes, fontsize=8, color=MUTED, ha="right")
     ax.grid(axis="x", color=GRID)
     ax.set_axisbelow(True)
