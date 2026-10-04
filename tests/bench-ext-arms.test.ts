@@ -130,3 +130,37 @@ describe("qodo_judge.py reads a third-party arm's run", () => {
     expect(String((err as { stderr: string }).stderr)).toMatch(/published vendor's name/);
   });
 });
+
+describe("martian_real.py — the audit's buckets over a work dir", () => {
+  it("counts real / not-real credits and the all-found PRs from the true positives", async () => {
+    const labels = (JSON.parse(readFileSync(join(ROOT, "bench", "aacr", "charts", "martian-data.json"), "utf8")) as {
+      goldens: Array<{ sev: string; bucket: string }>;
+    }).goldens;
+    // Two goldens per fake PR, in the labels' order (sorted urls, then index).
+    const published: Record<string, { golden_comments: Array<{ comment: string; severity: string }> }> = {};
+    labels.forEach((g, k) => {
+      const url = `https://x/pull/${String(Math.floor(k / 2)).padStart(3, "0")}`;
+      (published[url] ??= { golden_comments: [] }).golden_comments.push({ comment: `g${k}`, severity: g.sev });
+    });
+    const urls = Object.keys(published).sort();
+    // The tool finds exactly the goldens of the first PR with two real ones, and one not-real.
+    const pr = urls.find((u) => published[u]!.golden_comments.every((_, i) => labels[urls.indexOf(u) * 2 + i]!.bucket === "real"))!;
+    const notReal = labels.findIndex((g) => g.bucket === "notreal");
+    const notRealUrl = urls[Math.floor(notReal / 2)]!;
+    const tps = (u: string) => [
+      ...(u === pr ? published[u]!.golden_comments.map((g) => ({ golden_comment: g.comment })) : []),
+      ...(u === notRealUrl ? [{ golden_comment: `g${notReal}` }] : []),
+    ];
+    const work = join(t, "w.martian");
+    mkdirSync(join(work, "results", "judge-x"), { recursive: true });
+    writeFileSync(join(work, "published-benchmark_data.json"), JSON.stringify(published));
+    writeFileSync(
+      join(work, "results", "judge-x", "evaluations.json"),
+      JSON.stringify(Object.fromEntries(urls.map((u) => [u, { "pr-agent": { true_positives: tps(u) } }]))),
+    );
+    const { stdout } = await run("python3", [join(EXT, "martian_real.py"), work]);
+    const nReal = labels.filter((g) => g.bucket === "real").length;
+    expect(stdout).toContain(`| w.martian | pr-agent | 2 of ${nReal} (${((200 / nReal)).toFixed(1)}%) | 33% |`);
+    expect(stdout).toMatch(/\| 1 of \d+ \|$/m); // every real golden found on exactly one PR
+  });
+});
