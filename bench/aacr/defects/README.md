@@ -40,8 +40,8 @@ or changing either does not change the truth and does not bump `version`.
   references is `../bot_references.json`.
 
 **How it was built (version 1).** Per PR: a blind expert hunt from the diff and
-the code alone; then every candidate — the hunt, the AACR references (hand
-labels attached, trusted for nothing), and every comment any reviewer posted in
+the code alone; then every candidate — the hunt, the AACR references (agent-produced
+reference labels attached, trusted for nothing), and every comment any reviewer posted in
 our runs (ours and open-code-review's, anonymised) — checked against the code,
 merged where it is one defect, graded, and every exclusion recorded with its
 reason; then an adversarial critic per set spot-checked inclusions, exclusions

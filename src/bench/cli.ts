@@ -1217,7 +1217,7 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     assertArm(outDir, "qcr");
-    // Hand-checked reference labels ride beside the set, when there are any.
+    // Agent-produced reference labels ride beside the set, when there are any.
     const labelsPath = (f.get("--set") ?? "").replace(/\.json$/, ".labels.json");
     const labels = existsSync(labelsPath)
       ? parseReferenceLabels(JSON.parse(readFileSync(labelsPath, "utf8")))

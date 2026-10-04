@@ -162,8 +162,8 @@ its reason, and the judge sees those. The exact prompts are in
 each file):
 
 - smoke10 / dev10 / holdout10 (**v2**): per PR, a blind expert hunt from the
-  diff and code; every candidate (the hunt, the AACR references with hand
-  labels, every comment any reviewer posted in our runs — ours and OCR's,
+  diff and code; every candidate (the hunt, the AACR references with their
+  agent-produced reference labels, every comment any reviewer posted in our runs — ours and OCR's,
   anonymised) checked against the code, merged and graded, exclusions recorded;
   an adversarial critic per set (12 corrections). v2 added the judge's
   new-defect candidates from 12 judged runs after checking (1 added, 2
@@ -372,7 +372,7 @@ have been tuned on what.
 
 | When | What | Tuned on | Note |
 |---|---|---|---|
-| 09-25 | Harness wrapper, OCR arm, smoke10/holdout10/dev10 sets, hand labels | — | |
+| 09-25 | Harness wrapper, OCR arm, smoke10/holdout10/dev10 sets, reference labels (agent-produced) | — | |
 | 09-25/26 | "review iterations" 1–2 (validator premises, sibling sites, judgment lenses) [`ae9cab0`, `2a2cbe1`] | smoke10 AACR misses | before the defect benchmark existed |
 | 09-26 | Defect judge + ground truth v1/v2 for the 30 [`9a0a345`, `9d34a6a`] | — | |
 | 09-26 | Levers: effort, sub-lenses, sweep, dependency sources, restate-not-kill [`722657e`] | missed defects on the **30** | holdout10 stopped being a holdout here |

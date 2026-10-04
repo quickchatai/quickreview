@@ -53,7 +53,7 @@ the plain names; the gpt-6-sol study under `-gpt6sol`):
 | [`two-scores.jpg`](charts/two-scores.jpg) | the same reviews on our judge vs AACR's metric |
 | [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
 | [`independent-defects.jpg`](charts/independent-defects.jpg) | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
-| [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, hand-checked against the code |
+| [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, checked against the code by agents (no human check) |
 | [`judge-agreement.jpg`](charts/judge-agreement.jpg) | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
 | [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | the selection step: per tool, recall and $/PR of the published configuration vs each variant run on the 40 PRs; drawn by `charts.py --sensitivity` |
 | `*-gpt6sol.jpg` | the same charts for the gpt-6-sol study (seven reviewers as shipped) |
@@ -190,8 +190,8 @@ x/1505) by `select_cases.py`, which refuses any other revision:
 
 `--only id,id` narrows any command to named instances (backups included).
 
-`<set>.labels.json` beside a set holds a hand-checked quality label for every
-reference (real defect / real maintainability with a value, trivial, dubious,
+`<set>.labels.json` beside a set holds an agent-produced quality label (no human checked
+it) for every reference (real defect / real maintainability with a value, trivial, dubious,
 duplicate), checked against the code at head. When it exists, `report` adds a
 "Recall by reference quality" table: the benchmark's recall counts style and
 dubious references the same as real defects, and the real-issue column is the

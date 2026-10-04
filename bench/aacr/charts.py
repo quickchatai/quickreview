@@ -216,7 +216,7 @@ def chart_references(out):
     ax.set_xlim(0, 100)
     ax.axis("off")
     real = (tally["real-defect"] + tally["real-maintainability"]) / n
-    ax.set_title(f"What AACR-Bench's reference comments are — {n} on 30 PRs, hand-checked against the code: "
+    ax.set_title(f"What AACR-Bench's reference comments are — {n} on 30 PRs, agent-checked against the code: "
                  f"{real:.0%} real", fontsize=12)
     save(fig, out, "reference-quality.jpg")
 

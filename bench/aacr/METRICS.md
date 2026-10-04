@@ -82,8 +82,8 @@ comments, at these exact lines. That is a useful cross-check and the only
 number comparable with published leaderboard rows (under the same judge), but
 it is not a defect count, for three reasons we measured:
 
-1. **Most references are not defects.** Hand-labelling all 253 references on
-   30 PRs against the code: real defect 11%, real maintainability issue 8%,
+1. **Most references are not defects.** Labelling all 253 references on
+   30 PRs against the code (agents did the labelling; no human checked it): real defect 11%, real maintainability issue 8%,
    trivial 30%, dubious (unclear or likely wrong) 39%, duplicate 11%. A
    review that posts only what is true and consequential cannot match the
    other ~80%.
@@ -113,7 +113,7 @@ note.
 
 On three PRs every reviewer we ran scored 1 of 7 references (14%) while the
 defect table separated them by 3–4 real defects. When the benchmark's
-references carry hand labels (smoke10, dev10, holdout10), the per-run AACR
+references carry reference labels (smoke10, dev10, holdout10), the per-run AACR
 `report.md` adds a "real-defect recall" column scored only against the
 genuine ones — the fairer way to quote this benchmark.
 

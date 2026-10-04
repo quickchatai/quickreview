@@ -20,7 +20,7 @@ export function latestMetrics(dir: string): Metrics | null {
   return JSON.parse(readFileSync(join(dir, pick), "utf8")) as Metrics;
 }
 
-/** Hand-checked reference labels (`sets/<set>.labels.json`): per instance, one
+/** Agent-produced reference labels (`sets/<set>.labels.json`, no human check): per instance, one
  * entry per dataset reference in dataset order, saying whether the reference
  * names a real issue. The score counts a match on a dubious reference the same
  * as one on a real defect; this is how the report tells the two apart. */
@@ -204,7 +204,7 @@ export function renderReport(
       L.push("## Recall by reference quality");
       L.push("");
       L.push(
-        `Each reference hand-checked against the code (${labels.source}). A match on a dubious reference scores the same as one on a real defect; the first column is the one that says whether the review got better.`,
+        `Each reference checked against the code by agents, no human check (${labels.source}). A match on a dubious reference scores the same as one on a real defect; the first column is the one that says whether the review got better.`,
       );
       L.push("");
       L.push(`| Variant | ${classes.map((c) => c).join(" | ")} |`);
