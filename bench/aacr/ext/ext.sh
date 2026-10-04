@@ -17,6 +17,8 @@
 #   A RUN of a third-party arm (pragent, opencode, … — its <run>.arm.json) is scored under that
 #   arm's tool name (martian_ingest.py ARM_TOOLS) with the same steps; add `--only-tools <name>`
 #   to qodo and EXT_MARTIAN_REJUDGE= (empty) to martian to judge that tool alone.
+#   EXT_WORK_TAG=T   score into <run>.<scorer>-T instead (an interim score of a run still in
+#                    progress: its unfinished cases count as silent, and the final dir stays clean)
 #
 #   QCR_BENCH_RUNS_DIR   where runs live (required; outside any worktree)
 #   EXT_CACHE            the local bare git caches (default $QCR_BENCH_RUNS_DIR/../ext-cache)
@@ -196,7 +198,7 @@ PY
     if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-qodo-vendors-$set_name.qodo"
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/results/all" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no finished run $run"
-      work="$QCR_BENCH_RUNS_DIR/$run.qodo"; runargs=(--run /run --run-tool "$(arm_tool "$(run_arm "$run")")")
+      work="$QCR_BENCH_RUNS_DIR/$run.qodo${EXT_WORK_TAG:+-$EXT_WORK_TAG}"; runargs=(--run /run --run-tool "$(arm_tool "$(run_arm "$run")")")
     fi
     [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
     mkdir -p "$work"   # resumable: qodo_judge.py caches every judgement in $work/judgements.jsonl
@@ -221,7 +223,7 @@ PY
     if [[ "$run" == none ]]; then work="$QCR_BENCH_RUNS_DIR/ext-calibration-$set_name${EXT_CALIB_TAG:+-$EXT_CALIB_TAG}.martian"; qr=(--no-quickreview)
     else
       [[ -d "$QCR_BENCH_RUNS_DIR/$run/cases" && ! -L "$QCR_BENCH_RUNS_DIR/$run" ]] || die "no run $run"
-      work="$QCR_BENCH_RUNS_DIR/$run.martian"; qr=(--arm "$(run_arm "$run")")
+      work="$QCR_BENCH_RUNS_DIR/$run.martian${EXT_WORK_TAG:+-$EXT_WORK_TAG}"; qr=(--arm "$(run_arm "$run")")
     fi
     [[ "${EXT_JUDGE:-}" == mock ]] && work="$work-MOCK"
     [[ ! -e "$work" ]] || die "$work exists — move it away first (scores are never overwritten)"
