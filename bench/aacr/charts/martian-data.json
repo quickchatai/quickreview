@@ -1214,22 +1214,22 @@
  ],
  "real_same_judge": {
   "QuickReview (latest)": {
-   "real": 71,
-   "notreal": 18,
-   "disputed": 5
-  },
-  "cubic-v2": {
-   "real": 60,
-   "notreal": 35,
-   "disputed": 4
+   "real": 75,
+   "notreal": 27,
+   "disputed": 6
   },
   "qodo-extended-v2": {
    "real": 68,
    "notreal": 25,
+   "disputed": 5
+  },
+  "cubic-v2": {
+   "real": 58,
+   "notreal": 36,
    "disputed": 4
   },
   "claude-code": {
-   "real": 44,
+   "real": 45,
    "notreal": 24,
    "disputed": 2
   }
@@ -1309,15 +1309,15 @@
  "allfound": {
   "hi_same": {
    "QuickReview (latest)": [
-    17,
-    34
-   ],
-   "cubic-v2": [
-    21,
+    19,
     34
    ],
    "qodo-extended-v2": [
     19,
+    34
+   ],
+   "cubic-v2": [
+    21,
     34
    ],
    "claude-code": [
@@ -1385,15 +1385,15 @@
   },
   "real_same": {
    "QuickReview (latest)": [
-    21,
-    35
-   ],
-   "cubic-v2": [
-    21,
+    26,
     35
    ],
    "qodo-extended-v2": [
     21,
+    35
+   ],
+   "cubic-v2": [
+    20,
     35
    ],
    "claude-code": [
@@ -1461,15 +1461,15 @@
   },
   "realhi_same": {
    "QuickReview (latest)": [
+    15,
+    19
+   ],
+   "qodo-extended-v2": [
     14,
     19
    ],
    "cubic-v2": [
     12,
-    19
-   ],
-   "qodo-extended-v2": [
-    14,
     19
    ],
    "claude-code": [
@@ -1535,5 +1535,8 @@
     19
    ]
   }
+ },
+ "notes": {
+  "same_judge": "QuickReview (latest) and the three re-judged comparators: the final pass (final1-martian50, image qcr-bench:final1, 2026-10-04), one gpt-6.1-sol judge for all four."
  }
 }

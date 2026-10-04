@@ -273,7 +273,7 @@ OPUS50 = [("qodo-extended-v2", 65.1), ("cubic-v2", 64.9), ("augment", 64.0), ("q
           ("claude-code", 47.7), ("devin", 44.8), ("greptile-v5", 44.5), ("kodus-v2", 41.5),
           ("codeant-v2", 40.9), ("copilot", 40.6), ("baz", 40.5), ("claude", 38.9), ("kg", 18.4),
           ("graphite", 9.3)]
-QR_EST = (44.5, 46.5)
+QR_EST = (44.0, 45.6)  # final build (2026-10-04): our-judge F2 40.9, scaled by the Opus 4.5 judge's +8..+12 matches per tool
 
 
 def fig_leaderboard():
