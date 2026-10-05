@@ -32,6 +32,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { isBinaryContent } from "../src/setup/textsniff.js";
 import { deadLinks } from "./helpers/published-links.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -449,12 +450,14 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "bench/aacr/hf/card.md",
     tokens: ["owner_legacy", "quickchat"],
-    reason: "the dataset card's citations name the papers' author and affiliation",
+    reason:
+      "the dataset card's citations name the papers' author and affiliation",
   },
   {
     path: "tests/hf-export.test.ts",
     tokens: ["owner_legacy", "/home/user"],
-    reason: "scrub tripwire: plants the rewritten names and asserts none survives the export's scrub",
+    reason:
+      "scrub tripwire: plants the rewritten names and asserts none survives the export's scrub",
   },
 ];
 
@@ -515,7 +518,12 @@ const BINARY_EXTENSIONS = new Set([
 function isBinary(path: string, buf: Buffer): boolean {
   const dot = path.lastIndexOf(".");
   if (dot >= 0 && BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase())) return true;
-  return buf.subarray(0, 8192).includes(0);
+  // NOT git's bare "any NUL is binary" probe: that exempted src/eodpinwatch.ts
+  // (one literal NUL in a template literal) from the token sweep, and seven
+  // "the owner" lines reached a public candidate unscanned (,
+  // 2026-10-05). The shared sniff needs corroboration before it calls a
+  // NUL-bearing file binary — the same answer the scan gives.
+  return isBinaryContent(buf, path);
 }
 
 function trackedFiles(): string[] {
@@ -714,6 +722,12 @@ describe("publishability lint", () => {
     expect(planted.map((v) => v.token).sort()).toEqual(["my-vm", "owner_legacy"]);
     expect(planted[0]!.path).toBe("src/planted-control.ts");
     expect(planted[0]!.line).toBe(1);
+
+    // A source file with one stray NUL is still TEXT to the sweep — never
+    // exempted as binary (the src/eodpinwatch.ts escape).
+    const nulSource = Buffer.from("// for the owner\nconst k = `${a}\0${b}`;\n");
+    expect(isBinary("src/planted-control.ts", nulSource)).toBe(false);
+    expect(isBinary("docs/media/planted.gif", nulSource)).toBe(true);
 
     // …while the exemption channels behave as declared. The exclude/
     // pending_reseed probes are conditional: the assembled tree
