@@ -420,6 +420,22 @@ const ALLOWLIST: AllowlistEntry[] = [
     tokens: DENYLIST.map((d) => d.token),
     reason: "this lint — the denylist itself plus the negative-control plants",
   },
+  {
+    path: "bench/aacr/hf_export.py",
+    tokens: ["owner_legacy", "/home/user", "quickchat"],
+    reason:
+      "the HF dataset export's scrub rules name the strings they rewrite, and its NOTICE names the copyright holder",
+  },
+  {
+    path: "bench/aacr/hf/card.md",
+    tokens: ["owner_legacy", "quickchat"],
+    reason: "the dataset card's citations name the papers' author and affiliation",
+  },
+  {
+    path: "tests/hf-export.test.ts",
+    tokens: ["owner_legacy", "/home/user"],
+    reason: "scrub tripwire: plants the rewritten names and asserts none survives the export's scrub",
+  },
 ];
 
 function allowlisted(path: string, token: string): boolean {

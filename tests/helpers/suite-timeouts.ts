@@ -70,6 +70,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/guards-shell-parity.test.ts",
   "tests/guards-shell-post.test.ts",
   "tests/guards-shell-receipts.test.ts",
+  "tests/hf-export.test.ts",
   "tests/improvements-e2e.test.ts",
   "tests/install-shell.test.ts",
   "tests/lens-yield.test.ts",
