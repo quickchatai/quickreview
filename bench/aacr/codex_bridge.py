@@ -49,6 +49,14 @@ Headers mirror pi 0.87.1's Codex SSE transport (Authorization,
 chatgpt-account-id, originator: pi, OpenAI-Beta: responses=experimental,
 accept: text/event-stream) with this bridge's own User-Agent.
 
+The API-KEY route (QCR_BENCH_AUTH=api-key, src/bench/auth.ts): no
+login is read at all. The bridge forwards the same streamed Responses request
+to the PUBLIC API (https://api.openai.com/v1/responses) with
+`Authorization: Bearer $OPENAI_API_KEY` — the key from the container's
+environment (bench.sh's --env-file), never an argv — and without the ChatGPT
+headers. /health and /stats report `upstream: "openai-api"` so a run records
+which backend it measured.
+
 Stdlib only. Every upstream refusal is logged (status + error excerpt + the
 request's key set, never its content) to the --log file.
 """
@@ -70,6 +78,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 UPSTREAM = "https://chatgpt.com/backend-api/codex/responses"
+API_UPSTREAM = "https://api.openai.com/v1/responses"  # the API-key route
+
+
+def api_key_route(env: Optional[Dict[str, str]] = None) -> bool:
+    """QCR_BENCH_AUTH=api-key (src/bench/auth.ts benchAuthMode)."""
+    v = (env if env is not None else os.environ).get("QCR_BENCH_AUTH", "").strip()
+    if v not in ("", "login", "api-key"):
+        raise SystemExit(f"QCR_BENCH_AUTH must be login | api-key (got {v!r})")
+    return v == "api-key"
+
+
+def load_api_key(env: Optional[Dict[str, str]] = None) -> str:
+    key = (env if env is not None else os.environ).get("OPENAI_API_KEY", "").strip()
+    if not key:
+        raise SystemExit("the API-key route needs OPENAI_API_KEY in the environment (bench/aacr/openai.env)")
+    return key
 DISABLED_REFRESH = "bench-refresh-disabled"  # = src/bench/auth.ts DISABLED_REFRESH
 JWT_CLAIM = "https://api.openai.com/auth"
 
@@ -412,6 +436,7 @@ class Bridge:
             "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0,
             "by_status": {}, "dropped_keys": {},
             "model": a.model, "effort": a.effort, "verbosity": a.verbosity,
+            "upstream": "openai-api" if a.api_key else "chatgpt-codex",
         }
         self.log_handle = open(a.log, "a", encoding="utf-8") if a.log else None
         self.label = ""
@@ -426,10 +451,16 @@ class Bridge:
         if row.get("error"):
             print(f"bridge: {line[:600]}", file=sys.stderr, flush=True)
 
-    def call(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    def headers(self) -> Dict[str, str]:
+        if self.a.api_key:
+            return {
+                "Authorization": f"Bearer {load_api_key()}",
+                "accept": "text/event-stream",
+                "content-type": "application/json",
+                "User-Agent": "qcr-bench-ocr-bridge/2 (open-code-review baseline; API key)",
+            }
         token, account = load_credentials(self.a.auth)
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(self.a.upstream, data=data, method="POST", headers={
+        return {
             "Authorization": f"Bearer {token}",
             "chatgpt-account-id": account,
             "originator": "pi",
@@ -437,7 +468,11 @@ class Bridge:
             "accept": "text/event-stream",
             "content-type": "application/json",
             "User-Agent": "qcr-bench-ocr-bridge/2 (open-code-review baseline; pi-login access token)",
-        })
+        }
+
+    def call(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(self.a.upstream, data=data, method="POST", headers=self.headers())
         with self.gate:
             try:
                 resp = urllib.request.urlopen(req, timeout=self.a.read_timeout)
@@ -492,7 +527,8 @@ def make_handler(bridge: Bridge):
 
         def do_GET(self):
             if self.path == "/health":
-                self._send(200, {"ok": True, "model": bridge.a.model, "effort": bridge.a.effort, "verbosity": bridge.a.verbosity})
+                self._send(200, {"ok": True, "model": bridge.a.model, "effort": bridge.a.effort, "verbosity": bridge.a.verbosity,
+                                 "upstream": bridge.stats["upstream"]})
             elif self.path == "/stats":
                 with bridge.lock:
                     self._send(200, json.loads(json.dumps(bridge.stats)))
@@ -657,6 +693,30 @@ def _self_test() -> None:
         with open(p, "w") as f:
             json.dump({"openai-codex": {"type": "oauth", "access": "a.b.c", "refresh": DISABLED_REFRESH, "accountId": "acc"}}, f)
         assert load_credentials(p) == ("a.b.c", "acc")
+    # The API-key route: chosen by QCR_BENCH_AUTH, key from OPENAI_API_KEY only.
+    assert api_key_route({"QCR_BENCH_AUTH": "api-key"}) and not api_key_route({}) and not api_key_route({"QCR_BENCH_AUTH": "login"})
+    try:
+        api_key_route({"QCR_BENCH_AUTH": "bogus"})
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("an unknown route must be refused")
+    assert load_api_key({"OPENAI_API_KEY": " sk-x "}) == "sk-x"
+    try:
+        load_api_key({})
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("the key route without a key must be refused")
+    keyed = Bridge(argparse.Namespace(api_key=True, auth="", upstream=API_UPSTREAM, model="m", effort="e",
+                                      verbosity="v", log="", max_inflight=1))
+    os.environ["OPENAI_API_KEY"] = "sk-test"
+    try:
+        h = keyed.headers()
+    finally:
+        del os.environ["OPENAI_API_KEY"]
+    assert h["Authorization"] == "Bearer sk-test" and "chatgpt-account-id" not in h and "originator" not in h, h
+    assert keyed.stats["upstream"] == "openai-api"
     print("codex_bridge self-test: ok")
 
 
@@ -667,7 +727,7 @@ def main() -> None:
     ap.add_argument("--effort", default="medium")
     ap.add_argument("--verbosity", default="medium", help="text.verbosity; the public API default is medium")
     ap.add_argument("--auth", default=os.path.join(os.environ.get("PI_CODING_AGENT_DIR", "/tmp/pi-agent"), "auth.json"))
-    ap.add_argument("--upstream", default=UPSTREAM)
+    ap.add_argument("--upstream", default=None, help=f"default {UPSTREAM}; on the API-key route {API_UPSTREAM}")
     ap.add_argument("--log", default="")
     ap.add_argument("--max-inflight", type=int, default=16)
     ap.add_argument("--read-timeout", type=int, default=600)
@@ -676,7 +736,13 @@ def main() -> None:
     if a.self_test:
         _self_test()
         return
-    load_credentials(a.auth)  # refuse to start on a wrong/real auth file
+    a.api_key = api_key_route()
+    if a.upstream is None:
+        a.upstream = API_UPSTREAM if a.api_key else UPSTREAM
+    if a.api_key:
+        load_api_key()  # refuse to start without a key
+    else:
+        load_credentials(a.auth)  # refuse to start on a wrong/real auth file
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(Bridge(a)))
     srv.daemon_threads = True
     print(f"codex bridge on 127.0.0.1:{a.port} → {a.upstream} ({a.model}, effort {a.effort}, verbosity {a.verbosity})", flush=True)

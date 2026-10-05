@@ -25,6 +25,14 @@
 #              any run dir (either arm, archived too). → <run>/judge/<label>/report.md
 #   bench/aacr/bench.sh judge-report --run ID [--set smoke10] [--label L]   re-score, no model calls
 #   QCR_BENCH_RUNS_DIR=DIR   where runs live (default bench/aacr/runs) — keep them outside worktrees
+#   QCR_BENCH_AUTH=api-key   your OWN API key instead of a pi ChatGPT login volume (default:
+#                            login). No volume is mounted; bench/aacr/openai.env (gitignored;
+#                            QCR_BENCH_OPENAI_ENV=FILE overrides) holds OPENAI_API_KEY=…, passed
+#                            with --env-file; every openai-codex/ model runs as openai/ (the
+#                            same model on the public API) and every run/verdict is labelled
+#                            apart from the published login runs (src/bench/auth.ts)
+#   QCR_BENCH_CONFIG=FILE    `build`: the config baked in (default: your install's config.toml,
+#                            else the checkout's config.example.toml — README "Reproduce")
 #   QCR_BENCH_OCR_EFFORT=L   the OCR arm's reasoning effort (low|medium|high|xhigh|max; default medium)
 #   QCR_BENCH_PR_TEXT=1      hand the PR title/body to the ocr/codex/opencode/pireview arm the way
 #                            that tool takes review context (src/bench/prtext.ts; default off)
@@ -106,8 +114,9 @@
 #   - docker volume $QCR_BENCH_AUTH_VOLUME  READ-ONLY, only its agent/ dir, for the pi login;
 #     (default companion-pihome)           its sessions/ hidden by an empty tmpfs. The sandbox
 #                                           copies the access token into its own tmpfs with the
-#                                           refresh token disabled — it never writes the
-#                                           companion's config and never rotates its grant.
+#                                           refresh token disabled — it never writes the login
+#                                           volume and never rotates its grant. Not mounted at
+#                                           all on the API-key route (QCR_BENCH_AUTH=api-key).
 # Root filesystem read-only, all capabilities dropped, no-new-privileges, non-root uid,
 # pids/memory/cpu capped. No docker socket, no ssh agent, no host network namespace, no
 # GitHub credential, no posting scripts, no gh. Review and codex-judge containers DO have
@@ -123,6 +132,9 @@ RUNS_DIR="${QCR_BENCH_RUNS_DIR:-$HERE/runs}"
 REPO="$(cd "$HERE/../.." && pwd)"
 REPOS_VOLUME="${QCR_BENCH_REPOS_VOLUME:-qcr-bench-repos}"
 AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
+# The credential route (src/bench/auth.ts): a pi ChatGPT login volume, or your own API key.
+AUTH_MODE="${QCR_BENCH_AUTH:-login}"
+OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$HERE/openai.env}"
 CPUS="${QCR_BENCH_CPUS:-4}"
 MEMORY="${QCR_BENCH_MEMORY:-8g}"
 
@@ -193,6 +205,7 @@ fi
 CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
+[[ "$AUTH_MODE" == login || "$AUTH_MODE" == api-key ]] || die "QCR_BENCH_AUTH must be login | api-key"
 [[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
 [[ "$PHASE" =~ ^(all|init|case|finish)$ ]] || die "--phase must be all | init | case | finish"
 [[ "$SHARDS" =~ ^[1-9][0-9]?$ ]] || die "--shards must be 1..99"
@@ -224,12 +237,34 @@ run_dir() {
   echo "$d"
 }
 
+# The API-key route's OpenAI key file: like claude.env, handed to docker with
+# --env-file (no value on an argv or in the reproduction log); only key NAMES
+# are read here.
+openai_env_args() {
+  OENV=()
+  if [[ ! -e "$OPENAI_ENV" ]]; then
+    [[ "${1:-}" == optional ]] && return 0
+    die "QCR_BENCH_AUTH=api-key needs your OpenAI key in $OPENAI_ENV — create it (gitignored) with OPENAI_API_KEY=<key>, chmod 600"
+  fi
+  [[ -f "$OPENAI_ENV" && ! -L "$OPENAI_ENV" ]] || die "$OPENAI_ENV must be a regular file, not a symlink"
+  grep -qE '^OPENAI_API_KEY=.+' "$OPENAI_ENV" || die "$OPENAI_ENV must set OPENAI_API_KEY=<key>"
+  OENV=(--env-file "$OPENAI_ENV")
+}
+
+# The model credential every pi-backed step gets. Login route: the read-only
+# login volume. API-key route: no volume — QCR_BENCH_AUTH=api-key plus the key
+# file (optional only where an anthropic/ model may be all that runs).
 auth_mounts() {
+  if [[ "$AUTH_MODE" == api-key ]]; then
+    openai_env_args "${1:-}"
+    AUTH=(-e QCR_BENCH_AUTH=api-key ${OENV[@]+"${OENV[@]}"})
+    return 0
+  fi
   docker volume inspect "$AUTH_VOLUME" >/dev/null 2>&1 \
     || die "docker volume $AUTH_VOLUME not found — it must hold a pi login (agent/auth.json). Set QCR_BENCH_AUTH_VOLUME."
   docker run --rm --entrypoint test --user "$(id -u):$(id -g)" --network none \
     --mount "type=volume,src=$AUTH_VOLUME,dst=/p,volume-subpath=agent,readonly" "$IMAGE" -r /p/auth.json \
-    || die "$AUTH_VOLUME has no readable agent/auth.json for uid $(id -u) — log pi in there first (the companion's /login)"
+    || die "$AUTH_VOLUME has no readable agent/auth.json for uid $(id -u) — log pi in there first (/login), or use your own key: QCR_BENCH_AUTH=api-key"
   AUTH=(
     --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
     --mount "type=tmpfs,dst=/pi-agent-src/sessions"
@@ -270,6 +305,7 @@ judge_args() {
       [[ -f "$HERE/judge.env" ]] || die "judge openai needs bench/aacr/judge.env (JUDGE_BASE_URL, JUDGE_API_KEY, JUDGE_MODEL) — see README"
       envs=(--env-file "$HERE/judge.env") ;;
     codex)
+      [[ "$AUTH_MODE" == login ]] || die "--judge codex reads the pi login; on the API-key route use --judge openai (bench/aacr/judge.env)"
       auth_mounts; mounts=("${AUTH[@]}")
       [[ -n "${JUDGE_CODEX_MODEL:-}" ]] && envs=(-e "JUDGE_CODEX_MODEL=$JUDGE_CODEX_MODEL") ;;
     *) die "--judge must be mock | openai | codex" ;;
@@ -321,7 +357,11 @@ case "$cmd" in
     docker version --format 'docker {{.Server.Version}}' || die "docker not reachable"
     docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"
-    docker volume inspect "$AUTH_VOLUME" >/dev/null 2>&1 && echo "auth volume $AUTH_VOLUME: present" || echo "auth volume $AUTH_VOLUME: MISSING"
+    if [[ "$AUTH_MODE" == api-key ]]; then
+      echo "auth: API key (QCR_BENCH_AUTH=api-key) — key file $OPENAI_ENV: $([[ -f "$OPENAI_ENV" ]] && echo present || echo MISSING)"
+    else
+      docker volume inspect "$AUTH_VOLUME" >/dev/null 2>&1 && echo "auth volume $AUTH_VOLUME: present" || echo "auth volume $AUTH_VOLUME: MISSING"
+    fi
     ;;
 
   build)
@@ -333,7 +373,7 @@ case "$cmd" in
     # docs/, tests/ and every run output never reach the builder.
     ctx="$(mktemp -d)"; trap 'rm -rf "$ctx"' EXIT
     ( cd "$REPO" && tar -cf - --exclude=node_modules --exclude='*.tsbuildinfo' \
-        package.json package-lock.json tsconfig.json AGENTS.md CLAUDE.md .pi \
+        package.json package-lock.json tsconfig.json AGENTS.md .pi \
         src extensions prompts agents \
         bench/aacr/Dockerfile bench/aacr/sets bench/aacr/defects bench/aacr/judge_shim.py \
         bench/aacr/in-container.sh bench/aacr/codex_bridge.py bench/aacr/eval_shards.py \
@@ -341,12 +381,26 @@ case "$cmd" in
         bench/aacr/claude_driver.py bench/aacr/pragent_driver.py \
         deploy/reviewer/AGENTS.override.md ) \
       | tar -xf - -C "$ctx"
-    # The production config is the operator's live one, wherever the install
-    # locator finds it — baked in as the image's config.toml.
+    # The config baked in as the image's config.toml, first that applies:
+    #   1. QCR_BENCH_CONFIG=FILE — named explicitly (it must exist);
+    #   2. the operator's own config, wherever the install locator finds it
+    #      — what the published runs were built with;
+    #   3. the checkout's config.example.toml — a fresh clone has no install,
+    #      and the example's [models] and every [review] lever equal the
+    #      published runs' (the differences are deployment-only, and the bench
+    #      clears review.profile itself). Only the persona's two identity tokens
+    #      render as the neutral fallbacks instead of an operator's names.
     . "$REPO/scripts/install-locator.sh"
-    live_config="$(qcr_locate_config "$REPO")" || exit 1
-    [[ -f "$live_config" ]] || die "no config.toml at $live_config — the bench reviews with the production config"
-    cp "$live_config" "$ctx/config.toml"
+    if [[ -n "${QCR_BENCH_CONFIG:-}" ]]; then
+      bench_config="$QCR_BENCH_CONFIG"
+      [[ -f "$bench_config" ]] || die "QCR_BENCH_CONFIG=$bench_config is not a file"
+    else
+      bench_config="$(qcr_locate_config "$REPO")" || exit 1
+      [[ -f "$bench_config" ]] || bench_config="$REPO/config.example.toml"
+    fi
+    [[ -f "$bench_config" ]] || die "no config to bake in — set QCR_BENCH_CONFIG=FILE"
+    echo "bench: baking $bench_config in as the image's config.toml" >&2
+    cp "$bench_config" "$ctx/config.toml"
     # …and so are the profiles: the checkout's generic examples
     # only (no other checkout profile is read, so none is baked);
     # a profile in a higher-priority place (the config home, or beside
@@ -423,7 +477,7 @@ case "$cmd" in
         AUTH+=(-e "ANTHROPIC_MODEL=$QCR_BENCH_CLAUDE_MODEL")
       fi
     else
-      auth_mounts
+      if [[ "$ARM" == qcr && " ${EXTRA[*]-} " == *anthropic/* ]]; then auth_mounts optional; else auth_mounts; fi
       # quickreviewd on an Anthropic model (--config models.*=anthropic/…): pi's
       # anthropic provider needs an ANTHROPIC_API_KEY — the same dedicated
       # credential file as the Claude Code arm, by --env-file, never an argv.
@@ -532,7 +586,8 @@ case "$cmd" in
     jm=(--mount "type=bind,src=$DEFECTS_DIR,dst=/opt/quickreview/bench/defects,readonly")
     jn=(--network none)
     if [[ "$cmd" == judge ]]; then
-      auth_mounts; jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()
+      if [[ "${JUDGE_MODEL:-}" == anthropic/* ]]; then auth_mounts optional; else auth_mounts; fi
+      jm+=("${AUTH[@]}" --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"); jn=()
       # An Anthropic judge (--judge-model anthropic/…) uses the Claude arm's OWN
       # credential file (--env-file; never an argv, never the host's login). Its
       # verdicts land under judge/v<version>-<model>/, beside the GPT judge's.

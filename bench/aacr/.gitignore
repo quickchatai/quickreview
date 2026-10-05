@@ -3,3 +3,4 @@ whatif/
 judge.env
 __pycache__/
 claude.env
+openai.env

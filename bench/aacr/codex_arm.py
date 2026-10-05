@@ -63,14 +63,24 @@ def _harness():
     return config, schema, cx
 
 
-def config_prelude(effort: str) -> str:
+# The API-key route (src/bench/auth.ts): the key reaches this driver
+# under its OWN name, never as CODEX_API_KEY/OPENAI_API_KEY in its environment
+# (still refused below), and is handed to the harness the harness's own way —
+# `CODEX_API_KEY` in the codex_env it injects into `codex exec`.
+API_KEY_VAR = "QCR_CODEX_API_KEY"
+
+
+def config_prelude(effort: str, login: str = "chatgpt") -> str:
     """Top-level keys placed BEFORE the harness's config.toml lines (a TOML
-    top-level key after a table header would land inside that table)."""
+    top-level key after a table header would land inside that table).
+    `login`: "chatgpt" (the refresh-disabled login copy) or "api" (a key)."""
+    if login not in ("chatgpt", "api"):
+        raise SystemExit(f"unknown login method {login!r}")
     return (
         "# qcr-bench prelude (bench/aacr/codex_arm.py); the harness's own lines follow\n"
         f'model_reasoning_effort = "{effort}"\n'
         'cli_auth_credentials_store = "file"\n'
-        'forced_login_method = "chatgpt"\n'
+        f'forced_login_method = "{login}"\n'
         "check_for_update_on_startup = false\n"
         'web_search = "disabled"\n'
         "\n"
@@ -111,9 +121,13 @@ def load_instance(schema, dataset: Path, instance_id: str):
 def review(a: argparse.Namespace) -> int:
     for k in ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_GATEWAY_URL", "CODEX_HOME"):
         if os.environ.get(k):
-            raise SystemExit(f"{k} is set — this arm uses only the refresh-disabled ChatGPT login")
-    auth_src = Path(a.auth_json)
-    check_auth(auth_src)
+            raise SystemExit(f"{k} is set — this arm takes the refresh-disabled ChatGPT login (--auth-json) or a key under {API_KEY_VAR} (--api-key)")
+    api_key = os.environ.get(API_KEY_VAR, "") if a.api_key else ""
+    if a.api_key and not api_key:
+        raise SystemExit(f"--api-key needs the key in {API_KEY_VAR}")
+    auth_src = None if a.api_key else Path(a.auth_json)
+    if auth_src is not None:
+        check_auth(auth_src)
     config, schema, cx = _harness()
     instance = load_instance(schema, Path(a.dataset), a.instance_id)
     tree = Path(a.tree)
@@ -125,16 +139,19 @@ def review(a: argparse.Namespace) -> int:
     Path(a.home_base).mkdir(parents=True, exist_ok=True)
 
     codex_env: Dict[str, str] = {config.CODEX_MODEL_VAR: a.model}
+    if api_key:
+        codex_env[config.CODEX_API_KEY_VAR] = api_key  # the harness's own route
     cx.ensure_codex_installed()
     codex_home = cx.write_codex_config(codex_env)
     try:
         cfg = codex_home / "config.toml"
         harness_cfg = cfg.read_text(encoding="utf-8")
-        cfg.write_text(config_prelude(a.effort) + harness_cfg + ANALYTICS_OFF, encoding="utf-8")
+        cfg.write_text(config_prelude(a.effort, "api" if api_key else "chatgpt") + harness_cfg + ANALYTICS_OFF, encoding="utf-8")
         (case_dir / "codex-config.toml").write_text(cfg.read_text(encoding="utf-8"), encoding="utf-8")
-        dst = codex_home / "auth.json"
-        shutil.copyfile(auth_src, dst)
-        os.chmod(dst, 0o600)
+        if auth_src is not None:
+            dst = codex_home / "auth.json"
+            shutil.copyfile(auth_src, dst)
+            os.chmod(dst, 0o600)
         # The harness clones from github.com; this sandbox reviews offline from
         # the prefetched store, prepared by src/bench/runner.ts prepareTree.
         cx.prepare_repo = lambda **_kw: tree
@@ -242,6 +259,8 @@ def self_test() -> None:
     assert wrapped.endswith(")\n\nTitle: T\n\nbody"), wrapped[-40:]
     prelude = config_prelude("medium")
     assert "[" not in prelude, "the prelude must hold top-level keys only"
+    assert 'forced_login_method = "chatgpt"' in prelude
+    assert 'forced_login_method = "api"' in config_prelude("medium", "api")
     print("codex_arm self-test ok")
 
 
@@ -256,6 +275,8 @@ def main() -> int:
     ap.add_argument("--case-dir")
     ap.add_argument("--home-base")
     ap.add_argument("--auth-json")
+    ap.add_argument("--api-key", action="store_true",
+                    help=f"the API-key route: the key from ${API_KEY_VAR}, no --auth-json")
     ap.add_argument("--timeout-min", type=int, default=30)
     ap.add_argument("--model", default="gpt-6-sol")
     ap.add_argument("--effort", default="medium")
@@ -268,9 +289,11 @@ def main() -> int:
         n = check_result(json.loads(Path(a.check_result).read_text(encoding="utf-8")))
         print(json.dumps({"comments": n}))
         return 0
-    for k in ("instance_id", "tree", "results", "case_dir", "home_base", "auth_json"):
+    for k in ("instance_id", "tree", "results", "case_dir", "home_base"):
         if not getattr(a, k):
             ap.error(f"--{k.replace('_', '-')} is required")
+    if bool(a.auth_json) == bool(a.api_key):
+        ap.error("exactly one of --auth-json (the login copy) and --api-key is required")
     return review(a)
 
 

@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { AuthExpiring, syncBenchAuth } from "./auth.js";
+import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
 import {
   CODEX_HARNESS_DEFAULTS,
   codexProcessTimeoutMs,
@@ -73,6 +73,7 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
     effort,
     timeout_min: timeoutMin,
     ...(prText ? { pr_text: true as const } : {}),
+    ...authFingerprint(),
   };
   const resume = d.has("--resume");
   mkdirSync(outDir, { recursive: true });
@@ -101,7 +102,10 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
     model,
     effort,
     timeout_min: timeoutMin,
-    endpoint: "ChatGPT Codex backend, Codex's native ChatGPT auth (refresh-disabled token copy)",
+    endpoint:
+      benchAuthMode() === "api-key"
+        ? "the public OpenAI API, an API key through the harness's own CODEX_API_KEY route"
+        : "ChatGPT Codex backend, Codex's native ChatGPT auth (refresh-disabled token copy)",
     runner: "AACR harness evaluation/reviewers/codex.py (via bench/aacr/codex_arm.py)",
     // The equal-inputs switch (src/bench/prtext.ts): the PR title/body appended
     // to the harness's /review instructions.

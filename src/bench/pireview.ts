@@ -73,7 +73,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { AuthExpiring, syncBenchAuth } from "./auth.js";
+import { apiKeyEnv, authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
 import { run } from "./exec.js";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 import { prTextFor } from "./prtext.js";
@@ -165,6 +165,8 @@ export function pireviewEnv(o: {
     TMPDIR: o.tmpDir,
     LANG: "C.UTF-8",
     PI_CODING_AGENT_DIR: o.agentDir,
+    // The API-key route (src/bench/auth.ts): pi's openai provider reads it.
+    ...apiKeyEnv(),
     PI_OFFLINE: "1",
     PI_SKIP_VERSION_CHECK: "1",
     PI_TELEMETRY: "0",
@@ -451,6 +453,8 @@ export interface PireviewFingerprint {
   panel?: string;
   /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
   pr_text?: true;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
 }
 
 export interface PireviewCaseSummary {
@@ -849,6 +853,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     timeout_min: r.timeoutMin,
     ...(r.panel ? { panel: r.panel } : {}),
     ...(r.prText ? { pr_text: true as const } : {}),
+    ...authFingerprint(),
   };
   const piSettings = pireviewPiSettings(r.piVersion);
   mkdirSync(r.outDir, { recursive: true });
@@ -876,7 +881,10 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
     pi_version: r.piVersion,
     model: r.model,
     thinking: r.thinking,
-    endpoint: "pi's built-in openai-codex provider (ChatGPT Codex backend), refresh-disabled login copy",
+    endpoint:
+      benchAuthMode() === "api-key"
+        ? "pi's built-in openai provider (the public OpenAI API), an API key"
+        : "pi's built-in openai-codex provider (ChatGPT Codex backend), refresh-disabled login copy",
     command: `git diff <base>...<head> > pr.diff; pi-review --model <model> --thinking <level>${r.panel ? ` --panel ${r.panel}` : ""} --progress-log <case>/pi-events.jsonl -- @pr.diff '<target>'`,
     target: pireviewTarget("<base>", "<head>", r.prText ? "<the PR title and description>" : null),
     panel: r.panel ?? null,

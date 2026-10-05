@@ -82,7 +82,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { AuthExpiring, DISABLED_REFRESH, syncBenchAuth } from "./auth.js";
+import {
+  authFingerprint,
+  AuthExpiring,
+  benchAuthMode,
+  DISABLED_REFRESH,
+  syncBenchAuth,
+} from "./auth.js";
 import { jwtAccount } from "./codex.js";
 import { run } from "./exec.js";
 import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
@@ -705,6 +711,8 @@ export interface OpencodeFingerprint {
   provider?: "native";
   /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
   pr_text?: true;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
 }
 
 export interface OpencodeCaseSummary {
@@ -1089,8 +1097,14 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     timeout_min: r.flags.timeoutMin,
     ...(r.flags.provider === "native" ? { provider: "native" as const } : {}),
     ...(r.prText ? { pr_text: true as const } : {}),
+    ...authFingerprint(),
   };
   const native = r.flags.provider === "native";
+  // OpenCode's own ChatGPT provider IS a login; the API-key route takes the bridge.
+  if (native && benchAuthMode() === "api-key")
+    throw new Error(
+      "opencode-review: the native provider is OpenCode's ChatGPT login — on the API-key route use the bridge (unset QCR_BENCH_OPENCODE_PROVIDER)",
+    );
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
   const previous = existsSync(runFile)
@@ -1113,7 +1127,9 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     variant: r.flags.variant,
     endpoint: native
       ? "ChatGPT Codex backend through OpenCode's own ChatGPT login (provider openai, refresh-disabled token copy)"
-      : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+      : benchAuthMode() === "api-key"
+        ? "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)"
+        : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
     provider: native ? "native" : "bridge",
     // Native only, and only for a model OpenCode's bundled catalog lacks: the
     // entry declared on its `openai` provider (NATIVE_MODEL_ENTRIES).

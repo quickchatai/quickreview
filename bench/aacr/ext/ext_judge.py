@@ -26,7 +26,9 @@ reasoning effort are forced and logged on every request; every dropped
 request key (temperature, max_tokens, …) is logged; usage is logged per
 request, so the judge's tokens are counted. Credentials: the sandbox's own
 refresh-disabled copy of the pi login (codex_bridge.load_credentials refuses
-anything else).
+anything else) — or, on the API-key route (QCR_BENCH_AUTH=api-key),
+OPENAI_API_KEY from the environment against the public API, exactly as
+codex_bridge does it.
 """
 from __future__ import annotations
 
@@ -64,13 +66,19 @@ def main() -> None:
     ap.add_argument("--effort", default="low")
     ap.add_argument("--verbosity", default="medium")
     ap.add_argument("--auth", default=os.path.join(os.environ.get("PI_CODING_AGENT_DIR", "/tmp/pi-agent"), "auth.json"))
-    ap.add_argument("--upstream", default=cb.UPSTREAM)
+    ap.add_argument("--upstream", default=None)
     ap.add_argument("--log", default="")
     ap.add_argument("--max-inflight", type=int, default=64)
     ap.add_argument("--read-timeout", type=int, default=600)
     ap.add_argument("--probe-temperature", action="store_true")
     a = ap.parse_args()
-    cb.load_credentials(a.auth)  # refuse to start on a wrong/real auth file
+    a.api_key = cb.api_key_route()
+    if a.upstream is None:
+        a.upstream = cb.API_UPSTREAM if a.api_key else cb.UPSTREAM
+    if a.api_key:
+        cb.load_api_key()  # refuse to start without a key
+    else:
+        cb.load_credentials(a.auth)  # refuse to start on a wrong/real auth file
     bridge = cb.Bridge(a)
     if a.probe_temperature:
         row = probe_temperature(bridge)

@@ -29,7 +29,8 @@
 # no-new-privileges, as your uid. The two scoring containers have NO network
 # but an `--internal` docker network shared with the judge (and, for
 # SWE-PRBench, the replay); only the judge container has egress, for the
-# model API, holding the refresh-disabled copy of the pi login.
+# model API, holding the refresh-disabled copy of the pi login (or, with
+# QCR_BENCH_AUTH=api-key, your own OpenAI key — bench/aacr/README.md "Reproduce").
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,6 +51,10 @@ BASE_IMG="${QCR_EXT_BASE:-qcr-bench:pi099}"
 MIMG="qcr-ext-martian:e616e84"
 SIMG="qcr-ext-sweprbench:379f0bf"
 AUTH_VOLUME="${QCR_BENCH_AUTH_VOLUME:-companion-pihome}"
+# The credential route, as in bench.sh: QCR_BENCH_AUTH=api-key runs the judge on
+# your own OpenAI key (bench/aacr/openai.env, --env-file) instead of the login volume.
+AUTH_MODE="${QCR_BENCH_AUTH:-login}"
+OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$AACR/openai.env}"
 JUDGE_MODEL="gpt-6.1-sol"
 JUDGE_EFFORT="${EXT_JUDGE_EFFORT:-low}"
 NET_INTERNAL="qcr-ext-internal"
@@ -109,15 +114,24 @@ start_judge() { # work tag
       "$SIMG" python /opt/qcr-ext/mock_judge.py >/dev/null
     echo "MOCK judge — plumbing only; these numbers mean nothing" > "$work/judge/JUDGE.txt"
   else
+    local cred=() how="ChatGPT login, refresh-disabled copy"
+    if [[ "$AUTH_MODE" == api-key ]]; then
+      [[ -f "$OPENAI_ENV" && ! -L "$OPENAI_ENV" ]] && grep -qE '^OPENAI_API_KEY=.+' "$OPENAI_ENV" \
+        || die "QCR_BENCH_AUTH=api-key needs OPENAI_API_KEY=<key> in $OPENAI_ENV (a regular file)"
+      cred=(-e QCR_BENCH_AUTH=api-key --env-file "$OPENAI_ENV"); how="the public OpenAI API, your API key"
+    else
+      [[ "$AUTH_MODE" == login ]] || die "QCR_BENCH_AUTH must be login | api-key"
+      cred=(--mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly"
+        --mount "type=tmpfs,dst=/pi-agent-src/sessions")
+    fi
     docker run -d --rm --name "$name" "${HARDEN[@]}" --memory 2g --cpus 2 --network "$NET_EGRESS" \
-      --mount "type=volume,src=$AUTH_VOLUME,dst=/pi-agent-src,volume-subpath=agent,readonly" \
-      --mount "type=tmpfs,dst=/pi-agent-src/sessions" \
+      "${cred[@]}" \
       --mount "type=bind,src=$work/judge,dst=/judge-out" \
       --entrypoint bash "$JIMG" -c "mkdir -p \"\$HOME\" && node /opt/quickreview/sandbox/dist/src/bench/cli.js auth --need-min 120 \
         && exec python3 /opt/quickreview/bench/ext_judge.py --host 0.0.0.0 --port 8765 --model $JUDGE_MODEL \
            --effort $JUDGE_EFFORT --max-inflight 64 --probe-temperature --log /judge-out/judge.jsonl" >/dev/null
     docker network connect --alias "$JUDGE_HOST" "$NET_INTERNAL" "$name"
-    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py (ChatGPT login, refresh-disabled copy)" > "$work/judge/JUDGE.txt"
+    echo "$JUDGE_MODEL, reasoning effort $JUDGE_EFFORT, via bench/aacr/ext/ext_judge.py ($how)" > "$work/judge/JUDGE.txt"
   fi
   wait_health "$name" 8765
   log "judge $name up ($(cat "$work/judge/JUDGE.txt"))"

@@ -237,6 +237,8 @@ export interface OcrFingerprint {
   flags: OcrFlags;
   /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
   pr_text?: true;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
 }
 
 export interface OcrCaseSummary {

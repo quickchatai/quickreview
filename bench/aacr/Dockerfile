@@ -94,14 +94,14 @@ RUN git clone --quiet ${AACR_BENCH_REPO} /opt/aacr-bench \
 WORKDIR /opt/quickreview/sandbox
 COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/dist ./dist
-# AGENTS.md AND CLAUDE.md, as the VM's rsync ships them: pi loads the FIRST of
-# AGENTS.override.md → AGENTS.md → CLAUDE.md from the cwd, so without
-# AGENTS.md every bench session would read the 80 KB dev manual instead of
-# what production reviewers read.
-COPY package.json config.toml AGENTS.md CLAUDE.md ./
-# That config.toml is the operator's live one, copied in by bench.sh from
-# wherever the install locator found it. Named explicitly so the
-# locator inside the image takes it as given rather than as a legacy fallback.
+# AGENTS.md, as the VM's rsync ships it: pi loads the FIRST of
+# AGENTS.override.md → AGENTS.md → CLAUDE.md from the cwd. The image ships the
+# override (below), so a CLAUDE.md would never be read — and it is not part of
+# the public tree, so it is not copied.
+COPY package.json config.toml AGENTS.md ./
+# That config.toml is the one bench.sh baked in (QCR_BENCH_CONFIG, else the
+# operator's own via the install locator,, else config.example.toml).
+# Named explicitly so the locator inside the image takes it as given.
 ENV QCR_CONFIG=/opt/quickreview/sandbox/config.toml
 # …and the reviewer context stub the VM entrypoint installs at boot
 # (deploy/reviewer/AGENTS.override.md): pi takes it FIRST, so bench sessions

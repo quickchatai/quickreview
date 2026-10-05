@@ -169,7 +169,8 @@ describe("Codex runs as the harness's reviewers/codex.py runs it", () => {
     expect(py).toContain("cx.write_codex_config(codex_env)");
     expect(py).toContain("cx.review_instance(");
     expect(py).toContain("cx.prepare_repo = lambda **_kw: tree");
-    // Only the model rides codex_env: no API key, no gateway.
+    // Only the model rides codex_env — plus, on the API-key route only, the key
+    // the harness's own way (CODEX_API_KEY); never a gateway.
     expect(py).toContain("codex_env: Dict[str, str] = {config.CODEX_MODEL_VAR: a.model}");
     // The self-test pins the harness's argv, prompt and process timeout.
     expect(py).toContain(
@@ -184,7 +185,9 @@ describe("Codex runs as the harness's reviewers/codex.py runs it", () => {
     for (const k of [
       'model_reasoning_effort = "{effort}"',
       'cli_auth_credentials_store = "file"',
-      'forced_login_method = "chatgpt"',
+      // the login copy by default; "api" only on the API-key route
+      'login: str = "chatgpt"',
+      'forced_login_method = "{login}"',
       "check_for_update_on_startup = false",
       'web_search = "disabled"',
     ])

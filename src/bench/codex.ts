@@ -31,7 +31,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
-import { DISABLED_REFRESH } from "./auth.js";
+import { benchAuthMode, DISABLED_REFRESH, type BenchAuthMode } from "./auth.js";
 import { run } from "./exec.js";
 import { prTextFor } from "./prtext.js";
 import { prepareTree } from "./runner.js";
@@ -117,8 +117,13 @@ export function codexDriverEnv(o: {
   path: string;
   home: string;
   tmpDir: string;
+  /** The API-key route (src/bench/auth.ts): the key, handed to the driver
+   * under its own name (codex_arm.py API_KEY_VAR), never as an API-key
+   * variable Codex or the driver would read on their own. */
+  apiKey?: string;
 }): NodeJS.ProcessEnv {
   return {
+    ...(o.apiKey ? { QCR_CODEX_API_KEY: o.apiKey } : {}),
     PATH: o.path,
     HOME: o.home,
     TMPDIR: o.tmpDir,
@@ -141,7 +146,8 @@ export interface CodexDriverPaths {
   results: string;
   caseDir: string;
   homeBase: string;
-  authJson: string;
+  /** The login copy; `null` on the API-key route (the driver's --api-key). */
+  authJson: string | null;
 }
 
 /** The driver's argv. `prTextFile` (the equal-inputs switch, src/bench/
@@ -167,8 +173,7 @@ export function codexDriverArgv(
     p.caseDir,
     "--home-base",
     p.homeBase,
-    "--auth-json",
-    p.authJson,
+    ...(p.authJson === null ? ["--api-key"] : ["--auth-json", p.authJson]),
     "--timeout-min",
     String(o.timeoutMin),
     "--model",
@@ -303,6 +308,8 @@ export interface CodexFingerprint {
   timeout_min: number;
   /** Present only when the PR text was handed over (QCR_BENCH_PR_TEXT=1). */
   pr_text?: true;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
 }
 
 export interface CodexCaseSummary {
@@ -392,6 +399,8 @@ export interface CodexRunnerOptions {
   log?: (line: string) => void;
   /** Hand Codex the PR title/body in its review instructions (src/bench/prtext.ts). */
   prText?: boolean;
+  /** Default `benchAuthMode()`; on "api-key" the key is OPENAI_API_KEY. */
+  authMode?: BenchAuthMode;
 }
 
 function resultPath(outDir: string, c: BenchCase): string {
@@ -439,10 +448,18 @@ export async function reviewCaseCodex(
   const started = Date.now();
   const summary = blankSummary(c, o.fingerprint);
   let result: Record<string, unknown> | null = null;
+  const apiKeyRoute = (o.authMode ?? benchAuthMode()) === "api-key";
   try {
-    writeFileSync(o.codexAuthFile, codexAuthFrom(readFileSync(o.benchAuthFile, "utf8")), {
-      mode: 0o600,
-    });
+    let apiKey: string | undefined;
+    if (apiKeyRoute) {
+      apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey)
+        throw new Error("the API-key route needs OPENAI_API_KEY (bench/aacr/openai.env)");
+    } else {
+      writeFileSync(o.codexAuthFile, codexAuthFrom(readFileSync(o.benchAuthFile, "utf8")), {
+        mode: 0o600,
+      });
+    }
     await prepareTree(join(o.store, safe), tree, meta);
     for (const d of [tmpDir, homeBase]) {
       rmSync(d, { recursive: true, force: true });
@@ -452,6 +469,7 @@ export async function reviewCaseCodex(
       path: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       home: process.env.HOME ?? "/tmp",
       tmpDir,
+      ...(apiKey ? { apiKey } : {}),
     });
     const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
     summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
@@ -476,7 +494,7 @@ export async function reviewCaseCodex(
         results: join(o.outDir, "results", "all"),
         caseDir,
         homeBase,
-        authJson: o.codexAuthFile,
+        authJson: apiKeyRoute ? null : o.codexAuthFile,
       },
       { timeoutMin: o.timeoutMin, model: o.model, effort: o.effort, prTextFile },
     );

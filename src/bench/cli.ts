@@ -70,7 +70,14 @@ import {
   type CaseSet,
   type PrefetchMeta,
 } from "./aacr.js";
-import { AuthExpiring, syncBenchAuth } from "./auth.js";
+import {
+  apiKeyEnv,
+  authFingerprint,
+  AuthExpiring,
+  benchAuthMode,
+  modelForAuth,
+  syncBenchAuth,
+} from "./auth.js";
 import { prefetchCase, storeDir } from "./prefetch.js";
 import {
   OCR_HARNESS_DEFAULTS,
@@ -335,6 +342,7 @@ async function main(): Promise<number> {
       dataset: set.dataset,
       profile,
       ...(overrides ? { overrides } : {}),
+      ...authFingerprint(),
       models: {
         effort: ctx.cfg.models.effort,
         conversation: ctx.cfg.models.conversation,
@@ -574,6 +582,7 @@ async function main(): Promise<number> {
       effort,
       flags: flagsOcr,
       ...(prText ? { pr_text: true as const } : {}),
+      ...authFingerprint(),
     };
     const resume = f.has("--resume");
     mkdirSync(outDir, { recursive: true });
@@ -596,7 +605,10 @@ async function main(): Promise<number> {
       model,
       effort,
       verbosity: health["verbosity"] ?? null,
-      endpoint: "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+      endpoint:
+        benchAuthMode() === "api-key"
+        ? "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)"
+        : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
       flags: {
         concurrency: flagsOcr.concurrency,
         timeout_min: flagsOcr.timeoutMin,
@@ -846,7 +858,9 @@ async function main(): Promise<number> {
       piVersion,
       // QCR_PIREVIEW_MODEL (bench.sh QCR_BENCH_PIREVIEW_MODEL): pi's model id,
       // e.g. openai-codex/gpt-6.1-sol — which needs a pi whose catalog has it.
-      model: f.get("--model") ?? (process.env.QCR_PIREVIEW_MODEL || PIREVIEW_DEFAULTS.model),
+      model: modelForAuth(
+        f.get("--model") ?? (process.env.QCR_PIREVIEW_MODEL || PIREVIEW_DEFAULTS.model),
+      ),
       thinking:
         f.get("--thinking") ?? process.env.QCR_PIREVIEW_THINKING ?? PIREVIEW_DEFAULTS.thinking,
       // `--panel code-experts` = what /rv runs inside Pi (src/bench/pireview.ts header).
@@ -1010,7 +1024,10 @@ async function main(): Promise<number> {
     const defects: DefectSet = parseDefectSet(
       JSON.parse(readFileSync(f.get("--defects")!, "utf8")),
     );
-    const model = f.get("--model") ?? "openai-codex/gpt-6-sol:high";
+    // On the API-key route (src/bench/auth.ts) an `openai-codex/` judge runs as
+    // `openai/` — and judgeLabel keeps that provider in the label, so keyed
+    // verdicts never land in (or --resume over) the published login verdicts.
+    const model = modelForAuth(f.get("--model") ?? "openai-codex/gpt-6-sol:high");
     const label = f.get("--label") ?? judgeLabel(defects.version, model);
     const judgeDir = join(outDir, "judge", label);
     const cases = selectCases(set, only(f)).filter((c) => {
@@ -1097,6 +1114,8 @@ async function main(): Promise<number> {
                 ...(model.startsWith("anthropic/") && process.env.CLAUDE_CODE_OAUTH_TOKEN
                   ? { ANTHROPIC_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN }
                   : {}),
+                // An `openai/` judge on the API-key route reads OPENAI_API_KEY.
+                ...(model.startsWith("openai/") ? apiKeyEnv() : {}),
                 GIT_CONFIG_NOSYSTEM: "1",
                 GIT_CONFIG_SYSTEM: "/dev/null",
                 GIT_CONFIG_GLOBAL: "/dev/null",

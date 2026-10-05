@@ -838,7 +838,7 @@ describe("the sandbox cannot post", () => {
     expect(block).toContain('"type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"');
     // The login and the repos only for `judge`; `judge-report` is --network none.
     expect(block).toMatch(
-      /jn=\(--network none\)\n\s+if \[\[ "\$cmd" == judge \]\]; then\n\s+auth_mounts;/,
+      /jn=\(--network none\)\n\s+if \[\[ "\$cmd" == judge \]\]; then\n[^\n]*\bauth_mounts\b/,
     );
     expect(block).toContain('"${HARDEN[@]}"');
     const ic = readFileSync(join(ROOT, "bench", "aacr", "in-container.sh"), "utf8");

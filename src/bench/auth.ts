@@ -1,6 +1,6 @@
-// The benchmark's pi login: the companion's, READ-ONLY, never refreshed.
+// The benchmark's pi login: a ChatGPT login volume, READ-ONLY, never refreshed.
 //
-// The user asked for the companion's Codex login to be reused. Sharing its
+// The login volume (default: the operator's companion's) is reused. Sharing its
 // agent/ dir read-write (the first design) let a prompt-injected review write
 // the companion's persistent pi config — AGENTS.md, skills/, extensions/,
 // bin/ — which the companion loads with its much wider authority (adversarial
@@ -20,6 +20,56 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
+
+// The API-KEY route. The published runs used the login above; an
+// outsider re-running the benchmark brings their own API key instead.
+// `QCR_BENCH_AUTH=api-key` (set by bench.sh from the host's QCR_BENCH_AUTH):
+//   - no login is mounted or read: the sandbox's agent dir gets an EMPTY
+//     auth.json, so pi resolves every provider's key from the environment
+//     (OPENAI_API_KEY / ANTHROPIC_API_KEY, passed by --env-file, never argv);
+//   - every `openai-codex/` model spec (the ChatGPT-login provider) is
+//     rewritten to `openai/` — the same model id on the public OpenAI API;
+//   - every run fingerprint carries `auth: "api-key"`, so a keyed run never
+//     resumes over, or is mixed with, a login run.
+
+export type BenchAuthMode = "login" | "api-key";
+
+/** The sandbox's credential route, from `QCR_BENCH_AUTH` (unset = login). */
+export function benchAuthMode(env: NodeJS.ProcessEnv = process.env): BenchAuthMode {
+  const v = (env["QCR_BENCH_AUTH"] ?? "").trim();
+  if (v === "" || v === "login") return "login";
+  if (v === "api-key") return "api-key";
+  throw new Error(`QCR_BENCH_AUTH must be login | api-key (got "${v}")`);
+}
+
+/** A pi model spec as it runs under `mode`: the ChatGPT-login provider
+ * `openai-codex/` becomes the public API's `openai/` on the key route;
+ * every other spec (and every spec on the login route) is unchanged. */
+export function modelForAuth(spec: string, mode: BenchAuthMode = benchAuthMode()): string {
+  return mode === "api-key" ? spec.replace(/^openai-codex\//, "openai/") : spec;
+}
+
+/** Spread into an arm's fingerprint: empty on the login route (so every
+ * published fingerprint is unchanged), `{ auth: "api-key" }` on the key route. */
+export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): { auth?: "api-key" } {
+  return mode === "api-key" ? { auth: "api-key" } : {};
+}
+
+/** The API keys a pi process may see on the key route — read from the
+ * container's environment (bench.sh's --env-file), passed on by NAME only.
+ * Empty on the login route, so nothing changes there. */
+export function apiKeyEnv(
+  mode: BenchAuthMode = benchAuthMode(),
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  if (mode !== "api-key") return {};
+  const out: Record<string, string> = {};
+  for (const k of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
+    const v = env[k];
+    if (v) out[k] = v;
+  }
+  return out;
+}
 
 /** What a copied OAuth credential carries instead of the real refresh token. */
 export const DISABLED_REFRESH = "bench-refresh-disabled";
@@ -79,10 +129,25 @@ export function syncBenchAuth(o: {
   root: string;
   needMs: number;
   now?: () => number;
+  /** Default: `benchAuthMode()` — the key route reads no login at all. */
+  mode?: BenchAuthMode;
 }): { expiresAt: number | null } {
+  if ((o.mode ?? benchAuthMode()) === "api-key") {
+    // No login: an empty auth.json, so pi takes each provider's key from the
+    // environment. Nothing is read from srcDir (bench.sh mounts nothing there).
+    mkdirSync(o.dstDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(o.dstDir, "auth.json"), "{}\n", { mode: 0o600 });
+    chmodSync(join(o.dstDir, "auth.json"), 0o600);
+    const { settings, trust } = benchSettings(o.root);
+    writeFileSync(join(o.dstDir, "settings.json"), settings);
+    writeFileSync(join(o.dstDir, "trust.json"), trust);
+    return { expiresAt: null };
+  }
   const src = join(o.srcDir, "auth.json");
   if (!existsSync(src)) {
-    throw new AuthExpiring(`no pi login at ${src} — log the companion in (/login) first`);
+    throw new AuthExpiring(
+      `no pi login at ${src} — log pi in on the auth volume first (/login), or use your own API key: QCR_BENCH_AUTH=api-key (bench/aacr/README.md "Reproduce")`,
+    );
   }
   const { json, expiresAt } = benchAuthFrom(readFileSync(src, "utf8"));
   const now = (o.now ?? Date.now)();

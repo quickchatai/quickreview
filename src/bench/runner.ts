@@ -117,6 +117,13 @@ import {
   type Variant,
 } from "./aacr.js";
 import { must, run } from "./exec.js";
+import {
+  apiKeyEnv,
+  authFingerprint,
+  benchAuthMode,
+  modelForAuth,
+  type BenchAuthMode,
+} from "./auth.js";
 
 export interface RunnerOptions {
   /** The production tree inside the image (`/opt/quickreview/sandbox`) — the
@@ -199,6 +206,8 @@ export interface RunFingerprint {
   profile: string;
   /** `--config` levers this run set ("" = the shipped config). */
   overrides?: string;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
   conversation: string;
   tiers: Record<string, string>;
   validate_tier: string;
@@ -268,6 +277,7 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     qcr_commit: process.env.QCR_BENCH_COMMIT ?? "unknown",
     profile,
     ...(overrides ? { overrides } : {}),
+    ...authFingerprint(),
     conversation: cfg.models.conversation,
     tiers: { ...cfg.models.tiers },
     validate_tier: cfg.models.validate_tier,
@@ -960,6 +970,9 @@ export async function reviewCase(
       ...(process.env.ANTHROPIC_API_KEY
         ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
         : {}),
+      // The API-key route (src/bench/auth.ts): OPENAI_API_KEY for the `openai/`
+      // specs, from bench.sh's --env-file. Nothing on the login route.
+      ...apiKeyEnv(),
     };
     const sessionDir = join(caseDir, "session");
     // This attempt's session only: an earlier attempt's JSONL left here would
@@ -1262,9 +1275,26 @@ export function contextFor(
   // the profile's lens tuning (and its `[posting]` policy) is
   // overlaid LAST — after the `--config` levers and any preset re-parse —
   // exactly as production overlays it after config.toml: the profile wins.
-  const cfg = applyProfilePosting(
-    applyProfileTuning(levered, loadProfileLensTuning(root, chosen)),
-    loadProfilePosting(root, chosen),
+  const cfg = withAuthModels(
+    applyProfilePosting(
+      applyProfileTuning(levered, loadProfileLensTuning(root, chosen)),
+      loadProfilePosting(root, chosen),
+    ),
   );
   return { cfg, ecosystem: ecosystemFor(loadProfileEcosystem(root, chosen)) };
+}
+
+/** Every model spec of the config as it runs on the bench's credential route
+ * (src/bench/auth.ts): on the API-key route `openai-codex/` → `openai/`, the
+ * same model on the public API; on the login route the config unchanged. */
+export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode()): Config {
+  if (mode !== "api-key") return cfg;
+  const out = structuredClone(cfg);
+  const m = out.models;
+  m.default = modelForAuth(m.default, mode);
+  m.conversation = modelForAuth(m.conversation, mode);
+  m.overseer = modelForAuth(m.overseer, mode);
+  for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
+    m.tiers[k] = modelForAuth(m.tiers[k], mode);
+  return out;
 }

@@ -169,9 +169,16 @@ export function loadJudgements(dir: string): Record<string, CaseJudgement[]> {
   return by;
 }
 
-/** A judge dir's label: ground-truth version + model, filesystem-safe. */
+/** A judge dir's label: ground-truth version + model, filesystem-safe. The
+ * providers of the published verdicts (`openai-codex/`, the ChatGPT login, and
+ * `anthropic/`) are dropped, so those labels read as they always have; any
+ * other provider stays in the label — `openai/gpt-6-sol:high` on the
+ * API-key route is `v1-openai-gpt-6-sol-high`, never the login's
+ * `v1-gpt-6-sol-high`, so a keyed re-judge cannot mix with (or `--resume`
+ * over) the published verdicts. */
 export function judgeLabel(defectSetVersion: string, model: string): string {
-  return `v${defectSetVersion}-${model.replace(/^[^/]*\//, "").replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+  const bare = model.replace(/^(openai-codex|anthropic)\//, "");
+  return `v${defectSetVersion}-${bare.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
 }
 
 export function clearJudgeCase(dir: string, instanceId: string): void {

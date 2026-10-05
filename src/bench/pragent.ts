@@ -49,7 +49,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
-import { AuthExpiring, syncBenchAuth } from "./auth.js";
+import { authFingerprint, AuthExpiring, benchAuthMode, syncBenchAuth } from "./auth.js";
 import { run } from "./exec.js";
 import { bridgeDelta, type BridgeStats, type BridgeUsage } from "./ocr.js";
 import type { OcrShapedComment } from "./opencode.js";
@@ -338,6 +338,8 @@ export interface PragentFingerprint {
   model: string;
   effort: string;
   pr_text: boolean;
+  /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
+  auth?: "api-key";
   timeout_min: number;
 }
 
@@ -721,6 +723,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     effort: r.effort,
     pr_text: r.prText,
     timeout_min: r.timeoutMin,
+    ...authFingerprint(),
   };
   mkdirSync(r.outDir, { recursive: true });
   const runFile = join(r.outDir, "run.json");
@@ -746,7 +749,10 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     effort: r.effort,
     verbosity: r.verbosity,
     pr_text: r.prText,
-    endpoint: "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+    endpoint:
+      benchAuthMode() === "api-key"
+        ? "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)"
+        : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
     command:
       "git branch <base_ref> <base>; (in the tree at <head>) python pragent_driver.py --command describe|review|improve → python -m pr_agent.cli --pr_url <base_ref> describe|review|improve (local git provider; /describe's published body is the description /review and /improve read)",
     commands: [...PRAGENT_COMMANDS],
