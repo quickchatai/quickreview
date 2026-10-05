@@ -449,7 +449,9 @@ class VolumeWriter:
     def _open(self):
         self._check_space()
         n = len(self.volumes) + 1
-        path = self.out / f"{self.stem}.part{n:02d}.tar.zst"
+        # written under a `.partial` name and renamed only in finish(), so an
+        # interrupted run never leaves a file that looks complete
+        path = self.out / f"{self.stem}.part{n:02d}.tar.zst.partial"
         self.fh = open(path, "wb")
         self.proc = subprocess.Popen(["zstd", f"-{self.level}", "--long=27", f"-T{self.threads}", "-B64MiB", "-q", "-c"],
                                      stdin=subprocess.PIPE, stdout=self.fh)
@@ -490,11 +492,12 @@ class VolumeWriter:
 
     def finish(self) -> list[dict]:
         self._close()
-        if len(self.volumes) == 1:  # one part: no part suffix
-            p = self.volumes[0]["path"]
-            q = p.with_name(f"{self.stem}.tar.zst")
+        for v in self.volumes:
+            p = v["path"]
+            final = f"{self.stem}.tar.zst" if len(self.volumes) == 1 else p.name[:-len(".partial")]
+            q = p.with_name(final)
             p.rename(q)
-            self.volumes[0]["path"] = q
+            v["path"] = q
         return self.volumes
 
 
@@ -560,25 +563,62 @@ def cmd_plan(a):
         print(f"dropped {g:18} {s / GIB:8.2f} GiB  {r}")
 
 
+def group_done(out: Path, group: str) -> bool:
+    """A group is done when MANIFEST.json lists it and every volume it lists
+    exists at the recorded size (the manifest is written only after the
+    volumes were renamed from `.partial`)."""
+    man = out / "MANIFEST.json"
+    if not man.exists():
+        return False
+    g = json.loads(man.read_text()).get("groups", {}).get(group)
+    return bool(g) and all((out / v["file"]).is_file() and (out / v["file"]).stat().st_size == v["bytes"] for v in g["volumes"])
+
+
+def clear_group(out: Path, group: str):
+    """Remove whatever an earlier, interrupted or superseded build of this
+    group left (partials and finished volumes alike) before rebuilding it."""
+    for p in out.glob(f"quickreview-runs-{group}.*"):
+        print(f"  removing {p.name} (rebuilding {group})", flush=True)
+        p.unlink()
+
+
 def cmd_archive(a):
+    """Resumable: a group whose volumes the manifest already records is
+    skipped (unless --rebuild); each finished group is written to the
+    manifest the moment it completes, so a kill loses only the groups in
+    flight, which leave nothing but `.partial` files."""
     src, out = Path(a.src), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     tree = Tree(src)
-    files = collections.defaultdict(list)
-    for rel in walk_files(src):
-        files[tree.group(rel)].append(rel)
     groups = [g for g in GROUPS if not a.groups or g in a.groups.split(",")]
-    jobs = [(str(src), str(out), g, files[g], a.level, a.cap, a.threads) for g in groups if files[g]]
+    todo = []
+    for g in groups:
+        if group_done(out, g) and not a.rebuild:
+            print(f"  {g}: already complete in MANIFEST.json, skipped (--rebuild to redo)", flush=True)
+        else:
+            todo.append(g)
+    files = collections.defaultdict(list)
+    if todo:
+        for rel in walk_files(src):
+            g = tree.group(rel)
+            if g in todo:
+                files[g].append(rel)
+    for g in todo:
+        clear_group(out, g)
+    jobs = [(str(src), str(out), g, files[g], a.level, a.cap, a.threads) for g in todo if files[g]]
     jobs.sort(key=lambda j: -len(j[3]))
-    results = []
-    with multiprocessing.Pool(a.jobs) as pool:
-        for r in pool.imap_unordered(build_group, jobs):
-            for v in r["volumes"]:
-                print(f"  {Path(v['path']).name}: {v['files']} files, {os.path.getsize(v['path']) / (1 << 20):.1f} MiB "
-                      f"({r['seconds']} s)", flush=True)
-            results.append(r)
-    write_manifest(out, src, results, a)
-    write_readme(out)
+    if jobs:
+        with multiprocessing.Pool(min(a.jobs, len(jobs))) as pool:
+            for r in pool.imap_unordered(build_group, jobs):
+                for v in r["volumes"]:
+                    print(f"  {Path(v['path']).name}: {v['files']} files, {os.path.getsize(v['path']) / (1 << 20):.1f} MiB "
+                          f"({r['seconds']} s)", flush=True)
+                write_manifest(out, src, [r], a)
+    missing = [g for g in GROUPS if not group_done(out, g)]
+    if missing:
+        print(f"README not written: groups still to build: {', '.join(missing)}")
+    else:
+        write_readme(out)
 
 
 def write_manifest(out: Path, src: Path, results: list, a):
@@ -815,6 +855,8 @@ def slim_cost(case_dir: Path) -> tuple[float | None, str]:
 def cmd_slim(a):
     src, out = Path(a.src), Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("quickreview-bench-slim.*"):  # an earlier or interrupted build: rebuilt whole
+        old.unlink()
     proc = Processor(src)
     counts, n = collections.Counter(), 0
     w = VolumeWriter(out, "quickreview-bench-slim", a.level, a.cap, a.threads)
@@ -952,7 +994,8 @@ def main():
             s.add_argument("--cap", type=int, default=int(1.9 * GIB))
             s.add_argument("--threads", type=int, default=4)
         if name == "archive":
-            s.add_argument("--groups", default="")
+            s.add_argument("--groups", default="", help="comma-separated groups to build (default: all); one per invocation keeps a pause cheap")
+            s.add_argument("--rebuild", action="store_true", help="rebuild groups the manifest already records")
             s.add_argument("--jobs", type=int, default=3)
     a = ap.parse_args()
     {"plan": cmd_plan, "archive": cmd_archive, "slim": cmd_slim, "regrep": cmd_regrep,

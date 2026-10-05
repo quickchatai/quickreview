@@ -102,8 +102,8 @@ PAPER_SELECTION = {  # tab:selection: S40 recall, O145 found, O145 recall, O145 
     "OpenCode native + PR text": ("50%", "206", "51%", "60"), "PR-Agent": ("34%", "154.5", "38%", "44.5"),
 }
 PAPER_SOL = {  # tab:sol-summary: found, recall, high, correct, 2nd recall, 2nd correct, $/PR, AACR F1
-    "quickreviewd default": ("437.5", "84%", "86", "86%", "84%", "86%", "1.71", "12.6%"),
-    "quickreviewd low": ("345", "66%", "75", "80%", "66%", "82%", "0.80", "11.9%"),
+    "QuickReview default": ("437.5", "84%", "86", "86%", "84%", "86%", "1.71", "12.6%"),
+    "QuickReview low": ("345", "66%", "75", "80%", "66%", "82%", "0.80", "11.9%"),
     "Claude Code (Opus 5.5)": ("324.5", "62%", "72.5", "81%", "62%", "86%", "0.20", "8.9%"),
     "pi-review": ("292.5", "56%", "71.5", "79%", "56%", "79%", "0.11", "9.1%"),
     "open-code-review": ("291.5", "56%", "64.5", "73%", "56%", "77%", "0.60", "14.0%"),
