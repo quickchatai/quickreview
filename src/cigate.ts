@@ -112,8 +112,10 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  * the adapter lists statuses after check-runs the status always won — red or
  * pending read green. `scripts/guards.sh` never grouped statuses with
  * check-runs at all; this is that rule, so the two copies are identical
- * rather than claimed identical. `scripts/pr-checks.sh` reads check-runs only
- * and applies the check-run clause. Keep the three in step.
+ * rather than claimed identical. `scripts/pr-checks.sh` reads check-runs AND
+ * commit statuses (until then it read check-runs only and called a
+ * head green that both guards called red) and applies both clauses. Keep the
+ * three in step.
  */
 export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
   interface Kept {

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # pr-checks.sh — compact read-only CI status for a PR.
 #
-# One line per check run (name, status/conclusion, url) plus a final
+# One line per check run (name, status/conclusion, url) and per commit status
+# (`status <context>: <state>`), plus a final
 #   SUMMARY: n passed / n failed / n pending
-# REST only: GET /pulls/{n} for the head sha, then /commits/{sha}/check-runs.
+# REST only: GET /pulls/{n} for the head sha, then /commits/{sha}/check-runs
+# and /commits/{sha}/status.
 # Read-only: no gate involvement; token via scripts/mint-token.sh only.
 #
 # Usage: pr-checks.sh <pr-number> [--why]
@@ -71,7 +73,8 @@ get() { # get <path>  → body in $OUT, dies on non-200
 OUT="$(mktemp)"
 RUNS="$(mktemp)"
 FAILING="$(mktemp)"
-trap 'rm -f "$OUT" "$RUNS" "$FAILING" "$FAILING.output"' EXIT
+STATUSES="$(mktemp)"
+trap 'rm -f "$OUT" "$RUNS" "$FAILING" "$FAILING.output" "$STATUSES"' EXIT
 
 get "/repos/$REPO/pulls/$PR"
 HEAD_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT")"
@@ -92,9 +95,30 @@ print(len(rows))' "$RUNS" "$OUT")"
   if ((n < 100)); then break; fi
 done
 
-python3 - "$RUNS" "$FAILING" <<'PY'
+# The COMMIT STATUSES at the head, every page, as listChecks and guards.sh read
+# them (MC-51). Until this the script read check-runs only, so a
+# failing status (a deploy preview, an external CI that reports through the
+# status API) printed CLASSIFIED: green while guard 4 — on both routes — said
+# red, and the Decide step chose an approval the guard then refused. A status
+# is its own check: never collapsed with a check-run of its context, nor with
+# another status (the src/cigate.ts latestRunPerName rule).
+echo '{"statuses": []}' >"$STATUSES"
+for ((page = 1; page <= 10; page++)); do
+  get "/repos/$REPO/commits/$HEAD_SHA/status?per_page=100&page=$page"
+  n="$(python3 -c '
+import json, sys
+acc = json.load(open(sys.argv[1]))
+rows = json.load(open(sys.argv[2])).get("statuses") or []
+acc["statuses"] += rows
+json.dump(acc, open(sys.argv[1], "w"))
+print(len(rows))' "$STATUSES" "$OUT")"
+  if ((n < 100)); then break; fi
+done
+
+python3 - "$RUNS" "$FAILING" "$STATUSES" <<'PY'
 import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
+statuses = json.load(open(sys.argv[3])).get("statuses", [])
 # Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts
 # latestRunPerName, rule stated exactly there): GitHub auto-cancels
 # superseded runs — only the most recent run of each check name counts.
@@ -135,16 +159,29 @@ for c in runs:
         out = c.get("output") or {}
         with open(sys.argv[2] + ".output", "a") as fh:
             fh.write(json.dumps({"id": c["id"], "title": out.get("title"), "summary": out.get("summary"), "text": out.get("text")}) + "\n")
+for s in statuses:
+    st = s.get("state") or ""
+    desc = (s.get("description") or "").strip()
+    print(f"status {s.get('context') or 'status'}: {st or '-'}  {s.get('target_url') or '-'}" + (f"  ({desc[:200]})" if desc else ""))
+    if st == "pending":
+        pending += 1
+    elif st == "success":
+        passed += 1
+    else:
+        failed += 1
 print(f"SUMMARY: {passed} passed / {failed} failed / {pending} pending (latest run per check only)")
-# The one line the Decide step reads. Same table as the daemon gate + guards.sh.
-if not latest:
+# The one line the Decide step reads. Same table as the daemon gate + guards.sh:
+# check-runs (latest per name) and commit statuses (each its own check).
+if not latest and not statuses:
     print("CLASSIFIED: none")
 elif pending:
     print("CLASSIFIED: pending")
 elif failed:
     print("CLASSIFIED: red")
 else:
-    succeeded = any((c.get("conclusion") == "success") for c in latest)
+    succeeded = any((c.get("conclusion") == "success") for c in latest) or any(
+        (s.get("state") == "success") for s in statuses
+    )
     print("CLASSIFIED: green" if succeeded else "CLASSIFIED: red")
 PY
 

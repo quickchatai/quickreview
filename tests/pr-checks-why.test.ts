@@ -23,6 +23,8 @@ let logStatus: number;
 /** When set, the check-runs route serves these rows the way GitHub does —
  * `per_page` of page `page` — instead of the two-run fixture. */
 let pagedRuns: unknown[] | null;
+/** The combined-status endpoint's `statuses` rows at the head. */
+let statusRows: unknown[];
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
@@ -39,6 +41,7 @@ beforeEach(async () => {
   methods = [];
   logStatus = 200;
   pagedRuns = null;
+  statusRows = [];
   server = createServer((req, res) => {
     methods.push(req.method ?? "?");
     const url = req.url ?? "";
@@ -80,6 +83,12 @@ beforeEach(async () => {
           },
         ],
       });
+    if (url.startsWith(`/repos/o/r/commits/${HEAD}/status`)) {
+      const q = new URL(url, "http://stub").searchParams;
+      const per = Number(q.get("per_page") ?? 30);
+      const page = Number(q.get("page") ?? 1);
+      return json({ state: "pending", statuses: statusRows.slice((page - 1) * per, page * per) });
+    }
     if (url.startsWith("/repos/o/r/check-runs/2/annotations"))
       return json([
         {
@@ -160,6 +169,41 @@ describe("pr-checks.sh --why", () => {
     expect(stdout).toContain("late: completed/failure");
     expect(stdout).toContain("SUMMARY: 100 passed / 1 failed / 0 pending");
     expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+  });
+
+  // (MC-51, found by execution): the script read check-runs only, so a
+  // failing commit status beside green runs printed CLASSIFIED: green while
+  // guard 4 — src/cigate.ts and guards.sh alike — said red. A status is its
+  // own check, never collapsed with a run of its context.
+  // MUTATION: drop the status read (or `or any(... statuses)`) — these fail.
+  it("reads the commit statuses too: a failing status beside green runs is red (MC-51)", async () => {
+    pagedRuns = [
+      {
+        id: 1,
+        name: "deploy",
+        status: "completed",
+        conclusion: "success",
+        started_at: "2026-09-27T10:00:00Z",
+        html_url: "h1",
+      },
+    ];
+    statusRows = [
+      { context: "deploy", state: "failure", target_url: "t1", description: "preview failed" },
+    ];
+    const red = await checks();
+    expect(red.stdout).toContain("status deploy: failure  t1  (preview failed)");
+    expect(red.stdout).toContain("SUMMARY: 1 passed / 1 failed / 0 pending");
+    expect(red.stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
+
+    statusRows = [{ context: "ext-ci", state: "pending" }];
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: pending");
+
+    // A head whose only check is a passing status is green, not "none".
+    pagedRuns = [];
+    statusRows = [{ context: "ext-ci", state: "success" }];
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: green");
+    statusRows = [];
+    expect((await checks()).stdout.trim().split("\n").pop()).toBe("CLASSIFIED: none");
   });
 
   it("an unreadable log is said, not fatal", async () => {
