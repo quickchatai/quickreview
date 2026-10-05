@@ -25,6 +25,7 @@
 // working tree is never touched either — the base fetch lands in
 // `refs/remotes/`, and the branch is addressed by ref, never checked out.
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
+import { localWallClockToInstant, zonedParts } from "./eod.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { MutationGate } from "./gate.js";
 import type { StateStore } from "./state.js";
@@ -274,10 +275,18 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
 
 // ---- rate caps -------------------------------------------------------------
 
-function startOfDayIso(now: Date): string {
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  ).toISOString();
+/**
+ * The instant the operations day containing `now` began (MC-16).
+ * The day caps count the `[ops] timezone` day — "the ONE knob that defines
+ * whose calendar day the system runs on" — and until this they
+ * counted the UTC day, the one day boundary in the system that did not. A zone
+ * whose midnight falls in a DST gap starts its day at the first wall time that
+ * exists (`localWallClockToInstant`'s shifted-forward reading). The WEEK cap
+ * is a rolling seven days and has no day boundary to honour.
+ */
+function startOfDayIso(now: Date, timeZone: string): string {
+  const p = zonedParts(now, timeZone);
+  return localWallClockToInstant(p.year, p.month, p.day, 0, 0, timeZone).toISOString();
 }
 
 function daysAgoIso(now: Date, days: number): string {
@@ -288,10 +297,12 @@ export function improvementRateReason(
   store: StateStore,
   caps: Config["caps"],
   now: Date,
+  /** `[ops] timezone`; an absent zone is UTC, as `OPS_DEFAULTS` reads it. */
+  timeZone = "UTC",
 ): string | null {
   const unusable = unusableCapReason(caps, ["improvement_pr_per_day", "improvement_pr_per_week"]);
   if (unusable !== null) return unusable; // `day >= undefined` is false: uncapped, the same fail-open as checkDiffstat's
-  const day = store.filedSince("improvement_pr", startOfDayIso(now));
+  const day = store.filedSince("improvement_pr", startOfDayIso(now, timeZone));
   if (day >= caps.improvement_pr_per_day) {
     return `improvement-PR day cap reached (${day}/${caps.improvement_pr_per_day})`;
   }
@@ -302,10 +313,16 @@ export function improvementRateReason(
   return null;
 }
 
-export function issueRateReason(store: StateStore, caps: Config["caps"], now: Date): string | null {
+export function issueRateReason(
+  store: StateStore,
+  caps: Config["caps"],
+  now: Date,
+  /** `[ops] timezone`; an absent zone is UTC, as `OPS_DEFAULTS` reads it. */
+  timeZone = "UTC",
+): string | null {
   const unusable = unusableCapReason(caps, ["issues_per_day"]);
   if (unusable !== null) return unusable;
-  const day = store.filedSince("issue", startOfDayIso(now));
+  const day = store.filedSince("issue", startOfDayIso(now, timeZone));
   return day >= caps.issues_per_day
     ? `issue day cap reached (${day}/${caps.issues_per_day})`
     : null;
@@ -436,7 +453,7 @@ async function fileImprovementPrNow(
   if (!isBranchName(payload.branch))
     return reject(`bad branch name '${payload.branch}' (a plain local branch name is required)`);
 
-  const rate = improvementRateReason(ctx.store, ctx.cfg.caps, now);
+  const rate = improvementRateReason(ctx.store, ctx.cfg.caps, now, ctx.cfg.ops.timezone);
   if (rate) return reject(rate);
 
   // Fully qualified on both sides: the base as the remote-tracking ref the
@@ -604,7 +621,7 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
     return { ok: false, reason, pr, ...extra };
   };
 
-  const rate = issueRateReason(ctx.store, ctx.cfg.caps, now);
+  const rate = issueRateReason(ctx.store, ctx.cfg.caps, now, ctx.cfg.ops.timezone);
   if (rate) return reject(rate);
 
   let open: Array<{ number: number; title: string }> = [];

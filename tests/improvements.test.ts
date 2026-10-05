@@ -185,6 +185,37 @@ describe("rate caps from StateStore.filedSince", () => {
     week.close();
   });
 
+  // (MC-16): the day caps count the OPERATIONS day (`[ops] timezone`,
+  //) — the day every other boundary in the system uses — not the UTC
+  // one. Europe/Warsaw is UTC+2 in August, so 22:00Z is already tomorrow there.
+  // MUTATION: compute the window from getUTC* again — both directions fail.
+  it("counts the day caps on the operations day, never the UTC day (MC-16)", () => {
+    const tz = "Europe/Warsaw";
+    // Filed 23:30 Warsaw on the 13th; asked 00:30 Warsaw on the 14th — the
+    // same UTC day, a new operations day: not capped.
+    const lateFiling = new StateStore(":memory:", () => new Date("2026-08-13T21:30:00Z"));
+    lateFiling.recordFiledItem("improvement_pr", "late", "#1");
+    lateFiling.recordFiledItem("issue", "a", null);
+    lateFiling.recordFiledItem("issue", "b", null);
+    lateFiling.recordFiledItem("issue", "c", null);
+    const nextDay = new Date("2026-08-13T22:30:00Z");
+    expect(improvementRateReason(lateFiling, cfg.caps, nextDay, tz)).toBe(null);
+    expect(issueRateReason(lateFiling, cfg.caps, nextDay, tz)).toBe(null);
+    // The UTC reading — what an absent zone still means — caps both.
+    expect(improvementRateReason(lateFiling, cfg.caps, nextDay)).toContain("day cap");
+    expect(issueRateReason(lateFiling, cfg.caps, nextDay)).toContain("issue day cap");
+    lateFiling.close();
+
+    // Filed 01:30 Warsaw on the 14th; asked 02:30 Warsaw on the 14th — a new
+    // UTC day, the same operations day: capped.
+    const earlyFiling = new StateStore(":memory:", () => new Date("2026-08-13T23:30:00Z"));
+    earlyFiling.recordFiledItem("improvement_pr", "early", "#2");
+    const sameOpsDay = new Date("2026-08-14T00:30:00Z");
+    expect(improvementRateReason(earlyFiling, cfg.caps, sameOpsDay, tz)).toContain("day cap");
+    expect(improvementRateReason(earlyFiling, cfg.caps, sameOpsDay)).toBe(null);
+    earlyFiling.close();
+  });
+
   it("blocks the fourth issue of the day", () => {
     const now = new Date("2026-08-13T10:00:00Z");
     const store = new StateStore(":memory:", () => now);
