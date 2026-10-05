@@ -47,7 +47,7 @@
 // every case (never a second refresher, never a write to the source). The
 // child pi runs `--no-extensions` (pi-review's default isolation) plus
 // pi-review's own `.claude/rules` loader; its agent dir holds the token and
-// default settings only — NOT the quickreviewd sandbox's bash-guard settings.
+// default settings only — NOT the QuickReview sandbox's bash-guard settings.
 // The tree lives under /work, not under /opt/quickreview/sandbox: pi loads
 // AGENTS.md/CLAUDE.md from EVERY ancestor of its cwd, and the sandbox root
 // carries the production reviewer's context files.
@@ -179,7 +179,7 @@ export function pireviewEnv(o: {
 }
 
 /** The pi global settings for this arm: only what keeps a non-interactive run
- * from stalling — no extensions, no quickreviewd bash-guard. */
+ * from stalling — no extensions, no QuickReview bash-guard. */
 export const PIREVIEW_PI_SETTINGS = { defaultProjectTrust: "always" } as const;
 
 /** pi from 0.99.0 on ships built-in extensions loaded by default (mcp,
@@ -355,8 +355,8 @@ export interface OcrShapedComment {
 }
 
 /** A comment on the BASE side (deleted/old lines), kept for the defect judge
- * in the quickreviewd `comments.json` shape — the AACR scorer reads only the
- * new side, so these stay out of the scored file (as the quickreviewd arm's do). */
+ * in the QuickReview `comments.json` shape — the AACR scorer reads only the
+ * new side, so these stay out of the scored file (as the QuickReview arm's do). */
 export interface LeftSideComment {
   path: string;
   line: number | null;
@@ -924,7 +924,7 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
         root: r.root,
         needMs: pireviewProcessTimeoutMs(r.timeoutMin) + 5 * 60_000,
       });
-      // …and pi-review's child gets pi's defaults, not the quickreviewd sandbox's
+      // …and pi-review's child gets pi's defaults, not the QuickReview sandbox's
       // global settings (bash-guard registered for OUR sessions).
       writeFileSync(join(r.agentDir, "settings.json"), JSON.stringify(piSettings, null, 2) + "\n");
     } catch (err) {

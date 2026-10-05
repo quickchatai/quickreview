@@ -5,7 +5,7 @@
 # (other145.txt, prefix g61-145-*). QuickReview's default on gpt-6.1-sol is the
 # earlier g61-* run; its low preset was run like the tools. Claude Code was not
 # re-run: its row is the published all-claude-* run (Opus 5.5).
-# FULL-BENCHMARK.md, "Exact commands".
+# bench/aacr/README.md, "Reproduce".
 #
 #   QCR_BENCH_RUNS_DIR=<runs dir> bench/aacr/final/run-final.sh [quickreview|tools|claude]
 #
@@ -58,7 +58,7 @@ if [[ "$what" == all || "$what" == tools ]]; then
 fi
 
 if [[ "$what" == claude ]]; then
-  # Claude Code (published 2026-09-28; root CLAUDE.md rule 5's exception — inside its sandbox only).
+  # Claude Code (published 2026-09-28; the project's one sanctioned place to run Claude Code — inside its sandbox only).
   # Its rest145 ran in four chunks (all-claude-c1..c4-rest145); the 40 original PRs as all-claude-<set>.
   QCR_BENCH_CLAUDE_MODEL=claude-opus-5-5 \
     "$ARM" --prefix all-claude --arm claude --cases rest145+all30+fresh10 --no-judge

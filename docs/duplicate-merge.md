@@ -5,7 +5,7 @@ Ratified by the owner on 2026-10-03, after a design grilling session. Built behi
 
 ## Why
 
-The 2026-10-03 mining of two external runs (`bench/aacr/ext/REVIEW-MINING.md`)
+The 2026-10-03 mining of two external runs (a benchmark working note, not in the public repo; its runs are in the published run archive)
 found two separate costs that both get called "duplicates":
 
 1. **Duplicates that get posted.** About 10–11% of what we post repeats an issue
@@ -104,14 +104,14 @@ Group ids are stable, so a re-run gives the same groups.
 - unique AND real;
 - the cost per unique real finding.
 
-The baseline from the stored runs is in `bench/aacr/LENS-YIELD.md`. A lens is
+The baseline from the stored runs is computed by `bench/aacr/lens_yield.py`. A lens is
 narrowed (brief) before it is dropped, and dropping one needs the owner's
 sign-off per lens.
 
 ## How it is measured
 
 There is one run, approved by the owner, of 20 PRs. The selection and the
-commands are in `bench/aacr/ext/DEDUP-RUN.md`. Compared against the stored
+commands are in the run's working note (a benchmark working note, not in the public repo; its runs are in the published run archive). Compared against the stored
 baseline runs on the same PRs:
 
 - duplicates posted;

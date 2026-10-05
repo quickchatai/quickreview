@@ -8,7 +8,7 @@
 // PR's later commits — the future of the code it is reviewing. The same reason
 // the harness's own full clone (repo_utils.py, `fetch --all`) is not used.
 //
-// Anonymous only: no token of any kind (root CLAUDE.md rule 3). The public API
+// Anonymous only: no token of any kind (the project's credential rule: only the App's credential, never a personal token). The public API
 // is used once per case for the PR's title/body/base branch and degrades to
 // "unavailable" under the 60 req/h anonymous limit rather than blocking.
 //

@@ -31,7 +31,7 @@
 //                   cases run ONE AT A TIME
 //   opencode-report --set <file> --out DIR
 // The Claude Code arm (src/bench/claudecode.ts; image target `claude`; root
-// CLAUDE.md rule 5's one ratified exception — inside that sandbox ONLY):
+// the project's one sanctioned place to run Claude Code — inside that sandbox ONLY):
 //   claude-review --set <file> --out DIR [--only id,id] [--store DIR] [--resume] [--keep-tree]
 //                 [--timeout-min 30]     through the harness's reviewers/claude.py, one case at a time
 //   claude-report --set <file> --out DIR
@@ -197,11 +197,11 @@ function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
   };
 }
 
-/** A command of one arm refuses the other arm's run dir: the quickreviewd
+/** A command of one arm refuses the other arm's run dir: the QuickReview
  * `review`/`results` rewrite every variant's result files, which would wipe an
  * OCR run's scored input. */
 const ARM_NAMES = {
-  qcr: "a quickreviewd",
+  qcr: "a QuickReview",
   ocr: "an open-code-review",
   codex: "a Codex CLI",
   opencode: "an OpenCode",
@@ -638,7 +638,7 @@ async function main(): Promise<number> {
     // (--concurrency), and the login is shared with the companion.
     for (const c of cases) {
       const prior = readOcrSummary(outDir, c);
-      // Only a clean case is kept on --resume, exactly as the quickreviewd arm
+      // Only a clean case is kept on --resume, exactly as the QuickReview arm
       // keeps only `ok`: `partial` (some files failed, e.g. a 429 at the
       // bridge) is re-run, so rate-limit damage never persists in one arm only.
       if (resume && prior && prior.status === "ok") {

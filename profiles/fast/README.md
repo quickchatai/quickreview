@@ -18,7 +18,7 @@
 
 The trade is deliberate: a fraction of the cost and wall time of `default`
 for lower recall, mostly on low-severity and code-quality findings. Measured
-in `bench/aacr/RESULTS.md`, "The fast option" (runs `fast1-*`, `bench/aacr/ext/RUNS.md`).
+on runs `fast1-*` (published in the run archive; the two papers report the result).
 
 On the benchmark: `--config review.profile=fast,review.preset=low,models.effort=low`
 (`models.effort` re-applies low after explicit `models.tiers.*` overrides).

@@ -6,8 +6,8 @@
 """Charts for the benchmark report — JPGs in bench/aacr/charts/.
 
     uv run bench/aacr/charts.py --cases all30+fresh10+rest145 \\
-        "quickreviewd default=b40-smoke10,b40-dev10,b40-holdout10,b40-fresh10,all-default-rest145" \\
-        "quickreviewd low=all-low-smoke10,all-low-dev10,all-low-holdout10,all-low-fresh10,all-low-rest145" \\
+        "QuickReview default=b40-smoke10,b40-dev10,b40-holdout10,b40-fresh10,all-default-rest145" \\
+        "QuickReview low=all-low-smoke10,all-low-dev10,all-low-holdout10,all-low-fresh10,all-low-rest145" \\
         "open-code-review=b40ocr-smoke10,b40ocr-dev10,b40ocr-holdout10,b40ocr-fresh10,all-ocr-rest145"
 
 Every number comes from the archived judge and harness files through
@@ -20,7 +20,7 @@ NAME=runs argument.
 (config-sensitivity.json): arms are TOOL|VARIANT=runs, each tool's first
 variant is its published configuration, and the variant the full comparison
 takes forward is picked by `pick_best` (highest recall, ties to comments
-correct). The command behind the published chart is in FULL-BENCHMARK.md. The "tuned vs unseen" chart splits the cases into the 40
+correct). The command behind the published charts is final/score.sh. The "tuned vs unseen" chart splits the cases into the 40
 PRs the review was tuned on (all30+fresh10) and the rest (rest145).
 
 `--suffix -gpt6sol` writes every file as NAME-gpt6sol.jpg (and
@@ -412,7 +412,7 @@ def main():
     ap.add_argument("--unseen", default="rest145", help="the unseen PRs, for the split chart")
     ap.add_argument("--judge-model", default="gpt-6-sol-high")
     ap.add_argument("--second-judge", help="a second judge label (e.g. claude-opus-5-5) for the agreement chart")
-    ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.expanduser("~/qcr-bench-runs/runs") if os.path.isdir(os.path.expanduser("~/qcr-bench-runs/runs")) else os.path.join(HERE, "runs")))
+    ap.add_argument("--runs-dir", default=os.environ.get("QCR_BENCH_RUNS_DIR", os.path.join(HERE, "runs")))
     ap.add_argument("--out", default=os.path.join(HERE, "charts"))
     ap.add_argument("--sensitivity", action="store_true",
                     help="draw only config-sensitivity.jpg (+ config-sensitivity.json): arms are TOOL|VARIANT=runs, "

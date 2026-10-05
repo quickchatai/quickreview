@@ -13,10 +13,12 @@ first. For each threat it gives five things:
 
 The companion documents are [METHODOLOGY.md](METHODOLOGY.md), which covers what
 we did step by step, and [PROMPTS.md](PROMPTS.md), which gives every prompt
-verbatim. The headline results are in `../FULL-BENCHMARK.md` and the chronological
-log is in `../RESULTS.md`.
+verbatim. The headline results are in the benchmark paper
+([`../paper/benchmark.pdf`](../paper/benchmark.pdf)). The chronological
+experiment log this page cites is a working note of the study; it is not in the
+public repo, and the runs it describes are in the published run archive.
 
-Short version: **the ranking of quickreviewd default above every other
+Short version: **the ranking of QuickReview default above every other
 reviewer is robust. The exact size of its lead is not.** Several threats
 below favour our reviewer. Two have now been measured:
 
@@ -44,8 +46,8 @@ several sources.
 
 | Source | Defects it raised | Defects no other source raised |
 |---|---|---|
-| quickreviewd default's comments | 334 (88%) | 29 |
-| quickreviewd low's comments | 269 | 3 |
+| QuickReview default's comments | 334 (88%) | 29 |
+| QuickReview low's comments | 269 | 3 |
 | Expert hunt (Claude agents, reading the code) | 241 | 12 |
 | open-code-review's comments | 230 | 4 |
 | AACR reference comments | 115 | — |
@@ -83,8 +85,8 @@ Recall on those 369, with the Opus judge in brackets where it differs:
 
 | Reviewer | Recall on the 369 | High, of 82 | Recall on all 520 |
 |---|---|---|---|
-| quickreviewd default | 86% | 80 | 84% |
-| quickreviewd low | 71% | 71 [71.5] | 66% |
+| QuickReview default | 86% | 80 | 84% |
+| QuickReview low | 71% | 71 [71.5] | 66% |
 | open-code-review | 59% | 62 | 56% |
 | Codex CLI | 53% | 67.5 | 48% |
 | OpenCode | 53% | 62.5 | 48% |
@@ -123,8 +125,8 @@ What it does not show:
 - **Or build it from a pool of equal size per tool,** with a disjoint
   verifier.
 - **Report recall on an independent subset** alongside the current number.
-  Done: see Size above, the `independent-defects.jpg` chart and
-  `../FULL-BENCHMARK.md`.
+  Done: see Size above, the `independent-defects.jpg` chart and the
+  benchmark paper.
 
 ## 2. Benchmaxing: the reviewer was tuned on the benchmark (severe for the 40, moderate overall)
 
@@ -143,8 +145,8 @@ but it was then used for at least five further decisions:
 4. open nits;
 5. the three-PR comparisons.
 
-It is no longer held out. `RESULTS.md` mentions fresh10 eight times as the
-basis of a decision.
+It is no longer held out. The experiment log mentions fresh10 eight times as
+the basis of a decision.
 
 **Size.**
 - **On the 40 original PRs the default's numbers are optimistic:** 81% of
@@ -174,7 +176,7 @@ basis of a decision.
 - **Freeze the reviewer (commit `1ad710b`) now.**
 - **Evaluate on PRs from outside AACR-Bench,** or on a new AACR release.
 - **Tune on the 40 only, and report the 145 as the headline.** We already do
-  the latter; FULL-BENCHMARK.md reports both halves.
+  the latter; the benchmark paper reports both halves.
 
 ## 3. There is no human-verified ground truth for the 145 new PRs (severe)
 
@@ -203,7 +205,8 @@ basis of a decision.
 **Mitigation.**
 - Every defect carries evidence (file, line, quoted code).
 - Every exclusion carries a reason.
-- Both are in the repo (`defects/rest145.md`), so a human audit is possible.
+- Both are in the repo (`defects/rest145.json`; rendered as Markdown in the
+  dataset), so a human audit is possible.
 
 **To resolve.** A human audit of a stratified sample:
 - about 50 defects, weighted towards high severity and towards defects with a
@@ -220,7 +223,7 @@ family with some of the reviewers.
 **Evidence.**
 - **The defect judge** is `gpt-6-sol:high`. That is the same model family
   that runs:
-  - quickreviewd default and low (lens passes on gpt-6-sol tiers);
+  - QuickReview default and low (lens passes on gpt-6-sol tiers);
   - open-code-review;
   - Codex CLI;
   - OpenCode;
@@ -280,8 +283,8 @@ unmeasured.
   gpt-6-sol nor Claude. The two judges we have each share a family with
   some contestants, and both used the same judge prompt.
 - **Also re-judge** with a different judge prompt.
-- Inter-judge agreement per defect is now reported (above and in
-  `../FULL-BENCHMARK.md`).
+- Inter-judge agreement per defect is now reported (above and in the
+  benchmark paper).
 
 ## 5. Unequal inputs, effort and budget (moderate; the direction is known)
 
@@ -290,17 +293,17 @@ same budget.
 
 **Evidence and direction:**
 
-- **PR title and body:** quickreviewd gets them, as in production, and its
+- **PR title and body:** QuickReview gets them, as in production, and its
   `pass-intent` lens uses them. No other tool gets them: the AACR harness
   passes none to OCR, Codex, OpenCode or Claude Code, and pi-review gets only
   the diff. *Favours ours.*
-- **Budget:** quickreviewd default runs about 10–15 lens passes plus a
+- **Budget:** QuickReview default runs about 10–15 lens passes plus a
   validator. Per PR, on average:
 
   | Reviewer | Uncached input | Cached input | Output | Cost per PR |
   |---|---|---|---|---|
-  | quickreviewd default | 488k | 1.86M | 36.2k | $1.71 |
-  | quickreviewd low | 249k | 713k | 15.9k | $0.80 |
+  | QuickReview default | 488k | 1.86M | 36.2k | $1.71 |
+  | QuickReview low | 249k | 713k | 15.9k | $0.80 |
   | open-code-review | 264k | 96k | 5.1k | $0.60 |
   | Codex CLI | 34k | 266k | 2.9k | $0.15 |
   | OpenCode | 385k | 169k | 2.7k | $0.83 |
@@ -316,14 +319,14 @@ same budget.
   - Claude Code ran at its default effort on Opus 5.5, a different and more
     expensive model family. *Direction unclear.*
 - **Single run per arm:** the headline is one run per reviewer. In earlier
-  repeat runs of our own reviewer (`RESULTS.md`), two runs of the
+  repeat runs of our own reviewer (the experiment log), two runs of the
   same arm differed by about 1–2 defects per 10 PRs, with run-to-run
   agreement of 78–89%. We have no variance estimate for the other tools.
   - Default's lead over the next reviewer (18 points, 84% vs 66%) and over
     the third-party tools (22–36 points) is far larger than that noise.
   - Gaps under about 5 points are not. That covers most comparisons among
     the single-pass tools: OCR vs pi-review, and Codex CLI vs OpenCode.
-  - Bootstrap intervals over PRs (`FULL-BENCHMARK.md`, Uncertainty) agree:
+  - Bootstrap intervals over PRs (the benchmark paper) agree:
     every gap between default and another reviewer excludes zero, while low
     vs Claude Code, pi-review vs OCR and OpenCode vs Codex CLI do not. Those
     intervals cover PR sampling only, not run-to-run or judge variance.
@@ -333,7 +336,7 @@ same budget.
     later split into four parallel chunks.
   - Minutes per PR are wall-clock under that shared scheduler, so they
     include contention and are not directly comparable between our arms and
-    the single-pass tools (as `FULL-BENCHMARK.md` and `METHODOLOGY.md` say).
+    the single-pass tools (as the benchmark paper and `METHODOLOGY.md` say).
 
 **To resolve.**
 - **An equal-inputs arm:** give every tool the PR description.
@@ -416,7 +419,7 @@ documented in `../README.md`.
     to 1.4 points per reviewer (default 12.6% → 11.2%, OCR 14.0% → 13.0%).
     Default keeps the highest recall and OCR the highest precision and F1;
     the only swaps are under half a point at the bottom (Claude Code passes
-    pi-review on F1). Table 3a in `FULL-BENCHMARK.md`.
+    pi-review on F1). The benchmark paper has the table.
   - *Effect on our key.* 19 of the 520 defects cite such a reference in
     their provenance. 17 of them were also found by the blind hunt, and
     every one was checked against the code, so the defects stand. They
@@ -469,7 +472,7 @@ documented in `../README.md`.
 - **One accidental real Claude Code call.** During the prose-parser work, a
   driver self-test in the Claude container ran the real `claude` binary
   instead of the stub. The container had no network and no credential, so no
-  model call was made. It stayed within rule 5's container-only exception.
+  model call was made. It stayed within the rule that Claude Code runs only inside its container.
 - **Cost figures are list prices, not bills.**
   - The gpt-6-sol runs used a ChatGPT login. Their dollar figures are pi's
     list prices, with cached input correctly at a tenth of the uncached rate
@@ -504,7 +507,7 @@ documented in `../README.md`.
 **We claim:**
 
 - On AACR-Bench's 185 runnable PRs, under our defect judge and our verified
-  ground truth, quickreviewd default finds more real defects than every other
+  ground truth, QuickReview default finds more real defects than every other
   reviewer we ran. It also finds more high-severity ones, and under the
   primary judge more of its comments are correct (under the Opus judge
   Claude Code is level). The margin (84% against 48–66% of defects found) is
@@ -518,7 +521,7 @@ documented in `../README.md`.
 - On cost per defect found, pi-review is the most cost-efficient tool: $0.07
   per defect and $0.27 per high-severity defect at $0.11 per PR, against
   $0.11/$0.40 for Codex CLI, $0.11/$0.50 for Claude Code and $0.72/$3.68 for
-  quickreviewd default.
+  QuickReview default.
 
 **We do not claim:**
 

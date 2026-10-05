@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # External benchmarks for QuickReview — Martian's offline code-review benchmark
 # and SWE-PRBench — each scored by ITS OWN evaluation code, unmodified, with
-# QuickReview plugged in as one more tool. bench/aacr/EXTERNAL-BENCHMARKS.md is
-# the design, the deviations and the results; this script is every command.
+# QuickReview plugged in as one more tool. The benchmark paper's external-benchmark
+# section (bench/aacr/paper/benchmark.pdf) is the design, the deviations and the
+# results; this script is every command.
 #
 #   ext.sh build                      the three images (reviewer overlay, Martian, SWE-PRBench)
 #   ext.sh prefetch SET               per-case stores for SET (martian-*, sweprbench-*), from the
@@ -23,7 +24,7 @@
 #   QCR_BENCH_RUNS_DIR   where runs live (required; outside any worktree)
 #   EXT_CACHE            the local bare git caches (default $QCR_BENCH_RUNS_DIR/../ext-cache)
 #   EXT_DATA             the pinned benchmark data (default $QCR_BENCH_RUNS_DIR/../ext-data)
-#   EXT_JUDGE_EFFORT     the judge's reasoning effort (default low — see EXTERNAL-BENCHMARKS.md)
+#   EXT_JUDGE_EFFORT     the judge's reasoning effort (default low — see the benchmark paper)
 #
 # Sandboxing: every container runs read-only, all capabilities dropped,
 # no-new-privileges, as your uid. The two scoring containers have NO network

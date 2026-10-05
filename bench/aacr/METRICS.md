@@ -53,7 +53,8 @@ family as the reviewer; differences under ~2 defects per 10 PRs are noise.
 In the final benchmark, a second judge (Claude Opus 5.5) and a recall check
 on the defects the key would hold without any reviewer's comment both leave
 default first and the ordering nearly unchanged (under the second judge
-pi-review and OCR, one defect apart, swap places) — `FULL-BENCHMARK.md`.
+pi-review and OCR, one defect apart, swap places) — the benchmark paper
+([`paper/benchmark.pdf`](paper/benchmark.pdf)).
 
 ## Table 2 — AACR-Bench (the original benchmark)
 
@@ -106,7 +107,7 @@ Sourcery 5, LlamaPReview 4, Gemini Code Assist 4, Ellipsis 3, Cursor Bugbot 1
 (`bot_references.json`). On this metric such a bot is credited for
 repeating its own earlier comment. Removing the 80 moves each reviewer's
 F1 by at most 1.4 points and leaves the top of the ranking as it was: `compare.py --exclude-refs
-bot_references.json`, and Table 3a in `FULL-BENCHMARK.md`. 19 of our 520
+bot_references.json`, and the table in the benchmark paper. 19 of our 520
 defects cite one of them; each was checked against the code (17 were also
 found by the blind hunt), and they carry an unscored `bot_derived_reference`
 note.

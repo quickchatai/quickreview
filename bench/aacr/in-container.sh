@@ -24,8 +24,8 @@
 # The OpenCode arm (image target `opencode`):
 #   opencode-review <set> [cli flags…] → the same loopback Codex bridge + node cli opencode-review
 #   eval / report with BENCH_ARM=opencode: only the `all` variant, the OpenCode report.
-# The Claude Code arm (image target `claude`; root CLAUDE.md rule 5's one
-# ratified exception — `claude` runs HERE, inside this sandbox, and nowhere else):
+# The Claude Code arm (image target `claude`; the project's one sanctioned
+# place to run Claude Code — `claude` runs HERE, inside this sandbox, and nowhere else):
 #   claude-review <set> [cli flags…] → node cli claude-review → claude_driver.py →
 #   the harness's own reviewers/claude.py, which runs `claude -p '/code-review …'`.
 #   claude-rebuild <set> [--only ids] → node cli claude-rebuild: rebuild each result
@@ -176,7 +176,7 @@ case "$cmd" in
   eval|whatif-eval)
     set_name="$1"; judge="$2"; rounds="$3"; shift 3
     set_path="$(set_file "$set_name")"
-    # Which arm this run dir holds (run.json `reviewer`; quickreviewd runs carry
+    # Which arm this run dir holds (run.json `reviewer`; QuickReview runs carry
     # none) must be the arm bench.sh was asked to score.
     arm="${BENCH_ARM:-qcr}"
     run_arm="$(python3 -c 'import json,sys

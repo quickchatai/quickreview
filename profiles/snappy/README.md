@@ -17,6 +17,7 @@
   unprovable race is kept as a `plausible` finding — a `[question]` by the
   unchanged reachability gate — rather than killed as speculative.
 
-Why it exists and how it is measured: `bench/aacr/ext/SNAPPY-PLAN.md` and
-`bench/aacr/EXTERNAL-BENCHMARKS.md`. Select it with `[review] profile =
+Why it exists and how it is measured: the benchmark paper
+([`bench/aacr/paper/benchmark.pdf`](../../bench/aacr/paper/benchmark.pdf), the external
+benchmarks). Select it with `[review] profile =
 "snappy"`, or on the benchmark with `--config review.profile=snappy`.

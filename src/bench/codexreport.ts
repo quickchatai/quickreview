@@ -81,7 +81,7 @@ export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase
     );
   L.push("");
   L.push(
-    "Reading the numbers: Codex findings carry a severity but the harness ignores it, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. Source `mcp_stream` = the findings came through the harness's `report` MCP tool; `jsonl_fallback` = parsed from Codex's final message (raw text there scores zero comments, as in the harness).",
+    "Reading the numbers: Codex findings carry a severity but the harness ignores it, so only the `all` variant exists for this arm — compare it with the QuickReview arm's `all` row. Source `mcp_stream` = the findings came through the harness's `report` MCP tool; `jsonl_fallback` = parsed from Codex's final message (raw text there scores zero comments, as in the harness).",
   );
   L.push("");
   return L.join("\n");

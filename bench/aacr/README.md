@@ -1,16 +1,106 @@
-# AACR-Bench for quickreviewd
+# AACR-Bench for QuickReview
 
 This runs **our production reviewer** — the real `round-first.md` order, the
 real `conversation-system.md` persona, the real lens and validator agents built
 by `buildAgents` with `PASS_ADDENDA`, the production models and tiers from
-`config.toml` — against [AACR-Bench](https://github.com/alibaba/aacr-bench)
+the config baked into the image (`bench.sh build`, below) — against [AACR-Bench](https://github.com/alibaba/aacr-bench)
 (Alibaba's 200-PR, 10-language code-review benchmark), **locally, in a locked-down
 Docker sandbox**, and scores the result with Alibaba's own harness, unmodified,
 at a pinned commit. Nothing touches the live daemon, GitHub's write API or the
 gate, and nothing runs on the VM.
 
-Background and the fairness caveats: `docs/open-code-review-comparison.md`
-(idea 3).
+The method, every table and the fairness caveats are in the two papers,
+[`paper/benchmark.pdf`](paper/benchmark.pdf) (the defect benchmark, eight
+reviewers) and [`paper/quickreview.pdf`](paper/quickreview.pdf) (the
+reviewer), and in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md),
+[`docs/THREATS-TO-VALIDITY.md`](docs/THREATS-TO-VALIDITY.md) and
+[`docs/PROMPTS.md`](docs/PROMPTS.md). Every run behind them — reviews,
+verdicts, scores, the charts and tables they produce — is published in
+the Hugging Face dataset and run archive<!-- TODO(launch): link the dataset and the run archive here -->.
+
+## Reproduce
+
+Three tiers, cheapest first. Nothing here needs this repo's private history or
+the authors' machines.
+
+**Tier 1 — re-score and re-chart the published runs: no keys, no docker.**
+Download the **slim re-score bundle** from the run archive — every run dir
+behind the papers' tables, without the multi-gigabyte per-case transcripts —
+and point the scripts at it:
+
+```sh
+export QCR_BENCH_RUNS_DIR=/path/to/slim-bundle/runs
+bench/aacr/final/score.sh        # every final table (compare.py) and both chart sets (charts.py; needs uv)
+```
+
+`compare.py` and `charts.py` read, per run dir: `run.json`, `judge.txt`,
+`judge/<label>/<instance>.r1.json` (labels `v1-…`/`v2-gpt-6-sol-high` for the
+primary judge, `…-claude-opus-5-5` for the second: `--judge-model
+claude-opus-5-5`), `results/all/metrics_*_*.json` and `results/all/<instance>.json`,
+and `cases/<instance>/case-summary.json`. That is the bundle's whole layout. A
+case's cost comes from its `pi-events.jsonl` when the transcript is there (the
+full archive); in the slim bundle the summary carries `bench_cost_usd` instead
+— the same number, computed from the full transcript by `compare.py`'s own
+`usd_and_minutes` when the bundle was cut (null = unpriced) — so both re-score
+to the same cent. Still keyless and offline once the image exists:
+`bench.sh build`, then `bench.sh judge-report` / `results` / `report` (all
+`--network none`).
+
+**Tier 2 — re-judge the saved reviews.** Take the full run archive (each case
+also carries `comments.json`, `findings-record.json` and `review.md`, what the
+judge reads), `bench.sh build`, `bench.sh prefetch --set <set>` (anonymous
+github.com clones into a docker volume), and a model credential:
+
+```sh
+bench/aacr/bench.sh judge --run <run> --set <set>                                  # a pi ChatGPT login volume (QCR_BENCH_AUTH_VOLUME)
+QCR_BENCH_AUTH=api-key bench/aacr/bench.sh judge --run <run> --set <set>           # your OpenAI key: bench/aacr/openai.env
+QCR_BENCH_AUTH=api-key bench/aacr/bench.sh judge --run <run> --set <set> \
+  --judge-model anthropic/claude-opus-5-5                                         # your Anthropic key: bench/aacr/claude.env
+```
+
+On your own key the verdicts land under a label of their own
+(`v2-openai-gpt-6-sol-high`, never the published `v2-gpt-6-sol-high`), so a
+re-judge never mixes with — or `--resume`s over — the published verdicts.
+AACR-Bench's own metric takes any OpenAI-compatible endpoint the same way:
+`bench.sh eval --judge openai` with `bench/aacr/judge.env` (below).
+
+**Tier 3 — a full re-run.** Build each arm's image (`bench.sh build --arm
+<arm>`), prefetch, review every set with `arm.sh` (`final/run-selection.sh` and
+`final/run-final.sh` are the exact launches behind the papers, image builds
+noted in their headers), then judge and score as above. The config baked into
+the image is `QCR_BENCH_CONFIG=<file>` if you set it, else your own install's
+config, else the checkout's `config.example.toml`: its `[models]` and every
+`[review]` lever are the ones the published runs used (each final launch also
+names the models with `--config`), and only the persona's owner name and bot
+login render as neutral fallbacks instead of the operator's.
+
+Credentials, per arm. The published runs used one pi ChatGPT login, mounted
+read-only from a docker volume (`QCR_BENCH_AUTH_VOLUME`; the volume-subpath
+mount needs Docker 25 or newer), and `bench/aacr/claude.env` for Claude Code.
+With `QCR_BENCH_AUTH=api-key` nothing is mounted and every arm runs on your
+own keys:
+
+| Arm | On `QCR_BENCH_AUTH=api-key` |
+|---|---|
+| QuickReview | pi's `openai/` provider, `OPENAI_API_KEY` from `bench/aacr/openai.env` (an `anthropic/` model arm: `ANTHROPIC_API_KEY` from `claude.env`) |
+| pi-review | pi's `openai/` provider, the same key |
+| open-code-review, OpenCode, PR-Agent | the loopback bridge forwards to `api.openai.com/v1/responses` with the key (OpenCode's native ChatGPT provider is login-only: use the bridge) |
+| Codex CLI | the AACR harness's own `CODEX_API_KEY` route |
+| Claude Code | unchanged: `claude.env` (`ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` subscription token) |
+| defect judge / AACR judge | `openai/<model>` with the key / `--judge openai` |
+
+`openai.env` (gitignored) holds one line, `OPENAI_API_KEY=<key>`; bench.sh
+passes it with `--env-file`, never on a command line. On the key route every
+`openai-codex/<model>` spec runs as `openai/<model>`: the same model id on the
+public API, which is **not proven to behave identically** to the ChatGPT Codex
+backend the published runs used — read a keyed re-run as a replication, not a
+copy. Every keyed run records `auth: "api-key"` in its fingerprint and
+`run.json`. Scale: a median of about five minutes per review, 185 PRs for each
+of eight reviewers, plus the external benchmarks — days of wall time and real
+model spend; repeat runs differ by about ±2 found issues per benchmark.
+
+`run.json` `qcr_commit` values name builds in the pre-publication history; the
+public history starts at its first commit.
 
 ## Results
 
@@ -34,39 +124,41 @@ configuration found for it, all on gpt-6.1-sol except Claude Code (Opus 5.5):
 The configurations were chosen per tool, on gpt-6-sol, on a seeded 40-PR
 subset (`final/select40.txt`: highest defect recall, ties to comments
 correct) and then applied unchanged on gpt-6.1-sol; one run per reviewer, one
-defect judge (gpt-6-sol, high). Numbers, how each configuration was chosen,
-the exact command behind every row, and the caveats are in
-[`FULL-BENCHMARK.md`](FULL-BENCHMARK.md); the launchers are in `final/`;
-how to read the two metrics is in [`METRICS.md`](METRICS.md). The earlier
-seven-reviewer study with every tool as shipped on gpt-6-sol, graded by two
-judges from different model families (98.7% agreement), and the base-model
-runs (gpt-6.1-sol, gpt-6-luna, Claude Opus 5.5) are in FULL-BENCHMARK's
-Supporting material. Charts, all in `charts/` (the final comparison under
-the plain names; the gpt-6-sol study under `-gpt6sol`):
+defect judge (gpt-6-sol, high). Numbers, how each configuration was chosen
+and the caveats are in the benchmark paper ([`paper/benchmark.pdf`](paper/benchmark.pdf));
+the launchers are in `final/`; how to read the two metrics is in
+[`METRICS.md`](METRICS.md). The earlier seven-reviewer study with every tool as
+shipped on gpt-6-sol, graded by two judges from different model families
+(98.7% agreement), and the base-model runs (gpt-6.1-sol, gpt-6-luna, Claude
+Opus 5.5) are in the paper's supporting material. `final/score.sh` draws the
+charts into `charts/` (the final comparison under the plain names; the
+gpt-6-sol study under `-gpt6sol`). This repo ships only the ones the papers
+include; the full set, with the numbers behind them, is in the Hugging Face dataset and run archive<!-- TODO(launch): link the dataset and the run archive here -->:
 
 | Chart | Shows |
 |---|---|
 | [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | the main figure: real defects found, split high / medium / low |
-| [`overview.jpg`](charts/overview.jpg) | defects found, high-severity caught, AACR recall — the one-image summary |
-| [`high-severity.jpg`](charts/high-severity.jpg) | merge-blocking defects caught, of 90 |
+| `overview.jpg` | defects found, high-severity caught, AACR recall — the one-image summary |
+| `high-severity.jpg` | merge-blocking defects caught, of 90 |
 | [`cost-vs-coverage.jpg`](charts/cost-vs-coverage.jpg) | $ per PR against share of defects found |
 | [`two-scores.jpg`](charts/two-scores.jpg) | the same reviews on our judge vs AACR's metric |
 | [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
-| [`independent-defects.jpg`](charts/independent-defects.jpg) | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
-| [`reference-quality.jpg`](charts/reference-quality.jpg) | what AACR's reference comments are, checked against the code by agents (no human check) |
-| [`judge-agreement.jpg`](charts/judge-agreement.jpg) | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
+| `independent-defects.jpg` | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
+| `reference-quality.jpg` | what AACR's reference comments are, checked against the code by agents (no human check) |
+| `judge-agreement.jpg` | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
 | [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | the selection step: per tool, recall and $/PR of the published configuration vs each variant run on the 40 PRs; drawn by `charts.py --sensitivity` |
 | `*-gpt6sol.jpg` | the same charts for the gpt-6-sol study (seven reviewers as shipped) |
 
-`numbers.json` holds the headline figures behind the charts (with each arm's
-recall on the tuned and unseen halves and on the independent subset),
-`numbers-gpt6sol.json` the gpt-6-sol study's; `config-sensitivity.json` the
-per-variant figures behind `config-sensitivity.jpg`.
+`charts.py` also writes `numbers.json`, the headline figures behind the charts
+(with each arm's recall on the tuned and unseen halves and on the independent
+subset), `numbers-gpt6sol.json` the gpt-6-sol study's, and with
+`--sensitivity` `config-sensitivity.json`, the per-variant figures behind
+`config-sensitivity.jpg`.
 
 Regenerate after a run. Every number comes from the judge and harness files
 through `compare.py`'s scoring, and adding a reviewer is one more
-`NAME=runs`. The runs directory is `$QCR_BENCH_RUNS_DIR`, defaulting to
-`~/qcr-bench-runs/runs` when it exists. `final/score.sh`
+`NAME=runs`. The runs directory is `$QCR_BENCH_RUNS_DIR` (default
+`bench/aacr/runs`; keep runs outside any checkout). `final/score.sh`
 prints every final table and redraws both chart sets:
 
 ```sh
@@ -84,7 +176,7 @@ second judge.
 
 ## Testing a review change (the defect benchmark loop)
 
-The headline is the defect benchmark (`defects/`, `RESULTS.md`): did the review
+The headline is the defect benchmark (`defects/`): did the review
 find the real bugs, and is what it said true. One experiment = one image and
 several ARMS that differ only in config levers:
 
@@ -122,7 +214,7 @@ dataset). The benchmark's references carry no severity, so its table has no
 high/medium/low; its categories are the counterpart.
 
 What makes the rows comparable, and is enforced rather than assumed:
-- **One defect judge.** Every arm, OCR included, is judged in the quickreviewd
+- **One defect judge.** Every arm, OCR included, is judged in the QuickReview
   image (`$QCR_BENCH_IMAGE`) with the same model; `compare.py` reads one judge
   label. `--eval R` runs AACR-Bench's own metric with the codex judge
   (`JUDGE_CODEX_MODEL`, default `gpt-6-sol:low`) for every arm, and
@@ -223,19 +315,21 @@ or anonymous volumes for its scratch space. On this PC it can touch exactly:
   itself a symlink, so nothing the sandbox plants there can redirect a host
   write;
 - the `qcr-bench-repos` docker volume — read-only during review;
-- **the pi login, READ-ONLY**: only the `agent/` directory of the companion's
-  `companion-pihome` volume (override with `QCR_BENCH_AUTH_VOLUME`), with its
-  `sessions/` hidden by an empty tmpfs.
+- **the pi login, READ-ONLY**: only the `agent/` directory of a pi ChatGPT
+  login volume (`QCR_BENCH_AUTH_VOLUME`; the default, `companion-pihome`, is
+  the QuickReview companion's), with its `sessions/` hidden by an empty tmpfs.
+  On the API-key route (`QCR_BENCH_AUTH=api-key`, "Reproduce") no volume is
+  mounted; the key file is passed with `--env-file`.
 
 **How the login is used.** Before every case the sandbox copies the current
 access token into its own tmpfs agent dir with the **refresh token replaced by
-a dummy** (`src/bench/auth.ts`). So it never writes anything the companion
-reads (an injected review cannot plant `AGENTS.md`, skills or extensions for
-the companion), and it never refreshes — a second refresher would rotate the
-grant and log the companion out. The cost: a run cannot outlive the access
-token (≈10 days when fresh). Each case checks the remaining life against its
-budget first; if it is too short the run stops with an instruction — use the
-companion once so it refreshes its own login, then `--resume`.
+a dummy** (`src/bench/auth.ts`). So it never writes anything the login's
+owner reads (an injected review cannot plant `AGENTS.md`, skills or
+extensions in that pi home), and it never refreshes — a second refresher would
+rotate the grant and log the owner out. The cost: a run cannot outlive the
+access token (≈10 days when fresh). Each case checks the remaining life
+against its budget first; if it is too short the run stops with an
+instruction — use pi on that login once so it refreshes, then `--resume`.
 
 **Network.** `review` and `eval --judge codex|openai` have ordinary docker
 bridge egress — the model and judge APIs need it; `prefetch` talks to
@@ -255,10 +349,10 @@ production session can read its own pihome; the no-exec policy and
 |---|---|---|
 | Round order | `round-first.md` via `renderRoundPrompt` | same, plus an appended **BENCHMARK MODE** override (below) |
 | Persona | `conversation-system.md` | same (identity `repo` = the benchmark repo) |
-| Project context | the synced repo root: pi loads `AGENTS.md` | same file (the image ships `AGENTS.md` and `CLAUDE.md`, as the rsync does) |
+| Project context | the synced repo root: pi loads `AGENTS.md` | same file (the image ships `AGENTS.md` and the `AGENTS.override.md` stub production installs, which pi reads first) |
 | Pass plan | `buildRoundOrder` → `buildPassPlan` | same, from a real git file list (status, renames, hunks) |
 | Agents | `buildAgents` + `PASS_ADDENDA` + profile addenda + same-day feedback addendum | same minus the feedback addendum; profile `""` (generic) by default, `--profile <name>` (the one `config.toml [review] profile` names) for production-as-deployed |
-| Models | `config.toml [models]` | same file |
+| Models | `config.toml [models]` | the config baked into the image (`QCR_BENCH_CONFIG`, else your install's, else `config.example.toml`) |
 | Extensions | inject-bridge, ledger-pin, muted-theme, round-progress, subagents, openviking; bash-guard global | ledger-pin, subagents; bash-guard global |
 | Memory | OpenViking, recall + turn sync | **off** — foreign repos must not read the reviewed repo's memory, and a session would write its turns into it |
 | GitHub, CI, posting, verdict, ledger, deferrals | yes | replaced by the override: no CI gate (decide on the merits), write `comments.json` / `review.md` / `findings-record.json` / `outcome.json` instead of posting |
@@ -322,7 +416,7 @@ so a bench run picks them up only when its `--config` selects that profile.
   undisclosed. For a like-for-like number, re-run a published baseline (e.g.
   open-code-review v1.3.1 + GPT-5.5: published 234/728 precision, 234/1505
   recall) under the same judge and dataset, next to ours — `--arm ocr` (below)
-  does that. The harness's Claude Code arm runs only as `--arm claude`, inside this sandbox (root rule 5's one ratified exception, 2026-09-28).
+  does that. The harness's Claude Code arm runs only as `--arm claude`, inside this sandbox (the project's one sanctioned place to run Claude Code, 2026-09-28).
 - **The ground truth is 74% AI-seeded** (GPT-5.2 alone 25%, our model's family),
   and precision counts every comment the annotators did not record as a false
   positive.
@@ -345,7 +439,7 @@ bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
   agent --concurrency 8 --timeout 30 --max-tools 30`, a process timeout of
   30×60+300 s — and writes that runner's result file, which the harness scores
   with its own OCR reader. OCR diffs merge-base..head itself. The repo is the
-  same `prepareTree` checkout the quickreviewd arm gets (OCR reads code only
+  same `prepareTree` checkout the QuickReview arm gets (OCR reads code only
   through `git show/ls-tree/grep <head>` and that diff).
 - **Version**: 1.3.1, the version most leaderboard rows ran, with its binary's
   sha256 pinned in the Dockerfile. It needs git ≥ 2.41, so the `ocr` target is
@@ -381,7 +475,7 @@ Codex runner.
 export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs
 bench/aacr/bench.sh build  --arm codex                                   # image qcr-bench-codex
 bench/aacr/bench.sh review --arm codex --run codex-1 --set fresh10      # one case at a time
-bench/aacr/bench.sh judge  --run codex-1 --set fresh10                  # the defect benchmark (quickreviewd image)
+bench/aacr/bench.sh judge  --run codex-1 --set fresh10                  # the defect benchmark (QuickReview image)
 bench/aacr/bench.sh eval   --arm codex --run codex-1 --set fresh10 --judge codex --rounds 3
 bench/aacr/arm.sh --prefix codex --arm codex --cases fresh10 --eval 3   # all of the above, per set
 bench/aacr/compare.py --cases fresh10 default=default-fresh10 codex=codex-fresh10
@@ -508,7 +602,7 @@ Its findings carry the harness's codex severities, not our tags, so only the
   loopback; the token lives only in the bridge, which reads the sandbox's
   refresh-disabled copy (`src/bench/auth.ts`, re-taken before every case) and
   refuses any auth file whose refresh token is not the disabled sentinel — so
-  nothing in the container can refresh, rotate or write the companion's login.
+  nothing in the container can refresh, rotate or write the login volume.
   OpenCode's own `auth.json`, sessions DB, config and caches live in a fresh
   per-case HOME/XDG tree that is deleted with the case (tested:
   `tests/bench-opencode.test.ts`).
@@ -612,7 +706,7 @@ and opencode arms' line-less findings), text = summary, then `details`, then
 `Recommendation: …`. A finding with `Side: base` (a deleted/old line) is NOT
 put in the scored file — AACR reads the new side — but in
 `cases/<id>/comments.json` as a LEFT row, which the defect judge shows as
-`path (deleted line)`, exactly as it does for the quickreviewd arm. The result
+`path (deleted line)`, exactly as it does for the QuickReview arm. The result
 file is the harness CLI-runner shape (`reviewer: "pireview"`, `review_output`
 = pi-review's findings verbatim, `token_usage`) plus `review.comments` in the
 OCR reader's shape, so `eval` (`--reviewer ocr`), the defect judge and
@@ -623,11 +717,11 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
 - **The model and the credential**: pi's built-in `openai-codex` provider
   (`gpt-6-sol`), on the benchmark's one ChatGPT login through the
   refresh-disabled copy `src/bench/auth.ts` takes before EVERY case (the
-  companion's volume is read-only; the copy's refresh token is a sentinel no
+  login volume is read-only; the copy's refresh token is a sentinel no
   OAuth server accepts; a token that would expire inside a case's budget
   stops the run instead). The child's agent dir (`/tmp/pi-agent-pireview`)
   holds that token and pi's DEFAULT settings (`defaultProjectTrust` only —
-  not the bash-guard the quickreviewd sessions register). HOME is a fresh
+  not the bash-guard the QuickReview sessions register). HOME is a fresh
   per-case dir (so `~/.pi/pi-review/config.json` and `~/.claude/rules` are
   absent: its defaults), deleted with the case.
 - **No phone-home**: `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`,
@@ -737,7 +831,7 @@ and opencode arms' line-less findings), text = summary, then `details`, then
 `Recommendation: …`. A finding with `Side: base` (a deleted/old line) is NOT
 put in the scored file — AACR reads the new side — but in
 `cases/<id>/comments.json` as a LEFT row, which the defect judge shows as
-`path (deleted line)`, exactly as it does for the quickreviewd arm. The result
+`path (deleted line)`, exactly as it does for the QuickReview arm. The result
 file is the harness CLI-runner shape (`reviewer: "pireview"`, `review_output`
 = pi-review's findings verbatim, `token_usage`) plus `review.comments` in the
 OCR reader's shape, so `eval` (`--reviewer ocr`), the defect judge and
@@ -748,11 +842,11 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
 - **The model and the credential**: pi's built-in `openai-codex` provider
   (`gpt-6-sol`), on the benchmark's one ChatGPT login through the
   refresh-disabled copy `src/bench/auth.ts` takes before EVERY case (the
-  companion's volume is read-only; the copy's refresh token is a sentinel no
+  login volume is read-only; the copy's refresh token is a sentinel no
   OAuth server accepts; a token that would expire inside a case's budget
   stops the run instead). The child's agent dir (`/tmp/pi-agent-pireview`)
   holds that token and pi's DEFAULT settings (`defaultProjectTrust` only —
-  not the bash-guard the quickreviewd sessions register). HOME is a fresh
+  not the bash-guard the QuickReview sessions register). HOME is a fresh
   per-case dir (so `~/.pi/pi-review/config.json` and `~/.claude/rules` are
   absent: its defaults), deleted with the case.
 - **No phone-home**: `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`,
@@ -843,7 +937,7 @@ python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_
   `QCR_BENCH_PRAGENT_NO_PR_TEXT=1` withholds the title/description (the stock
   local stand-ins instead), for a row with the inputs the Codex, OpenCode and
   pi-review arms get; the default gives PR-Agent what it gets on a real PR,
-  as the quickreviewd arm gets it.
+  as the QuickReview arm gets it.
 - **Its defaults**, from the pinned release's `configuration.toml`: prompts,
   `num_max_findings = 3`, `max_model_tokens = 32000` (larger diffs are clipped
   as PR-Agent clips them), patch extension, `/improve`'s self-reflection and
@@ -922,8 +1016,8 @@ per model: $2 input, $0.10 cache read, $10 output per million).
 
 ## The Claude Code arm (`--arm claude`)
 
-Claude Code as a BENCHMARKED REVIEWER — root CLAUDE.md rule 5's one ratified
-exception: `claude` exists only in image `qcr-bench-claude` and runs only inside
+Claude Code as a BENCHMARKED REVIEWER — the project's one sanctioned place to
+run Claude Code: `claude` exists only in image `qcr-bench-claude` and runs only inside
 its hardened review container, never on the host (`tests/bench-claude.test.ts`
 fences it).
 
@@ -1051,7 +1145,7 @@ temporary worktree and refuses unless the image's `QCR_BENCH_COMMIT` label is HE
 reviews every set in ONE `arm.sh` (shared adaptive slots, run names `<prefix>-<set>`) and
 scores each set with its own scorer: `aacr` → `bench.sh judge`; `martian` / `qodo` /
 `swepr` → `ext/ext.sh`. Last it writes `dup_stats` and `lens_yield` to
-`$QCR_BENCH_RUNS_DIR/rerun-<name>/` and appends a row per set to `ext/RUNS.md`. A set with
+`$QCR_BENCH_RUNS_DIR/rerun-<name>/` and appends a row per set to `ext/RUNS.md` (a run log it creates). A set with
 `repeat_of` reviews a subset of another set a second time in the same run (the run-to-run
 variance floor). A derived AACR set takes its defect key from its parent through
 `defects_from` (`derive_defects.py`), and `bench.sh judge` defaults to the run's own recorded
@@ -1076,7 +1170,7 @@ old `arm.sh --cases full` ran the whole set in one container at
 `--concurrency 2` (~11.5 h of reviews), then the judge, then that eval:
 **~33 hours**.
 
-**What the scheduler does now** (`arm.sh`, quickreviewd arm):
+**What the scheduler does now** (`arm.sh`, QuickReview arm):
 - **One queue, one container per case.** Every case of every set and repeat,
   longest PR first (`change_line_count`, so the slow ones do not form the
   tail). A container per case costs ~1 s (agents build in under a second) and
@@ -1103,7 +1197,7 @@ old `arm.sh --cases full` ran the whole set in one container at
   explicit `QCR_BENCH_MAX_PARALLEL=N` are fixed caps (the old behaviour).
   `QCR_BENCH_REVIEW_MB` 768 is the measured peak: cgroup `memory.peak` of live
   review containers was 577–788 MB including page cache, ~210 MB anonymous
-  steady (2026-10-02, bench/aacr/PERF.md).
+  steady (measured 2026-10-02).
 - **The plan's usage limit stops the machine.** "Codex error: The usage limit
   has been reached" is the login's plan window spent (every refusal on record,
   2026-09-29, each case failing within seconds), not a short 429: a case that
@@ -1144,10 +1238,10 @@ runs.
 
 **Keep the desktop indexer out of the runs dir.** KDE's `baloo_file_extractor`
 was seen at 8 GB RSS indexing the multi-megabyte `pi-events.jsonl` files
-under `~/qcr-bench-runs`. That is memory the reviews could
+under `$QCR_BENCH_RUNS_DIR`. That is memory the reviews could
 use, on a machine without swap. Exclude the directory: System Settings →
 Search → File Search → add it to the excluded folders, or
-`balooctl6 config add excludeFolders ~/qcr-bench-runs`
+`balooctl6 config add excludeFolders "$QCR_BENCH_RUNS_DIR"`
 (then `balooctl6 purge` to drop what is already indexed).
 
 ## Files

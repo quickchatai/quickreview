@@ -7,12 +7,12 @@
 %  added 2026-09-30; rewritten 2026-10-01 around the final comparison;
 %  restructured 2026-10-01 as a stand-alone report: motivation, research
 %  questions, lens catalogue, validator dispositions, related work, cost
-%  decomposition, 185-PR panel comparison — see CHANGES-quickreview.md).
-%  Single file: diagrams are TikZ, the bibliography is inline.
-%  Every number is copied from bench/aacr/FULL-BENCHMARK.md,
-%  docs/METHODOLOGY.md, docs/THREATS-TO-VALIDITY.md, METRICS.md,
-%  RESULTS.md, charts/numbers*.json or the computed tables named in
-%  CHANGES-quickreview.md, unless a footnote says otherwise.
+%  decomposition, 185-PR panel comparison).
+%  Single file: diagrams are TikZ, the bibliography is inline; build with
+%  build.sh. Every number comes from the published run archive through the
+%  scripts in bench/aacr/, docs/METHODOLOGY.md, docs/THREATS-TO-VALIDITY.md
+%  and METRICS.md, or the study's working notes, unless a footnote says
+%  otherwise.
 %  Gap markers:
 %    \NEEDDATA  -- a number we could compute from existing runs/files
 %    \NEEDEXP   -- an experiment we have not run
@@ -380,7 +380,7 @@ always run at high reasoning; the others run at medium in the
 \code{default} preset (Section~\ref{sec:presets}). The last column gives the
 share of the 185 PRs on which each lens ran in the gpt-6-sol default
 run.\footnote{\code{executed\_passes} and \code{planned\_lenses} in each
-case's \code{case-summary.json}, computed 2026-09-29 (\code{wp-data/passes.json}).
+case's \code{case-summary.json}, computed 2026-09-29 (\code{wp-data/passes.json}\footnote{File names in footnotes --- \code{RESULTS.md}, \code{FULL-BENCHMARK.md}, \code{CHANGES-quickreview.md} and the scratch analyses under \code{wp-data/} and \code{paper-data/} --- are the study's working notes, not part of the public repository; the run data they were computed from is in the run archive~\cite{qcrbench}.}).
 The gpt-6.1-sol run has the same plan on 181 of the 185 PRs: the presets
 and the model change tiers, not the plan.}
 
@@ -1730,7 +1730,7 @@ and improving performance.
 \section{Tuning history in brief}
 \label{app:tuning}
 
-The chronological log (\code{RESULTS.md}) records the measurements that
+The chronological experiment log (a working note) records the measurements that
 shaped the shipped default. We summarise the points relevant to judging
 overfitting; all are single runs on small sets on gpt-6-sol and are
 superseded by the full benchmark.

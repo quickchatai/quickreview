@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AACR-Bench for quickreviewd — the host side. Everything real happens in the
+# AACR-Bench for QuickReview — the host side. Everything real happens in the
 # `qcr-bench` docker sandbox; this script only builds it and wires the mounts.
 #
 #   bench/aacr/bench.sh doctor
@@ -90,7 +90,7 @@
 #              Codex CLI — gpt-6.1-sol needs >= 0.159 (0.158.0's requests for it are refused by the
 #              ChatGPT backend: "not supported when using Codex with a ChatGPT account")
 #   --arm claude (build, review, eval, report, judge): Claude Code as a BENCHMARKED
-#              REVIEWER — root CLAUDE.md rule 5's one ratified exception; `claude` exists
+#              REVIEWER — the project's one sanctioned place to run Claude Code; `claude` exists
 #              only in image qcr-bench-claude and runs only in its review container.
 #              `review` runs the AACR harness's own reviewers/claude.py (`claude -p
 #              '/code-review <base>...<head> '` …, one case at a time, --timeout-min 30);
@@ -176,7 +176,7 @@ case "$ARM" in
   opencode) IMAGE="${QCR_BENCH_OPENCODE_IMAGE:-qcr-bench-opencode:latest}"; TARGET=opencode
        BASE_ARGS=(); REVIEW_ENTRY=opencode-review
        [[ -n "${QCR_BENCH_OPENCODE_VERSION:-}" ]] && BASE_ARGS=(--build-arg "OPENCODE_VERSION=$QCR_BENCH_OPENCODE_VERSION" --build-arg "OPENCODE_SHA256_LINUX_X64=${QCR_BENCH_OPENCODE_SHA256:?set QCR_BENCH_OPENCODE_SHA256 with QCR_BENCH_OPENCODE_VERSION}") ;;
-  # --- the Claude Code arm (rule 5's ratified exception: inside this image only) ---
+  # --- the Claude Code arm (the one sanctioned place to run it: inside this image only) ---
   # trixie as for OCR: the classic builder builds every stage before the target, ocr's included.
   claude) IMAGE="${QCR_BENCH_CLAUDE_IMAGE:-qcr-bench-claude:latest}"; TARGET=claude
        BASE_ARGS=(--build-arg RUNTIME_BASE=node:22-trixie); REVIEW_ENTRY=claude-review ;;
@@ -457,7 +457,7 @@ case "$cmd" in
     d="$(run_dir)"
     if [[ "$PHASE" == init || "$PHASE" == finish ]]; then
       # Bookkeeping only (run.json, the outcome tally): no model, no repos.
-      [[ "$ARM" == qcr ]] || die "--phase belongs to the quickreviewd arm"
+      [[ "$ARM" == qcr ]] || die "--phase belongs to the QuickReview arm"
       args=("${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out"
         "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
       record "${args[@]}"
@@ -478,7 +478,7 @@ case "$cmd" in
       fi
     else
       if [[ "$ARM" == qcr && " ${EXTRA[*]-} " == *anthropic/* ]]; then auth_mounts optional; else auth_mounts; fi
-      # quickreviewd on an Anthropic model (--config models.*=anthropic/…): pi's
+      # QuickReview on an Anthropic model (--config models.*=anthropic/…): pi's
       # anthropic provider needs an ANTHROPIC_API_KEY — the same dedicated
       # credential file as the Claude Code arm, by --env-file, never an argv.
       if [[ "$ARM" == qcr && " ${EXTRA[*]-} " == *anthropic/* ]]; then
@@ -530,7 +530,7 @@ case "$cmd" in
     # third-party CLI arm, the way that tool takes review context. Default off.
     if [[ "${QCR_BENCH_PR_TEXT:-}" == 1 ]]; then
       [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == pireview ]] \
-        || die "QCR_BENCH_PR_TEXT=1 is wired for the ocr, codex, opencode and pireview arms (quickreviewd and pragent always read the PR text)"
+        || die "QCR_BENCH_PR_TEXT=1 is wired for the ocr, codex, opencode and pireview arms (QuickReview and pragent always read the PR text)"
       oe+=(-e "QCR_BENCH_PR_TEXT=1")
     fi
     # pi-review: a disk-backed /work for the case trees — NOT under the sandbox
@@ -641,7 +641,7 @@ case "$cmd" in
     ;;
 
   results)
-    [[ "$ARM" == qcr ]] || die "results rebuilds the quickreviewd arm's scored files; the $ARM arm writes its result files directly"
+    [[ "$ARM" == qcr ]] || die "results rebuilds the QuickReview arm's scored files; the $ARM arm writes its result files directly"
     need_image
     d="$(run_dir)"
     docker run "${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out" \

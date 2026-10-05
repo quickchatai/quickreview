@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare judged benchmark arms on the SAME PRs — the table behind RESULTS.md.
+"""Compare judged benchmark arms on the SAME PRs — the tables behind the benchmark paper.
 
     bench/aacr/compare.py --cases fresh10 "before=fresh10-off" "default=lean-fresh10" "low=low-fresh10"
     bench/aacr/compare.py --cases fresh10:id,id low=low-fresh10 default=default-fresh10 ocr=ocr-fresh10

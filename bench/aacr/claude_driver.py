@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Claude Code arm's one call into the AACR harness — INSIDE the sandbox only.
 
-Root CLAUDE.md rule 5's single ratified exception (2026-09-28): Claude
+The project's single sanctioned place to run Claude Code (2026-09-28): Claude
 Code runs as a BENCHMARKED REVIEWER inside the locked-down bench/aacr image,
 never on the host. This file is the only thing in this repo that reaches the
 harness's Claude runner, and it is run only by src/bench/claudecode.ts, which

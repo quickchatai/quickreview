@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where one quickreviewd benchmark review spends its wall time.
+"""Where one QuickReview benchmark review spends its wall time.
 
   bench/aacr/perf_profile.py $QCR_BENCH_RUNS_DIR/<run> [--json]
 

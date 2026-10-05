@@ -350,7 +350,7 @@ export function renderWhatifReport(
   L.push(`# AACR-Bench what-if — ${set.name}, source run \`${origin}\``);
   L.push("");
   L.push(
-    `- Source run: quickreviewd \`${String(run.qcr_commit ?? "?").slice(0, 10)}\`, conversation model \`${run.models?.conversation ?? "?"}\`, pi ${run.pi ?? "?"}, ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} references`,
+    `- Source run: QuickReview \`${String(run.qcr_commit ?? "?").slice(0, 10)}\`, conversation model \`${run.models?.conversation ?? "?"}\`, pi ${run.pi ?? "?"}, ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} references`,
   );
   L.push(`- Judge (this scoring): ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Step 3: the tables and charts of the final comparison, from the archived judge
-# and harness files — no model calls. FULL-BENCHMARK.md, "Exact commands".
+# and harness files — no model calls. bench/aacr/README.md, "Reproduce".
 #
 #   QCR_BENCH_RUNS_DIR=<runs dir> bench/aacr/final/score.sh
 set -euo pipefail

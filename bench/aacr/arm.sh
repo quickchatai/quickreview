@@ -16,7 +16,7 @@
 #                       all30              smoke10 + dev10 + holdout10
 #                       full               the 196-PR AACR set: judged against every defect
 #                                          set it overlaps (the 40 PRs with ground truth)
-#   --arm qcr|ocr     quickreviewd (default) or the open-code-review baseline (bench.sh --arm ocr;
+#   --arm qcr|ocr     QuickReview (default) or the open-code-review baseline (bench.sh --arm ocr;
 #                     OCR reviews one case at a time in one container per set, as its harness does)
 #   --arm codex       the Codex CLI arm (bench.sh --arm codex; the harness's reviewers/codex.py,
 #                     one case at a time in one container per set, like ocr)
@@ -26,8 +26,8 @@
 #                     container per set, like ocr
 #   --arm pragent     PR-Agent (bench.sh --arm pragent; /describe, /review, /improve on gpt-6.1-sol), one case
 #                     at a time in one container per set, like ocr
-#   --arm claude      Claude Code as a benchmarked reviewer (bench.sh --arm claude; root CLAUDE.md
-#                     rule 5's one ratified exception — inside its sandbox only): the ocr path, one
+#   --arm claude      Claude Code as a benchmarked reviewer (bench.sh --arm claude; the one sanctioned
+#                     place to run Claude Code — inside its sandbox only): the ocr path, one
 #                     container per set, the harness's reviewers/claude.py; needs bench/aacr/claude.env
 #   --parallel N|auto reviews at once, MACHINE-WIDE (default auto; see "Scheduling" below)
 #   --max-parallel N, --concurrency N   other spellings of --parallel N
@@ -56,7 +56,7 @@
 # QCR_BENCH_{OCR,CODEX,OPENCODE,PIREVIEW}_MODEL
 # — each one set is recorded in <run>.arm.json (`env`).
 #
-# Scheduling (the quickreviewd arm). Every case of every set and every repeat
+# Scheduling (the QuickReview arm). Every case of every set and every repeat
 # goes on ONE queue, longest PR first (the set's change_line_count), and each
 # case runs in its OWN hardened container (bench.sh review --phase case), so
 # no slot ever idles on a set that finished early. A case takes one of
@@ -67,7 +67,7 @@
 # run's judge (one slot) and eval (one machine-wide eval lock) start the
 # moment its last case finishes, while other runs are still reviewing.
 #
-# `auto` is ADAPTIVE (AIMD, bench/aacr/PERF.md): it starts at
+# `auto` is ADAPTIVE (AIMD): it starts at
 # min((MemAvailable - QCR_BENCH_RESERVE_MB) / QCR_BENCH_REVIEW_MB,
 # QCR_BENCH_START_PARALLEL) and keeps ONE machine-wide target in
 # $QCR_BENCH_RUNS_DIR/.slots/target, shared by every arm.sh (an arm that finds
@@ -100,7 +100,7 @@
 #   QCR_BENCH_EVAL_CPUS=8        the eval container's cpu cap (it runs shards × variants pi judges)
 #
 # Every arm is judged by the SAME judge on the same image: the defect judge
-# always runs in the quickreviewd image ($QCR_BENCH_IMAGE), whatever the arm.
+# always runs in the QuickReview image ($QCR_BENCH_IMAGE), whatever the arm.
 # $QCR_BENCH_RUNS_DIR/<run>.arm.json records the arm, image id and levers.
 # Exits non-zero when any review, judge or eval step failed.
 #
@@ -137,9 +137,9 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$PREFIX" && -n "$CASES" ]] || { echo "--prefix and --cases are required" >&2; exit 2; }
 [[ "$ARM" == qcr || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude || "$ARM" == pireview || "$ARM" == pragent ]] || { echo "--arm must be qcr | ocr | codex | opencode | pireview | pragent | claude" >&2; exit 2; }
-[[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets quickreviewd levers; the $ARM arm has none" >&2; exit 2; }
+[[ "$ARM" == qcr || -z "$CONFIG" ]] || { echo "--config sets QuickReview levers; the $ARM arm has none" >&2; exit 2; }
 [[ "${QCR_BENCH_PR_TEXT:-}" != 1 || "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == pireview ]] \
-  || { echo "--pr-text is for the ocr, codex, opencode and pireview arms (quickreviewd and pragent always read the PR text)" >&2; exit 2; }
+  || { echo "--pr-text is for the ocr, codex, opencode and pireview arms (QuickReview and pragent always read the PR text)" >&2; exit 2; }
 [[ "$EVAL" =~ ^[0-9]+$ ]] || { echo "--eval takes a round count" >&2; exit 2; }
 [[ "$PAR" == auto || "$PAR" =~ ^[1-9][0-9]*$ ]] || { echo "--parallel takes a count or auto" >&2; exit 2; }
 [[ "$RETRIES" =~ ^[0-9]+$ && "$JCONC" =~ ^[1-9][0-9]*$ && "$EVAL_SHARDS" =~ ^[1-9][0-9]?$ ]] \
@@ -334,7 +334,7 @@ judge_and_eval() { # run set cases
   [[ "$ARM" != qcr ]] && arm=(--arm "$ARM")
   if [[ "$JUDGE" == 1 ]]; then
     # Judge ONLY this run's own cases, per ground truth that has them (a
-    # `full` run spans several defect sets), always in the quickreviewd image.
+    # `full` run spans several defect sets), always in the QuickReview image.
     defs=$(python3 - "$HERE/defects" "$cases" <<'PY'
 import json, os, sys
 want = set(sys.argv[2].split(","))
@@ -403,7 +403,7 @@ if [[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude
   exit "$fail"
 fi
 
-# ---- the quickreviewd arm: one machine-wide queue, one container per case ----------
+# ---- the QuickReview arm: one machine-wide queue, one container per case ----------
 SLOT=with_slot
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

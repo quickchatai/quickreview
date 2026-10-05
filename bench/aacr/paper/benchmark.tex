@@ -5,12 +5,13 @@
 %
 %  DRAFT (2026-09-28; base model, stability and the current-build re-run
 %  added 2026-09-30; rewritten 2026-10-01 around the final comparison;
-%  restructured and shortened 2026-10-01 after an internal referee review,
-%  REVIEW-benchmark.md; changes in CHANGES-benchmark.md). Single file:
-%  diagrams are TikZ, the bibliography is inline (no bibtex run needed).
-%  Every number is copied from bench/aacr/FULL-BENCHMARK.md,
-%  docs/METHODOLOGY.md, docs/THREATS-TO-VALIDITY.md, METRICS.md,
-%  RESULTS.md or charts/numbers*.json unless a footnote says otherwise.
+%  restructured and shortened 2026-10-01 after an internal referee review).
+%  Single file: diagrams are TikZ, the bibliography is inline (no bibtex run
+%  needed); build with build.sh. Every number comes from the published run
+%  archive through the scripts in bench/aacr/ (compare.py, charts.py,
+%  final/score.sh), docs/METHODOLOGY.md, docs/THREATS-TO-VALIDITY.md and
+%  METRICS.md, or the study's working notes (Section "Reproducibility and
+%  data availability"), unless a footnote says otherwise.
 %  Gap markers:
 %    \NEEDDATA  -- a number we could compute from existing runs/files
 %    \NEEDEXP   -- an experiment we have not run
@@ -3294,16 +3295,16 @@ reader attention, not a measure of review quality. Alongside the three
 numbers we report the two severity views of
 Sections~\ref{sec:martianstrong} and~\ref{sec:martianblocking}.
 
-\paragraph{Data.} The case sets, the converter, the scoring wrapper and
-every analysis note ship in \code{bench/aacr/ext/}:
-\code{EXTERNAL-BENCHMARKS.md} (method, deviations, every score),
-\code{martian-tuning/} (the posting-policy leaderboard, the frozen policy,
-the golden mining, the fair comparison, the full golden audit with its
-per-comment verdicts in \code{golden-audit-full.json}, and the position) and
-\code{RUNS.md} (every run and its Martian scoring); the consolidated
-critique is \code{MARTIAN-CRITIQUE.md}, and the figures of this section are
-drawn by \code{bench/aacr/martian\_figs.py} from \code{charts/martian-data.json}. Review and judge run
-directories are local, as for the main benchmark (Section~\ref{sec:repro}).
+\paragraph{Data.} The case sets, the converter and the scoring wrapper
+ship in \code{bench/aacr/ext/}, with the full golden audit's per-comment
+verdicts in \code{ext/martian-tuning/golden-audit-full.json}; the figures of
+this section are drawn by \code{bench/aacr/martian\_figs.py} from
+\code{charts/martian-data.json}. The analysis notes behind this section
+(method and deviations, the posting-policy leaderboard, the golden mining, the
+fair comparison, the run log and the consolidated critique) are working notes
+of the study, not in the public repository. Review and judge run directories
+are in the run archive, as for the main benchmark
+(Section~\ref{sec:repro}).
 
 % =====================================================================
 \section{External check: Qodo's PR-Review-Bench}
@@ -3652,15 +3653,19 @@ pi 0.99.1 for every gpt-6.1-sol arm; reviewer builds by commit
 (\code{docs/PROMPTS.md} \S4.1). The selection sets are derived by a
 committed rule (\code{bench/aacr/final/select40.py -{}-check}).
 
-\paragraph{Released.} The harness wrapper, every arm, the case sets, the
-defect keys (JSON and a readable rendering) with all 3{,}093 exclusions and
-their reasons, the reference labels and the 80 bot-derived references, the
-scoring and chart scripts, the final comparison's launch and scoring scripts
-(\code{bench/aacr/final/}), every prompt verbatim (key construction, both
-judges, our reviewer, each other reviewer, the parsers), and the reports.
-\code{FULL-BENCHMARK.md} records the exact command, image and build behind
-every row; \code{bench/aacr/final/score.sh} recomputes every final table from
-the archived judge files with no model call.
+\paragraph{Released.} In the repository: the harness wrapper, every arm,
+the case sets, the defect keys (JSON) with all 3{,}093 exclusions and their
+reasons, the reference labels and the 80 bot-derived references, the scoring
+and chart scripts, the final comparison's launch and scoring scripts
+(\code{bench/aacr/final/}, which record the exact command, image and build
+behind every row), every prompt verbatim (key construction, both judges, our
+reviewer, each other reviewer, the parsers), and this paper.
+\code{bench/aacr/final/score.sh} recomputes every final table from the
+archived judge files with no model call, and \code{bench/aacr/README.md}
+(``Reproduce'') gives the three ways in: re-score the slim bundle with no key,
+re-judge the archived reviews, or re-run every arm, on a ChatGPT login or on
+one's own API keys. The generated charts and the readable renderings of the
+keys are in the dataset. The file names some footnotes cite --- \code{FULL-BENCHMARK.md}, \code{RESULTS.md}, \code{EXTERNAL-BENCHMARKS.md}, \code{MARTIAN-CRITIQUE.md}, \code{RUNS.md}, \code{REVIEW-benchmark.md}, and the scratch analyses under \code{wp-data/} and \code{paper-data/} --- are the study's working notes. They are not part of the public repository; every number this paper takes from them is stated here, and the run data they were computed from is in the run archive below.
 
 \paragraph{Run archive.} The full run directories (reviews, transcripts,
 judge files, eval metrics) are published as one archive on Hugging Face

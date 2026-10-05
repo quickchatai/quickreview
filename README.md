@@ -165,13 +165,13 @@ validity: [*Measuring whether a code review finds the real
 defects*](bench/aacr/paper/benchmark.pdf) (the defect key, the judge, eight
 reviewers; the frozen build in §8.7) and [*QuickReview: a multi-pass
 automated code reviewer*](bench/aacr/paper/quickreview.pdf) (design, cost,
-stability). The working records are
-[`bench/aacr/FULL-BENCHMARK.md`](bench/aacr/FULL-BENCHMARK.md),
-[`RESULTS.md`](bench/aacr/RESULTS.md) ("The frozen build"),
-[`EXTERNAL-BENCHMARKS.md`](bench/aacr/EXTERNAL-BENCHMARKS.md) (§6),
-[`ext/MARTIAN-CRITIQUE.md`](bench/aacr/ext/MARTIAN-CRITIQUE.md) and
-[`ext/QODO-BENCH.md`](bench/aacr/ext/QODO-BENCH.md). Every run is one review
-per PR, and repeat runs differ by about ±2 found issues per benchmark.
+stability). Every run behind the tables — each review, verdict and score,
+and the charts drawn from them — is in the Hugging Face dataset and run
+archive<!-- TODO(launch): link the dataset and the run archive here -->,
+and [`bench/aacr/README.md`](bench/aacr/README.md#reproduce) shows how to
+re-score it with no keys, re-judge it, or re-run the whole benchmark on your
+own API keys. Every run is one review per PR, and repeat runs differ by about
+±2 found issues per benchmark.
 
 ## Why this exists
 

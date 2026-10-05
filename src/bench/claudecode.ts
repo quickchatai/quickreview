@@ -1,6 +1,6 @@
 // The Claude Code arm of the AACR-Bench harness — a BENCHMARKED REVIEWER only.
 //
-// Root CLAUDE.md rule 5 forbids spawning `claude`, with ONE ratified exception
+// The project never spawns `claude`, with ONE sanctioned exception
 // (2026-09-28): Claude Code may run as a benchmarked reviewer inside
 // the locked-down bench/aacr docker sandbox (`bench.sh --arm claude`), never on
 // the host, never in the daemon/TUI/companion/review rounds, never as a tool
@@ -904,7 +904,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
   const previous = readJson(runFile) as Obj | undefined;
   if (previous && previous["reviewer"] !== "claude")
     throw new Error(
-      `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "quickreviewd")}) — pick a new --run`,
+      `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "QuickReview")}) — pick a new --run`,
     );
   if (!o.resume) {
     for (const c of cases) {
@@ -1063,7 +1063,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
   }
   L.push("");
   L.push(
-    "Reading the numbers: Claude Code's findings carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. Claude Code 2.1.283's `/code-review` is a built-in local command that ignores the harness's findings prompt and findings tool, so the harness stores its answer as raw text, which the harness's own Claude reader scores as zero. Each result file therefore carries an OCR-shaped `review` view, scored with the harness's OCR reader: built from the harness's structured findings when it got any (identical to what its Claude reader sees), otherwise read out of the stored markdown by a deterministic prose parser (src/bench/claudeprose.ts) — every top-level list item (or paragraph) that opens with a `path:line` location, outside lists the review itself says are not findings. `(prose)` in the Findings column marks those cases. Items that name a file but no line are not counted.",
+    "Reading the numbers: Claude Code's findings carry no severity tag, so only the `all` variant exists for this arm — compare it with the QuickReview arm's `all` row. Claude Code 2.1.283's `/code-review` is a built-in local command that ignores the harness's findings prompt and findings tool, so the harness stores its answer as raw text, which the harness's own Claude reader scores as zero. Each result file therefore carries an OCR-shaped `review` view, scored with the harness's OCR reader: built from the harness's structured findings when it got any (identical to what its Claude reader sees), otherwise read out of the stored markdown by a deterministic prose parser (src/bench/claudeprose.ts) — every top-level list item (or paragraph) that opens with a `path:line` location, outside lists the review itself says are not findings. `(prose)` in the Findings column marks those cases. Items that name a file but no line are not counted.",
   );
   return L.join("\n") + "\n";
 }

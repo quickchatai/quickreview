@@ -14,7 +14,7 @@
 //    --audience agent --concurrency 8 --timeout 30 --max-tools 30`, a process
 //   timeout of timeout×60+300 s, and the result payload of `save_result`.
 //   OCR's range mode diffs merge-base(from, to)..to itself — the same
-//   merge-base..head range the quickreviewd arm reviews.
+//   merge-base..head range the QuickReview arm reviews.
 //
 // What differs, all mechanical:
 //   - the repo is `prepareTree`'s (objects borrowed read-only from the
@@ -31,7 +31,7 @@
 //
 // No PR title or description reaches OCR: reviewers/ocr.py passes no
 // `--background`, and in range mode OCR reads no commit message. (The
-// quickreviewd arm gets both, as production does — the report says so.)
+// QuickReview arm gets both, as production does — the report says so.)
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -322,7 +322,7 @@ export function summarizeOcrRun(a: {
 
 export interface OcrRunnerOptions {
   /** The image's production tree; cases are materialised under `<root>/wt`
-   * (a disk-backed anonymous volume), as the quickreviewd arm's are. */
+   * (a disk-backed anonymous volume), as the QuickReview arm's are. */
   root: string;
   store: string;
   outDir: string;
@@ -540,7 +540,7 @@ export function readOcrSummary(outDir: string, c: BenchCase): OcrCaseSummary | n
 }
 
 /** The arm a run dir holds, from its run.json (`reviewer: "ocr"` / `"codex"` /
- * `"opencode"` / `"claude"` / `"pireview"`; a quickreviewd run carries no `reviewer`); `null` when there is
+ * `"opencode"` / `"claude"` / `"pireview"`; a QuickReview run carries no `reviewer`); `null` when there is
  * no readable run.json yet. */
 export function runArmOf(
   outDir: string,

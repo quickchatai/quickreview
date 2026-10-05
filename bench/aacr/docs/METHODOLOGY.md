@@ -1,8 +1,8 @@
-# Benchmark methodology — quickreviewd and six other reviewers on AACR-Bench
+# Benchmark methodology — QuickReview and six other reviewers on AACR-Bench
 
 This document says exactly what was measured, how, with which builds and
 prompts, and in what order the decisions were made, so a reader can reproduce
-the numbers in [`../FULL-BENCHMARK.md`](../FULL-BENCHMARK.md) and judge for
+the numbers in the benchmark paper ([`../paper/benchmark.pdf`](../paper/benchmark.pdf)) and judge for
 themselves whether the review was tuned to the test. Companion documents:
 
 - [`THREATS-TO-VALIDITY.md`](THREATS-TO-VALIDITY.md) — the weak points, stated as
@@ -13,8 +13,11 @@ themselves whether the review was tuned to the test. Companion documents:
   disagree.
 
 Everything below is traceable to a file, a commit or a run directory. Run
-directories live outside the repo in `~/qcr-bench-runs/runs/`;
-analysis scripts in `~/qcr-bench-runs/analysis/`.
+directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and are published
+in the Hugging Face dataset and run archive<!-- TODO(launch): link -->; the ground-truth analysis scripts lived beside them in
+`<runs-root>/analysis/`. Commits in brackets are builds in the pre-publication
+history; the public history starts at its first commit, and each run's
+`run.json` records the build it ran on.
 
 ---
 
@@ -99,8 +102,7 @@ never against GitHub's write API (`bench/aacr/bench.sh`, `bench/aacr/README.md`
   (Codex natively, OCR/OpenCode through the loopback `codex_bridge.py`);
 - Claude Code uses its own API key from `~/.config/qcr-bench/claude.env`, passed
   with `--env-file`; the host's interactive Claude login is never mounted. Claude
-  Code exists only inside its own image (root `CLAUDE.md` rule 5's one ratified
-  exception, commit `44a614f`).
+  Code exists only inside its own image (the project's one sanctioned place to run Claude Code, commit `44a614f`).
 
 **Builds used by the final runs** (from each run's `run.json` / case
 fingerprint; image env `QCR_BENCH_COMMIT`):
@@ -132,8 +134,8 @@ tool as shipped).
 
 | Reviewer | Version | Model / reasoning | How it runs | Final runs |
 |---|---|---|---|---|
-| **quickreviewd default** | this repo | gpt-6-sol, per-lens tiers medium/high (`config.toml [models]`), validator high | production round (`round-first.md`, real lens + validator agents via `buildAgents` + `PASS_ADDENDA`) with a BENCHMARK MODE override (no CI gate, write files instead of posting); `[review] preset = "default"`: all levers, quality lenses, demoting validator, strict nits. Gets the PR title and body (as production does). | `b40-{smoke10,dev10,holdout10,fresh10}`, `all-default-rest145` |
-| quickreviewd low | this repo | every model at `low` | same, `--config review.preset=low` | `all-low-*` |
+| **QuickReview default** | this repo | gpt-6-sol, per-lens tiers medium/high (`config.toml [models]`), validator high | production round (`round-first.md`, real lens + validator agents via `buildAgents` + `PASS_ADDENDA`) with a BENCHMARK MODE override (no CI gate, write files instead of posting); `[review] preset = "default"`: all levers, quality lenses, demoting validator, strict nits. Gets the PR title and body (as production does). | `b40-{smoke10,dev10,holdout10,fresh10}`, `all-default-rest145` |
+| QuickReview low | this repo | every model at `low` | same, `--config review.preset=low` | `all-low-*` |
 | open-code-review | 1.3.1 (binary sha256 pinned) | gpt-6-sol, medium | exactly as the harness's `reviewers/ocr.py` (flags mirrored in `src/bench/ocr.ts`); no PR title/body (harness passes none) | `b40ocr-*`, `all-ocr-rest145` |
 | Codex CLI | 0.158.0 (sha256 pinned) | gpt-6-sol, medium | the harness's own `reviewers/codex.py` imported by `codex_arm.py` (its prompt, `codex exec review`, MCP findings server, result file). Deviations: prepared tree instead of clone; ChatGPT auth instead of API key; config prelude (effort medium, no update check/analytics, web search disabled); container `seccomp=unconfined` so Codex's own bubblewrap sandbox works | `all-codex-{S40}`, `all-codex-rest145` (18 kept), `all-codex-c{1..4}-rest145` |
 | OpenCode | 1.18.33 (sha256 pinned) | gpt-6-sol, medium (`--variant medium`) | no harness runner exists; built in the codex runner's shape: OpenCode's built-in `review` command with the codex runner's findings fragment and the harness's MCP findings server; `subtask: false` (the built-in subtask made the parent re-review and double-report; prompt otherwise identical to the built-in) | `all-opencode-{S40}`, `all-opencode-rest145` (19 kept), `all-opencode-c{1..4}-rest145` |
@@ -148,7 +150,7 @@ in the tables (`compare.py` takes the first run with a judgement per PR).
 
 **One review per PR per reviewer.** Every number comes from a single run. On
 the 40 original PRs, repeated runs of our reviewer earlier this week varied by
-about ±1–2 found defects per 10 PRs (`RESULTS.md`, consistency section).
+about ±1–2 found defects per 10 PRs (the benchmark paper, its run-to-run variance section).
 
 ## 5. Ground truth
 
@@ -235,7 +237,7 @@ candidate.
 - 39 have no reviewer among their sources.
 
 `charts.py` computes the subset (the `independent-defects.jpg` chart), and
-`FULL-BENCHMARK.md` has the table. On it, quickreviewd default scores 86% under
+The benchmark paper has the table. On it, QuickReview default scores 86% under
 both judges (80 of 82 high), against 84% on the whole key. The next reviewer
 scores 71% (low), then 70% (Claude Code).
 
@@ -327,7 +329,7 @@ Claude Code's cost is Anthropic's `costUSD` from its own output. The runs go
 through a ChatGPT login and one API key; the dollar figures are list-price
 equivalents for comparison, not invoices. The per-PR token table (uncached
 input, cached input, output) for all seven reviewers is in
-`../FULL-BENCHMARK.md`. For Claude Code, the uncached column includes cache
+the benchmark paper. For Claude Code, the uncached column includes cache
 writes.
 
 Minutes are wall-clock per PR under the shared machine-wide scheduler (up to 10
@@ -337,7 +339,7 @@ one case at a time per container are not directly comparable to ours on time.
 ## 8. Pipeline and reproducing
 
 ```sh
-export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs
+export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs   # any directory outside the checkout
 bench/aacr/check_available.py --sets full                    # which PRs can run
 bench/aacr/bench.sh build            # and: build --arm ocr|codex|opencode|pireview|claude
 bench/aacr/bench.sh prefetch --set full --wait-rate-limit
@@ -353,15 +355,16 @@ bench/aacr/compare.py --judge-model claude-opus-5-5 --cases …  "…=…"      
 uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --second-judge claude-opus-5-5 "…=…"  # the JPGs
 ```
 
-Ground truth for new PRs: `analysis/2026-09-27-rest145/` holds `extract-in.sh`,
+Ground truth for new PRs: `<runs-root>/analysis/2026-09-27-rest145/` held `extract-in.sh`,
 `candidates.py`, `verify-workflow.js` (the verify/critic orchestration),
 `assemble.py`, `extend_prep.py`, `assemble_ext.py`, the batch files and logs.
 The hunt, verify and extension prompts are reproduced in `PROMPTS.md`.
 
-**Committed** in this repo: the harness wrapper, every arm, sets, ground truth,
-compare/charts scripts, RESULTS/FULL-BENCHMARK/METRICS, charts. **Local only**
-(`qcr-bench-runs/`): the run directories (reviews, transcripts, judge files,
-eval metrics) and the extracted code; the analysis scripts above. A re-run
+**In this repo**: the harness wrapper, every arm, sets, ground truth,
+the compare/charts scripts, METRICS and the two papers (with the figures they
+include). **In the Hugging Face dataset and run archive<!-- TODO(launch): link -->**: the run directories (reviews, transcripts,
+judge files, eval metrics), the generated charts and tables, and a slim
+re-score bundle; `../README.md` "Reproduce" says how to use each. A re-run
 reproduces the method, not the exact numbers: models are nondeterministic and
 each reviewer ran once.
 
@@ -397,14 +400,13 @@ wrote which comment. That is why the reports show the two halves separately.
 
 | Path | What |
 |---|---|
-| `bench/aacr/FULL-BENCHMARK.md` | the full results, both tables, per-set split |
+| `bench/aacr/paper/benchmark.pdf`, `quickreview.pdf` (+ `.tex`) | the full results, both tables, per-set split; the reviewer's design |
 | `bench/aacr/METRICS.md` | how to read the two metrics |
 | `bench/aacr/README.md` | harness wrapper, every arm, safety model |
-| `bench/aacr/RESULTS.md` | chronological experiment log |
 | `bench/aacr/docs/PROMPTS.md`, `THREATS-TO-VALIDITY.md` | prompts; weak points |
 | `bench/aacr/sets/*.json`, `select_cases.py`, `check_available.py` | case sets and how they were made |
-| `bench/aacr/defects/*.json` / `.md` | ground truth (versioned) |
+| `bench/aacr/defects/*.json` | ground truth (versioned; the rendered `.md` keys are in the dataset) |
 | `bench/aacr/arm.sh`, `bench.sh`, `in-container.sh`, `compare.py`, `charts.py` | the pipeline |
 | `src/bench/*.ts`, `bench/aacr/*_arm.py`, `claude_driver.py`, `codex_bridge.py` | runners, judge, parser, bridge |
-| `~/qcr-bench-runs/runs/` | every run directory (local) |
-| `~/qcr-bench-runs/analysis/2026-09-27-rest145/` | ground-truth build scripts, batches, logs (local) |
+| `$QCR_BENCH_RUNS_DIR` | every run directory (published in the run archive) |
+| `<runs-root>/analysis/2026-09-27-rest145/` | ground-truth build scripts, batches, logs |

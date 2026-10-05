@@ -154,7 +154,7 @@ export function syncBenchAuth(o: {
   if (expiresAt !== null && expiresAt < now + o.needMs) {
     throw new AuthExpiring(
       `the shared Codex access token expires at ${new Date(expiresAt).toISOString()}, inside this case's ${Math.round(o.needMs / 60_000)}-minute budget. ` +
-        "The benchmark never refreshes it (that would invalidate the companion's login). Use the companion once so it refreshes its own login, then re-run with --resume.",
+        "The benchmark never refreshes it (that would invalidate the login's own grant). Use pi on that login volume once so it refreshes its own login, then re-run with --resume — or run on your own API key (QCR_BENCH_AUTH=api-key).",
     );
   }
   mkdirSync(o.dstDir, { recursive: true, mode: 0o700 });

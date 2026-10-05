@@ -226,7 +226,7 @@ ENV QCR_PIREVIEW_VERSION=${PIREVIEW_VERSION} PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=
 
 # ---- ocr: the open-code-review baseline arm --------------------------------------
 # Built on top of `runtime`, so the scorer, the dataset, pi and the judge shim
-# are the ones the quickreviewd arm is scored with. OCR is installed from npm at
+# are the ones the QuickReview arm is scored with. OCR is installed from npm at
 # the pinned version, and its downloaded binary is checked against the sha256
 # recorded HERE (npm's installer checks it only against the release's own
 # sha256sum.txt). The bench calls the binary directly: the npm `ocr` wrapper
@@ -247,7 +247,7 @@ RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
 ENV OCR_NO_UPDATE=1 QCR_OCR_VERSION=${OCR_VERSION}
 
 # ---- claude: Claude Code as a BENCHMARKED REVIEWER --------------------------------
-# Root CLAUDE.md rule 5's ONE ratified exception (2026-09-28): `claude`
+# The project's ONE sanctioned place to run Claude Code (2026-09-28): `claude`
 # exists in this target only and runs only inside its hardened review container
 # (bench.sh --arm claude) — never on the host. Built on `runtime`, so the scorer,
 # the dataset, pi and the judge shim are the ones every other arm is scored with.

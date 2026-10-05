@@ -2,8 +2,8 @@
 # Step 1 of the final comparison: the SELECTION runs (2026-09-30). Every candidate
 # configuration of every third-party tool, on gpt-6-sol, on the 40-PR selection
 # set (select40.txt), one run each; the pick per tool is the highest defect
-# recall, ties to comments correct (charts.py pick_best). FULL-BENCHMARK.md,
-# "How the competitor configurations were chosen".
+# recall, ties to comments correct (charts.py pick_best). The benchmark paper
+# (bench/aacr/paper/benchmark.pdf) says how the competitor configurations were chosen.
 #
 #   QCR_BENCH_RUNS_DIR=<runs dir> bench/aacr/final/run-selection.sh
 #

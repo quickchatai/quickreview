@@ -1,6 +1,6 @@
 // What a reviewed PR cost in dollars, the way pi prices it.
 //
-// quickreviewd runs through pi, which prices every model call it makes
+// QuickReview runs through pi, which prices every model call it makes
 // (usage.cost on each assistant message_end, and a per-child total on each
 // subagent result): the case's cost is the sum over the main session and every
 // lens pass — together they are exactly the case's recorded tokens. The OCR

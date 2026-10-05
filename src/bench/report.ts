@@ -148,7 +148,7 @@ export function renderReport(
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: quickreviewd \`${String(run.qcr_commit ?? "?").slice(0, 10)}\`, profile \`${run.profile || "(generic)"}\`, conversation model \`${run.models?.conversation ?? "?"}\`, pi ${run.pi ?? "?"}`,
+    `- Reviewer: QuickReview \`${String(run.qcr_commit ?? "?").slice(0, 10)}\`, profile \`${run.profile || "(generic)"}\`, conversation model \`${run.models?.conversation ?? "?"}\`, pi ${run.pi ?? "?"}`,
   );
   if (Array.isArray(run.resumes) && run.resumes.length)
     L.push(
@@ -402,7 +402,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
   }
   L.push("");
   L.push(
-    "Reading the numbers: OCR's comments carry no severity tag, so only the `all` variant exists for this arm — compare it with the quickreviewd arm's `all` row. OCR tokens are OCR's own summary (prompt tokens, cached included); the backend columns are the bridge's count of the same calls from the backend's usage (reasoning tokens are part of output). Precision counts every comment against the dataset's references, so a real issue the annotators did not record scores as a false positive.",
+    "Reading the numbers: OCR's comments carry no severity tag, so only the `all` variant exists for this arm — compare it with the QuickReview arm's `all` row. OCR tokens are OCR's own summary (prompt tokens, cached included); the backend columns are the bridge's count of the same calls from the backend's usage (reasoning tokens are part of output). Precision counts every comment against the dataset's references, so a real issue the annotators did not record scores as a false positive.",
   );
   L.push("");
   return L.join("\n");
