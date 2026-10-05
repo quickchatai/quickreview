@@ -337,6 +337,28 @@
         - "{{ sandbox_root }}/state"
         - "{{ sandbox_root }}/config-home"
 
+    # …except the operator command channel: `commands/operator/` is
+    # root-owned 0755 so no session (uid {{ container_uid }}) can write there,
+    # and that seal is the ONLY thing telling an operator's drain from a
+    # session's. The recurse above handed it to the container user on every
+    # deploy, so the next operator command was served as a session's, bounded
+    # and not lifted by the boot (2026-10-05: a TUI deploy-drain left the
+    # board drained after a sync). Re-seal it; never create it here — a
+    # root-owned commands/ parent would lock the daemon out of its own dir.
+    - name: Operator command channel present?
+      ansible.builtin.stat:
+        path: "{{ sandbox_root }}/sandbox/commands/operator"
+      register: operator_channel
+
+    - name: Operator command channel stays root-owned 0755 (the seal)
+      ansible.builtin.file:
+        path: "{{ sandbox_root }}/sandbox/commands/operator"
+        state: directory
+        owner: "0"
+        group: "0"
+        mode: "0755"
+      when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk
+
     - name: Build context — Dockerfile and entrypoint
       ansible.builtin.template:
         src: "templates/{{ item.src }}"

@@ -1396,3 +1396,40 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
     expect(unconditional).toEqual(["true", `"{{ 'cloudflared' not in ansible_facts.packages }}"`]);
   });
 });
+
+// 2026-10-05: the recursive chown handed commands/operator/ to the container
+// user on every deploy, so a pending operator drain was served as a session's
+// and the boot never lifted it.
+describe("deploy — the operator channel's seal survives the sandbox chown", () => {
+  const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
+
+  it("re-seals commands/operator root:root 0755 after the recursive chown and before the container starts", () => {
+    const text = playbook();
+    const chown = text.indexOf("- name: Sandbox tree owned by the container user");
+    const seal = text.indexOf("- name: Operator command channel stays root-owned 0755 (the seal)");
+    const run = text.indexOf("- name: Run the sandbox container");
+    expect(chown).toBeGreaterThan(0);
+    expect(seal).toBeGreaterThan(chown);
+    expect(run).toBeGreaterThan(seal);
+    const block = text.slice(seal, text.indexOf("- name:", seal + 1));
+    expect(block).toContain('path: "{{ sandbox_root }}/sandbox/commands/operator"');
+    expect(block).toContain('owner: "0"');
+    expect(block).toContain('group: "0"');
+    expect(block).toContain('mode: "0755"');
+  });
+
+  it("never creates the channel (a root-owned commands/ parent would lock the daemon out) and never follows a symlink", () => {
+    const text = playbook();
+    const seal = text.indexOf("- name: Operator command channel stays root-owned 0755 (the seal)");
+    const block = text.slice(seal, text.indexOf("- name:", seal + 1));
+    expect(block).toContain("when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk");
+  });
+
+  it("runs in a sync (after the sync start task)", () => {
+    const text = playbook();
+    const start = /SYNC_START_TASK="([^"]+)"/.exec(readFileSync(deploySh, "utf8"))![1]!;
+    expect(text.indexOf("- name: Operator command channel stays root-owned 0755")).toBeGreaterThan(
+      text.indexOf(`- name: ${start}`),
+    );
+  });
+});
