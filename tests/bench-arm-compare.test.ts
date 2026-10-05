@@ -521,6 +521,23 @@ describe("compare.py", () => {
     expect(await compare("g=g")).toContain("| $2.05 | 1.0 | 2/2 |");
   });
 
+  it("a slim-bundle case (no pi-events.jsonl) is priced from its precomputed bench_cost_usd, every arm", async () => {
+    judgement("slim", A, found(["D1"]));
+    judgement("slim", B, found([]));
+    for (const [id, cost] of [
+      [A, 1.25],
+      [B, 0.75],
+    ] as const) {
+      mkdirSync(join(runs, "slim", "cases", id), { recursive: true });
+      writeFileSync(
+        join(runs, "slim", "cases", id, "case-summary.json"),
+        // A pi-review case also carries its own cost_usd: the export's price wins.
+        JSON.stringify({ arm: "pireview", cost_usd: 99, duration_seconds: 60, bench_cost_usd: cost }),
+      );
+    }
+    expect(await compare("slim=slim")).toContain("| $1.00 | 1.0 | 2/2 |");
+  });
+
   // The harness's per-round file: every reference of a PR with its match
   // flag; and the result file whose comments it scored.
   const ref = (n: number) => ({ path: "f.py", from_line: n, to_line: n, note: `ref ${n}` });

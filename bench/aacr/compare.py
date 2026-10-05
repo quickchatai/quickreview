@@ -83,6 +83,15 @@ def cases_for(spec):
     return out
 
 
+# The SLIM re-score bundle (C10, built by the run-archive export;
+# bench/aacr/README.md "Reproduce"): the run dirs without the multi-GB
+# pi-events.jsonl transcripts. The export writes each case's price, exactly as
+# this function computes it from the FULL case dir, into the slim
+# case-summary.json as `bench_cost_usd` (null = unpriced), so every table and
+# chart re-scores from the bundle to the same cent.
+SLIM_COST_KEY = "bench_cost_usd"
+
+
 def usd_and_minutes(case_dir):
     usd = 0.0
     ev = os.path.join(case_dir, "pi-events.jsonl")
@@ -112,6 +121,10 @@ def usd_and_minutes(case_dir):
     if not os.path.exists(ev) and summary.get("arm") == "claude" and summary.get("cost_usd") is not None:
         # The Claude Code arm: its own total_cost_usd (API-price equivalent).
         usd = summary["cost_usd"]
+    if not os.path.exists(ev) and SLIM_COST_KEY in summary:
+        # A slim-bundle case (no transcript): the price the export computed from
+        # the full case dir with this same function, for every arm.
+        usd = summary[SLIM_COST_KEY]
     mins = summary["duration_seconds"] / 60 if "duration_seconds" in summary else None
     return usd, mins
 
