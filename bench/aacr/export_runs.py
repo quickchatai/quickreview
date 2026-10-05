@@ -685,7 +685,15 @@ def write_readme(out: Path):
     lo = "\n".join(f"| {k} | {v:,} |" for k, v in sorted(left.items()))
     level = man["compression"].split()[1].lstrip("-")
     cap = man["volume_cap_bytes"] / (1 << 30)
-    text = f"""# QuickReview benchmark runs — the run archive
+    text = f"""---
+license: apache-2.0
+pretty_name: QuickReview benchmark runs (run archive)
+tags:
+- code-review
+- benchmark
+---
+
+# QuickReview benchmark runs — the run archive
 
 Every run behind the QuickReview benchmark papers: each reviewer's full
 transcript (`pi-events.jsonl`, sessions, Codex and OpenCode event streams),
@@ -824,7 +832,44 @@ Cite this archive with the QuickReview benchmark paper and this dataset's
 DOI (minted by Hugging Face at upload).
 """
     (out / "README.md").write_text(text)
-    print(f"wrote {out / 'README.md'}")
+    write_licence(out)
+    print(f"wrote {out / 'README.md'}, LICENSE and NOTICE")
+
+
+ARCHIVE_NOTICE = """This run archive was assembled by Quickchat AI and is distributed under the Apache
+License, Version 2.0 (LICENSE).
+
+It contains material derived from AACR-Bench v1.0 (https://github.com/alibaba/aacr-bench,
+dataset commit ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f, harness commit
+68a569759289a83654a59d06db2a72910edf0a4a), licensed under the Apache License, Version 2.0.
+AACR-Bench ships no NOTICE file of its own. MODIFIED WORK: derived from AACR-Bench v1.0
+and modified by Quickchat AI in 2026. The runs re-key AACR-Bench's PRs with a verified
+defect key, score new reviews against it, and keep AACR-Bench's reference comments and
+labels and its harness's metric files as the harness wrote them (the harness ran
+unmodified except for its judge endpoint). Cite: Zhang et al., "AACR-Bench: Evaluating
+Automatic Code Review with Holistic Repository-Level Context", arXiv:2601.19494 (2026).
+
+Martian's scoring dirs contain golden comments from Martian's offline code-review
+benchmark (https://github.com/withmartian/code-review-benchmark, commit
+e616e849755441da38f18bf3adba2c9583b03803), MIT licence, Copyright (c) 2025 Martian.
+
+The Qodo scoring dirs contain issues from Qodo PR-Review-Bench
+(https://huggingface.co/datasets/Qodo/PR-Review-Bench, revision
+a73957c450a70693a743260e5637fffc44625f16), MIT licence, by the Qodo team.
+
+SWE-PRBench (https://huggingface.co/datasets/foundry-ai/swe-prbench, CC BY 4.0; harness
+MIT): its data is not redistributed here; its human review comments are left out.
+
+Code quoted by reviewers and judges comes from the reviewed open-source repositories at
+the commits each case names and stays under each project's own licence. Comments written
+by third-party review tools and the PR descriptions written by PR authors are not
+included: each is replaced by a hash and a link to the original.
+"""
+
+
+def write_licence(out: Path):
+    shutil.copyfile(HERE / "hf" / "LICENSE", out / "LICENSE")
+    (out / "NOTICE").write_text(ARCHIVE_NOTICE)
 
 # ---------------------------------------------------------------- slim bundle
 
@@ -900,6 +945,7 @@ def cmd_slim(a):
         print(f"{p.name}: {v['files']} files, {v['bytes_in'] / (1 << 20):.1f} MiB raw, {p.stat().st_size / (1 << 20):.1f} MiB")
         (out / (p.name + ".sha256")).write_text(f"{sha256_file(p)}  {p.name}\n")
     (out / "README.md").write_text(readme)
+    write_licence(out)
     (out / "counts.json").write_text(json.dumps(dict(counts), indent=1) + "\n")
 
 
