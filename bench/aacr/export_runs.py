@@ -739,8 +739,8 @@ Unpack every volume into one directory to get the original layout
 Compression: zstd level {level} with a 128 MiB window (`--long=27`), the
 largest window any zstd from 1.3.2 on decodes without extra flags; level 19
 because the transcripts repeat themselves across hundreds of megabytes, which
-only a long window and a high level reach (gzip's 32 KiB window makes the same
-data about 13 times larger). Each volume is a complete tar on its own and
+only a long window and a high level reach (gzip's 32 KiB window cannot see
+them). Each volume is a complete tar on its own and
 stays under {cap:.1f} GiB, so a download resumes per file and every volume
 also fits a GitHub release asset (2 GiB) as a mirror; Hugging Face's own
 per-file limit is far higher.
