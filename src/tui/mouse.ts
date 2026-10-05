@@ -42,6 +42,33 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
   return { events, rest };
 }
 
+/**
+ * Reassembles SGR mouse reports that a read() split in two.
+ *
+ * A fast drag floods stdin, and a chunk boundary can fall inside a report.
+ * Decoded per chunk, the head (`\x1b[<32;4`) matches nothing and the tail
+ * (`5;12M`) is plain text — so the drag loses a point, and when the companion
+ * column or the pi pane holds the keyboard those bytes are TYPED INTO PI.
+ * Only an unfinished `\x1b[<…` is held back: a bare ESC at the end of a
+ * chunk is the Esc key and must go through now.
+ */
+export class MouseDecoder {
+  private carry = "";
+
+  feed(buf: Buffer): { events: MouseEvent[]; rest: Buffer } {
+    let s = this.carry + buf.toString("utf8");
+    this.carry = "";
+    const tail = /\x1b\[<[\d;]*$/.exec(s);
+    // A real report is at most ~20 bytes; anything longer is not one, and is
+    // never held (a stuck carry would swallow every later keystroke).
+    if (tail && tail[0].length <= 24) {
+      this.carry = tail[0];
+      s = s.slice(0, tail.index);
+    }
+    return extractMouseEvents(Buffer.from(s, "utf8"));
+  }
+}
+
 /** A clickable region declared by the renderer, 1-based inclusive cells. */
 export interface Zone<A = string> {
   x1: number;

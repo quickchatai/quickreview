@@ -1087,8 +1087,13 @@ export const realDockerRunner: DockerRunner = (argv, opts) =>
       child.kill("SIGKILL");
       settle(false, null);
     }, opts?.timeoutMs ?? 20_000);
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    // Decoded by the stream, never per chunk: a multi-byte character split
+    // across two reads (a `─` in a large capture, any non-ASCII in a long
+    // copied buffer) otherwise becomes two U+FFFD.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => (stdout += d));
+    child.stderr.on("data", (d: string) => (stderr += d));
     child.on("error", () => settle(false, null));
     child.on("close", (code) => settle(code === 0, code));
   });

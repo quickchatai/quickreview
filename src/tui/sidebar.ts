@@ -32,6 +32,27 @@ import { ACCENT, BAD, MUTED, OK, RESET, SEP, WARN } from "./design.js";
 import { displayWidth, fit } from "./paint.js";
 import { clampScrollback, keysToTmux, SCROLL_STEP, splitCapture } from "./pipane.js";
 
+/** Marks the paste-buffer lines appended after the capture (see `onCopy`). A
+ * capture line would have to start with this exact text to be mistaken for
+ * one, and only the trailing run of such lines is read. ASCII on purpose: a
+ * `tmux -F` run through `docker exec` has no UTF-8 locale and prints every
+ * non-ASCII character as `_`, so a fancier marker never matched. */
+export const BUFFER_TAG = "@@qcr-buffer@@ ";
+
+/** Split one refresh's stdout into the pane capture and the buffer listing
+ * that follows it (newest first, each `name created size`). */
+export function splitBufferListing(stdout: string): { capture: string; buffers: string[] } {
+  const lines = stdout.split("\n");
+  if (lines[lines.length - 1] === "") lines.pop();
+  let i = lines.length;
+  while (i > 0 && lines[i - 1]!.startsWith(BUFFER_TAG)) i--;
+  if (i === lines.length) return { capture: stdout, buffers: [] };
+  return {
+    capture: lines.slice(0, i).join("\n") + "\n",
+    buffers: lines.slice(i).map((l) => l.slice(BUFFER_TAG.length)),
+  };
+}
+
 /** Left divider + right border — the two cells the column adds beyond content. */
 export const SIDEBAR_BORDER = 2;
 /** Smallest useful expanded column, borders included. */
@@ -388,8 +409,26 @@ export class CompanionSidebar {
       available?: () => boolean;
       onUpdate?: () => void;
       now?: () => number;
+      /**
+       * A copy the companion made INSIDE its container — pi's `/copy`, or a
+       * tmux copy-mode yank — with its text, for the host clipboard.
+       *
+       * The container has no display, so pi's `/copy` falls back to OSC 52,
+       * and tmux (`set-clipboard on`) files that as a PASTE BUFFER. With no
+       * client attached — the column is a capture mirror, never an attach —
+       * the escape reached nobody: pi said "Copied" and the clipboard never
+       * changed. Every refresh therefore lists the buffers in the same docker
+       * round trip as the capture; a buffer newer than the last one seen is
+       * read and handed here. The first listing is only a baseline, so a TUI
+       * start never re-copies a stale buffer over the operator's clipboard.
+       */
+      onCopy?: (text: string) => void;
     } = {},
   ) {}
+
+  /** The newest paste buffer seen (`name created size`), "" when there was
+   * none; undefined until the first listing — the baseline. */
+  private lastBuffer: string | undefined;
 
   /** The companion is up and can take keystrokes. */
   available(): boolean {
@@ -482,6 +521,13 @@ export class CompanionSidebar {
     // Parked in scrollback: ask for history above the window, as pipane does.
     if (offset > 0) argv.push("-S", `-${offset + SCROLL_PAD}`);
     argv.push("-t", this.cfg.session);
+    if (this.opts.onCopy)
+      argv.push(
+        ";",
+        "list-buffers",
+        "-F",
+        `${BUFFER_TAG}#{buffer_name} #{buffer_created} #{buffer_size}`,
+      );
     const res = await this.docker(argv, { timeoutMs: 5_000 });
     if (seq < this.refreshPublished) return;
     this.refreshPublished = seq;
@@ -493,7 +539,9 @@ export class CompanionSidebar {
       return;
     }
     this.captureOk = true;
-    this.lines = splitCapture(res.stdout, offset);
+    const { capture, buffers } = splitBufferListing(res.stdout);
+    if (this.opts.onCopy) this.noticeBuffers(buffers);
+    this.lines = splitCapture(capture, offset);
     // Same rule as pipane: clamp only an offset this capture actually answers.
     if (this.offset === offset)
       this.offset = clampScrollback(offset, this.lines.length, this.paneSize?.rows);
@@ -501,6 +549,23 @@ export class CompanionSidebar {
     // column is the companion's mirror and never the bring-up checklist again.
     if (!this.mirrored && this.lines.some((l) => l.trim() !== "")) this.mirrored = true;
     this.opts.onUpdate?.();
+  }
+
+  /** Act on one buffer listing (newest first): see `opts.onCopy`. */
+  private noticeBuffers(buffers: string[]): void {
+    const newest = buffers[0] ?? "";
+    const seen = this.lastBuffer;
+    this.lastBuffer = newest;
+    if (seen === undefined || newest === "" || newest === seen) return;
+    const name = newest.split(" ")[0]!;
+    const onCopy = this.opts.onCopy;
+    void this.docker(["exec", this.cfg.container_name, "tmux", "show-buffer", "-b", name], {
+      timeoutMs: 5_000,
+    })
+      .then((r) => {
+        if (r.ok && r.stdout.length > 0) onCopy?.(r.stdout);
+      })
+      .catch(() => undefined);
   }
 
   /** Literal text (`send-keys -l`) then Enter — two invocations, because `-l`

@@ -1,6 +1,8 @@
 // The thin ANSI layer (§4 verdict: no TUI framework — a few hundred
 // lines of cursor-addressed painting). Pure string builders throughout; the
 // only side effect lives in flush().
+import { cellWidth } from "./cellwidth.js";
+
 export const ESC = "\x1b[";
 /** Close every attribute. Zero display width, so it is safe to splice anywhere
  * a surface boundary needs to start from a known state. */
@@ -88,22 +90,11 @@ export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
 }
 
-/** Terminal cell width of one code point — CJK/fullwidth count 2. A heuristic
- * for chrome text only; the attach pane gets widths from @xterm/headless. */
+/** Terminal cell width of one code point: 0 (combining marks, ZWJ,
+ * variation selectors), 1, or 2 (East Asian Wide/Fullwidth — CJK, and the
+ * emoji terminals draw double). The Unicode tables live in `cellwidth.ts`. */
 export function charWidth(cp: number): number {
-  if (
-    (cp >= 0x1100 && cp <= 0x115f) ||
-    (cp >= 0x2e80 && cp <= 0xa4cf) ||
-    (cp >= 0xac00 && cp <= 0xd7a3) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xfe30 && cp <= 0xfe4f) ||
-    (cp >= 0xff00 && cp <= 0xff60) ||
-    (cp >= 0xffe0 && cp <= 0xffe6) ||
-    (cp >= 0x1f300 && cp <= 0x1faff) ||
-    (cp >= 0x20000 && cp <= 0x3fffd)
-  )
-    return 2;
-  return 1;
+  return cellWidth(cp);
 }
 
 export function displayWidth(s: string): number {
@@ -246,8 +237,17 @@ export class Frame {
 
   render(): string {
     // Home, then per-line erase — full repaint without scrollback pollution.
-    let out = `${ESC}H`;
-    for (const line of this.lines) out += `${line}${ESC}0m${ESC}K\r\n`;
+    // Every row is ADDRESSED (CUP), not reached by flowing from the one above:
+    // a row the terminal measures wider than we did (a glyph the width table
+    // got wrong) can then cost only its own last cells — it can never push the
+    // rows below it down, or scroll the screen and put every row one off the
+    // pointer. ALT_SCREEN_ON also turns autowrap off, so such a row is
+    // clipped rather than wrapped. The `\r\n` stays for readers of the bytes
+    // (the tests split on it); the CUP after it makes it harmless.
+    let out = "";
+    this.lines.forEach((line, r) => {
+      out += `${ESC}${r + 1};1H${line}${ESC}0m${ESC}K\r\n`;
+    });
     return out.slice(0, -2); // no trailing newline: the last row must not scroll
   }
 }
@@ -453,6 +453,55 @@ export function accentFrameRect(
   }
 }
 
-export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l`;
-export const ALT_SCREEN_OFF = `${ESC}?25h${ESC}?1049l`;
+// `?7l` turns autowrap OFF for the TUI's lifetime (see Frame.render) and
+// `?7h` gives it back: the shell behind the alt screen expects wrapping.
+export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l${ESC}?7l`;
+export const ALT_SCREEN_OFF = `${ESC}?7h${ESC}?25h${ESC}?1049l`;
 export const CLEAR = `${ESC}2J${ESC}H`;
+
+/** An independent copy of a composed frame: lines, zones and meta. */
+export function cloneFrame(f: Frame): Frame {
+  const out = new Frame(f.cols, f.rows);
+  f.lines.forEach((l, i) => out.set(i, l));
+  out.zones = f.zones.map((z) => ({ ...z }));
+  out.meta = { ...f.meta };
+  return out;
+}
+
+/** Glyphs that draw a pane's vertical edge — never content worth copying. */
+const VERTICAL_EDGE = new Set(["│", "┃", "║", "├", "┤", "┼", "┬", "┴", "┌", "┐", "└", "┘"]);
+
+/**
+ * A copied rectangle of plain rows, made into text you would paste.
+ *
+ * What a block of SCREEN looks like is not what its text is: rows padded to
+ * the pane width, the pane's border caught at either edge, and the indent the
+ * pane draws its content at (pi pads every line by its output margin). So, in
+ * order: an edge column that is a border glyph on every row goes; trailing
+ * blanks go; the indent common to every non-blank row goes; leading and
+ * trailing blank rows go. Interior blank rows and relative indentation stay
+ * — they are the text's own structure (paragraphs, code).
+ */
+export function cleanCopiedBlock(rows: string[]): string {
+  let r = rows.map((l) => [...l]);
+  const filled = (): string[][] => r.filter((l) => l.some((c) => c.trim() !== ""));
+  // An edge column that is a border glyph on EVERY non-blank row is chrome.
+  // Requiring all rows keeps a `│` that is genuinely part of one line's text.
+  if (filled().length > 0 && filled().every((l) => VERTICAL_EDGE.has(l[0] ?? ""))) {
+    r = r.map((l) => l.slice(1));
+  }
+  r = r.map((l) => {
+    const t = l.join("").replace(/\s+$/, "");
+    return [...t];
+  });
+  if (filled().length > 0 && filled().every((l) => VERTICAL_EDGE.has(l[l.length - 1] ?? ""))) {
+    r = r.map((l) => (l.length > 0 ? l.slice(0, -1) : l));
+  }
+  let lines = r.map((l) => l.join("").replace(/\s+$/, ""));
+  const indents = lines.filter((l) => l.trim() !== "").map((l) => /^ */.exec(l)![0].length);
+  const common = indents.length > 0 ? Math.min(...indents) : 0;
+  if (common > 0) lines = lines.map((l) => l.slice(common));
+  while (lines.length > 0 && lines[0] === "") lines.shift();
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n");
+}

@@ -871,9 +871,67 @@ describe("drag-to-copy", () => {
     h.mouse(32, 40, 3);
     h.mouse(0, 40, 3, false);
     await settle();
-    expect(h.copied[0]).toBe(h.onScreen(2, 1, 40, 3));
+    // What was on screen, minus the indent every copied row shares — the
+    // copy is text to paste, not the pane's left margin.
+    const rows = h.onScreen(2, 1, 40, 3).split("\n");
+    const common = Math.min(
+      ...rows.filter((r) => r.trim() !== "").map((r) => r.length - r.trimStart().length),
+    );
+    expect(h.copied[0]).toBe(rows.map((r) => r.slice(common)).join("\n"));
     expect(h.copied[0]).not.toContain("\x1b");
     expect(h.copied[0]!.length).toBeGreaterThan(0);
+    h.app.quit();
+    await h.running;
+  });
+
+  type Sel = { x1: number; y1: number; x2: number; y2: number } | undefined;
+  const selOf = (app: App): Sel => (app as unknown as { selection: Sel }).selection;
+
+  it("a drag started in the companion column never leaves it", async () => {
+    // Wandering left past the seam used to pull in the tab's border and the
+    // last letters of its rows.
+    const h = harness(160, 20, true);
+    await settle(); // the first frame
+    const seam = h.app.innerWidth(160); // the shared wall, 1-based
+    h.mouse(0, 120, 5);
+    h.mouse(32, 40, 8); // far into the tab
+    expect(selOf(h.app)).toEqual({ x1: seam + 1, y1: 5, x2: 120, y2: 8 });
+    h.mouse(0, 40, 8, false);
+    h.app.quit();
+    await h.running;
+  });
+
+  it("a drag started in the tab stops at the seam", async () => {
+    const h = harness(160, 20, true);
+    await settle();
+    const seam = h.app.innerWidth(160);
+    h.mouse(0, 10, 1);
+    h.mouse(32, 150, 1);
+    expect(selOf(h.app)!.x2).toBe(seam - 1);
+    h.mouse(0, 150, 1, false);
+    await settle();
+    expect(h.copied[0]).not.toContain("┬");
+    h.app.quit();
+    await h.running;
+  });
+
+  it("holds the screen still while dragging, and copies what was highlighted", async () => {
+    // The mirrors repaint under the pointer while pi streams; the copy must be
+    // the frozen screen, not whatever scrolled into the block before release.
+    const h = harness();
+    await settle();
+    h.mouse(0, 3, 1);
+    h.mouse(32, 20, 1);
+    const before = h.onScreen(3, 1, 20, 1);
+    h.app.view.dryRun = false; // the title bar's badge would change...
+    h.app.repaint(); // ...and repaint mid-drag
+    expect(h.onScreen(3, 1, 20, 1)).toBe(before);
+    h.mouse(0, 20, 1, false);
+    await settle();
+    expect(h.copied).toEqual([before]);
+    // After release the screen is live again.
+    h.app.repaint();
+    expect(h.onScreen(1, 1, 60, 1)).toContain("LIVE");
     h.app.quit();
     await h.running;
   });

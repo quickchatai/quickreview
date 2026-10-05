@@ -479,6 +479,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
+    // pi's `/copy` inside the container lands in a tmux paste buffer; the
+    // column forwards it here, to the host clipboard.
+    onCopy: (text) => app.copyText(text, "the companion"),
   });
   if (!companionOn)
     app.sidebar.setOff(args.companion ? "[companion] enabled = false" : "--no-companion");

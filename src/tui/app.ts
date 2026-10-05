@@ -24,20 +24,15 @@ import type { Tab } from "./tabs.js";
 import { visiblePrs } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
-import {
-  MOUSE_OFF,
-  MOUSE_ON,
-  extractMouseEvents,
-  hitTest,
-  type MouseEvent,
-  type Zone,
-} from "./mouse.js";
+import { MOUSE_OFF, MOUSE_ON, MouseDecoder, hitTest, type MouseEvent, type Zone } from "./mouse.js";
 import {
   ALT_SCREEN_OFF,
   ALT_SCREEN_ON,
   CLEAR,
   Frame,
   accentFrameRect,
+  cleanCopiedBlock,
+  cloneFrame,
   composeColumn,
   fit,
   sliceDisplay,
@@ -858,11 +853,20 @@ export class App {
     if (ev.kind === "drag") {
       const anchor = this.selAnchor;
       if (!anchor) return;
+      // The first motion freezes the screen and fixes the pane the drag
+      // belongs to; every later motion only moves the far corner.
+      if (!this.selFrame) {
+        this.selFrame = this.baseFrame;
+        this.selPane = this.paneRectAt(anchor.x, anchor.y);
+      }
+      const p = this.selPane ?? { x1: 1, y1: 1, x2: cols, y2: this.out.rows ?? 24 };
+      const cx = (x: number): number => Math.max(p.x1, Math.min(p.x2, x));
+      const cy = (y: number): number => Math.max(p.y1, Math.min(p.y2, y));
       this.selection = {
-        x1: Math.min(anchor.x, ev.x),
-        y1: Math.min(anchor.y, ev.y),
-        x2: Math.max(anchor.x, ev.x),
-        y2: Math.max(anchor.y, ev.y),
+        x1: cx(Math.min(anchor.x, ev.x)),
+        y1: cy(Math.min(anchor.y, ev.y)),
+        x2: cx(Math.max(anchor.x, ev.x)),
+        y2: cy(Math.max(anchor.y, ev.y)),
       };
       this.repaint();
       return;
@@ -872,6 +876,8 @@ export class App {
       // there is nothing to copy and the anchor just goes away.
       if (this.selection) this.copySelection();
       else this.selAnchor = undefined;
+      this.selFrame = undefined;
+      this.selPane = undefined;
       return;
     }
     // A new press starts a possible selection and clears the last highlight.
@@ -1042,6 +1048,7 @@ export class App {
   }
 
   private readonly killChord = new TripleCtrlC();
+  private readonly mouse = new MouseDecoder();
 
   private handleInput(buf: Buffer): void {
     if (this.killChord.feed(buf)) {
@@ -1049,7 +1056,7 @@ export class App {
       return;
     }
     if (this.suspended) return;
-    const { events, rest } = extractMouseEvents(buf);
+    const { events, rest } = this.mouse.feed(buf);
     for (const ev of events) this.handleMouse(ev);
     if (rest.length === 0) return;
     buf = rest;
@@ -1437,13 +1444,26 @@ export class App {
   private sidebarResizeActive = false;
   private selAnchor: { x: number; y: number } | undefined;
   private selection: { x1: number; y1: number; x2: number; y2: number } | undefined;
+  /** The last composed frame WITHOUT the highlight — what a drag freezes. */
+  private baseFrame: Frame | undefined;
+  /**
+   * The screen as it was when the drag began, held until release.
+   *
+   * The mirrors refresh under the pointer several times a second while pi
+   * streams: without the freeze the text scrolled out from under a
+   * half-finished drag, and release copied whatever had arrived in its place
+   * rather than what the operator had highlighted.
+   */
+  private selFrame: Frame | undefined;
+  /** The pane the drag started in (1-based, inclusive); the block never leaves it. */
+  private selPane: { x1: number; y1: number; x2: number; y2: number } | undefined;
   /** Injectable so tests never touch the real clipboard. */
   clipboard: { write(text: string): Promise<boolean> } = new ClipboardSink();
 
   /** The selected block as plain text, exactly as it appears on screen. */
   selectedText(): string {
     const sel = this.selection;
-    const frame = this.lastFrame;
+    const frame = this.selFrame ?? this.baseFrame ?? this.lastFrame;
     if (!sel || !frame) return "";
     const rows: string[] = [];
     for (let y = sel.y1; y <= sel.y2; y++) {
@@ -1452,10 +1472,52 @@ export class App {
       // BY DISPLAY CELL, not code unit: what is copied must be what was
       // highlighted, and a single wide glyph earlier in the row would put
       // those two out of step.
-      rows.push(sliceDisplay(line, sel.x1 - 1, sel.x2).replace(/\s+$/, ""));
+      rows.push(sliceDisplay(line, sel.x1 - 1, sel.x2));
     }
-    while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
-    return rows.join("\n");
+    return cleanCopiedBlock(rows);
+  }
+
+  /**
+   * The pane under a point, as the content rectangle a selection may cover
+   * (1-based, inclusive, borders excluded).
+   *
+   * A rectangular block already keeps a drag in its COLUMN band, but a drag
+   * that wandered a cell too far picked up the neighbour's border and first
+   * letters — the board's list beside its detail, the companion column beside
+   * the tab. Each pane is known from the layout, not guessed from glyphs: the
+   * companion column, and on the board the list, the detail and the pi pane
+   * (`frame.meta`, written by renderBoard). Any other tab is one pane.
+   */
+  private paneRectAt(
+    x: number,
+    y: number,
+  ): { x1: number; y1: number; x2: number; y2: number } | undefined {
+    const frame = this.baseFrame;
+    if (!frame) return undefined;
+    const cols = frame.cols;
+    const rows = frame.rows;
+    const sw = this.sidebarWidth(cols);
+    // The seam: with a column, the tab's right border IS the column's left one.
+    const seam = sw === 0 ? cols : this.innerWidth(cols);
+    if (sw > 0 && x > seam) return { x1: seam + 1, y1: 2, x2: cols - 1, y2: rows - 1 };
+    const half = { x1: 2, y1: 1, x2: seam - 1, y2: rows };
+    const m = frame.meta;
+    if (this.tab !== "board" || this.view.help || m["listW"] === undefined) return half;
+    const listW = m["listW"];
+    const bodyRows = m["bodyRows"] ?? 0;
+    const piTop = m["piTop"] ?? rows; // 0-based divider row
+    const piRows = m["piRows"] ?? 0;
+    // Body rows are 0-based 1..bodyRows: 1-based 2..bodyRows+1.
+    if (y >= 2 && y <= bodyRows + 1) {
+      return x <= listW + 1
+        ? { x1: 2, y1: 2, x2: listW + 1, y2: bodyRows + 1 }
+        : { x1: listW + 3, y1: 2, x2: half.x2, y2: bodyRows + 1 };
+    }
+    // The pi pane: its header row and mirror lines, below the divider.
+    if (piRows > 0 && y >= piTop + 2 && y <= piTop + piRows) {
+      return { x1: 2, y1: piTop + 2, x2: half.x2, y2: piTop + piRows };
+    }
+    return half;
   }
 
   /**
@@ -1492,21 +1554,34 @@ export class App {
       this.repaint();
       return;
     }
-    void this.clipboard
-      .write(text)
-      .then((ok) => {
-        const lines = text.split("\n").length;
-        this.notice(
-          ok
-            ? `✓ copied ${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}`
-            : "✖ no clipboard tool (wl-copy / xclip / klipper)",
-        );
-      })
-      .catch(() => this.notice("✖ clipboard write failed"));
+    this.copyText(text);
     // The highlight stays until the next click, so it is visible at the moment
     // the confirmation appears — proof of WHAT was copied, not just that
     // something was.
     this.repaint();
+  }
+
+  /**
+   * Put `text` on the system clipboard and say so on the notice line — the
+   * ONE route for every copy the TUI makes: a released drag, and a copy made
+   * inside the companion's container (`from`, e.g. pi's `/copy`), which the
+   * column hands over because nothing else could deliver it (sidebar.ts
+   * `onCopy`).
+   */
+  copyText(text: string, from?: string): void {
+    if (text.length === 0) return;
+    const lines = text.split("\n").length;
+    const what = `${text.length} chars${lines > 1 ? ` · ${lines} lines` : ""}`;
+    void this.clipboard
+      .write(text)
+      .then((ok) =>
+        this.notice(
+          ok
+            ? `✓ copied ${what}${from ? ` from ${from}` : ""}`
+            : "✖ no clipboard tool (wl-copy / xclip / klipper)",
+        ),
+      )
+      .catch(() => this.notice("✖ clipboard write failed"));
   }
 
   /** Paint the selection highlight over the finished frame. */
@@ -1552,18 +1627,26 @@ export class App {
       // An unwired tab (a harness, or a hook that failed to install) paints
       // its one-line notice INSIDE the layout, never as a bare full-width
       // string: the column is part of every frame, wired tab or not.
-      const frame = this.withSidebar(screen ?? placeholderFrame(inner, rows, fallback), cols, rows);
+      // Mid-drag the screen holds still (see selFrame): repaint the frozen
+      // frame with the moving highlight, and nothing new underneath it.
+      const frozen = this.selFrame;
+      const frame = frozen
+        ? cloneFrame(frozen)
+        : this.withSidebar(screen ?? placeholderFrame(inner, rows, fallback), cols, rows);
       // Zellij-style spatial focus: exactly one pane owns the accent square.
       // The sidebar and board pi are terminals; otherwise the main TUI pane
       // owns focus. Colour existing frame glyphs only, never the content.
       const mainRight = sw === 0 ? frame.cols - 1 : inner - 1;
-      if (sw > 0 && this.sidebar?.focused) {
+      if (frozen) {
+        // already composed and accented
+      } else if (sw > 0 && this.sidebar?.focused) {
         accentFrameRect(frame, inner - 1, 0, frame.cols - 1, rows - 1, ACCENT, RESET);
       } else if (this.tab === "board" && this.view.piFocus && frame.meta["piTop"] !== undefined) {
         accentFrameRect(frame, 0, frame.meta["piTop"], mainRight, rows - 1, ACCENT, RESET);
       } else {
         accentFrameRect(frame, 0, 0, mainRight, rows - 1, ACCENT, RESET);
       }
+      if (!frozen) this.baseFrame = cloneFrame(frame);
       // Selection first, prompt second: the modal must sit ON TOP of a
       // highlight, never under it.
       this.paintSelection(frame, cols, rows);
