@@ -445,6 +445,58 @@ describe("the [deferred] tag", () => {
   });
 });
 
+// the compliance audit's mechanically-checkable item 16 claimed a
+// full (severity × confidence × reachability) matrix already existed; it did
+// not (the contrived and plausible legs were spot checks). This is that
+// matrix, written as GROUND TRUTH rather than derived from the function: a
+// literal row per (severity, reachability) at four confidences. The range is
+// exactly the three tags — there is no drop path — and an absent or garbage
+// reachability reads as routine. MUTATION: any edit to postTag's gate or base
+// mapping fails a named cell.
+describe("postTag — the full severity × confidence × reachability matrix (audit item 16)", () => {
+  const CONFS = [0, 0.5, 0.8, 1] as const;
+  const B = "blocker";
+  const Q = "question";
+  const N = "nit";
+  // [severity, reachability, tags at confidence 0 / 0.5 / 0.8 / 1]
+  const ROUTINE: Record<Severity, readonly string[]> = {
+    P0: [B, B, B, B],
+    P1: [B, B, B, B],
+    P2: [Q, Q, B, B],
+    P3: [Q, Q, Q, Q],
+    nit: [N, N, N, N],
+  };
+  const PLAUSIBLE: Record<Severity, readonly string[]> = { ...ROUTINE, P2: [Q, Q, Q, Q] };
+  const CONTRIVED: Record<Severity, readonly string[]> = {
+    P0: [Q, Q, Q, Q],
+    P1: [Q, Q, Q, Q],
+    P2: [Q, Q, Q, Q],
+    P3: [Q, Q, Q, Q],
+    nit: [N, N, N, N],
+  };
+  const LEGS: ReadonlyArray<
+    [string, Reachability | undefined | null | string, Record<Severity, readonly string[]>]
+  > = [
+    ["routine", "routine", ROUTINE],
+    ["plausible", "plausible", PLAUSIBLE],
+    ["contrived", "contrived", CONTRIVED],
+    ["absent", undefined, ROUTINE],
+    ["null", null, ROUTINE],
+    ["garbage", "definitely-unreachable", ROUTINE],
+  ];
+  for (const [leg, reach, table] of LEGS) {
+    it(`${leg}: every severity at every confidence`, () => {
+      for (const sev of Object.keys(table) as Severity[]) {
+        CONFS.forEach((conf, i) => {
+          const got = postTag(sev, conf, reach as Reachability);
+          expect(got, `${sev} / ${leg} / confidence ${conf}`).toBe(table[sev][i]);
+          expect([B, Q, N]).toContain(got);
+        });
+      }
+    });
+  }
+});
+
 describe("reachabilityCappedSeverity — the posting map's reachability gate, as a severity (scan-loop)", () => {
   const sevs: Severity[] = ["P0", "P1", "P2", "P3", "nit"];
   const reaches: Reachability[] = ["routine", "plausible", "contrived"];
@@ -455,7 +507,9 @@ describe("reachabilityCappedSeverity — the posting map's reachability gate, as
         for (const conf of [0, 0.5, 0.8, 1]) {
           const capped = reachabilityCappedSeverity(sev, reach);
           // The capped severity, read as routine, posts as the reachability-gated original does.
-          expect(postTag(capped, conf, "routine"), `${sev}/${reach}/${conf}`).toBe(postTag(sev, conf, reach));
+          expect(postTag(capped, conf, "routine"), `${sev}/${reach}/${conf}`).toBe(
+            postTag(sev, conf, reach),
+          );
         }
       }
     }
