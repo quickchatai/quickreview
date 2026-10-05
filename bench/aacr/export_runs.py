@@ -69,6 +69,11 @@ GIB = 1 << 30
 MIN_FREE = 8 * GIB
 SHIPPED_TOPS = ("runs", "analysis", "whatif", "logs", "ext-images", "fresh10-code", "orig40-code", "rest145-code")
 NEVER = ("notes", "ext-cache", "ext-data", "scratch-archive")
+# runs whose reviewed code is QuickReview's own private repository (the
+# self-review set): its source, infrastructure names and handles are not
+# public and cannot be refetched from a public repo@commit, so the run is
+# withheld until the owner rules otherwise
+PRIVATE_RUNS = ("pc1-self-review-pc1",)
 MARTIAN_SRC = "https://github.com/withmartian/code-review-benchmark/blob/e616e84/offline/results/benchmark_data.json"
 QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor", "greptile", "codex", "coderabbit", "sentry"}
 
@@ -94,14 +99,17 @@ RULES = [
     ("quickreviewd", re.compile(rb"quickreviewd"), b"quickreview", b"quickreviewd"),
     ("runs", re.compile(rb"(?:/home/user/src|~/src)/qcr-bench-runs"), b"<runs>", b"qcr-bench-runs"),
     ("repo", re.compile(rb"(?:/home/user/src|~/src)/review-sandbox"), b"<repo>", b"src/quickreview"),
+    ("scratchpad", re.compile(rb"/tmp/claude-\d+/-home-user-[A-Za-z0-9\-]*/[0-9a-f\-]{36}(?:/scratchpad)?"), b"<scratchpad>", b"/-home-user-"),
+    ("claude-project", re.compile(rb"\.claude/projects/<project>[A-Za-z0-9\-]*"), b".claude/projects/<project>", b"/-home-user-"),
     ("home", re.compile(rb"/home/user(?![A-Za-z0-9_\-])"), b"<home>", b"/home/user"),
+    ("home-dashed", re.compile(rb"-home-user(?=[-/])"), b"-<home>", b"-home-user"),
     ("home-escaped", re.compile(rb"\\/home\\/mat(?![A-Za-z0-9_\-])"), b"<home>", b"\\/home\\/mat"),
     ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
     ("blob-encrypted_content", re.compile(rb"(encrypted_content" + ESCQ + rb")" + B64 + rb"+"), rb"\1", b"encrypted_content"),
     ("blob-thinkingSignature", re.compile(rb"(thinkingSignature" + ESCQ + rb")" + B64 + rb"{40,}"), rb"\1", b"thinkingSignature"),
     ("blob-signature", re.compile(rb"(signature" + ESCQ + rb")" + B64 + rb"{100,}"), _sig_keep, b"signature"),
 ]
-NAME_RULES = RULES[:10]  # the rules that also apply to member names
+NAME_RULES = RULES[:13]  # the rules that also apply to member names
 
 
 def rewrite(data: bytes, counts: collections.Counter, rules=RULES) -> bytes:
@@ -219,6 +227,8 @@ def drop_reason(rel: str) -> str | None:
         return "cache files"
     if parts[0] == "runs" and parts[1].startswith("."):
         return "scheduler state (runs/.slots)"
+    if parts[0] == "runs" and any(parts[1] == r or parts[1].startswith(r + ".") for r in PRIVATE_RUNS):
+        return "private: QuickReview reviewing its own unpublished repository (the self-review run)"
     if parts[0] == "runs" and ".martian" in parts[1]:
         if name == "published-benchmark_data.json" or "golden_comments" in parts:
             return "third-party: Martian's own data (pin withmartian/code-review-benchmark@e616e84)"
@@ -649,7 +659,9 @@ def _write_manifest(out: Path, src: Path, results: list, a):
         "placeholders": {"the owner": "<owner>", "example-review[bot]": "<review-bot>", "quickreviewd": "quickreview",
                          "/home/user/qcr-bench-runs": "<runs>",
                          "/home/user/src/quickreview": "<repo>",
-                         "/home/user": "<home>", "companion-pihome": "<pi-login-volume>"},
+                         "/home/user": "<home>", "companion-pihome": "<pi-login-volume>",
+                         "/tmp/claude-<uid>/-home-user-<project>/<session>/scratchpad": "<scratchpad>",
+                         ".claude/projects/<project><project>": ".claude/projects/<project>"},
     })
     tmp = man_path.with_suffix(".json.partial")
     tmp.write_text(json.dumps(prior, indent=1, sort_keys=False) + "\n")
@@ -755,7 +767,10 @@ packed. Nothing else in the text changed.
   other `/home/user` `<home>` (so the Claude Code credential file's path reads
   `<home>/.config/qcr-bench/claude.env`; its value never appeared), and the
   docker volume `companion-pihome` `<pi-login-volume>`. No model saw these.
-  The spellings are the same as in the Hugging Face dataset.
+  An agent's scratch directory (`/tmp/claude-<uid>/-home-…/<session>/scratchpad`)
+  became `<scratchpad>` and a Claude Code project dir `.claude/projects/<project>`,
+  the spellings of the repository's `docs/PROMPTS.md`. The other spellings are
+  the same as in the Hugging Face dataset.
 - **Encrypted reasoning blobs are blanked.** The value of every
   `encrypted_content` field (OpenAI reasoning items) and of every base64
   `thinkingSignature` and `signature` (Anthropic thinking blocks) is the empty
@@ -1002,6 +1017,8 @@ REGREP = {
     "sk- key-shaped": rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}",
     "gh?_ token-shaped": rb"(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])",
     "Fernet blob (gAAAAA, 100+)": rb"gAAAAA[A-Za-z0-9_\-=]{100,}",
+    "home-mat (dashed path)": rb"home-mat", "mhale": rb"(?i:mhale)", "issue-tracker": rb"issue-tracker",
+    "my-vm": rb"my-vm", "your-dev-project": rb"your-dev-project", "quickchat (any case)": rb"(?i:quickchat)",
 }
 
 
@@ -1009,7 +1026,7 @@ REGREP = {
 # names are searched too); every match is classified afterwards by REGREP
 REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|gAAAAA[A-Za-z0-9_\-=]{100,}"
                rb"|(?i:<owner>)(?:-review)?|quickreviewd|/home/user|src|companion-pihome|[./\w-]*claude\.env"
-               rb"|sk-|gh[psor]_")
+               rb"|home-mat|(?i:mhale)|issue-tracker|my-vm|your-dev-project|(?i:quickchat)|sk-|gh[psor]_")
 
 
 def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:

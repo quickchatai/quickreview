@@ -440,7 +440,15 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
   {
     path: "bench/aacr/export_runs.py",
-    tokens: ["owner_legacy", "/home/user", "quickchat"],
+    tokens: [
+      "owner_legacy",
+      "/home/user",
+      "quickchat",
+      "mhale",
+      "my-vm",
+      "your-dev-project",
+      "issue-tracker",
+    ],
     reason:
       "the run-archive export's scrub rules and re-grep name the strings they rewrite and hunt, and its README's modified-work statement names the copyright holder",
   },
