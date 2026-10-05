@@ -149,11 +149,11 @@ def main() -> None:
                 "review_comments": items,
             })
             report.append({"pr": url, "instance_id": c["instance_id"], **info, "items": len(items)})
-        for tool in rejudge:
-            src = [r for r in pub["reviews"] if r["tool"] == tool]
+        for other in rejudge:
+            src = [r for r in pub["reviews"] if r["tool"] == other]
             if len(src) != 1:
-                sys.exit(f"{url}: {len(src)} published reviews by {tool}")
-            entry["reviews"].append({**src[0], "tool": f"rejudged-{tool}"})
+                sys.exit(f"{url}: {len(src)} published reviews by {other}")
+            entry["reviews"].append({**src[0], "tool": f"rejudged-{other}"})
         out[url] = entry
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2) + "\n")

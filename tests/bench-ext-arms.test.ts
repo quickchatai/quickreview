@@ -35,7 +35,7 @@ function writeArmCase(runDir: string, id: string, status: string, comments: unkn
   if (body !== null) writeFileSync(join(runDir, "cases", id, "review.md"), body);
 }
 
-async function ingest(runDir: string, arm: string | null) {
+async function ingest(runDir: string, arm: string | null, rejudge: string | null = null) {
   const set = join(t, "set.json");
   writeFileSync(
     set,
@@ -59,6 +59,7 @@ async function ingest(runDir: string, arm: string | null) {
   await run("python3", [
     join(EXT, "martian_ingest.py"), "--run", runDir, "--set", set, "--published", pub, "--out", out,
     ...(arm ? ["--arm", arm] : []),
+    ...(rejudge ? ["--rejudge", rejudge] : []),
   ]);
   return JSON.parse(readFileSync(out, "utf8")) as Record<string, { reviews: Array<{ tool: string; review_comments: Array<Record<string, unknown>> }> }>;
 }
@@ -104,6 +105,23 @@ describe("martian_ingest.py --arm (a third-party bench arm)", () => {
       tool: "quickreview",
       review_comments: [{ path: "c.go", line: 4, body: "[nit] x" }, { path: null, line: null, body: "summary" }],
     });
+  });
+});
+
+describe("martian_ingest.py --rejudge", () => {
+  // fast1-martian50 (2026-10-05): the re-judge loop reused the arm's tool
+  // variable, so from the second PR on the arm's review was filed under the
+  // last re-judged tool's name and the arm was scored on one PR.
+  it("keeps the arm's tool name on every PR beside the re-judged reviews", async () => {
+    const runDir = join(t, "run");
+    for (const id of ["o__r-1@aaa", "o__r-2@bbb"]) {
+      mkdirSync(join(runDir, "cases", id), { recursive: true });
+      writeFileSync(join(runDir, "cases", id, "case-summary.json"), JSON.stringify({ status: "ok" }));
+      writeFileSync(join(runDir, "cases", id, "outcome.json"), JSON.stringify({ finished_at: "t", verdict: "COMMENT" }));
+      writeFileSync(join(runDir, "cases", id, "comments.json"), JSON.stringify([{ path: "c.go", line: 4, body: "x" }]));
+    }
+    const d = await ingest(runDir, null, "cubic-v2");
+    for (const url of [URL_A, URL_B]) expect(d[url]!.reviews.map((r) => r.tool)).toEqual(["quickreview", "rejudged-cubic-v2"]);
   });
 });
 
