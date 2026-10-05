@@ -1401,11 +1401,11 @@ comparison of harnesses on one model. On Martian's audited real goldens
 they find 67, 46 and 48 of 86 against the frozen build's 75; on Qodo's
 they find 27--29\% of all issues against 45.3\%, 44--46\% of the
 functional bugs against 52.1\%, and 8--12\% of the rule violations against
-37.6\%. They win on precision and F1: on Martian all three have a higher F1
-than the frozen build's 26.1 (33.1--38.8), and open-code-review a higher
+37.6\%. They win on precision on both benchmarks, and on F1 on Martian only:
+there all three have a higher F1 than the frozen build's 26.1 (33.1--38.8), and open-code-review a higher
 $F_2$ (47.4 against 40.9) and full coverage of the real Critical and High
-goldens on one more PR (16 of 19 against 15); on Qodo OpenCode's F1, 40.0,
-is within a point of the frozen build's 40.9. They cost \$0.09--0.86 and
+goldens on one more PR (16 of 19 against 15). On Qodo the frozen build keeps
+the highest F1 of the four, 40.9, with OpenCode's 40.0 the nearest. They cost \$0.09--0.86 and
 take 1.2--3.3 minutes per PR on these benchmarks, against the frozen
 build's \$2.84 and 26.1 minutes on Martian and \$2.48 and 19.6 on Qodo.
 

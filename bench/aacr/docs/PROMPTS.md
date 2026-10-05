@@ -21,14 +21,14 @@ named. Everything in a `~~~~~` fence is verbatim; placeholders are the only
 substitution, and each is marked with angle brackets. Two kinds of placeholder
 replace text that was rendered from the operator's machine and config, so the
 fences are verbatim up to them: the absolute paths of that machine
-(`<runs-root>`, `<repo>`, `<scratchpad>`, `~/.claude/projects/<project>/<session>/`),
+(`<runs>`, `<repo>`, `<scratchpad>`, `~/.claude/projects/<project>/<session>/`),
 and in §4 the reviewer's two identity tokens, which the prompt templates fill in
 from the operator's `config.toml` — the owner's name (`<owner>`) and the review
 bot's GitHub login (`<review-bot>`). A build from `config.example.toml` renders
 neutral fallbacks there instead; nothing else in those prompts depends on the
 config.
 
-**Paths.** `<runs-root>/` below is the benchmark's working directory outside
+**Paths.** `<runs>/` below is the benchmark's working directory outside
 this repo (extracted PR code, run outputs, analysis scripts; the run outputs
 are `$QCR_BENCH_RUNS_DIR` and are published as the run archive), and
 `<scratchpad>` an agent session's scratch directory. Workflow
@@ -298,9 +298,9 @@ return { decided, critique }
 You are building GROUND TRUTH for a code-review benchmark: the list of REAL defects that a pull request introduces or newly exposes. A reviewer will later be scored on whether it found them, so precision matters as much as coverage — every defect you list must be real, reachable, and verified against the code. Read-only: do not modify anything except your one output file; no network; do not run the projects' code, tests or package managers (reading files, grep, git-free diffing is fine).
 
 Your PRs (each directory has `pr.diff` = the PR's full diff from merge-base to head, `diff.stat`, `head/` = the full repository tree at the PR head, `base/` = the pre-PR versions of the changed files):
-- <runs-root>/fresh10-code/langflow-ai__langflow@6239290
-- <runs-root>/fresh10-code/cline__cline@2195a68
-- <runs-root>/fresh10-code/n8n-io__n8n@61fc500
+- <runs>/fresh10-code/langflow-ai__langflow@6239290
+- <runs>/fresh10-code/cline__cline@2195a68
+- <runs>/fresh10-code/n8n-io__n8n@61fc500
 
 For each PR: read the whole diff, then read the surrounding code in `head/` (callers, callees, definitions, config, tests) and compare with `base/`. Hunt for defects the PR introduces or newly exposes: wrong logic, broken edge cases (empty / None / zero / one / duplicates), broken callers or contracts, lost behaviour vs base, error handling, resource/size bounds, concurrency, security (untrusted input, injection, leakage), compatibility (persisted state, old clients, public API), build/lint breaks (read CI/lint config before calling one), incomplete fixes (the PR claims a fix that does not hold everywhere), and genuinely misleading/dead new code. NOT defects: pre-existing problems the PR does not touch or make worse, unreachable scenarios, style/naming taste, requests for tests or docs, speculative "consider" suggestions.
 
@@ -308,7 +308,7 @@ Severity: high = would block a merge (user-visible bug on a normal path, crash, 
 
 For every defect you keep, verify it by quoting the exact code lines (file:line in head/) and tracing the path that triggers it. If you cannot build a concrete triggering scenario, drop it and list it under `rejected` with the reason. Be honest: some PRs have zero or one real defect.
 
-Write ONE JSON file: <runs-root>/fresh10-code/hunt-B.json with this shape:
+Write ONE JSON file: <runs>/fresh10-code/hunt-B.json with this shape:
 {"cases": {"<instance id = directory name>": {"pr_summary": "<3-6 sentences: what the PR changes, factually>", "defects": [{"id": "D1", "title": "<one line: the defect and its consequence>", "statement": "<mechanism and consequence, concrete>", "sites": [{"path": "<repo-relative path>", "from_line": N, "to_line": M, "role": "cause|symptom|other-site"}], "kind": "bug|security|data|build|contract|performance|concurrency|resource|compat|incomplete-fix|maintainability", "severity": "high|medium|low", "evidence": "<file:line + quoted code + the traced path>", "notes": "<what a review comment must say to count as finding this; near-misses that must NOT count>"}], "rejected": [{"claim": "<a candidate you considered>", "reason": "<why it is not a defect>"}]}}}
 Line numbers refer to files in head/ (repo-relative paths). Validate the JSON with python before finishing. Then reply in under 150 words: defects per PR by severity, and anything you were unsure about.
 ~~~~~
@@ -320,7 +320,7 @@ Line numbers refer to files in head/ (repo-relative paths). Validate the JSON wi
 ~~~~~
 You are finalising GROUND TRUTH for a code-review benchmark: the real defects each pull request introduces or newly exposes. Automated reviewers will be scored against it, so every defect must be real, reachable and verified in the code — and every real defect in the candidate pool must be kept. Read-only except your one output file; no network; never run the projects' code, tests or package managers (reading files and grep are fine).
 
-For each PR below there is a candidate pool at <runs-root>/fresh10-code/pool/<id>.md and the code at <runs-root>/fresh10-code/<id>/ (`pr.diff` = merge-base..head, `head/` = full tree at the PR head, `base/` = pre-PR versions of changed files). The pool has three kinds of candidates:
+For each PR below there is a candidate pool at <runs>/fresh10-code/pool/<id>.md and the code at <runs>/fresh10-code/<id>/ (`pr.diff` = merge-base..head, `head/` = full tree at the PR head, `base/` = pre-PR versions of changed files). The pool has three kinds of candidates:
 - H-D* — defects a blind expert hunt proposed (with evidence). Re-verify each; the hunter can be wrong or mis-graded.
 - C* — comments posted by automated reviewers (anonymised, shuffled). Each may name a real defect, a wrong claim, a nit, or a duplicate.
 - A* — the dataset's reference comments (trusted for nothing).
@@ -329,7 +329,7 @@ PRs: infiniflow__ragflow@2d06022, browser-use__browser-use@aab7b3b, vllm-project
 
 Procedure per PR: check EVERY candidate against the code (open the files, trace the path). Decide for each: (a) it is a real defect → becomes (or merges into) a final defect; (b) it is not → record it in `excluded` with the concrete reason (wrong — cite the code that refutes it; pre-existing and not made worse; unreachable; style/naming; test or doc request; speculative). Merge candidates that describe the SAME defect (same mechanism) into one defect; keep different mechanisms apart even on the same line. Standard for a defect: introduced or newly exposed by this PR, reachable on a realistic path, with a concrete consequence. Severity: high = would block a merge (user-visible bug on a normal path, crash, data loss, security hole, broken build/install/CI); medium = should be fixed before merge; low = real but fine as a follow-up. Grade on the consequence, not on who proposed it. Be even-handed: you must not favour hunt candidates over reviewer comments or vice versa.
 
-Write ONE JSON file <runs-root>/fresh10-code/gt-A.json:
+Write ONE JSON file <runs>/fresh10-code/gt-A.json:
 {"cases": {"<id>": {"pr_summary": "<3-6 factual sentences>", "defects": [{"id": "D1", "title": "<defect + consequence, one line>", "statement": "<mechanism and consequence>", "sites": [{"path": "<repo-relative>", "from_line": N, "to_line": M, "role": "cause|symptom|other-site"}], "kind": "bug|security|data|build|contract|performance|concurrency|resource|compat|incomplete-fix|maintainability", "severity": "high|medium|low", "evidence": "<file:line in head/ + quoted code + traced path>", "notes": "<what a review comment must say to count as finding this; near-misses that must not count>", "provenance": {"hunt": ["D1"], "reviewer_comments": ["C3", "C7"], "dataset_refs": ["A2"]}}], "excluded": [{"source": "<H-D2 | C5 | A3>", "reason": "<concrete reason>"}]}}}
 Every H/C/A candidate must appear either in some defect's provenance or in `excluded` (a candidate that is a duplicate of a kept defect goes in that defect's provenance). Number defects D1.. per PR in severity order. Validate the JSON with python (parse it and check every candidate id in the pool is accounted for). Reply in under 150 words: final defects per PR by severity, how many candidates were rejected, anything contentious.
 ~~~~~
@@ -353,22 +353,22 @@ Every H/C/A candidate must appear either in some defect's provenance or in `excl
 ~~~~~
 You are an expert code reviewer doing a BLIND DEFECT HUNT on about five pull requests, one after another, for a benchmark's ground truth. Do each PR fully before the next.
 
-YOUR PRs: read the JSON file <runs-root>/analysis/2026-09-27-rest145/hunt-batches.json and take the list under key "<batch key>" — each entry has id (instance_id), repo, lang, lines (changed lines), head (head sha) and mb (merge-base sha). Hunt exactly those PRs, no others.
+YOUR PRs: read the JSON file <runs>/analysis/2026-09-27-rest145/hunt-batches.json and take the list under key "<batch key>" — each entry has id (instance_id), repo, lang, lines (changed lines), head (head sha) and mb (merge-base sha). Hunt exactly those PRs, no others.
 
-For each PR you have, under <runs-root>/rest145-code/<instance_id>/ :
+For each PR you have, under <runs>/rest145-code/<instance_id>/ :
 - pr.diff (the full diff, merge-base..head), diff.stat, files.txt (changed paths)
 - base/<path> and head/<path>: the before/after version of every changed file (a missing file = added or deleted)
 - repo.git: a bare git store holding the head commit and the merge-base. Read ANY file of the repo at head with
-  `git --git-dir <runs-root>/rest145-code/<id>/repo.git show <head>:<path>`, list with `git --git-dir … ls-tree -r --name-only <head> [dir]`,
+  `git --git-dir <runs>/rest145-code/<id>/repo.git show <head>:<path>`, list with `git --git-dir … ls-tree -r --name-only <head> [dir]`,
   search with `git --git-dir … grep -n <pattern> <head> -- <pathspec>`, and the base side the same way with the merge-base.
   Use this to read callers, definitions, config, CI workflow files, tests and locales outside the diff — most real defects are only visible there.
-- Do NOT read meta.json's body, and NEVER read anything under <runs-root>/runs (review outputs exist there; this hunt must be blind to them). Do not run the code, tests or builds; read only. Do not modify repo.git.
+- Do NOT read meta.json's body, and NEVER read anything under <runs>/runs (review outputs exist there; this hunt must be blind to them). Do not run the code, tests or builds; read only. Do not modify repo.git.
 
 What counts as a DEFECT: a real problem this PR introduces or newly exposes, verifiable by reading the code — a bug on a reachable path, a crash, data loss/corruption, a security hole, a broken build/type-check/lint/test/CI step the change causes, a contract break for callers, a resource/concurrency/performance regression with a concrete consequence, an incomplete fix, or a real maintainability trap (stale doc/comment the change made wrong, a duplicated rule that has already drifted). NOT defects: pre-existing problems the PR does not touch or make worse, unreachable/contrived scenarios, style/formatting/naming preferences, requests for more tests or docs, speculation you cannot ground in the code. Check each candidate against the code before keeping it; when unsure after checking, drop it. Quality over quantity — a PR may have zero defects.
 
 Severity: high = would block a merge (user-visible bug on a normal path, crash, data loss, security hole, broken build/install/CI); medium = should be fixed before merge; low = real, fine as a follow-up.
 
-For each PR write <runs-root>/rest145-code/<instance_id>/hunt.json (UTF-8 JSON, overwrite if present) exactly in this shape:
+For each PR write <runs>/rest145-code/<instance_id>/hunt.json (UTF-8 JSON, overwrite if present) exactly in this shape:
 {"instance_id": "<id>", "pr_summary": "what the PR changes, 2-5 sentences, factual",
  "defects": [{"id": "D1", "title": "one line: the defect and its consequence",
    "statement": "mechanism and consequence, precise, citing file:line",
@@ -395,25 +395,25 @@ Return, for each of your PRs, whether you wrote hunt.json and how many defects i
 ~~~~~
 You are an expert code reviewer building GROUND TRUTH — the real defects — for about five pull requests, one after another, for a benchmark's ground truth. Do each PR fully before the next.
 
-YOUR PRs: read the JSON file <runs-root>/analysis/2026-09-27-rest145/hunt-batches.json and take the list under key "<batch key>" — each entry has id (instance_id), repo, lang, lines (changed lines), head (head sha) and mb (merge-base sha). Hunt exactly those PRs, no others.
+YOUR PRs: read the JSON file <runs>/analysis/2026-09-27-rest145/hunt-batches.json and take the list under key "<batch key>" — each entry has id (instance_id), repo, lang, lines (changed lines), head (head sha) and mb (merge-base sha). Hunt exactly those PRs, no others.
 
-For each PR you have, under <runs-root>/rest145-code/<instance_id>/ :
+For each PR you have, under <runs>/rest145-code/<instance_id>/ :
 - pr.diff (the full diff, merge-base..head), diff.stat, files.txt (changed paths)
 - base/<path> and head/<path>: the before/after version of every changed file (a missing file = added or deleted)
 - repo.git: a bare git store holding the head commit and the merge-base. Read ANY file of the repo at head with
-  `git --git-dir <runs-root>/rest145-code/<id>/repo.git show <head>:<path>`, list with `git --git-dir … ls-tree -r --name-only <head> [dir]`,
+  `git --git-dir <runs>/rest145-code/<id>/repo.git show <head>:<path>`, list with `git --git-dir … ls-tree -r --name-only <head> [dir]`,
   search with `git --git-dir … grep -n <pattern> <head> -- <pathspec>`, and the base side the same way with the merge-base.
   Use this to read callers, definitions, config, CI workflow files, tests and locales outside the diff — most real defects are only visible there.
 - references.json: the benchmark's reference review comments for this PR (R1, R2, …; path, lines, category, note). Use them as LEADS: every reference must be checked against the code — many are wrong, trivial or style, and some are real defects. They do not limit you: hunt the code yourself for defects none of them mention.
 - meta.json has the PR title and body; you may read them.
 - If hunt.json already exists (an earlier pass without references), treat its defects as candidates too: re-check each against the code and keep only what holds.
-- NEVER read anything under <runs-root>/runs — reviewer outputs being benchmarked live there, and the truth must not be shaped by them. Do not run the code, tests or builds; read only. Do not modify repo.git.
+- NEVER read anything under <runs>/runs — reviewer outputs being benchmarked live there, and the truth must not be shaped by them. Do not run the code, tests or builds; read only. Do not modify repo.git.
 
 What counts as a DEFECT: a real problem this PR introduces or newly exposes, verifiable by reading the code — a bug on a reachable path, a crash, data loss/corruption, a security hole, a broken build/type-check/lint/test/CI step the change causes, a contract break for callers, a resource/concurrency/performance regression with a concrete consequence, an incomplete fix, or a real maintainability trap (stale doc/comment the change made wrong, a duplicated rule that has already drifted). NOT defects: pre-existing problems the PR does not touch or make worse, unreachable/contrived scenarios, style/formatting/naming preferences, requests for more tests or docs, speculation you cannot ground in the code. Check each candidate against the code before keeping it; when unsure after checking, drop it. Quality over quantity — a PR may have zero defects.
 
 Severity: high = would block a merge (user-visible bug on a normal path, crash, data loss, security hole, broken build/install/CI); medium = should be fixed before merge; low = real, fine as a follow-up.
 
-For each PR write <runs-root>/rest145-code/<instance_id>/hunt.json (UTF-8 JSON, overwrite if present) exactly in this shape:
+For each PR write <runs>/rest145-code/<instance_id>/hunt.json (UTF-8 JSON, overwrite if present) exactly in this shape:
 {"instance_id": "<id>", "pr_summary": "what the PR changes, 2-5 sentences, factual",
  "defects": [{"id": "D1", "title": "one line: the defect and its consequence",
    "statement": "mechanism and consequence, precise, citing file:line",
@@ -443,19 +443,19 @@ Return, for each of your PRs, whether you wrote hunt.json and how many defects i
 #### Verifier
 
 ~~~~~
-You are the INDEPENDENT VERIFIER building the final ground truth (the real defects) for about five pull requests of a code-review benchmark. Take your PRs from <runs-root>/analysis/2026-09-27-rest145/hunt-batches.json, key "<batch key>" (entries: id, repo, lang, lines, head sha, mb = merge-base sha). Do each PR fully before the next.
+You are the INDEPENDENT VERIFIER building the final ground truth (the real defects) for about five pull requests of a code-review benchmark. Take your PRs from <runs>/analysis/2026-09-27-rest145/hunt-batches.json, key "<batch key>" (entries: id, repo, lang, lines, head sha, mb = merge-base sha). Do each PR fully before the next.
 
-Per PR, under <runs-root>/rest145-code/<id>/ you have the code (pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read anything at head with `git --git-dir <runs-root>/rest145-code/<id>/repo.git show <head>:<path>`, `ls-tree -r --name-only <head>`, `grep -n <pattern> <head> -- <pathspec>`; base side with the merge-base), meta.json (title, body), and three candidate sources:
+Per PR, under <runs>/rest145-code/<id>/ you have the code (pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read anything at head with `git --git-dir <runs>/rest145-code/<id>/repo.git show <head>:<path>`, `ls-tree -r --name-only <head>`, `grep -n <pattern> <head> -- <pathspec>`; base side with the merge-base), meta.json (title, body), and three candidate sources:
 1. hunt.json — an expert's draft defects (and its verdict on each benchmark reference). Treat it as candidates, NOT as truth: re-check every defect.
 2. references.json — the benchmark's reference comments R1…: check each yourself (hunt.json's verdict is a hint only).
 3. candidates.json — every comment posted by the review tools being benchmarked, anonymised and shuffled (C1…). Check EACH against the code: a comment may be a real defect nobody else found, the same defect as another candidate, partly right, or wrong.
-Never open candidates-key.json or anything under <runs-root>/runs. Read only; run nothing.
+Never open candidates-key.json or anything under <runs>/runs. Read only; run nothing.
 
 A DEFECT is a real problem this PR introduces or newly exposes, verifiable by reading the code: a bug on a reachable path, crash, data loss, security hole, broken build/type-check/lint/test/CI step caused by the change, contract break for callers, a resource/concurrency/performance regression with a concrete consequence, an incomplete fix, or a real maintainability trap (a doc/comment the change made wrong, a duplicated rule that already drifted). NOT defects: pre-existing problems not made worse, unreachable/contrived scenarios, style/formatting/naming preference, requests for tests or docs, speculation not grounded in the code. Merge candidates that describe ONE defect into one entry (list every source in provenance). Severity: high = would block merge (user-visible bug on a normal path, crash, data loss, security hole, broken build/install/CI); medium = should be fixed before merge; low = real, fine as a follow-up. Grade on consequence, not on how a candidate phrased it.
 
 Every candidate ends up in exactly one place: a defect's provenance (hunt: true for the draft's own; dataset_refs for R#; reviewer_comments for C#), or "excluded" (source R#, C#, or H:D# for a dropped draft defect). Exclusion reasons must START with a one-sentence restatement of the claim so a later judge can recognise it in a review.
 
-Write <runs-root>/rest145-code/<id>/truth.json in exactly this shape (defect ids D1… renumbered in order; line numbers head-side unless the site is a deleted line, said in notes):
+Write <runs>/rest145-code/<id>/truth.json in exactly this shape (defect ids D1… renumbered in order; line numbers head-side unless the site is a deleted line, said in notes):
 {"instance_id": "<id>", "pr_summary": "…",
  "defects": [{"id": "D1", "title": "…", "statement": "mechanism and consequence, citing file:line",
    "sites": [{"path": "…", "from_line": 10, "to_line": 12, "role": "cause|symptom|other-site"}],
@@ -471,7 +471,7 @@ Return per PR: written, number of defects, how many defects came only from revie
 #### Critic
 
 ~~~~~
-You are an ADVERSARIAL CRITIC of a code-review benchmark's ground truth. Your PRs are the union of the lists under keys "<batch key A>", "<batch key B>", "<batch key C>" in <runs-root>/analysis/2026-09-27-rest145/hunt-batches.json. For each PR, <runs-root>/rest145-code/<id>/truth.json is the verified truth; its inputs are hunt.json, references.json and candidates.json, and the code is in pr.diff, base/, head/ and repo.git (`git --git-dir <runs-root>/rest145-code/<id>/repo.git show <head>:<path>` etc.). Never open candidates-key.json or anything under <runs-root>/runs. Read only; run nothing.
+You are an ADVERSARIAL CRITIC of a code-review benchmark's ground truth. Your PRs are the union of the lists under keys "<batch key A>", "<batch key B>", "<batch key C>" in <runs>/analysis/2026-09-27-rest145/hunt-batches.json. For each PR, <runs>/rest145-code/<id>/truth.json is the verified truth; its inputs are hunt.json, references.json and candidates.json, and the code is in pr.diff, base/, head/ and repo.git (`git --git-dir <runs>/rest145-code/<id>/repo.git show <head>:<path>` etc.). Never open candidates-key.json or anything under <runs>/runs. Read only; run nothing.
 
 Spot-check hard, against the CODE: (a) every high-severity defect — is it real, reachable, introduced by this PR, and truly merge-blocking? (b) at least two other defects per PR; (c) a sample of exclusions — was a real defect wrongly rejected (especially reviewer comments C# and references R#)? (d) merges — are two different defects fused, or one defect split in two? (e) severity grades. Where the truth is wrong, FIX truth.json in place (keep the same shape; renumber D1… if you remove one; move rejected items to "excluded" with a reason that restates the claim first). Be conservative: change only what you can show from the code.
 
@@ -488,7 +488,7 @@ Return every correction (instance_id, what changed, why) and how many PRs you ch
 ~~~~~
 You are the INDEPENDENT VERIFIER of a code-review benchmark's ground truth, for ONE pull request: ollama__ollama@2ed14f2. Its candidate list was renumbered after its truth was written, so the reviewer-comment ids (C#) in truth.json no longer match candidates.json. Rebuild truth.json for this PR so every id is correct.
 
-Directory: <runs-root>/rest145-code/ollama__ollama@2ed14f2/ — code in pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git (read anything at head with `git --git-dir …/repo.git show <head>:<path>`, `ls-tree -r --name-only <head>`, `grep -n <pattern> <head> -- <pathspec>`; head and merge-base shas are in .done as "<head> <merge_base>"). meta.json has the title/body. Candidate sources: hunt.json (draft defects + reference verdicts, a hint only), references.json (benchmark references R#), candidates.json (every reviewer comment, anonymised, C1…C46 — the CURRENT numbering). The existing truth.json is a good starting point for WHICH defects are real — keep its defects unless the code shows otherwise — but re-map every provenance/excluded C# and R# to the current candidates.json/references.json by reading each candidate's text. Never open candidates-key.json or anything under <runs-root>/runs. Read only; run nothing; write only truth.json.
+Directory: <runs>/rest145-code/ollama__ollama@2ed14f2/ — code in pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git (read anything at head with `git --git-dir …/repo.git show <head>:<path>`, `ls-tree -r --name-only <head>`, `grep -n <pattern> <head> -- <pathspec>`; head and merge-base shas are in .done as "<head> <merge_base>"). meta.json has the title/body. Candidate sources: hunt.json (draft defects + reference verdicts, a hint only), references.json (benchmark references R#), candidates.json (every reviewer comment, anonymised, C1…C46 — the CURRENT numbering). The existing truth.json is a good starting point for WHICH defects are real — keep its defects unless the code shows otherwise — but re-map every provenance/excluded C# and R# to the current candidates.json/references.json by reading each candidate's text. Never open candidates-key.json or anything under <runs>/runs. Read only; run nothing; write only truth.json.
 
 A DEFECT: a real problem this PR introduces or newly exposes, verifiable by reading the code (reachable bug, crash, data loss, security, broken build/test/CI caused by the change, contract break, concrete resource/concurrency/performance regression, incomplete fix, a real maintainability trap). Not: pre-existing, contrived, style, requests for tests/docs, speculation. Severity high (blocks merge) / medium (fix before merge) / low (follow-up).
 
@@ -502,7 +502,7 @@ Keep truth.json's exact shape: {"instance_id","pr_summary","defects":[{"id","tit
 - **When:** 2026-09-28 11:26 UTC, workflow `truth-extend`, over all five sets.
 - **Source:** `~/.claude/projects/<project>/<session>/workflows/scripts/truth-extend-wf_3587aab6-99a.js`,
   sha256 `667224857a9d8af968b7b8ae0506ed4cc554391fdb143c5cbb39d9b5ba65af38`.
-- **Input preparation:** `<runs-root>/analysis/2026-09-27-rest145/extend_prep.py`
+- **Input preparation:** `<runs>/analysis/2026-09-27-rest145/extend_prep.py`
   wrote each PR's current truth plus every comment of Codex CLI, OpenCode,
   pi-review and Claude Code as `N1…`, shuffled by a hash of the comment text,
   with the key in `new-candidates-key.json`. A Claude Code review is prose
@@ -520,9 +520,9 @@ Keep truth.json's exact shape: {"instance_id","pr_summary","defects":[{"id","tit
 #### Verifier
 
 ~~~~~
-You are the INDEPENDENT VERIFIER EXTENDING an existing ground truth (the real defects of each pull request) of a code-review benchmark with comments from more review tools. Take your PRs from <runs-root>/analysis/2026-09-27-rest145/extend-batches.json, key "<batch key>" (entries: id, dir, head, mb). Do each PR fully before the next.
+You are the INDEPENDENT VERIFIER EXTENDING an existing ground truth (the real defects of each pull request) of a code-review benchmark with comments from more review tools. Take your PRs from <runs>/analysis/2026-09-27-rest145/extend-batches.json, key "<batch key>" (entries: id, dir, head, mb). Do each PR fully before the next.
 
-Each PR's directory (the "dir" field of its batch entry) holds the code: pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read ANY file at head with `git --git-dir <dir>/repo.git show <head>:<path>`, list with `ls-tree -r --name-only <head>`, search with `grep -n <pattern> <head> -- <pathspec>`; the base side with the merge-base (mb). meta.json has the PR title/body. Read only; run nothing. Never open *-key.json files or anything under <runs-root>/runs.
+Each PR's directory (the "dir" field of its batch entry) holds the code: pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read ANY file at head with `git --git-dir <dir>/repo.git show <head>:<path>`, list with `ls-tree -r --name-only <head>`, search with `grep -n <pattern> <head> -- <pathspec>`; the base side with the merge-base (mb). meta.json has the PR title/body. Read only; run nothing. Never open *-key.json files or anything under <runs>/runs.
 
 Per PR, in its dir:
 - truth-current.json — the CURRENT verified truth: its defects (D1…, with statements, sites, severity, notes, provenance) and its excluded claims with reasons. It was built and critic-checked already. Keep every existing defect as it is (same id, text, severity); you only ADD.
@@ -542,9 +542,9 @@ Return per PR: written, number of candidates, how many matched an existing defec
 #### Critic
 
 ~~~~~
-You are an ADVERSARIAL CRITIC of additions to a code-review benchmark's ground truth. Your PRs are the union of the lists under keys "<batch key A>", "<batch key B>", "<batch key C>" in <runs-root>/analysis/2026-09-27-rest145/extend-batches.json.
+You are an ADVERSARIAL CRITIC of additions to a code-review benchmark's ground truth. Your PRs are the union of the lists under keys "<batch key A>", "<batch key B>", "<batch key C>" in <runs>/analysis/2026-09-27-rest145/extend-batches.json.
 
-Each PR's directory (the "dir" field of its batch entry) holds the code: pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read ANY file at head with `git --git-dir <dir>/repo.git show <head>:<path>`, list with `ls-tree -r --name-only <head>`, search with `grep -n <pattern> <head> -- <pathspec>`; the base side with the merge-base (mb). meta.json has the PR title/body. Read only; run nothing. Never open *-key.json files or anything under <runs-root>/runs.
+Each PR's directory (the "dir" field of its batch entry) holds the code: pr.diff, diff.stat, files.txt, base/<path>, head/<path>, and repo.git — read ANY file at head with `git --git-dir <dir>/repo.git show <head>:<path>`, list with `ls-tree -r --name-only <head>`, search with `grep -n <pattern> <head> -- <pathspec>`; the base side with the merge-base (mb). meta.json has the PR title/body. Read only; run nothing. Never open *-key.json files or anything under <runs>/runs.
 
 In each PR's dir, truth-current.json is the previous verified truth and truth-ext.json the extended one; new-candidates.json holds the new comments. Check hard, against the CODE: (a) EVERY defect in truth-ext.json whose provenance has "added_in": "extension-2026-09-28" — real, reachable, introduced or newly exposed by this PR, not a duplicate of an existing defect or of an earlier exclusion, correctly graded; (b) a sample of the new exclusions (source N#) — was a real defect wrongly rejected? (c) a sample of provenance additions — does the candidate really identify that defect? Where the extension is wrong, FIX truth-ext.json in place (remove a bogus added defect by moving it to excluded with a reason that restates the claim first; regrade; correct a provenance link; promote a wrongly excluded real defect). Never modify the pre-existing defects (those also in truth-current.json). Be conservative: change only what you can show from the code.
 

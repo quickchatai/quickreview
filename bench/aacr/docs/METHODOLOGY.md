@@ -15,7 +15,7 @@ themselves whether the review was tuned to the test. Companion documents:
 Everything below is traceable to a file, a commit or a run directory. Run
 directories live outside the repo, in `$QCR_BENCH_RUNS_DIR`, and are published
 in the Hugging Face dataset and run archive<!-- TODO(launch): link -->; the ground-truth analysis scripts lived beside them in
-`<runs-root>/analysis/`. Commits in brackets are builds in the pre-publication
+`<runs>/analysis/`. Commits in brackets are builds in the pre-publication
 history; the public history starts at its first commit, and each run's
 `run.json` records the build it ran on.
 
@@ -355,7 +355,7 @@ bench/aacr/compare.py --judge-model claude-opus-5-5 --cases …  "…=…"      
 uv run bench/aacr/charts.py --cases all30+fresh10+rest145 --second-judge claude-opus-5-5 "…=…"  # the JPGs
 ```
 
-Ground truth for new PRs: `<runs-root>/analysis/2026-09-27-rest145/` held `extract-in.sh`,
+Ground truth for new PRs: `<runs>/analysis/2026-09-27-rest145/` held `extract-in.sh`,
 `candidates.py`, `verify-workflow.js` (the verify/critic orchestration),
 `assemble.py`, `extend_prep.py`, `assemble_ext.py`, the batch files and logs.
 The hunt, verify and extension prompts are reproduced in `PROMPTS.md`.
@@ -409,4 +409,4 @@ wrote which comment. That is why the reports show the two halves separately.
 | `bench/aacr/arm.sh`, `bench.sh`, `in-container.sh`, `compare.py`, `charts.py` | the pipeline |
 | `src/bench/*.ts`, `bench/aacr/*_arm.py`, `claude_driver.py`, `codex_bridge.py` | runners, judge, parser, bridge |
 | `$QCR_BENCH_RUNS_DIR` | every run directory (published in the run archive) |
-| `<runs-root>/analysis/2026-09-27-rest145/` | ground-truth build scripts, batches, logs |
+| `<runs>/analysis/2026-09-27-rest145/` | ground-truth build scripts, batches, logs |
