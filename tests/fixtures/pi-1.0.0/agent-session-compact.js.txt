@@ -1,0 +1,59 @@
+// EXCERPT, verbatim, from @earendil-works/pi-coding-agent 1.0.0 dist/core/agent-session.js
+// (sha256 476722dd363a0347049d450b5a0c67386cf156ecae2b039676962aa00a857161): AgentSession.compact(),
+// the manual /compact path the daemon drives after every round. _runAutoCompaction() reads
+// the same fields (lines 2444-2488 of that file). Not executed; parsed by tests/ledger-pin.test.ts.
+            let extensionCompaction;
+            if (this._extensionRunner.hasHandlers("session_before_compact")) {
+                const result = (await this._extensionRunner.emit({
+                    type: "session_before_compact",
+                    preparation,
+                    branchEntries: pathEntries,
+                    customInstructions,
+                    reason: "manual",
+                    willRetry: false,
+                    signal: this._compactionAbortController.signal,
+                }));
+                if (result?.cancel) {
+                    cancelledByExtension = true;
+                    throw new Error("Compaction cancelled");
+                }
+                if (result?.compaction) {
+                    extensionCompaction = result.compaction;
+                    fromExtension = true;
+                }
+            }
+            let summary;
+            let firstKeptEntryId;
+            let tokensBefore;
+            let usage;
+            let details;
+            if (extensionCompaction) {
+                // Extension provided compaction content
+                summary = extensionCompaction.summary;
+                firstKeptEntryId = extensionCompaction.firstKeptEntryId;
+                tokensBefore = extensionCompaction.tokensBefore;
+                usage = extensionCompaction.usage;
+                details = extensionCompaction.details;
+            }
+            else {
+                // Shared default summary generator, also used by automatic compaction.
+                const result = await this._runDefaultCompaction(preparation, model, customInstructions, this._compactionAbortController.signal, "manual");
+                summary = result.summary;
+                firstKeptEntryId = result.firstKeptEntryId;
+                tokensBefore = result.tokensBefore;
+                usage = result.usage;
+                details = result.details;
+            }
+            if (this._compactionAbortController.signal.aborted) {
+                throw new Error("Compaction cancelled");
+            }
+            this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+
+// dist/core/agent-session.js, the extension appendEntry action:
+            appendEntry: (customType, data) => {
+                const entryId = this.sessionManager.appendCustomEntry(customType, data);
+                const entry = this.sessionManager.getEntry(entryId);
+                if (entry) {
+                    this._emit({ type: "entry_appended", entry });
+                }
+            },

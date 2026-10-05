@@ -29,21 +29,92 @@ declare module "@earendil-works/pi-coding-agent" {
     [key: string]: unknown;
   }
 
-  /** VERIFY-ON-PIN: return shape of a session_before_compact handler —
-   * findings §6 say a handler may cancel or "supply a custom summary with
-   * custom details"; the exact keys are unverified. */
+  /** The compaction a `session_before_compact` handler may supply.
+   * VERIFIED against pi 1.0.0's shipped dist (read out of the bench image,
+   * `qcr-bench:fast1`, @earendil-works/pi-coding-agent 1.0.0):
+   * `dist/core/compaction/compaction.d.ts` `CompactionResult`. pi reads
+   * exactly these five fields off it (`dist/core/agent-session.js`,
+   * `compact()` and `_runAutoCompaction()`, the `extensionCompaction` branch)
+   * and hands them to `sessionManager.appendCompaction`. */
+  export interface PiCompactionResult {
+    summary: string;
+    firstKeptEntryId: string;
+    tokensBefore: number;
+    estimatedTokensAfter?: number;
+    usage?: unknown;
+    details?: unknown;
+  }
+
+  /** Return shape of a session_before_compact handler. VERIFIED
+   * against pi 1.0.0: `dist/core/extensions/types.d.ts`
+   * `SessionBeforeCompactResult` is `{ cancel?, compaction? }`, and
+   * `dist/core/agent-session.js` reads only `result.cancel` and
+   * `result.compaction` — any other key is silently ignored (the legacy
+   * `instructions`/`summary`/`retainedTail`/`details` carriers were inert,
+   * MC-64). Only the LAST non-undefined handler result counts
+   * (`dist/core/extensions/runner.js` `emit`). */
   export interface CompactHandlerResult {
     cancel?: boolean;
-    summary?: string;
-    instructions?: string;
-    retainedTail?: unknown;
-    details?: Record<string, unknown>;
+    compaction?: PiCompactionResult;
+  }
+
+  /** `event.preparation` of session_before_compact. VERIFIED against pi 1.0.0
+   * `dist/core/compaction/compaction.d.ts` `CompactionPreparation` (the fields
+   * ledger-pin touches; the object is passed through to `compact()` whole). */
+  export interface PiCompactionPreparation {
+    firstKeptEntryId: string;
+    tokensBefore: number;
+    previousSummary?: string;
     [key: string]: unknown;
+  }
+
+  /** pi's own default summariser, a public export of the package root in
+   * 1.0.0 (`dist/index.js` re-exports `compact` from
+   * `dist/core/compaction/index.js`). Positional signature VERIFIED against
+   * `dist/core/compaction/compaction.d.ts`:
+   * `compact(preparation, model, apiKey, headers?, customInstructions?,
+   * signal?, thinkingLevel?, streamFn?, env?, retry?, callbacks?, sessionId?)`. */
+  export function compact(
+    preparation: PiCompactionPreparation,
+    model: unknown,
+    apiKey: string | undefined,
+    headers?: Record<string, string>,
+    customInstructions?: string,
+    signal?: AbortSignal,
+    thinkingLevel?: string,
+    streamFn?: (model: unknown, context: unknown, options: unknown) => unknown,
+    env?: Record<string, string>,
+  ): Promise<PiCompactionResult>;
+
+  /** Request-time auth for a model. VERIFIED against pi 1.0.0
+   * `dist/core/model-registry.d.ts` `ResolvedRequestAuth`. */
+  export type PiResolvedRequestAuth =
+    | {
+        ok: true;
+        apiKey?: string;
+        headers?: Record<string, string>;
+        baseUrl?: string;
+        env?: Record<string, string>;
+      }
+    | { ok: false; error: string };
+
+  /** The slice of pi 1.0.0's `ModelRegistry` ledger-pin uses
+   * (`dist/core/model-registry.d.ts`). */
+  export interface PiModelRegistry {
+    getApiKeyAndHeaders(model: unknown): Promise<PiResolvedRequestAuth>;
+    streamSimple(model: unknown, context: unknown, options?: unknown): unknown;
   }
 
   export interface PiEventContext {
     /** VERIFY-ON-PIN: documented extension UI surface in pi 0.84.1. */
     ui?: { setTheme(theme: string | unknown): { success: boolean; error?: string } };
+    /** VERIFIED against pi 1.0.0 `dist/core/extensions/types.d.ts`
+     * `ExtensionContext` (getters in `dist/core/extensions/runner.js`
+     * `createContext`): the model registry, the current model (may be
+     * undefined) and the current thinking level. */
+    modelRegistry?: PiModelRegistry;
+    model?: unknown;
+    thinkingLevel?: string;
     [key: string]: unknown;
   }
 
@@ -155,8 +226,13 @@ declare module "@earendil-works/pi-coding-agent" {
      * and agent-session.js while diagnosing PR #5408). */
     sendUserMessage(content: string, options?: SendMessageOptions): void;
     sendMessage?(message: unknown, options?: SendMessageOptions): void | Promise<void>;
-    /** Persists extension state into the session file (findings §5). */
-    appendEntry?(entry: unknown): void | Promise<void>;
+    /** Persists extension state into the session file as a `custom` entry
+     * (not sent to the LLM). VERIFIED against pi 1.0.0
+     * `dist/core/extensions/types.d.ts` `ExtensionAPI.appendEntry<T>(customType:
+     * string, data?: T): void` → `dist/core/agent-session.js`
+     * `sessionManager.appendCustomEntry(customType, data)` (it took
+     * one object before, which 1.0.0 would store as the customType). */
+    appendEntry?(customType: string, data?: unknown): void;
     /** VERIFY-ON-PIN: accessor for the live session's info. */
     session?: PiSessionInfo;
     events?: {

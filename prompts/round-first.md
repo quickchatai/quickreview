@@ -5,7 +5,7 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{base_ref}} {{base_sha}}
 > {{merge_base}} {{lenses}} {{pass_plan}} {{addable_lenses}}
 > {{migration_gate_note}} {{settled_digest}} {{round_type}} {{round_no}}
-> `intent_note`, `missing_migration_note`, `dependency_note`, `nit_policy_note` and `recovery_note`, plus the two memory sections `pinned_head` and
+> `intent_note`, `missing_migration_note`, `dependency_note`, `ledger_note`, `nit_policy_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
@@ -19,7 +19,7 @@
 **Lenses this round**: {{lenses}}
 
 {{pinned_head}}
-{{recovery_note}}
+{{recovery_note}}{{ledger_note}}
 
 Run the full 7-step round from your system prompt. This is the **first** review
 of this PR: there is no prior ledger to verify, so step 1 is pure fact-gathering
@@ -698,7 +698,10 @@ when the round found nothing (then it says so). The round is not finished
 until the ledger is written, and it must be written BEFORE the verdict file:
 the verdict file is the daemon's round-over signal — the moment it appears
 the daemon compacts this conversation, whatever is still unwritten is lost,
-and only the ledger survives compaction. A round that writes the verdict
+and only the ledger survives compaction word for word: the compaction pins
+your last ledger block verbatim into its summary, and the next round's order
+hands it back to you from disk. Everything else survives only as a
+paraphrase, if at all. A round that writes the verdict
 first gets its ledger update cut off and leaves the next round blind.
 
 ### The findings record — write it every round, before the verdict file

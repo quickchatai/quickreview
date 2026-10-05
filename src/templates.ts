@@ -523,6 +523,48 @@ export function renderRoundRecoveryNote(order: RoundOrder): string {
   ].join("\n");
 }
 
+/** A fence longer than any backtick run in `body` (so a ledger that quotes
+ * code cannot close the fence early). */
+function fenceAround(body: string): string {
+  let longest = 0;
+  for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/**
+ * `{{ledger_note}}` (MC-18): the PR's ledger as ledger-pin last
+ * mirrored it, handed back in every round order and saying where it came
+ * from. "" when the order carries none, so a PR with no ledger renders
+ * exactly as before.
+ */
+export function renderLedgerNote(order: RoundOrder): string {
+  const carry = order.ledger_carry;
+  if (!carry || !carry.text.trim()) return "";
+  const fence = fenceAround(carry.text);
+  const cut = carry.truncated
+    ? [
+        "",
+        `TRUNCATED: this is the first ${carry.text.length} of ${carry.total_chars} characters.`,
+        `Read the whole file, \`${carry.source}\`, before step 1.`,
+      ]
+    : [];
+  return [
+    "",
+    "**YOUR LEDGER, RE-HANDED BY THE DAEMON.** Read from",
+    `\`${carry.source}\`, the copy the ledger-pin extension mirrors from the`,
+    `last ledger block you wrote (header \`${carry.header}\`). It is here because`,
+    "compaction or a session restart can drop it from this conversation. It is",
+    "your checklist, not evidence: every open entry still needs verifying at",
+    `\`${order.head_sha}\`. If this conversation holds a NEWER ledger block, that`,
+    "block wins.",
+    ...cut,
+    "",
+    fence,
+    carry.text,
+    fence,
+  ].join("\n");
+}
+
 /**
  * The full variable set every round template may reference.
  *
@@ -573,6 +615,8 @@ export function roundVars(
     addable_lenses: renderAddableLenses(order.addable_lenses, order.addable_tiers),
     validator_note: renderValidatorNote(order),
     recovery_note: renderRoundRecoveryNote(order),
+    // "" unless the order carries the PR's mirrored ledger.
+    ledger_note: renderLedgerNote(order),
     base_ref: order.base_ref || NO_BASE,
     base_sha: order.base_sha || NO_BASE,
     merge_base: order.merge_base || NO_BASE,

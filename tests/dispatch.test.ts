@@ -1024,6 +1024,53 @@ describe("dispatchOnce", () => {
     expect(orders[0]!.order.settled_digest).toBe("SETTLED: thread 12 (perf, conceded)");
   });
 
+  // (MC-18): the ledger carry re-hands the PR's ledger on the order and
+  // supplies the settled digest; an explicit settledDigest still wins.
+  it("carries the PR's ledger and takes the settled digest from it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    queue(34, "2026-08-13T09:00:00Z");
+    queue(35, "2026-08-13T09:01:00Z");
+    const { hooks, orders } = recordingHooks();
+    const carry = {
+      source: "/r/state/ledgers/pr-34.md",
+      header: "LEDGER PR #34 @ abc1234",
+      text: "LEDGER PR #34 @ abc1234\nSETTLED: T1: conceded",
+      truncated: false,
+      total_chars: 44,
+    };
+    const asked: number[] = [];
+    await dispatchOnce({
+      cfg: { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 5 } },
+      store,
+      adapter,
+      hooks,
+      ledgerCarry: (pr) => {
+        asked.push(pr);
+        return pr === 34 ? { carry, settled: "- T1: conceded" } : { settled: "" };
+      },
+    });
+    const by = new Map(orders.map((o) => [o.order.pr, o.order]));
+    expect(asked.sort()).toEqual([34, 35]);
+    expect(by.get(34)!.ledger_carry).toEqual(carry);
+    expect(by.get(34)!.settled_digest).toBe("- T1: conceded");
+    // No ledger ⇒ no field at all (the order renders exactly as before).
+    expect("ledger_carry" in by.get(35)!).toBe(false);
+    expect(by.get(35)!.settled_digest).toBe("");
+  });
+
+  it("an explicit settledDigest supplier beats the ledger's SETTLED items", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    queue(36, "2026-08-13T09:00:00Z");
+    const { hooks, orders } = recordingHooks();
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      settledDigest: () => "explicit",
+      ledgerCarry: () => ({ settled: "- from ledger" }),
+    });
+    expect(orders[0]!.order.settled_digest).toBe("explicit");
+  });
+
   // the nit treadmill's stopping rule must reach the passes through
   // their task strings, and passes are blank slates — so the dispatched round
   // prompt itself must carry the verbatim NIT SCOPE block from round 3 onward,

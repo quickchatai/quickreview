@@ -116,6 +116,41 @@ describe("daemon wiring", () => {
     expect(dispatchRound.mock.calls[0]?.[1]).toContain("I concede this pre-existing finding");
   });
 
+  // (MC-18): the production daemon supplies the ledger carry from
+  // ledger-pin's mirror at state/ledgers/pr-<n>.md — the order re-hands it and
+  // its SETTLED items become the digest; no file ⇒ neither.
+  it("re-hands the PR's mirrored ledger in the round order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    const cfg = { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true };
+    const ledger = `LEDGER PR #${PR} @ headsha1\nF1 [P1/0.9][delivery] src/app.ts:3 — x → open thread:9\nSETTLED: T2: conceded`;
+    mkdirSync(join(root, "state", "ledgers"), { recursive: true });
+    writeFileSync(join(root, "state", "ledgers", `pr-${PR}.md`), `${ledger}\n`);
+    const dispatchRound = vi.fn(async (_order: unknown, _prompt: string) => {});
+    store.upsertPr({ number: PR, state: "queued", head_sha: "headsha1", title: "test PR", author: "someone", trigger_ts: new Date().toISOString(), stale_recheck: 0, migration_gate: 0 });
+    const daemon = createDaemon({ cfg, root, store, adapter: fakeAdapter([], join(root, "state", "dryrun")), listen: false, log: () => {},
+      hooks: { inject: async () => {}, dispatchRound, async injectOverseer() {}, async archiveAndClose() {} },
+    });
+    await daemon.pump();
+    expect(dispatchRound).toHaveBeenCalledOnce();
+    const order = dispatchRound.mock.calls[0]![0] as { ledger_carry?: { source: string; text: string }; settled_digest: string };
+    expect(order.ledger_carry?.source).toBe(join(root, "state", "ledgers", `pr-${PR}.md`));
+    expect(order.ledger_carry?.text).toBe(ledger);
+    expect(order.settled_digest).toBe("- T2: conceded");
+  });
+
+  it("no ledger file ⇒ no carry and an empty digest, and the round still dispatches", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+    const cfg = { ...loadConfig(join(process.cwd(), "tests/fixtures/config.toml")), dry_run: true };
+    const dispatchRound = vi.fn(async (_order: unknown, _prompt: string) => {});
+    store.upsertPr({ number: PR, state: "queued", head_sha: "headsha1", title: "test PR", author: "someone", trigger_ts: new Date().toISOString(), stale_recheck: 0, migration_gate: 0 });
+    const daemon = createDaemon({ cfg, root, store, adapter: fakeAdapter([], join(root, "state", "dryrun")), listen: false, log: () => {},
+      hooks: { inject: async () => {}, dispatchRound, async injectOverseer() {}, async archiveAndClose() {} },
+    });
+    await daemon.pump();
+    expect(dispatchRound).toHaveBeenCalledOnce();
+    const order = dispatchRound.mock.calls[0]![0] as Record<string, unknown>;
+    expect("ledger_carry" in order).toBe(false);
+    expect(order.settled_digest).toBe("");
+  });
+
   // Boot-order regression (live, #5290 2026-08-19): the first reconcile can
   // nudge a recheck at a dead session immediately; the respawn path needs the
   // title resolver wired by onStart, so onStart must run BEFORE the sweep.

@@ -212,10 +212,14 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the re-review and staleness templates rendered the nit-policy note from a broken doc-header line; it now sits in the Dispatch body beside the pass plan, as in round-first, and the header is stripped whole
+// Re-pinned 2026-10-05 (ordered by the owner before the freeze): the ledger step's
+// compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
+// (pinned into the compaction summary, and re-handed by the next round order); everything
+// else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "95dce8cabc99262407ba081e617145004cd4574d903985bbfb121e6f4e14564d",
-  "re-review": "9a8ed307dd2162cb0371e890ff6ad799b56e947326d89e2b51509322c75f4322",
-  staleness: "8dafcd30986daf8b726ace10d4c10eaf5a54531096c17a38f681f8afdfd025b3",
+  first: "7d5b96050141b80cef518b0aa212e64fd598dc2d9b323e32f843f67b988e33a1",
+  "re-review": "43965b02c1b55b3e3fc97b1036d3b16304602486eac288318bdda46eb2b9f744",
+  staleness: "51f3a75dfb5e975a47323852a38c46cbc85b9df06b22e4cc301b0aba3e53e470",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -238,10 +242,14 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the re-review and staleness templates rendered the nit-policy note from a broken doc-header line; it now sits in the Dispatch body beside the pass plan, as in round-first, and the header is stripped whole
+// Re-pinned 2026-10-05 (ordered by the owner before the freeze): the ledger step's
+// compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
+// (pinned into the compaction summary, and re-handed by the next round order); everything
+// else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "3373761faaa368eca74c80cae9df522afedc11e1aff7af1fa9acd997c8f3f00f",
-  "re-review": "834cddf5fafbccc6330e529f9933d3109a9312096ed15e1c3e2722fd432baea1",
-  staleness: "4b2ae10b839a6a50c56f44b9ed32e2ebcb10678e0e44738a6743a45916b36857",
+  first: "a4d94398a9ec33f6174fb74b87ce176c1eeec46f27559936a76b769c5a4d449a",
+  "re-review": "a502b607177e4c097097e3ebc21b6b00b064ffff5a76bf03747715db34293c94",
+  staleness: "148c17eeda67bcbaf63b63e6bf1b8647f199f3ada955be9ec67270165371e5b3",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -249,10 +257,14 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the re-review and staleness templates rendered the nit-policy note from a broken doc-header line; it now sits in the Dispatch body beside the pass plan, as in round-first, and the header is stripped whole
+// Re-pinned 2026-10-05 (ordered by the owner before the freeze): the ledger step's
+// compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
+// (pinned into the compaction summary, and re-handed by the next round order); everything
+// else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "d1d537a03c9f5a1732930d7b508525161af8b09d0fdd5f3eb6a69c26d767fbfd",
-  "re-review": "d1fa0cac0858b35044e2a4d2480857b20f8031ba35cf36ed615ef5cad196240b",
-  staleness: "3bc9621d310ae6ee2b511b772216cfb721084cd7a3f34bc665182138743203f6",
+  first: "bfe28d448b373e3865de8b0ae211c46570cad187974057e540f9c5957e16efcd",
+  "re-review": "a22016763792066f322643b24f2e6c2bc5a1e1680e0e240ada3ba2db79d5d3f3",
+  staleness: "e69cffe2b0df3a9d1d8306ff00f26cfa9f96d255e301df343497601ab34838d7",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -263,10 +275,14 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ticket ids, dated asides and deployed-repo statistics outside the ratified fences removed from the round templates, the addenda and pass-ask-human
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the re-review and staleness templates rendered the nit-policy note from a broken doc-header line; it now sits in the Dispatch body beside the pass plan, as in round-first, and the header is stripped whole
+// Re-pinned 2026-10-05 (ordered by the owner before the freeze): the ledger step's
+// compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
+// (pinned into the compaction summary, and re-handed by the next round order); everything
+// else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "a2a5b944d2a75a889073e0a6c3cbd88db950615f905ffe1c71c9c3696245bd48",
-  "re-review": "3412bf545fa383f9e3bc624d9b34924d8f99fc3673f0cb0b500e370a2c43c2f1",
-  staleness: "54b466ec97ac297c826041eb0988b311a152fd8471be559c2ca011d02451ac54",
+  first: "c1ce7e4c49556b75009f44ecb9b9f4e7f442ac0474b2ef9046e423609e07886a",
+  "re-review": "35981186a25516ade9fa111d900f4fedff92a34d9467c7c545d967d3f0affe85",
+  staleness: "54873e308b1bddf1a9c788f9785d4f36c30b43edfeceb6822654aa7a3ba12cfb",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

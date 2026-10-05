@@ -5,7 +5,20 @@
 // <sha>" (see prompts/conversation-system.md). Compaction is token-driven and
 // would happily summarise it away, so this extension hooks
 // session_before_compact, finds the most recent ledger block in the entries
-// the hook hands it, and requires it to survive verbatim.
+// the hook hands it, and returns a REAL compaction (MC-64): pi's own
+// default summary, produced by calling the package's exported `compact()`
+// (the function pi would have called itself), with the pinned ledger block
+// appended to it VERBATIM. That summary is what pi puts back in front of the
+// model after compaction, so the ledger survives word for word. Any failure
+// on that path (no model, no auth, the summariser threw, a shape we do not
+// recognise) returns nothing, and pi runs its default compaction unchanged:
+// never a cancelled compaction, never a wedged session. The ledger then still
+// comes back through the daemon, because every round order re-hands the
+// mirrored snapshot (src/ledgercarry.ts, / MC-18).
+//
+// Before the hook returned `instructions`/`summary`/`retainedTail`/
+// `details`. pi 1.0.0 reads only `cancel` and `compaction`, so all four were
+// inert and nothing pinned the ledger at all.
 //
 // It also mirrors the newest ledger block to state/ledgers/<session>.md after
 // every turn — that snapshot is what archiveAndClose() copies into
@@ -19,9 +32,19 @@
 // QCR_PR (the overseer) mirrors NO PR ledger, ever — fail safe is no mirror.
 //
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
+// The contract was read out of pi 1.0.0's shipped dist (the
+// `qcr-bench:fast1` image, docker create + docker cp, no container run); each
+// tag below names the file and symbol it was checked against.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { CompactHandlerResult, Pi, PiEventPayload } from "@earendil-works/pi-coding-agent";
+import type {
+  CompactHandlerResult,
+  Pi,
+  PiCompactionPreparation,
+  PiCompactionResult,
+  PiEventContext,
+  PiEventPayload,
+} from "@earendil-works/pi-coding-agent";
 
 // A block runs from its "LEDGER PR #<n>" header to the next fence / blank
 // line + heading / NEXT ledger header / end — the last terminator keeps a
@@ -95,19 +118,170 @@ function writeSnapshot(path: string, body: string): void {
   writeFileSync(path, `${body}\n`);
 }
 
-/** The block that must survive compaction: PR meta + the ledger, verbatim. */
+/** Sentinels around the pinned block, so the next compaction can strip the
+ * previous copy out of `previousSummary` before pi's summariser sees it (it
+ * would otherwise paraphrase a stale ledger into the new summary). */
+export const PIN_OPEN = "<!-- qcr:ledger-pin -->";
+export const PIN_CLOSE = "<!-- /qcr:ledger-pin -->";
+
+/** A fence longer than any backtick run in `body`, so a ledger that quotes
+ * code can never close its own fence early. */
+export function fenceFor(body: string): string {
+  let longest = 0;
+  for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+/** The block appended to the compaction summary: PR meta + the ledger,
+ * verbatim, between the sentinels. */
 export function pinnedBlock(meta: string, ledger: string): string {
+  const fence = fenceFor(ledger);
   return [
-    "PINNED — reproduce the following verbatim; it is the review ledger and",
-    "may never be paraphrased, summarised, or dropped.",
-    meta ? `\n${meta}` : "",
-    "\n```",
+    PIN_OPEN,
+    "PINNED LEDGER — your review ledger exactly as you last wrote it, appended",
+    "verbatim to this compaction summary by the ledger-pin extension. It is the",
+    "checklist the next round starts from; the summary above is a paraphrase.",
+    ...(meta ? ["", meta] : []),
+    "",
+    fence,
     ledger,
-    "```",
+    fence,
+    PIN_CLOSE,
   ].join("\n");
 }
 
-export const activate: (pi: Pi) => void = (pi) => {
+/** `summary` with every pinned block (sentinels inclusive) removed. */
+export function stripPinned(summary: string): string {
+  let out = summary;
+  for (;;) {
+    const open = out.indexOf(PIN_OPEN);
+    if (open < 0) return out.trimEnd();
+    const close = out.indexOf(PIN_CLOSE, open);
+    if (close < 0) return out.slice(0, open).trimEnd();
+    out = out.slice(0, open).trimEnd() + out.slice(close + PIN_CLOSE.length);
+  }
+}
+
+/** pi's exported default summariser, as ledger-pin calls it. */
+export type CompactFn = (
+  preparation: PiCompactionPreparation,
+  model: unknown,
+  apiKey: string | undefined,
+  headers?: Record<string, string>,
+  customInstructions?: string,
+  signal?: AbortSignal,
+  thinkingLevel?: string,
+  streamFn?: (model: unknown, context: unknown, options: unknown) => unknown,
+  env?: Record<string, string>,
+) => Promise<PiCompactionResult>;
+
+/** Load `compact` from the installed (= pinned) pi package, resolved inside
+ * the pi process exactly like extensions/subagents.ts's import of the same
+ * package. VERIFY-ON-PIN: pi 1.0.0 `dist/index.js` exports `compact`
+ * (re-exported from `dist/core/compaction/index.js`). Undefined when the
+ * import fails or the export is missing. */
+export async function loadPiCompact(): Promise<CompactFn | undefined> {
+  try {
+    const pkg = (await import("@earendil-works/pi-coding-agent")) as unknown as {
+      compact?: unknown;
+    };
+    return typeof pkg.compact === "function" ? (pkg.compact as CompactFn) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPreparation(value: unknown): value is PiCompactionPreparation {
+  if (!value || typeof value !== "object") return false;
+  const p = value as Record<string, unknown>;
+  return typeof p.firstKeptEntryId === "string" && typeof p.tokensBefore === "number";
+}
+
+/**
+ * The compaction: pi's own default summary with the pinned block
+ * appended. It mirrors pi 1.0.0's `AgentSession._runDefaultCompaction`
+ * (dist/core/agent-session.js): resolve request auth for the session model,
+ * then `compact(preparation, model, apiKey, headers, customInstructions,
+ * signal, thinkingLevel, streamFn, env)`. The stream function is the model
+ * registry's `streamSimple`, which is what pi's own agent streamFn delegates
+ * to (dist/core/sdk.js, `modelRuntime.streamSimple`; ModelRegistry.streamSimple
+ * is that same runtime call). Returns undefined on ANY failure, so pi falls
+ * back to its default compaction rather than cancelling one.
+ * VERIFY-ON-PIN, whole function: every name here is from pi 1.0.0's dist and
+ * has not yet run in a live session.
+ */
+export async function pinnedCompaction(
+  event: PiEventPayload,
+  ctx: PiEventContext | undefined,
+  pinned: string,
+  compactFn: CompactFn | undefined,
+  log: (msg: string) => void = (m) => console.error(m),
+): Promise<CompactHandlerResult | undefined> {
+  const fail = (why: string): undefined => {
+    log(
+      `[ledger-pin] pinned compaction unavailable (${why}); pi runs its default compaction and the ledger returns with the next round order`,
+    );
+    return undefined;
+  };
+  if (!compactFn) return fail("pi's compact() is not exported by the installed package");
+  const preparation = event.preparation;
+  if (!isPreparation(preparation))
+    return fail("event.preparation has no firstKeptEntryId/tokensBefore");
+  const registry = ctx?.modelRegistry;
+  const model = ctx?.model;
+  if (!registry || typeof registry.getApiKeyAndHeaders !== "function")
+    return fail("no model registry");
+  if (!model || typeof model !== "object") return fail("no session model");
+  try {
+    const auth = await registry.getApiKeyAndHeaders(model);
+    if (!auth.ok) return fail(`auth: ${auth.error}`);
+    const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+    const forSummary: PiCompactionPreparation =
+      typeof preparation.previousSummary === "string"
+        ? { ...preparation, previousSummary: stripPinned(preparation.previousSummary) }
+        : preparation;
+    const custom =
+      typeof event.customInstructions === "string" ? event.customInstructions : undefined;
+    const signal = event.signal instanceof AbortSignal ? event.signal : undefined;
+    const result = await compactFn(
+      forSummary,
+      requestModel,
+      auth.apiKey,
+      auth.headers,
+      custom,
+      signal,
+      ctx?.thinkingLevel,
+      (m, c, o) => registry.streamSimple(m, c, o),
+      auth.env,
+    );
+    if (
+      !result ||
+      typeof result.summary !== "string" ||
+      typeof result.firstKeptEntryId !== "string" ||
+      typeof result.tokensBefore !== "number"
+    )
+      return fail("compact() returned no usable result");
+    return {
+      compaction: {
+        ...result,
+        summary: `${stripPinned(result.summary)}\n\n${pinned}`,
+      },
+    };
+  } catch (err) {
+    return fail(`summariser threw: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** The custom entry type ledger-pin writes into the session file. */
+export const LEDGER_ENTRY_TYPE = "qcr-review-ledger";
+
+export interface LedgerPinDeps {
+  /** Where pi's `compact()` comes from; tests inject a fake. */
+  loadCompact?: () => Promise<CompactFn | undefined>;
+}
+
+export function activateWith(pi: Pi, deps: LedgerPinDeps = {}): void {
+  const loadCompact = deps.loadCompact ?? loadPiCompact;
   const env = process.env;
   const session = env.QCR_SESSION_NAME?.trim() || "session";
   const meta = env.QCR_PR_META?.trim() ?? "";
@@ -115,12 +289,12 @@ export const activate: (pi: Pi) => void = (pi) => {
   const snapshotPath = ledgerSnapshotPath(env, session);
   let lastLedger = "";
 
-  const capture = (event: PiEventPayload): string => {
+  const capture = (source: unknown): string => {
     const onIgnore = (pr: number): void => {
       const who = ownPr === undefined ? "session has no QCR_PR" : `own PR is #${ownPr}`;
       console.error(`[ledger-pin] debug: ignoring LEDGER PR #${pr} (${who})`);
     };
-    const ledger = extractLedger(collectText(event), ownPr, onIgnore) ?? lastLedger;
+    const ledger = extractLedger(collectText(source), ownPr, onIgnore) ?? lastLedger;
     if (ledger && ledger !== lastLedger) {
       lastLedger = ledger;
       try {
@@ -132,36 +306,39 @@ export const activate: (pi: Pi) => void = (pi) => {
     return ledger;
   };
 
-  // VERIFY-ON-PIN: "turn_end" fires with the turn's entries in its payload.
+  // VERIFY-ON-PIN: "turn_end". pi 1.0.0 `TurnEndEvent` (dist/core/extensions/
+  // types.d.ts) carries the turn's `message` and `toolResults`; the walk stays
+  // shape-agnostic.
   pi.on("turn_end", (event) => {
     capture(event);
   });
 
-  // VERIFY-ON-PIN: "session_before_compact" payload + return shape (findings
-  // §6: a handler may cancel or supply a custom summary/details). We return
-  // every plausible carrier — summary, instructions, retainedTail, details —
-  // so at least one is honoured whatever the real contract turns out to be.
-  pi.on("session_before_compact", (event): CompactHandlerResult | void => {
-    const ledger = capture(event);
+  // VERIFY-ON-PIN: pi 1.0.0 `SessionBeforeCompactEvent` (dist/core/extensions/
+  // types.d.ts) is { preparation, branchEntries, customInstructions?, reason,
+  // willRetry, signal }. The handler gets (event, ctx: ExtensionContext) and
+  // may return `SessionBeforeCompactResult` = { cancel?, compaction? }, the
+  // only two keys `dist/core/agent-session.js` reads (both `compact()` and
+  // `_runAutoCompaction()`). The ledger is looked for in `branchEntries`
+  // (oldest first, so the newest own block wins), falling back to the whole
+  // event if that field is ever missing.
+  pi.on("session_before_compact", async (event, ctx): Promise<CompactHandlerResult | void> => {
+    const ledger = capture(Array.isArray(event.branchEntries) ? event.branchEntries : event);
     if (!ledger) return;
-    const pinned = pinnedBlock(meta, ledger);
-    const proposed = typeof event.summary === "string" ? event.summary : undefined;
-    const result: CompactHandlerResult = {
-      instructions: `Preserve the following block verbatim in the summary:\n\n${pinned}`,
-      details: { quickreview_ledger: ledger, quickreview_meta: meta },
-    };
-    if (proposed !== undefined) result.summary = `${proposed}\n\n${pinned}`;
-    const tail = event.retainedTail;
-    if (Array.isArray(tail)) result.retainedTail = [...tail, { type: "text", text: pinned }];
     // Persist it into the session file too, so archival never depends on the
-    // summariser. VERIFY-ON-PIN: appendEntry entry shape (findings §5).
+    // summariser. VERIFY-ON-PIN: pi 1.0.0 `ExtensionAPI.appendEntry<T>(
+    // customType: string, data?: T): void` (dist/core/extensions/types.d.ts),
+    // implemented in dist/core/agent-session.js as
+    // `sessionManager.appendCustomEntry(customType, data)`: a `custom` entry,
+    // never sent to the model.
     try {
-      void pi.appendEntry?.({ type: "custom", subtype: "quickreview-ledger", ledger, meta });
+      pi.appendEntry?.(LEDGER_ENTRY_TYPE, { pr: ownPr, ledger, meta });
     } catch (err) {
       console.error(`[ledger-pin] appendEntry failed: ${String(err)}`);
     }
-    return result;
+    return pinnedCompaction(event, ctx, pinnedBlock(meta, ledger), await loadCompact());
   });
-};
+}
+
+export const activate: (pi: Pi) => void = (pi) => activateWith(pi);
 
 export default activate;

@@ -1135,7 +1135,9 @@ export class VerdictWatcher {
     await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
     // Round is over: compact the sticky conversation. Cache re-reads of the
     // ever-growing prefix were 41% of measured cost; the continuity that
-    // matters (SETTLED digest, ledger) survives compaction by design.
+    // matters (SETTLED digest, ledger) survives compaction by design: ledger-pin
+    // pins the ledger into pi's summary and the next round order re-hands the
+    // mirrored copy.
     await this.safe(
       () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
       `compact pr-${v.pr}`,

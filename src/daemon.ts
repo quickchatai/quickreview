@@ -25,6 +25,7 @@ import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
+import { readLedgerCarry } from "./ledgercarry.js";
 import { sweepExpiredLevers } from "./levers.js";
 import {
   PingPongLedger,
@@ -558,6 +559,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(deps.memory ? { memory: deps.memory } : {}),
         ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
         ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
+        // (MC-18): every round order re-hands the PR's ledger, read
+        // from ledger-pin's mirror — the same file the freshness check reads.
+        // Total: no file, an unreadable one or another PR's ⇒ no carry.
+        ledgerCarry: (n) => readLedgerCarry(join(root, "state", "ledgers", `pr-${n}.md`), n),
         prepareWorktree: deps.prepareWorktree,
         listBaseMigrations: deps.listBaseMigrations,
         ...(deps.dependencySources ? { dependencySources: deps.dependencySources } : {}),

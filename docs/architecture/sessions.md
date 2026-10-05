@@ -346,10 +346,22 @@ token-driven and would summarise it away.
 
 `extensions/ledger-pin.ts` prevents that. On `turn_end` it extracts the newest
 ledger block and mirrors it to `state/ledgers/<session>.md` (only on change).
-On `session_before_compact` it returns a `CompactHandlerResult` that carries the
-pinned block through every plausible carrier — `instructions`, `summary`,
-`retainedTail`, `details` — and also appends a custom entry to the session file,
-so archival never depends on the summariser honouring any one of them.
+On `session_before_compact` it returns a real `compaction`: pi's own
+default summary, made by calling the package's exported `compact()` with the
+session model's auth, with the pinned ledger block appended verbatim. pi 1.0.0
+reads only `cancel` and `compaction` from that hook; the earlier carriers
+(`instructions`, `summary`, `retainedTail`, `details`) were all ignored. Any
+failure on that path returns nothing, so pi runs its default compaction rather
+than a cancelled one. The hook also appends a `qcr-review-ledger` custom entry
+(`appendEntry(customType, data)`) to the session file, so archival never
+depends on the summariser.
+
+The daemon hands the ledger back too, without any pi API (MC-18):
+every round order carries the mirrored block from `state/ledgers/pr-<n>.md`
+(`src/ledgercarry.ts`, bounded, the path named, rendered as
+`{{ledger_note}}`), and the ledger's `SETTLED:` items become the order's
+`settled_digest`. No ledger file, or another PR's, means no section and an
+empty digest.
 
 Two details are load-bearing:
 

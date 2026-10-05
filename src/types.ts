@@ -227,8 +227,15 @@ export interface RoundOrder {
    * entire intent artifact. Absent on orders built before the field existed
    * and on orders whose adapter read failed (no intent lens either way). */
   pr_body?: string;
-  /** SETTLED digest carried from the last verdict's ledger snapshot. */
+  /** SETTLED digest: the `SETTLED:` items of the PR's mirrored ledger
+   * (`state/ledgers/pr-<n>.md`), bounded — src/ledgercarry.ts. ""
+   * when there is no ledger or it settles nothing. */
   settled_digest: string;
+  /** The PR's ledger as ledger-pin last mirrored it, re-handed to the session
+   * every round (MC-18) and rendered as `{{ledger_note}}`. Absent
+   * when there is no readable ledger for this PR: the order then renders
+   * exactly as before. */
+  ledger_carry?: LedgerCarry;
   issued_at: string;
   /** `[review] task_files` (src/passtasks.ts): the discovery rows' task files
    * the daemon wrote for this round — plan row index, agent, absolute path.
@@ -250,6 +257,20 @@ export interface RoundOrder {
    * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ the
    * order renders exactly as before. */
   coverage_files?: Array<{ path: string; lines: number }>;
+}
+
+/** What a round order carries of the PR's ledger (src/ledgercarry.ts). */
+export interface LedgerCarry {
+  /** Where the daemon read it: the ledger-pin mirror. */
+  source: string;
+  /** The block's header line as written, e.g. `LEDGER PR #42 @ abc1234`. */
+  header: string;
+  /** The block, verbatim up to the cap. */
+  text: string;
+  /** True when `text` was cut at the cap. */
+  truncated: boolean;
+  /** The full block's length in characters, before any cut. */
+  total_chars: number;
 }
 
 /**

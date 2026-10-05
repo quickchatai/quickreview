@@ -1,0 +1,59 @@
+// EXCERPTS, verbatim, from @earendil-works/pi-coding-agent 1.0.0, read out of the
+// qcr-bench:fast1 image with docker create + docker cp on 2026-10-05.
+// Not compiled; tests/ledger-pin.test.ts parses the field names out of it.
+
+// dist/core/extensions/types.d.ts (sha256 6c78c89ad1ffb421e81ff0ad11ceff1a635b21fd818a32aa3e87009392298d9f)
+/** Fired before context compaction (can be cancelled or customized) */
+export interface SessionBeforeCompactEvent {
+    type: "session_before_compact";
+    preparation: CompactionPreparation;
+    branchEntries: SessionEntry[];
+    customInstructions?: string;
+    /** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
+    reason: "manual" | "threshold" | "overflow";
+    /** True when the aborted turn is retried after this compaction (overflow recovery) */
+    willRetry: boolean;
+    signal: AbortSignal;
+}
+export interface SessionBeforeCompactResult {
+    cancel?: boolean;
+    compaction?: CompactionResult;
+}
+export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContext) => Promise<R | void> | R | void;
+    /** Append a custom entry to the session for state persistence (not sent to LLM). */
+    appendEntry<T = unknown>(customType: string, data?: T): void;
+
+// dist/core/compaction/compaction.d.ts (sha256 0e93fec810760cfed03f749be2a79cf1cff8540899b693592139c673d03b35fa)
+/** Result from compact() - SessionManager adds uuid/parentUuid when saving */
+export interface CompactionResult<T = unknown> {
+    summary: string;
+    firstKeptEntryId: string;
+    tokensBefore: number;
+    estimatedTokensAfter?: number;
+    /** Usage from the LLM call(s) that generated this summary, if available */
+    usage?: Usage;
+    /** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
+    details?: T;
+}
+export interface CompactionPreparation {
+    /** UUID of first entry to keep */
+    firstKeptEntryId: string;
+    /** Messages that will be summarized and discarded */
+    messagesToSummarize: AgentMessage[];
+    /** Messages that will be turned into turn prefix summary (if splitting) */
+    turnPrefixMessages: AgentMessage[];
+    /** Whether this is a split turn (cut point in middle of turn) */
+    isSplitTurn: boolean;
+    tokensBefore: number;
+    /** Summary from previous compaction, for iterative update */
+    previousSummary?: string;
+    /** File operations extracted from messagesToSummarize */
+    fileOps: FileOperations;
+    /** Compaction settions from settings.jsonl	*/
+    settings: CompactionSettings;
+}
+export declare function prepareCompaction(pathEntries: SessionEntry[], settings: CompactionSettings): CompactionPreparation | undefined;
+export declare function compact(preparation: CompactionPreparation, model: Model<any>, apiKey: string | undefined, headers?: Record<string, string>, customInstructions?: string, signal?: AbortSignal, thinkingLevel?: ThinkingLevel, streamFn?: StreamFn, env?: Record<string, string>, retry?: RetryPolicy, callbacks?: RetryCallbacks, sessionId?: string): Promise<CompactionResult>;
+
+// dist/index.js (sha256 5482298b995db935f7b96f5d6056fa1c36ac6fc80456be594ef65b83c62b0d30)
+export { calculateContextTokens, collectEntriesForBranchSummary, compact, DEFAULT_COMPACTION_SETTINGS, estimateTokens, findCutPoint, findTurnStartIndex, generateBranchSummary, generateSummary, generateSummaryWithUsage, getLastAssistantUsage, prepareBranchEntries, serializeConversation, shouldCompact, } from "./core/compaction/index.js";

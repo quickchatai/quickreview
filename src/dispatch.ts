@@ -77,6 +77,7 @@ import { ALL_PASSES } from "./passes.js";
 import { detectLoosenedAssertions, loosenedReason } from "./loosenedtests.js";
 import { isDefaultPosting } from "./postingpolicy.js";
 import type {
+  LedgerCarry,
   PassPlanEntry,
   PassTier,
   RoundOrder,
@@ -141,8 +142,16 @@ export interface DispatchDeps {
    * on the prompt, never a precondition for a round.
    */
   memory?: RoundMemorySeed;
-  /** SETTLED digest carried from the session ledger (B3/B4). */
+  /** SETTLED digest carried from the session ledger (B3/B4). When absent,
+   * the digest comes from `ledgerCarry`'s SETTLED items. */
   settledDigest?: (pr: number) => string;
+  /**
+   * The PR's mirrored ledger, re-handed in every round order (,
+   * MC-18; src/ledgercarry.ts). Production reads `state/ledgers/pr-<n>.md`
+   * (daemon.ts). Total: undefined carry ⇒ the order has no `ledger_carry`
+   * and renders exactly as before. Absent ⇒ no carry and an empty digest.
+   */
+  ledgerCarry?: (pr: number) => { carry?: LedgerCarry; settled: string };
   worktreeFor?: (pr: number) => string;
   /**
    * Fetch the PR head + its base branch and materialise the worktree, before
@@ -935,6 +944,8 @@ export function buildRoundOrder(args: {
   roundType: RoundType;
   worktree: string;
   settledDigest: string;
+  /** The PR's mirrored ledger; absent ⇒ no `ledger_carry`. */
+  ledgerCarry?: LedgerCarry;
   issuedAt: string;
   /** Facts established by preparing the worktree. Absent only for callers with
    * no worktree seam (the stub-wired daemon core and unit tests), which fall
@@ -1049,6 +1060,7 @@ export function buildRoundOrder(args: {
     merge_base: args.tree?.merge_base ?? "",
     worktree: args.worktree,
     settled_digest: args.settledDigest,
+    ...(args.ledgerCarry ? { ledger_carry: args.ledgerCarry } : {}),
     issued_at: args.issuedAt,
     ...(args.prBody !== undefined ? { pr_body: args.prBody } : {}),
   };
@@ -1083,7 +1095,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
   const render =
     deps.renderPrompt ?? ((o: RoundOrder, _m: RoundMemory) => JSON.stringify(o, null, 2));
   const worktreeFor = deps.worktreeFor ?? defaultWorktree;
-  const settledDigest = deps.settledDigest ?? (() => "");
+  const ledgerCarry =
+    deps.ledgerCarry ?? ((): { carry?: LedgerCarry; settled: string } => ({ settled: "" }));
   const log = deps.log ?? (() => {});
 
   // Deploy-window drain (2026-08-25): the pump starts NOTHING while draining.
@@ -1548,7 +1561,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         reviewNo: priorRounds + 1,
         roundType,
         worktree: worktreeFor(row.number),
-        settledDigest: settledDigest(row.number),
+        ...((): { settledDigest: string; ledgerCarry?: LedgerCarry } => {
+          // one read of the ledger mirror per order; an explicit
+          // settledDigest supplier still wins for the digest.
+          const fromLedger = ledgerCarry(row.number);
+          return {
+            settledDigest: deps.settledDigest
+              ? deps.settledDigest(row.number)
+              : fromLedger.settled,
+            ...(fromLedger.carry ? { ledgerCarry: fromLedger.carry } : {}),
+          };
+        })(),
         issuedAt: now().toISOString(),
         ...(prBody !== undefined ? { prBody } : {}),
         ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
