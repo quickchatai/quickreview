@@ -62,6 +62,35 @@ its license, and where the full text and provenance live in this tree.
   `deploying`, `runbook` and `feedback-mining` skills. The `skills/companion/`
   directory at the repository root is likewise first-party.
 
+## bench/aacr — third-party benchmark data
+
+The benchmark harness (`bench/aacr/`) commits rows derived from four public
+benchmarks: case sets (PR ids, commits, and the PR author's title and
+description) and, for Martian, its golden comments. Each set file's `dataset`
+field pins the source commit and file hash (`sets/dedup5-*.json` are cut
+from the four below and name their source the same way). No third-party review-tool
+comment text is committed: vendor reviews and SWE-PRBench's human review
+comments are fetched from the pinned sources at run time and verified by hash
+(`bench/aacr/ext/sweprbench/dataset-manifest.sha256`, the Martian manifest
+sha256 in `sets/martian*.json`).
+
+- **AACR-Bench** — <https://github.com/alibaba/aacr-bench> (dataset commit
+  `ab8af8d5`, harness commit `68a5697`), **Apache-2.0**. Derived here:
+  `sets/` (smoke10, dev10, holdout10, fresh10, rest145, full and their
+  subsets), `references.json`, `bot_references.json`, `sets/*.labels.json`,
+  and the defect keys in `defects/` (a modified work: our verified answer key
+  over AACR-Bench's PRs).
+- **Martian code-review-benchmark** — <https://github.com/withmartian/code-review-benchmark>
+  (commit `e616e84`), **MIT**. Derived here: `sets/martian*.json`,
+  `ext/martian/fork-prs.json`, and the golden comments quoted in
+  `ext/martian-tuning/golden-audit-full.json`.
+- **Qodo PR-Review-Bench** — <https://huggingface.co/datasets/Qodo/PR-Review-Bench>
+  (commit `a73957c`), **MIT**. Derived here: `sets/qodo-*.json`.
+- **SWE-PRBench** — <https://huggingface.co/datasets/foundry-ai/swe-prbench>
+  (commit `b87f579`), **CC-BY-4.0**. Derived here: `sets/sweprbench-*.json`
+  (PR metadata with each PR's title and description from the dataset's
+  `prs.jsonl`); attribution: SWE-PRBench, FoundryHQ-AI.
+
 ## Subagents — no third-party component
 
 Subagents run on pi's **first-party** subagent extension, shipped inside the
