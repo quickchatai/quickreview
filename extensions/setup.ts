@@ -49,14 +49,14 @@
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { configHome, stateHome } from "../src/install.js";
-import {
-  SetupEngine,
-  type CutStatus,
-  type CutView,
-  type Refusal,
-} from "../src/setup/engine.js";
+import { SetupEngine, type CutStatus, type CutView, type Refusal } from "../src/setup/engine.js";
 import type { HistoryTheme, HistoryThemesFile } from "../src/setup/history.js";
-import { MAX_THEMES, THEME_SOURCES, THEME_SUMMARY_MAX, THEME_TITLE_MAX } from "../src/setup/history.js";
+import {
+  MAX_THEMES,
+  THEME_SOURCES,
+  THEME_SUMMARY_MAX,
+  THEME_TITLE_MAX,
+} from "../src/setup/history.js";
 import {
   checkoutReader,
   configHomeFs,
@@ -111,7 +111,9 @@ const NO_PARAMS = { type: "object", properties: {} } as const;
 export const DEFAULT_REVIEWED_REPO = "/reviewed-repo";
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details ? { content: [{ type: "text", text: t }], details } : { content: [{ type: "text", text: t }] };
+  return details
+    ? { content: [{ type: "text", text: t }], details }
+    : { content: [{ type: "text", text: t }] };
 }
 
 function refused(what: string, r: Refusal): PiToolResult {
@@ -123,7 +125,8 @@ function refused(what: string, r: Refusal): PiToolResult {
 export function renderFacts(facts: RepoFacts, head: string | null): string {
   const ev = (xs: Array<{ name: string; evidence: string }>): string =>
     xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${x.name} — ${x.evidence}`).join("\n");
-  const list = (xs: readonly string[]): string => (xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${x}`).join("\n"));
+  const list = (xs: readonly string[]): string =>
+    xs.length === 0 ? "  (none found)" : xs.map((x) => `  - ${x}`).join("\n");
   return [
     `Repo facts (${facts.files} tracked files${head ? ` at ${head.slice(0, 12)}` : ""}). Deterministic: each fact names the file that shows it; "none found" means no such file, not that the practice is absent.`,
     `Languages:\n${facts.languages.length === 0 ? "  (none recognised)" : facts.languages.map((l) => `  - ${l.language}: ${l.files} files`).join("\n")}`,
@@ -135,7 +138,10 @@ export function renderFacts(facts: RepoFacts, head: string | null): string {
     `Style guides:\n${list(facts.style_guides)}`,
     `Agent-directive files:\n${list(facts.agent_files)}`,
     `Unit candidates (a first guess — propose your own cut from these):\n${facts.unit_candidates
-      .map((u) => `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")} — ${u.reason}`)
+      .map(
+        (u) =>
+          `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")} — ${u.reason}`,
+      )
       .join("\n")}`,
   ].join("\n\n");
 }
@@ -146,11 +152,14 @@ export function renderCut(title: string, v: CutView): string {
       u.cases.length > 1
         ? ` — split into ${u.cases.length} cases (${u.cases.map((c) => `${c.id}: ${c.files}f/${c.lines}l`).join(", ")})`
         : "";
-    const over = u.cases.some((c) => c.over_budget) ? " [a file alone exceeds one case — a scan reads it in line ranges]" : "";
+    const over = u.cases.some((c) => c.over_budget)
+      ? " [a file alone exceeds one case — a scan reads it in line ranges]"
+      : "";
     return `  - ${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.reviewable} reviewable, ${u.lines} lines${split}${over}${u.note ? ` — ${u.note}` : ""}`;
   });
   const lines = [`${title}:`, ...rows];
-  if (v.ignored.length > 0) lines.push(`  ignored: ${v.ignored.join(", ")} (${v.ignored_files} files)`);
+  if (v.ignored.length > 0)
+    lines.push(`  ignored: ${v.ignored.join(", ")} (${v.ignored_files} files)`);
   for (const e of v.errors) lines.push(`  ✗ ${e}`);
   for (const b of v.blocking_save) lines.push(`  ! ${b}`);
   return lines.join("\n");
@@ -160,15 +169,30 @@ export function renderStatus(s: CutStatus): string {
   const out: string[] = [];
   for (const p of s.problems) out.push(`✗ ${p}`);
   if (s.saved) {
-    const stale = s.saved.blocking_save.length > 0 ? " — STALE against the repo now, see the ! lines" : "";
-    out.push(renderCut(`Saved unit cut (saved ${s.saved.saved_at}${s.saved.head ? ` at ${s.saved.head.slice(0, 12)}` : ""})${stale}`, s.saved));
+    const stale =
+      s.saved.blocking_save.length > 0 ? " — STALE against the repo now, see the ! lines" : "";
+    out.push(
+      renderCut(
+        `Saved unit cut (saved ${s.saved.saved_at}${s.saved.head ? ` at ${s.saved.head.slice(0, 12)}` : ""})${stale}`,
+        s.saved,
+      ),
+    );
   } else if (s.cut_file_unreadable) {
-    out.push("Saved unit cut: UNKNOWN — the cut file could not be read (see above); nothing will overwrite it.");
+    out.push(
+      "Saved unit cut: UNKNOWN — the cut file could not be read (see above); nothing will overwrite it.",
+    );
   } else {
     out.push("No saved unit cut yet.");
   }
-  if (s.draft) out.push(renderCut(`Draft (${s.draft.source}, updated ${s.draft.updated_at}) — not in use until saved`, s.draft));
-  if (s.has_previous) out.push("The cut before the saved one is kept as `previous` in the state home.");
+  if (s.draft)
+    out.push(
+      renderCut(
+        `Draft (${s.draft.source}, updated ${s.draft.updated_at}) — not in use until saved`,
+        s.draft,
+      ),
+    );
+  if (s.has_previous)
+    out.push("The cut before the saved one is kept as `previous` in the state home.");
   return out.join("\n\n");
 }
 
@@ -206,7 +230,9 @@ export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
   );
   for (const p of s.problems) out.push(`! ${p}`);
   if (s.empty) {
-    out.push("EMPTY history: no merged-PR review comments, no rounds, no feedback. Save an empty theme list to record that.");
+    out.push(
+      "EMPTY history: no merged-PR review comments, no rounds, no feedback. Save an empty theme list to record that.",
+    );
   }
   if (h.page) {
     const end = h.page.offset + h.page.lines.length;
@@ -221,7 +247,8 @@ export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
 }
 
 const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixed(2)}`);
-const scopeName = (unit: string): string => (unit === REPO_SCOPE ? "repo-wide read" : `unit ${unit}`);
+const scopeName = (unit: string): string =>
+  unit === REPO_SCOPE ? "repo-wide read" : `unit ${unit}`;
 
 export function renderSurveyPreview(p: SurveyPreview): string {
   const rows = p.cases.map(
@@ -235,7 +262,10 @@ export function renderSurveyPreview(p: SurveyPreview): string {
     `Price basis: ${p.rate.basis}.`,
     ...rows,
   ];
-  if (p.unsampled.length > 0) out.push(`Not surveyed (no code to sample outside tests and migrations): ${p.unsampled.join(", ")}`);
+  if (p.unsampled.length > 0)
+    out.push(
+      `Not surveyed (no code to sample outside tests and migrations): ${p.unsampled.join(", ")}`,
+    );
   if (p.unassigned.length > 0) {
     out.push(
       `Not surveyed: ${p.unassigned.length} file(s) belong to no unit of the saved cut: ${p.unassigned.slice(0, 10).join(", ")}` +
@@ -254,7 +284,9 @@ export function renderSurveyPreview(p: SurveyPreview): string {
     );
   }
   for (const b of p.blockers) out.push(`✗ ${b}`);
-  out.push(`Preview key: ${p.key} — show the operator this cost; start with this key only when he agrees.`);
+  out.push(
+    `Preview key: ${p.key} — show the operator this cost; start with this key only when he agrees.`,
+  );
   return out.join("\n");
 }
 
@@ -262,7 +294,11 @@ export function renderSurveyStatus(s: SurveyStatus): string {
   const out: string[] = s.problems.map((p) => `✗ ${p}`);
   const run = s.run;
   if (run === null) {
-    out.push(s.ok ? "No survey has run yet." : "Survey record: UNKNOWN — the file could not be read (see above); nothing will overwrite it.");
+    out.push(
+      s.ok
+        ? "No survey has run yet."
+        : "Survey record: UNKNOWN — the file could not be read (see above); nothing will overwrite it.",
+    );
   } else {
     const done = run.cases.filter((c) => c.status === "done").length;
     const cost = run.cases.some((c) => c.cost_usd !== null)
@@ -286,7 +322,9 @@ export function renderSurveyStatus(s: SurveyStatus): string {
         c.notes_dropped ? `${c.notes_dropped} over the cap` : "",
         c.error ?? "",
       ].filter(Boolean);
-      out.push(`  - ${c.id}: ${c.status}, ${c.notes_written} notes${c.cost_usd !== null ? `, ${usd(c.cost_usd)}` : ""}${extra.length ? ` — ${extra.join("; ")}` : ""}`);
+      out.push(
+        `  - ${c.id}: ${c.status}, ${c.notes_written} notes${c.cost_usd !== null ? `, ${usd(c.cost_usd)}` : ""}${extra.length ? ` — ${extra.join("; ")}` : ""}`,
+      );
     }
     for (const p of run.problems) out.push(`  ! ${p}`);
   }
@@ -321,14 +359,20 @@ export function renderPortraitFacts(v: FactsVersion): string {
   const langs = f.stack.languages.map((l) => `${l.language} ${l.files}`).join(", ");
   out.push(
     `${SECTION_TITLES.stack}:\n  languages: ${langs || "(none recognised)"}\n` +
-      bullets(lines.stack.filter((l) => !l.startsWith("language ")), "  (no manifests or frameworks found)"),
+      bullets(
+        lines.stack.filter((l) => !l.startsWith("language ")),
+        "  (no manifests or frameworks found)",
+      ),
   );
   const units = f.units.units.map(
     (u) =>
       `${u.name} [${u.kind}] ${u.roots.map((r) => r || "(repo root)").join(", ")}: ${u.files} files, ${u.lines} lines` +
       `${u.cases > 1 ? `, ${u.cases} cases` : ""}${u.note ? ` — ${u.note}` : ""}`,
   );
-  const cut = f.units.source === "saved" ? `the saved cut (${f.units.saved_at})` : "NO SAVED CUT — the deterministic candidates, not the cut";
+  const cut =
+    f.units.source === "saved"
+      ? `the saved cut (${f.units.saved_at})`
+      : "NO SAVED CUT — the deterministic candidates, not the cut";
   out.push(
     `${SECTION_TITLES.units}, ${cut}:\n${bullets(units)}` +
       (f.units.ignored.length > 0 ? `\n  ignored: ${f.units.ignored.join(", ")}` : ""),
@@ -339,7 +383,9 @@ export function renderPortraitFacts(v: FactsVersion): string {
   const scan = f.scan ?? null;
   if (scan !== null) {
     const t = scan.findings;
-    const sev = Object.entries(t.by_severity).map(([k, n]) => `${k} ${n}`).join(", ");
+    const sev = Object.entries(t.by_severity)
+      .map(([k, n]) => `${k} ${n}`)
+      .join(", ");
     const units = t.units.map(
       (u) =>
         `${u.unit}: ${u.open} open (${u.promoted} promoted${u.doubted > 0 ? `, ${u.doubted} may not be valid` : ""}), ` +
@@ -354,7 +400,9 @@ export function renderPortraitFacts(v: FactsVersion): string {
     );
   }
   if (f.problems.length > 0) {
-    out.push(`${SECTION_TITLES.problems} (these parts are UNKNOWN, not empty):\n${f.problems.map((p) => `  ✗ ${p}`).join("\n")}`);
+    out.push(
+      `${SECTION_TITLES.problems} (these parts are UNKNOWN, not empty):\n${f.problems.map((p) => `  ✗ ${p}`).join("\n")}`,
+    );
   }
   return out.join("\n\n");
 }
@@ -371,12 +419,14 @@ export function renderFactsDiff(diff: readonly SectionDiff[], since: string): st
 
 export function renderPortrait(v: PortraitView): string {
   const out: string[] = [];
-  if (v.facts.state === "absent") out.push("No portrait facts yet — setup_portrait_assemble reads them (free, deterministic).");
+  if (v.facts.state === "absent")
+    out.push("No portrait facts yet — setup_portrait_assemble reads them (free, deterministic).");
   else if (v.facts.state === "unreadable") out.push(`✗ ${v.facts.error}\nPortrait facts: UNKNOWN.`);
   else out.push(renderPortraitFacts(v.facts.file.current));
   const n = v.narrative;
   if (n.state === "no-config-home") out.push("Narrative: no config home in this assembly.");
-  else if (n.state === "absent") out.push(`Narrative: none yet (${NARRATIVE_FILE} in the config home).`);
+  else if (n.state === "absent")
+    out.push(`Narrative: none yet (${NARRATIVE_FILE} in the config home).`);
   else if (n.state === "unreadable") out.push(`✗ ${n.error}\nNarrative: UNKNOWN.`);
   else {
     const fresh =
@@ -389,11 +439,17 @@ export function renderPortrait(v: PortraitView): string {
           : "current with these facts";
     out.push(`Narrative (${n.doc.written_at ?? "time unknown"}; ${fresh}):\n\n${n.doc.body}`);
   }
-  if (v.has_previous_narrative) out.push(`The narrative it replaced is kept (${NARRATIVE_PREVIOUS_FILE}).`);
-  if (v.previous_narrative_error !== null) out.push(`✗ ${v.previous_narrative_error}\nThe kept previous narrative: UNKNOWN.`);
+  if (v.has_previous_narrative)
+    out.push(`The narrative it replaced is kept (${NARRATIVE_PREVIOUS_FILE}).`);
+  if (v.previous_narrative_error !== null)
+    out.push(`✗ ${v.previous_narrative_error}\nThe kept previous narrative: UNKNOWN.`);
   if (v.facts_diff !== null && v.facts.state === "ok") {
     const prev = v.facts.file.previous;
-    out.push(prev ? renderFactsDiff(v.facts_diff, `${prev.key} (${prev.assembled_at})`) : "Facts: no earlier version kept yet.");
+    out.push(
+      prev
+        ? renderFactsDiff(v.facts_diff, `${prev.key} (${prev.assembled_at})`)
+        : "Facts: no earlier version kept yet.",
+    );
   }
   if (v.narrative_diff !== null && v.previous_narrative_error === null) {
     out.push(
@@ -410,7 +466,9 @@ export function renderPortrait(v: PortraitView): string {
 // ---- the interview's tuning --------------------------------------------
 
 const settingsText = (s: Record<string, unknown>): string => {
-  const parts = TABLE_KEYS.filter((k) => s[k] !== undefined).map((k) => `${k} = ${JSON.stringify(s[k])}`);
+  const parts = TABLE_KEYS.filter((k) => s[k] !== undefined).map(
+    (k) => `${k} = ${JSON.stringify(s[k])}`,
+  );
   return parts.length === 0 ? "(nothing — the shipped behaviour)" : parts.join(", ");
 };
 
@@ -423,9 +481,13 @@ export function renderInterviewTable(): string {
   ];
   for (const point of ["merge-blocking", "risk", "style-tests"] as const) {
     out.push(`  ${point}:`);
-    for (const c of CONCERNS.filter((x) => x.point === point)) out.push(`    - ${c.name} — ${c.title} [${c.lenses.join(", ")}]`);
+    for (const c of CONCERNS.filter((x) => x.point === point))
+      out.push(`    - ${c.name} — ${c.title} [${c.lenses.join(", ")}]`);
   }
-  out.push("", "The table (priority → the lens settings it writes on every lens its concern names):");
+  out.push(
+    "",
+    "The table (priority → the lens settings it writes on every lens its concern names):",
+  );
   for (const p of PRIORITIES) out.push(`  - ${p}: ${settingsText(PRIORITY_SETTINGS[p])}`);
   out.push(
     "",
@@ -449,7 +511,9 @@ export function renderProfileStatus(s: ProfileStatus): string {
       `SETUP IS OWED: ${s.why_setup}. Tell the owner, once, and offer to run setup (the \`setup\` skill) — never start it on your own.`,
     );
   } else if (s.needs_setup === null) {
-    out.push(`Whether setup is owed is UNKNOWN: ${s.why_setup}. Do not nudge on it; say what could not be read.`);
+    out.push(
+      `Whether setup is owed is UNKNOWN: ${s.why_setup}. Do not nudge on it; say what could not be read.`,
+    );
   }
   if (s.profile && s.check) out.push(renderCheck(s.profile, s.check));
   if (s.target.state === "ok" && s.profile && s.target.named !== s.profile) {
@@ -467,7 +531,8 @@ export function renderProfileStatus(s: ProfileStatus): string {
           .join(", "),
     );
   } else out.push("No interview recorded yet.");
-  if (s.unanswered === null) out.push("Unanswered concerns: UNKNOWN (the interview record cannot be read).");
+  if (s.unanswered === null)
+    out.push("Unanswered concerns: UNKNOWN (the interview record cannot be read).");
   else if (s.unanswered.length > 0) out.push(`Unanswered concerns: ${s.unanswered.join(", ")}.`);
   for (const c of s.commits) {
     const r = c.result;
@@ -481,7 +546,12 @@ export function renderProfileStatus(s: ProfileStatus): string {
 function renderDecisions(ds: readonly LensDecision[]): string {
   return ds.length === 0
     ? "  (no concern answered yet)"
-    : ds.map((d) => `  - ${d.lens}: ${d.priority} (${d.because.join(", ")}) → ${settingsText(d.settings)}`).join("\n");
+    : ds
+        .map(
+          (d) =>
+            `  - ${d.lens}: ${d.priority} (${d.because.join(", ")}) → ${settingsText(d.settings)}`,
+        )
+        .join("\n");
 }
 
 export function renderApply(r: ApplyResult): string {
@@ -506,7 +576,7 @@ export function renderApply(r: ApplyResult): string {
   if (r.written) {
     out.push(
       `${r.commit ? `A commit was asked for (${r.commit.id}); it lands if the config home is a git repo. ` : ""}` +
-        "PR reviews change only when the owner deploys — the deploy tab says \"profile changed, not deployed\" until then.",
+        'PR reviews change only when the owner deploys — the deploy tab says "profile changed, not deployed" until then.',
     );
   }
   // the replay's default "old" side is this record — say when it
@@ -537,24 +607,29 @@ export function renderRetune(r: RetuneResult): string {
         .map(
           (c) =>
             `  - ${c.input}: ${c.from} → ${c.to}\n    why: ${c.why}\n` +
-            (c.effects.length > 0 ? c.effects.map((e) => `    moves ${e}`).join("\n") : "    moves no resolved lens setting"),
+            (c.effects.length > 0
+              ? c.effects.map((e) => `    moves ${e}`).join("\n")
+              : "    moves no resolved lens setting"),
         )
         .join("\n"),
   );
   for (const d of r.diff) out.push(`${d.file}:\n${d.lines.map((l) => `  ${l}`).join("\n")}`);
   if (r.config_names !== null && r.config_names !== r.profile) {
-    out.push(`The live config names ${r.config_names === "" ? "no profile" : `"${r.config_names}"`} — PR rounds do not use "${r.profile}" even once deployed.`);
+    out.push(
+      `The live config names ${r.config_names === "" ? "no profile" : `"${r.config_names}"`} — PR rounds do not use "${r.profile}" even once deployed.`,
+    );
   }
   if (r.record) {
-    const portrait = "key" in r.record.portrait
-      ? `Portrait facts refreshed (key ${r.record.portrait.key}) — if your narrative is now STALE, rewrite it from them.`
-      : `The portrait facts could NOT be refreshed: ${r.record.portrait.error}.`;
+    const portrait =
+      "key" in r.record.portrait
+        ? `Portrait facts refreshed (key ${r.record.portrait.key}) — if your narrative is now STALE, rewrite it from them.`
+        : `The portrait facts could NOT be refreshed: ${r.record.portrait.error}.`;
     out.push(portrait);
   }
   if (r.written) {
     out.push(
       `${r.commit ? `A commit was asked for (${r.commit.id}). ` : ""}` +
-        "Report this to the owner: what changed and why. It reaches PR reviews ONLY when he deploys — the deploy tab shows this re-tune as \"profile changed, not deployed\" until then. You never deploy.",
+        'Report this to the owner: what changed and why. It reaches PR reviews ONLY when he deploys — the deploy tab shows this re-tune as "profile changed, not deployed" until then. You never deploy.',
     );
   }
   return out.join("\n\n");
@@ -565,13 +640,21 @@ export function renderRetune(r: RetuneResult): string {
 const UNIT_SCHEMA = {
   type: "object",
   properties: {
-    name: { type: "string", description: "Plain name: letters, digits, '.', '_', '-' (it keys every report)." },
+    name: {
+      type: "string",
+      description: "Plain name: letters, digits, '.', '_', '-' (it keys every report).",
+    },
     roots: {
       type: "array",
       items: { type: "string" },
-      description: 'Repo-relative directory or file prefixes the unit owns; "" is the repo root (a catch-all).',
+      description:
+        'Repo-relative directory or file prefixes the unit owns; "" is the repo root (a catch-all).',
     },
-    kind: { type: "string", description: "django-app | js-package | python-package | go-module | rust-crate | directory | rest | custom" },
+    kind: {
+      type: "string",
+      description:
+        "django-app | js-package | python-package | go-module | rust-crate | directory | rest | custom",
+    },
     note: { type: "string", description: "Why this unit — shown beside it." },
   },
   required: ["name", "roots"],
@@ -620,13 +703,20 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
       type: "object",
       properties: {
         units: { type: "array", items: UNIT_SCHEMA },
-        ignored: { type: "array", items: { type: "string" }, description: "Prefixes nobody reviews (vendored, generated)." },
+        ignored: {
+          type: "array",
+          items: { type: "string" },
+          description: "Prefixes nobody reviews (vendored, generated).",
+        },
       },
     },
     execute: async (_id, params) => {
       const r = engine.propose(params && "units" in params ? params : undefined);
       if (!r.ok) return refused("Proposal", r);
-      return text(`${renderCut("Draft stored", r.draft)}\n\nNot in use until setup_unit_cut_save.`, { draft: r.draft });
+      return text(
+        `${renderCut("Draft stored", r.draft)}\n\nNot in use until setup_unit_cut_save.`,
+        { draft: r.draft },
+      );
     },
   };
 
@@ -647,7 +737,10 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     execute: async (_id, params) => {
       const r = engine.adjust((params as { ops?: unknown } | undefined)?.ops);
       if (!r.ok) return refused("Adjustment", r);
-      return text(`${renderCut("Draft adjusted", r.draft)}\n\nNot in use until setup_unit_cut_save.`, { draft: r.draft });
+      return text(
+        `${renderCut("Draft adjusted", r.draft)}\n\nNot in use until setup_unit_cut_save.`,
+        { draft: r.draft },
+      );
     },
   };
 
@@ -685,12 +778,22 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     },
     execute: async (_id, params) => {
       const p = (params ?? {}) as { section?: unknown; offset?: unknown; limit?: unknown };
-      const section = p.section === "human" || p.section === "rounds" || p.section === "feedback" ? p.section : null;
-      const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+      const section =
+        p.section === "human" || p.section === "rounds" || p.section === "feedback"
+          ? p.section
+          : null;
+      const num = (v: unknown): number | undefined =>
+        typeof v === "number" && Number.isFinite(v) ? v : undefined;
       const offset = num(p.offset);
       const limit = num(p.limit);
       const h = engine.history(
-        section ? { section, ...(offset !== undefined ? { offset } : {}), ...(limit !== undefined ? { limit } : {}) } : null,
+        section
+          ? {
+              section,
+              ...(offset !== undefined ? { offset } : {}),
+              ...(limit !== undefined ? { limit } : {}),
+            }
+          : null,
       );
       return text(renderHistory(h), { digest: h.digest, summary: h.summary });
     },
@@ -726,13 +829,18 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
       required: ["themes"],
     },
     execute: async (_id, params) => {
-      const r = await engine.saveHistoryThemes((params as { themes?: unknown } | undefined)?.themes);
+      const r = await engine.saveHistoryThemes(
+        (params as { themes?: unknown } | undefined)?.themes,
+      );
       if (!r.ok) return refused("Themes", r);
       const mem = r.memory;
       const memLine =
         `Memory: ${mem.written} #history entr${mem.written === 1 ? "y" : "ies"} written, ${mem.retired} earlier retired.` +
         (mem.problems.length > 0 ? `\n${mem.problems.map((p) => `! ${p}`).join("\n")}` : "");
-      return text(`Themes saved:\n${renderThemes(r.themes)}\n\n${memLine}`, { themes: r.themes, memory: mem });
+      return text(`Themes saved:\n${renderThemes(r.themes)}\n\n${memLine}`, {
+        themes: r.themes,
+        memory: mem,
+      });
     },
   };
 
@@ -765,7 +873,10 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
       type: "object",
       properties: {
         key: { type: "string", description: "The key setup_survey_preview returned." },
-        resurvey: { type: "boolean", description: "The operator asked to survey again, superseding the last survey's notes." },
+        resurvey: {
+          type: "boolean",
+          description: "The operator asked to survey again, superseding the last survey's notes.",
+        },
       },
       required: ["key"],
     },
@@ -798,7 +909,8 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
   const surveyStop: PiToolDefinition = {
     name: "setup_survey_stop",
     label: "Stop the survey",
-    description: "Stop the running survey: running cases are killed, pending ones never start; notes already written stay.",
+    description:
+      "Stop the running survey: running cases are killed, pending ones never start; notes already written stay.",
     promptSnippet: "Stop the running survey",
     parameters: NO_PARAMS,
     execute: async () => {
@@ -839,7 +951,9 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
               : "Which facts your stored narrative was written from is unknown (its header was edited) — read it (setup_portrait) and check it against these facts.",
         );
       } else if (v.narrative.state === "absent") {
-        out.push(`No narrative stored yet: write the operator a reading of these facts and store it with setup_portrait_narrative, facts_key ${r.current.key}.`);
+        out.push(
+          `No narrative stored yet: write the operator a reading of these facts and store it with setup_portrait_narrative, facts_key ${r.current.key}.`,
+        );
       }
       return text(out.join("\n\n"), { key: r.current.key, unchanged: r.unchanged, diff: r.diff });
     },
@@ -854,11 +968,22 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     promptSnippet: "Read the stored repo portrait",
     parameters: {
       type: "object",
-      properties: { diff: { type: "boolean", description: "Also show what changed since the kept previous versions." } },
+      properties: {
+        diff: {
+          type: "boolean",
+          description: "Also show what changed since the kept previous versions.",
+        },
+      },
     },
     execute: async (_id, params) => {
-      const v = engine.portrait({ diff: (params as { diff?: unknown } | undefined)?.diff === true });
-      return text(renderPortrait(v), { facts: v.facts.state, narrative: v.narrative.state, stale: v.stale });
+      const v = engine.portrait({
+        diff: (params as { diff?: unknown } | undefined)?.diff === true,
+      });
+      return text(renderPortrait(v), {
+        facts: v.facts.state,
+        narrative: v.narrative.state,
+        stale: v.stale,
+      });
     },
   };
 
@@ -874,8 +999,15 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     parameters: {
       type: "object",
       properties: {
-        facts_key: { type: "string", description: "The key setup_portrait_assemble (or setup_portrait) showed." },
-        narrative: { type: "string", description: "Markdown prose: what the facts say about this repo, and what they leave open." },
+        facts_key: {
+          type: "string",
+          description: "The key setup_portrait_assemble (or setup_portrait) showed.",
+        },
+        narrative: {
+          type: "string",
+          description:
+            "Markdown prose: what the facts say about this repo, and what they leave open.",
+        },
       },
       required: ["facts_key", "narrative"],
     },
@@ -884,11 +1016,18 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
       const r = engine.storePortraitNarrative({ facts_key: p.facts_key, narrative: p.narrative });
       if (!r.ok) return refused("Narrative", r);
       if (r.unchanged) {
-        return text(`Narrative unchanged — the stored one is the same text, from facts ${r.facts_key}.`, { unchanged: true });
+        return text(
+          `Narrative unchanged — the stored one is the same text, from facts ${r.facts_key}.`,
+          { unchanged: true },
+        );
       }
-      const out = [`Narrative stored from facts ${r.facts_key} (${NARRATIVE_FILE} in the config home).`];
+      const out = [
+        `Narrative stored from facts ${r.facts_key} (${NARRATIVE_FILE} in the config home).`,
+      ];
       if (r.replaced) {
-        out.push(`The previous one is kept (${NARRATIVE_PREVIOUS_FILE}); changes:\n${r.diff.map((l) => `  ${l}`).join("\n")}`);
+        out.push(
+          `The previous one is kept (${NARRATIVE_PREVIOUS_FILE}); changes:\n${r.diff.map((l) => `  ${l}`).join("\n")}`,
+        );
       }
       return text(out.join("\n\n"), { facts_key: r.facts_key, replaced: r.replaced });
     },
@@ -918,7 +1057,11 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     execute: async () => {
       const s = engine.profileStatus();
       if (!("target" in s)) return refused("Profile status", s);
-      return text(renderProfileStatus(s), { needs_setup: s.needs_setup, profile: s.profile, unanswered: s.unanswered });
+      return text(renderProfileStatus(s), {
+        needs_setup: s.needs_setup,
+        profile: s.profile,
+        unanswered: s.unanswered,
+      });
     },
   };
 
@@ -938,22 +1081,43 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     parameters: {
       type: "object",
       properties: {
-        profile: { type: "string", description: "The profile's name — needed only when the live config names none (the repo's name is a good one)." },
-        goals: { type: "string", description: `The project's goals, in the owner's words (at most ${GOALS_MAX_CHARS} characters).` },
+        profile: {
+          type: "string",
+          description:
+            "The profile's name — needed only when the live config names none (the repo's name is a good one).",
+        },
+        goals: {
+          type: "string",
+          description: `The project's goals, in the owner's words (at most ${GOALS_MAX_CHARS} characters).`,
+        },
         priorities: {
           type: "object",
           description: `{concern: priority}; concerns: ${CONCERNS.map((c) => c.name).join(", ")}; priorities: ${PRIORITIES.join(", ")}.`,
         },
-        emphasis: { type: "object", description: "{lens: the words for it, or null to remove them}." },
-        style_guide: { type: "string", description: "A style guide you drafted (markdown), for a repo that writes none." },
-        drop_style_guide: { type: "boolean", description: "true stops the style lens reading the drafted guide." },
+        emphasis: {
+          type: "object",
+          description: "{lens: the words for it, or null to remove them}.",
+        },
+        style_guide: {
+          type: "string",
+          description: "A style guide you drafted (markdown), for a repo that writes none.",
+        },
+        drop_style_guide: {
+          type: "boolean",
+          description: "true stops the style lens reading the drafted guide.",
+        },
         write: { type: "boolean", description: "true writes; omitted or false previews." },
       },
     },
     execute: async (_id, params) => {
-      const r = engine.profileApply((params ?? {}) as Record<string, unknown>);
+      const r = engine.profileApply(params ?? {});
       if (!r.ok) return refused("Profile", r);
-      return text(renderApply(r), { written: r.written, unchanged: r.unchanged, profile: r.profile, commit: r.commit });
+      return text(renderApply(r), {
+        written: r.written,
+        unchanged: r.unchanged,
+        profile: r.profile,
+        commit: r.commit,
+      });
     },
   };
 
@@ -972,23 +1136,41 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
     parameters: {
       type: "object",
       properties: {
-        scan: { type: "string", description: "The finished scan run it follows (scan_status); the latest when omitted." },
+        scan: {
+          type: "string",
+          description: "The finished scan run it follows (scan_status); the latest when omitted.",
+        },
         priorities: {
           type: "object",
           description: `{concern: priority} to change; concerns: ${CONCERNS.map((c) => c.name).join(", ")}; priorities: ${PRIORITIES.join(", ")}.`,
         },
-        emphasis: { type: "object", description: "{lens: the words for it, or null to remove them}." },
+        emphasis: {
+          type: "object",
+          description: "{lens: the words for it, or null to remove them}.",
+        },
         style_guide: { type: "string", description: "A revised drafted style guide (markdown)." },
-        drop_style_guide: { type: "boolean", description: "true stops the style lens reading the drafted guide." },
-        reasons: { type: "object", description: `{concern | lens | "${GUIDE_REASON}": why, from what the scan found} — one per change.` },
+        drop_style_guide: {
+          type: "boolean",
+          description: "true stops the style lens reading the drafted guide.",
+        },
+        reasons: {
+          type: "object",
+          description: `{concern | lens | "${GUIDE_REASON}": why, from what the scan found} — one per change.`,
+        },
         write: { type: "boolean", description: "true writes; omitted or false previews." },
       },
       required: ["reasons"],
     },
     execute: async (_id, params) => {
-      const r = engine.retune((params ?? {}) as Record<string, unknown>);
+      const r = engine.retune(params ?? {});
       if (!r.ok) return refused("Re-tune", r);
-      return text(renderRetune(r), { written: r.written, profile: r.profile, scan: r.scan.run, changes: r.changes.length, commit: r.commit });
+      return text(renderRetune(r), {
+        written: r.written,
+        profile: r.profile,
+        scan: r.scan.run,
+        changes: r.changes.length,
+        commit: r.commit,
+      });
     },
   };
 
@@ -1024,7 +1206,12 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
           type: "array",
           items: {
             type: "object",
-            properties: { id: { type: "string" }, ts: { type: "string" }, block: { type: "number" }, why: { type: "string" } },
+            properties: {
+              id: { type: "string" },
+              ts: { type: "string" },
+              block: { type: "number" },
+              why: { type: "string" },
+            },
             required: ["id", "ts", "block", "why"],
           },
         },
@@ -1076,7 +1263,9 @@ export function toolDefinitions(engine: SetupEngine): PiToolDefinition[] {
 /** The companion agent set (docker/companion/agents), beside this file in
  * the /workspace checkout — where `pass-survey` lives. Resolved from this
  * SOURCE file: pi loads the extension's .ts through jiti, never dist/. */
-export const COMPANION_AGENTS_DIR = fileURLToPath(new URL("../docker/companion/agents", import.meta.url));
+export const COMPANION_AGENTS_DIR = fileURLToPath(
+  new URL("../docker/companion/agents", import.meta.url),
+);
 
 /** The app checkout this extension runs from (`/workspace` in the
  * companion) — where the generic profiles a repo profile extends live. */
@@ -1086,10 +1275,17 @@ export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url));
  * and the tracker sink — the issue tracker mounted at QCR_TRACKER_DIR
  * (`/tracker`), or one markdown file per promoted finding in the state home
  * when there is none. */
-export function sharedPorts(env: NodeJS.ProcessEnv = process.env): { memory: MemoryStore | null; tracker: TrackerSink } {
+export function sharedPorts(env: NodeJS.ProcessEnv = process.env): {
+  memory: MemoryStore | null;
+  tracker: TrackerSink;
+} {
   return {
     memory: reviewerMemoryFromEnv(env),
-    tracker: scanTrackerSink({ trackerDir: env.QCR_TRACKER_DIR?.trim(), state: stateHomeFs(stateHome(env)), clock: () => new Date() }),
+    tracker: scanTrackerSink({
+      trackerDir: env.QCR_TRACKER_DIR?.trim(),
+      state: stateHomeFs(stateHome(env)),
+      clock: () => new Date(),
+    }),
   };
 }
 
@@ -1116,7 +1312,10 @@ export function buildEngine(
       memory: shared.memory,
       // Background pi subagents, run from the companion's own cwd (first-party
       // ground), never from the reviewed checkout.
-      cases: piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: env.QCR_ROOT?.trim() || process.cwd() }),
+      cases: piCaseRunner({
+        agentsDir: COMPANION_AGENTS_DIR,
+        cwd: env.QCR_ROOT?.trim() || process.cwd(),
+      }),
       tracker: shared.tracker,
       github: tokenFileGitHubReader({
         envFile: env.QCR_GITHUB_READ_ENV,
@@ -1154,11 +1353,21 @@ const activate = (pi: Pi): void => {
     process.env,
     shared,
   );
-  for (const def of scanToolDefinitions(scan, findings, settingsOf, triage ? () => triage.closeFixed() : null)) pi.registerTool(def);
+  for (const def of scanToolDefinitions(
+    scan,
+    findings,
+    settingsOf,
+    triage ? () => triage.closeFixed() : null,
+  ))
+    pi.registerTool(def);
   // triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
   // the PR replay — old vs new profile, cost first.
-  const replay = buildReplay(process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO, process.env, resolveMaxConcurrency());
+  const replay = buildReplay(
+    process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
+    process.env,
+    resolveMaxConcurrency(),
+  );
   for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
   // the TUI's stage-2 start click and its scan stop, answered while the companion's
   // session runs (the inject-bridge's lifecycle: start on session_start, stop

@@ -130,9 +130,13 @@ describe("dry-run fixture round", () => {
   // is the owner's (rule 1) and deploy.sh's plan shows the value it ships
   // without ever changing it. What this file CAN pin is its own premise: the
   // fixture round it drives is a DRY-RUN round.
-  it("runs on a dry-run fixture config — the round never reaches GitHub", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    expect(harness().cfg.dry_run).toBe(true);
-  });
+  it(
+    "runs on a dry-run fixture config — the round never reaches GitHub",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      expect(harness().cfg.dry_run).toBe(true);
+    },
+  );
 
   it("builds the round's agent variant definitions with includes expanded", () => {
     const { cfg } = harness();

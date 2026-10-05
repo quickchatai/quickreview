@@ -141,8 +141,7 @@ export class OriginStore {
     private readonly now: () => Date = () => new Date(),
   ) {
     const newest = this.onDisk()[0] ?? null;
-    this.bootCause =
-      newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
+    this.bootCause = newest && newest.source === "slack" && newest.tier !== "owner" ? newest : null;
   }
 
   /** Absolute path of the record for an inject basename. */
@@ -232,8 +231,7 @@ export class OriginStore {
   /** Every unexpired record this process wrote, newest first. */
   all(): OriginRecord[] {
     const now = this.now().getTime();
-    return this.held()
-      .filter((rec) => Date.parse(rec.expires_at) > now);
+    return this.held().filter((rec) => Date.parse(rec.expires_at) > now);
   }
 
   /** The most recent unexpired origin, or null when no Slack turn is live. */

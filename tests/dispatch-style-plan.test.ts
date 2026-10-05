@@ -27,49 +27,53 @@ const cfg: Config = parseConfig(
 const noop = async (): Promise<GateResult> => ({ executed: false, dryRunFile: "x" });
 
 describe("the persisted round plan includes the repo style guide's pass-style", () => {
-  it("rounds.lenses, pass_plan and addable_passes match the dispatched order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const store = new StateStore(":memory:");
-    store.upsertPr({
-      number: 51,
-      state: "queued",
-      head_sha: "sha51",
-      title: "PR 51",
-      author: "alice",
-      trigger_ts: "2026-09-30T09:00:00Z",
-      trigger_provenance: null,
-      stale_recheck: 0,
-      migration_gate: 0,
-    });
-    const files: PrFileEntry[] = [
-      { filename: "app/service.py", additions: 12, deletions: 1, status: "modified" },
-    ];
-    const adapter: DispatchAdapter = {
-      listPrFiles: async () => files,
-      getPr: async () => ({ base_ref: "master" }),
-      addLabel: noop,
-      removeLabel: noop,
-      deleteTeamReviewRequest: noop,
-      createReview: noop,
-    };
-    const orders: RoundOrder[] = [];
-    const hooks: SessionHooks = {
-      async dispatchRound(order) {
-        orders.push(order);
-      },
-      async inject() {},
-      async injectOverseer() {},
-      async archiveAndClose() {},
-    };
+  it(
+    "rounds.lenses, pass_plan and addable_passes match the dispatched order",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      store.upsertPr({
+        number: 51,
+        state: "queued",
+        head_sha: "sha51",
+        title: "PR 51",
+        author: "alice",
+        trigger_ts: "2026-09-30T09:00:00Z",
+        trigger_provenance: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const files: PrFileEntry[] = [
+        { filename: "app/service.py", additions: 12, deletions: 1, status: "modified" },
+      ];
+      const adapter: DispatchAdapter = {
+        listPrFiles: async () => files,
+        getPr: async () => ({ base_ref: "master" }),
+        addLabel: noop,
+        removeLabel: noop,
+        deleteTeamReviewRequest: noop,
+        createReview: noop,
+      };
+      const orders: RoundOrder[] = [];
+      const hooks: SessionHooks = {
+        async dispatchRound(order) {
+          orders.push(order);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      };
 
-    await dispatchOnce({ cfg, store, adapter, hooks });
+      await dispatchOnce({ cfg, store, adapter, hooks });
 
-    const order = orders[0]!;
-    expect(order.lenses).toContain("pass-style");
-    const round = store.roundsFor(51)[0]!;
-    expect(round.lenses.split(",")).toEqual(order.lenses);
-    expect(JSON.parse(round.pass_plan!)).toEqual(order.pass_plan);
-    const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string }>;
-    expect(addable.map((a) => a.lens)).toEqual(order.addable_lenses);
-    expect(addable.map((a) => a.lens)).not.toContain("pass-style");
-  });
+      const order = orders[0]!;
+      expect(order.lenses).toContain("pass-style");
+      const round = store.roundsFor(51)[0]!;
+      expect(round.lenses.split(",")).toEqual(order.lenses);
+      expect(JSON.parse(round.pass_plan!)).toEqual(order.pass_plan);
+      const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string }>;
+      expect(addable.map((a) => a.lens)).toEqual(order.addable_lenses);
+      expect(addable.map((a) => a.lens)).not.toContain("pass-style");
+    },
+  );
 });

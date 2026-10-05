@@ -180,46 +180,53 @@ describe("handleDelivery", () => {
     store.close();
   });
 
-  it("caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    // The endpoint is public through the tunnel and a rejection is logged
-    // before any dedupe. Uncapped header values and one row per request let a
-    // sender without the secret write ~8KB rows at line rate, forever.
-    const store = new StateStore(":memory:");
-    let t = 1_000_000;
-    const deps = { cfg, store, secret: SECRET, onInterpretation: () => {}, now: () => t };
-    const raw = Buffer.from("{}");
-    const huge = "x".repeat(8192);
-    for (let i = 0; i < 500; i++) {
-      const res = handleDelivery(deps, { signature: "sha256=bad", guid: huge, event: huge }, raw);
-      expect(res.status).toBe(403);
-    }
-    const rows = () =>
-      (
-        store.db
-          .prepare("SELECT payload FROM events WHERE kind = 'webhook_rejected' ORDER BY id")
-          .all() as Array<{ payload: string }>
-      ).map((r) => ({ len: r.payload.length, p: JSON.parse(r.payload) }));
-    const first = rows();
-    expect(first.length).toBeGreaterThan(0);
-    expect(first.length).toBeLessThanOrEqual(20);
-    for (const r of first) expect(r.len).toBeLessThan(1024);
-    // The audit trail survives: the next window's first row says how many
-    // were folded away rather than silently dropping them.
-    t += 61_000;
-    handleDelivery(deps, { signature: "sha256=bad", guid: "g", event: "push" }, raw);
-    const after = rows();
-    const last = after[after.length - 1]!.p;
-    expect(last.guid).toBe("g");
-    expect(last.suppressed_before).toBe(500 - first.length);
-    store.close();
-  });
+  it(
+    "caps and throttles bad-signature rows so an unauthenticated flood cannot fill the state volume (selfscan 4c15a23f)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      // The endpoint is public through the tunnel and a rejection is logged
+      // before any dedupe. Uncapped header values and one row per request let a
+      // sender without the secret write ~8KB rows at line rate, forever.
+      const store = new StateStore(":memory:");
+      let t = 1_000_000;
+      const deps = { cfg, store, secret: SECRET, onInterpretation: () => {}, now: () => t };
+      const raw = Buffer.from("{}");
+      const huge = "x".repeat(8192);
+      for (let i = 0; i < 500; i++) {
+        const res = handleDelivery(deps, { signature: "sha256=bad", guid: huge, event: huge }, raw);
+        expect(res.status).toBe(403);
+      }
+      const rows = () =>
+        (
+          store.db
+            .prepare("SELECT payload FROM events WHERE kind = 'webhook_rejected' ORDER BY id")
+            .all() as Array<{ payload: string }>
+        ).map((r) => ({ len: r.payload.length, p: JSON.parse(r.payload) }));
+      const first = rows();
+      expect(first.length).toBeGreaterThan(0);
+      expect(first.length).toBeLessThanOrEqual(20);
+      for (const r of first) expect(r.len).toBeLessThan(1024);
+      // The audit trail survives: the next window's first row says how many
+      // were folded away rather than silently dropping them.
+      t += 61_000;
+      handleDelivery(deps, { signature: "sha256=bad", guid: "g", event: "push" }, raw);
+      const after = rows();
+      const last = after[after.length - 1]!.p;
+      expect(last.guid).toBe("g");
+      expect(last.suppressed_before).toBe(500 - first.length);
+      store.close();
+    },
+  );
 
   it("drops an event from another repository the App is installed on (selfscan b448dc04)", () => {
     // The App's installation spans many repos and every one of them delivers
     // here. A PR closed elsewhere whose NUMBER matches a tracked PR used to
     // drive this repo's closed transition and archive its live session.
     const store = new StateStore(":memory:");
-    const foreignClose = { ...closedPayload(false), repository: { full_name: "example-org/other" } };
+    const foreignClose = {
+      ...closedPayload(false),
+      repository: { full_name: "example-org/other" },
+    };
     const res = delivery(store, foreignClose, "pull_request", "g-foreign-1");
     expect(res.status).toBe(200);
     expect(res.reason).toBe("foreign-repository");
@@ -228,13 +235,17 @@ describe("handleDelivery", () => {
       ...labeledPayload(cfg.github.trigger_label),
       repository: { full_name: "example-org/other" },
     };
-    expect(delivery(store, foreignTrigger, "pull_request", "g-foreign-2").interpretation).toBeUndefined();
+    expect(
+      delivery(store, foreignTrigger, "pull_request", "g-foreign-2").interpretation,
+    ).toBeUndefined();
     // Our own repo, in any letter case GitHub chooses to send, still lands.
     const ours = {
       ...labeledPayload(cfg.github.trigger_label),
       repository: { full_name: cfg.github.repo.toUpperCase() },
     };
-    expect(delivery(store, ours, "pull_request", "g-foreign-3").interpretation?.kind).toBe("trigger");
+    expect(delivery(store, ours, "pull_request", "g-foreign-3").interpretation?.kind).toBe(
+      "trigger",
+    );
     store.close();
   });
 
@@ -446,32 +457,64 @@ describe("interpretEvent — review comments", () => {
 
 describe("interpretEvent — issue comments", () => {
   it("routes a blocked PR author's unmentioned objection without triggering a round", () => {
-    const payload = issueCommentPayload({ body: "This predates the PR; please reconsider the blocker." });
-    expect(interpretEvent("issue_comment", "created", payload, {
-      ...deps(), blockedPrAuthor: () => "alice",
-    })).toMatchObject({ kind: "author_pr_comment", pr: 4242, comment_id: 910001, author: "alice" });
+    const payload = issueCommentPayload({
+      body: "This predates the PR; please reconsider the blocker.",
+    });
+    expect(
+      interpretEvent("issue_comment", "created", payload, {
+        ...deps(),
+        blockedPrAuthor: () => "alice",
+      }),
+    ).toMatchObject({ kind: "author_pr_comment", pr: 4242, comment_id: 910001, author: "alice" });
   });
 
   it.each([
-    { body: "[feedback] This review is noisy", user: { login: "alice", type: "User" }, expected: "feedback_comment" },
+    {
+      body: "[feedback] This review is noisy",
+      user: { login: "alice", type: "User" },
+      expected: "feedback_comment",
+    },
     { body: "please reconsider", user: { login: "bob", type: "User" }, expected: "ignored" },
     { body: "please reconsider", user: { login: "other[bot]", type: "Bot" }, expected: "ignored" },
     { body: " ", user: { login: "alice", type: "User" }, expected: "ignored" },
-  ])("preserves exclusion/diversion ahead of blocked-author routing: $expected", ({ body, user, expected }) => {
-    expect(interpretEvent("issue_comment", "created", issueCommentPayload({ body, user }), {
-      ...deps(), blockedPrAuthor: () => "alice",
-    }).kind).toBe(expected);
-  });
+  ])(
+    "preserves exclusion/diversion ahead of blocked-author routing: $expected",
+    ({ body, user, expected }) => {
+      expect(
+        interpretEvent("issue_comment", "created", issueCommentPayload({ body, user }), {
+          ...deps(),
+          blockedPrAuthor: () => "alice",
+        }).kind,
+      ).toBe(expected);
+    },
+  );
 
   it("routes a signed top-level objection against stored standing-review evidence", async () => {
     const store = new StateStore(":memory:");
-    store.upsertPr({ number: 4242, state: "awaiting_author", head_sha: "abc", title: "T", author: "alice", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 4242,
+      state: "awaiting_author",
+      head_sha: "abc",
+      title: "T",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.recordReviewedHead(4242, { head_sha: "abc", verdict: "REQUEST_CHANGES" });
-    const response = delivery(store, issueCommentPayload({ body: "This predates the PR" }), "issue_comment", "author-pr-comment");
+    const response = delivery(
+      store,
+      issueCommentPayload({ body: "This predates the PR" }),
+      "issue_comment",
+      "author-pr-comment",
+    );
     expect(response.interpretation?.kind).toBe("author_pr_comment");
     const received = vi.fn();
     const touched = vi.fn();
-    await applyInterpretation({ cfg, store, onAuthorPrComment: received, onPrTouched: touched }, response.interpretation!);
+    await applyInterpretation(
+      { cfg, store, onAuthorPrComment: received, onPrTouched: touched },
+      response.interpretation!,
+    );
     expect(received).toHaveBeenCalledOnce();
     expect(touched).not.toHaveBeenCalled();
     expect(store.getPr(4242)?.state).toBe("awaiting_author");

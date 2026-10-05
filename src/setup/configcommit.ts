@@ -22,7 +22,17 @@
 // answer ("not-a-repo"), not a failure: a config home is a git repo only if
 // the operator made it one.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { PROFILES_DIR } from "../install.js";
 
@@ -57,7 +67,11 @@ export const resultFile = (id: string): string => `${COMMITS_DIR}/${id}.result.j
  * already carry this id? — moves a same-instant write to `_2`, `_3`, … so two
  * writes never share one id (a shared id replaced the first write's baseline
  * and let the second be skipped as already answered). */
-export function commitId(now: Date, profile: string, taken: (id: string) => boolean = () => false): string {
+export function commitId(
+  now: Date,
+  profile: string,
+  taken: (id: string) => boolean = () => false,
+): string {
   const stamp = now.toISOString().replace(/[-:.]/g, "").replace("T", "-").slice(0, 18);
   for (let n = 1; ; n++) {
     const id = `${stamp}${n === 1 ? "" : `_${n}`}-${profile}`;
@@ -70,16 +84,24 @@ export function refusePath(path: unknown): string | null {
   if (typeof path !== "string" || path === "") return "a path is not a non-empty string";
   if (path.startsWith("/") || path.split("/").some((s) => s === ".." || s === "." || s === ""))
     return `${JSON.stringify(path)} is not a plain relative path`;
-  if (!path.startsWith(`${PROFILES_DIR}/`)) return `${JSON.stringify(path)} is outside ${PROFILES_DIR}/`;
+  if (!path.startsWith(`${PROFILES_DIR}/`))
+    return `${JSON.stringify(path)} is outside ${PROFILES_DIR}/`;
   return null;
 }
 
 /** One git invocation in `cwd`: exit code and output, never a throw. */
-export type GitRun = (args: string[], cwd: string) => { code: number; stdout: string; stderr: string };
+export type GitRun = (
+  args: string[],
+  cwd: string,
+) => { code: number; stdout: string; stderr: string };
 
 export const realGit: GitRun = (args, cwd) => {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
-  return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? (r.error ? String(r.error) : "") };
+  return {
+    code: r.status ?? 1,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? (r.error ? String(r.error) : ""),
+  };
 };
 
 function parseRequest(text: string): CommitRequest | string {
@@ -90,7 +112,13 @@ function parseRequest(text: string): CommitRequest | string {
     return "the request is not JSON";
   }
   const r = (raw ?? {}) as Partial<CommitRequest>;
-  if (typeof r.id !== "string" || typeof r.message !== "string" || r.message.trim() === "" || !Array.isArray(r.paths) || r.paths.length === 0) {
+  if (
+    typeof r.id !== "string" ||
+    typeof r.message !== "string" ||
+    r.message.trim() === "" ||
+    !Array.isArray(r.paths) ||
+    r.paths.length === 0
+  ) {
     return "the request is not {id, message, paths}";
   }
   for (const p of r.paths) {
@@ -101,7 +129,7 @@ function parseRequest(text: string): CommitRequest | string {
     id: r.id,
     requested_at: typeof r.requested_at === "string" ? r.requested_at : "",
     profile: typeof r.profile === "string" ? r.profile : "",
-    paths: r.paths as string[],
+    paths: r.paths,
     message: r.message,
   };
 }
@@ -109,7 +137,11 @@ function parseRequest(text: string): CommitRequest | string {
 /** Is `configHome` the top of its own git work tree? */
 function ownRepo(configHome: string, git: GitRun): { ok: true } | { ok: false; detail: string } {
   const top = git(["rev-parse", "--show-toplevel"], configHome);
-  if (top.code !== 0) return { ok: false, detail: `${configHome} is not a git repository — the profile is written, not committed` };
+  if (top.code !== 0)
+    return {
+      ok: false,
+      detail: `${configHome} is not a git repository — the profile is written, not committed`,
+    };
   let same = false;
   try {
     same = realpathSync(top.stdout.trim()) === realpathSync(configHome);
@@ -118,18 +150,28 @@ function ownRepo(configHome: string, git: GitRun): { ok: true } | { ok: false; d
   }
   return same
     ? { ok: true }
-    : { ok: false, detail: `${configHome} sits inside ${top.stdout.trim()}, not in a repository of its own — not committed into it` };
+    : {
+        ok: false,
+        detail: `${configHome} sits inside ${top.stdout.trim()}, not in a repository of its own — not committed into it`,
+      };
 }
 
-function commitOne(req: CommitRequest, configHome: string, git: GitRun): Omit<CommitResult, "id" | "at"> {
+function commitOne(
+  req: CommitRequest,
+  configHome: string,
+  git: GitRun,
+): Omit<CommitResult, "id" | "at"> {
   const repo = ownRepo(configHome, git);
   if (!repo.ok) return { state: "not-a-repo", detail: repo.detail };
   const add = git(["add", "-A", "--", ...req.paths], configHome);
-  if (add.code !== 0) return { state: "failed", detail: `git add: ${(add.stderr || add.stdout).trim()}` };
+  if (add.code !== 0)
+    return { state: "failed", detail: `git add: ${(add.stderr || add.stdout).trim()}` };
   const staged = git(["diff", "--cached", "--quiet", "--", ...req.paths], configHome);
-  if (staged.code === 0) return { state: "nothing-to-commit", detail: "the committed profile already matches" };
+  if (staged.code === 0)
+    return { state: "nothing-to-commit", detail: "the committed profile already matches" };
   const commit = git(["commit", "--no-verify", "-m", req.message, "--", ...req.paths], configHome);
-  if (commit.code !== 0) return { state: "failed", detail: `git commit: ${(commit.stderr || commit.stdout).trim()}` };
+  if (commit.code !== 0)
+    return { state: "failed", detail: `git commit: ${(commit.stderr || commit.stdout).trim()}` };
   const sha = git(["rev-parse", "HEAD"], configHome).stdout.trim();
   return { state: "committed", sha, detail: `committed ${req.paths.join(", ")}` };
 }
@@ -190,7 +232,14 @@ function takeLock(path: string, now: Date): boolean {
   return false;
 }
 
-function processLocked(dir: string, names: string[], stateHome: string, configHome: string, git: GitRun, clock: () => Date): CommitResult[] {
+function processLocked(
+  dir: string,
+  names: string[],
+  stateHome: string,
+  configHome: string,
+  git: GitRun,
+  clock: () => Date,
+): CommitResult[] {
   const done: CommitResult[] = [];
   for (const name of names.filter((n) => n.endsWith(".request.json")).sort()) {
     const id = name.slice(0, -".request.json".length);
@@ -207,7 +256,10 @@ function processLocked(dir: string, names: string[], stateHome: string, configHo
       typeof req === "string"
         ? { state: "refused" as const, detail: req }
         : req.id !== id
-          ? { state: "refused" as const, detail: `the request's id ${JSON.stringify(req.id)} is not its file's` }
+          ? {
+              state: "refused" as const,
+              detail: `the request's id ${JSON.stringify(req.id)} is not its file's`,
+            }
           : commitOne(req, configHome, git);
     const result: CommitResult = { id, at: clock().toISOString(), ...outcome };
     const target = join(stateHome, resultFile(id));

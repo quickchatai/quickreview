@@ -132,11 +132,10 @@ export function pireviewArgv(o: {
 /** The whole command: pi-review under coreutils `timeout`, which signals its
  * own process GROUP — the child `pi` dies with pi-review (a plain kill of the
  * node process would orphan it, still spending tokens). */
-export function pireviewCommand(o: {
+export function pireviewCommand(o: { bin: string; timeoutMin: number; argv: string[] }): {
   bin: string;
-  timeoutMin: number;
-  argv: string[];
-}): { bin: string; args: string[] } {
+  args: string[];
+} {
   return {
     bin: "timeout",
     args: ["-k", "30s", `${o.timeoutMin * 60 + 60}s`, o.bin, ...o.argv],
@@ -288,7 +287,9 @@ export function panelFindings(meta: PireviewMeta): PireviewFinding[] {
     const path = canonical?.path ?? sources.find((f) => f.path)?.path ?? cl.path;
     out.push({
       ...(canonical ?? { summary: cl.summary, actionable: cl.confirmed }),
-      ...(canonical?.severity ?? cl.severity ? { severity: canonical?.severity ?? cl.severity } : {}),
+      ...((canonical?.severity ?? cl.severity)
+        ? { severity: canonical?.severity ?? cl.severity }
+        : {}),
       ...(path ? { path } : {}),
       ...(location ? { location } : {}),
       actionable: cl.confirmed,
@@ -546,10 +547,17 @@ export function pireviewResultPayload(a: {
   };
 }
 
-export function writePireviewResult(outDir: string, c: BenchCase, payload: Record<string, unknown>): void {
+export function writePireviewResult(
+  outDir: string,
+  c: BenchCase,
+  payload: Record<string, unknown>,
+): void {
   const dir = join(outDir, "results", "all");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${safeId(c.instance_id)}.json`), JSON.stringify(payload, null, 2) + "\n");
+  writeFileSync(
+    join(dir, `${safeId(c.instance_id)}.json`),
+    JSON.stringify(payload, null, 2) + "\n",
+  );
 }
 
 export function readPireviewSummary(outDir: string, c: BenchCase): PireviewCaseSummary | null {
@@ -672,7 +680,10 @@ export async function reviewCasePireview(
       prText,
     });
     const cmd = pireviewCommand({ bin: o.pireviewBin, timeoutMin: o.timeoutMin, argv });
-    writeFileSync(join(caseDir, "pireview-argv.json"), JSON.stringify([cmd.bin, ...cmd.args], null, 2) + "\n");
+    writeFileSync(
+      join(caseDir, "pireview-argv.json"),
+      JSON.stringify([cmd.bin, ...cmd.args], null, 2) + "\n",
+    );
     log(
       `pireview: ${c.instance_id} — ${meta.diff.files} files, diff ${Math.round(summary.diff_bytes / 1024)} KiB, ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)}`,
     );
@@ -738,7 +749,8 @@ export async function reviewCasePireview(
   summary.left_side = left.length;
   writeFileSync(join(caseDir, "pireview-stdout.txt"), stdout);
   writeFileSync(join(caseDir, "pireview-stderr.log"), stderr);
-  if (pmeta) writeFileSync(join(caseDir, "pireview-meta.json"), JSON.stringify(pmeta, null, 2) + "\n");
+  if (pmeta)
+    writeFileSync(join(caseDir, "pireview-meta.json"), JSON.stringify(pmeta, null, 2) + "\n");
   // Base-side findings: the defect judge reads LEFT rows from comments.json.
   writeFileSync(join(caseDir, "comments.json"), JSON.stringify(left, null, 2) + "\n");
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
@@ -868,8 +880,12 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
   // incomplete, never scored under the new model/thinking label.
   for (const c of r.cases) {
     const prior = r.resume ? readPireviewSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint))) continue;
-    if (prior) r.log(`pireview: ${c.instance_id} was reviewed by a different pi-review/model/flags — its result is dropped`);
+    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
+      continue;
+    if (prior)
+      r.log(
+        `pireview: ${c.instance_id} was reviewed by a different pi-review/model/flags — its result is dropped`,
+      );
     rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
     rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
@@ -900,7 +916,9 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
       (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
       new Date().toISOString(),
     resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"]) ? (previous["resumes"] as unknown[]) : []),
+      ...(r.resume && Array.isArray(previous?.["resumes"])
+        ? (previous["resumes"] as unknown[])
+        : []),
       ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
     ],
     finished_at: null as string | null,
@@ -964,7 +982,9 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
   runRecord.finished_at = new Date().toISOString();
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
   const ok = summaries.filter((s) => s.status === "ok").length;
-  r.log(`pireview: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`);
+  r.log(
+    `pireview: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`,
+  );
   if (stopped !== null) r.log(`pireview: run stopped early — ${stopped}`);
   return ok === r.cases.length ? 0 : 1;
 }
@@ -972,15 +992,24 @@ export async function runPireviewReview(r: PireviewReviewRun): Promise<number> {
 // ---- the report ------------------------------------------------------------------------
 
 function n(v: number | undefined): string {
-  return v === undefined ? "?" : Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  return v === undefined
+    ? "?"
+    : Number.isInteger(v)
+      ? String(v)
+      : String(Math.round(v * 100) / 100);
 }
 
 export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
   const L: string[] = [];
   const runPath = join(outDir, "run.json");
-  const runRec = (existsSync(runPath) ? JSON.parse(readFileSync(runPath, "utf8")) : {}) as Record<string, unknown>;
+  const runRec = (existsSync(runPath) ? JSON.parse(readFileSync(runPath, "utf8")) : {}) as Record<
+    string,
+    unknown
+  >;
   const judgeFile = join(outDir, "judge.txt");
-  const judge = existsSync(judgeFile) ? readFileSync(judgeFile, "utf8").trim().split("\n") : ["not run"];
+  const judge = existsSync(judgeFile)
+    ? readFileSync(judgeFile, "utf8").trim().split("\n")
+    : ["not run"];
   const k = (x: number): string => `${Math.round(x / 1000)}k`;
   L.push(`# AACR-Bench run — ${set.name} — pi-review`);
   L.push("");
@@ -1037,7 +1066,10 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
     for (const { c, s } of warned) {
       if (!s.merge_base_ok && s.status !== "failed")
         L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of [...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []), ...s.warnings])
+      for (const w of [
+        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
+        ...s.warnings,
+      ])
         L.push(`- \`${c.instance_id}\`: ${w}`);
     }
   }

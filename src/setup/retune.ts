@@ -27,9 +27,22 @@ import { STYLE_LENS } from "../lenstuning.js";
 import type { Refusal } from "./engine.js";
 import { CONCERNS, parsePriorities, TABLE_KEYS, unansweredConcerns } from "./interview.js";
 import { checkProfile, DRAFTED_GUIDE_FILE, readProfileFile, writeTarget } from "./profile.js";
-import { RETUNES_FILE, RETUNES_KEPT, RETUNES_VERSION, parseRetunes, type RetuneChange, type RetuneRecord } from "./retunelog.js";
+import {
+  RETUNES_FILE,
+  RETUNES_KEPT,
+  RETUNES_VERSION,
+  parseRetunes,
+  type RetuneChange,
+  type RetuneRecord,
+} from "./retunelog.js";
 import { finishedRuns } from "./scanrun.js";
-import { parseEmphasis, profileApply, readRecord, type ApplyResult, type TuningDeps } from "./tuning.js";
+import {
+  parseEmphasis,
+  profileApply,
+  readRecord,
+  type ApplyResult,
+  type TuningDeps,
+} from "./tuning.js";
 
 export const RETUNE_REASON_MAX = 500;
 /** The reason key for a drafted style guide's change. */
@@ -67,14 +80,27 @@ export interface RetuneResult {
   config_names: string | null;
 }
 
-const show = (v: unknown): string => (v === undefined || v === null || v === "" ? "(unset)" : typeof v === "string" ? v : JSON.stringify(v));
+const show = (v: unknown): string =>
+  v === undefined || v === null || v === ""
+    ? "(unset)"
+    : typeof v === "string"
+      ? v
+      : JSON.stringify(v);
 
 /** One lens's resolved keys before vs after, as effect lines. */
-function lensEffects(lens: string, before: Record<string, unknown>, after: Record<string, unknown>, keys: readonly string[]): string[] {
+function lensEffects(
+  lens: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  keys: readonly string[],
+): string[] {
   const out: string[] = [];
   for (const k of keys) {
     if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
-    const text = (v: unknown): string => (k === "emphasis" && typeof v === "string" ? JSON.stringify(v.length > 60 ? `${v.slice(0, 59)}…` : v) : show(v));
+    const text = (v: unknown): string =>
+      k === "emphasis" && typeof v === "string"
+        ? JSON.stringify(v.length > 60 ? `${v.slice(0, 59)}…` : v)
+        : show(v);
     out.push(`${lens}: ${k} ${text(before[k])} → ${text(after[k])}`);
   }
   return out;
@@ -88,27 +114,50 @@ function lensEffects(lens: string, before: Record<string, unknown>, after: Recor
  * whatever `profileApply` refuses.
  */
 export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Refusal {
-  if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
+  if (!deps.profiles)
+    return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
   const runs = finishedRuns(deps.state);
   if (runs.error !== null) return { ok: false, errors: [runs.error] };
-  if (runs.runs.length === 0) return { ok: false, errors: ["no finished scan run yet — a re-tune follows a scan; run one first"] };
+  if (runs.runs.length === 0)
+    return {
+      ok: false,
+      errors: ["no finished scan run yet — a re-tune follows a scan; run one first"],
+    };
   const wanted = typeof input.scan === "string" ? input.scan.trim() : "";
   const run = wanted === "" ? runs.runs[0]! : runs.runs.find((r) => r.id === wanted);
-  if (!run) return { ok: false, errors: [`${JSON.stringify(wanted)} is not a finished scan run (latest: ${runs.runs[0]!.id})`] };
+  if (!run)
+    return {
+      ok: false,
+      errors: [
+        `${JSON.stringify(wanted)} is not a finished scan run (latest: ${runs.runs[0]!.id})`,
+      ],
+    };
 
   const rec = readRecord(deps.state);
   if (rec.state === "unreadable") return { ok: false, errors: [rec.error] };
-  if (rec.state === "absent" || rec.record.goals === null || unansweredConcerns(rec.record.priorities).length > 0) {
+  if (
+    rec.state === "absent" ||
+    rec.record.goals === null ||
+    unansweredConcerns(rec.record.priorities).length > 0
+  ) {
     return {
       ok: false,
-      errors: ["no finished setup interview on record — a re-tune adjusts the profile setup wrote; run setup (the `setup` skill) first"],
+      errors: [
+        "no finished setup interview on record — a re-tune adjusts the profile setup wrote; run setup (the `setup` skill) first",
+      ],
     };
   }
   const record = rec.record;
   const profile = record.profile;
   const before = checkProfile(deps.profiles, profile);
   if (!before.ok) {
-    return { ok: false, errors: [`profile "${profile}" does not load now — fix it first (setup_profile_validate says why):`, ...before.errors] };
+    return {
+      ok: false,
+      errors: [
+        `profile "${profile}" does not load now — fix it first (setup_profile_validate says why):`,
+        ...before.errors,
+      ],
+    };
   }
 
   const pr = parsePriorities(input.priorities);
@@ -120,11 +169,18 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
   // What would actually move — each a change that needs a reason.
   const changes: Array<Omit<RetuneChange, "why" | "effects"> & { key: string }> = [];
   for (const [concern, p] of Object.entries(pr.priorities)) {
-    if (record.priorities[concern] !== p) changes.push({ key: concern, input: `priority ${concern}`, from: record.priorities[concern] ?? "(unset)", to: p });
+    if (record.priorities[concern] !== p)
+      changes.push({
+        key: concern,
+        input: `priority ${concern}`,
+        from: record.priorities[concern] ?? "(unset)",
+        to: p,
+      });
   }
   for (const [lens, text] of Object.entries(em.emphasis)) {
     const was = before.summary.lenses[lens]?.emphasis;
-    if ((was ?? null) !== text) changes.push({ key: lens, input: `emphasis ${lens}`, from: show(was), to: show(text) });
+    if ((was ?? null) !== text)
+      changes.push({ key: lens, input: `emphasis ${lens}`, from: show(was), to: show(text) });
   }
   if (guide !== undefined) {
     const where = writeTarget(deps.profiles, profile);
@@ -135,31 +191,54 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
       current = "";
     }
     const pointed = before.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE;
-    if (guide === null ? pointed : typeof guide !== "string" || !pointed || current !== guide.replace(/\n*$/, "\n")) {
+    if (
+      guide === null
+        ? pointed
+        : typeof guide !== "string" || !pointed || current !== guide.replace(/\n*$/, "\n")
+    ) {
       changes.push({
         key: GUIDE_REASON,
         input: "style guide",
         from: pointed ? "the drafted guide" : "(none drafted)",
-        to: guide === null ? "(none drafted)" : pointed ? "a revised drafted guide" : "a drafted guide",
+        to:
+          guide === null
+            ? "(none drafted)"
+            : pointed
+              ? "a revised drafted guide"
+              : "a drafted guide",
       });
     }
   }
   if (changes.length === 0) {
-    return { ok: false, errors: ["nothing to re-tune — every value given is what the profile already says"] };
+    return {
+      ok: false,
+      errors: ["nothing to re-tune — every value given is what the profile already says"],
+    };
   }
 
   // Every change has its reason, and every reason its change.
-  const reasons = (typeof input.reasons === "object" && input.reasons !== null && !Array.isArray(input.reasons) ? input.reasons : {}) as Record<string, unknown>;
+  const reasons = (
+    typeof input.reasons === "object" && input.reasons !== null && !Array.isArray(input.reasons)
+      ? input.reasons
+      : {}
+  ) as Record<string, unknown>;
   const errors: string[] = [];
   const why = new Map<string, string>();
   for (const c of changes) {
     const r = reasons[c.key];
-    if (typeof r !== "string" || r.trim() === "") errors.push(`no reason for ${c.input} (${c.from} → ${c.to}) — give \`reasons.${c.key}\`: what the scan found that calls for it`);
-    else if (r.length > RETUNE_REASON_MAX) errors.push(`the reason for ${c.input} is over ${RETUNE_REASON_MAX} characters`);
+    if (typeof r !== "string" || r.trim() === "")
+      errors.push(
+        `no reason for ${c.input} (${c.from} → ${c.to}) — give \`reasons.${c.key}\`: what the scan found that calls for it`,
+      );
+    else if (r.length > RETUNE_REASON_MAX)
+      errors.push(`the reason for ${c.input} is over ${RETUNE_REASON_MAX} characters`);
     else why.set(c.key, r.replace(/\s+/g, " ").trim());
   }
   for (const k of Object.keys(reasons)) {
-    if (!changes.some((c) => c.key === k)) errors.push(`a reason for "${k}", but nothing about it changes — the report says only what happened`);
+    if (!changes.some((c) => c.key === k))
+      errors.push(
+        `a reason for "${k}", but nothing about it changes — the report says only what happened`,
+      );
   }
   if (errors.length > 0) return { ok: false, errors };
 
@@ -172,9 +251,16 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
     try {
       log = parseRetunes(deps.state.read(RETUNES_FILE));
     } catch (err) {
-      log = { state: "unreadable" as const, error: `${RETUNES_FILE} cannot be read: ${String(err)}` };
+      log = {
+        state: "unreadable" as const,
+        error: `${RETUNES_FILE} cannot be read: ${String(err)}`,
+      };
     }
-    if (log.state === "unreadable") return { ok: false, errors: [`${log.error} — nothing was written; move it aside to re-tune`] };
+    if (log.state === "unreadable")
+      return {
+        ok: false,
+        errors: [`${log.error} — nothing was written; move it aside to re-tune`],
+      };
     if (log.state === "ok") prior = log.retunes;
   }
   const applyInput = {
@@ -187,9 +273,14 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
   // answers are re-applied to nothing else, so an operator's direct edit of
   // another lens's setting is neither reset nor left out of the report.
   const decide = new Set(
-    changes.filter((c) => c.input.startsWith("priority ")).flatMap((c) => CONCERNS.find((x) => x.name === c.key)?.lenses ?? []),
+    changes
+      .filter((c) => c.input.startsWith("priority "))
+      .flatMap((c) => CONCERNS.find((x) => x.name === c.key)?.lenses ?? []),
   );
-  const opts = { message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})`, decide };
+  const opts = {
+    message: `qcr setup: re-tune profile ${profile} after scan ${run.id} (${changes.map((c) => `${c.input} ${c.to}`).join(", ")})`,
+    decide,
+  };
   // Staged first, whatever `write` says: an emphasis "removed" that the
   // profile only INHERITS (from its base) stays resolved after the write, so
   // the report would claim a change that never happened. Refused before
@@ -201,8 +292,12 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
   const phantom = changes.filter(
     (c) =>
       (c.input.startsWith("emphasis ") &&
-        lensEffects(c.key, before.summary.lenses[c.key] ?? {}, staged.summary.lenses[c.key] ?? {}, ["emphasis"]).length === 0) ||
-      (c.key === GUIDE_REASON && guide === null && staged.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE),
+        lensEffects(c.key, before.summary.lenses[c.key] ?? {}, staged.summary.lenses[c.key] ?? {}, [
+          "emphasis",
+        ]).length === 0) ||
+      (c.key === GUIDE_REASON &&
+        guide === null &&
+        staged.summary.lenses[STYLE_LENS]?.guide === DRAFTED_GUIDE_FILE),
   );
   if (phantom.length > 0) {
     return {
@@ -219,18 +314,32 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
 
   // What each change moved in the resolved profile, before vs after.
   const after = applied.summary.lenses;
-  const lenses = [...new Set([...Object.keys(before.summary.lenses), ...Object.keys(after)])].sort();
+  const lenses = [
+    ...new Set([...Object.keys(before.summary.lenses), ...Object.keys(after)]),
+  ].sort();
   const report: RetuneChange[] = changes.map((c) => {
     let effects: string[] = [];
     if (c.input.startsWith("priority ")) {
       const named = CONCERNS.find((x) => x.name === c.key)?.lenses ?? [];
-      effects = lenses.filter((l) => named.includes(l)).flatMap((l) => lensEffects(l, before.summary.lenses[l] ?? {}, after[l] ?? {}, TABLE_KEYS));
+      effects = lenses
+        .filter((l) => named.includes(l))
+        .flatMap((l) => lensEffects(l, before.summary.lenses[l] ?? {}, after[l] ?? {}, TABLE_KEYS));
     } else if (c.input.startsWith("emphasis ")) {
-      effects = lensEffects(c.key, before.summary.lenses[c.key] ?? {}, after[c.key] ?? {}, ["emphasis"]);
+      effects = lensEffects(c.key, before.summary.lenses[c.key] ?? {}, after[c.key] ?? {}, [
+        "emphasis",
+      ]);
     } else {
-      effects = lensEffects(STYLE_LENS, before.summary.lenses[STYLE_LENS] ?? {}, after[STYLE_LENS] ?? {}, ["guide"]);
+      effects = lensEffects(
+        STYLE_LENS,
+        before.summary.lenses[STYLE_LENS] ?? {},
+        after[STYLE_LENS] ?? {},
+        ["guide"],
+      );
       const guideDiff = applied.diff.find((d) => d.file === DRAFTED_GUIDE_FILE);
-      if (guideDiff) effects.push(`${STYLE_LENS}: ${DRAFTED_GUIDE_FILE} ${guideDiff.lines.length} line(s) changed`);
+      if (guideDiff)
+        effects.push(
+          `${STYLE_LENS}: ${DRAFTED_GUIDE_FILE} ${guideDiff.lines.length} line(s) changed`,
+        );
     }
     return { input: c.input, from: c.from, to: c.to, why: why.get(c.key)!, effects };
   });
@@ -250,7 +359,10 @@ export function retune(deps: RetuneDeps, input: RetuneInput): RetuneResult | Ref
       commit: applied.commit?.id ?? null,
       portrait: portrait.ok ? { key: portrait.key } : { error: portrait.errors.join("; ") },
     };
-    deps.state.write(RETUNES_FILE, `${JSON.stringify({ version: RETUNES_VERSION, retunes: [...prior, entry].slice(-RETUNES_KEPT) }, null, 2)}\n`);
+    deps.state.write(
+      RETUNES_FILE,
+      `${JSON.stringify({ version: RETUNES_VERSION, retunes: [...prior, entry].slice(-RETUNES_KEPT) }, null, 2)}\n`,
+    );
   }
   return {
     ok: true,

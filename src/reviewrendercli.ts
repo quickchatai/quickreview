@@ -30,7 +30,15 @@ export function renderRound(
   pr: number,
   round: number,
   cfg: PostedRenderConfig,
-): { rendered: RenderedReview; merges: PostCheckMerge[]; withheld: PolicyWithheld[]; body: string; comments: string } | { error: string } {
+):
+  | {
+      rendered: RenderedReview;
+      merges: PostCheckMerge[];
+      withheld: PolicyWithheld[];
+      body: string;
+      comments: string;
+    }
+  | { error: string } {
   const recordPath = join(root, "state", "findings", `pr-${pr}-round-${round}.json`);
   let record: unknown;
   try {
@@ -85,7 +93,9 @@ function main(argv: string[]): number {
   for (const w of res.withheld)
     console.log(`render-review: posting policy withheld ${w.id} (${w.word})`);
   for (const m of res.merges)
-    console.log(`render-review: post-check merged ${m.follower} into ${m.lead} (${m.path}:${m.line})`);
+    console.log(
+      `render-review: post-check merged ${m.follower} into ${m.lead} (${m.path}:${m.line})`,
+    );
   for (const p of res.rendered.problems) console.log(`render-review: record problem — ${p}`);
   return 0;
 }

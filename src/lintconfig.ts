@@ -36,29 +36,110 @@ const TOOLS: readonly ToolSpec[] = [
   {
     tool: "eslint",
     invoked: /\beslint\b/,
-    configs: ["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml"],
+    configs: [
+      "eslint.config.js",
+      "eslint.config.mjs",
+      "eslint.config.cjs",
+      "eslint.config.ts",
+      ".eslintrc",
+      ".eslintrc.js",
+      ".eslintrc.cjs",
+      ".eslintrc.json",
+      ".eslintrc.yml",
+      ".eslintrc.yaml",
+    ],
     covers: JS_TS,
   },
-  { tool: "biome", invoked: /\bbiome\b/, configs: ["biome.json", "biome.jsonc"], covers: /\.(c|m)?(j|t)sx?$|\.jsonc?$|\.css$/i },
-  { tool: "prettier", invoked: /\bprettier\b/, configs: [".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.yml", ".prettierrc.yaml", "prettier.config.js", "prettier.config.mjs"], covers: /\.(c|m)?(j|t)sx?$|\.(css|scss|less|json|md|ya?ml|html|vue)$/i },
-  { tool: "ruff", invoked: /\bruff\b/, configs: ["ruff.toml", ".ruff.toml", "pyproject.toml"], covers: /\.pyi?$/i },
+  {
+    tool: "biome",
+    invoked: /\bbiome\b/,
+    configs: ["biome.json", "biome.jsonc"],
+    covers: /\.(c|m)?(j|t)sx?$|\.jsonc?$|\.css$/i,
+  },
+  {
+    tool: "prettier",
+    invoked: /\bprettier\b/,
+    configs: [
+      ".prettierrc",
+      ".prettierrc.json",
+      ".prettierrc.js",
+      ".prettierrc.cjs",
+      ".prettierrc.yml",
+      ".prettierrc.yaml",
+      "prettier.config.js",
+      "prettier.config.mjs",
+    ],
+    covers: /\.(c|m)?(j|t)sx?$|\.(css|scss|less|json|md|ya?ml|html|vue)$/i,
+  },
+  {
+    tool: "ruff",
+    invoked: /\bruff\b/,
+    configs: ["ruff.toml", ".ruff.toml", "pyproject.toml"],
+    covers: /\.pyi?$/i,
+  },
   { tool: "black", invoked: /\bblack\b/, configs: ["pyproject.toml"], covers: /\.pyi?$/i },
-  { tool: "flake8", invoked: /\bflake8\b/, configs: [".flake8", "setup.cfg", "tox.ini"], covers: /\.py$/i },
-  { tool: "mypy", invoked: /\bmypy\b/, configs: ["mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"], covers: /\.pyi?$/i },
-  { tool: "clippy", invoked: /\bcargo\s+clippy\b|\bclippy\b/, configs: ["clippy.toml", ".clippy.toml", "Cargo.toml"], covers: /\.rs$/i },
-  { tool: "rustfmt", invoked: /\bcargo\s+fmt\b|\brustfmt\b/, configs: ["rustfmt.toml", ".rustfmt.toml"], covers: /\.rs$/i },
-  { tool: "golangci-lint", invoked: /\bgolangci-lint\b|golangci\/golangci-lint-action/, configs: [".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"], covers: /\.go$/i },
+  {
+    tool: "flake8",
+    invoked: /\bflake8\b/,
+    configs: [".flake8", "setup.cfg", "tox.ini"],
+    covers: /\.py$/i,
+  },
+  {
+    tool: "mypy",
+    invoked: /\bmypy\b/,
+    configs: ["mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"],
+    covers: /\.pyi?$/i,
+  },
+  {
+    tool: "clippy",
+    invoked: /\bcargo\s+clippy\b|\bclippy\b/,
+    configs: ["clippy.toml", ".clippy.toml", "Cargo.toml"],
+    covers: /\.rs$/i,
+  },
+  {
+    tool: "rustfmt",
+    invoked: /\bcargo\s+fmt\b|\brustfmt\b/,
+    configs: ["rustfmt.toml", ".rustfmt.toml"],
+    covers: /\.rs$/i,
+  },
+  {
+    tool: "golangci-lint",
+    invoked: /\bgolangci-lint\b|golangci\/golangci-lint-action/,
+    configs: [".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"],
+    covers: /\.go$/i,
+  },
   { tool: "gofmt", invoked: /\bgofmt\b|\bgoimports\b|\bgo\s+vet\b/, configs: [], covers: /\.go$/i },
-  { tool: "clang-format", invoked: /\bclang-format\b/, configs: [".clang-format", "_clang-format"], covers: /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|m|mm)$/i },
-  { tool: "swiftlint", invoked: /\bswiftlint\b/, configs: [".swiftlint.yml", ".swiftlint.yaml"], covers: /\.swift$/i },
+  {
+    tool: "clang-format",
+    invoked: /\bclang-format\b/,
+    configs: [".clang-format", "_clang-format"],
+    covers: /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|m|mm)$/i,
+  },
+  {
+    tool: "swiftlint",
+    invoked: /\bswiftlint\b/,
+    configs: [".swiftlint.yml", ".swiftlint.yaml"],
+    covers: /\.swift$/i,
+  },
   { tool: "ktlint", invoked: /\bktlint\b/, configs: [".editorconfig"], covers: /\.kts?$/i },
   { tool: "rubocop", invoked: /\brubocop\b/, configs: [".rubocop.yml"], covers: /\.rb$/i },
-  { tool: "dotnet-format", invoked: /\bdotnet\s+format\b|EnforceCodeStyleInBuild/, configs: [".editorconfig"], covers: /\.cs$/i },
+  {
+    tool: "dotnet-format",
+    invoked: /\bdotnet\s+format\b|EnforceCodeStyleInBuild/,
+    configs: [".editorconfig"],
+    covers: /\.cs$/i,
+  },
 ];
 
 /** CI definitions a job runs from. */
 const CI_DIRS = [".github/workflows", ".circleci", ".buildkite"];
-const CI_FILES = [".gitlab-ci.yml", "azure-pipelines.yml", ".travis.yml", "Jenkinsfile", "bitbucket-pipelines.yml"];
+const CI_FILES = [
+  ".gitlab-ci.yml",
+  "azure-pipelines.yml",
+  ".travis.yml",
+  "Jenkinsfile",
+  "bitbucket-pipelines.yml",
+];
 /** Wrapper scripts a CI step commonly calls (`npm run lint`, `make lint`). */
 const WRAPPERS = ["package.json", "Makefile", "justfile", "tox.ini", "noxfile.py", "Taskfile.yml"];
 const MAX_READ = 512 * 1024;

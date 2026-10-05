@@ -610,22 +610,26 @@ describe("metrics dashboard", () => {
     expect(failed).toContain("metrics unavailable: ssh: connect timed out");
   });
 
-  it("never overflows the pane at any width or height (the width-30 lesson)", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    for (const cols of [30, 40, 60, 80, 100, 120, 160, 170, 200, 220]) {
-      for (const rows of [24, 30, 44, 130]) {
-        for (const view of [
-          mkView(),
-          mkView({ local: { head: "deadbee", ahead: 4 } }),
-          mkView({ payload: undefined }),
-          mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never }),
-        ]) {
-          const frame = renderMetrics(view, cols, rows);
-          expect(frame.lines).toHaveLength(rows);
-          for (const line of frame.lines) expect(displayWidth(line)).toBeLessThanOrEqual(cols);
+  it(
+    "never overflows the pane at any width or height (the width-30 lesson)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      for (const cols of [30, 40, 60, 80, 100, 120, 160, 170, 200, 220]) {
+        for (const rows of [24, 30, 44, 130]) {
+          for (const view of [
+            mkView(),
+            mkView({ local: { head: "deadbee", ahead: 4 } }),
+            mkView({ payload: undefined }),
+            mkView({ drill: { pr: 5265, payload: timeline, loading: false } as never }),
+          ]) {
+            const frame = renderMetrics(view, cols, rows);
+            expect(frame.lines).toHaveLength(rows);
+            for (const line of frame.lines) expect(displayWidth(line)).toBeLessThanOrEqual(cols);
+          }
         }
       }
-    }
-  });
+    },
+  );
 });
 
 // ---- the OPERATIONS card ----------------------------------------------------
@@ -882,58 +886,62 @@ describe("metrics tab wiring", () => {
     ]);
   });
 
-  it("opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const streams = fakeStreams();
-    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
-    let overallCalls = 0;
-    const timelineCalls: number[] = [];
-    const view = installMetricsHooks(app, {
-      overall: async () => (overallCalls++, { payload: payload as never }),
-      timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
-    });
-    const run = app.run();
-    streams.type("6");
-    expect(app.tab).toBe("metrics");
-    await new Promise((r) => setTimeout(r, 0)); // lazy load settles
-    expect(overallCalls).toBe(1);
-    expect(stripAnsi(streams.written())).toContain("triggered 12");
+  it(
+    "opens on 6, switches windows on w/m/a, drills in with # <pr> ⏎ and Esc goes back",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const streams = fakeStreams();
+      const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+      let overallCalls = 0;
+      const timelineCalls: number[] = [];
+      const view = installMetricsHooks(app, {
+        overall: async () => (overallCalls++, { payload: payload as never }),
+        timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
+      });
+      const run = app.run();
+      streams.type("6");
+      expect(app.tab).toBe("metrics");
+      await new Promise((r) => setTimeout(r, 0)); // lazy load settles
+      expect(overallCalls).toBe(1);
+      expect(stripAnsi(streams.written())).toContain("triggered 12");
 
-    streams.type("a");
-    expect(view.window).toBe("all");
-    streams.type("m"); // the board's `m` verb letter is this tab's month window (keyChar)
-    expect(view.window).toBe("d30");
-    streams.type("w");
-    expect(view.window).toBe("d7");
-    streams.type("7"); // a digit is a SURFACE, on every tab — never a window
-    expect(app.tab).toBe("feedback");
-    streams.type("6");
-    expect(view.window).toBe("d7");
+      streams.type("a");
+      expect(view.window).toBe("all");
+      streams.type("m"); // the board's `m` verb letter is this tab's month window (keyChar)
+      expect(view.window).toBe("d30");
+      streams.type("w");
+      expect(view.window).toBe("d7");
+      streams.type("7"); // a digit is a SURFACE, on every tab — never a window
+      expect(app.tab).toBe("feedback");
+      streams.type("6");
+      expect(view.window).toBe("d7");
 
-    streams.type("j");
-    expect(view.scroll).toBe(1);
-    streams.type("k");
-    expect(view.scroll).toBe(0);
+      streams.type("j");
+      expect(view.scroll).toBe(1);
+      streams.type("k");
+      expect(view.scroll).toBe(0);
 
-    // PR entry: digits that normally switch tabs are read back as digits.
-    streams.type("#");
-    streams.type("5");
-    streams.type("2");
-    streams.type("6");
-    streams.type("5");
-    expect(view.prEntry).toBe("5265");
-    expect(app.tab).toBe("metrics");
-    streams.type("\r");
-    await new Promise((r) => setTimeout(r, 0));
-    expect(timelineCalls).toEqual([5265]);
-    expect(stripAnsi(streams.written())).toContain("round 1 finished");
+      // PR entry: digits that normally switch tabs are read back as digits.
+      streams.type("#");
+      streams.type("5");
+      streams.type("2");
+      streams.type("6");
+      streams.type("5");
+      expect(view.prEntry).toBe("5265");
+      expect(app.tab).toBe("metrics");
+      streams.type("\r");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(timelineCalls).toEqual([5265]);
+      expect(stripAnsi(streams.written())).toContain("round 1 finished");
 
-    streams.type("\x1b");
-    expect(view.drill).toBeUndefined();
-    streams.type("1");
-    expect(app.tab).toBe("board");
-    app.quit();
-    await run;
-  });
+      streams.type("\x1b");
+      expect(view.drill).toBeUndefined();
+      streams.type("1");
+      expect(app.tab).toBe("board");
+      app.quit();
+      await run;
+    },
+  );
 
   it("r inside a drill-down refetches the timeline, like r on the dashboard — never the cache", async () => {
     const streams = fakeStreams();

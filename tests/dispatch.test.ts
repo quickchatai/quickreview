@@ -132,13 +132,17 @@ function queue(
 }
 
 describe("queue ordering and capacity", () => {
-  it("is FIFO by trigger_ts, nulls last, PR number as tiebreak", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    queue(3, "2026-08-13T10:00:00Z");
-    queue(1, "2026-08-13T09:00:00Z");
-    queue(2, null);
-    queue(4, "2026-08-13T09:00:00Z");
-    expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 4, 3, 2]);
-  });
+  it(
+    "is FIFO by trigger_ts, nulls last, PR number as tiebreak",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      queue(3, "2026-08-13T10:00:00Z");
+      queue(1, "2026-08-13T09:00:00Z");
+      queue(2, null);
+      queue(4, "2026-08-13T09:00:00Z");
+      expect(queuedInOrder(store).map((p) => p.number)).toEqual([1, 4, 3, 2]);
+    },
+  );
 
   it("skips overseer-paused PRs entirely", () => {
     queue(1, "2026-08-13T09:00:00Z");
@@ -167,245 +171,284 @@ describe("roundTypeFor", () => {
 });
 
 describe("pre-fanout recovery dispatch", () => {
-  it("binds one daemon recovery instruction to the exact ordinary successor order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(5467, "2026-09-02T15:00:00Z", { head: "recovery-head" });
-    const completed = store.startRound(5467, "first", ["pass-baseline"], 75);
-    store.finishRound(completed, "REQUEST_CHANGES", null);
-    const prior = store.startRound(5467, "re-review", ["pass-baseline"], 75);
-    store.createSessionCommand({
-      id: "cmd-old",
-      pr: 5467,
-      session: "pr-5467",
-      kind: "round",
-      round_no: 2,
-      payload_sha256: "a".repeat(64),
-      payload_path: "/payload/old.md",
-      inject_path: "/inject/old.md",
-      next_check_at: "2026-09-02T15:00:00Z",
-    });
-    store.failPendingSessionCommand("cmd-old", "pre-fanout stall");
-    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
-    store.recordRoundRecoveryInstruction({
-      pr: 5467,
-      target_round_no: 3,
-      target_head_sha: "recovery-head",
-      stage: "first_pass_start",
-      source_incident_id: null,
-      source_command_id: "cmd-old",
-      source_round_no: 2,
-      immediate_attempt: 2,
-      retry_epoch: 1,
-    });
-    adapter.files.set(5467, [file("backend/service.py", 20, 3)]);
-    const { hooks, orders } = recordingHooks();
-    const template = readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8");
-
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      renderPrompt: (order, memory) => renderRoundPrompt(template, order, memory),
-    });
-
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.order).toMatchObject({
-      pr: 5467,
-      round_no: 3,
-      head_sha: "recovery-head",
-      recovery: {
+  it(
+    "binds one daemon recovery instruction to the exact ordinary successor order",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(5467, "2026-09-02T15:00:00Z", { head: "recovery-head" });
+      const completed = store.startRound(5467, "first", ["pass-baseline"], 75);
+      store.finishRound(completed, "REQUEST_CHANGES", null);
+      const prior = store.startRound(5467, "re-review", ["pass-baseline"], 75);
+      store.createSessionCommand({
+        id: "cmd-old",
+        pr: 5467,
+        session: "pr-5467",
+        kind: "round",
+        round_no: 2,
+        payload_sha256: "a".repeat(64),
+        payload_path: "/payload/old.md",
+        inject_path: "/inject/old.md",
+        next_check_at: "2026-09-02T15:00:00Z",
+      });
+      store.failPendingSessionCommand("cmd-old", "pre-fanout stall");
+      store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+      store.recordRoundRecoveryInstruction({
+        pr: 5467,
+        target_round_no: 3,
+        target_head_sha: "recovery-head",
         stage: "first_pass_start",
+        source_incident_id: null,
         source_command_id: "cmd-old",
         source_round_no: 2,
-        target_head_sha: "recovery-head",
+        immediate_attempt: 2,
         retry_epoch: 1,
-      },
-    });
-    expect(orders[0]!.prompt).toContain("RECOVERY — PRE-FANOUT STALL");
-    expect(orders[0]!.prompt).toContain("launch every planned discovery pass");
-  });
+      });
+      adapter.files.set(5467, [file("backend/service.py", 20, 3)]);
+      const { hooks, orders } = recordingHooks();
+      const template = readFileSync(resolve(process.cwd(), "prompts/round-re-review.md"), "utf8");
 
-  it("never applies an orphaned recovery instruction to a newer prepared head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
-    const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
-    store.createSessionCommand({
-      id: "cmd-old-head",
-      pr: 5468,
-      session: "pr-5468",
-      kind: "round",
-      round_no: 1,
-      payload_sha256: "b".repeat(64),
-      payload_path: "/payload/old-head.md",
-      inject_path: "/inject/old-head.md",
-      next_check_at: "2026-09-02T15:00:00Z",
-    });
-    store.failPendingSessionCommand("cmd-old-head", "pre-fanout stall");
-    store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
-    store.recordRoundRecoveryInstruction({
-      pr: 5468,
-      target_round_no: 2,
-      target_head_sha: "old-head",
-      stage: "first_pass_start",
-      source_incident_id: null,
-      source_command_id: "cmd-old-head",
-      source_round_no: 1,
-      immediate_attempt: 2,
-      retry_epoch: 0,
-    });
-    queue(5468, "2026-09-02T15:01:00Z", { head: "new-head" });
-    adapter.files.set(5468, [file("backend/service.py", 20, 3)]);
-    const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        renderPrompt: (order, memory) => renderRoundPrompt(template, order, memory),
+      });
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.order).toMatchObject({
+        pr: 5467,
+        round_no: 3,
+        head_sha: "recovery-head",
+        recovery: {
+          stage: "first_pass_start",
+          source_command_id: "cmd-old",
+          source_round_no: 2,
+          target_head_sha: "recovery-head",
+          retry_epoch: 1,
+        },
+      });
+      expect(orders[0]!.prompt).toContain("RECOVERY — PRE-FANOUT STALL");
+      expect(orders[0]!.prompt).toContain("launch every planned discovery pass");
+    },
+  );
 
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.order).toMatchObject({ round_no: 2, head_sha: "new-head" });
-    expect(orders[0]!.order.recovery).toBeUndefined();
-    const mismatch = store.db
-      .prepare(
-        "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
-      )
-      .get() as { payload: string };
-    expect(JSON.parse(mismatch.payload)).toMatchObject({
-      stored_head_sha: "old-head",
-      prepared_head_sha: "new-head",
-    });
-  });
+  it(
+    "never applies an orphaned recovery instruction to a newer prepared head",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(5468, "2026-09-02T15:00:00Z", { head: "old-head" });
+      const prior = store.startRound(5468, "first", ["pass-baseline"], 75);
+      store.createSessionCommand({
+        id: "cmd-old-head",
+        pr: 5468,
+        session: "pr-5468",
+        kind: "round",
+        round_no: 1,
+        payload_sha256: "b".repeat(64),
+        payload_path: "/payload/old-head.md",
+        inject_path: "/inject/old-head.md",
+        next_check_at: "2026-09-02T15:00:00Z",
+      });
+      store.failPendingSessionCommand("cmd-old-head", "pre-fanout stall");
+      store.markRoundCancelled(prior, "pre-fanout stall", "infrastructure_failure");
+      store.recordRoundRecoveryInstruction({
+        pr: 5468,
+        target_round_no: 2,
+        target_head_sha: "old-head",
+        stage: "first_pass_start",
+        source_incident_id: null,
+        source_command_id: "cmd-old-head",
+        source_round_no: 1,
+        immediate_attempt: 2,
+        retry_epoch: 0,
+      });
+      queue(5468, "2026-09-02T15:01:00Z", { head: "new-head" });
+      adapter.files.set(5468, [file("backend/service.py", 20, 3)]);
+      const { hooks, orders } = recordingHooks();
+
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.order).toMatchObject({ round_no: 2, head_sha: "new-head" });
+      expect(orders[0]!.order.recovery).toBeUndefined();
+      const mismatch = store.db
+        .prepare(
+          "SELECT payload FROM events WHERE kind='round_recovery_instruction_not_applied' AND pr=5468",
+        )
+        .get() as { payload: string };
+      expect(JSON.parse(mismatch.payload)).toMatchObject({
+        stored_head_sha: "old-head",
+        prepared_head_sha: "new-head",
+      });
+    },
+  );
 });
 
 describe("recording at round start", () => {
-  it("stamps the diffstat off the files list and the pr_state trigger_ts", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(21, "2026-08-13T09:00:00Z");
-    adapter.files.set(21, [file("a.ts", 12, 3), file("b.ts", 4, 40)]);
-    const { hooks } = recordingHooks();
+  it(
+    "stamps the diffstat off the files list and the pr_state trigger_ts",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(21, "2026-08-13T09:00:00Z");
+      adapter.files.set(21, [file("a.ts", 12, 3), file("b.ts", 4, 40)]);
+      const { hooks } = recordingHooks();
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    const round = store.roundsFor(21)[0]!;
-    expect(round).toMatchObject({ additions: 16, deletions: 43, changed_files: 2, backfilled: 0 });
-    // trigger_ts survives even though the dispatch transition clears pr_state's.
-    expect(round.trigger_ts).toBe("2026-08-13T09:00:00Z");
-    expect(store.getPr(21)!.trigger_ts).toBeNull();
-    // No extra GitHub call: the diffstat comes off the one files fetch.
-    expect(adapter.calls.filter((c) => c.fn === "listPrFiles")).toHaveLength(1);
-  });
+      const round = store.roundsFor(21)[0]!;
+      expect(round).toMatchObject({
+        additions: 16,
+        deletions: 43,
+        changed_files: 2,
+        backfilled: 0,
+      });
+      // trigger_ts survives even though the dispatch transition clears pr_state's.
+      expect(round.trigger_ts).toBe("2026-08-13T09:00:00Z");
+      expect(store.getPr(21)!.trigger_ts).toBeNull();
+      // No extra GitHub call: the diffstat comes off the one files fetch.
+      expect(adapter.calls.filter((c) => c.fn === "listPrFiles")).toHaveLength(1);
+    },
+  );
 
   // the git-config baseline. Mutation-verification caught that
   // nothing covered THIS half: every other test injects the baseline straight
   // into the round row, so deleting dispatch's call left the suite green while
   // the integrity check silently never ran for any real round. A layer nobody
   // calls is precisely the failure mode this ticket is about.
-  it("takes the git-config fingerprint when the round starts", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(29, "2026-08-13T09:00:00Z");
-    adapter.files.set(29, [file("a.ts", 1, 1)]);
-    const { hooks } = recordingHooks();
+  it(
+    "takes the git-config fingerprint when the round starts",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(29, "2026-08-13T09:00:00Z");
+      adapter.files.set(29, [file("a.ts", 1, 1)]);
+      const { hooks } = recordingHooks();
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    const round = store.roundsFor(29)[0]!;
-    const fp = store.roundGitConfig(round.id) as
-      | { digest?: unknown; files?: Record<string, string> }
-      | undefined;
-    expect(fp, "dispatch must record a baseline, or verdicts has nothing to compare").toBeTruthy();
-    expect(typeof fp!.digest).toBe("string");
-    // The clone's own config and the PINNED global file are both in it — the
-    // pin concentrates the target onto one file, so leaving it unwatched would
-    // trade a search path for a single unguarded door.
-    const watched = Object.keys(fp!.files ?? {});
-    expect(watched.some((p) => p.endsWith("/.git/config"))).toBe(true);
-    expect(watched.some((p) => p.endsWith("/pihome/.gitconfig"))).toBe(true);
-    // and this system's OWN policy surface under the sandbox root —
-    // the guards' config, the sanctioned scripts and the compiled guard.
-    expect(watched.some((p) => p.endsWith("/config.toml"))).toBe(true);
-    expect(watched.some((p) => p.endsWith("/scripts"))).toBe(true);
-    expect(watched.some((p) => p.endsWith("/dist"))).toBe(true);
-  });
+      const round = store.roundsFor(29)[0]!;
+      const fp = store.roundGitConfig(round.id) as
+        { digest?: unknown; files?: Record<string, string> } | undefined;
+      expect(
+        fp,
+        "dispatch must record a baseline, or verdicts has nothing to compare",
+      ).toBeTruthy();
+      expect(typeof fp!.digest).toBe("string");
+      // The clone's own config and the PINNED global file are both in it — the
+      // pin concentrates the target onto one file, so leaving it unwatched would
+      // trade a search path for a single unguarded door.
+      const watched = Object.keys(fp!.files ?? {});
+      expect(watched.some((p) => p.endsWith("/.git/config"))).toBe(true);
+      expect(watched.some((p) => p.endsWith("/pihome/.gitconfig"))).toBe(true);
+      // and this system's OWN policy surface under the sandbox root —
+      // the guards' config, the sanctioned scripts and the compiled guard.
+      expect(watched.some((p) => p.endsWith("/config.toml"))).toBe(true);
+      expect(watched.some((p) => p.endsWith("/scripts"))).toBe(true);
+      expect(watched.some((p) => p.endsWith("/dist"))).toBe(true);
+    },
+  );
 
   // the audit trail — which tier held the veto in this round.
-  it("records the validator's tier on the round row and the dispatch event", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(23, "2026-08-13T09:00:00Z");
-    adapter.files.set(23, [file("auth/permissions.py", 10, 2)]);
-    const { hooks, orders } = recordingHooks();
+  it(
+    "records the validator's tier on the round row and the dispatch event",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(23, "2026-08-13T09:00:00Z");
+      adapter.files.set(23, [file("auth/permissions.py", 10, 2)]);
+      const { hooks, orders } = recordingHooks();
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    const round = store.roundsFor(23)[0]!;
-    const planned = orders[0]!.order.pass_plan.find((p) => p.lens === "pass-validate")!;
-    expect(round.validate_tier).toBe(planned.tier);
-    expect(round.validate_tier).toBe("sol-high");
-    expect(JSON.parse(round.pass_plan!)).toEqual(orders[0]!.order.pass_plan);
-    const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string; tier: string }>;
-    expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "sol-med" });
-    expect(
-      addable
-        .filter((p) => baseCfg.models.risk_passes.includes(p.lens as never))
-        .every((p) => p.tier === "sol-high"),
-    ).toBe(true);
-    const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
-    expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
-  });
+      const round = store.roundsFor(23)[0]!;
+      const planned = orders[0]!.order.pass_plan.find((p) => p.lens === "pass-validate")!;
+      expect(round.validate_tier).toBe(planned.tier);
+      expect(round.validate_tier).toBe("sol-high");
+      expect(JSON.parse(round.pass_plan!)).toEqual(orders[0]!.order.pass_plan);
+      const addable = JSON.parse(round.addable_passes!) as Array<{ lens: string; tier: string }>;
+      expect(addable).toContainEqual({ lens: "pass-concurrency", tier: "sol-med" });
+      expect(
+        addable
+          .filter((p) => baseCfg.models.risk_passes.includes(p.lens as never))
+          .every((p) => p.tier === "sol-high"),
+      ).toBe(true);
+      const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
+      expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBe("sol-high");
+    },
+  );
 
   // a round whose profile switched the validator off had no
   // validator, so the round row must not claim one ran at the configured tier.
   // MUTATION: restore `?? cfg.models.validate_tier` on dispatch's validateTier
   // and this fails.
-  it("records a NULL validator tier when the profile switched the validator off", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(24, "2026-08-13T09:00:00Z");
-    adapter.files.set(24, [file("auth/permissions.py", 10, 2)]);
-    const { hooks, orders } = recordingHooks();
-    const off: Config = { ...baseCfg, lenses: { "pass-validate": { enabled: false } } };
+  it(
+    "records a NULL validator tier when the profile switched the validator off",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(24, "2026-08-13T09:00:00Z");
+      adapter.files.set(24, [file("auth/permissions.py", 10, 2)]);
+      const { hooks, orders } = recordingHooks();
+      const off: Config = { ...baseCfg, lenses: { "pass-validate": { enabled: false } } };
 
-    await dispatchOnce({ cfg: off, store, adapter, hooks });
+      await dispatchOnce({ cfg: off, store, adapter, hooks });
 
-    expect(orders[0]!.order.pass_plan.some((p) => p.lens === "pass-validate")).toBe(false);
-    const round = store.roundsFor(24)[0]!;
-    expect(round.validate_tier).toBeNull();
-    const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
-    expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBeNull();
-  });
+      expect(orders[0]!.order.pass_plan.some((p) => p.lens === "pass-validate")).toBe(false);
+      const round = store.roundsFor(24)[0]!;
+      expect(round.validate_tier).toBeNull();
+      const dispatched = store.recentEvents(50).find((e) => e.kind === "round_dispatched")!;
+      expect(JSON.parse(dispatched.payload ?? "{}").validate_tier).toBeNull();
+    },
+  );
 
-  it("counts only daemon-run rounds when choosing first vs re-review", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // A backfilled (imported) round must not flip the next live round to
-    // "re-review" — its template references a settled digest that never existed.
-    store.db
-      .prepare(
-        `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, started_at, deadline_at, finished_at, status, backfilled)
+  it(
+    "counts only daemon-run rounds when choosing first vs re-review",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // A backfilled (imported) round must not flip the next live round to
+      // "re-review" — its template references a settled digest that never existed.
+      store.db
+        .prepare(
+          `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, started_at, deadline_at, finished_at, status, backfilled)
          VALUES (?, 0, 'backfill', '', 'REQUEST_CHANGES', '2026-07-01T10:00:00Z', '2026-07-01T10:00:00Z', '2026-07-01T10:00:00Z', 'done', 1)`,
-      )
-      .run(22);
-    expect(store.priorRoundCount(22)).toBe(0);
+        )
+        .run(22);
+      expect(store.priorRoundCount(22)).toBe(0);
 
-    queue(22, "2026-08-13T09:00:00Z");
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      queue(22, "2026-08-13T09:00:00Z");
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    expect(orders[0]!.order.round_type).toBe("first");
-    // …and a real prior round still yields a re-review.
-    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
-    expect(store.priorRoundCount(22)).toBe(1);
-    queue(22, "2026-08-13T11:00:00Z");
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(orders[1]!.order.round_type).toBe("re-review");
-  });
+      expect(orders[0]!.order.round_type).toBe("first");
+      // …and a real prior round still yields a re-review.
+      store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+      expect(store.priorRoundCount(22)).toBe(1);
+      queue(22, "2026-08-13T11:00:00Z");
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(orders[1]!.order.round_type).toBe("re-review");
+    },
+  );
 
-  it("a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // Live 2026-08-18, #5313: two rounds died before posting anything and the
-    // PR was dispatched as "round 3 (re-review)" with the nit cap active,
-    // despite zero posted reviews. Failed rounds advance round_no (the audit
-    // sequence) but must not advance the review age.
-    queue(31, "2026-08-13T09:00:00Z");
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    store.markRoundCancelled(store.runningRounds()[0]!.id, "session lost");
-    expect(store.priorRoundCount(31)).toBe(0);
+  it(
+    "a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // Live 2026-08-18, #5313: two rounds died before posting anything and the
+      // PR was dispatched as "round 3 (re-review)" with the nit cap active,
+      // despite zero posted reviews. Failed rounds advance round_no (the audit
+      // sequence) but must not advance the review age.
+      queue(31, "2026-08-13T09:00:00Z");
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      store.markRoundCancelled(store.runningRounds()[0]!.id, "session lost");
+      expect(store.priorRoundCount(31)).toBe(0);
 
-    queue(31, "2026-08-13T10:00:00Z");
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    const order = orders[1]!.order;
-    expect(order.round_no).toBe(2); // audit sequence keeps counting
-    expect(order.round_type).toBe("first"); // review age does not
-    expect(order.review_no).toBe(1);
-  });
+      queue(31, "2026-08-13T10:00:00Z");
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      const order = orders[1]!.order;
+      expect(order.round_no).toBe(2); // audit sequence keeps counting
+      expect(order.round_type).toBe("first"); // review age does not
+      expect(order.review_no).toBe(1);
+    },
+  );
 });
 
 describe("buildPassPlan", () => {
@@ -426,24 +469,21 @@ describe("buildPassPlan", () => {
   // The threading is profile-agnostic, so it runs on the generic
   // example-django pack every tree ships (the same Django settings/DRF
   // predicates) — never skipped, in any tree.
-  it(
-    "threads the profile heuristics extension into selection",
-    async () => {
-      const { loadProfileHeuristics } = await import("../src/profiles.js");
-      const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "example-django");
-      const files = [file("project/settings_prod.py", 12, 1)];
-      // Without the extension the settings glob is not in the generic core…
-      expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain(
-        "pass-security",
-      );
-      // …with it, the profile predicate selects the lens through the plan.
-      const withExt = buildPassPlan(planCfg, files, undefined, undefined, qc).pass_plan.map(
-        (p) => p.lens,
-      );
-      expect(withExt).toContain("pass-security");
-      expect(withExt).toContain("pass-backcompat");
-    },
-  );
+  it("threads the profile heuristics extension into selection", async () => {
+    const { loadProfileHeuristics } = await import("../src/profiles.js");
+    const qc = loadProfileHeuristics(resolve(import.meta.dirname, ".."), "example-django");
+    const files = [file("project/settings_prod.py", 12, 1)];
+    // Without the extension the settings glob is not in the generic core…
+    expect(buildPassPlan(planCfg, files).pass_plan.map((p) => p.lens)).not.toContain(
+      "pass-security",
+    );
+    // …with it, the profile predicate selects the lens through the plan.
+    const withExt = buildPassPlan(planCfg, files, undefined, undefined, qc).pass_plan.map(
+      (p) => p.lens,
+    );
+    expect(withExt).toContain("pass-security");
+    expect(withExt).toContain("pass-backcompat");
+  });
 
   it("pins risk passes to sol-high with no raise ladder", () => {
     const { pass_plan } = buildPassPlan(planCfg, [
@@ -735,157 +775,189 @@ describe("buildPassPlan", () => {
 });
 
 describe("dispatchOnce", () => {
-  it("dispatches in FIFO order and stops at the concurrency cap", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 } };
-    queue(11, "2026-08-13T09:00:00Z");
-    queue(12, "2026-08-13T09:30:00Z");
-    queue(13, "2026-08-13T10:00:00Z");
-    const { hooks, orders } = recordingHooks();
+  it(
+    "dispatches in FIFO order and stops at the concurrency cap",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 2 } };
+      queue(11, "2026-08-13T09:00:00Z");
+      queue(12, "2026-08-13T09:30:00Z");
+      queue(13, "2026-08-13T10:00:00Z");
+      const { hooks, orders } = recordingHooks();
 
-    const dispatched = await dispatchOnce({ cfg, store, adapter, hooks });
-    expect(dispatched.map((o) => o.pr)).toEqual([11, 12]);
-    expect(orders.map((o) => o.order.pr)).toEqual([11, 12]);
-    expect(store.getPr(11)!.state).toBe("reviewing");
-    expect(store.getPr(13)!.state).toBe("queued");
-    expect(store.runningRounds()).toHaveLength(2);
+      const dispatched = await dispatchOnce({ cfg, store, adapter, hooks });
+      expect(dispatched.map((o) => o.pr)).toEqual([11, 12]);
+      expect(orders.map((o) => o.order.pr)).toEqual([11, 12]);
+      expect(store.getPr(11)!.state).toBe("reviewing");
+      expect(store.getPr(13)!.state).toBe("queued");
+      expect(store.runningRounds()).toHaveLength(2);
 
-    // The cap holds on the next pump until a round finishes.
-    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(0);
-    store.finishRound(store.runningRounds()[0]!.id, "APPROVE", 1.5);
-    const next = await dispatchOnce({ cfg, store, adapter, hooks });
-    expect(next.map((o) => o.pr)).toEqual([13]);
-  });
+      // The cap holds on the next pump until a round finishes.
+      expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(0);
+      store.finishRound(store.runningRounds()[0]!.id, "APPROVE", 1.5);
+      const next = await dispatchOnce({ cfg, store, adapter, hooks });
+      expect(next.map((o) => o.pr)).toEqual([13]);
+    },
+  );
 
-  it("consumes both triggers and flags the round in progress", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(21, "2026-08-13T09:00:00Z");
-    const { hooks } = recordingHooks();
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(adapter.calls).toEqual([
-      { fn: "removeLabel", pr: 21, arg: baseCfg.github.trigger_label },
-      { fn: "deleteTeamReviewRequest", pr: 21 },
-      { fn: "addLabel", pr: 21, arg: baseCfg.github.in_progress_label },
-      { fn: "getPr", pr: 21 }, // base branch, for the worktree fetch
-      { fn: "listPrFiles", pr: 21 },
-    ]);
-  });
+  it(
+    "consumes both triggers and flags the round in progress",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(21, "2026-08-13T09:00:00Z");
+      const { hooks } = recordingHooks();
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(adapter.calls).toEqual([
+        { fn: "removeLabel", pr: 21, arg: baseCfg.github.trigger_label },
+        { fn: "deleteTeamReviewRequest", pr: 21 },
+        { fn: "addLabel", pr: 21, arg: baseCfg.github.in_progress_label },
+        { fn: "getPr", pr: 21 }, // base branch, for the worktree fetch
+        { fn: "listPrFiles", pr: 21 },
+      ]);
+    },
+  );
 
-  it("still dispatches when trigger consumption partially fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(22, "2026-08-13T09:00:00Z");
-    adapter.failLabelOn.add(22);
-    const { hooks, orders } = recordingHooks();
-    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(dispatched).toHaveLength(1);
-    expect(orders).toHaveLength(1);
-    const logged = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'trigger_consume_failed'")
-      .all() as Array<{ payload: string }>;
-    expect(JSON.parse(logged[0]!.payload).which).toBe("label");
-  });
+  it(
+    "still dispatches when trigger consumption partially fails",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(22, "2026-08-13T09:00:00Z");
+      adapter.failLabelOn.add(22);
+      const { hooks, orders } = recordingHooks();
+      const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(dispatched).toHaveLength(1);
+      expect(orders).toHaveLength(1);
+      const logged = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'trigger_consume_failed'")
+        .all() as Array<{ payload: string }>;
+      expect(JSON.parse(logged[0]!.payload).which).toBe("label");
+    },
+  );
 
-  it("treats a GitHub 404 on label removal as already-consumed, not a failure", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(23, "2026-08-13T09:00:00Z");
-    adapter.goneLabelOn.add(23);
-    const { hooks, orders } = recordingHooks();
-    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(dispatched).toHaveLength(1);
-    expect(orders).toHaveLength(1);
-    expect(
-      store.db
-        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'trigger_consume_failed'")
-        .get(),
-    ).toEqual({ c: 0 });
-    const already = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'trigger_already_consumed'")
-      .all() as Array<{ payload: string }>;
-    expect(JSON.parse(already[0]!.payload).which).toBe("label");
-    const round = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'round_dispatched'")
-      .get() as { payload: string };
-    expect(JSON.parse(round.payload).triggers_consumed).toContain("label");
-  });
+  it(
+    "treats a GitHub 404 on label removal as already-consumed, not a failure",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(23, "2026-08-13T09:00:00Z");
+      adapter.goneLabelOn.add(23);
+      const { hooks, orders } = recordingHooks();
+      const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(dispatched).toHaveLength(1);
+      expect(orders).toHaveLength(1);
+      expect(
+        store.db
+          .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'trigger_consume_failed'")
+          .get(),
+      ).toEqual({ c: 0 });
+      const already = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'trigger_already_consumed'")
+        .all() as Array<{ payload: string }>;
+      expect(JSON.parse(already[0]!.payload).which).toBe("label");
+      const round = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'round_dispatched'")
+        .get() as { payload: string };
+      expect(JSON.parse(round.payload).triggers_consumed).toContain("label");
+    },
+  );
 
-  it("never dispatches a PR that already has a running round (one worktree, one round)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(24, "2026-08-13T09:00:00Z");
-    queue(25, "2026-08-13T09:01:00Z");
-    store.startRound(24, "first", ["pass-baseline"], 45); // round in flight, PR requeued behind it
-    const { hooks, orders } = recordingHooks();
-    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(dispatched.map((o) => o.pr)).toEqual([25]);
-    expect(orders.map((o) => o.order.pr)).toEqual([25]);
-    expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
-  });
+  it(
+    "never dispatches a PR that already has a running round (one worktree, one round)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(24, "2026-08-13T09:00:00Z");
+      queue(25, "2026-08-13T09:01:00Z");
+      store.startRound(24, "first", ["pass-baseline"], 45); // round in flight, PR requeued behind it
+      const { hooks, orders } = recordingHooks();
+      const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(dispatched.map((o) => o.pr)).toEqual([25]);
+      expect(orders.map((o) => o.order.pr)).toEqual([25]);
+      expect(adapter.calls.filter((c) => c.pr === 24)).toHaveLength(0);
+    },
+  );
 
-  it("never dispatches a round behind an active ordinary session command", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(26, "2026-08-13T09:00:00Z");
-    queue(27, "2026-08-13T09:01:00Z");
-    store.createSessionCommand({
-      id: "cmd-26",
-      pr: 26,
-      session: "pr-26",
-      kind: "wake",
-      round_no: null,
-      payload_sha256: "a".repeat(64),
-      payload_path: "/state/cmd-26.md",
-      inject_path: "/inject/pr-26/cmd-26.md",
-      next_check_at: "2026-08-13T09:02:00Z",
-    });
-    const { hooks, orders } = recordingHooks();
-    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(dispatched.map((o) => o.pr)).toEqual([27]);
-    expect(orders.map((o) => o.order.pr)).toEqual([27]);
-    expect(adapter.calls.filter((c) => c.pr === 26)).toHaveLength(0);
-  });
+  it(
+    "never dispatches a round behind an active ordinary session command",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(26, "2026-08-13T09:00:00Z");
+      queue(27, "2026-08-13T09:01:00Z");
+      store.createSessionCommand({
+        id: "cmd-26",
+        pr: 26,
+        session: "pr-26",
+        kind: "wake",
+        round_no: null,
+        payload_sha256: "a".repeat(64),
+        payload_path: "/state/cmd-26.md",
+        inject_path: "/inject/pr-26/cmd-26.md",
+        next_check_at: "2026-08-13T09:02:00Z",
+      });
+      const { hooks, orders } = recordingHooks();
+      const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(dispatched.map((o) => o.pr)).toEqual([27]);
+      expect(orders.map((o) => o.order.pr)).toEqual([27]);
+      expect(adapter.calls.filter((c) => c.pr === 26)).toHaveLength(0);
+    },
+  );
 
-  it("never dispatches a round ahead of an older held conversational wake", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(28, "2026-08-13T09:00:00Z");
-    queue(29, "2026-08-13T09:01:00Z");
-    store.holdWake(28, "operator-recovered author reply", "operator_recovered:wake:cmd-28");
-    const { hooks, orders } = recordingHooks();
+  it(
+    "never dispatches a round ahead of an older held conversational wake",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(28, "2026-08-13T09:00:00Z");
+      queue(29, "2026-08-13T09:01:00Z");
+      store.holdWake(28, "operator-recovered author reply", "operator_recovered:wake:cmd-28");
+      const { hooks, orders } = recordingHooks();
 
-    const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      const dispatched = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    expect(dispatched.map((o) => o.pr)).toEqual([29]);
-    expect(orders.map((o) => o.order.pr)).toEqual([29]);
-    expect(store.heldWakes(28)).toHaveLength(1);
-    expect(adapter.calls.filter((c) => c.pr === 28)).toHaveLength(0);
-  });
+      expect(dispatched.map((o) => o.pr)).toEqual([29]);
+      expect(orders.map((o) => o.order.pr)).toEqual([29]);
+      expect(store.heldWakes(28)).toHaveLength(1);
+      expect(adapter.calls.filter((c) => c.pr === 28)).toHaveLength(0);
+    },
+  );
 
-  it("builds the round order from the files API: lenses and the migration gate", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
-    adapter.files.set(31, [
-      file("infra/main.tf", 120, 5),
-      file("app/migrations/0007_add_index.py", 30, 0),
-      file("app/serializers/routes.py", 40, 2),
-      file("tests/test_routes.py", 400, 0), // test file: excluded from prod stats
-    ]);
-    const { hooks, orders } = recordingHooks();
-    const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+  it(
+    "builds the round order from the files API: lenses and the migration gate",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(31, "2026-08-13T09:00:00Z", { title: "Terraform the ingest cluster", head: "abc123" });
+      adapter.files.set(31, [
+        file("infra/main.tf", 120, 5),
+        file("app/migrations/0007_add_index.py", 30, 0),
+        file("app/serializers/routes.py", 40, 2),
+        file("tests/test_routes.py", 400, 0), // test file: excluded from prod stats
+      ]);
+      const { hooks, orders } = recordingHooks();
+      const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
 
-    expect(order).toBeDefined();
-    expect(order!.pr).toBe(31);
-    expect(order!.round_no).toBe(1);
-    expect(order!.round_type).toBe("first");
-    expect(order!.head_sha).toBe("abc123");
-    expect(order!.title).toBe("Terraform the ingest cluster");
-    expect(order!.worktree).toBe("wt/pr-31");
-    expect(order!.lenses).toContain("pass-baseline");
-    expect(order!.lenses).toContain("pass-prod-risk");
-    expect(order!.lenses).toContain("pass-data-safety");
-    expect(order!.lenses).toContain("pass-contracts");
-    expect(order!.lenses[order!.lenses.length - 1]).toBe("pass-validate");
-    expect(order!.migration_gate).toBe(true);
-    // The escalation heuristic is gone: an infra-shaped diff carries no flag.
-    expect((order as unknown as Record<string, unknown>).escalation_worthy).toBeUndefined();
-    expect((order as unknown as Record<string, unknown>).escalation_reasons).toBeUndefined();
-    // pass_plan mirrors lenses in order (a lens with several rows — the sweep,
-    // one row per file group — once); addable = the known passes not planned.
-    expect([...new Set(order!.pass_plan.map((p) => p.lens))]).toEqual(order!.lenses);
-    expect(order!.addable_lenses).toEqual(ALL_PASSES.filter((l) => !order!.lenses.includes(l)));
+      expect(order).toBeDefined();
+      expect(order!.pr).toBe(31);
+      expect(order!.round_no).toBe(1);
+      expect(order!.round_type).toBe("first");
+      expect(order!.head_sha).toBe("abc123");
+      expect(order!.title).toBe("Terraform the ingest cluster");
+      expect(order!.worktree).toBe("wt/pr-31");
+      expect(order!.lenses).toContain("pass-baseline");
+      expect(order!.lenses).toContain("pass-prod-risk");
+      expect(order!.lenses).toContain("pass-data-safety");
+      expect(order!.lenses).toContain("pass-contracts");
+      expect(order!.lenses[order!.lenses.length - 1]).toBe("pass-validate");
+      expect(order!.migration_gate).toBe(true);
+      // The escalation heuristic is gone: an infra-shaped diff carries no flag.
+      expect((order as unknown as Record<string, unknown>).escalation_worthy).toBeUndefined();
+      expect((order as unknown as Record<string, unknown>).escalation_reasons).toBeUndefined();
+      // pass_plan mirrors lenses in order (a lens with several rows — the sweep,
+      // one row per file group — once); addable = the known passes not planned.
+      expect([...new Set(order!.pass_plan.map((p) => p.lens))]).toEqual(order!.lenses);
+      expect(order!.addable_lenses).toEqual(ALL_PASSES.filter((l) => !order!.lenses.includes(l)));
 
-    const row = store.getPr(31)!;
-    expect(row.migration_gate).toBe(1);
-    expect(orders[0]!.prompt).toContain('"pr": 31'); // default renderer = JSON
-  });
+      const row = store.getPr(31)!;
+      expect(row.migration_gate).toBe(1);
+      expect(orders[0]!.prompt).toContain('"pr": 31'); // default renderer = JSON
+    },
+  );
 
   it("leaves a small tidy PR ungated", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(32, "2026-08-13T09:00:00Z");
@@ -906,209 +978,245 @@ describe("dispatchOnce", () => {
 
   // ---- worktree facts in the order (2026-08-18) ---------------------------
 
-  it("carries the prepared tree's base facts into the order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(60, "2026-08-13T09:00:00Z", { head: "snapshot-sha" });
-    adapter.baseRefs.set(60, "release/2026-08");
-    const asked: Array<[number, string]> = [];
-    const { hooks } = recordingHooks();
-    const [order] = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async (pr, baseRef) => {
-        asked.push([pr, baseRef]);
-        return {
-          head_sha: "snapshot-sha",
+  it(
+    "carries the prepared tree's base facts into the order",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(60, "2026-08-13T09:00:00Z", { head: "snapshot-sha" });
+      adapter.baseRefs.set(60, "release/2026-08");
+      const asked: Array<[number, string]> = [];
+      const { hooks } = recordingHooks();
+      const [order] = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async (pr, baseRef) => {
+          asked.push([pr, baseRef]);
+          return {
+            head_sha: "snapshot-sha",
+            base_ref: baseRef,
+            base_sha: "base-tip",
+            merge_base: "fork-point",
+          };
+        },
+      });
+      // The PR's OWN base branch is what gets fetched, not a hardcoded master.
+      expect(asked).toEqual([[60, "release/2026-08"]]);
+      expect(order!.base_ref).toBe("release/2026-08");
+      expect(order!.base_sha).toBe("base-tip");
+      expect(order!.merge_base).toBe("fork-point");
+    },
+  );
+
+  it(
+    "prefers the tree's real sha over the PR row snapshot and logs the drift",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(61, "2026-08-13T09:00:00Z", { head: "stale-snapshot" });
+      const { hooks } = recordingHooks();
+      const [order] = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        // A push landed between the reconcile snapshot and the fetch.
+        prepareWorktree: async () => ({
+          head_sha: "pushed-sha",
+          base_ref: "master",
+          base_sha: "b",
+          merge_base: "m",
+        }),
+      });
+      expect(order!.head_sha).toBe("pushed-sha");
+      const drift = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'head_drift'")
+        .all() as Array<{ payload: string }>;
+      expect(drift).toHaveLength(1);
+      expect(JSON.parse(drift[0]!.payload)).toMatchObject({
+        expected: "stale-snapshot",
+        actual: "pushed-sha",
+      });
+    },
+  );
+
+  it(
+    "logs no drift when the tree matches the snapshot",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(62, "2026-08-13T09:00:00Z", { head: "same-sha" });
+      const { hooks } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => ({
+          head_sha: "same-sha",
+          base_ref: "master",
+          base_sha: "b",
+          merge_base: "m",
+        }),
+      });
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get(),
+      ).toMatchObject({ c: 0 });
+    },
+  );
+
+  it(
+    "still dispatches when the base-ref lookup fails — degraded, not blocked",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(63, "2026-08-13T09:00:00Z", { head: "abc" });
+      adapter.failGetPrOn.add(63);
+      const { hooks } = recordingHooks();
+      const [order] = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async (_pr, baseRef) => ({
+          head_sha: "abc",
           base_ref: baseRef,
-          base_sha: "base-tip",
-          merge_base: "fork-point",
-        };
-      },
-    });
-    // The PR's OWN base branch is what gets fetched, not a hardcoded master.
-    expect(asked).toEqual([[60, "release/2026-08"]]);
-    expect(order!.base_ref).toBe("release/2026-08");
-    expect(order!.base_sha).toBe("base-tip");
-    expect(order!.merge_base).toBe("fork-point");
-  });
+          base_sha: "",
+          merge_base: "",
+        }),
+      });
+      expect(order).toBeDefined();
+      expect(order!.base_ref).toBe("");
+    },
+  );
 
-  it("prefers the tree's real sha over the PR row snapshot and logs the drift", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(61, "2026-08-13T09:00:00Z", { head: "stale-snapshot" });
-    const { hooks } = recordingHooks();
-    const [order] = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      // A push landed between the reconcile snapshot and the fetch.
-      prepareWorktree: async () => ({
-        head_sha: "pushed-sha",
-        base_ref: "master",
-        base_sha: "b",
-        merge_base: "m",
-      }),
-    });
-    expect(order!.head_sha).toBe("pushed-sha");
-    const drift = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'head_drift'")
-      .all() as Array<{ payload: string }>;
-    expect(drift).toHaveLength(1);
-    expect(JSON.parse(drift[0]!.payload)).toMatchObject({
-      expected: "stale-snapshot",
-      actual: "pushed-sha",
-    });
-  });
+  it(
+    "falls back to the row sha with empty base facts when there is no worktree seam",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(64, "2026-08-13T09:00:00Z", { head: "row-sha" });
+      const { hooks } = recordingHooks();
+      const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(order!.head_sha).toBe("row-sha");
+      expect(order!.base_ref).toBe("");
+      expect(order!.merge_base).toBe("");
+    },
+  );
 
-  it("logs no drift when the tree matches the snapshot", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(62, "2026-08-13T09:00:00Z", { head: "same-sha" });
-    const { hooks } = recordingHooks();
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => ({
-        head_sha: "same-sha",
-        base_ref: "master",
-        base_sha: "b",
-        merge_base: "m",
-      }),
-    });
-    expect(
-      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'head_drift'").get(),
-    ).toMatchObject({ c: 0 });
-  });
-
-  it("still dispatches when the base-ref lookup fails — degraded, not blocked", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(63, "2026-08-13T09:00:00Z", { head: "abc" });
-    adapter.failGetPrOn.add(63);
-    const { hooks } = recordingHooks();
-    const [order] = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async (_pr, baseRef) => ({
-        head_sha: "abc",
-        base_ref: baseRef,
-        base_sha: "",
-        merge_base: "",
-      }),
-    });
-    expect(order).toBeDefined();
-    expect(order!.base_ref).toBe("");
-  });
-
-  it("falls back to the row sha with empty base facts when there is no worktree seam", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(64, "2026-08-13T09:00:00Z", { head: "row-sha" });
-    const { hooks } = recordingHooks();
-    const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
-    expect(order!.head_sha).toBe("row-sha");
-    expect(order!.base_ref).toBe("");
-    expect(order!.merge_base).toBe("");
-  });
-
-  it("uses the injected prompt renderer and settled digest", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(33, "2026-08-13T09:00:00Z");
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      renderPrompt: (o) => `ROUND ${o.round_no} for #${o.pr}`,
-      settledDigest: () => "SETTLED: thread 12 (perf, conceded)",
-    });
-    expect(orders[0]!.prompt).toBe("ROUND 1 for #33");
-    expect(orders[0]!.order.settled_digest).toBe("SETTLED: thread 12 (perf, conceded)");
-  });
+  it(
+    "uses the injected prompt renderer and settled digest",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(33, "2026-08-13T09:00:00Z");
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        renderPrompt: (o) => `ROUND ${o.round_no} for #${o.pr}`,
+        settledDigest: () => "SETTLED: thread 12 (perf, conceded)",
+      });
+      expect(orders[0]!.prompt).toBe("ROUND 1 for #33");
+      expect(orders[0]!.order.settled_digest).toBe("SETTLED: thread 12 (perf, conceded)");
+    },
+  );
 
   // (MC-18): the ledger carry re-hands the PR's ledger on the order and
   // supplies the settled digest; an explicit settledDigest still wins.
-  it("carries the PR's ledger and takes the settled digest from it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(34, "2026-08-13T09:00:00Z");
-    queue(35, "2026-08-13T09:01:00Z");
-    const { hooks, orders } = recordingHooks();
-    const carry = {
-      source: "/r/state/ledgers/pr-34.md",
-      header: "LEDGER PR #34 @ abc1234",
-      text: "LEDGER PR #34 @ abc1234\nSETTLED: T1: conceded",
-      truncated: false,
-      total_chars: 44,
-    };
-    const asked: number[] = [];
-    await dispatchOnce({
-      cfg: { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 5 } },
-      store,
-      adapter,
-      hooks,
-      ledgerCarry: (pr) => {
-        asked.push(pr);
-        return pr === 34 ? { carry, settled: "- T1: conceded" } : { settled: "" };
-      },
-    });
-    const by = new Map(orders.map((o) => [o.order.pr, o.order]));
-    expect(asked.sort()).toEqual([34, 35]);
-    expect(by.get(34)!.ledger_carry).toEqual(carry);
-    expect(by.get(34)!.settled_digest).toBe("- T1: conceded");
-    // No ledger ⇒ no field at all (the order renders exactly as before).
-    expect("ledger_carry" in by.get(35)!).toBe(false);
-    expect(by.get(35)!.settled_digest).toBe("");
-  });
+  it(
+    "carries the PR's ledger and takes the settled digest from it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(34, "2026-08-13T09:00:00Z");
+      queue(35, "2026-08-13T09:01:00Z");
+      const { hooks, orders } = recordingHooks();
+      const carry = {
+        source: "/r/state/ledgers/pr-34.md",
+        header: "LEDGER PR #34 @ abc1234",
+        text: "LEDGER PR #34 @ abc1234\nSETTLED: T1: conceded",
+        truncated: false,
+        total_chars: 44,
+      };
+      const asked: number[] = [];
+      await dispatchOnce({
+        cfg: { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 5 } },
+        store,
+        adapter,
+        hooks,
+        ledgerCarry: (pr) => {
+          asked.push(pr);
+          return pr === 34 ? { carry, settled: "- T1: conceded" } : { settled: "" };
+        },
+      });
+      const by = new Map(orders.map((o) => [o.order.pr, o.order]));
+      expect(asked.sort()).toEqual([34, 35]);
+      expect(by.get(34)!.ledger_carry).toEqual(carry);
+      expect(by.get(34)!.settled_digest).toBe("- T1: conceded");
+      // No ledger ⇒ no field at all (the order renders exactly as before).
+      expect("ledger_carry" in by.get(35)!).toBe(false);
+      expect(by.get(35)!.settled_digest).toBe("");
+    },
+  );
 
-  it("an explicit settledDigest supplier beats the ledger's SETTLED items", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(36, "2026-08-13T09:00:00Z");
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      settledDigest: () => "explicit",
-      ledgerCarry: () => ({ settled: "- from ledger" }),
-    });
-    expect(orders[0]!.order.settled_digest).toBe("explicit");
-  });
+  it(
+    "an explicit settledDigest supplier beats the ledger's SETTLED items",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(36, "2026-08-13T09:00:00Z");
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        settledDigest: () => "explicit",
+        ledgerCarry: () => ({ settled: "- from ledger" }),
+      });
+      expect(orders[0]!.order.settled_digest).toBe("explicit");
+    },
+  );
 
   // the nit treadmill's stopping rule must reach the passes through
   // their task strings, and passes are blank slates — so the dispatched round
   // prompt itself must carry the verbatim NIT SCOPE block from round 3 onward,
   // rendered through the REAL shipped templates.
-  it("arms the NIT SCOPE task-string block in the dispatched prompt from round 3, not before", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const templates = new Map(
-      (["first", "re-review", "staleness"] as const).map((rt) => [
-        rt,
-        readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8"),
-      ]),
-    );
-    const renderPrompt = (o: RoundOrder) => renderRoundPrompt(templates.get(o.round_type)!, o);
-    const { hooks, orders } = recordingHooks();
-    queue(89, "2026-08-13T09:00:00Z", { head: "h1" });
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
-    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
-    queue(89, "2026-08-13T10:00:00Z", { head: "h2" });
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
-    store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
-    queue(89, "2026-08-13T11:00:00Z", { head: "h3" });
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+  it(
+    "arms the NIT SCOPE task-string block in the dispatched prompt from round 3, not before",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const templates = new Map(
+        (["first", "re-review", "staleness"] as const).map((rt) => [
+          rt,
+          readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8"),
+        ]),
+      );
+      const renderPrompt = (o: RoundOrder) => renderRoundPrompt(templates.get(o.round_type)!, o);
+      const { hooks, orders } = recordingHooks();
+      queue(89, "2026-08-13T09:00:00Z", { head: "h1" });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+      store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+      queue(89, "2026-08-13T10:00:00Z", { head: "h2" });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
+      store.finishRound(store.runningRounds()[0]!.id, "REQUEST_CHANGES", 1);
+      queue(89, "2026-08-13T11:00:00Z", { head: "h3" });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, renderPrompt });
 
-    expect(orders.map((o) => [o.order.round_no, o.order.round_type])).toEqual([
-      [1, "first"],
-      [2, "re-review"],
-      [3, "re-review"],
-    ]);
-    // Rounds 1–2: no armed block in what the session was handed.
-    expect(orders[0]!.prompt).not.toContain("NIT SCOPE: this is review");
-    expect(orders[1]!.prompt).not.toContain("NIT SCOPE: this is review");
-    // Round 3: the verbatim block, round number stated, rule + exemption whole.
-    const p3 = orders[2]!.prompt;
-    expect(p3).toContain("fenced block below VERBATIM into every lens pass's task string");
-    expect(p3).toContain("NIT SCOPE: this is review 3 of this PR");
-    expect(p3).toContain("inside the current delta");
-    expect(p3).toContain("P0–P2 findings are exempt");
-    expect(p3).toContain("running non-blocking thread");
-  });
+      expect(orders.map((o) => [o.order.round_no, o.order.round_type])).toEqual([
+        [1, "first"],
+        [2, "re-review"],
+        [3, "re-review"],
+      ]);
+      // Rounds 1–2: no armed block in what the session was handed.
+      expect(orders[0]!.prompt).not.toContain("NIT SCOPE: this is review");
+      expect(orders[1]!.prompt).not.toContain("NIT SCOPE: this is review");
+      // Round 3: the verbatim block, round number stated, rule + exemption whole.
+      const p3 = orders[2]!.prompt;
+      expect(p3).toContain("fenced block below VERBATIM into every lens pass's task string");
+      expect(p3).toContain("NIT SCOPE: this is review 3 of this PR");
+      expect(p3).toContain("inside the current delta");
+      expect(p3).toContain("P0–P2 findings are exempt");
+      expect(p3).toContain("running non-blocking thread");
+    },
+  );
 
   it("numbers rounds per PR and marks a stale recheck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(41, "2026-08-13T09:00:00Z");
@@ -1141,81 +1249,95 @@ describe("dispatchOnce", () => {
     expect(adapter.calls).toHaveLength(0);
   });
 
-  it("serializes concurrent pumps so one PR gets one round and the cap holds", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } };
-    queue(58, "2026-08-13T09:00:00Z");
-    queue(59, "2026-08-13T09:01:00Z");
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { hooks, orders } = recordingHooks();
-    const original = hooks.dispatchRound;
-    hooks.dispatchRound = async (order, prompt) => {
-      await blocked;
-      await original(order, prompt);
-    };
-
-    const first = dispatchOnce({ cfg, store, adapter, hooks });
-    const joined = dispatchOnce({ cfg, store, adapter, hooks });
-    release();
-    expect((await first).map((o) => o.pr)).toEqual([58]);
-    expect(await joined).toEqual([]);
-    expect(orders.map((o) => o.order.pr)).toEqual([58]);
-    expect(store.runningRounds()).toHaveLength(1);
-    expect(store.getPr(59)!.state).toBe("queued");
-    expect(adapter.calls.filter((c) => c.fn === "removeLabel" && c.pr === 58)).toHaveLength(1);
-  });
-
-  it("discards a provisional round and leaves the PR queued when session dispatch fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(60, "2026-08-13T09:00:00Z");
-    const hooks = recordingHooks().hooks;
-    hooks.dispatchRound = async () => {
-      throw new Error("worktree index.lock");
-    };
-
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
-    expect(store.getPr(60)!.state).toBe("queued");
-    expect(store.runningRounds()).toEqual([]);
-    expect(store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = 60").get()).toMatchObject({
-      c: 0,
-    });
-    const failure = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'dispatch_failed' AND pr = 60")
-      .get() as { payload: string };
-    expect(JSON.parse(failure.payload)).toMatchObject({
-      round_id: 1,
-      error: expect.stringContaining("index.lock"),
-    });
-  });
-
-  it("retains the round when a durable command exists before bookkeeping fails", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(63, "2026-08-13T09:00:00Z");
-    const hooks = recordingHooks().hooks;
-    hooks.dispatchRound = async (order) => {
-      store.createSessionCommand({
-        id: "cmd-retained",
-        pr: order.pr,
-        session: `pr-${order.pr}`,
-        kind: "round",
-        round_no: order.round_no,
-        payload_sha256: "a".repeat(64),
-        payload_path: "/state/cmd-retained.md",
-        inject_path: "/inject/pr-63/cmd-retained.md",
-        next_check_at: "2026-08-13T09:02:00Z",
+  it(
+    "serializes concurrent pumps so one PR gets one round and the cap holds",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg = { ...baseCfg, daemon: { ...baseCfg.daemon, max_concurrent_rounds: 1 } };
+      queue(58, "2026-08-13T09:00:00Z");
+      queue(59, "2026-08-13T09:01:00Z");
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
       });
-      throw new Error("post-handoff bookkeeping failed");
-    };
+      const { hooks, orders } = recordingHooks();
+      const original = hooks.dispatchRound;
+      hooks.dispatchRound = async (order, prompt) => {
+        await blocked;
+        await original(order, prompt);
+      };
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
-    expect(store.getPr(63)?.state).toBe("reviewing");
-    expect(store.runningRounds()).toHaveLength(1);
-    expect(store.blockingSessionCommand("pr-63")?.id).toBe("cmd-retained");
-    const failure = store.db
-      .prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63")
-      .get() as { payload: string };
-    expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
-  });
+      const first = dispatchOnce({ cfg, store, adapter, hooks });
+      const joined = dispatchOnce({ cfg, store, adapter, hooks });
+      release();
+      expect((await first).map((o) => o.pr)).toEqual([58]);
+      expect(await joined).toEqual([]);
+      expect(orders.map((o) => o.order.pr)).toEqual([58]);
+      expect(store.runningRounds()).toHaveLength(1);
+      expect(store.getPr(59)!.state).toBe("queued");
+      expect(adapter.calls.filter((c) => c.fn === "removeLabel" && c.pr === 58)).toHaveLength(1);
+    },
+  );
+
+  it(
+    "discards a provisional round and leaves the PR queued when session dispatch fails",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(60, "2026-08-13T09:00:00Z");
+      const hooks = recordingHooks().hooks;
+      hooks.dispatchRound = async () => {
+        throw new Error("worktree index.lock");
+      };
+
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      expect(store.getPr(60)!.state).toBe("queued");
+      expect(store.runningRounds()).toEqual([]);
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = 60").get(),
+      ).toMatchObject({
+        c: 0,
+      });
+      const failure = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'dispatch_failed' AND pr = 60")
+        .get() as { payload: string };
+      expect(JSON.parse(failure.payload)).toMatchObject({
+        round_id: 1,
+        error: expect.stringContaining("index.lock"),
+      });
+    },
+  );
+
+  it(
+    "retains the round when a durable command exists before bookkeeping fails",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(63, "2026-08-13T09:00:00Z");
+      const hooks = recordingHooks().hooks;
+      hooks.dispatchRound = async (order) => {
+        store.createSessionCommand({
+          id: "cmd-retained",
+          pr: order.pr,
+          session: `pr-${order.pr}`,
+          kind: "round",
+          round_no: order.round_no,
+          payload_sha256: "a".repeat(64),
+          payload_path: "/state/cmd-retained.md",
+          inject_path: "/inject/pr-63/cmd-retained.md",
+          next_check_at: "2026-08-13T09:02:00Z",
+        });
+        throw new Error("post-handoff bookkeeping failed");
+      };
+
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      expect(store.getPr(63)?.state).toBe("reviewing");
+      expect(store.runningRounds()).toHaveLength(1);
+      expect(store.blockingSessionCommand("pr-63")?.id).toBe("cmd-retained");
+      const failure = store.db
+        .prepare("SELECT payload FROM events WHERE kind='dispatch_failed' AND pr=63")
+        .get() as { payload: string };
+      expect(JSON.parse(failure.payload)).toMatchObject({ retained_command: true });
+    },
+  );
 
   it("one failing PR does not stall the pump", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(61, "2026-08-13T09:00:00Z");
@@ -1243,133 +1365,153 @@ describe("first-party directive escalation pick", () => {
     merge_base: "forkpoint",
   };
 
-  it("puts the directive files and the git-picked mention on the order, deterministically and logged", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(70, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(70, [file(".claude/skills/uja/SKILL.md"), file("src/app.py")]);
-    const { hooks, orders } = recordingHooks();
-    const lookups: Array<{ sha: string; paths: string[] }> = [];
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => tree,
-      directiveAuthor: async (sha, paths) => {
-        lookups.push({ sha, paths });
-        return { login: "alex", name: "Alex", email: "7+alex@users.noreply.github.com" };
-      },
-    });
-    // The lookup runs at the MERGE BASE over the directive files only — the
-    // PR's own commits can never elect the PR author as their own approver.
-    expect(lookups).toEqual([{ sha: "forkpoint", paths: [".claude/skills/uja/SKILL.md"] }]);
-    expect(orders[0]!.order.first_party_directives).toEqual({
-      files: [".claude/skills/uja/SKILL.md"],
-      mention: "alex",
-    });
-    const ev = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
-      .get() as { payload: string };
-    expect(JSON.parse(ev.payload)).toMatchObject({
-      mention: "alex",
-      source: "git-log",
-      sha: "forkpoint",
-    });
-  });
+  it(
+    "puts the directive files and the git-picked mention on the order, deterministically and logged",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(70, "2026-08-13T10:00:00Z", { head: "sha70" });
+      adapter.files.set(70, [file(".claude/skills/uja/SKILL.md"), file("src/app.py")]);
+      const { hooks, orders } = recordingHooks();
+      const lookups: Array<{ sha: string; paths: string[] }> = [];
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => tree,
+        directiveAuthor: async (sha, paths) => {
+          lookups.push({ sha, paths });
+          return { login: "alex", name: "Alex", email: "7+alex@users.noreply.github.com" };
+        },
+      });
+      // The lookup runs at the MERGE BASE over the directive files only — the
+      // PR's own commits can never elect the PR author as their own approver.
+      expect(lookups).toEqual([{ sha: "forkpoint", paths: [".claude/skills/uja/SKILL.md"] }]);
+      expect(orders[0]!.order.first_party_directives).toEqual({
+        files: [".claude/skills/uja/SKILL.md"],
+        mention: "alex",
+      });
+      const ev = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
+        .get() as { payload: string };
+      expect(JSON.parse(ev.payload)).toMatchObject({
+        mention: "alex",
+        source: "git-log",
+        sha: "forkpoint",
+      });
+    },
+  );
 
-  it("falls back to config [review].escalation_mention_default when git yields no login", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(71, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(71, [file("CLAUDE.md")]);
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => tree,
-      directiveAuthor: async () => null,
-    });
-    expect(orders[0]!.order.first_party_directives).toEqual({
-      files: ["CLAUDE.md"],
-      mention: baseCfg.review.escalation_mention_default,
-    });
-    const ev = store.db
-      .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
-      .get() as { payload: string };
-    expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
-  });
+  it(
+    "falls back to config [review].escalation_mention_default when git yields no login",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(71, "2026-08-13T10:00:00Z", { head: "sha70" });
+      adapter.files.set(71, [file("CLAUDE.md")]);
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => tree,
+        directiveAuthor: async () => null,
+      });
+      expect(orders[0]!.order.first_party_directives).toEqual({
+        files: ["CLAUDE.md"],
+        mention: baseCfg.review.escalation_mention_default,
+      });
+      const ev = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'escalation_mention_selected'")
+        .get() as { payload: string };
+      expect(JSON.parse(ev.payload)).toMatchObject({ source: "config-default" });
+    },
+  );
 
-  it("falls back to [owner] github_login when the [review] knob is unset", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg = structuredClone(baseCfg);
-    cfg.review.escalation_mention_default = "";
-    queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(74, [file("CLAUDE.md")]);
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({
-      cfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => tree,
-      directiveAuthor: async () => null,
-    });
-    expect(orders[0]!.order.first_party_directives).toEqual({
-      files: ["CLAUDE.md"],
-      mention: cfg.owner.github_login, // "example-owner" from the fixture
-    });
-  });
+  it(
+    "falls back to [owner] github_login when the [review] knob is unset",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg = structuredClone(baseCfg);
+      cfg.review.escalation_mention_default = "";
+      queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
+      adapter.files.set(74, [file("CLAUDE.md")]);
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => tree,
+        directiveAuthor: async () => null,
+      });
+      expect(orders[0]!.order.first_party_directives).toEqual({
+        files: ["CLAUDE.md"],
+        mention: cfg.owner.github_login, // "example-owner" from the fixture
+      });
+    },
+  );
 
-  it("degrades to the fallback — never a lost round — when the author lookup throws or is absent", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(72, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(72, [file("prompts/system.md")]);
-    const { hooks, orders } = recordingHooks();
-    const dispatched = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => tree,
-      directiveAuthor: async () => {
-        throw new Error("git exploded");
-      },
-    });
-    expect(dispatched).toHaveLength(1);
-    expect(orders[0]!.order.first_party_directives!.mention).toBe(
-      baseCfg.review.escalation_mention_default,
-    );
+  it(
+    "degrades to the fallback — never a lost round — when the author lookup throws or is absent",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(72, "2026-08-13T10:00:00Z", { head: "sha70" });
+      adapter.files.set(72, [file("prompts/system.md")]);
+      const { hooks, orders } = recordingHooks();
+      const dispatched = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => tree,
+        directiveAuthor: async () => {
+          throw new Error("git exploded");
+        },
+      });
+      expect(dispatched).toHaveLength(1);
+      expect(orders[0]!.order.first_party_directives!.mention).toBe(
+        baseCfg.review.escalation_mention_default,
+      );
 
-    // No seam at all (stub-wired core): same fallback.
-    queue(73, "2026-08-13T11:00:00Z", { head: "sha70" });
-    adapter.files.set(73, [file("AGENTS.md")]);
-    const second = recordingHooks();
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks: second.hooks });
-    expect(second.orders[0]!.order.first_party_directives!.mention).toBe(
-      baseCfg.review.escalation_mention_default,
-    );
-  });
+      // No seam at all (stub-wired core): same fallback.
+      queue(73, "2026-08-13T11:00:00Z", { head: "sha70" });
+      adapter.files.set(73, [file("AGENTS.md")]);
+      const second = recordingHooks();
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks: second.hooks });
+      expect(second.orders[0]!.order.first_party_directives!.mention).toBe(
+        baseCfg.review.escalation_mention_default,
+      );
+    },
+  );
 
-  it("a PR touching no directive file carries no field and logs no pick", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
-    adapter.files.set(74, [
-      file("src/app.py"),
-      file("backend/prompts/nested.md"),
-      file("node_modules/x/CLAUDE.md"),
-    ]);
-    const { hooks, orders } = recordingHooks();
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      prepareWorktree: async () => tree,
-      directiveAuthor: async () => ({ login: "alex", name: "Alex", email: "e" }),
-    });
-    expect(orders[0]!.order.first_party_directives).toBeUndefined();
-    expect(
-      store.db
-        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'")
-        .get(),
-    ).toMatchObject({ c: 0 });
-  });
+  it(
+    "a PR touching no directive file carries no field and logs no pick",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(74, "2026-08-13T10:00:00Z", { head: "sha70" });
+      adapter.files.set(74, [
+        file("src/app.py"),
+        file("backend/prompts/nested.md"),
+        file("node_modules/x/CLAUDE.md"),
+      ]);
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        prepareWorktree: async () => tree,
+        directiveAuthor: async () => ({ login: "alex", name: "Alex", email: "e" }),
+      });
+      expect(orders[0]!.order.first_party_directives).toBeUndefined();
+      expect(
+        store.db
+          .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'escalation_mention_selected'")
+          .get(),
+      ).toMatchObject({ c: 0 });
+    },
+  );
 });
 
 describe("system re-trigger short-circuit", () => {
@@ -1400,120 +1542,148 @@ describe("system re-trigger short-circuit", () => {
     );
   }
 
-  it("unchanged-head system re-trigger short-circuits — the #5308 r2 case", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(41, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
-    reviewed(41, OLD, "APPROVE");
-    const { hooks, orders } = recordingHooks();
+  it(
+    "unchanged-head system re-trigger short-circuits — the #5308 r2 case",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(41, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+      reviewed(41, OLD, "APPROVE");
+      const { hooks, orders } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toEqual([]);
+      expect(await dispatchOnce({ cfg, store, adapter, hooks })).toEqual([]);
 
-    expect(orders).toEqual([]);
-    expect(store.priorRoundCount(41)).toBe(1); // no new round
-    expect(store.getPr(41)!.state).toBe("tracked"); // as the APPROVE uphold leaves it
-    expect(shortCircuitEvents(41)).toMatchObject([
-      { reason: "unchanged-head", delta_class: "empty", standing_verdict: "APPROVE" },
-    ]);
-    // The trigger is consumed but the PR is never painted "in progress".
-    const fns = adapter.calls.map((c) => `${c.fn}:${c.pr}`);
-    expect(fns).toContain("removeLabel:41");
-    expect(fns).toContain("deleteTeamReviewRequest:41");
-    expect(adapter.calls.filter((c) => c.fn === "addLabel")).toEqual([]);
-  });
+      expect(orders).toEqual([]);
+      expect(store.priorRoundCount(41)).toBe(1); // no new round
+      expect(store.getPr(41)!.state).toBe("tracked"); // as the APPROVE uphold leaves it
+      expect(shortCircuitEvents(41)).toMatchObject([
+        { reason: "unchanged-head", delta_class: "empty", standing_verdict: "APPROVE" },
+      ]);
+      // The trigger is consumed but the PR is never painted "in progress".
+      const fns = adapter.calls.map((c) => `${c.fn}:${c.pr}`);
+      expect(fns).toContain("removeLabel:41");
+      expect(fns).toContain("deleteTeamReviewRequest:41");
+      expect(adapter.calls.filter((c) => c.fn === "addLabel")).toEqual([]);
+    },
+  );
 
-  it("a clean base merge touching no PR-owned files short-circuits — the #5308 r6 case", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(42, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(42, OLD, "APPROVE");
-    adapter.files.set(42, [file("mine.ts")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [
-      file("base/other.py", 30, 4),
-      file("base/second.py", 8, 1),
-    ]);
-    const { hooks, orders } = recordingHooks();
+  it(
+    "a clean base merge touching no PR-owned files short-circuits — the #5308 r6 case",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(42, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(42, OLD, "APPROVE");
+      adapter.files.set(42, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [
+        file("base/other.py", 30, 4),
+        file("base/second.py", 8, 1),
+      ]);
+      const { hooks, orders } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
 
-    expect(orders).toEqual([]);
-    expect(store.priorRoundCount(42)).toBe(1);
-    expect(store.getPr(42)!.state).toBe("tracked");
-    const [ev] = shortCircuitEvents(42);
-    expect(ev).toMatchObject({
-      reason: "trivial-delta",
-      delta_class: "trivial",
-      standing_verdict: "APPROVE",
-    });
-    // Terminal for this head: the reconcile push-backstop's exact fingerprint
-    // is claimed, so the same question is never re-asked every sweep.
-    expect(store.hasRecheck(42, recheckFingerprint({ trigger: "push" }, NEW))).toBe(true);
-  });
+      expect(orders).toEqual([]);
+      expect(store.priorRoundCount(42)).toBe(1);
+      expect(store.getPr(42)!.state).toBe("tracked");
+      const [ev] = shortCircuitEvents(42);
+      expect(ev).toMatchObject({
+        reason: "trivial-delta",
+        delta_class: "trivial",
+        standing_verdict: "APPROVE",
+      });
+      // Terminal for this head: the reconcile push-backstop's exact fingerprint
+      // is claimed, so the same question is never re-asked every sweep.
+      expect(store.hasRecheck(42, recheckFingerprint({ trigger: "push" }, NEW))).toBe(true);
+    },
+  );
 
   // Selfscan 5bd5d43c / a78c7cba: a compare GitHub truncated at 300 files,
   // or a PR file list cut at its cap, is not evidence of "base-merge only".
-  it("a truncated compare or PR file list never short-circuits the round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(46, OLD, "APPROVE");
-    adapter.files.set(46, [file("mine.ts")]);
-    adapter.compares.set(
-      `${OLD}..${NEW}`,
-      Object.assign(
-        Array.from({ length: 300 }, (_, i) => file(`base/f${i}.py`, 1, 1)),
-        { truncated: true },
-      ),
-    );
-    const { hooks, orders } = recordingHooks();
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(orders).toHaveLength(1);
-    expect(shortCircuitEvents(46)).toEqual([]);
+  it(
+    "a truncated compare or PR file list never short-circuits the round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(46, OLD, "APPROVE");
+      adapter.files.set(46, [file("mine.ts")]);
+      adapter.compares.set(
+        `${OLD}..${NEW}`,
+        Object.assign(
+          Array.from({ length: 300 }, (_, i) => file(`base/f${i}.py`, 1, 1)),
+          { truncated: true },
+        ),
+      );
+      const { hooks, orders } = recordingHooks();
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(orders).toHaveLength(1);
+      expect(shortCircuitEvents(46)).toEqual([]);
 
-    queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(47, OLD, "APPROVE");
-    adapter.files.set(47, Object.assign([file("mine.ts")], { truncated: true }));
-    adapter.compares.set(`${OLD}..${NEW}`, [file("owned_past_the_cap.py", 30, 4)]);
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(47)).toEqual([]);
-  });
+      queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(47, OLD, "APPROVE");
+      adapter.files.set(47, Object.assign([file("mine.ts")], { truncated: true }));
+      adapter.compares.set(`${OLD}..${NEW}`, [file("owned_past_the_cap.py", 30, 4)]);
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(47)).toEqual([]);
+    },
+  );
 
   // Selfscan 8dd186e2 (the dispatch copy): a push restoring a reviewed file
   // to its base content drops it from the CURRENT diff; ownership read only
   // there called the reversion a base merge and skipped the round.
-  it("a push reverting a reviewed file is never a base-merge short-circuit", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(47, OLD, "APPROVE");
-    adapter.files.set(47, [file("api.py")]);
-    adapter.compares.set(`master..${OLD}`, [file("auth.py"), file("api.py")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [file("auth.py", 0, 2)]);
-    const { hooks, orders } = recordingHooks();
+  it(
+    "a push reverting a reviewed file is never a base-merge short-circuit",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(47, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(47, OLD, "APPROVE");
+      adapter.files.set(47, [file("api.py")]);
+      adapter.compares.set(`master..${OLD}`, [file("auth.py"), file("api.py")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("auth.py", 0, 2)]);
+      const { hooks, orders } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(orders).toHaveLength(1);
-    expect(shortCircuitEvents(47)).toEqual([]);
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(orders).toHaveLength(1);
+      expect(shortCircuitEvents(47)).toEqual([]);
+    },
+  );
 
-  it("a significant delta dispatches the full round as today", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(43, OLD, "APPROVE");
-    adapter.files.set(43, [file("mine.ts")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [file("mine.ts", 12, 3)]); // PR-owned content change
-    const { hooks, orders } = recordingHooks();
+  it(
+    "a significant delta dispatches the full round as today",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(43, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(43, OLD, "APPROVE");
+      adapter.files.set(43, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("mine.ts", 12, 3)]); // PR-owned content change
+      const { hooks, orders } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(orders).toHaveLength(1);
-    expect(shortCircuitEvents(43)).toEqual([]);
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(orders).toHaveLength(1);
+      expect(shortCircuitEvents(43)).toEqual([]);
+    },
+  );
 
-  it("human provenance never short-circuits, even on an empty delta", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(44, "2026-08-19T10:00:00Z", { head: NEW, provenance: "human" });
-    reviewed(44, OLD, "APPROVE");
-    const { hooks } = recordingHooks();
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(44)).toEqual([]);
-  });
+  it(
+    "human provenance never short-circuits, even on an empty delta",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(44, "2026-08-19T10:00:00Z", { head: NEW, provenance: "human" });
+      reviewed(44, OLD, "APPROVE");
+      const { hooks } = recordingHooks();
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(44)).toEqual([]);
+    },
+  );
 
-  it("legacy null provenance never short-circuits (full round is the safe default)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(45, "2026-08-19T10:00:00Z", { head: NEW, provenance: null });
-    reviewed(45, OLD, "APPROVE");
-    const { hooks } = recordingHooks();
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-  });
+  it(
+    "legacy null provenance never short-circuits (full round is the safe default)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(45, "2026-08-19T10:00:00Z", { head: NEW, provenance: null });
+      reviewed(45, OLD, "APPROVE");
+      const { hooks } = recordingHooks();
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+    },
+  );
 
   it("first reviews never short-circuit", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(46, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
@@ -1522,138 +1692,174 @@ describe("system re-trigger short-circuit", () => {
     expect(shortCircuitEvents(46)).toEqual([]);
   });
 
-  it("a withheld approval at this head still dispatches —'s retry must post", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(47, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
-    reviewed(47, OLD, "APPROVE");
-    store.recordApprovalWithheld(47, { head_sha: OLD });
-    const { hooks } = recordingHooks();
-    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(47)).toEqual([]);
-  });
+  it(
+    "a withheld approval at this head still dispatches —'s retry must post",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(47, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+      reviewed(47, OLD, "APPROVE");
+      store.recordApprovalWithheld(47, { head_sha: OLD });
+      const { hooks } = recordingHooks();
+      expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(47)).toEqual([]);
+    },
+  );
 
-  it("an author reply pending on the mark blocks the unchanged-head skip", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(48, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
-    reviewed(48, OLD, "APPROVE");
-    store.noteAuthorReply(48, "2099-01-01T00:00:00.000Z");
-    const { hooks } = recordingHooks();
-    expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(48)).toEqual([]);
-  });
+  it(
+    "an author reply pending on the mark blocks the unchanged-head skip",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(48, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
+      reviewed(48, OLD, "APPROVE");
+      store.noteAuthorReply(48, "2099-01-01T00:00:00.000Z");
+      const { hooks } = recordingHooks();
+      expect(await dispatchOnce({ cfg, store, adapter, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(48)).toEqual([]);
+    },
+  );
 
-  it("standing REQUEST_CHANGES short-circuits back to awaiting_author and claims no recheck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(49, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(49, OLD, "REQUEST_CHANGES");
-    const { hooks } = recordingHooks();
+  it(
+    "standing REQUEST_CHANGES short-circuits back to awaiting_author and claims no recheck",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(49, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(49, OLD, "REQUEST_CHANGES");
+      const { hooks } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
-    expect(store.getPr(49)!.state).toBe("awaiting_author");
-    expect(shortCircuitEvents(49)).toMatchObject([
-      { reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" },
-    ]);
-    // The rechecks table is the APPROVE path's guard — untouched here.
-    expect(store.rechecksFor(49)).toEqual([]);
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      expect(store.getPr(49)!.state).toBe("awaiting_author");
+      expect(shortCircuitEvents(49)).toMatchObject([
+        { reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" },
+      ]);
+      // The rechecks table is the APPROVE path's guard — untouched here.
+      expect(store.rechecksFor(49)).toEqual([]);
+    },
+  );
 
-  it("carries a withheld approval to the new head on a trivial short-circuit (amendment 3)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(50, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(50, OLD, "APPROVE");
-    store.recordApprovalWithheld(50, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
-    const { hooks } = recordingHooks();
+  it(
+    "carries a withheld approval to the new head on a trivial short-circuit (amendment 3)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(50, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(50, OLD, "APPROVE");
+      store.recordApprovalWithheld(50, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
+      const { hooks } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
-    expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
-    expect(
-      store.db
-        .prepare(
-          "SELECT COUNT(*) AS c FROM events WHERE pr = 50 AND kind = 'approval_withheld_carried'",
-        )
-        .get(),
-    ).toEqual({ c: 1 });
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
+      expect(
+        store.db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM events WHERE pr = 50 AND kind = 'approval_withheld_carried'",
+          )
+          .get(),
+      ).toEqual({ c: 1 });
+    },
+  );
 
-  it("an existing recheck claim is left untouched — no double-claim against", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(51, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(51, OLD, "APPROVE");
-    const fp = recheckFingerprint({ trigger: "push" }, NEW);
-    store.claimRecheck(51, fp, { head_sha: NEW, trigger: "push", reason: "real-recheck" });
-    const { hooks } = recordingHooks();
+  it(
+    "an existing recheck claim is left untouched — no double-claim against",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(51, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(51, OLD, "APPROVE");
+      const fp = recheckFingerprint({ trigger: "push" }, NEW);
+      store.claimRecheck(51, fp, { head_sha: NEW, trigger: "push", reason: "real-recheck" });
+      const { hooks } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
-    const claims = store.rechecksFor(51);
-    expect(claims).toHaveLength(1);
-    expect(claims[0]).toMatchObject({ fingerprint: fp, reason: "real-recheck" });
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
+      const claims = store.rechecksFor(51);
+      expect(claims).toHaveLength(1);
+      expect(claims[0]).toMatchObject({ fingerprint: fp, reason: "real-recheck" });
+    },
+  );
 
-  it("a failed compare read falls back to the full round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(52, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(52, OLD, "APPROVE");
-    adapter.failCompare = true;
-    const { hooks } = recordingHooks();
+  it(
+    "a failed compare read falls back to the full round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(52, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(52, OLD, "APPROVE");
+      adapter.failCompare = true;
+      const { hooks } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(52)).toEqual([]);
-    expect(
-      store.db
-        .prepare(
-          "SELECT COUNT(*) AS c FROM events WHERE pr = 52 AND kind = 'dispatch_classifier_failed'",
-        )
-        .get(),
-    ).toEqual({ c: 1 });
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(52)).toEqual([]);
+      expect(
+        store.db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM events WHERE pr = 52 AND kind = 'dispatch_classifier_failed'",
+          )
+          .get(),
+      ).toEqual({ c: 1 });
+    },
+  );
 
-  it("an adapter without the compare seam never short-circuits a moved head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(53, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(53, OLD, "APPROVE");
-    const legacy = new FakeAdapter();
-    (legacy as { compareFiles?: unknown }).compareFiles = undefined;
-    const { hooks } = recordingHooks();
+  it(
+    "an adapter without the compare seam never short-circuits a moved head",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(53, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(53, OLD, "APPROVE");
+      const legacy = new FakeAdapter();
+      (legacy as { compareFiles?: unknown }).compareFiles = undefined;
+      const { hooks } = recordingHooks();
 
-    expect(await dispatchOnce({ cfg: baseCfg, store, adapter: legacy, hooks })).toHaveLength(1);
-    expect(shortCircuitEvents(53)).toEqual([]);
-  });
+      expect(await dispatchOnce({ cfg: baseCfg, store, adapter: legacy, hooks })).toHaveLength(1);
+      expect(shortCircuitEvents(53)).toEqual([]);
+    },
+  );
 
-  it("a hand-resolved merge conflict in the delta classifies significant — full round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(54, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(54, OLD, "APPROVE");
-    adapter.files.set(54, [file("mine.ts")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
-    const { hooks } = recordingHooks();
+  it(
+    "a hand-resolved merge conflict in the delta classifies significant — full round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(54, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(54, OLD, "APPROVE");
+      adapter.files.set(54, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+      const { hooks } = recordingHooks();
 
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      resolvedFilesInMerges: async () => ({ files: ["base/other.py"], degraded: false }),
-    });
-    expect(orders).toHaveLength(1);
-    expect(shortCircuitEvents(54)).toEqual([]);
-  });
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        resolvedFilesInMerges: async () => ({ files: ["base/other.py"], degraded: false }),
+      });
+      expect(orders).toHaveLength(1);
+      expect(shortCircuitEvents(54)).toEqual([]);
+    },
+  );
 
-  it("a degraded merge-verify keeps the delta-only classification but is never quiet", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(55, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
-    reviewed(55, OLD, "APPROVE");
-    adapter.files.set(55, [file("mine.ts")]);
-    adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
-    const { hooks } = recordingHooks();
+  it(
+    "a degraded merge-verify keeps the delta-only classification but is never quiet",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(55, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
+      reviewed(55, OLD, "APPROVE");
+      adapter.files.set(55, [file("mine.ts")]);
+      adapter.compares.set(`${OLD}..${NEW}`, [file("base/other.py", 30, 4)]);
+      const { hooks } = recordingHooks();
 
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      resolvedFilesInMerges: async () => ({ files: [], degraded: true }),
-    });
-    expect(orders).toEqual([]); // delta-only classification: trivial base-merge
-    expect(shortCircuitEvents(55)).toMatchObject([{ reason: "trivial-delta" }]);
-    expect(
-      store.db
-        .prepare(
-          "SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'",
-        )
-        .get(),
-    ).toEqual({ c: 1 });
-  });
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        resolvedFilesInMerges: async () => ({ files: [], degraded: true }),
+      });
+      expect(orders).toEqual([]); // delta-only classification: trivial base-merge
+      expect(shortCircuitEvents(55)).toMatchObject([{ reason: "trivial-delta" }]);
+      expect(
+        store.db
+          .prepare(
+            "SELECT COUNT(*) AS c FROM events WHERE pr = 55 AND kind = 'recheck_merge_verify_degraded'",
+          )
+          .get(),
+      ).toEqual({ c: 1 });
+    },
+  );
 });
 
 // round-memory seeding at dispatch: the pinned head and ONE budgeted
@@ -1700,152 +1906,19 @@ describe("round-memory seeding", () => {
     ).map((r) => JSON.parse(r.payload) as Record<string, unknown>);
   }
 
-  it("seeds the dispatched prompt with the head and the block, through the real template", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(70, "2026-08-20T09:00:00Z", { title: "Cap the retry budget" });
-    adapter.files.set(70, [file("api/retries.py")]);
-    const assembler = new Assembler();
-    const { hooks, orders } = recordingHooks();
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+  it(
+    "seeds the dispatched prompt with the head and the block, through the real template",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(70, "2026-08-20T09:00:00Z", { title: "Cap the retry budget" });
+      adapter.files.set(70, [file("api/retries.py")]);
+      const assembler = new Assembler();
+      const { hooks, orders } = recordingHooks();
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
 
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      memory: { assembler },
-      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
-    });
-
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.prompt).toContain("STANDING: approvals are final.");
-    expect(orders[0]!.prompt).toContain("PRECEDENT: #4000 settled the retry budget.");
-    // The query is derived from the PR's title and diff shape, at the sha the
-    // worktree was prepared to.
-    expect(assembler.queries[0]).toContain("Cap the retry budget");
-    expect(assembler.queries[0]).toContain("api");
-    expect(memoryEvents(70)).toMatchObject([
-      { degraded: false, round_no: 1, head_state: "populated" },
-    ]);
-  });
-
-  it("makes EXACTLY one context call per round — never one per pass, never two per round", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(71, "2026-08-20T09:00:00Z");
-    queue(72, "2026-08-20T09:30:00Z");
-    adapter.files.set(71, [
-      file("a.ts"),
-      file("b.ts"),
-      file("ui/c.tsx"),
-      file("migrations/0001_x.py"),
-    ]);
-    adapter.files.set(72, [file("d.ts")]);
-    const assembler = new Assembler();
-    const { hooks, orders } = recordingHooks();
-
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
-
-    expect(orders).toHaveLength(2);
-    // Two rounds — two calls, whatever the pass plan looked like.
-    expect(orders[0]!.order.pass_plan.length).toBeGreaterThan(2);
-    expect(assembler.contexts).toBe(2);
-    expect(assembler.heads).toBe(2);
-  });
-
-  // The acceptance criterion: with the store unreachable the round still
-  // renders and dispatches, memory-less, and it is not delayed while it waits.
-  it("dispatches memory-less and on time when the store never answers", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(73, "2026-08-20T09:00:00Z");
-    adapter.files.set(73, [file("a.ts")]);
-    const hung: ContextAssembler = {
-      pinnedHead: () => new Promise(() => {}),
-      contextBlock: () => new Promise(() => {}),
-    };
-    const { hooks, orders } = recordingHooks();
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
-
-    const started = Date.now();
-    const dispatched = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      memory: { assembler: hung, timeoutMs: 25 },
-      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
-    });
-    const elapsed = Date.now() - started;
-
-    // Dispatched, complete, and bounded by the memory deadline — not by the
-    // store's silence.
-    expect(dispatched).toHaveLength(1);
-    expect(elapsed).toBeLessThan(2000);
-    expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
-    expect(orders[0]!.prompt).toContain("Run the full 7-step round");
-    expect(store.getPr(73)!.state).toBe("reviewing");
-    // Logged AND alerted: the gap is never silent.
-    expect(memoryEvents(73)).toMatchObject([{ degraded: true }]);
-    const anomaly = store.db
-      .prepare("SELECT payload FROM events WHERE pr = 73 AND kind = 'anomaly'")
-      .get() as { payload: string };
-    expect(JSON.parse(anomaly.payload).kind).toBe("round_memory_degraded");
-  });
-
-  it("a store that breaks its contract and throws still costs nothing but memory", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(74, "2026-08-20T09:00:00Z");
-    adapter.files.set(74, [file("a.ts")]);
-    const broken: ContextAssembler = {
-      pinnedHead: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
-      contextBlock: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
-    };
-    const { hooks, orders } = recordingHooks();
-
-    await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: broken } });
-
-    expect(orders).toHaveLength(1);
-    expect(memoryEvents(74)).toMatchObject([{ degraded: true }]);
-    expect(JSON.stringify(memoryEvents(74)[0]!["gaps"])).toContain("ECONNREFUSED");
-  });
-
-  // the path every adopter takes first: a healthy store with nothing
-  // pinned yet. The round is seeded normally, told memory had nothing to add,
-  // and the operator hears nothing — EMPTY IS NOT DEGRADED.
-  it("a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(78, "2026-08-20T09:00:00Z");
-    adapter.files.set(78, [file("a.ts")]);
-    const fresh = new Assembler(read(""), read(""));
-    const { hooks, orders } = recordingHooks();
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
-
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      memory: { assembler: fresh },
-      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
-    });
-
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
-    expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
-    expect(orders[0]!.prompt).toContain("had nothing to add");
-    expect(memoryEvents(78)).toMatchObject([
-      { degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 },
-    ]);
-    expect(anomalies(78)).toEqual([]);
-  });
-
-  // review: EMPTY IS NOT DEGRADED made one state silent that used to be
-  // loud — a store that answered "nothing pinned" on an install whose previous
-  // round carried standing instructions (a container recreated without its
-  // volume). The transition itself gets ONE anomaly; a fresh install never
-  // sees it, and it never repeats.
-  it("populated → empty with the store readable raises pinned_head_emptied exactly once", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
-    const { hooks, orders } = recordingHooks();
-    const injected: string[] = [];
-    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
-    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
-      queue(pr, ts);
-      adapter.files.set(pr, [file("a.ts")]);
       await dispatchOnce({
         cfg: baseCfg,
         store,
@@ -1854,135 +1927,326 @@ describe("round-memory seeding", () => {
         memory: { assembler },
         renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
       });
-    };
 
-    await run(80, "2026-08-20T09:00:00Z", new Assembler());
-    expect(anomalies(80)).toEqual([]);
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.prompt).toContain("STANDING: approvals are final.");
+      expect(orders[0]!.prompt).toContain("PRECEDENT: #4000 settled the retry budget.");
+      // The query is derived from the PR's title and diff shape, at the sha the
+      // worktree was prepared to.
+      expect(assembler.queries[0]).toContain("Cap the retry budget");
+      expect(assembler.queries[0]).toContain("api");
+      expect(memoryEvents(70)).toMatchObject([
+        { degraded: false, round_no: 1, head_state: "populated" },
+      ]);
+    },
+  );
 
-    // The volume is gone: the store is up and answers "nothing pinned".
-    await run(81, "2026-08-20T09:10:00Z", new Assembler(read(""), read("")));
-    expect(memoryEvents(81)).toMatchObject([{ degraded: false, head_state: "empty" }]);
-    expect(anomalies(81)).toEqual(["pinned_head_emptied"]);
-    expect(injected).toHaveLength(1);
-    expect(injected[0]).toContain("pinned area is EMPTY");
-    expect(injected[0]).toContain("#80");
-    expect(injected[0]).toContain(String("STANDING: approvals are final.".length));
-    // The round itself was normal: no unavailable note, dispatched.
-    expect(orders[1]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+  it(
+    "makes EXACTLY one context call per round — never one per pass, never two per round",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(71, "2026-08-20T09:00:00Z");
+      queue(72, "2026-08-20T09:30:00Z");
+      adapter.files.set(71, [
+        file("a.ts"),
+        file("b.ts"),
+        file("ui/c.tsx"),
+        file("migrations/0001_x.py"),
+      ]);
+      adapter.files.set(72, [file("d.ts")]);
+      const assembler = new Assembler();
+      const { hooks, orders } = recordingHooks();
 
-    // Still empty next round: the baseline is now the empty row — no repeat.
-    await run(82, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
-    expect(anomalies(82)).toEqual([]);
-    expect(injected).toHaveLength(1);
-  });
-
-  it("an unreadable round between the two does not hide the transition — the baseline is the last READ head", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const { hooks } = recordingHooks();
-    const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
-      queue(pr, ts);
-      adapter.files.set(pr, [file("a.ts")]);
       await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
-    };
-    await run(83, "2026-08-20T09:00:00Z", new Assembler());
-    await run(
-      84,
-      "2026-08-20T09:10:00Z",
-      new Assembler(unreadable("connect ECONNREFUSED"), read("")),
-    );
-    expect(anomalies(84)).toEqual(["round_memory_degraded"]);
-    await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
-    expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
-  });
 
-  it("an UNREADABLE store still degrades, still alerts the operator, and names what is missing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(79, "2026-08-20T09:00:00Z");
-    adapter.files.set(79, [file("a.ts")]);
-    const dead = new Assembler(
-      unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"),
-      read(""),
-    );
-    const { hooks, orders } = recordingHooks();
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
-    const injected: string[] = [];
-    store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+      expect(orders).toHaveLength(2);
+      // Two rounds — two calls, whatever the pass plan looked like.
+      expect(orders[0]!.order.pass_plan.length).toBeGreaterThan(2);
+      expect(assembler.contexts).toBe(2);
+      expect(assembler.heads).toBe(2);
+    },
+  );
 
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      memory: { assembler: dead },
-      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
-    });
+  // The acceptance criterion: with the store unreachable the round still
+  // renders and dispatches, memory-less, and it is not delayed while it waits.
+  it(
+    "dispatches memory-less and on time when the store never answers",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(73, "2026-08-20T09:00:00Z");
+      adapter.files.set(73, [file("a.ts")]);
+      const hung: ContextAssembler = {
+        pinnedHead: () => new Promise(() => {}),
+        contextBlock: () => new Promise(() => {}),
+      };
+      const { hooks, orders } = recordingHooks();
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
 
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
-    expect(store.getPr(79)!.state).toBe("reviewing");
-    expect(memoryEvents(79)).toMatchObject([
-      {
-        degraded: true,
-        head_state: "unread",
-        gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }],
-      },
-    ]);
-    expect(anomalies(79)).toEqual(["round_memory_degraded"]);
-    // The operator's alert says what is actually missing — here the head
-    // only; the context search answered (with nothing), so it is not claimed
-    // lost — and carries the reason.
-    expect(injected).toHaveLength(1);
-    expect(injected[0]).toContain("no standing-instructions head.");
-    expect(injected[0]).not.toContain("no recalled context");
-    expect(injected[0]).toContain("ECONNREFUSED");
-  });
+      const started = Date.now();
+      const dispatched = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: { assembler: hung, timeoutMs: 25 },
+        renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+      });
+      const elapsed = Date.now() - started;
 
-  it("keeps alerting bounded while the store stays down — the per-round record does not thin", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const down = new Assembler(
-      unreadable("connect ECONNREFUSED"),
-      unreadable("connect ECONNREFUSED"),
-    );
-    const { hooks } = recordingHooks();
-    for (const [pr, ts] of [
-      [75, "2026-08-20T09:00:00Z"],
-      [76, "2026-08-20T09:10:00Z"],
-    ] as const) {
-      queue(pr, ts);
-      adapter.files.set(pr, [file("a.ts")]);
-    }
+      // Dispatched, complete, and bounded by the memory deadline — not by the
+      // store's silence.
+      expect(dispatched).toHaveLength(1);
+      expect(elapsed).toBeLessThan(2000);
+      expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
+      expect(orders[0]!.prompt).toContain("Run the full 7-step round");
+      expect(store.getPr(73)!.state).toBe("reviewing");
+      // Logged AND alerted: the gap is never silent.
+      expect(memoryEvents(73)).toMatchObject([{ degraded: true }]);
+      const anomaly = store.db
+        .prepare("SELECT payload FROM events WHERE pr = 73 AND kind = 'anomaly'")
+        .get() as { payload: string };
+      expect(JSON.parse(anomaly.payload).kind).toBe("round_memory_degraded");
+    },
+  );
 
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      memory: { assembler: down, alertCooldownMin: 60 },
-    });
+  it(
+    "a store that breaks its contract and throws still costs nothing but memory",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(74, "2026-08-20T09:00:00Z");
+      adapter.files.set(74, [file("a.ts")]);
+      const broken: ContextAssembler = {
+        pinnedHead: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+        contextBlock: () => Promise.reject(new Error("ECONNREFUSED 127.0.0.1:1933")),
+      };
+      const { hooks, orders } = recordingHooks();
 
-    expect(memoryEvents(75)).toHaveLength(1);
-    expect(memoryEvents(76)).toHaveLength(1);
-    expect(
-      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'anomaly'").get(),
-    ).toEqual({ c: 1 });
-  });
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler: broken } });
 
-  it("with no memory wired at all, dispatch behaves exactly as before", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(77, "2026-08-20T09:00:00Z");
-    adapter.files.set(77, [file("a.ts")]);
-    const { hooks, orders } = recordingHooks();
-    const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile("first")), "utf8");
+      expect(orders).toHaveLength(1);
+      expect(memoryEvents(74)).toMatchObject([{ degraded: true }]);
+      expect(JSON.stringify(memoryEvents(74)[0]!["gaps"])).toContain("ECONNREFUSED");
+    },
+  );
 
-    await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
-    });
+  // the path every adopter takes first: a healthy store with nothing
+  // pinned yet. The round is seeded normally, told memory had nothing to add,
+  // and the operator hears nothing — EMPTY IS NOT DEGRADED.
+  it(
+    "a fresh install (healthy store, nothing pinned) is NOT degraded: no unavailable note, no anomaly",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(78, "2026-08-20T09:00:00Z");
+      adapter.files.set(78, [file("a.ts")]);
+      const fresh = new Assembler(read(""), read(""));
+      const { hooks, orders } = recordingHooks();
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
 
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
-    expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
-    expect(memoryEvents(77)).toEqual([]);
-  });
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: { assembler: fresh },
+        renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+      });
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+      expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
+      expect(orders[0]!.prompt).toContain("had nothing to add");
+      expect(memoryEvents(78)).toMatchObject([
+        { degraded: false, gaps: [], head_state: "empty", head_chars: 0, block_chars: 0 },
+      ]);
+      expect(anomalies(78)).toEqual([]);
+    },
+  );
+
+  // review: EMPTY IS NOT DEGRADED made one state silent that used to be
+  // loud — a store that answered "nothing pinned" on an install whose previous
+  // round carried standing instructions (a container recreated without its
+  // volume). The transition itself gets ONE anomaly; a fresh install never
+  // sees it, and it never repeats.
+  it(
+    "populated → empty with the store readable raises pinned_head_emptied exactly once",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
+      const { hooks, orders } = recordingHooks();
+      const injected: string[] = [];
+      store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+      const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+        queue(pr, ts);
+        adapter.files.set(pr, [file("a.ts")]);
+        await dispatchOnce({
+          cfg: baseCfg,
+          store,
+          adapter,
+          hooks,
+          memory: { assembler },
+          renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+        });
+      };
+
+      await run(80, "2026-08-20T09:00:00Z", new Assembler());
+      expect(anomalies(80)).toEqual([]);
+
+      // The volume is gone: the store is up and answers "nothing pinned".
+      await run(81, "2026-08-20T09:10:00Z", new Assembler(read(""), read("")));
+      expect(memoryEvents(81)).toMatchObject([{ degraded: false, head_state: "empty" }]);
+      expect(anomalies(81)).toEqual(["pinned_head_emptied"]);
+      expect(injected).toHaveLength(1);
+      expect(injected[0]).toContain("pinned area is EMPTY");
+      expect(injected[0]).toContain("#80");
+      expect(injected[0]).toContain(String("STANDING: approvals are final.".length));
+      // The round itself was normal: no unavailable note, dispatched.
+      expect(orders[1]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+
+      // Still empty next round: the baseline is now the empty row — no repeat.
+      await run(82, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+      expect(anomalies(82)).toEqual([]);
+      expect(injected).toHaveLength(1);
+    },
+  );
+
+  it(
+    "an unreadable round between the two does not hide the transition — the baseline is the last READ head",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { hooks } = recordingHooks();
+      const run = async (pr: number, ts: string, assembler: ContextAssembler) => {
+        queue(pr, ts);
+        adapter.files.set(pr, [file("a.ts")]);
+        await dispatchOnce({ cfg: baseCfg, store, adapter, hooks, memory: { assembler } });
+      };
+      await run(83, "2026-08-20T09:00:00Z", new Assembler());
+      await run(
+        84,
+        "2026-08-20T09:10:00Z",
+        new Assembler(unreadable("connect ECONNREFUSED"), read("")),
+      );
+      expect(anomalies(84)).toEqual(["round_memory_degraded"]);
+      await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
+      expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
+    },
+  );
+
+  it(
+    "an UNREADABLE store still degrades, still alerts the operator, and names what is missing",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(79, "2026-08-20T09:00:00Z");
+      adapter.files.set(79, [file("a.ts")]);
+      const dead = new Assembler(
+        unreadable("ls viking://user/reviewer/memories: connect ECONNREFUSED 127.0.0.1:1933"),
+        read(""),
+      );
+      const { hooks, orders } = recordingHooks();
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
+      const injected: string[] = [];
+      store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: { assembler: dead },
+        renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+      });
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
+      expect(store.getPr(79)!.state).toBe("reviewing");
+      expect(memoryEvents(79)).toMatchObject([
+        {
+          degraded: true,
+          head_state: "unread",
+          gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }],
+        },
+      ]);
+      expect(anomalies(79)).toEqual(["round_memory_degraded"]);
+      // The operator's alert says what is actually missing — here the head
+      // only; the context search answered (with nothing), so it is not claimed
+      // lost — and carries the reason.
+      expect(injected).toHaveLength(1);
+      expect(injected[0]).toContain("no standing-instructions head.");
+      expect(injected[0]).not.toContain("no recalled context");
+      expect(injected[0]).toContain("ECONNREFUSED");
+    },
+  );
+
+  it(
+    "keeps alerting bounded while the store stays down — the per-round record does not thin",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const down = new Assembler(
+        unreadable("connect ECONNREFUSED"),
+        unreadable("connect ECONNREFUSED"),
+      );
+      const { hooks } = recordingHooks();
+      for (const [pr, ts] of [
+        [75, "2026-08-20T09:00:00Z"],
+        [76, "2026-08-20T09:10:00Z"],
+      ] as const) {
+        queue(pr, ts);
+        adapter.files.set(pr, [file("a.ts")]);
+      }
+
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: { assembler: down, alertCooldownMin: 60 },
+      });
+
+      expect(memoryEvents(75)).toHaveLength(1);
+      expect(memoryEvents(76)).toHaveLength(1);
+      expect(
+        store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'anomaly'").get(),
+      ).toEqual({ c: 1 });
+    },
+  );
+
+  it(
+    "with no memory wired at all, dispatch behaves exactly as before",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(77, "2026-08-20T09:00:00Z");
+      adapter.files.set(77, [file("a.ts")]);
+      const { hooks, orders } = recordingHooks();
+      const tpl = readFileSync(
+        resolve(process.cwd(), "prompts", roundTemplateFile("first")),
+        "utf8",
+      );
+
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
+      });
+
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.prompt).not.toContain("STANDING INSTRUCTIONS");
+      expect(orders[0]!.prompt).not.toContain("MEMORY UNAVAILABLE");
+      expect(memoryEvents(77)).toEqual([]);
+    },
+  );
 });
 
 // ---- selfscan-2: dispatch decides on a snapshot the webhook can move --------
@@ -2011,57 +2275,69 @@ describe("a newer push/re-request during trigger consumption is never settled aw
       migration_gate: 0,
     });
 
-  it("no-new-evidence skip: the PR stays queued at the new head with its trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(91, "2026-09-30T09:00:00Z", { head: "h1" });
-    store.recordReviewedHead(91, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
-    const racing = new RacingAdapter();
-    racing.onDelete = moveTo(91, "h2", "2026-09-30T09:00:05Z");
-    const { hooks } = recordingHooks();
+  it(
+    "no-new-evidence skip: the PR stays queued at the new head with its trigger",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(91, "2026-09-30T09:00:00Z", { head: "h1" });
+      store.recordReviewedHead(91, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      const racing = new RacingAdapter();
+      racing.onDelete = moveTo(91, "h2", "2026-09-30T09:00:05Z");
+      const { hooks } = recordingHooks();
 
-    await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks });
+      await dispatchOnce({ cfg: baseCfg, store, adapter: racing, hooks });
 
-    const row = store.getPr(91)!;
-    expect(row.state).toBe("queued");
-    expect(row.head_sha).toBe("h2");
-    expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
-  });
+      const row = store.getPr(91)!;
+      expect(row.state).toBe("queued");
+      expect(row.head_sha).toBe("h2");
+      expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+    },
+  );
 
-  it("system short-circuit: the PR stays queued at the new head with its trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
-    queue(92, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
-    const id = store.startRound(92, "first", ["pass-baseline"], 60);
-    store.finishRound(id, "APPROVE", null);
-    store.recordReviewedHead(92, { head_sha: "h1", verdict: "APPROVE", round_no: 1 });
-    const racing = new RacingAdapter();
-    racing.onDelete = moveTo(92, "h2", "2026-09-30T09:00:05Z");
-    const { hooks } = recordingHooks();
+  it(
+    "system short-circuit: the PR stays queued at the new head with its trigger",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
+      queue(92, "2026-09-30T09:00:00Z", { head: "h1", provenance: "system" });
+      const id = store.startRound(92, "first", ["pass-baseline"], 60);
+      store.finishRound(id, "APPROVE", null);
+      store.recordReviewedHead(92, { head_sha: "h1", verdict: "APPROVE", round_no: 1 });
+      const racing = new RacingAdapter();
+      racing.onDelete = moveTo(92, "h2", "2026-09-30T09:00:05Z");
+      const { hooks } = recordingHooks();
 
-    await dispatchOnce({ cfg, store, adapter: racing, hooks });
+      await dispatchOnce({ cfg, store, adapter: racing, hooks });
 
-    const row = store.getPr(92)!;
-    expect(row.state).toBe("queued");
-    expect(row.head_sha).toBe("h2");
-    expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
-  });
+      const row = store.getPr(92)!;
+      expect(row.state).toBe("queued");
+      expect(row.head_sha).toBe("h2");
+      expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+    },
+  );
 });
 
 describe("the round's file facts describe the prepared head", () => {
-  it("a push landing before the worktree fetch is planned from the prepared head's files", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(93, "2026-09-30T09:00:00Z", { head: "h1" });
-    adapter.files.set(93, [file("src/views.py")]);
-    const { hooks } = recordingHooks();
-    const [order] = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter,
-      hooks,
-      // The push adds a migration; the worktree fetch sees it.
-      prepareWorktree: async () => {
-        adapter.files.set(93, [file("src/views.py"), file("app/migrations/0042_x.py")]);
-        return { head_sha: "h2", base_ref: "master", base_sha: "b", merge_base: "m" };
-      },
-    });
-    expect(order!.head_sha).toBe("h2");
-    expect(order!.migration_gate).toBe(true);
-  });
+  it(
+    "a push landing before the worktree fetch is planned from the prepared head's files",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(93, "2026-09-30T09:00:00Z", { head: "h1" });
+      adapter.files.set(93, [file("src/views.py")]);
+      const { hooks } = recordingHooks();
+      const [order] = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        // The push adds a migration; the worktree fetch sees it.
+        prepareWorktree: async () => {
+          adapter.files.set(93, [file("src/views.py"), file("app/migrations/0042_x.py")]);
+          return { head_sha: "h2", base_ref: "master", base_sha: "b", merge_base: "m" };
+        },
+      });
+      expect(order!.head_sha).toBe("h2");
+      expect(order!.migration_gate).toBe(true);
+    },
+  );
 });

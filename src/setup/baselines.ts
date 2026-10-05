@@ -37,8 +37,7 @@ export interface ProfileBaseline {
 }
 
 export type BaselinesRead =
-  | { state: "ok"; baselines: ProfileBaseline[] }
-  | { state: "unreadable"; error: string };
+  { state: "ok"; baselines: ProfileBaseline[] } | { state: "unreadable"; error: string };
 
 function isBaseline(b: unknown): b is ProfileBaseline {
   if (typeof b !== "object" || b === null) return false;
@@ -50,7 +49,9 @@ function isBaseline(b: unknown): b is ProfileBaseline {
     typeof r.existed === "boolean" &&
     typeof r.files === "object" &&
     r.files !== null &&
-    Object.values(r.files as Record<string, unknown>).every((v) => v === null || typeof v === "string") &&
+    Object.values(r.files as Record<string, unknown>).every(
+      (v) => v === null || typeof v === "string",
+    ) &&
     (r.config_named === null || typeof r.config_named === "string")
   );
 }
@@ -61,12 +62,19 @@ export function readBaselines(state: StateFs): BaselinesRead {
   try {
     text = state.read(PROFILE_BASELINES_FILE);
   } catch (err) {
-    return { state: "unreadable", error: `${PROFILE_BASELINES_FILE} cannot be read: ${String(err)}` };
+    return {
+      state: "unreadable",
+      error: `${PROFILE_BASELINES_FILE} cannot be read: ${String(err)}`,
+    };
   }
   if (text === null) return { state: "ok", baselines: [] };
   try {
     const raw = JSON.parse(text) as { version?: unknown; baselines?: unknown };
-    if (raw.version !== BASELINES_VERSION || !Array.isArray(raw.baselines) || !raw.baselines.every(isBaseline)) {
+    if (
+      raw.version !== BASELINES_VERSION ||
+      !Array.isArray(raw.baselines) ||
+      !raw.baselines.every(isBaseline)
+    ) {
       throw new Error("not a version-1 baselines record");
     }
     return { state: "ok", baselines: raw.baselines };
@@ -84,11 +92,18 @@ export function recordBaseline(state: StateFs, b: ProfileBaseline): void {
   const read = readBaselines(state);
   if (read.state !== "ok") throw new Error(read.error);
   const kept = [...read.baselines.filter((x) => x.id !== b.id), b].slice(-BASELINES_KEPT);
-  state.write(PROFILE_BASELINES_FILE, `${JSON.stringify({ version: BASELINES_VERSION, baselines: kept }, null, 2)}\n`);
+  state.write(
+    PROFILE_BASELINES_FILE,
+    `${JSON.stringify({ version: BASELINES_VERSION, baselines: kept }, null, 2)}\n`,
+  );
 }
 
 /** The newest baseline of `profile`, or null. */
-export function latestBaseline(baselines: readonly ProfileBaseline[], profile: string): ProfileBaseline | null {
-  for (let i = baselines.length - 1; i >= 0; i--) if (baselines[i]!.profile === profile) return baselines[i]!;
+export function latestBaseline(
+  baselines: readonly ProfileBaseline[],
+  profile: string,
+): ProfileBaseline | null {
+  for (let i = baselines.length - 1; i >= 0; i--)
+    if (baselines[i]!.profile === profile) return baselines[i]!;
   return null;
 }

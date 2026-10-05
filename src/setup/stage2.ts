@@ -106,7 +106,11 @@ export interface RowPrice {
 /** Stage 1 measured at BOTH validator settings at one tier and effort —
  * `[scan]`'s own when it has both, else the first other pair (sorted) that
  * does — or null: the skeptic's share is then unmeasured. */
-function stage1Pair(entries: readonly LedgerEntry[], cfg: PriceSettings, validator: boolean): { row: ScanRate; other: ScanRate } | null {
+function stage1Pair(
+  entries: readonly LedgerEntry[],
+  cfg: PriceSettings,
+  validator: boolean,
+): { row: ScanRate; other: ScanRate } | null {
   const at = (tier: string, effort: string) => {
     const row = measuredRate(entries, { lens: SCAN_PASS, tier, effort, validator });
     const other = measuredRate(entries, { lens: SCAN_PASS, tier, effort, validator: !validator });
@@ -114,7 +118,9 @@ function stage1Pair(entries: readonly LedgerEntry[], cfg: PriceSettings, validat
   };
   const own = at(cfg.tier, cfg.effort);
   if (own) return own;
-  const keys = [...new Set(entries.filter((e) => e.lens === SCAN_PASS).map((e) => `${e.tier}\0${e.effort}`))].sort();
+  const keys = [
+    ...new Set(entries.filter((e) => e.lens === SCAN_PASS).map((e) => `${e.tier}\0${e.effort}`)),
+  ].sort();
   for (const k of keys) {
     const [tier, effort] = k.split("\0") as [string, string];
     const p = at(tier, effort);
@@ -124,13 +130,24 @@ function stage1Pair(entries: readonly LedgerEntry[], cfg: PriceSettings, validat
 }
 
 /** The scan settings a stage-2 price reads. */
-export type PriceSettings = { tier: string; effort: string; validator: boolean; unmeasured_rate_factor: number };
+export type PriceSettings = {
+  tier: string;
+  effort: string;
+  validator: boolean;
+  unmeasured_rate_factor: number;
+};
 
 /**
  * A stage-2 row's price at `lens`/`tier`/`effort` from the ledger (header
  * "PRICED FROM THE LEDGER"), or null when stage 1 has measured nothing.
  */
-export function priceStage2Row(entries: readonly LedgerEntry[], cfg: PriceSettings, lens: string, tier: string, effort: string): RowPrice | null {
+export function priceStage2Row(
+  entries: readonly LedgerEntry[],
+  cfg: PriceSettings,
+  lens: string,
+  tier: string,
+  effort: string,
+): RowPrice | null {
   const validator = cfg.validator;
   const own = measuredRate(entries, { lens, tier, effort, validator });
   if (own) return { rate: own, basis: "measured", from: lens };
@@ -138,12 +155,20 @@ export function priceStage2Row(entries: readonly LedgerEntry[], cfg: PriceSettin
   // and its rate at a matching tier/effort (a profile giving a deep lens
   // `effort = "low"` at `[scan] tier`) would price a deep row at stage 1's
   // cost unscaled — stage 1's rate reaches a row only through a factor.
-  const deepAt = (v: boolean, same: boolean) => (e: LedgerEntry): boolean =>
-    (same ? e.lens === lens : e.lens !== lens && e.lens !== SCAN_PASS) && e.tier === tier && e.effort === effort && e.validator === v;
+  const deepAt =
+    (v: boolean, same: boolean) =>
+    (e: LedgerEntry): boolean =>
+      (same ? e.lens === lens : e.lens !== lens && e.lens !== SCAN_PASS) &&
+      e.tier === tier &&
+      e.effort === effort &&
+      e.validator === v;
   const lensesOf = (keep: (e: LedgerEntry) => boolean): string =>
-    [...new Set(entries.filter((e) => keep(e) && e.cost_usd !== null).map((e) => e.lens))].sort().join(", ");
+    [...new Set(entries.filter((e) => keep(e) && e.cost_usd !== null).map((e) => e.lens))]
+      .sort()
+      .join(", ");
   const borrowed = rateWhere(entries, deepAt(validator, false));
-  if (borrowed) return { rate: borrowed, basis: "borrowed", from: lensesOf(deepAt(validator, false)) };
+  if (borrowed)
+    return { rate: borrowed, basis: "borrowed", from: lensesOf(deepAt(validator, false)) };
   // Stage 1 at a validator setting: at `[scan]`'s tier and effort, else at
   // any (the same fallback the extrapolation has always used).
   const stage1At = (v: boolean): ScanRate | null =>
@@ -265,7 +290,11 @@ export function lensEffort(lenses: LensTuningMap | undefined, lens: string): str
 
 /** The tiers `lens` may run at in a scan: the ones its build variants exist
  * at, at or above its profile floor. */
-export function lensTiers(lenses: LensTuningMap | undefined, lens: string, riskPasses: readonly string[]): PassTier[] {
+export function lensTiers(
+  lenses: LensTuningMap | undefined,
+  lens: string,
+  riskPasses: readonly string[],
+): PassTier[] {
   if (riskPasses.includes(lens)) return ["sol-high"];
   const floor = flooredTier(lenses, lens, PASS_TIER_ORDER[0]!);
   return PASS_TIER_ORDER.slice(PASS_TIER_ORDER.indexOf(floor));
@@ -280,7 +309,16 @@ export function stage2Lenses(lenses: LensTuningMap | undefined): string[] {
 // ---- pairing tests -------------------------------------------------------------
 
 const TEST_DIRS = new Set(["test", "tests", "__tests__", "spec", "specs", "testing", "main"]);
-const FAMILY: Record<string, string> = { ts: "js", tsx: "js", js: "js", jsx: "js", mjs: "js", cjs: "js", mts: "js", cts: "js" };
+const FAMILY: Record<string, string> = {
+  ts: "js",
+  tsx: "js",
+  js: "js",
+  jsx: "js",
+  mjs: "js",
+  cjs: "js",
+  mts: "js",
+  cts: "js",
+};
 
 function ext(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
@@ -311,11 +349,15 @@ function testStem(path: string): string {
   let s = path.slice(path.lastIndexOf("/") + 1);
   const i = s.lastIndexOf(".");
   if (i > 0) s = s.slice(0, i);
-  s = s.replace(/[._-](test|spec)s?$/i, "").replace(/(?<=[a-z0-9])Tests?$/, "").replace(/^tests?[_-]/i, "");
+  s = s
+    .replace(/[._-](test|spec)s?$/i, "")
+    .replace(/(?<=[a-z0-9])Tests?$/, "")
+    .replace(/^tests?[_-]/i, "");
   return s.toLowerCase();
 }
 
-const endsWithSegs = (a: string[], b: string[]): boolean => b.length <= a.length && b.every((s, i) => a[a.length - b.length + i] === s);
+const endsWithSegs = (a: string[], b: string[]): boolean =>
+  b.length <= a.length && b.every((s, i) => a[a.length - b.length + i] === s);
 
 /**
  * The tests in `tree` that pair with `code`: same subject, same language
@@ -348,7 +390,11 @@ export function pairTests(code: string, tree: readonly string[]): string[] {
 
 // ---- the plan ------------------------------------------------------------------
 
-const cleanPath = (p: string): string => p.trim().replace(/^`+|`+$/g, "").replace(/^\.?\/+/, "");
+const cleanPath = (p: string): string =>
+  p
+    .trim()
+    .replace(/^`+|`+$/g, "")
+    .replace(/^\.?\/+/, "");
 
 /**
  * Plan a proposal: every row checked (all-or-nothing — one bad row refuses
@@ -358,9 +404,13 @@ const cleanPath = (p: string): string => p.trim().replace(/^`+|`+$/g, "").replac
  */
 export function planStage2(input: Stage2PlanInput): Stage2Plan {
   const errors: string[] = [];
-  if (input.rows.length === 0) return { ok: false, errors: ["a stage 2 proposal needs at least one row"] };
+  if (input.rows.length === 0)
+    return { ok: false, errors: ["a stage 2 proposal needs at least one row"] };
   if (input.rows.length > MAX_STAGE2_ROWS) {
-    return { ok: false, errors: [`${input.rows.length} rows — at most ${MAX_STAGE2_ROWS} in one proposal`] };
+    return {
+      ok: false,
+      errors: [`${input.rows.length} rows — at most ${MAX_STAGE2_ROWS} in one proposal`],
+    };
   }
   const excluded = globMatcher(input.exclude);
   const blobs = new Map(input.files.map((f) => [f.path, f.blob]));
@@ -374,7 +424,8 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const id = `row-${i + 1}`;
     const bad = (why: string): void => void errors.push(`${id}: ${why}`);
     const lens = typeof req?.lens === "string" ? req.lens.trim() : "";
-    if (lens === SCAN_PASS) return bad(`${SCAN_PASS} is stage 1's lens — a stage 2 row names a deep lens`);
+    if (lens === SCAN_PASS)
+      return bad(`${SCAN_PASS} is stage 1's lens — a stage 2 row names a deep lens`);
     if (!allowed.includes(lens)) {
       return bad(
         SCAN_DEEP_LENSES.includes(lens)
@@ -384,34 +435,48 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     }
     const reason = typeof req.reason === "string" ? req.reason.trim().replace(/\s+/g, " ") : "";
     if (reason === "") return bad("no reason — say in one line what the lens should chase");
-    if (reason.length > ROW_REASON_MAX) return bad(`the reason is ${reason.length} characters — one line, at most ${ROW_REASON_MAX}`);
+    if (reason.length > ROW_REASON_MAX)
+      return bad(`the reason is ${reason.length} characters — one line, at most ${ROW_REASON_MAX}`);
     const tiers = lensTiers(input.lenses, lens, input.riskPasses);
     let tier: PassTier;
     if (req.tier === undefined || req.tier === null || req.tier === "") {
-      tier = input.riskPasses.includes(lens) ? "sol-high" : flooredTier(input.lenses, lens, input.defaultTier);
+      tier = input.riskPasses.includes(lens)
+        ? "sol-high"
+        : flooredTier(input.lenses, lens, input.defaultTier);
     } else if ((tiers as readonly string[]).includes(req.tier)) {
       tier = req.tier as PassTier;
     } else {
-      return bad(`${lens} cannot run at ${JSON.stringify(req.tier)} here — one of: ${tiers.join(", ")}`);
+      return bad(
+        `${lens} cannot run at ${JSON.stringify(req.tier)} here — one of: ${tiers.join(", ")}`,
+      );
     }
-    const named = [...new Set((Array.isArray(req.files) ? req.files : []).filter((p) => typeof p === "string").map(cleanPath))].filter(
-      (p) => p !== "",
-    );
+    const named = [
+      ...new Set(
+        (Array.isArray(req.files) ? req.files : [])
+          .filter((p) => typeof p === "string")
+          .map(cleanPath),
+      ),
+    ].filter((p) => p !== "");
     if (named.length === 0) return bad("no files");
     const problems: string[] = [];
     const lines = new Map<string, number>();
     for (const p of named) {
       if (!blobs.has(p)) problems.push(`${p} is not in the tree at the scan sha`);
-      else if (isTestFile(p)) problems.push(`${p} is a test — tests enter stage 2 only paired with the code they test; name that code`);
-      else if (isSweepSkipped(p)) problems.push(`${p} is not code a lens reads (lockfile, generated, binary or prose)`);
+      else if (isTestFile(p))
+        problems.push(
+          `${p} is a test — tests enter stage 2 only paired with the code they test; name that code`,
+        );
+      else if (isSweepSkipped(p))
+        problems.push(`${p} is not code a lens reads (lockfile, generated, binary or prose)`);
       else if (excluded(p)) problems.push(`${p} is excluded from scans by [scan] exclude`);
       else {
         const n = input.linesOf(p);
         if (n === null) {
           const why = input.whyUnreadable?.(p) ?? null;
-          problems.push(`${p} cannot be read as text${why === "binary" ? " (skipped: binary)" : why === "too-big" ? " (skipped: over the size cap)" : ""}`);
-        }
-        else lines.set(p, n);
+          problems.push(
+            `${p} cannot be read as text${why === "binary" ? " (skipped: binary)" : why === "too-big" ? " (skipped: over the size cap)" : ""}`,
+          );
+        } else lines.set(p, n);
       }
     }
     if (problems.length > 0) return bad(problems.join("; "));
@@ -436,7 +501,9 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     // Pair the tests, nearest first, while the case budget holds. A ranged
     // row's tests ride in EVERY range case, so they get at most half a case.
     const testFiles = oversize ? input.budget.maxFiles - 1 : input.budget.maxFiles - sorted.length;
-    const testLines = oversize ? Math.floor(input.budget.maxLines / 2) : input.budget.maxLines - rowLines;
+    const testLines = oversize
+      ? Math.floor(input.budget.maxLines / 2)
+      : input.budget.maxLines - rowLines;
     let pairedLines = 0;
     const tests: ScanCaseFile[] = [];
     const unpaired: string[] = [];
@@ -461,9 +528,11 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     if (oversize) {
       const p = sorted[0]!;
       const done = input.partial?.(lens).get(coverKey(p, blobs.get(p)!)) ?? [];
-      ranges = cutRanges(lines.get(p)!, input.budget.maxLines - pairedLines, input.textOf?.(p) ?? null).filter(
-        (r) => !rangesCover(done, r.start, r.end),
-      );
+      ranges = cutRanges(
+        lines.get(p)!,
+        input.budget.maxLines - pairedLines,
+        input.textOf?.(p) ?? null,
+      ).filter((r) => !rangesCover(done, r.start, r.end));
       rowLines = ranges.reduce((n, r) => n + (r.end - r.start + 1) + pairedLines, 0);
     } else {
       rowLines += pairedLines;
@@ -471,12 +540,16 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
     const effort = lensEffort(input.lenses, lens);
     const price = input.price(lens, tier, effort);
     if (price === null) {
-      return bad(`no measured price for any scan lens yet — run stage 1 (its calibration run prices the scan) before proposing stage 2`);
+      return bad(
+        `no measured price for any scan lens yet — run stage 1 (its calibration run prices the scan) before proposing stage 2`,
+      );
     }
     const files = sorted.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p)! }));
     const cover = input.covered(lens);
     const all = [...files, ...tests];
-    const isCovered = all.every((f) => cover.has(coverKey(f.path, f.blob))) || (ranges !== undefined && ranges.length === 0);
+    const isCovered =
+      all.every((f) => cover.has(coverKey(f.path, f.blob))) ||
+      (ranges !== undefined && ranges.length === 0);
     rows.push({
       id,
       lens,
@@ -492,7 +565,10 @@ export function planStage2(input: Stage2PlanInput): Stage2Plan {
       estimate_usd: isCovered
         ? 0
         : ranges !== undefined
-          ? ranges.reduce((n, r) => n + caseEstimate(r.end - r.start + 1 + pairedLines, price.rate), 0)
+          ? ranges.reduce(
+              (n, r) => n + caseEstimate(r.end - r.start + 1 + pairedLines, price.rate),
+              0,
+            )
           : caseEstimate(rowLines, price.rate),
       price,
       status: isCovered ? "covered" : "run",
@@ -527,8 +603,13 @@ export function unitOwner(cut: UnitCut, paths: readonly string[]): (path: string
 /** The cases one row runs as: the row itself, or — a row over a file too
  * big for one case — one per range, `<row>#<i>`, each the ranged file plus
  * the paired tests. */
-export function stage2Cases(row: Stage2Row): Array<{ id: string; part: number; parts: number; files: ScanCaseFile[]; lines: number }> {
-  if (row.ranges === undefined) return [{ id: row.id, part: 1, parts: 1, files: [...row.files, ...row.tests], lines: row.lines }];
+export function stage2Cases(
+  row: Stage2Row,
+): Array<{ id: string; part: number; parts: number; files: ScanCaseFile[]; lines: number }> {
+  if (row.ranges === undefined)
+    return [
+      { id: row.id, part: 1, parts: 1, files: [...row.files, ...row.tests], lines: row.lines },
+    ];
   const code = row.files[0]!;
   const tests = row.tests.reduce((n, t) => n + t.lines, 0);
   return row.ranges.map((r, i) => ({
@@ -542,8 +623,13 @@ export function stage2Cases(row: Stage2Row): Array<{ id: string; part: number; p
 
 /** The stage-2 task string for one row — or, for a ranged row, for the one
  * case whose `files` (from `stage2Cases`) are given. */
-export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext, caseFiles?: readonly ScanCaseFile[]): string {
-  const list = (fs: readonly ScanCaseFile[]): string => fs.map((f) => focusLine(f, ctx.root)).join("\n");
+export function stage2CasePrompt(
+  row: Stage2Row,
+  ctx: PromptContext,
+  caseFiles?: readonly ScanCaseFile[],
+): string {
+  const list = (fs: readonly ScanCaseFile[]): string =>
+    fs.map((f) => focusLine(f, ctx.root)).join("\n");
   const code = caseFiles ? caseFiles.slice(0, row.files.length) : row.files;
   return [
     `SCAN CASE ${ctx.caseId} — stage 2, ${row.id}: ${row.lens}${row.units.length > 1 ? ` across units ${row.units.join(", ")}` : ` in unit ${row.units[0]}`}.`,
@@ -557,7 +643,11 @@ export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext, caseFiles?:
     list(code),
     ...rangeNote(code),
     ...(row.tests.length > 0
-      ? ["", `Their tests (${row.tests.length} — read them for the contract the code is held to; a missing test is not a finding):`, list(row.tests)]
+      ? [
+          "",
+          `Their tests (${row.tests.length} — read them for the contract the code is held to; a missing test is not a finding):`,
+          list(row.tests),
+        ]
       : []),
     "",
     `Answer with the findings block headed \`FINDINGS ${row.lens} SCAN ${ctx.caseId} @${ctx.sha}\` (or NONE).`,
@@ -567,5 +657,8 @@ export function stage2CasePrompt(row: Stage2Row, ctx: PromptContext, caseFiles?:
 /** The key a stage-2 start must quote: the runnable rows, the sha, the
  * validator setting and the cap. */
 export function stage2Key(parts: unknown): string {
-  return createHash("sha256").update(JSON.stringify({ stage: 2, parts })).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(JSON.stringify({ stage: 2, parts }))
+    .digest("hex")
+    .slice(0, 16);
 }

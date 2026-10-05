@@ -349,8 +349,16 @@ describe("mutations in dry-run", () => {
 
   it("posts PR-level author answers through the ordinary gate on the issues route", async () => {
     const { adapter, calls } = build(() => ({ id: 999 }), false);
-    expect(await adapter.createIssueComment(77, "I concede this finding")).toMatchObject({ executed: true });
-    expect(calls).toEqual([{ url: "https://api.github.com/repos/example-org/example-app/issues/77/comments", method: "POST", body: { body: "I concede this finding" } }]);
+    expect(await adapter.createIssueComment(77, "I concede this finding")).toMatchObject({
+      executed: true,
+    });
+    expect(calls).toEqual([
+      {
+        url: "https://api.github.com/repos/example-org/example-app/issues/77/comments",
+        method: "POST",
+        body: { body: "I concede this finding" },
+      },
+    ]);
   });
 
   // Live noise fix (2026-08-19, #5309/#5314): removing an already-absent
@@ -756,7 +764,9 @@ function pageOf(url: string): number {
 /** Rows `from..to` of a list that is `total` long, in 100-row pages. */
 function page<T>(url: string, total: number, row: (i: number) => T): T[] {
   const start = (pageOf(url) - 1) * 100;
-  return Array.from({ length: Math.max(0, Math.min(100, total - start)) }, (_, k) => row(start + k));
+  return Array.from({ length: Math.max(0, Math.min(100, total - start)) }, (_, k) =>
+    row(start + k),
+  );
 }
 
 describe("list reads are paginated", () => {
@@ -784,7 +794,12 @@ describe("list reads are paginated", () => {
 
   it("listPrFiles reads every file GitHub serves — up to its 3,000, not 1,000 (a78c7cba)", async () => {
     const { adapter } = build((url) =>
-      page(url, 1_234, (i) => ({ filename: `f${i}.py`, additions: 1, deletions: 0, status: "modified" })),
+      page(url, 1_234, (i) => ({
+        filename: `f${i}.py`,
+        additions: 1,
+        deletions: 0,
+        status: "modified",
+      })),
     );
     const files = await adapter.listPrFiles(7);
     expect(files).toHaveLength(1_234);
@@ -815,7 +830,10 @@ describe("list reads are paginated", () => {
 
   it("the registry backfill sees the bot's newest inline comments too (6796b994)", async () => {
     const { adapter } = build((url) =>
-      page(url, 150, (i) => ({ id: i, user: { login: i >= 100 ? "example-review[bot]" : "alice" } })),
+      page(url, 150, (i) => ({
+        id: i,
+        user: { login: i >= 100 ? "example-review[bot]" : "alice" },
+      })),
     );
     expect(await adapter.listBotReviewComments(7)).toHaveLength(50);
   });
@@ -888,7 +906,10 @@ describe("prConversation shows the NEWEST comments (0f257255)", () => {
 describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () => {
   function graphqlPages(handler: (query: string, vars: Record<string, unknown>) => unknown) {
     return build((_url, init) => {
-      const body = JSON.parse(String(init.body)) as { query: string; variables: Record<string, unknown> };
+      const body = JSON.parse(String(init.body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
       return { data: handler(body.query, body.variables) };
     });
   }
@@ -897,15 +918,28 @@ describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () =>
     const { adapter } = graphqlPages((query, vars) => {
       const reviewsPage = (after: unknown) =>
         after === "r1"
-          ? { pageInfo: { hasNextPage: false, endCursor: "r2" }, nodes: [{ databaseId: 2, state: "APPROVED" }] }
-          : { pageInfo: { hasNextPage: true, endCursor: "r1" }, nodes: [{ databaseId: 1, state: "COMMENTED" }] };
+          ? {
+              pageInfo: { hasNextPage: false, endCursor: "r2" },
+              nodes: [{ databaseId: 2, state: "APPROVED" }],
+            }
+          : {
+              pageInfo: { hasNextPage: true, endCursor: "r1" },
+              nodes: [{ databaseId: 1, state: "COMMENTED" }],
+            };
       const timelinePage = (after: unknown) =>
         after === "t1"
-          ? { pageInfo: { hasNextPage: false, endCursor: "t2" }, nodes: [{ __typename: "LabeledEvent", createdAt: "2" }] }
-          : { pageInfo: { hasNextPage: true, endCursor: "t1" }, nodes: [{ __typename: "LabeledEvent", createdAt: "1" }] };
+          ? {
+              pageInfo: { hasNextPage: false, endCursor: "t2" },
+              nodes: [{ __typename: "LabeledEvent", createdAt: "2" }],
+            }
+          : {
+              pageInfo: { hasNextPage: true, endCursor: "t1" },
+              nodes: [{ __typename: "LabeledEvent", createdAt: "1" }],
+            };
       const pr: Record<string, unknown> = { number: 7 };
       if (/reviews\(/.test(query)) pr.reviews = reviewsPage(vars.reviewsAfter ?? vars.after);
-      if (/timelineItems\(/.test(query)) pr.timelineItems = timelinePage(vars.timelineAfter ?? vars.after);
+      if (/timelineItems\(/.test(query))
+        pr.timelineItems = timelinePage(vars.timelineAfter ?? vars.after);
       return { repository: { pullRequest: pr } };
     });
     const h = await adapter.prReviewHistory(7, "bot");
@@ -918,7 +952,10 @@ describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () =>
       if (/node\(id:/.test(query)) {
         return {
           node: {
-            comments: { pageInfo: { hasNextPage: false, endCursor: "c2" }, nodes: [{ body: "second" }] },
+            comments: {
+              pageInfo: { hasNextPage: false, endCursor: "c2" },
+              nodes: [{ body: "second" }],
+            },
           },
         };
       }
@@ -939,7 +976,10 @@ describe("the history GraphQL reads follow pageInfo (990c4c6a, 47b3d525)", () =>
                     id: "R1",
                     state: "COMMENTED",
                     body: "oldest",
-                    comments: { pageInfo: { hasNextPage: true, endCursor: "c1" }, nodes: [{ body: "first" }] },
+                    comments: {
+                      pageInfo: { hasNextPage: true, endCursor: "c1" },
+                      nodes: [{ body: "first" }],
+                    },
                   },
                 ],
               },

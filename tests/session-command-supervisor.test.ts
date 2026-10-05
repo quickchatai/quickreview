@@ -185,34 +185,38 @@ function supervisor(
 }
 
 describe("bounded round-stage supervision", () => {
-  it("replays a started ordinary wake at its hard bound instead of making it a permanent blocker", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const { id, pr } = seedWakeCommand({
-      status: "running",
-      startedAt: "2026-08-27T19:00:00.000Z",
-      nextCheckAt: "2026-08-27T19:45:00.000Z",
-    });
-    const retry = vi.fn(async () => {
-      store.retrySessionCommandAfterFence(id, 1, clock.toISOString());
-      store.claimSessionCommand(id, "bridge-new", clock.toISOString());
-      return "retried" as const;
-    });
+  it(
+    "replays a started ordinary wake at its hard bound instead of making it a permanent blocker",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { id, pr } = seedWakeCommand({
+        status: "running",
+        startedAt: "2026-08-27T19:00:00.000Z",
+        nextCheckAt: "2026-08-27T19:45:00.000Z",
+      });
+      const retry = vi.fn(async () => {
+        store.retrySessionCommandAfterFence(id, 1, clock.toISOString());
+        store.claimSessionCommand(id, "bridge-new", clock.toISOString());
+        return "retried" as const;
+      });
 
-    await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
+      await supervisor(hooks({ retrySessionCommand: retry })).supervisor.scan();
 
-    expect(retry).toHaveBeenCalledWith(
-      id,
-      expect.stringContaining("fixed 45-minute running bound"),
-    );
-    expect(store.getSessionCommand(id)).toMatchObject({ status: "running", attempt: 2 });
-    const recovery = store
-      .recentEvents(20)
-      .find((event) => event.kind === "session_command_nonround_recovery");
-    expect(JSON.parse(recovery!.payload!)).toMatchObject({
-      recovery_attempt: 1,
-      delivery_attempt: 2,
-    });
-    expect(store.openReviewFailure(pr)).toBeUndefined();
-  });
+      expect(retry).toHaveBeenCalledWith(
+        id,
+        expect.stringContaining("fixed 45-minute running bound"),
+      );
+      expect(store.getSessionCommand(id)).toMatchObject({ status: "running", attempt: 2 });
+      const recovery = store
+        .recentEvents(20)
+        .find((event) => event.kind === "session_command_nonround_recovery");
+      expect(JSON.parse(recovery!.payload!)).toMatchObject({
+        recovery_attempt: 1,
+        delivery_attempt: 2,
+      });
+      expect(store.openReviewFailure(pr)).toBeUndefined();
+    },
+  );
 
   it("recovers the pre-fix failed ordinary-wake rows that used to disappear from supervision", async () => {
     const { id } = seedWakeCommand({ status: "failed", attempt: 1 });

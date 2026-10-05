@@ -33,7 +33,10 @@ describe("assign — longest prefix wins", () => {
       ignored: ["backend/vendor"],
     };
     const a = assign(cut, FILES);
-    expect(a.byUnit.get("payments")).toEqual(["backend/payments/models.py", "backend/payments/views.py"]);
+    expect(a.byUnit.get("payments")).toEqual([
+      "backend/payments/models.py",
+      "backend/payments/views.py",
+    ]);
     expect(a.byUnit.get("backend")).toEqual(["backend/manage.py", "backend/users/models.py"]);
     expect(a.byUnit.get("rest")).toEqual(["README.md", "frontend/src/app.tsx"]);
     expect(a.ignored).toEqual(["backend/vendor/lib.py"]);
@@ -64,12 +67,18 @@ describe("checkCut", () => {
 
   it("separates save-blocking conditions: unclaimed files and a unit left empty", () => {
     const { errors, blocking_save } = checkCut(
-      { units: [unit("backend", "backend"), unit("inner", "backend/payments")], ignored: ["backend/payments"] },
+      {
+        units: [unit("backend", "backend"), unit("inner", "backend/payments")],
+        ignored: ["backend/payments"],
+      },
       FILES,
     );
     expect(errors.join("\n")).toMatch(/both ignored and owned/);
     const second = checkCut(
-      { units: [unit("outer", "backend/users"), unit("inner", "backend/users/models.py")], ignored: [] },
+      {
+        units: [unit("outer", "backend/users"), unit("inner", "backend/users/models.py")],
+        ignored: [],
+      },
       FILES,
     );
     expect(second.errors).toEqual([]);
@@ -88,13 +97,19 @@ describe("normalizeCut / normalizeRoot", () => {
     const bad = normalizeCut({ units: [{ name: "x", roots: ["../up"] }] });
     expect(bad.ok).toBe(false);
     const good = normalizeCut({ units: [{ name: " x ", roots: "./a/", kind: "nonsense" }] });
-    expect(good).toEqual({ ok: true, cut: { units: [{ name: "x", roots: ["a"], kind: "custom", note: "" }], ignored: [] } });
+    expect(good).toEqual({
+      ok: true,
+      cut: { units: [{ name: "x", roots: ["a"], kind: "custom", note: "" }], ignored: [] },
+    });
     expect(normalizeCut({ units: [{ name: "x", roots: [""] }], ignored: [""] }).ok).toBe(false);
   });
 });
 
 describe("applyOps — all or nothing", () => {
-  const base: UnitCut = { units: [unit("backend", "backend"), unit("frontend", "frontend"), unit("rest", "")], ignored: [] };
+  const base: UnitCut = {
+    units: [unit("backend", "backend"), unit("frontend", "frontend"), unit("rest", "")],
+    ignored: [],
+  };
 
   it("renames, adds (taking the root from whoever held it), merges, moves and ignores", () => {
     const r = applyOps(base, [
@@ -109,7 +124,10 @@ describe("applyOps — all or nothing", () => {
     const names = r.cut.units.map((u) => u.name);
     expect(names).toEqual(["backend", "everything-else", "payments"]);
     expect(r.cut.units.find((u) => u.name === "everything-else")!.roots).toEqual(["frontend", ""]);
-    expect(r.cut.units.find((u) => u.name === "backend")!.roots).toEqual(["backend", "backend/payments"]);
+    expect(r.cut.units.find((u) => u.name === "backend")!.roots).toEqual([
+      "backend",
+      "backend/payments",
+    ]);
     expect(r.cut.units.find((u) => u.name === "payments")!.roots).toEqual([]);
     expect(r.cut.ignored).toEqual(["backend/vendor"]);
     // The input is never mutated.
@@ -117,7 +135,11 @@ describe("applyOps — all or nothing", () => {
   });
 
   it("refuses the whole batch when one op is wrong", () => {
-    const r = applyOps(base, [{ op: "rename", unit: "backend", to: "api" }, { op: "remove", unit: "nope" }, { op: "explode" }]);
+    const r = applyOps(base, [
+      { op: "rename", unit: "backend", to: "api" },
+      { op: "remove", unit: "nope" },
+      { op: "explode" },
+    ]);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.errors.join("\n")).toMatch(/no unit named "nope"/);
@@ -136,9 +158,20 @@ describe("splitUnit — an oversized unit split to fit, its name kept", () => {
   const lines = (n: number) => () => n;
 
   it("keeps a unit that fits as ONE case under its own name", () => {
-    const cases = splitUnit("payments", ["p/a.py", "p/b.py"], lines(10), { maxFiles: 5, maxLines: 100 });
+    const cases = splitUnit("payments", ["p/a.py", "p/b.py"], lines(10), {
+      maxFiles: 5,
+      maxLines: 100,
+    });
     expect(cases).toEqual([
-      { unit: "payments", id: "payments", part: 1, parts: 1, files: ["p/a.py", "p/b.py"], lines: 20, over_budget: false },
+      {
+        unit: "payments",
+        id: "payments",
+        part: 1,
+        parts: 1,
+        files: ["p/a.py", "p/b.py"],
+        lines: 20,
+        over_budget: false,
+      },
     ]);
   });
 
@@ -177,7 +210,10 @@ describe("splitUnit — an oversized unit split to fit, its name kept", () => {
 
   it("splits by lines as well as files, and never cuts a file in half", () => {
     const sizes: Record<string, number> = { "m/big.py": 5000, "m/a.py": 40, "m/b.py": 40 };
-    const cases = splitUnit("m", Object.keys(sizes), (p) => sizes[p]!, { maxFiles: 30, maxLines: 100 });
+    const cases = splitUnit("m", Object.keys(sizes), (p) => sizes[p]!, {
+      maxFiles: 30,
+      maxLines: 100,
+    });
     expect(cases.map((c) => [c.files, c.over_budget])).toEqual([
       [["m/a.py", "m/b.py"], false],
       [["m/big.py"], true],

@@ -141,7 +141,7 @@ export const BACKCOMPAT_PASS = "pass-backcompat";
  * C#/Swift `public`, Python names in `__all__` or a top-level `def`/`class`
  * without a leading underscore. */
 export const PUBLIC_SIGNATURE_RE =
-  /^(?:\s*(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|interface|type|enum)\b|func\s+(?:\([^)]*\)\s*)?[A-Z]\w*\s*\(|type\s+[A-Z]\w*\s|pub(?:\([^)]*\))?\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const|mod)\b|public\s+(?:static\s+)?(?:final\s+)?(?:abstract\s+)?[\w<>\[\],\s]+\s+\w+\s*\(|public\s+(?:class|interface|enum|record)\b|__all__\s*=)|(?:def|class)\s+[A-Za-z]\w*)/;
+  /^(?:\s*(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|interface|type|enum)\b|func\s+(?:\([^)]*\)\s*)?[A-Z]\w*\s*\(|type\s+[A-Z]\w*\s|pub(?:\([^)]*\))?\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const|mod)\b|public\s+(?:static\s+)?(?:final\s+)?(?:abstract\s+)?[\w<>[\],\s]+\s+\w+\s*\(|public\s+(?:class|interface|enum|record)\b|__all__\s*=)|(?:def|class)\s+[A-Za-z]\w*)/;
 /** A wire-serialization site on a changed line: field names and order that
  * a peer or a stored payload agrees with. */
 export const WIRE_FORMAT_RE =
@@ -412,12 +412,19 @@ export function selectLenses(
   const publicSurface = (): boolean => {
     for (const f of code) {
       if (f.patch === undefined) continue;
-      const removed = f.patch.split("\n").find((l) => l.startsWith("-") && !l.startsWith("---") && PUBLIC_SIGNATURE_RE.test(l.slice(1)));
+      const removed = f.patch
+        .split("\n")
+        .find(
+          (l) => l.startsWith("-") && !l.startsWith("---") && PUBLIC_SIGNATURE_RE.test(l.slice(1)),
+        );
       if (removed !== undefined) {
         lastHit = `a public signature changes in ${f.filename}`;
         return true;
       }
-      if (/^[+-](?![+-]).*/m.test(f.patch) && f.patch.split("\n").some((l) => /^[+-](?![+-])/.test(l) && WIRE_FORMAT_RE.test(l))) {
+      if (
+        /^[+-](?![+-]).*/m.test(f.patch) &&
+        f.patch.split("\n").some((l) => /^[+-](?![+-])/.test(l) && WIRE_FORMAT_RE.test(l))
+      ) {
         lastHit = `wire serialization changes in ${f.filename}`;
         return true;
       }
@@ -632,7 +639,8 @@ const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
 /** JS/TS: an in-place read-modify-write of a shared member, counted only in a
  * file whose changed lines also await — the shape where two callers interleave. */
 const JS_FILE_RE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/i;
-const JS_SHARED_RMW_RE = /\bthis\.[\w.]+(?:\s*(?:\+\+|--|[-+*]=)|\[[^\]\n]+\]\s*(?:\+\+|--|[-+*]=))/;
+const JS_SHARED_RMW_RE =
+  /\bthis\.[\w.]+(?:\s*(?:\+\+|--|[-+*]=)|\[[^\]\n]+\]\s*(?:\+\+|--|[-+*]=))/;
 const JS_AWAIT_RE = /\bawait\b/;
 
 /** The PR text says the change is about concurrency. `lock` counts unless it
@@ -817,9 +825,10 @@ export const BEHAVIOUR_DELTA_PASS = "pass-behaviour-delta";
 // read as no risk.
 const DELTA_RISK_RE =
   /\b(if|elif|else|unless|guard|while|for|foreach|switch|case|match|when|try|catch|except|finally|rescue|ensure|defer|raise|throw|throws|return|yield|await|assert|require|default|break|continue|goto|null|nil|None|undefined)\b|&&|\|\||\?\?|[!=]==?|[<>]=|\w\s*[<>]\s*\w|[^=!<>:+\-*/%&|^]=[^=>]|\w\s*\(/;
-const DELTA_NEW_BRANCH_RE = /^\s*(\}\s*)?(if|elif|else|unless|guard|switch|case|match|try|catch|except|rescue|when)\b/;
+const DELTA_NEW_BRANCH_RE =
+  /^\s*(\}\s*)?(if|elif|else|unless|guard|switch|case|match|try|catch|except|rescue|when)\b/;
 const DELTA_INERT_RE =
-  /^\s*(\/\/|#(?!include|define|if|else|endif)|\*|\/\*|--|"""|\'\'\'|<!--)|^\s*(import|from\s+\S+\s+import|#include|use\s|using\s|package\s|export\s+\{[^}]*\}\s+from)\b|^\s*[)\]};,]*\s*$/;
+  /^\s*(\/\/|#(?!include|define|if|else|endif)|\*|\/\*|--|"""|'''|<!--)|^\s*(import|from\s+\S+\s+import|#include|use\s|using\s|package\s|export\s+\{[^}]*\}\s+from)\b|^\s*[)\]};,]*\s*$/;
 const DELTA_LOG_ONLY_RE =
   /^\s*(console\.(log|debug|info|warn|error)|(self\.|this\.)?(log|logger|logging|LOG|Log)\.(trace|debug|info|warn|warning|error|fatal|Debugf|Infof|Warnf|Errorf)|print(ln|f)?|fmt\.Print(ln|f)?|System\.out\.print(ln)?|puts|echo)\s*\(/;
 const norm = (l: string): string => l.replace(/\s+/g, " ").trim();
@@ -955,7 +964,9 @@ export function selectQualityLenses(files: PrFileEntry[], minAdded: number): str
 export function qualityReason(files: PrFileEntry[], minAdded: number): string {
   const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
   const testOnly = code.length > 0 && code.every((f) => isTestFile(f.filename));
-  const n = code.filter((f) => isTestFile(f.filename) === testOnly).reduce((m, f) => m + f.additions, 0);
+  const n = code
+    .filter((f) => isTestFile(f.filename) === testOnly)
+    .reduce((m, f) => m + f.additions, 0);
   return testOnly
     ? `a test-only change adds ${n} lines of test code (at least ${minAdded})`
     : `the change adds ${n} lines of non-test code (at least ${minAdded})`;
@@ -1032,7 +1043,9 @@ export function sweepGroups(
   let lines = 0;
   const unswept: string[] = [];
   for (const f of eligible) {
-    const size = isDoc(f.filename) ? Math.ceil((f.additions + f.deletions) / 2) : f.additions + f.deletions;
+    const size = isDoc(f.filename)
+      ? Math.ceil((f.additions + f.deletions) / 2)
+      : f.additions + f.deletions;
     if (cur.length > 0 && (cur.length >= maxFiles || lines + size > maxLines)) {
       groups.push(cur);
       cur = [];

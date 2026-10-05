@@ -24,23 +24,34 @@ export interface PinProposalsFile {
   entries: PinProposal[];
 }
 
-export type PinProposalsRead = { state: "absent" } | { state: "ok"; file: PinProposalsFile } | { state: "unreadable"; error: string };
+export type PinProposalsRead =
+  | { state: "absent" }
+  | { state: "ok"; file: PinProposalsFile }
+  | { state: "unreadable"; error: string };
 
 /** Read the proposals file from its text (null = absent). */
 export function parsePinProposals(text: string | null): PinProposalsRead {
   if (text === null) return { state: "absent" };
   try {
     const raw = JSON.parse(text) as Partial<PinProposalsFile>;
-    if (typeof raw.proposed_at !== "string" || !Array.isArray(raw.entries)) throw new Error("not {proposed_at, entries}");
+    if (typeof raw.proposed_at !== "string" || !Array.isArray(raw.entries))
+      throw new Error("not {proposed_at, entries}");
     const entries = raw.entries.filter(
       (e): e is PinProposal =>
-        typeof e?.id === "string" && typeof e.ts === "string" && typeof e.block === "number" && typeof e.why === "string",
+        typeof e?.id === "string" &&
+        typeof e.ts === "string" &&
+        typeof e.block === "number" &&
+        typeof e.why === "string",
     );
     return { state: "ok", file: { proposed_at: raw.proposed_at, entries } };
   } catch (err) {
-    return { state: "unreadable", error: `${PIN_PROPOSALS_FILE} is not a proposals file (${String(err)})` };
+    return {
+      state: "unreadable",
+      error: `${PIN_PROPOSALS_FILE} is not a proposals file (${String(err)})`,
+    };
   }
 }
 
 /** The key the TUI's memory tab addresses an entry by (memtab `entryKey`). */
-export const proposalKey = (p: { id: string; ts: string; block: number }): string => `${p.ts}|${p.id}#${p.block}`;
+export const proposalKey = (p: { id: string; ts: string; block: number }): string =>
+  `${p.ts}|${p.id}#${p.block}`;

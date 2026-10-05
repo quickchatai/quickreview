@@ -23,12 +23,13 @@
 //
 // Pure — no port, no clock, no disk.
 import type { LensTuning } from "../lenstuning.js";
-import type { Severity } from "../severity.js";
-import type { PassTier } from "../types.js";
 
 /** The four points every setup interview covers. */
 export const FIXED_POINTS = [
-  { name: "goals", question: "What is this project for, and what does a good change to it look like?" },
+  {
+    name: "goals",
+    question: "What is this project for, and what does a good change to it look like?",
+  },
   { name: "merge-blocking", question: "What must stop a pull request from merging?" },
   { name: "risk", question: "Which risk areas matter here — security, data, money, compliance?" },
   { name: "style-tests", question: "How much do code style and tests matter in review?" },
@@ -56,8 +57,13 @@ export const TABLE_KEYS = ["enabled", "min_tier", "effort", "max_severity"] as c
  *   ignore    — off: not planned, not addable, not paid for.
  */
 export const PRIORITY_SETTINGS: Readonly<Record<Priority, Readonly<TableSettings>>> = {
-  critical: { enabled: true, min_tier: "sol-high" as PassTier, effort: "high", max_severity: "P0" as Severity },
-  important: { enabled: true, min_tier: "sol-med" as PassTier, effort: "medium" },
+  critical: {
+    enabled: true,
+    min_tier: "sol-high",
+    effort: "high",
+    max_severity: "P0",
+  },
+  important: { enabled: true, min_tier: "sol-med", effort: "medium" },
   normal: {},
   ignore: { enabled: false },
 };
@@ -144,8 +150,18 @@ export const CONCERNS: readonly Concern[] = [
     title: "Compliance — personal data, audit trails, retention",
     lenses: ["pass-security", "pass-data-safety"],
   },
-  { name: "style", point: "style-tests", title: "Code style — against a written guide", lenses: ["pass-style"] },
-  { name: "tests", point: "style-tests", title: "Tests — what the change breaks, what its tests really test", lenses: ["pass-tests"] },
+  {
+    name: "style",
+    point: "style-tests",
+    title: "Code style — against a written guide",
+    lenses: ["pass-style"],
+  },
+  {
+    name: "tests",
+    point: "style-tests",
+    title: "Tests — what the change breaks, what its tests really test",
+    lenses: ["pass-tests"],
+  },
 ];
 
 export const CONCERN_NAMES: readonly string[] = CONCERNS.map((c) => c.name);
@@ -157,7 +173,9 @@ const RANK: Record<Priority, number> = { critical: 3, important: 2, normal: 1, i
 /** Read a `{concern: priority}` object the companion sent. Unknown concerns
  * and unknown priorities are refused by name; a missing concern is not an
  * error here (the write decides whether the set is complete). */
-export function parsePriorities(raw: unknown): { ok: true; priorities: Record<string, Priority> } | { ok: false; errors: string[] } {
+export function parsePriorities(
+  raw: unknown,
+): { ok: true; priorities: Record<string, Priority> } | { ok: false; errors: string[] } {
   if (raw === undefined || raw === null) return { ok: true, priorities: {} };
   if (typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, errors: ["`priorities` must be an object of {concern: priority}"] };
@@ -171,7 +189,9 @@ export function parsePriorities(raw: unknown): { ok: true; priorities: Record<st
     }
     const p = typeof value === "string" ? value.trim().toLowerCase() : value;
     if (!(PRIORITIES as readonly unknown[]).includes(p)) {
-      errors.push(`${concern}: priority must be one of ${PRIORITIES.join(", ")}, got ${JSON.stringify(value)}`);
+      errors.push(
+        `${concern}: priority must be one of ${PRIORITIES.join(", ")}, got ${JSON.stringify(value)}`,
+      );
       continue;
     }
     out[concern] = p as Priority;
@@ -206,11 +226,17 @@ export function lensDecisions(priorities: Priorities): LensDecision[] {
     if (p === undefined) continue;
     for (const lens of concern.lenses) {
       const cur = best.get(lens);
-      if (!cur || RANK[p] > RANK[cur.priority]) best.set(lens, { priority: p, because: [concern.name] });
+      if (!cur || RANK[p] > RANK[cur.priority])
+        best.set(lens, { priority: p, because: [concern.name] });
       else if (RANK[p] === RANK[cur.priority]) cur.because.push(concern.name);
     }
   }
   return [...best.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([lens, { priority, because }]) => ({ lens, priority, because, settings: { ...PRIORITY_SETTINGS[priority] } }));
+    .map(([lens, { priority, because }]) => ({
+      lens,
+      priority,
+      because,
+      settings: { ...PRIORITY_SETTINGS[priority] },
+    }));
 }

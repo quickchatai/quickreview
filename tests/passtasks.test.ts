@@ -40,7 +40,12 @@ function order(over: Partial<RoundOrder> = {}): RoundOrder {
         raisable_to: [],
         why: "src/cache.go takes a sync.RWMutex",
       },
-      { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+      {
+        lens: "pass-validate",
+        agent: "pass-validate--sol-high",
+        tier: "sol-high",
+        raisable_to: [],
+      },
     ],
     addable_lenses: [],
     migration_gate: false,

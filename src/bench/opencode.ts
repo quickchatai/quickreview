@@ -153,7 +153,8 @@ export function opencodeReviewArguments(
  * but its main thread only relays. With `subtask: false` the one session gets
  * exactly this prompt and reports once. Re-check it on every version bump.
  */
-export const REVIEW_COMMAND_TEMPLATE: string = "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review\n\nBased on the input provided, determine which type of review to perform:\n\n1. **No arguments (default)**: Review all uncommitted changes\n   - Run: `git diff` for unstaged changes\n   - Run: `git diff --cached` for staged changes\n   - Run: `git status --short` to identify untracked (net new) files\n\n2. **Commit hash** (40-char SHA or short hash): Review that specific commit\n   - Run: `git show $ARGUMENTS`\n\n3. **Branch name**: Compare current branch to the specified branch\n   - Run: `git diff $ARGUMENTS...HEAD`\n\n4. **PR URL or number** (contains \"github.com\" or \"pull\" or looks like a PR number): Review the pull request\n   - Run: `gh pr view $ARGUMENTS` to get PR context\n   - Run: `gh pr diff $ARGUMENTS` to get the diff\n\nUse best judgement when processing input.\n\n---\n\n## Gathering Context\n\n**Diffs alone are not enough.** After getting the diff, read the entire file(s) being modified to understand the full context. Code that looks wrong in isolation may be correct given surrounding logic—and vice versa.\n\n- Use the diff to identify which files changed\n- Use `git status --short` to identify untracked files, then read their full contents\n- Read the full file to understand existing patterns, control flow, and error handling\n- Check for existing style guide or conventions files (CONVENTIONS.md, AGENTS.md, .editorconfig, etc.)\n\n---\n\n## What to Look For\n\n**Bugs** - Your primary focus.\n- Logic errors, off-by-one mistakes, incorrect conditionals\n- If-else guards: missing guards, incorrect branching, unreachable code paths\n- Edge cases: null/empty/undefined inputs, error conditions, race conditions\n- Security issues: injection, auth bypass, data exposure\n- Broken error handling that swallows failures, throws unexpectedly or returns error types that are not caught.\n\n**Structure** - Does the code fit the codebase?\n- Does it follow existing patterns and conventions?\n- Are there established abstractions it should use but doesn't?\n- Excessive nesting that could be flattened with early returns or extraction\n\n**Performance** - Only flag if obviously problematic.\n- O(n²) on unbounded data, N+1 queries, blocking I/O on hot paths\n\n**Behavior Changes** - If a behavioral change is introduced, raise it (especially if it's possibly unintentional).\n\n---\n\n## Before You Flag Something\n\n**Be certain.** If you're going to call something a bug, you need to be confident it actually is one.\n\n- Only review the changes - do not review pre-existing code that wasn't modified\n- Don't flag something as a bug if you're unsure - investigate first\n- Don't invent hypothetical problems - if an edge case matters, explain the realistic scenario where it breaks\n- If you need more context to be sure, use the tools below to get it\n\n**Don't be a zealot about style.** When checking code against conventions:\n\n- Verify the code is *actually* in violation. Don't complain about else statements if early returns are already being used correctly.\n- Some \"violations\" are acceptable when they're the simplest option. A `let` statement is fine if the alternative is convoluted.\n- Excessive nesting is a legitimate concern regardless of other style choices.\n- Don't flag style preferences as issues unless they clearly violate established project conventions.\n\n---\n\n## Tools\n\nUse these to inform your review:\n\n- **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.\n- **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.\n- **Web Search** - Research best practices if you're unsure about a pattern.\n\nIf you're uncertain about something and can't verify it with these tools, say \"I'm not sure about X\" rather than flagging it as a definite issue.\n\n---\n\n## Output\n\n1. If there is a bug, be direct and clear about why it is a bug.\n2. Clearly communicate severity of issues. Do not overstate severity.\n3. Critiques should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.\n4. Your tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.\n5. Write so the reader can quickly understand the issue without reading too closely.\n6. AVOID flattery, do not give any comments that are not helpful to the reader. Avoid phrasing like \"Great job ...\", \"Thanks for ...\".";
+export const REVIEW_COMMAND_TEMPLATE: string =
+  "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review\n\nBased on the input provided, determine which type of review to perform:\n\n1. **No arguments (default)**: Review all uncommitted changes\n   - Run: `git diff` for unstaged changes\n   - Run: `git diff --cached` for staged changes\n   - Run: `git status --short` to identify untracked (net new) files\n\n2. **Commit hash** (40-char SHA or short hash): Review that specific commit\n   - Run: `git show $ARGUMENTS`\n\n3. **Branch name**: Compare current branch to the specified branch\n   - Run: `git diff $ARGUMENTS...HEAD`\n\n4. **PR URL or number** (contains \"github.com\" or \"pull\" or looks like a PR number): Review the pull request\n   - Run: `gh pr view $ARGUMENTS` to get PR context\n   - Run: `gh pr diff $ARGUMENTS` to get the diff\n\nUse best judgement when processing input.\n\n---\n\n## Gathering Context\n\n**Diffs alone are not enough.** After getting the diff, read the entire file(s) being modified to understand the full context. Code that looks wrong in isolation may be correct given surrounding logic—and vice versa.\n\n- Use the diff to identify which files changed\n- Use `git status --short` to identify untracked files, then read their full contents\n- Read the full file to understand existing patterns, control flow, and error handling\n- Check for existing style guide or conventions files (CONVENTIONS.md, AGENTS.md, .editorconfig, etc.)\n\n---\n\n## What to Look For\n\n**Bugs** - Your primary focus.\n- Logic errors, off-by-one mistakes, incorrect conditionals\n- If-else guards: missing guards, incorrect branching, unreachable code paths\n- Edge cases: null/empty/undefined inputs, error conditions, race conditions\n- Security issues: injection, auth bypass, data exposure\n- Broken error handling that swallows failures, throws unexpectedly or returns error types that are not caught.\n\n**Structure** - Does the code fit the codebase?\n- Does it follow existing patterns and conventions?\n- Are there established abstractions it should use but doesn't?\n- Excessive nesting that could be flattened with early returns or extraction\n\n**Performance** - Only flag if obviously problematic.\n- O(n²) on unbounded data, N+1 queries, blocking I/O on hot paths\n\n**Behavior Changes** - If a behavioral change is introduced, raise it (especially if it's possibly unintentional).\n\n---\n\n## Before You Flag Something\n\n**Be certain.** If you're going to call something a bug, you need to be confident it actually is one.\n\n- Only review the changes - do not review pre-existing code that wasn't modified\n- Don't flag something as a bug if you're unsure - investigate first\n- Don't invent hypothetical problems - if an edge case matters, explain the realistic scenario where it breaks\n- If you need more context to be sure, use the tools below to get it\n\n**Don't be a zealot about style.** When checking code against conventions:\n\n- Verify the code is *actually* in violation. Don't complain about else statements if early returns are already being used correctly.\n- Some \"violations\" are acceptable when they're the simplest option. A `let` statement is fine if the alternative is convoluted.\n- Excessive nesting is a legitimate concern regardless of other style choices.\n- Don't flag style preferences as issues unless they clearly violate established project conventions.\n\n---\n\n## Tools\n\nUse these to inform your review:\n\n- **Explore agent** - Find how existing code handles similar problems. Check patterns, conventions, and prior art before claiming something doesn't fit.\n- **Exa Code Context** - Verify correct usage of libraries/APIs before flagging something as wrong.\n- **Web Search** - Research best practices if you're unsure about a pattern.\n\nIf you're uncertain about something and can't verify it with these tools, say \"I'm not sure about X\" rather than flagging it as a definite issue.\n\n---\n\n## Output\n\n1. If there is a bug, be direct and clear about why it is a bug.\n2. Clearly communicate severity of issues. Do not overstate severity.\n3. Critiques should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.\n4. Your tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.\n5. Write so the reader can quickly understand the issue without reading too closely.\n6. AVOID flattery, do not give any comments that are not helpful to the reader. Avoid phrasing like \"Great job ...\", \"Thanks for ...\".";
 
 /**
  * Models the native path serves that OpenCode 1.18.33's bundled model catalog
@@ -520,7 +521,8 @@ export function parseOpencodeEvents(stdout: string): OpencodeEvents {
     } catch {
       continue;
     }
-    if (out.sessionId === null && typeof e["sessionID"] === "string") out.sessionId = e["sessionID"];
+    if (out.sessionId === null && typeof e["sessionID"] === "string")
+      out.sessionId = e["sessionID"];
     const part = (e["part"] ?? {}) as Record<string, unknown>;
     switch (e["type"]) {
       case "text":
@@ -550,7 +552,10 @@ export function parseOpencodeEvents(stdout: string): OpencodeEvents {
         const err = (e["error"] ?? {}) as Record<string, unknown>;
         const data = (err["data"] ?? {}) as Record<string, unknown>;
         out.errors.push(
-          String(data["message"] ?? err["message"] ?? err["name"] ?? JSON.stringify(err)).slice(0, 600),
+          String(data["message"] ?? err["message"] ?? err["name"] ?? JSON.stringify(err)).slice(
+            0,
+            600,
+          ),
         );
         break;
       }
@@ -756,7 +761,10 @@ export function writeOpencodeResult(
 ): void {
   const dir = join(outDir, "results", "all");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${safeId(c.instance_id)}.json`), JSON.stringify(payload, null, 2) + "\n");
+  writeFileSync(
+    join(dir, `${safeId(c.instance_id)}.json`),
+    JSON.stringify(payload, null, 2) + "\n",
+  );
 }
 
 export function readOpencodeSummary(outDir: string, c: BenchCase): OpencodeCaseSummary | null {
@@ -887,9 +895,13 @@ export async function reviewCaseOpencode(
       if (!o.benchAuthFile) throw new Error("the native provider needs the sandbox's token copy");
       const dataDir = join(home, ".local", "share", "opencode");
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-      writeFileSync(join(dataDir, "auth.json"), opencodeAuthFrom(readFileSync(o.benchAuthFile, "utf8")), {
-        mode: 0o600,
-      });
+      writeFileSync(
+        join(dataDir, "auth.json"),
+        opencodeAuthFrom(readFileSync(o.benchAuthFile, "utf8")),
+        {
+          mode: 0o600,
+        },
+      );
     }
     writeFileSync(join(caseDir, "opencode-config.json"), JSON.stringify(config, null, 2) + "\n");
     const env = opencodeEnv({
@@ -921,7 +933,9 @@ export async function reviewCaseOpencode(
     );
     if (!native) await bridgeCall(o, "/label", { label: c.instance_id });
     const before = native ? null : ((await bridgeCall(o, "/stats")) as BridgeStats | null);
-    log(`opencode: ${c.instance_id} — ${meta.diff.files} files, /review ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)}`);
+    log(
+      `opencode: ${c.instance_id} — ${meta.diff.files} files, /review ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)}`,
+    );
     const r = await exec(o.opencodeBin, argv, {
       cwd: tree,
       env,
@@ -933,15 +947,24 @@ export async function reviewCaseOpencode(
     summary.exit_code = r.code;
     if (native) {
       // Every step of every session (the subtask's too) from OpenCode's own store.
-      const db = await exec(o.opencodeBin, ["db", USAGE_SQL, "--format", "json"], { cwd: tree, env });
+      const db = await exec(o.opencodeBin, ["db", USAGE_SQL, "--format", "json"], {
+        cwd: tree,
+        env,
+      });
       summary.bridge = db.code === 0 ? opencodeUsage(db.stdout) : null;
       summary.usage_source = "opencode-db";
       if (!summary.bridge)
         summary.warnings.push(`opencode db: no token totals (${db.stderr.trim().slice(0, 200)})`);
-      const models = await exec(o.opencodeBin, ["db", MODELS_SQL, "--format", "json"], { cwd: tree, env });
+      const models = await exec(o.opencodeBin, ["db", MODELS_SQL, "--format", "json"], {
+        cwd: tree,
+        env,
+      });
       const m = models.code === 0 ? opencodeModels(models.stdout) : null;
       if (m) summary.models = m;
-      else summary.warnings.push(`opencode db: no model counts (${models.stderr.trim().slice(0, 200)})`);
+      else
+        summary.warnings.push(
+          `opencode db: no model counts (${models.stderr.trim().slice(0, 200)})`,
+        );
     } else {
       const after = (await bridgeCall(o, "/stats")) as BridgeStats | null;
       await bridgeCall(o, "/label", { label: "" });
@@ -971,7 +994,9 @@ export async function reviewCaseOpencode(
     // OpenCode's own log (it writes one per process under its data dir).
     const logDir = join(home, ".local", "share", "opencode", "log");
     if (existsSync(logDir))
-      for (const f of readdirSync(logDir).filter((n) => n.endsWith(".log")).slice(-1))
+      for (const f of readdirSync(logDir)
+        .filter((n) => n.endsWith(".log"))
+        .slice(-1))
         copyFileSync(join(logDir, f), join(caseDir, "opencode.log"));
   } catch (err) {
     summary.status = "failed";
@@ -1149,7 +1174,9 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
       (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
       new Date().toISOString(),
     resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"]) ? (previous["resumes"] as unknown[]) : []),
+      ...(r.resume && Array.isArray(previous?.["resumes"])
+        ? (previous["resumes"] as unknown[])
+        : []),
       ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
     ],
     finished_at: null as string | null,
@@ -1165,7 +1192,9 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
         summaries.push(prior);
         continue;
       }
-      r.log(`opencode: ${c.instance_id} was reviewed by a different OpenCode/model/flags — re-running`);
+      r.log(
+        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/flags — re-running`,
+      );
     }
     try {
       // The bridge reads this refresh-disabled copy on every call.
@@ -1212,7 +1241,9 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
   runRecord.finished_at = new Date().toISOString();
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
   const ok = summaries.filter((s) => s.status === "ok").length;
-  r.log(`opencode: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`);
+  r.log(
+    `opencode: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`,
+  );
   if (stopped !== null) r.log(`opencode: run stopped early — ${stopped}`);
   return ok === r.cases.length ? 0 : 1;
 }
@@ -1220,7 +1251,11 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
 // ---- the report ---------------------------------------------------------------------
 
 function n(v: number | undefined): string {
-  return v === undefined ? "?" : Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  return v === undefined
+    ? "?"
+    : Number.isInteger(v)
+      ? String(v)
+      : String(Math.round(v * 100) / 100);
 }
 
 /** The OpenCode arm's report: the harness's numbers (average and every
@@ -1233,7 +1268,9 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
     unknown
   >;
   const judgeFile = join(outDir, "judge.txt");
-  const judge = existsSync(judgeFile) ? readFileSync(judgeFile, "utf8").trim().split("\n") : ["not run"];
+  const judge = existsSync(judgeFile)
+    ? readFileSync(judgeFile, "utf8").trim().split("\n")
+    : ["not run"];
   const k = (x: number): string => `${Math.round(x / 1000)}k`;
   L.push(`# AACR-Bench run — ${set.name} — OpenCode`);
   L.push("");
@@ -1290,7 +1327,10 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
     for (const { c, s } of warned) {
       if (!s.merge_base_ok && s.status !== "failed")
         L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of [...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []), ...s.warnings])
+      for (const w of [
+        ...(s.error ? [s.error.replaceAll("\n", " ").slice(0, 400)] : []),
+        ...s.warnings,
+      ])
         L.push(`- \`${c.instance_id}\`: ${w}`);
     }
   }

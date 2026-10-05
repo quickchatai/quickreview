@@ -349,7 +349,9 @@ describe("docker-compose topology", () => {
 
   it("state on a volume, secrets read-only, pihome persistent, repo as the sandbox", () => {
     expect(compose).toContain("qcr-state:/opt/quickreview/state");
-    expect(compose).toContain("${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro");
+    expect(compose).toContain(
+      "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
+    );
     expect(compose).not.toContain("quickreview-bot"); //: the old dir is never mounted
     expect(compose).toContain("qcr-pihome:/home/review/.pi");
     expect(compose).toContain("./:/opt/quickreview/sandbox");
@@ -505,15 +507,22 @@ describe("entrypoint secrets link", () => {
         mkdirSync(home);
         mkdirSync(mount);
         writeFileSync(join(mount, "app_id"), "1\n");
-        execFileSync("bash", ["-c", `set -euo pipefail\nSECRETS=${JSON.stringify(mount)}\n${block}`], {
-          env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home },
+        execFileSync(
+          "bash",
+          ["-c", `set -euo pipefail\nSECRETS=${JSON.stringify(mount)}\n${block}`],
+          {
+            env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home },
+          },
+        );
+        const located = locateSecrets({
+          configured: "~/.config/quickreview-bot",
+          env: { HOME: home },
         });
-        const located = locateSecrets({ configured: "~/.config/quickreview-bot", env: { HOME: home } });
         expect(located.source).toBe("home");
         expect(readFileSync(join(located.path, "app_id"), "utf8")).toBe("1\n");
         // the old compatibility link is gone — nothing reads that dir.
         expect(existsSync(join(home, ".config", "quickreview-bot"))).toBe(false);
-        expect(text).not.toContain("quickreview-bot\"");
+        expect(text).not.toContain('quickreview-bot"');
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

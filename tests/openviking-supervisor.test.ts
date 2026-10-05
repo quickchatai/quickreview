@@ -560,72 +560,76 @@ describe("OpenVikingSupervisor", () => {
 // ---- the heartbeat block -------------------------------------------------
 
 describe("status.json openviking block", () => {
-  it("reaches the heartbeat, and a throwing status read never breaks it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const root = mkdtempSync(join(tmpdir(), "qcr-ov-"));
-    const store = new StateStore(":memory:");
-    try {
-      for (const d of ["state", "state/dryrun", "verdict", "inject"])
-        mkdirSync(join(root, d), { recursive: true });
-      const adapter = {
-        searchLabelTriggered: async () => [],
-        searchTeamTriggered: async () => [],
-        listOpenPrs: async () => [],
-        stalenessScan: async () => [],
-        listBotReviewComments: async () => [],
-      } as unknown as DaemonAdapter;
+  it(
+    "reaches the heartbeat, and a throwing status read never breaks it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "qcr-ov-"));
+      const store = new StateStore(":memory:");
+      try {
+        for (const d of ["state", "state/dryrun", "verdict", "inject"])
+          mkdirSync(join(root, d), { recursive: true });
+        const adapter = {
+          searchLabelTriggered: async () => [],
+          searchTeamTriggered: async () => [],
+          listOpenPrs: async () => [],
+          stalenessScan: async () => [],
+          listBotReviewComments: async () => [],
+        } as unknown as DaemonAdapter;
 
-      const h = harness();
-      h.sup.start();
-      const daemon = createDaemon({
-        cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
-        root,
-        store,
-        adapter,
-        hooks: stubSessionHooks(root),
-        listen: false,
-        log: () => {},
-        openvikingStatus: () => h.sup.status(),
-      });
-      await daemon.start();
-      const snap = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
-        openviking?: { pid?: number };
-      };
-      expect(snap.openviking).toMatchObject({
-        enabled: true,
-        running: true,
-        pinned_version: "0.4.15",
-      });
-      await daemon.stop();
+        const h = harness();
+        h.sup.start();
+        const daemon = createDaemon({
+          cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
+          root,
+          store,
+          adapter,
+          hooks: stubSessionHooks(root),
+          listen: false,
+          log: () => {},
+          openvikingStatus: () => h.sup.status(),
+        });
+        await daemon.start();
+        const snap = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
+          openviking?: { pid?: number };
+        };
+        expect(snap.openviking).toMatchObject({
+          enabled: true,
+          running: true,
+          pinned_version: "0.4.15",
+        });
+        await daemon.stop();
 
-      // A supervisor that throws must never cost us the heartbeat: the daemon
-      // still writes status.json, just without the block.
-      const store2 = new StateStore(":memory:");
-      const angry = createDaemon({
-        cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
-        root,
-        store: store2,
-        adapter,
-        hooks: stubSessionHooks(root),
-        listen: false,
-        log: () => {},
-        openvikingStatus: () => {
-          throw new Error("memory engine on fire");
-        },
-      });
-      await angry.start();
-      const after = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
-        heartbeat?: string;
-        openviking?: unknown;
-      };
-      expect(after.heartbeat).toBeTruthy();
-      expect(after.openviking).toBeUndefined();
-      await angry.stop();
-      store2.close();
-    } finally {
-      store.close();
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+        // A supervisor that throws must never cost us the heartbeat: the daemon
+        // still writes status.json, just without the block.
+        const store2 = new StateStore(":memory:");
+        const angry = createDaemon({
+          cfg: loadConfig(join(process.cwd(), "tests/fixtures/config.toml")),
+          root,
+          store: store2,
+          adapter,
+          hooks: stubSessionHooks(root),
+          listen: false,
+          log: () => {},
+          openvikingStatus: () => {
+            throw new Error("memory engine on fire");
+          },
+        });
+        await angry.start();
+        const after = JSON.parse(readFileSync(join(root, "state", "status.json"), "utf8")) as {
+          heartbeat?: string;
+          openviking?: unknown;
+        };
+        expect(after.heartbeat).toBeTruthy();
+        expect(after.openviking).toBeUndefined();
+        await angry.stop();
+        store2.close();
+      } finally {
+        store.close();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("is present when a supervisor is wired and absent when it is not", () => {
     const store = new StateStore(":memory:");

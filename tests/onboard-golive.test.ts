@@ -147,17 +147,21 @@ describe("flipDryRunToFalse — the ONE writer of the flag", () => {
     ).toThrow(/no dry_run key/);
   });
 
-  it("flips exactly one key, and leaves the rest of the file alone", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const after = flipDryRunToFalse(exampleConfig, {
-      confirmation: GO_LIVE_CONFIRMATION,
-      proof: PROOF,
-    });
-    expect(after).toMatch(/^dry_run = false/m);
-    expect(after.split("\n")).toHaveLength(exampleConfig.split("\n").length);
-    // Everything else is byte-identical.
-    const diff = after.split("\n").filter((line, i) => line !== exampleConfig.split("\n")[i]);
-    expect(diff).toHaveLength(1);
-  });
+  it(
+    "flips exactly one key, and leaves the rest of the file alone",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const after = flipDryRunToFalse(exampleConfig, {
+        confirmation: GO_LIVE_CONFIRMATION,
+        proof: PROOF,
+      });
+      expect(after).toMatch(/^dry_run = false/m);
+      expect(after.split("\n")).toHaveLength(exampleConfig.split("\n").length);
+      // Everything else is byte-identical.
+      const diff = after.split("\n").filter((line, i) => line !== exampleConfig.split("\n")[i]);
+      expect(diff).toHaveLength(1);
+    },
+  );
 
   it("takes the phrase, and only the phrase (case and space forgiven)", () => {
     expect(isGoLiveConfirmation("GO LIVE")).toBe(true);
@@ -317,8 +321,15 @@ describe("declining is a first-class outcome", () => {
     expect(SETUP_RECOMMENDATION).toMatch(/press I on the TUI board/);
     expect(SETUP_RECOMMENDATION).toMatch(/until you deploy/);
     const declined = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
-    expect(declined.checks.at(-1)).toEqual({ name: "next", ok: true, detail: SETUP_RECOMMENDATION });
-    const live = await harness().engine.runStep(GO_LIVE_STEP_ID, { decision: "go_live", confirm: GO_LIVE_CONFIRMATION });
+    expect(declined.checks.at(-1)).toEqual({
+      name: "next",
+      ok: true,
+      detail: SETUP_RECOMMENDATION,
+    });
+    const live = await harness().engine.runStep(GO_LIVE_STEP_ID, {
+      decision: "go_live",
+      confirm: GO_LIVE_CONFIRMATION,
+    });
     expect(live.ok).toBe(true);
     expect(live.checks.at(-1)).toEqual({ name: "next", ok: true, detail: SETUP_RECOMMENDATION });
   });

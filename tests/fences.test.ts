@@ -223,48 +223,52 @@ describe("[T3] union members have producers", () => {
    * MUTATION: delete the `{ type: "dispatched" }` construction from
    * src/dispatch.ts — this fails naming `dispatched`.
    */
-  it("every SmEventType is constructed by a module outside statemachine.ts", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const declared = unionMembers("src/statemachine.ts", "SmEventType");
-    const producers = SRC_FILES.filter((f) => !f.endsWith("/statemachine.ts"))
-      .map(codeOf)
-      .join("\n");
+  it(
+    "every SmEventType is constructed by a module outside statemachine.ts",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const declared = unionMembers("src/statemachine.ts", "SmEventType");
+      const producers = SRC_FILES.filter((f) => !f.endsWith("/statemachine.ts"))
+        .map(codeOf)
+        .join("\n");
 
-    /**
-     * ALLOWLIST — event types with no producer, each with the reason it is
-     * still in the union and the ticket that will remove it.
-     *
-     * This is NOT a place to park a member nobody wants to think about: an
-     * entry needs a ticket id, and the fence below refuses an entry that has
-     * quietly acquired a producer, so a resolved item cannot linger here
-     * pretending to be debt.
-     */
-    const NO_PRODUCER_ALLOWLIST: ReadonlyArray<{ type: string; why: string }> = [
-      {
-        type: "stale_detected",
-        why:
-          "[A6]: the staleness round type has no producer and takes the whole round type with it. " +
-          "Classified DELETE by the inventory and cut as its own batch (the inventory's Batch 6), which has " +
-          "not landed — it depends on whether the live VM database holds rows with stale_recheck = 1 " +
-          "([U1], stated there as an unknown rather than guessed). Recorded here so it reads as " +
-          "a ticketed removal, not an oversight.",
-      },
-    ];
-    for (const e of NO_PRODUCER_ALLOWLIST) {
-      expect(declared, `${e.type} is allowlisted but is no longer in SmEventType`).toContain(
-        e.type,
-      );
-      expect(e.why).toMatch(/FT-\d{4}/);
-    }
+      /**
+       * ALLOWLIST — event types with no producer, each with the reason it is
+       * still in the union and the ticket that will remove it.
+       *
+       * This is NOT a place to park a member nobody wants to think about: an
+       * entry needs a ticket id, and the fence below refuses an entry that has
+       * quietly acquired a producer, so a resolved item cannot linger here
+       * pretending to be debt.
+       */
+      const NO_PRODUCER_ALLOWLIST: ReadonlyArray<{ type: string; why: string }> = [
+        {
+          type: "stale_detected",
+          why:
+            "[A6]: the staleness round type has no producer and takes the whole round type with it. " +
+            "Classified DELETE by the inventory and cut as its own batch (the inventory's Batch 6), which has " +
+            "not landed — it depends on whether the live VM database holds rows with stale_recheck = 1 " +
+            "([U1], stated there as an unknown rather than guessed). Recorded here so it reads as " +
+            "a ticketed removal, not an oversight.",
+        },
+      ];
+      for (const e of NO_PRODUCER_ALLOWLIST) {
+        expect(declared, `${e.type} is allowlisted but is no longer in SmEventType`).toContain(
+          e.type,
+        );
+        expect(e.why).toMatch(/FT-\d{4}/);
+      }
 
-    const constructed = new Set(declared.filter((t) => producers.includes(`type: "${t}"`)));
-    const orphans = declared.filter((t) => !constructed.has(t));
-    const allowed = NO_PRODUCER_ALLOWLIST.map((e) => e.type).sort();
+      const constructed = new Set(declared.filter((t) => producers.includes(`type: "${t}"`)));
+      const orphans = declared.filter((t) => !constructed.has(t));
+      const allowed = NO_PRODUCER_ALLOWLIST.map((e) => e.type).sort();
 
-    expect(
-      orphans.sort(),
-      "an SmEventType with no producer is dead vocabulary — delete it, or allowlist it with the ticket that will",
-    ).toEqual(allowed);
-  });
+      expect(
+        orphans.sort(),
+        "an SmEventType with no producer is dead vocabulary — delete it, or allowlist it with the ticket that will",
+      ).toEqual(allowed);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -668,52 +672,56 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * FIRST_PARTY_DIRECTIVE_ADDENDUM — fails on every variant. Put `awk` back
    * into the allowlist sentence — fails on every variant.
    */
-  it("no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    // Every pack the locator would load (a stranded checkout pack is
-    // not one — it is never read, so it composes into nothing): the generic
-    // examples, plus the frozen fixture copy of the deployment's pack
-    // (tests/fixtures/profiles/), staged into the temp config home so the
-    // deployed composition stays one of the compositions this fence covers.
-    const fixtures = stageFixtureProfiles(ROOT);
-    const examples = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-    const profiles = [...examples, ...fixtures].filter(
-      (name) => locateProfile({ root: ROOT, profile: name }) !== null,
-    );
-    expect(
-      profiles.length,
-      "no profile packs found — the profile half of this fence would be vacuous",
-    ).toBeGreaterThan(0);
-    const compositions: Array<[string, typeof PASS_ADDENDA]> = [
-      ["default", PASS_ADDENDA],
-      ...profiles.map((name): [string, typeof PASS_ADDENDA] => [
-        name,
-        [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)],
-      ]),
-    ];
-    for (const [label, addenda] of compositions) {
-      const out = mkdtempSync(join(tmpdir(), `qcr-ft0403-${label}-`));
-      try {
-        const built = buildAgents(join(ROOT, "agents"), out, { root: ROOT, addenda });
-        expect(
-          built.length,
-          `${label}: too few variants built to be the real set`,
-        ).toBeGreaterThanOrEqual(30);
-        for (const b of built) {
-          const body = readFileSync(b.output, "utf8");
-          const where = `${label}/${b.name}`;
-          expect(body, where).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
-          expect([...advertisedIn(body)].sort(), where).toEqual([...ALLOWED_PROGRAMS].sort());
-          expect(body, `${where} names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
-          expect(body, `${where} names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
-          expect(body, `${where} names awk`).not.toMatch(/\bawk\b/);
+  it(
+    "no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      // Every pack the locator would load (a stranded checkout pack is
+      // not one — it is never read, so it composes into nothing): the generic
+      // examples, plus the frozen fixture copy of the deployment's pack
+      // (tests/fixtures/profiles/), staged into the temp config home so the
+      // deployed composition stays one of the compositions this fence covers.
+      const fixtures = stageFixtureProfiles(ROOT);
+      const examples = readdirSync(join(ROOT, "profiles"), { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      const profiles = [...examples, ...fixtures].filter(
+        (name) => locateProfile({ root: ROOT, profile: name }) !== null,
+      );
+      expect(
+        profiles.length,
+        "no profile packs found — the profile half of this fence would be vacuous",
+      ).toBeGreaterThan(0);
+      const compositions: Array<[string, typeof PASS_ADDENDA]> = [
+        ["default", PASS_ADDENDA],
+        ...profiles.map((name): [string, typeof PASS_ADDENDA] => [
+          name,
+          [...PASS_ADDENDA, ...loadProfileAddenda(ROOT, name)],
+        ]),
+      ];
+      for (const [label, addenda] of compositions) {
+        const out = mkdtempSync(join(tmpdir(), `qcr-ft0403-${label}-`));
+        try {
+          const built = buildAgents(join(ROOT, "agents"), out, { root: ROOT, addenda });
+          expect(
+            built.length,
+            `${label}: too few variants built to be the real set`,
+          ).toBeGreaterThanOrEqual(30);
+          for (const b of built) {
+            const body = readFileSync(b.output, "utf8");
+            const where = `${label}/${b.name}`;
+            expect(body, where).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
+            expect([...advertisedIn(body)].sort(), where).toEqual([...ALLOWED_PROGRAMS].sort());
+            expect(body, `${where} names NEEDS_HUMAN`).not.toMatch(/NEEDS_HUMAN/);
+            expect(body, `${where} names the park`).not.toMatch(/\bpark(s|ed|ing)?\b/i);
+            expect(body, `${where} names awk`).not.toMatch(/\bawk\b/);
+          }
+        } finally {
+          rmSync(out, { recursive: true, force: true });
         }
-      } finally {
-        rmSync(out, { recursive: true, force: true });
       }
-    }
-  });
+    },
+  );
 
   /**
    * The sentence lists PROGRAMS, and the guard admits a few SHAPES beyond
@@ -820,17 +828,21 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * daemon builds `state/agents` from `dist/src/include.js`, so the sentence
    * the VM's passes read is the compiled module's, not the source's.
    */
-  it("the COMPILED execution policy is the source's, and names no awk", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const dist = join(ROOT, "dist", "src", "include.js");
-    if (!existsSync(dist)) {
-      throw new Error(
-        "dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified",
-      );
-    }
-    const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
-    expect(compiled.EXECUTION_POLICY_ADDENDUM).toBe(EXECUTION_POLICY_ADDENDUM);
-    expect(compiled.EXECUTION_POLICY_ADDENDUM).not.toMatch(/\bawk\b/);
-  });
+  it(
+    "the COMPILED execution policy is the source's, and names no awk",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const dist = join(ROOT, "dist", "src", "include.js");
+      if (!existsSync(dist)) {
+        throw new Error(
+          "dist/src/include.js is missing — run `npm run build`; the shipped prompt is unverified",
+        );
+      }
+      const compiled = (await import(dist)) as { EXECUTION_POLICY_ADDENDUM: string };
+      expect(compiled.EXECUTION_POLICY_ADDENDUM).toBe(EXECUTION_POLICY_ADDENDUM);
+      expect(compiled.EXECUTION_POLICY_ADDENDUM).not.toMatch(/\bawk\b/);
+    },
+  );
 });
 
 describe("the prose beside the posting map says what the map does (MC-45)", () => {

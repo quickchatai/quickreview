@@ -12,8 +12,13 @@ describe("blocked author's PR conversation", () => {
   let dir: string;
   let time: Date;
   const inject = vi.fn(async (_pr: number, _message: string) => {});
-  const post = vi.fn(async (_pr: number, _body: string): Promise<GateResult> => ({ executed: true, response: { id: 999 } }));
-  const list = vi.fn(async (_pr: number) => [] as Array<{ id: number; user: string; body: string }>);
+  const post = vi.fn(async (_pr: number, _body: string): Promise<GateResult> => ({
+    executed: true,
+    response: { id: 999 },
+  }));
+  const list = vi.fn(
+    async (_pr: number) => [] as Array<{ id: number; user: string; body: string }>,
+  );
   let conversation: PrConversation;
   beforeEach(() => {
     vi.resetAllMocks();
@@ -22,25 +27,77 @@ describe("blocked author's PR conversation", () => {
     list.mockResolvedValue([]);
     time = new Date("2026-10-02T12:00:00Z");
     store = new StateStore(":memory:", () => time);
-    store.upsertPr({ number: 77, state: "awaiting_author", title: "Audit", author: "alice", head_sha: "abc", trigger_ts: null, stale_recheck: 0, migration_gate: 0 });
+    store.upsertPr({
+      number: 77,
+      state: "awaiting_author",
+      title: "Audit",
+      author: "alice",
+      head_sha: "abc",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
     store.recordReviewedHead(77, { head_sha: "abc", verdict: "REQUEST_CHANGES", round_no: 4 });
     dir = mkdtempSync(join(tmpdir(), "pr-conversation-"));
-    conversation = new PrConversation({ store, verdictDir: dir, botLogin: "review[bot]", inject,
-      adapter: { createIssueComment: post, listIssueComments: list }, now: () => time });
+    conversation = new PrConversation({
+      store,
+      verdictDir: dir,
+      botLogin: "review[bot]",
+      inject,
+      adapter: { createIssueComment: post, listIssueComments: list },
+      now: () => time,
+    });
   });
-  afterEach(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
-  const objection = { pr: 77, comment_id: 100, author: "alice", body: "Please reconsider this blocker.", created_at: "2026-10-02T12:00:00Z" };
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const objection = {
+    pr: 77,
+    comment_id: 100,
+    author: "alice",
+    body: "Please reconsider this blocker.",
+    created_at: "2026-10-02T12:00:00Z",
+  };
   const answer = (id = 100, reply = "This is pre-existing debt; I concede this finding.") =>
-    writeFileSync(join(dir, `pr-77-conversation-comment-${id}.json`), JSON.stringify({ pr: 77, comment_id: id, reply }));
-  const advance = (ms = 60_000) => { time = new Date(time.getTime() + ms); };
+    writeFileSync(
+      join(dir, `pr-77-conversation-comment-${id}.json`),
+      JSON.stringify({ pr: 77, comment_id: id, reply }),
+    );
+  const advance = (ms = 60_000) => {
+    time = new Date(time.getTime() + ms);
+  };
 
   it("delivers the objection once, posts a top-level answer, and preserves the standing verdict", async () => {
-    expect(await conversation.accept({ pr: 77, comment_id: 100, author: "alice", body: "This predates my PR. Please reconsider.", created_at: time.toISOString() })).toBe(true);
+    expect(
+      await conversation.accept({
+        pr: 77,
+        comment_id: 100,
+        author: "alice",
+        body: "This predates my PR. Please reconsider.",
+        created_at: time.toISOString(),
+      }),
+    ).toBe(true);
     expect(inject).toHaveBeenCalledTimes(1);
     expect(inject.mock.calls[0]?.[1]).toContain("This predates my PR");
     expect(inject.mock.calls[0]?.[1]).toContain("pr-77-conversation-comment-100.json");
-    expect(await conversation.accept({ pr: 77, comment_id: 100, author: "alice", body: "This predates my PR. Please reconsider.", created_at: time.toISOString() })).toBe(false);
-    writeFileSync(join(dir, "pr-77-conversation-comment-100.json"), JSON.stringify({ pr: 77, comment_id: 100, reply: "You are right: this predates the audit. I concede this finding." }));
+    expect(
+      await conversation.accept({
+        pr: 77,
+        comment_id: 100,
+        author: "alice",
+        body: "This predates my PR. Please reconsider.",
+        created_at: time.toISOString(),
+      }),
+    ).toBe(false);
+    writeFileSync(
+      join(dir, "pr-77-conversation-comment-100.json"),
+      JSON.stringify({
+        pr: 77,
+        comment_id: 100,
+        reply: "You are right: this predates the audit. I concede this finding.",
+      }),
+    );
     await conversation.sweep();
     expect(post).toHaveBeenCalledOnce();
     expect(post.mock.calls[0]?.[0]).toBe(77);
@@ -53,23 +110,38 @@ describe("blocked author's PR conversation", () => {
   });
 
   it.each([
-    { author: "bob" }, { author: "review[bot]" }, { pr: 99 },
-    { body: " " }, { body: "[feedback] The review is noisy" }, { comment_id: -1 },
-    { created_at: null }, { created_at: "invalid" }, { created_at: "2026-09-01T00:00:00Z" },
-  ])("refuses unrelated or invalid intake %j", async patch => {
+    { author: "bob" },
+    { author: "review[bot]" },
+    { pr: 99 },
+    { body: " " },
+    { body: "[feedback] The review is noisy" },
+    { comment_id: -1 },
+    { created_at: null },
+    { created_at: "invalid" },
+    { created_at: "2026-09-01T00:00:00Z" },
+  ])("refuses unrelated or invalid intake %j", async (patch) => {
     expect(await conversation.accept({ ...objection, ...patch })).toBe(false);
     expect(inject).not.toHaveBeenCalled();
     expect(store.reviewedHead(77)?.last_author_reply_at).toBeNull();
   });
 
-  it.each(["APPROVE", "COMMENT", "NEEDS_HUMAN"])("does not wake without a standing blocker (%s)", async verdict => {
-    store.recordReviewedHead(77, { head_sha: "abc", verdict });
-    expect(await conversation.accept(objection)).toBe(false);
-    expect(inject).not.toHaveBeenCalled();
-  });
+  it.each(["APPROVE", "COMMENT", "NEEDS_HUMAN"])(
+    "does not wake without a standing blocker (%s)",
+    async (verdict) => {
+      store.recordReviewedHead(77, { head_sha: "abc", verdict });
+      expect(await conversation.accept(objection)).toBe(false);
+      expect(inject).not.toHaveBeenCalled();
+    },
+  );
 
   it("fails closed for an unknown posting adapter", async () => {
-    const missing = new PrConversation({ store, verdictDir: dir, botLogin: "review[bot]", inject, adapter: {} });
+    const missing = new PrConversation({
+      store,
+      verdictDir: dir,
+      botLogin: "review[bot]",
+      inject,
+      adapter: {},
+    });
     expect(await missing.accept(objection)).toBe(false);
   });
 
@@ -110,14 +182,22 @@ describe("blocked author's PR conversation", () => {
     for (let i = 0; i < 6; i++) store.holdWake(77, `later ${i}`, "other");
     advance(6 * 60_000);
     await conversation.sweep();
-    expect(inject.mock.calls.some(c => c[1].includes("pr-77-conversation-comment-100.json"))).toBe(true);
+    expect(
+      inject.mock.calls.some((c) => c[1].includes("pr-77-conversation-comment-100.json")),
+    ).toBe(true);
     expect(conversation.context(77)).toContain("pending");
   });
 
   it("persists an obligation across daemon restart and carries it into an explicit review", async () => {
     await conversation.accept(objection);
-    conversation = new PrConversation({ store, verdictDir: dir, botLogin: "review[bot]", inject,
-      adapter: { createIssueComment: post, listIssueComments: list }, now: () => time });
+    conversation = new PrConversation({
+      store,
+      verdictDir: dir,
+      botLogin: "review[bot]",
+      inject,
+      adapter: { createIssueComment: post, listIssueComments: list },
+      now: () => time,
+    });
     expect(await conversation.accept(objection)).toBe(false);
     expect(conversation.context(77)).toContain("Please reconsider this blocker");
     answer();
@@ -174,7 +254,10 @@ describe("blocked author's PR conversation", () => {
   it("rejects unclaimed or cross-PR response files without posting", async () => {
     answer(101);
     await conversation.accept(objection);
-    writeFileSync(join(dir, "pr-78-conversation-comment-100.json"), JSON.stringify({ pr: 78, comment_id: 100, reply: "forged" }));
+    writeFileSync(
+      join(dir, "pr-78-conversation-comment-100.json"),
+      JSON.stringify({ pr: 78, comment_id: 100, reply: "forged" }),
+    );
     await conversation.sweep();
     expect(post).not.toHaveBeenCalled();
   });
@@ -224,7 +307,13 @@ describe("blocked author's PR conversation", () => {
       { comment_id: 102, author: "alice", body: "[feedback] Too noisy", tagged: true },
       { comment_id: 103, author: "alice", body: "older", created_at: "2026-09-01T00:00:00Z" },
       { comment_id: 104, author: "alice", body: "unknown timestamp", created_at: null },
-    ]) store.recordPrComment({ pr: 77, source: "issue_comment", created_at: time.toISOString(), ...c });
+    ])
+      store.recordPrComment({
+        pr: 77,
+        source: "issue_comment",
+        created_at: time.toISOString(),
+        ...c,
+      });
     await conversation.sweep();
     expect(inject).toHaveBeenCalledOnce();
     await conversation.sweep();
@@ -232,10 +321,19 @@ describe("blocked author's PR conversation", () => {
   });
 
   it("pre-review chatter cannot starve the bounded recovery batch", async () => {
-    for (let i = 0; i < 30; i++) store.recordPrComment({ ...objection, comment_id: 200 + i,
-      source: "issue_comment", created_at: "2026-10-02T11:30:00Z" });
+    for (let i = 0; i < 30; i++)
+      store.recordPrComment({
+        ...objection,
+        comment_id: 200 + i,
+        source: "issue_comment",
+        created_at: "2026-10-02T11:30:00Z",
+      });
     advance(1000);
-    store.recordPrComment({ ...objection, source: "issue_comment", created_at: time.toISOString() });
+    store.recordPrComment({
+      ...objection,
+      source: "issue_comment",
+      created_at: time.toISOString(),
+    });
     await conversation.sweep();
     expect(inject).toHaveBeenCalledOnce();
     expect(inject.mock.calls[0]?.[1]).toContain("comment 100");
@@ -245,7 +343,11 @@ describe("blocked author's PR conversation", () => {
     const first = store.startRound(77, "first", ["pass-baseline"], 75);
     store.finishRound(first, "REQUEST_CHANGES", null);
     advance(1000);
-    store.recordPrComment({ ...objection, source: "issue_comment", created_at: time.toISOString() });
+    store.recordPrComment({
+      ...objection,
+      source: "issue_comment",
+      created_at: time.toISOString(),
+    });
     advance(1000);
     store.recordReviewedHead(77, { head_sha: "abc", verdict: "REQUEST_CHANGES", round_no: 5 });
     await conversation.sweep();
@@ -254,7 +356,10 @@ describe("blocked author's PR conversation", () => {
 
   it("accepts a late valid answer without reissuing work after delivery exhaustion", async () => {
     await conversation.accept(objection);
-    for (let i = 0; i < 3; i++) { advance(6 * 60_000); await conversation.sweep(); }
+    for (let i = 0; i < 3; i++) {
+      advance(6 * 60_000);
+      await conversation.sweep();
+    }
     expect(conversation.context(77)).toContain("failed");
     answer();
     await conversation.sweep();
@@ -266,9 +371,12 @@ describe("blocked author's PR conversation", () => {
     await conversation.accept(objection);
     answer();
     list.mockRejectedValue(new Error("API failure"));
-    for (let i = 0; i < 3; i++) { advance(3 * 60_000); await conversation.sweep(); }
+    for (let i = 0; i < 3; i++) {
+      advance(3 * 60_000);
+      await conversation.sweep();
+    }
     expect(conversation.context(77)).toContain("failed");
     expect(post).not.toHaveBeenCalled();
-    expect(store.anomalies().some(e => e.kind === "pr_conversation_failed")).toBe(true);
+    expect(store.anomalies().some((e) => e.kind === "pr_conversation_failed")).toBe(true);
   });
 });

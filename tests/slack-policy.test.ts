@@ -48,11 +48,15 @@ const inject = (id: string, user: string | null) =>
   });
 
 describe("dayWindow (Warsaw, DST-correct)", () => {
-  it("puts a late-evening UTC instant in the NEXT Warsaw day", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    // 22:30Z on the 17th is 00:30 on the 18th in Warsaw (CEST, +2).
-    expect(dayWindow(new Date("2026-08-17T22:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-18");
-    expect(dayWindow(new Date("2026-08-17T21:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-17");
-  });
+  it(
+    "puts a late-evening UTC instant in the NEXT Warsaw day",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      // 22:30Z on the 17th is 00:30 on the 18th in Warsaw (CEST, +2).
+      expect(dayWindow(new Date("2026-08-17T22:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-18");
+      expect(dayWindow(new Date("2026-08-17T21:30:00Z"), "Europe/Warsaw").day).toBe("2026-08-17");
+    },
+  );
 
   it("spans 23h on the spring-forward day and 25h on the fall-back day", () => {
     const spring = dayWindow(new Date("2026-03-29T12:00:00Z"), "Europe/Warsaw");

@@ -136,19 +136,23 @@ afterEach(() => {
 });
 
 describe("slack off", () => {
-  it("constructs nothing, reads no secret and builds no transport", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    cfg.slack.enabled = false;
-    const readSecret = vi.fn(() => "xoxb-should-never-be-read");
-    const makeTransport = vi.fn(() => fakeTransport());
+  it(
+    "constructs nothing, reads no secret and builds no transport",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      cfg.slack.enabled = false;
+      const readSecret = vi.fn(() => "xoxb-should-never-be-read");
+      const makeTransport = vi.fn(() => fakeTransport());
 
-    const runtime = await startSlack(
-      wiring({ readSecret: readSecret as never, makeTransport: makeTransport as never }),
-    );
+      const runtime = await startSlack(
+        wiring({ readSecret: readSecret as never, makeTransport: makeTransport as never }),
+      );
 
-    expect(runtime).toBeUndefined();
-    expect(readSecret).not.toHaveBeenCalled();
-    expect(makeTransport).not.toHaveBeenCalled();
-  });
+      expect(runtime).toBeUndefined();
+      expect(readSecret).not.toHaveBeenCalled();
+      expect(makeTransport).not.toHaveBeenCalled();
+    },
+  );
 
   it("leaves the legacy command watcher exactly as it was before", () => {
     const watcher = buildLocalCommandWatcher({

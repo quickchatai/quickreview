@@ -51,7 +51,11 @@ export const VALIDITY_ORDER: readonly ValidityView[] = [...VALIDITIES, "unknown"
 
 /** A finding's tier as stored — `unknown` when it carries none. */
 export function validityOf(f: { validity?: Validity | null }): ValidityView {
-  return f.validity !== undefined && f.validity !== null && (VALIDITIES as readonly string[]).includes(f.validity) ? f.validity : "unknown";
+  return f.validity !== undefined &&
+    f.validity !== null &&
+    (VALIDITIES as readonly string[]).includes(f.validity)
+    ? f.validity
+    : "unknown";
 }
 
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -62,18 +66,22 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
  * stores the finding), as a reader shows it: only on a finding still
  * untriaged (`new`) — once the operator promotes or dismisses it, the
  * resemblance is answered. */
-export function dismissedLookalike(f: Pick<ScanFinding, "state" | "resembles_dismissed">): ResemblesDismissed | null {
+export function dismissedLookalike(
+  f: Pick<ScanFinding, "state" | "resembles_dismissed">,
+): ResemblesDismissed | null {
   return f.state === "new" ? (f.resembles_dismissed ?? null) : null;
 }
 
 /** 1 for a finding flagged as resembling a dismissed one, else 0 — the sort
  * key that puts it below the unflagged findings of its tier. */
-export const lookalikeRank = (f: Pick<ScanFinding, "state" | "resembles_dismissed">): number => (dismissedLookalike(f) ? 1 : 0);
+export const lookalikeRank = (f: Pick<ScanFinding, "state" | "resembles_dismissed">): number =>
+  dismissedLookalike(f) ? 1 : 0;
 
 /** Parse the run record; throws on anything this version does not read. */
 export function parseRunFile(text: string): RunFile {
   const raw = JSON.parse(text) as Partial<RunFile> | null;
-  if (typeof raw !== "object" || raw === null || raw.version !== RUN_VERSION) throw new Error("unknown version");
+  if (typeof raw !== "object" || raw === null || raw.version !== RUN_VERSION)
+    throw new Error("unknown version");
   const current = raw.current ?? null;
   if (current !== null && (typeof current !== "object" || !Array.isArray(current.cases))) {
     throw new Error("`current` is not a scan run");
@@ -84,19 +92,35 @@ export function parseRunFile(text: string): RunFile {
 /** Parse the findings store; throws on anything this version does not read. */
 export function parseFindingsFile(text: string): FindingsFile {
   const raw = JSON.parse(text) as Partial<FindingsFile> | null;
-  if (typeof raw !== "object" || raw === null || raw.version !== FINDINGS_VERSION || !Array.isArray(raw.findings)) {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    raw.version !== FINDINGS_VERSION ||
+    !Array.isArray(raw.findings)
+  ) {
     throw new Error("not a version-1 findings store");
   }
   for (const f of raw.findings) {
-    if (typeof f?.fingerprint !== "string" || typeof f.path !== "string" || typeof f.state !== "string") {
+    if (
+      typeof f?.fingerprint !== "string" ||
+      typeof f.path !== "string" ||
+      typeof f.state !== "string"
+    ) {
       throw new Error("a finding has no fingerprint, path or state");
     }
   }
   const q = raw.question ?? null;
-  if (q !== null && (typeof q.key !== "string" || !Array.isArray(q.unreported) || !Array.isArray(q.fresh))) {
+  if (
+    q !== null &&
+    (typeof q.key !== "string" || !Array.isArray(q.unreported) || !Array.isArray(q.fresh))
+  ) {
     throw new Error("the pending match question is malformed");
   }
-  return { version: FINDINGS_VERSION, findings: currentLookalikes(raw.findings.map(stickyDismissal)), question: q };
+  return {
+    version: FINDINGS_VERSION,
+    findings: currentLookalikes(raw.findings.map(stickyDismissal)),
+    question: q,
+  };
 }
 
 /** A `resembles_dismissed` flag is written when a finding is stored; the
@@ -118,7 +142,13 @@ function currentLookalikes(findings: ScanFinding[]): ScanFinding[] {
     const { resembles_dismissed: flag, ...rest } = f;
     const d = owner.get(flag.fingerprint);
     if (!d || d.state !== "dismissed" || d.fingerprint === f.fingerprint) return rest;
-    return { ...rest, resembles_dismissed: { fingerprint: d.fingerprint, reason: d.dismissal?.reason ?? flag.reason } };
+    return {
+      ...rest,
+      resembles_dismissed: {
+        fingerprint: d.fingerprint,
+        reason: d.dismissal?.reason ?? flag.reason,
+      },
+    };
   });
 }
 
@@ -133,7 +163,8 @@ function stickyDismissal(f: ScanFinding): ScanFinding {
 }
 
 /** One record file: absent, read, or why it could not be. */
-export type RecordRead<T> = { kind: "absent" } | { kind: "read"; value: T } | { kind: "unreadable"; why: string };
+export type RecordRead<T> =
+  { kind: "absent" } | { kind: "read"; value: T } | { kind: "unreadable"; why: string };
 
 function readText(path: string): string | null {
   try {
@@ -160,7 +191,9 @@ function readRecord<T>(home: string, rel: string, parse: (text: string) => T): R
 }
 
 /** The scan run record in the state home at `home`. */
-export function readScanRuns(home: string): RecordRead<{ current: ScanRun | null; history: ScanRunSummary[] }> {
+export function readScanRuns(
+  home: string,
+): RecordRead<{ current: ScanRun | null; history: ScanRunSummary[] }> {
   return readRecord(home, RUN_FILE, (t) => {
     const f = parseRunFile(t);
     return { current: f.current, history: f.history };
@@ -168,7 +201,9 @@ export function readScanRuns(home: string): RecordRead<{ current: ScanRun | null
 }
 
 /** The findings store in the state home at `home`. */
-export function readScanFindings(home: string): RecordRead<{ findings: ScanFinding[]; question: MatchQuestion | null }> {
+export function readScanFindings(
+  home: string,
+): RecordRead<{ findings: ScanFinding[]; question: MatchQuestion | null }> {
   return readRecord(home, FINDINGS_FILE, (t) => {
     const f = parseFindingsFile(t);
     return { findings: f.findings, question: f.question ?? null };
@@ -198,7 +233,15 @@ export interface ScanStopResult {
 export function parseStopRequest(text: string): ScanStopRequest | null {
   try {
     const r = JSON.parse(text) as Partial<ScanStopRequest> | null;
-    if (typeof r !== "object" || r === null || typeof r.id !== "string" || r.id === "" || typeof r.run !== "string" || r.run === "") return null;
+    if (
+      typeof r !== "object" ||
+      r === null ||
+      typeof r.id !== "string" ||
+      r.id === "" ||
+      typeof r.run !== "string" ||
+      r.run === ""
+    )
+      return null;
     return { id: r.id, run: r.run, at: typeof r.at === "string" ? r.at : "", by: "tui" };
   } catch {
     return null;
@@ -209,13 +252,21 @@ export function parseStopRequest(text: string): ScanStopRequest | null {
 export function parseStopResult(text: string): ScanStopResult | null {
   try {
     const r = JSON.parse(text) as Partial<ScanStopResult> | null;
-    if (typeof r !== "object" || r === null || typeof r.request !== "string" || typeof r.ok !== "boolean") return null;
+    if (
+      typeof r !== "object" ||
+      r === null ||
+      typeof r.request !== "string" ||
+      typeof r.ok !== "boolean"
+    )
+      return null;
     return {
       request: r.request,
       run: typeof r.run === "string" ? r.run : "",
       at: typeof r.at === "string" ? r.at : "",
       ok: r.ok,
-      errors: Array.isArray(r.errors) ? r.errors.filter((e): e is string => typeof e === "string") : [],
+      errors: Array.isArray(r.errors)
+        ? r.errors.filter((e): e is string => typeof e === "string")
+        : [],
     };
   } catch {
     return null;
@@ -244,7 +295,10 @@ export function clickStopScan(
   if (read.kind === "unreadable") return { ok: false, line: `scan not stopped: ${read.why}` };
   const cur = read.kind === "read" ? read.value.current : null;
   if (cur === null || cur.id !== run || cur.state !== "running") {
-    return { ok: false, line: `scan not stopped: ${run} is no longer running — look at the report again` };
+    return {
+      ok: false,
+      line: `scan not stopped: ${run} is no longer running — look at the report again`,
+    };
   }
   const request: ScanStopRequest = {
     id: `${now.toISOString()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -255,9 +309,16 @@ export function clickStopScan(
   try {
     writeAtomic(join(home, SCAN_STOP_FILE), `${JSON.stringify(request)}\n`);
   } catch (err) {
-    return { ok: false, line: `scan not stopped: the stop request could not be written: ${clean(err)}` };
+    return {
+      ok: false,
+      line: `scan not stopped: the stop request could not be written: ${clean(err)}`,
+    };
   }
-  return { ok: true, request: request.id, line: `stop asked for ${run} — the companion stops it within seconds; the ledger resumes the rest` };
+  return {
+    ok: true,
+    request: request.id,
+    line: `stop asked for ${run} — the companion stops it within seconds; the ledger resumes the rest`,
+  };
 }
 
 /** What became of the stop `request`: the companion's answer, or null while
@@ -272,5 +333,7 @@ export function scanStopOutcome(home: string, request: string): string | null {
   }
   const r = text === null ? null : parseStopResult(text);
   if (r === null || r.request !== request) return null;
-  return r.ok ? `scan ${r.run} stopped — what finished is in the ledger` : `scan stop refused: ${r.errors.join("; ")}`;
+  return r.ok
+    ? `scan ${r.run} stopped — what finished is in the ledger`
+    : `scan stop refused: ${r.errors.join("; ")}`;
 }

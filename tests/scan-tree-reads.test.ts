@@ -45,16 +45,36 @@ function fakeSpawn(lines: unknown[]) {
   return { spawn, calls };
 }
 
-const tool = (toolName: string, path: string) => ({ type: "tool_execution_start", toolCallId: `c-${path}`, toolName, args: { path } });
-const done = { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "NONE" }], usage: { cost: { total: 0.01 } } } };
-const spec: CaseSpec = { id: "run/api", unit: "api", agent: "pass-survey", files: ["api/models.py"], prompt: "SCAN" };
+const tool = (toolName: string, path: string) => ({
+  type: "tool_execution_start",
+  toolCallId: `c-${path}`,
+  toolName,
+  args: { path },
+});
+const done = {
+  type: "message_end",
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: "NONE" }],
+    usage: { cost: { total: 0.01 } },
+  },
+};
+const spec: CaseSpec = {
+  id: "run/api",
+  unit: "api",
+  agent: "pass-survey",
+  files: ["api/models.py"],
+  prompt: "SCAN",
+};
 
 async function readsOf(paths: string[]): Promise<string[] | undefined> {
   const f = fakeSpawn([...paths.map((p) => tool("read", p)), done]);
-  const out = await piCaseRunner({ agentsDir: COMPANION_AGENTS_DIR, cwd: APP, spawn: f.spawn, invocation: { command: "pi", prefix: [] } }).run(
-    spec,
-    new AbortController().signal,
-  );
+  const out = await piCaseRunner({
+    agentsDir: COMPANION_AGENTS_DIR,
+    cwd: APP,
+    spawn: f.spawn,
+    invocation: { command: "pi", prefix: [] },
+  }).run(spec, new AbortController().signal);
   expect(f.calls[0]!.cwd).toBe(APP); // first-party ground, never the tree
   return out.ok ? out.reads : undefined;
 }
@@ -65,7 +85,9 @@ describe("the case runner reports every read as the path pi opened", () => {
   });
 
   it("a relative read that names a path inside the tree resolves inside the tree", async () => {
-    expect(await readsOf(["state/scan/tree/abc123/api/models.py"])).toEqual([`${TREE}/api/models.py`]);
+    expect(await readsOf(["state/scan/tree/abc123/api/models.py"])).toEqual([
+      `${TREE}/api/models.py`,
+    ]);
   });
 
   it("strips pi's one leading `@`, expands `~`, and normalises `..` — as pi's own resolver does", () => {
@@ -81,7 +103,9 @@ describe("the read-count guard credits what resolved inside the tree", () => {
   const focus = ["api/models.py"];
 
   it("credits a RELATIVE read that resolved inside the tree", async () => {
-    expect(unreadFocus(await readsOf(["state/scan/tree/abc123/api/models.py"]), focus, TREE)).toBeNull();
+    expect(
+      unreadFocus(await readsOf(["state/scan/tree/abc123/api/models.py"]), focus, TREE),
+    ).toBeNull();
   });
 
   it("credits an absolute read under the tree", async () => {
@@ -89,24 +113,50 @@ describe("the read-count guard credits what resolved inside the tree", () => {
   });
 
   it("never credits a relative read that opened the app root's copy — the wrong repository", async () => {
-    expect(unreadFocus(await readsOf(["api/models.py"]), focus, TREE)).toMatch(/read none of its 1 focus file/);
+    expect(unreadFocus(await readsOf(["api/models.py"]), focus, TREE)).toMatch(
+      /read none of its 1 focus file/,
+    );
   });
 
   it("never credits a read that climbs out of the tree", async () => {
-    expect(unreadFocus(await readsOf([`${TREE}/../abc123-other/api/models.py`]), focus, TREE)).toMatch(/read none/);
-    expect(unreadFocus(await readsOf(["../workspace/api/models.py"]), focus, TREE)).toMatch(/read none/);
+    expect(
+      unreadFocus(await readsOf([`${TREE}/../abc123-other/api/models.py`]), focus, TREE),
+    ).toMatch(/read none/);
+    expect(unreadFocus(await readsOf(["../workspace/api/models.py"]), focus, TREE)).toMatch(
+      /read none/,
+    );
   });
 });
 
 describe("the task string names where to open each file", () => {
-  const plan = { unit: "api", id: "api", part: 1, parts: 1, files: [{ path: "api/models.py", blob: "b", lines: 9 }], lines: 9 } as never;
+  const plan = {
+    unit: "api",
+    id: "api",
+    part: 1,
+    parts: 1,
+    files: [{ path: "api/models.py", blob: "b", lines: 9 }],
+    lines: 9,
+  } as never;
   const ctx = { root: TREE, sha: "abc123", caseId: "run/api" };
 
   it("every focus line carries the file's absolute tree path, and keeps the repo-relative one the answer uses", () => {
-    expect(focusLine({ path: "api/models.py", blob: "b", lines: 9 }, TREE)).toBe(`- api/models.py (9 lines) — open ${TREE}/api/models.py`);
+    expect(focusLine({ path: "api/models.py", blob: "b", lines: 9 }, TREE)).toBe(
+      `- api/models.py (9 lines) — open ${TREE}/api/models.py`,
+    );
     for (const prompt of [
       scanCasePrompt(plan, ctx),
-      stage2CasePrompt({ id: "r1", lens: "pass-security", units: ["api"], files: [{ path: "api/models.py", blob: "b", lines: 9 }], tests: [], lines: 9, reason: "x" } as never, ctx),
+      stage2CasePrompt(
+        {
+          id: "r1",
+          lens: "pass-security",
+          units: ["api"],
+          files: [{ path: "api/models.py", blob: "b", lines: 9 }],
+          tests: [],
+          lines: 9,
+          reason: "x",
+        } as never,
+        ctx,
+      ),
     ]) {
       expect(prompt).toContain(`open ${TREE}/api/models.py`);
       expect(prompt).toMatch(/working directory is NOT the tree/);
@@ -128,7 +178,9 @@ describe("the task string names where to open each file", () => {
 describe("the rest of pi's path normalisation", () => {
   it("a `file://` URL opens its path, and a unicode space reads as a space — pi's `normalizePath`", () => {
     expect(resolvedReadPath(`file://${TREE}/api/models.py`, APP)).toBe(`${TREE}/api/models.py`);
-    expect(unreadFocus([resolvedReadPath(`file://${TREE}/api/models.py`, APP)], ["api/models.py"], TREE)).toBeNull();
-    expect(resolvedReadPath(`${TREE}/api/my file.py`, APP)).toBe(`${TREE}/api/my file.py`);
+    expect(
+      unreadFocus([resolvedReadPath(`file://${TREE}/api/models.py`, APP)], ["api/models.py"], TREE),
+    ).toBeNull();
+    expect(resolvedReadPath(`${TREE}/api/my\u00a0file.py`, APP)).toBe(`${TREE}/api/my file.py`);
   });
 });

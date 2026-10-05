@@ -82,17 +82,21 @@ beforeEach(() => {
 afterEach(() => store.close());
 
 describe("slack_reply execution", () => {
-  it("posts into the configured channel and thread, and never takes a channel from the caller", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    seenInbound();
-    const out = await reply()({ thread: THREAD, text: "on it", file: "cmd-1" });
-    expect(out).toMatchObject({ ok: true, ts: "1755431234.001900", truncated: false });
-    expect(posts).toEqual([{ channel: CHANNEL, text: "on it", thread_ts: THREAD }]);
-    expect(store.slackPost("reply:cmd-1")).toMatchObject({
-      ok: 1,
-      ts: "1755431234.001900",
-      kind: "reply",
-    });
-  });
+  it(
+    "posts into the configured channel and thread, and never takes a channel from the caller",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      seenInbound();
+      const out = await reply()({ thread: THREAD, text: "on it", file: "cmd-1" });
+      expect(out).toMatchObject({ ok: true, ts: "1755431234.001900", truncated: false });
+      expect(posts).toEqual([{ channel: CHANNEL, text: "on it", thread_ts: THREAD }]);
+      expect(store.slackPost("reply:cmd-1")).toMatchObject({
+        ok: 1,
+        ts: "1755431234.001900",
+        kind: "reply",
+      });
+    },
+  );
 
   it("refuses a thread it was never spoken to in (no cold starts)", async () => {
     const out = await reply()({ thread: THREAD, text: "hello?", file: "cmd-1" });

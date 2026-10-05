@@ -242,7 +242,11 @@ describe("honest status", () => {
 
   it("an operator's `settle` after completion reaches the heartbeat without a restart (selfscan bfd61967)", async () => {
     const state: FakeState = {
-      journal: { state: "pending", awaiting_operator: ["companion"], namespaces: { reviewer: { state: "pending" } } },
+      journal: {
+        state: "pending",
+        awaiting_operator: ["companion"],
+        namespaces: { reviewer: { state: "pending" } },
+      },
       resumes: [],
       outcomes: [{ state: "completed", detail: "14 records" }],
     };
@@ -259,11 +263,17 @@ describe("honest status", () => {
   it("a journal that stops reading after boot is `unknown` in the next status, logged once", async () => {
     const lines: string[] = [];
     const mod = fakeModule({ journal: { state: "none" }, resumes: [], outcomes: [] });
-    const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] }, { load: async () => mod, log: lines });
+    const { d } = await started(
+      { journal: { state: "none" }, resumes: [], outcomes: [] },
+      { load: async () => mod, log: lines },
+    );
     mod.journalStatus = () => {
       throw new Error("disk on fire");
     };
-    expect(d.status()).toMatchObject({ state: "unknown", last_error: expect.stringContaining("disk on fire") });
+    expect(d.status()).toMatchObject({
+      state: "unknown",
+      last_error: expect.stringContaining("disk on fire"),
+    });
     d.status();
     expect(lines.filter((l) => l.includes("disk on fire"))).toHaveLength(1);
   });
@@ -347,91 +357,95 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
   const REINDEX = /\/api\/v1\/content\/reindex$/;
   const TASK = /\/api\/v1\/tasks\/task-9$/;
 
-  it("a journalled pending reviewer namespace is re-embedded through the script with a Bearer reviewer key and no actor-peer header", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const mod: ReembedModule = realModule;
-    mod.journalStatus(home); // the module's own reader, on an empty home
-    realModule.writeJournal(home, {
-      version: 1,
-      embedder: LOCAL,
-      previous: HOSTED,
-      reset_at: "2026-09-02T15:00:00.000Z",
-      namespaces: { reviewer: { state: "pending" }, companion: { state: "operator" } },
-    });
-    const calls: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
-    const fetchFn = async (
-      url: string,
-      init?: { headers?: Record<string, string>; body?: string },
-    ) => {
-      calls.push({ url, headers: init?.headers ?? {}, body: init?.body });
-      if (REINDEX.test(url))
-        return {
-          status: 200,
-          json: async () => ({ status: "ok", result: { task_id: "task-9", status: "accepted" } }),
-        };
-      if (TASK.test(url))
-        return {
-          status: 200,
-          json: async () => ({
-            status: "ok",
-            result: {
-              task_id: "task-9",
-              status: "completed",
+  it(
+    "a journalled pending reviewer namespace is re-embedded through the script with a Bearer reviewer key and no actor-peer header",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const mod: ReembedModule = realModule;
+      mod.journalStatus(home); // the module's own reader, on an empty home
+      realModule.writeJournal(home, {
+        version: 1,
+        embedder: LOCAL,
+        previous: HOSTED,
+        reset_at: "2026-09-02T15:00:00.000Z",
+        namespaces: { reviewer: { state: "pending" }, companion: { state: "operator" } },
+      });
+      const calls: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
+      const fetchFn = async (
+        url: string,
+        init?: { headers?: Record<string, string>; body?: string },
+      ) => {
+        calls.push({ url, headers: init?.headers ?? {}, body: init?.body });
+        if (REINDEX.test(url))
+          return {
+            status: 200,
+            json: async () => ({ status: "ok", result: { task_id: "task-9", status: "accepted" } }),
+          };
+        if (TASK.test(url))
+          return {
+            status: 200,
+            json: async () => ({
+              status: "ok",
               result: {
-                scanned_records: 3,
-                rebuilt_records: 4,
-                failed_records: 0,
-                unsupported_records: 0,
+                task_id: "task-9",
+                status: "completed",
+                result: {
+                  scanned_records: 3,
+                  rebuilt_records: 4,
+                  failed_records: 0,
+                  unsupported_records: 0,
+                },
               },
-            },
-          }),
-        };
-      return { status: 404, json: async () => ({}) };
-    };
-    const clock = new FakeClock();
-    writeFileSync(join(home, "openviking_reviewer_key"), "reviewer-secret");
-    const lines: string[] = [];
-    const d = new ReembedDriver({
-      cfg: cfg(),
-      repoRoot: home,
-      keyPath: join(home, "openviking_reviewer_key"),
-      ready: () => true,
-      log: (m) => lines.push(m),
-      schedule: clock.schedule,
-      load: async () => mod,
-      fetchFn,
-    });
-    d.start();
-    await flush();
-    expect(d.status().state).toBe("pending");
-    await clock.fire();
-    // The script polls the task on a real 2s sleep; wait for it to settle —
-    // by deadline, not by a count of ticks, which was a 5s budget around a 2s
-    // sleep and too tight on a loaded machine. The deadline sits inside the
-    // test's timeout, so a miss still fails on the assertion below.
-    const deadline = Date.now() + 45_000;
-    while (d.status().state !== "completed" && Date.now() < deadline)
-      await new Promise((r) => setTimeout(r, 50));
-    expect(d.status()).toMatchObject({
-      state: "completed",
-      attempts: 1,
-      awaiting_operator: ["companion"],
-    });
-    expect(calls[0]!.headers["Authorization"]).toBe("Bearer reviewer-secret");
-    expect(calls[0]!.headers["X-OpenViking-User"]).toBe("reviewer");
-    expect(calls[0]!.headers["X-OpenViking-Actor-Peer"]).toBeUndefined();
-    expect(JSON.parse(calls[0]!.body!)).toEqual({
-      uri: "viking://user/reviewer",
-      mode: "vectors_only",
-      wait: false,
-    });
-    const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
-    expect(journal.namespaces.reviewer).toMatchObject({
-      state: "completed",
-      rebuilt_records: 4,
-      task_id: "task-9",
-    });
-    expect(journal.namespaces.companion).toEqual({ state: "operator" });
-  });
+            }),
+          };
+        return { status: 404, json: async () => ({}) };
+      };
+      const clock = new FakeClock();
+      writeFileSync(join(home, "openviking_reviewer_key"), "reviewer-secret");
+      const lines: string[] = [];
+      const d = new ReembedDriver({
+        cfg: cfg(),
+        repoRoot: home,
+        keyPath: join(home, "openviking_reviewer_key"),
+        ready: () => true,
+        log: (m) => lines.push(m),
+        schedule: clock.schedule,
+        load: async () => mod,
+        fetchFn,
+      });
+      d.start();
+      await flush();
+      expect(d.status().state).toBe("pending");
+      await clock.fire();
+      // The script polls the task on a real 2s sleep; wait for it to settle —
+      // by deadline, not by a count of ticks, which was a 5s budget around a 2s
+      // sleep and too tight on a loaded machine. The deadline sits inside the
+      // test's timeout, so a miss still fails on the assertion below.
+      const deadline = Date.now() + 45_000;
+      while (d.status().state !== "completed" && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 50));
+      expect(d.status()).toMatchObject({
+        state: "completed",
+        attempts: 1,
+        awaiting_operator: ["companion"],
+      });
+      expect(calls[0]!.headers["Authorization"]).toBe("Bearer reviewer-secret");
+      expect(calls[0]!.headers["X-OpenViking-User"]).toBe("reviewer");
+      expect(calls[0]!.headers["X-OpenViking-Actor-Peer"]).toBeUndefined();
+      expect(JSON.parse(calls[0]!.body!)).toEqual({
+        uri: "viking://user/reviewer",
+        mode: "vectors_only",
+        wait: false,
+      });
+      const journal = JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"));
+      expect(journal.namespaces.reviewer).toMatchObject({
+        state: "completed",
+        rebuilt_records: 4,
+        task_id: "task-9",
+      });
+      expect(journal.namespaces.companion).toEqual({ state: "operator" });
+    },
+  );
 });
 
 // ---- the operator's side ----------------------------------------------------------

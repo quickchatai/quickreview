@@ -390,7 +390,8 @@ export function parseFindingsRecord(
       if (bare === "nit" && request === null) conformance.nits_without_request.push(key);
       if (raisedIn !== null && raisedIn < roundNo) conformance.restated.push(key);
     }
-    if (disposition === "doubted" && str(e.posted_as) !== null) conformance.doubted_posted.push(key);
+    if (disposition === "doubted" && str(e.posted_as) !== null)
+      conformance.doubted_posted.push(key);
     findings.push({
       key,
       path,

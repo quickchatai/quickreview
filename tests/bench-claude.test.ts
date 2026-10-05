@@ -490,10 +490,20 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
       readFileSync(join(out, "results", "all", `${c.instance_id}.json`), "utf8"),
     ) as Record<string, unknown>;
     expect(scored["review_output"]).toEqual([
-      { file: "a.ts", line: 1, summary: "wrong constant", failure_scenario: "a is 2, callers expect 1" },
+      {
+        file: "a.ts",
+        line: 1,
+        summary: "wrong constant",
+        failure_scenario: "a is 2, callers expect 1",
+      },
     ]);
     expect((scored["review"] as { comments: unknown[] }).comments).toEqual([
-      { path: "a.ts", start_line: 1, end_line: 1, content: "wrong constant\na is 2, callers expect 1" },
+      {
+        path: "a.ts",
+        start_line: 1,
+        end_line: 1,
+        content: "wrong constant\na is 2, callers expect 1",
+      },
     ]);
     expect(scored["bench"]).toEqual({ claude_view: { source: "harness", comments: 1 } });
     expect(s.view_source).toBe("harness");
@@ -587,7 +597,12 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(typeof scored["review_output"]).toBe("string");
     expect((scored["review"] as { comments: unknown[] }).comments).toEqual([
       { path: "a.ts", start_line: 1, end_line: 1, content: "`a.ts:1` — wrong constant." },
-      { path: "lib/gone.ts", start_line: 3, end_line: 3, content: "`lib/gone.ts:3` — not in this PR." },
+      {
+        path: "lib/gone.ts",
+        start_line: 3,
+        end_line: 3,
+        content: "`lib/gone.ts:3` — not in this PR.",
+      },
     ]);
     expect((scored["bench"] as Record<string, unknown>)["claude_prose_parsed"]).toMatchObject({
       findings: 2,
@@ -597,7 +612,12 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
       changed_files: 1,
     });
     const s = readClaudeSummary(out, c)!;
-    expect(s).toMatchObject({ comments: 2, harness_comments: 0, view_source: "prose", raw_text_fallback: true });
+    expect(s).toMatchObject({
+      comments: 2,
+      harness_comments: 0,
+      view_source: "prose",
+      raw_text_fallback: true,
+    });
     expect(reviewForJudge(out, c.instance_id).comments.map((x) => [x.path, x.line])).toEqual([
       ["a.ts", 1],
       ["lib/gone.ts", 3],
@@ -714,8 +734,18 @@ describe("withClaudeView: the view the eval scores, beside the harness's payload
     expect(v["review_output"]).toBe(RAW_ANSWER);
     expect(v["review"]).toEqual({
       comments: [
-        { path: "src/a.ts", start_line: 12, end_line: 12, content: "**`src/a.ts:12`** — wrong constant." },
-        { path: "pkg/mongo/mongo.go", start_line: 7, end_line: 7, content: "**mongo.go:7** — escaped twice." },
+        {
+          path: "src/a.ts",
+          start_line: 12,
+          end_line: 12,
+          content: "**`src/a.ts:12`** — wrong constant.",
+        },
+        {
+          path: "pkg/mongo/mongo.go",
+          start_line: 7,
+          end_line: 7,
+          content: "**mongo.go:7** — escaped twice.",
+        },
       ],
       summary: { input_tokens: 5, output_tokens: 7, total_tokens: 12 },
     });
@@ -737,14 +767,21 @@ describe("withClaudeView: the view the eval scores, beside the harness's payload
     expect(claudeScoredFindings(v)).toEqual([]);
     // no file list: paths as written, unchecked
     const u = withClaudeView(r, null);
-    expect((u["bench"] as Record<string, Record<string, unknown>>)["claude_prose_parsed"]).toMatchObject({
+    expect(
+      (u["bench"] as Record<string, Record<string, unknown>>)["claude_prose_parsed"],
+    ).toMatchObject({
       paths_unchecked: 2,
       changed_files: null,
     });
   });
 
   it("the empty result of a case that never ran carries an empty view", () => {
-    const c = { instance_id: "o__r@1", repo: "o/r", base_commit: "a", head_commit: "b" } as BenchCase;
+    const c = {
+      instance_id: "o__r@1",
+      repo: "o/r",
+      base_commit: "a",
+      head_commit: "b",
+    } as BenchCase;
     const e = emptyClaudeResult(c, "boom");
     expect((e["review"] as { comments: unknown[] }).comments).toEqual([]);
   });
@@ -759,8 +796,30 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
       rule: "r",
       references: 1,
       cases: [
-        { instance_id: id, repo: "o/r", pr: 1, pr_url: "u", base_commit: "a".repeat(40), head_commit: "b".repeat(40), language: "Go", pr_category: "bug", change_line_count: 1, references: 1 },
-        { instance_id: "o__r@0000000", repo: "o/r", pr: 2, pr_url: "u", base_commit: "a".repeat(40), head_commit: "c".repeat(40), language: "Go", pr_category: "bug", change_line_count: 1, references: 1 },
+        {
+          instance_id: id,
+          repo: "o/r",
+          pr: 1,
+          pr_url: "u",
+          base_commit: "a".repeat(40),
+          head_commit: "b".repeat(40),
+          language: "Go",
+          pr_category: "bug",
+          change_line_count: 1,
+          references: 1,
+        },
+        {
+          instance_id: "o__r@0000000",
+          repo: "o/r",
+          pr: 2,
+          pr_url: "u",
+          base_commit: "a".repeat(40),
+          head_commit: "c".repeat(40),
+          language: "Go",
+          pr_category: "bug",
+          change_line_count: 1,
+          references: 1,
+        },
       ],
       backups: [],
     };
@@ -771,7 +830,26 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     writeFileSync(join(out, "results", "all", `${id}.json`), JSON.stringify(result));
     writeFileSync(
       join(out, "cases", id, "case-summary.json"),
-      JSON.stringify({ instance_id: id, arm: "claude", status: "ok", comments: 0, raw_text_fallback: true, fingerprint: {}, warnings: [], argv_ok: true, argv_mismatches: [], duration_seconds: 60, cost_usd: 0.1, tokens: null, models: [], model: "m", review_output_source: "stdout_fallback", num_turns: 0, exit_code: 0, merge_base_ok: true }),
+      JSON.stringify({
+        instance_id: id,
+        arm: "claude",
+        status: "ok",
+        comments: 0,
+        raw_text_fallback: true,
+        fingerprint: {},
+        warnings: [],
+        argv_ok: true,
+        argv_mismatches: [],
+        duration_seconds: 60,
+        cost_usd: 0.1,
+        tokens: null,
+        models: [],
+        model: "m",
+        review_output_source: "stdout_fallback",
+        num_turns: 0,
+        exit_code: 0,
+        merge_base_ok: true,
+      }),
     );
     const files = join(t, "code");
     mkdirSync(join(files, id), { recursive: true });
@@ -783,16 +861,25 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
     const { set, out, id, files } = finishedRun(t, rawResult());
     const lines: string[] = [];
-    const got = await claudeRebuildRun({ set, outDir: out, filesDir: files, log: (l) => lines.push(l) });
+    const got = await claudeRebuildRun({
+      set,
+      outDir: out,
+      filesDir: files,
+      log: (l) => lines.push(l),
+    });
     expect(got).toHaveLength(1);
     expect(got[0]).toMatchObject({ instance_id: id, source: "prose", comments: 2 });
-    const r = JSON.parse(readFileSync(join(out, "results", "all", `${id}.json`), "utf8")) as Record<string, unknown>;
+    const r = JSON.parse(readFileSync(join(out, "results", "all", `${id}.json`), "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(r["review_output"]).toBe(RAW_ANSWER);
-    expect((r["review"] as { comments: Array<{ path: string }> }).comments.map((x) => x.path)).toEqual([
-      "src/a.ts",
-      "pkg/mongo/mongo.go",
-    ]);
-    const s = JSON.parse(readFileSync(join(out, "cases", id, "case-summary.json"), "utf8")) as Record<string, unknown>;
+    expect(
+      (r["review"] as { comments: Array<{ path: string }> }).comments.map((x) => x.path),
+    ).toEqual(["src/a.ts", "pkg/mongo/mongo.go"]);
+    const s = JSON.parse(
+      readFileSync(join(out, "cases", id, "case-summary.json"), "utf8"),
+    ) as Record<string, unknown>;
     expect(s).toMatchObject({ comments: 2, harness_comments: 0, view_source: "prose" });
     expect(lines.join("\n")).toMatch(/o__r@0000000 — no result file, skipped/);
     expect(lines.join("\n")).toMatch(/paths 2\/2 matched to 2 changed file\(s\)/);
@@ -808,14 +895,23 @@ describe("claudeRebuildRun: the view for a finished run, no model and no network
     const t = mkdtempSync(join(tmpdir(), "qcr-claude-rebuild-"));
     const { set, out, files } = finishedRun(t, rawResult());
     const all = join(out, "results", "all");
-    writeFileSync(join(all, "metrics_ocr_round_1.json"), JSON.stringify({ summary: { semantic_f1: 0.5 } }));
-    writeFileSync(join(all, "metrics_ocr_average.json"), JSON.stringify({ summary: { semantic_f1: 0.5 } }));
+    writeFileSync(
+      join(all, "metrics_ocr_round_1.json"),
+      JSON.stringify({ summary: { semantic_f1: 0.5 } }),
+    );
+    writeFileSync(
+      join(all, "metrics_ocr_average.json"),
+      JSON.stringify({ summary: { semantic_f1: 0.5 } }),
+    );
     const lines: string[] = [];
     await claudeRebuildRun({ set, outDir: out, filesDir: files, log: (l) => lines.push(l) });
     expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
     expect(lines.join("\n")).toMatch(/metrics.*re-run eval/i);
     // a no-op rebuild leaves fresh metrics alone
-    writeFileSync(join(all, "metrics_ocr_round_1.json"), JSON.stringify({ summary: { semantic_f1: 0.6 } }));
+    writeFileSync(
+      join(all, "metrics_ocr_round_1.json"),
+      JSON.stringify({ summary: { semantic_f1: 0.6 } }),
+    );
     await claudeRebuildRun({ set, outDir: out, filesDir: files, log: () => {} });
     expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
   });
@@ -962,7 +1058,19 @@ describe("bench.sh --arm claude: its own credential file, and the same hardening
 
   it("claude-rebuild: --network none, the store read-only, no credential; only for this arm", () => {
     const t = benchTree();
-    let r = bench(t, {}, "claude-rebuild", "--arm", "claude", "--run", "r3", "--set", "fresh10", "--only", "o__r@1234567");
+    let r = bench(
+      t,
+      {},
+      "claude-rebuild",
+      "--arm",
+      "claude",
+      "--run",
+      "r3",
+      "--set",
+      "fresh10",
+      "--only",
+      "o__r@1234567",
+    );
     expect(r.status, r.stderr).toBe(0);
     const run = readFileSync(t.log, "utf8")
       .split("\n")
@@ -987,7 +1095,9 @@ describe("bench.sh --arm claude: its own credential file, and the same hardening
     // stale metrics of the old reader are cleared with the new ones
     expect(sh).toContain('rm -f "$dir"/metrics_*.json');
     const driver = readFileSync(join(B, "claude_driver.py"), "utf8");
-    expect(driver).toContain("build_target_comments_from_claude, evaluate.build_target_comments_from_ocr");
+    expect(driver).toContain(
+      "build_target_comments_from_claude, evaluate.build_target_comments_from_ocr",
+    );
   });
 });
 

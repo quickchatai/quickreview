@@ -225,65 +225,75 @@ afterEach(async () => {
 });
 
 describe("the full concierge loop", () => {
-  it("carries one Slack message to one threaded reply, and ledgers it", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const ev = event();
-    await deliver(ev);
+  it(
+    "carries one Slack message to one threaded reply, and ledgers it",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const ev = event();
+      await deliver(ev);
 
-    // (1) the turn was injected, once
-    expect(store.slackEvent(ev.event_id)?.disposition).toBe("injected");
+      // (1) the turn was injected, once
+      expect(store.slackEvent(ev.event_id)?.disposition).toBe("injected");
 
-    // (2) the inject file exists and carries the trusted envelope
-    const injects = readdirSync(join(dir, "inject", "overseer"));
-    expect(injects).toHaveLength(1);
-    const body = readFileSync(join(dir, "inject", "overseer", injects[0]!), "utf8");
-    expect(body.startsWith(SLACK_INJECT_MARKER)).toBe(true);
-    expect(body).toContain(`| thread | ${ev.ts} |`);
-    expect(body).toContain("| tier | author |");
-    expect(body).toContain("| github_login | alice-gh |");
-    expect(body).toContain("> any news on the review for 4242?");
+      // (2) the inject file exists and carries the trusted envelope
+      const injects = readdirSync(join(dir, "inject", "overseer"));
+      expect(injects).toHaveLength(1);
+      const body = readFileSync(join(dir, "inject", "overseer", injects[0]!), "utf8");
+      expect(body.startsWith(SLACK_INJECT_MARKER)).toBe(true);
+      expect(body).toContain(`| thread | ${ev.ts} |`);
+      expect(body).toContain("| tier | author |");
+      expect(body).toContain("| github_login | alice-gh |");
+      expect(body).toContain("> any news on the review for 4242?");
 
-    // (3) the rights were written down next to it, under state/slack/origin
-    const originPath = join(dir, "state", "slack", "origin", injects[0]!.replace(/\.md$/, ".json"));
-    expect(existsSync(originPath)).toBe(true);
-    const origin = JSON.parse(readFileSync(originPath, "utf8"));
-    expect(origin).toMatchObject({
-      event_id: ev.event_id,
-      slack_user: ALICE,
-      tier: "author",
-      authorized_prs: [PR],
-    });
-    expect(runtime.origins.latest()?.event_id).toBe(ev.event_id);
+      // (3) the rights were written down next to it, under state/slack/origin
+      const originPath = join(
+        dir,
+        "state",
+        "slack",
+        "origin",
+        injects[0]!.replace(/\.md$/, ".json"),
+      );
+      expect(existsSync(originPath)).toBe(true);
+      const origin = JSON.parse(readFileSync(originPath, "utf8"));
+      expect(origin).toMatchObject({
+        event_id: ev.event_id,
+        slack_user: ALICE,
+        tier: "author",
+        authorized_prs: [PR],
+      });
+      expect(runtime.origins.latest()?.event_id).toBe(ev.event_id);
 
-    // (4) the overseer answers by writing a command file into commands/slack/
-    writeSlackCommand("reply-1", {
-      command: "slack_reply",
-      thread: ev.ts,
-      text: "Round 2 is running now — verdict in ~10 min.",
-    });
-    await runtime.commands.sweep();
+      // (4) the overseer answers by writing a command file into commands/slack/
+      writeSlackCommand("reply-1", {
+        command: "slack_reply",
+        thread: ev.ts,
+        text: "Round 2 is running now — verdict in ~10 min.",
+      });
+      await runtime.commands.sweep();
 
-    // (5) exactly one post, right channel, right thread, right text
-    const replies = transport.posts.filter((p) => p.thread_ts === ev.ts);
-    expect(replies).toHaveLength(1);
-    expect(replies[0]).toEqual({
-      channel: CHANNEL,
-      thread_ts: ev.ts,
-      text: "Round 2 is running now — verdict in ~10 min.",
-    });
-    expect(resultFile("reply-1")).toMatchObject({
-      ok: true,
-      command: "slack_reply",
-      thread: ev.ts,
-    });
+      // (5) exactly one post, right channel, right thread, right text
+      const replies = transport.posts.filter((p) => p.thread_ts === ev.ts);
+      expect(replies).toHaveLength(1);
+      expect(replies[0]).toEqual({
+        channel: CHANNEL,
+        thread_ts: ev.ts,
+        text: "Round 2 is running now — verdict in ~10 min.",
+      });
+      expect(resultFile("reply-1")).toMatchObject({
+        ok: true,
+        command: "slack_reply",
+        thread: ev.ts,
+      });
 
-    // (6) ledgered under the command file's own idem key (one post per file)
-    const row = store.slackPost("reply:reply-1");
-    expect(row).toMatchObject({ kind: "reply", thread_ts: ev.ts, ok: 1 });
-    expect(row?.ts).toMatch(/^\d{10}\.\d{6}$/); // the delivered message's ts, as a string
+      // (6) ledgered under the command file's own idem key (one post per file)
+      const row = store.slackPost("reply:reply-1");
+      expect(row).toMatchObject({ kind: "reply", thread_ts: ev.ts, ok: 1 });
+      expect(row?.ts).toMatch(/^\d{10}\.\d{6}$/); // the delivered message's ts, as a string
 
-    // (7) not one GitHub call anywhere in that loop
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
+      // (7) not one GitHub call anywhere in that loop
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses a second post for the same command file (replayed sweep)", async () => {
     const ev = event();

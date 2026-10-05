@@ -422,19 +422,23 @@ describe("— the four proven bypasses, replayed against the COMPILED guard", ()
     ).not.toThrow();
   });
 
-  it("blocks every bash chain, in the build the container actually loads", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const compiled = (await import(distPath)) as {
-      checkBashCommand: (c: string) => { allowed: boolean; reason?: string };
-      checkWritePath: (p: string) => { allowed: boolean; reason?: string };
-    };
-    for (const c of CORPUS) {
-      const res =
-        c.via === "bash" ? compiled.checkBashCommand(c.chain) : compiled.checkWritePath(c.chain);
-      expect(res.allowed, `round ${c.round} (${c.via}) — ${c.chain} :: ${c.note}`).toBe(false);
-      expect(res.reason, `round ${c.round} must say WHY`).toBeTruthy();
-    }
-    expect(require_).toBeTruthy();
-  });
+  it(
+    "blocks every bash chain, in the build the container actually loads",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const compiled = (await import(distPath)) as {
+        checkBashCommand: (c: string) => { allowed: boolean; reason?: string };
+        checkWritePath: (p: string) => { allowed: boolean; reason?: string };
+      };
+      for (const c of CORPUS) {
+        const res =
+          c.via === "bash" ? compiled.checkBashCommand(c.chain) : compiled.checkWritePath(c.chain);
+        expect(res.allowed, `round ${c.round} (${c.via}) — ${c.chain} :: ${c.note}`).toBe(false);
+        expect(res.reason, `round ${c.round} must say WHY`).toBeTruthy();
+      }
+      expect(require_).toBeTruthy();
+    },
+  );
 
   it("the source agrees with the build — otherwise one of them is the live policy and nobody knows which", async () => {
     const compiled = (await import(distPath)) as {
@@ -964,7 +968,10 @@ describe("— the write class that no command string can show (round 2)", () => 
         const changes = integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)));
         const { git, policy } = splitIntegrityChanges(changes, "/sb", vmEnv);
         expect(git, path).toEqual([]);
-        expect(policy.map((c) => c.path), path).toEqual(["/opt/quickreview/config-home/profiles"]);
+        expect(
+          policy.map((c) => c.path),
+          path,
+        ).toEqual(["/opt/quickreview/config-home/profiles"]);
       }
     });
 
@@ -987,7 +994,9 @@ describe("— the write class that no command string can show (round 2)", () => 
     it("start and end agree: an untouched install is silent, and no sandbox root ⇒ no located paths", () => {
       const disk = vmDisk();
       const before = fingerprintRoundIntegrity(vmOpts, policyFs(disk));
-      expect(integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)))).toEqual([]);
+      expect(integrityChanges(before, fingerprintRoundIntegrity(vmOpts, policyFs(disk)))).toEqual(
+        [],
+      );
       const gitOnly = fingerprintRoundIntegrity(
         { clonePath: "/clone", installEnv: vmEnv },
         policyFs(disk),
@@ -1011,7 +1020,9 @@ describe("— the write class that no command string can show (round 2)", () => 
       const fs = policyFs(disk);
       const after = fingerprintRoundIntegrity(vmOpts, fs);
       const oldFiles = Object.fromEntries(
-        Object.entries(after.files).filter(([p]) => !p.startsWith("/opt/") && !p.startsWith("/home/q")),
+        Object.entries(after.files).filter(
+          ([p]) => !p.startsWith("/opt/") && !p.startsWith("/home/q"),
+        ),
       );
       const before = { digest: "old-release", files: oldFiles };
       expect(Object.keys(after.files).length).toBeGreaterThan(Object.keys(oldFiles).length);

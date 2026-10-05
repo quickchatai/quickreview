@@ -173,7 +173,11 @@ describe("loadProfileAddenda", () => {
     put("p", "30-third.md", entry("third"));
     writeFileSync(join(profileDir(root, "p"), "addenda", ".gitkeep"), "");
     writeFileSync(join(profileDir(root, "p"), "addenda", "README"), "not an addendum");
-    expect(loadProfileAddenda(root, "p", at(root)).map((a) => a.id)).toEqual(["first", "second", "third"]);
+    expect(loadProfileAddenda(root, "p", at(root)).map((a) => a.id)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
   });
 
   it("a duplicate id within the pack fails loudly", () => {
@@ -184,7 +188,9 @@ describe("loadProfileAddenda", () => {
 
   it("an id colliding with a built-in registry entry fails loudly", () => {
     put("p", "10-a.md", entry("execution-policy"));
-    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(/collides with a built-in registry entry/);
+    expect(() => loadProfileAddenda(root, "p", at(root))).toThrow(
+      /collides with a built-in registry entry/,
+    );
   });
 
   it("the dynamic feedback-day addendum's id is reserved too", () => {
@@ -302,19 +308,24 @@ describe("quickchat extraction is byte-preserving", () => {
     },
   );
 
-  it("no profile (and the minimal profile) build exactly the generic addenda set", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const bare = build(PASS_ADDENDA);
-    const minimal = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "minimal")]);
-    expect([...minimal.keys()].sort()).toEqual([...bare.keys()].sort());
-    for (const [name, bytes] of bare) expect(minimal.get(name), name).toBe(bytes);
-    // …and none of the moved house rules leaks into the generic build.
-    for (const [name, bytes] of bare) {
-      expect(bytes.includes("## Migration discipline — the team's four standing rules"), name).toBe(
-        false,
-      );
-      expect(bytes.includes("## How this team tests"), name).toBe(false);
-    }
-  });
+  it(
+    "no profile (and the minimal profile) build exactly the generic addenda set",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const bare = build(PASS_ADDENDA);
+      const minimal = build([...PASS_ADDENDA, ...loadProfileAddenda(sandbox, "minimal")]);
+      expect([...minimal.keys()].sort()).toEqual([...bare.keys()].sort());
+      for (const [name, bytes] of bare) expect(minimal.get(name), name).toBe(bytes);
+      // …and none of the moved house rules leaks into the generic build.
+      for (const [name, bytes] of bare) {
+        expect(
+          bytes.includes("## Migration discipline — the team's four standing rules"),
+          name,
+        ).toBe(false);
+        expect(bytes.includes("## How this team tests"), name).toBe(false);
+      }
+    },
+  );
 
   it("the dynamic feedback-day addendum still composes LAST, after the pack", () => {
     const fb: PassAddendum = {
@@ -494,7 +505,10 @@ describe("profiles load from the config home, then the checkout's examples", () 
     }
     // …and a chain whose base is stranded fails the same way.
     writeProfile(configHome(env), "child", "HOME");
-    writeFileSync(join(configHome(env), "profiles", "child", "profile.toml"), 'extends = "house"\n');
+    writeFileSync(
+      join(configHome(env), "profiles", "child", "profile.toml"),
+      'extends = "house"\n',
+    );
     expect(() => loadProfileAddenda(root, "child", lookup())).toThrow(
       /extends "house", which was not found.*no longer read.*qcr install migrate/,
     );

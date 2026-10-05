@@ -10,7 +10,11 @@ import { execFileSync } from "node:child_process";
 const LY = join(import.meta.dirname, "..", "bench", "aacr");
 
 function py(code: string, ...args: string[]): unknown {
-  const out = execFileSync("python3", ["-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(LY)}); import lens_yield as ly\n${code}`, ...args]);
+  const out = execFileSync("python3", [
+    "-c",
+    `import sys, json; sys.path.insert(0, ${JSON.stringify(LY)}); import lens_yield as ly\n${code}`,
+    ...args,
+  ]);
   return JSON.parse(out.toString());
 }
 
@@ -25,8 +29,22 @@ describe("lens_yield: merge groups", () => {
   it("folds old-format merges ('MERGED x into F1') and new merged_into into their lead; raisers are the union", () => {
     const d = caseDir([
       { id: "F1", path: "a.py", line: "10", lens: "pass-baseline", disposition: "posted" },
-      { id: "t-1", path: "a.py", line: "10", lens: "pass-tests", disposition: "merged", reason: "MERGED t-1 into F1: same" },
-      { id: "s-1", path: "a.py", line: "40", lens: "pass-sweep", disposition: "merged", merged_into: "F1" },
+      {
+        id: "t-1",
+        path: "a.py",
+        line: "10",
+        lens: "pass-tests",
+        disposition: "merged",
+        reason: "MERGED t-1 into F1: same",
+      },
+      {
+        id: "s-1",
+        path: "a.py",
+        line: "40",
+        lens: "pass-sweep",
+        disposition: "merged",
+        merged_into: "F1",
+      },
       { id: "F2", path: "b.py", line: "5", lens: "pass-abstraction", disposition: "posted" },
       { id: "F3", path: "c.py", line: "1", lens: "pass-style", disposition: "killed" },
     ]);
@@ -44,16 +62,33 @@ describe("lens_yield: merge groups", () => {
   it("a merge with no pointer joins the lead on the same path within 3 lines", () => {
     const d = caseDir([
       { id: "F1", path: "a.py", line: "10", lens: "pass-baseline", disposition: "posted" },
-      { id: "x", path: "a.py", line: "12", lens: "pass-consistency", disposition: "merged", reason: "same thing" },
+      {
+        id: "x",
+        path: "a.py",
+        line: "12",
+        lens: "pass-consistency",
+        disposition: "merged",
+        reason: "same thing",
+      },
     ]);
-    const g = py("print(json.dumps([sorted(x['raisers']) for x in ly.case_groups(__import__('pathlib').Path(sys.argv[1]))]))", d);
+    const g = py(
+      "print(json.dumps([sorted(x['raisers']) for x in ly.case_groups(__import__('pathlib').Path(sys.argv[1]))]))",
+      d,
+    );
     expect(g).toEqual([["pass-baseline", "pass-consistency"]]);
   });
 
   it("a comment credits its group once; a corroborated group is not unique to any lens; posted never exceeds raised", () => {
     const d = caseDir([
       { id: "F1", path: "a.py", line: "10", lens: "pass-baseline", disposition: "posted" },
-      { id: "t-1", path: "a.py", line: "10", lens: "pass-tests", disposition: "merged", merged_into: "F1" },
+      {
+        id: "t-1",
+        path: "a.py",
+        line: "10",
+        lens: "pass-tests",
+        disposition: "merged",
+        merged_into: "F1",
+      },
       { id: "F2", path: "b.py", line: "5", lens: "pass-abstraction", disposition: "posted" },
     ]);
     const r = py(

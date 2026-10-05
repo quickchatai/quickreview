@@ -18,11 +18,20 @@ import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
 import { planStage1 } from "../src/setup/scan.js";
-import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import {
+  ScanRunner,
+  type ScanPorts,
+  type ScanSource,
+  type ScanTree,
+} from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
-const lines = (n: number, word: string): string => Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
-const blob = (text: string): string => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+const lines = (n: number, word: string): string =>
+  Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
+const blob = (text: string): string =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 const cutOf = (units: readonly string[]): UnitCut => ({
   units: units.map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
   ignored: [],
@@ -57,7 +66,10 @@ describe("planStage1 orders cases by what the ledger has read", () => {
         ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
         ["c/x.py", { blob: "old-c", complete: true, at: "2026-09-01T00:00:00Z" }],
         ["d/x.py", { blob: "old-d", complete: false, at: "2026-09-01T00:00:00Z" }],
-        ["f/big.py", { blob: blob(TREE["f/big.py"]!), complete: false, at: "2026-09-01T00:00:00Z" }],
+        [
+          "f/big.py",
+          { blob: blob(TREE["f/big.py"]!), complete: false, at: "2026-09-01T00:00:00Z" },
+        ],
       ]),
       partial: new Map([[`f/big.py\0${blob(TREE["f/big.py"]!)}`, [{ start: 1, end: 40 }]]]),
     });
@@ -87,7 +99,13 @@ describe("planStage1 orders cases by what the ledger has read", () => {
   it("a case holding one unread file among changed ones goes first", () => {
     const plan = planStage1({
       ...base,
-      cut: { units: [{ name: "ab", roots: ["a", "b"], kind: "directory", note: "" }, ...cutOf(["c"]).units], ignored: [] },
+      cut: {
+        units: [
+          { name: "ab", roots: ["a", "b"], kind: "directory", note: "" },
+          ...cutOf(["c"]).units,
+        ],
+        ignored: [],
+      },
       files: files.filter((f) => /^[abc]\//.test(f.path)),
       history: new Map([
         ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
@@ -97,7 +115,13 @@ describe("planStage1 orders cases by what the ledger has read", () => {
     // Put "c" ahead in the cut: the unread b/x.py still lifts "ab" over it.
     const flipped = planStage1({
       ...base,
-      cut: { units: [...cutOf(["c"]).units, { name: "ab", roots: ["a", "b"], kind: "directory", note: "" }], ignored: [] },
+      cut: {
+        units: [
+          ...cutOf(["c"]).units,
+          { name: "ab", roots: ["a", "b"], kind: "directory", note: "" },
+        ],
+        ignored: [],
+      },
       files: files.filter((f) => /^[abc]\//.test(f.path)),
       history: new Map([
         ["a/x.py", { blob: "old-a", complete: true, at: "2026-09-01T00:00:00Z" }],
@@ -134,7 +158,8 @@ const shaOf = (r: number): string => String(r).padStart(40, "0");
 function fakeSource(rounds: number): ScanSource {
   const trees: Record<string, Record<string, string>> = {};
   for (let r = 0; r <= rounds; r++) trees[shaOf(r)] = treeAt(r);
-  const listOf = (files: Record<string, string>) => Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) }));
+  const listOf = (files: Record<string, string>) =>
+    Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) }));
   return {
     location: "/reviewed-repo",
     resolve: (ref) => (ref in trees ? ref : null),
@@ -157,7 +182,11 @@ function fakeSource(rounds: number): ScanSource {
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
@@ -168,7 +197,11 @@ function runner(perFile: number): FakeRunner {
     specs,
     run: async (spec) => {
       specs.push(spec);
-      return { ok: true, output: `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE`, cost_usd: perFile * spec.files.length };
+      return {
+        ok: true,
+        output: `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE`,
+        cost_usd: perFile * spec.files.length,
+      };
     },
   };
 }
@@ -186,7 +219,16 @@ function ports(cases: FakeRunner, rounds: number, scan: Partial<ScanConfig> = {}
     savedCut: () => ({ ok: true, cut: CUT }),
     settings: () => ({
       ok: true,
-      settings: { scan: { ...SCAN_DEFAULTS, validator: false, case_max_files: 1, concurrency: 1, calibration_units: 3, ...scan } },
+      settings: {
+        scan: {
+          ...SCAN_DEFAULTS,
+          validator: false,
+          case_max_files: 1,
+          concurrency: 1,
+          calibration_units: 3,
+          ...scan,
+        },
+      },
     }),
     buildAgents: () => ({ ok: true }),
   };
@@ -201,7 +243,12 @@ async function runOnce(s: ScanRunner, sha: string, delta = false) {
   return { preview: p.preview, run: s.status().run! };
 }
 
-const readPaths = (): Set<string> => new Set((JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile).entries.map((e) => e.path));
+const readPaths = (): Set<string> =>
+  new Set(
+    (JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile).entries.map(
+      (e) => e.path,
+    ),
+  );
 
 /** Calibrate on round 0 (u1-u3 at $0.01 a case), then make every case cost
  * twice its estimate: the hard stop then fits half of each run. */
@@ -226,7 +273,12 @@ describe("capped runs converge to full coverage instead of starving the same tai
     // Everything changed again; nothing is unread any more, so the stalest
     // reading runs first — the OLD half, starved last round, is read first
     // (the rate now counts round 1's dearer cases, so a little more fits).
-    expect(r2.run.cases.filter((c) => c.status === "done").map((c) => c.id).slice(0, 3)).toEqual(OLD);
+    expect(
+      r2.run.cases
+        .filter((c) => c.status === "done")
+        .map((c) => c.id)
+        .slice(0, 3),
+    ).toEqual(OLD);
     expect([...readPaths()].sort()).toEqual([...OLD, ...NEW].map((u) => `${u}/m.py`).sort());
   });
 });
@@ -244,7 +296,12 @@ describe("changed files the last capped run starved run first next time", () => 
       const r2 = await runOnce(s, shaOf(2));
       expect(r2.run.state).toBe("capped");
       expect(r2.preview.cases.map((c) => c.id)).toEqual([...OLD, ...NEW]);
-      expect(r2.run.cases.filter((c) => c.status === "done").map((c) => c.id).slice(0, 3)).toEqual(OLD);
+      expect(
+        r2.run.cases
+          .filter((c) => c.status === "done")
+          .map((c) => c.id)
+          .slice(0, 3),
+      ).toEqual(OLD);
     } finally {
       CUT = cutOf([...OLD, ...NEW]);
     }

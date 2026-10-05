@@ -31,7 +31,6 @@
 // Persistence: `<state home>/setup/replay.json` — the last preview (its key
 // and request), the current run, and the rates measured from finished cases
 // (what later previews price with).
-import type { PrFileEntry } from "../github.js";
 import { buildPassPlan } from "../dispatch.js";
 import { VALIDATE_PASS } from "../include.js";
 import { findStyleGuide } from "../styleguide.js";
@@ -194,7 +193,12 @@ export interface ReplayPreview {
   request: ReplayRequest;
   sides: Record<SideName, ReplaySideView>;
   prs: ReplayPrState[];
-  cases: Array<Pick<ReplayCaseState, "id" | "pr" | "lens" | "tier" | "sides" | "lines" | "estimate_usd" | "rate_basis" | "kind">>;
+  cases: Array<
+    Pick<
+      ReplayCaseState,
+      "id" | "pr" | "lens" | "tier" | "sides" | "lines" | "estimate_usd" | "rate_basis" | "kind"
+    >
+  >;
   /** Cases planned on both sides and run once. */
   shared: number;
   estimate_usd: number;
@@ -252,15 +256,35 @@ const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 const usd = (n: number): number => Math.round(n * 10000) / 10000;
 
-export function parseReplayRequest(raw: { prs?: unknown; old?: unknown; new_profile?: unknown }): { ok: true; request: ReplayRequest } | Refusal {
+export function parseReplayRequest(raw: {
+  prs?: unknown;
+  old?: unknown;
+  new_profile?: unknown;
+}): { ok: true; request: ReplayRequest } | Refusal {
   const prs = Array.isArray(raw.prs) ? raw.prs : raw.prs === undefined ? [] : [raw.prs];
-  const nums = prs.map((p) => (typeof p === "string" && /^\d+$/.test(p.trim()) ? Number(p.trim()) : p));
-  if (nums.length === 0 || nums.length > MAX_REPLAY_PRS || !nums.every((n) => typeof n === "number" && Number.isInteger(n) && n > 0)) {
-    return { ok: false, errors: [`\`prs\` must be one or two PR numbers (at most ${MAX_REPLAY_PRS}: a replay reviews each one twice)`] };
+  const nums = prs.map((p) =>
+    typeof p === "string" && /^\d+$/.test(p.trim()) ? Number(p.trim()) : p,
+  );
+  if (
+    nums.length === 0 ||
+    nums.length > MAX_REPLAY_PRS ||
+    !nums.every((n) => typeof n === "number" && Number.isInteger(n) && n > 0)
+  ) {
+    return {
+      ok: false,
+      errors: [
+        `\`prs\` must be one or two PR numbers (at most ${MAX_REPLAY_PRS}: a replay reviews each one twice)`,
+      ],
+    };
   }
-  if (new Set(nums).size !== nums.length) return { ok: false, errors: ["`prs` names the same PR twice"] };
-  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
-  return { ok: true, request: { prs: nums as number[], old: str(raw.old), new_profile: str(raw.new_profile) } };
+  if (new Set(nums).size !== nums.length)
+    return { ok: false, errors: ["`prs` names the same PR twice"] };
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+  return {
+    ok: true,
+    request: { prs: nums as number[], old: str(raw.old), new_profile: str(raw.new_profile) },
+  };
 }
 
 export class ReplayRunner {
@@ -279,7 +303,10 @@ export class ReplayRunner {
     try {
       text = this.ports.state.read(REPLAY_FILE);
     } catch (err) {
-      return { file: empty, error: `${REPLAY_FILE} in ${this.ports.state.location} cannot be read: ${clean(err)}` };
+      return {
+        file: empty,
+        error: `${REPLAY_FILE} in ${this.ports.state.location} cannot be read: ${clean(err)}`,
+      };
     }
     if (text === null) return { file: empty, error: null };
     try {
@@ -288,11 +315,21 @@ export class ReplayRunner {
         throw new Error(`unknown version ${JSON.stringify(raw?.version)}`);
       }
       const current = raw.current ?? null;
-      if (current !== null && (typeof current !== "object" || !Array.isArray(current.cases) || !Array.isArray(current.prs))) {
+      if (
+        current !== null &&
+        (typeof current !== "object" ||
+          !Array.isArray(current.cases) ||
+          !Array.isArray(current.prs))
+      ) {
         throw new Error("`current` is not a replay run");
       }
       return {
-        file: { version: REPLAY_VERSION, preview: raw.preview ?? null, current, rates: raw.rates ?? {} },
+        file: {
+          version: REPLAY_VERSION,
+          preview: raw.preview ?? null,
+          current,
+          rates: raw.rates ?? {},
+        },
         error: null,
       };
     } catch (err) {
@@ -310,7 +347,10 @@ export class ReplayRunner {
   // -- planning --
 
   /** Both sides' reviews of every PR, as cases, priced. Builds the sides. */
-  private async plan(request: ReplayRequest, rates: Record<string, ReplayRate>): Promise<{ ok: true; planned: Planned } | Refusal> {
+  private async plan(
+    request: ReplayRequest,
+    rates: Record<string, ReplayRate>,
+  ): Promise<{ ok: true; planned: Planned } | Refusal> {
     const built = this.ports.sides(request);
     if (!built.ok) return built;
     const sides = built.sides;
@@ -323,7 +363,9 @@ export class ReplayRunner {
     }
     const trees: ReplayTree[] = [];
     for (const pr of pulls) {
-      const keep = pulls.filter((p) => p !== pr).flatMap((p) => [p.head_sha, ...(p.merge_commit_sha ? [p.merge_commit_sha] : [])]);
+      const keep = pulls
+        .filter((p) => p !== pr)
+        .flatMap((p) => [p.head_sha, ...(p.merge_commit_sha ? [p.merge_commit_sha] : [])]);
       const opened = this.ports.source.open(pr, keep);
       if (!opened.ok) return { ok: false, errors: [`PR #${pr.number}: ${opened.reason}`] };
       trees.push(opened.tree);
@@ -352,10 +394,19 @@ export class ReplayRunner {
       };
       // Which lens cases each side reads for this PR, and its validator row.
       const read: Record<SideName, string[]> = { old: [], new: [] };
-      const validators: Partial<Record<SideName, { agent: string; tier: PassTier; text: string }>> = {};
+      const validators: Partial<Record<SideName, { agent: string; tier: PassTier; text: string }>> =
+        {};
       for (const side of SIDES) {
         const s = sides[side];
-        const { pass_plan } = buildPassPlan(s.cfg, tree.files as PrFileEntry[], { title: pr.title, body: pr.body }, s.ecosystem, s.heuristics, guides, findCiLinters(tree.root));
+        const { pass_plan } = buildPassPlan(
+          s.cfg,
+          tree.files,
+          { title: pr.title, body: pr.body },
+          s.ecosystem,
+          s.heuristics,
+          guides,
+          findCiLinters(tree.root),
+        );
         for (const row of pass_plan) {
           const text = s.agentText(row.agent);
           if (text === null) {
@@ -366,7 +417,12 @@ export class ReplayRunner {
             validators[side] = { agent: row.agent, tier: row.tier, text };
             continue;
           }
-          const lensRow = { lens: row.lens, tier: row.tier, ...(row.why ? { why: row.why } : {}), ...(row.focus ? { focus: row.focus } : {}) };
+          const lensRow = {
+            lens: row.lens,
+            tier: row.tier,
+            ...(row.why ? { why: row.why } : {}),
+            ...(row.focus ? { focus: row.focus } : {}),
+          };
           const prompt = replayLensPrompt(pr, tree, lensRow);
           const key = caseKey(text, prompt);
           let job = byKey.get(key);
@@ -408,7 +464,14 @@ export class ReplayRunner {
           }
           if (!job.state.sides.includes(side)) job.state.sides.push(side);
           read[side].push(job.state.id);
-          state.plans[side].push({ agent: row.agent, lens: row.lens, tier: row.tier, case: job.state.id, ...(row.why ? { why: row.why } : {}), ...(row.focus ? { focus: row.focus } : {}) });
+          state.plans[side].push({
+            agent: row.agent,
+            lens: row.lens,
+            tier: row.tier,
+            case: job.state.id,
+            ...(row.why ? { why: row.why } : {}),
+            ...(row.focus ? { focus: row.focus } : {}),
+          });
         }
       }
       // The validators: one per side that keeps one — or one for both when
@@ -422,7 +485,10 @@ export class ReplayRunner {
       for (const side of SIDES) {
         const v = validators[side];
         if (!v) continue;
-        let job = sameInput && side === "new" ? jobs.find((j) => j.state.kind === "validate" && j.state.pr === pr.number) : undefined;
+        let job =
+          sameInput && side === "new"
+            ? jobs.find((j) => j.state.kind === "validate" && j.state.pr === pr.number)
+            : undefined;
         if (!job) {
           const model = modelOf(v.text);
           const rate = rateFor(model, v.tier, rates);
@@ -460,7 +526,12 @@ export class ReplayRunner {
           jobs.push(job);
         }
         job.state.sides.push(side);
-        state.plans[side].push({ agent: v.agent, lens: VALIDATE_PASS, tier: v.tier, case: job.state.id });
+        state.plans[side].push({
+          agent: v.agent,
+          lens: VALIDATE_PASS,
+          tier: v.tier,
+          case: job.state.id,
+        });
       }
       prs.push(state);
     }
@@ -469,7 +540,13 @@ export class ReplayRunner {
     const key = planKeyOf({
       prs: prs.map((p) => [p.number, p.sha, p.base]),
       sides: SIDES.map((s) => [sides[s].profile, sides[s].basis]),
-      jobs: jobs.map((j) => [j.state.id, j.state.agent, j.state.sides, j.state.estimate_usd, j.fingerprint]),
+      jobs: jobs.map((j) => [
+        j.state.id,
+        j.state.agent,
+        j.state.sides,
+        j.state.estimate_usd,
+        j.fingerprint,
+      ]),
     });
     return { ok: true, planned: { key, request, sides, prs, jobs, estimate, bases: [...bases] } };
   }
@@ -478,8 +555,16 @@ export class ReplayRunner {
 
   /** What the replay would run and cost now, and the key a start quotes.
    * Free: nothing runs. The preview is stored so a start can re-plan it. */
-  async preview(raw: { prs?: unknown; old?: unknown; new_profile?: unknown }): Promise<{ ok: true; preview: ReplayPreview } | Refusal> {
-    if (this.active) return { ok: false, errors: [`replay ${this.active.id} is running — wait for it or stop it first`] };
+  async preview(raw: {
+    prs?: unknown;
+    old?: unknown;
+    new_profile?: unknown;
+  }): Promise<{ ok: true; preview: ReplayPreview } | Refusal> {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`replay ${this.active.id} is running — wait for it or stop it first`],
+      };
     const req = parseReplayRequest(raw);
     if (!req.ok) return req;
     const { file, error } = this.load();
@@ -492,11 +577,18 @@ export class ReplayRunner {
     }
     if (!p.ok) return p;
     const planned = p.planned;
-    file.preview = { key: planned.key, at: this.ports.clock().toISOString(), request: planned.request };
+    file.preview = {
+      key: planned.key,
+      at: this.ports.clock().toISOString(),
+      request: planned.request,
+    };
     try {
       this.store(file);
     } catch (err) {
-      return { ok: false, errors: [`could not record the preview in ${this.ports.state.location}: ${clean(err)}`] };
+      return {
+        ok: false,
+        errors: [`could not record the preview in ${this.ports.state.location}: ${clean(err)}`],
+      };
     }
     return {
       ok: true,
@@ -528,14 +620,28 @@ export class ReplayRunner {
   /** Start the replay the last preview showed — its key, and nothing that
    * moved since. Returns as soon as the run is recorded. */
   async start(args: { key?: unknown }): Promise<{ ok: true; run: ReplayRun } | Refusal> {
-    if (this.active) return { ok: false, errors: [`replay ${this.active.id} is still running — stop it or wait for it`] };
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`replay ${this.active.id} is still running — stop it or wait for it`],
+      };
     if (typeof args.key !== "string" || args.key === "") {
-      return { ok: false, errors: ["no preview key — preview the replay, tell the operator its cost, then start it with the preview's key"] };
+      return {
+        ok: false,
+        errors: [
+          "no preview key — preview the replay, tell the operator its cost, then start it with the preview's key",
+        ],
+      };
     }
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     if (file.preview === null || file.preview.key !== args.key) {
-      return { ok: false, errors: [`no stored preview has key ${args.key} — preview again and show the operator the cost`] };
+      return {
+        ok: false,
+        errors: [
+          `no stored preview has key ${args.key} — preview again and show the operator the cost`,
+        ],
+      };
     }
     let p;
     try {
@@ -548,12 +654,17 @@ export class ReplayRunner {
     if (planned.key !== args.key) {
       return {
         ok: false,
-        errors: [`the replay changed since that preview (key ${args.key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`],
+        errors: [
+          `the replay changed since that preview (key ${args.key}, now ${planned.key}: a profile, a PR or a price moved) — preview again and show the operator the new cost`,
+        ],
       };
     }
     const now = this.ports.clock();
     const run: ReplayRun = {
-      id: `replay-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
+      id: `replay-${now
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d+Z$/, "Z")}`,
       key: planned.key,
       started_at: now.toISOString(),
       finished_at: null,
@@ -571,7 +682,12 @@ export class ReplayRunner {
     try {
       this.store(file);
     } catch (err) {
-      return { ok: false, errors: [`could not record the replay in ${this.ports.state.location}: ${clean(err)} — nothing started`] };
+      return {
+        ok: false,
+        errors: [
+          `could not record the replay in ${this.ports.state.location}: ${clean(err)} — nothing started`,
+        ],
+      };
     }
     const abort = new AbortController();
     const done = this.drive(file, run, planned.jobs, abort)
@@ -598,7 +714,14 @@ export class ReplayRunner {
     return {
       ok: error === null,
       problems: error === null ? [] : [error],
-      run: run === null ? null : { ...run, display: run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state },
+      run:
+        run === null
+          ? null
+          : {
+              ...run,
+              display:
+                run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state,
+            },
       active: this.active !== null,
     };
   }
@@ -617,7 +740,12 @@ export class ReplayRunner {
 
   // -- the background run --
 
-  private async drive(file: ReplayFile, run: ReplayRun, jobs: readonly CaseJob[], abort: AbortController): Promise<void> {
+  private async drive(
+    file: ReplayFile,
+    run: ReplayRun,
+    jobs: readonly CaseJob[],
+    abort: AbortController,
+  ): Promise<void> {
     const signal = abort.signal;
     let capHit = false;
     let reserved = 0;
@@ -649,19 +777,30 @@ export class ReplayRunner {
           reserved -= est;
           run.spent_usd = usd(run.spent_usd + spent);
           this.store(file);
-          if (run.spent_usd >= run.cap_usd - EPS && !signal.aborted && run.cases.some((c) => c.status === "running")) {
+          if (
+            run.spent_usd >= run.cap_usd - EPS &&
+            !signal.aborted &&
+            run.cases.some((c) => c.status === "running")
+          ) {
             capHit = true;
             abort.abort();
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.max(1, Math.min(this.concurrency, list.length)) }, lane));
+      await Promise.all(
+        Array.from({ length: Math.max(1, Math.min(this.concurrency, list.length)) }, lane),
+      );
     };
     await phase(jobs.filter((j) => j.state.kind === "lens"));
     if (!signal.aborted && !capHit) await phase(jobs.filter((j) => j.state.kind === "validate"));
-    for (const c of run.cases) if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
+    for (const c of run.cases)
+      if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
     const allDone = run.cases.every((c) => c.status === "done");
-    this.settle(file, run, allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial");
+    this.settle(
+      file,
+      run,
+      allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial",
+    );
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
@@ -684,7 +823,12 @@ export class ReplayRunner {
       const read = (job.reads ?? []).map((id) => run.cases.find((x) => x.id === id)!);
       candidates = read.flatMap((x) => x.findings ?? []);
       if (read.some((x) => x.status !== "done")) {
-        run.problems.push(`${c.id}: the validator reads only what finished — ${read.filter((x) => x.status !== "done").map((x) => x.id).join(", ")} did not`);
+        run.problems.push(
+          `${c.id}: the validator reads only what finished — ${read
+            .filter((x) => x.status !== "done")
+            .map((x) => x.id)
+            .join(", ")} did not`,
+        );
       }
       if (candidates.length === 0) {
         // Nothing to validate is a finished validation, and free.
@@ -703,7 +847,13 @@ export class ReplayRunner {
     let outcome: CaseOutcome;
     try {
       outcome = await this.ports.cases(job.agentsDir).run(
-        { id: `${run.id}/${c.id}`, unit: `PR #${c.pr}`, agent: c.agent, files: [], prompt: job.prompt(candidates) },
+        {
+          id: `${run.id}/${c.id}`,
+          unit: `PR #${c.pr}`,
+          agent: c.agent,
+          files: [],
+          prompt: job.prompt(candidates),
+        },
         signal,
         (v) => {
           seen = Math.max(seen, v);
@@ -736,7 +886,12 @@ export class ReplayRunner {
     }
     if (c.kind === "lens") {
       const answer = parseScanAnswer(outcome.output, { root: job.root, deepLenses: [] });
-      c.findings = answer.candidates.map((f) => ({ ...f, lens: c.lens, doubt: null, validated: false }));
+      c.findings = answer.candidates.map((f) => ({
+        ...f,
+        lens: c.lens,
+        doubt: null,
+        validated: false,
+      }));
       c.dropped = answer.dropped;
       c.none = answer.none;
     } else {
@@ -764,7 +919,11 @@ export class ReplayRunner {
 }
 
 function sideViews(sides: Record<SideName, ReplaySide>): Record<SideName, ReplaySideView> {
-  const v = (s: ReplaySide): ReplaySideView => ({ profile: s.profile, basis: s.basis, baseline: s.baseline });
+  const v = (s: ReplaySide): ReplaySideView => ({
+    profile: s.profile,
+    basis: s.basis,
+    baseline: s.baseline,
+  });
   return { old: v(sides.old), new: v(sides.new) };
 }
 
@@ -784,12 +943,16 @@ export function validated(
   candidates: readonly ReplayFinding[],
 ): { findings: ReplayFinding[]; dropped: number; kept: number; doubted: number; killed: number } {
   const answer = parseValidatorAnswer(output, root);
-  const near = (a: { path: string; start: number; end: number }, b: ScanCandidate | ReplayFinding): boolean =>
-    a.path === b.path && a.start <= b.end && b.start <= a.end;
+  const near = (
+    a: { path: string; start: number; end: number },
+    b: ScanCandidate | ReplayFinding,
+  ): boolean => a.path === b.path && a.start <= b.end && b.start <= a.end;
   const used = new Set<ReplayFinding>();
   const findings: ReplayFinding[] = [];
   for (const s of answer.survivors) {
-    const from = candidates.find((c) => !used.has(c) && near(s, c) && c.kind === s.kind) ?? candidates.find((c) => !used.has(c) && near(s, c));
+    const from =
+      candidates.find((c) => !used.has(c) && near(s, c) && c.kind === s.kind) ??
+      candidates.find((c) => !used.has(c) && near(s, c));
     if (from) used.add(from);
     findings.push({ ...s, lens: from?.lens ?? VALIDATE_PASS, doubt: null, validated: true });
   }
@@ -803,7 +966,13 @@ export function validated(
     doubted++;
     findings.push({ ...c, doubt: { word: d.word, reason: d.reason }, validated: true });
   }
-  return { findings, dropped: answer.dropped, kept, doubted, killed: Math.max(0, candidates.length - used.size) };
+  return {
+    findings,
+    dropped: answer.dropped,
+    kept,
+    doubted,
+    killed: Math.max(0, candidates.length - used.size),
+  };
 }
 
 /**
@@ -818,7 +987,9 @@ export function compareRun(run: Pick<ReplayRun, "prs" | "cases">): ReplayCompari
     const complete = {} as Record<SideName, boolean>;
     for (const side of SIDES) {
       const rows = pr.plans[side];
-      const cases = rows.map((r) => run.cases.find((c) => c.id === r.case)).filter((c): c is ReplayCaseState => c !== undefined);
+      const cases = rows
+        .map((r) => run.cases.find((c) => c.id === r.case))
+        .filter((c): c is ReplayCaseState => c !== undefined);
       const validation = cases.find((c) => c.kind === "validate");
       complete[side] = cases.every((c) => c.status === "done");
       findings[side] = (
@@ -831,7 +1002,9 @@ export function compareRun(run: Pick<ReplayRun, "prs" | "cases">): ReplayCompari
     // A case that never started cost nothing; one that ran unpriced makes
     // its side's cost unknown, never a smaller number.
     const sum = (cs: ReplayCaseState[]): number | null =>
-      cs.some((c) => c.cost_usd === null && c.started_at !== null) ? null : usd(cs.reduce((t, c) => t + (c.cost_usd ?? 0), 0));
+      cs.some((c) => c.cost_usd === null && c.started_at !== null)
+        ? null
+        : usd(cs.reduce((t, c) => t + (c.cost_usd ?? 0), 0));
     const compared = compareFindings(findings.old, findings.new);
     return {
       pr: pr.number,

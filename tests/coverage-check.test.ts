@@ -8,12 +8,22 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseConfig, REVIEW_DEFAULTS } from "../src/config.js";
-import { coverageEligible, coverageGaps, coverageReason, COVERAGE_MAX_GROUPS } from "../src/coverage.js";
+import {
+  coverageEligible,
+  coverageGaps,
+  coverageReason,
+  COVERAGE_MAX_GROUPS,
+} from "../src/coverage.js";
 import { renderCoverageNote } from "../src/templates.js";
 import { COVERAGE_TOOL, readCoverageArgs } from "../extensions/finding-clusters.js";
 
 const root = resolve(process.cwd());
-const f = (filename: string, additions = 10, status = "modified", deletions = 0) => ({ filename, additions, deletions, status });
+const f = (filename: string, additions = 10, status = "modified", deletions = 0) => ({
+  filename,
+  additions,
+  deletions,
+  status,
+});
 
 describe("eligible files", () => {
   it("keeps changed source code; drops tests, docs, locks, vendored, generated, removed and deletion-only files", () => {
@@ -46,7 +56,13 @@ describe("coverageGaps", () => {
     { path: "a/Five.java", lines: 10 },
   ];
   it("is empty when every eligible file was addressed (suffix paths count)", () => {
-    const g = coverageGaps(el, ["a/One.java", "Two.java", "./a/Three.java", "a/Four.java", "a/Five.java"]);
+    const g = coverageGaps(el, [
+      "a/One.java",
+      "Two.java",
+      "./a/Three.java",
+      "a/Four.java",
+      "a/Five.java",
+    ]);
     expect(g).toEqual({ uncovered: [], groups: [], unchecked: [] });
   });
   it("packs the unaddressed files by line budget into at most two rows and lists the rest", () => {
@@ -57,7 +73,14 @@ describe("coverageGaps", () => {
     expect(g.unchecked).toEqual(["a/Four.java", "a/Five.java"]);
   });
   it("a file over the budget gets a row of its own; small files share", () => {
-    const g = coverageGaps([{ path: "x/Big.kt", lines: 900 }, { path: "x/a.kt", lines: 5 }, { path: "x/b.kt", lines: 5 }], []);
+    const g = coverageGaps(
+      [
+        { path: "x/Big.kt", lines: 900 },
+        { path: "x/a.kt", lines: 5 },
+        { path: "x/b.kt", lines: 5 },
+      ],
+      [],
+    );
     expect(g.groups).toEqual([["x/Big.kt"], ["x/a.kt", "x/b.kt"]]);
   });
   it("says why", () => {
@@ -70,10 +93,13 @@ describe("the knob and the note", () => {
     expect(REVIEW_DEFAULTS.coverage_check).toBe(true);
     const fixture = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
     expect(parseConfig(fixture).review.coverage_check).toBe(true);
-    expect(parseConfig(fixture.replace("[review]", "[review]\ncoverage_check = false")).review.coverage_check).toBe(false);
-    expect(() => parseConfig(fixture.replace("[review]", '[review]\ncoverage_check = "yes"'))).toThrow(
-      /coverage_check must be true or false/,
-    );
+    expect(
+      parseConfig(fixture.replace("[review]", "[review]\ncoverage_check = false")).review
+        .coverage_check,
+    ).toBe(false);
+    expect(() =>
+      parseConfig(fixture.replace("[review]", '[review]\ncoverage_check = "yes"')),
+    ).toThrow(/coverage_check must be true or false/);
   });
   it("renders nothing without coverage files (byte-identical order), the instruction with them", () => {
     expect(renderCoverageNote({})).toBe("");
@@ -86,7 +112,9 @@ describe("the knob and the note", () => {
   });
   it("sits at the end of step 2 in every round template", () => {
     for (const t of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
-      expect(readFileSync(join(root, "prompts", t), "utf8")).toContain("{{intent_note}}{{coverage_note}}\n\n## 3. Merge");
+      expect(readFileSync(join(root, "prompts", t), "utf8")).toContain(
+        "{{intent_note}}{{coverage_note}}\n\n## 3. Merge",
+      );
     }
   });
 });
@@ -96,19 +124,29 @@ describe("coverage_gaps on both routes", () => {
     const ext = readFileSync(join(root, "extensions/finding-clusters.ts"), "utf8");
     expect(ext).toContain("pi.registerTool(COVERAGE_TOOL)");
     expect(readFileSync(join(root, "src/sessions.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
-    expect(readFileSync(join(root, "src/bench/runner.ts"), "utf8")).toMatch(/"finding-clusters\.ts"/);
+    expect(readFileSync(join(root, "src/bench/runner.ts"), "utf8")).toMatch(
+      /"finding-clusters\.ts"/,
+    );
   });
   it("answers rows with reasons, and reports malformed input instead of throwing", async () => {
     const res = await COVERAGE_TOOL.execute("t1", {
-      eligible: [{ path: "q/Dist.java", lines: 40 }, { path: "q/Other.java", lines: 8 }],
+      eligible: [
+        { path: "q/Dist.java", lines: 40 },
+        { path: "q/Other.java", lines: 8 },
+      ],
       addressed: ["q/Other.java"],
     });
     const t = res.content[0]!.text;
     expect(t).toContain('ROW 1: focus ["q/Dist.java"]');
     expect(t).toContain("reason: coverage: no lens addressed q/Dist.java");
-    const all = await COVERAGE_TOOL.execute("t2", { eligible: [{ path: "q/Dist.java", lines: 40 }], addressed: ["q/Dist.java"] });
+    const all = await COVERAGE_TOOL.execute("t2", {
+      eligible: [{ path: "q/Dist.java", lines: 40 }],
+      addressed: ["q/Dist.java"],
+    });
     expect(all.content[0]!.text).toContain("no coverage row");
-    expect(readCoverageArgs({ eligible: "nope", addressed: [] }).problems).toContain("eligible is not valid JSON");
+    expect(readCoverageArgs({ eligible: "nope", addressed: [] }).problems).toContain(
+      "eligible is not valid JSON",
+    );
     expect(readCoverageArgs({ eligible: {}, addressed: {} }).problems).toEqual([
       "eligible must be an array",
       "addressed must be an array",

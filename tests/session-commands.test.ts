@@ -34,26 +34,30 @@ describe("durable PR-session command slot", () => {
     return store;
   };
 
-  it("persists one finite pending slot with exact command identity and payload evidence", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const store = open();
-    const row = store.createSessionCommand(input("cmd-a"));
+  it(
+    "persists one finite pending slot with exact command identity and payload evidence",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const store = open();
+      const row = store.createSessionCommand(input("cmd-a"));
 
-    expect(row).toMatchObject({
-      id: "cmd-a",
-      pr: 5408,
-      session: "pr-5408",
-      kind: "round",
-      round_no: 20,
-      payload_sha256: "a".repeat(64),
-      payload_path: "/state/session-commands/cmd-a.md",
-      inject_path: "/inject/pr-5408/wake--cmd-cmd-a.md",
-      status: "pending",
-      attempt: 0,
-      owner_token: null,
-      next_check_at: "2026-08-27T20:02:00.000Z",
-    });
-    expect(store.activeSessionCommand("pr-5408")?.id).toBe("cmd-a");
-  });
+      expect(row).toMatchObject({
+        id: "cmd-a",
+        pr: 5408,
+        session: "pr-5408",
+        kind: "round",
+        round_no: 20,
+        payload_sha256: "a".repeat(64),
+        payload_path: "/state/session-commands/cmd-a.md",
+        inject_path: "/inject/pr-5408/wake--cmd-cmd-a.md",
+        status: "pending",
+        attempt: 0,
+        owner_token: null,
+        next_check_at: "2026-08-27T20:02:00.000Z",
+      });
+      expect(store.activeSessionCommand("pr-5408")?.id).toBe("cmd-a");
+    },
+  );
 
   it("structurally forbids two nonterminal commands for one PR session", () => {
     const store = open();

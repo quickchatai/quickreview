@@ -65,3 +65,10 @@ publish-manifest.json
 # VENDORED from the pinned upstream skills repo (see VENDORED.md) — provenance
 # is a comparison against that copy, so local reformatting would be drift.
 .claude/skills/
+
+# Benchmark DATA, machine-written by the Python harness (bench/aacr/*.py):
+# the defect keys, the PR sets and their labels, the run plans, the
+# reference sets and the golden audits. They are inputs the harness reads
+# and the dataset export publishes byte for byte; a formatter rewriting them
+# produces a diff no generator would, and the next regeneration undoes it.
+bench/aacr/**/*.json

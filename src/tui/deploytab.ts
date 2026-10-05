@@ -374,7 +374,9 @@ export function deployLines(st: DeployState, width: number): string[] {
   const retunes = pendingRetunes(st.retunes, drift, dep?.at);
   const retuneInk = retunes.state === "pending" ? BAD : WARN;
   for (const [i, l] of pendingRetuneLines(retunes).entries()) {
-    lines.push(truncate(i === 0 ? `  ${retuneInk}${l}${DRESET}` : `  ${FG.dim}${l}${RESET}`, width));
+    lines.push(
+      truncate(i === 0 ? `  ${retuneInk}${l}${DRESET}` : `  ${FG.dim}${l}${RESET}`, width),
+    );
   }
   lines.push("");
 

@@ -20,13 +20,30 @@
 // said. A preview never does, and never writes anything.
 import { ALL_PASSES } from "../dispatch.js";
 import { EXAMPLE_PROFILES, PROFILES_DIR } from "../install.js";
-import { PINNED_BUDGET_CHARS, pinnedBudget, type MemoryEntry, type MemoryStore } from "../memory/store.js";
+import {
+  PINNED_BUDGET_CHARS,
+  pinnedBudget,
+  type MemoryEntry,
+  type MemoryStore,
+} from "../memory/store.js";
 import { EMPHASIS_MAX_CHARS, PROFILE_GUIDE_MAX_CHARS, STYLE_LENS } from "../lenstuning.js";
 import { lineDiff } from "./portrait.js";
-import { parsePinProposals, PIN_PROPOSALS_FILE, proposalKey, type PinProposal, type PinProposalsFile } from "./pins.js";
+import {
+  parsePinProposals,
+  PIN_PROPOSALS_FILE,
+  proposalKey,
+  type PinProposal,
+  type PinProposalsFile,
+} from "./pins.js";
 import type { Refusal, StateFs } from "./engine.js";
 import { recordBaseline } from "./baselines.js";
-import { commitId, requestFile, resultFile, type CommitRequest, type CommitResult } from "./configcommit.js";
+import {
+  commitId,
+  requestFile,
+  resultFile,
+  type CommitRequest,
+  type CommitResult,
+} from "./configcommit.js";
 import {
   CONCERN_NAMES,
   lensDecisions,
@@ -83,7 +100,10 @@ export interface InterviewRecord {
   commits: Array<{ id: string; requested_at: string }>;
 }
 
-export type RecordRead = { state: "absent" } | { state: "ok"; record: InterviewRecord } | { state: "unreadable"; error: string };
+export type RecordRead =
+  | { state: "absent" }
+  | { state: "ok"; record: InterviewRecord }
+  | { state: "unreadable"; error: string };
 
 export function readRecord(state: StateFs): RecordRead {
   let text: string | null;
@@ -95,7 +115,8 @@ export function readRecord(state: StateFs): RecordRead {
   if (text === null) return { state: "absent" };
   try {
     const raw = JSON.parse(text) as Partial<InterviewRecord>;
-    if (raw.version !== 1 || typeof raw.profile !== "string") throw new Error("not a version-1 interview record");
+    if (raw.version !== 1 || typeof raw.profile !== "string")
+      throw new Error("not a version-1 interview record");
     const p = parsePriorities(raw.priorities ?? {});
     if (!p.ok) throw new Error(p.errors.join("; "));
     return {
@@ -106,7 +127,9 @@ export function readRecord(state: StateFs): RecordRead {
         goals: typeof raw.goals === "string" ? raw.goals : null,
         priorities: p.priorities,
         updated_at: typeof raw.updated_at === "string" ? raw.updated_at : "",
-        commits: Array.isArray(raw.commits) ? raw.commits.filter((c) => typeof c?.id === "string") : [],
+        commits: Array.isArray(raw.commits)
+          ? raw.commits.filter((c) => typeof c?.id === "string")
+          : [],
       },
     };
   } catch (err) {
@@ -146,7 +169,8 @@ export interface ProfileStatus {
 }
 
 export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
-  if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
+  if (!deps.profiles)
+    return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
   const target = readProfileTarget(deps.profiles);
   const interview = readRecord(deps.state);
   const record = interview.state === "ok" ? interview.record : null;
@@ -156,13 +180,16 @@ export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
   let why: string | null = null;
   let owed: boolean | null = null;
   if (target.state !== "ok") why = `the live config cannot be read (${target.error})`;
-  else if (named === "") why = "the live config names no repo profile — PR rounds run the untuned shipped behaviour";
-  else if (EXAMPLE_PROFILES.includes(named)) why = `the live config names "${named}", a generic example — the repo has no profile of its own`;
+  else if (named === "")
+    why = "the live config names no repo profile — PR rounds run the untuned shipped behaviour";
+  else if (EXAMPLE_PROFILES.includes(named))
+    why = `the live config names "${named}", a generic example — the repo has no profile of its own`;
   else {
     // The profile PR rounds actually use — which may not be the one setup is
     // working on (a fresh profile the config does not name yet).
     const inUse = profile === named ? check : checkProfile(deps.profiles, named);
-    if (inUse && !inUse.ok) why = `the profile the live config names does not load: ${inUse.errors[0]}`;
+    if (inUse && !inUse.ok)
+      why = `the profile the live config names does not load: ${inUse.errors[0]}`;
   }
   if (target.state === "ok") owed = why !== null;
   return {
@@ -172,21 +199,30 @@ export function profileStatus(deps: TuningDeps): ProfileStatus | Refusal {
     needs_setup: owed,
     why_setup: why,
     interview,
-    unanswered: interview.state === "unreadable" ? null : unansweredConcerns(record?.priorities ?? {}),
+    unanswered:
+      interview.state === "unreadable" ? null : unansweredConcerns(record?.priorities ?? {}),
     commits: (record?.commits ?? []).map((c) => ({ ...c, result: readResult(deps.state, c.id) })),
   };
 }
 
 /** The daemon's check of a profile as it is on disk — for a direct edit. */
-export function profileValidate(deps: TuningDeps, name?: unknown): { profile: string; check: ProfileCheck } | Refusal {
-  if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
+export function profileValidate(
+  deps: TuningDeps,
+  name?: unknown,
+): { profile: string; check: ProfileCheck } | Refusal {
+  if (!deps.profiles)
+    return { ok: false, errors: ["this assembly has no config home to read profiles from"] };
   let profile = typeof name === "string" ? name.trim() : "";
   if (profile === "") {
     const r = readRecord(deps.state);
     const t = readProfileTarget(deps.profiles);
     profile = (r.state === "ok" ? r.record.profile : "") || (t.state === "ok" ? t.named : "");
   }
-  if (profile === "") return { ok: false, errors: ["no profile to validate — the live config names none; pass `profile`"] };
+  if (profile === "")
+    return {
+      ok: false,
+      errors: ["no profile to validate — the live config names none; pass `profile`"],
+    };
   return { profile, check: checkProfile(deps.profiles, profile) };
 }
 
@@ -228,16 +264,21 @@ export interface ApplyResult {
   baseline: { id: string } | { error: string } | null;
 }
 
-export function parseEmphasis(raw: unknown): { ok: true; emphasis: Record<string, string | null> } | Refusal {
+export function parseEmphasis(
+  raw: unknown,
+): { ok: true; emphasis: Record<string, string | null> } | Refusal {
   if (raw === undefined || raw === null) return { ok: true, emphasis: {} };
-  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, errors: ["`emphasis` must be an object of {lens: text | null}"] };
+  if (typeof raw !== "object" || Array.isArray(raw))
+    return { ok: false, errors: ["`emphasis` must be an object of {lens: text | null}"] };
   const errors: string[] = [];
   const out: Record<string, string | null> = {};
   for (const [lens, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!ALL_PASSES.includes(lens)) errors.push(`emphasis: "${lens}" is not a lens`);
     else if (v === null) out[lens] = null;
-    else if (typeof v !== "string" || v.trim() === "") errors.push(`emphasis for ${lens} must be text, or null to remove it`);
-    else if (v.length > EMPHASIS_MAX_CHARS) errors.push(`emphasis for ${lens} is over ${EMPHASIS_MAX_CHARS} characters`);
+    else if (typeof v !== "string" || v.trim() === "")
+      errors.push(`emphasis for ${lens} must be text, or null to remove it`);
+    else if (v.length > EMPHASIS_MAX_CHARS)
+      errors.push(`emphasis for ${lens} is over ${EMPHASIS_MAX_CHARS} characters`);
     else out[lens] = v.trim();
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, emphasis: out };
@@ -260,7 +301,8 @@ export function profileApply(
   input: ApplyInput,
   opts: { message?: string; decide?: ReadonlySet<string> } = {},
 ): ApplyResult | Refusal {
-  if (!deps.profiles) return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
+  if (!deps.profiles)
+    return { ok: false, errors: ["this assembly has no config home to write profiles to"] };
   const home = deps.profiles;
   const write = input.write === true;
   const rec = readRecord(deps.state);
@@ -274,7 +316,9 @@ export function profileApply(
   if (profile === "") {
     return {
       ok: false,
-      errors: ["the live config names no repo profile yet — pass `profile`: a plain name for this repo's own (the repo's name is a good one)"],
+      errors: [
+        "the live config names no repo profile yet — pass `profile`: a plain name for this repo's own (the repo's name is a good one)",
+      ],
     };
   }
   const where = writeTarget(home, profile);
@@ -284,17 +328,44 @@ export function profileApply(
   if (!pr.ok) return pr;
   const em = parseEmphasis(input.emphasis);
   if (!em.ok) return em;
-  if (input.goals !== undefined && (typeof input.goals !== "string" || input.goals.trim() === "" || input.goals.length > GOALS_MAX_CHARS)) {
-    return { ok: false, errors: [`\`goals\` must be the project's goals in the operator's words, at most ${GOALS_MAX_CHARS} characters`] };
+  if (
+    input.goals !== undefined &&
+    (typeof input.goals !== "string" ||
+      input.goals.trim() === "" ||
+      input.goals.length > GOALS_MAX_CHARS)
+  ) {
+    return {
+      ok: false,
+      errors: [
+        `\`goals\` must be the project's goals in the operator's words, at most ${GOALS_MAX_CHARS} characters`,
+      ],
+    };
   }
   const guide = input.drop_style_guide === true ? null : input.style_guide;
-  if (guide !== undefined && guide !== null && (typeof guide !== "string" || guide.trim() === "" || guide.length > PROFILE_GUIDE_MAX_CHARS)) {
-    return { ok: false, errors: [`\`style_guide\` must be markdown text of at most ${PROFILE_GUIDE_MAX_CHARS} characters, or null`] };
+  if (
+    guide !== undefined &&
+    guide !== null &&
+    (typeof guide !== "string" || guide.trim() === "" || guide.length > PROFILE_GUIDE_MAX_CHARS)
+  ) {
+    return {
+      ok: false,
+      errors: [
+        `\`style_guide\` must be markdown text of at most ${PROFILE_GUIDE_MAX_CHARS} characters, or null`,
+      ],
+    };
   }
 
   // The answers so far: the record's (same profile only), then this call's.
-  const priorities = { ...(record && record.profile === profile ? record.priorities : {}), ...pr.priorities };
-  const goals = typeof input.goals === "string" ? input.goals.trim() : record && record.profile === profile ? record.goals : null;
+  const priorities = {
+    ...(record && record.profile === profile ? record.priorities : {}),
+    ...pr.priorities,
+  };
+  const goals =
+    typeof input.goals === "string"
+      ? input.goals.trim()
+      : record && record.profile === profile
+        ? record.goals
+        : null;
   const unanswered = unansweredConcerns(priorities);
   if (write && (unanswered.length > 0 || goals === null)) {
     const missing = [
@@ -303,7 +374,9 @@ export function profileApply(
     ];
     return {
       ok: false,
-      errors: [`the interview is not finished — still to ask: ${missing.join("; ")}. Preview (write: false) shows what the answers so far would do.`],
+      errors: [
+        `the interview is not finished — still to ask: ${missing.join("; ")}. Preview (write: false) shows what the answers so far would do.`,
+      ],
     };
   }
 
@@ -331,7 +404,10 @@ export function profileApply(
     before = readProfileFile(where.dir, PROFILE_FILE);
     guideBefore = readProfileFile(where.dir, DRAFTED_GUIDE_FILE);
   } catch (err) {
-    return { ok: false, errors: [`${where.dir} cannot be read: ${String(err)} — nothing was changed`] };
+    return {
+      ok: false,
+      errors: [`${where.dir} cannot be read: ${String(err)} — nothing was changed`],
+    };
   }
   const edited = editLensTables(before === "" ? newProfileText(DEFAULT_BASE) : before, changes);
   if (!edited.ok) return { ok: false, errors: [`${where.dir}/${PROFILE_FILE}: ${edited.error}`] };
@@ -340,11 +416,22 @@ export function profileApply(
 
   const check = checkStaged(home, profile, files);
   if (!check.ok) {
-    return { ok: false, errors: [`the profile these answers produce would not load — nothing was written:`, ...check.errors] };
+    return {
+      ok: false,
+      errors: [
+        `the profile these answers produce would not load — nothing was written:`,
+        ...check.errors,
+      ],
+    };
   }
   const diff: ApplyResult["diff"] = [];
-  if (files[PROFILE_FILE] !== undefined) diff.push({ file: PROFILE_FILE, lines: lineDiff(before, files[PROFILE_FILE]) });
-  if (files[DRAFTED_GUIDE_FILE] !== undefined) diff.push({ file: DRAFTED_GUIDE_FILE, lines: lineDiff(guideBefore, files[DRAFTED_GUIDE_FILE]) });
+  if (files[PROFILE_FILE] !== undefined)
+    diff.push({ file: PROFILE_FILE, lines: lineDiff(before, files[PROFILE_FILE]) });
+  if (files[DRAFTED_GUIDE_FILE] !== undefined)
+    diff.push({
+      file: DRAFTED_GUIDE_FILE,
+      lines: lineDiff(guideBefore, files[DRAFTED_GUIDE_FILE]),
+    });
   const unchanged = Object.keys(files).length === 0;
 
   let commit: { id: string } | null = null;
@@ -357,7 +444,10 @@ export function profileApply(
       // baseline of the profile still on disk, never a missing one.
       const id = commitId(now, profile, (candidate) => {
         try {
-          return deps.state.read(requestFile(candidate)) !== null || deps.state.read(resultFile(candidate)) !== null;
+          return (
+            deps.state.read(requestFile(candidate)) !== null ||
+            deps.state.read(resultFile(candidate)) !== null
+          );
         } catch {
           return true; // unreadable: it exists, so it is taken
         }
@@ -378,7 +468,9 @@ export function profileApply(
         });
         baseline = { id };
       } catch (err) {
-        baseline = { error: `the profile before this write was not recorded for a replay: ${String(err)}` };
+        baseline = {
+          error: `the profile before this write was not recorded for a replay: ${String(err)}`,
+        };
       }
       try {
         writeProfileFiles(where.dir, files);
@@ -401,7 +493,10 @@ export function profileApply(
       goals,
       priorities,
       updated_at: now.toISOString(),
-      commits: [...(record?.commits ?? []), ...(commit ? [{ id: commit.id, requested_at: now.toISOString() }] : [])].slice(-COMMITS_KEPT),
+      commits: [
+        ...(record?.commits ?? []),
+        ...(commit ? [{ id: commit.id, requested_at: now.toISOString() }] : []),
+      ].slice(-COMMITS_KEPT),
     };
     deps.state.write(INTERVIEW_FILE, `${JSON.stringify(next, null, 2)}\n`);
   }
@@ -425,7 +520,9 @@ export function profileApply(
 
 /** The commit message: which profile, and the answers that shaped it. */
 export function commitMessage(profile: string, priorities: Record<string, Priority>): string {
-  const notable = CONCERN_NAMES.filter((c) => priorities[c] !== undefined && priorities[c] !== "normal").map((c) => `${c} ${priorities[c]}`);
+  const notable = CONCERN_NAMES.filter(
+    (c) => priorities[c] !== undefined && priorities[c] !== "normal",
+  ).map((c) => `${c} ${priorities[c]}`);
   return `qcr setup: tune profile ${profile}${notable.length > 0 ? ` (${notable.join(", ")})` : ""}`;
 }
 
@@ -447,11 +544,24 @@ export interface PinProposeResult {
  * it reads now, with one line of why. Nothing is pinned: the operator pins
  * in the TUI's memory tab, where these are marked.
  */
-export async function proposePins(deps: TuningDeps, raw: unknown): Promise<PinProposeResult | Refusal> {
-  if (!deps.memory) return { ok: false, errors: ["reviewer memory is not reachable from here — nothing to propose against"] };
-  if (!Array.isArray(raw) || raw.length === 0) return { ok: false, errors: ["`entries` must be a non-empty array of {id, ts, block, why}"] };
+export async function proposePins(
+  deps: TuningDeps,
+  raw: unknown,
+): Promise<PinProposeResult | Refusal> {
+  if (!deps.memory)
+    return {
+      ok: false,
+      errors: ["reviewer memory is not reachable from here — nothing to propose against"],
+    };
+  if (!Array.isArray(raw) || raw.length === 0)
+    return { ok: false, errors: ["`entries` must be a non-empty array of {id, ts, block, why}"] };
   if (raw.length > MAX_PIN_PROPOSALS) {
-    return { ok: false, errors: [`at most ${MAX_PIN_PROPOSALS} proposals — pins are the head of every round; choose the few that matter most`] };
+    return {
+      ok: false,
+      errors: [
+        `at most ${MAX_PIN_PROPOSALS} proposals — pins are the head of every round; choose the few that matter most`,
+      ],
+    };
   }
   let entries: MemoryEntry[];
   try {
@@ -467,11 +577,24 @@ export async function proposePins(deps: TuningDeps, raw: unknown): Promise<PinPr
     const e = entries.find((x) => x.id === r.id && x.ts === r.ts && x.block === block);
     const why = typeof r.why === "string" ? r.why.trim() : "";
     const oneLine = !/[\r\n]/.test(why);
-    if (!e) errors.push(`entries[${i}]: no memory entry ${JSON.stringify({ id: r.id, ts: r.ts, block: r.block })} — read memory again`);
+    if (!e)
+      errors.push(
+        `entries[${i}]: no memory entry ${JSON.stringify({ id: r.id, ts: r.ts, block: r.block })} — read memory again`,
+      );
     else if (e.pinned) errors.push(`entries[${i}]: ${e.id} is already pinned`);
-    else if (why === "" || !oneLine || why.length > PIN_WHY_MAX) errors.push(`entries[${i}]: \`why\` must be one line of at most ${PIN_WHY_MAX} characters`);
-    else if (proposed.some((p) => proposalKey(p) === proposalKey(e))) errors.push(`entries[${i}]: proposed twice`);
-    else proposed.push({ id: e.id, ts: e.ts, block: e.block, hash: e.hash, excerpt: e.text.replace(/\s+/g, " ").slice(0, 160), why });
+    else if (why === "" || !oneLine || why.length > PIN_WHY_MAX)
+      errors.push(`entries[${i}]: \`why\` must be one line of at most ${PIN_WHY_MAX} characters`);
+    else if (proposed.some((p) => proposalKey(p) === proposalKey(e)))
+      errors.push(`entries[${i}]: proposed twice`);
+    else
+      proposed.push({
+        id: e.id,
+        ts: e.ts,
+        block: e.block,
+        hash: e.hash,
+        excerpt: e.text.replace(/\s+/g, " ").slice(0, 160),
+        why,
+      });
   }
   if (errors.length > 0) return { ok: false, errors };
   const prior = (() => {
@@ -485,7 +608,9 @@ export async function proposePins(deps: TuningDeps, raw: unknown): Promise<PinPr
   deps.state.write(PIN_PROPOSALS_FILE, `${JSON.stringify(file, null, 2)}\n`);
   const now = pinnedBudget(entries).chars;
   const keys = new Set(proposed.map(proposalKey));
-  const projected = pinnedBudget(entries.map((e) => (keys.has(proposalKey(e)) ? { ...e, pinned: true } : e))).chars;
+  const projected = pinnedBudget(
+    entries.map((e) => (keys.has(proposalKey(e)) ? { ...e, pinned: true } : e)),
+  ).chars;
   return {
     ok: true,
     proposed,

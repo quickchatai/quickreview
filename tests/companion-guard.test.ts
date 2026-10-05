@@ -59,7 +59,7 @@ describe("bashBlockReason", () => {
     // GraphQL queries go by POST — a query is a read.
     expect(
       bashBlockReason(
-        `${auth} -X POST https://api.github.com/graphql -d '{"query":"{ repository(owner:\"o\",name:\"r\") { id } }"}'`,
+        `${auth} -X POST https://api.github.com/graphql -d '{"query":"{ repository(owner:"o",name:"r") { id } }"}'`,
       ),
     ).toBeUndefined();
     expect(bashBlockReason(`. "$QCR_GITHUB_READ_ENV" && echo "$QCR_GITHUB_REPO"`)).toBeUndefined();

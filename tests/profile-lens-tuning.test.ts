@@ -116,15 +116,19 @@ const lensesOf = (cfg: Config, files: PrFileEntry[]) =>
 // ---- untuned is unchanged -----------------------------------------------------
 
 describe("an untuned profile changes nothing", () => {
-  it("no [lenses] ⇒ the same plan and the same built bytes as no profile", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    profile("plain", 'extends = "default"\n');
-    const cfg = tuned("plain");
-    expect(cfg.lenses).toEqual({});
-    for (const files of [SMALL, AUTH]) expect(plan(cfg, files)).toEqual(plan(fixture, files));
-    const a = agents(tuned(""));
-    const b = agents(cfg);
-    for (const [name, bytes] of a) expect(b.get(name), name).toBe(bytes);
-  });
+  it(
+    "no [lenses] ⇒ the same plan and the same built bytes as no profile",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      profile("plain", 'extends = "default"\n');
+      const cfg = tuned("plain");
+      expect(cfg.lenses).toEqual({});
+      for (const files of [SMALL, AUTH]) expect(plan(cfg, files)).toEqual(plan(fixture, files));
+      const a = agents(tuned(""));
+      const b = agents(cfg);
+      for (const [name, bytes] of a) expect(b.get(name), name).toBe(bytes);
+    },
+  );
 });
 
 // ---- min_tier -------------------------------------------------------------------
@@ -424,7 +428,7 @@ describe("resolution", () => {
 
 describe("the daemon's assembly overlays the tuning (wire.ts buildParts)", () => {
   it("parts.cfg carries the selected profile's resolved lenses", () => {
-    profile("wired", '[lenses.pass-ui]\nenabled = false\n');
+    profile("wired", "[lenses.pass-ui]\nenabled = false\n");
     const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
     process.env.HOME = env.HOME;
     process.env.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME;

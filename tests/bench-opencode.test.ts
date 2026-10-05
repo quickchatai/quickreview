@@ -133,7 +133,9 @@ describe("the OpenCode arm runs in the shape of the harness's codex runner", () 
 
   it("the findings fragment is the harness's, naming OpenCode's spelling of the tool", () => {
     expect(FINDINGS_TOOL).toBe("findings_report");
-    expect(INLINE_FINDINGS_PROMPT_FRAGMENT).toContain("You have an MCP tool named `findings_report`.");
+    expect(INLINE_FINDINGS_PROMPT_FRAGMENT).toContain(
+      "You have an MCP tool named `findings_report`.",
+    );
     for (const line of [
       "  - file: path relative to the repository root\n",
       "  - start_line: the 1-based starting line number\n",
@@ -188,18 +190,29 @@ describe("the OpenCode arm runs in the shape of the harness's codex runner", () 
   });
 
   it("the review template is OpenCode 1.18.33's built-in text", () => {
-    expect(REVIEW_COMMAND_TEMPLATE.startsWith(
-      "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review",
-    )).toBe(true);
+    expect(
+      REVIEW_COMMAND_TEMPLATE.startsWith(
+        "You are a code reviewer. Your job is to review code changes and provide actionable feedback.\n\n---\n\nInput: $ARGUMENTS\n\n---\n\n## Determining What to Review",
+      ),
+    ).toBe(true);
     expect(REVIEW_COMMAND_TEMPLATE.match(/\$ARGUMENTS/g)).toHaveLength(5);
     expect(REVIEW_COMMAND_TEMPLATE).toContain("   - Run: `git diff $ARGUMENTS...HEAD`");
     expect(REVIEW_COMMAND_TEMPLATE).toContain("O(n²) on unbounded data");
-    expect(REVIEW_COMMAND_TEMPLATE.trimEnd().endsWith('Avoid phrasing like "Great job ...", "Thanks for ...".')).toBe(true);
+    expect(
+      REVIEW_COMMAND_TEMPLATE.trimEnd().endsWith(
+        'Avoid phrasing like "Great job ...", "Thanks for ...".',
+      ),
+    ).toBe(true);
     expect(REVIEW_COMMAND_TEMPLATE).not.toContain("findings_report");
   });
 
   it("env: a fresh HOME/XDG per case, project config and every phone-home off, and no pi login in reach", () => {
-    const env = opencodeEnv({ path: "/usr/bin", home: "/wt/x.opencode/home", tmpDir: "/t", configPath: "/c.json" });
+    const env = opencodeEnv({
+      path: "/usr/bin",
+      home: "/wt/x.opencode/home",
+      tmpDir: "/t",
+      configPath: "/c.json",
+    });
     expect(env["XDG_DATA_HOME"]).toBe("/wt/x.opencode/home/.local/share");
     expect(env["OPENCODE_CONFIG"]).toBe("/c.json");
     for (const k of [
@@ -227,13 +240,23 @@ describe("what OpenCode wrote → what the scorer and the defect judge read", ()
     expect(e.steps).toBe(1);
     expect(e.tools).toEqual({ task: 1 });
     expect(e.sessionId).toBe("ses_1");
-    expect(parseOpencodeEvents('{"type":"error","error":{"name":"APIError","data":{"message":"boom"}}}').errors).toEqual(["boom"]);
+    expect(
+      parseOpencodeEvents('{"type":"error","error":{"name":"APIError","data":{"message":"boom"}}}')
+        .errors,
+    ).toEqual(["boom"]);
   });
 
   it("the dual channel is codex.py's: the larger wins, a tie goes to MCP, raw text scores nothing", () => {
     const mcp = [{ file: "a.py", summary: "s", description: "d" }];
-    expect(chooseFindings(mcp, "No findings.")).toMatchObject({ source: "mcp_stream", mcp: 1, text: 0 });
-    expect(chooseFindings(mcp, '[{"file":"b"}]')).toMatchObject({ source: "mcp_stream", review_output: mcp });
+    expect(chooseFindings(mcp, "No findings.")).toMatchObject({
+      source: "mcp_stream",
+      mcp: 1,
+      text: 0,
+    });
+    expect(chooseFindings(mcp, '[{"file":"b"}]')).toMatchObject({
+      source: "mcp_stream",
+      review_output: mcp,
+    });
     expect(chooseFindings(mcp, '```json\n[{"file":"b"},{"file":"c"}]\n```')).toMatchObject({
       source: "jsonl_fallback",
       mcp: 1,
@@ -251,7 +274,14 @@ describe("what OpenCode wrote → what the scorer and the defect judge read", ()
   it("comments: note = summary + description, the line range as given; empty ones dropped", () => {
     expect(
       toOcrShapedComments([
-        { file: "a.py", start_line: 3, end_line: 5, severity: "Major", summary: " S ", description: "D" },
+        {
+          file: "a.py",
+          start_line: 3,
+          end_line: 5,
+          severity: "Major",
+          summary: " S ",
+          description: "D",
+        },
         { file: "b.py", start_line: "7", summary: "only" },
         { file: "c.py", summary: "", description: "" },
         "junk",
@@ -266,7 +296,16 @@ describe("what OpenCode wrote → what the scorer and the defect judge read", ()
     const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-"));
     try {
       const chosen = chooseFindings(
-        [{ file: "a.py", start_line: 2, end_line: 3, severity: "Major", summary: "Off by one", description: "loop skips the last row" }],
+        [
+          {
+            file: "a.py",
+            start_line: 2,
+            end_line: 3,
+            severity: "Major",
+            summary: "Off by one",
+            description: "loop skips the last row",
+          },
+        ],
         "",
       );
       const payload = opencodeResultPayload({
@@ -291,10 +330,20 @@ describe("what OpenCode wrote → what the scorer and the defect judge read", ()
       });
       expect(scoredOcrComments(payload)).toBe(1);
       mkdirSync(join(tmp, "results", "all"), { recursive: true });
-      writeFileSync(join(tmp, "results", "all", `${CASE.instance_id}.json`), JSON.stringify(payload));
+      writeFileSync(
+        join(tmp, "results", "all", `${CASE.instance_id}.json`),
+        JSON.stringify(payload),
+      );
       const r = reviewForJudge(tmp, CASE.instance_id);
       expect(r.comments).toEqual([
-        { id: "C1", path: "a.py", line: 2, end_line: 3, tag: null, text: "Off by one\nloop skips the last row" },
+        {
+          id: "C1",
+          path: "a.py",
+          line: 2,
+          end_line: 3,
+          tag: null,
+          text: "Off by one\nloop skips the last row",
+        },
       ]);
       writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "opencode" }));
       expect(runArmOf(tmp)).toBe("opencode");
@@ -309,10 +358,20 @@ describe("what OpenCode wrote → what the scorer and the defect judge read", ()
     expect(opencodeStatus({ exitCode: 0, timedOut: true, events, bridgeOk: 3 })).toBe("timeout");
     expect(opencodeStatus({ exitCode: 1, timedOut: false, events, bridgeOk: 3 })).toBe("failed");
     expect(
-      opencodeStatus({ exitCode: 0, timedOut: false, events: parseOpencodeEvents(""), bridgeOk: 0 }),
+      opencodeStatus({
+        exitCode: 0,
+        timedOut: false,
+        events: parseOpencodeEvents(""),
+        bridgeOk: 0,
+      }),
     ).toBe("no-output");
     expect(
-      opencodeStatus({ exitCode: 0, timedOut: false, events: { ...events, errors: ["x"] }, bridgeOk: 3 }),
+      opencodeStatus({
+        exitCode: 0,
+        timedOut: false,
+        events: { ...events, errors: ["x"] },
+        bridgeOk: 3,
+      }),
     ).toBe("failed");
   });
 });
@@ -328,10 +387,26 @@ describe("one case end to end, OpenCode stubbed", () => {
       // run --auto` writing into .git, and on a loaded machine it is still
       // there when the copy below walks the directory (a vanished lock file).
       const git = (...a: string[]) =>
-        execFileSync("git", ["-C", src, "-c", "user.email=a@b", "-c", "user.name=a", "-c", "maintenance.auto=false", "-c", "gc.auto=0", ...a], {
-          encoding: "utf8",
-          env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-        }).trim();
+        execFileSync(
+          "git",
+          [
+            "-C",
+            src,
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=a",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            ...a,
+          ],
+          {
+            encoding: "utf8",
+            env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+          },
+        ).trim();
       git("init", "-q");
       writeFileSync(join(src, "a.py"), "x = 1\n");
       git("add", "a.py");
@@ -374,7 +449,14 @@ describe("one case end to end, OpenCode stubbed", () => {
         writeFileSync(
           join(dir, `${c.instance_id}.partial.json`),
           JSON.stringify([
-            { file: "a.py", start_line: 2, end_line: 3, severity: "Major", summary: "S", description: "D" },
+            {
+              file: "a.py",
+              start_line: 2,
+              end_line: 3,
+              severity: "Major",
+              summary: "S",
+              description: "D",
+            },
           ]),
         );
         return { code: 0, stdout: EVENTS, stderr: "", timedOut: false };
@@ -383,7 +465,18 @@ describe("one case end to end, OpenCode stubbed", () => {
       const fetchImpl = (async (url: string) => {
         const u = String(url);
         const body = u.endsWith("/stats")
-          ? { requests: stats, ok: stats, errors: 0, upstream_refusals: 0, input_tokens: 1000 * stats, cached_tokens: 400 * stats, output_tokens: 50 * stats, reasoning_tokens: 10 * stats, by_status: { "200": stats }, dropped_keys: {} }
+          ? {
+              requests: stats,
+              ok: stats,
+              errors: 0,
+              upstream_refusals: 0,
+              input_tokens: 1000 * stats,
+              cached_tokens: 400 * stats,
+              output_tokens: 50 * stats,
+              reasoning_tokens: 10 * stats,
+              by_status: { "200": stats },
+              dropped_keys: {},
+            }
           : { ok: true };
         if (u.endsWith("/stats")) stats += 4;
         return new Response(JSON.stringify(body), { status: 200 });
@@ -413,13 +506,23 @@ describe("one case end to end, OpenCode stubbed", () => {
       expect(seen.argv).toContain("--command");
       expect(seen.argv!.at(-1)).toBe(opencodeReviewArguments(base, head));
       expect(seen.env!["HOME"]).toContain(`${c.instance_id}.opencode`);
-      const result = JSON.parse(readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"));
+      const result = JSON.parse(
+        readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"),
+      );
       expect(result.review.comments).toEqual([
         { path: "a.py", start_line: 2, end_line: 3, content: "S\nD", severity: "Major" },
       ]);
-      expect(result.token_usage).toMatchObject({ input_tokens: 4000, cached_input_tokens: 1600, output_tokens: 200 });
+      expect(result.token_usage).toMatchObject({
+        input_tokens: 4000,
+        cached_input_tokens: 1600,
+        output_tokens: 200,
+      });
       // The scratch HOME (OpenCode's DB, config, partial) and the tree are gone.
-      expect(spawnSync("ls", [join(root, "wt")]).stdout.toString().trim()).toBe("");
+      expect(
+        spawnSync("ls", [join(root, "wt")])
+          .stdout.toString()
+          .trim(),
+      ).toBe("");
       const md = renderOpencodeReport(SET, outDir, [c]);
       expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | 1 (mcp_stream) |");
       expect(md).toContain("task 1");
@@ -483,8 +586,8 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
       // An unprefetched case still gets a (zero-comment) result file and the run its record.
       expect(JSON.parse(readFileSync(join(out, "run.json"), "utf8")).reviewer).toBe("opencode");
       expect(
-        JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8")).review
-          .comments,
+        JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8"))
+          .review.comments,
       ).toEqual([]);
       // The bridge — the only thing holding the token — accepts the copy and
       // refuses the real login (so it can never be pointed at a refreshable grant).
@@ -511,10 +614,14 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
   });
 
   it("the bridge's self-test passes, streaming replay included", () => {
-    const r = spawnSync("python3", [join(ROOT, "bench", "aacr", "codex_bridge.py"), "--self-test"], {
-      encoding: "utf8",
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
-    });
+    const r = spawnSync(
+      "python3",
+      [join(ROOT, "bench", "aacr", "codex_bridge.py"), "--self-test"],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+      },
+    );
     expect(r.status, r.stderr).toBe(0);
     const bridge = readFileSync(join(ROOT, "bench", "aacr", "codex_bridge.py"), "utf8");
     expect(bridge).toContain("def chat_stream_chunks(");
@@ -530,8 +637,13 @@ describe("the sandbox wiring", () => {
 
   it("pins OpenCode 1.18.33 by sha256 on the shared runtime, with no GitHub route", () => {
     // Above the ocr stage: without BuildKit, every stage above the target builds.
-    expect(docker.indexOf("FROM runtime AS opencode")).toBeLessThan(docker.indexOf("FROM runtime AS ocr"));
-    const stage = docker.slice(docker.indexOf("FROM runtime AS opencode"), docker.indexOf("FROM runtime AS ocr"));
+    expect(docker.indexOf("FROM runtime AS opencode")).toBeLessThan(
+      docker.indexOf("FROM runtime AS ocr"),
+    );
+    const stage = docker.slice(
+      docker.indexOf("FROM runtime AS opencode"),
+      docker.indexOf("FROM runtime AS ocr"),
+    );
     expect(stage).toContain("ARG OPENCODE_VERSION=1.18.33");
     expect(stage).toMatch(/ARG OPENCODE_SHA256_LINUX_X64=[0-9a-f]{64}/);
     expect(stage).toContain("sha256sum -c -");
@@ -547,7 +659,9 @@ describe("the sandbox wiring", () => {
     );
     expect(sh).toContain("REVIEW_ENTRY=opencode-review");
     expect(inContainer).toContain("opencode-review)");
-    expect(inContainer).toContain('[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }');
+    expect(inContainer).toContain(
+      '[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }',
+    );
     expect(inContainer).toContain('print(json.load(open(sys.argv[1])).get("reviewer") or "qcr")');
     expect(arm).toContain(
       '[[ "$ARM" == ocr || "$ARM" == codex || "$ARM" == opencode || "$ARM" == claude || "$ARM" == pireview || "$ARM" == pragent ]]; then',

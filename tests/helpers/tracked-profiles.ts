@@ -49,7 +49,9 @@ export function stageFixtureProfile(root: string, name: string): boolean {
   if (existsSync(src) && !EXAMPLE_PROFILES.includes(name)) {
     const home = configHome(process.env);
     if (!home.startsWith(tmpdir()))
-      throw new Error(`stageFixtureProfile: config home ${home} is not a temp dir — refusing to write`);
+      throw new Error(
+        `stageFixtureProfile: config home ${home} is not a temp dir — refusing to write`,
+      );
     const dest = join(home, "profiles", name);
     if (!existsSync(dest)) cpSync(src, dest, { recursive: true });
   }

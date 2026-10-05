@@ -14,7 +14,10 @@ import {
 } from "../src/setup/facts.js";
 import { findStyleGuide, styleGuideRefsIn } from "../src/styleguide.js";
 
-function repo(files: Record<string, string>): { files: string[]; read: (p: string) => string | null } {
+function repo(files: Record<string, string>): {
+  files: string[];
+  read: (p: string) => string | null;
+} {
   return { files: Object.keys(files).sort(), read: (p) => files[p] ?? null };
 }
 
@@ -30,7 +33,8 @@ const DJANGO = repo({
   ".github/workflows/ci.yml": "name: Backend CI\non: push\n",
   ".github/workflows/lint.yaml": "on: push\n",
   ".pre-commit-config.yaml": "repos: []\n",
-  "backend/pyproject.toml": '[project]\ndependencies = [\n  "Django>=4.2",\n  "celery==5",\n  "flask-cors",\n]\n[tool.ruff]\nline-length = 100\n',
+  "backend/pyproject.toml":
+    '[project]\ndependencies = [\n  "Django>=4.2",\n  "celery==5",\n  "flask-cors",\n]\n[tool.ruff]\nline-length = 100\n',
   "backend/requirements.txt": "djangorestframework==3.14\npytest\n",
   "backend/manage.py": "import django\n",
   "backend/payments/apps.py": "class PaymentsConfig: ...\n",
@@ -38,7 +42,11 @@ const DJANGO = repo({
   "backend/users/apps.py": "x\n",
   "backend/users/views.py": "x\n",
   "backend/settings.py": "x\n",
-  "frontend/package.json": JSON.stringify({ dependencies: { react: "18", next: "14" }, devDependencies: { tailwindcss: "3", eslint: "9" }, prettier: {} }),
+  "frontend/package.json": JSON.stringify({
+    dependencies: { react: "18", next: "14" },
+    devDependencies: { tailwindcss: "3", eslint: "9" },
+    prettier: {},
+  }),
   "frontend/src/app.tsx": "x\n",
   "frontend/src/page.tsx": "x\n",
   "frontend/eslint.config.js": "export default []\n",
@@ -108,7 +116,9 @@ describe("repoFacts", () => {
 
 describe("unitCandidates — the stack-aware first guess", () => {
   it("proposes Django apps, packages and code directories, and a catch-all rest", () => {
-    const own = DJANGO.files.filter((f) => !f.includes("node_modules") && !f.startsWith("third_party"));
+    const own = DJANGO.files.filter(
+      (f) => !f.includes("node_modules") && !f.startsWith("third_party"),
+    );
     const units = unitCandidates(own);
     const byName = Object.fromEntries(units.map((u) => [u.name, u]));
     expect(byName.payments).toMatchObject({ roots: ["backend/payments"], kind: "django-app" });
@@ -142,7 +152,12 @@ describe("unitCandidates — the stack-aware first guess", () => {
 describe("vendoredRoots", () => {
   it("returns the shallowest vendored directories", () => {
     expect(
-      vendoredRoots(["web/node_modules/a/b.js", "web/node_modules/a/node_modules/c.js", "third_party/x.py", "src/vendor.py"]),
+      vendoredRoots([
+        "web/node_modules/a/b.js",
+        "web/node_modules/a/node_modules/c.js",
+        "third_party/x.py",
+        "src/vendor.py",
+      ]),
     ).toEqual(["third_party", "web/node_modules"]);
   });
 });
@@ -152,7 +167,14 @@ describe("styleGuideRefsIn — the listing twin of findStyleGuide", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-style-twin-"));
     try {
       const guide = Array.from({ length: 20 }, (_, i) => `rule ${i}`).join("\n");
-      const section = ["# Project", "intro", "## Code style", ...Array.from({ length: 10 }, (_, i) => `- rule ${i}`), "## Other", "x"].join("\n");
+      const section = [
+        "# Project",
+        "intro",
+        "## Code style",
+        ...Array.from({ length: 10 }, (_, i) => `- rule ${i}`),
+        "## Other",
+        "x",
+      ].join("\n");
       const tree: Record<string, string> = {
         "STYLEGUIDE.md": guide,
         "CONTRIBUTING.md": section,

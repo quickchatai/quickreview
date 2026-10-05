@@ -11,32 +11,28 @@
 // here throws into a tool call except the state port's "exists but cannot be
 // read", which the engine turns into a reported, write-refusing problem.
 import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import type { MemoryStore } from "../memory/store.js";
 import { OpenVikingClient } from "../openviking/client.js";
 import { openVikingStore } from "../openviking/store.js";
 import { isBinaryContent } from "./textsniff.js";
-import type {
-  GitHubReader,
-  RepoReader,
-  StateFs,
-  TrackerSink,
-} from "./engine.js";
+import type { GitHubReader, RepoReader, StateFs, TrackerSink } from "./engine.js";
 
 /** Files over this are not read for facts or counted line by line — a
  * generated dump says nothing about a repo's conventions. */
 export const MAX_READ_BYTES = 1024 * 1024;
 
 /** Directories a walk never descends (the git-less fallback only). */
-const WALK_SKIP = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"]);
+const WALK_SKIP = new Set([
+  ".git",
+  "node_modules",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "dist",
+  "build",
+]);
 
 function inside(root: string, rel: string): string | null {
   if (isAbsolute(rel)) return null;
@@ -127,7 +123,15 @@ export function checkoutReader(root: string): RepoReader {
     changeCounts: () => {
       // Six months, bounded twice over: a busy repo's whole history is not
       // what "most-changed" means, and the listing must stay cheap.
-      const log = git(["log", "--since=6.months", "--no-merges", "-n", String(CHANGE_LOG_COMMITS), "--name-only", "--format="]);
+      const log = git([
+        "log",
+        "--since=6.months",
+        "--no-merges",
+        "-n",
+        String(CHANGE_LOG_COMMITS),
+        "--name-only",
+        "--format=",
+      ]);
       if (log === null) return null;
       const counts: Record<string, number> = {};
       for (const line of log.split("\n")) {
@@ -201,21 +205,37 @@ export function tokenFileGitHubReader(opts: {
   const apiRoot = opts.apiRoot ?? "https://api.github.com";
   return {
     get: async (path) => {
-      if (!/^\/[A-Za-z0-9_./?&=%,:+-]*$/.test(path) || path.startsWith("//") || path.includes("..") || /%2e/i.test(path)) {
+      if (
+        !/^\/[A-Za-z0-9_./?&=%,:+-]*$/.test(path) ||
+        path.startsWith("//") ||
+        path.includes("..") ||
+        /%2e/i.test(path)
+      ) {
         return { ok: false, reason: `not an API path: ${JSON.stringify(path)}` };
       }
-      if (!opts.envFile) return { ok: false, reason: "no read-only GitHub token is configured (QCR_GITHUB_READ_ENV unset)" };
+      if (!opts.envFile)
+        return {
+          ok: false,
+          reason: "no read-only GitHub token is configured (QCR_GITHUB_READ_ENV unset)",
+        };
       let text: string;
       try {
         text = readFileSync(opts.envFile, "utf8");
       } catch {
-        return { ok: false, reason: "the read-only GitHub token file is missing — the TUI is closed or has no App credential" };
+        return {
+          ok: false,
+          reason:
+            "the read-only GitHub token file is missing — the TUI is closed or has no App credential",
+        };
       }
       const token = new RegExp(`^${TOKEN_VAR}=(\\S+)$`, "m").exec(text)?.[1];
       const expires = Date.parse(new RegExp(`^${EXPIRES_VAR}=(\\S+)$`, "m").exec(text)?.[1] ?? "");
       if (!token) return { ok: false, reason: "the read-only GitHub token file holds no token" };
       if (!Number.isFinite(expires) || expires <= opts.clock().getTime()) {
-        return { ok: false, reason: "the read-only GitHub token has expired — the TUI re-mints it while it runs" };
+        return {
+          ok: false,
+          reason: "the read-only GitHub token has expired — the TUI re-mints it while it runs",
+        };
       }
       try {
         const res = await opts.fetch(`${apiRoot}${path}`, {
@@ -228,7 +248,7 @@ export function tokenFileGitHubReader(opts: {
           signal: AbortSignal.timeout(15_000),
         });
         if (!res.ok) return { ok: false, reason: `GitHub answered ${res.status} for GET ${path}` };
-        return { ok: true, data: (await res.json()) as unknown };
+        return { ok: true, data: await res.json() };
       } catch (err) {
         return { ok: false, reason: `GET ${path} failed: ${String(err)}` };
       }
@@ -261,5 +281,7 @@ export function reviewerMemoryFromEnv(env: NodeJS.ProcessEnv): MemoryStore | nul
   const baseUrl = env.OPENVIKING_URL?.trim() || env.OPENVIKING_BASE_URL?.trim();
   const key = env.OPENVIKING_REVIEWER_KEY?.trim();
   if (!baseUrl || !key) return null;
-  return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: "reviewer" }), { cacheTtlMs: 0 });
+  return openVikingStore(new OpenVikingClient({ baseUrl, apiKey: key, user: "reviewer" }), {
+    cacheTtlMs: 0,
+  });
 }

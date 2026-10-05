@@ -46,7 +46,11 @@ import {
   satisfiesRange,
   unpackEntries,
 } from "../src/depsources.js";
-import { LINEAR_HANG_GUARD_MS, LINEAR_RATIO_CEILING_10X, measureScaling } from "./helpers/scaling.js";
+import {
+  LINEAR_HANG_GUARD_MS,
+  LINEAR_RATIO_CEILING_10X,
+  measureScaling,
+} from "./helpers/scaling.js";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -1670,22 +1674,26 @@ describe("pruneDependencyCache — the cache's size cap", () => {
 // ---------------------------------------------------------------------------
 
 describe("selfscan2: bounded scanning and archive work", () => {
-  it("import scanning is linear: a megabyte of dangling `import ` tokens is not a daemon stall", () => {
-    // Quadratic before: the lazy `[^;'"`]*?` gap re-scanned the whole suffix
-    // at every `import` token (~30s at the 1MB source cap, on the event loop).
-    // Asserted as SCALING (tests/helpers/scaling.ts), never a wall-clock
-    // budget: 10× the tokens must cost ~10× the time, not ~100×.
-    const hostile = (n: number) => "import ".repeat(n);
-    const s = measureScaling(extractJsImports, hostile(4_000), hostile(40_000));
-    expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
-    expect(extractJsImports(hostile(140_000))).toEqual([]);
-    // …and the forms it exists for still resolve.
-    expect(
-      extractJsImports(
-        "import {\n  a,\n  b,\n} from 'multi';\nexport * from \"re\";\nimport def, { x } from `tpl`;\nconst from = 1; foo('from'); import y from 'late';\n",
-      ),
-    ).toEqual(["multi", "re", "tpl", "late"]);
-  }, LINEAR_HANG_GUARD_MS);
+  it(
+    "import scanning is linear: a megabyte of dangling `import ` tokens is not a daemon stall",
+    () => {
+      // Quadratic before: the lazy `[^;'"`]*?` gap re-scanned the whole suffix
+      // at every `import` token (~30s at the 1MB source cap, on the event loop).
+      // Asserted as SCALING (tests/helpers/scaling.ts), never a wall-clock
+      // budget: 10× the tokens must cost ~10× the time, not ~100×.
+      const hostile = (n: number) => "import ".repeat(n);
+      const s = measureScaling(extractJsImports, hostile(4_000), hostile(40_000));
+      expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
+      expect(extractJsImports(hostile(140_000))).toEqual([]);
+      // …and the forms it exists for still resolve.
+      expect(
+        extractJsImports(
+          "import {\n  a,\n  b,\n} from 'multi';\nexport * from \"re\";\nimport def, { x } from `tpl`;\nconst from = 1; foo('from'); import y from 'late';\n",
+        ),
+      ).toEqual(["multi", "re", "tpl", "late"]);
+    },
+    LINEAR_HANG_GUARD_MS,
+  );
 
   it("zip: entries that replay one compressed range are refused before the inflate work multiplies", () => {
     const payload = Buffer.from("x = 1  # " + "0123456789abcdef".repeat(200) + "\n");
@@ -2150,39 +2158,50 @@ describe("selfscan2: the version a file actually runs against", () => {
 // ---------------------------------------------------------------------------
 
 describe("selfscan4: hostile lockfiles and archives are linear work", () => {
-  it("yarn.lock: 50k versions of one package parse in linear time (was a quadratic find per entry)", () => {
-    const hostile = (n: number) => {
-      const parts: string[] = [];
-      for (let i = 0; i < n; i++) parts.push(`x@^${i}:\n  version "1.0.${i}"\n`);
-      // …and one version claimed by many headers: the spec merge must not be quadratic either.
-      for (let i = 0; i < n; i++) parts.push(`y@~${i}:\n  version "2.0.0"\n`);
-      return parts.join("");
-    };
-    // SCALING, not a wall-clock budget: 10× the entries, ~10× the time.
-    const s = measureScaling(parseYarnLock, hostile(1_000), hostile(10_000));
-    expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
-    const n = 50_000;
-    const lock = parseYarnLock(hostile(n));
-    expect(lock.entries.get("x")).toHaveLength(n);
-    const y = lock.entries.get("y");
-    expect(y).toHaveLength(1);
-    expect(y?.[0]?.specs).toHaveLength(n);
-    expect(y?.[0]?.specs?.slice(0, 2)).toEqual(["~0", "~1"]);
-  }, LINEAR_HANG_GUARD_MS);
+  it(
+    "yarn.lock: 50k versions of one package parse in linear time (was a quadratic find per entry)",
+    () => {
+      const hostile = (n: number) => {
+        const parts: string[] = [];
+        for (let i = 0; i < n; i++) parts.push(`x@^${i}:\n  version "1.0.${i}"\n`);
+        // …and one version claimed by many headers: the spec merge must not be quadratic either.
+        for (let i = 0; i < n; i++) parts.push(`y@~${i}:\n  version "2.0.0"\n`);
+        return parts.join("");
+      };
+      // SCALING, not a wall-clock budget: 10× the entries, ~10× the time.
+      const s = measureScaling(parseYarnLock, hostile(1_000), hostile(10_000));
+      expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
+      const n = 50_000;
+      const lock = parseYarnLock(hostile(n));
+      expect(lock.entries.get("x")).toHaveLength(n);
+      const y = lock.entries.get("y");
+      expect(y).toHaveLength(1);
+      expect(y?.[0]?.specs).toHaveLength(n);
+      expect(y?.[0]?.specs?.slice(0, 2)).toEqual(["~0", "~1"]);
+    },
+    LINEAR_HANG_GUARD_MS,
+  );
 
-  it("tar: a pax length that does not cover its own prefix is refused, not re-scanned byte by byte", () => {
-    // A million zeroes then `1 `: every record "parses" as length 1 and advances one byte.
-    const hostile = (n: number) =>
-      tarball(tarEntry("PaxHeader/x", `${"0".repeat(n)}1 `, "x"), tarEntry("package/a.js", "a\n"));
-    // SCALING, not a wall-clock budget: 10× the zeroes, ~10× the time.
-    const s = measureScaling(parseTar, hostile(5_000), hostile(50_000));
-    expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
-    expect(parseTar(hostile(1_000_000)).map((e) => e.path)).toEqual(["package/a.js"]);
-    // A well-formed pax header still names its entry.
-    expect(
-      parseTar(tarball(paxHeader("package/p.js"), tarEntry("x.js", "p\n"))).map((e) => e.path),
-    ).toEqual(["package/p.js"]);
-  }, LINEAR_HANG_GUARD_MS);
+  it(
+    "tar: a pax length that does not cover its own prefix is refused, not re-scanned byte by byte",
+    () => {
+      // A million zeroes then `1 `: every record "parses" as length 1 and advances one byte.
+      const hostile = (n: number) =>
+        tarball(
+          tarEntry("PaxHeader/x", `${"0".repeat(n)}1 `, "x"),
+          tarEntry("package/a.js", "a\n"),
+        );
+      // SCALING, not a wall-clock budget: 10× the zeroes, ~10× the time.
+      const s = measureScaling(parseTar, hostile(5_000), hostile(50_000));
+      expect(s.ratio, JSON.stringify(s)).toBeLessThan(LINEAR_RATIO_CEILING_10X);
+      expect(parseTar(hostile(1_000_000)).map((e) => e.path)).toEqual(["package/a.js"]);
+      // A well-formed pax header still names its entry.
+      expect(
+        parseTar(tarball(paxHeader("package/p.js"), tarEntry("x.js", "p\n"))).map((e) => e.path),
+      ).toEqual(["package/p.js"]);
+    },
+    LINEAR_HANG_GUARD_MS,
+  );
 
   it("unpack: an entry whose write is bound to clash is never inflated", () => {
     let reads = 0;

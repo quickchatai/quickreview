@@ -8,11 +8,19 @@ import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
 const NO_BENCHMARK_NAMES =
   /qodo|martian|swe-?prbench|aacr|ghost|aspnetcore|firefox|tauri|prefect|dify|redis|pipecat|metaflow|spyder|cal\.com|keycloak|sentry|grafana|discourse|freecad|clickhouse|dbeaver|ollama|lvgl|electron|immich|ragflow|filament|kestra|browser-use|cherry/i;
 const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
-const ids = (p: string, mode: "pr" | "scan" = "pr") => addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
+const ids = (p: string, mode: "pr" | "scan" = "pr") =>
+  addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);
 
 describe("no budget", () => {
   it("binds every lens in PR builds, not the validator, not scans", () => {
-    for (const p of ["pass-baseline", "pass-sweep", "pass-behaviour-delta", "pass-tests", "pass-security", "pass-style"])
+    for (const p of [
+      "pass-baseline",
+      "pass-sweep",
+      "pass-behaviour-delta",
+      "pass-tests",
+      "pass-security",
+      "pass-style",
+    ])
       expect(ids(p), p).toContain("no-budget");
     expect(ids("pass-validate")).not.toContain("no-budget");
     expect(ids("pass-baseline", "scan")).not.toContain("no-budget");
@@ -28,7 +36,8 @@ describe("no budget", () => {
 
 describe("repeated copies the PR adds", () => {
   it("binds duplication, baseline and sweep, with a validator half", () => {
-    for (const p of ["pass-duplication", "pass-baseline", "pass-sweep"]) expect(ids(p), p).toContain("repeated-copy");
+    for (const p of ["pass-duplication", "pass-baseline", "pass-sweep"])
+      expect(ids(p), p).toContain("repeated-copy");
     expect(ids("pass-validate")).toContain("repeated-copy-validate");
     expect(ids("pass-security")).not.toContain("repeated-copy");
   });
@@ -67,26 +76,59 @@ describe("regression-test request on a bug fix", () => {
 import { behaviourDeltaGroups, behaviourDeltaRisk, type PrFile } from "../src/heuristics.js";
 
 const file = (patch: string | undefined, extra: Partial<PrFile> = {}): PrFile =>
-  ({ filename: "src/a.py", additions: 3, deletions: 3, status: "modified", patch, ...extra }) as PrFile;
+  ({
+    filename: "src/a.py",
+    additions: 3,
+    deletions: 3,
+    status: "modified",
+    patch,
+    ...extra,
+  }) as PrFile;
 
 describe("behaviour-delta is planned only where base behaviour is at risk", () => {
   it("a removed or replaced guard, predicate, call, return or value is at risk", () => {
-    expect(behaviourDeltaRisk(file("@@ -1,2 +1,2 @@\n-    if x is None:\n+    if x:\n"))).toBe(true);
-    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    return cache.get(k)\n+    return k\n"))).toBe(true);
-    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    timeout = 30\n+    timeout = 300\n"))).toBe(true);
+    expect(behaviourDeltaRisk(file("@@ -1,2 +1,2 @@\n-    if x is None:\n+    if x:\n"))).toBe(
+      true,
+    );
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    return cache.get(k)\n+    return k\n"))).toBe(
+      true,
+    );
+    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    timeout = 30\n+    timeout = 300\n"))).toBe(
+      true,
+    );
     expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    a && b\n+    a\n"))).toBe(true);
   });
   it("existing code wrapped in a NEW branch is at risk (a rewrapped guard, a value changed in a new else)", () => {
-    expect(behaviourDeltaRisk(file("@@ -1,2 +1,4 @@\n-    run()\n+    if enabled:\n+        run()\n+    else:\n+        skip()\n"))).toBe(true);
+    expect(
+      behaviourDeltaRisk(
+        file(
+          "@@ -1,2 +1,4 @@\n-    run()\n+    if enabled:\n+        run()\n+    else:\n+        skip()\n",
+        ),
+      ),
+    ).toBe(true);
   });
   it("a statement moved to another position at the same indent is a reorder, and at risk", () => {
-    expect(behaviourDeltaRisk(file("@@ -1,3 +1,3 @@\n-        state.mark_done(x)\n         propagate(x)\n+        state.mark_done(x)\n"))).toBe(true);
+    expect(
+      behaviourDeltaRisk(
+        file(
+          "@@ -1,3 +1,3 @@\n-        state.mark_done(x)\n         propagate(x)\n+        state.mark_done(x)\n",
+        ),
+      ),
+    ).toBe(true);
   });
   it("comments, imports, log lines, blank lines and re-indented copies are not", () => {
     expect(behaviourDeltaRisk(file("@@ -1,2 +1,2 @@\n-# old note\n+# new note\n"))).toBe(false);
     expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-import os\n+import sys\n"))).toBe(false);
-    expect(behaviourDeltaRisk(file("@@ -1 +1 @@\n-    logger.info(\"start %s\", x)\n+    logger.info(\"starting %s\", x)\n"))).toBe(false);
-    expect(behaviourDeltaRisk(file("@@ -1,2 +3,2 @@\n-    if ok:\n-        go()\n+        if ok:\n+            go()\n"))).toBe(false); // re-indented, same text
+    expect(
+      behaviourDeltaRisk(
+        file('@@ -1 +1 @@\n-    logger.info("start %s", x)\n+    logger.info("starting %s", x)\n'),
+      ),
+    ).toBe(false);
+    expect(
+      behaviourDeltaRisk(
+        file("@@ -1,2 +3,2 @@\n-    if ok:\n-        go()\n+        if ok:\n+            go()\n"),
+      ),
+    ).toBe(false); // re-indented, same text
     expect(behaviourDeltaRisk(file("@@ -1,2 +1,3 @@\n     keep()\n+    added()\n"))).toBe(false); // pure addition
   });
   it("no patch, or a deleted file, is never read as no risk", () => {
@@ -96,8 +138,20 @@ describe("behaviour-delta is planned only where base behaviour is at risk", () =
   });
   it("the groups keep only at-risk files", () => {
     const files: PrFile[] = [
-      { filename: "src/a.py", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n" },
-      { filename: "src/b.py", additions: 1, deletions: 1, status: "modified", patch: "@@ -1 +1 @@\n-# x\n+# y\n" },
+      {
+        filename: "src/a.py",
+        additions: 1,
+        deletions: 1,
+        status: "modified",
+        patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n",
+      },
+      {
+        filename: "src/b.py",
+        additions: 1,
+        deletions: 1,
+        status: "modified",
+        patch: "@@ -1 +1 @@\n-# x\n+# y\n",
+      },
     ];
     expect(behaviourDeltaGroups(files, 3, 500)).toEqual({ groups: [["src/a.py"]], unread: [] });
   });
@@ -110,50 +164,104 @@ import { buildPassPlan } from "../src/dispatch.js";
 import { detectLoosenedAssertions, loosenedReason } from "../src/loosenedtests.js";
 import type { PrFileEntry } from "../src/github.js";
 
-const t = (filename: string, patch: string): PrFile => ({ filename, additions: 1, deletions: 1, status: "modified", patch });
+const t = (filename: string, patch: string): PrFile => ({
+  filename,
+  additions: 1,
+  deletions: 1,
+  status: "modified",
+  patch,
+});
 
 describe("the loosened-test hint", () => {
   it("finds an exact check turned into a bound — with or without an assert keyword", () => {
     const hits = detectLoosenedAssertions([
-      t("tests/test_pool.py", "@@ -70,3 +70,3 @@\n         \"SlotsAcquired\",\n-        lambda x: x == 100,\n+        lambda x: x >= 1 and x <= 100,\n"),
+      t(
+        "tests/test_pool.py",
+        '@@ -70,3 +70,3 @@\n         "SlotsAcquired",\n-        lambda x: x == 100,\n+        lambda x: x >= 1 and x <= 100,\n',
+      ),
     ]);
     expect(hits).toEqual([{ file: "tests/test_pool.py", line: 71, kind: "exact-to-bound" }]);
   });
   it("finds a lower bound lowered and an upper bound raised", () => {
-    expect(detectLoosenedAssertions([t("tests/q.sql", "@@ -11 +11 @@\n-select length(ids) >= 16 from log;\n+select length(ids) >= 1 from log;\n")]))
-      .toEqual([{ file: "tests/q.sql", line: 11, kind: "bound-relaxed" }]);
-    expect(detectLoosenedAssertions([t("src/a.test.ts", "@@ -5 +5 @@\n-  expect(ms).toBeLessThan(50);\n+  expect(ms).toBeLessThan(500);\n")]).map((h) => h.kind))
-      .toEqual(["bound-relaxed"]);
+    expect(
+      detectLoosenedAssertions([
+        t(
+          "tests/q.sql",
+          "@@ -11 +11 @@\n-select length(ids) >= 16 from log;\n+select length(ids) >= 1 from log;\n",
+        ),
+      ]),
+    ).toEqual([{ file: "tests/q.sql", line: 11, kind: "bound-relaxed" }]);
+    expect(
+      detectLoosenedAssertions([
+        t(
+          "src/a.test.ts",
+          "@@ -5 +5 @@\n-  expect(ms).toBeLessThan(50);\n+  expect(ms).toBeLessThan(500);\n",
+        ),
+      ]).map((h) => h.kind),
+    ).toEqual(["bound-relaxed"]);
   });
   it("finds a tolerance widened, a timeout lengthened and a count lowered", () => {
     const kinds = detectLoosenedAssertions([
-      t("tests/test_m.py", "@@ -1,3 +1,3 @@\n-    assert abs(a - b) < tol(1e-6)\n+    assert abs(a - b) < tol(1e-3)\n-    wait_for(done, timeout=5)\n+    wait_for(done, timeout=60)\n-    assert len(rows) == 10\n+    assert len(rows) == 3\n"),
+      t(
+        "tests/test_m.py",
+        "@@ -1,3 +1,3 @@\n-    assert abs(a - b) < tol(1e-6)\n+    assert abs(a - b) < tol(1e-3)\n-    wait_for(done, timeout=5)\n+    wait_for(done, timeout=60)\n-    assert len(rows) == 10\n+    assert len(rows) == 3\n",
+      ),
     ]).map((h) => h.kind);
     expect(kinds).toEqual(["tolerance-widened", "timeout-lengthened", "count-lowered"]);
   });
   it("finds an exact check turned into contains, an assert removed or commented out, and a skip added", () => {
     const kinds = detectLoosenedAssertions([
-      t("tests/test_x.py", "@@ -1,2 +1,2 @@\n-    assert msg == \"exact\"\n+    assert \"exa\" in msg\n"),
+      t(
+        "tests/test_x.py",
+        '@@ -1,2 +1,2 @@\n-    assert msg == "exact"\n+    assert "exa" in msg\n',
+      ),
       t("tests/test_y.py", "@@ -1,2 +1,1 @@\n     run()\n-    assert state.ok\n"),
       t("tests/test_z.py", "@@ -1 +1 @@\n-    assert state.ok\n+    # assert state.ok\n"),
-      t("tests/test_w.py", "@@ -1 +1,2 @@\n+@pytest.mark.skip(reason=\"flaky\")\n def test_w():\n"),
+      t("tests/test_w.py", '@@ -1 +1,2 @@\n+@pytest.mark.skip(reason="flaky")\n def test_w():\n'),
     ]).map((h) => h.kind);
-    expect(kinds).toEqual(["exact-to-contains", "assert-removed", "assert-commented", "skip-added"]);
+    expect(kinds).toEqual([
+      "exact-to-contains",
+      "assert-removed",
+      "assert-commented",
+      "skip-added",
+    ]);
   });
   it("ignores production files, tightened checks and unchanged text", () => {
-    expect(detectLoosenedAssertions([t("src/pool.py", "@@ -1 +1 @@\n-    assert x == 1\n+    assert x >= 1\n")])).toEqual([]);
-    expect(detectLoosenedAssertions([t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n >= 1\n+    assert n >= 5\n")])).toEqual([]);
-    expect(detectLoosenedAssertions([t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n == 1\n+    assert n == 1  # same\n")])).toEqual([]);
+    expect(
+      detectLoosenedAssertions([
+        t("src/pool.py", "@@ -1 +1 @@\n-    assert x == 1\n+    assert x >= 1\n"),
+      ]),
+    ).toEqual([]);
+    expect(
+      detectLoosenedAssertions([
+        t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n >= 1\n+    assert n >= 5\n"),
+      ]),
+    ).toEqual([]);
+    expect(
+      detectLoosenedAssertions([
+        t("tests/test_a.py", "@@ -1 +1 @@\n-    assert n == 1\n+    assert n == 1  # same\n"),
+      ]),
+    ).toEqual([]);
   });
 
-  const cfg = (): Config => parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
+  const cfg = (): Config =>
+    parseConfig(readFile(resolvePath("tests/fixtures/config.toml"), "utf8"));
   const weakened = [
-    { filename: "tests/test_pool.py", status: "modified", additions: 1, deletions: 1, changes: 2, patch: "@@ -70 +70 @@\n-        lambda x: x == 100,\n+        lambda x: x >= 1,\n" },
+    {
+      filename: "tests/test_pool.py",
+      status: "modified",
+      additions: 1,
+      deletions: 1,
+      changes: 2,
+      patch: "@@ -70 +70 @@\n-        lambda x: x == 100,\n+        lambda x: x >= 1,\n",
+    },
   ] as unknown as PrFileEntry[];
   it("hands the hits to pass-tests' plan reason, and their presence plans it", () => {
     const { pass_plan } = buildPassPlan(cfg(), weakened);
     const row = pass_plan.find((r) => r.lens === "pass-tests");
-    expect(row?.why).toMatch(/weaken existing test assertions — tests\/test_pool\.py:70 \(an exact check became a bound\)/);
+    expect(row?.why).toMatch(
+      /weaken existing test assertions — tests\/test_pool\.py:70 \(an exact check became a bound\)/,
+    );
     expect(row?.why).toMatch(/report THAT change at the production line/);
   });
   it("the knob turns the hint off: the reason is the old one", () => {
@@ -163,7 +271,11 @@ describe("the loosened-test hint", () => {
     expect(row?.why ?? "").not.toMatch(/weaken/);
   });
   it("names at most twelve sites in the reason", () => {
-    const hits = Array.from({ length: 15 }, (_, i) => ({ file: "tests/t.py", line: i + 1, kind: "assert-removed" as const }));
+    const hits = Array.from({ length: 15 }, (_, i) => ({
+      file: "tests/t.py",
+      line: i + 1,
+      kind: "assert-removed" as const,
+    }));
     expect(loosenedReason(hits)).toMatch(/and 3 more/);
   });
 });
@@ -171,7 +283,8 @@ describe("the loosened-test hint", () => {
 import { applyConfigOverrides } from "../src/bench/runner.js";
 
 describe("the decisions-validation plans", () => {
-  const plan = (n: string) => JSON.parse(readFile(resolvePath(`bench/aacr/plans/${n}.json`), "utf8"));
+  const plan = (n: string) =>
+    JSON.parse(readFile(resolvePath(`bench/aacr/plans/${n}.json`), "utf8"));
   it("arm B differs from arm A only by the three lenses pinned to the high tier, on the same image and PRs", () => {
     const a = plan("decisions-validation");
     const b = plan("decisions-validation-hi");
@@ -179,7 +292,12 @@ describe("the decisions-validation plans", () => {
     expect(b.sets).toEqual(a.sets);
     expect(b.prefix).not.toBe(a.prefix);
     expect(b.config.startsWith(a.config + ",")).toBe(true);
-    expect(b.config.slice(a.config.length + 1).split(",").sort()).toEqual([
+    expect(
+      b.config
+        .slice(a.config.length + 1)
+        .split(",")
+        .sort(),
+    ).toEqual([
       "models.pass_tiers.pass-baseline=sol-high",
       "models.pass_tiers.pass-behaviour-delta=sol-high",
       "models.pass_tiers.pass-sweep=sol-high",
@@ -196,9 +314,18 @@ describe("the decisions-validation plans", () => {
     });
     expect(c.models.tiers["sol-high"]).toMatch(/:high$/);
     const { pass_plan } = buildPassPlan(c, [
-      { filename: "src/a.py", status: "modified", additions: 3, deletions: 2, changes: 5, patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n" },
+      {
+        filename: "src/a.py",
+        status: "modified",
+        additions: 3,
+        deletions: 2,
+        changes: 5,
+        patch: "@@ -1 +1 @@\n-    return 1\n+    return 2\n",
+      },
     ] as unknown as PrFileEntry[]);
-    for (const r of pass_plan.filter((r) => ["pass-baseline", "pass-sweep", "pass-behaviour-delta"].includes(r.lens)))
+    for (const r of pass_plan.filter((r) =>
+      ["pass-baseline", "pass-sweep", "pass-behaviour-delta"].includes(r.lens),
+    ))
       expect(r.tier, r.lens).toBe("sol-high");
   });
   it("uses no held-out set", () => {

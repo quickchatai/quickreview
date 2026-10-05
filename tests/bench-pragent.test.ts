@@ -88,9 +88,18 @@ const REVIEW_CAP: PragentCapture = {
           end_line: 3,
         },
         // no line range → the review body, not a scored comment
-        { relevant_file: "util/io.py\n", issue_header: "Leak\n", issue_content: "File handle never closed.\n" },
+        {
+          relevant_file: "util/io.py\n",
+          issue_header: "Leak\n",
+          issue_content: "File handle never closed.\n",
+        },
         // a string line and a git a/ prefix, as models sometimes write them
-        { relevant_file: "b/util/io.py", issue_header: "Race", issue_content: "Unlocked write.", start_line: "9" },
+        {
+          relevant_file: "b/util/io.py",
+          issue_header: "Race",
+          issue_content: "Unlocked write.",
+          start_line: "9",
+        },
       ],
       security_concerns: "SQL injection: the query is formatted from user input.\n",
     },
@@ -124,7 +133,11 @@ const IMPROVE_CAP: PragentCapture = {
       relevant_file: "util/io.py",
       relevant_lines_start: -1,
       relevant_lines_end: -1,
-      original_suggestion: { suggestion_content: "Close the file.", one_sentence_summary: "Close file", label: "general" },
+      original_suggestion: {
+        suggestion_content: "Close the file.",
+        one_sentence_summary: "Close file",
+        label: "general",
+      },
     },
   ],
 };
@@ -184,7 +197,14 @@ describe("invocation: PR-Agent's own CLI per command, on its local git provider"
     const env = pragentEnv({ path: "/usr/bin", home: "/h", tmpDir: "/x" });
     expect(env.HOME).toBe("/h");
     expect(env.LITELLM_LOCAL_MODEL_COST_MAP).toBe("True");
-    for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"])
+    for (const k of [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+    ])
       expect(env[k], k).toBe("http://127.0.0.1:9");
     expect(env.NO_PROXY).toBe("127.0.0.1,localhost");
     expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
@@ -216,9 +236,30 @@ describe("output → findings: key issues and suggestions with lines are comment
   it("/review: header + content at relevant_file:start-end; a missing range is unlocated", () => {
     const f = reviewFindings(REVIEW_CAP);
     expect(f).toEqual([
-      { source: "review", path: "calc.py", start_line: 2, end_line: 3, content: "Possible Bug\nDivision by zero when b is 0.", label: "Possible Bug" },
-      { source: "review", path: "util/io.py", start_line: null, end_line: null, content: "Leak\nFile handle never closed.", label: "Leak" },
-      { source: "review", path: "util/io.py", start_line: 9, end_line: 9, content: "Race\nUnlocked write.", label: "Race" },
+      {
+        source: "review",
+        path: "calc.py",
+        start_line: 2,
+        end_line: 3,
+        content: "Possible Bug\nDivision by zero when b is 0.",
+        label: "Possible Bug",
+      },
+      {
+        source: "review",
+        path: "util/io.py",
+        start_line: null,
+        end_line: null,
+        content: "Leak\nFile handle never closed.",
+        label: "Leak",
+      },
+      {
+        source: "review",
+        path: "util/io.py",
+        start_line: 9,
+        end_line: 9,
+        content: "Race\nUnlocked write.",
+        label: "Race",
+      },
     ]);
     expect(reviewFindings(null)).toEqual([]);
   });
@@ -230,21 +271,33 @@ describe("output → findings: key issues and suggestions with lines are comment
       path: "calc.py",
       start_line: 3,
       end_line: 3,
-      content: "Guard zero divisor\nGuard against a zero divisor.\n\nSuggested code:\n```\n    return a / b if b else 0\n```",
+      content:
+        "Guard zero divisor\nGuard against a zero divisor.\n\nSuggested code:\n```\n    return a / b if b else 0\n```",
       label: "possible bug",
       score: 8,
     });
-    expect(f[1]).toMatchObject({ path: "util/io.py", start_line: null, end_line: null, content: "Close file\nClose the file." });
+    expect(f[1]).toMatchObject({
+      path: "util/io.py",
+      start_line: null,
+      end_line: null,
+      content: "Close file\nClose the file.",
+    });
   });
 
   it("located → OCR-shaped comments; unlocated and the security verdict → the review body", () => {
-    const { comments, unlocated } = splitFindings([...reviewFindings(REVIEW_CAP), ...improveFindings(IMPROVE_CAP)]);
+    const { comments, unlocated } = splitFindings([
+      ...reviewFindings(REVIEW_CAP),
+      ...improveFindings(IMPROVE_CAP),
+    ]);
     expect(comments.map((c) => [c.path, c.start_line, c.end_line])).toEqual([
       ["calc.py", 2, 3],
       ["util/io.py", 9, 9],
       ["calc.py", 3, 3],
     ]);
-    expect(comments[0]).toMatchObject({ content: "Possible Bug\nDivision by zero when b is 0.", severity: "Possible Bug" });
+    expect(comments[0]).toMatchObject({
+      content: "Possible Bug\nDivision by zero when b is 0.",
+      severity: "Possible Bug",
+    });
     expect(unlocated.map((u) => u.source)).toEqual(["review", "improve"]);
     const body = reviewBody(REVIEW_CAP, unlocated);
     expect(body).toContain("## PR Reviewer Guide");
@@ -262,13 +315,21 @@ describe("output → findings: key issues and suggestions with lines are comment
     expect(commandStatus("review", { code: 1, timedOut: false }, REVIEW_CAP)).toBe("failed");
     expect(commandStatus("review", ok, { ...REVIEW_CAP, error: "boom" })).toBe("failed");
     expect(commandStatus("improve", ok, IMPROVE_CAP)).toBe("ok");
-    expect(commandStatus("improve", ok, { comments: ["No suggestions found to improve this PR."] })).toBe("ok");
+    expect(
+      commandStatus("improve", ok, { comments: ["No suggestions found to improve this PR."] }),
+    ).toBe("ok");
     // No suggestions: PR-Agent publishes an EMPTY artifact (smoke, immich-app__immich@7e2009f).
     expect(commandStatus("improve", ok, { suggestions: [] })).toBe("ok");
-    expect(commandStatus("improve", ok, { comments: ["Failed to generate code suggestions for PR"] })).toBe("failed");
+    expect(
+      commandStatus("improve", ok, { comments: ["Failed to generate code suggestions for PR"] }),
+    ).toBe("failed");
     expect(commandStatus("improve", null, null)).toBe("not-run");
-    expect(commandStatus("describe", ok, { published_description: { title: null, body: "x" } })).toBe("ok");
-    expect(commandStatus("describe", ok, { comments: ["Failed to generate PR description"] })).toBe("failed");
+    expect(
+      commandStatus("describe", ok, { published_description: { title: null, body: "x" } }),
+    ).toBe("ok");
+    expect(commandStatus("describe", ok, { comments: ["Failed to generate PR description"] })).toBe(
+      "failed",
+    );
   });
 });
 
@@ -279,10 +340,17 @@ describe("pricing is per model", () => {
     expect(ratesFor("gpt-9")).toBeNull();
     const dir = mkdtempSync(join(tmpdir(), "pragent-cost-"));
     try {
-      const summary = { model: "gpt-6.1-sol", bridge: { input_tokens: 1_000_000, cached_tokens: 500_000, output_tokens: 100_000 } };
+      const summary = {
+        model: "gpt-6.1-sol",
+        bridge: { input_tokens: 1_000_000, cached_tokens: 500_000, output_tokens: 100_000 },
+      };
       writeFileSync(join(dir, "case-summary.json"), JSON.stringify(summary));
       // 0.5M × $2 + 0.5M × $0.10 + 0.1M × $10
-      expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.05 + 1, source: "priced", model: "gpt-6.1-sol" });
+      expect(caseCostUsd(dir)).toEqual({
+        usd: 1 + 0.05 + 1,
+        source: "priced",
+        model: "gpt-6.1-sol",
+      });
       writeFileSync(join(dir, "case-summary.json"), JSON.stringify({ ...summary, model: "gpt-9" }));
       expect(caseCostUsd(dir)).toBeNull();
     } finally {
@@ -344,14 +412,25 @@ describe("one case end to end, PR-Agent stubbed", () => {
       const root = join(tmp, "root");
       const outDir = join(tmp, "out");
       mkdirSync(join(root, "wt"), { recursive: true });
-      const seen: Array<{ argv: string[]; cwd?: string; env?: NodeJS.ProcessEnv; branches: string; title: string; body: string }> = [];
+      const seen: Array<{
+        argv: string[];
+        cwd?: string;
+        env?: NodeJS.ProcessEnv;
+        branches: string;
+        title: string;
+        body: string;
+      }> = [];
       const runImpl: typeof run = async (bin, args, opts = {}) => {
         if (bin !== "/venv/bin/python") return run(bin, args, opts);
         const at = (k: string) => args[args.indexOf(k) + 1]!;
         const tree = at("--tree");
-        const branches = execFileSync("git", ["-C", tree, "for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], {
-          encoding: "utf8",
-        }).trim();
+        const branches = execFileSync(
+          "git",
+          ["-C", tree, "for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"],
+          {
+            encoding: "utf8",
+          },
+        ).trim();
         seen.push({
           argv: args,
           cwd: opts.cwd,
@@ -363,7 +442,14 @@ describe("one case end to end, PR-Agent stubbed", () => {
         const cmd = at("--command");
         const cap =
           cmd === "describe"
-            ? { command: cmd, exit: 0, published_description: { title: null, body: "<!-- pr-agent-generated -->\nAI summary + Divides a by b." } }
+            ? {
+                command: cmd,
+                exit: 0,
+                published_description: {
+                  title: null,
+                  body: "<!-- pr-agent-generated -->\nAI summary + Divides a by b.",
+                },
+              }
             : cmd === "review"
               ? REVIEW_CAP
               : IMPROVE_CAP;
@@ -375,7 +461,18 @@ describe("one case end to end, PR-Agent stubbed", () => {
       const fetchImpl = (async (url: string) => {
         const u = String(url);
         const body = u.endsWith("/stats")
-          ? { requests: stats, ok: stats, errors: 0, upstream_refusals: 0, input_tokens: 250_000 * stats, cached_tokens: 100_000 * stats, output_tokens: 10_000 * stats, reasoning_tokens: 2_000 * stats, by_status: { "200": stats }, dropped_keys: {} }
+          ? {
+              requests: stats,
+              ok: stats,
+              errors: 0,
+              upstream_refusals: 0,
+              input_tokens: 250_000 * stats,
+              cached_tokens: 100_000 * stats,
+              output_tokens: 10_000 * stats,
+              reasoning_tokens: 2_000 * stats,
+              by_status: { "200": stats },
+              dropped_keys: {},
+            }
           : { ok: true };
         if (u.endsWith("/stats")) stats += 3;
         return new Response(JSON.stringify(body), { status: 200 });
@@ -397,7 +494,11 @@ describe("one case end to end, PR-Agent stubbed", () => {
       expect(s.status).toBe("ok");
       expect(s.merge_base_ok).toBe(true);
       expect(s.target_branch).toBe("main");
-      expect(seen.map((x) => x.argv[x.argv.indexOf("--command") + 1])).toEqual(["describe", "review", "improve"]);
+      expect(seen.map((x) => x.argv[x.argv.indexOf("--command") + 1])).toEqual([
+        "describe",
+        "review",
+        "improve",
+      ]);
       // /describe reads the author's body; the next two read what /describe published, as on GitHub.
       expect(seen.map((x) => x.body)).toEqual([
         "Divides a by b.",
@@ -415,16 +516,26 @@ describe("one case end to end, PR-Agent stubbed", () => {
       expect(s.improve_findings).toBe(2);
       expect(s.unlocated).toBe(2);
       expect(s.model).toBe("gpt-6.1-sol");
-      expect(s.bridge).toMatchObject({ requests: 3, input_tokens: 750_000, cached_tokens: 300_000 });
+      expect(s.bridge).toMatchObject({
+        requests: 3,
+        input_tokens: 750_000,
+        cached_tokens: 300_000,
+      });
       expect(s.usage).toEqual({ input: 450_000, cacheRead: 300_000, output: 30_000 });
       const caseDir = join(outDir, "cases", c.instance_id);
       // 0.45M × $2 + 0.3M × $0.10 + 0.03M × $10
       expect(caseCostUsd(caseDir)?.usd).toBeCloseTo(0.9 + 0.03 + 0.3, 10);
-      const result = JSON.parse(readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"));
+      const result = JSON.parse(
+        readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"),
+      );
       expect(result.reviewer).toBe("pragent");
       expect(result.review.comments).toHaveLength(3);
       expect(result.review_output.review.security_concerns).toContain("SQL injection");
-      expect(result.token_usage).toMatchObject({ input_tokens: 750_000, cached_input_tokens: 300_000, output_tokens: 30_000 });
+      expect(result.token_usage).toMatchObject({
+        input_tokens: 750_000,
+        cached_input_tokens: 300_000,
+        output_tokens: 30_000,
+      });
       // The defect judge reads the same comments and the body.
       const j = reviewForJudge(outDir, c.instance_id);
       expect(j.comments.map((x) => [x.path, x.line, x.end_line])).toEqual([
@@ -434,12 +545,19 @@ describe("one case end to end, PR-Agent stubbed", () => {
       ]);
       expect(j.body).toContain("SQL injection");
       expect(j.body).toContain("Findings without a line range");
-      for (const f of ["pragent-review.json", "pragent-improve.json", "pragent-review.log", "pragent-argv.json"])
+      for (const f of [
+        "pragent-review.json",
+        "pragent-improve.json",
+        "pragent-review.log",
+        "pragent-argv.json",
+      ])
         expect(readdirSync(caseDir), f).toContain(f);
       // The scratch (PR-Agent's HOME, its outputs) and the tree are gone.
       expect(readdirSync(join(root, "wt"))).toEqual([]);
       const md = renderPragentReport(SET, outDir, [c]);
-      expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | 3 | ok | ok (3) | ok (2) | 2 |");
+      expect(md).toContain(
+        "| acme__widget@bbbbbbb | Python | 2 | ok | 3 | ok | ok (3) | ok (2) | 2 |",
+      );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -465,19 +583,23 @@ describe("one case end to end, PR-Agent stubbed", () => {
         writeFileSync(join(at("--out"), `${cmd}.json`), JSON.stringify(cap));
         return { code: 0, stdout: "", stderr: "", timedOut: false };
       };
-      const s = await reviewCasePragent(c, { ...meta, title: null, body: null }, {
-        root,
-        store,
-        outDir,
-        python: "py",
-        driver: "d",
-        bridgeUrl: "http://127.0.0.1:1",
-        model: "gpt-6.1-sol",
-        timeoutMin: 30,
-        prText: false,
-        fingerprint: { ...FP, pr_text: false },
-        runImpl,
-      });
+      const s = await reviewCasePragent(
+        c,
+        { ...meta, title: null, body: null },
+        {
+          root,
+          store,
+          outDir,
+          python: "py",
+          driver: "d",
+          bridgeUrl: "http://127.0.0.1:1",
+          model: "gpt-6.1-sol",
+          timeoutMin: 30,
+          prText: false,
+          fingerprint: { ...FP, pr_text: false },
+          runImpl,
+        },
+      );
       expect(s.status).toBe("failed");
       expect(s.commands.review.status).toBe("failed");
       expect(s.commands.improve.status).toBe("ok");
@@ -496,17 +618,30 @@ describe("the run", () => {
     try {
       const src = join(tmp, "src");
       mkdirSync(src);
-      const jwtPayload = Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc" } })).toString("base64url");
+      const jwtPayload = Buffer.from(
+        JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc" } }),
+      ).toString("base64url");
       writeFileSync(
         join(src, "auth.json"),
-        JSON.stringify({ "openai-codex": { type: "oauth", access: `h.${jwtPayload}.s`, refresh: "R", expires: Date.now() + 5 * 86_400_000 } }),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: `h.${jwtPayload}.s`,
+            refresh: "R",
+            expires: Date.now() + 5 * 86_400_000,
+          },
+        }),
       );
       const out = join(tmp, "out");
       // An earlier result by another model.
       mkdirSync(join(out, "cases", CASE.instance_id), { recursive: true });
       writeFileSync(
         join(out, "cases", CASE.instance_id, "case-summary.json"),
-        JSON.stringify({ arm: "pragent", status: "ok", fingerprint: { ...FP, model: "gpt-6-sol" } }),
+        JSON.stringify({
+          arm: "pragent",
+          status: "ok",
+          fingerprint: { ...FP, model: "gpt-6-sol" },
+        }),
       );
       const base = {
         set: SET,
@@ -538,10 +673,15 @@ describe("the run", () => {
       expect(rec.reviewer).toBe("pragent");
       expect(rec.commands).toEqual(["describe", "review", "improve"]);
       expect(runArmOf(out)).toBe("pragent");
-      const s = JSON.parse(readFileSync(join(out, "cases", CASE.instance_id, "case-summary.json"), "utf8"));
+      const s = JSON.parse(
+        readFileSync(join(out, "cases", CASE.instance_id, "case-summary.json"), "utf8"),
+      );
       expect(s.fingerprint.model).toBe("gpt-6.1-sol");
       expect(s.status).toBe("failed");
-      expect(JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8")).review.comments).toEqual([]);
+      expect(
+        JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8"))
+          .review.comments,
+      ).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -568,14 +708,20 @@ describe("the sandbox wiring", () => {
   });
 
   it("bench.sh, in-container.sh and arm.sh know the arm; its bridge serves gpt-6.1-sol; eval scores `all`", () => {
-    expect(sh).toContain('pragent) IMAGE="${QCR_BENCH_PRAGENT_IMAGE:-qcr-bench-pragent:latest}"; TARGET=pragent');
+    expect(sh).toContain(
+      'pragent) IMAGE="${QCR_BENCH_PRAGENT_IMAGE:-qcr-bench-pragent:latest}"; TARGET=pragent',
+    );
     expect(sh).toContain("REVIEW_ENTRY=pragent-review");
     expect(sh).toContain("bench/aacr/pragent_driver.py");
     // The served model is a bench.sh knob (gpt-6-sol for parity with the other arms).
     expect(sh).toContain('oe+=(-e "PRAGENT_BRIDGE_MODEL=$QCR_BENCH_PRAGENT_MODEL")');
     expect(inContainer).toContain("pragent-review)");
-    expect(inContainer).toContain('--model "${PRAGENT_BRIDGE_MODEL:-gpt-6.1-sol}" --effort "${PRAGENT_BRIDGE_EFFORT:-medium}"');
-    expect(inContainer).toContain('[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }');
+    expect(inContainer).toContain(
+      '--model "${PRAGENT_BRIDGE_MODEL:-gpt-6.1-sol}" --effort "${PRAGENT_BRIDGE_EFFORT:-medium}"',
+    );
+    expect(inContainer).toContain(
+      '[[ "$arm" != qcr ]] && { variants="all"; report_cmd="$arm-report"; }',
+    );
     expect(arm).toContain('"$ARM" == pragent ]]; then');
     const cli = readFileSync(join(ROOT, "src", "bench", "cli.ts"), "utf8");
     for (const cmd of ["pragent-review", "pragent-report"]) {

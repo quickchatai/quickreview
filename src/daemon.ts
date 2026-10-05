@@ -268,7 +268,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.now ? { now: deps.now } : {}),
   });
   const prConversation = new PrConversation({
-    store, adapter: gh, verdictDir, botLogin: cfg.github.bot_login,
+    store,
+    adapter: gh,
+    verdictDir,
+    botLogin: cfg.github.bot_login,
     inject: (pr, message) => hooks.inject(pr, message),
     ...(deps.now ? { now: deps.now } : {}),
   });
@@ -371,7 +374,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onPrTouched: async () => {
           await pump();
         },
-        onAuthorPrComment: async (comment) => { await prConversation.accept(comment); },
+        onAuthorPrComment: async (comment) => {
+          await prConversation.accept(comment);
+        },
         onAuthorReply: async (reply) => {
           // Webhook interpretation guarantees a same-PR bot-owned root. Claim
           // the author message before waking so duplicate deliveries cannot

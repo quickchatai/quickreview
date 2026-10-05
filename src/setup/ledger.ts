@@ -79,16 +79,28 @@ export class Ledger {
     try {
       text = this.state.read(LEDGER_FILE);
     } catch (err) {
-      return { entries: [], error: `${LEDGER_FILE} in ${this.state.location} cannot be read: ${String(err)}` };
+      return {
+        entries: [],
+        error: `${LEDGER_FILE} in ${this.state.location} cannot be read: ${String(err)}`,
+      };
     }
     if (text === null) return { entries: [], error: null };
     try {
       const raw = JSON.parse(text) as Partial<LedgerFile> | null;
-      if (typeof raw !== "object" || raw === null || raw.version !== LEDGER_VERSION || !Array.isArray(raw.entries)) {
+      if (
+        typeof raw !== "object" ||
+        raw === null ||
+        raw.version !== LEDGER_VERSION ||
+        !Array.isArray(raw.entries)
+      ) {
         throw new Error("not a version-1 ledger");
       }
       for (const e of raw.entries) {
-        if (typeof e?.path !== "string" || typeof e.blob !== "string" || typeof e.lens !== "string") {
+        if (
+          typeof e?.path !== "string" ||
+          typeof e.blob !== "string" ||
+          typeof e.lens !== "string"
+        ) {
           throw new Error("an entry has no path, blob or lens");
         }
       }
@@ -154,33 +166,55 @@ export function readings(entries: readonly LedgerEntry[], lens: string): Map<str
   const out = new Map<string, Reading>();
   for (const [path, rows] of byPath) {
     // Stable by time: equal stamps keep ledger order, as `newestRead` does.
-    const sorted = rows.map((e, i) => ({ e, i })).sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i));
+    const sorted = rows
+      .map((e, i) => ({ e, i }))
+      .sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i));
     const newest = sorted[sorted.length - 1]!.e;
     const streak: LedgerEntry[] = [];
-    for (let k = sorted.length - 1; k >= 0 && sorted[k]!.e.blob === newest.blob; k--) streak.push(sorted[k]!.e);
+    for (let k = sorted.length - 1; k >= 0 && sorted[k]!.e.blob === newest.blob; k--)
+      streak.push(sorted[k]!.e);
     const whole = streak.some((e) => !e.range);
     const ranges = streak.filter((e) => e.range).map((e) => e.range!);
     const total = ranges[0]?.total ?? 0;
-    out.set(path, { blob: newest.blob, newest, complete: whole || (ranges.length > 0 && rangesCover(ranges, 1, total)), ranges: whole ? [] : ranges, runs: [...new Set(streak.map((e) => e.run))] });
+    out.set(path, {
+      blob: newest.blob,
+      newest,
+      complete: whole || (ranges.length > 0 && rangesCover(ranges, 1, total)),
+      ranges: whole ? [] : ranges,
+      runs: [...new Set(streak.map((e) => e.run))],
+    });
   }
   return out;
 }
 
 /** `path\0blob` → the ranges of each newest reading by `lens` that is not
  * yet complete: the ranges a plan need not read again. */
-export function partialRanges(entries: readonly LedgerEntry[], lens: string): Map<string, FileRange[]> {
+export function partialRanges(
+  entries: readonly LedgerEntry[],
+  lens: string,
+): Map<string, FileRange[]> {
   const out = new Map<string, FileRange[]>();
-  for (const [path, r] of readings(entries, lens)) if (!r.complete && r.ranges.length > 0) out.set(coverKey(path, r.blob), r.ranges);
+  for (const [path, r] of readings(entries, lens))
+    if (!r.complete && r.ranges.length > 0) out.set(coverKey(path, r.blob), r.ranges);
   return out;
 }
 
 /** Rows written for `key` at all, and how many of their cases were priced —
  * which is how a preview tells "never calibrated" from "calibrated, but the
  * runner reports no cost". */
-export function casesFor(entries: readonly LedgerEntry[], key: RateKey): { cases: number; priced: number } {
+export function casesFor(
+  entries: readonly LedgerEntry[],
+  key: RateKey,
+): { cases: number; priced: number } {
   const cases = new Map<string, boolean>();
   for (const e of entries) {
-    if (e.lens !== key.lens || e.tier !== key.tier || e.effort !== key.effort || e.validator !== key.validator) continue;
+    if (
+      e.lens !== key.lens ||
+      e.tier !== key.tier ||
+      e.effort !== key.effort ||
+      e.validator !== key.validator
+    )
+      continue;
     const id = `${e.run}\0${e.case}`;
     cases.set(id, (cases.get(id) ?? false) || e.cost_usd !== null);
   }
@@ -192,13 +226,20 @@ export function casesFor(entries: readonly LedgerEntry[], key: RateKey): { cases
 export function measuredRate(entries: readonly LedgerEntry[], key: RateKey): ScanRate | null {
   return rateWhere(
     entries,
-    (e) => e.lens === key.lens && e.tier === key.tier && e.effort === key.effort && e.validator === key.validator,
+    (e) =>
+      e.lens === key.lens &&
+      e.tier === key.tier &&
+      e.effort === key.effort &&
+      e.validator === key.validator,
   );
 }
 
 /** The measured price over the priced rows `keep` selects (stage 2 borrows
  * another lens's price at the same settings this way), or null when none. */
-export function rateWhere(entries: readonly LedgerEntry[], keep: (e: LedgerEntry) => boolean): ScanRate | null {
+export function rateWhere(
+  entries: readonly LedgerEntry[],
+  keep: (e: LedgerEntry) => boolean,
+): ScanRate | null {
   let cost = 0;
   let lines = 0;
   const cases = new Set<string>();
@@ -233,7 +274,10 @@ export function newestRead(entries: readonly LedgerEntry[], lens: string): Map<s
 
 /** The sha of the LAST scan by `lens` — its newest row's — or null when the
  * ledger holds none: what a delta re-scan compares the tree against. */
-export function lastScanned(entries: readonly LedgerEntry[], lens: string): { sha: string; at: string; run: string } | null {
+export function lastScanned(
+  entries: readonly LedgerEntry[],
+  lens: string,
+): { sha: string; at: string; run: string } | null {
   let last: LedgerEntry | null = null;
   for (const e of entries) if (e.lens === lens && (last === null || e.at >= last.at)) last = e;
   return last === null ? null : { sha: last.sha, at: last.at, run: last.run };

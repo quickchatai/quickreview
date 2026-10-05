@@ -35,11 +35,17 @@ export interface ReplaySource {
   pr(n: number): Promise<{ ok: true; pr: ReplayPr } | { ok: false; reason: string }>;
   /** Its code materialised for the lenses; earlier trees other than `keep`
    * (shas) may be removed to bound the disk. */
-  open(pr: ReplayPr, keep: readonly string[]): { ok: true; tree: ReplayTree } | { ok: false; reason: string };
+  open(
+    pr: ReplayPr,
+    keep: readonly string[],
+  ): { ok: true; tree: ReplayTree } | { ok: false; reason: string };
 }
 
 /** Read a pulls API answer into a ReplayPr, or say what is missing. */
-export function parsePull(n: number, data: unknown): { ok: true; pr: ReplayPr } | { ok: false; reason: string } {
+export function parsePull(
+  n: number,
+  data: unknown,
+): { ok: true; pr: ReplayPr } | { ok: false; reason: string } {
   const d = (data ?? {}) as Record<string, unknown>;
   const head = (d.head ?? {}) as Record<string, unknown>;
   const base = (d.base ?? {}) as Record<string, unknown>;
@@ -47,7 +53,10 @@ export function parsePull(n: number, data: unknown): { ok: true; pr: ReplayPr } 
   const headSha = sha(head.sha);
   const baseSha = sha(base.sha);
   if (d.number !== n || headSha === null || baseSha === null) {
-    return { ok: false, reason: `GitHub's answer for PR #${n} is not a pull request with a head and a base` };
+    return {
+      ok: false,
+      reason: `GitHub's answer for PR #${n} is not a pull request with a head and a base`,
+    };
   }
   return {
     ok: true,
@@ -59,7 +68,8 @@ export function parsePull(n: number, data: unknown): { ok: true; pr: ReplayPr } 
       merged: typeof d.merged_at === "string" && d.merged_at !== "",
       head_sha: headSha,
       base_sha: baseSha,
-      merge_commit_sha: typeof d.merged_at === "string" && d.merged_at !== "" ? sha(d.merge_commit_sha) : null,
+      merge_commit_sha:
+        typeof d.merged_at === "string" && d.merged_at !== "" ? sha(d.merge_commit_sha) : null,
     },
   };
 }
@@ -74,23 +84,31 @@ export function gitReplaySource(opts: {
 }): ReplaySource {
   const git = (args: string[], maxBuffer = 16 * 1024 * 1024): string | null => {
     try {
-      return execFileSync("git", ["-c", `safe.directory=${opts.repoRoot}`, "-C", opts.repoRoot, ...args], {
-        encoding: "utf8",
-        maxBuffer,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      return execFileSync(
+        "git",
+        ["-c", `safe.directory=${opts.repoRoot}`, "-C", opts.repoRoot, ...args],
+        {
+          encoding: "utf8",
+          maxBuffer,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
     } catch {
       return null;
     }
   };
-  const has = (sha: string | null): boolean => sha !== null && git(["cat-file", "-e", `${sha}^{commit}`]) !== null;
+  const has = (sha: string | null): boolean =>
+    sha !== null && git(["cat-file", "-e", `${sha}^{commit}`]) !== null;
   const trees = gitScanSource(opts.repoRoot, opts.stateRoot, { treesDir: REPLAY_TREES_DIR });
   const diffsDir = join(opts.stateRoot, REPLAY_DIFFS_DIR);
   return {
     pr: async (n) => {
       const repo = typeof opts.repo === "function" ? opts.repo() : opts.repo;
       if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
-        return { ok: false, reason: `the live config's [github] repo ${JSON.stringify(repo)} is not owner/name` };
+        return {
+          ok: false,
+          reason: `the live config's [github] repo ${JSON.stringify(repo)} is not owner/name`,
+        };
       }
       const got = await opts.github.get(`/repos/${repo}/pulls/${n}`);
       if (!got.ok) return { ok: false, reason: got.reason };
@@ -116,21 +134,32 @@ export function gitReplaySource(opts: {
         };
       }
       if (base === null || !SHA_RE.test(base)) {
-        return { ok: false, reason: `PR #${pr.number}: no base to diff ${sha.slice(0, 12)} against in the reviewed checkout — pull its base branch on the host` };
+        return {
+          ok: false,
+          reason: `PR #${pr.number}: no base to diff ${sha.slice(0, 12)} against in the reviewed checkout — pull its base branch on the host`,
+        };
       }
       const diff = git(["diff", "--no-color", "--no-ext-diff", "-M", base, sha], MAX_DIFF_BYTES);
-      if (diff === null) return { ok: false, reason: `git could not diff ${base.slice(0, 12)}..${sha.slice(0, 12)}` };
+      if (diff === null)
+        return {
+          ok: false,
+          reason: `git could not diff ${base.slice(0, 12)}..${sha.slice(0, 12)}`,
+        };
       const opened = trees.open(sha, keep);
       if (!opened.ok) return opened;
       const diffPath = join(diffsDir, `${sha}.diff`);
       try {
         mkdirSync(diffsDir, { recursive: true });
         for (const other of readdirSync(diffsDir)) {
-          if (other !== `${sha}.diff` && !keep.some((k) => other === `${k}.diff`)) rmSync(join(diffsDir, other), { force: true });
+          if (other !== `${sha}.diff` && !keep.some((k) => other === `${k}.diff`))
+            rmSync(join(diffsDir, other), { force: true });
         }
         writeFileSync(diffPath, diff);
       } catch (err) {
-        return { ok: false, reason: `cannot write the diff: ${err instanceof Error ? err.message : String(err)}` };
+        return {
+          ok: false,
+          reason: `cannot write the diff: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
       const tree = opened.tree;
       return {

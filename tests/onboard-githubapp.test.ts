@@ -824,54 +824,58 @@ describe("inputs and credential validation", () => {
 // ---- the real loopback listener --------------------------------------------------
 
 describe("the loopback callback listener (real, on an ephemeral port)", () => {
-  it("serves the page, honours the state token, hands back the code, and closes deterministically", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const listener = await nodeCallbackServer({
-      state: "state-token",
-      port: 0,
-      timeoutMs: 5_000,
-      page: (bound) =>
-        manifestPageHtml({
-          postUrl: `${GH}/settings/apps/new`,
-          state: "state-token",
-          target: { kind: "personal" },
-          manifest: pinnedManifest,
-        }) + `<!--${bound.redirectUrl}-->`,
-    });
-    try {
-      expect(listener.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
-      expect(listener.redirectUrl).toBe(`${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}`);
-
-      const page = await fetch(listener.url);
-      expect(page.status).toBe(200);
-      expect(await page.text()).toContain('name="manifest"');
-
-      // A callback carrying someone else's state is refused and never resolves.
-      const forged = await fetch(
-        `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=evil&state=wrong`,
-      );
-      expect(forged.status).toBe(400);
-
-      const good = await fetch(
-        `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=real-code&state=state-token`,
-      );
-      expect(good.status).toBe(200);
-      await expect(listener.waitForCode()).resolves.toEqual({
-        code: "real-code",
-        detail: "code received on the loopback callback",
+  it(
+    "serves the page, honours the state token, hands back the code, and closes deterministically",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const listener = await nodeCallbackServer({
+        state: "state-token",
+        port: 0,
+        timeoutMs: 5_000,
+        page: (bound) =>
+          manifestPageHtml({
+            postUrl: `${GH}/settings/apps/new`,
+            state: "state-token",
+            target: { kind: "personal" },
+            manifest: pinnedManifest,
+          }) + `<!--${bound.redirectUrl}-->`,
       });
-    } finally {
-      await listener.close();
-    }
-    // Closed deterministically: the port no longer answers.
-    await expect(fetch(listener.url)).rejects.toBeTruthy();
-  });
+      try {
+        expect(listener.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+        expect(listener.redirectUrl).toBe(`${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}`);
+
+        const page = await fetch(listener.url);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toContain('name="manifest"');
+
+        // A callback carrying someone else's state is refused and never resolves.
+        const forged = await fetch(
+          `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=evil&state=wrong`,
+        );
+        expect(forged.status).toBe(400);
+
+        const good = await fetch(
+          `${listener.url.replace(/\/$/, "")}${CALLBACK_PATH}?code=real-code&state=state-token`,
+        );
+        expect(good.status).toBe(200);
+        await expect(listener.waitForCode()).resolves.toEqual({
+          code: "real-code",
+          detail: "code received on the loopback callback",
+        });
+      } finally {
+        await listener.close();
+      }
+      // Closed deterministically: the port no longer answers.
+      await expect(fetch(listener.url)).rejects.toBeTruthy();
+    },
+  );
   const rawRequest = (port: number, text: string): Promise<string> =>
     new Promise((resolveRaw, rejectRaw) => {
       const sock = connect(port, "127.0.0.1", () => sock.write(text));
       let out = "";
       sock.setEncoding("utf8");
       sock.on("data", (d) => {
-        out += d;
+        out += String(d);
       });
       sock.on("end", () => resolveRaw(out));
       sock.on("close", () => resolveRaw(out));

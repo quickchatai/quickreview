@@ -84,7 +84,12 @@ describe("the board's I key", () => {
 
   it("asks through the setup hook on the board, and nowhere else", async () => {
     const { out, input } = streams();
-    const app = new App(TUI_DEFAULTS, async () => ({ ok: true, stdout: "", stderr: "", code: 0 }), out, input);
+    const app = new App(
+      TUI_DEFAULTS,
+      async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
+      out,
+      input,
+    );
     const asked: string[] = [];
     app.hooks.setup = () => void asked.push(app.tab);
     app.tab = "board";
@@ -112,16 +117,22 @@ describe("qcr setup validate — the direct edit's check", () => {
     write(join(cfgHome, "profiles", "acme", "profile.toml"), profileToml);
   }
 
-  it("passes a profile the daemon would boot with, naming its chain", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    home('extends = "default"\n[lenses.pass-security]\neffort = "high"\n');
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      expect(await cmdSetup(["validate"])).toBe(0);
-      expect(log.mock.calls.flat().join("\n")).toMatch(/Profile "acme" loads[\s\S]*chain: default → acme/);
-    } finally {
-      log.mockRestore();
-    }
-  });
+  it(
+    "passes a profile the daemon would boot with, naming its chain",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      home('extends = "default"\n[lenses.pass-security]\neffort = "high"\n');
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(await cmdSetup(["validate"])).toBe(0);
+        expect(log.mock.calls.flat().join("\n")).toMatch(
+          /Profile "acme" loads[\s\S]*chain: default → acme/,
+        );
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 
   it("fails a typo the daemon would refuse at boot, and says where", async () => {
     home('extends = "default"\n[lenses.pass-security]\neffrot = "high"\n');
@@ -137,7 +148,17 @@ describe("qcr setup validate — the direct edit's check", () => {
 
 describe("the memory tab marks what setup proposes to pin", () => {
   it("☆ on a proposed entry, ● still on a pinned one", () => {
-    const e: MemoryEntry = { id: "a", ts: "2026-09-29 09:00:00", day: "2026-09-29", block: 0, text: "#survey x", tags: [], links: [], pinned: false, hash: "h" };
+    const e: MemoryEntry = {
+      id: "a",
+      ts: "2026-09-29 09:00:00",
+      day: "2026-09-29",
+      block: 0,
+      text: "#survey x",
+      tags: [],
+      links: [],
+      pinned: false,
+      hash: "h",
+    };
     expect(stripAnsi(entryLine(e, 60, true))).toMatch(/^☆ 09-29 09:00 #survey x/);
     expect(stripAnsi(entryLine(e, 60))).toMatch(/^ {2}09-29/);
     expect(stripAnsi(entryLine({ ...e, pinned: true }, 60, true))).toMatch(/^● /);

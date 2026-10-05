@@ -788,7 +788,8 @@ describe("renderBoard", () => {
       const legendY = 1 + (bodyRows - 1) + 1;
       const pr = 6000 + selected;
       const zone = frame.zones.find(
-        (z) => (z.action as { t: string; pr?: number }).t === "select-pr" &&
+        (z) =>
+          (z.action as { t: string; pr?: number }).t === "select-pr" &&
           (z.action as { pr: number }).pr === pr,
       );
       expect(zone, `selected #${pr} has a click target`).toBeDefined();

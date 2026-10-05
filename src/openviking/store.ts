@@ -515,7 +515,8 @@ export class OpenVikingStore implements MemoryStore {
       const res = await this.replace(op.id, next, op.expect);
       if (res.ok && op.op === "retire" && this.knownRetired !== null) {
         const uri = this.uriOf(op.id);
-        if (!this.knownRetired.includes(uri)) this.knownRetired = [...this.knownRetired, uri].sort();
+        if (!this.knownRetired.includes(uri))
+          this.knownRetired = [...this.knownRetired, uri].sort();
       }
       return res;
     } catch (err) {

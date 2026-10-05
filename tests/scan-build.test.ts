@@ -33,7 +33,9 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function built(out: string): Map<string, string> {
-  return new Map(readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]));
+  return new Map(
+    readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]),
+  );
 }
 
 function prBuild(): Map<string, string> {
@@ -62,7 +64,10 @@ function profile(name: string, toml: string): void {
 
 /** The fixture config with `[review] profile = name` and extra TOML. */
 function configWith(name: string, extra = ""): string {
-  return `${fixtureToml.replace(/^profile = .*$/m, "")}\n${extra}`.replace(/^\[review\]$/m, `[review]\nprofile = "${name}"`);
+  return `${fixtureToml.replace(/^profile = .*$/m, "")}\n${extra}`.replace(
+    /^\[review\]$/m,
+    `[review]\nprofile = "${name}"`,
+  );
 }
 
 describe("the scan-mode anchor addendum rides only the scan build", () => {
@@ -71,8 +76,12 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     expect(entry).toMatchObject({ scope: "all", mode: "scan" });
     expect(addendaForPass("pass-baseline").map((a) => a.id)).not.toContain("scan-mode-anchor");
     expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).not.toContain("scan-mode-anchor");
-    expect(addendaForPass("pass-baseline", PASS_ADDENDA, "django", "scan").map((a) => a.id)).toContain("scan-mode-anchor");
-    expect(addendaForPass(VALIDATE_PASS, PASS_ADDENDA, "none", "scan").map((a) => a.id)).toContain("scan-mode-anchor");
+    expect(
+      addendaForPass("pass-baseline", PASS_ADDENDA, "django", "scan").map((a) => a.id),
+    ).toContain("scan-mode-anchor");
+    expect(addendaForPass(VALIDATE_PASS, PASS_ADDENDA, "none", "scan").map((a) => a.id)).toContain(
+      "scan-mode-anchor",
+    );
   });
 
   it("a PR build carries it nowhere and has no pass-scan", () => {
@@ -88,15 +97,20 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     const agents = scanBuild();
     for (const [name, body] of agents) expect(body, name).toContain(SCAN_MODE_ANCHOR_ADDENDUM);
     // Only the [scan] tier's variant: nothing runs pass-scan at another tier.
-    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--")).sort()).toEqual([`pass-scan--${fixture.scan.tier}`]);
+    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--")).sort()).toEqual([
+      `pass-scan--${fixture.scan.tier}`,
+    ]);
     expect(agents.has("pass-validate--sol-high")).toBe(true);
   });
 
   it("builds pass-scan at the [scan] tier alone; the deep lenses keep every tier for stage 2", () => {
     const cfg = scanConfig(sandbox, `${fixtureToml}\n[scan]\ntier = "terra-med"\n`, { env });
     const agents = scanBuild(cfg);
-    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--"))).toEqual(["pass-scan--terra-med"]);
-    for (const t of ["terra-med", "sol-med", "sol-high"]) expect(agents.has(`pass-baseline--${t}`), t).toBe(true);
+    expect([...agents.keys()].filter((n) => n.startsWith("pass-scan--"))).toEqual([
+      "pass-scan--terra-med",
+    ]);
+    for (const t of ["terra-med", "sol-med", "sol-high"])
+      expect(agents.has(`pass-baseline--${t}`), t).toBe(true);
   });
 
   it("pass-scan's built body pins the defect line, quotes it, and carries the reachability axis", () => {
@@ -118,7 +132,9 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
       expect(tools, name).toBe(SCAN_LEAF_TOOLS.join(", "));
     }
     // …while a PR build keeps its own (bash behind the guard, the two memory reads).
-    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--sol-med")!)?.[1]).toContain("viking_search");
+    expect(/^tools: (.*)$/m.exec(prBuild().get("pass-baseline--sol-med")!)?.[1]).toContain(
+      "viking_search",
+    );
   });
 
   it("runs pass-scan at the [scan] effort on each tier's model, other lenses untouched", () => {
@@ -127,16 +143,21 @@ describe("the scan-mode anchor addendum rides only the scan build", () => {
     expect(/^model: (.*)$/m.exec(agents.get("pass-scan--sol-med")!)?.[1]).toBe(
       fixture.models.tiers["sol-med"].replace(/:[a-z]+$/, "") + ":low",
     );
-    expect(/^model: (.*)$/m.exec(agents.get("pass-baseline--sol-med")!)?.[1]).toBe(fixture.models.tiers["sol-med"]);
+    expect(/^model: (.*)$/m.exec(agents.get("pass-baseline--sol-med")!)?.[1]).toBe(
+      fixture.models.tiers["sol-med"],
+    );
   });
 
   it("refuses an agent name found in two source directories", () => {
     const extra = join(dir, "extra");
     mkdirSync(extra);
     writeFileSync(join(extra, "pass-baseline.md"), "---\nname: pass-baseline\n---\nx\n");
-    expect(() => buildAgents(join(sandbox, "agents"), join(dir, "o"), { root: sandbox, extraSrcDirs: [extra] })).toThrow(
-      /more than one source directory/,
-    );
+    expect(() =>
+      buildAgents(join(sandbox, "agents"), join(dir, "o"), {
+        root: sandbox,
+        extraSrcDirs: [extra],
+      }),
+    ).toThrow(/more than one source directory/);
   });
 });
 
@@ -148,21 +169,45 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
   });
 
   it("config.toml sets any key; bad values and unknown keys refuse to load", () => {
-    const cfg = parseConfig(`${fixtureToml}\n[scan]\neffort = "medium"\nconcurrency = 3\nexclude = ["gen/"]\n`);
-    expect(cfg.scan).toEqual({ ...SCAN_DEFAULTS, effort: "medium", concurrency: 3, exclude: ["gen/"] });
-    expect(() => parseConfig(`${fixtureToml}\n[scan]\neffort = "max"\n`)).toThrow(/\[scan\] effort/);
-    expect(() => parseConfig(`${fixtureToml}\n[scan]\nconcurrency = 0\n`)).toThrow(/positive integer/);
-    expect(() => parseConfig(`${fixtureToml}\n[scan]\nexclude = ["/abs"]\n`)).toThrow(/repo-relative/);
-    expect(() => parseConfig(`${fixtureToml}\n[scan]\nturbo = true\n`)).toThrow(/unknown key "turbo"/);
+    const cfg = parseConfig(
+      `${fixtureToml}\n[scan]\neffort = "medium"\nconcurrency = 3\nexclude = ["gen/"]\n`,
+    );
+    expect(cfg.scan).toEqual({
+      ...SCAN_DEFAULTS,
+      effort: "medium",
+      concurrency: 3,
+      exclude: ["gen/"],
+    });
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\neffort = "max"\n`)).toThrow(
+      /\[scan\] effort/,
+    );
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\nconcurrency = 0\n`)).toThrow(
+      /positive integer/,
+    );
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\nexclude = ["/abs"]\n`)).toThrow(
+      /repo-relative/,
+    );
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\nturbo = true\n`)).toThrow(
+      /unknown key "turbo"/,
+    );
     // stage 2's stand-in factor — at least 1 (never a discount on stage 1's rate).
-    expect(parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 2.5\n`).scan.unmeasured_rate_factor).toBe(2.5);
-    expect(() => parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 0.5\n`)).toThrow(/unmeasured_rate_factor must be a number of at least 1/);
+    expect(
+      parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 2.5\n`).scan
+        .unmeasured_rate_factor,
+    ).toBe(2.5);
+    expect(() => parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 0.5\n`)).toThrow(
+      /unmeasured_rate_factor must be a number of at least 1/,
+    );
   });
 
   it("the profile's [scan] wins over config.toml, per key, along the extends chain", () => {
     profile("base", `[scan]\neffort = "medium"\nexclude = ["vendor/"]\n`);
     profile("repo", `extends = "base"\n[scan]\nvalidator = true\nexclude = ["gen/"]\n`);
-    const cfg = scanConfig(sandbox, configWith("repo", `[scan]\neffort = "high"\nvalidator = false\nconcurrency = 2\n`), { env });
+    const cfg = scanConfig(
+      sandbox,
+      configWith("repo", `[scan]\neffort = "high"\nvalidator = false\nconcurrency = 2\n`),
+      { env },
+    );
     expect(cfg.scan).toEqual({
       ...SCAN_DEFAULTS,
       effort: "medium", // the base profile beats config.toml's "high"
@@ -175,9 +220,13 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
 
   it("a profile may not set the install's operating limits", () => {
     profile("repo", `[scan]\nconcurrency = 64\n`);
-    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(/unknown key "concurrency"/);
+    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(
+      /unknown key "concurrency"/,
+    );
     profile("repo", `[scan]\nunmeasured_rate_factor = 1\n`);
-    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(/unknown key "unmeasured_rate_factor"/);
+    expect(() => scanConfig(sandbox, configWith("repo"), { env })).toThrow(
+      /unknown key "unmeasured_rate_factor"/,
+    );
     expect(() => parseScanTable("x", { effort: "low" }, ["effort"])).not.toThrow();
   });
 

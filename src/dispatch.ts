@@ -773,14 +773,18 @@ export function buildPassPlan(
   const sub = selectSubLenses(files, intent).filter(
     (s) => on(s.lens, cfg.review.sublenses) && !selected0.includes(s.lens),
   );
-  const whyOf = new Map<string, string>([...reasons0, ...sub.map((s) => [s.lens, s.why] as [string, string])]);
+  const whyOf = new Map<string, string>([
+    ...reasons0,
+    ...sub.map((s) => [s.lens, s.why] as [string, string]),
+  ]);
   // existing tests are consumers of every code change, and the PR's
   // own tests are claims about the code — one lens reads both.
   // The loosened-test hint (owner decision 2026-10-03): weakened assertions
   // found deterministically in the PR's test files are handed to the lens.
   const loosened = cfg.review.loosened_test_hint ? detectLoosenedAssertions(files) : [];
   const tests =
-    on(TESTS_PASS, cfg.review.tests_lens) && (files.some((f) => CODE_FILE_RE.test(f.filename)) || loosened.length > 0)
+    on(TESTS_PASS, cfg.review.tests_lens) &&
+    (files.some((f) => CODE_FILE_RE.test(f.filename)) || loosened.length > 0)
       ? [TESTS_PASS]
       : [];
   // The code-quality lenses: maintainability, duplication, abstraction — never
@@ -825,7 +829,10 @@ export function buildPassPlan(
     whyOf.set(
       LINT_CONFORMANCE_PASS,
       `CI runs ${coveredLinters
-        .map((l) => `${l.tool} (${l.ci.join(", ")}${l.configs.length ? `; config ${l.configs.join(", ")}` : ""})`)
+        .map(
+          (l) =>
+            `${l.tool} (${l.ci.join(", ")}${l.configs.length ? `; config ${l.configs.join(", ")}` : ""})`,
+        )
         .join("; ")} on the changed files`,
     );
   // `[review] skip_lenses` (cost tuning): a listed lens is neither planned
@@ -917,7 +924,8 @@ export function buildPassPlan(
       lens: BEHAVIOUR_DELTA_PASS,
       agent: `${BEHAVIOUR_DELTA_PASS}--${tier}`,
       tier,
-      raisable_to: pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
+      raisable_to:
+        pins[BEHAVIOUR_DELTA_PASS] !== undefined ? [] : raisableFrom(BEHAVIOUR_DELTA_PASS, tier),
       why: `base behaviour is at risk in ${focus.length === 1 ? focus[0] : `${focus.length} files`}: removed or replaced guards, conditions, calls, returns or values, or existing code wrapped in a new branch`,
       focus,
     }));
@@ -1029,14 +1037,15 @@ export function buildRoundOrder(args: {
     // `[review] coverage_check` (src/coverage.ts): only when the plan has a
     // sweep to launch for the uncovered files and there is a file to hold it to.
     ...(() => {
-      if (!args.cfg.review?.coverage_check || !pass_plan.some((p) => p.lens === "pass-sweep")) return {};
+      if (!args.cfg.review?.coverage_check || !pass_plan.some((p) => p.lens === "pass-sweep"))
+        return {};
       const coverage_files = coverageEligible(args.files);
       return coverage_files.length > 0 ? { coverage_files } : {};
     })(),
     // `[review] validator_shards` (templates.ts renderValidatorShardNote):
     // only above 1, and only when the plan has a validator to shard.
     ...((args.cfg.review?.validator_shards ?? 1) > 1
-      ? { validator_shards: args.cfg.review!.validator_shards }
+      ? { validator_shards: args.cfg.review.validator_shards }
       : {}),
     migration_gate: eco.migrationGate(args.files),
     migration_collisions: args.migrationCollisions ?? [],
@@ -1566,9 +1575,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           // settledDigest supplier still wins for the digest.
           const fromLedger = ledgerCarry(row.number);
           return {
-            settledDigest: deps.settledDigest
-              ? deps.settledDigest(row.number)
-              : fromLedger.settled,
+            settledDigest: deps.settledDigest ? deps.settledDigest(row.number) : fromLedger.settled,
             ...(fromLedger.carry ? { ledgerCarry: fromLedger.carry } : {}),
           };
         })(),
@@ -1612,7 +1619,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         store.setRoundPlan(roundId, order.lenses, {
           validate_tier: order.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
           pass_plan: order.pass_plan,
-          addable_passes: order.addable_lenses.map((lens) => ({ lens, tier: addTierOf(cfg, lens) })),
+          addable_passes: order.addable_lenses.map((lens) => ({
+            lens,
+            tier: addTierOf(cfg, lens),
+          })),
         });
       const memory = await seedRoundMemory(deps, order, files);
 

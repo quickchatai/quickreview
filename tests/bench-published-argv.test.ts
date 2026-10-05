@@ -41,9 +41,22 @@ const HARDEN = (uid: string) =>
 const REPOS = "--mount type=volume\\,src=qcr-bench-repos\\,dst=/repos\\,readonly ";
 
 async function reviewLine(arm: string, runName: string, set: string, imgVar: string, img: string) {
-  await run("bash", [join(ROOT, "bench", "aacr", "bench.sh"), "review", "--arm", arm, "--run", runName, "--set", set], {
-    env: { HOME: t, PATH: `${bin}:/usr/bin:/bin`, QCR_BENCH_RUNS_DIR: runs, [imgVar]: img },
-  });
+  await run(
+    "bash",
+    [
+      join(ROOT, "bench", "aacr", "bench.sh"),
+      "review",
+      "--arm",
+      arm,
+      "--run",
+      runName,
+      "--set",
+      set,
+    ],
+    {
+      env: { HOME: t, PATH: `${bin}:/usr/bin:/bin`, QCR_BENCH_RUNS_DIR: runs, [imgVar]: img },
+    },
+  );
   const log = readFileSync(join(runs, `${runName}.sandbox-commands.log`), "utf8");
   return log.split("\n").filter((l) => l.startsWith("docker run"));
 }
@@ -52,16 +65,43 @@ describe("bench.sh with every knob unset = the published sandbox commands", () =
   const uid = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`;
   const out = (r: string) => `--mount type=bind\\,src=${runs}/${r}\\,dst=/bench-out `;
   const cases: Array<[string, string, string, string, (r: string) => string]> = [
-    ["codex", "all-codex-smoke10", "QCR_BENCH_CODEX_IMAGE", "qcr-bench-codex:six",
-      (r) => `${HARDEN(uid)}--security-opt seccomp=unconfined ${REPOS}${out(r)}qcr-bench-codex:six codex-review smoke10 `],
-    ["opencode", "all-opencode-smoke10", "QCR_BENCH_OPENCODE_IMAGE", "qcr-bench-opencode:six",
-      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-opencode:six opencode-review smoke10 `],
-    ["pireview", "all-pireview-smoke10", "QCR_BENCH_PIREVIEW_IMAGE", "qcr-bench-pireview:six",
-      (r) => `${HARDEN(uid)}--mount type=volume\\,dst=/work ${REPOS}${out(r)}qcr-bench-pireview:six pireview-review smoke10 `],
-    ["ocr", "b40ocr-smoke10", "QCR_BENCH_OCR_IMAGE", "qcr-bench-ocr:b40",
-      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-ocr:b40 ocr-review smoke10 `],
-    ["pragent", "best-pragent-g61-smoke10", "QCR_BENCH_PRAGENT_IMAGE", "qcr-bench-pragent:latest",
-      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-pragent:latest pragent-review smoke10 `],
+    [
+      "codex",
+      "all-codex-smoke10",
+      "QCR_BENCH_CODEX_IMAGE",
+      "qcr-bench-codex:six",
+      (r) =>
+        `${HARDEN(uid)}--security-opt seccomp=unconfined ${REPOS}${out(r)}qcr-bench-codex:six codex-review smoke10 `,
+    ],
+    [
+      "opencode",
+      "all-opencode-smoke10",
+      "QCR_BENCH_OPENCODE_IMAGE",
+      "qcr-bench-opencode:six",
+      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-opencode:six opencode-review smoke10 `,
+    ],
+    [
+      "pireview",
+      "all-pireview-smoke10",
+      "QCR_BENCH_PIREVIEW_IMAGE",
+      "qcr-bench-pireview:six",
+      (r) =>
+        `${HARDEN(uid)}--mount type=volume\\,dst=/work ${REPOS}${out(r)}qcr-bench-pireview:six pireview-review smoke10 `,
+    ],
+    [
+      "ocr",
+      "b40ocr-smoke10",
+      "QCR_BENCH_OCR_IMAGE",
+      "qcr-bench-ocr:b40",
+      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-ocr:b40 ocr-review smoke10 `,
+    ],
+    [
+      "pragent",
+      "best-pragent-g61-smoke10",
+      "QCR_BENCH_PRAGENT_IMAGE",
+      "qcr-bench-pragent:latest",
+      (r) => `${HARDEN(uid)}${REPOS}${out(r)}qcr-bench-pragent:latest pragent-review smoke10 `,
+    ],
   ];
   for (const [arm, r, imgVar, img, want] of cases)
     it(`${arm} (${r})`, async () => {

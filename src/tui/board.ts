@@ -752,7 +752,12 @@ export function detailLines(
   lines.push(...doubtedLines(detail.doubted, width));
   // The profile's `[posting]` policy: survivors kept off the PR, same grammar.
   lines.push(
-    ...doubtedLines(detail.withheld, width, "WITHHELD", "over the posting policy · kept, never posted"),
+    ...doubtedLines(
+      detail.withheld,
+      width,
+      "WITHHELD",
+      "over the posting policy · kept, never posted",
+    ),
   );
   lines.push(
     truncate(`${section("THREADS", "bot review threads")} ${detail.threads.total} known`, width),

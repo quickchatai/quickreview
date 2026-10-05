@@ -665,7 +665,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     store: new ScanReportStore(stateHome()),
     ask: (text, verb) => {
       try {
-        writeCompanionAsk({ injectDir: companionInjectDir(full.companion), suffix: `scan-${verb}`, text });
+        writeCompanionAsk({
+          injectDir: companionInjectDir(full.companion),
+          suffix: `scan-${verb}`,
+          text,
+        });
       } catch (err) {
         return { ok: false, line: `✖ scan ${verb}: the ask could not be written — ${String(err)}` };
       }
@@ -676,7 +680,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           : `scan ${verb}: asked — the companion picks it up when it starts`,
       };
     },
-    companionUp: () => (!companionOn || companionError !== undefined ? false : companionUp ? true : undefined),
+    companionUp: () =>
+      !companionOn || companionError !== undefined ? false : companionUp ? true : undefined,
   });
 
   // finished-round evidence, copied down from the VM into a local
@@ -846,7 +851,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       // CONTAINER.configLive). Kept in step on the same timer as the token.
       const syncConfig = (): void => {
         const m = companion.syncConfigMirror();
-        if (typeof m === "object") app.notice(`companion: config mirror NOT refreshed — ${m.failed}`);
+        if (typeof m === "object")
+          app.notice(`companion: config mirror NOT refreshed — ${m.failed}`);
         commitProfiles();
       };
       syncConfig();

@@ -7,7 +7,15 @@
 // in the CONFIG home against the facts' key; each half keeps the version it
 // replaced, so a refresh can be diffed; and nothing of the raw review history
 // reaches either.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -62,7 +70,8 @@ const REPO = {
   "README.md": "# hi\n",
   "AGENTS.md": "Use the service layer.\n",
   ".github/workflows/ci.yml": "name: CI\n",
-  "backend/pyproject.toml": '[project]\ndependencies = [\n  "django>=4",\n]\n[tool.ruff]\nline-length = 100\n',
+  "backend/pyproject.toml":
+    '[project]\ndependencies = [\n  "django>=4",\n]\n[tool.ruff]\nline-length = 100\n',
   "backend/payments/apps.py": "x\n",
   "backend/payments/models.py": "a\nb\nc\n",
   "frontend/package.json": JSON.stringify({ dependencies: { react: "18" } }),
@@ -86,7 +95,9 @@ function engine(opts: { repo?: ReturnType<typeof fakeRepo> | RepoReader; config?
 }
 
 function factsOnDisk(): PortraitFactsFile {
-  return JSON.parse(readFileSync(join(stateDir(), PORTRAIT_FACTS_FILE), "utf8")) as PortraitFactsFile;
+  return JSON.parse(
+    readFileSync(join(stateDir(), PORTRAIT_FACTS_FILE), "utf8"),
+  ) as PortraitFactsFile;
 }
 
 function assembled(e: SetupEngine) {
@@ -95,7 +106,8 @@ function assembled(e: SetupEngine) {
   return r;
 }
 
-const RAW = "Please always wrap payment writes in a database transaction so a crash never leaves half a charge.";
+const RAW =
+  "Please always wrap payment writes in a database transaction so a crash never leaves half a charge.";
 
 function digest(): ReviewHistoryDigest {
   return {
@@ -105,8 +117,21 @@ function digest(): ReviewHistoryDigest {
     generated_at: "2026-09-29T09:00:00.000Z",
     window: { since: "2026-03-29T09:00:00.000Z", until: "2026-09-29T09:00:00.000Z", months: 6 },
     human: {
-      prs_enumerated: 1, prs_scanned: 1, prs_missing: 0, truncated: false,
-      comments: [{ pr: 12, merged_at: null, kind: "inline", state: "CHANGES_REQUESTED", path: "pay/charge.py", author: "rev-alpha", body: RAW }],
+      prs_enumerated: 1,
+      prs_scanned: 1,
+      prs_missing: 0,
+      truncated: false,
+      comments: [
+        {
+          pr: 12,
+          merged_at: null,
+          kind: "inline",
+          state: "CHANGES_REQUESTED",
+          path: "pay/charge.py",
+          author: "rev-alpha",
+          body: RAW,
+        },
+      ],
     },
     rounds: [],
     feedback: [],
@@ -114,7 +139,12 @@ function digest(): ReviewHistoryDigest {
   };
 }
 
-const THEME = { title: "Money writes are atomic", summary: "Payment code is expected to commit in one transaction.", source: "human", weight: 1 };
+const THEME = {
+  title: "Money writes are atomic",
+  summary: "Payment code is expected to commit in one transaction.",
+  source: "human",
+  weight: 1,
+};
 
 describe("the facts: assembled into the state home", () => {
   it("covers the stack, the units, the conventions, what is enforced and the themes — candidates flagged before a cut is saved", () => {
@@ -123,20 +153,41 @@ describe("the facts: assembled into the state home", () => {
     const f = r.current.facts;
     expect(r.current.key).toMatch(/^[0-9a-f]{12}$/);
     expect(f.head).toBe("abc123def4567890");
-    expect(f.stack.frameworks.map((x) => x.name)).toEqual(expect.arrayContaining(["Django", "React"]));
-    expect(f.stack.languages.map((l) => l.language)).toEqual(expect.arrayContaining(["Python", "TypeScript"]));
+    expect(f.stack.frameworks.map((x) => x.name)).toEqual(
+      expect.arrayContaining(["Django", "React"]),
+    );
+    expect(f.stack.languages.map((l) => l.language)).toEqual(
+      expect.arrayContaining(["Python", "TypeScript"]),
+    );
     expect(f.units.source).toBe("candidates");
     expect(f.units.saved_at).toBeNull();
-    expect(f.units.units.map((u) => u.name)).toEqual(expect.arrayContaining(["payments", "frontend", "rest"]));
+    expect(f.units.units.map((u) => u.name)).toEqual(
+      expect.arrayContaining(["payments", "frontend", "rest"]),
+    );
     expect(f.units.ignored).toEqual(["frontend/node_modules"]);
-    expect(f.conventions).toEqual({ guides: ["README.md"], style_guides: expect.any(Array), agent_files: ["AGENTS.md"] });
-    expect(f.enforced.ci).toEqual([{ system: "GitHub Actions", path: ".github/workflows/ci.yml", name: "CI" }]);
+    expect(f.conventions).toEqual({
+      guides: ["README.md"],
+      style_guides: expect.any(Array),
+      agent_files: ["AGENTS.md"],
+    });
+    expect(f.enforced.ci).toEqual([
+      { system: "GitHub Actions", path: ".github/workflows/ci.yml", name: "CI" },
+    ]);
     expect(f.enforced.linters.map((l) => l.name)).toContain("Ruff");
-    expect(f.history).toEqual({ state: "absent", saved_at: null, digest_generated_at: null, themes: [] });
+    expect(f.history).toEqual({
+      state: "absent",
+      saved_at: null,
+      digest_generated_at: null,
+      themes: [],
+    });
     expect(f.survey).toBeNull();
     expect(f.problems).toEqual([]);
     // Stored in the STATE home, and nothing written to the config home.
-    expect(factsOnDisk()).toMatchObject({ version: 1, current: { key: r.current.key, assembled_at: now.toISOString() }, previous: null });
+    expect(factsOnDisk()).toMatchObject({
+      version: 1,
+      current: { key: r.current.key, assembled_at: now.toISOString() },
+      previous: null,
+    });
     expect(existsSync(configDir())).toBe(false);
     expect(r.previous).toBeNull();
     expect(r.diff).toEqual([]);
@@ -145,18 +196,33 @@ describe("the facts: assembled into the state home", () => {
   it("uses the SAVED cut once there is one, and keeps the version it replaced with a diff", () => {
     const { e } = engine();
     const first = assembled(e);
-    e.propose({ units: [{ name: "backend", roots: ["backend"] }, { name: "web", roots: ["frontend"] }, { name: "rest", roots: [""] }] });
+    e.propose({
+      units: [
+        { name: "backend", roots: ["backend"] },
+        { name: "web", roots: ["frontend"] },
+        { name: "rest", roots: [""] },
+      ],
+    });
     e.save();
     now = new Date("2026-09-29T11:00:00Z");
     const second = assembled(e);
-    expect(second.current.facts.units).toMatchObject({ source: "saved", saved_at: "2026-09-29T10:00:00.000Z" });
+    expect(second.current.facts.units).toMatchObject({
+      source: "saved",
+      saved_at: "2026-09-29T10:00:00.000Z",
+    });
     expect(second.current.facts.units.units.map((u) => u.name)).toEqual(["backend", "web", "rest"]);
     expect(second.current.key).not.toBe(first.current.key);
     expect(second.unchanged).toBe(false);
     expect(second.previous).toEqual(first.current);
     expect(factsOnDisk().previous).toEqual(first.current);
     const units = second.diff.find((d) => d.section === "units")!;
-    expect(units.added).toEqual(expect.arrayContaining(["cut: saved", "unit backend [custom] backend", "unit web [custom] frontend"]));
+    expect(units.added).toEqual(
+      expect.arrayContaining([
+        "cut: saved",
+        "unit backend [custom] backend",
+        "unit web [custom] frontend",
+      ]),
+    );
     expect(units.removed).toEqual(expect.arrayContaining(["cut: none saved — candidates"]));
     expect(second.diff.map((d) => d.section)).toEqual(["units"]);
   });
@@ -207,20 +273,26 @@ describe("the facts: assembled into the state home", () => {
   });
 
   it("refuses without a checkout, and never overwrites a facts file it cannot read", () => {
-    expect(engine({ repo: { ...fakeRepo({}), listFiles: () => null } }).e.portraitAssemble()).toEqual({
+    expect(
+      engine({ repo: { ...fakeRepo({}), listFiles: () => null } }).e.portraitAssemble(),
+    ).toEqual({
       ok: false,
       errors: [expect.stringMatching(/no readable checkout/)],
     });
     const { e } = engine();
     stateHomeFs(stateDir()).write(PORTRAIT_FACTS_FILE, '{"version": 99}');
     const r = e.portraitAssemble();
-    expect(r).toEqual({ ok: false, errors: [expect.stringMatching(/not portrait facts this version reads.*move it aside/)] });
+    expect(r).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/not portrait facts this version reads.*move it aside/)],
+    });
     expect(readFileSync(join(stateDir(), PORTRAIT_FACTS_FILE), "utf8")).toBe('{"version": 99}');
   });
 });
 
 describe("the narrative: stored in the config home against the facts' key", () => {
-  const BODY = "A Django backend with a React frontend.\n\nCI runs one workflow; Ruff is configured.";
+  const BODY =
+    "A Django backend with a React frontend.\n\nCI runs one workflow; Ruff is configured.";
 
   it("is refused without facts, without the key, against moved facts, or when empty, oversized or header-shaped", () => {
     const { e, repo } = engine();
@@ -229,13 +301,26 @@ describe("the narrative: stored in the config home against the facts' key", () =
       errors: [expect.stringMatching(/no portrait facts yet/)],
     });
     const key = assembled(e).current.key;
-    expect(e.storePortraitNarrative({ narrative: BODY })).toMatchObject({ ok: false, errors: [expect.stringMatching(/no `facts_key`/)] });
-    expect(e.storePortraitNarrative({ facts_key: key, narrative: "  " })).toMatchObject({ ok: false, errors: [expect.stringMatching(/non-empty/)] });
-    expect(e.storePortraitNarrative({ facts_key: key, narrative: "x".repeat(NARRATIVE_MAX + 1) })).toMatchObject({
+    expect(e.storePortraitNarrative({ narrative: BODY })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/no `facts_key`/)],
+    });
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "  " })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/non-empty/)],
+    });
+    expect(
+      e.storePortraitNarrative({ facts_key: key, narrative: "x".repeat(NARRATIVE_MAX + 1) }),
+    ).toMatchObject({
       ok: false,
       errors: [expect.stringMatching(/at most 16000/)],
     });
-    expect(e.storePortraitNarrative({ facts_key: key, narrative: "<!-- qcr repo portrait narrative -->\nhi" })).toMatchObject({
+    expect(
+      e.storePortraitNarrative({
+        facts_key: key,
+        narrative: "<!-- qcr repo portrait narrative -->\nhi",
+      }),
+    ).toMatchObject({
       ok: false,
       errors: [expect.stringMatching(/header line is the tool's/)],
     });
@@ -258,7 +343,8 @@ describe("the narrative: stored in the config home against the facts' key", () =
     repo.files["frontend/src/b.tsx"] = "x\n";
     repo.files["frontend/src/c.tsx"] = "x\n";
     const second = assembled(e);
-    const order = (f: typeof first.current): string[] => f.facts.stack.languages.map((l) => l.language);
+    const order = (f: typeof first.current): string[] =>
+      f.facts.stack.languages.map((l) => l.language);
     expect(order(second.current)).not.toEqual(order(first.current)); // the ranking flipped
     expect(second.current.key).toBe(key);
     expect(e.portrait().stale).toBe(false);
@@ -278,13 +364,29 @@ describe("the narrative: stored in the config home against the facts' key", () =
     const { e } = engine();
     const key = assembled(e).current.key;
     const r = e.storePortraitNarrative({ facts_key: ` ${key} `, narrative: `${BODY}\r\n` });
-    expect(r).toEqual({ ok: true, facts_key: key, written_at: now.toISOString(), replaced: false, unchanged: false, diff: [] });
+    expect(r).toEqual({
+      ok: true,
+      facts_key: key,
+      written_at: now.toISOString(),
+      replaced: false,
+      unchanged: false,
+      diff: [],
+    });
     expect(readdirSync(configDir())).toEqual([PORTRAIT_DIR]);
     const text = readFileSync(join(configDir(), NARRATIVE_FILE), "utf8");
-    expect(text).toBe(`<!-- qcr repo portrait narrative · facts ${key} at abc123def456 · written ${now.toISOString()} -->\n\n${BODY}\n`);
-    expect(parseNarrative(text)).toEqual({ facts_key: key, written_at: now.toISOString(), body: BODY });
+    expect(text).toBe(
+      `<!-- qcr repo portrait narrative · facts ${key} at abc123def456 · written ${now.toISOString()} -->\n\n${BODY}\n`,
+    );
+    expect(parseNarrative(text)).toEqual({
+      facts_key: key,
+      written_at: now.toISOString(),
+      body: BODY,
+    });
     const v = e.portrait();
-    expect(v.narrative).toEqual({ state: "ok", doc: { facts_key: key, written_at: now.toISOString(), body: BODY } });
+    expect(v.narrative).toEqual({
+      state: "ok",
+      doc: { facts_key: key, written_at: now.toISOString(), body: BODY },
+    });
     expect(v.stale).toBe(false);
     expect(v.has_previous_narrative).toBe(false);
     // The narrative never goes to the state home.
@@ -297,11 +399,22 @@ describe("the narrative: stored in the config home against the facts' key", () =
     e.storePortraitNarrative({ facts_key: key, narrative: "One.\nTwo.\nThree." });
     const firstFile = readFileSync(join(configDir(), NARRATIVE_FILE), "utf8");
     now = new Date("2026-09-29T11:00:00Z");
-    const second = e.storePortraitNarrative({ facts_key: key, narrative: "One.\nTwo, revised.\nThree.\nFour." });
-    expect(second).toMatchObject({ ok: true, replaced: true, unchanged: false, diff: ["- Two.", "+ Two, revised.", "+ Four."] });
+    const second = e.storePortraitNarrative({
+      facts_key: key,
+      narrative: "One.\nTwo, revised.\nThree.\nFour.",
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      replaced: true,
+      unchanged: false,
+      diff: ["- Two.", "+ Two, revised.", "+ Four."],
+    });
     expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe(firstFile);
 
-    const again = e.storePortraitNarrative({ facts_key: key, narrative: "One.\nTwo, revised.\nThree.\nFour." });
+    const again = e.storePortraitNarrative({
+      facts_key: key,
+      narrative: "One.\nTwo, revised.\nThree.\nFour.",
+    });
     expect(again).toMatchObject({ ok: true, unchanged: true, replaced: false });
     expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe(firstFile);
 
@@ -311,14 +424,19 @@ describe("the narrative: stored in the config home against the facts' key", () =
     expect(e.portrait().stale).toBe(true);
     // …and re-storing the same prose against the new key re-stamps it without
     // displacing the kept version the diff needs.
-    const restamped = e.storePortraitNarrative({ facts_key: moved, narrative: "One.\nTwo, revised.\nThree.\nFour." });
+    const restamped = e.storePortraitNarrative({
+      facts_key: moved,
+      narrative: "One.\nTwo, revised.\nThree.\nFour.",
+    });
     expect(restamped).toMatchObject({ ok: true, replaced: false, unchanged: false, diff: [] });
     expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe(firstFile);
     expect(e.portrait().stale).toBe(false);
 
     const d = e.portrait({ diff: true });
     expect(d.narrative_diff).toEqual(["- Two.", "+ Two, revised.", "+ Four."]);
-    expect(d.facts_diff).toEqual([{ section: "conventions", added: ["design doc CONTRIBUTING.md"], removed: [] }]);
+    expect(d.facts_diff).toEqual([
+      { section: "conventions", added: ["design doc CONTRIBUTING.md"], removed: [] },
+    ]);
   });
 
   it("refuses a narrative that quotes a raw review comment or names its author", () => {
@@ -329,9 +447,18 @@ describe("the narrative: stored in the config home against the facts' key", () =
       facts_key: key,
       narrative: `Reviewers say: always wrap payment writes in a database transaction so a crash never leaves half a charge.`,
     });
-    expect(quoted).toMatchObject({ ok: false, errors: [expect.stringMatching(/the narrative quotes a raw review comment/)] });
-    const named = e.storePortraitNarrative({ facts_key: key, narrative: "rev-alpha cares most about money code." });
-    expect(named).toMatchObject({ ok: false, errors: [expect.stringMatching(/names a comment author \(rev-alpha\)/)] });
+    expect(quoted).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/the narrative quotes a raw review comment/)],
+    });
+    const named = e.storePortraitNarrative({
+      facts_key: key,
+      narrative: "rev-alpha cares most about money code.",
+    });
+    expect(named).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/names a comment author \(rev-alpha\)/)],
+    });
     expect(existsSync(join(configDir(), NARRATIVE_FILE))).toBe(false);
     // An unreadable digest cannot be checked against: refused, not waved through.
     stateHomeFs(stateDir()).write(HISTORY_DIGEST_FILE, "{ nope");
@@ -347,11 +474,16 @@ describe("the narrative: stored in the config home against the facts' key", () =
     mkdirSync(join(configDir(), PORTRAIT_DIR), { recursive: true });
     writeFileSync(join(configDir(), NARRATIVE_FILE), "My own notes.\n");
     const v = e.portrait();
-    expect(v.narrative).toEqual({ state: "ok", doc: { facts_key: null, written_at: null, body: "My own notes." } });
+    expect(v.narrative).toEqual({
+      state: "ok",
+      doc: { facts_key: null, written_at: null, body: "My own notes." },
+    });
     expect(v.stale).toBeNull();
     const r = e.storePortraitNarrative({ facts_key: key, narrative: "The companion's reading." });
     expect(r).toMatchObject({ ok: true, replaced: true });
-    expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe("My own notes.\n");
+    expect(readFileSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), "utf8")).toBe(
+      "My own notes.\n",
+    );
   });
 });
 
@@ -359,7 +491,9 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
   it("facts that cannot be read make the narrative's freshness UNKNOWN — never blamed on an edited header", () => {
     const { e } = engine();
     const key = assembled(e).current.key;
-    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({ ok: true });
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({
+      ok: true,
+    });
     stateHomeFs(stateDir()).write(PORTRAIT_FACTS_FILE, "{ nope");
     const v = e.portrait();
     expect(v.stale).toBeNull();
@@ -371,7 +505,9 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
   it("a kept previous narrative that cannot be read is UNKNOWN, not 'no earlier version'", () => {
     const { e } = engine();
     const key = assembled(e).current.key;
-    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({ ok: true });
+    expect(e.storePortraitNarrative({ facts_key: key, narrative: "Prose." })).toMatchObject({
+      ok: true,
+    });
     // A directory where the file should be: reading it throws EISDIR.
     mkdirSync(join(configDir(), NARRATIVE_PREVIOUS_FILE), { recursive: true });
     const v = e.portrait({ diff: true });
@@ -412,7 +548,13 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
     const real = stateHomeFs(stateDir());
     const e = new SetupEngine({
       repo: fakeRepo({ ...REPO }),
-      state: { location: real.location, read: (rel) => real.read(rel), write: () => { throw new Error("EACCES"); } },
+      state: {
+        location: real.location,
+        read: (rel) => real.read(rel),
+        write: () => {
+          throw new Error("EACCES");
+        },
+      },
       config: configHomeFs(configDir()),
       clock: () => now,
       memory: null,
@@ -420,7 +562,10 @@ describe("the honest unknowns and the refusals at the disk (review fixes)", () =
       tracker: notYetTrackerSink(""),
       github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
     });
-    expect(e.portraitAssemble()).toEqual({ ok: false, errors: [expect.stringMatching(/portrait-facts\.json .*cannot be written: Error: EACCES/)] });
+    expect(e.portraitAssemble()).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/portrait-facts\.json .*cannot be written: Error: EACCES/)],
+    });
   });
 });
 

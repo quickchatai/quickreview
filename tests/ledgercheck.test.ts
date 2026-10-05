@@ -62,13 +62,17 @@ function anomalyKinds(): string[] {
 }
 
 describe("classifyLedger", () => {
-  it("accepts a full-sha header and an abbreviated (≥7) prefix", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    expect(classifyLedger(`LEDGER PR #7 @ ${HEAD}\n- state`, 7, HEAD)).toBe("fresh");
-    expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 12)}\n- state`, 7, HEAD)).toBe("fresh");
-    expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 7).toUpperCase()}`, 7, HEAD)).toBe(
-      "fresh",
-    );
-  });
+  it(
+    "accepts a full-sha header and an abbreviated (≥7) prefix",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      expect(classifyLedger(`LEDGER PR #7 @ ${HEAD}\n- state`, 7, HEAD)).toBe("fresh");
+      expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 12)}\n- state`, 7, HEAD)).toBe("fresh");
+      expect(classifyLedger(`LEDGER PR #7 @ ${HEAD.slice(0, 7).toUpperCase()}`, 7, HEAD)).toBe(
+        "fresh",
+      );
+    },
+  );
 
   it("flags missing / unparseable / wrong PR / stale sha", () => {
     expect(classifyLedger(null, 7, HEAD)).toBe("missing");

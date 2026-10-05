@@ -109,7 +109,9 @@ class FakeCases implements CaseRunner {
         this.waiting.delete(spec.id);
         resolve(o);
       };
-      signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), { once: true });
+      signal.addEventListener("abort", () => done({ ok: false, reason: "stopped" }), {
+        once: true,
+      });
       if (this.auto) {
         const o = this.auto(spec);
         queueMicrotask(() => done(o));
@@ -121,7 +123,8 @@ class FakeCases implements CaseRunner {
   }
   answer(idSuffix: string, o: CaseOutcome): void {
     const key = [...this.waiting.keys()].find((k) => k.endsWith(`/${idSuffix}`));
-    if (!key) throw new Error(`no pending case ${idSuffix} (pending: ${this.pending().join(", ")})`);
+    if (!key)
+      throw new Error(`no pending case ${idSuffix} (pending: ${this.pending().join(", ")})`);
     this.waiting.get(key)!(o);
   }
 }
@@ -132,7 +135,10 @@ async function until(pred: () => boolean): Promise<void> {
   expect(pred()).toBe(true);
 }
 
-function fakeRepo(files: Record<string, string>, changes: Record<string, number> | null = null): RepoReader & { files: Record<string, string> } {
+function fakeRepo(
+  files: Record<string, string>,
+  changes: Record<string, number> | null = null,
+): RepoReader & { files: Record<string, string> } {
   const r = {
     files,
     location: "/reviewed-repo",
@@ -190,14 +196,17 @@ afterEach(() => {
   rmSync(stateDir, { recursive: true, force: true });
 });
 
-function setup(opts: {
-  repo?: ReturnType<typeof fakeRepo>;
-  memory?: MemoryStore | null;
-  cases?: CaseRunner;
-  concurrency?: number;
-  save?: boolean;
-} = {}) {
-  const repo = opts.repo ?? fakeRepo({ ...REPO }, { "web/src/big.ts": 9, "backend/payments/views.py": 4 });
+function setup(
+  opts: {
+    repo?: ReturnType<typeof fakeRepo>;
+    memory?: MemoryStore | null;
+    cases?: CaseRunner;
+    concurrency?: number;
+    save?: boolean;
+  } = {},
+) {
+  const repo =
+    opts.repo ?? fakeRepo({ ...REPO }, { "web/src/big.ts": 9, "backend/payments/views.py": 4 });
   const memory = opts.memory === undefined ? new FakeMemory() : opts.memory;
   const cases = opts.cases ?? new FakeCases();
   const ports: SetupPorts = {
@@ -221,7 +230,11 @@ function onDisk(): SurveyFile {
   return JSON.parse(readFileSync(join(stateDir, SURVEY_FILE), "utf8")) as SurveyFile;
 }
 
-const answer = (text: string, cost: number | null = 0.03): CaseOutcome => ({ ok: true, output: text, cost_usd: cost });
+const answer = (text: string, cost: number | null = 0.03): CaseOutcome => ({
+  ok: true,
+  output: text,
+  cost_usd: cost,
+});
 
 // ---- the rules (survey.ts) ---------------------------------------------------
 
@@ -243,10 +256,18 @@ describe("the sample", () => {
   });
 
   it("stays inside the line cap unless one file is all there is", () => {
-    const s = pickSample(["web/src/big.ts", "web/src/api.ts"], linesOf, null, { perCategory: 2, maxFiles: 8, maxLines: 500 });
+    const s = pickSample(["web/src/big.ts", "web/src/api.ts"], linesOf, null, {
+      perCategory: 2,
+      maxFiles: 8,
+      maxLines: 500,
+    });
     // big.ts (700) would break the cap once api.ts is in; api.ts is the entry point.
     expect(s.map((f) => f.path)).toEqual(["web/src/api.ts"]);
-    const alone = pickSample(["web/src/big.ts"], linesOf, null, { perCategory: 2, maxFiles: 8, maxLines: 500 });
+    const alone = pickSample(["web/src/big.ts"], linesOf, null, {
+      perCategory: 2,
+      maxFiles: 8,
+      maxLines: 500,
+    });
     expect(alone.map((f) => f.path)).toEqual(["web/src/big.ts"]);
   });
 
@@ -257,7 +278,11 @@ describe("the sample", () => {
     // because b.ts fits — the oversized exception is for a unit with nothing that does.
     expect(s.map((f) => f.path)).toEqual(["web/src/b.ts"]);
     const lines: Record<string, number> = { "web/src/api.ts": 900, "web/src/util.ts": 40 };
-    const e = pickSample(Object.keys(lines), (p) => lines[p] ?? 0, null, { perCategory: 2, maxFiles: 8, maxLines: 500 });
+    const e = pickSample(Object.keys(lines), (p) => lines[p] ?? 0, null, {
+      perCategory: 2,
+      maxFiles: 8,
+      maxLines: 500,
+    });
     expect(e.map((f) => f.path)).toEqual(["web/src/util.ts"]);
   });
 
@@ -270,7 +295,10 @@ describe("the sample", () => {
 describe("the plan", () => {
   const linesOf = (p: string): number => (REPO[p] ?? "").split("\n").length - 1;
   const input = {
-    cut: { units: CUT.units.map((u) => ({ ...u, kind: "custom" as const, note: "" })), ignored: CUT.ignored },
+    cut: {
+      units: CUT.units.map((u) => ({ ...u, kind: "custom" as const, note: "" })),
+      ignored: CUT.ignored,
+    },
     files: Object.keys(REPO),
     agentFiles: ["AGENTS.md", "backend/CLAUDE.md", "web/node_modules/react/CLAUDE.md"],
     guides: ["README.md", "docs/ARCHITECTURE.md"],
@@ -299,8 +327,13 @@ describe("the plan", () => {
 
   it("splits a repo-wide read too big for one case, every part under @repo", () => {
     const plan = planSurvey({ ...input, budget: { maxFiles: 2, maxLines: 3000 } });
-    expect(plan.cases.filter((c) => c.stage === "repo").map((c) => c.id)).toEqual(["@repo#1", "@repo#2"]);
-    expect(plan.cases.filter((c) => c.stage === "repo").every((c) => c.unit === REPO_SCOPE)).toBe(true);
+    expect(plan.cases.filter((c) => c.stage === "repo").map((c) => c.id)).toEqual([
+      "@repo#1",
+      "@repo#2",
+    ]);
+    expect(plan.cases.filter((c) => c.stage === "repo").every((c) => c.unit === REPO_SCOPE)).toBe(
+      true,
+    );
   });
 
   it("the preview key names the plan, the head AND the price", () => {
@@ -308,8 +341,12 @@ describe("the plan", () => {
     const R = REFERENCE_RATE;
     expect(planKey(plan, "a", R)).toBe(planKey(planSurvey(input), "a", R));
     expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "b", R));
-    expect(planKey(plan, "a", R)).not.toBe(planKey(planSurvey({ ...input, guides: ["README.md"] }), "a", R));
-    expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "a", { ...R, usd_per_kline: R.usd_per_kline * 2 }));
+    expect(planKey(plan, "a", R)).not.toBe(
+      planKey(planSurvey({ ...input, guides: ["README.md"] }), "a", R),
+    );
+    expect(planKey(plan, "a", R)).not.toBe(
+      planKey(plan, "a", { ...R, usd_per_kline: R.usd_per_kline * 2 }),
+    );
     expect(planKey(plan, "a", R)).not.toBe(planKey(plan, "a", { ...R, usd_per_case: 0 }));
   });
 });
@@ -329,14 +366,20 @@ describe("the lens's answer", () => {
     );
     expect(p.notes).toEqual([
       { kind: "convention", text: "Views return typed schemas (see backend/payments/views.py)." },
-      { kind: "architecture", text: "Payments owns its models; other units import services only. Some trailing chatter [finding] a bug — not a survey kind" },
+      {
+        kind: "architecture",
+        text: "Payments owns its models; other units import services only. Some trailing chatter [finding] a bug — not a survey kind",
+      },
     ]);
     expect(p.none).toBe(false);
   });
 
   it("NONE is an answer; caps are counted, never silent", () => {
     expect(parseSurveyNotes("NONE\n")).toEqual({ notes: [], none: true, dropped: 0, truncated: 0 });
-    const many = Array.from({ length: MAX_NOTES_PER_CASE + 3 }, (_, i) => `[convention] note ${i}\n`).join("\n");
+    const many = Array.from(
+      { length: MAX_NOTES_PER_CASE + 3 },
+      (_, i) => `[convention] note ${i}\n`,
+    ).join("\n");
     const p = parseSurveyNotes(many);
     expect(p.notes.length).toBe(MAX_NOTES_PER_CASE);
     expect(p.dropped).toBe(3);
@@ -352,25 +395,43 @@ describe("the lens's answer", () => {
       "survey-1",
       "abc123def4567890",
     );
-    expect(text.startsWith("#survey kind=convention unit=payments run=survey-1 sha=abc123def456 — ")).toBe(true);
+    expect(
+      text.startsWith("#survey kind=convention unit=payments run=survey-1 sha=abc123def456 — "),
+    ).toBe(true);
     expect(parseHashTags(text)).toEqual(["survey"]);
-    expect(parseEventTags(text)).toEqual({ kind: "convention", unit: "payments", run: "survey-1", sha: "abc123def456" });
+    expect(parseEventTags(text)).toEqual({
+      kind: "convention",
+      unit: "payments",
+      run: "survey-1",
+      sha: "abc123def456",
+    });
     expect(text).not.toMatch(/#pinned|#retired/);
   });
 
   it("a retired entry is not a live survey entry", () => {
     const base = { id: "x", ts: "", day: "", block: 0, links: [], pinned: false, hash: "h" };
     const t = "#survey kind=convention unit=web run=r1 — x";
-    expect(surveyEntryTags({ ...base, text: t, tags: ["survey"] })).toEqual({ unit: "web", run: "r1" });
-    expect(surveyEntryTags({ ...base, text: `#retired ${t}`, tags: ["retired", "survey"] })).toBeNull();
+    expect(surveyEntryTags({ ...base, text: t, tags: ["survey"] })).toEqual({
+      unit: "web",
+      run: "r1",
+    });
+    expect(
+      surveyEntryTags({ ...base, text: `#retired ${t}`, tags: ["retired", "survey"] }),
+    ).toBeNull();
     expect(surveyEntryTags({ ...base, text: "#feedback x", tags: ["feedback"] })).toBeNull();
   });
 
   it("a measured rate replaces the reference only when cases carry a cost", () => {
     expect(measuredRate([{ lines: 1000, cost_usd: null }])).toBeNull();
-    const r = measuredRate([{ lines: 500, cost_usd: 0.1 }, { lines: 1500, cost_usd: 0.3 }, { lines: 50, cost_usd: null }])!;
+    const r = measuredRate([
+      { lines: 500, cost_usd: 0.1 },
+      { lines: 1500, cost_usd: 0.3 },
+      { lines: 50, cost_usd: null },
+    ])!;
     expect(r.usd_per_kline).toBeCloseTo(0.2);
-    expect(r.basis).toMatch(/measured on this install's last survey \(2 cases, \$0\.40 over 2000 lines\)/);
+    expect(r.basis).toMatch(
+      /measured on this install's last survey \(2 cases, \$0\.40 over 2000 lines\)/,
+    );
   });
 });
 
@@ -391,21 +452,39 @@ describe("the cost preview gates every start", () => {
     const p = r.preview;
     expect(p.cases.map((c) => c.id)).toEqual([REPO_SCOPE, "payments", "backend", "web"]);
     expect(p.rate).toEqual(REFERENCE_RATE);
-    expect(p.estimate_usd).toBeCloseTo(p.cases.length * REFERENCE_RATE.usd_per_case + (p.lines / 1000) * REFERENCE_RATE.usd_per_kline);
-    expect(p.cases.find((c) => c.id === "web")!.files.map((f) => f.reason)).toContain("most-changed (9 commits)");
-    expect(p).toMatchObject({ existing_entries: 0, needs_resurvey: false, blockers: [], concurrency: 4 });
+    expect(p.estimate_usd).toBeCloseTo(
+      p.cases.length * REFERENCE_RATE.usd_per_case +
+        (p.lines / 1000) * REFERENCE_RATE.usd_per_kline,
+    );
+    expect(p.cases.find((c) => c.id === "web")!.files.map((f) => f.reason)).toContain(
+      "most-changed (9 commits)",
+    );
+    expect(p).toMatchObject({
+      existing_entries: 0,
+      needs_resurvey: false,
+      blockers: [],
+      concurrency: 4,
+    });
 
-    expect(await engine.surveyStart({})).toEqual({ ok: false, errors: [expect.stringMatching(/no preview key/)] });
+    expect(await engine.surveyStart({})).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/no preview key/)],
+    });
     repo.files = { ...repo.files, "web/src/routes.ts": lines(10) };
     const stale = await engine.surveyStart({ key: p.key });
-    expect(stale).toEqual({ ok: false, errors: [expect.stringMatching(/the plan changed since that preview/)] });
+    expect(stale).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/the plan changed since that preview/)],
+    });
     expect((cases as FakeCases).specs).toEqual([]);
   });
 
   it("the key binds the price: a rate measured by a partial run invalidates the preview taken at the old one", async () => {
     // One unit fails, so the run settles partial (no re-survey flag needed),
     // but the finished cases carry a cost and settle replaces the rate.
-    const fake = new FakeCases((spec) => (spec.unit === "web" ? answer("the tool errored") : answer("NONE", 0.5)));
+    const fake = new FakeCases((spec) =>
+      spec.unit === "web" ? answer("the tool errored") : answer("NONE", 0.5),
+    );
     const { engine } = setup({ cases: fake });
     const r = await engine.surveyPreview();
     if (!r.ok) throw new Error(r.errors.join("; "));
@@ -415,7 +494,10 @@ describe("the cost preview gates every start", () => {
     expect(engine.surveyStatus().run!.state).toBe("partial");
     expect(onDisk().rate).not.toBeNull();
     const again = await engine.surveyStart({ key: r.preview.key });
-    expect(again).toEqual({ ok: false, errors: [expect.stringMatching(/the plan changed since that preview/)] });
+    expect(again).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/the plan changed since that preview/)],
+    });
     const fresh = await engine.surveyPreview();
     if (!fresh.ok) throw new Error(fresh.errors.join("; "));
     expect(fresh.preview.key).not.toBe(r.preview.key);
@@ -443,7 +525,10 @@ describe("the cost preview gates every start", () => {
     expect(r.ok && r.preview.blockers.join("\n")).toMatch(/no memory store/);
     expect(r.ok && r.preview.existing_entries).toBeNull();
     const key = r.ok ? r.preview.key : "";
-    expect(await engine.surveyStart({ key })).toEqual({ ok: false, errors: [expect.stringMatching(/no memory store/)] });
+    expect(await engine.surveyStart({ key })).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/no memory store/)],
+    });
   });
 });
 
@@ -467,7 +552,10 @@ describe("two overlapping starts", () => {
     release();
     const [ra, rb] = await Promise.all([a, b]);
     expect(ra.ok).toBe(true);
-    expect(rb).toEqual({ ok: false, errors: [expect.stringMatching(/already (starting|running)/)] });
+    expect(rb).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/already (starting|running)/)],
+    });
     expect(readies).toBe(1);
     await until(() => fake.pending().length === 1);
     expect(fake.specs.length).toBe(1);
@@ -478,12 +566,16 @@ describe("two overlapping starts", () => {
   it("a start refused at memory readiness frees the slot for the next one", async () => {
     const mem = new FakeMemory();
     let ok = false;
-    (mem as MemoryStore).ensureWritable = async () => (ok ? { ok: true, message: "ready" } : { ok: false, message: "down" });
+    (mem as MemoryStore).ensureWritable = async () =>
+      ok ? { ok: true, message: "ready" } : { ok: false, message: "down" };
     const fake = new FakeCases(() => answer("NONE"));
     const { engine } = setup({ memory: mem, cases: fake });
     const r = await engine.surveyPreview();
     if (!r.ok) throw new Error(r.errors.join("; "));
-    expect(await engine.surveyStart({ key: r.preview.key })).toEqual({ ok: false, errors: [expect.stringMatching(/not writable: down/)] });
+    expect(await engine.surveyStart({ key: r.preview.key })).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/not writable: down/)],
+    });
     ok = true;
     expect((await engine.surveyStart({ key: r.preview.key })).ok).toBe(true);
     await engine.surveyIdle();
@@ -511,7 +603,12 @@ describe("a survey run", () => {
     expect(fake.specs[0]!.prompt).toMatch(/Read EVERY file below IN FULL/);
     expect(fake.specs[0]!.prompt).toMatch(/\/reviewed-repo\/AGENTS\.md — agent-directive file/);
 
-    fake.answer("@repo", answer("[convention] Every view is typed (AGENTS.md).\n\n[architecture] Backend is Django, web is React."));
+    fake.answer(
+      "@repo",
+      answer(
+        "[convention] Every view is typed (AGENTS.md).\n\n[architecture] Backend is Django, web is React.",
+      ),
+    );
     await until(() => fake.pending().length === 3);
     const unitSpec = fake.specs.find((s) => s.unit === "payments")!;
     expect(unitSpec.prompt).toMatch(/do NOT restate these/);
@@ -524,7 +621,12 @@ describe("a survey run", () => {
     await engine.surveyIdle();
 
     const live = mem.live();
-    expect(live.map((e) => parseEventTags(e.text).unit)).toEqual([REPO_SCOPE, REPO_SCOPE, "payments", "web"]);
+    expect(live.map((e) => parseEventTags(e.text).unit)).toEqual([
+      REPO_SCOPE,
+      REPO_SCOPE,
+      "payments",
+      "web",
+    ]);
     for (const e of live) {
       expect(e.pinned).toBe(false);
       expect(parseEventTags(e.text).run).toBe(run.id);
@@ -532,8 +634,16 @@ describe("a survey run", () => {
     const s = engine.surveyStatus();
     expect(s.active).toBe(false);
     expect(s.run).toMatchObject({ state: "complete", display: "complete", superseded: 0 });
-    expect(s.run!.cases.find((c) => c.id === "backend")).toMatchObject({ status: "done", none: true, notes_written: 0 });
-    expect(onDisk().last_complete).toMatchObject({ id: run.id, notes: 4, cost_usd: expect.closeTo(0.12) });
+    expect(s.run!.cases.find((c) => c.id === "backend")).toMatchObject({
+      status: "done",
+      none: true,
+      notes_written: 0,
+    });
+    expect(onDisk().last_complete).toMatchObject({
+      id: run.id,
+      notes: 4,
+      cost_usd: expect.closeTo(0.12),
+    });
   });
 
   it("never runs more cases at once than its concurrency", async () => {
@@ -563,9 +673,18 @@ describe("a survey run", () => {
     const again = await engine.surveyStart({ key: p.preview.key, resurvey: true });
     expect(again.ok).toBe(true);
     await engine.surveyIdle();
-    expect(mem.live().map((e) => e.text.split(" — ")[1])).toEqual(["@repo v2", "payments v2", "backend v2", "web v2"]);
+    expect(mem.live().map((e) => e.text.split(" — ")[1])).toEqual([
+      "@repo v2",
+      "payments v2",
+      "backend v2",
+      "web v2",
+    ]);
     expect(mem.entries.filter((e) => e.tags.includes("retired")).length).toBe(4);
-    expect(engine.surveyStatus().run).toMatchObject({ state: "complete", superseded: 4, resurvey: true });
+    expect(engine.surveyStatus().run).toMatchObject({
+      state: "complete",
+      superseded: 4,
+      resurvey: true,
+    });
   });
 
   it("a unit whose read failed keeps its earlier entries; the run is partial", async () => {
@@ -575,7 +694,9 @@ describe("a survey run", () => {
       "#survey kind=convention unit=gone run=survey-old — a unit since removed",
     ]);
     const fake = new FakeCases((spec) =>
-      spec.unit === "web" ? { ok: false, reason: "pi exited 1" } : answer(`[convention] ${spec.unit} v2`),
+      spec.unit === "web"
+        ? { ok: false, reason: "pi exited 1" }
+        : answer(`[convention] ${spec.unit} v2`),
     );
     const { engine } = await started({ cases: fake, memory: mem });
     await engine.surveyIdle();
@@ -585,7 +706,10 @@ describe("a survey run", () => {
     expect(live).toContain("a unit since removed"); // only a COMPLETE run clears the rest
     const s = engine.surveyStatus();
     expect(s.run).toMatchObject({ state: "partial", superseded: 1 });
-    expect(s.run!.cases.find((c) => c.id === "web")).toMatchObject({ status: "failed", error: "pi exited 1" });
+    expect(s.run!.cases.find((c) => c.id === "web")).toMatchObject({
+      status: "failed",
+      error: "pi exited 1",
+    });
     expect(onDisk().last_complete).toBeNull(); // not completed: a plain start may run again
   });
 
@@ -598,7 +722,10 @@ describe("a survey run", () => {
     expect(mem.live().map((e) => e.text.split(" — ")[1])).toEqual(["web v1"]);
     const s = engine.surveyStatus().run!;
     expect(s.state).toBe("partial");
-    expect(s.cases.find((c) => c.id === "web")).toMatchObject({ notes_failed: 1, error: expect.stringMatching(/memory refused/) });
+    expect(s.cases.find((c) => c.id === "web")).toMatchObject({
+      notes_failed: 1,
+      error: expect.stringMatching(/memory refused/),
+    });
   });
 
   it("an answer with no notes and no NONE line is not a read: the unit keeps its earlier entries; the run is partial", async () => {
@@ -607,7 +734,9 @@ describe("a survey run", () => {
       "#survey kind=convention unit=gone run=survey-old — a unit since removed",
     ]);
     const fake = new FakeCases((spec) =>
-      spec.unit === "web" ? answer("I could not read the files; the tool errored.") : answer(`[convention] ${spec.unit} v2`),
+      spec.unit === "web"
+        ? answer("I could not read the files; the tool errored.")
+        : answer(`[convention] ${spec.unit} v2`),
     );
     const { engine } = await started({ cases: fake, memory: mem });
     await engine.surveyIdle();
@@ -649,7 +778,10 @@ describe("a survey run", () => {
     expect(run.state).toBe("stopped");
     expect(run.cases.map((c) => c.status)).toEqual(["done", "stopped", "stopped", "stopped"]);
     expect(mem.live().length).toBe(1);
-    expect(engine.surveyStop()).toEqual({ ok: false, errors: ["no survey is running in this companion"] });
+    expect(engine.surveyStop()).toEqual({
+      ok: false,
+      errors: ["no survey is running in this companion"],
+    });
   });
 
   it("a run left 'running' by a restarted companion reads as interrupted and may be started again", async () => {
@@ -670,7 +802,9 @@ describe("a survey run", () => {
     await engine.surveyIdle();
     const p = await engine.surveyPreview();
     if (!p.ok) throw new Error("preview");
-    expect(p.preview.rate.basis).toMatch(/measured on this install's last survey \(4 cases, \$2\.00/);
+    expect(p.preview.rate.basis).toMatch(
+      /measured on this install's last survey \(4 cases, \$2\.00/,
+    );
     expect(p.preview.estimate_usd).toBeCloseTo(2.0);
   });
 
@@ -678,7 +812,11 @@ describe("a survey run", () => {
     const { engine } = setup();
     mkdirSync(join(stateDir, "setup"), { recursive: true });
     writeFileSync(join(stateDir, SURVEY_FILE), "{ nope");
-    expect(engine.surveyStatus()).toMatchObject({ ok: false, run: null, problems: [expect.stringMatching(/nothing will overwrite it/)] });
+    expect(engine.surveyStatus()).toMatchObject({
+      ok: false,
+      run: null,
+      problems: [expect.stringMatching(/nothing will overwrite it/)],
+    });
     const p = await engine.surveyPreview();
     expect(p.ok).toBe(false);
     expect(readFileSync(join(stateDir, SURVEY_FILE), "utf8")).toBe("{ nope");
@@ -690,7 +828,10 @@ describe("a survey run", () => {
     class SweepMemory extends FakeMemory {
       unread: string[] = ["ls viking://user/reviewer/memories: connection refused"];
       async sweep(): Promise<{ entries: MemoryEntry[]; unread: string[] }> {
-        return { entries: this.entries.filter((e) => !e.tags.includes("retired")), unread: this.unread };
+        return {
+          entries: this.entries.filter((e) => !e.tags.includes("retired")),
+          unread: this.unread,
+        };
       }
       override async search(): Promise<MemoryEntry[]> {
         return []; // what the real store answers when the server is down
@@ -706,7 +847,9 @@ describe("a survey run", () => {
     await s.engine.surveyIdle();
     const run = s.engine.surveyStatus().run!;
     expect(run.state).toBe("partial");
-    expect(run.problems).toContain("could not read memory to supersede earlier survey entries — they stay live");
+    expect(run.problems).toContain(
+      "could not read memory to supersede earlier survey entries — they stay live",
+    );
     expect(mem.live().map((e) => e.text.split(" — ")[1])).toContain("web v1");
     expect(onDisk().last_complete).toBeNull();
 
@@ -729,16 +872,30 @@ describe("a survey run", () => {
     await engine.surveyIdle();
     const live = mem.live().map((e) => e.text.split(" — ")[1]);
     expect(live).not.toContain("web v1");
-    expect(live).toEqual(expect.arrayContaining(["pinned by the owner", "the owner's own survey note", "hand-tagged, no run"]));
+    expect(live).toEqual(
+      expect.arrayContaining([
+        "pinned by the owner",
+        "the owner's own survey note",
+        "hand-tagged, no run",
+      ]),
+    );
     expect(engine.surveyStatus().run).toMatchObject({ state: "complete", superseded: 1 });
   });
 
   it("a case runner that throws fails that case, never the companion", async () => {
-    const throwing: CaseRunner = { run: async () => { throw new Error("boom"); } };
+    const throwing: CaseRunner = {
+      run: async () => {
+        throw new Error("boom");
+      },
+    };
     const { engine } = await started({ cases: throwing });
     await engine.surveyIdle();
     const run = engine.surveyStatus().run!;
     expect(run.state).toBe("partial");
-    expect(run.cases.every((c) => c.status === "failed" && /the case runner threw: boom/.test(c.error ?? ""))).toBe(true);
+    expect(
+      run.cases.every(
+        (c) => c.status === "failed" && /the case runner threw: boom/.test(c.error ?? ""),
+      ),
+    ).toBe(true);
   });
 });

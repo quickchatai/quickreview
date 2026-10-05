@@ -125,7 +125,8 @@ const ENTRY_RE =
 const MODEL_RE = /(^|\/)(models?|schemas?|entities|entity|types|serializers?|dtos?)(\/|\.[a-z]+$)/i;
 
 const depth = (p: string): number => p.split("/").length;
-const shallowFirst = (a: string, b: string): number => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0);
+const shallowFirst = (a: string, b: string): number =>
+  depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * One unit's sample, deterministic: entry points and models/schemas
@@ -144,12 +145,18 @@ export function pickSample(
   const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
   const categories: Array<{ reason: (p: string) => string; order: string[] }> = [
     { reason: () => "entry point", order: pool.filter((p) => ENTRY_RE.test(p)).sort(shallowFirst) },
-    { reason: () => "model / schema", order: pool.filter((p) => MODEL_RE.test(p)).sort(shallowFirst) },
+    {
+      reason: () => "model / schema",
+      order: pool.filter((p) => MODEL_RE.test(p)).sort(shallowFirst),
+    },
     {
       reason: (p) => `most-changed (${changes?.[p] ?? 0} commits)`,
-      order: changes === null
-        ? []
-        : pool.filter((p) => (changes[p] ?? 0) > 0).sort((a, b) => (changes[b] ?? 0) - (changes[a] ?? 0) || byPath(a, b)),
+      order:
+        changes === null
+          ? []
+          : pool
+              .filter((p) => (changes[p] ?? 0) > 0)
+              .sort((a, b) => (changes[b] ?? 0) - (changes[a] ?? 0) || byPath(a, b)),
     },
     {
       reason: (p) => `largest (${linesOf(p)} lines)`,
@@ -184,7 +191,8 @@ export function planSurvey(input: PlanInput): SurveyPlan {
   for (const f of a.ignored) readable.delete(f);
   const reasonOf = new Map<string, string>();
   for (const f of input.agentFiles) if (readable.has(f)) reasonOf.set(f, "agent-directive file");
-  for (const f of input.guides) if (readable.has(f) && !reasonOf.has(f)) reasonOf.set(f, "design doc");
+  for (const f of input.guides)
+    if (readable.has(f) && !reasonOf.has(f)) reasonOf.set(f, "design doc");
 
   const cases: SurveyCasePlan[] = [];
   // Stage 1: read in full, so split to fit — every part under `@repo`.
@@ -192,13 +200,34 @@ export function planSurvey(input: PlanInput): SurveyPlan {
     const files = part.files
       .map((p) => ({ path: p, lines: Math.max(0, input.linesOf(p)), reason: reasonOf.get(p)! }))
       // Directive files before design docs, as the survey reads them.
-      .sort((x, y) => (x.reason === y.reason ? (x.path < y.path ? -1 : 1) : x.reason === "agent-directive file" ? -1 : 1));
-    cases.push({ id: part.id, unit: REPO_SCOPE, stage: "repo", kind: "repo", roots: [""], files, lines: part.lines });
+      .sort((x, y) =>
+        x.reason === y.reason
+          ? x.path < y.path
+            ? -1
+            : 1
+          : x.reason === "agent-directive file"
+            ? -1
+            : 1,
+      );
+    cases.push({
+      id: part.id,
+      unit: REPO_SCOPE,
+      stage: "repo",
+      kind: "repo",
+      roots: [""],
+      files,
+      lines: part.lines,
+    });
   }
 
   const unsampled: string[] = [];
   for (const u of input.cut.units) {
-    const sample = pickSample(a.byUnit.get(u.name) ?? [], input.linesOf, input.changes, input.sample);
+    const sample = pickSample(
+      a.byUnit.get(u.name) ?? [],
+      input.linesOf,
+      input.changes,
+      input.sample,
+    );
     if (sample.length === 0) {
       unsampled.push(u.name);
       continue;
@@ -213,7 +242,12 @@ export function planSurvey(input: PlanInput): SurveyPlan {
       lines: sample.reduce((n, f) => n + f.lines, 0),
     });
   }
-  return { cases, unsampled, unassigned: a.unassigned, lines: cases.reduce((n, c) => n + c.lines, 0) };
+  return {
+    cases,
+    unsampled,
+    unassigned: a.unassigned,
+    lines: cases.reduce((n, c) => n + c.lines, 0),
+  };
 }
 
 /** A short key naming exactly this plan at this head at this rate: the
@@ -223,7 +257,10 @@ export function planSurvey(input: PlanInput): SurveyPlan {
 export function planKey(plan: SurveyPlan, head: string | null, rate: SurveyRate): string {
   const shape = plan.cases.map((c) => [c.id, c.files.map((f) => [f.path, f.lines])]);
   const price = [rate.usd_per_case, rate.usd_per_kline];
-  return createHash("sha256").update(JSON.stringify([head, shape, plan.unassigned, price])).digest("hex").slice(0, 12);
+  return createHash("sha256")
+    .update(JSON.stringify([head, shape, plan.unassigned, price]))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 // ---- the price ------------------------------------------------------------------
@@ -241,11 +278,14 @@ export interface SurveyRate {
 export const REFERENCE_RATE: SurveyRate = {
   usd_per_case: 0.02,
   usd_per_kline: 0.06,
-  basis: "reference rate (no survey measured on this install yet — the first run's cost replaces it)",
+  basis:
+    "reference rate (no survey measured on this install yet — the first run's cost replaces it)",
 };
 
 /** A rate measured from finished cases, or null when they carry no cost. */
-export function measuredRate(cases: ReadonlyArray<{ lines: number; cost_usd: number | null }>): SurveyRate | null {
+export function measuredRate(
+  cases: ReadonlyArray<{ lines: number; cost_usd: number | null }>,
+): SurveyRate | null {
   const priced = cases.filter((c) => c.cost_usd !== null && c.cost_usd > 0);
   const cost = priced.reduce((n, c) => n + c.cost_usd!, 0);
   const lines = priced.reduce((n, c) => n + c.lines, 0);
@@ -372,7 +412,12 @@ export function parseSurveyNotes(output: string): ParsedNotes {
  * header only), and its own `#word`s are de-hashed. Never `#pinned`: survey memory is ordinary memory the EOD
  * curator may merge.
  */
-export function surveyMemoryText(note: SurveyNote, unit: string, run: string, head: string | null): string {
+export function surveyMemoryText(
+  note: SurveyNote,
+  unit: string,
+  run: string,
+  head: string | null,
+): string {
   const tags: Record<string, string> = { kind: note.kind, unit, run };
   if (head) tags.sha = head.slice(0, 12);
   // `#word` in the body is de-hashed: the store's tag list reads the whole
@@ -383,9 +428,15 @@ export function surveyMemoryText(note: SurveyNote, unit: string, run: string, he
 }
 
 /** A live (not retired) survey entry's header, or null for any other entry. */
-export function surveyEntryTags(e: MemoryEntry): { unit: string | null; run: string | null } | null {
+export function surveyEntryTags(
+  e: MemoryEntry,
+): { unit: string | null; run: string | null } | null {
   const hash = parseHashTags(e.text);
-  if (!hash.includes(SURVEY_TAG) || hash.includes("retired") || e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === "retired")) {
+  if (
+    !hash.includes(SURVEY_TAG) ||
+    hash.includes("retired") ||
+    e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === "retired")
+  ) {
     return null;
   }
   const kv = parseEventTags(e.text);

@@ -75,7 +75,11 @@ describe("migration collisions: a cross-app dependency on a renamed migration", 
       renumber: false,
       target_path: "backend/billing/migrations/0008_link.py",
     });
-    const body = renderMigrationCollisionComment({ collisions: out, base_ref: "master", base_sha: "" });
+    const body = renderMigrationCollisionComment({
+      collisions: out,
+      base_ref: "master",
+      base_sha: "",
+    });
     // The replace instruction names the dependency's OWN app, not billing.
     expect(body).toContain('replace `("chat", "0042_a")` with `("chat", "0043_a")`');
   });
@@ -110,7 +114,10 @@ describe("migration collisions: follow-ups match the dependency's app, and every
           patch: '+    dependencies = [("chat", "0042_existing"), ("billing", "0042_a")]',
         },
       ],
-      baseFiles: ["backend/chat/migrations/0042_existing.py", "backend/billing/migrations/0042_a.py"],
+      baseFiles: [
+        "backend/chat/migrations/0042_existing.py",
+        "backend/billing/migrations/0042_a.py",
+      ],
     });
     expect(out.map((c) => c.pr_path)).toEqual(["backend/chat/migrations/0042_a.py"]);
     expect(body(out)).not.toContain('("chat", "0042_a")` with');

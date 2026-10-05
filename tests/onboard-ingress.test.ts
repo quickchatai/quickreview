@@ -126,13 +126,26 @@ describe("deterministic file surgery", () => {
     const { parse } = await import("smol-toml");
     const text = `  [server]\n  hostname = "old"\n  port = 8787\n[github]\nhostname = "other"\n`;
     const patched = setTomlKey(text, "server", "hostname", "new");
-    expect(patched).toBe(`  [server]\n  hostname = "new"\n  port = 8787\n[github]\nhostname = "other"\n`);
-    const loaded = parse(patched!) as { server: { hostname: string }; github: { hostname: string } };
+    expect(patched).toBe(
+      `  [server]\n  hostname = "new"\n  port = 8787\n[github]\nhostname = "other"\n`,
+    );
+    const loaded = parse(patched!) as {
+      server: { hostname: string };
+      github: { hostname: string };
+    };
     expect(loaded.server.hostname).toBe("new");
     expect(loaded.github.hostname).toBe("other");
     // The table boundary is found through indentation too.
-    const nested = setTomlKey(`[server]\nport = 1\n  [github]\n  hostname = "g"\n`, "server", "hostname", "h");
-    expect(parse(nested!)).toEqual({ server: { hostname: "h", port: 1 }, github: { hostname: "g" } });
+    const nested = setTomlKey(
+      `[server]\nport = 1\n  [github]\n  hostname = "g"\n`,
+      "server",
+      "hostname",
+      "h",
+    );
+    expect(parse(nested!)).toEqual({
+      server: { hostname: "h", port: 1 },
+      github: { hostname: "g" },
+    });
   });
 
   it("patchTomlSection replaces an indented section and stops at an indented next table", async () => {
@@ -406,10 +419,15 @@ describe("resume and verify", () => {
 
   it("an ngrok domain edited away from the recorded hostname demotes the step", async () => {
     writeFileSync(join(secretsDir, "ngrok_authtoken"), "2abc_token\n");
-    await fake().engine.runStep(INGRESS_STEP_ID, { choice: "ngrok", hostname: "reviews.example.com" });
+    await fake().engine.runStep(INGRESS_STEP_ID, {
+      choice: "ngrok",
+      hostname: "reviews.example.com",
+    });
     writeFileSync(join(root, ".env"), "COMPOSE_PROFILES=ngrok\n");
     const report = await fake().engine.reconcile();
-    expect(report.demoted[0]?.failures.join(" ")).toMatch(/QCR_NGROK_DOMAIN="" but .*reviews\.example\.com/);
+    expect(report.demoted[0]?.failures.join(" ")).toMatch(
+      /QCR_NGROK_DOMAIN="" but .*reviews\.example\.com/,
+    );
   });
 
   it("a compose profile edited away demotes it too", async () => {

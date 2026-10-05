@@ -151,7 +151,12 @@ export function checkProfile(home: ProfileHome, name: string): ProfileCheck {
   try {
     assertPathSegment("profile", name);
     if (!locateProfile({ root: home.root, profile: name, env: home.env })) {
-      return { ok: false, errors: [`profile "${name}" not found — not in ${join(configHome(home.env), PROFILES_DIR)}, and not a generic example`] };
+      return {
+        ok: false,
+        errors: [
+          `profile "${name}" not found — not in ${join(configHome(home.env), PROFILES_DIR)}, and not a generic example`,
+        ],
+      };
     }
     const chain = resolveProfileChain(home.root, name, lookup);
     const addenda = loadProfileAddenda(home.root, name, lookup);
@@ -168,8 +173,12 @@ export function checkProfile(home: ProfileHome, name: string): ProfileCheck {
         chain,
         ecosystem,
         addenda: addenda.map((a) => a.id),
-        lenses: Object.fromEntries(Object.entries(lenses).map(([lens, t]) => [lens, plainTuning(t)])),
-        heuristics: [...new Set([...Object.keys(heuristics.paths), ...Object.keys(heuristics.addedLines)])].sort(),
+        lenses: Object.fromEntries(
+          Object.entries(lenses).map(([lens, t]) => [lens, plainTuning(t)]),
+        ),
+        heuristics: [
+          ...new Set([...Object.keys(heuristics.paths), ...Object.keys(heuristics.addedLines)]),
+        ].sort(),
         scan,
         posting,
       },
@@ -195,7 +204,9 @@ export function describeSummary(s: ProfileSummary): string {
       `    - ${lens}: ${Object.entries(t)
         .filter(([k]) => k !== "emphasis")
         .map(([k, v]) => `${k} = ${JSON.stringify(v)}`)
-        .join(", ")}${t.emphasis !== undefined ? `${Object.keys(t).length > 1 ? " " : ""}(+ emphasis)` : ""}`,
+        .join(
+          ", ",
+        )}${t.emphasis !== undefined ? `${Object.keys(t).length > 1 ? " " : ""}(+ emphasis)` : ""}`,
   );
   return [
     `  chain: ${s.chain.map((l) => l.name).join(" → ")}`,
@@ -214,7 +225,7 @@ export type RawLensTable = Record<string, string | boolean>;
 /** Per lens, per key: the new value, or null to remove the key. */
 export type LensChanges = Record<string, Record<string, string | boolean | null>>;
 
-const HEADER_RE = /^\s*\[\s*([^\[\]]+?)\s*\]\s*(?:#.*)?$/;
+const HEADER_RE = /^\s*\[\s*([^[\]]+?)\s*\]\s*(?:#.*)?$/;
 const LENS_HEADER_RE = /^lenses\.([A-Za-z0-9_-]+)$/;
 
 function renderValue(v: string | boolean): string {
@@ -224,20 +235,31 @@ function renderValue(v: string | boolean): string {
 }
 
 function renderTable(lens: string, table: RawLensTable): string[] {
-  const keys = [...LENS_TUNING_KEYS.filter((k) => k in table), ...Object.keys(table).filter((k) => !(LENS_TUNING_KEYS as readonly string[]).includes(k)).sort()];
-  return [`[lenses.${lens}]`, ...keys.map((k) => `${k} = ${renderValue(table[k] as string | boolean)}`)];
+  const keys = [
+    ...LENS_TUNING_KEYS.filter((k) => k in table),
+    ...Object.keys(table)
+      .filter((k) => !(LENS_TUNING_KEYS as readonly string[]).includes(k))
+      .sort(),
+  ];
+  return [
+    `[lenses.${lens}]`,
+    ...keys.map((k) => `${k} = ${renderValue(table[k] as string | boolean)}`),
+  ];
 }
 
 function rawLenses(doc: Record<string, unknown>): Record<string, RawLensTable> {
   const raw = doc["lenses"];
   if (raw === undefined) return {};
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error("[lenses] is not a table");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    throw new Error("[lenses] is not a table");
   const out: Record<string, RawLensTable> = {};
   for (const [lens, body] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof body !== "object" || body === null || Array.isArray(body)) throw new Error(`[lenses.${lens}] is not a table`);
+    if (typeof body !== "object" || body === null || Array.isArray(body))
+      throw new Error(`[lenses.${lens}] is not a table`);
     const t: RawLensTable = {};
     for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
-      if (typeof v !== "string" && typeof v !== "boolean") throw new Error(`[lenses.${lens}] ${k} is neither a string nor a boolean`);
+      if (typeof v !== "string" && typeof v !== "boolean")
+        throw new Error(`[lenses.${lens}] ${k} is neither a string nor a boolean`);
       t[k] = v;
     }
     out[lens] = t;
@@ -250,7 +272,12 @@ const sameTables = (a: Record<string, RawLensTable>, b: Record<string, RawLensTa
     JSON.stringify(
       Object.keys(x)
         .sort()
-        .map((l) => [l, Object.keys(x[l]!).sort().map((k) => [k, x[l]![k]])]),
+        .map((l) => [
+          l,
+          Object.keys(x[l]!)
+            .sort()
+            .map((k) => [k, x[l]![k]]),
+        ]),
     );
   return norm(a) === norm(b);
 };
@@ -279,9 +306,12 @@ export function editLensTables(
 ): { ok: true; text: string; tables: Record<string, RawLensTable> } | { ok: false; error: string } {
   let current: Record<string, RawLensTable>;
   try {
-    current = rawLenses(parseToml(text) as Record<string, unknown>);
+    current = rawLenses(parseToml(text));
   } catch (err) {
-    return { ok: false, error: `profile.toml cannot be read as a profile: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      ok: false,
+      error: `profile.toml cannot be read as a profile: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   const intended: Record<string, RawLensTable> = structuredClone(current);
   const touched = new Set<string>();
@@ -333,9 +363,12 @@ export function editLensTables(
   const next = out.join("\n");
   let reread: Record<string, RawLensTable>;
   try {
-    reread = rawLenses(parseToml(next) as Record<string, unknown>);
+    reread = rawLenses(parseToml(next));
   } catch (err) {
-    return { ok: false, error: `the edited profile.toml would not parse (${String(err)}) — edit it by hand` };
+    return {
+      ok: false,
+      error: `the edited profile.toml would not parse (${String(err)}) — edit it by hand`,
+    };
   }
   if (!sameTables(reread, intended)) {
     return {
@@ -369,7 +402,8 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
     // a link. A copied symlink still points into the LIVE tree (cpSync even
     // rewrites a relative target to an absolute one), so every link on the
     // path of a candidate write is cut first — see `unlinkWritePath`.
-    if (existsSync(src)) cpSync(realpathSync(src), join(scratch, PROFILES_DIR), { recursive: true });
+    if (existsSync(src))
+      cpSync(realpathSync(src), join(scratch, PROFILES_DIR), { recursive: true });
     const root = join(scratch, PROFILES_DIR);
     const dir = join(root, assertPathSegment("profile", name));
     for (const [rel, text] of Object.entries(files)) {
@@ -377,7 +411,10 @@ export function checkStaged(home: ProfileHome, name: string, files: ProfileFiles
       mkdirSync(dirname(join(dir, rel)), { recursive: true });
       writeFileSync(join(dir, rel), text);
     }
-    const r = checkProfile({ root: home.root, env: { ...home.env, QCR_CONFIG_HOME: scratch } }, name);
+    const r = checkProfile(
+      { root: home.root, env: { ...home.env, QCR_CONFIG_HOME: scratch } },
+      name,
+    );
     if (r.ok) {
       for (const layer of r.summary.chain) layer.dir = layer.dir.split(scratch).join(realHome);
       return r;
@@ -419,7 +456,10 @@ export function unlinkWritePath(root: string, rel: string): void {
 }
 
 /** Where a write to profile `name` may land, or why it may not. */
-export function writeTarget(home: ProfileHome, name: string): { ok: true; dir: string; exists: boolean } | { ok: false; error: string } {
+export function writeTarget(
+  home: ProfileHome,
+  name: string,
+): { ok: true; dir: string; exists: boolean } | { ok: false; error: string } {
   try {
     assertPathSegment("profile", name);
   } catch (err) {

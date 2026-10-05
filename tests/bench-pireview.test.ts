@@ -104,7 +104,15 @@ const META = {
   durationMs: 42300,
   model: "openai-codex/gpt-6-sol",
   thinking: "medium",
-  usage: { input: 18031, output: 512, cacheRead: 2048, cacheWrite: 0, reasoning: 100, totalTokens: 20591, costTotal: 0.05 },
+  usage: {
+    input: 18031,
+    output: 512,
+    cacheRead: 2048,
+    cacheWrite: 0,
+    reasoning: 100,
+    totalTokens: 20591,
+    costTotal: 0.05,
+  },
 };
 const STDOUT =
   "## Verdict\nrequest_changes\n\n## Findings\n### F1: Off by one in the loop\n- Severity: high\n\n" +
@@ -134,7 +142,15 @@ describe("invocation: pi-review's own CLI, its defaults, one target sentence", (
       pireviewTarget(BASE, HEAD),
     ]);
     // Single review: no panel, loop, mode, tools or rules override of ours.
-    for (const f of ["--reviewers", "--panel", "--mode", "--tools", "--no-rules", "--skill", "loop"])
+    for (const f of [
+      "--reviewers",
+      "--panel",
+      "--mode",
+      "--tools",
+      "--no-rules",
+      "--skill",
+      "loop",
+    ])
       expect(argv).not.toContain(f);
     // The target names WHAT to review, never how.
     expect(pireviewTarget(BASE, HEAD)).toBe(
@@ -151,7 +167,12 @@ describe("invocation: pi-review's own CLI, its defaults, one target sentence", (
   });
 
   it("env: the case's agent dir, meta on stdout, phone-home off, no Jev key, no inherited secrets", () => {
-    const env = pireviewEnv({ path: "/usr/bin", home: "/w/h", tmpDir: "/w/t", agentDir: "/tmp/pi-agent-pireview" });
+    const env = pireviewEnv({
+      path: "/usr/bin",
+      home: "/w/h",
+      tmpDir: "/w/t",
+      agentDir: "/tmp/pi-agent-pireview",
+    });
     expect(env).toMatchObject({
       HOME: "/w/h",
       PI_CODING_AGENT_DIR: "/tmp/pi-agent-pireview",
@@ -190,36 +211,74 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
           "Off by one in the loop\n\nEvidence: range(n - 1) skips the last row.\n\nImpact: the last row is never saved.\n\nRecommendation: Use range(n).",
         severity: "high",
       },
-      { path: "", start_line: null, end_line: null, content: "No tests for the change", severity: "low" },
+      {
+        path: "",
+        start_line: null,
+        end_line: null,
+        content: "No tests for the change",
+        severity: "low",
+      },
     ]);
     expect(left).toEqual([
-      { path: "b.py", line: 9, side: "LEFT", body: "Removed guard\n\nEvidence: the deleted check guarded None." },
+      {
+        path: "b.py",
+        line: 9,
+        side: "LEFT",
+        body: "Removed guard\n\nEvidence: the deleted check guarded None.",
+      },
     ]);
     expect(findingNote({ summary: "", actionable: true })).toBe("");
   });
 
   it("normalizes paths: tree prefix, ./, a/ b/, and a line written into Path", () => {
     const t = "/work/wt/x";
-    expect(normalizeFindingPath("/work/wt/x/src/a.ts", t)).toEqual({ path: "src/a.ts", lines: null });
+    expect(normalizeFindingPath("/work/wt/x/src/a.ts", t)).toEqual({
+      path: "src/a.ts",
+      lines: null,
+    });
     expect(normalizeFindingPath("./src/a.ts", t)).toEqual({ path: "src/a.ts", lines: null });
     expect(normalizeFindingPath("b/src/a.ts", t)).toEqual({ path: "src/a.ts", lines: null });
-    expect(normalizeFindingPath("`src/a.ts:12-14`", t)).toEqual({ path: "src/a.ts", lines: { start: 12, end: 14 } });
+    expect(normalizeFindingPath("`src/a.ts:12-14`", t)).toEqual({
+      path: "src/a.ts",
+      lines: { start: 12, end: 14 },
+    });
     const { comments } = toComments([{ summary: "S", actionable: true, path: "src/a.ts:7" }], t);
     expect(comments[0]).toMatchObject({ path: "src/a.ts", start_line: 7, end_line: 7 });
     // A parsed location wins over a line in Path; a single line ends where it starts.
-    const two = toComments([{ summary: "S", actionable: true, path: "a.ts:7", location: { startLine: 3 } }], t);
+    const two = toComments(
+      [{ summary: "S", actionable: true, path: "a.ts:7", location: { startLine: 3 } }],
+      t,
+    );
     expect(two.comments[0]).toMatchObject({ start_line: 3, end_line: 3 });
   });
 
   it("status: timeout, no meta, blocked are not ok; needs_human with a parse error still is", () => {
     const m = META as never;
     expect(pireviewStatus({ exitCode: 1, timedOut: false, meta: m })).toBe("ok");
-    expect(pireviewStatus({ exitCode: 0, timedOut: false, meta: { ...META, status: "clean", findings: [] } as never })).toBe("ok");
+    expect(
+      pireviewStatus({
+        exitCode: 0,
+        timedOut: false,
+        meta: { ...META, status: "clean", findings: [] } as never,
+      }),
+    ).toBe("ok");
     expect(pireviewStatus({ exitCode: 124, timedOut: false, meta: null })).toBe("timeout");
     expect(pireviewStatus({ exitCode: 0, timedOut: true, meta: m })).toBe("timeout");
     expect(pireviewStatus({ exitCode: 4, timedOut: false, meta: null })).toBe("no-output");
-    expect(pireviewStatus({ exitCode: 4, timedOut: false, meta: { ...META, status: "blocked" } as never })).toBe("failed");
-    expect(pireviewStatus({ exitCode: 3, timedOut: false, meta: { ...META, status: "needs_human" } as never })).toBe("ok");
+    expect(
+      pireviewStatus({
+        exitCode: 4,
+        timedOut: false,
+        meta: { ...META, status: "blocked" } as never,
+      }),
+    ).toBe("failed");
+    expect(
+      pireviewStatus({
+        exitCode: 3,
+        timedOut: false,
+        meta: { ...META, status: "needs_human" } as never,
+      }),
+    ).toBe("ok");
   });
 
   it("the result file: harness keys, OCR-shaped comments the scorer and defect judge read", () => {
@@ -248,7 +307,10 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
       });
       expect(scoredOcrComments(payload)).toBe(2);
       mkdirSync(join(tmp, "results", "all"), { recursive: true });
-      writeFileSync(join(tmp, "results", "all", `${CASE.instance_id}.json`), JSON.stringify(payload));
+      writeFileSync(
+        join(tmp, "results", "all", `${CASE.instance_id}.json`),
+        JSON.stringify(payload),
+      );
       mkdirSync(join(tmp, "cases", CASE.instance_id), { recursive: true });
       writeFileSync(
         join(tmp, "cases", CASE.instance_id, "comments.json"),
@@ -270,14 +332,20 @@ describe("output → findings: pi-review's PI_REVIEW_META_JSON line", () => {
   it("real output (pi-review 0.18.0 on immich-app__immich@966c3f2, smoke 2026-09-28): meta ↔ Markdown agree", () => {
     const out = readFileSync(join(ROOT, "tests", "fixtures", "pireview-stdout-immich.txt"), "utf8");
     const meta = parsePireviewMeta(out)!;
-    expect(meta).toMatchObject({ metaVersion: 1, verdict: "request_changes", status: "has_findings" });
+    expect(meta).toMatchObject({
+      metaVersion: 1,
+      verdict: "request_changes",
+      status: "has_findings",
+    });
     const { comments, left } = toComments(meta.findings, "/work/wt/immich-app__immich@966c3f2");
     expect(left).toEqual([]);
     expect(comments.map((c) => [c.path, c.start_line, c.end_line, c.severity])).toEqual([
       ["server/src/repositories/album.repository.ts", 162, 170, "high"],
       ["server/src/repositories/album.repository.ts", 140, 160, "medium"],
     ]);
-    expect(comments[0]!.content.startsWith("Preserve the full last-modified timestamp\n\nEvidence: ")).toBe(true);
+    expect(
+      comments[0]!.content.startsWith("Preserve the full last-modified timestamp\n\nEvidence: "),
+    ).toBe(true);
     expect(comments[0]!.content).toContain("\n\nImpact: ");
     expect(comments[0]!.content).toContain("\n\nRecommendation: ");
     // The Markdown the model wrote says the same lines the meta carries.
@@ -309,10 +377,26 @@ describe("one case end to end, pi-review stubbed", () => {
       // run --auto` writing into .git, and on a loaded machine it is still
       // there when the copy below walks the directory (a vanished lock file).
       const git = (...a: string[]) =>
-        execFileSync("git", ["-C", src, "-c", "user.email=a@b", "-c", "user.name=a", "-c", "maintenance.auto=false", "-c", "gc.auto=0", ...a], {
-          encoding: "utf8",
-          env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
-        }).trim();
+        execFileSync(
+          "git",
+          [
+            "-C",
+            src,
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=a",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            ...a,
+          ],
+          {
+            encoding: "utf8",
+            env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+          },
+        ).trim();
       git("init", "-q");
       writeFileSync(join(src, "a.py"), "x = 1\n");
       git("add", "a.py");
@@ -342,7 +426,13 @@ describe("one case end to end, pi-review stubbed", () => {
       } as PrefetchMeta;
       const work = join(tmp, "work");
       const outDir = join(tmp, "out");
-      const seen: { bin?: string; args?: string[]; env?: NodeJS.ProcessEnv; cwd?: string; diff?: string } = {};
+      const seen: {
+        bin?: string;
+        args?: string[];
+        env?: NodeJS.ProcessEnv;
+        cwd?: string;
+        diff?: string;
+      } = {};
       const runImpl: typeof run = async (bin, args, opts = {}) => {
         if (bin !== "timeout") return run(bin, args, opts);
         seen.bin = bin;
@@ -352,7 +442,10 @@ describe("one case end to end, pi-review stubbed", () => {
         const at = args.indexOf("--");
         seen.diff = readFileSync(args[at + 1]!.slice(1), "utf8");
         const log = args[args.indexOf("--progress-log") + 1]!;
-        writeFileSync(log, JSON.stringify({ type: "tool_execution_start", toolName: "read" }) + "\n");
+        writeFileSync(
+          log,
+          JSON.stringify({ type: "tool_execution_start", toolName: "read" }) + "\n",
+        );
         return { code: 1, stdout: STDOUT, stderr: "pi-review: review finished\n", timedOut: false };
       };
       const s = await reviewCasePireview(c, meta, {
@@ -382,7 +475,9 @@ describe("one case end to end, pi-review stubbed", () => {
       expect(seen.diff).toContain("+y = 2");
       expect(seen.env!["HOME"]).toContain(`${c.instance_id}.pireview`);
       expect(seen.args!.at(-1)).toBe(pireviewTarget(base, head));
-      const result = JSON.parse(readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"));
+      const result = JSON.parse(
+        readFileSync(join(outDir, "results", "all", `${c.instance_id}.json`), "utf8"),
+      );
       expect(result.review.comments).toHaveLength(2);
       expect(result.review_output).toHaveLength(3);
       const caseDir = join(outDir, "cases", c.instance_id);
@@ -393,7 +488,9 @@ describe("one case end to end, pi-review stubbed", () => {
       expect(execFileSync("ls", ["-A", join(work, "wt")], { encoding: "utf8" }).trim()).toBe("");
       expect(existsSync(join(work, `${c.instance_id}.pireview`))).toBe(false);
       const md = renderPireviewReport(SET, outDir, [c]);
-      expect(md).toContain("| acme__widget@bbbbbbb | Python | 2 | ok | request_changes | 2 (+1) | 3 (2) |");
+      expect(md).toContain(
+        "| acme__widget@bbbbbbb | Python | 2 | ok | request_changes | 2 (+1) | 3 (2) |",
+      );
       expect(md).toContain("read 1");
       // A rerun into the same run dir that produces nothing must not leave the
       // judge the earlier attempt's body or base-side rows.
@@ -410,7 +507,9 @@ describe("one case end to end, pi-review stubbed", () => {
         fingerprint: FP,
       };
       const silent: typeof run = async (bin, args, o = {}) =>
-        bin === "timeout" ? { code: 124, stdout: "", stderr: "", timedOut: true } : run(bin, args, o);
+        bin === "timeout"
+          ? { code: 124, stdout: "", stderr: "", timedOut: true }
+          : run(bin, args, o);
       const again = await reviewCasePireview(c, meta, { ...opts, runImpl: silent });
       expect(again.status).not.toBe("ok");
       expect(existsSync(join(caseDir, "review.md"))).toBe(false);
@@ -436,7 +535,12 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       const agent = join(tmp, "agent");
       mkdirSync(src);
       const real = JSON.stringify({
-        "openai-codex": { type: "oauth", access: "h.p.s", refresh: "REAL-REFRESH-TOKEN", expires: Date.now() + 5 * 86_400_000 },
+        "openai-codex": {
+          type: "oauth",
+          access: "h.p.s",
+          refresh: "REAL-REFRESH-TOKEN",
+          expires: Date.now() + 5 * 86_400_000,
+        },
       });
       writeFileSync(join(src, "auth.json"), real);
       const out = join(tmp, "out");
@@ -474,7 +578,8 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       expect(settings).not.toContain("bash-guard");
       expect(JSON.parse(readFileSync(join(out, "run.json"), "utf8")).reviewer).toBe("pireview");
       expect(
-        JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8")).review.comments,
+        JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8"))
+          .review.comments,
       ).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -488,7 +593,14 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       mkdirSync(src);
       writeFileSync(
         join(src, "auth.json"),
-        JSON.stringify({ "openai-codex": { type: "oauth", access: "a", refresh: "R", expires: Date.now() + 60_000 } }),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: "a",
+            refresh: "R",
+            expires: Date.now() + 60_000,
+          },
+        }),
       );
       const lines: string[] = [];
       let ran = false;
@@ -540,7 +652,12 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
         mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
         writeFileSync(
           join(out, "cases", c.instance_id, "case-summary.json"),
-          JSON.stringify({ instance_id: c.instance_id, arm: "pireview", status: "ok", fingerprint: fp }),
+          JSON.stringify({
+            instance_id: c.instance_id,
+            arm: "pireview",
+            status: "ok",
+            fingerprint: fp,
+          }),
         );
         mkdirSync(join(out, "results", "all"), { recursive: true });
         writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
@@ -551,7 +668,14 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
       mkdirSync(src);
       writeFileSync(
         join(src, "auth.json"),
-        JSON.stringify({ "openai-codex": { type: "oauth", access: "a", refresh: "R", expires: Date.now() + 60_000 } }),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: "a",
+            refresh: "R",
+            expires: Date.now() + 60_000,
+          },
+        }),
       );
       const code = await runPireviewReview({
         set: SET,
@@ -600,8 +724,13 @@ describe("the sandbox wiring", () => {
   it("pins pi-review 0.18.0 by the tarball's sha512 on the shared runtime (its pi), no GitHub route", () => {
     expect(docker.indexOf("FROM runtime AS pireview")).toBeGreaterThan(0);
     // Above the ocr stage: without BuildKit, every stage above the target builds.
-    expect(docker.indexOf("FROM runtime AS pireview")).toBeLessThan(docker.indexOf("FROM runtime AS ocr"));
-    const stage = docker.slice(docker.indexOf("FROM runtime AS pireview"), docker.indexOf("FROM runtime AS ocr"));
+    expect(docker.indexOf("FROM runtime AS pireview")).toBeLessThan(
+      docker.indexOf("FROM runtime AS ocr"),
+    );
+    const stage = docker.slice(
+      docker.indexOf("FROM runtime AS pireview"),
+      docker.indexOf("FROM runtime AS ocr"),
+    );
     expect(stage).toContain("ARG PIREVIEW_VERSION=0.18.0");
     expect(stage).toMatch(/ARG PIREVIEW_SHA512=[0-9a-f]{128}\n/);
     expect(stage).toContain("sha512sum -c -");
@@ -613,7 +742,9 @@ describe("the sandbox wiring", () => {
   });
 
   it("bench.sh, in-container.sh and arm.sh know the arm; the trees sit on /work", () => {
-    expect(sh).toContain('pireview) IMAGE="${QCR_BENCH_PIREVIEW_IMAGE:-qcr-bench-pireview:latest}"; TARGET=pireview');
+    expect(sh).toContain(
+      'pireview) IMAGE="${QCR_BENCH_PIREVIEW_IMAGE:-qcr-bench-pireview:latest}"; TARGET=pireview',
+    );
     expect(sh).toContain("REVIEW_ENTRY=pireview-review");
     expect(sh).toContain("oe+=(--mount type=volume,dst=/work)");
     expect(inContainer).toContain("pireview-review)");

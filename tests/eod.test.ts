@@ -101,17 +101,21 @@ describe("DST: fall back (last Sunday of October 2026 = 10-25)", () => {
     expect(gaps).toEqual([24, 25, 24]);
   });
 
-  it("no local calendar day is skipped or doubled over a full year", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const seen: string[] = [];
-    let cursor = new Date("2026-01-01T00:00:00Z");
-    for (let i = 0; i < 365; i++) {
-      const fire = nextEodFire(cursor, "18:00", TZ);
-      seen.push(zoneDateString(fire, TZ));
-      expect(warsawWall(fire).endsWith("18:00")).toBe(true);
-      cursor = new Date(fire.getTime() + 1000);
-    }
-    expect(new Set(seen).size).toBe(seen.length);
-  });
+  it(
+    "no local calendar day is skipped or doubled over a full year",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const seen: string[] = [];
+      let cursor = new Date("2026-01-01T00:00:00Z");
+      for (let i = 0; i < 365; i++) {
+        const fire = nextEodFire(cursor, "18:00", TZ);
+        seen.push(zoneDateString(fire, TZ));
+        expect(warsawWall(fire).endsWith("18:00")).toBe(true);
+        cursor = new Date(fire.getTime() + 1000);
+      }
+      expect(new Set(seen).size).toBe(seen.length);
+    },
+  );
 });
 
 describe("ambiguous / nonexistent wall clocks", () => {

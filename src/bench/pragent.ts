@@ -167,7 +167,7 @@ export function readCapture(path: string): PragentCapture | null {
   if (!existsSync(path)) return null;
   try {
     const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return typeof v === "object" && v !== null ? (v as PragentCapture) : null;
+    return typeof v === "object" && v !== null ? v : null;
   } catch {
     return null;
   }
@@ -244,7 +244,8 @@ export function improveFindings(cap: PragentCapture | null): PragentFinding[] {
     const o = (s["original_suggestion"] ?? {}) as Record<string, unknown>;
     const summary = str(o["one_sentence_summary"]);
     const content = str(o["suggestion_content"]);
-    const improved = typeof o["improved_code"] === "string" ? o["improved_code"].replace(/\s+$/, "") : "";
+    const improved =
+      typeof o["improved_code"] === "string" ? o["improved_code"].replace(/\s+$/, "") : "";
     const label = str(o["label"]);
     const score = typeof o["score"] === "number" ? o["score"] : lineOf(o["score"]);
     const text =
@@ -299,7 +300,10 @@ export function reviewBody(review: PragentCapture | null, unlocated: PragentFind
     parts.push(
       "## Findings without a line range\n\n" +
         unlocated
-          .map((f) => `- **${f.source}**${f.path ? ` \`${f.path}\`` : ""}: ${f.content.replace(/\n/g, "\n  ")}`)
+          .map(
+            (f) =>
+              `- **${f.source}**${f.path ? ` \`${f.path}\`` : ""}: ${f.content.replace(/\n/g, "\n  ")}`,
+          )
           .join("\n"),
     );
   }
@@ -322,7 +326,8 @@ export function commandStatus(
   if (!r) return "not-run";
   if (r.timedOut) return "timeout";
   if (r.code !== 0 || !cap || cap.error) return "failed";
-  if (command === "describe") return typeof cap.published_description?.body === "string" ? "ok" : "failed";
+  if (command === "describe")
+    return typeof cap.published_description?.body === "string" ? "ok" : "failed";
   if (command === "review") return cap.structured_review?.review ? "ok" : "failed";
   if (Array.isArray(cap.suggestions)) return "ok";
   return (cap.comments ?? []).some((c) => /no (code )?suggestions/i.test(c)) ? "ok" : "failed";
@@ -471,7 +476,10 @@ export function pragentResultPayload(a: {
 function writeResult(outDir: string, c: BenchCase, payload: Record<string, unknown>): void {
   const dir = join(outDir, "results", "all");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${safeId(c.instance_id)}.json`), JSON.stringify(payload, null, 2) + "\n");
+  writeFileSync(
+    join(dir, `${safeId(c.instance_id)}.json`),
+    JSON.stringify(payload, null, 2) + "\n",
+  );
 }
 
 export function readPragentSummary(outDir: string, c: BenchCase): PragentCaseSummary | null {
@@ -502,7 +510,11 @@ export async function reviewCasePragent(
   const startedAt = new Date().toISOString();
   const started = Date.now();
   const summary = emptySummary(c, o.fingerprint);
-  const caps: Record<PragentCommand, PragentCapture | null> = { describe: null, review: null, improve: null };
+  const caps: Record<PragentCommand, PragentCapture | null> = {
+    describe: null,
+    review: null,
+    improve: null,
+  };
   try {
     await prepareTree(join(o.store, safe), tree, meta);
     rmSync(scratch, { recursive: true, force: true });
@@ -534,11 +546,15 @@ export async function reviewCasePragent(
       if (meta.title !== null) writeFileSync((titleFile = join(scratch, "title.txt")), meta.title);
       if (meta.body !== null) writeFileSync((bodyFile = join(scratch, "body.txt")), meta.body);
       if (meta.title === null && meta.body === null)
-        summary.warnings.push("the PR's title and body were not prefetched — PR-Agent got the local provider's");
+        summary.warnings.push(
+          "the PR's title and body were not prefetched — PR-Agent got the local provider's",
+        );
     }
     await bridgeCall(o, "/label", { label: c.instance_id });
     const before = (await bridgeCall(o, "/stats")) as BridgeStats | null;
-    log(`pragent: ${c.instance_id} — ${meta.diff.files} files, ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)} (target ${target})`);
+    log(
+      `pragent: ${c.instance_id} — ${meta.diff.files} files, ${c.base_commit.slice(0, 7)}...${c.head_commit.slice(0, 7)} (target ${target})`,
+    );
     const argvs: Record<string, string[]> = {};
     const describedFile = join(scratch, "body-described.txt");
     for (const command of PRAGENT_COMMANDS) {
@@ -560,7 +576,10 @@ export async function reviewCasePragent(
         env,
         timeoutMs: pragentProcessTimeoutMs(o.timeoutMin),
       });
-      writeFileSync(join(caseDir, `pragent-${command}.log`), `${r.stdout}\n--- stderr ---\n${r.stderr}`);
+      writeFileSync(
+        join(caseDir, `pragent-${command}.log`),
+        `${r.stdout}\n--- stderr ---\n${r.stderr}`,
+      );
       caps[command] = readCapture(join(out, `${command}.json`));
       const st = commandStatus(command, r, caps[command]);
       summary.commands[command] = {
@@ -568,7 +587,7 @@ export async function reviewCasePragent(
         exit: r.code,
         seconds: Math.round((Date.now() - t0) / 1000),
       };
-      if (caps[command]?.error) summary.warnings.push(`${command}: ${caps[command]!.error}`);
+      if (caps[command]?.error) summary.warnings.push(`${command}: ${caps[command].error}`);
       const described = caps[command]?.published_description?.body;
       if (command === "describe" && st === "ok" && typeof described === "string") {
         // On GitHub /describe rewrites the PR body; the next commands read it.
@@ -577,7 +596,7 @@ export async function reviewCasePragent(
       }
       if (st !== "ok")
         summary.warnings.push(
-          `${command}: ${st}${caps[command]?.comments?.length ? ` — PR-Agent said: ${caps[command]!.comments!.at(-1)!.slice(0, 300)}` : ""}`,
+          `${command}: ${st}${caps[command]?.comments?.length ? ` — PR-Agent said: ${caps[command].comments.at(-1)!.slice(0, 300)}` : ""}`,
         );
     }
     writeFileSync(join(caseDir, "pragent-argv.json"), JSON.stringify(argvs, null, 2) + "\n");
@@ -604,7 +623,8 @@ export async function reviewCasePragent(
       ["pragent-review.md", "review.md"],
       ["pragent-improve.md", "improve.md"],
     ] as const)
-      if (existsSync(join(out, file))) writeFileSync(join(caseDir, name), readFileSync(join(out, file)));
+      if (existsSync(join(out, file)))
+        writeFileSync(join(caseDir, name), readFileSync(join(out, file)));
   } catch (err) {
     summary.status = "failed";
     summary.error = String(err instanceof Error ? err.message : err).slice(0, 2000);
@@ -649,7 +669,9 @@ export async function reviewCasePragent(
   );
   log(
     `pragent: ${c.instance_id} ${summary.status} — ${summary.comments} comment(s) (review ${review.length}, improve ${improve.length}, unlocated ${unlocated.length}), ${summary.duration_seconds}s` +
-      (b ? `, ${b.requests} model call(s) (${b.errors} failed), ${b.input_tokens} in/${b.output_tokens} out` : ""),
+      (b
+        ? `, ${b.requests} model call(s) (${b.errors} failed), ${b.input_tokens} in/${b.output_tokens} out`
+        : ""),
   );
   return summary;
 }
@@ -735,8 +757,12 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   // never leave it scored under this run's label.
   for (const c of r.cases) {
     const prior = r.resume ? readPragentSummary(r.outDir, c) : null;
-    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint))) continue;
-    if (prior) r.log(`pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/flags — its result is dropped`);
+    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
+      continue;
+    if (prior)
+      r.log(
+        `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/flags — its result is dropped`,
+      );
     rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
     rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
@@ -763,7 +789,9 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       (r.resume && typeof previous?.["started_at"] === "string" && previous["started_at"]) ||
       new Date().toISOString(),
     resumes: [
-      ...(r.resume && Array.isArray(previous?.["resumes"]) ? (previous["resumes"] as unknown[]) : []),
+      ...(r.resume && Array.isArray(previous?.["resumes"])
+        ? (previous["resumes"] as unknown[])
+        : []),
       ...(r.resume && previous ? [{ at: new Date().toISOString(), fingerprint }] : []),
     ],
     finished_at: null as string | null,
@@ -823,7 +851,9 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
   runRecord.finished_at = new Date().toISOString();
   writeFileSync(runFile, JSON.stringify(runRecord, null, 2) + "\n");
   const ok = summaries.filter((s) => s.status === "ok").length;
-  r.log(`pragent: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`);
+  r.log(
+    `pragent: ${ok}/${r.cases.length} reviewed — results in ${join(r.outDir, "results", "all")}`,
+  );
   if (stopped !== null) r.log(`pragent: run stopped early — ${stopped}`);
   return ok === r.cases.length ? 0 : 1;
 }
@@ -831,7 +861,11 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
 // ---- the report ----------------------------------------------------------------------
 
 function n(v: number | undefined): string {
-  return v === undefined ? "?" : Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+  return v === undefined
+    ? "?"
+    : Number.isInteger(v)
+      ? String(v)
+      : String(Math.round(v * 100) / 100);
 }
 
 /** The PR-Agent arm's report: the harness's numbers, then per case what each
@@ -839,9 +873,14 @@ function n(v: number | undefined): string {
 export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCase[]): string {
   const L: string[] = [];
   const runPath = join(outDir, "run.json");
-  const run = (existsSync(runPath) ? JSON.parse(readFileSync(runPath, "utf8")) : {}) as Record<string, unknown>;
+  const run = (existsSync(runPath) ? JSON.parse(readFileSync(runPath, "utf8")) : {}) as Record<
+    string,
+    unknown
+  >;
   const judgeFile = join(outDir, "judge.txt");
-  const judge = existsSync(judgeFile) ? readFileSync(judgeFile, "utf8").trim().split("\n") : ["not run"];
+  const judge = existsSync(judgeFile)
+    ? readFileSync(judgeFile, "utf8").trim().split("\n")
+    : ["not run"];
   const k = (x: number): string => `${Math.round(x / 1000)}k`;
   L.push(`# AACR-Bench run — ${set.name} — PR-Agent`);
   L.push("");
@@ -894,8 +933,10 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
     for (const { c, s } of warned) {
       if (!s.merge_base_ok && s.status !== "failed")
         L.push(`- \`${c.instance_id}\`: merge-base check failed — see case-summary.json`);
-      for (const w of s.warnings) L.push(`- \`${c.instance_id}\`: ${w.replaceAll("\n", " ").slice(0, 400)}`);
-      if (s.error && !s.warnings.length) L.push(`- \`${c.instance_id}\`: ${s.error.replaceAll("\n", " ").slice(0, 400)}`);
+      for (const w of s.warnings)
+        L.push(`- \`${c.instance_id}\`: ${w.replaceAll("\n", " ").slice(0, 400)}`);
+      if (s.error && !s.warnings.length)
+        L.push(`- \`${c.instance_id}\`: ${s.error.replaceAll("\n", " ").slice(0, 400)}`);
     }
   }
   L.push("");

@@ -437,7 +437,9 @@ describe("deploy.sh — the config home ships", () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("not a plain file name");
     // verify ships nothing, so it is not refused.
-    expect(run(env, ["--dry-run", "verify"], { QCR_CONFIG: join(other, "c[1].toml") }).code).toBe(0);
+    expect(run(env, ["--dry-run", "verify"], { QCR_CONFIG: join(other, "c[1].toml") }).code).toBe(
+      0,
+    );
   });
 
   it("refuses a config home path with braces (ansible would template it)", () => {
@@ -1336,7 +1338,9 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
   }
 
   it("verify FAILS when the only heartbeat predates the running container", () => {
-    const r = verifyWith(`printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:55:31.228Z")}'`);
+    const r = verifyWith(
+      `printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:55:31.228Z")}'`,
+    );
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("CHECK FAILED: no fresh heartbeat");
   });
@@ -1346,7 +1350,9 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
   });
 
   it("verify passes on a heartbeat from this boot", () => {
-    const r = verifyWith(`printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:56:50.000Z")}'`);
+    const r = verifyWith(
+      `printf '%s\\n%s\\n%s' '${STARTED}' '${NOW}' '${status("2026-10-03T09:56:50.000Z")}'`,
+    );
     expect(r.code).toBe(0);
   });
 
@@ -1388,7 +1394,9 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
     const at = text.indexOf("- name: Base packages");
     const block = text.slice(at, text.indexOf("- name:", at + 1));
     expect(block).toContain("update_cache: true");
-    expect(block).toContain("when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0");
+    expect(block).toContain(
+      "when: base_packages | difference(ansible_facts.packages.keys() | list) | length > 0",
+    );
     expect(text.indexOf("ansible.builtin.package_facts")).toBeLessThan(at);
     // …and so does every other apt install: an unconditional refresh is the
     // whole failure, wherever it sits.
@@ -1422,7 +1430,9 @@ describe("deploy — the operator channel's seal survives the sandbox chown", ()
     const text = playbook();
     const seal = text.indexOf("- name: Operator command channel stays root-owned 0755 (the seal)");
     const block = text.slice(seal, text.indexOf("- name:", seal + 1));
-    expect(block).toContain("when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk");
+    expect(block).toContain(
+      "when: operator_channel.stat.exists and operator_channel.stat.isdir and not operator_channel.stat.islnk",
+    );
   });
 
   it("runs in a sync (after the sync start task)", () => {

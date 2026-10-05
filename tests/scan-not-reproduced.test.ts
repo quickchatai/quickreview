@@ -51,7 +51,18 @@ function reported(over: Partial<ReportedFinding> = {}): ReportedFinding {
 }
 
 function row(over: Partial<LedgerEntry> & Pick<LedgerEntry, "run" | "at" | "blob">): LedgerEntry {
-  return { path: PATH, lens: "pass-security", tier: "t", effort: "low", validator: false, sha: `sha-${over.run}`, lines: 40, cost_usd: 0, case: "c", ...over };
+  return {
+    path: PATH,
+    lens: "pass-security",
+    tier: "t",
+    effort: "low",
+    validator: false,
+    sha: `sha-${over.run}`,
+    lines: 40,
+    cost_usd: 0,
+    case: "c",
+    ...over,
+  };
 }
 
 const tree = new Set([PATH]);
@@ -64,13 +75,18 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     // r2 (a narrower stage-2 row) re-reads the file at the same content, same lens, silent.
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({
+    expect(
+      st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") }),
+    ).toEqual({
       fixed: 0,
       pending: 0,
       not_reproduced: 1,
       dismissed_unreported: 0,
     });
-    expect(only(st)).toMatchObject({ state: "new", not_reproduced: { count: 1, run: "r2", sha: "sha-r2" } });
+    expect(only(st)).toMatchObject({
+      state: "new",
+      not_reproduced: { count: 1, run: "r2", sha: "sha-r2" },
+    });
     expect(only(st).fixed ?? null).toBeNull();
     expect(st.question().question).toBeNull();
   });
@@ -80,11 +96,15 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
     st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") });
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:00Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:00Z") }),
+    ).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st).not_reproduced).toMatchObject({ count: 1, run: "r2" });
     // A second silent re-read of the same content counts.
     const more = [...rows, row({ blob: "b1", run: "r4", at: "2026-09-30T13:00:00Z" })];
-    expect(st.reconcile({ rows: more, tree, blobs: at("b1"), run: S("r4", "2026-09-30T13:00:01Z") })).toMatchObject({ not_reproduced: 1 });
+    expect(
+      st.reconcile({ rows: more, tree, blobs: at("b1"), run: S("r4", "2026-09-30T13:00:01Z") }),
+    ).toMatchObject({ not_reproduced: 1 });
     expect(only(st)).toMatchObject({ state: "new", not_reproduced: { count: 2, run: "r4" } });
   });
 
@@ -93,23 +113,44 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [
       row({ blob: "b1", run: "r1", at: "2026-09-30T10:00:01Z" }),
-      row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z", range: { start: 20, end: 40, total: 40 } }),
+      row({
+        blob: "b1",
+        run: "r2",
+        at: "2026-09-30T11:00:00Z",
+        range: { start: 20, end: 40, total: 40 },
+      }),
     ];
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") }),
+    ).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st).not_reproduced ?? null).toBeNull();
     // A range that holds lines 10-12 does count.
-    const holds = [...rows, row({ blob: "b1", run: "r3", at: "2026-09-30T12:00:00Z", range: { start: 1, end: 25, total: 40 } })];
-    expect(st.reconcile({ rows: holds, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:01Z") })).toMatchObject({ not_reproduced: 1 });
+    const holds = [
+      ...rows,
+      row({
+        blob: "b1",
+        run: "r3",
+        at: "2026-09-30T12:00:00Z",
+        range: { start: 1, end: 25, total: 40 },
+      }),
+    ];
+    expect(
+      st.reconcile({ rows: holds, tree, blobs: at("b1"), run: S("r3", "2026-09-30T12:00:01Z") }),
+    ).toMatchObject({ not_reproduced: 1 });
   });
 
   it("a dismissed finding is neither stamped nor counted — it is already triaged", () => {
     const st = new FindingsStore(stateHomeFs(dir));
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
-    const raw = JSON.parse(readFileSync(join(dir, "scan/findings.json"), "utf8")) as { findings: ScanFinding[] };
+    const raw = JSON.parse(readFileSync(join(dir, "scan/findings.json"), "utf8")) as {
+      findings: ScanFinding[];
+    };
     raw.findings[0]!.state = "dismissed";
     writeFileSync(join(dir, "scan/findings.json"), JSON.stringify(raw));
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
-    expect(st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") }),
+    ).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st)).toMatchObject({ state: "dismissed" });
     expect(only(st).not_reproduced ?? null).toBeNull();
   });
@@ -117,7 +158,12 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
   it("a later sighting clears the stamp; until then it stays in the open list for triage", () => {
     const st = new FindingsStore(stateHomeFs(dir));
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
-    st.reconcile({ rows: [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })], tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") });
+    st.reconcile({
+      rows: [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })],
+      tree,
+      blobs: at("b1"),
+      run: S("r2", "2026-09-30T11:00:01Z"),
+    });
     expect(st.list({ state: "new" }).findings).toHaveLength(1);
     st.report([reported()], S("r3", "2026-09-30T12:00:00Z"));
     expect(only(st).not_reproduced ?? null).toBeNull();
@@ -129,7 +175,9 @@ describe("a re-read of CHANGED content that does not report a finding", () => {
     const st = new FindingsStore(stateHomeFs(dir));
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [row({ blob: "b2", run: "r2", at: "2026-09-30T11:00:00Z" })];
-    expect(st.reconcile({ rows, tree, blobs: at("b2"), run: S("r2", "2026-09-30T11:00:01Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree, blobs: at("b2"), run: S("r2", "2026-09-30T11:00:01Z") }),
+    ).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(only(st)).toMatchObject({ state: "fixed", fixed: { run: "r2", from: "new" } });
   });
 
@@ -139,7 +187,9 @@ describe("a re-read of CHANGED content that does not report a finding", () => {
     const rows = [row({ blob: "b1", run: "r2", at: "2026-09-30T11:00:00Z" })];
     st.reconcile({ rows, tree, blobs: at("b1"), run: S("r2", "2026-09-30T11:00:01Z") });
     const changed = [...rows, row({ blob: "b2", run: "r3", at: "2026-09-30T12:00:00Z" })];
-    expect(st.reconcile({ rows: changed, tree, blobs: at("b2"), run: S("r3", "2026-09-30T12:00:01Z") })).toMatchObject({ fixed: 1 });
+    expect(
+      st.reconcile({ rows: changed, tree, blobs: at("b2"), run: S("r3", "2026-09-30T12:00:01Z") }),
+    ).toMatchObject({ fixed: 1 });
     expect(only(st).state).toBe("fixed");
   });
 });
@@ -171,7 +221,10 @@ describe("a promoted finding's ticket", () => {
       tracker: sink,
       clock: () => new Date(Date.parse("2026-09-30T14:00:00Z") + 1000 * tick++),
       units: () => ["src"],
-      runs: () => [{ id: "r2", sha: "sha-r2", state: "complete" }, { id: "r1", sha: "sha-r1", state: "complete" }],
+      runs: () => [
+        { id: "r2", sha: "sha-r2", state: "complete" },
+        { id: "r1", sha: "sha-r1", state: "complete" },
+      ],
     });
     return { findings, sink, triage };
   }
@@ -187,7 +240,12 @@ describe("a promoted finding's ticket", () => {
     expect(sink.closes).toEqual([]);
 
     const changed = [...rows, row({ blob: "b2", run: "r3", at: "2026-09-30T12:00:00Z" })];
-    findings.reconcile({ rows: changed, tree, blobs: at("b2"), run: S("r3", "2026-09-30T12:00:01Z") });
+    findings.reconcile({
+      rows: changed,
+      tree,
+      blobs: at("b2"),
+      run: S("r3", "2026-09-30T12:00:01Z"),
+    });
     expect((await triage.closeFixed()).closed).toHaveLength(1);
     expect(sink.closes).toEqual(["FT-9001"]);
   });

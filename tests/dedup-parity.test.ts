@@ -18,11 +18,62 @@ const RECORD = {
   lenses_applied: "baseline, sweep, tests",
   comments_posted: 4,
   findings: [
-    { id: "F1", lens: "pass-sweep", disposition: "posted", posted_as: "nit", severity: "P3", path: "src/retry.ts", line: 40, group: "G1", title: "`backoff` resets on every `retry`", body: "Nit body." },
-    { id: "F2", lens: "pass-baseline", disposition: "posted", posted_as: "blocker", severity: "P1", confidence: 1, path: "src/retry.ts", line: 42, group: "G2", title: "`retry` loops forever when `maxAttempts` is 0", body: "Blocker body." },
-    { id: "F3", lens: "pass-tests", disposition: "posted", posted_as: "question", severity: "P2", path: "tests/retry.test.ts", line: 10, title: "Does the test cover `maxAttempts` of 0?", body: "Question body." },
-    { id: "F4", lens: "pass-baseline", disposition: "posted", posted_as: "nit", severity: "P3", path: "src/other.ts", line: 3, title: "typo in a log message", body: "Typo." },
-    { id: "F5", lens: "pass-sweep", disposition: "killed", path: "src/retry.ts", line: 41, title: "`retry` dup", reason: "duplicate" },
+    {
+      id: "F1",
+      lens: "pass-sweep",
+      disposition: "posted",
+      posted_as: "nit",
+      severity: "P3",
+      path: "src/retry.ts",
+      line: 40,
+      group: "G1",
+      title: "`backoff` resets on every `retry`",
+      body: "Nit body.",
+    },
+    {
+      id: "F2",
+      lens: "pass-baseline",
+      disposition: "posted",
+      posted_as: "blocker",
+      severity: "P1",
+      confidence: 1,
+      path: "src/retry.ts",
+      line: 42,
+      group: "G2",
+      title: "`retry` loops forever when `maxAttempts` is 0",
+      body: "Blocker body.",
+    },
+    {
+      id: "F3",
+      lens: "pass-tests",
+      disposition: "posted",
+      posted_as: "question",
+      severity: "P2",
+      path: "tests/retry.test.ts",
+      line: 10,
+      title: "Does the test cover `maxAttempts` of 0?",
+      body: "Question body.",
+    },
+    {
+      id: "F4",
+      lens: "pass-baseline",
+      disposition: "posted",
+      posted_as: "nit",
+      severity: "P3",
+      path: "src/other.ts",
+      line: 3,
+      title: "typo in a log message",
+      body: "Typo.",
+    },
+    {
+      id: "F5",
+      lens: "pass-sweep",
+      disposition: "killed",
+      path: "src/retry.ts",
+      line: 41,
+      title: "`retry` dup",
+      reason: "duplicate",
+    },
   ],
 };
 
@@ -49,7 +100,10 @@ function bothRoutes(cfg: PostedRenderConfig) {
 
 describe("live render route ≡ bench render route", () => {
   it("with the duplicate merge on: the same posted set, body and dispositions", () => {
-    const { live, bench } = bothRoutes({ review: { dedup_merge: true }, github: { bot_login: "qc-bot" } });
+    const { live, bench } = bothRoutes({
+      review: { dedup_merge: true },
+      github: { bot_login: "qc-bot" },
+    });
     expect(live.comments).toEqual(bench.comments);
     expect(live.body).toBe(bench.body);
     expect(live.record).toEqual(JSON.parse(JSON.stringify(bench.record)));
@@ -61,7 +115,10 @@ describe("live render route ≡ bench render route", () => {
   });
 
   it("with it off: the same, and nothing merged", () => {
-    const { live, bench } = bothRoutes({ review: { dedup_merge: false }, github: { bot_login: "qc-bot" } });
+    const { live, bench } = bothRoutes({
+      review: { dedup_merge: false },
+      github: { bot_login: "qc-bot" },
+    });
     expect(live.comments).toEqual(bench.comments);
     expect(live.body).toBe(bench.body);
     expect(live.comments).toHaveLength(4);
@@ -81,7 +138,11 @@ describe("the [posting] cut on both render routes", () => {
     comment_style: "full" as const,
   };
   it("cuts the same items on both routes and records them withheld", () => {
-    const { live, bench } = bothRoutes({ review: { dedup_merge: false }, github: { bot_login: "qc-bot" }, posting: policy });
+    const { live, bench } = bothRoutes({
+      review: { dedup_merge: false },
+      github: { bot_login: "qc-bot" },
+      posting: policy,
+    });
     expect(live.comments).toEqual(bench.comments);
     expect(live.body).toBe(bench.body);
     expect(live.record).toEqual(JSON.parse(JSON.stringify(bench.record)));
@@ -95,19 +156,46 @@ describe("the [posting] cut on both render routes", () => {
     expect(live.body).toContain("**Verdict: Changes requested** — 1 blocker, 1 question.");
   });
   it("body = verdict renders the verdict line and one sentence on both routes", () => {
-    const { live, bench } = bothRoutes({ review: { dedup_merge: true }, posting: { ...policy, body: "verdict" } });
+    const { live, bench } = bothRoutes({
+      review: { dedup_merge: true },
+      posting: { ...policy, body: "verdict" },
+    });
     expect(live.body).toBe(bench.body);
-    expect(live.body).toBe("**Verdict: Changes requested** — 1 blocker, 1 question.\n\nThe retry change can loop forever.\n");
+    expect(live.body).toBe(
+      "**Verdict: Changes requested** — 1 blocker, 1 question.\n\nThe retry change can loop forever.\n",
+    );
   });
   it("a follower row (same_as) is withheld as a repeat site when repeat_sites = false", () => {
     const rec = {
       ...RECORD,
       findings: [
-        { id: "L", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 1, title: "`x` is wrong", body: "b" },
-        { id: "S", disposition: "posted", posted_as: "blocker", severity: "P1", path: "b.ts", line: 9, title: "same root cause", body: "f", same_as: "L" },
+        {
+          id: "L",
+          disposition: "posted",
+          posted_as: "blocker",
+          severity: "P1",
+          path: "a.ts",
+          line: 1,
+          title: "`x` is wrong",
+          body: "b",
+        },
+        {
+          id: "S",
+          disposition: "posted",
+          posted_as: "blocker",
+          severity: "P1",
+          path: "b.ts",
+          line: 9,
+          title: "same root cause",
+          body: "f",
+          same_as: "L",
+        },
       ],
     };
-    const out = renderBenchOutputs(rec, undefined, { review: {}, posting: { ...policy, nits: "post", max_comments: 0 } });
+    const out = renderBenchOutputs(rec, undefined, {
+      review: {},
+      posting: { ...policy, nits: "post", max_comments: 0 },
+    });
     expect(out.withheld.map((w) => [w.id, w.word])).toEqual([["S", "repeat-site"]]);
     expect(out.rendered.comments).toHaveLength(1);
   });

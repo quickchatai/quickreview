@@ -36,16 +36,37 @@ import { sandboxRoot } from "../src/config.js";
 import { stateHome } from "../src/install.js";
 import { piCaseRunner } from "../src/setup/caserunner.js";
 import type { Refusal, SetupEngine } from "../src/setup/engine.js";
-import type { FindingsFilter, FindingState, MatchQuestionView, ScanFinding, ValidityView } from "../src/setup/findings.js";
+import type {
+  FindingsFilter,
+  FindingState,
+  MatchQuestionView,
+  ScanFinding,
+  ValidityView,
+} from "../src/setup/findings.js";
 import { VALIDITY_ORDER, validityOf } from "../src/setup/scanreport.js";
 import { FindingsStore, dismissedLookalike, lookalikeRank } from "../src/setup/findings.js";
 import { stateHomeFs } from "../src/setup/adapters.js";
 import { SEVERITIES, type ScanSeverity } from "../src/setup/scan.js";
 import { lensTiers, stage2Lenses, MAX_STAGE2_ROWS } from "../src/setup/stage2.js";
-import { priceIsMeasured, priceLabel, type StoredStage2Proposal } from "../src/setup/stage2request.js";
-import { buildScanAgents, loadScanConfig, scanSettings, SCAN_AGENTS_DIR } from "../src/setup/scanbuild.js";
+import {
+  priceIsMeasured,
+  priceLabel,
+  type StoredStage2Proposal,
+} from "../src/setup/stage2request.js";
+import {
+  buildScanAgents,
+  loadScanConfig,
+  scanSettings,
+  SCAN_AGENTS_DIR,
+} from "../src/setup/scanbuild.js";
 import { escapeControls } from "../src/setup/textsniff.js";
-import { ScanRunner, type ScanPreview, type ScanSettings, type ScanStatus, type StoredSuggestion } from "../src/setup/scanrun.js";
+import {
+  ScanRunner,
+  type ScanPreview,
+  type ScanSettings,
+  type ScanStatus,
+  type StoredSuggestion,
+} from "../src/setup/scanrun.js";
 import { gitScanSource } from "../src/setup/scantree.js";
 import { ScanTriage, type CloseFixedResult } from "../src/setup/triage.js";
 import type { MemoryStore } from "../src/memory/store.js";
@@ -54,7 +75,9 @@ import type { TrackerSink } from "../src/setup/engine.js";
 const NO_PARAMS = { type: "object", properties: {} } as const;
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details ? { content: [{ type: "text", text: t }], details } : { content: [{ type: "text", text: t }] };
+  return details
+    ? { content: [{ type: "text", text: t }], details }
+    : { content: [{ type: "text", text: t }] };
 }
 
 function refused(what: string, r: Refusal): PiToolResult {
@@ -73,7 +96,9 @@ export function renderPreview(p: ScanPreview): string {
       `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
       `Files whose content changed since, and any not yet read whole: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
         `${p.covered} already read at this content` +
-        (p.delta && p.delta.owed > 0 ? `; ${p.delta.owed} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first` : "") +
+        (p.delta && p.delta.owed > 0
+          ? `; ${p.delta.owed} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first`
+          : "") +
         `. Estimate ${usd(p.estimate_usd)}, measured at ` +
         `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate. ` +
         "No deep pass runs on a delta.",
@@ -93,7 +118,12 @@ export function renderPreview(p: ScanPreview): string {
         `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate.`,
     );
   }
-  const rows = p.cases.slice(0, 40).map((c) => `  - ${c.id}: ${c.files.length} files, ${c.lines} lines${c.estimate_usd !== null ? `, ~${usd(c.estimate_usd)}` : ""}`);
+  const rows = p.cases
+    .slice(0, 40)
+    .map(
+      (c) =>
+        `  - ${c.id}: ${c.files.length} files, ${c.lines} lines${c.estimate_usd !== null ? `, ~${usd(c.estimate_usd)}` : ""}`,
+    );
   if (p.cases.length > 40) rows.push(`  … and ${p.cases.length - 40} more`);
   out.push(rows.join("\n"));
   const skipped = Object.entries(p.excluded)
@@ -108,15 +138,22 @@ export function renderPreview(p: ScanPreview): string {
   const skippedBy = new Map<string, string[]>();
   for (const f of p.skipped ?? []) skippedBy.set(f.why, [...(skippedBy.get(f.why) ?? []), f.path]);
   for (const [why, paths] of skippedBy) {
-    const label = why === "binary" ? "binary" : why === "too-big" ? "over the size cap" : "unreadable";
-    out.push(`skipped: ${label} — ${paths.length} file(s): ${paths.slice(0, 5).map(escapeControls).join(", ")}${paths.length > 5 ? ", …" : ""}; not read by any lens.`);
+    const label =
+      why === "binary" ? "binary" : why === "too-big" ? "over the size cap" : "unreadable";
+    out.push(
+      `skipped: ${label} — ${paths.length} file(s): ${paths.slice(0, 5).map(escapeControls).join(", ")}${paths.length > 5 ? ", …" : ""}; not read by any lens.`,
+    );
   }
   if (p.unassigned.length > 0) {
-    out.push(`! ${p.unassigned.length} file(s) no unit owns at this sha (e.g. ${p.unassigned.slice(0, 3).join(", ")}) — the unit cut may need adjusting; they are not read.`);
+    out.push(
+      `! ${p.unassigned.length} file(s) no unit owns at this sha (e.g. ${p.unassigned.slice(0, 3).join(", ")}) — the unit cut may need adjusting; they are not read.`,
+    );
   }
   for (const b of p.blockers) out.push(`✗ ${b}`);
   if (p.blockers.length === 0) {
-    out.push(`To run it: scan_start with key ${p.key} and sha ${p.sha}${p.mode === "delta" ? " and delta true" : ""} — only after the operator agreed to the cost.`);
+    out.push(
+      `To run it: scan_start with key ${p.key} and sha ${p.sha}${p.mode === "delta" ? " and delta true" : ""} — only after the operator agreed to the cost.`,
+    );
   }
   return out.join("\n\n");
 }
@@ -125,7 +162,8 @@ export function renderPreview(p: ScanPreview): string {
  * — from the per-case counts; `unknown` for what no skeptic judged (the
  * validator off or failed, or a case recorded before the tiers). */
 function tierCounts(r: NonNullable<ScanStatus["run"]>, findings: number, doubted: number): string {
-  if (!r.settings.validator) return doubted ? ` (${doubted} may not be valid)` : " (skeptic off — validity unknown)";
+  if (!r.settings.validator)
+    return doubted ? ` (${doubted} may not be valid)` : " (skeptic off — validity unknown)";
   const confirmed = r.cases.reduce((n, c) => n + (c.confirmed ?? 0), 0);
   const likely = r.cases.reduce((n, c) => n + (c.likely ?? 0), 0);
   const unknown = findings - confirmed - likely - doubted;
@@ -146,32 +184,45 @@ export function renderStatus(s: ScanStatus): string {
     out.push(
       `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
         `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
-        (r.unpriced_cases ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)` : ""),
+        (r.unpriced_cases
+          ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
+          : ""),
     );
     // Stage 2 is re-entered by a new proposal (the rows already read are
     // covered, free); stage 1 by a new preview.
     const again = r.mode === "stage2" ? "Propose stage 2 again" : "Preview";
-    if (r.display === "interrupted") out.push(`It was interrupted (the companion restarted). ${again} and start again — the ledger resumes it.`);
-    if (r.display === "capped") out.push(`It stopped at its hard cap. ${again} for the price of what is left.`);
+    if (r.display === "interrupted")
+      out.push(
+        `It was interrupted (the companion restarted). ${again} and start again — the ledger resumes it.`,
+      );
+    if (r.display === "capped")
+      out.push(`It stopped at its hard cap. ${again} for the price of what is left.`);
     if (r.mode === "stage2") {
       for (const c of r.cases.slice(0, 40)) {
-        out.push(`  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}`);
+        out.push(
+          `  - ${c.id} ${c.lens ?? "?"} at ${c.tier ?? "?"} (${(c.units ?? [c.unit]).join(", ")}): ${c.status}, ${c.findings} finding(s), ${usd(c.cost_usd)}`,
+        );
       }
     }
     const failed = r.cases.filter((c) => c.status === "failed");
     for (const c of failed.slice(0, 10)) out.push(`  ✗ ${c.id}: ${c.error}`);
     for (const p of r.problems.slice(-5)) out.push(`  ! ${p}`);
-    if (r.tickets_closed) out.push(`Tickets closed as fixed at ${r.sha.slice(0, 12)}: ${r.tickets_closed}.`);
+    if (r.tickets_closed)
+      out.push(`Tickets closed as fixed at ${r.sha.slice(0, 12)}: ${r.tickets_closed}.`);
     if (r.matching && (r.matching.fixed > 0 || r.matching.pending > 0)) {
       out.push(
         `Findings no longer reported: ${r.matching.fixed} fixed` +
-          (r.matching.pending > 0 ? `, ${r.matching.pending} waiting on your match (scan_matches)` : ""),
+          (r.matching.pending > 0
+            ? `, ${r.matching.pending} waiting on your match (scan_matches)`
+            : ""),
       );
     }
     // A dismissal is sticky (scan-loop): what would have been fixed is only stamped.
     const dismissedGone = r.matching?.dismissed_unreported ?? 0;
     if (dismissedGone > 0) {
-      out.push(`Dismissed and no longer reported: ${dismissedGone} — kept dismissed (a scan never overwrites the operator's triage), stamped for audit.`);
+      out.push(
+        `Dismissed and no longer reported: ${dismissedGone} — kept dismissed (a scan never overwrites the operator's triage), stamped for audit.`,
+      );
     }
     // A record written before the stamp existed has no count: nothing to say.
     const notReproduced = r.matching?.not_reproduced ?? 0;
@@ -198,7 +249,10 @@ export function renderStatus(s: ScanStatus): string {
 export function byValidity(fs: readonly ScanFinding[]): ScanFinding[] {
   return VALIDITY_ORDER.flatMap((v) => {
     const tier = fs.filter((f) => validityOf(f) === v);
-    return [...tier.filter((f) => lookalikeRank(f) === 0), ...tier.filter((f) => lookalikeRank(f) === 1)];
+    return [
+      ...tier.filter((f) => lookalikeRank(f) === 0),
+      ...tier.filter((f) => lookalikeRank(f) === 1),
+    ];
   });
 }
 
@@ -206,13 +260,21 @@ export function byValidity(fs: readonly ScanFinding[]): ScanFinding[] {
  * — flagged for triage, never dismissed by the scan. */
 function lookalikeNote(f: ScanFinding): string {
   const d = dismissedLookalike(f);
-  return d ? `, LOOKS LIKE DISMISSED ${d.fingerprint.slice(0, 12)}: ${d.reason} — not auto-dismissed` : "";
+  return d
+    ? `, LOOKS LIKE DISMISSED ${d.fingerprint.slice(0, 12)}: ${d.reason} — not auto-dismissed`
+    : "";
 }
 
 function validityNote(f: ScanFinding): string {
   const v = validityOf(f);
-  if (v === "doubtful") return `, DOUBTFUL — ${f.doubt?.word ?? "?"}${f.doubt?.class ? ` [${f.doubt.class}]` : ""}`;
-  if (v === "unknown") return f.doubt ? `, MAY NOT BE VALID — ${f.doubt.word}` : f.validated ? ", validity unknown" : ", unvalidated";
+  if (v === "doubtful")
+    return `, DOUBTFUL — ${f.doubt?.word ?? "?"}${f.doubt?.class ? ` [${f.doubt.class}]` : ""}`;
+  if (v === "unknown")
+    return f.doubt
+      ? `, MAY NOT BE VALID — ${f.doubt.word}`
+      : f.validated
+        ? ", validity unknown"
+        : ", unvalidated";
   return `, ${v.toUpperCase()}`;
 }
 
@@ -235,7 +297,8 @@ export function renderFindings(fs: readonly ScanFinding[], total: number): strin
 }
 
 export function renderQuestion(q: MatchQuestionView | null): string {
-  if (q === null) return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
+  if (q === null)
+    return "No match question is pending: every finding a re-scan stopped reporting has been settled.";
   const row = (f: ScanFinding): string =>
     `  - ${f.fingerprint} [${f.severity}] ${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`} (${f.unit}, ${f.lens}, ${f.kind}` +
     `${f.state === "new" ? "" : `, ${f.state}`}${lookalikeNote(f)}) ${f.claim}`;
@@ -249,15 +312,22 @@ export function renderQuestion(q: MatchQuestionView | null): string {
   ].join("\n");
 }
 
-export function renderSuggestions(sugs: readonly StoredSuggestion[], settings: ScanSettings | null): string {
+export function renderSuggestions(
+  sugs: readonly StoredSuggestion[],
+  settings: ScanSettings | null,
+): string {
   const out: string[] = [];
-  if (sugs.length === 0) out.push("No deep-lens suggestions stored — stage 1 has not suggested any yet.");
+  if (sugs.length === 0)
+    out.push("No deep-lens suggestions stored — stage 1 has not suggested any yet.");
   else {
     const byLens = new Map<string, StoredSuggestion[]>();
     for (const s of sugs) byLens.set(s.lens, [...(byLens.get(s.lens) ?? []), s]);
-    for (const [lens, ss] of [...byLens.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1))) {
+    for (const [lens, ss] of [...byLens.entries()].sort(
+      (a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1),
+    )) {
       out.push(`${lens} (${ss.length}):`);
-      for (const s of ss.slice(0, 30)) out.push(`  - [${s.unit}] ${s.files.join(", ")} — ${s.reason} (at ${s.sha.slice(0, 12)})`);
+      for (const s of ss.slice(0, 30))
+        out.push(`  - [${s.unit}] ${s.files.join(", ")} — ${s.reason} (at ${s.sha.slice(0, 12)})`);
       if (ss.length > 30) out.push(`  … and ${ss.length - 30} more`);
     }
   }
@@ -281,7 +351,12 @@ export function renderProposal(p: StoredStage2Proposal): string {
       `; validator ${p.validator ? "on" : "off"}.`,
   );
   const rows = p.rows.map((r) => {
-    const mark = r.status === "run" ? "" : r.status === "covered" ? " — COVERED (already read at this content, free)" : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
+    const mark =
+      r.status === "run"
+        ? ""
+        : r.status === "covered"
+          ? " — COVERED (already read at this content, free)"
+          : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
     const price = priceLabel(r.price);
     return [
       `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
@@ -299,7 +374,9 @@ export function renderProposal(p: StoredStage2Proposal): string {
   if (priced.length > 0) {
     out.push(
       `Priced by measurement: ${measured} row(s); by estimate: ${priced.length - measured} row(s).` +
-        (measured < priced.length ? " An estimate stands for this run once approved; the next proposal is priced from what the run measures." : ""),
+        (measured < priced.length
+          ? " An estimate stands for this run once approved; the next proposal is priced from what the run measures."
+          : ""),
     );
   }
   if (p.over_budget_usd > 0) out.push(`Left out by the budget: ${usd(p.over_budget_usd)} of rows.`);
@@ -316,12 +393,14 @@ export function renderProposal(p: StoredStage2Proposal): string {
 
 const DELTA_PARAM = {
   type: "boolean",
-  description: "A DELTA re-scan: the files whose content changed since the last scan, plus any not yet read whole (priced from the ledger; never before calibration).",
+  description:
+    "A DELTA re-scan: the files whose content changed since the last scan, plus any not yet read whole (priced from the ledger; never before calibration).",
 } as const;
 
 const SHA_PARAM = {
   type: "string",
-  description: "The commit to scan: a sha or ref of the reviewed checkout (default HEAD). The tree AT that commit is read.",
+  description:
+    "The commit to scan: a sha or ref of the reviewed checkout (default HEAD). The tree AT that commit is read.",
 } as const;
 
 export function scanToolDefinitions(
@@ -343,9 +422,22 @@ export function scanToolDefinitions(
     promptSnippet: "Preview a scan's cases and cost",
     parameters: { type: "object", properties: { sha: SHA_PARAM, delta: DELTA_PARAM } },
     execute: async (_id, params) => {
-      const r = await scan.preview({ sha: typeof params?.sha === "string" ? params.sha : undefined, delta: params?.delta === true });
+      const r = await scan.preview({
+        sha: typeof params?.sha === "string" ? params.sha : undefined,
+        delta: params?.delta === true,
+      });
       if (!r.ok) return refused("Scan preview", r);
-      return text(renderPreview(r.preview), { preview: { ...r.preview, cases: r.preview.cases.map((c) => ({ id: c.id, files: c.files.length, lines: c.lines, estimate_usd: c.estimate_usd })) } });
+      return text(renderPreview(r.preview), {
+        preview: {
+          ...r.preview,
+          cases: r.preview.cases.map((c) => ({
+            id: c.id,
+            files: c.files.length,
+            lines: c.lines,
+            estimate_usd: c.estimate_usd,
+          })),
+        },
+      });
     },
   };
   const start: PiToolDefinition = {
@@ -356,38 +448,60 @@ export function scanToolDefinitions(
       "HARD at the previewed estimate (the calibration cap for a calibration run). Refused if anything moved since the preview. Only after " +
       "the operator agreed to the cost ('do it').",
     promptSnippet: "Start the previewed scan",
-    parameters: { type: "object", properties: { key: { type: "string" }, sha: SHA_PARAM, delta: DELTA_PARAM }, required: ["key"] },
+    parameters: {
+      type: "object",
+      properties: { key: { type: "string" }, sha: SHA_PARAM, delta: DELTA_PARAM },
+      required: ["key"],
+    },
     execute: async (_id, params) => {
-      const r = await scan.start({ key: params?.key, sha: typeof params?.sha === "string" ? params.sha : undefined, delta: params?.delta === true });
+      const r = await scan.start({
+        key: params?.key,
+        sha: typeof params?.sha === "string" ? params.sha : undefined,
+        delta: params?.delta === true,
+      });
       if (!r.ok) return refused("Scan start", r);
       return text(
         `Scan ${r.run.id} (${r.run.mode}) started at ${r.run.sha.slice(0, 12)}: ${r.run.cases.length} case(s), hard stop ${usd(r.run.cap_usd)}. ` +
           "It runs in the background — scan_status shows progress, scan_stop stops it.",
-        { run: { id: r.run.id, mode: r.run.mode, sha: r.run.sha, cases: r.run.cases.length, cap_usd: r.run.cap_usd } },
+        {
+          run: {
+            id: r.run.id,
+            mode: r.run.mode,
+            sha: r.run.sha,
+            cases: r.run.cases.length,
+            cap_usd: r.run.cap_usd,
+          },
+        },
       );
     },
   };
   const status: PiToolDefinition = {
     name: "scan_status",
     label: "Scan status",
-    description: "The latest scan run — cases done, findings, spend against its hard cap — and the coverage ledger's totals.",
+    description:
+      "The latest scan run — cases done, findings, spend against its hard cap — and the coverage ledger's totals.",
     promptSnippet: "Show the scan's progress",
     parameters: NO_PARAMS,
     execute: async () => {
       const s = scan.status();
-      return text(renderStatus(s), { status: { ...s, run: s.run ? { ...s.run, cases: undefined } : null } });
+      return text(renderStatus(s), {
+        status: { ...s, run: s.run ? { ...s.run, cases: undefined } : null },
+      });
     },
   };
   const stop: PiToolDefinition = {
     name: "scan_stop",
     label: "Stop the scan",
-    description: "Stop the running scan: in-flight cases are aborted, no more start. Finished cases stay in the ledger, so a later start resumes.",
+    description:
+      "Stop the running scan: in-flight cases are aborted, no more start. Finished cases stay in the ledger, so a later start resumes.",
     promptSnippet: "Stop the running scan",
     parameters: NO_PARAMS,
     execute: async () => {
       const r = scan.stop();
       if (!r.ok) return refused("Scan stop", r);
-      return text(`Stopping scan ${r.id}. What finished is kept; preview and start again to resume.`);
+      return text(
+        `Stopping scan ${r.id}. What finished is kept; preview and start again to resume.`,
+      );
     },
   };
   const list: PiToolDefinition = {
@@ -416,11 +530,13 @@ export function scanToolDefinitions(
       const p = params ?? {};
       const filter: FindingsFilter = {};
       if (typeof p.state === "string") {
-        if (!["new", "promoted", "dismissed", "fixed"].includes(p.state)) return text(`Unknown state ${JSON.stringify(p.state)}.`);
+        if (!["new", "promoted", "dismissed", "fixed"].includes(p.state))
+          return text(`Unknown state ${JSON.stringify(p.state)}.`);
         filter.state = p.state as FindingState;
       }
       if (typeof p.severity === "string") {
-        if (!(SEVERITIES as readonly string[]).includes(p.severity)) return text(`Unknown severity ${JSON.stringify(p.severity)}.`);
+        if (!(SEVERITIES as readonly string[]).includes(p.severity))
+          return text(`Unknown severity ${JSON.stringify(p.severity)}.`);
         filter.severity = p.severity as ScanSeverity;
       }
       if (typeof p.lens === "string") filter.lens = p.lens;
@@ -428,16 +544,24 @@ export function scanToolDefinitions(
       if (typeof p.doubted === "boolean") filter.doubted = p.doubted;
       if (typeof p.validity === "string") {
         if (!(VALIDITY_ORDER as readonly string[]).includes(p.validity)) {
-          return text(`Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`);
+          return text(
+            `Unknown validity ${JSON.stringify(p.validity)} — confirmed, likely, doubtful or unknown.`,
+          );
         }
         filter.validity = p.validity as ValidityView;
       }
       const { findings: listed, error } = findings.list(filter);
       if (error !== null) return text(`✗ ${error}`);
       const fs = byValidity(listed);
-      const limit = typeof p.limit === "number" && p.limit > 0 ? Math.min(200, Math.floor(p.limit)) : 50;
-      const tiers = Object.fromEntries(VALIDITY_ORDER.map((v) => [v, fs.filter((f) => validityOf(f) === v).length]));
-      return text(renderFindings(fs.slice(0, limit), fs.length), { total: fs.length, validity: tiers });
+      const limit =
+        typeof p.limit === "number" && p.limit > 0 ? Math.min(200, Math.floor(p.limit)) : 50;
+      const tiers = Object.fromEntries(
+        VALIDITY_ORDER.map((v) => [v, fs.filter((f) => validityOf(f) === v).length]),
+      );
+      return text(renderFindings(fs.slice(0, limit), fs.length), {
+        total: fs.length,
+        validity: tiers,
+      });
     },
   };
   const matches: PiToolDefinition = {
@@ -469,7 +593,11 @@ export function scanToolDefinitions(
         key: { type: "string" },
         pairs: {
           type: "array",
-          items: { type: "object", properties: { old: { type: "string" }, new: { type: "string" } }, required: ["old", "new"] },
+          items: {
+            type: "object",
+            properties: { old: { type: "string" }, new: { type: "string" } },
+            required: ["old", "new"],
+          },
         },
       },
       required: ["key"],
@@ -479,13 +607,16 @@ export function scanToolDefinitions(
       if (!r.ok) return refused("Match", r);
       const out = [
         `Settled: ${r.matched} matched (state kept), ${r.fixed} fixed, ${r.new} new` +
-          (r.dismissed_unreported > 0 ? `, ${r.dismissed_unreported} dismissed kept dismissed (stamped no longer reported)` : "") +
+          (r.dismissed_unreported > 0
+            ? `, ${r.dismissed_unreported} dismissed kept dismissed (stamped no longer reported)`
+            : "") +
           ".",
       ];
       let tickets: CloseFixedResult | null = null;
       if (afterMatch && r.fixed > 0) {
         tickets = await afterMatch();
-        if (tickets.closed.length > 0) out.push(`Closed as fixed: ${tickets.closed.map((c) => c.ref).join(", ")}.`);
+        if (tickets.closed.length > 0)
+          out.push(`Closed as fixed: ${tickets.closed.map((c) => c.ref).join(", ")}.`);
         for (const p of tickets.problems) out.push(`! ticket not closed: ${p}`);
       }
       return text(out.join("\n"), { ...r, tickets_closed: tickets?.closed.length ?? 0 });
@@ -544,7 +675,13 @@ export function scanToolDefinitions(
       });
       if (!r.ok) return refused("Stage 2 proposal", r);
       return text(renderProposal(r.proposal), {
-        proposal: { key: r.proposal.key, sha: r.proposal.sha, cap_usd: r.proposal.cap_usd, runnable: r.proposal.runnable, rows: r.proposal.rows.length },
+        proposal: {
+          key: r.proposal.key,
+          sha: r.proposal.sha,
+          cap_usd: r.proposal.cap_usd,
+          runnable: r.proposal.runnable,
+          rows: r.proposal.rows.length,
+        },
       });
     },
   };
@@ -565,7 +702,10 @@ export function scanToolDefinitions(
     execute: async (_id, params) => {
       // The engine validates `rows` (a list of runnable row ids, not empty —
       // `keptRows`, the TUI click's own rule) and re-plans before it starts.
-      const r = await scan.startStage2({ key: params?.key, ...(params?.rows !== undefined ? { rows: params.rows } : {}) });
+      const r = await scan.startStage2({
+        key: params?.key,
+        ...(params?.rows !== undefined ? { rows: params.rows } : {}),
+      });
       if (!r.ok) return refused("Stage 2 start", r);
       const runnable = scan.stage2Proposal().proposal?.runnable ?? null;
       const narrowed = params?.rows !== undefined && params?.rows !== null;
@@ -576,7 +716,15 @@ export function scanToolDefinitions(
       return text(
         `Stage 2 ${r.run.id} started at ${r.run.sha.slice(0, 12)}: ${count}, hard stop ${usd(r.run.cap_usd)}. ` +
           "It runs in the background — scan_status shows progress, scan_stop stops it.",
-        { run: { id: r.run.id, mode: r.run.mode, sha: r.run.sha, cases: r.run.cases.length, cap_usd: r.run.cap_usd } },
+        {
+          run: {
+            id: r.run.id,
+            mode: r.run.mode,
+            sha: r.run.sha,
+            cases: r.run.cases.length,
+            cap_usd: r.run.cap_usd,
+          },
+        },
       );
     },
   };
@@ -598,7 +746,11 @@ export function watchTuiRequests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): ()
     } catch (err) {
       console.error(`setup: scan stop request failed: ${String(err)}`);
     }
-    scan.consumeStage2Request().catch((err: unknown) => console.error(`setup: stage 2 start request failed: ${String(err)}`));
+    scan
+      .consumeStage2Request()
+      .catch((err: unknown) =>
+        console.error(`setup: stage 2 start request failed: ${String(err)}`),
+      );
   }, everyMs);
   timer.unref?.();
   return () => clearInterval(timer);
@@ -616,7 +768,12 @@ export function buildScan(
   reviewedRepo: string,
   env: NodeJS.ProcessEnv = process.env,
   shared: { memory: MemoryStore | null; tracker: TrackerSink } | null = null,
-): { scan: ScanRunner; findings: FindingsStore; settingsOf: () => ScanSettings | null; triage: ScanTriage | null } {
+): {
+  scan: ScanRunner;
+  findings: FindingsStore;
+  settingsOf: () => ScanSettings | null;
+  triage: ScanTriage | null;
+} {
   const root = env.QCR_ROOT?.trim() || sandboxRoot();
   const home = stateHome(env);
   const state = stateHomeFs(home);
@@ -640,7 +797,9 @@ export function buildScan(
       const status = engine.status();
       return {
         ok: false,
-        errors: status.cut_file_unreadable ? status.problems : ["no saved unit cut — a scan reads by unit; propose, adjust and save one first"],
+        errors: status.cut_file_unreadable
+          ? status.problems
+          : ["no saved unit cut — a scan reads by unit; propose, adjust and save one first"],
       };
     },
     settings: () => {
@@ -680,6 +839,7 @@ export function scanRuns(scan: ScanRunner): Array<{ id: string; sha: string; sta
   const s = scan.status();
   const out: Array<{ id: string; sha: string; state: string }> = [];
   if (s.run) out.push({ id: s.run.id, sha: s.run.sha, state: s.run.display });
-  for (const h of s.history) if (!out.some((r) => r.id === h.id)) out.push({ id: h.id, sha: h.sha, state: h.state });
+  for (const h of s.history)
+    if (!out.some((r) => r.id === h.id)) out.push({ id: h.id, sha: h.sha, state: h.state });
   return out;
 }

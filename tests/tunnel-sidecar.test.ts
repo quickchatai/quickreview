@@ -486,7 +486,9 @@ describe("compose topology — a sidecar only when the operator chose one", () =
 
   it("the token-bearing sidecars mount the secrets dir READ-ONLY and pass nothing on a command line", () => {
     for (const name of ["tunnel-ngrok", "tunnel-named"]) {
-      expect(service(name)).toContain("${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro");
+      expect(service(name)).toContain(
+        "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
+      );
     }
     // The quick tunnel needs no credential at all, so it gets no secrets mount.
     expect(service("tunnel-quick")).not.toContain("secrets");

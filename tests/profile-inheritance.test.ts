@@ -104,7 +104,13 @@ function baselineBody(name: string): string {
 function plan(name: string, files: PrFileEntry[]) {
   const r = resolved(name);
   // Unpinned (the shipped DEFAULT_PASS_TIERS would mask the ecosystem's tier gate).
-  return buildPassPlan({ ...cfg, models: { ...cfg.models, pass_tiers: {} } }, files, undefined, r.ecosystem, r.heuristics);
+  return buildPassPlan(
+    { ...cfg, models: { ...cfg.models, pass_tiers: {} } },
+    files,
+    undefined,
+    r.ecosystem,
+    r.heuristics,
+  );
 }
 
 const file = (filename: string, extra: Partial<PrFileEntry> = {}): PrFileEntry => ({
@@ -136,17 +142,21 @@ describe("the default profile", () => {
     expect(r.ecosystem.name).toBe("none");
   });
 
-  it("an empty child of it reviews exactly as no profile does — plan and built agents", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    profile("house", { toml: 'extends = "default"\n' }); // no addenda/, no heuristics
-    for (const files of CORPUS) {
-      expect(plan("house", files), files[0]!.filename).toEqual(plan("", files));
-      expect(plan("default", files), files[0]!.filename).toEqual(plan("", files));
-    }
-    const generic = agents("");
-    const child = agents("house");
-    expect([...child.keys()].sort()).toEqual([...generic.keys()].sort());
-    for (const [name, bytes] of generic) expect(child.get(name), name).toBe(bytes);
-  });
+  it(
+    "an empty child of it reviews exactly as no profile does — plan and built agents",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      profile("house", { toml: 'extends = "default"\n' }); // no addenda/, no heuristics
+      for (const files of CORPUS) {
+        expect(plan("house", files), files[0]!.filename).toEqual(plan("", files));
+        expect(plan("default", files), files[0]!.filename).toEqual(plan("", files));
+      }
+      const generic = agents("");
+      const child = agents("house");
+      expect([...child.keys()].sort()).toEqual([...generic.keys()].sort());
+      for (const [name, bytes] of generic) expect(child.get(name), name).toBe(bytes);
+    },
+  );
 });
 
 // ---- addenda: add / replace by id / drop ------------------------------------

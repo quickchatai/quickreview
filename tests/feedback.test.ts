@@ -143,7 +143,10 @@ describe("dayScopedRebuild — the day-change agents rebuild wire.ts runs", () =
 
   it("an explicit day (the [feedback] ingest path) builds that day", () => {
     const built: string[] = [];
-    const r = dayScopedRebuild(() => "2026-01-15", (day) => built.push(day));
+    const r = dayScopedRebuild(
+      () => "2026-01-15",
+      (day) => built.push(day),
+    );
     r.rebuild("2026-01-15");
     expect(r.builtDay()).toBe("2026-01-15");
     r.tick();

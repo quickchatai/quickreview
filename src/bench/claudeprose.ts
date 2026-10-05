@@ -300,14 +300,24 @@ export function parseClaudeProse(
       const loc = paragraphLocation(b.lines[0]!);
       i++;
       if (loc && !STRONG_NEG.test(t)) {
-        const cand: Candidate = { written: loc.written, start: loc.start, end: loc.end, text: t, group: null };
+        const cand: Candidate = {
+          written: loc.written,
+          start: loc.start,
+          end: loc.end,
+          text: t,
+          group: null,
+        };
         cands.push(cand);
         // the list right under it (no blank line), when it has no locations of
         // its own, is its body: "- **Cause:** … - **Effect:** …"
         const next = bs[i];
         if (next?.kind === "item" && !next.afterBlank) {
           const members: Block[] = [];
-          for (let k = i; k < bs.length && bs[k]!.kind === "item" && bs[k]!.group === next.group; k++)
+          for (
+            let k = i;
+            k < bs.length && bs[k]!.kind === "item" && bs[k]!.group === next.group;
+            k++
+          )
             members.push(bs[k]!);
           if (members.every((x) => !findLocations(firstLine(x))[0])) {
             cand.text = [t, ...members.map(text)].join("\n");
@@ -332,7 +342,13 @@ export function parseClaudeProse(
         continue;
       }
       if (loc) {
-        cands.push({ written: loc.written, start: loc.start, end: loc.end, text: itemText, group: g });
+        cands.push({
+          written: loc.written,
+          start: loc.start,
+          end: loc.end,
+          text: itemText,
+          group: g,
+        });
         continue;
       }
       // `1. **Line 10533 — …**` under "both in `src/gpu/x.c`:"
@@ -341,7 +357,13 @@ export function parseClaudeProse(
       if (lineOnly && file) {
         const a = Number(lineOnly[1]);
         const e = lineOnly[2] ? Number(lineOnly[2]) : a;
-        cands.push({ written: file, start: Math.min(a, e), end: Math.max(a, e), text: itemText, group: g });
+        cands.push({
+          written: file,
+          start: Math.min(a, e),
+          end: Math.max(a, e),
+          text: itemText,
+          group: g,
+        });
         continue;
       }
       skipped.unlocated++;

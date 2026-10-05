@@ -172,7 +172,9 @@ describe("locateConfig", () => {
     try {
       delete process.env.QCR_CONFIG;
       Object.assign(process.env, env);
-      expect(() => load()).toThrow(new RegExp(`no config at ${join(configHome(env), "config.toml")}`));
+      expect(() => load()).toThrow(
+        new RegExp(`no config at ${join(configHome(env), "config.toml")}`),
+      );
       // The real checkout may strand one; either way the message is the locator's.
       const stranded = strandedCheckoutConfig({ root: sandboxRoot(), env });
       if (stranded) expect(() => load()).toThrow(/qcr install migrate/);
@@ -188,9 +190,7 @@ describe("locateConfig", () => {
       "utf8",
     );
     const p = put(join(configHome(env), "config.toml"), fixture);
-    expect(loadConfig(locateConfig({ env }).path).github.repo).toBe(
-      loadConfig(p).github.repo,
-    );
+    expect(loadConfig(locateConfig({ env }).path).github.repo).toBe(loadConfig(p).github.repo);
   });
 });
 
@@ -270,19 +270,23 @@ describe("qcr install", () => {
     expect(conflict.lines.join("\n")).toMatch(/differ/);
   });
 
-  it("the CLI's migrate moves the checkout config and is idempotent", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const { cmdInstall } = await import("../src/cli.js");
-    put(join(root, "config.toml"), "x = 1\n");
-    const out: string[] = [];
-    const log = (l: string) => out.push(l);
-    expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
-    const to = join(configHome(env), "config.toml");
-    expect(readFileSync(to, "utf8")).toBe("x = 1\n");
-    expect(existsSync(join(root, "config.toml"))).toBe(false);
-    expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
-    expect(out.join("\n")).toMatch(/already/);
-    expect(readFileSync(to, "utf8")).toBe("x = 1\n");
-  });
+  it(
+    "the CLI's migrate moves the checkout config and is idempotent",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { cmdInstall } = await import("../src/cli.js");
+      put(join(root, "config.toml"), "x = 1\n");
+      const out: string[] = [];
+      const log = (l: string) => out.push(l);
+      expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
+      const to = join(configHome(env), "config.toml");
+      expect(readFileSync(to, "utf8")).toBe("x = 1\n");
+      expect(existsSync(join(root, "config.toml"))).toBe(false);
+      expect(cmdInstall(["migrate"], { root, env, log })).toBe(0);
+      expect(out.join("\n")).toMatch(/already/);
+      expect(readFileSync(to, "utf8")).toBe("x = 1\n");
+    },
+  );
 
   it("the CLI's where names both homes, and what the checkout still strands", async () => {
     const { cmdInstall } = await import("../src/cli.js");
@@ -592,26 +596,30 @@ describe("the checkout's profiles/ holds the generic examples", () => {
     for (const example of EXAMPLE_PROFILES) expect(dirs).toContain(example);
   });
 
-  it("no TypeScript module but the locator builds a profiles/ path", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const offenders: string[] = [];
-    const walk = (rel: string): void => {
-      for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
-        const path = `${rel}/${entry.name}`;
-        if (entry.isDirectory()) {
-          if (entry.name !== "vendor") walk(path);
-        } else if (/\.(ts|mjs)$/.test(entry.name) && path !== "src/install.ts") {
-          readFileSync(join(repo, path), "utf8")
-            .split("\n")
-            .forEach((line, i) => {
-              if (/(join|resolve)\([^()]*"profiles"/.test(line))
-                offenders.push(`${path}:${i + 1}: ${line.trim()}`);
-            });
+  it(
+    "no TypeScript module but the locator builds a profiles/ path",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const offenders: string[] = [];
+      const walk = (rel: string): void => {
+        for (const entry of readdirSync(join(repo, rel), { withFileTypes: true })) {
+          const path = `${rel}/${entry.name}`;
+          if (entry.isDirectory()) {
+            if (entry.name !== "vendor") walk(path);
+          } else if (/\.(ts|mjs)$/.test(entry.name) && path !== "src/install.ts") {
+            readFileSync(join(repo, path), "utf8")
+              .split("\n")
+              .forEach((line, i) => {
+                if (/(join|resolve)\([^()]*"profiles"/.test(line))
+                  offenders.push(`${path}:${i + 1}: ${line.trim()}`);
+              });
+          }
         }
-      }
-    };
-    for (const top of ["src", "extensions"]) walk(top);
-    expect(offenders).toEqual([]);
-  });
+      };
+      for (const top of ["src", "extensions"]) walk(top);
+      expect(offenders).toEqual([]);
+    },
+  );
 });
 
 // ----: secrets under the install's config home ----------------------
@@ -725,9 +733,9 @@ describe("locateSecrets", () => {
       );
       expect(parseConfig(withDir("/elsewhere")).github.secrets_dir).toBe("/elsewhere");
       // An absent key is the same as an empty one.
-      expect(
-        parseConfig(fixture.replace(/^secrets_dir = .*$/m, "")).github.secrets_dir,
-      ).toBe(secretsHome(env));
+      expect(parseConfig(fixture.replace(/^secrets_dir = .*$/m, "")).github.secrets_dir).toBe(
+        secretsHome(env),
+      );
     } finally {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
       Object.assign(process.env, saved);
@@ -874,9 +882,13 @@ describe("migrate repoints the compose .env (review)", () => {
     writeFileSync(join(legacy(), "app.pem"), "PEM\n", { mode: 0o600 });
     const envFile = join(root, ".env");
     mkdirSync(root, { recursive: true });
-    writeFileSync(envFile, `COMPOSE_PROFILES=tunnel\nQCR_SECRETS_DIR=${legacy()}\nQCR_CONFIG_NAME=config.toml\n`, {
-      mode: 0o600,
-    });
+    writeFileSync(
+      envFile,
+      `COMPOSE_PROFILES=tunnel\nQCR_SECRETS_DIR=${legacy()}\nQCR_CONFIG_NAME=config.toml\n`,
+      {
+        mode: 0o600,
+      },
+    );
     const out: string[] = [];
     expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(0);
     expect(readFileSync(envFile, "utf8")).toBe(
@@ -912,7 +924,10 @@ describe("migrate repoints the compose .env (review)", () => {
     const out: string[] = [];
     cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) });
     expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${legacy()}\n`);
-    expect(repointComposeSecrets({ root, env })).toMatchObject({ kind: "held", missing: ["app.pem"] });
+    expect(repointComposeSecrets({ root, env })).toMatchObject({
+      kind: "held",
+      missing: ["app.pem"],
+    });
     expect(out.join("\n")).toMatch(/app\.pem/);
     expect(out.join("\n")).not.toMatch(/docker compose up -d/);
   });
@@ -930,7 +945,11 @@ describe("migrate repoints the compose .env (review)", () => {
     expect(cmdInstall(["migrate"], { root, env, log: (l) => out.push(l) })).toBe(1);
     expect(out.join("\n")).toMatch(/both exist and differ/);
     expect(readFileSync(envFile, "utf8")).toBe(`QCR_SECRETS_DIR=${legacy()}\n`);
-    expect(repointComposeSecrets({ root, env })).toMatchObject({ kind: "held", missing: [], differ: ["app.pem"] });
+    expect(repointComposeSecrets({ root, env })).toMatchObject({
+      kind: "held",
+      missing: [],
+      differ: ["app.pem"],
+    });
     expect(out.join("\n")).not.toMatch(/docker compose up -d/);
     expect(out.join("\n")).toMatch(/app\.pem/);
   });
@@ -950,7 +969,8 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
   // profiles.ts) and the companion column's missing-keys note — never from a
   // reader deciding where to read.
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-  const OLD_PLACE = /\b(legacySecretsDir|strandedLegacySecrets|strandedCheckoutConfig|strandedCheckoutProfiles?|migrate(Config|Profiles|Secrets)|repointComposeSecrets)\(/;
+  const OLD_PLACE =
+    /\b(legacySecretsDir|strandedLegacySecrets|strandedCheckoutConfig|strandedCheckoutProfiles?|migrate(Config|Profiles|Secrets)|repointComposeSecrets)\(/;
   const ALLOWED = new Set([
     "src/install.ts",
     "src/cli.ts",
@@ -1021,7 +1041,8 @@ describe("no reader builds the legacy secrets path itself", () => {
             const code = line.trim();
             if (/^(\/\/|\*|\/\*|#)/.test(code)) return; // a comment
             // Prose that names it AS the legacy dir is a pointer, not a read.
-            if (SPELLS.test(code) && !/legacy/i.test(code)) offenders.push(`${rel}:${i + 1}: ${code}`);
+            if (SPELLS.test(code) && !/legacy/i.test(code))
+              offenders.push(`${rel}:${i + 1}: ${code}`);
           });
       }
     }

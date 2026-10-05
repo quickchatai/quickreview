@@ -178,19 +178,25 @@ describe("④ push does not review — any unsolicited round, and a REAL fixture
     }
   });
 
-  it("the offline simulation tracks an APPROVED PR at the old head, so reconcile really sees a push", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg = parseConfig(readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"));
-    const sim = stalenessSimulation(cfg, scratch());
-    const r = await probeStalenessWake(sim);
-    expect(r.pass).toBe(true);
-    const row = sim.store.getPr(sim.fixture.number);
-    expect(row).toMatchObject({ head_sha: sim.fixture.head_sha });
-    expect(sim.store.reviewedHead(sim.fixture.number)).toMatchObject({
-      head_sha: sim.fixture.approved_sha,
-      verdict: "APPROVE",
-    });
-    expect(sim.store.priorRoundCount(sim.fixture.number)).toBe(1);
-  });
+  it(
+    "the offline simulation tracks an APPROVED PR at the old head, so reconcile really sees a push",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg = parseConfig(
+        readFileSync(join(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
+      );
+      const sim = stalenessSimulation(cfg, scratch());
+      const r = await probeStalenessWake(sim);
+      expect(r.pass).toBe(true);
+      const row = sim.store.getPr(sim.fixture.number);
+      expect(row).toMatchObject({ head_sha: sim.fixture.head_sha });
+      expect(sim.store.reviewedHead(sim.fixture.number)).toMatchObject({
+        head_sha: sim.fixture.approved_sha,
+        verdict: "APPROVE",
+      });
+      expect(sim.store.priorRoundCount(sim.fixture.number)).toBe(1);
+    },
+  );
 });
 
 describe("② derived queue (selfscan)", () => {

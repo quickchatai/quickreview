@@ -192,13 +192,17 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
   // apart from another app's identically named migration.
   const knownLabels = new Set<string>();
   for (const path of basePaths) knownLabels.add(parseMigrationPath(path)!.app_label);
-  for (const entries of prByApp.values()) for (const { ref } of entries) knownLabels.add(ref.app_label);
+  for (const entries of prByApp.values())
+    for (const { ref } of entries) knownLabels.add(ref.app_label);
   knownLabels.delete("");
 
   const out: MigrationCollision[] = [];
   // Every rename the remedy prescribes, per app, for the cross-app follow-up
   // pass below.
-  const renamedByApp = new Map<string, { app_label: string; renamed: Map<string, { name: string; number: number }> }>();
+  const renamedByApp = new Map<
+    string,
+    { app_label: string; renamed: Map<string, { name: string; number: number }> }
+  >();
   for (const [app, entries] of [...prByApp].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     const base = baseByApp.get(app) ?? new Map<number, MigrationRef>();
     const ordered = [...entries].sort(

@@ -43,8 +43,15 @@ class MemFake implements MemoryStore {
   add(text: string, pinned = false): void {
     this.n++;
     this.entries.push({
-      id: `e${this.n}`, ts: "2026-09-29 12:00:00", day: "2026-09-29", block: 0, text,
-      tags: tagsOf(text), links: [], pinned, hash: `h${this.n}`,
+      id: `e${this.n}`,
+      ts: "2026-09-29 12:00:00",
+      day: "2026-09-29",
+      block: 0,
+      text,
+      tags: tagsOf(text),
+      links: [],
+      pinned,
+      hash: `h${this.n}`,
     });
   }
   async read(): Promise<MemoryEntry[]> {
@@ -69,8 +76,10 @@ class MemFake implements MemoryStore {
   }
 }
 
-const RAW_1 = "Please always wrap payment writes in a database transaction so a crash never leaves half a charge.";
-const RAW_2 = "[feedback] the reviewer keeps flagging logging calls that our style guide explicitly allows here";
+const RAW_1 =
+  "Please always wrap payment writes in a database transaction so a crash never leaves half a charge.";
+const RAW_2 =
+  "[feedback] the reviewer keeps flagging logging calls that our style guide explicitly allows here";
 
 function digest(over: Partial<ReviewHistoryDigest> = {}): ReviewHistoryDigest {
   return {
@@ -80,14 +89,50 @@ function digest(over: Partial<ReviewHistoryDigest> = {}): ReviewHistoryDigest {
     generated_at: "2026-09-29T12:00:00.000Z",
     window: { since: "2026-03-29T12:00:00.000Z", until: "2026-09-29T12:00:00.000Z", months: 6 },
     human: {
-      prs_enumerated: 2, prs_scanned: 2, prs_missing: 0, truncated: false,
+      prs_enumerated: 2,
+      prs_scanned: 2,
+      prs_missing: 0,
+      truncated: false,
       comments: [
-        { pr: 12, merged_at: null, kind: "inline", state: "CHANGES_REQUESTED", path: "pay/charge.py", author: "rev-alpha", body: RAW_1 },
-        { pr: 11, merged_at: null, kind: "review", state: "COMMENTED", path: null, author: "quinnx", body: "Needs a test for the empty cart." },
+        {
+          pr: 12,
+          merged_at: null,
+          kind: "inline",
+          state: "CHANGES_REQUESTED",
+          path: "pay/charge.py",
+          author: "rev-alpha",
+          body: RAW_1,
+        },
+        {
+          pr: 11,
+          merged_at: null,
+          kind: "review",
+          state: "COMMENTED",
+          path: null,
+          author: "quinnx",
+          body: "Needs a test for the empty cart.",
+        },
       ],
     },
-    rounds: [{ pr: 12, round_no: 1, verdict: "REQUEST_CHANGES", finished_at: "2026-09-01T00:00:00Z", backfilled: false, summary: "Blocked on the charge transaction." }],
-    feedback: [{ pr: 12, kind: "feedback_comment", created_at: "2026-09-02T00:00:00Z", author: "quinnx", body: RAW_2 }],
+    rounds: [
+      {
+        pr: 12,
+        round_no: 1,
+        verdict: "REQUEST_CHANGES",
+        finished_at: "2026-09-01T00:00:00Z",
+        backfilled: false,
+        summary: "Blocked on the charge transaction.",
+      },
+    ],
+    feedback: [
+      {
+        pr: 12,
+        kind: "feedback_comment",
+        created_at: "2026-09-02T00:00:00Z",
+        author: "quinnx",
+        body: RAW_2,
+      },
+    ],
     problems: [],
     ...over,
   };
@@ -96,7 +141,13 @@ function digest(over: Partial<ReviewHistoryDigest> = {}): ReviewHistoryDigest {
 function engine(memory: MemoryStore | null) {
   const state = stateHomeFs(join(dir, "state"));
   const e = new SetupEngine({
-    repo: { location: "/reviewed-repo", listFiles: () => [], read: () => null, lines: () => null, head: () => null },
+    repo: {
+      location: "/reviewed-repo",
+      listFiles: () => [],
+      read: () => null,
+      lines: () => null,
+      head: () => null,
+    },
     state,
     clock: () => new Date("2026-09-29T13:00:00Z"),
     memory,
@@ -104,18 +155,39 @@ function engine(memory: MemoryStore | null) {
     tracker: notYetTrackerSink(""),
     github: { get: async () => ({ ok: false, reason: "no network in tests" }) },
   });
-  return { e, state, put: (d: ReviewHistoryDigest | string) => state.write(HISTORY_DIGEST_FILE, typeof d === "string" ? d : JSON.stringify(d)) };
+  return {
+    e,
+    state,
+    put: (d: ReviewHistoryDigest | string) =>
+      state.write(HISTORY_DIGEST_FILE, typeof d === "string" ? d : JSON.stringify(d)),
+  };
 }
 
 const GOOD = [
-  { title: "Money writes are atomic", summary: "Reviewers block payment code that can leave a partial charge; they expect one transaction around it.", source: "mixed", weight: 2 },
-  { title: "Edge-case tests", summary: "Empty and boundary inputs are expected to carry a test.", source: "human", weight: 1 },
+  {
+    title: "Money writes are atomic",
+    summary:
+      "Reviewers block payment code that can leave a partial charge; they expect one transaction around it.",
+    source: "mixed",
+    weight: 2,
+  },
+  {
+    title: "Edge-case tests",
+    summary: "Empty and boundary inputs are expected to carry a test.",
+    source: "human",
+    weight: 1,
+  },
 ];
 
 describe("reading the digest", () => {
   it("absent is the normal state before a pull — no error, and the save is refused with the way to get one", async () => {
     const { e } = engine(new MemFake());
-    expect(e.history()).toMatchObject({ digest: "absent", problems: [], summary: null, themes: null });
+    expect(e.history()).toMatchObject({
+      digest: "absent",
+      problems: [],
+      summary: null,
+      themes: null,
+    });
     const r = await e.saveHistoryThemes(GOOD);
     expect(r).toEqual({ ok: false, errors: [expect.stringMatching(/qcr history pull/)] });
   });
@@ -123,7 +195,10 @@ describe("reading the digest", () => {
   it("an unreadable digest is reported, never half-used", () => {
     const { e, put } = engine(null);
     put("{ not json");
-    expect(e.history()).toMatchObject({ digest: "unreadable", problems: [expect.stringMatching(/not JSON/)] });
+    expect(e.history()).toMatchObject({
+      digest: "unreadable",
+      problems: [expect.stringMatching(/not JSON/)],
+    });
   });
 
   it("summarises and pages each half — raw, for the companion to condense", () => {
@@ -131,7 +206,12 @@ describe("reading the digest", () => {
     put(digest());
     const h = e.history({ section: "human", offset: 1, limit: 5 });
     expect(h.summary).toMatchObject({ human_comments: 2, rounds: 1, feedback: 1, empty: false });
-    expect(h.page).toEqual({ section: "human", total: 2, offset: 1, lines: ["#11 review [COMMENTED] @quinnx: Needs a test for the empty cart."] });
+    expect(h.page).toEqual({
+      section: "human",
+      total: 2,
+      offset: 1,
+      lines: ["#11 review [COMMENTED] @quinnx: Needs a test for the empty cart."],
+    });
     expect(e.history({ section: "rounds" }).page!.lines[0]).toMatch(/^#12 round 1 REQUEST_CHANGES/);
     expect(e.history({ section: "feedback", limit: 500 }).page!.lines).toHaveLength(1);
   });
@@ -155,9 +235,13 @@ describe("saving themes", () => {
     expect(saved.themes).toEqual(GOOD);
     expect(saved.digest_generated_at).toBe("2026-09-29T12:00:00.000Z");
 
-    const onward = [...mem.entries.map((x) => x.text), readFileSync(join(dir, "state", HISTORY_THEMES_FILE), "utf8")].join("\n");
+    const onward = [
+      ...mem.entries.map((x) => x.text),
+      readFileSync(join(dir, "state", HISTORY_THEMES_FILE), "utf8"),
+    ].join("\n");
     const d = digest();
-    for (const raw of [...d.human.comments.map((c) => c.body), ...d.feedback.map((f) => f.body!)]) expect(onward).not.toContain(raw);
+    for (const raw of [...d.human.comments.map((c) => c.body), ...d.feedback.map((f) => f.body!)])
+      expect(onward).not.toContain(raw);
     for (const who of ["rev-alpha", "quinnx"]) expect(onward).not.toContain(who);
   });
 
@@ -165,14 +249,40 @@ describe("saving themes", () => {
     const mem = new MemFake();
     const { e, put } = engine(mem);
     put(digest());
-    const quoting = [{ title: "Transactions", summary: "As one reviewer put it: always wrap payment writes in a database transaction so a crash never", source: "human", weight: 1 }];
+    const quoting = [
+      {
+        title: "Transactions",
+        summary:
+          "As one reviewer put it: always wrap payment writes in a database transaction so a crash never",
+        source: "human",
+        weight: 1,
+      },
+    ];
     const q = await e.saveHistoryThemes(quoting);
-    expect(q).toEqual({ ok: false, errors: [expect.stringMatching(/^themes\[0\] quotes a raw review comment/)] });
-    const feedbackQuote = [{ title: "Logging", summary: "They said the reviewer keeps flagging logging calls that our style guide explicitly allows", source: "feedback", weight: 1 }];
+    expect(q).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/^themes\[0\] quotes a raw review comment/)],
+    });
+    const feedbackQuote = [
+      {
+        title: "Logging",
+        summary:
+          "They said the reviewer keeps flagging logging calls that our style guide explicitly allows",
+        source: "feedback",
+        weight: 1,
+      },
+    ];
     expect((await e.saveHistoryThemes(feedbackQuote)).ok).toBe(false);
-    const naming = [{ title: "Tests", summary: "quinnx wants tests for empty carts", source: "human", weight: 1 }];
-    expect(await e.saveHistoryThemes(naming)).toEqual({ ok: false, errors: [expect.stringMatching(/names a comment author \(quinnx\)/)] });
-    expect((await e.saveHistoryThemes([{ ...naming[0], summary: "@rev-alpha asks" }])).ok).toBe(false);
+    const naming = [
+      { title: "Tests", summary: "quinnx wants tests for empty carts", source: "human", weight: 1 },
+    ];
+    expect(await e.saveHistoryThemes(naming)).toEqual({
+      ok: false,
+      errors: [expect.stringMatching(/names a comment author \(quinnx\)/)],
+    });
+    expect((await e.saveHistoryThemes([{ ...naming[0], summary: "@rev-alpha asks" }])).ok).toBe(
+      false,
+    );
     expect(mem.ops).toEqual([]);
     expect(readHistoryThemes(stateHomeFs(join(dir, "state")))).toBeNull();
   });
@@ -184,7 +294,12 @@ describe("saving themes", () => {
   it("validates shape: caps, one line, no leading #, a known source, a positive weight", async () => {
     const { e, put } = engine(null);
     put(digest());
-    const many = Array.from({ length: MAX_THEMES + 1 }, (_, i) => ({ title: `t${i}`, summary: "s", source: "human", weight: 1 }));
+    const many = Array.from({ length: MAX_THEMES + 1 }, (_, i) => ({
+      title: `t${i}`,
+      summary: "s",
+      source: "human",
+      weight: 1,
+    }));
     expect((await e.saveHistoryThemes(many)).ok).toBe(false);
     const bad = await e.saveHistoryThemes([
       { title: "#pinned trick", summary: "x", source: "human", weight: 1 },
@@ -192,12 +307,19 @@ describe("saving themes", () => {
       { title: "ok", summary: "x", source: "gossip", weight: 0 },
     ]);
     expect(bad.ok).toBe(false);
-    expect((bad as { errors: string[] }).errors.join("\n")).toMatch(/must not start with '#'[\s\S]*no newlines[\s\S]*source must be[\s\S]*weight must be/);
+    expect((bad as { errors: string[] }).errors.join("\n")).toMatch(
+      /must not start with '#'[\s\S]*no newlines[\s\S]*source must be[\s\S]*weight must be/,
+    );
     expect((await e.saveHistoryThemes("nope")).ok).toBe(false);
   });
 
   it("a theme's text cannot extend the entry header into a tag", () => {
-    const text = themeEntryText({ title: "pinned=yes k=v", summary: "#pinned", source: "human", weight: 3 });
+    const text = themeEntryText({
+      title: "pinned=yes k=v",
+      summary: "#pinned",
+      source: "human",
+      weight: 3,
+    });
     expect(parseHashTags(text)).toEqual(["history"]);
     expect(parseEventTags(text)).toEqual({ source: "human", weight: "3" });
   });
@@ -242,7 +364,19 @@ describe("saving themes", () => {
   it("works for a repo with no rounds: the empty history summarises as empty and saves an empty theme list", async () => {
     const mem = new MemFake();
     const { e, put } = engine(mem);
-    put(digest({ human: { prs_enumerated: 0, prs_scanned: 0, prs_missing: 0, truncated: false, comments: [] }, rounds: [], feedback: [] }));
+    put(
+      digest({
+        human: {
+          prs_enumerated: 0,
+          prs_scanned: 0,
+          prs_missing: 0,
+          truncated: false,
+          comments: [],
+        },
+        rounds: [],
+        feedback: [],
+      }),
+    );
     const h = e.history({ section: "rounds" });
     expect(h.summary).toMatchObject({ empty: true, human_comments: 0, rounds: 0, feedback: 0 });
     expect(h.page).toEqual({ section: "rounds", total: 0, offset: 0, lines: [] });
@@ -255,7 +389,10 @@ describe("saving themes", () => {
     const { e, put } = engine(null);
     put(digest());
     const r = await e.saveHistoryThemes(GOOD);
-    expect(r).toMatchObject({ ok: true, memory: { written: 0, problems: [expect.stringMatching(/no reviewer memory/)] } });
+    expect(r).toMatchObject({
+      ok: true,
+      memory: { written: 0, problems: [expect.stringMatching(/no reviewer memory/)] },
+    });
   });
 
   it("a themes file this version cannot read is never overwritten", async () => {
@@ -270,7 +407,10 @@ describe("saving themes", () => {
 
 describe("the tool belt", () => {
   it("registers the history tools, and they read, refuse and save through the engine", async () => {
-    const env = { QCR_REVIEWED_REPO: join(dir, "repo"), QCR_STATE_HOME: join(dir, "state") } as NodeJS.ProcessEnv;
+    const env = {
+      QCR_REVIEWED_REPO: join(dir, "repo"),
+      QCR_STATE_HOME: join(dir, "state"),
+    } as NodeJS.ProcessEnv;
     const defs = toolDefinitions(buildEngine(env));
     const call = async (name: string, params: Record<string, unknown> = {}): Promise<string> => {
       const def = defs.find((d) => d.name === name)!;
@@ -278,8 +418,25 @@ describe("the tool belt", () => {
       return (r.content[0] as { text: string }).text;
     };
     expect(await call("setup_review_history")).toMatch(/Ask the owner to run `qcr history pull`/);
-    stateHomeFs(join(dir, "state")).write(HISTORY_DIGEST_FILE, JSON.stringify(digest({ human: { prs_enumerated: 0, prs_scanned: 0, prs_missing: 0, truncated: false, comments: [] }, rounds: [], feedback: [] })));
-    expect(await call("setup_review_history", { section: "human" })).toMatch(/EMPTY history[\s\S]*human \(none\)/);
+    stateHomeFs(join(dir, "state")).write(
+      HISTORY_DIGEST_FILE,
+      JSON.stringify(
+        digest({
+          human: {
+            prs_enumerated: 0,
+            prs_scanned: 0,
+            prs_missing: 0,
+            truncated: false,
+            comments: [],
+          },
+          rounds: [],
+          feedback: [],
+        }),
+      ),
+    );
+    expect(await call("setup_review_history", { section: "human" })).toMatch(
+      /EMPTY history[\s\S]*human \(none\)/,
+    );
     // No endpoint or reviewer key in this env: the themes save, memory says why not.
     const saved = await call("setup_review_history_themes", { themes: [] });
     expect(saved).toMatch(/Themes saved:\n {2}\(none — an empty history has no themes\)/);
@@ -291,9 +448,21 @@ describe("the tool belt", () => {
 describe("reviewerMemoryFromEnv", () => {
   it("is null unless the spawn carries both the endpoint and the REVIEWER key", () => {
     expect(reviewerMemoryFromEnv({} as NodeJS.ProcessEnv)).toBeNull();
-    expect(reviewerMemoryFromEnv({ OPENVIKING_URL: "http://10.0.0.1:1933" } as NodeJS.ProcessEnv)).toBeNull();
+    expect(
+      reviewerMemoryFromEnv({ OPENVIKING_URL: "http://10.0.0.1:1933" } as NodeJS.ProcessEnv),
+    ).toBeNull();
     // The companion's own key is never the reviewer's.
-    expect(reviewerMemoryFromEnv({ OPENVIKING_URL: "http://10.0.0.1:1933", OPENVIKING_API_KEY: "k" } as NodeJS.ProcessEnv)).toBeNull();
-    expect(reviewerMemoryFromEnv({ OPENVIKING_URL: "http://10.0.0.1:1933", OPENVIKING_REVIEWER_KEY: "k" } as NodeJS.ProcessEnv)).not.toBeNull();
+    expect(
+      reviewerMemoryFromEnv({
+        OPENVIKING_URL: "http://10.0.0.1:1933",
+        OPENVIKING_API_KEY: "k",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+    expect(
+      reviewerMemoryFromEnv({
+        OPENVIKING_URL: "http://10.0.0.1:1933",
+        OPENVIKING_REVIEWER_KEY: "k",
+      } as NodeJS.ProcessEnv),
+    ).not.toBeNull();
   });
 });

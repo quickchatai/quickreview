@@ -287,23 +287,27 @@ describe("inject-bridge — start-acknowledged single flight", () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1));
   });
 
-  it("never overrides an active run merely because the old 15-minute hold elapsed", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const t0 = Date.now();
-    const now = vi.spyOn(Date, "now").mockReturnValue(t0);
-    activate(fakePi());
-    fire("session_start");
-    fire("agent_start");
+  it(
+    "never overrides an active run merely because the old 15-minute hold elapsed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const t0 = Date.now();
+      const now = vi.spyOn(Date, "now").mockReturnValue(t0);
+      activate(fakePi());
+      fire("session_start");
+      fire("agent_start");
 
-    writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake A");
-    await sleep(150);
-    now.mockReturnValue(t0 + 15 * 60_000 + 1);
-    writeFileSync(join(dir, "2026-08-20T13-00-01-0000.md"), "wake B");
-    await sleep(150);
+      writeFileSync(join(dir, "2026-08-20T13-00-00-0000.md"), "wake A");
+      await sleep(150);
+      now.mockReturnValue(t0 + 15 * 60_000 + 1);
+      writeFileSync(join(dir, "2026-08-20T13-00-01-0000.md"), "wake B");
+      await sleep(150);
 
-    expect(sends).toHaveLength(0);
-    expect(pending()).toHaveLength(2);
-    expect(done()).toHaveLength(0);
-  });
+      expect(sends).toHaveLength(0);
+      expect(pending()).toHaveLength(2);
+      expect(done()).toHaveLength(0);
+    },
+  );
 
   it("submits at most one wake, then waits for its acknowledged run to settle", async () => {
     writeFileSync(join(dir, "2026-08-20T14-00-00-0000.md"), "first");

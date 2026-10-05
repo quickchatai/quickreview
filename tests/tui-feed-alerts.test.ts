@@ -2,7 +2,14 @@
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
 import { FG } from "../src/tui/theme.js";
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

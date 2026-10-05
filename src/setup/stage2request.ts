@@ -90,9 +90,16 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 /** Parse the proposal file; throws on anything this version does not read. */
 export function parseStage2File(text: string): Stage2File {
   const raw = JSON.parse(text) as Partial<Stage2File> | null;
-  if (typeof raw !== "object" || raw === null || raw.version !== STAGE2_VERSION) throw new Error("not a version-1 stage 2 file");
+  if (typeof raw !== "object" || raw === null || raw.version !== STAGE2_VERSION)
+    throw new Error("not a version-1 stage 2 file");
   const p = raw.proposal ?? null;
-  if (p !== null && (typeof p !== "object" || typeof p.key !== "string" || !Array.isArray(p.rows) || !Array.isArray(p.request))) {
+  if (
+    p !== null &&
+    (typeof p !== "object" ||
+      typeof p.key !== "string" ||
+      !Array.isArray(p.rows) ||
+      !Array.isArray(p.request))
+  ) {
     throw new Error("`proposal` is not a stage 2 proposal");
   }
   return { version: STAGE2_VERSION, proposal: p };
@@ -102,9 +109,26 @@ export function parseStage2File(text: string): Stage2File {
 export function parseStartRequest(text: string): Stage2StartRequest | null {
   try {
     const r = JSON.parse(text) as Partial<Stage2StartRequest> | null;
-    if (typeof r !== "object" || r === null || typeof r.id !== "string" || r.id === "" || typeof r.key !== "string") return null;
-    if (r.rows !== undefined && (!Array.isArray(r.rows) || !r.rows.every((x) => typeof x === "string"))) return null;
-    return { id: r.id, key: r.key, at: typeof r.at === "string" ? r.at : "", by: "tui", ...(r.rows !== undefined ? { rows: [...r.rows] } : {}) };
+    if (
+      typeof r !== "object" ||
+      r === null ||
+      typeof r.id !== "string" ||
+      r.id === "" ||
+      typeof r.key !== "string"
+    )
+      return null;
+    if (
+      r.rows !== undefined &&
+      (!Array.isArray(r.rows) || !r.rows.every((x) => typeof x === "string"))
+    )
+      return null;
+    return {
+      id: r.id,
+      key: r.key,
+      at: typeof r.at === "string" ? r.at : "",
+      by: "tui",
+      ...(r.rows !== undefined ? { rows: [...r.rows] } : {}),
+    };
   } catch {
     return null;
   }
@@ -114,14 +138,22 @@ export function parseStartRequest(text: string): Stage2StartRequest | null {
 export function parseStartResult(text: string): Stage2StartResult | null {
   try {
     const r = JSON.parse(text) as Partial<Stage2StartResult> | null;
-    if (typeof r !== "object" || r === null || typeof r.request !== "string" || typeof r.ok !== "boolean") return null;
+    if (
+      typeof r !== "object" ||
+      r === null ||
+      typeof r.request !== "string" ||
+      typeof r.ok !== "boolean"
+    )
+      return null;
     return {
       request: r.request,
       key: typeof r.key === "string" ? r.key : "",
       at: typeof r.at === "string" ? r.at : "",
       ok: r.ok,
       run: typeof r.run === "string" ? r.run : null,
-      errors: Array.isArray(r.errors) ? r.errors.filter((e): e is string => typeof e === "string") : [],
+      errors: Array.isArray(r.errors)
+        ? r.errors.filter((e): e is string => typeof e === "string")
+        : [],
     };
   } catch {
     return null;
@@ -146,7 +178,9 @@ function writeAtomic(path: string, text: string): void {
 
 /** The latest stage-2 proposal in the state home at `home`, none, or why it
  * cannot be read (then the TUI shows UNKNOWN — never "no proposal"). */
-export function readStage2Proposal(home: string): { ok: true; proposal: StoredStage2Proposal | null } | { ok: false; error: string } {
+export function readStage2Proposal(
+  home: string,
+): { ok: true; proposal: StoredStage2Proposal | null } | { ok: false; error: string } {
   try {
     const text = readText(join(home, STAGE2_FILE));
     return { ok: true, proposal: text === null ? null : parseStage2File(text).proposal };
@@ -160,12 +194,17 @@ export function readStage2Proposal(home: string): { ok: true; proposal: StoredSt
  * refused when `keep` is empty or names a row that is not runnable in the
  * proposal (the engine applies the same rule after it re-plans).
  */
-export function keptRows(rows: readonly Stage2Row[], keep: readonly string[] | undefined): { ok: true; rows: Stage2Row[]; cap_usd: number | null } | { ok: false; errors: string[] } {
+export function keptRows(
+  rows: readonly Stage2Row[],
+  keep: readonly string[] | undefined,
+): { ok: true; rows: Stage2Row[]; cap_usd: number | null } | { ok: false; errors: string[] } {
   const runnable = rows.filter((r) => r.status === "run");
   if (keep === undefined) return { ok: true, rows: runnable, cap_usd: null };
-  if (keep.length === 0) return { ok: false, errors: ["every row is toggled off — keep at least one"] };
+  if (keep.length === 0)
+    return { ok: false, errors: ["every row is toggled off — keep at least one"] };
   const bad = keep.filter((id) => !runnable.some((r) => r.id === id));
-  if (bad.length > 0) return { ok: false, errors: [`not a runnable row of the proposal: ${bad.join(", ")}`] };
+  if (bad.length > 0)
+    return { ok: false, errors: [`not a runnable row of the proposal: ${bad.join(", ")}`] };
   const kept = runnable.filter((r) => keep.includes(r.id));
   return { ok: true, rows: kept, cap_usd: kept.reduce((n, r) => n + r.estimate_usd, 0) };
 }
@@ -182,13 +221,27 @@ export function requestStage2Start(
   key: string,
   now: Date,
   keep?: readonly string[],
-): { ok: true; request: Stage2StartRequest; proposal: StoredStage2Proposal; rows: number; cap_usd: number } | { ok: false; errors: string[] } {
+):
+  | {
+      ok: true;
+      request: Stage2StartRequest;
+      proposal: StoredStage2Proposal;
+      rows: number;
+      cap_usd: number;
+    }
+  | { ok: false; errors: string[] } {
   const read = readStage2Proposal(home);
   if (!read.ok) return { ok: false, errors: [read.error] };
   const p = read.proposal;
-  if (p === null) return { ok: false, errors: ["no stage 2 proposal — ask the companion to propose one"] };
+  if (p === null)
+    return { ok: false, errors: ["no stage 2 proposal — ask the companion to propose one"] };
   if (p.key !== key) {
-    return { ok: false, errors: [`the proposal changed since it was shown (showed ${key}, now ${p.key}) — look at the new one first`] };
+    return {
+      ok: false,
+      errors: [
+        `the proposal changed since it was shown (showed ${key}, now ${p.key}) — look at the new one first`,
+      ],
+    };
   }
   if (p.runnable === 0) return { ok: false, errors: ["the proposal has no row to run"] };
   const kept = keptRows(p.rows, keep);
@@ -205,7 +258,13 @@ export function requestStage2Start(
   } catch (err) {
     return { ok: false, errors: [`the start request could not be written: ${clean(err)}`] };
   }
-  return { ok: true, request, proposal: p, rows: kept.rows.length, cap_usd: kept.cap_usd ?? p.cap_usd };
+  return {
+    ok: true,
+    request,
+    proposal: p,
+    rows: kept.rows.length,
+    cap_usd: kept.cap_usd ?? p.cap_usd,
+  };
 }
 
 /** The companion's answer to the request `id`, or null while it has not

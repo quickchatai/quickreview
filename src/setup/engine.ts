@@ -30,7 +30,13 @@
 import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
 import { repoFacts, unitCandidates, vendoredRoots, type RepoFacts } from "./facts.js";
-import { SurveyRunner, type SurveyInputs, type SurveyPreview, type SurveyRun, type SurveyStatus } from "./surveyrun.js";
+import {
+  SurveyRunner,
+  type SurveyInputs,
+  type SurveyPreview,
+  type SurveyRun,
+  type SurveyStatus,
+} from "./surveyrun.js";
 import {
   historyPage,
   historyThemesState,
@@ -149,7 +155,11 @@ export type CaseOutcome =
  * running cost each time the runner learns more of it, so a caller with a
  * hard cap can abort a case mid-flight rather than after the fact. */
 export interface CaseRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
 }
 
 export interface TrackerTicket {
@@ -169,7 +179,8 @@ export interface TrackerTicket {
 /** Filed or closed: the sink's reference, and `existing` when nothing new was
  * written — a ticket already stamped with the fingerprint, or one already
  * closed. */
-export type SinkResult = { ok: true; ref: string; existing?: boolean } | { ok: false; reason: string };
+export type SinkResult =
+  { ok: true; ref: string; existing?: boolean } | { ok: false; reason: string };
 
 /** Where a promoted finding goes (trackersink.ts): the issue
  * tracker, or one markdown file per finding in the state home when the
@@ -301,11 +312,17 @@ function cutShapeError(cut: unknown): string | null {
   if (cut === null) return null;
   if (typeof cut !== "object") return "is not an object";
   const c = cut as { units?: unknown; ignored?: unknown };
-  const strings = (v: unknown): boolean => Array.isArray(v) && v.every((x) => typeof x === "string");
+  const strings = (v: unknown): boolean =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
   if (!Array.isArray(c.units)) return "has no `units` array";
   for (const [i, u] of c.units.entries()) {
     const unit = (u ?? {}) as { name?: unknown; roots?: unknown; kind?: unknown; note?: unknown };
-    if (typeof unit.name !== "string" || !strings(unit.roots) || typeof unit.kind !== "string" || typeof unit.note !== "string") {
+    if (
+      typeof unit.name !== "string" ||
+      !strings(unit.roots) ||
+      typeof unit.kind !== "string" ||
+      typeof unit.note !== "string"
+    ) {
       return `units[${i}] is not {name, roots, kind, note}`;
     }
   }
@@ -338,7 +355,9 @@ export class SetupEngine {
   private noRepo(): Refusal {
     return {
       ok: false,
-      errors: [`no readable checkout at ${this.ports.repo.location} — is the reviewed repo mounted?`],
+      errors: [
+        `no readable checkout at ${this.ports.repo.location} — is the reviewed repo mounted?`,
+      ],
     };
   }
 
@@ -347,24 +366,38 @@ export class SetupEngine {
   facts(): FactsResult {
     const files = this.files();
     if (files === null) return this.noRepo();
-    return { ok: true, head: this.ports.repo.head(), facts: repoFacts(files, (p) => this.ports.repo.read(p)) };
+    return {
+      ok: true,
+      head: this.ports.repo.head(),
+      facts: repoFacts(files, (p) => this.ports.repo.read(p)),
+    };
   }
 
   // -- the file --
 
   private load(): { file: UnitCutFile; error: string | null } {
-    const empty: UnitCutFile = { version: UNIT_CUT_VERSION, saved: null, previous: null, draft: null };
+    const empty: UnitCutFile = {
+      version: UNIT_CUT_VERSION,
+      saved: null,
+      previous: null,
+      draft: null,
+    };
     let text: string | null;
     try {
       text = this.ports.state.read(UNIT_CUT_FILE);
     } catch (err) {
-      return { file: empty, error: `${UNIT_CUT_FILE} in ${this.ports.state.location} cannot be read: ${String(err)}` };
+      return {
+        file: empty,
+        error: `${UNIT_CUT_FILE} in ${this.ports.state.location} cannot be read: ${String(err)}`,
+      };
     }
     if (text === null) return { file: empty, error: null };
     try {
       const raw = JSON.parse(text) as Partial<UnitCutFile>;
       if (typeof raw !== "object" || raw === null || raw.version !== UNIT_CUT_VERSION) {
-        throw new Error(`unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`);
+        throw new Error(
+          `unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`,
+        );
       }
       const file: UnitCutFile = {
         version: UNIT_CUT_VERSION,
@@ -418,7 +451,12 @@ export class SetupEngine {
         files: owned.length,
         reviewable: reviewable.length,
         lines: cases.reduce((n, c) => n + c.lines, 0),
-        cases: cases.map((c) => ({ id: c.id, files: c.files.length, lines: c.lines, over_budget: c.over_budget })),
+        cases: cases.map((c) => ({
+          id: c.id,
+          files: c.files.length,
+          lines: c.lines,
+          over_budget: c.over_budget,
+        })),
       };
     });
     return {
@@ -455,16 +493,30 @@ export class SetupEngine {
     const lines = this.lineCounter();
     const see = (cut: UnitCut): CutView =>
       files === null
-        ? { units: [], ignored: cut.ignored, ignored_files: 0, unassigned: [], errors: [], blocking_save: [] }
+        ? {
+            units: [],
+            ignored: cut.ignored,
+            ignored_files: 0,
+            unassigned: [],
+            errors: [],
+            blocking_save: [],
+          }
         : this.view(cut, files, lines);
     return {
       ok: problems.length === 0,
       problems,
       cut_file_unreadable: error !== null,
       saved: file.saved
-        ? { ...see(file.saved), saved_at: file.saved.saved_at, head: file.saved.head, files_at_save: file.saved.files }
+        ? {
+            ...see(file.saved),
+            saved_at: file.saved.saved_at,
+            head: file.saved.head,
+            files_at_save: file.saved.files,
+          }
         : null,
-      draft: file.draft ? { ...see(file.draft), updated_at: file.draft.updated_at, source: file.draft.source } : null,
+      draft: file.draft
+        ? { ...see(file.draft), updated_at: file.draft.updated_at, source: file.draft.source }
+        : null,
       has_previous: file.previous !== null,
       repo_files: files?.length ?? null,
       head,
@@ -489,7 +541,12 @@ export class SetupEngine {
     let source: DraftCut["source"];
     if (raw === undefined || raw === null || (typeof raw === "object" && !("units" in raw))) {
       cut = {
-        units: unitCandidates(files).map((c) => ({ name: c.name, roots: c.roots, kind: c.kind, note: c.reason })),
+        units: unitCandidates(files).map((c) => ({
+          name: c.name,
+          roots: c.roots,
+          kind: c.kind,
+          note: c.reason,
+        })),
         ignored: vendoredRoots(files),
       };
       source = "candidates";
@@ -520,12 +577,17 @@ export class SetupEngine {
     const loaded = this.loadForWrite();
     if ("ok" in loaded) return loaded;
     const base = loaded.file.draft ?? loaded.file.saved;
-    if (!base) return { ok: false, errors: ["there is no unit cut to adjust yet — propose one first"] };
+    if (!base)
+      return { ok: false, errors: ["there is no unit cut to adjust yet — propose one first"] };
     const applied = applyOps({ units: base.units, ignored: base.ignored }, ops);
     if (!applied.ok) return applied;
     const problems = checkCut(applied.cut, files);
     if (problems.errors.length > 0) return { ok: false, errors: problems.errors };
-    loaded.file.draft = { ...applied.cut, updated_at: this.ports.clock().toISOString(), source: "adjusted" };
+    loaded.file.draft = {
+      ...applied.cut,
+      updated_at: this.ports.clock().toISOString(),
+      source: "adjusted",
+    };
     this.store(loaded.file);
     return { ok: true, draft: this.view(applied.cut, files, this.lineCounter()) };
   }
@@ -583,12 +645,15 @@ export class SetupEngine {
    * split to fit the case budget, each case under its unit's name. Refused
    * when there is no saved cut: a survey or scan never runs on a guess.
    */
-  cases(include: (path: string) => boolean = () => true): { ok: true; cases: CasePlan[] } | Refusal {
+  cases(
+    include: (path: string) => boolean = () => true,
+  ): { ok: true; cases: CasePlan[] } | Refusal {
     const files = this.files();
     if (files === null) return this.noRepo();
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
-    if (!file.saved) return { ok: false, errors: ["no saved unit cut — propose, adjust and save one first"] };
+    if (!file.saved)
+      return { ok: false, errors: ["no saved unit cut — propose, adjust and save one first"] };
     const a = assign(file.saved, files);
     const lines = this.lineCounter();
     const cases: CasePlan[] = [];
@@ -604,9 +669,7 @@ export class SetupEngine {
   /** The digest in the state home: its summary, one page of one half, and the
    * themes saved from it so far. `digest: "absent"` is the normal state
    * before the TUI has pulled one — never an error. */
-  history(
-    page: { section: HistorySection; offset?: number; limit?: number } | null = null,
-  ): {
+  history(page: { section: HistorySection; offset?: number; limit?: number } | null = null): {
     digest: "absent" | "unreadable" | "ok";
     problems: string[];
     summary: HistorySummary | null;
@@ -616,14 +679,23 @@ export class SetupEngine {
     const read = readDigest(this.ports.state);
     const themes = readHistoryThemes(this.ports.state);
     if (read.state !== "ok") {
-      return { digest: read.state, problems: read.state === "unreadable" ? [read.error] : [], summary: null, page: null, themes };
+      return {
+        digest: read.state,
+        problems: read.state === "unreadable" ? [read.error] : [],
+        summary: null,
+        page: null,
+        themes,
+      };
     }
     return {
       digest: "ok",
       problems: [],
       summary: summarize(read.digest),
       page: page
-        ? { section: page.section, ...historyPage(read.digest, page.section, page.offset ?? 0, page.limit ?? 50) }
+        ? {
+            section: page.section,
+            ...historyPage(read.digest, page.section, page.offset ?? 0, page.limit ?? 50),
+          }
         : null,
       themes,
     };
@@ -632,7 +704,10 @@ export class SetupEngine {
   /** Save the companion's themes — the only part of the history that goes on
    * to memory and the portrait. */
   saveHistoryThemes(raw: unknown): Promise<SaveThemesResult> {
-    return saveHistoryThemes({ state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock }, raw);
+    return saveHistoryThemes(
+      { state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock },
+      raw,
+    );
   }
 
   // -- the survey (the run itself is surveyrun.ts) --
@@ -643,7 +718,13 @@ export class SetupEngine {
     if (files === null) return this.noRepo();
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
-    if (!file.saved) return { ok: false, errors: ["no saved unit cut — the survey reads by unit; propose, adjust and save one first"] };
+    if (!file.saved)
+      return {
+        ok: false,
+        errors: [
+          "no saved unit cut — the survey reads by unit; propose, adjust and save one first",
+        ],
+      };
     const facts = repoFacts(files, (p) => this.ports.repo.read(p));
     let changes: Record<string, number> | null = null;
     try {
@@ -673,7 +754,10 @@ export class SetupEngine {
 
   /** Start the previewed survey in the background (see surveyrun.ts for
    * every refusal). Returns as soon as the run is recorded. */
-  surveyStart(args: { key?: unknown; resurvey?: unknown }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
+  surveyStart(args: {
+    key?: unknown;
+    resurvey?: unknown;
+  }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
     return this.surveyRun.start(args);
   }
 
@@ -704,7 +788,12 @@ export class SetupEngine {
     const { file, error } = this.load();
     if (error !== null) problems.push(error);
     const cut: UnitCut = file.saved ?? {
-      units: repo.unit_candidates.map((c) => ({ name: c.name, roots: c.roots, kind: c.kind, note: c.reason })),
+      units: repo.unit_candidates.map((c) => ({
+        name: c.name,
+        roots: c.roots,
+        kind: c.kind,
+        note: c.reason,
+      })),
       ignored: vendoredRoots(files),
     };
     const view = this.view(cut, files, this.lineCounter());
@@ -720,7 +809,12 @@ export class SetupEngine {
       ok: true,
       facts: {
         head: this.ports.repo.head(),
-        stack: { files: repo.files, languages: repo.languages, manifests: repo.manifests, frameworks: repo.frameworks },
+        stack: {
+          files: repo.files,
+          languages: repo.languages,
+          manifests: repo.manifests,
+          frameworks: repo.frameworks,
+        },
         units: {
           source: file.saved ? "saved" : "candidates",
           saved_at: file.saved?.saved_at ?? null,
@@ -736,7 +830,11 @@ export class SetupEngine {
           })),
           ignored: cut.ignored,
         },
-        conventions: { guides: repo.guides, style_guides: repo.style_guides, agent_files: repo.agent_files },
+        conventions: {
+          guides: repo.guides,
+          style_guides: repo.style_guides,
+          agent_files: repo.agent_files,
+        },
         enforced: { ci: repo.ci, linters: repo.linters },
         history:
           themes.state === "ok"
@@ -747,7 +845,9 @@ export class SetupEngine {
                 themes: themes.file.themes,
               }
             : { state: themes.state, saved_at: null, digest_generated_at: null, themes: [] },
-        survey: done ? { id: done.id, finished_at: done.finished_at, head: done.head, notes: done.notes } : null,
+        survey: done
+          ? { id: done.id, finished_at: done.finished_at, head: done.head, notes: done.notes }
+          : null,
         scan: scanned.scan,
         problems,
       },

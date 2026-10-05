@@ -15,8 +15,21 @@ import { stateHomeFs } from "../src/setup/adapters.js";
 import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { LEDGER_FILE, type LedgerFile } from "../src/setup/ledger.js";
-import { anchoredLines, evidenceQuotesAnchor, findingFingerprint, normalizeCode, parseScanAnswer, scanValidatorPrompt } from "../src/setup/scan.js";
-import { RUN_FILE, ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import {
+  anchoredLines,
+  evidenceQuotesAnchor,
+  findingFingerprint,
+  normalizeCode,
+  parseScanAnswer,
+  scanValidatorPrompt,
+} from "../src/setup/scan.js";
+import {
+  RUN_FILE,
+  ScanRunner,
+  type ScanPorts,
+  type ScanSource,
+  type ScanTree,
+} from "../src/setup/scanrun.js";
 import { gitScanSource } from "../src/setup/scantree.js";
 import { renderPreview } from "../extensions/setup-scan.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
@@ -27,7 +40,8 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
 
-const lines = (n: number, word = "x"): string => Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
+const lines = (n: number, word = "x"): string =>
+  Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
 
 const TREE: Record<string, string> = {
   "app/models.py": lines(10, "model"),
@@ -43,14 +57,25 @@ const TREE: Record<string, string> = {
 };
 
 const CUT: UnitCut = {
-  units: ["app", "lib", "web", "gen", "tools"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
+  units: ["app", "lib", "web", "gen", "tools"].map((u) => ({
+    name: u,
+    roots: [u],
+    kind: "directory",
+    note: "",
+  })),
   ignored: [],
 };
 
-const blob = (text: string): string => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+const blob = (text: string): string =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 
 /** An in-memory source: one tree per sha. */
-function fakeSource(trees: Record<string, Record<string, string>>, head: string): ScanSource & { opened: string[] } {
+function fakeSource(
+  trees: Record<string, Record<string, string>>,
+  head: string,
+): ScanSource & { opened: string[] } {
   const src = {
     location: "/reviewed-repo",
     opened: [] as string[],
@@ -70,7 +95,10 @@ function fakeSource(trees: Record<string, Record<string, string>>, head: string)
         },
       };
     },
-    list: (sha: string) => (trees[sha] ? Object.entries(trees[sha]!).map(([path, text]) => ({ path, blob: blob(text) })) : null),
+    list: (sha: string) =>
+      trees[sha]
+        ? Object.entries(trees[sha]!).map(([path, text]) => ({ path, blob: blob(text) }))
+        : null,
   };
   return src;
 }
@@ -109,14 +137,22 @@ function scanAnswer(spec: CaseSpec): string {
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
 /** A runner that answers at once, costing `perFile` dollars per focus file
  * (or null: unpriced). */
 function runner(
-  opts: { perFile?: number | null; answer?: (spec: CaseSpec) => string; reads?: (spec: CaseSpec) => string[] | undefined } = {},
+  opts: {
+    perFile?: number | null;
+    answer?: (spec: CaseSpec) => string;
+    reads?: (spec: CaseSpec) => string[] | undefined;
+  } = {},
 ): FakeRunner {
   const specs: CaseSpec[] = [];
   return {
@@ -137,7 +173,11 @@ function runner(
 
 let now = new Date("2026-09-29T10:00:00Z");
 
-function ports(cases: FakeRunner, scan: Partial<ScanConfig> = {}, source = fakeSource({ [SHA1]: TREE }, SHA1)): ScanPorts {
+function ports(
+  cases: FakeRunner,
+  scan: Partial<ScanConfig> = {},
+  source = fakeSource({ [SHA1]: TREE }, SHA1),
+): ScanPorts {
   return {
     state: stateHomeFs(stateDir),
     clock: () => {
@@ -147,12 +187,16 @@ function ports(cases: FakeRunner, scan: Partial<ScanConfig> = {}, source = fakeS
     cases,
     source,
     savedCut: () => ({ ok: true, cut: CUT }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false, exclude: ["gen/"], ...scan } } }),
+    settings: () => ({
+      ok: true,
+      settings: { scan: { ...SCAN_DEFAULTS, validator: false, exclude: ["gen/"], ...scan } },
+    }),
     buildAgents: () => ({ ok: true }),
   };
 }
 
-const ledger = (): LedgerFile => JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
+const ledger = (): LedgerFile =>
+  JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
 
 async function previewOf(s: ScanRunner, sha?: string) {
   const p = await s.preview(sha ? { sha } : {});
@@ -173,7 +217,12 @@ describe("what stage 1 reads", () => {
     const p = await previewOf(new ScanRunner(ports(runner())));
     expect(p.excluded).toEqual({ test: 1, migration: 1, "unreadable-kind": 1, "excluded-glob": 1 });
     const planned = p.cases.flatMap((c) => c.files.map((f) => f.path));
-    for (const f of ["app/tests/test_views.py", "app/migrations/0001_init.py", "web/package-lock.json", "gen/out.py"]) {
+    for (const f of [
+      "app/tests/test_views.py",
+      "app/migrations/0001_init.py",
+      "web/package-lock.json",
+      "gen/out.py",
+    ]) {
       expect(planned).not.toContain(f);
     }
   });
@@ -186,16 +235,41 @@ describe("a stray NUL is still text; a binary is skipped and SAID (selfscan roun
       mkdirSync(join(repo, p, ".."), { recursive: true });
       writeFileSync(join(repo, p), b);
     };
-    put("app/stray.ts", "export const k = (a: string, b: string) => `${a}\0${b}`;\nexport const two = 2;\nexport const three = 3;\n");
+    put(
+      "app/stray.ts",
+      "export const k = (a: string, b: string) => `${a}\0${b}`;\nexport const two = 2;\nexport const three = 3;\n",
+    );
     put("app/models.py", lines(10, "model"));
-    put("app/logo.dat", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66]));
+    put(
+      "app/logo.dat",
+      Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0,
+        1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66,
+      ]),
+    );
     const git = (...args: string[]) =>
-      execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" }).trim();
+      execFileSync(
+        "git",
+        [
+          "-C",
+          repo,
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "commit.gpgsign=false",
+          ...args,
+        ],
+        { encoding: "utf8" },
+      ).trim();
     git("init", "-q");
     git("add", "-A");
     git("commit", "-qm", "init");
     const r = runner();
-    const s = new ScanRunner(ports(r, {}, { ...gitScanSource(repo, join(stateDir, "state-home")), opened: [] }));
+    const s = new ScanRunner(
+      ports(r, {}, { ...gitScanSource(repo, join(stateDir, "state-home")), opened: [] }),
+    );
     const p = await previewOf(s);
     const planned = p.cases.flatMap((c) => c.files.map((f) => f.path));
     expect(planned).toContain("app/stray.ts");
@@ -232,8 +306,19 @@ describe("first-scan calibration, then previews from the ledger", () => {
     const cal = await runToEnd(s);
     expect(cal.run.state).toBe("complete");
     const rows = ledger().entries;
-    expect(rows.map((e) => e.path).sort()).toEqual(["app/models.py", "app/views.py", "lib/big.py", "lib/util.py", "web/index.ts"]);
-    expect(rows.every((e) => e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "sol-med" && e.effort === "low")).toBe(true);
+    expect(rows.map((e) => e.path).sort()).toEqual([
+      "app/models.py",
+      "app/views.py",
+      "lib/big.py",
+      "lib/util.py",
+      "web/index.ts",
+    ]);
+    expect(
+      rows.every(
+        (e) =>
+          e.lens === "pass-scan" && e.sha === SHA1 && e.tier === "sol-med" && e.effort === "low",
+      ),
+    ).toBe(true);
 
     const next = await previewOf(s);
     expect(next.mode).toBe("stage1");
@@ -291,7 +376,10 @@ describe("nothing runs unseen", () => {
     const s = new ScanRunner(p);
     const pv = await previewOf(s);
     const r = await s.start({ key: pv.key });
-    expect(r).toEqual({ ok: false, errors: ["the scan agents could not be built: profile broken"] });
+    expect(r).toEqual({
+      ok: false,
+      errors: ["the scan agents could not be built: profile broken"],
+    });
   });
 });
 
@@ -302,7 +390,9 @@ describe("hard stop at the estimate", () => {
     const s = new ScanRunner(ports(cheap, { case_max_files: 1, concurrency: 1 }));
     await runToEnd(s);
     const before = ledger().entries.length;
-    const dear = new ScanRunner(ports(runner({ perFile: 0.1 }), { case_max_files: 1, concurrency: 1 }));
+    const dear = new ScanRunner(
+      ports(runner({ perFile: 0.1 }), { case_max_files: 1, concurrency: 1 }),
+    );
     const p = await previewOf(dear);
     expect(p.mode).toBe("stage1");
     const { run } = await runToEnd(dear);
@@ -350,7 +440,9 @@ describe("hard stop — mid-case, and what a failure spent (review)", () => {
           );
         }),
     };
-    const s = new ScanRunner(ports(r, { concurrency: 1, calibration_units: 1, calibration_max_usd: 3 }));
+    const s = new ScanRunner(
+      ports(r, { concurrency: 1, calibration_units: 1, calibration_max_usd: 3 }),
+    );
     const { run } = await runToEnd(s);
     expect(run.mode).toBe("calibration");
     expect(run.state).toBe("capped");
@@ -381,8 +473,15 @@ describe("hard stop — mid-case, and what a failure spent (review)", () => {
   });
 
   it("a failed case that cannot say what it spent is counted at its estimate, never as free", async () => {
-    await runToEnd(new ScanRunner(ports(runner({ perFile: 0.01 }), { case_max_files: 1, concurrency: 1 })));
-    const s = new ScanRunner(ports({ specs: [], run: async () => ({ ok: false, reason: "pi exited 1" }) }, { case_max_files: 1, concurrency: 1 }));
+    await runToEnd(
+      new ScanRunner(ports(runner({ perFile: 0.01 }), { case_max_files: 1, concurrency: 1 })),
+    );
+    const s = new ScanRunner(
+      ports(
+        { specs: [], run: async () => ({ ok: false, reason: "pi exited 1" }) },
+        { case_max_files: 1, concurrency: 1 },
+      ),
+    );
     const p = await previewOf(s);
     const { run } = await runToEnd(s);
     expect(run.cases.every((c) => c.status === "failed")).toBe(true);
@@ -399,8 +498,13 @@ describe("stop, and resume by the ledger", () => {
       specs,
       run: (spec, signal) => {
         specs.push(spec);
-        if (!hang(spec)) return Promise.resolve({ ok: true, output: scanAnswer(spec), cost_usd: 0.01 });
-        return new Promise((res) => signal.addEventListener("abort", () => res({ ok: false, reason: "stopped" }), { once: true }));
+        if (!hang(spec))
+          return Promise.resolve({ ok: true, output: scanAnswer(spec), cost_usd: 0.01 });
+        return new Promise((res) =>
+          signal.addEventListener("abort", () => res({ ok: false, reason: "stopped" }), {
+            once: true,
+          }),
+        );
       },
     };
   }
@@ -434,9 +538,15 @@ describe("stop, and resume by the ledger", () => {
     const second = new ScanRunner(ports(runner()));
     expect(second.status().run!.display).toBe("interrupted");
     const resumed = await runToEnd(second);
-    expect(resumed.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain("web/index.ts");
-    expect(resumed.preview.cases.flatMap((c) => c.files.map((f) => f.path))).not.toContain("app/models.py");
-    const file = JSON.parse(readFileSync(join(stateDir, RUN_FILE), "utf8")) as { history: Array<{ state: string }> };
+    expect(resumed.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain(
+      "web/index.ts",
+    );
+    expect(resumed.preview.cases.flatMap((c) => c.files.map((f) => f.path))).not.toContain(
+      "app/models.py",
+    );
+    const file = JSON.parse(readFileSync(join(stateDir, RUN_FILE), "utf8")) as {
+      history: Array<{ state: string }>;
+    };
     expect(file.history[0]!.state).toBe("interrupted");
     first.stop();
     await first.idle();
@@ -459,9 +569,24 @@ describe("findings, fingerprinted", () => {
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     expect(findings).toHaveLength(3);
     const f = findings.find((x) => x.path === "app/models.py")!;
-    expect(f).toMatchObject({ lens: "pass-scan", kind: "bug", severity: "P1", start: 2, end: 3, state: "new", validated: false, doubt: null, unit: "app" });
+    expect(f).toMatchObject({
+      lens: "pass-scan",
+      kind: "bug",
+      severity: "P1",
+      start: 2,
+      end: 3,
+      state: "new",
+      validated: false,
+      doubt: null,
+      unit: "app",
+    });
     expect(f.fingerprint).toBe(
-      findingFingerprint({ path: "app/models.py", lens: "pass-scan", kind: "bug", code: normalizeCode(["model_2 = 2", "model_3 = 3"]) }),
+      findingFingerprint({
+        path: "app/models.py",
+        lens: "pass-scan",
+        kind: "bug",
+        code: normalizeCode(["model_2 = 2", "model_3 = 3"]),
+      }),
     );
     // The missing-file item and the diff-only suggestion were dropped, counted.
     expect(run.cases.every((c) => c.dropped === 2)).toBe(true);
@@ -471,27 +596,37 @@ describe("findings, fingerprinted", () => {
     const a = normalizeCode(["  if x:", "      return  y"]);
     const b = normalizeCode(["if x:", "", "\treturn y"]);
     expect(a).toBe(b);
-    const fp = (code: string) => findingFingerprint({ path: "a.py", lens: "pass-scan", kind: "bug", code });
+    const fp = (code: string) =>
+      findingFingerprint({ path: "a.py", lens: "pass-scan", kind: "bug", code });
     expect(fp(a)).toBe(fp(b));
     expect(fp(a)).not.toBe(fp(normalizeCode(["if x:", "return z"])));
-    expect(fp(a)).not.toBe(findingFingerprint({ path: "a.py", lens: "pass-scan", kind: "design", code: a }));
+    expect(fp(a)).not.toBe(
+      findingFingerprint({ path: "a.py", lens: "pass-scan", kind: "design", code: a }),
+    );
   });
 
   it("an exact fingerprint match on a later scan is the same finding: its state is kept", async () => {
     // Scan SHA1 fully, dismiss one finding by hand, then scan SHA2 where the
     // same code moved down two lines and was re-indented.
-    const moved = { ...TREE, "app/models.py": `\n\n${TREE["app/models.py"]!.replace("model_2", "  model_2")}` };
+    const moved = {
+      ...TREE,
+      "app/models.py": `\n\n${TREE["app/models.py"]!.replace("model_2", "  model_2")}`,
+    };
     const src = fakeSource({ [SHA1]: TREE, [SHA2]: moved }, SHA1);
     const s = new ScanRunner(ports(runner(), {}, src));
     await runToEnd(s);
     const path = join(stateDir, "scan/findings.json");
-    const file = JSON.parse(readFileSync(path, "utf8")) as { findings: Array<{ path: string; state: string }> };
+    const file = JSON.parse(readFileSync(path, "utf8")) as {
+      findings: Array<{ path: string; state: string }>;
+    };
     file.findings.find((f) => f.path === "app/models.py")!.state = "dismissed";
     writeFileSync(path, JSON.stringify(file));
     const answerAt4 = (spec: CaseSpec) => scanAnswer(spec).replace("line: 2-3", "line: 4-5");
     const s2 = new ScanRunner(ports(runner({ answer: answerAt4 }), {}, src));
     await runToEnd(s2, SHA2);
-    const after = new FindingsStore(stateHomeFs(stateDir)).list().findings.filter((f) => f.path === "app/models.py");
+    const after = new FindingsStore(stateHomeFs(stateDir))
+      .list()
+      .findings.filter((f) => f.path === "app/models.py");
     expect(after).toHaveLength(1);
     expect(after[0]).toMatchObject({ state: "dismissed", start: 4, end: 5, seen: 2 });
     expect(after[0]!.last_seen.sha).toBe(SHA2);
@@ -501,8 +636,15 @@ describe("findings, fingerprinted", () => {
     const s = new ScanRunner(ports(runner()));
     await runToEnd(s);
     const { suggestions } = s.suggestions();
-    expect(suggestions.map((x) => `${x.unit}:${x.lens}`).sort()).toEqual(["app:pass-security", "lib:pass-security", "web:pass-security"]);
-    expect(suggestions.find((x) => x.unit === "app")!.files.sort()).toEqual(["app/models.py", "app/views.py"]);
+    expect(suggestions.map((x) => `${x.unit}:${x.lens}`).sort()).toEqual([
+      "app:pass-security",
+      "lib:pass-security",
+      "web:pass-security",
+    ]);
+    expect(suggestions.find((x) => x.unit === "app")!.files.sort()).toEqual([
+      "app/models.py",
+      "app/views.py",
+    ]);
   });
 });
 
@@ -517,9 +659,12 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
     const answer = (spec: CaseSpec): string => {
       if (spec.agent.startsWith("pass-validate")) {
         const f = spec.files[0]!;
-        if (spec.unit === "app") return `NONE\n\nDOUBTED\n- pass-scan ${f}:2 — refuted: the guard on line 1 covers it\n`;
+        if (spec.unit === "app")
+          return `NONE\n\nDOUBTED\n- pass-scan ${f}:2 — refuted: the guard on line 1 covers it\n`;
         if (spec.unit === "web") return `NONE\n\nKILLED\n- pass-scan ${f}:2 — below-bar\n`;
-        return scanAnswer(spec).split("SUGGEST")[0]!.replace("FINDINGS pass-scan", "FINDINGS pass-validate");
+        return scanAnswer(spec)
+          .split("SUGGEST")[0]!
+          .replace("FINDINGS pass-scan", "FINDINGS pass-validate");
       }
       return scanAnswer(spec);
     };
@@ -530,17 +675,32 @@ describe("the validator — the skeptic; a profile may switch it off", () => {
     expect(r.specs.some((x) => x.agent === "pass-validate--sol-high")).toBe(false);
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     const byUnit = new Map(findings.map((f) => [f.unit, f]));
-    expect(byUnit.get("app")).toMatchObject({ validated: true, validity: "doubtful", doubt: { word: "refuted", reason: "the guard on line 1 covers it" } });
+    expect(byUnit.get("app")).toMatchObject({
+      validated: true,
+      validity: "doubtful",
+      doubt: { word: "refuted", reason: "the guard on line 1 covers it" },
+    });
     expect(byUnit.get("lib")).toMatchObject({ validated: true, validity: "likely", doubt: null });
-    expect(byUnit.get("web")).toMatchObject({ validated: true, validity: "doubtful", doubt: { word: "below-bar" } });
-    expect(new FindingsStore(stateHomeFs(stateDir)).list({ doubted: true }).findings.map((f) => f.unit).sort()).toEqual(["app", "web"]);
+    expect(byUnit.get("web")).toMatchObject({
+      validated: true,
+      validity: "doubtful",
+      doubt: { word: "below-bar" },
+    });
+    expect(
+      new FindingsStore(stateHomeFs(stateDir))
+        .list({ doubted: true })
+        .findings.map((f) => f.unit)
+        .sort(),
+    ).toEqual(["app", "web"]);
   });
 });
 
 describe("an answer that is neither findings nor NONE is not a reading (selfscan a03e554c)", () => {
   it("a lens answering in prose fails its case: no ledger row, so nothing is certified clean", async () => {
     const answer = (spec: CaseSpec): string =>
-      spec.unit === "app" ? "I could not inspect these files — they are too large to open." : scanAnswer(spec);
+      spec.unit === "app"
+        ? "I could not inspect these files — they are too large to open."
+        : scanAnswer(spec);
     const { run } = await runToEnd(new ScanRunner(ports(runner({ answer }))));
     const app = run.cases.filter((c) => c.unit === "app");
     expect(app.length).toBeGreaterThan(0);
@@ -551,7 +711,9 @@ describe("an answer that is neither findings nor NONE is not a reading (selfscan
 
   it("a validator answering in prose is a failed validator: the lens's findings are kept unvalidated", async () => {
     const answer = (spec: CaseSpec): string =>
-      spec.agent.startsWith("pass-validate") ? "Sorry, I was unable to read the tree." : scanAnswer(spec);
+      spec.agent.startsWith("pass-validate")
+        ? "Sorry, I was unable to read the tree."
+        : scanAnswer(spec);
     const { run } = await runToEnd(new ScanRunner(ports(runner({ answer }), { validator: true })));
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     expect(findings).toHaveLength(3);
@@ -562,14 +724,20 @@ describe("an answer that is neither findings nor NONE is not a reading (selfscan
 
 describe("a lens that read none of its focus files is not a reading (scan-loop round 7)", () => {
   const ROOT = `/state/scan/tree/${SHA1}`;
-  const none = (spec: CaseSpec): string => `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE\n`;
+  const none = (spec: CaseSpec): string =>
+    `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE\n`;
 
   it("a NONE with zero file reads fails its case: no ledger row (not coverage, not a price sample), and the run names it", async () => {
-    const reads = (spec: CaseSpec): string[] => (spec.unit === "app" ? [] : spec.files.map((f) => `${ROOT}/${f}`));
+    const reads = (spec: CaseSpec): string[] =>
+      spec.unit === "app" ? [] : spec.files.map((f) => `${ROOT}/${f}`);
     const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none, reads }))));
     const app = run.cases.filter((c) => c.unit === "app");
     expect(app.length).toBeGreaterThan(0);
-    expect(app.every((c) => c.status === "failed" && /read none of its \d+ focus file/.test(c.error ?? ""))).toBe(true);
+    expect(
+      app.every(
+        (c) => c.status === "failed" && /read none of its \d+ focus file/.test(c.error ?? ""),
+      ),
+    ).toBe(true);
     expect(ledger().entries.some((e) => e.path.startsWith("app/"))).toBe(false);
     expect(ledger().entries.some((e) => e.path.startsWith("lib/"))).toBe(true);
     expect(run.problems.some((p) => p.includes(app[0]!.id) && /not a reading/.test(p))).toBe(true);
@@ -577,9 +745,14 @@ describe("a lens that read none of its focus files is not a reading (scan-loop r
   });
 
   it("reading only files OUTSIDE the case is still no reading — and its findings are not stored", async () => {
-    const reads = (spec: CaseSpec): string[] => (spec.unit === "app" ? [`${ROOT}/tools/x.py`, `${ROOT}/CLAUDE.md`] : spec.files.map((f) => `${ROOT}/${f}`));
+    const reads = (spec: CaseSpec): string[] =>
+      spec.unit === "app"
+        ? [`${ROOT}/tools/x.py`, `${ROOT}/CLAUDE.md`]
+        : spec.files.map((f) => `${ROOT}/${f}`);
     const { run } = await runToEnd(new ScanRunner(ports(runner({ reads }))));
-    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(true);
+    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(
+      true,
+    );
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     expect(findings.some((f) => f.path.startsWith("app/"))).toBe(false);
     expect(findings.some((f) => f.path.startsWith("lib/"))).toBe(true);
@@ -589,7 +762,9 @@ describe("a lens that read none of its focus files is not a reading (scan-loop r
     const reads = (spec: CaseSpec): string[] =>
       spec.unit === "app" ? [spec.files[0]!] : [`${ROOT}/nowhere/../${spec.files.at(-1)!}`];
     const { run } = await runToEnd(new ScanRunner(ports(runner({ answer: none, reads }))));
-    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(true);
+    expect(run.cases.filter((c) => c.unit === "app").every((c) => c.status === "failed")).toBe(
+      true,
+    );
     expect(run.cases.filter((c) => c.unit !== "app").every((c) => c.status === "done")).toBe(true);
   });
 
@@ -610,7 +785,9 @@ describe("the validator — a survivor it also doubts (review)", () => {
     const answer = (spec: CaseSpec): string => {
       if (spec.agent.startsWith("pass-validate")) {
         const f = spec.files[0]!;
-        const kept = scanAnswer(spec).split("SUGGEST")[0]!.replace("FINDINGS pass-scan", "FINDINGS pass-validate");
+        const kept = scanAnswer(spec)
+          .split("SUGGEST")[0]!
+          .replace("FINDINGS pass-scan", "FINDINGS pass-validate");
         return `${kept}\nDOUBTED\n- pass-scan ${f}:2 — refuted: guarded above\n`;
       }
       return scanAnswer(spec);
@@ -634,7 +811,13 @@ describe("reading the lens's answer", () => {
       { root: "/t/root" },
     );
     expect(a.candidates).toEqual([
-      expect.objectContaining({ path: "src/a.py", start: 7, end: 7, kind: "data-loss", severity: "P2" }),
+      expect.objectContaining({
+        path: "src/a.py",
+        start: 7,
+        end: 7,
+        kind: "data-loss",
+        severity: "P2",
+      }),
     ]);
     expect(a.suggestions).toEqual([]);
     expect(parseScanAnswer("NONE\n\nSUGGEST NONE").none).toBe(true);
@@ -659,43 +842,90 @@ describe("a finding's severity follows the reachability axis (scan-loop)", () =>
       const [c] = parseScanAnswer(one(sev, "contrived")).candidates;
       expect(c).toMatchObject({ severity: "P3", capped_from: sev, reachability: "contrived" });
     }
-    expect(parseScanAnswer(one("nit", "contrived")).candidates[0]).toMatchObject({ severity: "nit", capped_from: null });
-    expect(parseScanAnswer(one("P3", "contrived")).candidates[0]).toMatchObject({ severity: "P3", capped_from: null });
+    expect(parseScanAnswer(one("nit", "contrived")).candidates[0]).toMatchObject({
+      severity: "nit",
+      capped_from: null,
+    });
+    expect(parseScanAnswer(one("P3", "contrived")).candidates[0]).toMatchObject({
+      severity: "P3",
+      capped_from: null,
+    });
   });
 
   it("plausible: a P2 becomes P3, a P0/P1 keeps its severity", () => {
-    expect(parseScanAnswer(one("P2", "plausible")).candidates[0]).toMatchObject({ severity: "P3", capped_from: "P2" });
-    expect(parseScanAnswer(one("P1", "plausible")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null });
+    expect(parseScanAnswer(one("P2", "plausible")).candidates[0]).toMatchObject({
+      severity: "P3",
+      capped_from: "P2",
+    });
+    expect(parseScanAnswer(one("P1", "plausible")).candidates[0]).toMatchObject({
+      severity: "P1",
+      capped_from: null,
+    });
   });
 
   it("the validator is shown the severity the lens WROTE, so a reach it corrects to routine restores it", () => {
     const [c] = parseScanAnswer(one("P1", "contrived")).candidates;
     expect(c).toMatchObject({ severity: "P3", capped_from: "P1" });
-    const plan = { unit: "src", id: "src", part: 1, parts: 1, files: [{ path: "src/a.py", blob: "b", lines: 9 }], lines: 9 } as never;
+    const plan = {
+      unit: "src",
+      id: "src",
+      part: 1,
+      parts: 1,
+      files: [{ path: "src/a.py", blob: "b", lines: 9 }],
+      lines: 9,
+    } as never;
     const prompt = scanValidatorPrompt(plan, [c!], { root: "/t", sha: "y", caseId: "x" });
     expect(prompt).toContain("  severity: P1\n");
     expect(prompt).toContain("  reachability: contrived\n");
     // Its survivor, re-read with the corrected axis, is a P1 again — and still capped if it upholds contrived.
     const back = (reach: string): unknown =>
-      parseScanAnswer(prompt.replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1").replace("reachability: contrived", `reachability: ${reach}`)).candidates[0];
+      parseScanAnswer(
+        prompt
+          .replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1")
+          .replace("reachability: contrived", `reachability: ${reach}`),
+      ).candidates[0];
     expect(back("routine")).toMatchObject({ severity: "P1", capped_from: null });
     expect(back("contrived")).toMatchObject({ severity: "P3", capped_from: "P1" });
   });
 
   it("the validator is shown each candidate's detail paragraph, and it round-trips (selfscan 9cfaa2db)", () => {
     const [c] = parseScanAnswer(one("P1", "routine")).candidates;
-    const withDetail = { ...c!, detail: "Two writers race on the cache; the second overwrites the first's entry." };
-    const plan = { unit: "src", id: "src", part: 1, parts: 1, files: [{ path: "src/a.py", blob: "b", lines: 9 }], lines: 9 } as never;
+    const withDetail = {
+      ...c!,
+      detail: "Two writers race on the cache; the second overwrites the first's entry.",
+    };
+    const plan = {
+      unit: "src",
+      id: "src",
+      part: 1,
+      parts: 1,
+      files: [{ path: "src/a.py", blob: "b", lines: 9 }],
+      lines: 9,
+    } as never;
     const prompt = scanValidatorPrompt(plan, [withDetail], { root: "/t", sha: "y", caseId: "x" });
-    expect(prompt).toContain("  detail: Two writers race on the cache; the second overwrites the first's entry.\n");
-    const back = parseScanAnswer(prompt.replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1")).candidates[0];
+    expect(prompt).toContain(
+      "  detail: Two writers race on the cache; the second overwrites the first's entry.\n",
+    );
+    const back = parseScanAnswer(prompt.replace(/^.*?(FINDINGS pass-scan SCAN)/s, "$1"))
+      .candidates[0];
     expect(back?.detail).toBe(withDetail.detail);
   });
 
   it("routine — or the field absent, read as routine like a PR round — leaves severity alone", () => {
-    expect(parseScanAnswer(one("P1", "routine")).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: "routine" });
-    expect(parseScanAnswer(one("P1", null)).candidates[0]).toMatchObject({ severity: "P1", capped_from: null, reachability: null });
-    expect(parseScanAnswer(one("P1", "`Contrived`")).candidates[0]).toMatchObject({ severity: "P3", reachability: "contrived" });
+    expect(parseScanAnswer(one("P1", "routine")).candidates[0]).toMatchObject({
+      severity: "P1",
+      capped_from: null,
+      reachability: "routine",
+    });
+    expect(parseScanAnswer(one("P1", null)).candidates[0]).toMatchObject({
+      severity: "P1",
+      capped_from: null,
+      reachability: null,
+    });
+    expect(parseScanAnswer(one("P1", "`Contrived`")).candidates[0]).toMatchObject({
+      severity: "P3",
+      reachability: "contrived",
+    });
   });
 });
 
@@ -711,8 +941,12 @@ describe("the evidence quotes the anchored line (scan-loop)", () => {
 
   it("evidenceQuotesAnchor: a quoted fragment or the whole line counts; code elsewhere in the file does not", () => {
     const at5 = anchoredLines(code, 5, 5)!;
-    expect(evidenceQuotesAnchor("L5 `user.profile.name` dereferences a None from lookup", at5)).toBe(true);
-    expect(evidenceQuotesAnchor("line 5: return user.profile.name — lookup returns None", at5)).toBe(true);
+    expect(
+      evidenceQuotesAnchor("L5 `user.profile.name` dereferences a None from lookup", at5),
+    ).toBe(true);
+    expect(
+      evidenceQuotesAnchor("line 5: return user.profile.name — lookup returns None", at5),
+    ).toBe(true);
     expect(evidenceQuotesAnchor("`lookup(request.user_id)` may return None", at5)).toBe(false);
     expect(evidenceQuotesAnchor(null, at5)).toBe(false);
     // An anchor with nothing quotable (a lone brace) cannot be checked, so it is not flagged.
@@ -744,10 +978,16 @@ describe("the evidence quotes the anchored line (scan-loop)", () => {
             "",
             "SUGGEST NONE",
           ].join("\n");
-    await runToEnd(new ScanRunner(ports(runner({ answer }), {}, fakeSource({ [SHA1]: tree }, SHA1))));
+    await runToEnd(
+      new ScanRunner(ports(runner({ answer }), {}, fakeSource({ [SHA1]: tree }, SHA1))),
+    );
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list();
     const byLine = new Map(findings.map((f) => [f.start, f]));
-    expect(byLine.get(1)).toMatchObject({ anchor_quoted: false, reachability: "plausible", severity: "P1" });
+    expect(byLine.get(1)).toMatchObject({
+      anchor_quoted: false,
+      reachability: "plausible",
+      severity: "P1",
+    });
     expect(byLine.get(5)).toMatchObject({ anchor_quoted: true, severity: "P2", capped_from: null });
   });
 });
@@ -755,9 +995,13 @@ describe("the evidence quotes the anchored line (scan-loop)", () => {
 describe("the preview's lines and the measured rate's lines agree (scan-loop)", () => {
   it("an empty __init__.py counts 0 lines on both sides", async () => {
     const tree = { ...TREE, "app/__init__.py": "", "web/empty.ts": "" };
-    const s = new ScanRunner(ports(runner({ perFile: 0.01 }), {}, fakeSource({ [SHA1]: tree }, SHA1)));
+    const s = new ScanRunner(
+      ports(runner({ perFile: 0.01 }), {}, fakeSource({ [SHA1]: tree }, SHA1)),
+    );
     const cal = await runToEnd(s);
-    expect(cal.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain("app/__init__.py");
+    expect(cal.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toContain(
+      "app/__init__.py",
+    );
     const next = await previewOf(s);
     expect(next.rate!.lines).toBe(cal.preview.lines);
     // 7 priced files at $0.01 over the calibration's real lines.

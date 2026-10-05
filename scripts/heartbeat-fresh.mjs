@@ -47,7 +47,9 @@ if (written < started) {
 }
 const age = Math.round((now - written) / 1000);
 if (age > MAX_AGE_S) {
-  console.log(`stale: last heartbeat is ${age}s old (limit ${MAX_AGE_S}s) — the daemon stopped writing it`);
+  console.log(
+    `stale: last heartbeat is ${age}s old (limit ${MAX_AGE_S}s) — the daemon stopped writing it`,
+  );
   process.exit(1);
 }
 console.log(`fresh: written ${age}s ago, after the container started`);

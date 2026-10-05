@@ -31,15 +31,23 @@ export function scanFacts(state: StateFs): { scan: PortraitScan | null; problems
   const memory = readScanMemory(state);
   if (memory.error !== null) problems.push(memory.error);
   const last = runs.runs[0] ?? null;
-  if (problems.length === 0 && last === null && stored.findings.length === 0) return { scan: null, problems };
+  if (problems.length === 0 && last === null && stored.findings.length === 0)
+    return { scan: null, problems };
 
   const bySeverity: Record<string, number> = {};
   const units = new Map<string, ScanUnitFacts & { by: Set<string> }>();
   const totals = { open: 0, promoted: 0, dismissed: 0, fixed: 0, doubted: 0 };
   for (const f of stored.findings) {
-    const u =
-      units.get(f.unit) ??
-      { unit: f.unit, open: 0, promoted: 0, dismissed: 0, fixed: 0, doubted: 0, open_by: [], by: new Set<string>() };
+    const u = units.get(f.unit) ?? {
+      unit: f.unit,
+      open: 0,
+      promoted: 0,
+      dismissed: 0,
+      fixed: 0,
+      doubted: 0,
+      open_by: [],
+      by: new Set<string>(),
+    };
     units.set(f.unit, u);
     // Open = still standing: new, or promoted and not yet fixed.
     const open = f.state === "new" || f.state === "promoted";
@@ -64,7 +72,10 @@ export function scanFacts(state: StateFs): { scan: PortraitScan | null; problems
   };
   const unitFacts: ScanUnitFacts[] = [...units.values()]
     .sort((a, b) => a.unit.localeCompare(b.unit))
-    .map(({ by, ...u }) => ({ ...u, open_by: [...by].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)) }));
+    .map(({ by, ...u }) => ({
+      ...u,
+      open_by: [...by].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)),
+    }));
 
   // The latest hotspot per unit, across every scan that wrote one.
   const hot = new Map<string, { unit: string; text: string; sha: string; at: string }>();
@@ -80,7 +91,15 @@ export function scanFacts(state: StateFs): { scan: PortraitScan | null; problems
   return {
     scan: {
       state: problems.length === 0 ? "ok" : "unreadable",
-      last: last ? { id: last.id, mode: last.mode, sha: last.sha, state: last.state, finished_at: last.finished_at } : null,
+      last: last
+        ? {
+            id: last.id,
+            mode: last.mode,
+            sha: last.sha,
+            state: last.state,
+            finished_at: last.finished_at,
+          }
+        : null,
       findings: { ...totals, by_severity: bySeverity, units: unitFacts },
       hotspots: [...hot.values()].sort((a, b) => a.unit.localeCompare(b.unit)),
     },

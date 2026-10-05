@@ -311,13 +311,7 @@ export function writeKeyFile(secretsDir: string, value: string): string {
 // ---- container login verification -------------------------------------------
 
 export type LoginState =
-  | "absent"
-  | "no-pi-volume"
-  | "stopped"
-  | "no-auth"
-  | "wrong-provider"
-  | "ok"
-  | "undetectable";
+  "absent" | "no-pi-volume" | "stopped" | "no-auth" | "wrong-provider" | "ok" | "undetectable";
 
 /**
  * The in-container login check: the same question `hostHasOAuthLogin` asks of

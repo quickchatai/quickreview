@@ -22,10 +22,17 @@ function tree(label = HEAD) {
   const here = join(tmp, "repo", "bench", "aacr");
   mkdirSync(join(here, "sets"), { recursive: true });
   mkdirSync(join(here, "ext"), { recursive: true });
-  for (const f of ["rerun-all.sh", "rerun_plan.py", "dup_stats.py", "lens_yield.py"]) cpSync(join(B, f), join(here, f));
-  writeFileSync(join(here, "ext", "RUNS.md"), "| Run | Kind | Cases ok | Score |\n|---|---|---|---|\n");
+  for (const f of ["rerun-all.sh", "rerun_plan.py", "dup_stats.py", "lens_yield.py"])
+    cpSync(join(B, f), join(here, f));
+  writeFileSync(
+    join(here, "ext", "RUNS.md"),
+    "| Run | Kind | Cases ok | Score |\n|---|---|---|---|\n",
+  );
   const set = (name: string, ids: string[]) =>
-    writeFileSync(join(here, "sets", `${name}.json`), JSON.stringify({ name, cases: ids.map((instance_id) => ({ instance_id })) }));
+    writeFileSync(
+      join(here, "sets", `${name}.json`),
+      JSON.stringify({ name, cases: ids.map((instance_id) => ({ instance_id })) }),
+    );
   set("qa", ["o__a@1", "o__b@2"]);
   set("ma", ["o__c@3"]);
   set("qa-rep", ["o__a@1"]);
@@ -35,7 +42,10 @@ function tree(label = HEAD) {
   mkdirSync(bin);
   const calls = join(tmp, "calls.log");
   const stub = (name: string, body: string) => {
-    writeFileSync(join(bin, name), `#!/usr/bin/env bash\necho "${name} $*" >> "${calls}"\n${body}\n`);
+    writeFileSync(
+      join(bin, name),
+      `#!/usr/bin/env bash\necho "${name} $*" >> "${calls}"\n${body}\n`,
+    );
     chmodSync(join(bin, name), 0o755);
   };
   // arm.sh: writes one result per case of every set into <prefix>-<set>.
@@ -102,7 +112,9 @@ describe("rerun-all.sh", () => {
     const c = calls(t);
     const arms = c.filter((l) => l.startsWith("arm.sh "));
     expect(arms).toHaveLength(1);
-    expect(arms[0]).toContain("--prefix p --config models.default=x --cases qa+ma+qa-rep --no-judge --parallel auto");
+    expect(arms[0]).toContain(
+      "--prefix p --config models.default=x --cases qa+ma+qa-rep --no-judge --parallel auto",
+    );
     expect(c).toContain("ext.sh qodo p-qa qa --only-tools quickreview");
     expect(c).toContain("ext.sh martian p-ma ma");
     expect(c).toContain("bench.sh judge --run p-qa-rep --set qa-rep");
@@ -122,7 +134,10 @@ describe("rerun-all.sh", () => {
 
   it("refuses a plan whose repeat set is not a subset of the set it repeats", () => {
     const t = tree();
-    writeFileSync(join(t.here, "sets", "qa-rep.json"), JSON.stringify({ name: "qa-rep", cases: [{ instance_id: "o__z@9" }] }));
+    writeFileSync(
+      join(t.here, "sets", "qa-rep.json"),
+      JSON.stringify({ name: "qa-rep", cases: [{ instance_id: "o__z@9" }] }),
+    );
     const r = go(t);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("not a subset");
@@ -133,10 +148,20 @@ describe("the freeze-validation plan", () => {
   it("names no held-out set and checks clean against the real sets", () => {
     const plan = JSON.parse(readFileSync(join(B, "plans", "freeze-validation.json"), "utf8"));
     const names = plan.sets.map((s: { set: string }) => s.set);
-    for (const held of ["martian-test30", "holdout10", "fresh10"]) expect(names).not.toContain(held);
-    const r = spawnSync("python3", [join(B, "rerun_plan.py"), "check", join(B, "plans", "freeze-validation.json"), join(B, "sets")], {
-      encoding: "utf8",
-    });
+    for (const held of ["martian-test30", "holdout10", "fresh10"])
+      expect(names).not.toContain(held);
+    const r = spawnSync(
+      "python3",
+      [
+        join(B, "rerun_plan.py"),
+        "check",
+        join(B, "plans", "freeze-validation.json"),
+        join(B, "sets"),
+      ],
+      {
+        encoding: "utf8",
+      },
+    );
     expect(r.status, r.stderr).toBe(0);
   });
 });

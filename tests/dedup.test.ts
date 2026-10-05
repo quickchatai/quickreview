@@ -6,7 +6,9 @@ import { clusterFindings, identifiersOf, postCheckRecord, renderGroups } from ".
 
 describe("identifiersOf", () => {
   it("takes named identifiers from code spans, not prose, paths or common words", () => {
-    const ids = identifiersOf("The `getUserById` call in `src/users.ts` returns `null`; `this.cache.lookup` stale");
+    const ids = identifiersOf(
+      "The `getUserById` call in `src/users.ts` returns `null`; `this.cache.lookup` stale",
+    );
     expect([...ids].sort()).toEqual(["cache", "getUserById", "lookup", "this.cache.lookup"].sort());
     expect(identifiersOf("plain prose about users and caches").size).toBe(0);
   });
@@ -54,7 +56,14 @@ describe("clusterFindings — any one signal joins two candidates", () => {
   });
   it("renders groups for the validator task string", () => {
     const c = [
-      { id: "A", path: "a.py", line: 1, severity: "P1", lens: "pass-baseline", title: "`foo` breaks" },
+      {
+        id: "A",
+        path: "a.py",
+        line: 1,
+        severity: "P1",
+        lens: "pass-baseline",
+        title: "`foo` breaks",
+      },
       { id: "B", path: "a.py", line: 3, severity: "P3", lens: "pass-sweep", title: "`foo` again" },
     ];
     const text = renderGroups(clusterFindings(c), new Map(c.map((x) => [x.id, x])));
@@ -67,9 +76,39 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
   const rec = () => ({
     comments_posted: 3,
     findings: [
-      { id: "F1", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 10, group: "G1", title: "`retry` misses", body: "nit body" },
-      { id: "F2", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 12, group: "G2", title: "`retry` loops forever", body: "blocker body" },
-      { id: "F3", disposition: "posted", posted_as: "nit", severity: "P3", path: "a.ts", line: 11, group: "G3", title: "unrelated `other`", body: "b" },
+      {
+        id: "F1",
+        disposition: "posted",
+        posted_as: "nit",
+        severity: "P3",
+        path: "a.ts",
+        line: 10,
+        group: "G1",
+        title: "`retry` misses",
+        body: "nit body",
+      },
+      {
+        id: "F2",
+        disposition: "posted",
+        posted_as: "blocker",
+        severity: "P1",
+        path: "a.ts",
+        line: 12,
+        group: "G2",
+        title: "`retry` loops forever",
+        body: "blocker body",
+      },
+      {
+        id: "F3",
+        disposition: "posted",
+        posted_as: "nit",
+        severity: "P3",
+        path: "a.ts",
+        line: 11,
+        group: "G3",
+        title: "unrelated `other`",
+        body: "b",
+      },
       { id: "F4", disposition: "killed", path: "a.ts", line: 10, title: "`retry`" },
     ],
   });
@@ -78,7 +117,13 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     const { record, merges } = postCheckRecord(input);
     expect(merges).toEqual([{ follower: "F1", lead: "F2", path: "a.ts", line: 10 }]);
     const f = (record as { findings: Array<Record<string, unknown>> }).findings;
-    expect(f[0]).toMatchObject({ id: "F1", disposition: "merged", word: "post-check", merged_into: "F2", withheld_as: "nit" });
+    expect(f[0]).toMatchObject({
+      id: "F1",
+      disposition: "merged",
+      word: "post-check",
+      merged_into: "F2",
+      withheld_as: "nit",
+    });
     expect(f[0]!.posted_as).toBeUndefined();
     expect(f[1]!.body).toBe("blocker body\n\nAlso at `a.ts:10`.");
     expect(f[2]!.disposition).toBe("posted"); // no shared identifier
@@ -87,15 +132,36 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(input.findings[0]!.disposition).toBe("posted"); // input not mutated
   });
   it("is a no-op (same object) when nothing merges", () => {
-    const r = { findings: [{ id: "X", disposition: "posted", path: "a.ts", line: 1, group: "G1", title: "`a`" }] };
+    const r = {
+      findings: [
+        { id: "X", disposition: "posted", path: "a.ts", line: 1, group: "G1", title: "`a`" },
+      ],
+    };
     expect(postCheckRecord(r).record).toBe(r);
     expect(postCheckRecord(null).merges).toEqual([]);
   });
   it("leaves a follower row the session already linked", () => {
     const r = {
       findings: [
-        { id: "L", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 1, group: "G1", title: "`x` bad" },
-        { id: "S", disposition: "posted", posted_as: "blocker", path: "a.ts", line: 2, group: "G2", title: "`x` bad", same_as: "L" },
+        {
+          id: "L",
+          disposition: "posted",
+          posted_as: "blocker",
+          path: "a.ts",
+          line: 1,
+          group: "G1",
+          title: "`x` bad",
+        },
+        {
+          id: "S",
+          disposition: "posted",
+          posted_as: "blocker",
+          path: "a.ts",
+          line: 2,
+          group: "G2",
+          title: "`x` bad",
+          same_as: "L",
+        },
       ],
     };
     expect(postCheckRecord(r).merges).toEqual([]);
@@ -105,8 +171,28 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
   // apart (17 merges over the round-1 runs, two medium defects hidden).
   const pair = (ga?: string, gb?: string) => ({
     findings: [
-      { id: "A", disposition: "posted", posted_as: "blocker", severity: "P1", path: "a.ts", line: 10, ...(ga ? { group: ga } : {}), title: "`rowCache` keyed by index", body: "a" },
-      { id: "B", disposition: "posted", posted_as: "question", severity: "P2", path: "a.ts", line: 11, ...(gb ? { group: gb } : {}), title: "`rowCache` never cleared", body: "b" },
+      {
+        id: "A",
+        disposition: "posted",
+        posted_as: "blocker",
+        severity: "P1",
+        path: "a.ts",
+        line: 10,
+        ...(ga ? { group: ga } : {}),
+        title: "`rowCache` keyed by index",
+        body: "a",
+      },
+      {
+        id: "B",
+        disposition: "posted",
+        posted_as: "question",
+        severity: "P2",
+        path: "a.ts",
+        line: 11,
+        ...(gb ? { group: gb } : {}),
+        title: "`rowCache` never cleared",
+        body: "b",
+      },
     ],
   });
   it("never merges two survivors the validator judged in one group", () => {
@@ -118,6 +204,8 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect(postCheckRecord(pair(undefined, "G5")).merges).toEqual([]);
   });
   it("merges leftovers of different groups, the cases the validator never compared", () => {
-    expect(postCheckRecord(pair("G4", "G5")).merges).toEqual([{ follower: "B", lead: "A", path: "a.ts", line: 11 }]);
+    expect(postCheckRecord(pair("G4", "G5")).merges).toEqual([
+      { follower: "B", lead: "A", path: "a.ts", line: 11 },
+    ]);
   });
 });

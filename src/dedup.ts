@@ -62,23 +62,131 @@ export interface ClusterResult {
 
 /** Words that sit in code spans but name nothing specific. */
 const STOP = new Set([
-  "true", "false", "null", "none", "nil", "undefined", "self", "this", "that", "return", "returns",
-  "const", "let", "var", "def", "function", "class", "async", "await", "new", "await", "import",
-  "export", "default", "public", "private", "static", "string", "number", "boolean", "int", "str",
-  "bool", "list", "dict", "map", "set", "get", "put", "post", "delete", "error", "errors", "value",
-  "values", "data", "id", "ids", "key", "keys", "name", "type", "types", "test", "tests", "file",
-  "path", "line", "lines", "the", "and", "for", "not", "with", "from", "into", "when", "then",
-  "else", "elif", "while", "try", "catch", "except", "finally", "throw", "raise", "yield", "pass",
-  "break", "continue", "case", "switch", "match", "object", "array", "result", "results", "item",
-  "items", "index", "args", "kwargs", "options", "opts", "config", "props", "state", "req", "res",
+  "true",
+  "false",
+  "null",
+  "none",
+  "nil",
+  "undefined",
+  "self",
+  "this",
+  "that",
+  "return",
+  "returns",
+  "const",
+  "let",
+  "var",
+  "def",
+  "function",
+  "class",
+  "async",
+  "await",
+  "new",
+  "await",
+  "import",
+  "export",
+  "default",
+  "public",
+  "private",
+  "static",
+  "string",
+  "number",
+  "boolean",
+  "int",
+  "str",
+  "bool",
+  "list",
+  "dict",
+  "map",
+  "set",
+  "get",
+  "put",
+  "post",
+  "delete",
+  "error",
+  "errors",
+  "value",
+  "values",
+  "data",
+  "id",
+  "ids",
+  "key",
+  "keys",
+  "name",
+  "type",
+  "types",
+  "test",
+  "tests",
+  "file",
+  "path",
+  "line",
+  "lines",
+  "the",
+  "and",
+  "for",
+  "not",
+  "with",
+  "from",
+  "into",
+  "when",
+  "then",
+  "else",
+  "elif",
+  "while",
+  "try",
+  "catch",
+  "except",
+  "finally",
+  "throw",
+  "raise",
+  "yield",
+  "pass",
+  "break",
+  "continue",
+  "case",
+  "switch",
+  "match",
+  "object",
+  "array",
+  "result",
+  "results",
+  "item",
+  "items",
+  "index",
+  "args",
+  "kwargs",
+  "options",
+  "opts",
+  "config",
+  "props",
+  "state",
+  "req",
+  "res",
 ]);
-const FILE_LIKE = /[\\/]|\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rb|java|kt|rs|c|cc|cpp|h|hpp|cs|php|swift|scala|json|ya?ml|toml|md|css|scss|html|sql|sh)$/i;
+const FILE_LIKE =
+  /[\\/]|\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|go|rb|java|kt|rs|c|cc|cpp|h|hpp|cs|php|swift|scala|json|ya?ml|toml|md|css|scss|html|sql|sh)$/i;
 
 /** Mixed-case product words that look like identifiers but name nothing in
  * the code. */
 const PROSE_CAMEL = new Set([
-  "javascript", "typescript", "github", "gitlab", "postgresql", "mysql", "mongodb", "macos", "ios",
-  "iphone", "ipad", "openapi", "graphql", "nodejs", "devops", "youtube", "linkedin", "wordpress",
+  "javascript",
+  "typescript",
+  "github",
+  "gitlab",
+  "postgresql",
+  "mysql",
+  "mongodb",
+  "macos",
+  "ios",
+  "iphone",
+  "ipad",
+  "openapi",
+  "graphql",
+  "nodejs",
+  "devops",
+  "youtube",
+  "linkedin",
+  "wordpress",
 ]);
 /** An identifier written WITHOUT backticks (freeze fixes 2: the dedup5 audit
  * found 0 of 463 candidates used backticks, so the shared-identifier signal
@@ -93,10 +201,11 @@ export function identifiersOf(text: string): Set<string> {
   const out = new Set<string>();
   const prose = text.replace(/`[^`\n]{1,200}`/g, " ");
   for (const t of prose.matchAll(BARE_IDENT_RE)) {
-    const tok = t[0]!;
+    const tok = t[0];
     if (FILE_LIKE.test(tok)) continue;
     for (const part of [tok, ...tok.split(/\.|::/)]) {
-      if (part.length < 3 || STOP.has(part.toLowerCase()) || PROSE_CAMEL.has(part.toLowerCase())) continue;
+      if (part.length < 3 || STOP.has(part.toLowerCase()) || PROSE_CAMEL.has(part.toLowerCase()))
+        continue;
       // A plain English word reached only through `word(` or `a.b` (e.g. "i.e") is not an identifier.
       if (/^[a-z]+$/.test(part) && part.length < 4) continue;
       out.add(part);
@@ -105,8 +214,10 @@ export function identifiersOf(text: string): Set<string> {
   for (const m of text.matchAll(/`([^`\n]{1,200})`/g)) {
     const span = m[1]!;
     if (FILE_LIKE.test(span.trim()) && !/\s/.test(span.trim())) continue;
-    for (const t of span.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*(?:(?:\.|::)[A-Za-z_$][A-Za-z0-9_$]*)*/g)) {
-      const tok = t[0]!;
+    for (const t of span.matchAll(
+      /[A-Za-z_$][A-Za-z0-9_$]*(?:(?:\.|::)[A-Za-z_$][A-Za-z0-9_$]*)*/g,
+    )) {
+      const tok = t[0];
       for (const part of [tok, ...tok.split(/\.|::/)]) {
         if (part.length < 3 || STOP.has(part.toLowerCase())) continue;
         out.add(part);
@@ -195,7 +306,9 @@ export function clusterFindings(candidates: readonly ClusterCandidate[]): Cluste
     groups.push({
       group: `G${groups.length + 1}`,
       members: members.map((m) => candidates[m]!.id),
-      signals: (["close-lines", "shared-identifier", "same-fix-target"] as const).filter((s) => sig.has(s)),
+      signals: (["close-lines", "shared-identifier", "same-fix-target"] as const).filter((s) =>
+        sig.has(s),
+      ),
       identifiers: [...idents].sort(),
     });
   }
@@ -203,7 +316,10 @@ export function clusterFindings(candidates: readonly ClusterCandidate[]): Cluste
 }
 
 /** The tool's answer, as the validator task string carries it. */
-export function renderGroups(result: ClusterResult, byId: ReadonlyMap<string, ClusterCandidate>): string {
+export function renderGroups(
+  result: ClusterResult,
+  byId: ReadonlyMap<string, ClusterCandidate>,
+): string {
   if (!result.groups.length) return "No candidate groups: every candidate stands alone.";
   const L: string[] = [];
   for (const g of result.groups) {
@@ -215,7 +331,9 @@ export function renderGroups(result: ClusterResult, byId: ReadonlyMap<string, Cl
     for (const id of g.members) {
       const c = byId.get(id);
       const at = c?.path ? ` \`${c.path}${typeof c.line === "number" ? `:${c.line}` : ""}\`` : "";
-      L.push(`  - ${id}${at} [${c?.severity ?? "?"}] ${c?.lens ?? "?"} — ${(c?.title ?? "").slice(0, 160)}`);
+      L.push(
+        `  - ${id}${at} [${c?.severity ?? "?"}] ${c?.lens ?? "?"} — ${(c?.title ?? "").slice(0, 160)}`,
+      );
     }
   }
   if (result.singletons.length) L.push(`- Alone: ${result.singletons.join(", ")}`);
@@ -235,7 +353,9 @@ function lineOf(v: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 function tagOf(e: Record<string, unknown>): string {
-  return s(e.posted_as).toLowerCase().replace(/^\[|\]$/g, "");
+  return s(e.posted_as)
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
 }
 function rank(e: Record<string, unknown>): number {
   return (TAG_RANK[tagOf(e)] ?? 3) * 10 + (SEV_RANK[s(e.severity)] ?? 5);
@@ -311,7 +431,8 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       fol.disposition = "merged";
       fol.word = "post-check";
       fol.merged_into = leadId;
-      fol.reason = `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
+      fol.reason =
+        `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
       const folLine = lineOf(fol.line)!;
       if (folLine !== lineOf(lead.line)) {
         const site = `\`${s(fol.path)}:${folLine}\``;
@@ -324,6 +445,6 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
   if (!merges.length) return { record, merges };
   const next: Record<string, unknown> = { ...rec, findings: entries };
   if (typeof rec.comments_posted === "number")
-    next.comments_posted = Math.max(0, (rec.comments_posted as number) - merges.length);
+    next.comments_posted = Math.max(0, rec.comments_posted - merges.length);
   return { record: next, merges };
 }

@@ -39,6 +39,8 @@ describe("stopCompanionOnQuit", () => {
     expect(ensure).toBeGreaterThan(0);
     expect(mark).toBeGreaterThan(ensure);
     expect(mark).toBeLessThan(rollover);
-    expect(src).toMatch(/stopCompanionOnQuit\(\{\s*containerStarted: companionContainerStarted \|\| companionUp/);
+    expect(src).toMatch(
+      /stopCompanionOnQuit\(\{\s*containerStarted: companionContainerStarted \|\| companionUp/,
+    );
   });
 });

@@ -58,7 +58,9 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function built(out: string): Map<string, string> {
-  return new Map(readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]));
+  return new Map(
+    readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]),
+  );
 }
 
 // ---- the addendum ------------------------------------------------------------------
@@ -66,34 +68,50 @@ function built(out: string): Map<string, string> {
 describe("the skeptic addendum is a scan-mode registry entry for the validator alone", () => {
   it("binds pass-validate in scan mode, and nothing else, in no PR build", () => {
     const entry = PASS_ADDENDA.find((a) => a.id === "scan-skeptic-validate");
-    expect(entry).toMatchObject({ mode: "scan", scope: [VALIDATE_PASS], text: SCAN_SKEPTIC_ADDENDUM });
+    expect(entry).toMatchObject({
+      mode: "scan",
+      scope: [VALIDATE_PASS],
+      text: SCAN_SKEPTIC_ADDENDUM,
+    });
     expect(addendaForPass(VALIDATE_PASS).map((a) => a.id)).not.toContain("scan-skeptic-validate");
-    expect(addendaForPass(VALIDATE_PASS, PASS_ADDENDA, "django", "scan").map((a) => a.id)).toContain("scan-skeptic-validate");
+    expect(
+      addendaForPass(VALIDATE_PASS, PASS_ADDENDA, "django", "scan").map((a) => a.id),
+    ).toContain("scan-skeptic-validate");
     for (const lens of ["pass-scan", "pass-security", "pass-baseline"]) {
-      expect(addendaForPass(lens, PASS_ADDENDA, "django", "scan").map((a) => a.id), lens).not.toContain("scan-skeptic-validate");
+      expect(
+        addendaForPass(lens, PASS_ADDENDA, "django", "scan").map((a) => a.id),
+        lens,
+      ).not.toContain("scan-skeptic-validate");
     }
   });
 
   for (const ecosystem of ["django", "none"] as const) {
-    it(`leaves a PR build byte-identical with and without it (${ecosystem})`, { timeout: HEAVY_TIMEOUT_MS }, () => {
-      const pr = (out: string, addenda: readonly PassAddendum[]): Map<string, string> => {
-        buildAgents(join(sandbox, "agents"), join(dir, out), {
-          root: sandbox,
-          tiers: fixture.models.tiers,
-          riskPasses: fixture.models.risk_passes,
-          validateTier: fixture.models.validate_tier,
-          addenda,
-          ecosystem,
-        });
-        return built(join(dir, out));
-      };
-      const withEntry = pr("with", PASS_ADDENDA);
-      const without = pr("without", PASS_ADDENDA.filter((a) => a.id !== "scan-skeptic-validate"));
-      expect(withEntry.size).toBeGreaterThan(20);
-      expect([...withEntry.keys()].sort()).toEqual([...without.keys()].sort());
-      for (const [name, body] of withEntry) expect(body, name).toBe(without.get(name));
-      for (const [name, body] of withEntry) expect(body, name).not.toContain("Scan skeptic");
-    });
+    it(
+      `leaves a PR build byte-identical with and without it (${ecosystem})`,
+      { timeout: HEAVY_TIMEOUT_MS },
+      () => {
+        const pr = (out: string, addenda: readonly PassAddendum[]): Map<string, string> => {
+          buildAgents(join(sandbox, "agents"), join(dir, out), {
+            root: sandbox,
+            tiers: fixture.models.tiers,
+            riskPasses: fixture.models.risk_passes,
+            validateTier: fixture.models.validate_tier,
+            addenda,
+            ecosystem,
+          });
+          return built(join(dir, out));
+        };
+        const withEntry = pr("with", PASS_ADDENDA);
+        const without = pr(
+          "without",
+          PASS_ADDENDA.filter((a) => a.id !== "scan-skeptic-validate"),
+        );
+        expect(withEntry.size).toBeGreaterThan(20);
+        expect([...withEntry.keys()].sort()).toEqual([...without.keys()].sort());
+        for (const [name, body] of withEntry) expect(body, name).toBe(without.get(name));
+        for (const [name, body] of withEntry) expect(body, name).not.toContain("Scan skeptic");
+      },
+    );
   }
 
   it("the scan build composes it into EVERY tier's validator (the skeptic runs at the lens's tier), before the anchor rule", () => {
@@ -101,13 +119,20 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
     buildScanAgents(sandbox, out, fixture, { env });
     const agents = built(out);
     const validators = [...agents.keys()].filter((n) => n.startsWith(`${VALIDATE_PASS}--`)).sort();
-    expect(validators).toEqual(["pass-validate--sol-high", "pass-validate--sol-med", "pass-validate--terra-med"]);
+    expect(validators).toEqual([
+      "pass-validate--sol-high",
+      "pass-validate--sol-med",
+      "pass-validate--terra-med",
+    ]);
     for (const name of validators) {
       const body = agents.get(name)!;
       expect(body, name).toContain(SCAN_SKEPTIC_ADDENDUM);
-      expect(body.indexOf(SCAN_SKEPTIC_ADDENDUM), name).toBeLessThan(body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM));
+      expect(body.indexOf(SCAN_SKEPTIC_ADDENDUM), name).toBeLessThan(
+        body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM),
+      );
     }
-    for (const [name, body] of agents) if (!name.startsWith(VALIDATE_PASS)) expect(body, name).not.toContain("Scan skeptic");
+    for (const [name, body] of agents)
+      if (!name.startsWith(VALIDATE_PASS)) expect(body, name).not.toContain("Scan skeptic");
   });
 
   it("carries the ONE class list — every class of the lenses' checklist, with its slug", () => {
@@ -125,12 +150,14 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
     expect(SCAN_SKEPTIC_ADDENDUM).toMatch(/callers/);
     expect(SCAN_SKEPTIC_ADDENDUM).toContain("`CLAUDE.md`");
     expect(SCAN_SKEPTIC_ADDENDUM).toMatch(/ratified decisions/);
-    for (const t of ["confirmed", "likely", "doubtful"]) expect(SCAN_SKEPTIC_ADDENDUM).toContain(`**${t}**`);
+    for (const t of ["confirmed", "likely", "doubtful"])
+      expect(SCAN_SKEPTIC_ADDENDUM).toContain(`**${t}**`);
     expect(SCAN_SKEPTIC_ADDENDUM).toContain("validity: confirmed");
     expect(SCAN_SKEPTIC_ADDENDUM).toContain("scenario:");
     expect(SCAN_SKEPTIC_ADDENDUM).toContain("Write no KILLED block");
     // Each frozen kill path is named as a doubt.
-    for (const k of ["below the bar", "a duplicate", "a restatement", "a confidence under 0.5"]) expect(SCAN_SKEPTIC_ADDENDUM).toContain(k);
+    for (const k of ["below the bar", "a duplicate", "a restatement", "a confidence under 0.5"])
+      expect(SCAN_SKEPTIC_ADDENDUM).toContain(k);
   });
 
   // scan-loop: the skeptic vs an outside adversarial check on the 30 findings
@@ -140,7 +167,14 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
   it("tightened from its disagreements: confirmed names every link with file:line; likely names its untraced link; the misses' shapes are doubtful", () => {
     const t = SCAN_SKEPTIC_ADDENDUM;
     // confirmed: every link, anchored, and "at most likely" when one is missing.
-    for (const link of ["the entry point", "the concrete input or state", "one `path:line` per hop", "who observes it", "not intended:"]) expect(t, link).toContain(link);
+    for (const link of [
+      "the entry point",
+      "the concrete input or state",
+      "one `path:line` per hop",
+      "who observes it",
+      "not intended:",
+    ])
+      expect(t, link).toContain(link);
     expect(t).toContain("If any link is missing, it is at most **likely**");
     expect(t).toContain("a `confirmed` scenario with no `path:line` reference is read as `likely`");
     // the three refutation questions the confirmed misses skipped
@@ -149,7 +183,8 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
     expect(t).toMatch(/every other candidate on the same path/);
     // likely: says which link, and the untraced links that make it doubtful instead.
     expect(t).toContain("untraced: <the link>");
-    for (const cls of ["no-consequence", "unreachable", "contrived-concurrency", "same-principal"]) expect(t, cls).toContain(`\`[${cls}]\``);
+    for (const cls of ["no-consequence", "unreachable", "contrived-concurrency", "same-principal"])
+      expect(t, cls).toContain(`\`[${cls}]\``);
     expect(t).toMatch(/operator or by this system's own first-party code/);
     // and still: nothing is dropped.
     expect(t).toContain("It is NOT deleted");
@@ -208,33 +243,67 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
   it("a confirmed scenario with no path:line reference is demoted to likely — the scenario is kept", () => {
     const one = (scenario: string) =>
       parseValidatorAnswer(
-        ["FINDINGS pass-validate SCAN x @y", "- path: app/a.py", "  line: 1", "  kind: bug", "  severity: P2", "  validity: confirmed", `  scenario: ${scenario}`, "  claim: c"].join("\n"),
+        [
+          "FINDINGS pass-validate SCAN x @y",
+          "- path: app/a.py",
+          "  line: 1",
+          "  kind: bug",
+          "  severity: P2",
+          "  validity: confirmed",
+          `  scenario: ${scenario}`,
+          "  claim: c",
+        ].join("\n"),
         null,
       ).survivors[0]!;
     // The shape of the three refuted confirmeds: prose arrows, no anchor.
-    const bare = "runTui() → app.run(initial) → poller.start() → tick() → SSH starts before the layout is painted";
+    const bare =
+      "runTui() → app.run(initial) → poller.start() → tick() → SSH starts before the layout is painted";
     expect(one(bare)).toMatchObject({ validity: "likely", scenario: bare });
     expect(one("a request reaches line 250 and it breaks").validity).toBe("likely");
     // Anchored, in any of the usual spellings.
-    expect(one("runTui src/tui/index.ts:1177 → app.run src/tui/app.ts:369").validity).toBe("confirmed");
+    expect(one("runTui src/tui/index.ts:1177 → app.run src/tui/app.ts:369").validity).toBe(
+      "confirmed",
+    );
     expect(one("dispatch (`src/dispatch.ts:1470-1472`) → spawnSession").validity).toBe("confirmed");
     expect(one("the webhook in webhook.ts:88 passes the header").validity).toBe("confirmed");
     // Extensionless files are anchored too: a scan reviews any repo.
-    expect(one("the build at Dockerfile:12 copies the secret → image layer").validity).toBe("confirmed");
+    expect(one("the build at Dockerfile:12 copies the secret → image layer").validity).toBe(
+      "confirmed",
+    );
     expect(one("the wrapper scripts/qcr:40 passes argv unquoted").validity).toBe("confirmed");
     // Neither a time, a ratio nor a bare host:port is a path:line.
-    expect(one("at 12:30 the job runs; ratio 1.5:1; localhost:8787 answers").validity).toBe("likely");
+    expect(one("at 12:30 the job runs; ratio 1.5:1; localhost:8787 answers").validity).toBe(
+      "likely",
+    );
   });
 
   it("a doubt names its class only when it is one of the ten; KILLED lines are read in the same shape", () => {
     const r = parseValidatorAnswer(answer, null);
     expect(r.doubted).toEqual([
-      { path: "app/a.py", line: 7, word: "refuted", reason: "the gate at src/gate.ts:40 refuses it", class: "guarded-elsewhere" },
-      { path: "app/a.py", line: 8, word: "unverifiable", reason: "[not-a-class] could not open it", class: null },
+      {
+        path: "app/a.py",
+        line: 7,
+        word: "refuted",
+        reason: "the gate at src/gate.ts:40 refuses it",
+        class: "guarded-elsewhere",
+      },
+      {
+        path: "app/a.py",
+        line: 8,
+        word: "unverifiable",
+        reason: "[not-a-class] could not open it",
+        class: null,
+      },
     ]);
     expect(r.killed).toEqual([
       { path: "app/a.py", line: 9, word: "below-bar", reason: "", class: null },
-      { path: "app/a.py", line: 11, word: "duplicate", reason: "merged into app/a.py:1", class: null },
+      {
+        path: "app/a.py",
+        line: 11,
+        word: "duplicate",
+        reason: "merged into app/a.py:1",
+        class: null,
+      },
     ]);
     expect(r.answered).toBe(true);
   });
@@ -243,7 +312,8 @@ describe("parseValidatorAnswer reads tiers, classes and kills", () => {
 // ---- the engine --------------------------------------------------------------------------
 
 const SHA = "a".repeat(40);
-const FILE_A = Array.from({ length: 14 }, (_, i) => `line_${i + 1} = compute(${i + 1})`).join("\n") + "\n";
+const FILE_A =
+  Array.from({ length: 14 }, (_, i) => `line_${i + 1} = compute(${i + 1})`).join("\n") + "\n";
 const FILES: Record<string, string> = { "app/a.py": FILE_A, "lib/b.py": "x = 1\ny = 2\n" };
 
 /** Six candidates on app/a.py — distinct kinds and claims, so none folds. */
@@ -261,7 +331,15 @@ const CLAIMS = [
 function lensAnswer(id: string, path: string): string {
   if (path !== "app/a.py") return "NONE\n\nSUGGEST NONE\n";
   const items = LENS_LINES.map((l, i) =>
-    [`- path: app/a.py`, `  line: ${l}`, `  kind: ${KINDS[i]}`, "  severity: P1", "  confidence: 0.8", `  claim: ${CLAIMS[i]}`, `  evidence: \`line_${l} = compute(${l})\``].join("\n"),
+    [
+      `- path: app/a.py`,
+      `  line: ${l}`,
+      `  kind: ${KINDS[i]}`,
+      "  severity: P1",
+      "  confidence: 0.8",
+      `  claim: ${CLAIMS[i]}`,
+      `  evidence: \`line_${l} = compute(${l})\``,
+    ].join("\n"),
   );
   return `FINDINGS pass-scan SCAN ${id} @${SHA}\n${items.join("\n")}\n\nSUGGEST NONE\n`;
 }
@@ -301,7 +379,12 @@ interface Call {
 }
 
 function ports(
-  opts: { scan?: Partial<ScanConfig>; validator?: (id: string) => CaseOutcome; files?: Record<string, string>; lens?: (id: string, path: string) => string } = {},
+  opts: {
+    scan?: Partial<ScanConfig>;
+    validator?: (id: string) => CaseOutcome;
+    files?: Record<string, string>;
+    lens?: (id: string, path: string) => string;
+  } = {},
 ) {
   const files = opts.files ?? FILES;
   const calls: Call[] = [];
@@ -313,8 +396,19 @@ function ports(
     cases: {
       run: async (spec) => {
         calls.push({ agent: spec.agent, id: spec.id });
-        if (spec.agent.startsWith("pass-validate")) return opts.validator?.(spec.id) ?? { ok: true, output: skepticAnswer(spec.id), cost_usd: 0.03 };
-        return { ok: true, output: (opts.lens ?? lensAnswer)(spec.id, spec.files[0]!), cost_usd: 0.01 };
+        if (spec.agent.startsWith("pass-validate"))
+          return (
+            opts.validator?.(spec.id) ?? {
+              ok: true,
+              output: skepticAnswer(spec.id),
+              cost_usd: 0.03,
+            }
+          );
+        return {
+          ok: true,
+          output: (opts.lens ?? lensAnswer)(spec.id, spec.files[0]!),
+          cost_usd: 0.01,
+        };
       },
     },
     source: {
@@ -332,9 +426,18 @@ function ports(
       }),
       list: () => Object.keys(files).map((path) => ({ path, blob: `b-${path}` })),
     },
-    savedCut: () => ({ ok: true, cut: { units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })), ignored: [] } }),
+    savedCut: () => ({
+      ok: true,
+      cut: {
+        units: ["app", "lib"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
+        ignored: [],
+      },
+    }),
     // The shipped defaults: the skeptic is ON unless a test says otherwise.
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, calibration_units: 1, ...opts.scan } } }),
+    settings: () => ({
+      ok: true,
+      settings: { scan: { ...SCAN_DEFAULTS, calibration_units: 1, ...opts.scan } },
+    }),
     buildAgents: () => ({ ok: true }),
   };
   return { ports: p, calls, state };
@@ -355,7 +458,9 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     await runOnce(new ScanRunner(p));
     const validatorCalls = calls.filter((c) => c.agent.startsWith("pass-validate"));
     expect(validatorCalls.length).toBeGreaterThan(0);
-    expect(new Set(validatorCalls.map((c) => c.agent))).toEqual(new Set([`pass-validate--${SCAN_DEFAULTS.tier}`]));
+    expect(new Set(validatorCalls.map((c) => c.agent))).toEqual(
+      new Set([`pass-validate--${SCAN_DEFAULTS.tier}`]),
+    );
   });
 
   it("confirmed / likely / doubtful from the answer; refuted kept with its class; KILLED and unmentioned kept doubtful", async () => {
@@ -366,17 +471,39 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     // All six candidates stored — none killed.
     expect(findings).toHaveLength(6);
     const at = (line: number) => findings.find((f) => f.start === line)!;
-    expect(at(1)).toMatchObject({ validity: "confirmed", scenario: expect.stringContaining("POST /refund"), doubt: null, validated: true });
-    expect(at(3)).toMatchObject({ validity: "likely", scenario: expect.stringContaining("no caller"), doubt: null });
+    expect(at(1)).toMatchObject({
+      validity: "confirmed",
+      scenario: expect.stringContaining("POST /refund"),
+      doubt: null,
+      validated: true,
+    });
+    expect(at(3)).toMatchObject({
+      validity: "likely",
+      scenario: expect.stringContaining("no caller"),
+      doubt: null,
+    });
     expect(at(5)).toMatchObject({
       validity: "doubtful",
-      doubt: { word: "refuted", reason: "the supervisor at src/sup.ts:12 closes it", class: "guarded-elsewhere" },
+      doubt: {
+        word: "refuted",
+        reason: "the supervisor at src/sup.ts:12 closes it",
+        class: "guarded-elsewhere",
+      },
     });
     // The frozen validator's kill paths — below the bar, a low confidence — are marks.
-    expect(at(7)).toMatchObject({ validity: "doubtful", doubt: { word: "below-bar", class: null } });
-    expect(at(9)).toMatchObject({ validity: "doubtful", doubt: { word: "unverifiable", reason: "confidence 0.3 after audit" } });
+    expect(at(7)).toMatchObject({
+      validity: "doubtful",
+      doubt: { word: "below-bar", class: null },
+    });
+    expect(at(9)).toMatchObject({
+      validity: "doubtful",
+      doubt: { word: "unverifiable", reason: "confidence 0.3 after audit" },
+    });
     // Never mentioned at all: still kept, doubtful, and says why.
-    expect(at(11)).toMatchObject({ validity: "doubtful", doubt: { word: "not-upheld", reason: UNMENTIONED_REASON } });
+    expect(at(11)).toMatchObject({
+      validity: "doubtful",
+      doubt: { word: "not-upheld", reason: UNMENTIONED_REASON },
+    });
     const app = s.status().run!.cases.find((c) => c.unit === "app")!;
     expect([app.findings, app.confirmed, app.likely, app.doubted]).toEqual([6, 1, 1, 4]);
   });
@@ -387,7 +514,14 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     // duplicate at line 1, and names a single survivor at line 3 for the io
     // candidate only — so an overlapping survivor must not swallow the rest.
     const item = (line: number, kind: string, claim: string, end?: number) =>
-      [`- path: app/a.py`, `  line: ${line}${end ? `-${end}` : ""}`, `  kind: ${kind}`, "  severity: P1", "  confidence: 0.8", `  claim: ${claim}`].join("\n");
+      [
+        `- path: app/a.py`,
+        `  line: ${line}${end ? `-${end}` : ""}`,
+        `  kind: ${kind}`,
+        "  severity: P1",
+        "  confidence: 0.8",
+        `  claim: ${claim}`,
+      ].join("\n");
     const lens = (id: string, path: string) =>
       path !== "app/a.py"
         ? "NONE\n\nSUGGEST NONE\n"
@@ -406,7 +540,10 @@ describe("the engine sorts every finding into a tier and drops none", () => {
         "DOUBTED",
         "- pass-scan app/a.py:1 — duplicate: the same defect as the bug at line 1",
       ].join("\n");
-    const { ports: p, state } = ports({ lens, validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }) });
+    const { ports: p, state } = ports({
+      lens,
+      validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }),
+    });
     await runOnce(new ScanRunner(p));
     const { findings } = new FindingsStore(state).list();
     expect(findings).toHaveLength(3);
@@ -417,33 +554,49 @@ describe("the engine sorts every finding into a tier and drops none", () => {
   });
 
   it("scan-loop: a confirmed whose scenario cites no path:line is stored LIKELY, with its scenario — and nothing is dropped", async () => {
-    const unanchored = "runTui() → app.run(initial) → poller.start() → SSH starts before the layout is painted";
-    const answer = (id: string) => skepticAnswer(id).replace(/  scenario: POST \/refund[^\n]*/, `  scenario: ${unanchored}`);
-    const { ports: p, state } = ports({ validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }) });
+    const unanchored =
+      "runTui() → app.run(initial) → poller.start() → SSH starts before the layout is painted";
+    const answer = (id: string) =>
+      skepticAnswer(id).replace(/ {2}scenario: POST \/refund[^\n]*/, `  scenario: ${unanchored}`);
+    const { ports: p, state } = ports({
+      validator: (id) => ({ ok: true, output: answer(id), cost_usd: 0.01 }),
+    });
     const s = new ScanRunner(p);
     await runOnce(s);
     const { findings } = new FindingsStore(state).list();
     expect(findings).toHaveLength(6);
-    expect(findings.find((f) => f.start === 1)).toMatchObject({ validity: "likely", scenario: unanchored, doubt: null });
+    expect(findings.find((f) => f.start === 1)).toMatchObject({
+      validity: "likely",
+      scenario: unanchored,
+      doubt: null,
+    });
     const app = s.status().run!.cases.find((c) => c.unit === "app")!;
     expect([app.findings, app.confirmed, app.likely, app.doubted]).toEqual([6, 0, 2, 4]);
   });
 
   it("a validator that answers NONE upholds nothing — every candidate is kept doubtful", async () => {
-    const { ports: p, state } = ports({ validator: () => ({ ok: true, output: "NONE\n", cost_usd: 0.01 }) });
+    const { ports: p, state } = ports({
+      validator: () => ({ ok: true, output: "NONE\n", cost_usd: 0.01 }),
+    });
     await runOnce(new ScanRunner(p));
     const { findings } = new FindingsStore(state).list();
     expect(findings).toHaveLength(6);
-    expect(findings.every((f) => f.validity === "doubtful" && f.doubt?.word === "not-upheld")).toBe(true);
+    expect(findings.every((f) => f.validity === "doubtful" && f.doubt?.word === "not-upheld")).toBe(
+      true,
+    );
   });
 
   it("a failed validator judges nothing: the findings are kept with NO tier — unknown, never guessed", async () => {
-    const { ports: p, state } = ports({ validator: () => ({ ok: true, output: "I could not read the tree.", cost_usd: 0.01 }) });
+    const { ports: p, state } = ports({
+      validator: () => ({ ok: true, output: "I could not read the tree.", cost_usd: 0.01 }),
+    });
     const s = new ScanRunner(p);
     await runOnce(s);
     const { findings } = new FindingsStore(state).list();
     expect(findings).toHaveLength(6);
-    expect(findings.every((f) => f.validity === null && !f.validated && validityOf(f) === "unknown")).toBe(true);
+    expect(
+      findings.every((f) => f.validity === null && !f.validated && validityOf(f) === "unknown"),
+    ).toBe(true);
     expect(s.status().run!.problems.some((x) => x.includes("the validator failed"))).toBe(true);
   });
 
@@ -451,7 +604,9 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     const { ports: p, calls, state } = ports({ scan: { validator: false } });
     await runOnce(new ScanRunner(p));
     expect(calls.every((c) => c.agent.startsWith("pass-scan"))).toBe(true);
-    expect(new FindingsStore(state).list().findings.every((f) => validityOf(f) === "unknown")).toBe(true);
+    expect(new FindingsStore(state).list().findings.every((f) => validityOf(f) === "unknown")).toBe(
+      true,
+    );
   });
 
   it("the skeptic's cost is part of the price: the ledger records lens + skeptic, and the next preview is priced from it", async () => {
@@ -460,9 +615,14 @@ describe("the engine sorts every finding into a tier and drops none", () => {
     const cal = await s.preview();
     if (!cal.ok) throw new Error(cal.errors.join("; "));
     expect(cal.preview.mode).toBe("calibration");
-    expect(cal.preview.settings).toMatchObject({ validator: true, validate_tier: SCAN_DEFAULTS.tier });
+    expect(cal.preview.settings).toMatchObject({
+      validator: true,
+      validate_tier: SCAN_DEFAULTS.tier,
+    });
     await runOnce(s);
-    const ledger = JSON.parse(readFileSync(join(dir, "state", LEDGER_FILE), "utf8")) as { entries: Array<{ path: string; cost_usd: number; validator: boolean }> };
+    const ledger = JSON.parse(readFileSync(join(dir, "state", LEDGER_FILE), "utf8")) as {
+      entries: Array<{ path: string; cost_usd: number; validator: boolean }>;
+    };
     const a = ledger.entries.find((e) => e.path === "app/a.py")!;
     expect(a.validator).toBe(true);
     expect(a.cost_usd).toBeCloseTo(0.01 + 0.03, 9);
@@ -502,27 +662,79 @@ const reported = (fp: string, over: Partial<ReportedFinding> = {}): ReportedFind
 describe("the findings store keeps the tier", () => {
   it("an exact match takes the latest judgement; a near-duplicate fold keeps the best-supported one", () => {
     const store = new FindingsStore(stateHomeFs(join(dir, "state")));
-    store.report([reported(FP("a"), { validity: "doubtful", doubt: { word: "refuted", reason: "r", class: "unreachable" } })], { run: "r1", sha: SHA, at: "t1" });
-    store.report([reported(FP("a"), { validity: "confirmed", scenario: "s" })], { run: "r2", sha: SHA, at: "t2" });
-    expect(store.list().findings[0]).toMatchObject({ validity: "confirmed", scenario: "s", doubt: null });
+    store.report(
+      [
+        reported(FP("a"), {
+          validity: "doubtful",
+          doubt: { word: "refuted", reason: "r", class: "unreachable" },
+        }),
+      ],
+      { run: "r1", sha: SHA, at: "t1" },
+    );
+    store.report([reported(FP("a"), { validity: "confirmed", scenario: "s" })], {
+      run: "r2",
+      sha: SHA,
+      at: "t2",
+    });
+    expect(store.list().findings[0]).toMatchObject({
+      validity: "confirmed",
+      scenario: "s",
+      doubt: null,
+    });
     // A second lens's near-duplicate, doubtful, folds in — the confirmed tier stands.
     store.report(
-      [reported(FP("b"), { lens: "pass-security", start: 11, validity: "doubtful", doubt: { word: "refuted", reason: "x", class: null } })],
+      [
+        reported(FP("b"), {
+          lens: "pass-security",
+          start: 11,
+          validity: "doubtful",
+          doubt: { word: "refuted", reason: "x", class: null },
+        }),
+      ],
       { run: "r2", sha: SHA, at: "t3" },
     );
     const [one] = store.list().findings;
     expect(store.list().findings).toHaveLength(1);
-    expect(one).toMatchObject({ fingerprint: FP("a"), validity: "confirmed", doubt: null, aliases: [FP("b")] });
+    expect(one).toMatchObject({
+      fingerprint: FP("a"),
+      validity: "confirmed",
+      doubt: null,
+      aliases: [FP("b")],
+    });
   });
 
   it("review fix: an UNJUDGED re-sighting of the same code keeps the judgement it has (the skeptic off or failed says nothing)", () => {
     const store = new FindingsStore(stateHomeFs(join(dir, "state")));
-    store.report([reported(FP("e"), { validity: "confirmed", scenario: "s" })], { run: "r1", sha: SHA, at: "t1" });
-    store.report([reported(FP("e"), { validated: false, validity: null, scenario: null })], { run: "r2", sha: SHA, at: "t2" });
-    expect(store.list().findings[0]).toMatchObject({ validity: "confirmed", scenario: "s", validated: true, seen: 2 });
+    store.report([reported(FP("e"), { validity: "confirmed", scenario: "s" })], {
+      run: "r1",
+      sha: SHA,
+      at: "t1",
+    });
+    store.report([reported(FP("e"), { validated: false, validity: null, scenario: null })], {
+      run: "r2",
+      sha: SHA,
+      at: "t2",
+    });
+    expect(store.list().findings[0]).toMatchObject({
+      validity: "confirmed",
+      scenario: "s",
+      validated: true,
+      seen: 2,
+    });
     // A judged one still replaces it — the latest judgement wins.
-    store.report([reported(FP("e"), { validity: "doubtful", doubt: { word: "refuted", reason: "r", class: null } })], { run: "r3", sha: SHA, at: "t3" });
-    expect(store.list().findings[0]).toMatchObject({ validity: "doubtful", doubt: { word: "refuted" } });
+    store.report(
+      [
+        reported(FP("e"), {
+          validity: "doubtful",
+          doubt: { word: "refuted", reason: "r", class: null },
+        }),
+      ],
+      { run: "r3", sha: SHA, at: "t3" },
+    );
+    expect(store.list().findings[0]).toMatchObject({
+      validity: "doubtful",
+      doubt: { word: "refuted" },
+    });
   });
 
   it("review fix: a fold's doubt follows the tier it chose — never doubtful with no reason, never confirmed yet flagged", () => {
@@ -531,20 +743,40 @@ describe("the findings store keeps the tier", () => {
     const { validity: _v, scenario: _s, ...legacy } = reported(FP("f"));
     store.report([legacy as ReportedFinding], { run: "r1", sha: SHA, at: "t1" });
     store.report(
-      [reported(FP("g"), { lens: "pass-security", start: 11, validity: "doubtful", doubt: { word: "refuted", reason: "x", class: "unreachable" } })],
+      [
+        reported(FP("g"), {
+          lens: "pass-security",
+          start: 11,
+          validity: "doubtful",
+          doubt: { word: "refuted", reason: "x", class: "unreachable" },
+        }),
+      ],
       { run: "r1", sha: SHA, at: "t2" },
     );
     const [one] = store.list().findings;
     expect(store.list().findings).toHaveLength(1);
-    expect(one).toMatchObject({ validity: "doubtful", doubt: { word: "refuted", class: "unreachable" } });
+    expect(one).toMatchObject({
+      validity: "doubtful",
+      doubt: { word: "refuted", class: "unreachable" },
+    });
   });
 
   it("a finding stored before the tiers reads UNKNOWN, and the filter finds it as such", () => {
     const store = new FindingsStore(stateHomeFs(join(dir, "state")));
     const { validity: _v, scenario: _s, ...legacy } = reported(FP("c"));
-    store.report([legacy as ReportedFinding, reported(FP("d"), { path: "lib/b.py", validity: "confirmed", scenario: "s" })], { run: "r1", sha: SHA, at: "t1" });
-    expect(store.list({ validity: "unknown" }).findings.map((f) => f.fingerprint)).toEqual([FP("c")]);
-    expect(store.list({ validity: "confirmed" }).findings.map((f) => f.fingerprint)).toEqual([FP("d")]);
+    store.report(
+      [
+        legacy as ReportedFinding,
+        reported(FP("d"), { path: "lib/b.py", validity: "confirmed", scenario: "s" }),
+      ],
+      { run: "r1", sha: SHA, at: "t1" },
+    );
+    expect(store.list({ validity: "unknown" }).findings.map((f) => f.fingerprint)).toEqual([
+      FP("c"),
+    ]);
+    expect(store.list({ validity: "confirmed" }).findings.map((f) => f.fingerprint)).toEqual([
+      FP("d"),
+    ]);
   });
 });
 
@@ -588,12 +820,26 @@ function belt() {
     units: () => ["app", "lib"],
     runs: () => [{ id: "scan-1", sha: SHA, state: "complete" }],
   });
-  const defs = [...scanToolDefinitions(scan, findings, () => null, () => triage.closeFixed()), ...triageToolDefinitions(triage)];
+  const defs = [
+    ...scanToolDefinitions(
+      scan,
+      findings,
+      () => null,
+      () => triage.closeFixed(),
+    ),
+    ...triageToolDefinitions(triage),
+  ];
   return { defs, scan, findings, sink, triage };
 }
 
-async function call(defs: PiToolDefinition[], name: string, params: Record<string, unknown> = {}): Promise<string> {
-  return (await defs.find((d) => d.name === name)!.execute("id", params)).content.map((c) => c.text).join("\n");
+async function call(
+  defs: PiToolDefinition[],
+  name: string,
+  params: Record<string, unknown> = {},
+): Promise<string> {
+  return (await defs.find((d) => d.name === name)!.execute("id", params)).content
+    .map((c) => c.text)
+    .join("\n");
 }
 
 describe("promotion defaults to confirmed findings", () => {
@@ -603,7 +849,11 @@ describe("promotion defaults to confirmed findings", () => {
       [
         reported(FP("1"), { validity: "confirmed", scenario: "s", path: "app/one.py" }),
         reported(FP("2"), { validity: "likely", path: "app/two.py" }),
-        reported(FP("3"), { validity: "doubtful", doubt: { word: "refuted", reason: "r", class: null }, path: "app/three.py" }),
+        reported(FP("3"), {
+          validity: "doubtful",
+          doubt: { word: "refuted", reason: "r", class: null },
+          path: "app/three.py",
+        }),
         reported(FP("4"), { validity: null, validated: false, path: "app/four.py" }),
       ],
       { run: "r1", sha: SHA, at: "t" },
@@ -618,7 +868,9 @@ describe("promotion defaults to confirmed findings", () => {
       const r = await triage.promote({ fingerprint: fp, effort: "e" });
       expect(r).toMatchObject({ ok: false, errors: [expect.stringContaining(word)] });
       expect(r).toMatchObject({ errors: [expect.stringContaining("`unconfirmed: true`")] });
-      expect(await triage.promote({ fingerprint: fp, effort: "e", unconfirmed: true })).toMatchObject({ ok: true });
+      expect(
+        await triage.promote({ fingerprint: fp, effort: "e", unconfirmed: true }),
+      ).toMatchObject({ ok: true });
     }
     expect(sink.filed).toHaveLength(4);
   });
@@ -628,7 +880,9 @@ describe("the extension tools surface the tier", () => {
   it("scan_status counts per tier; scan_findings groups confirmed first and filters by validity", async () => {
     const { defs, scan } = belt();
     await runOnce(scan);
-    expect(await call(defs, "scan_status")).toMatch(/6 finding\(s\) \(1 confirmed, 1 likely, 4 doubtful\)/);
+    expect(await call(defs, "scan_status")).toMatch(
+      /6 finding\(s\) \(1 confirmed, 1 likely, 4 doubtful\)/,
+    );
     const listed = (await call(defs, "scan_findings")).split("\n");
     expect(listed[0]).toMatch(/app\/a\.py:1 \(app, bug, new, CONFIRMED\)/);
     expect(listed[1]).toMatch(/app\/a\.py:3 \(app, data, new, LIKELY\)/);
@@ -642,8 +896,12 @@ describe("the extension tools surface the tier", () => {
   it("scan_promote refuses an unconfirmed finding, and files it with `unconfirmed: true`", async () => {
     const { defs, findings } = belt();
     findings.report([reported(FP("5"), { validity: "likely" })], { run: "r1", sha: SHA, at: "t" });
-    expect(await call(defs, "scan_promote", { fingerprint: FP("5"), effort: "e" })).toMatch(/^Promote refused:\n✗ 555555555555 is likely, not confirmed/);
-    expect(await call(defs, "scan_promote", { fingerprint: FP("5"), effort: "e", unconfirmed: true })).toBe("555555555555 promoted: filed as FT-801.");
+    expect(await call(defs, "scan_promote", { fingerprint: FP("5"), effort: "e" })).toMatch(
+      /^Promote refused:\n✗ 555555555555 is likely, not confirmed/,
+    );
+    expect(
+      await call(defs, "scan_promote", { fingerprint: FP("5"), effort: "e", unconfirmed: true }),
+    ).toBe("555555555555 promoted: filed as FT-801.");
   });
 });
 
@@ -653,7 +911,10 @@ describe("the default is on in config, and a profile may switch it off", () => {
     const p = join(configHome(env), "profiles", "quiet");
     mkdirSync(join(p, "addenda"), { recursive: true });
     writeFileSync(join(p, "profile.toml"), "[scan]\nvalidator = false\n");
-    const toml = `${fixtureToml.replace(/^profile = .*$/m, "")}\n`.replace(/^\[review\]$/m, '[review]\nprofile = "quiet"');
+    const toml = `${fixtureToml.replace(/^profile = .*$/m, "")}\n`.replace(
+      /^\[review\]$/m,
+      '[review]\nprofile = "quiet"',
+    );
     expect(scanConfig(sandbox, toml, { env }).scan.validator).toBe(false);
   });
 });

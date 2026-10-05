@@ -147,7 +147,16 @@ export interface PortraitFactsFile {
   previous: FactsVersion | null;
 }
 
-export const PORTRAIT_SECTIONS = ["stack", "units", "conventions", "enforced", "history", "survey", "scan", "problems"] as const;
+export const PORTRAIT_SECTIONS = [
+  "stack",
+  "units",
+  "conventions",
+  "enforced",
+  "history",
+  "survey",
+  "scan",
+  "problems",
+] as const;
 export type PortraitSection = (typeof PORTRAIT_SECTIONS)[number];
 
 /**
@@ -157,7 +166,8 @@ export type PortraitSection = (typeof PORTRAIT_SECTIONS)[number];
  * not stale because a file was added.
  */
 export function shapeLines(f: PortraitFacts): Record<PortraitSection, string[]> {
-  const ev = (what: string, xs: readonly Evidence[]): string[] => xs.map((x) => `${what} ${x.name} — ${x.evidence}`);
+  const ev = (what: string, xs: readonly Evidence[]): string[] =>
+    xs.map((x) => `${what} ${x.name} — ${x.evidence}`);
   const root = (r: string): string => r || "(repo root)";
   return {
     stack: [
@@ -197,8 +207,12 @@ function scanShape(s: PortraitScan | null): string[] {
   if (s === null) return [];
   if (s.state === "unreadable") return ["scan: UNKNOWN (a scan record is unreadable)"];
   return [
-    s.last ? `scan ${s.last.id} [${s.last.mode}, ${s.last.state}] at ${s.last.sha.slice(0, 12)}` : "scan: none finished",
-    ...s.findings.units.filter((u) => u.open_by.length > 0).map((u) => `open in ${u.unit}: ${u.open_by.join(", ")}`),
+    s.last
+      ? `scan ${s.last.id} [${s.last.mode}, ${s.last.state}] at ${s.last.sha.slice(0, 12)}`
+      : "scan: none finished",
+    ...s.findings.units
+      .filter((u) => u.open_by.length > 0)
+      .map((u) => `open in ${u.unit}: ${u.open_by.join(", ")}`),
     ...s.hotspots.map((h) => `hotspot ${h.unit} — ${h.text}`),
   ];
 }
@@ -240,9 +254,17 @@ export type FactsRead =
 
 function factsVersionError(v: unknown, at: string): string | null {
   if (v === null && at === "previous") return null;
+  // tsc needs this assertion (TS2339 on o.key without it); the type-aware
+  // lint misreads it as unnecessary, and its autofix breaks the build.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
   const o = (v ?? null) as Partial<FactsVersion> | null;
   if (o === null || typeof o !== "object") return `\`${at}\` is not a facts version`;
-  if (typeof o.key !== "string" || typeof o.assembled_at !== "string" || typeof o.facts !== "object" || o.facts === null) {
+  if (
+    typeof o.key !== "string" ||
+    typeof o.assembled_at !== "string" ||
+    typeof o.facts !== "object" ||
+    o.facts === null
+  ) {
     return `\`${at}\` is not {key, assembled_at, facts}`;
   }
   const f = o.facts as Partial<PortraitFacts>;
@@ -264,11 +286,22 @@ export function readPortraitFacts(fs: StateFs): FactsRead {
   try {
     const raw = JSON.parse(text) as Partial<PortraitFactsFile>;
     if (typeof raw !== "object" || raw === null || raw.version !== PORTRAIT_FACTS_VERSION) {
-      throw new Error(`unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`);
+      throw new Error(
+        `unknown version ${JSON.stringify((raw as { version?: unknown } | null)?.version)}`,
+      );
     }
-    const bad = factsVersionError(raw.current, "current") ?? factsVersionError(raw.previous ?? null, "previous");
+    const bad =
+      factsVersionError(raw.current, "current") ??
+      factsVersionError(raw.previous ?? null, "previous");
     if (bad !== null) throw new Error(bad);
-    return { state: "ok", file: { version: PORTRAIT_FACTS_VERSION, current: raw.current!, previous: raw.previous ?? null } };
+    return {
+      state: "ok",
+      file: {
+        version: PORTRAIT_FACTS_VERSION,
+        current: raw.current!,
+        previous: raw.previous ?? null,
+      },
+    };
   } catch (err) {
     return {
       state: "unreadable",
@@ -307,9 +340,18 @@ export function saveFacts(fs: StateFs, facts: PortraitFacts, now: Date): Assembl
   try {
     fs.write(PORTRAIT_FACTS_FILE, `${JSON.stringify(file, null, 2)}\n`);
   } catch (err) {
-    return { ok: false, errors: [`${PORTRAIT_FACTS_FILE} in ${fs.location} cannot be written: ${String(err)}`] };
+    return {
+      ok: false,
+      errors: [`${PORTRAIT_FACTS_FILE} in ${fs.location} cannot be written: ${String(err)}`],
+    };
   }
-  return { ok: true, current, previous, unchanged, diff: previous ? factsDiff(previous.facts, facts) : [] };
+  return {
+    ok: true,
+    current,
+    previous,
+    unchanged,
+    diff: previous ? factsDiff(previous.facts, facts) : [],
+  };
 }
 
 // ---- the narrative -----------------------------------------------------------
@@ -322,10 +364,16 @@ export interface NarrativeDoc {
   body: string;
 }
 
-const HEADER_RE = /^<!-- qcr repo portrait narrative · facts ([0-9a-f]{12}) at (\S+) · written (\S+) -->\n\n?/;
+const HEADER_RE =
+  /^<!-- qcr repo portrait narrative · facts ([0-9a-f]{12}) at (\S+) · written (\S+) -->\n\n?/;
 
 /** The file's text: one header line the engine writes, then the prose. */
-export function renderNarrative(body: string, factsKey: string, head: string | null, writtenAt: string): string {
+export function renderNarrative(
+  body: string,
+  factsKey: string,
+  head: string | null,
+  writtenAt: string,
+): string {
   return `<!-- qcr repo portrait narrative · facts ${factsKey} at ${head ? head.slice(0, 12) : "unknown-head"} · written ${writtenAt} -->\n\n${body}\n`;
 }
 
@@ -336,16 +384,17 @@ export function parseNarrative(text: string): NarrativeDoc {
 }
 
 export type NarrativeRead =
-  | { state: "absent" }
-  | { state: "unreadable"; error: string }
-  | { state: "ok"; doc: NarrativeDoc };
+  { state: "absent" } | { state: "unreadable"; error: string } | { state: "ok"; doc: NarrativeDoc };
 
 export function readNarrative(fs: StateFs, rel: string = NARRATIVE_FILE): NarrativeRead {
   try {
     const text = fs.read(rel);
     return text === null ? { state: "absent" } : { state: "ok", doc: parseNarrative(text) };
   } catch (err) {
-    return { state: "unreadable", error: `${rel} in ${fs.location} cannot be read: ${String(err)}` };
+    return {
+      state: "unreadable",
+      error: `${rel} in ${fs.location} cannot be read: ${String(err)}`,
+    };
   }
 }
 
@@ -359,10 +408,14 @@ export function lineDiff(before: string, after: string, maxCells = 4_000_000): s
   const b = after === "" ? [] : after.split("\n");
   if (a.length * b.length > maxCells) return [...a.map((l) => `- ${l}`), ...b.map((l) => `+ ${l}`)];
   // lcs[i][j] = LCS length of a[i..] and b[j..].
-  const lcs: Uint32Array[] = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
+  const lcs: Uint32Array[] = Array.from(
+    { length: a.length + 1 },
+    () => new Uint32Array(b.length + 1),
+  );
   for (let i = a.length - 1; i >= 0; i--) {
     for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+      lcs[i]![j] =
+        a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
     }
   }
   const out: string[] = [];
@@ -412,29 +465,51 @@ export type StoreNarrativeResult =
  * names its author, or a narrative file is in the way that cannot be read.
  * The narrative it replaces becomes `narrative.previous.md`.
  */
-export function storeNarrative(deps: NarrativeDeps, raw: { facts_key?: unknown; narrative?: unknown }): StoreNarrativeResult {
+export function storeNarrative(
+  deps: NarrativeDeps,
+  raw: { facts_key?: unknown; narrative?: unknown },
+): StoreNarrativeResult {
   if (deps.config === null) {
-    return { ok: false, errors: ["no config home in this assembly — the narrative has nowhere to live"] };
+    return {
+      ok: false,
+      errors: ["no config home in this assembly — the narrative has nowhere to live"],
+    };
   }
   const facts = readPortraitFacts(deps.state);
-  if (facts.state === "absent") return { ok: false, errors: ["no portrait facts yet — assemble them first, then write the narrative from them"] };
+  if (facts.state === "absent")
+    return {
+      ok: false,
+      errors: ["no portrait facts yet — assemble them first, then write the narrative from them"],
+    };
   if (facts.state === "unreadable") return { ok: false, errors: [facts.error] };
   const errors: string[] = [];
   const key = facts.file.current.key;
   if (typeof raw.facts_key !== "string" || raw.facts_key.trim() === "") {
     errors.push("no `facts_key` — quote the key of the facts the narrative was written from");
   } else if (raw.facts_key.trim() !== key) {
-    errors.push(`the facts changed since that key (now ${key}) — read the portrait again and write from what it says now`);
+    errors.push(
+      `the facts changed since that key (now ${key}) — read the portrait again and write from what it says now`,
+    );
   }
-  const body = typeof raw.narrative === "string" ? raw.narrative.replace(/\r\n?/g, "\n").trim() : "";
+  const body =
+    typeof raw.narrative === "string" ? raw.narrative.replace(/\r\n?/g, "\n").trim() : "";
   if (body === "") errors.push("`narrative` must be non-empty prose");
-  else if (body.length > NARRATIVE_MAX) errors.push(`the narrative is ${body.length} characters — at most ${NARRATIVE_MAX}; it is a page, not a report`);
-  if (body.startsWith("<!--")) errors.push("start with prose, not a comment — the header line is the tool's to write");
+  else if (body.length > NARRATIVE_MAX)
+    errors.push(
+      `the narrative is ${body.length} characters — at most ${NARRATIVE_MAX}; it is a page, not a report`,
+    );
+  if (body.startsWith("<!--"))
+    errors.push("start with prose, not a comment — the header line is the tool's to write");
   if (errors.length > 0) return { ok: false, errors };
 
   const digest = readDigest(deps.state);
   if (digest.state === "unreadable") {
-    return { ok: false, errors: [`${digest.error} — the narrative cannot be checked for raw review comments until it is pulled again`] };
+    return {
+      ok: false,
+      errors: [
+        `${digest.error} — the narrative cannot be checked for raw review comments until it is pulled again`,
+      ],
+    };
   }
   if (digest.state === "ok") {
     const leaks = leakChecker(digest.digest)(body);
@@ -442,10 +517,18 @@ export function storeNarrative(deps: NarrativeDeps, raw: { facts_key?: unknown; 
   }
 
   const prior = readNarrative(deps.config);
-  if (prior.state === "unreadable") return { ok: false, errors: [`${prior.error} — nothing will overwrite it`] };
+  if (prior.state === "unreadable")
+    return { ok: false, errors: [`${prior.error} — nothing will overwrite it`] };
   const writtenAt = deps.clock().toISOString();
   if (prior.state === "ok" && prior.doc.body === body && prior.doc.facts_key === key) {
-    return { ok: true, facts_key: key, written_at: prior.doc.written_at ?? writtenAt, replaced: false, unchanged: true, diff: [] };
+    return {
+      ok: true,
+      facts_key: key,
+      written_at: prior.doc.written_at ?? writtenAt,
+      replaced: false,
+      unchanged: true,
+      diff: [],
+    };
   }
   const text = renderNarrative(body, key, facts.file.current.facts.head, writtenAt);
   let replaced = false;
@@ -468,7 +551,9 @@ export function storeNarrative(deps: NarrativeDeps, raw: { facts_key?: unknown; 
       ok: false,
       errors: [
         `${replaced ? NARRATIVE_FILE : `${NARRATIVE_PREVIOUS_FILE} or ${NARRATIVE_FILE}`} in ${deps.config.location} cannot be written: ${String(err)}` +
-          (replaced ? ` — the narrative it would replace is already kept as ${NARRATIVE_PREVIOUS_FILE}` : ""),
+          (replaced
+            ? ` — the narrative it would replace is already kept as ${NARRATIVE_PREVIOUS_FILE}`
+            : ""),
       ],
     };
   }
@@ -495,8 +580,12 @@ export interface PortraitView {
 /** The stored portrait as it is — nothing reassembled. */
 export function readPortrait(deps: NarrativeDeps, opts: { diff?: boolean } = {}): PortraitView {
   const facts = readPortraitFacts(deps.state);
-  const narrative = deps.config === null ? ({ state: "no-config-home" } as const) : readNarrative(deps.config);
-  const previous = deps.config === null ? ({ state: "absent" } as const) : readNarrative(deps.config, NARRATIVE_PREVIOUS_FILE);
+  const narrative =
+    deps.config === null ? ({ state: "no-config-home" } as const) : readNarrative(deps.config);
+  const previous =
+    deps.config === null
+      ? ({ state: "absent" } as const)
+      : readNarrative(deps.config, NARRATIVE_PREVIOUS_FILE);
   const stale =
     narrative.state === "ok" && facts.state === "ok" && narrative.doc.facts_key !== null
       ? narrative.doc.facts_key !== facts.file.current.key
@@ -504,8 +593,14 @@ export function readPortrait(deps: NarrativeDeps, opts: { diff?: boolean } = {})
   let factsDiffOut: SectionDiff[] | null = null;
   let narrativeDiff: string[] | null = null;
   if (opts.diff) {
-    factsDiffOut = facts.state === "ok" && facts.file.previous ? factsDiff(facts.file.previous.facts, facts.file.current.facts) : [];
-    narrativeDiff = narrative.state === "ok" && previous.state === "ok" ? lineDiff(previous.doc.body, narrative.doc.body) : [];
+    factsDiffOut =
+      facts.state === "ok" && facts.file.previous
+        ? factsDiff(facts.file.previous.facts, facts.file.current.facts)
+        : [];
+    narrativeDiff =
+      narrative.state === "ok" && previous.state === "ok"
+        ? lineDiff(previous.doc.body, narrative.doc.body)
+        : [];
   }
   return {
     facts,

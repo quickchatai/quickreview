@@ -28,8 +28,11 @@ import type { InstallEnv } from "../src/install.js";
 import { buildScanAgents } from "../src/setup/scanbuild.js";
 
 const sandbox = join(import.meta.dirname, "..");
-const fixture: Config = parseConfig(readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"));
-const TRIGGER_MARKER = "## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)";
+const fixture: Config = parseConfig(
+  readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
+);
+const TRIGGER_MARKER =
+  "## You were added on demand — your task string must NAME THE SHAPE (sandbox rule)";
 
 let dir: string;
 let env: InstallEnv;
@@ -40,7 +43,9 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function built(out: string): Map<string, string> {
-  return new Map(readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]));
+  return new Map(
+    readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]),
+  );
 }
 
 describe("the PR-round trigger rule is a PR-build rule", () => {
@@ -68,7 +73,10 @@ describe("the PR-round trigger rule is a PR-build rule", () => {
     const ids = addendaForPass(CONCURRENCY_PASS, PASS_ADDENDA, "django", "scan").map((a) => a.id);
     expect(ids).not.toContain("concurrency-trigger");
     expect(ids).toContain("concurrency-scan");
-    expect(PASS_ADDENDA.find((a) => a.id === "concurrency-scan")).toMatchObject({ scope: [CONCURRENCY_PASS], mode: "scan" });
+    expect(PASS_ADDENDA.find((a) => a.id === "concurrency-scan")).toMatchObject({
+      scope: [CONCURRENCY_PASS],
+      mode: "scan",
+    });
 
     const out = join(dir, "scan");
     buildScanAgents(sandbox, out, fixture, { env });
@@ -80,7 +88,9 @@ describe("the PR-round trigger rule is a PR-build rule", () => {
         expect(body, name).not.toContain(TRIGGER_MARKER);
         expect(body, name).toContain(CONCURRENCY_SCAN_ADDENDUM);
         // The anchor rule stays the final word.
-        expect(body.indexOf(CONCURRENCY_SCAN_ADDENDUM), name).toBeLessThan(body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM));
+        expect(body.indexOf(CONCURRENCY_SCAN_ADDENDUM), name).toBeLessThan(
+          body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM),
+        );
         // It still reads: the tools a reading needs are there.
         expect(body, name).toMatch(/^tools: .*\bread\b/m);
       } else {

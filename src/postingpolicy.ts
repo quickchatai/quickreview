@@ -93,8 +93,14 @@ export type WithholdWord = (typeof WITHHOLD_WORDS)[number];
 /** Ids the compiled posting addenda take — a profile pack may not claim them. */
 export const POSTING_ADDENDUM_IDS = ["posting-policy-validate"] as const;
 
-function oneOf<T extends string>(at: string, key: string, value: unknown, allowed: readonly T[]): T {
-  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+function oneOf<T extends string>(
+  at: string,
+  key: string,
+  value: unknown,
+  allowed: readonly T[],
+): T {
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value))
+    return value as T;
   throw new Error(
     `${at} ${key} must be one of ${allowed.map((a) => `"${a}"`).join(", ")} (got ${JSON.stringify(value)})`,
   );
@@ -133,7 +139,9 @@ export function parsePostingTable(where: string, raw: unknown): Partial<PostingP
         break;
       case "repeat_sites":
         if (typeof value !== "boolean")
-          throw new Error(`${at} repeat_sites must be true or false (got ${JSON.stringify(value)})`);
+          throw new Error(
+            `${at} repeat_sites must be true or false (got ${JSON.stringify(value)})`,
+          );
         out.repeat_sites = value;
         break;
       case "body":
@@ -179,30 +187,34 @@ export function applyProfilePosting<C extends { posting?: PostingPolicy }>(
 function policyLines(p: PostingPolicy, who: "session" | "validator"): string[] {
   const L: string[] = [];
   if (p.max_comments > 0)
-  if (p.max_comments > 0) {
-    L.push(
-      `- **Budget: at most ${p.max_comments} posted finding${p.max_comments === 1 ? "" : "s"} this round** — inline comments and findings posted in the body counted together. Every surviving \`[blocker]\` posts whatever the budget (the blocker bar never moves; a budget is filled around the blockers, never out of them). Fill the rest by what a senior reviewer would insist on before merge: real bugs first — wrong behaviour, crashes, data loss, security, races — then the risks most likely to bite, then everything else.${who === "session" ? " `pass-validate` makes that selection in step 4 (its SELECTED/WITHHELD blocks); post what it selected." : ""}`,
-    );
-    // Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.4): the budget counts
-    // root causes, not sites, and ties go to the defect on a changed line.
-    L.push(
-      "- **One root cause, one comment — merge BEFORE you count.** Survivors that are the same defect at several sites — the same wrong assumption, the same missing guard, the same mistaken call repeated across functions or files — are ONE finding: post it once, at the site where the cause is clearest (the changed line that introduces it), and name the other sites in its text (\"also at `path:line`, `path:line`\"). It counts once against the budget. Distinct defects that merely sit near each other stay separate.",
-    );
-    L.push(
-      "- **Within one severity, the changed line first.** Between two survivors of the same tag and severity, rank a defect on a line this PR changed — a wrong operator, a wrong variable, a missing check in the new code — above a consequence it has in code the PR did not touch.",
-    );
-  }
+    if (p.max_comments > 0) {
+      L.push(
+        `- **Budget: at most ${p.max_comments} posted finding${p.max_comments === 1 ? "" : "s"} this round** — inline comments and findings posted in the body counted together. Every surviving \`[blocker]\` posts whatever the budget (the blocker bar never moves; a budget is filled around the blockers, never out of them). Fill the rest by what a senior reviewer would insist on before merge: real bugs first — wrong behaviour, crashes, data loss, security, races — then the risks most likely to bite, then everything else.${who === "session" ? " `pass-validate` makes that selection in step 4 (its SELECTED/WITHHELD blocks); post what it selected." : ""}`,
+      );
+      // Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.4): the budget counts
+      // root causes, not sites, and ties go to the defect on a changed line.
+      L.push(
+        '- **One root cause, one comment — merge BEFORE you count.** Survivors that are the same defect at several sites — the same wrong assumption, the same missing guard, the same mistaken call repeated across functions or files — are ONE finding: post it once, at the site where the cause is clearest (the changed line that introduces it), and name the other sites in its text ("also at `path:line`, `path:line`"). It counts once against the budget. Distinct defects that merely sit near each other stay separate.',
+      );
+      L.push(
+        "- **Within one severity, the changed line first.** Between two survivors of the same tag and severity, rank a defect on a line this PR changed — a wrong operator, a wrong variable, a missing check in the new code — above a consequence it has in code the PR did not touch.",
+      );
+    }
   if (p.nits === "off")
-    L.push("- **Nits: off.** No `[nit]` is posted. A surviving nit is recorded `withheld` (word `nits-off`).");
+    L.push(
+      "- **Nits: off.** No `[nit]` is posted. A surviving nit is recorded `withheld` (word `nits-off`).",
+    );
   if (p.questions === "off")
-    L.push("- **Questions: off.** No `[question]` is posted. A surviving question is recorded `withheld` (word `questions-off`).");
+    L.push(
+      "- **Questions: off.** No `[question]` is posted. A surviving question is recorded `withheld` (word `questions-off`).",
+    );
   if (p.questions === "blocking")
     L.push(
       "- **Questions: blocking only.** A `[question]` posts only when its severity is `P0`–`P2` — a likely defect the reachability gate turned into a question. A `P3` question is recorded `withheld` (word `question-not-blocking`). The reachability gate itself is unchanged.",
     );
   if (!p.repeat_sites)
     L.push(
-      "- **One site per finding.** A finding that applies at several places posts ONCE, at its single best anchor; name the other sites in its text (\"also at `path:line`\"). Extra sites are recorded `withheld` (word `repeat-site`).",
+      '- **One site per finding.** A finding that applies at several places posts ONCE, at its single best anchor; name the other sites in its text ("also at `path:line`"). Extra sites are recorded `withheld` (word `repeat-site`).',
     );
   if (p.body === "verdict")
     L.push(
@@ -228,7 +240,7 @@ export function renderPostingPolicyNote(p: PostingPolicy | undefined): string {
     "**POSTING POLICY — this repo's profile (`[posting]`).** What is true and how severe is decided above, unchanged; this policy decides only how much of it is POSTED. It binds steps 6 and 7:",
     "",
     ...policyLines(p, "session"),
-    "- **Nothing is lost.** Every survivor you do not post goes in the findings record with `\"disposition\": \"withheld\"`, its word, and the reason — kept, never deleted. The policy is also applied mechanically after you, so an over-budget review is cut lowest-ranked first and the cut is recorded the same way.",
+    '- **Nothing is lost.** Every survivor you do not post goes in the findings record with `"disposition": "withheld"`, its word, and the reason — kept, never deleted. The policy is also applied mechanically after you, so an over-budget review is cut lowest-ranked first and the cut is recorded the same way.',
   ].join("\n");
 }
 
@@ -342,7 +354,12 @@ export function selectPosted<T>(
     if (v.cls === "nit" && p.nits === "off") return void withheld.push({ item, word: "nits-off" });
     if (v.cls === "question" && p.questions === "off")
       return void withheld.push({ item, word: "questions-off" });
-    if (v.cls === "question" && p.questions === "blocking" && v.severity !== null && sevRank(v.severity) > 2)
+    if (
+      v.cls === "question" &&
+      p.questions === "blocking" &&
+      v.severity !== null &&
+      sevRank(v.severity) > 2
+    )
       return void withheld.push({ item, word: "question-not-blocking" });
     pass1.push({ item, v, i });
   });

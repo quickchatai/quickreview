@@ -225,25 +225,29 @@ describe("renderHeartbeatMessage", () => {
 });
 
 describe("startHeartbeat — daily fire", () => {
-  it("boot before 09:00 Warsaw: no catch-up, fires at 09:00, then once per following day", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // 2026-08-19 06:00Z = 08:00 Warsaw (CEST).
-    const h = heartbeatHarness("2026-08-19T06:00:00Z");
-    const hb = h.start();
-    await hb.booted;
-    expect(h.injected).toEqual([]);
-    expect(hb.nextFire().toISOString()).toBe("2026-08-19T07:00:00.000Z"); // 09:00 CEST
+  it(
+    "boot before 09:00 Warsaw: no catch-up, fires at 09:00, then once per following day",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // 2026-08-19 06:00Z = 08:00 Warsaw (CEST).
+      const h = heartbeatHarness("2026-08-19T06:00:00Z");
+      const hb = h.start();
+      await hb.booted;
+      expect(h.injected).toEqual([]);
+      expect(hb.nextFire().toISOString()).toBe("2026-08-19T07:00:00.000Z"); // 09:00 CEST
 
-    await h.clock.advanceTo("2026-08-19T07:00:01Z");
-    expect(h.injected).toHaveLength(1);
-    expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
-    expect(h.store.lastHeartbeatDate()).toBe("2026-08-19");
+      await h.clock.advanceTo("2026-08-19T07:00:01Z");
+      expect(h.injected).toHaveLength(1);
+      expect(h.injected[0]).toContain("OVERSEER HEARTBEAT — 2026-08-19");
+      expect(h.store.lastHeartbeatDate()).toBe("2026-08-19");
 
-    await h.clock.advanceTo("2026-08-20T12:00:00Z");
-    expect(h.injected).toHaveLength(2);
-    expect(h.injected[1]).toContain("2026-08-20");
-    expect(h.injected[1]).toContain("since the last heartbeat (2026-08-19)");
-    hb.stop();
-  });
+      await h.clock.advanceTo("2026-08-20T12:00:00Z");
+      expect(h.injected).toHaveLength(2);
+      expect(h.injected[1]).toContain("2026-08-20");
+      expect(h.injected[1]).toContain("since the last heartbeat (2026-08-19)");
+      hb.stop();
+    },
+  );
 
   it("boot AFTER 09:00 with no fire today: exactly one catch-up, then tomorrow", async () => {
     const h = heartbeatHarness("2026-08-19T12:00:00Z"); // 14:00 Warsaw
@@ -279,19 +283,23 @@ describe("startHeartbeat — daily fire", () => {
     hb.stop();
   });
 
-  it("fires once per Warsaw day across spring-forward (2026-03-29), offset flipping", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const h = heartbeatHarness("2026-03-28T00:00:00Z");
-    const hb = h.start();
-    await hb.booted;
-    await h.clock.advanceTo("2026-03-30T23:00:00Z");
-    expect(h.injected).toHaveLength(3);
-    expect(h.injected.map((m) => m.split("\n")[0])).toEqual([
-      "OVERSEER HEARTBEAT — 2026-03-28",
-      "OVERSEER HEARTBEAT — 2026-03-29",
-      "OVERSEER HEARTBEAT — 2026-03-30",
-    ]);
-    hb.stop();
-  });
+  it(
+    "fires once per Warsaw day across spring-forward (2026-03-29), offset flipping",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const h = heartbeatHarness("2026-03-28T00:00:00Z");
+      const hb = h.start();
+      await hb.booted;
+      await h.clock.advanceTo("2026-03-30T23:00:00Z");
+      expect(h.injected).toHaveLength(3);
+      expect(h.injected.map((m) => m.split("\n")[0])).toEqual([
+        "OVERSEER HEARTBEAT — 2026-03-28",
+        "OVERSEER HEARTBEAT — 2026-03-29",
+        "OVERSEER HEARTBEAT — 2026-03-30",
+      ]);
+      hb.stop();
+    },
+  );
 
   it("stop() disarms — nothing fires after", async () => {
     const h = heartbeatHarness("2026-08-19T06:00:00Z");

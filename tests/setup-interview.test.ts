@@ -10,7 +10,17 @@
 // git repo (`processProfileCommits`) is a scratch repo, git being the thing
 // under test there.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,7 +49,9 @@ import { PIN_PROPOSALS_FILE } from "../src/setup/pins.js";
 import { INTERVIEW_FILE, type ApplyResult } from "../src/setup/tuning.js";
 
 const sandbox = join(import.meta.dirname, "..");
-const fixture: Config = parseConfig(readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"));
+const fixture: Config = parseConfig(
+  readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
+);
 
 let dir: string;
 let env: InstallEnv;
@@ -47,7 +59,11 @@ let now = new Date("2026-09-29T10:00:00Z");
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-interview-"));
-  env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config"), QCR_STATE_HOME: join(dir, "state") };
+  env = {
+    HOME: join(dir, "home"),
+    XDG_CONFIG_HOME: join(dir, "xdg-config"),
+    QCR_STATE_HOME: join(dir, "state"),
+  };
   now = new Date("2026-09-29T10:00:00Z");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -62,20 +78,32 @@ function write(path: string, text: string): void {
 
 /** The live config, naming `profile` ("" = none). */
 function liveConfig(profile: string): void {
-  write(join(home(), "config.toml"), `dry_run = true\n\n[review]\nprofile = ${JSON.stringify(profile)}\n`);
+  write(
+    join(home(), "config.toml"),
+    `dry_run = true\n\n[review]\nprofile = ${JSON.stringify(profile)}\n`,
+  );
 }
 
 function fakeMemory(entries: MemoryEntry[]): MemoryStore {
   return {
     read: async () => entries,
     search: async () => entries,
-    apply: async (_op: MemoryOp) => ({ ok: false, message: "the tools under test never write memory" }),
+    apply: async (_op: MemoryOp) => ({
+      ok: false,
+      message: "the tools under test never write memory",
+    }),
   };
 }
 
 function engine(memory: MemoryStore | null = null): SetupEngine {
   return new SetupEngine({
-    repo: { location: "/r", listFiles: () => [], read: () => null, lines: () => null, head: () => null },
+    repo: {
+      location: "/r",
+      listFiles: () => [],
+      read: () => null,
+      lines: () => null,
+      head: () => null,
+    },
     state: stateHomeFs(join(dir, "state")),
     profiles: { root: sandbox, env },
     clock: () => now,
@@ -112,7 +140,11 @@ function agents(cfg: Config): Map<string, string> {
       riskPasses: cfg.models.risk_passes,
       validateTier: cfg.models.validate_tier,
       models: lensModelOverrides(cfg.models, cfg.lenses),
-      addenda: [...PASS_ADDENDA, ...loadProfileAddenda(sandbox, cfg.review.profile, { env }), ...lensTuningAddenda(cfg.lenses)],
+      addenda: [
+        ...PASS_ADDENDA,
+        ...loadProfileAddenda(sandbox, cfg.review.profile, { env }),
+        ...lensTuningAddenda(cfg.lenses),
+      ],
     });
     return new Map(built.map((b) => [b.name, readFileSync(b.output, "utf8")]));
   } finally {
@@ -120,11 +152,20 @@ function agents(cfg: Config): Map<string, string> {
   }
 }
 
-const file = (filename: string, patch = "+x = 1\n"): PrFileEntry => ({ filename, additions: 5, deletions: 0, status: "modified", patch });
+const file = (filename: string, patch = "+x = 1\n"): PrFileEntry => ({
+  filename,
+  additions: 5,
+  deletions: 0,
+  status: "modified",
+  patch,
+});
 const AUTH = [file("svc/auth/token.py", "+def check(t): return t\n")];
-const plan = (cfg: Config, files: PrFileEntry[]) => buildPassPlan(cfg, files, undefined, NONE_ECOSYSTEM);
-const row = (cfg: Config, files: PrFileEntry[], lens: string) => plan(cfg, files).pass_plan.find((p) => p.lens === lens);
-const modelOf = (bytes: string | undefined): string | undefined => /^model:\s*(.+)$/m.exec(bytes ?? "")?.[1];
+const plan = (cfg: Config, files: PrFileEntry[]) =>
+  buildPassPlan(cfg, files, undefined, NONE_ECOSYSTEM);
+const row = (cfg: Config, files: PrFileEntry[], lens: string) =>
+  plan(cfg, files).pass_plan.find((p) => p.lens === lens);
+const modelOf = (bytes: string | undefined): string | undefined =>
+  /^model:\s*(.+)$/m.exec(bytes ?? "")?.[1];
 
 // ---- the table ------------------------------------------------------------------
 
@@ -141,12 +182,16 @@ describe("the priority → settings table", () => {
   it("names only real lenses, and never the validator, pass-intent or pass-ask-human", () => {
     const named = CONCERNS.flatMap((c) => c.lenses);
     for (const lens of named) expect(ALL_PASSES, lens).toContain(lens);
-    for (const lens of ["pass-validate", "pass-intent", "pass-ask-human"]) expect(named).not.toContain(lens);
+    for (const lens of ["pass-validate", "pass-intent", "pass-ask-human"])
+      expect(named).not.toContain(lens);
     // every risk area the spec names is its own concern
     for (const risk of ["security", "data", "money", "compliance"]) {
       expect(CONCERNS.find((c) => c.name === risk)?.point).toBe("risk");
     }
-    expect(CONCERNS.filter((c) => c.point === "style-tests").map((c) => c.name)).toEqual(["style", "tests"]);
+    expect(CONCERNS.filter((c) => c.point === "style-tests").map((c) => c.name)).toEqual([
+      "style",
+      "tests",
+    ]);
   });
 
   it("a lens two concerns share takes the higher priority — ignoring one never switches off what the other wants", () => {
@@ -159,7 +204,10 @@ describe("the priority → settings table", () => {
     // delivery and concurrency belong to money alone → off
     expect(d.find((x) => x.lens === "pass-delivery")?.settings).toEqual({ enabled: false });
     const both = lensDecisions(answers({ security: "critical", compliance: "critical" }));
-    expect(both.find((x) => x.lens === "pass-security")?.because).toEqual(["security", "compliance"]);
+    expect(both.find((x) => x.lens === "pass-security")?.because).toEqual([
+      "security",
+      "compliance",
+    ]);
   });
 
   it("refuses an unknown concern or priority by name", () => {
@@ -167,7 +215,9 @@ describe("the priority → settings table", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.errors.join("\n")).toMatch(/unknown concern "secruity"/);
-      expect(r.errors.join("\n")).toMatch(/style: priority must be one of critical, important, normal, ignore/);
+      expect(r.errors.join("\n")).toMatch(
+        /style: priority must be one of critical, important, normal, ignore/,
+      );
     }
   });
 });
@@ -178,9 +228,20 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
   beforeEach(() => liveConfig("acme"));
 
   it("security critical: the security lens at sol-high, at the model's ceiling, able to block; nothing else moves", () => {
-    applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "a payments API", write: true }));
+    applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "a payments API",
+        write: true,
+      }),
+    );
     const cfg = tuned("acme");
-    expect(cfg.lenses?.["pass-security"]).toEqual({ enabled: true, min_tier: "sol-high", effort: "high", max_severity: "P0" });
+    expect(cfg.lenses?.["pass-security"]).toEqual({
+      enabled: true,
+      min_tier: "sol-high",
+      effort: "high",
+      max_severity: "P0",
+    });
     expect(row(cfg, AUTH, "pass-security")).toMatchObject({ tier: "sol-high" });
     const before = agents(tuned(""));
     const after = agents(cfg);
@@ -189,13 +250,24 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
     expect(after.get(sec)).toContain("Severity ceiling for `pass-security`: `P0`");
     // only the security concern's lenses changed their bytes
     for (const [name, bytes] of before) {
-      if (name.startsWith("pass-security--") || name.startsWith("pass-bounds--") || name.startsWith("pass-validate")) continue;
+      if (
+        name.startsWith("pass-security--") ||
+        name.startsWith("pass-bounds--") ||
+        name.startsWith("pass-validate")
+      )
+        continue;
       expect(after.get(name), name).toBe(bytes);
     }
   });
 
   it("ignore: the lens is not planned and not addable", () => {
-    applied(engine().profileApply({ priorities: answers({ correctness: "ignore", tests: "ignore" }), goals: "g", write: true }));
+    applied(
+      engine().profileApply({
+        priorities: answers({ correctness: "ignore", tests: "ignore" }),
+        goals: "g",
+        write: true,
+      }),
+    );
     const cfg = tuned("acme");
     const p = plan(cfg, [file("app/views.py")]);
     expect(p.pass_plan.map((r) => r.lens)).not.toContain("pass-baseline");
@@ -212,16 +284,33 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
       }),
     );
     const built = agents(tuned("acme"));
-    expect(built.get("pass-data-safety--sol-high")).toContain("Tenant data never crosses accounts.");
-    expect(built.get("pass-security--sol-high")).not.toContain("Tenant data never crosses accounts.");
+    expect(built.get("pass-data-safety--sol-high")).toContain(
+      "Tenant data never crosses accounts.",
+    );
+    expect(built.get("pass-security--sol-high")).not.toContain(
+      "Tenant data never crosses accounts.",
+    );
   });
 
   it("a drafted style guide lands in the profile and the style lens is pointed at it", () => {
-    applied(engine().profileApply({ priorities: answers({ style: "important" }), goals: "g", style_guide: "# Style\n- Use snake_case.\n", write: true }));
-    expect(readFileSync(join(profileDir("acme"), "style-guide.md"), "utf8")).toBe("# Style\n- Use snake_case.\n");
+    applied(
+      engine().profileApply({
+        priorities: answers({ style: "important" }),
+        goals: "g",
+        style_guide: "# Style\n- Use snake_case.\n",
+        write: true,
+      }),
+    );
+    expect(readFileSync(join(profileDir("acme"), "style-guide.md"), "utf8")).toBe(
+      "# Style\n- Use snake_case.\n",
+    );
     const cfg = tuned("acme");
     expect(cfg.lenses?.["pass-style"]?.guide?.file).toBe("style-guide.md");
-    expect(cfg.lenses?.["pass-style"]).toMatchObject({ enabled: true, min_tier: "sol-med", effort: "medium" });
+    expect(cfg.lenses?.["pass-style"]).toMatchObject({
+      enabled: true,
+      min_tier: "sol-med",
+      effort: "medium",
+    });
     applied(engine().profileApply({ drop_style_guide: true, write: true }));
     expect(tuned("acme").lenses?.["pass-style"]?.guide).toBeUndefined();
   });
@@ -231,10 +320,18 @@ describe("a profile the interview wrote, resolved the way the daemon resolves it
       join(profileDir("acme"), "profile.toml"),
       '# our profile\nextends = "default"\necosystem = "none"\n\n[lenses.pass-ui]\n# hand-tuned\nemphasis = "Mobile first."\n\n[scan]\neffort = "low"\n',
     );
-    applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true }));
+    applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "g",
+        write: true,
+      }),
+    );
     applied(engine().profileApply({ priorities: { security: "normal" }, write: true }));
     const text = readFileSync(join(profileDir("acme"), "profile.toml"), "utf8");
-    expect(text).toBe('# our profile\nextends = "default"\necosystem = "none"\n\n[lenses.pass-ui]\n# hand-tuned\nemphasis = "Mobile first."\n\n[scan]\neffort = "low"\n');
+    expect(text).toBe(
+      '# our profile\nextends = "default"\necosystem = "none"\n\n[lenses.pass-ui]\n# hand-tuned\nemphasis = "Mobile first."\n\n[scan]\neffort = "low"\n',
+    );
     expect(tuned("acme").lenses).toEqual({ "pass-ui": { emphasis: "Mobile first." } });
   });
 });
@@ -267,22 +364,37 @@ describe("profile write tools: validate, diff, commit", () => {
 
   it("answers accumulate across calls — a later call only adds what it asks", () => {
     liveConfig("acme");
-    applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true }));
+    applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "g",
+        write: true,
+      }),
+    );
     const r = applied(engine().profileApply({ priorities: { tests: "important" }, write: true }));
     expect(r.unanswered).toEqual([]);
     expect(tuned("acme").lenses?.["pass-security"]?.min_tier).toBe("sol-high");
     expect(tuned("acme").lenses?.["pass-tests"]?.min_tier).toBe("sol-med");
     const rec = JSON.parse(readFileSync(join(dir, "state", INTERVIEW_FILE), "utf8"));
-    expect(rec).toMatchObject({ profile: "acme", goals: "g", priorities: { security: "critical", tests: "important" } });
+    expect(rec).toMatchObject({
+      profile: "acme",
+      goals: "g",
+      priorities: { security: "critical", tests: "important" },
+    });
   });
 
   it("a profile that would not load is refused before anything is written", () => {
     liveConfig("acme");
-    write(join(profileDir("acme"), "profile.toml"), 'extends = "default"\n\n[lenses.pass-ui]\ncolour = "red"\n');
+    write(
+      join(profileDir("acme"), "profile.toml"),
+      'extends = "default"\n\n[lenses.pass-ui]\ncolour = "red"\n',
+    );
     const r = engine().profileApply({ priorities: answers(), goals: "g", write: true });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors.join("\n")).toMatch(/would not load[\s\S]*unknown key "colour"/);
-    expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toContain('colour = "red"');
+    expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toContain(
+      'colour = "red"',
+    );
     expect(existsSync(join(dir, "state", "setup", "commits"))).toBe(false);
   });
 
@@ -295,20 +407,30 @@ describe("profile write tools: validate, diff, commit", () => {
     const none = engine().profileApply({ priorities: answers(), goals: "g", write: true });
     expect(none.ok).toBe(false);
     if (!none.ok) expect(none.errors[0]).toMatch(/pass `profile`/);
-    const named = applied(engine().profileApply({ profile: "acme", priorities: answers(), goals: "g", write: true }));
+    const named = applied(
+      engine().profileApply({ profile: "acme", priorities: answers(), goals: "g", write: true }),
+    );
     expect(named.config_names).toBe("");
-    expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toMatch(/^extends = "default"$/m);
+    expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toMatch(
+      /^extends = "default"$/m,
+    );
     expect(engine().profileApply({ profile: "../x", priorities: answers() }).ok).toBe(false);
   });
 
   it("the validate tool catches a direct edit the daemon would refuse at boot", () => {
     liveConfig("acme");
-    write(join(profileDir("acme"), "profile.toml"), 'extends = "default"\n[lenses.pass-securty]\neffort = "high"\n');
+    write(
+      join(profileDir("acme"), "profile.toml"),
+      'extends = "default"\n[lenses.pass-securty]\neffort = "high"\n',
+    );
     const bad = engine().profileValidate();
     if (!("check" in bad)) throw new Error("expected a check");
     expect(bad.check.ok).toBe(false);
     if (!bad.check.ok) expect(bad.check.errors[0]).toMatch(/pass-securty\] is not a known lens/);
-    write(join(profileDir("acme"), "profile.toml"), 'extends = "default"\n[lenses.pass-security]\neffort = "high"\n');
+    write(
+      join(profileDir("acme"), "profile.toml"),
+      'extends = "default"\n[lenses.pass-security]\neffort = "high"\n',
+    );
     const good = engine().profileValidate();
     if (!("check" in good) || !good.check.ok) throw new Error("expected a passing check");
     expect(good.check.summary.chain.map((l) => l.name)).toEqual(["default", "acme"]);
@@ -361,7 +483,10 @@ describe("profile write tools: validate, diff, commit", () => {
     // the whole profile directory is a link (a relative one)
     rmSync(profileDir("acme"), { recursive: true, force: true });
     write(join(dir, "dotfiles", "acme", "profile.toml"), original);
-    symlinkSync(relative(dirname(profileDir("acme")), join(dir, "dotfiles", "acme")), profileDir("acme"));
+    symlinkSync(
+      relative(dirname(profileDir("acme")), join(dir, "dotfiles", "acme")),
+      profileDir("acme"),
+    );
     expect(readFileSync(join(profileDir("acme"), "profile.toml"), "utf8")).toBe(original);
     applied(engine().profileApply({ priorities: { security: "critical" } }));
     expect(readFileSync(join(dir, "dotfiles", "acme", "profile.toml"), "utf8")).toBe(original);
@@ -378,12 +503,22 @@ describe("profile write tools: validate, diff, commit", () => {
 
   it("two changing writes in the same instant ask for two commits, never one reused id", () => {
     liveConfig("acme");
-    const a = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true }));
-    const b = applied(engine().profileApply({ priorities: { security: "important" }, write: true }));
+    const a = applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "g",
+        write: true,
+      }),
+    );
+    const b = applied(
+      engine().profileApply({ priorities: { security: "important" }, write: true }),
+    );
     expect(a.commit).not.toBeNull();
     expect(b.commit).not.toBeNull();
     expect(b.commit!.id).not.toBe(a.commit!.id);
-    const names = readdirSync(join(dir, "state", "setup", "commits")).filter((n) => n.endsWith(".request.json")).sort();
+    const names = readdirSync(join(dir, "state", "setup", "commits"))
+      .filter((n) => n.endsWith(".request.json"))
+      .sort();
     expect(names).toEqual([`${a.commit!.id}.request.json`, `${b.commit!.id}.request.json`]);
     const s = engine().profileStatus();
     if (!("commits" in s)) throw new Error("refused");
@@ -392,10 +527,22 @@ describe("profile write tools: validate, diff, commit", () => {
 
   it("a write asks for a commit of exactly the profile's files; the operator's machine carries it out", () => {
     liveConfig("acme");
-    const r = applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", style_guide: "# s\n", write: true }));
+    const r = applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "g",
+        style_guide: "# s\n",
+        write: true,
+      }),
+    );
     expect(r.commit).not.toBeNull();
-    const req = JSON.parse(readFileSync(join(dir, "state", "setup", "commits", `${r.commit!.id}.request.json`), "utf8"));
-    expect(req.paths.sort()).toEqual(["profiles/acme/profile.toml", "profiles/acme/style-guide.md"]);
+    const req = JSON.parse(
+      readFileSync(join(dir, "state", "setup", "commits", `${r.commit!.id}.request.json`), "utf8"),
+    );
+    expect(req.paths.sort()).toEqual([
+      "profiles/acme/profile.toml",
+      "profiles/acme/style-guide.md",
+    ]);
     expect(req.message).toBe("qcr setup: tune profile acme (security critical)");
     // the same answers again change nothing, so no second commit is asked for
     const again = applied(engine().profileApply({ write: true }));
@@ -424,7 +571,13 @@ describe("the commit hand-off (processProfileCommits)", () => {
 
   function requestOne(): string {
     liveConfig("acme");
-    return applied(engine().profileApply({ priorities: answers({ security: "critical" }), goals: "g", write: true })).commit!.id;
+    return applied(
+      engine().profileApply({
+        priorities: answers({ security: "critical" }),
+        goals: "g",
+        write: true,
+      }),
+    ).commit!.id;
   }
 
   it("commits the profile's paths alone in a config home that is its own repo — never a staged secret", () => {
@@ -432,7 +585,12 @@ describe("the commit hand-off (processProfileCommits)", () => {
     git(home(), "init", "-q");
     write(join(home(), "secrets", "app.pem"), "KEY\n");
     git(home(), "add", "secrets/app.pem");
-    const [res] = processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: identityGit, clock: () => now });
+    const [res] = processProfileCommits({
+      stateHome: join(dir, "state"),
+      configHome: home(),
+      git: identityGit,
+      clock: () => now,
+    });
     expect(res).toMatchObject({ id, state: "committed" });
     expect(git(home(), "show", "--name-only", "--format=%s", "HEAD").trim().split("\n")).toEqual([
       "qcr setup: tune profile acme (security critical)",
@@ -441,7 +599,13 @@ describe("the commit hand-off (processProfileCommits)", () => {
     ]);
     expect(git(home(), "diff", "--cached", "--name-only").trim()).toBe("secrets/app.pem");
     // answered once: the status reads the result, a second pass does nothing
-    expect(processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: identityGit })).toEqual([]);
+    expect(
+      processProfileCommits({
+        stateHome: join(dir, "state"),
+        configHome: home(),
+        git: identityGit,
+      }),
+    ).toEqual([]);
     const s = engine().profileStatus();
     if (!("commits" in s)) throw new Error("refused");
     expect(s.commits[0]?.result).toMatchObject({ state: "committed" });
@@ -449,12 +613,20 @@ describe("the commit hand-off (processProfileCommits)", () => {
 
   it("a config home that is no repo, or only sits inside one, is reported and not committed into", () => {
     requestOne();
-    const [plain] = processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: identityGit });
+    const [plain] = processProfileCommits({
+      stateHome: join(dir, "state"),
+      configHome: home(),
+      git: identityGit,
+    });
     expect(plain?.state).toBe("not-a-repo");
     rmSync(join(dir, "state", "setup", "commits"), { recursive: true, force: true });
     requestOne2();
     git(join(dir, "xdg-config"), "init", "-q");
-    const [inner] = processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: identityGit });
+    const [inner] = processProfileCommits({
+      stateHome: join(dir, "state"),
+      configHome: home(),
+      git: identityGit,
+    });
     expect(inner?.state).toBe("not-a-repo");
     expect(inner?.detail).toMatch(/not in a repository of its own/);
   });
@@ -467,13 +639,21 @@ describe("the commit hand-off (processProfileCommits)", () => {
   it("two host processors never both answer one request: a pass that holds the lock is left alone, a result another wrote is kept", () => {
     const stateHome = join(dir, "state");
     const commits = join(stateHome, "setup", "commits");
-    write(join(commits, "a.request.json"), JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }));
-    write(join(commits, "b.request.json"), JSON.stringify({ id: "b", message: "m", paths: ["profiles/acme/profile.toml"] }));
+    write(
+      join(commits, "a.request.json"),
+      JSON.stringify({ id: "a", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
+    write(
+      join(commits, "b.request.json"),
+      JSON.stringify({ id: "b", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
     const theirs = { id: "b", at: "t", state: "committed", sha: "abc", detail: "theirs" };
     // while A is being processed, another processor answers B
     const racing: GitRun = (args) => {
-      if (args[0] === "add" && !existsSync(join(commits, "b.result.json"))) write(join(commits, "b.result.json"), JSON.stringify(theirs));
-      if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return { code: 0, stdout: home(), stderr: "" };
+      if (args[0] === "add" && !existsSync(join(commits, "b.result.json")))
+        write(join(commits, "b.result.json"), JSON.stringify(theirs));
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel")
+        return { code: 0, stdout: home(), stderr: "" };
       if (args[0] === "diff") return { code: 1, stdout: "", stderr: "" };
       return { code: 0, stdout: "sha1\n", stderr: "" };
     };
@@ -483,7 +663,10 @@ describe("the commit hand-off (processProfileCommits)", () => {
     expect(JSON.parse(readFileSync(join(commits, "b.result.json"), "utf8"))).toEqual(theirs);
 
     // a live lock held by another pass: this one does nothing
-    write(join(commits, "c.request.json"), JSON.stringify({ id: "c", message: "m", paths: ["profiles/acme/profile.toml"] }));
+    write(
+      join(commits, "c.request.json"),
+      JSON.stringify({ id: "c", message: "m", paths: ["profiles/acme/profile.toml"] }),
+    );
     write(join(commits, ".processing.lock"), "other\n");
     const calls: string[][] = [];
     const counting: GitRun = (args, cwd) => (calls.push(args), racing(args, cwd));
@@ -492,7 +675,9 @@ describe("the commit hand-off (processProfileCommits)", () => {
     // a stale lock (its holder died) is taken over
     const old = new Date(Date.now() - 60 * 60 * 1000);
     utimesSync(join(commits, ".processing.lock"), old, old);
-    expect(processProfileCommits({ stateHome, configHome: home(), git: counting }).map((r) => r.id)).toEqual(["c"]);
+    expect(
+      processProfileCommits({ stateHome, configHome: home(), git: counting }).map((r) => r.id),
+    ).toEqual(["c"]);
     expect(existsSync(join(commits, ".processing.lock"))).toBe(false);
   });
 
@@ -506,7 +691,11 @@ describe("the commit hand-off (processProfileCommits)", () => {
       JSON.stringify({ id: "x", message: "m", paths: ["secrets/app.pem"] }),
     );
     const calls: string[][] = [];
-    const [r] = processProfileCommits({ stateHome: join(dir, "state"), configHome: home(), git: (a) => (calls.push(a), { code: 0, stdout: "", stderr: "" }) });
+    const [r] = processProfileCommits({
+      stateHome: join(dir, "state"),
+      configHome: home(),
+      git: (a) => (calls.push(a), { code: 0, stdout: "", stderr: "" }),
+    });
     expect(r).toMatchObject({ id: "x", state: "refused" });
     expect(calls).toEqual([]);
   });
@@ -548,7 +737,11 @@ describe("pin proposals go to the operator", () => {
 
   it("records live, unpinned entries with a reason — and pins nothing", async () => {
     const applied: MemoryOp[] = [];
-    const mem = fakeMemory([entry("a", "#survey Views are thin."), entry("b", "#survey Money in cents.", false), entry("c", "pinned one", true)]);
+    const mem = fakeMemory([
+      entry("a", "#survey Views are thin."),
+      entry("b", "#survey Money in cents.", false),
+      entry("c", "pinned one", true),
+    ]);
     mem.apply = async (op) => (applied.push(op), { ok: true, message: "" });
     const r = await engine(mem).proposePins([
       { id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "every view PR trips on this" },
@@ -560,7 +753,11 @@ describe("pin proposals go to the operator", () => {
     expect(r.projected_chars).toBeGreaterThan(r.pinned_chars);
     expect(applied).toEqual([]);
     const file = JSON.parse(readFileSync(join(dir, "state", PIN_PROPOSALS_FILE), "utf8"));
-    expect(file.entries[0]).toMatchObject({ id: "a", hash: "h-a", why: "every view PR trips on this" });
+    expect(file.entries[0]).toMatchObject({
+      id: "a",
+      hash: "h-a",
+      why: "every view PR trips on this",
+    });
   });
 
   it("refuses an unknown or already-pinned entry, a missing reason, and more than a handful", async () => {
@@ -572,9 +769,16 @@ describe("pin proposals go to the operator", () => {
     ]);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors).toHaveLength(3);
-    const twoLines = await engine(mem).proposePins([{ id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "one\ntwo" }]);
+    const twoLines = await engine(mem).proposePins([
+      { id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "one\ntwo" },
+    ]);
     expect(twoLines.ok).toBe(false);
-    const many = Array.from({ length: 9 }, () => ({ id: "a", ts: "2026-09-29 09:00:00", block: 0, why: "w" }));
+    const many = Array.from({ length: 9 }, () => ({
+      id: "a",
+      ts: "2026-09-29 09:00:00",
+      block: 0,
+      why: "w",
+    }));
     const capped = await engine(mem).proposePins(many);
     expect(capped.ok).toBe(false);
     expect(readdirSync(dir)).not.toContain("state");

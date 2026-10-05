@@ -132,8 +132,14 @@ function directiveStyleRules(
   const files = listing.filter((rel) => {
     const parts = rel.split("/");
     if (parts.length === 1) return ROOT_DIRECTIVE_RE.test(parts[0]!);
-    if (parts.length === 2 && parts[0] === ".github") return /^copilot-instructions\.md$/i.test(parts[1]!);
-    return parts.length === 3 && parts[0] === ".github" && parts[1] === "instructions" && /\.(md|markdown)$/i.test(parts[2]!);
+    if (parts.length === 2 && parts[0] === ".github")
+      return /^copilot-instructions\.md$/i.test(parts[1]!);
+    return (
+      parts.length === 3 &&
+      parts[0] === ".github" &&
+      parts[1] === "instructions" &&
+      /\.(md|markdown)$/i.test(parts[2]!)
+    );
   });
   const out: string[] = [];
   const seen = new Set<string>();

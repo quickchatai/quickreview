@@ -718,7 +718,7 @@ export function renderEscalationComment(
       // made, and the request can still fail (GitHub 422s the PR author or a
       // non-collaborator) — so it must not promise the queue entry.
       "_A review request is also being sent to you, so this pull request may appear in your " +
-        'review-requested queue: that is how the notification is delivered, and GitHub words it as ' +
+        "review-requested queue: that is how the notification is delivered, and GitHub words it as " +
         '"review this pull request". It is not what is being asked. The item above is._',
     );
   }

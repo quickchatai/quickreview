@@ -29,19 +29,27 @@ export interface LoosenedHit {
 
 const ASSERT_RE =
   /\b(assert\w*|expect|should|require\.\w+|t\.(Error|Fatal|Fail)\w*|XCTAssert\w*|assert_eq!|assert_ne!|assert!|verify|check)\b|\.(toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|toMatch|toContain|toThrow)\b/;
-const EXACT_RE = /==|\b(assertEqual|assertEquals|assert_eq!|toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|XCTAssertEqual|Equal|Equals|is)\b/;
-const BOUND_RE = />=|<=|(?<![=!<>])[<>](?!=)|\b(assertGreater\w*|assertLess\w*|toBeGreaterThan\w*|toBeLessThan\w*|XCTAssertGreaterThan\w*|XCTAssertLessThan\w*|GreaterOrEqual|LessOrEqual|atLeast|atMost)\b/;
-const CONTAINS_RE = /\b(assertIn|assertContains|toContain|toMatch|stringContaining|objectContaining|arrayContaining|Contains|contains|includes|startswith|endswith|startsWith|endsWith|XCTAssertTrue)\b|\bin\b/;
-const TOLERANCE_RE = /\b(tol|tolerance|delta|places|epsilon|eps|atol|rtol|approx|abs_tol|rel_tol|within|closeTo|toBeCloseTo|accuracy|margin)\b/i;
-const TIMEOUT_RE = /\b(timeout|time_out|sleep|wait|deadline|retries|retry|attempts|max_wait|waitFor|patience)\w*\b/i;
-const COUNT_RE = /\b(len|length|count|size|toHaveLength|toHaveBeenCalledTimes|Times|call_count|assert_called\w*)\b/;
+const EXACT_RE =
+  /==|\b(assertEqual|assertEquals|assert_eq!|toBe|toEqual|toStrictEqual|toHaveLength|toHaveBeenCalledTimes|XCTAssertEqual|Equal|Equals|is)\b/;
+const BOUND_RE =
+  />=|<=|(?<![=!<>])[<>](?!=)|\b(assertGreater\w*|assertLess\w*|toBeGreaterThan\w*|toBeLessThan\w*|XCTAssertGreaterThan\w*|XCTAssertLessThan\w*|GreaterOrEqual|LessOrEqual|atLeast|atMost)\b/;
+const CONTAINS_RE =
+  /\b(assertIn|assertContains|toContain|toMatch|stringContaining|objectContaining|arrayContaining|Contains|contains|includes|startswith|endswith|startsWith|endsWith|XCTAssertTrue)\b|\bin\b/;
+const TOLERANCE_RE =
+  /\b(tol|tolerance|delta|places|epsilon|eps|atol|rtol|approx|abs_tol|rel_tol|within|closeTo|toBeCloseTo|accuracy|margin)\b/i;
+const TIMEOUT_RE =
+  /\b(timeout|time_out|sleep|wait|deadline|retries|retry|attempts|max_wait|waitFor|patience)\w*\b/i;
+const COUNT_RE =
+  /\b(len|length|count|size|toHaveLength|toHaveBeenCalledTimes|Times|call_count|assert_called\w*)\b/;
 const SKIP_RE =
   /@pytest\.mark\.(skip|xfail)|pytest\.(skip|xfail)\(|@unittest\.skip|\bt\.Skip(f|Now)?\(|\b(it|test|describe)\.(skip|todo)\(|\bx(it|describe|test)\(|@(Ignore|Disabled)\b|#\[ignore\]|\bXCTSkip\w*|\.skip\(|@skip\b|\bpending\(/;
 const CHECK_OP_RE = /==|!=|>=|<=/;
 /** `x >= N` / `x > N` / `assertGreater…` / `toBeGreaterThan…`: lowering N relaxes it. */
-const LOWER_BOUND_RE = />=?\s*-?\d|\b(assertGreater\w*|toBeGreaterThan\w*|XCTAssertGreaterThan\w*|GreaterOrEqual|atLeast)\b/;
+const LOWER_BOUND_RE =
+  />=?\s*-?\d|\b(assertGreater\w*|toBeGreaterThan\w*|XCTAssertGreaterThan\w*|GreaterOrEqual|atLeast)\b/;
 /** `x <= N` / `x < N` / `assertLess…` / `toBeLessThan…`: raising N relaxes it. */
-const UPPER_BOUND_RE = /<=?\s*-?\d|\b(assertLess\w*|toBeLessThan\w*|XCTAssertLessThan\w*|LessOrEqual|atMost)\b/;
+const UPPER_BOUND_RE =
+  /<=?\s*-?\d|\b(assertLess\w*|toBeLessThan\w*|XCTAssertLessThan\w*|LessOrEqual|atMost)\b/;
 const isCheck = (s: string): boolean => ASSERT_RE.test(s) || CHECK_OP_RE.test(s);
 const COMMENT_PREFIX_RE = /^\s*(#|\/\/|\/\*|\*|--)\s*/;
 
@@ -105,11 +113,21 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
         const isAssert = isCheck(r.text);
         // its counterpart: the first unused added line of the same shape, or
         // (for an assertion) the first unused added assertion
-        let ai = h.added.findIndex((a, i) => !usedAdded.has(i) && shape(a.text) === shape(r.text) && norm(a.text) !== norm(r.text));
-        if (ai < 0 && isAssert) ai = h.added.findIndex((a, i) => !usedAdded.has(i) && isCheck(a.text) && norm(a.text) !== norm(r.text));
+        let ai = h.added.findIndex(
+          (a, i) =>
+            !usedAdded.has(i) && shape(a.text) === shape(r.text) && norm(a.text) !== norm(r.text),
+        );
+        if (ai < 0 && isAssert)
+          ai = h.added.findIndex(
+            (a, i) => !usedAdded.has(i) && isCheck(a.text) && norm(a.text) !== norm(r.text),
+          );
         const a = ai >= 0 ? h.added[ai]! : undefined;
         if (a) usedAdded.add(ai);
-        const commented = h.added.find((x) => COMMENT_PREFIX_RE.test(x.text) && norm(x.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text));
+        const commented = h.added.find(
+          (x) =>
+            COMMENT_PREFIX_RE.test(x.text) &&
+            norm(x.text.replace(COMMENT_PREFIX_RE, "")) === norm(r.text),
+        );
         if (isAssert && commented) {
           hits.push({ file: f.filename, line: commented.line, kind: "assert-commented" });
           continue;
@@ -117,9 +135,12 @@ export function detectLoosenedAssertions(files: readonly PrFile[]): LoosenedHit[
         if (a && shape(a.text) === shape(r.text)) {
           const grew = numberGrew(r.text, a.text);
           const shrank = numberGrew(a.text, r.text);
-          if (grew === true && TOLERANCE_RE.test(r.text)) hits.push({ file: f.filename, line: a.line, kind: "tolerance-widened" });
-          else if (grew === true && TIMEOUT_RE.test(r.text)) hits.push({ file: f.filename, line: a.line, kind: "timeout-lengthened" });
-          else if (shrank === true && LOWER_BOUND_RE.test(r.text)) hits.push({ file: f.filename, line: a.line, kind: "bound-relaxed" });
+          if (grew === true && TOLERANCE_RE.test(r.text))
+            hits.push({ file: f.filename, line: a.line, kind: "tolerance-widened" });
+          else if (grew === true && TIMEOUT_RE.test(r.text))
+            hits.push({ file: f.filename, line: a.line, kind: "timeout-lengthened" });
+          else if (shrank === true && LOWER_BOUND_RE.test(r.text))
+            hits.push({ file: f.filename, line: a.line, kind: "bound-relaxed" });
           else if (grew === true && UPPER_BOUND_RE.test(r.text) && !LOWER_BOUND_RE.test(r.text))
             hits.push({ file: f.filename, line: a.line, kind: "bound-relaxed" });
           else if (shrank === true && isAssert && COUNT_RE.test(r.text))

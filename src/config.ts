@@ -1523,13 +1523,16 @@ export function parseScanTable(
     }
     switch (key) {
       case "effort": {
-        const e = String(v ?? "").trim().toLowerCase();
+        const e = String(v ?? "")
+          .trim()
+          .toLowerCase();
         if (e === "low" || e === "medium" || e === "high") out.effort = e;
         else fail(key, 'must be "low", "medium" or "high"', v);
         break;
       }
       case "tier":
-        if (typeof v === "string" && (PASS_TIER_ORDER as readonly string[]).includes(v)) out.tier = v as PassTier;
+        if (typeof v === "string" && (PASS_TIER_ORDER as readonly string[]).includes(v))
+          out.tier = v as PassTier;
         else fail(key, `must be one of ${PASS_TIER_ORDER.join(", ")}`, v);
         break;
       case "validator":
@@ -2036,9 +2039,13 @@ export function parseConfig(toml: string): Config {
   const running =
     cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
   const finalize = cfg.daemon.round_finalize_grace_min ?? DEFAULT_ROUND_FINALIZE_GRACE_MIN;
-  if (
-    !(firstPass > 0 && firstPass < passes && passes < running && finalize > 0 && finalize < running)
-  ) {
+  if (!(
+    firstPass > 0 &&
+    firstPass < passes &&
+    passes < running &&
+    finalize > 0 &&
+    finalize < running
+  )) {
     throw new Error(
       "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );

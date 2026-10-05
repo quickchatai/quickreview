@@ -48,17 +48,16 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
   });
 
   it("parses the -z form: raw paths (unquoted), binary markers, and a rename record whose BOTH sides the denylist checks", () => {
-    const out = parseNumstat("3\t2\tsrc/a b.ts\0-\t-\tdocs/logo.png\0" + "0\t0\t\0src/cfg.txt\0.env\0");
+    const out = parseNumstat(
+      "3\t2\tsrc/a b.ts\0-\t-\tdocs/logo.png\0" + "0\t0\t\0src/cfg.txt\0.env\0",
+    );
     expect(out).toEqual([
       { additions: 3, deletions: 2, path: "src/a b.ts", binary: false },
       { additions: 0, deletions: 0, path: "docs/logo.png", binary: true },
       { additions: 0, deletions: 0, path: ".env", binary: false, from: "src/cfg.txt" },
     ]);
     // A move OUT of a denied place is refused as well as a move into one.
-    const outOf = checkDiffstat(
-      parseNumstat("0\t0\t\0migrations/0001.sql\0src/x.sql\0"),
-      cfg.caps,
-    );
+    const outOf = checkDiffstat(parseNumstat("0\t0\t\0migrations/0001.sql\0src/x.sql\0"), cfg.caps);
     expect(outOf.ok).toBe(false);
     expect(outOf.reason).toContain("migrations/0001.sql");
   });
@@ -169,21 +168,25 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
 });
 
 describe("rate caps from StateStore.filedSince", () => {
-  it("blocks the second improvement PR of the day and the fourth of the week", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const now = new Date("2026-08-13T10:00:00Z");
-    const store = new StateStore(":memory:", () => now);
-    expect(improvementRateReason(store, cfg.caps, now)).toBe(null);
-    store.recordFiledItem("improvement_pr", "one", "#1");
-    expect(improvementRateReason(store, cfg.caps, now)).toContain("day cap");
+  it(
+    "blocks the second improvement PR of the day and the fourth of the week",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const now = new Date("2026-08-13T10:00:00Z");
+      const store = new StateStore(":memory:", () => now);
+      expect(improvementRateReason(store, cfg.caps, now)).toBe(null);
+      store.recordFiledItem("improvement_pr", "one", "#1");
+      expect(improvementRateReason(store, cfg.caps, now)).toContain("day cap");
 
-    const week = new StateStore(":memory:", () => new Date("2026-08-11T10:00:00Z"));
-    week.recordFiledItem("improvement_pr", "a", null);
-    week.recordFiledItem("improvement_pr", "b", null);
-    week.recordFiledItem("improvement_pr", "c", null);
-    expect(improvementRateReason(week, cfg.caps, now)).toContain("week cap");
-    store.close();
-    week.close();
-  });
+      const week = new StateStore(":memory:", () => new Date("2026-08-11T10:00:00Z"));
+      week.recordFiledItem("improvement_pr", "a", null);
+      week.recordFiledItem("improvement_pr", "b", null);
+      week.recordFiledItem("improvement_pr", "c", null);
+      expect(improvementRateReason(week, cfg.caps, now)).toContain("week cap");
+      store.close();
+      week.close();
+    },
+  );
 
   // (MC-16): the day caps count the OPERATIONS day (`[ops] timezone`,
   //) — the day every other boundary in the system uses — not the UTC
@@ -421,9 +424,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     // every one of those ran in the reviewed clone — no exceptions.
     expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR]);
     // The push intent names the branch as the LOCAL ref it is pushed from.
-    expect(push.path).toBe(
-      `git push origin ${TIP}:refs/heads/bot/improve-clarify-retry`,
-    );
+    expect(push.path).toBe(`git push origin ${TIP}:refs/heads/bot/improve-clarify-retry`);
     expect(push.body.source).toBe("refs/heads/wip/docs");
     // …pinned to the commit the diffstat validated, never re-resolved by name.
     expect(push.body.commit).toBe(TIP);
@@ -811,11 +812,7 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     // in live mode, so this list began at `create_pull`.
     expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
     const push = calls.find((c) => c[0] === "push");
-    expect(push).toEqual([
-      "push",
-      "origin",
-      `${TIP}:refs/heads/bot/improve-clarify-retry`,
-    ]);
+    expect(push).toEqual(["push", "origin", `${TIP}:refs/heads/bot/improve-clarify-retry`]);
     // the push, like every other step, runs where `origin` IS the
     // reviewed repo. Before, it ran with no cwd at all.
     expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
@@ -834,7 +831,12 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
       throw new Error("no direct fetch expected");
     }) as unknown as typeof fetch);
     const out = await fileImprovementPr(
-      { branch: "wip/docs", title: "Docs: clarify retry", body: "rationale", slug: "clarify-retry" },
+      {
+        branch: "wip/docs",
+        title: "Docs: clarify retry",
+        body: "rationale",
+        slug: "clarify-retry",
+      },
       ctx(run),
     );
 
@@ -845,7 +847,9 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     // …so the day's 1/day slot is spent and a second filing is refused.
     expect(improvementRateReason(store, cfg.caps, new Date())).toContain("day cap");
     expect(
-      store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "improvement_pr_label_failed"),
+      store
+        .eventsOn(new Date().toISOString().slice(0, 10))
+        .some((e) => e.kind === "improvement_pr_label_failed"),
     ).toBe(true);
   });
 

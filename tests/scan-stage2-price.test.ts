@@ -15,7 +15,13 @@ import { priceIsMeasured, priceLabel } from "../src/setup/stage2request.js";
 
 let n = 0;
 /** One ledger row: `usd` over `lines`, one case per row. */
-function row(lens: string, validator: boolean, usd: number, lines: number, over: Partial<LedgerEntry> = {}): LedgerEntry {
+function row(
+  lens: string,
+  validator: boolean,
+  usd: number,
+  lines: number,
+  over: Partial<LedgerEntry> = {},
+): LedgerEntry {
   n++;
   return {
     path: `f${n}.py`,
@@ -35,8 +41,13 @@ function row(lens: string, validator: boolean, usd: number, lines: number, over:
 }
 
 const cfg = (validator: boolean) => ({ ...SCAN_DEFAULTS, validator });
-const price = (entries: LedgerEntry[], validator = true, lens = "pass-security", tier: "sol-med" | "sol-high" = "sol-med", effort = "tier"): RowPrice =>
-  priceStage2Row(entries, cfg(validator), lens, tier, effort)!;
+const price = (
+  entries: LedgerEntry[],
+  validator = true,
+  lens = "pass-security",
+  tier: "sol-med" | "sol-high" = "sol-med",
+  effort = "tier",
+): RowPrice => priceStage2Row(entries, cfg(validator), lens, tier, effort)!;
 
 // Stage 1: $0.05/kline with the skeptic off, $0.075/kline with it on (the
 // skeptic is a third of a validated case). Stage 2, skeptic off: $0.14/kline.
@@ -94,7 +105,10 @@ describe("a stage-2 row's price", () => {
 
   it("prefers the row's own lens over other deep lenses; learns from another deep lens only when its own has nothing", () => {
     const other = row("pass-contracts", false, 0.3, 1000);
-    expect(price([S1_OFF, S1_ON, S2_OFF, other])).toMatchObject({ basis: "learned", from: "pass-security" });
+    expect(price([S1_OFF, S1_ON, S2_OFF, other])).toMatchObject({
+      basis: "learned",
+      from: "pass-security",
+    });
     const p = price([S1_OFF, S1_ON, other]);
     expect(p).toMatchObject({ basis: "learned", from: "pass-contracts" });
     expect(p.rate.usd_per_kline).toBeCloseTo(0.075 * (0.3 / 0.05), 9);
@@ -103,13 +117,19 @@ describe("a stage-2 row's price", () => {
   it("never learns from pass-scan, another tier or another effort — those fall back to the extrapolation", () => {
     const high = row("pass-security", false, 0.4, 1000, { tier: "sol-high" });
     const low = row("pass-security", false, 0.1, 1000, { effort: "low" });
-    for (const entries of [[S1_OFF, S1_ON, high], [S1_OFF, S1_ON, low], [S1_OFF, S1_ON]]) {
+    for (const entries of [
+      [S1_OFF, S1_ON, high],
+      [S1_OFF, S1_ON, low],
+      [S1_OFF, S1_ON],
+    ]) {
       const p = price(entries);
       expect(p).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
       expect(p.rate.usd_per_kline).toBeCloseTo(0.075 * SCAN_DEFAULTS.unmeasured_rate_factor, 9);
     }
     // …while the sol-high row itself learns from the sol-high measurement.
-    expect(price([S1_OFF, S1_ON, high], true, "pass-security", "sol-high")).toMatchObject({ basis: "learned" });
+    expect(price([S1_OFF, S1_ON, high], true, "pass-security", "sol-high")).toMatchObject({
+      basis: "learned",
+    });
   });
 
   it("cannot learn without stage 1 measured at BOTH settings (the skeptic share is unmeasured): extrapolated", () => {
@@ -143,16 +163,24 @@ describe("a stage-2 row's price", () => {
   });
 
   it("ignores unpriced rows, and is null with no priced stage 1 at all", () => {
-    expect(price([S1_OFF, S1_ON, row("pass-security", false, 0, 1000, { cost_usd: null })])).toMatchObject({ basis: "extrapolated" });
+    expect(
+      price([S1_OFF, S1_ON, row("pass-security", false, 0, 1000, { cost_usd: null })]),
+    ).toMatchObject({ basis: "extrapolated" });
     expect(priceStage2Row([S2_OFF], cfg(true), "pass-security", "sol-med", "tier")).toBeNull();
   });
 
   it("says in its label whether it is a measurement or an estimate, and how the estimate was made", () => {
-    expect(priceLabel(price([S1_OFF, S1_ON, S2_OFF, row("pass-security", true, 0.2, 1000)]))).toBe("measured");
+    expect(priceLabel(price([S1_OFF, S1_ON, S2_OFF, row("pass-security", true, 0.2, 1000)]))).toBe(
+      "measured",
+    );
     expect(priceLabel(price([S1_OFF, S1_ON, S2_OFF]))).toBe(
       "estimate: learned from pass-security with the validator off (×2.80 stage 1), stage 1 validator on/off ×1.50",
     );
-    expect(priceLabel(price([S1_OFF, S1_ON]))).toBe(`estimate: extrapolated from pass-scan (×${SCAN_DEFAULTS.unmeasured_rate_factor})`);
-    expect(priceLabel(price([S1_OFF, S1_ON, row("pass-contracts", true, 0.18, 1000)]))).toBe("estimate: borrowed from pass-contracts");
+    expect(priceLabel(price([S1_OFF, S1_ON]))).toBe(
+      `estimate: extrapolated from pass-scan (×${SCAN_DEFAULTS.unmeasured_rate_factor})`,
+    );
+    expect(priceLabel(price([S1_OFF, S1_ON, row("pass-contracts", true, 0.18, 1000)]))).toBe(
+      "estimate: borrowed from pass-contracts",
+    );
   });
 });

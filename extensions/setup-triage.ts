@@ -20,10 +20,17 @@
 // throw.
 import type { PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 import type { Refusal } from "../src/setup/engine.js";
-import { MAX_PATTERNS_PER_SCAN, MEMORY_TEXT_MAX, REASON_MAX, type ScanTriage } from "../src/setup/triage.js";
+import {
+  MAX_PATTERNS_PER_SCAN,
+  MEMORY_TEXT_MAX,
+  REASON_MAX,
+  type ScanTriage,
+} from "../src/setup/triage.js";
 
 function text(t: string, details?: Record<string, unknown>): PiToolResult {
-  return details ? { content: [{ type: "text", text: t }], details } : { content: [{ type: "text", text: t }] };
+  return details
+    ? { content: [{ type: "text", text: t }], details }
+    : { content: [{ type: "text", text: t }] };
 }
 
 function refused(what: string, r: Refusal): PiToolResult {
@@ -32,7 +39,8 @@ function refused(what: string, r: Refusal): PiToolResult {
 
 const FP_PARAM = {
   type: "string",
-  description: "The finding's fingerprint as scan_findings shows it (the first 12 characters are enough).",
+  description:
+    "The finding's fingerprint as scan_findings shows it (the first 12 characters are enough).",
 } as const;
 
 export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
@@ -46,15 +54,24 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
     promptSnippet: "Dismiss a scan finding with a reason",
     parameters: {
       type: "object",
-      properties: { fingerprint: FP_PARAM, reason: { type: "string", description: "Why it is not a problem — the operator's reason." } },
+      properties: {
+        fingerprint: FP_PARAM,
+        reason: { type: "string", description: "Why it is not a problem — the operator's reason." },
+      },
       required: ["fingerprint", "reason"],
     },
     execute: async (_id, params) => {
       const r = await triage.dismiss({ fingerprint: params?.fingerprint, reason: params?.reason });
       if (!r.ok) return refused("Dismiss", r);
       const fp = r.finding.fingerprint.slice(0, 12);
-      const mem = r.memory === "written" ? "the memory note is written" : `the memory note was NOT written (${r.memory.problem}) — dismiss it again later to retry`;
-      return text(`${fp} ${r.again ? "re-dismissed" : "dismissed"}: ${mem}.`, { fingerprint: r.finding.fingerprint, memory: r.memory === "written" });
+      const mem =
+        r.memory === "written"
+          ? "the memory note is written"
+          : `the memory note was NOT written (${r.memory.problem}) — dismiss it again later to retry`;
+      return text(`${fp} ${r.again ? "re-dismissed" : "dismissed"}: ${mem}.`, {
+        fingerprint: r.finding.fingerprint,
+        memory: r.memory === "written",
+      });
     },
   };
   const promote: PiToolDefinition = {
@@ -72,12 +89,17 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       type: "object",
       properties: {
         fingerprint: FP_PARAM,
-        effort: { type: "string", description: "The tracker effort the ticket goes in (ignored by the markdown fallback beyond being recorded)." },
+        effort: {
+          type: "string",
+          description:
+            "The tracker effort the ticket goes in (ignored by the markdown fallback beyond being recorded).",
+        },
         title: { type: "string" },
         note: { type: "string" },
         unconfirmed: {
           type: "boolean",
-          description: "true only on the operator's explicit word: promote a finding the skeptic did not confirm (likely, doubtful or unknown).",
+          description:
+            "true only on the operator's explicit word: promote a finding the skeptic did not confirm (likely, doubtful or unknown).",
         },
       },
       required: ["fingerprint", "effort"],
@@ -95,9 +117,16 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
       const where = r.sink === "markdown" ? `the markdown file ${r.ref} in the state home` : r.ref;
       const line = r.existing
         ? `${fp} is promoted onto its existing ticket ${where} — nothing new was filed` +
-          (r.closed ? ` (that ticket was closed as fixed at ${r.closed.sha.slice(0, 12)}; it came back — reopen it by hand if it is real)` : "")
+          (r.closed
+            ? ` (that ticket was closed as fixed at ${r.closed.sha.slice(0, 12)}; it came back — reopen it by hand if it is real)`
+            : "")
         : `${fp} promoted: filed as ${where}.`;
-      return text(line, { fingerprint: r.finding.fingerprint, ref: r.ref, sink: r.sink, existing: r.existing });
+      return text(line, {
+        fingerprint: r.finding.fingerprint,
+        ref: r.ref,
+        sink: r.sink,
+        existing: r.existing,
+      });
     },
   };
   const closeFixed: PiToolDefinition = {
@@ -111,8 +140,12 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
     execute: async () => {
       const r = await triage.closeFixed();
       const out: string[] = [];
-      if (r.closed.length === 0 && r.problems.length === 0) out.push("Nothing to close: no promoted finding is fixed with its ticket still open.");
-      for (const c of r.closed) out.push(`Closed ${c.ref} (${c.fingerprint.slice(0, 12)}) — fixed at ${c.sha.slice(0, 12)}.`);
+      if (r.closed.length === 0 && r.problems.length === 0)
+        out.push("Nothing to close: no promoted finding is fixed with its ticket still open.");
+      for (const c of r.closed)
+        out.push(
+          `Closed ${c.ref} (${c.fingerprint.slice(0, 12)}) — fixed at ${c.sha.slice(0, 12)}.`,
+        );
       for (const p of r.problems) out.push(`✗ ${p}`);
       return text(out.join("\n"), { closed: r.closed.length, problems: r.problems.length });
     },
@@ -133,16 +166,28 @@ export function triageToolDefinitions(triage: ScanTriage): PiToolDefinition[] {
         run: { type: "string", description: "A scan run id (default: the latest finished run)." },
         patterns: {
           type: "array",
-          items: { type: "object", properties: { text: { type: "string" }, occurrences: { type: "number" } }, required: ["text", "occurrences"] },
+          items: {
+            type: "object",
+            properties: { text: { type: "string" }, occurrences: { type: "number" } },
+            required: ["text", "occurrences"],
+          },
         },
         hotspots: {
           type: "array",
-          items: { type: "object", properties: { unit: { type: "string" }, text: { type: "string" } }, required: ["unit", "text"] },
+          items: {
+            type: "object",
+            properties: { unit: { type: "string" }, text: { type: "string" } },
+            required: ["unit", "text"],
+          },
         },
       },
     },
     execute: async (_id, params) => {
-      const r = await triage.writeMemory({ run: params?.run, patterns: params?.patterns, hotspots: params?.hotspots });
+      const r = await triage.writeMemory({
+        run: params?.run,
+        patterns: params?.patterns,
+        hotspots: params?.hotspots,
+      });
       if (!r.ok) return refused("Scan memory", r);
       const out = [
         `Written for the scan at ${r.sha.slice(0, 12)} (run ${r.run}): ${r.written.patterns} pattern(s), ${r.written.hotspots} hotspot(s).`,

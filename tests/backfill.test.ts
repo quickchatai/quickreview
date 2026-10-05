@@ -214,24 +214,28 @@ describe("trigger reconstruction", () => {
 });
 
 describe("enumeration", () => {
-  it("unions the label search and the reviewed-by search", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const queries = enumerationQueries(cfg);
-    expect(queries[0]).toBe('repo:example-org/example-app is:pr label:"Automatic Review"');
-    expect(queries[1]).toBe("repo:example-org/example-app is:pr reviewed-by:example-review[bot]");
+  it(
+    "unions the label search and the reviewed-by search",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const queries = enumerationQueries(cfg);
+      expect(queries[0]).toBe('repo:example-org/example-app is:pr label:"Automatic Review"');
+      expect(queries[1]).toBe("repo:example-org/example-app is:pr reviewed-by:example-review[bot]");
 
-    const { adapter } = harness(
-      [
-        { number: 10, reviews: [] },
-        { number: 20, reviews: [] },
-        { number: 30, reviews: [] },
-      ],
-      { [queries[0]!]: [30, 10], [queries[1]!]: [10, 20] },
-    );
-    const s = store();
-    const stats = await runBackfill(s, adapter, cfg, { dryRun: true });
-    expect(stats.prs_enumerated).toBe(3);
-    s.close();
-  });
+      const { adapter } = harness(
+        [
+          { number: 10, reviews: [] },
+          { number: 20, reviews: [] },
+          { number: 30, reviews: [] },
+        ],
+        { [queries[0]!]: [30, 10], [queries[1]!]: [10, 20] },
+      );
+      const s = store();
+      const stats = await runBackfill(s, adapter, cfg, { dryRun: true });
+      expect(stats.prs_enumerated).toBe(3);
+      s.close();
+    },
+  );
 });
 
 // ---- the import ------------------------------------------------------------

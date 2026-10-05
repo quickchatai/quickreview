@@ -353,7 +353,8 @@ function linters(files: readonly string[], read: RepoRead): Evidence[] {
     for (const [name, re] of LINTER_FILES) if (re.test(b)) note(name, f);
     if (b === "pyproject.toml" || b === "setup.cfg" || b === "tox.ini") {
       const text = read(f);
-      if (text !== null) for (const [name, re] of PY_TOOL_SECTIONS) if (re.test(text)) note(name, f);
+      if (text !== null)
+        for (const [name, re] of PY_TOOL_SECTIONS) if (re.test(text)) note(name, f);
     } else if (b === "package.json") {
       const text = read(f);
       if (text === null) continue;
@@ -413,7 +414,9 @@ export function vendoredRoots(files: readonly string[]): string[] {
   const roots = new Set<string>();
   for (const f of files) {
     const segs = f.split("/");
-    const i = segs.findIndex((s) => DEFAULT_DIRECTIVE_VOCABULARY.vendoredSegments.has(s.toLowerCase()));
+    const i = segs.findIndex((s) =>
+      DEFAULT_DIRECTIVE_VOCABULARY.vendoredSegments.has(s.toLowerCase()),
+    );
     if (i >= 0 && i < segs.length - 1) roots.add(segs.slice(0, i + 1).join("/"));
   }
   return [...roots].filter((r) => ![...roots].some((o) => o !== r && r.startsWith(`${o}/`))).sort();
@@ -430,7 +433,8 @@ function slug(path: string): string {
 }
 
 /** Directories never offered as units of their own (they ride "rest"). */
-const NON_UNIT_TOP = /^(\..*|docs?|scripts?|tools?|bin|ci|examples?|fixtures|assets|static|public)$/i;
+const NON_UNIT_TOP =
+  /^(\..*|docs?|scripts?|tools?|bin|ci|examples?|fixtures|assets|static|public)$/i;
 
 /**
  * The stack-aware first guess at the unit cut. Markers, most specific first:
@@ -461,8 +465,7 @@ export function unitCandidates(files: readonly string[]): UnitCandidate[] {
     else if (b === "go.mod") add(d, "go-module", `${f} declares a Go module`);
     else if (b === "Cargo.toml") add(d, "rust-crate", `${f} declares a crate`);
   }
-  const covered = (f: string): boolean =>
-    [...roots].some((r) => f === r || f.startsWith(`${r}/`));
+  const covered = (f: string): boolean => [...roots].some((r) => f === r || f.startsWith(`${r}/`));
   const tops = new Map<string, number>();
   for (const f of sorted) {
     const i = f.indexOf("/");
@@ -473,7 +476,11 @@ export function unitCandidates(files: readonly string[]): UnitCandidate[] {
     if (LANGUAGE_BY_EXT[ext]) tops.set(top, (tops.get(top) ?? 0) + 1);
   }
   for (const [top, n] of [...tops.entries()].sort()) {
-    add(top, "directory", `top-level directory with ${n} code file${n === 1 ? "" : "s"} no package marker claims`);
+    add(
+      top,
+      "directory",
+      `top-level directory with ${n} code file${n === 1 ? "" : "s"} no package marker claims`,
+    );
   }
   // Names: the last segment, widened with its parents only where two collide.
   const byLast = new Map<string, number>();

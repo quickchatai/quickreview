@@ -3,7 +3,15 @@
 // scan that must be proven on git itself: "the tree AT the chosen sha", with
 // git's own blob hashes as the ledger's content hash.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,9 +22,23 @@ let repo: string;
 let state: string;
 
 const git = (...args: string[]): string =>
-  execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], {
-    encoding: "utf8",
-  }).trim();
+  execFileSync(
+    "git",
+    [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
+    {
+      encoding: "utf8",
+    },
+  ).trim();
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-scantree-"));
@@ -87,7 +109,9 @@ describe("gitScanSource", () => {
   it("lists a sha's files and blob hashes without materialising anything — a delta's baseline", () => {
     const first = git("rev-parse", "HEAD");
     const src = gitScanSource(repo, state);
-    expect(src.list(first)).toEqual([{ path: "src/a.py", blob: git("rev-parse", `${first}:src/a.py`) }]);
+    expect(src.list(first)).toEqual([
+      { path: "src/a.py", blob: git("rev-parse", `${first}:src/a.py`) },
+    ]);
     expect(existsSync(join(state, SCAN_TREES_DIR, first))).toBe(false);
     expect(src.list("f".repeat(40))).toBeNull();
     expect(src.list("HEAD")).toBeNull();
@@ -114,7 +138,10 @@ describe("gitScanSource materialisation is the listed blobs, byte for byte (self
   });
 
   it("ignores in-tree export-ignore / export-subst attributes: every listed file reads as its blob", () => {
-    writeFileSync(join(repo, ".gitattributes"), "src/hidden.py export-ignore\nsrc/subst.py export-subst\n");
+    writeFileSync(
+      join(repo, ".gitattributes"),
+      "src/hidden.py export-ignore\nsrc/subst.py export-subst\n",
+    );
     writeFileSync(join(repo, "src/hidden.py"), "hidden\n");
     writeFileSync(join(repo, "src/subst.py"), "v = '$Format:%H$'\n");
     git("add", "-A");
@@ -130,7 +157,8 @@ describe("gitScanSource materialisation is the listed blobs, byte for byte (self
   });
 
   it("reads a tree whose blobs span several cat-file calls, by count and by bytes", () => {
-    for (let i = 0; i < 300; i++) writeFileSync(join(repo, `src/f${i}.txt`), `${i}\n`.repeat(i + 1));
+    for (let i = 0; i < 300; i++)
+      writeFileSync(join(repo, `src/f${i}.txt`), `${i}\n`.repeat(i + 1));
     git("add", "-A");
     git("commit", "-qm", "many");
     const sha = git("rev-parse", "HEAD");
@@ -138,25 +166,35 @@ describe("gitScanSource materialisation is the listed blobs, byte for byte (self
     if (!opened.ok) throw new Error(opened.reason);
     expect(opened.tree.files.length).toBeGreaterThan(300);
     const files = opened.tree.files;
-    const hashes = git("hash-object", ...files.map((f) => join(opened.tree.root, f.path))).split("\n");
+    const hashes = git("hash-object", ...files.map((f) => join(opened.tree.root, f.path))).split(
+      "\n",
+    );
     expect(hashes).toEqual(files.map((f) => f.blob));
   });
 });
 
 describe("gitScanSource text vs binary (selfscan round 6: a stray NUL is still text)", () => {
   it("a .ts with one NUL is read; PNG bytes under a neutral name are skipped and say so", () => {
-    writeFileSync(join(repo, "src/stray.ts"), "export const k = (a: string, b: string) => `${a}\0${b}`;\n");
+    writeFileSync(
+      join(repo, "src/stray.ts"),
+      "export const k = (a: string, b: string) => `${a}\0${b}`;\n",
+    );
     mkdirSync(join(repo, "assets"), { recursive: true });
     writeFileSync(
       join(repo, "assets/logo.dat"),
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66]),
+      Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0,
+        1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0x5c, 0x72, 0xa8, 0x66,
+      ]),
     );
     git("add", "-A");
     git("commit", "-qm", "nul");
     const opened = gitScanSource(repo, state).open(git("rev-parse", "HEAD"), []);
     if (!opened.ok) throw new Error(opened.reason);
     const t = opened.tree;
-    expect(t.read("src/stray.ts")).toBe("export const k = (a: string, b: string) => `${a}\0${b}`;\n");
+    expect(t.read("src/stray.ts")).toBe(
+      "export const k = (a: string, b: string) => `${a}\0${b}`;\n",
+    );
     expect(t.lines("src/stray.ts")).toBe(1);
     expect(t.whyUnreadable?.("src/stray.ts")).toBeNull();
     expect(t.read("assets/logo.dat")).toBeNull();

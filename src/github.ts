@@ -455,12 +455,12 @@ export class GitHubAdapter {
       merged_at: pr.mergedAt ?? null,
       merged: Boolean(pr.merged),
       reviews: reviews.map((r) => ({
-          database_id: r.databaseId ?? 0,
-          state: r.state ?? "",
-          submitted_at: r.submittedAt ?? null,
-          body: r.body ?? "",
-          commit_oid: r.commit?.oid ?? null,
-        })),
+        database_id: r.databaseId ?? 0,
+        state: r.state ?? "",
+        submitted_at: r.submittedAt ?? null,
+        body: r.body ?? "",
+        commit_oid: r.commit?.oid ?? null,
+      })),
       timeline: timeline
         .filter((t) => Boolean(t.createdAt))
         .map((t) => ({
@@ -535,7 +535,9 @@ export class GitHubAdapter {
     const commentsOf = (r: RawReview): Promise<RawComment[]> =>
       walkConnection(r.comments, async (after) => {
         if (!r.id) return null;
-        const d = await this.graphql<{ node?: { comments?: Connection<RawComment> | null } | null }>(
+        const d = await this.graphql<{
+          node?: { comments?: Connection<RawComment> | null } | null;
+        }>(
           `query ($id: ID!, $after: String!) {
             node(id: $id) { ... on PullRequestReview { comments(first: 100, after: $after) { ${DIGEST_COMMENTS_BODY} } } }
           }`,
@@ -1066,9 +1068,12 @@ export class GitHubAdapter {
   /** A claimed PR-level author response; ordinary posting guards and dry-run apply. */
   async createIssueComment(n: number, body: string): Promise<GateResult> {
     return this.gate.execute({
-      kind: "create_issue_comment", method: "POST",
+      kind: "create_issue_comment",
+      method: "POST",
       path: `/repos/${this.owner}/${this.repo}/issues/${n}/comments`,
-      body: { body }, note: `answer the author in PR #${n}'s conversation`, pr: n,
+      body: { body },
+      note: `answer the author in PR #${n}'s conversation`,
+      pr: n,
     });
   }
 

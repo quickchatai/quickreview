@@ -234,9 +234,34 @@ export const SCAN_FINDINGS: ScanFinding[] = [
       claim: `a module-level import inside a function breaks rule 4.2 (${n})`,
     }),
   ),
-  scanFinding({ fingerprint: "f6".padEnd(64, "0"), unit: "auth", path: "auth/views.py", start: 140, end: 141, lens: "pass-security", kind: "authz", severity: "P2", claim: "the token check trusts the header" }),
-  scanFinding({ fingerprint: "f7".padEnd(64, "0"), unit: "auth", path: "auth/forms.py", state: "dismissed", severity: "P3", claim: "unused field", dismissal: { reason: "kept for the API", at: "2026-09-29T10:00:00Z", memory: "written" } }),
-  scanFinding({ fingerprint: "f8".padEnd(64, "0"), unit: "auth", path: "auth/old.py", state: "fixed", severity: "nit", claim: "old bug" }),
+  scanFinding({
+    fingerprint: "f6".padEnd(64, "0"),
+    unit: "auth",
+    path: "auth/views.py",
+    start: 140,
+    end: 141,
+    lens: "pass-security",
+    kind: "authz",
+    severity: "P2",
+    claim: "the token check trusts the header",
+  }),
+  scanFinding({
+    fingerprint: "f7".padEnd(64, "0"),
+    unit: "auth",
+    path: "auth/forms.py",
+    state: "dismissed",
+    severity: "P3",
+    claim: "unused field",
+    dismissal: { reason: "kept for the API", at: "2026-09-29T10:00:00Z", memory: "written" },
+  }),
+  scanFinding({
+    fingerprint: "f8".padEnd(64, "0"),
+    unit: "auth",
+    path: "auth/old.py",
+    state: "fixed",
+    severity: "nit",
+    claim: "old bug",
+  }),
 ];
 
 function scanCase(unit: string, status: string, n: number) {
@@ -280,14 +305,41 @@ export function writeScanHome(
     spent_usd: 41.2,
     unpriced_cases: 0,
     settings: { tier: "sol-low", effort: "low", validator: true, validate_tier: "sol-high" },
-    cases: [scanCase("billing", "done", 1), scanCase("auth", "running", 2), scanCase("widget", "pending", 3)],
+    cases: [
+      scanCase("billing", "done", 1),
+      scanCase("auth", "running", 2),
+      scanCase("widget", "pending", 3),
+    ],
     problems: [],
   };
   writeFileSync(
     join(home, "scan", "run.json"),
-    JSON.stringify({ version: 1, current: run, history: opts.running === false ? [] : [{ id: "scan-1", mode: "calibration", sha, state: "complete", started_at: "", finished_at: "", cases_done: 3, cases: 3, findings: 2, spent_usd: 1 }] }),
+    JSON.stringify({
+      version: 1,
+      current: run,
+      history:
+        opts.running === false
+          ? []
+          : [
+              {
+                id: "scan-1",
+                mode: "calibration",
+                sha,
+                state: "complete",
+                started_at: "",
+                finished_at: "",
+                cases_done: 3,
+                cases: 3,
+                findings: 2,
+                spent_usd: 1,
+              },
+            ],
+    }),
   );
-  writeFileSync(join(home, "scan", "findings.json"), JSON.stringify({ version: 1, findings: opts.findings ?? SCAN_FINDINGS, question: null }));
+  writeFileSync(
+    join(home, "scan", "findings.json"),
+    JSON.stringify({ version: 1, findings: opts.findings ?? SCAN_FINDINGS, question: null }),
+  );
   if (opts.proposal !== false) {
     const row = (id: string, lens: string, est: number, status = "run") => ({
       id,
@@ -301,7 +353,11 @@ export function writeScanHome(
       unpaired: [],
       lines: 100,
       estimate_usd: est,
-      price: { rate: { usd_per_kline: 1, basis_lines: 1, cases: 1 }, basis: "measured", from: lens },
+      price: {
+        rate: { usd_per_kline: 1, basis_lines: 1, cases: 1 },
+        basis: "measured",
+        from: lens,
+      },
       status,
     });
     writeFileSync(
@@ -314,7 +370,11 @@ export function writeScanHome(
           at: "2026-09-29T11:00:00Z",
           request: [],
           budget_usd: 20,
-          rows: [row("row-1", "pass-security", 6.1), row("row-2", "pass-data-safety", 4.8), row("row-3", "pass-tests", 2.4, "over-budget")],
+          rows: [
+            row("row-1", "pass-security", 6.1),
+            row("row-2", "pass-data-safety", 4.8),
+            row("row-3", "pass-tests", 2.4, "over-budget"),
+          ],
           cap_usd: 10.9,
           runnable: 2,
           over_budget_usd: 2.4,
@@ -334,7 +394,7 @@ function removeWhenTestFinishes(home: string): void {
     onTestFinished(() => rmSync(home, { recursive: true, force: true }));
   } catch (e) {
     rmSync(home, { recursive: true, force: true });
-    throw new Error(`installScanRig must be called inside a test: ${String(e)}`);
+    throw new Error(`installScanRig must be called inside a test: ${String(e)}`, { cause: e });
   }
 }
 
@@ -347,7 +407,10 @@ export interface ScanRig {
 
 /** Install the scan tab over a temp state home holding `writeScanHome`'s
  * records; every ask is recorded instead of reaching a companion. */
-export function installScanRig(app: App, opts: Parameters<typeof writeScanHome>[1] & { companionUp?: boolean | undefined } = {}): ScanRig {
+export function installScanRig(
+  app: App,
+  opts: Parameters<typeof writeScanHome>[1] & { companionUp?: boolean | undefined } = {},
+): ScanRig {
   const home = mkdtempSync(join(tmpdir(), "qcr-scantab-"));
   removeWhenTestFinishes(home);
   writeScanHome(home, opts);

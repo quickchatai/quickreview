@@ -922,121 +922,129 @@ describe("durable FAILED_LOUD review obligations", () => {
     expect(store.selfRequeueCount(5467, "same-head")).toBe(1);
   });
 
-  it("keeps permanent same-head failure on finite exponential backoff capped at six hours", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const delays = [15, 30, 60, 120, 240, 360, 360, 360];
-    for (const [epoch, delay] of delays.entries()) {
-      const pr = 5600 + epoch;
-      const head = `permanent-${epoch}`;
-      store.upsertPr(prRow(pr, { state: "reviewing", head_sha: head }));
-      const roundId = store.startRound(pr, "re-review", ["pass-baseline", "pass-validate"], 75);
-      store.stampPostingKey(roundId, `v1:${pr}:1:${head}`);
-      store.recordRoundRecoveryInstruction({
-        pr,
-        target_round_no: 1,
-        target_head_sha: head,
-        stage: "first_pass_start",
-        source_incident_id: `older-${epoch}`,
-        source_command_id: `older-${epoch}`,
-        source_round_no: 0,
-        immediate_attempt: 2,
-        retry_epoch: epoch,
-      });
-      store.createSessionCommand({
-        id: `permanent-cmd-${epoch}`,
-        pr,
-        session: `pr-${pr}`,
-        kind: "round",
-        round_no: 1,
-        payload_sha256: "f".repeat(64),
-        payload_path: `/payload/permanent-${epoch}.md`,
-        inject_path: `/inject/permanent-${epoch}.md`,
-        next_check_at: T0.toISOString(),
-      });
-      store.failPendingSessionCommand(`permanent-cmd-${epoch}`, "provider still unavailable");
-      store.markRoundCancelled(roundId, "provider still unavailable", "infrastructure_failure");
-      const failure = store.openReviewFailure({
-        pr,
-        command_id: `permanent-cmd-${epoch}`,
-        round_id: roundId,
-        round_no: 1,
-        head_sha: head,
-        stage: "first_pass_start",
-        detail: "provider still unavailable",
-        attempts: 2,
-        retry_cap: 2,
-      });
-      expect(failure).toMatchObject({
-        retry_epoch: epoch,
-        next_action: "retry_wait",
-        work_owed: 1,
-      });
-      expect(failure.next_retry_at).toBe(new Date(T0.getTime() + delay * 60_000).toISOString());
-    }
-    const snapshot = buildStatusSnapshot(store, false, undefined, now);
-    expect(snapshot.pipeline).toMatchObject({ healthy: false, failed_loud: delays.length });
-    expect(snapshot.pipeline!.causes.every((cause) => cause.next_retry_at !== undefined)).toBe(
-      true,
-    );
-  });
+  it(
+    "keeps permanent same-head failure on finite exponential backoff capped at six hours",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const delays = [15, 30, 60, 120, 240, 360, 360, 360];
+      for (const [epoch, delay] of delays.entries()) {
+        const pr = 5600 + epoch;
+        const head = `permanent-${epoch}`;
+        store.upsertPr(prRow(pr, { state: "reviewing", head_sha: head }));
+        const roundId = store.startRound(pr, "re-review", ["pass-baseline", "pass-validate"], 75);
+        store.stampPostingKey(roundId, `v1:${pr}:1:${head}`);
+        store.recordRoundRecoveryInstruction({
+          pr,
+          target_round_no: 1,
+          target_head_sha: head,
+          stage: "first_pass_start",
+          source_incident_id: `older-${epoch}`,
+          source_command_id: `older-${epoch}`,
+          source_round_no: 0,
+          immediate_attempt: 2,
+          retry_epoch: epoch,
+        });
+        store.createSessionCommand({
+          id: `permanent-cmd-${epoch}`,
+          pr,
+          session: `pr-${pr}`,
+          kind: "round",
+          round_no: 1,
+          payload_sha256: "f".repeat(64),
+          payload_path: `/payload/permanent-${epoch}.md`,
+          inject_path: `/inject/permanent-${epoch}.md`,
+          next_check_at: T0.toISOString(),
+        });
+        store.failPendingSessionCommand(`permanent-cmd-${epoch}`, "provider still unavailable");
+        store.markRoundCancelled(roundId, "provider still unavailable", "infrastructure_failure");
+        const failure = store.openReviewFailure({
+          pr,
+          command_id: `permanent-cmd-${epoch}`,
+          round_id: roundId,
+          round_no: 1,
+          head_sha: head,
+          stage: "first_pass_start",
+          detail: "provider still unavailable",
+          attempts: 2,
+          retry_cap: 2,
+        });
+        expect(failure).toMatchObject({
+          retry_epoch: epoch,
+          next_action: "retry_wait",
+          work_owed: 1,
+        });
+        expect(failure.next_retry_at).toBe(new Date(T0.getTime() + delay * 60_000).toISOString());
+      }
+      const snapshot = buildStatusSnapshot(store, false, undefined, now);
+      expect(snapshot.pipeline).toMatchObject({ healthy: false, failed_loud: delays.length });
+      expect(snapshot.pipeline!.causes.every((cause) => cause.next_retry_at !== undefined)).toBe(
+        true,
+      );
+    },
+  );
 
-  it("reconstructs due pre-fanout retry debt after a process restart", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const root = mkdtempSync(join(tmpdir(), "qcr-ft0406-restart-"));
-    const db = join(root, "state.db");
-    const first = new StateStore(db, now);
-    try {
-      first.upsertPr(prRow(5469, { state: "reviewing", head_sha: "restart-head" }));
-      const roundId = first.startRound(5469, "re-review", ["pass-baseline", "pass-validate"], 75);
-      first.stampPostingKey(roundId, "v1:5469:1:restart-head");
-      first.createSessionCommand({
-        id: "cmd-restart",
-        pr: 5469,
-        session: "pr-5469",
-        kind: "round",
-        round_no: 1,
-        payload_sha256: "d".repeat(64),
-        payload_path: "/payload/restart.md",
-        inject_path: "/inject/restart.md",
-        next_check_at: T0.toISOString(),
-      });
-      first.failPendingSessionCommand("cmd-restart", "no planned pass");
-      first.markRoundCancelled(roundId, "no planned pass", "infrastructure_failure");
-      const failure = first.openReviewFailure({
-        pr: 5469,
-        command_id: "cmd-restart",
-        round_id: roundId,
-        round_no: 1,
-        head_sha: "restart-head",
-        stage: "first_pass_start",
-        detail: "no planned pass",
-        attempts: 2,
-        retry_cap: 2,
-      });
-      expect(failure.next_retry_at).toBe("2026-08-13T09:15:00.000Z");
-    } finally {
-      first.close();
-    }
-
-    clock = new Date("2026-08-13T09:15:00.000Z");
-    const second = new StateStore(db, now);
-    try {
-      expect(second.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
-        expect.objectContaining({
+  it(
+    "reconstructs due pre-fanout retry debt after a process restart",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "qcr-ft0406-restart-"));
+      const db = join(root, "state.db");
+      const first = new StateStore(db, now);
+      try {
+        first.upsertPr(prRow(5469, { state: "reviewing", head_sha: "restart-head" }));
+        const roundId = first.startRound(5469, "re-review", ["pass-baseline", "pass-validate"], 75);
+        first.stampPostingKey(roundId, "v1:5469:1:restart-head");
+        first.createSessionCommand({
+          id: "cmd-restart",
           pr: 5469,
-          target_head_sha: "restart-head",
-          target_round_no: 2,
-        }),
-      ]);
-      expect(second.getPr(5469)).toMatchObject({ state: "queued", head_sha: "restart-head" });
-      expect(second.roundRecoveryInstruction(5469, 2)).toMatchObject({
-        source_incident_id: "review-failure:cmd-restart",
-        source_command_id: "cmd-restart",
-        retry_epoch: 1,
-      });
-    } finally {
-      second.close();
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+          session: "pr-5469",
+          kind: "round",
+          round_no: 1,
+          payload_sha256: "d".repeat(64),
+          payload_path: "/payload/restart.md",
+          inject_path: "/inject/restart.md",
+          next_check_at: T0.toISOString(),
+        });
+        first.failPendingSessionCommand("cmd-restart", "no planned pass");
+        first.markRoundCancelled(roundId, "no planned pass", "infrastructure_failure");
+        const failure = first.openReviewFailure({
+          pr: 5469,
+          command_id: "cmd-restart",
+          round_id: roundId,
+          round_no: 1,
+          head_sha: "restart-head",
+          stage: "first_pass_start",
+          detail: "no planned pass",
+          attempts: 2,
+          retry_cap: 2,
+        });
+        expect(failure.next_retry_at).toBe("2026-08-13T09:15:00.000Z");
+      } finally {
+        first.close();
+      }
+
+      clock = new Date("2026-08-13T09:15:00.000Z");
+      const second = new StateStore(db, now);
+      try {
+        expect(second.activateDueReviewFailureRetries(clock.toISOString())).toEqual([
+          expect.objectContaining({
+            pr: 5469,
+            target_head_sha: "restart-head",
+            target_round_no: 2,
+          }),
+        ]);
+        expect(second.getPr(5469)).toMatchObject({ state: "queued", head_sha: "restart-head" });
+        expect(second.roundRecoveryInstruction(5469, 2)).toMatchObject({
+          source_incident_id: "review-failure:cmd-restart",
+          source_command_id: "cmd-restart",
+          retry_epoch: 1,
+        });
+      } finally {
+        second.close();
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("keeps a pre-fanout round with an executed/ambiguous preflight mutation out of automatic retry", () => {
     for (const [pr, preflight] of [

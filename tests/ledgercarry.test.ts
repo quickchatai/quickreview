@@ -33,7 +33,12 @@ const order: RoundOrder = {
   lenses: ["pass-security", "pass-validate"],
   pass_plan: [
     { lens: "pass-security", agent: "pass-security--sol-high", tier: "sol-high", raisable_to: [] },
-    { lens: "pass-validate", agent: "pass-validate--terra-med", tier: "terra-med", raisable_to: [] },
+    {
+      lens: "pass-validate",
+      agent: "pass-validate--terra-med",
+      tier: "terra-med",
+      raisable_to: [],
+    },
   ],
   addable_lenses: [],
   migration_gate: false,

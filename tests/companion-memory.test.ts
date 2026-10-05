@@ -147,13 +147,27 @@ describe("memory wiring on the container", () => {
       writeFileSync(legacy, "K=1\n");
       const body = KEY_NAMES.map((n) => `${n}=x`).join("\n");
       const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");
-      const lc = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [legacy]: body }));
+      const lc = new CompanionLifecycle(
+        CFG,
+        docker([networkUp()]).runner,
+        env,
+        () => {},
+        fakeFs({ [legacy]: body }),
+      );
       const w = await lc.resolveMemoryWiring();
       expect(w.keysFile).toBeUndefined(); // no usable key file: memory refuses, the old one is not a stand-in
       const notes = w.notes.join(" ");
       expect(notes).toContain(`no OpenViking keys at ${primary}`);
-      expect(notes).toMatch(/quickreview-bot\/openviking-keys\.env is no longer read .*qcr install migrate/);
-      const lc2 = new CompanionLifecycle(CFG, docker([networkUp()]).runner, env, () => {}, fakeFs({ [primary]: body }));
+      expect(notes).toMatch(
+        /quickreview-bot\/openviking-keys\.env is no longer read .*qcr install migrate/,
+      );
+      const lc2 = new CompanionLifecycle(
+        CFG,
+        docker([networkUp()]).runner,
+        env,
+        () => {},
+        fakeFs({ [primary]: body }),
+      );
       expect((await lc2.resolveMemoryWiring()).notes.join(" ")).not.toMatch(/no longer read/);
     } finally {
       if (saved === undefined) delete process.env.HOME;
@@ -314,9 +328,8 @@ describe("memory wiring on the container", () => {
   });
 
   it("the TUI and the forward resolve the SAME keys file — neither reads the old copy", async () => {
-    const { keysFilePath: forwardKeysFilePath } = await import(
-      "../scripts/companion-memory-forward.mjs"
-    );
+    const { keysFilePath: forwardKeysFilePath } =
+      await import("../scripts/companion-memory-forward.mjs");
     const home = mkdtempSync(join(tmpdir(), "qcr-keys-"));
     const legacy = join(home, ".config", "quickreview-bot", "openviking-keys.env");
     const primary = join(home, "xdg", "qcr-operator", "default", "openviking-keys.env");

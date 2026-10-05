@@ -181,14 +181,18 @@ function failed(report: { checks: Array<{ ok: boolean; name: string; detail: str
 // ---- the full interview -----------------------------------------------------
 
 describe("the config file is the install locator's", () => {
-  it("fills the config where the adapters say — a config home that does not exist yet — and never the checkout", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const home = join(root, "xdg-config", "qcr", "default", "config.toml");
-    const { report, choices } = await runStep({ configPath: home });
-    expect(failed(report)).toBe("");
-    expect(loadConfig(home).dry_run).toBe(true);
-    expect(existsSync(join(root, "config.toml"))).toBe(false);
-    expect(choices[CHOICE_KEYS.configPath]).toBe(home);
-  });
+  it(
+    "fills the config where the adapters say — a config home that does not exist yet — and never the checkout",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const home = join(root, "xdg-config", "qcr", "default", "config.toml");
+      const { report, choices } = await runStep({ configPath: home });
+      expect(failed(report)).toBe("");
+      expect(loadConfig(home).dry_run).toBe(true);
+      expect(existsSync(join(root, "config.toml"))).toBe(false);
+      expect(choices[CHOICE_KEYS.configPath]).toBe(home);
+    },
+  );
 });
 
 describe("the full interview", () => {
@@ -516,7 +520,10 @@ describe("comment-preserving patch", () => {
       { section: "tui", key: "ssh_host", value: tomlString("review-vm") },
     ]);
     expect(out.split("\n").filter((l) => l.includes("[tui]"))).toEqual(["[tui] # mine"]);
-    const parsed = parseToml(out) as { tui: Record<string, unknown>; server: Record<string, unknown> };
+    const parsed = parseToml(out) as {
+      tui: Record<string, unknown>;
+      server: Record<string, unknown>;
+    };
     expect(parsed.tui).toEqual({ target: "ssh", ssh_host: "review-vm" });
     expect(parsed.server).toEqual({ port: 8787 });
   });
@@ -559,32 +566,36 @@ describe("re-run", () => {
     ).toBe(true);
   });
 
-  it("offers targeted edits — one changed answer touches one key and no other", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    await runStep();
-    const before = readFileSync(join(root, "config.toml"), "utf8");
+  it(
+    "offers targeted edits — one changed answer touches one key and no other",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      await runStep();
+      const before = readFileSync(join(root, "config.toml"), "utf8");
 
-    const choices: Record<string, unknown> = {};
-    const answers = new Map<string, string>([["default branch", "release"]]);
-    const ctx: StepContext = {
-      adapters: adapters(async (q) => {
-        for (const [needle, value] of answers) if (q.includes(needle)) return value;
-        return "";
-      }),
-      input: {},
-      choices,
-      data: {},
-      recordChoice: (k, v) => {
-        choices[k] = v;
-      },
-    };
-    const report = await configFillStep().run(ctx);
-    expect(failed(report)).toBe("");
-    const after = readFileSync(join(root, "config.toml"), "utf8");
-    const diff = after.split("\n").filter((l, i) => l !== before.split("\n")[i]);
-    expect(diff.length).toBe(1);
-    expect(diff[0]).toContain('base_branch = "release"');
-    expect(producedConfig().github.repo).toBe("acme/web-app");
-  });
+      const choices: Record<string, unknown> = {};
+      const answers = new Map<string, string>([["default branch", "release"]]);
+      const ctx: StepContext = {
+        adapters: adapters(async (q) => {
+          for (const [needle, value] of answers) if (q.includes(needle)) return value;
+          return "";
+        }),
+        input: {},
+        choices,
+        data: {},
+        recordChoice: (k, v) => {
+          choices[k] = v;
+        },
+      };
+      const report = await configFillStep().run(ctx);
+      expect(failed(report)).toBe("");
+      const after = readFileSync(join(root, "config.toml"), "utf8");
+      const diff = after.split("\n").filter((l, i) => l !== before.split("\n")[i]);
+      expect(diff.length).toBe(1);
+      expect(diff[0]).toContain('base_branch = "release"');
+      expect(producedConfig().github.repo).toBe("acme/web-app");
+    },
+  );
 
   it("preserves the operator's OWN comments and hand edits on re-run", async () => {
     await runStep();

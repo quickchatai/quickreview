@@ -16,8 +16,12 @@ describe("the knob", () => {
     expect(REVIEW_DEFAULTS.dedup_merge).toBe(true);
     const fixture = readFileSync(join(root, "tests/fixtures/config.toml"), "utf8");
     expect(parseConfig(fixture).review.dedup_merge).toBe(true);
-    expect(parseConfig(fixture.replace("[review]", "[review]\ndedup_merge = false")).review.dedup_merge).toBe(false);
-    expect(() => parseConfig(fixture.replace("[review]", '[review]\ndedup_merge = "yes"'))).toThrow(/dedup_merge must be true or false/);
+    expect(
+      parseConfig(fixture.replace("[review]", "[review]\ndedup_merge = false")).review.dedup_merge,
+    ).toBe(false);
+    expect(() => parseConfig(fixture.replace("[review]", '[review]\ndedup_merge = "yes"'))).toThrow(
+      /dedup_merge must be true or false/,
+    );
   });
 });
 
@@ -33,20 +37,26 @@ describe("the round order note", () => {
   });
   it("every round template carries the placeholder on the validator line", () => {
     for (const t of ["round-first.md", "round-re-review.md", "round-staleness.md"])
-      expect(readFileSync(join(root, "prompts", t), "utf8")).toContain("{{validator_note}}{{validator_shard_note}}{{dedup_note}}");
+      expect(readFileSync(join(root, "prompts", t), "utf8")).toContain(
+        "{{validator_note}}{{validator_shard_note}}{{dedup_note}}",
+      );
   });
 });
 
 describe("the validator rule", () => {
   it("is composed only when the knob is on, onto pass-validate, PR builds only", () => {
     expect(configAddenda({}).some((a) => a.id === "dedup-group-validate")).toBe(false);
-    expect(configAddenda({ dedup_merge: false }).some((a) => a.id === "dedup-group-validate")).toBe(false);
+    expect(configAddenda({ dedup_merge: false }).some((a) => a.id === "dedup-group-validate")).toBe(
+      false,
+    );
     const a = configAddenda({ dedup_merge: true }).find((x) => x.id === "dedup-group-validate")!;
     expect(a.scope).toEqual(["pass-validate"]);
     expect(a.mode).toBe("pr");
     expect(a.text).toMatch(/One root cause → ONE surviving finding/);
     expect(a.text).toMatch(/every lens that raised it/);
-    expect(a.text).toMatch(/never merge two findings because they share a file, a line range or a word/);
+    expect(a.text).toMatch(
+      /never merge two findings because they share a file, a line range or a word/,
+    );
   });
 });
 
@@ -64,8 +74,22 @@ describe("cluster_findings on both routes", () => {
   it("answers groups for the validator, and reports malformed input instead of throwing", async () => {
     const res = await CLUSTER_TOOL.execute("t1", {
       candidates: [
-        { id: "A", path: "a.ts", line: 1, title: "`foo` breaks", lens: "pass-baseline", severity: "P1" },
-        { id: "B", path: "a.ts", line: 4, title: "`foo` again", lens: "pass-sweep", severity: "P3" },
+        {
+          id: "A",
+          path: "a.ts",
+          line: 1,
+          title: "`foo` breaks",
+          lens: "pass-baseline",
+          severity: "P1",
+        },
+        {
+          id: "B",
+          path: "a.ts",
+          line: 4,
+          title: "`foo` again",
+          lens: "pass-sweep",
+          severity: "P3",
+        },
         { id: "C", path: "b.ts", line: 90, title: "unrelated" },
       ],
     });

@@ -230,7 +230,7 @@ export function renderMigrationCollisionsNote(
     lines.push(
       "",
       "So the author has not been told. Put this remedy in your review body, once,",
-      "in a short \"Migration numbering (mechanics, not a blocker)\" paragraph that",
+      'in a short "Migration numbering (mechanics, not a blocker)" paragraph that',
       "states each rename and `dependencies` entry above. It is still mechanics:",
       "it is not a finding, not a blocker, never inline, and it never moves the",
       "verdict — a PR whose only migration problem is this numbering collision is",
@@ -387,7 +387,9 @@ async function djangoPreCheck(
     // fingerprint. A guard refusal returns without throwing and delivered
     // nothing, so it must not consume the dedupe: the next round retries.
     if (!result.executed && !result.dryRunFile) {
-      log(`dispatch: #${round.pr} migration collision comment refused (${result.blocked ?? "not executed"})`);
+      log(
+        `dispatch: #${round.pr} migration collision comment refused (${result.blocked ?? "not executed"})`,
+      );
       io.logEvent("migration_collision_comment_refused", round.pr, {
         head_sha: round.head_sha,
         fingerprint,

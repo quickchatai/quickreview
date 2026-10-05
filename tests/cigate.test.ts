@@ -819,47 +819,60 @@ function hooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
 }
 
 describe("dispatch — a withheld approval is new evidence at the same head", () => {
-  it("runs the round the no-new-evidence guard would otherwise have skipped", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    tracked(5180, HEAD);
-    store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
-    // The last round decided APPROVE at this very head — guard 2's skip case.
-    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
-    await retryWithheldApproval(
-      { cfg, store, adapter: new CiFake() },
-      { pr: 5180, head_sha: HEAD },
-    );
-    const h = hooks();
+  it(
+    "runs the round the no-new-evidence guard would otherwise have skipped",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordApprovalWithheld(5180, { head_sha: HEAD, ci_state: "red" });
+      // The last round decided APPROVE at this very head — guard 2's skip case.
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      await retryWithheldApproval(
+        { cfg, store, adapter: new CiFake() },
+        { pr: 5180, head_sha: HEAD },
+      );
+      const h = hooks();
 
-    const orders = await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks });
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new DispatchFake(),
+        hooks: h.hooks,
+      });
 
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.head_sha).toBe(HEAD);
-    // Spent: the round about to run decides the verdict again from scratch.
-    expect(store.approvalWithheld(5180)).toBeUndefined();
-    expect(
-      store.db
-        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_dispatched'")
-        .get(),
-    ).toEqual({ c: 1 });
-  });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.head_sha).toBe(HEAD);
+      // Spent: the round about to run decides the verdict again from scratch.
+      expect(store.approvalWithheld(5180)).toBeUndefined();
+      expect(
+        store.db
+          .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'approval_retry_dispatched'")
+          .get(),
+      ).toEqual({ c: 1 });
+    },
+  );
 
-  it("still skips an unchanged head with no withholding standing", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    tracked(5180, HEAD);
-    store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
-    store.upsertPr({
-      number: 5180,
-      state: "queued",
-      head_sha: HEAD,
-      title: "PR 5180",
-      author: "alice",
-      trigger_ts: "2026-08-18T10:00:00Z",
-      stale_recheck: 0,
-      migration_gate: 0,
-    });
-    const h = hooks();
+  it(
+    "still skips an unchanged head with no withholding standing",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      tracked(5180, HEAD);
+      store.recordReviewedHead(5180, { head_sha: HEAD, verdict: "APPROVE", round_no: 1 });
+      store.upsertPr({
+        number: 5180,
+        state: "queued",
+        head_sha: HEAD,
+        title: "PR 5180",
+        author: "alice",
+        trigger_ts: "2026-08-18T10:00:00Z",
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const h = hooks();
 
-    expect(await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks })).toEqual(
-      [],
-    );
-  });
+      expect(
+        await dispatchOnce({ cfg, store, adapter: new DispatchFake(), hooks: h.hooks }),
+      ).toEqual([]);
+    },
+  );
 });

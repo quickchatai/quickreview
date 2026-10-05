@@ -546,7 +546,9 @@ export function mergeCandidates(
  * `T` and a same-day comparison would lie. Unparseable ⇒ -Infinity, so an
  * unreadable receipt never judges anything (the safe direction: re-offer). */
 function instant(ts: string): number {
-  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts.replace(" ", "T")}Z` : ts;
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts)
+    ? `${ts.replace(" ", "T")}Z`
+    : ts;
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? -Infinity : ms;
 }

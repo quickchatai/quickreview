@@ -123,11 +123,16 @@ export function pendingRetunes(
   const known = Number.isFinite(deployed);
   const since = known ? written.filter((r) => !(Date.parse(r.at) < deployed)) : [];
   if (!known) {
-    const why = drift.kind === "unknown" ? `${drift.why}; when the VM was last deployed is unknown` : "when the VM was last deployed is unknown";
+    const why =
+      drift.kind === "unknown"
+        ? `${drift.why}; when the VM was last deployed is unknown`
+        : "when the VM was last deployed is unknown";
     return { state: "unknown", why, retunes: written.slice(-1) };
   }
   if (drift.kind === "unknown") {
-    return since.length === 0 ? { state: "none" } : { state: "unknown", why: drift.why, retunes: since };
+    return since.length === 0
+      ? { state: "none" }
+      : { state: "unknown", why: drift.why, retunes: since };
   }
   return since.length === 0 ? { state: "none" } : { state: "pending", retunes: since };
 }

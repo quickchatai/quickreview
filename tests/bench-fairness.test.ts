@@ -75,7 +75,9 @@ describe("the equal-inputs switch: the PR text, framed as the quickreviewd arm f
   it("OCR: its own --background flag, absent by default (the harness's argv exactly)", () => {
     const flags = { ...OCR_HARNESS_DEFAULTS };
     const off = ocrReviewArgv({ repo: "/r", from: BASE, to: HEAD, ...flags });
-    expect(off).toEqual(ocrReviewArgv({ repo: "/r", from: BASE, to: HEAD, ...flags, background: null }));
+    expect(off).toEqual(
+      ocrReviewArgv({ repo: "/r", from: BASE, to: HEAD, ...flags, background: null }),
+    );
     expect(off).not.toContain("--background");
     const on = ocrReviewArgv({ repo: "/r", from: BASE, to: HEAD, ...flags, background: "CTX" });
     expect(on).toEqual([...off, "--background", "CTX"]);
@@ -105,7 +107,9 @@ describe("the equal-inputs switch: the PR text, framed as the quickreviewd arm f
     const drv = read("bench", "aacr", "codex_arm.py");
     expect(drv).toContain('ap.add_argument("--pr-text"');
     // wrapped only when asked, and AFTER the harness's own prompt
-    expect(drv).toMatch(/if a\.pr_text:\n[\s\S]*cx\.build_findings_prompt = with_pr_text\(cx\.build_findings_prompt/);
+    expect(drv).toMatch(
+      /if a\.pr_text:\n[\s\S]*cx\.build_findings_prompt = with_pr_text\(cx\.build_findings_prompt/,
+    );
     expect(drv).toContain('return f"{build(base_commit, head_commit)}\\n\\n{text}"');
   });
 
@@ -134,7 +138,9 @@ describe("the equal-inputs switch: the PR text, framed as the quickreviewd arm f
 
   it("bench.sh passes the switch to the four CLI arms only; arm.sh records it", () => {
     const bench = read("bench", "aacr", "bench.sh");
-    expect(bench).toMatch(/QCR_BENCH_PR_TEXT:-\}" == 1[\s\S]*ocr[\s\S]*codex[\s\S]*opencode[\s\S]*pireview[\s\S]*oe\+=\(-e "QCR_BENCH_PR_TEXT=1"\)/);
+    expect(bench).toMatch(
+      /QCR_BENCH_PR_TEXT:-\}" == 1[\s\S]*ocr[\s\S]*codex[\s\S]*opencode[\s\S]*pireview[\s\S]*oe\+=\(-e "QCR_BENCH_PR_TEXT=1"\)/,
+    );
     const arm = read("bench", "aacr", "arm.sh");
     expect(arm).toContain("--pr-text) export QCR_BENCH_PR_TEXT=1");
     expect(arm).toMatch(/"env":%s/);
@@ -185,8 +191,21 @@ describe("pi-review's panel: what /rv runs, every cluster it shows", () => {
       },
     ],
     advisories: [
-      { id: "C2", summary: "Missing test", severity: "low", confirmed: false, sourceFindingIds: ["testing#F1"] },
-      { id: "C3", summary: "Orphan", path: "c.py", severity: "medium", confirmed: false, sourceFindingIds: ["gone#F9"] },
+      {
+        id: "C2",
+        summary: "Missing test",
+        severity: "low",
+        confirmed: false,
+        sourceFindingIds: ["testing#F1"],
+      },
+      {
+        id: "C3",
+        summary: "Orphan",
+        path: "c.py",
+        severity: "medium",
+        confirmed: false,
+        sourceFindingIds: ["gone#F9"],
+      },
     ],
     sourceFindings: [
       {
@@ -232,9 +251,18 @@ describe("pi-review's panel: what /rv runs, every cluster it shows", () => {
       location: { startLine: 10, endLine: 12 },
       actionable: true,
     });
-    expect(f[1]).toMatchObject({ path: "b_test.py", location: { startLine: 3 }, actionable: false });
+    expect(f[1]).toMatchObject({
+      path: "b_test.py",
+      location: { startLine: 3 },
+      actionable: false,
+    });
     // a cluster whose sources are missing keeps its own summary, severity and path
-    expect(f[2]).toEqual({ summary: "Orphan", severity: "medium", path: "c.py", actionable: false });
+    expect(f[2]).toEqual({
+      summary: "Orphan",
+      severity: "medium",
+      path: "c.py",
+      actionable: false,
+    });
   });
 
   it("scoredFindings: a panel's clusters; a single review's findings unchanged", () => {
@@ -250,7 +278,12 @@ describe("pi-review's panel: what /rv runs, every cluster it shows", () => {
   it("the clusters become the comments the scorer and the judge read", () => {
     const { comments } = toComments(scoredFindings(meta), "/wt/x");
     expect(comments).toHaveLength(3);
-    expect(comments[0]).toMatchObject({ path: "a.py", start_line: 10, end_line: 12, severity: "high" });
+    expect(comments[0]).toMatchObject({
+      path: "a.py",
+      start_line: 10,
+      end_line: 12,
+      severity: "high",
+    });
     expect(comments[0]!.content).toContain("Recommendation: use <");
     expect(comments[2]).toMatchObject({ path: "c.py", start_line: null, end_line: null });
   });
@@ -258,7 +291,9 @@ describe("pi-review's panel: what /rv runs, every cluster it shows", () => {
   it("bench.sh passes QCR_BENCH_PIREVIEW_PANEL through, validated", () => {
     const bench = read("bench", "aacr", "bench.sh");
     expect(bench).toContain('oe+=(-e "QCR_PIREVIEW_PANEL=$QCR_BENCH_PIREVIEW_PANEL")');
-    expect(read("src", "bench", "cli.ts")).toContain('f.get("--panel") ?? (process.env.QCR_PIREVIEW_PANEL || null)');
+    expect(read("src", "bench", "cli.ts")).toContain(
+      'f.get("--panel") ?? (process.env.QCR_PIREVIEW_PANEL || null)',
+    );
   });
 });
 
@@ -276,8 +311,16 @@ describe("OpenCode on its native ChatGPT provider", () => {
     const def = opencodeConfig(cfg);
     expect(opencodeConfig({ ...cfg, provider: "bridge" })).toEqual(def);
     expect(def["enabled_providers"]).toEqual([BRIDGE_PROVIDER]);
-    expect((def["command"] as Record<string, Record<string, unknown>>)["review"]!["subtask"]).toBe(false);
-    const argv = opencodeRunArgv({ dir: "/t", model: "gpt-6-sol", variant: "medium", title: "x", arguments: "A" });
+    expect((def["command"] as Record<string, Record<string, unknown>>)["review"]!["subtask"]).toBe(
+      false,
+    );
+    const argv = opencodeRunArgv({
+      dir: "/t",
+      model: "gpt-6-sol",
+      variant: "medium",
+      title: "x",
+      arguments: "A",
+    });
     expect(argv[argv.indexOf("--model") + 1]).toBe("bridge/gpt-6-sol");
   });
 
@@ -288,7 +331,11 @@ describe("OpenCode on its native ChatGPT provider", () => {
     expect(c["enabled_providers"]).toEqual(["openai"]);
     expect(c["provider"]).toBeUndefined();
     expect(c["command"]).toBeUndefined();
-    expect(c["permission"]).toEqual({ webfetch: "deny", websearch: "deny", external_directory: "deny" });
+    expect(c["permission"]).toEqual({
+      webfetch: "deny",
+      websearch: "deny",
+      external_directory: "deny",
+    });
     expect(c["mcp"]).toEqual(opencodeConfig(cfg)["mcp"]);
     const argv = opencodeRunArgv({
       dir: "/t",
@@ -315,7 +362,15 @@ describe("OpenCode on its native ChatGPT provider", () => {
   it("auth.json: the refresh-disabled copy only — the sentinel as refresh token, access, expiry, account", () => {
     const jwt = `h.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acct-1" } })).toString("base64url")}.s`;
     const src = (refresh: string, extra: object = {}) =>
-      JSON.stringify({ "openai-codex": { type: "oauth", access: jwt, refresh, expires: 1_900_000_000_000, ...extra } });
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: jwt,
+          refresh,
+          expires: 1_900_000_000_000,
+          ...extra,
+        },
+      });
     const out = JSON.parse(opencodeAuthFrom(src(DISABLED_REFRESH)));
     expect(out).toEqual({
       openai: {
@@ -328,10 +383,16 @@ describe("OpenCode on its native ChatGPT provider", () => {
     });
     expect(() => opencodeAuthFrom(src("real-refresh-token"))).toThrow(/disabled sentinel/);
     expect(() =>
-      opencodeAuthFrom(JSON.stringify({ "openai-codex": { type: "oauth", access: jwt, refresh: DISABLED_REFRESH } })),
+      opencodeAuthFrom(
+        JSON.stringify({
+          "openai-codex": { type: "oauth", access: jwt, refresh: DISABLED_REFRESH },
+        }),
+      ),
     ).toThrow(/no expiry/);
     expect(() => opencodeAuthFrom("{}")).toThrow(/no openai-codex/);
-    expect(JSON.parse(opencodeAuthFrom(src(DISABLED_REFRESH, { accountId: "acct-x" }))).openai.accountId).toBe("acct-x");
+    expect(
+      JSON.parse(opencodeAuthFrom(src(DISABLED_REFRESH, { accountId: "acct-x" }))).openai.accountId,
+    ).toBe("acct-x");
   });
 
   it("usage: every step from OpenCode's own store, OpenAI-style (cached into input, reasoning into output)", () => {
@@ -360,7 +421,9 @@ describe("OpenCode on its native ChatGPT provider", () => {
     const block = native.slice(0, native.indexOf("fi\n"));
     expect(block).not.toContain("codex_bridge.py");
     expect(block).toContain("--provider native");
-    expect(read("bench", "aacr", "bench.sh")).toContain('oe+=(-e "QCR_OPENCODE_PROVIDER=$QCR_BENCH_OPENCODE_PROVIDER")');
+    expect(read("bench", "aacr", "bench.sh")).toContain(
+      'oe+=(-e "QCR_OPENCODE_PROVIDER=$QCR_BENCH_OPENCODE_PROVIDER")',
+    );
   });
 });
 
@@ -373,9 +436,17 @@ describe("arm.sh records the environment knobs of a third-party arm", () => {
       writeFileSync(join(t, "f.sh"), `${fn}\narm_env_json\n`);
       mkdirSync(join(t, "x"));
       const out = execFileSync("bash", [join(t, "f.sh")], {
-        env: { PATH: process.env.PATH, QCR_BENCH_PR_TEXT: "1", QCR_BENCH_PIREVIEW_PANEL: "code-experts", QCR_BENCH_CODEX_EFFORT: "" },
+        env: {
+          PATH: process.env.PATH,
+          QCR_BENCH_PR_TEXT: "1",
+          QCR_BENCH_PIREVIEW_PANEL: "code-experts",
+          QCR_BENCH_CODEX_EFFORT: "",
+        },
       }).toString();
-      expect(JSON.parse(out)).toEqual({ QCR_BENCH_PIREVIEW_PANEL: "code-experts", QCR_BENCH_PR_TEXT: "1" });
+      expect(JSON.parse(out)).toEqual({
+        QCR_BENCH_PIREVIEW_PANEL: "code-experts",
+        QCR_BENCH_PR_TEXT: "1",
+      });
     } finally {
       rmSync(t, { recursive: true, force: true });
     }

@@ -366,9 +366,7 @@ describe("the variants", () => {
         },
       ],
     );
-    expect(extras.map((x) => `${x.line}:${x.prov.anchor}:${x.content}`)).toEqual([
-      "7:record:same",
-    ]);
+    expect(extras.map((x) => `${x.line}:${x.prov.anchor}:${x.content}`)).toEqual(["7:record:same"]);
     expect(toOcrComments(extras).excluded.no_line).toBe(0);
   });
 

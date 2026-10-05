@@ -269,7 +269,9 @@ export interface ClassifyOpts {
  * would otherwise read as a base-merge file, which is trivial. */
 export function ownershipSet(own: DeltaList): Set<string> | undefined {
   if (own.truncated) return undefined;
-  return new Set(own.flatMap((f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename])));
+  return new Set(
+    own.flatMap((f) => (f.previous_filename ? [f.filename, f.previous_filename] : [f.filename])),
+  );
 }
 
 /** Classify one file. The rules are deliberately narrow: anything a rule does
@@ -369,7 +371,8 @@ export function classifyDelta(files: DeltaList, opts: ClassifyOpts = {}): DeltaC
   // A truncated delta is significant by construction: the files GitHub did not
   // return may be exactly the PR-owned edit, and "all visible files trivial"
   // says nothing about them.
-  if (files.truncated) return { class: "significant", files: classified, significant, truncated: true };
+  if (files.truncated)
+    return { class: "significant", files: classified, significant, truncated: true };
   const cls: DeltaClass =
     classified.length === 0 ? "empty" : significant.length > 0 ? "significant" : "trivial";
   return { class: cls, files: classified, significant };

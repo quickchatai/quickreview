@@ -361,71 +361,75 @@ function quietDrain(rounds = 0): DeployDrainSender {
 }
 
 describe("deploy tab drain orchestration", () => {
-  it("engages drain, visibly waits through running rounds, then deploys exactly once at zero", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const streams = fakeStreams();
-    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
-    const drainCalls: boolean[] = [];
-    const drain: DeployDrainSender = {
-      set: async (on) => {
-        drainCalls.push(on);
-        return {
-          ok: true,
-          draining: on,
-          running_rounds: on ? 2 : undefined,
-          dropped_deliveries: on ? undefined : 0,
-        };
-      },
-    };
-    let deploys = 0;
-    app.hooks.deployRun = (_a, _id, _data, exit) => {
-      deploys++;
-      exit(0);
-      return { kill: () => {} };
-    };
-    const st = installDeployHooks(
-      app,
-      { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
-      () => 1000,
-      drain,
-    );
-    const run = app.run();
-    streams.type("5");
-    await settle();
-    streams.type("D");
-    streams.type("D");
-    await settle();
+  it(
+    "engages drain, visibly waits through running rounds, then deploys exactly once at zero",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const streams = fakeStreams();
+      const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+      const drainCalls: boolean[] = [];
+      const drain: DeployDrainSender = {
+        set: async (on) => {
+          drainCalls.push(on);
+          return {
+            ok: true,
+            draining: on,
+            running_rounds: on ? 2 : undefined,
+            dropped_deliveries: on ? undefined : 0,
+          };
+        },
+      };
+      let deploys = 0;
+      app.hooks.deployRun = (_a, _id, _data, exit) => {
+        deploys++;
+        exit(0);
+        return { kill: () => {} };
+      };
+      const st = installDeployHooks(
+        app,
+        { load: async () => ({ dirty: [], plan: [], head: "abc1234" }) },
+        () => 1000,
+        drain,
+      );
+      const run = app.run();
+      streams.type("5");
+      await settle();
+      streams.type("D");
+      streams.type("D");
+      await settle();
 
-    expect(drainCalls).toEqual([true]);
-    expect(deploys).toBe(0);
-    expect(st.deployPhase).toBe("waiting-rounds");
-    expect(stripAnsi(streams.written())).toContain("DRAINING — 2 rounds finishing");
+      expect(drainCalls).toEqual([true]);
+      expect(deploys).toBe(0);
+      expect(st.deployPhase).toBe("waiting-rounds");
+      expect(stripAnsi(streams.written())).toContain("DRAINING — 2 rounds finishing");
 
-    publishStatus(app, 1);
-    expect(deploys).toBe(0);
-    expect(stripAnsi(streams.written())).toContain("DRAINING — 1 round finishing");
-    publishStatus(app, 0);
-    await settle();
-    expect(deploys).toBe(1);
-    publishStatus(app, 0);
-    await settle();
-    expect(deploys).toBe(1);
-    expect(stripAnsi(streams.written())).toContain("healthy boot will auto-lift the drain");
-    // With the finished log on screen `D` is not offered (deployKeys) — the
-    // bar says `x close log` — so the key is not this tab's and does nothing.
-    streams.type("D");
-    streams.type("D");
-    expect(deploys).toBe(1);
-    expect(deployKeys(st).bar.map((b) => b.key)).toEqual(["x"]);
-    streams.type("x");
-    expect(st.run).toBeDefined();
-    expect(app.view.noticeLine).toContain("has not auto-lifted yet");
-    publishStatus(app, 0, false);
-    expect(st.deployPhase).toBe("done");
-    expect(app.view.noticeLine).toContain("drain lifted");
-    expect(drainCalls).toEqual([true]); // the healthy daemon boot owns the lift
-    app.quit();
-    await run;
-  });
+      publishStatus(app, 1);
+      expect(deploys).toBe(0);
+      expect(stripAnsi(streams.written())).toContain("DRAINING — 1 round finishing");
+      publishStatus(app, 0);
+      await settle();
+      expect(deploys).toBe(1);
+      publishStatus(app, 0);
+      await settle();
+      expect(deploys).toBe(1);
+      expect(stripAnsi(streams.written())).toContain("healthy boot will auto-lift the drain");
+      // With the finished log on screen `D` is not offered (deployKeys) — the
+      // bar says `x close log` — so the key is not this tab's and does nothing.
+      streams.type("D");
+      streams.type("D");
+      expect(deploys).toBe(1);
+      expect(deployKeys(st).bar.map((b) => b.key)).toEqual(["x"]);
+      streams.type("x");
+      expect(st.run).toBeDefined();
+      expect(app.view.noticeLine).toContain("has not auto-lifted yet");
+      publishStatus(app, 0, false);
+      expect(st.deployPhase).toBe("done");
+      expect(app.view.noticeLine).toContain("drain lifted");
+      expect(drainCalls).toEqual([true]); // the healthy daemon boot owns the lift
+      app.quit();
+      await run;
+    },
+  );
 
   it("restores an owned drain after hot reload and continues only when the board reaches zero", async () => {
     const store = new MemoryDeployCeremonyStore();

@@ -22,16 +22,25 @@ function text(t: string, details?: Record<string, unknown>): PiToolResult {
 
 /** Read the tool's `candidates` argument into ClusterCandidates; anything
  * malformed is reported, never thrown. */
-export function readCandidates(raw: unknown): { candidates: ClusterCandidate[]; problems: string[] } {
+export function readCandidates(raw: unknown): {
+  candidates: ClusterCandidate[];
+  problems: string[];
+} {
   const problems: string[] = [];
   const arr = typeof raw === "string" ? safeParse(raw, problems) : raw;
-  if (!Array.isArray(arr)) return { candidates: [], problems: [...problems, "candidates must be an array"] };
+  if (!Array.isArray(arr))
+    return { candidates: [], problems: [...problems, "candidates must be an array"] };
   const candidates: ClusterCandidate[] = [];
   arr.forEach((c, i) => {
     if (typeof c !== "object" || c === null) return void problems.push(`#${i + 1}: not an object`);
     const o = c as Record<string, unknown>;
     const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `#${i + 1}`;
-    const line = typeof o.line === "number" ? o.line : typeof o.line === "string" && /^\d+$/.test(o.line) ? Number(o.line) : null;
+    const line =
+      typeof o.line === "number"
+        ? o.line
+        : typeof o.line === "string" && /^\d+$/.test(o.line)
+          ? Number(o.line)
+          : null;
     const str = (v: unknown) => (typeof v === "string" ? v : null);
     candidates.push({
       id,
@@ -106,13 +115,29 @@ export function readCoverageArgs(params: Record<string, unknown>): {
 } {
   const problems: string[] = [];
   const parse = (raw: unknown, name: string): unknown =>
-    typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { problems.push(`${name} is not valid JSON`); return null; } })() : raw;
+    typeof raw === "string"
+      ? (() => {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            problems.push(`${name} is not valid JSON`);
+            return null;
+          }
+        })()
+      : raw;
   const el = parse(params.eligible, "eligible");
   const ad = parse(params.addressed, "addressed");
   const eligible: CoverageFile[] = Array.isArray(el)
     ? el.flatMap((x) =>
-        typeof x === "object" && x !== null && typeof (x as Record<string, unknown>).path === "string"
-          ? [{ path: (x as { path: string }).path, lines: Number((x as { lines?: unknown }).lines) || 0 }]
+        typeof x === "object" &&
+        x !== null &&
+        typeof (x as Record<string, unknown>).path === "string"
+          ? [
+              {
+                path: (x as { path: string }).path,
+                lines: Number((x as { lines?: unknown }).lines) || 0,
+              },
+            ]
           : [],
       )
     : (problems.push("eligible must be an array"), []);
@@ -133,7 +158,11 @@ export const COVERAGE_TOOL: PiToolDefinition = {
       eligible: {
         type: "array",
         description: "The round order's coverage-eligible files, verbatim.",
-        items: { type: "object", properties: { path: { type: "string" }, lines: { type: "number" } }, required: ["path"] },
+        items: {
+          type: "object",
+          properties: { path: { type: "string" }, lines: { type: "number" } },
+          required: ["path"],
+        },
       },
       addressed: {
         type: "array",
@@ -147,17 +176,25 @@ export const COVERAGE_TOOL: PiToolDefinition = {
     const { eligible, addressed, problems } = readCoverageArgs(params);
     const gaps = coverageGaps(eligible, addressed);
     const warn = problems.length ? `\nProblems: ${problems.join("; ")}` : "";
-    const rows = gaps.groups.map((g, i) => `ROW ${i + 1}: focus ${JSON.stringify(g)}\n  reason: ${coverageReason(g)}`);
+    const rows = gaps.groups.map(
+      (g, i) => `ROW ${i + 1}: focus ${JSON.stringify(g)}\n  reason: ${coverageReason(g)}`,
+    );
     const body = gaps.groups.length
       ? `${gaps.uncovered.length} of ${eligible.length} eligible file(s) unaddressed → ${gaps.groups.length} pass-sweep row(s).\n${rows.join("\n")}${gaps.unchecked.length ? `\nUNCHECKED (past the row cap): ${gaps.unchecked.join(", ")}` : ""}`
       : `All ${eligible.length} eligible file(s) addressed — no coverage row.`;
-    return text(`${body}${warn}`, { groups: gaps.groups, uncovered: gaps.uncovered, unchecked: gaps.unchecked });
+    return text(`${body}${warn}`, {
+      groups: gaps.groups,
+      uncovered: gaps.uncovered,
+      unchecked: gaps.unchecked,
+    });
   },
 };
 
 const activate = (pi: Pi): void => {
   if (typeof pi.registerTool !== "function") {
-    console.error("finding-clusters: pi.registerTool unavailable — cluster_findings not registered.");
+    console.error(
+      "finding-clusters: pi.registerTool unavailable — cluster_findings not registered.",
+    );
     return;
   }
   pi.registerTool(CLUSTER_TOOL);

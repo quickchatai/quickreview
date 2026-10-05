@@ -30,7 +30,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseConfig, withThinking, type Config } from "../config.js";
 import { locateConfig } from "../install.js";
-import { PASS_ADDENDA, buildAgents, configAddenda, identityVars, type BuiltAgent } from "../include.js";
+import {
+  PASS_ADDENDA,
+  buildAgents,
+  configAddenda,
+  identityVars,
+  type BuiltAgent,
+} from "../include.js";
 import { lensModelOverrides, lensTuningAddenda, applyProfileTuning } from "../lenstuning.js";
 import { PASS_TIER_ORDER } from "../types.js";
 import {
@@ -64,7 +70,10 @@ export function scanConfig(root: string, toml: string, lookup: ProfileLookup = {
 /** The live config (the install locator's answer), as `scanConfig` reads
  * it — or why it cannot be read. Never `loadConfig`: that also demands the
  * Slack token files, which the companion does not mount. */
-export function loadScanConfig(root: string, env: NodeJS.ProcessEnv = process.env): { ok: true; cfg: Config } | Refusal {
+export function loadScanConfig(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { ok: true; cfg: Config } | Refusal {
   let path: string;
   try {
     path = locateConfig({ env }).path;
@@ -80,7 +89,12 @@ export function loadScanConfig(root: string, env: NodeJS.ProcessEnv = process.en
   try {
     return { ok: true, cfg: scanConfig(root, toml, { env }) };
   } catch (err) {
-    return { ok: false, errors: [`the live config or its profile is invalid: ${err instanceof Error ? err.message : String(err)}`] };
+    return {
+      ok: false,
+      errors: [
+        `the live config or its profile is invalid: ${err instanceof Error ? err.message : String(err)}`,
+      ],
+    };
   }
 }
 
@@ -100,12 +114,19 @@ export function scanSettings(cfg: Config): ScanSettings {
  * lens's `effort` uses. One variant — stage 1 runs at that tier alone. */
 export function scanPassModels(cfg: Pick<Config, "models" | "scan">): Record<string, string> {
   const level = cfg.scan.effort === "high" ? cfg.models.effort_max : cfg.scan.effort;
-  return { [`${SCAN_PASS}--${cfg.scan.tier}`]: withThinking(cfg.models.tiers[cfg.scan.tier], level) };
+  return {
+    [`${SCAN_PASS}--${cfg.scan.tier}`]: withThinking(cfg.models.tiers[cfg.scan.tier], level),
+  };
 }
 
 /** Build the scan agents into `outDir` — `buildAgents` in `"scan"` mode, the
  * profile's pack and tuning composed exactly as a PR build composes them. */
-export function buildScanAgents(root: string, outDir: string, cfg: Config, lookup: ProfileLookup = {}): BuiltAgent[] {
+export function buildScanAgents(
+  root: string,
+  outDir: string,
+  cfg: Config,
+  lookup: ProfileLookup = {},
+): BuiltAgent[] {
   return buildAgents(join(root, "agents"), outDir, {
     root,
     mode: "scan",

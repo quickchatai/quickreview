@@ -49,7 +49,9 @@ export const DIFF_ONLY_LENSES: readonly string[] = [
 ];
 
 /** The deep lenses stage 1 may point stage 2 at. */
-export const SCAN_DEEP_LENSES: readonly string[] = ALL_PASSES.filter((p) => !DIFF_ONLY_LENSES.includes(p));
+export const SCAN_DEEP_LENSES: readonly string[] = ALL_PASSES.filter(
+  (p) => !DIFF_ONLY_LENSES.includes(p),
+);
 
 /** Migration files, whatever the stack calls their directory. */
 const MIGRATION_RE = /(^|\/)(migrations?|alembic\/versions|db\/migrate)\//i;
@@ -61,7 +63,10 @@ export function isMigrationFile(path: string): boolean {
 export type ExclusionReason = "test" | "migration" | "unreadable-kind" | "excluded-glob";
 
 /** Why stage 1 does not read `path`, or null when it does. */
-export function stage1Exclusion(path: string, excluded: (p: string) => boolean): ExclusionReason | null {
+export function stage1Exclusion(
+  path: string,
+  excluded: (p: string) => boolean,
+): ExclusionReason | null {
   if (isSweepSkipped(path)) return "unreadable-kind";
   if (isTestFile(path)) return "test";
   if (isMigrationFile(path)) return "migration";
@@ -145,7 +150,11 @@ export function cutRanges(total: number, maxLines: number, text: string | null):
 }
 
 /** Does the union of `ranges` cover every line of `start..end`? */
-export function rangesCover(ranges: readonly { start: number; end: number }[], start: number, end: number): boolean {
+export function rangesCover(
+  ranges: readonly { start: number; end: number }[],
+  start: number,
+  end: number,
+): boolean {
   let reach = start - 1;
   for (const r of [...ranges].sort((a, b) => a.start - b.start)) {
     if (r.start > reach + 1) break;
@@ -255,7 +264,10 @@ export interface PriorReading {
  * is tier 1 (changed); anything else is tier 2. A case takes its best file's
  * tier; a tier keeps the plan's order.
  */
-export function readTier(f: { path: string; blob: string }, history: ReadonlyMap<string, PriorReading>): 0 | 1 | 2 {
+export function readTier(
+  f: { path: string; blob: string },
+  history: ReadonlyMap<string, PriorReading>,
+): 0 | 1 | 2 {
   const r = history.get(f.path);
   if (r === undefined || !r.complete) return 0;
   return r.blob !== f.blob ? 1 : 2;
@@ -270,7 +282,12 @@ export const coverKey = (path: string, blob: string): string => `${path}\0${blob
  * Deterministic. */
 export function planStage1(input: PlanInput): Stage1Plan {
   const excludedGlob = globMatcher(input.exclude);
-  const excluded: Record<ExclusionReason, number> = { test: 0, migration: 0, "unreadable-kind": 0, "excluded-glob": 0 };
+  const excluded: Record<ExclusionReason, number> = {
+    test: 0,
+    migration: 0,
+    "unreadable-kind": 0,
+    "excluded-glob": 0,
+  };
   const blobs = new Map(input.files.map((f) => [f.path, f.blob]));
   const lines = new Map<string, number>();
   let covered = 0;
@@ -280,7 +297,9 @@ export function planStage1(input: PlanInput): Stage1Plan {
   const readable: string[] = [];
   // Files over one case: the ranges still to read, cut up front.
   const ranged = new Map<string, FileRange[]>();
-  for (const f of [...input.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+  for (const f of [...input.files].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  )) {
     const why = stage1Exclusion(f.path, excludedGlob);
     if (why !== null) {
       excluded[why]++;
@@ -331,11 +350,17 @@ export function planStage1(input: PlanInput): Stage1Plan {
       if (only !== undefined) {
         const p = c.files[0]!;
         for (const r of only) {
-          parts.push({ files: [{ path: p, blob: blobs.get(p)!, lines: r.end - r.start + 1, range: r }], lines: r.end - r.start + 1 });
+          parts.push({
+            files: [{ path: p, blob: blobs.get(p)!, lines: r.end - r.start + 1, range: r }],
+            lines: r.end - r.start + 1,
+          });
         }
         continue;
       }
-      parts.push({ files: c.files.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p) ?? 0 })), lines: c.lines });
+      parts.push({
+        files: c.files.map((p) => ({ path: p, blob: blobs.get(p)!, lines: lines.get(p) ?? 0 })),
+        lines: c.lines,
+      });
     }
     parts.forEach((p, i) => {
       cases.push({
@@ -365,7 +390,9 @@ export function planStage1(input: PlanInput): Stage1Plan {
     ranked.sort((x, y) => x.t - y.t || (x.at < y.at ? -1 : x.at > y.at ? 1 : 0) || x.i - y.i);
     cases.splice(0, cases.length, ...ranked.map((r) => r.c));
   }
-  const owed = new Set(cases.flatMap((c) => c.files.map((f) => f.path)).filter((p) => unchangedPaths.has(p))).size;
+  const owed = new Set(
+    cases.flatMap((c) => c.files.map((f) => f.path)).filter((p) => unchangedPaths.has(p)),
+  ).size;
   return { cases, excluded, covered, unassigned: a.unassigned, unreadable, skipped, owed };
 }
 
@@ -456,7 +483,11 @@ function fileList(c: ScanCasePlan, root: string): string {
 }
 
 /** The stage-1 task string for one case. */
-export function scanCasePrompt(c: ScanCasePlan, ctx: PromptContext, deepLenses: readonly string[] = SCAN_DEEP_LENSES): string {
+export function scanCasePrompt(
+  c: ScanCasePlan,
+  ctx: PromptContext,
+  deepLenses: readonly string[] = SCAN_DEEP_LENSES,
+): string {
   const part = c.parts > 1 ? ` (part ${c.part} of ${c.parts})` : "";
   return [
     `SCAN CASE ${ctx.caseId} — stage 1, unit ${c.unit}${part}.`,
@@ -615,7 +646,8 @@ function lineRange(v: string | undefined): { start: number; end: number } | null
 
 function cleanPath(v: string, root: string | null): string {
   let p = v.trim().replace(/^`+|`+$/g, "");
-  if (root && p.startsWith(`${root.replace(/\/+$/, "")}/`)) p = p.slice(root.replace(/\/+$/, "").length + 1);
+  if (root && p.startsWith(`${root.replace(/\/+$/, "")}/`))
+    p = p.slice(root.replace(/\/+$/, "").length + 1);
   return p.replace(/^\.?\/+/, "").replace(/:(\d+)(?:-\d+)?$/, "");
 }
 
@@ -627,7 +659,12 @@ function severityOf(v: string | undefined): ScanSeverity {
 }
 
 function reachabilityOf(v: string | undefined): Reachability | null {
-  const r = (v ?? "").trim().replace(/[`*]/g, "").toLowerCase().split(/[\s,;.(—–-]/)[0] ?? "";
+  const r =
+    (v ?? "")
+      .trim()
+      .replace(/[`*]/g, "")
+      .toLowerCase()
+      .split(/[\s,;.(—–-]/)[0] ?? "";
   return (REACHABILITY_VALUES as readonly string[]).includes(r) ? (r as Reachability) : null;
 }
 
@@ -644,7 +681,10 @@ export function normalizeKind(v: string | undefined): string {
 
 /** The findings of one block of text (the part before SUGGEST / DOUBTED /
  * KILLED). */
-function readFindings(text: string, root: string | null): { candidates: ScanCandidate[]; dropped: number } {
+function readFindings(
+  text: string,
+  root: string | null,
+): { candidates: ScanCandidate[]; dropped: number } {
   const { read, dropped } = readFindingItems(text, root);
   return { candidates: read.map((r) => r.candidate), dropped };
 }
@@ -659,7 +699,8 @@ function readFindingItems(
   for (const f of parseItems(text)) {
     const path = cleanPath(f.get("path") ?? f.get("file") ?? "", root);
     const claim = (f.get("claim") ?? "").trim();
-    const range = lineRange(f.get("line")) ?? lineRange(/:(\d+(?:-\d+)?)`?$/.exec(f.get("path") ?? "")?.[1]);
+    const range =
+      lineRange(f.get("line")) ?? lineRange(/:(\d+(?:-\d+)?)`?$/.exec(f.get("path") ?? "")?.[1]);
     if (path === "" || claim === "" || range === null) {
       dropped++;
       continue;
@@ -735,7 +776,12 @@ export function parseScanAnswer(
         .map((p) => cleanPath(p, root))
         .filter((p) => p !== "");
       const reason = (s.get("reason") ?? "").trim();
-      if (!lenses.includes(lens) || files.length === 0 || reason === "" || suggestions.length >= MAX_SUGGESTIONS) {
+      if (
+        !lenses.includes(lens) ||
+        files.length === 0 ||
+        reason === "" ||
+        suggestions.length >= MAX_SUGGESTIONS
+      ) {
         suggestionsDropped++;
         continue;
       }
@@ -756,7 +802,9 @@ export interface DoubtLine {
 }
 
 /** The slugs a doubt may name as its class — the ONE class list. */
-export const SCAN_FALSE_POSITIVE_SLUGS: readonly string[] = SCAN_FALSE_POSITIVE_CLASSES.map((c) => c.slug);
+export const SCAN_FALSE_POSITIVE_SLUGS: readonly string[] = SCAN_FALSE_POSITIVE_CLASSES.map(
+  (c) => c.slug,
+);
 
 /** A `path:line` reference — a file with an extension, a colon, a line
  * (`src/tui/app.ts:369`, `webhook.ts:88`, `a.py:3-7`); or an extensionless
@@ -828,13 +876,20 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
 export function parseValidatorAnswer(
   text: string,
   root: string | null,
-): { survivors: SkepticSurvivor[]; dropped: number; doubted: DoubtLine[]; killed: DoubtLine[]; answered: boolean } {
+): {
+  survivors: SkepticSurvivor[];
+  dropped: number;
+  doubted: DoubtLine[];
+  killed: DoubtLine[];
+  answered: boolean;
+} {
   const head = findingsPart(text);
   const { read, dropped } = readFindingItems(head, root);
   const survivors = read.map(({ candidate, fields }): SkepticSurvivor => {
     const said = (fields.get("validity") ?? "").trim().replace(/[`*]/g, "").toLowerCase();
     const scenario = fields.get("scenario")?.trim() || null;
-    const confirmed = said.startsWith("confirmed") && scenario !== null && scenarioIsAnchored(scenario);
+    const confirmed =
+      said.startsWith("confirmed") && scenario !== null && scenarioIsAnchored(scenario);
     return { ...candidate, validity: confirmed ? "confirmed" : "likely", scenario };
   });
   const body = blockBody(text, "DOUBTED");
@@ -843,7 +898,12 @@ export function parseValidatorAnswer(
   const killed = judgementLines(killedBody, root);
   // A validator's answer: survivors, a NONE, or a DOUBTED/KILLED block.
   // Prose with none of them (a tool error told in words) judges nothing.
-  const answered = survivors.length > 0 || doubted.length > 0 || /^\s*NONE\s*$/m.test(head) || killedBody !== null || body !== null;
+  const answered =
+    survivors.length > 0 ||
+    doubted.length > 0 ||
+    /^\s*NONE\s*$/m.test(head) ||
+    killedBody !== null ||
+    body !== null;
   return { survivors, dropped, doubted, killed, answered };
 }
 
@@ -885,7 +945,10 @@ const quotable = (t: string): boolean => t.length >= 4 && /[A-Za-z0-9]/.test(t);
  * signature for a dereference twelve lines down — is exactly the misanchor
  * this catches.
  */
-export function evidenceQuotesAnchor(evidence: string | null, anchored: readonly string[]): boolean {
+export function evidenceQuotesAnchor(
+  evidence: string | null,
+  anchored: readonly string[],
+): boolean {
   const lines = anchored.map(squash).filter(quotable);
   if (lines.length === 0) return true;
   if (evidence === null) return false;
@@ -903,7 +966,12 @@ export function evidenceQuotesAnchor(evidence: string | null, anchored: readonly
  * anchored code, whitespace-normalised. Stable across a re-scan that only
  * moved the code or re-indented it; different when the code itself changed.
  */
-export function findingFingerprint(f: { path: string; lens: string; kind: string; code: string }): string {
+export function findingFingerprint(f: {
+  path: string;
+  lens: string;
+  kind: string;
+  code: string;
+}): string {
   const code = createHash("sha256").update(f.code).digest("hex");
   return createHash("sha256").update([f.path, f.lens, f.kind, code].join("\0")).digest("hex");
 }

@@ -106,19 +106,23 @@ describe("no Slack HTTP route exists", () => {
     pipeline = { healthy: true, failed_loud: 0, causes: [] };
   });
 
-  it("404s every plausible Slack path, on GET and on POST", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    for (const path of SLACK_PATHS) {
-      for (const method of ["GET", "POST"] as const) {
-        const res = await fetch(`${base}${path}`, {
-          method,
-          ...(method === "POST"
-            ? { body: JSON.stringify({ type: "url_verification", challenge: "c" }) }
-            : {}),
-        });
-        expect(res.status, `${method} ${path} must not be routed`).toBe(404);
+  it(
+    "404s every plausible Slack path, on GET and on POST",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      for (const path of SLACK_PATHS) {
+        for (const method of ["GET", "POST"] as const) {
+          const res = await fetch(`${base}${path}`, {
+            method,
+            ...(method === "POST"
+              ? { body: JSON.stringify({ type: "url_verification", challenge: "c" }) }
+              : {}),
+          });
+          expect(res.status, `${method} ${path} must not be routed`).toBe(404);
+        }
       }
-    }
-  });
+    },
+  );
 
   it("404s a POST to /health too — the allowlist is method-exact", async () => {
     const res = await fetch(`${base}/health`, { method: "POST", body: "{}" });

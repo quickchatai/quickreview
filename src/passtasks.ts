@@ -149,7 +149,9 @@ export function writePassTasks(
 
 /** The round prompt's `{{pass_task_note}}`: "" when the order carries no task
  * files (the knob off), so the round order renders exactly as before. */
-export function renderPassTaskNote(order: Pick<RoundOrder, "pass_plan" | "pass_task_files">): string {
+export function renderPassTaskNote(
+  order: Pick<RoundOrder, "pass_plan" | "pass_task_files">,
+): string {
   const files = order.pass_task_files;
   if (!files || files.length === 0) return "";
   const rows = files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`);

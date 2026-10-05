@@ -166,8 +166,7 @@ function runLoginScript(args: string[], auth: FakeContainer["auth"]): ProcessRes
   if (node !== "node" || flag !== "-e" || script === undefined)
     return { code: 1, stdout: "", stderr: "unexpected exec" };
   const file = join(root, `auth-${Math.random().toString(36).slice(2)}.json`);
-  if (auth !== undefined && auth !== false)
-    writeFileSync(file, auth === true ? CODEX_LOGIN : auth);
+  if (auth !== undefined && auth !== false) writeFileSync(file, auth === true ? CODEX_LOGIN : auth);
   const r = spawnSync(process.execPath, ["-e", script, file], { encoding: "utf8" });
   rmSync(file, { force: true });
   return { code: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
@@ -356,9 +355,9 @@ describe("tolerant config reads", () => {
     const { secretsHome } = await import("../src/install.js");
     const home = secretsHome({ ...process.env, HOME: "/h" });
     expect(resolveSecretsDir("", "/h")).toBe(home);
-    expect(
-      resolveSecretsDir('[github]\nsecrets_dir = "~/.config/quickreview-bot"\n', "/h"),
-    ).toBe(home);
+    expect(resolveSecretsDir('[github]\nsecrets_dir = "~/.config/quickreview-bot"\n', "/h")).toBe(
+      home,
+    );
     expect(expandHomePath("~", "/h")).toBe("/h");
     expect(expandHomePath("/abs", "/h")).toBe("/abs");
   });
@@ -526,7 +525,9 @@ describe("OAuth route", () => {
       },
     }).verifyAll();
     expect(report.ok).toBe(false);
-    expect(report.results[0]?.failures.join(" ")).toMatch(/no ChatGPT \(openai-codex\) OAuth login/);
+    expect(report.results[0]?.failures.join(" ")).toMatch(
+      /no ChatGPT \(openai-codex\) OAuth login/,
+    );
   });
 
   it("verify on the VM route probes the daemon container ON THE REVIEW HOST, over ssh — the companion stays local", async () => {
@@ -619,7 +620,10 @@ describe("API-key route", () => {
 
   it("run: a pi login for ANOTHER provider (or an empty auth.json) is not an OpenAI OAuth login — the key file decides", async () => {
     keyFileOnDisk();
-    for (const body of ["{}", '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}']) {
+    for (const body of [
+      "{}",
+      '{"anthropic":{"type":"oauth","access":"x","refresh":"y","expires":1}}',
+    ]) {
       hostLogin(body);
       const result = await engine().runStep(LLM_AUTH_STEP_ID);
       expect(result.ok, result.failures.join("; ")).toBe(true);

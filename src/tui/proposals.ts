@@ -734,16 +734,7 @@ export async function acceptProposal(
     const trailer = `${TRAILER_RATIFIED}: owner TUI accept of '${slug}' (${deps.today()})`;
     // `--only` with the paths: the commit is exactly this proposal. Anything
     // else already staged in the shared checkout stays staged, uncommitted.
-    await deps.git.run("git", [
-      "commit",
-      "-m",
-      subject,
-      "-m",
-      trailer,
-      "--only",
-      "--",
-      ...toAdd,
-    ]);
+    await deps.git.run("git", ["commit", "-m", subject, "-m", trailer, "--only", "--", ...toAdd]);
   } catch (err) {
     return {
       ok: false,

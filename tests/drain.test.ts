@@ -56,30 +56,34 @@ describe("drain state row", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("survives a simulated restart (new StateStore over the same file)", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const dbPath = join(dir, "state.db");
-    const first = new StateStore(dbPath);
-    expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0 });
-    expect(first.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
-    first.countDrainedDelivery();
-    expect(first.countDrainedDelivery()).toBe(2);
-    first.close();
+  it(
+    "survives a simulated restart (new StateStore over the same file)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const dbPath = join(dir, "state.db");
+      const first = new StateStore(dbPath);
+      expect(first.drainState()).toEqual({ draining: false, drained_deliveries: 0 });
+      expect(first.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
+      first.countDrainedDelivery();
+      expect(first.countDrainedDelivery()).toBe(2);
+      first.close();
 
-    const second = new StateStore(dbPath);
-    const state = second.drainState();
-    expect(state.draining).toBe(true);
-    expect(state.drained_deliveries).toBe(2);
-    if (!state.draining) throw new Error("unreachable: asserted draining above");
-    expect(state.since).not.toBeNull();
-    // Lifting returns the window's drop count; re-draining starts a fresh one.
-    expect(second.liftDrain("operator")).toEqual({ changed: true, dropped: 2 });
-    // Idempotent off: no change, and the counter (kept for the record until
-    // the next drain-on resets it) is still reported honestly.
-    expect(second.liftDrain("operator")).toEqual({ changed: false, dropped: 2 });
-    expect(second.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
-    expect(second.drainState().drained_deliveries).toBe(0);
-    second.close();
-  });
+      const second = new StateStore(dbPath);
+      const state = second.drainState();
+      expect(state.draining).toBe(true);
+      expect(state.drained_deliveries).toBe(2);
+      if (!state.draining) throw new Error("unreachable: asserted draining above");
+      expect(state.since).not.toBeNull();
+      // Lifting returns the window's drop count; re-draining starts a fresh one.
+      expect(second.liftDrain("operator")).toEqual({ changed: true, dropped: 2 });
+      // Idempotent off: no change, and the counter (kept for the record until
+      // the next drain-on resets it) is still reported honestly.
+      expect(second.liftDrain("operator")).toEqual({ changed: false, dropped: 2 });
+      expect(second.engageDrain({ issuer: "operator", expires_at: null }).outcome).toBe("engaged");
+      expect(second.drainState().drained_deliveries).toBe(0);
+      second.close();
+    },
+  );
 });
 
 // ---- webhook: hard stop ----------------------------------------------------
@@ -200,38 +204,42 @@ class PumpAdapter implements DispatchAdapter {
 }
 
 describe("dispatch pump while draining", () => {
-  it("starts nothing; the queued PR dispatches after the lift", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const store = new StateStore(":memory:");
-    store.upsertPr({
-      number: 7,
-      state: "queued",
-      head_sha: "sha7",
-      title: "PR 7",
-      author: "alice",
-      trigger_ts: "2026-08-25T09:00:00Z",
-      trigger_provenance: "human",
-      stale_recheck: 0,
-      migration_gate: 0,
-    });
-    const orders: unknown[] = [];
-    const hooks = {
-      async dispatchRound(order: unknown) {
-        orders.push(order);
-      },
-      async inject() {},
-      async injectOverseer() {},
-      async archiveAndClose() {},
-    };
-    store.engageDrain({ issuer: "operator", expires_at: null });
-    expect(await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks })).toEqual([]);
-    expect(orders).toHaveLength(0);
-    expect(store.runningRounds()).toHaveLength(0);
+  it(
+    "starts nothing; the queued PR dispatches after the lift",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const store = new StateStore(":memory:");
+      store.upsertPr({
+        number: 7,
+        state: "queued",
+        head_sha: "sha7",
+        title: "PR 7",
+        author: "alice",
+        trigger_ts: "2026-08-25T09:00:00Z",
+        trigger_provenance: "human",
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      const orders: unknown[] = [];
+      const hooks = {
+        async dispatchRound(order: unknown) {
+          orders.push(order);
+        },
+        async inject() {},
+        async injectOverseer() {},
+        async archiveAndClose() {},
+      };
+      store.engageDrain({ issuer: "operator", expires_at: null });
+      expect(await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks })).toEqual([]);
+      expect(orders).toHaveLength(0);
+      expect(store.runningRounds()).toHaveLength(0);
 
-    store.liftDrain("operator");
-    const dispatched = await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks });
-    expect(dispatched.map((o) => o.pr)).toEqual([7]);
-    store.close();
-  });
+      store.liftDrain("operator");
+      const dispatched = await dispatchOnce({ cfg, store, adapter: new PumpAdapter(), hooks });
+      expect(dispatched.map((o) => o.pr)).toEqual([7]);
+      store.close();
+    },
+  );
 });
 
 // ---- recheck ----------------------------------------------------------------

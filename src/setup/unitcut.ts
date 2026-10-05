@@ -42,7 +42,10 @@ export interface UnitCut {
 export function normalizeRoot(raw: string): string | null {
   let r = raw.trim().replace(/\\/g, "/");
   while (r.startsWith("./")) r = r.slice(2);
-  r = r.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/{2,}/g, "/");
+  r = r
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "")
+    .replace(/\/{2,}/g, "/");
   if (r === ".") r = "";
   if (r.split("/").some((s) => s === ".." || s === ".")) return null;
   return r;
@@ -64,7 +67,7 @@ export interface Assignment {
 /** Longest-prefix assignment of every listed file. */
 export function assign(cut: UnitCut, files: readonly string[]): Assignment {
   const claims: Array<{ root: string; unit: string | null }> = [
-    ...cut.units.flatMap((u) => u.roots.map((root) => ({ root, unit: u.name as string | null }))),
+    ...cut.units.flatMap((u) => u.roots.map((root) => ({ root, unit: u.name }))),
     ...cut.ignored.map((root) => ({ root, unit: null })),
   ].sort((a, b) => b.root.length - a.root.length);
   const byUnit = new Map<string, string[]>(cut.units.map((u) => [u.name, []]));
@@ -118,7 +121,8 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
     if (u.roots.length === 0) errors.push(`unit "${u.name}" owns no root`);
     for (const r of u.roots) {
       const owner = roots.get(r);
-      if (owner !== undefined) errors.push(`root "${r || "(repo root)"}" is claimed by both "${owner}" and "${u.name}"`);
+      if (owner !== undefined)
+        errors.push(`root "${r || "(repo root)"}" is claimed by both "${owner}" and "${u.name}"`);
       roots.set(r, u.name);
     }
   }
@@ -136,7 +140,9 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
     const a = assign(cut, files);
     for (const [name, owned] of a.byUnit) {
       if (owned.length === 0) {
-        blocking.push(`unit "${name}" ends up with no files — every file under its roots belongs to a deeper unit or is ignored`);
+        blocking.push(
+          `unit "${name}" ends up with no files — every file under its roots belongs to a deeper unit or is ignored`,
+        );
       }
     }
     if (a.unassigned.length > 0) {
@@ -151,10 +157,13 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
 /** Raw input (a tool call's JSON) → a normalised cut, or the reasons it is not
  * one. Normalisation never guesses: an unspellable root is an error, not a
  * silently-dropped entry. */
-export function normalizeCut(raw: unknown): { ok: true; cut: UnitCut } | { ok: false; errors: string[] } {
+export function normalizeCut(
+  raw: unknown,
+): { ok: true; cut: UnitCut } | { ok: false; errors: string[] } {
   const errors: string[] = [];
   const obj = (raw ?? {}) as { units?: unknown; ignored?: unknown };
-  if (!Array.isArray(obj.units)) return { ok: false, errors: ["`units` must be an array of {name, roots, kind?, note?}"] };
+  if (!Array.isArray(obj.units))
+    return { ok: false, errors: ["`units` must be an array of {name, roots, kind?, note?}"] };
   const units: Unit[] = [];
   for (const [i, u] of obj.units.entries()) {
     const unit = (u ?? {}) as { name?: unknown; roots?: unknown; kind?: unknown; note?: unknown };
@@ -171,7 +180,10 @@ export function normalizeCut(raw: unknown): { ok: true; cut: UnitCut } | { ok: f
     units.push({
       name: unit.name.trim(),
       roots,
-      kind: typeof unit.kind === "string" && KINDS.has(unit.kind as UnitKind) ? (unit.kind as UnitKind) : "custom",
+      kind:
+        typeof unit.kind === "string" && KINDS.has(unit.kind as UnitKind)
+          ? (unit.kind as UnitKind)
+          : "custom",
       note: typeof unit.note === "string" ? unit.note.trim() : "",
     });
   }
@@ -181,7 +193,8 @@ export function normalizeCut(raw: unknown): { ok: true; cut: UnitCut } | { ok: f
       errors.push("`ignored` must be an array of repo-relative paths");
     } else {
       ignored = normalizeRoots(obj.ignored as string[], "ignored", errors);
-      if (ignored.includes("")) errors.push("the repo root cannot be ignored — that would leave nothing to review");
+      if (ignored.includes(""))
+        errors.push("the repo root cannot be ignored — that would leave nothing to review");
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: { units, ignored } };
@@ -236,12 +249,15 @@ export const ADJUST_OPS = [
 ] as const;
 
 function clone(cut: UnitCut): UnitCut {
-  return { units: cut.units.map((u) => ({ ...u, roots: [...u.roots] })), ignored: [...cut.ignored] };
+  return {
+    units: cut.units.map((u) => ({ ...u, roots: [...u.roots] })),
+    ignored: [...cut.ignored],
+  };
 }
 
 function strings(v: unknown): string[] | null {
   if (typeof v === "string") return [v];
-  return Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null;
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v : null;
 }
 
 /**
@@ -250,12 +266,18 @@ function strings(v: unknown): string[] | null {
  * The structural check of the RESULT is the caller's (`checkCut`) — an op
  * sequence may pass through an invalid intermediate state (swap two names).
  */
-export function applyOps(cut: UnitCut, ops: readonly unknown[]): { ok: true; cut: UnitCut } | { ok: false; errors: string[] } {
+export function applyOps(
+  cut: UnitCut,
+  ops: readonly unknown[],
+): { ok: true; cut: UnitCut } | { ok: false; errors: string[] } {
   const next = clone(cut);
   const errors: string[] = [];
   const unit = (name: unknown, i: number): Unit | null => {
     const u = typeof name === "string" ? next.units.find((x) => x.name === name) : undefined;
-    if (!u) errors.push(`ops[${i}]: no unit named ${JSON.stringify(name)} — units: ${next.units.map((x) => x.name).join(", ")}`);
+    if (!u)
+      errors.push(
+        `ops[${i}]: no unit named ${JSON.stringify(name)} — units: ${next.units.map((x) => x.name).join(", ")}`,
+      );
     return u ?? null;
   };
   const rootsOf = (v: unknown, i: number): string[] | null => {
@@ -287,7 +309,10 @@ export function applyOps(cut: UnitCut, ops: readonly unknown[]): { ok: true; cut
           next.units.push({
             name: o.name.trim(),
             roots,
-            kind: typeof o.kind === "string" && KINDS.has(o.kind as UnitKind) ? (o.kind as UnitKind) : "custom",
+            kind:
+              typeof o.kind === "string" && KINDS.has(o.kind as UnitKind)
+                ? (o.kind as UnitKind)
+                : "custom",
             note: typeof o.note === "string" ? o.note.trim() : "added by the operator",
           });
         }
@@ -310,7 +335,9 @@ export function applyOps(cut: UnitCut, ops: readonly unknown[]): { ok: true; cut
         const keep = members.find((m) => m!.name === into) ?? members[0]!;
         keep.roots = [...new Set(members.flatMap((m) => m!.roots))];
         keep.name = into;
-        keep.note = keep.note ? `${keep.note}; merged from ${names.join(", ")}` : `merged from ${names.join(", ")}`;
+        keep.note = keep.note
+          ? `${keep.note}; merged from ${names.join(", ")}`
+          : `merged from ${names.join(", ")}`;
         next.units = next.units.filter((x) => x === keep || !members.includes(x));
         break;
       }
@@ -356,7 +383,9 @@ export function applyOps(cut: UnitCut, ops: readonly unknown[]): { ok: true; cut
         break;
       }
       default:
-        errors.push(`ops[${i}]: unknown op ${JSON.stringify(o.op)} — one of ${ADJUST_OPS.join(", ")}`);
+        errors.push(
+          `ops[${i}]: unknown op ${JSON.stringify(o.op)} — one of ${ADJUST_OPS.join(", ")}`,
+        );
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, cut: next };
@@ -410,7 +439,8 @@ export function splitUnit(
 ): CasePlan[] {
   const sorted = [...files].sort();
   const size = new Map(sorted.map((f) => [f, Math.max(0, linesOf(f))]));
-  const fits = (n: number, lines: number): boolean => n <= budget.maxFiles && lines <= budget.maxLines;
+  const fits = (n: number, lines: number): boolean =>
+    n <= budget.maxFiles && lines <= budget.maxLines;
   const total = (fs: readonly string[]): number => fs.reduce((n, f) => n + size.get(f)!, 0);
 
   const pieces = (fs: string[], depth: number): Piece[] => {

@@ -376,7 +376,10 @@ describe("sweepGroups", () => {
       2,
       500,
     );
-    expect(groups).toEqual([["src/a.py", "src/b.py"], ["tests/test_a.py", "docs/guide.md"]]);
+    expect(groups).toEqual([
+      ["src/a.py", "src/b.py"],
+      ["tests/test_a.py", "docs/guide.md"],
+    ]);
     expect(sweepGroups([f("README.md", 20), f("docs/x.rst", 5)], 6).groups).toEqual([]);
   });
 

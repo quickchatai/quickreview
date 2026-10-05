@@ -116,7 +116,13 @@ describe("[posting] — parse and validation", () => {
   });
 
   it("the withhold words are in the findings-record vocabulary", () => {
-    for (const w of ["over-budget", "nits-off", "questions-off", "question-not-blocking", "repeat-site"])
+    for (const w of [
+      "over-budget",
+      "nits-off",
+      "questions-off",
+      "question-not-blocking",
+      "repeat-site",
+    ])
       expect(isKnownVocabularyWord(w)).toBe(true);
   });
 });
@@ -179,7 +185,14 @@ describe("the shipped snappy profile", () => {
       cfg,
       row: { number: 7, title: "t", head_sha: "abc" } as unknown as PrStateRow,
       files: [
-        { filename: "src/a.ts", status: "modified", additions: 300, deletions: 0, changes: 300, patch: "@@ -1 +1 @@\n+x\n" },
+        {
+          filename: "src/a.ts",
+          status: "modified",
+          additions: 300,
+          deletions: 0,
+          changes: 300,
+          patch: "@@ -1 +1 @@\n+x\n",
+        },
       ] as unknown as PrFileEntry[],
       roundId: 1,
       roundNo: 1,
@@ -191,7 +204,12 @@ describe("the shipped snappy profile", () => {
     });
     expect(order.posting_policy).toEqual(SNAPPY);
     const lenses = order.pass_plan.map((p) => p.lens);
-    for (const off of ["pass-maintainability", "pass-duplication", "pass-abstraction", "pass-consistency"])
+    for (const off of [
+      "pass-maintainability",
+      "pass-duplication",
+      "pass-abstraction",
+      "pass-consistency",
+    ])
       expect(lenses).not.toContain(off);
     const text = renderRoundPrompt(
       readFileSync(join(sandbox, "prompts", "round-first.md"), "utf8"),
@@ -228,7 +246,11 @@ describe("the shipped snappy profile", () => {
 });
 
 describe("selectPosted — the deterministic cut", () => {
-  const v = (cls: PolicyView["cls"], severity: string | null, key: string) => ({ cls, severity, key });
+  const v = (cls: PolicyView["cls"], severity: string | null, key: string) => ({
+    cls,
+    severity,
+    key,
+  });
   const items = [
     v("nit", "nit", "n1"),
     v("question", "P3", "q-minor"),
@@ -265,10 +287,26 @@ describe("selectPosted — the deterministic cut", () => {
   });
 });
 
-const PATCH = "@@ -1,3 +1,30 @@\n" + Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join("\n") + "\n";
+const PATCH =
+  "@@ -1,3 +1,30 @@\n" + Array.from({ length: 30 }, (_, i) => `+line ${i + 1}`).join("\n") + "\n";
 
-function finding(title: string, severity: Finding["severity"], line: number, extra: Partial<Finding> = {}): Finding {
-  return { severity, confidence: 0.9, path: "src/a.ts", line, side: "RIGHT", title, body: `${title} body.`, lens: "pass-baseline", ...extra };
+function finding(
+  title: string,
+  severity: Finding["severity"],
+  line: number,
+  extra: Partial<Finding> = {},
+): Finding {
+  return {
+    severity,
+    confidence: 0.9,
+    path: "src/a.ts",
+    line,
+    side: "RIGHT",
+    title,
+    body: `${title} body.`,
+    lens: "pass-baseline",
+    ...extra,
+  };
 }
 
 describe("production posting (src/posting.ts) enforces the policy", () => {
@@ -303,8 +341,16 @@ describe("production posting (src/posting.ts) enforces the policy", () => {
     const r = assembleReview({ ...base, policy: SNAPPY });
     expect(r.payload.comments.length).toBeLessThanOrEqual(4);
     const posted = r.payload.comments.map((c) => c.body.split("\n")[0]);
-    for (const t of ["Null deref on empty list", "Off by one in loop", "Is the retry idempotent?", "Missing timeout on fetch"])
-      expect(posted.some((p) => p?.includes(t)), t).toBe(true);
+    for (const t of [
+      "Null deref on empty list",
+      "Off by one in loop",
+      "Is the retry idempotent?",
+      "Missing timeout on fetch",
+    ])
+      expect(
+        posted.some((p) => p?.includes(t)),
+        t,
+      ).toBe(true);
     const words = r.withheld.map((w) => [w.finding.title, w.word]);
     expect(words).toContainEqual(["Rename x to count", "nits-off"]);
     expect(words).toContainEqual(["Consider a helper", "question-not-blocking"]);
@@ -324,7 +370,12 @@ describe("production posting (src/posting.ts) enforces the policy", () => {
   });
 });
 
-function caseDir(files: { comments: unknown; review: string; record: unknown; outcome?: unknown }): string {
+function caseDir(files: {
+  comments: unknown;
+  review: string;
+  record: unknown;
+  outcome?: unknown;
+}): string {
   const d = join(dir, "case");
   mkdirSync(d, { recursive: true });
   writeFileSync(join(d, "comments.json"), JSON.stringify(files.comments));
@@ -340,14 +391,49 @@ function caseDir(files: { comments: unknown; review: string; record: unknown; ou
 const tail = (sev: string) => `\n\n_${sev} · confidence 0.90 · lens pass-baseline_`;
 const SESSION = {
   comments: [
-    { path: "src/a.ts", line: 3, side: "RIGHT", body: `[blocker] Null deref\n\nCrashes.${tail("P1")}` },
+    {
+      path: "src/a.ts",
+      line: 3,
+      side: "RIGHT",
+      body: `[blocker] Null deref\n\nCrashes.${tail("P1")}`,
+    },
     { path: "src/a.ts", line: 4, side: "RIGHT", body: `[nit] Rename x\n\nRename.${tail("nit")}` },
-    { path: "src/a.ts", line: 5, side: "RIGHT", body: `[question] Retry idempotent?\n\nMaybe.${tail("P2")}` },
-    { path: "src/a.ts", line: 6, side: "RIGHT", body: `[question] Name it better?\n\nHm.${tail("P3")}` },
-    { path: "src/a.ts", line: 20, side: "RIGHT", body: `[blocker] Off by one\n\nLoop.${tail("P2")}` },
-    { path: "src/b.ts", line: 9, side: "RIGHT", body: `[blocker] Off by one\n\nLoop again.${tail("P2")}` },
-    { path: "src/a.ts", line: 30, side: "RIGHT", body: `[question] Timeout?\n\nNo timeout.${tail("P2")}` },
-    { path: "src/a.ts", line: 40, side: "RIGHT", body: `[question] Error unchecked?\n\nWrite.${tail("P1")}` },
+    {
+      path: "src/a.ts",
+      line: 5,
+      side: "RIGHT",
+      body: `[question] Retry idempotent?\n\nMaybe.${tail("P2")}`,
+    },
+    {
+      path: "src/a.ts",
+      line: 6,
+      side: "RIGHT",
+      body: `[question] Name it better?\n\nHm.${tail("P3")}`,
+    },
+    {
+      path: "src/a.ts",
+      line: 20,
+      side: "RIGHT",
+      body: `[blocker] Off by one\n\nLoop.${tail("P2")}`,
+    },
+    {
+      path: "src/b.ts",
+      line: 9,
+      side: "RIGHT",
+      body: `[blocker] Off by one\n\nLoop again.${tail("P2")}`,
+    },
+    {
+      path: "src/a.ts",
+      line: 30,
+      side: "RIGHT",
+      body: `[question] Timeout?\n\nNo timeout.${tail("P2")}`,
+    },
+    {
+      path: "src/a.ts",
+      line: 40,
+      side: "RIGHT",
+      body: `[question] Error unchecked?\n\nWrite.${tail("P1")}`,
+    },
   ],
   review: [
     "This PR adds a loader that reads files. It crashes on empty input.",
@@ -379,10 +465,44 @@ const SESSION = {
     round_no: 1,
     comments_posted: 8,
     findings: [
-      { id: "f1", path: "src/a.ts", line: 3, lens: "pass-baseline", severity: "P1", disposition: "posted", posted_as: "blocker" },
-      { id: "f2", path: "src/a.ts", line: 4, lens: "pass-style", severity: "nit", disposition: "posted", posted_as: "nit", request: "rename" },
-      { id: "f3", path: "src/c.ts", line: 7, lens: "pass-concurrency", severity: "P2", disposition: "posted", posted_as: "question", title: "Body-only race" },
-      { id: "f4", path: "src/a.ts", line: 40, lens: "pass-baseline", severity: "P1", disposition: "posted", posted_as: "question" },
+      {
+        id: "f1",
+        path: "src/a.ts",
+        line: 3,
+        lens: "pass-baseline",
+        severity: "P1",
+        disposition: "posted",
+        posted_as: "blocker",
+      },
+      {
+        id: "f2",
+        path: "src/a.ts",
+        line: 4,
+        lens: "pass-style",
+        severity: "nit",
+        disposition: "posted",
+        posted_as: "nit",
+        request: "rename",
+      },
+      {
+        id: "f3",
+        path: "src/c.ts",
+        line: 7,
+        lens: "pass-concurrency",
+        severity: "P2",
+        disposition: "posted",
+        posted_as: "question",
+        title: "Body-only race",
+      },
+      {
+        id: "f4",
+        path: "src/a.ts",
+        line: 40,
+        lens: "pass-baseline",
+        severity: "P1",
+        disposition: "posted",
+        posted_as: "question",
+      },
     ],
   },
 };
@@ -396,7 +516,9 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
       outcome: { verdict: "REQUEST_CHANGES", summary: "s" },
       policy: SNAPPY,
     });
-    const kept = (out.comments as Array<{ path: string; line: number }>).map((c) => `${c.path}:${c.line}`);
+    const kept = (out.comments as Array<{ path: string; line: number }>).map(
+      (c) => `${c.path}:${c.line}`,
+    );
     // blockers a:3 and a:20 (b:9 is a repeat site of a:20), then the strongest questions
     expect(kept).toContain("src/a.ts:3");
     expect(kept).toContain("src/a.ts:20");
@@ -404,7 +526,9 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
     expect(kept).not.toContain("src/a.ts:4");
     expect(kept).not.toContain("src/a.ts:6");
     expect(out.report.kept).toBe(4);
-    const words = Object.fromEntries(out.report.withheld.map((w) => [`${w.path}:${w.line}`, w.word]));
+    const words = Object.fromEntries(
+      out.report.withheld.map((w) => [`${w.path}:${w.line}`, w.word]),
+    );
     expect(words["src/a.ts:4"]).toBe("nits-off");
     expect(words["src/a.ts:6"]).toBe("question-not-blocking");
     expect(words["src/b.ts:9"]).toBe("repeat-site");
@@ -466,9 +590,16 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
     const d = caseDir(SESSION);
     const report = enforceBenchPosting(d, SNAPPY);
     expect(report?.kept).toBe(4);
-    for (const f of ["comments.session.json", "review.session.md", "findings-record.session.json", "posting-policy.json"])
+    for (const f of [
+      "comments.session.json",
+      "review.session.md",
+      "findings-record.session.json",
+      "posting-policy.json",
+    ])
       expect(existsSync(join(d, f)), f).toBe(true);
-    expect(JSON.parse(readFileSync(join(d, "comments.session.json"), "utf8"))).toEqual(SESSION.comments);
+    expect(JSON.parse(readFileSync(join(d, "comments.session.json"), "utf8"))).toEqual(
+      SESSION.comments,
+    );
     const scored = collectComments(d).comments;
     expect(scored.length).toBe(4);
   });
@@ -555,7 +686,12 @@ describe("the budget: one root cause, the changed line first", () => {
       { path: "src/a.ts", line: 2, side: "RIGHT", body: `[blocker] B1\n\nx.${tail("P1")}` },
       { path: "src/a.ts", line: 3, side: "RIGHT", body: `[blocker] B2\n\nx.${tail("P1")}` },
       { path: "src/a.ts", line: 4, side: "RIGHT", body: `[blocker] B3\n\nx.${tail("P1")}` },
-      { path: "src/a.ts", line: 60, side: "RIGHT", body: `[question] Elsewhere?\n\nx.${tail("P2")}` },
+      {
+        path: "src/a.ts",
+        line: 60,
+        side: "RIGHT",
+        body: `[question] Elsewhere?\n\nx.${tail("P2")}`,
+      },
       { path: "src/a.ts", line: 9, side: "RIGHT", body: `[question] Operator?\n\nx.${tail("P2")}` },
     ];
     const run = (patches?: Record<string, string>) =>

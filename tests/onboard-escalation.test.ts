@@ -62,20 +62,24 @@ async function rerun(rule: string) {
 }
 
 describe("escalation step: a re-run never eats a hand-written rule", () => {
-  it("keeps a rule whose header is indented (valid TOML)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const cfg = await rerun(
-      [
-        "  [[escalation.rules]]",
-        '  name = "hand"',
-        '  to = "alice"',
-        '  why = "she wrote the billing module"',
-        '  paths = ["billing/**"]',
-        "",
-      ].join("\n"),
-    );
-    expect(cfg.escalation.rules.map((r) => r.name).sort()).toEqual(["hand", "onboarding:alice"]);
-    expect(cfg.escalation.rules.find((r) => r.name === "hand")!.paths).toEqual(["billing/**"]);
-  });
+  it(
+    "keeps a rule whose header is indented (valid TOML)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const cfg = await rerun(
+        [
+          "  [[escalation.rules]]",
+          '  name = "hand"',
+          '  to = "alice"',
+          '  why = "she wrote the billing module"',
+          '  paths = ["billing/**"]',
+          "",
+        ].join("\n"),
+      );
+      expect(cfg.escalation.rules.map((r) => r.name).sort()).toEqual(["hand", "onboarding:alice"]);
+      expect(cfg.escalation.rules.find((r) => r.name === "hand")!.paths).toEqual(["billing/**"]);
+    },
+  );
 
   it("keeps a rule whose header carries a trailing comment — once, not twice", async () => {
     const cfg = await rerun(

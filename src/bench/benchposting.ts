@@ -83,7 +83,10 @@ function classOf(tag: string): PolicyClass {
 }
 
 function postedClass(postedAs: string): PolicyClass {
-  const t = postedAs.trim().replace(/^\[|\]$/g, "").toLowerCase();
+  const t = postedAs
+    .trim()
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase();
   return t === "blocker" || t === "question" || t === "nit" ? t : "check";
 }
 
@@ -99,12 +102,15 @@ function str(v: unknown): string {
 }
 
 function lineOf(v: unknown): number | undefined {
-  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
+  const n =
+    typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 function normPath(p: unknown): string {
-  return str(p).trim().replace(/^\.?\/+/, "");
+  return str(p)
+    .trim()
+    .replace(/^\.?\/+/, "");
 }
 
 /** Remove each bullet naming `` `path:line` `` (and its indented
@@ -135,7 +141,12 @@ function dropBullets(md: string, refs: ReadonlySet<string>): string {
     if (/^###\s/.test(l)) {
       let j = i + 1;
       while (j < out.length && /^\s*$/.test(out[j] as string)) j++;
-      if (j >= out.length || /^#{1,3}\s/.test(out[j] as string) || /^_Automated review/.test(out[j] as string)) continue;
+      if (
+        j >= out.length ||
+        /^#{1,3}\s/.test(out[j] as string) ||
+        /^_Automated review/.test(out[j] as string)
+      )
+        continue;
     }
     cleaned.push(l);
   }
@@ -192,7 +203,7 @@ export function policeBenchOutput(args: {
       ? (structuredClone(args.record) as Record<string, unknown>)
       : null;
   const entries: Array<Record<string, unknown>> = Array.isArray(record?.["findings"])
-    ? (record!["findings"] as unknown[]).filter(
+    ? (record["findings"] as unknown[]).filter(
         (e): e is Record<string, unknown> => typeof e === "object" && e !== null,
       )
     : [];
@@ -229,9 +240,11 @@ export function policeBenchOutput(args: {
     const path = normPath(e["path"]);
     const line = lineOf(e["line"]);
     if (!path || line === undefined) continue;
-    if ([...inlineItems, ...items.filter((x) => x.source === "body")].some(
-      (c) => c.path === path && Math.abs(c.line - line) <= NEAR,
-    ))
+    if (
+      [...inlineItems, ...items.filter((x) => x.source === "body")].some(
+        (c) => c.path === path && Math.abs(c.line - line) <= NEAR,
+      )
+    )
       continue;
     items.push({
       source: "body",
@@ -318,7 +331,10 @@ export function policeBenchOutput(args: {
   }
 
   return {
-    comments: [...items.filter((i) => i.source === "inline" && kept.has(i)).map((i) => i.row), ...passthrough],
+    comments: [
+      ...items.filter((i) => i.source === "inline" && kept.has(i)).map((i) => i.row),
+      ...passthrough,
+    ],
     reviewMd,
     record: record ?? args.record,
     report: {
@@ -363,7 +379,8 @@ export function enforceBenchPosting(
   const comments = readJsonOr(cPath);
   const reviewMd = existsSync(rPath) ? readFileSync(rPath, "utf8") : "";
   const record = readJsonOr(fPath);
-  const outcome = readJsonOr(join(caseDir, CASE_FILES.outcome)) as Record<string, unknown> | undefined;
+  const outcome = readJsonOr(join(caseDir, CASE_FILES.outcome)) as
+    Record<string, unknown> | undefined;
   const out = policeBenchOutput({
     comments,
     reviewMd,

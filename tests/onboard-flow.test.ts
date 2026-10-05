@@ -287,14 +287,18 @@ const LAPTOP_INPUTS_ESCALATION: Inputs = {
 const SKIP = ["memory"];
 
 describe("the registered steps hand their choices to each other", () => {
-  it("drives preflight → topology → LLM → interview → App → ingress → slug, in order", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const engine = new OnboardingEngine(defaultSteps(), adapters());
-    const d = await drive(engine, LAPTOP_INPUTS, "app_slug_reconcile", SKIP);
-    const failed = [...d.results]
-      .filter(([, r]) => !r.ok)
-      .map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
-    expect(failed, "a step in the composed flow went red").toEqual([]);
-  });
+  it(
+    "drives preflight → topology → LLM → interview → App → ingress → slug, in order",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const engine = new OnboardingEngine(defaultSteps(), adapters());
+      const d = await drive(engine, LAPTOP_INPUTS, "app_slug_reconcile", SKIP);
+      const failed = [...d.results]
+        .filter(([, r]) => !r.ok)
+        .map(([id, r]) => `${id}: ${r.failures.join("; ")}`);
+      expect(failed, "a step in the composed flow went red").toEqual([]);
+    },
+  );
 
   // ---, and it is the lesson applied: the escalation step
   // reads `CHOICE_KEYS.configPath`, which only `config_fill` writes. A
@@ -367,19 +371,23 @@ describe("the registered steps hand their choices to each other", () => {
     expect(producedConfig().escalation.enabled).toBe(false);
   });
 
-  it("HANDOFF 1 — the repo the interview records reaches the App step", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const engine = new OnboardingEngine(defaultSteps(), adapters());
-    const d = await drive(engine, LAPTOP_INPUTS, GITHUB_APP_STEP_ID, SKIP);
+  it(
+    "HANDOFF 1 — the repo the interview records reaches the App step",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const engine = new OnboardingEngine(defaultSteps(), adapters());
+      const d = await drive(engine, LAPTOP_INPUTS, GITHUB_APP_STEP_ID, SKIP);
 
-    // Written by the interview…
-    expect(engine.choices()[CHOICE_KEYS.repo]).toBe(REPO);
-    // …and READ by the App step: it verified the installation on that owner
-    // and created the labels on that repository. Before this step
-    // refused here, because it read a key nothing wrote.
-    expect(d.results.get(GITHUB_APP_STEP_ID)!.ok).toBe(true);
-    expect(detail(d, GITHUB_APP_STEP_ID, "installation")).toContain("acme");
-    expect(calls).toContain(`POST /repos/${REPO}/labels`);
-  });
+      // Written by the interview…
+      expect(engine.choices()[CHOICE_KEYS.repo]).toBe(REPO);
+      // …and READ by the App step: it verified the installation on that owner
+      // and created the labels on that repository. Before this step
+      // refused here, because it read a key nothing wrote.
+      expect(d.results.get(GITHUB_APP_STEP_ID)!.ok).toBe(true);
+      expect(detail(d, GITHUB_APP_STEP_ID, "installation")).toContain("acme");
+      expect(calls).toContain(`POST /repos/${REPO}/labels`);
+    },
+  );
 
   it("HANDOFF 1b — the label NAMES the config carries reach the App step", async () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());

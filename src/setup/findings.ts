@@ -95,7 +95,16 @@ import type { StateFs } from "./engine.js";
 import { readings, type LedgerEntry, type Reading } from "./ledger.js";
 import type { ScanSeverity } from "./scan.js";
 import type { Reachability } from "../severity.js";
-import { FINDINGS_FILE, FINDINGS_VERSION, dismissedLookalike, lookalikeRank, parseFindingsFile, validityOf, type Validity, type ValidityView } from "./scanreport.js";
+import {
+  FINDINGS_FILE,
+  FINDINGS_VERSION,
+  dismissedLookalike,
+  lookalikeRank,
+  parseFindingsFile,
+  validityOf,
+  type Validity,
+  type ValidityView,
+} from "./scanreport.js";
 
 export { FINDINGS_FILE, FINDINGS_VERSION, dismissedLookalike, lookalikeRank };
 export type { Validity, ValidityView };
@@ -239,7 +248,20 @@ export interface FindingTicket {
 /** What a scan reports — a finding before the store gives it a history. */
 export type ReportedFinding = Omit<
   ScanFinding,
-  "state" | "first_seen" | "last_seen" | "seen" | "fixed" | "unreported" | "not_reproduced" | "aliases" | "lenses" | "merged" | "own_severity" | "dismissal" | "ticket" | "resembles_dismissed"
+  | "state"
+  | "first_seen"
+  | "last_seen"
+  | "seen"
+  | "fixed"
+  | "unreported"
+  | "not_reproduced"
+  | "aliases"
+  | "lenses"
+  | "merged"
+  | "own_severity"
+  | "dismissal"
+  | "ticket"
+  | "resembles_dismissed"
 >;
 
 // ---- near-duplicate collapse ----------------------------------------------------------
@@ -261,11 +283,14 @@ const STOPWORDS = new Set(
  * stopwords out, each stemmed to its first five characters (so
  * authorization/authority, read/reads, omit/omits agree). */
 function claimStems(claim: string): string[] {
-  return (claim.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length >= 3 && !STOPWORDS.has(w)).map((w) => w.slice(0, 5));
+  return (claim.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+    .map((w) => w.slice(0, 5));
 }
 
 const SEVERITY_ORDER: readonly ScanSeverity[] = ["P0", "P1", "P2", "P3", "nit"];
-const higher = (a: ScanSeverity, b: ScanSeverity): ScanSeverity => (SEVERITY_ORDER.indexOf(b) < SEVERITY_ORDER.indexOf(a) ? b : a);
+const higher = (a: ScanSeverity, b: ScanSeverity): ScanSeverity =>
+  SEVERITY_ORDER.indexOf(b) < SEVERITY_ORDER.indexOf(a) ? b : a;
 
 /**
  * Are `a` and `b` the same defect reported twice? Same file, same kind,
@@ -299,7 +324,10 @@ export function nearDuplicate(
  * fingerprint never catches a re-raise of what the operator already
  * dismissed; this says so. It decides nothing: the caller only flags.
  */
-function resemblingDismissal(stored: Iterable<ScanFinding>, r: Pick<ScanFinding, "fingerprint" | "path" | "kind" | "start" | "end" | "claim">): ResemblesDismissed | null {
+function resemblingDismissal(
+  stored: Iterable<ScanFinding>,
+  r: Pick<ScanFinding, "fingerprint" | "path" | "kind" | "start" | "end" | "claim">,
+): ResemblesDismissed | null {
   for (const d of stored) {
     if (d.state !== "dismissed" || d.fingerprint === r.fingerprint) continue;
     const sightings = [d, ...(d.merged ?? []).map((m) => ({ ...m, path: d.path, kind: d.kind }))];
@@ -316,12 +344,20 @@ function combinedDoubt(a: ReportedFinding | ScanFinding, b: ReportedFinding): Sc
   return a.doubt ?? b.doubt;
 }
 
-const VALIDITY_RANK: Record<ValidityView, number> = { confirmed: 3, likely: 2, doubtful: 1, unknown: 0 };
+const VALIDITY_RANK: Record<ValidityView, number> = {
+  confirmed: 3,
+  likely: 2,
+  doubtful: 1,
+  unknown: 0,
+};
 
 /** Two sightings of one defect: the best-supported tier wins (a confirmed
  * sighting outranks a doubt, as a clean survivor clears the doubt flag), and
  * its scenario with it. Unknown only when neither was judged. */
-function combinedValidity(a: ReportedFinding | ScanFinding, b: ReportedFinding): Pick<ScanFinding, "validity" | "scenario"> {
+function combinedValidity(
+  a: ReportedFinding | ScanFinding,
+  b: ReportedFinding,
+): Pick<ScanFinding, "validity" | "scenario"> {
   const best = VALIDITY_RANK[validityOf(b)] > VALIDITY_RANK[validityOf(a)] ? b : a;
   const v = validityOf(best);
   return { validity: v === "unknown" ? null : v, scenario: best.scenario ?? null };
@@ -332,9 +368,13 @@ function combinedValidity(a: ReportedFinding | ScanFinding, b: ReportedFinding):
  * its doubt, a confirmed/likely one clears it) — so a finding never reads
  * doubtful with no reason, nor confirmed while flagged "may not be valid".
  * With no tier on either side, the pre-tier doubt rule stands. */
-function combinedJudgement(a: ReportedFinding | ScanFinding, b: ReportedFinding): Pick<ScanFinding, "doubt" | "validity" | "scenario"> {
+function combinedJudgement(
+  a: ReportedFinding | ScanFinding,
+  b: ReportedFinding,
+): Pick<ScanFinding, "doubt" | "validity" | "scenario"> {
   const tiered = combinedValidity(a, b);
-  if (tiered.validity === null || tiered.validity === undefined) return { doubt: combinedDoubt(a, b), ...tiered };
+  if (tiered.validity === null || tiered.validity === undefined)
+    return { doubt: combinedDoubt(a, b), ...tiered };
   if (tiered.validity !== "doubtful") return { doubt: null, ...tiered };
   // Neither side ranks above doubtful here, so at least one IS doubtful.
   const src = validityOf(b) === "doubtful" ? b : a;
@@ -345,11 +385,24 @@ function combinedJudgement(a: ReportedFinding | ScanFinding, b: ReportedFinding)
  * the finding's validity: an exact re-sighting of the SAME code keeps the
  * judgement it already has rather than dropping a confirmed tier — or a
  * doubt — to unknown. Any judged sighting replaces it (the latest wins). */
-function judgementOf(known: ScanFinding, r: ReportedFinding): Pick<ScanFinding, "validated" | "doubt" | "validity" | "scenario"> {
+function judgementOf(
+  known: ScanFinding,
+  r: ReportedFinding,
+): Pick<ScanFinding, "validated" | "doubt" | "validity" | "scenario"> {
   if (r.validated || validityOf(r) !== "unknown") {
-    return { validated: r.validated, doubt: r.doubt, validity: r.validity ?? null, scenario: r.scenario ?? null };
+    return {
+      validated: r.validated,
+      doubt: r.doubt,
+      validity: r.validity ?? null,
+      scenario: r.scenario ?? null,
+    };
   }
-  return { validated: known.validated, doubt: known.doubt, validity: known.validity ?? null, scenario: known.scenario ?? null };
+  return {
+    validated: known.validated,
+    doubt: known.doubt,
+    validity: known.validity ?? null,
+    scenario: known.scenario ?? null,
+  };
 }
 
 /** Can a fresh near-duplicate fold into `f`? Only a live finding this very
@@ -367,7 +420,10 @@ function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
   return {
     ...once,
     lenses: [...new Set([...once.lenses!, ...(f.lenses ?? [])])],
-    merged: [...once.merged!, ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint))],
+    merged: [
+      ...once.merged!,
+      ...(f.merged ?? []).filter((m) => !once.merged!.some((x) => x.fingerprint === m.fingerprint)),
+    ],
     aliases: [...new Set([...once.aliases!, ...(f.aliases ?? [])])],
   };
 }
@@ -378,14 +434,25 @@ function absorbFinding(into: ScanFinding, f: ScanFinding): ScanFinding {
  * report-time collapse misses when the duplicate's case ran before the
  * sighting it duplicates. Mutates `byFp`; returns how many folded.
  */
-function collapseRun(byFp: Map<string, ScanFinding>, run: string, held: ReadonlySet<string>): number {
+function collapseRun(
+  byFp: Map<string, ScanFinding>,
+  run: string,
+  held: ReadonlySet<string>,
+): number {
   let folded = 0;
   const all = [...byFp.values()];
   for (const f of all) {
     if (!byFp.has(f.fingerprint)) continue;
-    const fresh = f.state === "new" && f.first_seen.run === run && !f.ticket && !f.dismissal && !held.has(f.fingerprint);
+    const fresh =
+      f.state === "new" &&
+      f.first_seen.run === run &&
+      !f.ticket &&
+      !f.dismissal &&
+      !held.has(f.fingerprint);
     if (!fresh) continue;
-    const into = [...byFp.values()].find((o) => o.fingerprint !== f.fingerprint && collapsible(o, run, held) && nearDuplicate(o, f));
+    const into = [...byFp.values()].find(
+      (o) => o.fingerprint !== f.fingerprint && collapsible(o, run, held) && nearDuplicate(o, f),
+    );
     if (!into) continue;
     const cur = byFp.get(f.fingerprint)!;
     byFp.delete(f.fingerprint);
@@ -396,7 +463,14 @@ function collapseRun(byFp: Map<string, ScanFinding>, run: string, held: Readonly
 }
 
 function sightingOf(r: ReportedFinding): MergedSighting {
-  return { fingerprint: r.fingerprint, lens: r.lens, start: r.start, end: r.end, severity: r.severity, claim: r.claim };
+  return {
+    fingerprint: r.fingerprint,
+    lens: r.lens,
+    start: r.start,
+    end: r.end,
+    severity: r.severity,
+    claim: r.claim,
+  };
 }
 
 /** The highest of a finding's own latest severity and each merged
@@ -409,7 +483,10 @@ function aggregateSeverity(own: ScanSeverity, merged: readonly MergedSighting[])
  * the content `r` read, so the content hash moves with it. */
 function absorb(into: ScanFinding, r: ReportedFinding): ScanFinding {
   const lenses = [...new Set([...(into.lenses ?? [into.lens]), r.lens])];
-  const merged = [...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint), sightingOf(r)];
+  const merged = [
+    ...(into.merged ?? []).filter((m) => m.fingerprint !== r.fingerprint),
+    sightingOf(r),
+  ];
   // Before anything collapsed into it, its severity IS its own; a record
   // stored before `own_severity` existed falls back to its aggregate.
   const own = into.own_severity ?? into.severity;
@@ -520,7 +597,8 @@ function returnedState(f: ScanFinding): FindingState {
 
 /** Is `f` already settled — fixed, or dismissed and stamped unreported? A
  * settled finding is out of play until a scan reports it again. */
-const settled = (f: ScanFinding): boolean => f.state === "fixed" || (f.state === "dismissed" && f.unreported != null);
+const settled = (f: ScanFinding): boolean =>
+  f.state === "fixed" || (f.state === "dismissed" && f.unreported != null);
 
 /**
  * Settle a finding a re-scan no longer reports — the ONE place every path
@@ -530,19 +608,39 @@ const settled = (f: ScanFinding): boolean => f.state === "fixed" || (f.state ===
  * any other becomes `fixed` (a promoted one's ticket then closes).
  * `null` when there was nothing to settle.
  */
-function settleUnreported(f: ScanFinding, at: Sighting): { finding: ScanFinding; as: "fixed" | "dismissed" } | null {
+function settleUnreported(
+  f: ScanFinding,
+  at: Sighting,
+): { finding: ScanFinding; as: "fixed" | "dismissed" } | null {
   if (f.state === "fixed" || settled(f)) return null;
   const where: Sighting = { run: at.run, sha: at.sha, at: at.at };
-  if (f.state === "dismissed") return { finding: { ...f, unreported: where, not_reproduced: null }, as: "dismissed" };
-  return { finding: { ...f, state: "fixed", fixed: { ...where, from: f.state }, unreported: null, not_reproduced: null }, as: "fixed" };
+  if (f.state === "dismissed")
+    return { finding: { ...f, unreported: where, not_reproduced: null }, as: "dismissed" };
+  return {
+    finding: {
+      ...f,
+      state: "fixed",
+      fixed: { ...where, from: f.state },
+      unreported: null,
+      not_reproduced: null,
+    },
+    as: "fixed",
+  };
 }
 
 /** The question over `unreported` × `fresh`, or null when nothing waits. */
-function questionOf(unreported: readonly string[], fresh: readonly string[], at: Sighting): MatchQuestion | null {
+function questionOf(
+  unreported: readonly string[],
+  fresh: readonly string[],
+  at: Sighting,
+): MatchQuestion | null {
   if (unreported.length === 0) return null;
   const u = [...new Set(unreported)].sort();
   const f = [...new Set(fresh)].sort();
-  const key = createHash("sha256").update(JSON.stringify({ u, f, run: at.run })).digest("hex").slice(0, 16);
+  const key = createHash("sha256")
+    .update(JSON.stringify({ u, f, run: at.run }))
+    .digest("hex")
+    .slice(0, 16);
   return { key, run: at.run, sha: at.sha, at: at.at, unreported: u, fresh: f };
 }
 
@@ -591,7 +689,11 @@ function settleQuestion(
  * Null when some lens has no such row. A ranged row counts only when its
  * range holds the finding's lines.
  */
-function silentReread(f: ScanFinding, rows: readonly LedgerEntry[], current: string | undefined): LedgerEntry | null {
+function silentReread(
+  f: ScanFinding,
+  rows: readonly LedgerEntry[],
+  current: string | undefined,
+): LedgerEntry | null {
   if (f.blob == null || (current !== undefined && current !== f.blob)) return null;
   let latest: LedgerEntry | null = null;
   for (const lens of lensesOf(f)) {
@@ -617,7 +719,10 @@ export class FindingsStore {
     try {
       text = this.state.read(FINDINGS_FILE);
     } catch (err) {
-      return { file: empty, error: `${FINDINGS_FILE} in ${this.state.location} cannot be read: ${String(err)}` };
+      return {
+        file: empty,
+        error: `${FINDINGS_FILE} in ${this.state.location} cannot be read: ${String(err)}`,
+      };
     }
     if (text === null) return { file: empty, error: null };
     try {
@@ -652,13 +757,17 @@ export class FindingsStore {
    * fingerprint or alias) and how many were collapsed. Throws when the stored file cannot be read — never
    * writes over it.
    */
-  report(reported: readonly ReportedFinding[], seen: Sighting): { added: number; matched: number; merged: number } {
+  report(
+    reported: readonly ReportedFinding[],
+    seen: Sighting,
+  ): { added: number; matched: number; merged: number } {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
     // An absorbed near-duplicate's fingerprint names the finding it joined.
     const aliasOf = new Map<string, string>();
-    for (const f of file.findings) for (const a of f.merged ?? []) aliasOf.set(a.fingerprint, f.fingerprint);
+    for (const f of file.findings)
+      for (const a of f.merged ?? []) aliasOf.set(a.fingerprint, f.fingerprint);
     const held = new Set(file.question?.unreported ?? []);
     let added = 0;
     let matched = 0;
@@ -671,13 +780,28 @@ export class FindingsStore {
         // The same sighting twice (one case reporting a duplicate) counts once.
         const again = known.last_seen.run === seen.run && known.last_seen.sha === seen.sha;
         const state: FindingState = known.state === "fixed" ? returnedState(known) : known.state;
-        const history = { state, fixed: null, unreported: null, not_reproduced: null, first_seen: known.first_seen, last_seen: seen, seen: again ? known.seen : known.seen + 1 };
+        const history = {
+          state,
+          fixed: null,
+          unreported: null,
+          not_reproduced: null,
+          first_seen: known.first_seen,
+          last_seen: seen,
+          seen: again ? known.seen : known.seen + 1,
+        };
         if (ownFp === r.fingerprint) {
           // A collapsed finding carries the highest severity its sightings now
           // give — its own latest and each absorbed one's latest, never a
           // stale maximum a re-scan has since lowered.
           const severity = aggregateSeverity(r.severity, known.merged ?? []);
-          byFp.set(ownFp, { ...known, ...r, ...judgementOf(known, r), severity, ...(known.merged ? { own_severity: r.severity } : {}), ...history });
+          byFp.set(ownFp, {
+            ...known,
+            ...r,
+            ...judgementOf(known, r),
+            severity,
+            ...(known.merged ? { own_severity: r.severity } : {}),
+            ...history,
+          });
         } else {
           // A sighting of an absorbed near-duplicate: the finding keeps its own
           // wording and position; the alias's record and the severity move.
@@ -695,14 +819,23 @@ export class FindingsStore {
         matched++;
         continue;
       }
-      const twin = [...byFp.values()].find((f) => collapsible(f, seen.run, held) && nearDuplicate(f, r));
+      const twin = [...byFp.values()].find(
+        (f) => collapsible(f, seen.run, held) && nearDuplicate(f, r),
+      );
       if (twin) {
         byFp.set(twin.fingerprint, absorb(twin, r));
         aliasOf.set(r.fingerprint, twin.fingerprint);
         merged++;
       } else {
         const lookalike = resemblingDismissal(byFp.values(), r);
-        byFp.set(r.fingerprint, { ...r, state: "new", first_seen: seen, last_seen: seen, seen: 1, ...(lookalike ? { resembles_dismissed: lookalike } : {}) });
+        byFp.set(r.fingerprint, {
+          ...r,
+          state: "new",
+          first_seen: seen,
+          last_seen: seen,
+          seen: 1,
+          ...(lookalike ? { resembles_dismissed: lookalike } : {}),
+        });
         added++;
       }
     }
@@ -747,10 +880,15 @@ export class FindingsStore {
     // and the findings in its unread ranges must not read as fixed.
     const newest = new Map<string, Reading>();
     for (const lens of new Set(args.rows.map((r) => r.lens))) {
-      for (const [path, r] of readings(args.rows, lens)) if (r.complete) newest.set(`${lens}\0${path}`, r);
+      for (const [path, r] of readings(args.rows, lens))
+        if (r.complete) newest.set(`${lens}\0${path}`, r);
     }
     const prior = file.question ?? null;
-    collapseRun(byFp, args.run.run, new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]));
+    collapseRun(
+      byFp,
+      args.run.run,
+      new Set([...(prior?.unreported ?? []), ...(prior?.fresh ?? [])]),
+    );
     const pending = new Set(prior?.unreported ?? []);
     const rereadBy = new Set<string>([args.run.run]);
     const unreported: string[] = [];
@@ -764,7 +902,8 @@ export class FindingsStore {
         // whose fresh findings might be it.
         const lenses = lensesOf(f);
         for (const r of args.rows) {
-          if (r.run !== f.last_seen.run && r.at >= f.last_seen.at && lenses.includes(r.lens)) rereadBy.add(r.run);
+          if (r.run !== f.last_seen.run && r.at >= f.last_seen.at && lenses.includes(r.lens))
+            rereadBy.add(r.run);
         }
         continue;
       }
@@ -793,7 +932,12 @@ export class FindingsStore {
         if (silent !== null && !(f.not_reproduced && f.not_reproduced.at >= silent.at)) {
           byFp.set(f.fingerprint, {
             ...f,
-            not_reproduced: { run: silent.run, sha: silent.sha, at: silent.at, count: (f.not_reproduced?.count ?? 0) + 1 },
+            not_reproduced: {
+              run: silent.run,
+              sha: silent.sha,
+              at: silent.at,
+              count: (f.not_reproduced?.count ?? 0) + 1,
+            },
           });
           notReproduced++;
         }
@@ -808,12 +952,21 @@ export class FindingsStore {
       .filter((f) => f.state !== "fixed" && rereadBy.has(f.first_seen.run))
       .map((f) => f.fingerprint);
     const at: Sighting = args.run;
-    const settledNow = settleQuestion(byFp, [...pending, ...unreported], [...(prior?.fresh ?? []), ...fresh], at);
+    const settledNow = settleQuestion(
+      byFp,
+      [...pending, ...unreported],
+      [...(prior?.fresh ?? []), ...fresh],
+      at,
+    );
     // A run that changed nothing about the question leaves it as it was: its
     // key must not move under a companion that is judging it right now.
-    const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
+    const same = (a: readonly string[], b: readonly string[]): boolean =>
+      a.length === b.length && a.every((x, i) => x === b[i]);
     const question =
-      prior !== null && settledNow.question !== null && same(settledNow.question.unreported, prior.unreported) && same(settledNow.question.fresh, prior.fresh)
+      prior !== null &&
+      settledNow.question !== null &&
+      same(settledNow.question.unreported, prior.unreported) &&
+      same(settledNow.question.fresh, prior.fresh)
         ? prior
         : settledNow.question;
     this.write(byFp.values(), question);
@@ -831,8 +984,18 @@ export class FindingsStore {
     const q = file.question ?? null;
     if (q === null) return { question: null, error };
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
-    const expand = (fps: readonly string[]): ScanFinding[] => fps.map((fp) => byFp.get(fp)).filter((f): f is ScanFinding => f !== undefined);
-    return { question: { key: q.key, run: q.run, sha: q.sha, unreported: expand(q.unreported), fresh: expand(q.fresh) }, error };
+    const expand = (fps: readonly string[]): ScanFinding[] =>
+      fps.map((fp) => byFp.get(fp)).filter((f): f is ScanFinding => f !== undefined);
+    return {
+      question: {
+        key: q.key,
+        run: q.run,
+        sha: q.sha,
+        unreported: expand(q.unreported),
+        fresh: expand(q.fresh),
+      },
+      error,
+    };
   }
 
   /**
@@ -846,11 +1009,18 @@ export class FindingsStore {
     const { file, error } = this.loadFile();
     if (error !== null) return { ok: false, errors: [error] };
     const q = file.question ?? null;
-    if (q === null) return { ok: false, errors: ["no match question is pending — nothing to judge"] };
+    if (q === null)
+      return { ok: false, errors: ["no match question is pending — nothing to judge"] };
     if (args.key !== q.key) {
-      return { ok: false, errors: [`the question moved since you read it (key ${String(args.key)}, now ${q.key}) — read it again`] };
+      return {
+        ok: false,
+        errors: [
+          `the question moved since you read it (key ${String(args.key)}, now ${q.key}) — read it again`,
+        ],
+      };
     }
-    if (args.pairs !== undefined && !Array.isArray(args.pairs)) return { ok: false, errors: ["`pairs` must be a list of {old, new}"] };
+    if (args.pairs !== undefined && !Array.isArray(args.pairs))
+      return { ok: false, errors: ["`pairs` must be a list of {old, new}"] };
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
     const pairs: MatchPair[] = [];
     const errors: string[] = [];
@@ -860,17 +1030,22 @@ export class FindingsStore {
       const p = raw as Partial<MatchPair> | null;
       const o = typeof p?.old === "string" ? p.old : "";
       const n = typeof p?.new === "string" ? p.new : "";
-      if (!q.unreported.includes(o)) errors.push(`${JSON.stringify(o)} is not an unreported finding of this question`);
+      if (!q.unreported.includes(o))
+        errors.push(`${JSON.stringify(o)} is not an unreported finding of this question`);
       else if (usedOld.has(o)) errors.push(`${o.slice(0, 12)} is paired twice`);
-      if (!q.fresh.includes(n)) errors.push(`${JSON.stringify(n)} is not a fresh finding of this question`);
+      if (!q.fresh.includes(n))
+        errors.push(`${JSON.stringify(n)} is not a fresh finding of this question`);
       else if (usedNew.has(n)) errors.push(`${n.slice(0, 12)} is paired twice`);
       const of = byFp.get(o);
       const nf = byFp.get(n);
-      if (of && nf && !shareLens(of, nf)) errors.push(`${o.slice(0, 12)} and ${n.slice(0, 12)} are different lenses' findings`);
+      if (of && nf && !shareLens(of, nf))
+        errors.push(`${o.slice(0, 12)} and ${n.slice(0, 12)} are different lenses' findings`);
       // Each side's ticket is a filed work item: a pair that would keep only
       // one of two different tickets would orphan the other.
       else if (of?.ticket && nf?.ticket && of.ticket.ref !== nf.ticket.ref) {
-        errors.push(`${o.slice(0, 12)} (${of.ticket.ref}) and ${n.slice(0, 12)} (${nf.ticket.ref}) each carry their own ticket — pairing would orphan one; leave them unpaired (the old one then settles as fixed and its ticket closes, the fresh one keeps its own)`);
+        errors.push(
+          `${o.slice(0, 12)} (${of.ticket.ref}) and ${n.slice(0, 12)} (${nf.ticket.ref}) each carry their own ticket — pairing would orphan one; leave them unpaired (the old one then settles as fixed and its ticket closes, the fresh one keeps its own)`,
+        );
       }
       usedOld.add(o);
       usedNew.add(n);
@@ -897,7 +1072,9 @@ export class FindingsStore {
         first_seen: o.first_seen,
         seen: o.seen + n.seen,
         aliases: [...new Set([...(o.aliases ?? []), old, ...(n.aliases ?? [])])],
-        ...(o.lenses || n.lenses ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] } : {}),
+        ...(o.lenses || n.lenses
+          ? { lenses: [...new Set([...(o.lenses ?? [o.lens]), ...(n.lenses ?? [n.lens])])] }
+          : {}),
         ...(o.merged || n.merged ? { merged: [...(o.merged ?? []), ...(n.merged ?? [])] } : {}),
         dismissal: o.dismissal ?? n.dismissal ?? null,
         ticket: triaged.ticket ?? null,
@@ -917,7 +1094,13 @@ export class FindingsStore {
       }
     }
     this.write(byFp.values(), null);
-    return { ok: true, matched, fixed, new: q.fresh.filter((fp) => !usedNew.has(fp)).length, dismissed_unreported: dismissed };
+    return {
+      ok: true,
+      matched,
+      fixed,
+      new: q.fresh.filter((fp) => !usedNew.has(fp)).length,
+      dismissed_unreported: dismissed,
+    };
   }
 
   /** The stored findings the filter keeps, most severe first — a finding
@@ -930,13 +1113,20 @@ export class FindingsStore {
       .filter(
         (f) =>
           (filter.state === undefined || f.state === filter.state) &&
-          (filter.lens === undefined || f.lens === filter.lens || (f.lenses ?? []).includes(filter.lens)) &&
+          (filter.lens === undefined ||
+            f.lens === filter.lens ||
+            (f.lenses ?? []).includes(filter.lens)) &&
           (filter.unit === undefined || f.unit === filter.unit) &&
           (filter.severity === undefined || f.severity === filter.severity) &&
           (filter.doubted === undefined || (f.doubt !== null) === filter.doubted) &&
           (filter.validity === undefined || validityOf(f) === filter.validity),
       )
-      .sort((a, b) => rank(a.severity) - rank(b.severity) || lookalikeRank(a) - lookalikeRank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start));
+      .sort(
+        (a, b) =>
+          rank(a.severity) - rank(b.severity) ||
+          lookalikeRank(a) - lookalikeRank(b) ||
+          (a.path < b.path ? -1 : a.path > b.path ? 1 : a.start - b.start),
+      );
     return { findings: kept, error };
   }
 
@@ -951,14 +1141,24 @@ export class FindingsStore {
     const { findings, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     const want = ref.trim().toLowerCase();
-    if (!/^[0-9a-f]{12,64}$/.test(want)) return { ok: false, errors: [`${JSON.stringify(ref)} is not a fingerprint (12+ hex characters)`] };
+    if (!/^[0-9a-f]{12,64}$/.test(want))
+      return {
+        ok: false,
+        errors: [`${JSON.stringify(ref)} is not a fingerprint (12+ hex characters)`],
+      };
     const exact = findings.find((f) => f.fingerprint === want || (f.aliases ?? []).includes(want));
     if (exact) return { ok: true, finding: exact };
-    const hits = findings.filter((f) => f.fingerprint.startsWith(want) || (f.aliases ?? []).some((a) => a.startsWith(want)));
+    const hits = findings.filter(
+      (f) => f.fingerprint.startsWith(want) || (f.aliases ?? []).some((a) => a.startsWith(want)),
+    );
     if (hits.length === 1) return { ok: true, finding: hits[0]! };
     return {
       ok: false,
-      errors: [hits.length === 0 ? `no stored finding has fingerprint ${want}` : `${want} matches ${hits.length} findings — give more of the fingerprint`],
+      errors: [
+        hits.length === 0
+          ? `no stored finding has fingerprint ${want}`
+          : `${want} matches ${hits.length} findings — give more of the fingerprint`,
+      ],
     };
   }
 
@@ -975,7 +1175,13 @@ export class FindingsStore {
     const { file, error } = this.loadFile();
     if (error !== null) return { ok: false, errors: [error] };
     const i = file.findings.findIndex((f) => f.fingerprint === fingerprint);
-    if (i < 0) return { ok: false, errors: [`finding ${fingerprint.slice(0, 12)} is no longer stored under that fingerprint — list the findings again`] };
+    if (i < 0)
+      return {
+        ok: false,
+        errors: [
+          `finding ${fingerprint.slice(0, 12)} is no longer stored under that fingerprint — list the findings again`,
+        ],
+      };
     const next = change(file.findings[i]!);
     if (typeof next === "string") return { ok: false, errors: [next] };
     file.findings[i] = next;

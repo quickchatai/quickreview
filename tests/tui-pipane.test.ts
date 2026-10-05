@@ -141,7 +141,11 @@ describe("keysToTmux", () => {
   });
 
   it("keeps a pasted multi-line block to one invocation per run", () => {
-    expect(t("line one\nline two")).toEqual([["-l", "--", "line one"], ["Enter"], ["-l", "--", "line two"]]);
+    expect(t("line one\nline two")).toEqual([
+      ["-l", "--", "line one"],
+      ["Enter"],
+      ["-l", "--", "line two"],
+    ]);
   });
 });
 

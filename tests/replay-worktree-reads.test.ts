@@ -41,8 +41,25 @@ const diff = [
   "-x = 1",
   "",
 ].join("\n");
-const tree: ReplayTree = { sha: "abc123", base: "def456", root: ROOT, diffPath: DIFF, diffLines: 12, files: parseUnifiedDiff(diff), lines: () => 2 };
-const pr: ReplayPr = { number: 7, title: "t", body: "b", state: "closed", merged: true, head_sha: "abc123", base_sha: "def456", merge_commit_sha: null };
+const tree: ReplayTree = {
+  sha: "abc123",
+  base: "def456",
+  root: ROOT,
+  diffPath: DIFF,
+  diffLines: 12,
+  files: parseUnifiedDiff(diff),
+  lines: () => 2,
+};
+const pr: ReplayPr = {
+  number: 7,
+  title: "t",
+  body: "b",
+  state: "closed",
+  merged: true,
+  head_sha: "abc123",
+  base_sha: "def456",
+  merge_commit_sha: null,
+};
 
 describe("every replay task names where to open each file", () => {
   it("the lens task carries each changed file's absolute worktree path, and says the cwd is not the worktree", () => {
@@ -58,8 +75,16 @@ describe("every replay task names where to open each file", () => {
   });
 
   it("a sweep row's focus files carry their absolute worktree paths", () => {
-    const task = replayLensPrompt(pr, tree, { lens: "pass-sweep", tier: "high" as never, focus: ["svc/auth/token.py"] });
-    expect(task).toMatch(new RegExp(`Your focus files \\(1\\):\\n- svc/auth/token.py — open ${ROOT}/svc/auth/token.py`));
+    const task = replayLensPrompt(pr, tree, {
+      lens: "pass-sweep",
+      tier: "high" as never,
+      focus: ["svc/auth/token.py"],
+    });
+    expect(task).toMatch(
+      new RegExp(
+        `Your focus files \\(1\\):\\n- svc/auth/token.py — open ${ROOT}/svc/auth/token.py`,
+      ),
+    );
   });
 
   it("the validator is told the same", () => {
@@ -77,12 +102,20 @@ describe("a read counts as reading the PR only when it resolved inside its workt
   });
 
   it("an absolute worktree read, a relative one that resolved inside, and the diff file are the PR", () => {
-    const reads = [`${ROOT}/svc/auth/token.py`, resolvedReadPath("state/setup/replay/trees/abc123/svc/x.py", APP), DIFF];
+    const reads = [
+      `${ROOT}/svc/auth/token.py`,
+      resolvedReadPath("state/setup/replay/trees/abc123/svc/x.py", APP),
+      DIFF,
+    ];
     expect(replayReads(reads, tree)).toEqual({ pr: reads, elsewhere: [] });
   });
 
   it("a grep over the whole worktree (its root, with or without the slash) reads the PR", () => {
-    const reads = [resolvedReadPath(ROOT, APP), resolvedReadPath(`${ROOT}/`, APP), resolvedReadPath(".", ROOT)];
+    const reads = [
+      resolvedReadPath(ROOT, APP),
+      resolvedReadPath(`${ROOT}/`, APP),
+      resolvedReadPath(".", ROOT),
+    ];
     expect(replayReads(reads, tree)).toEqual({ pr: reads, elsewhere: [] });
     // …but a grep over the app root is not.
     expect(replayReads([resolvedReadPath(".", APP)], tree)).toEqual({ pr: [], elsewhere: [APP] });

@@ -7,13 +7,21 @@ import { describe, expect, it } from "vitest";
 import { escapeControls, isBinaryContent, isBinaryPath } from "../src/setup/textsniff.js";
 
 const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0]),
-  Buffer.from([0x5c, 0x72, 0xa8, 0x66, 0, 0, 0x20, 0, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0xed, 0xc1, 0x01, 0x0d, 0, 0, 0, 0xc2, 0xa0]),
+  Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 1,
+    0, 0, 0, 1, 0, 8, 6, 0, 0, 0,
+  ]),
+  Buffer.from([
+    0x5c, 0x72, 0xa8, 0x66, 0, 0, 0x20, 0, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0xed, 0xc1, 0x01,
+    0x0d, 0, 0, 0, 0xc2, 0xa0,
+  ]),
 ]);
 
 describe("isBinaryContent", () => {
   it("a source file with one stray NUL is text — the eodpinwatch.ts shape: 20 KB, one NUL near byte 5850", () => {
-    expect(isBinaryContent(Buffer.from("export const k = `${a}\0${b}`;\n"), "src/k.ts")).toBe(false);
+    expect(isBinaryContent(Buffer.from("export const k = `${a}\0${b}`;\n"), "src/k.ts")).toBe(
+      false,
+    );
     expect(isBinaryContent(Buffer.from("a\0b"), "x")).toBe(false);
     const body = "// a comment — with ünïcode\nexport function f(): void {}\n".repeat(400);
     const own = Buffer.from(body.slice(0, 5848) + "`${k}\0${h}`" + body.slice(5848));

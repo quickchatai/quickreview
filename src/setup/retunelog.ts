@@ -59,17 +59,30 @@ export function parseRetunes(text: string | null): RetunesRead {
   if (text === null) return { state: "absent" };
   try {
     const raw = JSON.parse(text) as Partial<RetunesFile> | null;
-    if (typeof raw !== "object" || raw === null || raw.version !== RETUNES_VERSION || !Array.isArray(raw.retunes)) {
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      raw.version !== RETUNES_VERSION ||
+      !Array.isArray(raw.retunes)
+    ) {
       throw new Error("not a version-1 re-tune log");
     }
     for (const r of raw.retunes) {
-      if (typeof r?.id !== "string" || typeof r.at !== "string" || !Array.isArray(r.changes) || !Array.isArray(r.files)) {
+      if (
+        typeof r?.id !== "string" ||
+        typeof r.at !== "string" ||
+        !Array.isArray(r.changes) ||
+        !Array.isArray(r.files)
+      ) {
         throw new Error("a re-tune has no id, time, changes or files");
       }
     }
     return { state: "ok", retunes: raw.retunes };
   } catch (err) {
-    return { state: "unreadable", error: `${RETUNES_FILE} is not a re-tune log this version reads (${err instanceof Error ? err.message : String(err)})` };
+    return {
+      state: "unreadable",
+      error: `${RETUNES_FILE} is not a re-tune log this version reads (${err instanceof Error ? err.message : String(err)})`,
+    };
   }
 }
 

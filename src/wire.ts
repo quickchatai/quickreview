@@ -28,7 +28,12 @@ import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
-import { FeedbackEngine, dayScopedRebuild, feedbackDayAddendum, type FeedbackEvent } from "./feedback.js";
+import {
+  FeedbackEngine,
+  dayScopedRebuild,
+  feedbackDayAddendum,
+  type FeedbackEvent,
+} from "./feedback.js";
 import {
   PASS_ADDENDA,
   buildAgents,

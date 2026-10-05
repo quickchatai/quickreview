@@ -137,7 +137,10 @@ export function windowStart(now: Date, months: number): string {
 /** The enumeration query: merged PRs from `since` (to `until`, both days
  * inclusive, when given), the App's own excluded. */
 export function mergedPrsQuery(cfg: Config, since: string, until?: string): string {
-  const range = until === undefined ? `>=${since.slice(0, 10)}` : `${since.slice(0, 10)}..${until.slice(0, 10)}`;
+  const range =
+    until === undefined
+      ? `>=${since.slice(0, 10)}`
+      : `${since.slice(0, 10)}..${until.slice(0, 10)}`;
   return `repo:${cfg.github.repo} is:pr is:merged merged:${range} -author:app/${cfg.github.app_slug}`;
 }
 
@@ -153,7 +156,8 @@ export function mergedPrsQuery(cfg: Config, since: string, until?: string): stri
 export function mergedPrsQueries(cfg: Config, now: Date, months: number): string[] {
   if (months <= 1) return [mergedPrsQuery(cfg, windowStart(now, months))];
   const out: string[] = [];
-  for (let m = months; m > 1; m--) out.push(mergedPrsQuery(cfg, windowStart(now, m), windowStart(now, m - 1)));
+  for (let m = months; m > 1; m--)
+    out.push(mergedPrsQuery(cfg, windowStart(now, m), windowStart(now, m - 1)));
   out.push(mergedPrsQuery(cfg, windowStart(now, 1)));
   return out;
 }
@@ -180,18 +184,38 @@ export function humanCommentsOf(pr: PrReviews, cfg: Config): HumanComment[] {
   for (const r of pr.reviews) {
     const reviewer = humanReviewer(r.author, pr, cfg);
     if (reviewer !== null && keep(r.body)) {
-      out.push({ pr: pr.number, merged_at: pr.merged_at, kind: "review", state: r.state, path: null, author: reviewer, body: clip(r.body) });
+      out.push({
+        pr: pr.number,
+        merged_at: pr.merged_at,
+        kind: "review",
+        state: r.state,
+        path: null,
+        author: reviewer,
+        body: clip(r.body),
+      });
     }
     for (const c of r.comments) {
       const who = humanReviewer(c.author, pr, cfg);
       if (who === null || !keep(c.body)) continue;
-      out.push({ pr: pr.number, merged_at: pr.merged_at, kind: "inline", state: r.state, path: c.path, author: who, body: clip(c.body) });
+      out.push({
+        pr: pr.number,
+        merged_at: pr.merged_at,
+        kind: "inline",
+        state: r.state,
+        path: c.path,
+        author: who,
+        body: clip(c.body),
+      });
     }
   }
   return out;
 }
 
-async function mapPool<T, R>(items: T[], workers: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapPool<T, R>(
+  items: T[],
+  workers: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -225,7 +249,9 @@ export async function collectReviewHistory(
       const found = await source.searchIssuesPaged(q, cfg.backfill.max_search_pages);
       for (const i of found) if (Number.isInteger(i.number)) numbers.add(i.number);
       if (found.length >= Math.min(cfg.backfill.max_search_pages * 100, 1000)) {
-        problems.push(`the search returned its cap (${found.length} PRs) for ${q} — some merged PRs in that month were not read`);
+        problems.push(
+          `the search returned its cap (${found.length} PRs) for ${q} — some merged PRs in that month were not read`,
+        );
       }
     } catch (err) {
       problems.push(`merged-PR search failed (${q}): ${String(err)}`);
@@ -235,7 +261,9 @@ export async function collectReviewHistory(
   let prs = [...numbers].sort((a, b) => b - a);
   const enumerated = prs.length;
   if (opts.limit !== undefined && opts.limit >= 0) prs = prs.slice(0, opts.limit);
-  log(`history: ${enumerated} merged PRs since ${since.slice(0, 10)}${prs.length !== enumerated ? ` · ${prs.length} after --limit` : ""}`);
+  log(
+    `history: ${enumerated} merged PRs since ${since.slice(0, 10)}${prs.length !== enumerated ? ` · ${prs.length} after --limit` : ""}`,
+  );
 
   let scanned = 0;
   let missing = 0;
@@ -278,7 +306,9 @@ export async function collectReviewHistory(
     author: f.author,
     body: f.body === null ? null : clip(f.body),
   }));
-  log(`history: ${scanned} PRs read · ${comments.length} human comments · ${rounds.length} rounds · ${feedback.length} feedback signals`);
+  log(
+    `history: ${scanned} PRs read · ${comments.length} human comments · ${rounds.length} rounds · ${feedback.length} feedback signals`,
+  );
 
   return {
     kind: DIGEST_KIND,
@@ -311,7 +341,9 @@ const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInt
  * it. Structure only, and strict: a digest this version cannot read is
  * refused, never half-used.
  */
-export function parseDigest(text: string): { ok: true; digest: ReviewHistoryDigest } | { ok: false; error: string } {
+export function parseDigest(
+  text: string,
+): { ok: true; digest: ReviewHistoryDigest } | { ok: false; error: string } {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -320,11 +352,15 @@ export function parseDigest(text: string): { ok: true; digest: ReviewHistoryDige
   }
   const d = raw as Partial<ReviewHistoryDigest> | null;
   if (typeof d !== "object" || d === null) return { ok: false, error: "not an object" };
-  if (d.kind !== DIGEST_KIND) return { ok: false, error: `not a review history digest (kind ${JSON.stringify(d.kind)})` };
-  if (d.version !== DIGEST_VERSION) return { ok: false, error: `unknown digest version ${JSON.stringify(d.version)}` };
-  if (!isStr(d.repo) || !isStr(d.generated_at)) return { ok: false, error: "missing repo / generated_at" };
+  if (d.kind !== DIGEST_KIND)
+    return { ok: false, error: `not a review history digest (kind ${JSON.stringify(d.kind)})` };
+  if (d.version !== DIGEST_VERSION)
+    return { ok: false, error: `unknown digest version ${JSON.stringify(d.version)}` };
+  if (!isStr(d.repo) || !isStr(d.generated_at))
+    return { ok: false, error: "missing repo / generated_at" };
   const w = d.window;
-  if (!w || !isStr(w.since) || !isStr(w.until) || !isInt(w.months)) return { ok: false, error: "bad window" };
+  if (!w || !isStr(w.since) || !isStr(w.until) || !isInt(w.months))
+    return { ok: false, error: "bad window" };
   const h = d.human;
   if (
     !h ||
@@ -337,22 +373,47 @@ export function parseDigest(text: string): { ok: true; digest: ReviewHistoryDige
     return { ok: false, error: "bad human section" };
   }
   for (const [i, c] of h.comments.entries()) {
-    if (!c || !isInt(c.pr) || (c.kind !== "review" && c.kind !== "inline") || !isStr(c.author) || !isStr(c.body) || !isStrOrNull(c.path) || !isStr(c.state) || !isStrOrNull(c.merged_at)) {
+    if (
+      !c ||
+      !isInt(c.pr) ||
+      (c.kind !== "review" && c.kind !== "inline") ||
+      !isStr(c.author) ||
+      !isStr(c.body) ||
+      !isStrOrNull(c.path) ||
+      !isStr(c.state) ||
+      !isStrOrNull(c.merged_at)
+    ) {
       return { ok: false, error: `human.comments[${i}] is not a comment` };
     }
   }
   if (!Array.isArray(d.rounds)) return { ok: false, error: "no rounds array" };
   for (const [i, r] of d.rounds.entries()) {
-    if (!r || !isInt(r.pr) || !isInt(r.round_no) || typeof r.backfilled !== "boolean" || !isStrOrNull(r.summary) || !isStrOrNull(r.verdict) || !isStrOrNull(r.finished_at)) {
+    if (
+      !r ||
+      !isInt(r.pr) ||
+      !isInt(r.round_no) ||
+      typeof r.backfilled !== "boolean" ||
+      !isStrOrNull(r.summary) ||
+      !isStrOrNull(r.verdict) ||
+      !isStrOrNull(r.finished_at)
+    ) {
       return { ok: false, error: `rounds[${i}] is not a round` };
     }
   }
   if (!Array.isArray(d.feedback)) return { ok: false, error: "no feedback array" };
   for (const [i, f] of d.feedback.entries()) {
-    if (!f || !isInt(f.pr) || !isStr(f.kind) || !isStr(f.created_at) || !isStrOrNull(f.body) || !isStrOrNull(f.author)) {
+    if (
+      !f ||
+      !isInt(f.pr) ||
+      !isStr(f.kind) ||
+      !isStr(f.created_at) ||
+      !isStrOrNull(f.body) ||
+      !isStrOrNull(f.author)
+    ) {
       return { ok: false, error: `feedback[${i}] is not a feedback signal` };
     }
   }
-  if (!Array.isArray(d.problems) || !d.problems.every(isStr)) return { ok: false, error: "no problems array" };
+  if (!Array.isArray(d.problems) || !d.problems.every(isStr))
+    return { ok: false, error: "no problems array" };
   return { ok: true, digest: d as ReviewHistoryDigest };
 }

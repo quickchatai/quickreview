@@ -93,7 +93,10 @@ describe("defaults reproduce today's review", () => {
 
   it("the default config addenda and the default model map are unchanged", () => {
     // + the duplicate merge's validator rule, on by default since round 7 (docs/duplicate-merge.md)
-    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual(["validate-demote-not-kill", "dedup-group-validate"]);
+    expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
+      "validate-demote-not-kill",
+      "dedup-group-validate",
+    ]);
     // the shipped pins' variants carry the sol-high spec; no other lens is touched
     const pinned = passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers);
     const expected: Record<string, string> = {};
@@ -124,7 +127,10 @@ describe("defaults reproduce today's review", () => {
   it("a config with no [models.pass_tiers] table still gets the shipped pins; an entry replaces one", () => {
     expect(parseConfig(fixture).models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS });
     const lowered = parseConfig(fixture + `\n[models.pass_tiers]\n"pass-baseline" = "sol-med"\n`);
-    expect(lowered.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-baseline": "sol-med" });
+    expect(lowered.models.pass_tiers).toEqual({
+      ...DEFAULT_PASS_TIERS,
+      "pass-baseline": "sol-med",
+    });
     const row = buildPassPlan(lowered, LARGE).pass_plan.find((p) => p.lens === "pass-baseline")!;
     expect(row.tier).toBe("sol-med");
   });
@@ -268,7 +274,11 @@ describe("[models.pass_tiers]", () => {
     const ok = parseConfig(
       fixture + `\n[models.pass_tiers]\n"pass-sweep" = "sol-high"\n"pass-baseline" = "sol-high"\n`,
     );
-    expect(ok.models.pass_tiers).toEqual({ ...DEFAULT_PASS_TIERS, "pass-sweep": "sol-high", "pass-baseline": "sol-high" });
+    expect(ok.models.pass_tiers).toEqual({
+      ...DEFAULT_PASS_TIERS,
+      "pass-sweep": "sol-high",
+      "pass-baseline": "sol-high",
+    });
     const bad = (body: string) => () => parseConfig(fixture + `\n[models.pass_tiers]\n${body}\n`);
     expect(bad(`"pass-swep" = "sol-high"`)).toThrow(/unknown pass "pass-swep"/);
     expect(bad(`"pass-sweep" = "sol-max"`)).toThrow(/unknown tier/);

@@ -316,42 +316,54 @@ describe("historical dwell is kept, and reads as history", () => {
 describe("the compiled artifact agrees with the source", () => {
   const distPath = (rel: string): string => resolve(process.cwd(), "dist", rel);
 
-  it("the built glyph table and legend carry no retired state", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const model = (await import(distPath("src/tui/model.js"))) as {
-      STATE_GLYPHS: Record<string, string>;
-    };
-    const theme = (await import(distPath("src/tui/theme.js"))) as { legendLine: () => string };
-    const producible = producibleStates();
-    for (const state of Object.keys(model.STATE_GLYPHS))
-      expect([state, producible.has(state)]).toEqual([state, true]);
-    expect(stripAnsi(theme.legendLine())).not.toContain("needs-you");
-  });
+  it(
+    "the built glyph table and legend carry no retired state",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const model = (await import(distPath("src/tui/model.js"))) as {
+        STATE_GLYPHS: Record<string, string>;
+      };
+      const theme = (await import(distPath("src/tui/theme.js"))) as { legendLine: () => string };
+      const producible = producibleStates();
+      for (const state of Object.keys(model.STATE_GLYPHS))
+        expect([state, producible.has(state)]).toEqual([state, true]);
+      expect(stripAnsi(theme.legendLine())).not.toContain("needs-you");
+    },
+  );
 
-  it("the built digest view renders no awaiting panel and no zones", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const dt = (await import(distPath("src/tui/digesttab.js"))) as {
-      renderDigestTab: (
-        st: unknown,
-        dryRun: boolean,
-        today: string,
-        cols: number,
-        rows: number,
-      ) => { lines: string[]; zones: unknown[] };
-    };
-    const frame = dt.renderDigestTab(
-      { files: [], back: 0, scroll: 0, loaded: true },
-      false,
-      "2026-08-31",
-      120,
-      24,
-    );
-    expect(stripAnsi(frame.lines.join("\n"))).not.toContain("AWAITING YOU");
-    expect(frame.zones).toEqual([]);
-  });
+  it(
+    "the built digest view renders no awaiting panel and no zones",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const dt = (await import(distPath("src/tui/digesttab.js"))) as {
+        renderDigestTab: (
+          st: unknown,
+          dryRun: boolean,
+          today: string,
+          cols: number,
+          rows: number,
+        ) => { lines: string[]; zones: unknown[] };
+      };
+      const frame = dt.renderDigestTab(
+        { files: [], back: 0, scroll: 0, loaded: true },
+        false,
+        "2026-08-31",
+        120,
+        24,
+      );
+      expect(stripAnsi(frame.lines.join("\n"))).not.toContain("AWAITING YOU");
+      expect(frame.zones).toEqual([]);
+    },
+  );
 
-  it("the built installDigestHooks twin is gone, not merely unused", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const dt = (await import(distPath("src/tui/digesttab.js"))) as Record<string, unknown>;
-    expect(dt["installDigestHooks"]).toBeUndefined();
-  });
+  it(
+    "the built installDigestHooks twin is gone, not merely unused",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const dt = (await import(distPath("src/tui/digesttab.js"))) as Record<string, unknown>;
+      expect(dt["installDigestHooks"]).toBeUndefined();
+    },
+  );
 });
 
 describe("the always-zero metric is gone from the computation and from every surface", () => {

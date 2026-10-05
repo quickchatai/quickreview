@@ -1091,7 +1091,10 @@ export class ThreadDecisionWatcher {
           c.body.trim() === body,
       )?.id;
     } catch (err) {
-      this.deps.log?.(`pingpong: could not check #${pr} thread ${threadId} for a landed reply`, err);
+      this.deps.log?.(
+        `pingpong: could not check #${pr} thread ${threadId} for a landed reply`,
+        err,
+      );
       return undefined;
     }
   }

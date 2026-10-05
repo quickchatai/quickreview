@@ -22,13 +22,27 @@
 // Builds land in `<state home>/replay/agents/<side>/`, the old side's config
 // home in `<state home>/replay/home/old/`; both are rebuilt on every preview
 // and start, so a replay always reads the profiles as they are.
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseConfig, type Config } from "../config.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { HeuristicsExtension } from "../heuristics.js";
 import { PASS_ADDENDA, buildAgents, configAddenda, identityVars } from "../include.js";
-import { assertPathSegment, configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "../install.js";
+import {
+  assertPathSegment,
+  configHome,
+  locateConfig,
+  PROFILES_DIR,
+  type InstallEnv,
+} from "../install.js";
 import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "../lenstuning.js";
 import { applyProfilePosting, postingPolicyAddenda } from "../postingpolicy.js";
 import {
@@ -100,7 +114,10 @@ interface SideSource {
  * no profile to compare, no recorded write to compare against, a side that
  * would not load (the daemon's own check), a build that failed.
  */
-export function replaySides(deps: SidesDeps, req: SideRequest): { ok: true; sides: Record<SideName, ReplaySide> } | Refusal {
+export function replaySides(
+  deps: SidesDeps,
+  req: SideRequest,
+): { ok: true; sides: Record<SideName, ReplaySide> } | Refusal {
   let toml: string;
   let parsed: Config;
   try {
@@ -114,30 +131,52 @@ export function replaySides(deps: SidesDeps, req: SideRequest): { ok: true; side
   const home = { root: deps.root, env: deps.env };
   let newProfile = (req.new_profile ?? "").trim();
   if (newProfile === "") {
-    const status = profileStatus({ state: deps.state, profiles: home, memory: null, clock: deps.clock });
+    const status = profileStatus({
+      state: deps.state,
+      profiles: home,
+      memory: null,
+      clock: deps.clock,
+    });
     newProfile = "ok" in status ? "" : (status.profile ?? "");
   }
   if (newProfile === "") {
     return {
       ok: false,
-      errors: ["no profile to replay: setup has written none and the live config names none — finish the interview's write, or pass new_profile"],
+      errors: [
+        "no profile to replay: setup has written none and the live config names none — finish the interview's write, or pass new_profile",
+      ],
     };
   }
-  const newSource: SideSource = { profile: newProfile, env: deps.env, basis: `profile "${newProfile}" as it is now`, baseline: null };
+  const newSource: SideSource = {
+    profile: newProfile,
+    env: deps.env,
+    basis: `profile "${newProfile}" as it is now`,
+    baseline: null,
+  };
 
   const old = oldSource(deps, req.old, newProfile);
   if (!old.ok) return old;
 
   const sides = {} as Record<SideName, ReplaySide>;
-  for (const [name, src] of [["old", old.source], ["new", newSource]] as const) {
+  for (const [name, src] of [
+    ["old", old.source],
+    ["new", newSource],
+  ] as const) {
     if (src.profile !== "") {
       const check = checkProfile({ root: deps.root, env: src.env }, src.profile);
-      if (!check.ok) return { ok: false, errors: [`the ${name} side (${src.basis}) would not load:`, ...check.errors] };
+      if (!check.ok)
+        return {
+          ok: false,
+          errors: [`the ${name} side (${src.basis}) would not load:`, ...check.errors],
+        };
     }
     try {
       sides[name] = buildSide(deps, name, src, parsed);
     } catch (err) {
-      return { ok: false, errors: [`the ${name} side (${src.basis}) could not be built: ${clean(err)}`] };
+      return {
+        ok: false,
+        errors: [`the ${name} side (${src.basis}) could not be built: ${clean(err)}`],
+      };
     }
   }
   return { ok: true, sides };
@@ -151,7 +190,16 @@ function oldSource(
   newProfile: string,
 ): { ok: true; source: SideSource } | Refusal {
   const asked = (raw ?? "").trim();
-  if (asked === "none") return { ok: true, source: { profile: "", env: deps.env, basis: "no profile — the reviewer as shipped", baseline: null } };
+  if (asked === "none")
+    return {
+      ok: true,
+      source: {
+        profile: "",
+        env: deps.env,
+        basis: "no profile — the reviewer as shipped",
+        baseline: null,
+      },
+    };
   if (asked.startsWith("profile:")) {
     const name = asked.slice("profile:".length).trim();
     try {
@@ -159,12 +207,23 @@ function oldSource(
     } catch (err) {
       return { ok: false, errors: [clean(err)] };
     }
-    return { ok: true, source: { profile: name, env: deps.env, basis: `profile "${name}" as it is now`, baseline: null } };
+    return {
+      ok: true,
+      source: {
+        profile: name,
+        env: deps.env,
+        basis: `profile "${name}" as it is now`,
+        baseline: null,
+      },
+    };
   }
   const read = readBaselines(deps.state);
   if (read.state !== "ok") return { ok: false, errors: [read.error] };
   const known = read.baselines.map((b) => `${b.id} (${b.profile}, ${b.taken_at})`);
-  const b = asked === "" ? latestBaseline(read.baselines, newProfile) : (read.baselines.find((x) => x.id === asked) ?? null);
+  const b =
+    asked === ""
+      ? latestBaseline(read.baselines, newProfile)
+      : (read.baselines.find((x) => x.id === asked) ?? null);
   if (b === null) {
     return {
       ok: false,
@@ -180,7 +239,10 @@ function oldSource(
   // last): a file only a LATER write changed — a style guide redrafted after
   // `b` — must read as it did before `b`, not as it does now.
   const at = read.baselines.indexOf(b);
-  const unwind = read.baselines.slice(at).filter((x) => x.profile === b.profile).reverse();
+  const unwind = read.baselines
+    .slice(at)
+    .filter((x) => x.profile === b.profile)
+    .reverse();
   return restoreBaseline(deps, b, unwind);
 }
 
@@ -188,7 +250,11 @@ function oldSource(
  * the state home — the profiles as they read before that write. `unwind`
  * is every recorded write to `b.profile` from the newest down to `b`
  * itself, applied in that order. */
-function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly ProfileBaseline[] = [b]): { ok: true; source: SideSource } | Refusal {
+function restoreBaseline(
+  deps: SidesDeps,
+  b: ProfileBaseline,
+  unwind: readonly ProfileBaseline[] = [b],
+): { ok: true; source: SideSource } | Refusal {
   const out = join(deps.stateRoot, REPLAY_HOME_DIR);
   try {
     assertPathSegment("profile", b.profile);
@@ -218,22 +284,40 @@ function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly P
       }
     }
   } catch (err) {
-    return { ok: false, errors: [`the profile before write ${b.id} could not be put back together: ${clean(err)}`] };
+    return {
+      ok: false,
+      errors: [`the profile before write ${b.id} could not be put back together: ${clean(err)}`],
+    };
   }
   const env: InstallEnv = { ...deps.env, QCR_CONFIG_HOME: out };
   if (b.existed) {
-    return { ok: true, source: { profile: b.profile, env, basis: `profile "${b.profile}" before write ${b.id}`, baseline: b.id } };
+    return {
+      ok: true,
+      source: {
+        profile: b.profile,
+        env,
+        basis: `profile "${b.profile}" before write ${b.id}`,
+        baseline: b.id,
+      },
+    };
   }
   // The write CREATED the profile: before it, PR rounds used whatever the
   // live config named then.
   const then = b.config_named;
   if (then === null) {
-    return { ok: false, errors: [`before write ${b.id} the live config could not be read, so what reviewed then is unknown — pass old explicitly`] };
+    return {
+      ok: false,
+      errors: [
+        `before write ${b.id} the live config could not be read, so what reviewed then is unknown — pass old explicitly`,
+      ],
+    };
   }
   if (then === b.profile) {
     return {
       ok: false,
-      errors: [`before write ${b.id} the live config already named "${b.profile}", which did not exist yet — pass old explicitly ("none", or "profile:<name>")`],
+      errors: [
+        `before write ${b.id} the live config already named "${b.profile}", which did not exist yet — pass old explicitly ("none", or "profile:<name>")`,
+      ],
     };
   }
   return {
@@ -241,7 +325,10 @@ function restoreBaseline(deps: SidesDeps, b: ProfileBaseline, unwind: readonly P
     source: {
       profile: then,
       env,
-      basis: then === "" ? `no profile (before write ${b.id} created "${b.profile}")` : `profile "${then}" (the live config's, before write ${b.id} created "${b.profile}")`,
+      basis:
+        then === ""
+          ? `no profile (before write ${b.id} created "${b.profile}")`
+          : `profile "${then}" (the live config's, before write ${b.id} created "${b.profile}")`,
       baseline: b.id,
     },
   };
@@ -297,4 +384,3 @@ function buildSide(deps: SidesDeps, name: SideName, src: SideSource, parsed: Con
     },
   };
 }
-

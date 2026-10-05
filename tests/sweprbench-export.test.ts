@@ -29,16 +29,32 @@ function exportRun(results: object[], caseComments: object[]) {
   const data = join(run, "data");
   for (const sub of ["config_A", "config_B", "config_C"]) {
     mkdirSync(join(data, "contexts", sub), { recursive: true });
-    writeFileSync(join(data, "contexts", sub, "r__1.json"), JSON.stringify({ rendered: `ctx ${sub}` }));
+    writeFileSync(
+      join(data, "contexts", sub, "r__1.json"),
+      JSON.stringify({ rendered: `ctx ${sub}` }),
+    );
   }
   const set = join(run, "set.json");
   writeFileSync(set, JSON.stringify({ cases: [{ task_id: "r__1", instance_id: id }] }));
   const out = join(run, "out", "replay-table.json");
   execFileSync("python3", [
-    "bench/aacr/ext/sweprbench_export.py", "--run", run, "--set", set, "--data", data, "--out", out,
+    "bench/aacr/ext/sweprbench_export.py",
+    "--run",
+    run,
+    "--set",
+    set,
+    "--data",
+    data,
+    "--out",
+    out,
   ]);
   const answers = JSON.parse(readFileSync(join(run, "out", "quickreview-answers.json"), "utf8"));
-  return answers["r__1"].comments as { body: string; file: string | null; line: number | null; severity: string | null }[];
+  return answers["r__1"].comments as {
+    body: string;
+    file: string | null;
+    line: number | null;
+    severity: string | null;
+  }[];
 }
 
 describe("sweprbench_export.py", () => {
@@ -58,12 +74,27 @@ describe("sweprbench_export.py", () => {
     const items = exportRun(
       [],
       [
-        { path: "pkg.json", line: 87, side: "LEFT", body: "[question] Should the peers also become required?\n\n_P2 · confidence 0.92_" },
-        { path: "pkg.json", line: 12, side: "RIGHT", body: "[nit] already in the result file\n\n_P3 · confidence 1.00_" },
+        {
+          path: "pkg.json",
+          line: 87,
+          side: "LEFT",
+          body: "[question] Should the peers also become required?\n\n_P2 · confidence 0.92_",
+        },
+        {
+          path: "pkg.json",
+          line: 12,
+          side: "RIGHT",
+          body: "[nit] already in the result file\n\n_P3 · confidence 1.00_",
+        },
       ],
     );
     expect(items).toEqual([
-      { body: "[question] Should the peers also become required?\n\n_P2 · confidence 0.92_", file: "pkg.json", line: null, severity: "P2" },
+      {
+        body: "[question] Should the peers also become required?\n\n_P2 · confidence 0.92_",
+        file: "pkg.json",
+        line: null,
+        severity: "P2",
+      },
     ]);
   });
 });
@@ -75,7 +106,9 @@ describe("sweprbench_report.py", () => {
         "-c",
         "import sys; sys.path.insert(0, 'bench/aacr/ext'); import sweprbench_report as r; from pathlib import Path; print(r.set_label(Path(sys.argv[1])))",
         `/runs/${name}`,
-      ]).toString().trim();
+      ])
+        .toString()
+        .trim();
     expect(label("ext-r5-sweprbench-eval100.sweprbench")).toBe("eval100");
     expect(label("ext-g61-sweprbench-smoke10.sweprbench")).toBe("smoke10");
     expect(label("ext-x-sweprbench-smoke10.sweprbench-MOCK")).toBe("smoke10");
@@ -89,7 +122,9 @@ describe("sweprbench_report.py", () => {
         "import sys; sys.path.insert(0, 'bench/aacr/ext'); import sweprbench_report as r; from pathlib import Path; print(r.set_label(Path(sys.argv[1]), sys.argv[2]))",
         `/runs/${name}`,
         set,
-      ]).toString().trim();
+      ])
+        .toString()
+        .trim();
     expect(label("r7-dedup5-swepr.sweprbench", "dedup5-swepr")).toBe("dedup5-swepr");
     expect(label("ext-r5-sweprbench-eval100.sweprbench", "sweprbench-eval100")).toBe("eval100");
     const ext = readFileSync("bench/aacr/ext/ext.sh", "utf8");

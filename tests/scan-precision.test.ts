@@ -28,7 +28,9 @@ import { buildScanAgents } from "../src/setup/scanbuild.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const sandbox = join(import.meta.dirname, "..");
-const fixture: Config = parseConfig(readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"));
+const fixture: Config = parseConfig(
+  readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
+);
 
 let dir: string;
 let env: InstallEnv;
@@ -39,10 +41,16 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 function built(out: string): Map<string, string> {
-  return new Map(readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]));
+  return new Map(
+    readdirSync(out).map((f) => [f.replace(/\.md$/, ""), readFileSync(join(out, f), "utf8")]),
+  );
 }
 
-function prBuild(out: string, addenda: readonly PassAddendum[], ecosystem: "django" | "none"): Map<string, string> {
+function prBuild(
+  out: string,
+  addenda: readonly PassAddendum[],
+  ecosystem: "django" | "none",
+): Map<string, string> {
   buildAgents(join(sandbox, "agents"), join(dir, out), {
     root: sandbox,
     tiers: fixture.models.tiers,
@@ -66,13 +74,26 @@ describe("the scan precision addendum is a scan-mode registry entry", () => {
       "pass-concurrency",
     ]);
     const entry = PASS_ADDENDA.find((a) => a.id === "scan-precision");
-    expect(entry).toMatchObject({ mode: "scan", scope: SCAN_PRECISION_LENSES, text: SCAN_PRECISION_ADDENDUM });
+    expect(entry).toMatchObject({
+      mode: "scan",
+      scope: SCAN_PRECISION_LENSES,
+      text: SCAN_PRECISION_ADDENDUM,
+    });
     for (const lens of SCAN_PRECISION_LENSES) {
-      expect(addendaForPass(lens).map((a) => a.id), lens).not.toContain("scan-precision");
-      expect(addendaForPass(lens, PASS_ADDENDA, "django", "scan").map((a) => a.id), lens).toContain("scan-precision");
+      expect(
+        addendaForPass(lens).map((a) => a.id),
+        lens,
+      ).not.toContain("scan-precision");
+      expect(
+        addendaForPass(lens, PASS_ADDENDA, "django", "scan").map((a) => a.id),
+        lens,
+      ).toContain("scan-precision");
     }
     for (const other of ["pass-baseline", "pass-tests", VALIDATE_PASS]) {
-      expect(addendaForPass(other, PASS_ADDENDA, "django", "scan").map((a) => a.id), other).not.toContain("scan-precision");
+      expect(
+        addendaForPass(other, PASS_ADDENDA, "django", "scan").map((a) => a.id),
+        other,
+      ).not.toContain("scan-precision");
     }
   });
 
@@ -86,18 +107,22 @@ describe("the scan precision addendum is a scan-mode registry entry", () => {
 
 describe("the PR build does not change", () => {
   for (const ecosystem of ["django", "none"] as const) {
-    it(`is byte-identical with and without the entry (${ecosystem})`, { timeout: HEAVY_TIMEOUT_MS }, () => {
-      const withEntry = prBuild("with", PASS_ADDENDA, ecosystem);
-      const without = prBuild(
-        "without",
-        PASS_ADDENDA.filter((a) => a.id !== "scan-precision"),
-        ecosystem,
-      );
-      expect(withEntry.size).toBeGreaterThan(20);
-      expect([...withEntry.keys()].sort()).toEqual([...without.keys()].sort());
-      for (const [name, body] of withEntry) expect(body, name).toBe(without.get(name));
-      for (const [name, body] of withEntry) expect(body, name).not.toContain("Scan precision");
-    });
+    it(
+      `is byte-identical with and without the entry (${ecosystem})`,
+      { timeout: HEAVY_TIMEOUT_MS },
+      () => {
+        const withEntry = prBuild("with", PASS_ADDENDA, ecosystem);
+        const without = prBuild(
+          "without",
+          PASS_ADDENDA.filter((a) => a.id !== "scan-precision"),
+          ecosystem,
+        );
+        expect(withEntry.size).toBeGreaterThan(20);
+        expect([...withEntry.keys()].sort()).toEqual([...without.keys()].sort());
+        for (const [name, body] of withEntry) expect(body, name).toBe(without.get(name));
+        for (const [name, body] of withEntry) expect(body, name).not.toContain("Scan precision");
+      },
+    );
   }
 });
 
@@ -113,7 +138,9 @@ describe("the scan build carries it where the refuted findings came from", () =>
         seen.add(lens);
         expect(body, name).toContain(SCAN_PRECISION_ADDENDUM);
         // …before the anchor rule, which stays the final word on anchoring.
-        expect(body.indexOf(SCAN_PRECISION_ADDENDUM), name).toBeLessThan(body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM));
+        expect(body.indexOf(SCAN_PRECISION_ADDENDUM), name).toBeLessThan(
+          body.indexOf(SCAN_MODE_ANCHOR_ADDENDUM),
+        );
       } else {
         expect(body, name).not.toContain("Scan precision");
       }

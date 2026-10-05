@@ -203,107 +203,111 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
     ]);
   });
 
-  it("BEHAVIOURAL: the verdict a round lands is IDENTICAL with escalation on and off", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // Same round, same verdict file, same everything — driven twice through
-    // the real VerdictWatcher, once with the feature off and once with it on
-    // and actually firing. If escalation could touch the verdict, these two
-    // snapshots would diverge.
-    const snapshots: Array<Record<string, unknown>> = [];
-    for (const escalation of [
-      OFF,
-      on({
-        targets: ["teammate-one"],
-        rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
-      }),
-    ]) {
-      const s = new StateStore(":memory:");
-      const dir = mkdtempSync(join(tmpdir(), "qcr-esc-verdict-"));
-      const labelCalls: string[] = [];
-      const adapter: VerdictAdapter = {
-        async addLabel(n, l) {
-          labelCalls.push(`add:${n}:${l}`);
-          return { executed: true };
-        },
-        async removeLabel(n, l) {
-          labelCalls.push(`rm:${n}:${l}`);
-          return { executed: true };
-        },
-        async listPrFiles() {
-          return [{ filename: "billing/charge.py" }];
-        },
-        async getPr() {
-          return { labels: [] };
-        },
-        async createReview() {
-          return { executed: true };
-        },
-        async requestEscalationReview() {
-          return { executed: true };
-        },
-      };
-      const hooks: SessionHooks = {
-        async dispatchRound() {},
-        async inject() {},
-        async injectOverseer() {},
-        async archiveAndClose() {},
-      };
-      s.setAnomalySink((sig) =>
-        new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) }).onAnomaly(sig),
-      );
-      s.upsertPr({
-        number: 42,
-        state: "reviewing",
-        head_sha: HEAD,
-        title: "T",
-        author: "alice",
-        trigger_ts: null,
-        stale_recheck: 0,
-        migration_gate: 0,
-      });
-      s.startRound(42, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
-      const v: VerdictFile = {
-        pr: 42,
-        round_no: 1,
-        verdict: "REQUEST_CHANGES",
-        head_sha: HEAD,
-        finished_at: "2026-08-31T12:00:00Z",
-      };
-      writeFileSync(join(dir, "pr-42-round-1.json"), JSON.stringify(v));
-      const w = new VerdictWatcher({
-        cfg: { ...cfg, escalation },
-        store: s,
-        adapter,
-        hooks,
-        verdictDir: dir,
-        root: dir,
-        usage: { globalStoreDir: null },
-        parseRetries: 0,
-        retryDelayMs: 1,
-        ledgerCheckDelayMs: 0,
-      });
-      await w.sweep();
-      const row = s.getPr(42)!;
-      snapshots.push({
-        state: row.state,
-        // (`PrStateRow` carries no verdict column at all — the line that used
-        // to read `row.last_verdict` here compared undefined against undefined
-        // on both sides of the parity and asserted nothing. The `round` line
-        // below is where the verdict actually is..)
-        head: row.head_sha,
-        round: s.roundsFor(42).map((r) => `${r.round_no}:${r.status}:${r.verdict ?? ""}`),
-        // Timestamps are wall-clock, so only the SHAPE and content are
-        // compared — everything else about the mark must be identical.
-        reviewedHead: JSON.stringify(s.reviewedHead(42) ?? null).replace(
-          /"reviewed_at":"[^"]*"/,
-          '"reviewed_at":"<ts>"',
-        ),
-        labels: labelCalls,
-      });
-      s.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-    expect(snapshots[1]).toEqual(snapshots[0]);
-  });
+  it(
+    "BEHAVIOURAL: the verdict a round lands is IDENTICAL with escalation on and off",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // Same round, same verdict file, same everything — driven twice through
+      // the real VerdictWatcher, once with the feature off and once with it on
+      // and actually firing. If escalation could touch the verdict, these two
+      // snapshots would diverge.
+      const snapshots: Array<Record<string, unknown>> = [];
+      for (const escalation of [
+        OFF,
+        on({
+          targets: ["teammate-one"],
+          rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+        }),
+      ]) {
+        const s = new StateStore(":memory:");
+        const dir = mkdtempSync(join(tmpdir(), "qcr-esc-verdict-"));
+        const labelCalls: string[] = [];
+        const adapter: VerdictAdapter = {
+          async addLabel(n, l) {
+            labelCalls.push(`add:${n}:${l}`);
+            return { executed: true };
+          },
+          async removeLabel(n, l) {
+            labelCalls.push(`rm:${n}:${l}`);
+            return { executed: true };
+          },
+          async listPrFiles() {
+            return [{ filename: "billing/charge.py" }];
+          },
+          async getPr() {
+            return { labels: [] };
+          },
+          async createReview() {
+            return { executed: true };
+          },
+          async requestEscalationReview() {
+            return { executed: true };
+          },
+        };
+        const hooks: SessionHooks = {
+          async dispatchRound() {},
+          async inject() {},
+          async injectOverseer() {},
+          async archiveAndClose() {},
+        };
+        s.setAnomalySink((sig) =>
+          new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m) }).onAnomaly(sig),
+        );
+        s.upsertPr({
+          number: 42,
+          state: "reviewing",
+          head_sha: HEAD,
+          title: "T",
+          author: "alice",
+          trigger_ts: null,
+          stale_recheck: 0,
+          migration_gate: 0,
+        });
+        s.startRound(42, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+        const v: VerdictFile = {
+          pr: 42,
+          round_no: 1,
+          verdict: "REQUEST_CHANGES",
+          head_sha: HEAD,
+          finished_at: "2026-08-31T12:00:00Z",
+        };
+        writeFileSync(join(dir, "pr-42-round-1.json"), JSON.stringify(v));
+        const w = new VerdictWatcher({
+          cfg: { ...cfg, escalation },
+          store: s,
+          adapter,
+          hooks,
+          verdictDir: dir,
+          root: dir,
+          usage: { globalStoreDir: null },
+          parseRetries: 0,
+          retryDelayMs: 1,
+          ledgerCheckDelayMs: 0,
+        });
+        await w.sweep();
+        const row = s.getPr(42)!;
+        snapshots.push({
+          state: row.state,
+          // (`PrStateRow` carries no verdict column at all — the line that used
+          // to read `row.last_verdict` here compared undefined against undefined
+          // on both sides of the parity and asserted nothing. The `round` line
+          // below is where the verdict actually is..)
+          head: row.head_sha,
+          round: s.roundsFor(42).map((r) => `${r.round_no}:${r.status}:${r.verdict ?? ""}`),
+          // Timestamps are wall-clock, so only the SHAPE and content are
+          // compared — everything else about the mark must be identical.
+          reviewedHead: JSON.stringify(s.reviewedHead(42) ?? null).replace(
+            /"reviewed_at":"[^"]*"/,
+            '"reviewed_at":"<ts>"',
+          ),
+          labels: labelCalls,
+        });
+        s.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+      expect(snapshots[1]).toEqual(snapshots[0]);
+    },
+  );
 
   it("BEHAVIOURAL: a delivery that THROWS still leaves the verdict applied", async () => {
     const s = new StateStore(":memory:");
@@ -527,7 +531,9 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     // every byte of it inside one code span.
     const evil = "billing/x` @outsider **APPROVED** `.py";
     const c = on({
-      rules: [{ name: "billing", to: "teammate-one", why: "you own billing", paths: ["billing/**"] }],
+      rules: [
+        { name: "billing", to: "teammate-one", why: "you own billing", paths: ["billing/**"] },
+      ],
     });
     const out = evaluateEscalationRules(c, facts({ changed_paths: [evil] }));
     expect(out).toHaveLength(1);
@@ -2031,136 +2037,140 @@ describe("the verdict path delivers what the rules found", () => {
   // re-review, N6: `roundReviewConfirmed` was unpinned — `return true`
   // passed the whole suite. These two drive the REAL receipt reader through the
   // real verdict path, over the branches that decide the note's wording.
-  it("the note says POSTED when the round's posting receipt confirms it, and not otherwise", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    async function noteFor(receipt: Record<string, unknown> | null): Promise<string> {
-      const s = new StateStore(":memory:");
-      const dir = mkdtempSync(join(tmpdir(), "qcr-esc-receipt-"));
-      const reviews: Array<{ body: string }> = [];
-      const adapter: VerdictAdapter = {
-        async addLabel() {
-          return { executed: true };
-        },
-        async removeLabel() {
-          return { executed: true };
-        },
-        async listPrFiles() {
-          return [{ filename: "billing/charge.py" }];
-        },
-        async getPr() {
-          return { labels: [] };
-        },
-        async createReview(_pr, payload) {
-          reviews.push({ body: payload.body });
-          return { executed: true };
-        },
-      };
-      const hooks: SessionHooks = {
-        async dispatchRound() {},
-        async inject() {},
-        async injectOverseer() {},
-        async archiveAndClose() {},
-      };
-      s.setAnomalySink(() => {});
-      s.upsertPr({
-        number: 60,
-        state: "reviewing",
-        head_sha: HEAD,
-        title: "T",
-        author: "a",
-        trigger_ts: null,
-        stale_recheck: 0,
-        migration_gate: 0,
-      });
-      s.startRound(60, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
-      if (receipt) {
-        const rdir = join(dir, "state", "posting-receipts");
-        mkdirSync(rdir, { recursive: true });
-        writeFileSync(join(rdir, "pr-60-round-1.json"), JSON.stringify(receipt));
-      }
-      writeFileSync(
-        join(dir, "pr-60-round-1.json"),
-        JSON.stringify({
-          pr: 60,
-          round_no: 1,
-          verdict: "REQUEST_CHANGES",
+  it(
+    "the note says POSTED when the round's posting receipt confirms it, and not otherwise",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      async function noteFor(receipt: Record<string, unknown> | null): Promise<string> {
+        const s = new StateStore(":memory:");
+        const dir = mkdtempSync(join(tmpdir(), "qcr-esc-receipt-"));
+        const reviews: Array<{ body: string }> = [];
+        const adapter: VerdictAdapter = {
+          async addLabel() {
+            return { executed: true };
+          },
+          async removeLabel() {
+            return { executed: true };
+          },
+          async listPrFiles() {
+            return [{ filename: "billing/charge.py" }];
+          },
+          async getPr() {
+            return { labels: [] };
+          },
+          async createReview(_pr, payload) {
+            reviews.push({ body: payload.body });
+            return { executed: true };
+          },
+        };
+        const hooks: SessionHooks = {
+          async dispatchRound() {},
+          async inject() {},
+          async injectOverseer() {},
+          async archiveAndClose() {},
+        };
+        s.setAnomalySink(() => {});
+        s.upsertPr({
+          number: 60,
+          state: "reviewing",
           head_sha: HEAD,
-          finished_at: "2026-08-31T12:00:00Z",
-        }),
-      );
-      const w = new VerdictWatcher({
-        cfg: {
-          ...cfg,
-          escalation: on({
-            targets: ["teammate-one"],
-            rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+          title: "T",
+          author: "a",
+          trigger_ts: null,
+          stale_recheck: 0,
+          migration_gate: 0,
+        });
+        s.startRound(60, "first", ["pass-baseline"], cfg.daemon.round_deadline_min);
+        if (receipt) {
+          const rdir = join(dir, "state", "posting-receipts");
+          mkdirSync(rdir, { recursive: true });
+          writeFileSync(join(rdir, "pr-60-round-1.json"), JSON.stringify(receipt));
+        }
+        writeFileSync(
+          join(dir, "pr-60-round-1.json"),
+          JSON.stringify({
+            pr: 60,
+            round_no: 1,
+            verdict: "REQUEST_CHANGES",
+            head_sha: HEAD,
+            finished_at: "2026-08-31T12:00:00Z",
           }),
-        },
-        store: s,
-        adapter,
-        hooks,
-        verdictDir: dir,
-        root: dir,
-        usage: { globalStoreDir: null },
-        parseRetries: 0,
-        retryDelayMs: 1,
-        ledgerCheckDelayMs: 0,
-      });
-      await w.sweep();
-      s.close();
-      rmSync(dir, { recursive: true, force: true });
-      expect(reviews).toHaveLength(1);
-      return reviews[0]!.body;
-    }
+        );
+        const w = new VerdictWatcher({
+          cfg: {
+            ...cfg,
+            escalation: on({
+              targets: ["teammate-one"],
+              rules: [{ name: "all", to: "teammate-one", why: "w", paths: ["**"] }],
+            }),
+          },
+          store: s,
+          adapter,
+          hooks,
+          verdictDir: dir,
+          root: dir,
+          usage: { globalStoreDir: null },
+          parseRetries: 0,
+          retryDelayMs: 1,
+          ledgerCheckDelayMs: 0,
+        });
+        await w.sweep();
+        s.close();
+        rmSync(dir, { recursive: true, force: true });
+        expect(reviews).toHaveLength(1);
+        return reviews[0]!.body;
+      }
 
-    const key = roundPostingKey(60, 1, HEAD);
-    const base = {
-      version: 1,
-      posting_key: key,
-      marker: postingMarker(key),
-      pr: 60,
-      round_no: 1,
-      head_sha: HEAD,
-      intended_event: "REQUEST_CHANGES",
-      actual_event: "REQUEST_CHANGES",
-      payload_sha256: "a".repeat(64),
-      prepared_at: "2026-08-31T11:59:00Z",
-    };
-    /** The extra fields `parsePostingReceipt` demands of a confirmed receipt. */
-    const confirmed = {
-      status: "confirmed",
-      confirmed_at: "2026-08-31T12:00:00Z",
-      gh_review_id: 1,
-      gh_commit_id: HEAD,
-      gh_state: "CHANGES_REQUESTED",
-    };
+      const key = roundPostingKey(60, 1, HEAD);
+      const base = {
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: 60,
+        round_no: 1,
+        head_sha: HEAD,
+        intended_event: "REQUEST_CHANGES",
+        actual_event: "REQUEST_CHANGES",
+        payload_sha256: "a".repeat(64),
+        prepared_at: "2026-08-31T11:59:00Z",
+      };
+      /** The extra fields `parsePostingReceipt` demands of a confirmed receipt. */
+      const confirmed = {
+        status: "confirmed",
+        confirmed_at: "2026-08-31T12:00:00Z",
+        gh_review_id: 1,
+        gh_commit_id: HEAD,
+        gh_state: "CHANGES_REQUESTED",
+      };
 
-    // CONFIRMED ⇒ the note may say the review is posted.
-    expect(await noteFor({ ...base, ...confirmed })).toContain("already decided and posted");
+      // CONFIRMED ⇒ the note may say the review is posted.
+      expect(await noteFor({ ...base, ...confirmed })).toContain("already decided and posted");
 
-    // Every other branch must NOT claim it: no receipt at all, a receipt still
-    // only prepared, a dry-run receipt, and one belonging to another head.
-    for (const [label, r] of [
-      ["no receipt", null],
-      ["prepared only", { ...base, status: "prepared" }],
-      ["dry-run", { ...base, status: "dryrun", confirmed_at: "2026-08-31T12:00:00Z" }],
-      // A confirmed receipt for a DIFFERENT head or round must not be read as
-      // this round's proof.
-      [
-        "other head",
-        {
-          ...base,
-          ...confirmed,
-          head_sha: "0".repeat(40),
-          gh_commit_id: "0".repeat(40),
-          posting_key: roundPostingKey(60, 1, "0".repeat(40)),
-          marker: postingMarker(roundPostingKey(60, 1, "0".repeat(40))),
-        },
-      ],
-      ["other round", { ...base, ...confirmed, round_no: 9 }],
-    ] as Array<[string, Record<string, unknown> | null]>) {
-      const body = await noteFor(r);
-      expect(body, label).not.toContain("already decided and posted");
-      expect(body, label).toContain("not confirmed on this pull request yet");
-    }
-  });
+      // Every other branch must NOT claim it: no receipt at all, a receipt still
+      // only prepared, a dry-run receipt, and one belonging to another head.
+      for (const [label, r] of [
+        ["no receipt", null],
+        ["prepared only", { ...base, status: "prepared" }],
+        ["dry-run", { ...base, status: "dryrun", confirmed_at: "2026-08-31T12:00:00Z" }],
+        // A confirmed receipt for a DIFFERENT head or round must not be read as
+        // this round's proof.
+        [
+          "other head",
+          {
+            ...base,
+            ...confirmed,
+            head_sha: "0".repeat(40),
+            gh_commit_id: "0".repeat(40),
+            posting_key: roundPostingKey(60, 1, "0".repeat(40)),
+            marker: postingMarker(roundPostingKey(60, 1, "0".repeat(40))),
+          },
+        ],
+        ["other round", { ...base, ...confirmed, round_no: 9 }],
+      ] as Array<[string, Record<string, unknown> | null]>) {
+        const body = await noteFor(r);
+        expect(body, label).not.toContain("already decided and posted");
+        expect(body, label).toContain("not confirmed on this pull request yet");
+      }
+    },
+  );
 });

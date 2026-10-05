@@ -381,7 +381,12 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
       await tick();
       log.inFlight -= tasks.length;
       return {
-        content: [{ type: "text", text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\n${tasks.map((t) => t.task).join(",")}` }],
+        content: [
+          {
+            type: "text",
+            text: `Parallel: ${tasks.length}/${tasks.length} succeeded\n\n${tasks.map((t) => t.task).join(",")}`,
+          },
+        ],
         details: { mode: "parallel", results: tasks.map((task) => ({ ...task, exitCode: 0 })) },
       };
     });
@@ -397,7 +402,11 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
   it("runs one 12-task call 12 wide under a cap of 12, in chunks native accepts, results in task order", async () => {
     const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
     const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(12), WIDE);
-    const tasks = Array.from({ length: 12 }, (_, i) => ({ agent: `pass-${i}`, task: `task-${i}`, cwd: "/evil" }));
+    const tasks = Array.from({ length: 12 }, (_, i) => ({
+      agent: `pass-${i}`,
+      task: `task-${i}`,
+      cwd: "/evil",
+    }));
     const result = (await wrapped("round", { tasks })) as unknown as {
       content: Array<{ text: string }>;
       details: { results: Array<{ task: string; cwd?: string }> };
@@ -412,7 +421,8 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
   it("still never exceeds the process-wide cap, across one call or several", async () => {
     const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
     const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(6), WIDE);
-    const mk = (n: number, p: string) => Array.from({ length: n }, (_, i) => ({ agent: `${p}${i}`, task: `${p}${i}` }));
+    const mk = (n: number, p: string) =>
+      Array.from({ length: n }, (_, i) => ({ agent: `${p}${i}`, task: `${p}${i}` }));
     await Promise.all([wrapped("a", { tasks: mk(10, "a") }), wrapped("b", { tasks: mk(5, "b") })]);
     expect(log.peak).toBeLessThanOrEqual(6);
     expect(log.sizes.reduce((x, y) => x + y, 0)).toBe(15);

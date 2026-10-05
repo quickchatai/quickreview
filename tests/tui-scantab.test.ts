@@ -8,7 +8,11 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { TUI_DEFAULTS } from "../src/config.js";
-import { SCAN_STOP_FILE, SCAN_STOP_RESULT_FILE, type ScanFinding } from "../src/setup/scanreport.js";
+import {
+  SCAN_STOP_FILE,
+  SCAN_STOP_RESULT_FILE,
+  type ScanFinding,
+} from "../src/setup/scanreport.js";
 import { STAGE2_RESULT_FILE, STAGE2_START_FILE } from "../src/setup/stage2request.js";
 import { App } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
@@ -23,12 +27,24 @@ import {
   styleRule,
   unitRows,
 } from "../src/tui/scantab.js";
-import { fakeStreams, installScanRig, okSsh, SCAN_FINDINGS, scanFinding, type ScanRig } from "./helpers/tui-rig.js";
+import {
+  fakeStreams,
+  installScanRig,
+  okSsh,
+  SCAN_FINDINGS,
+  scanFinding,
+  type ScanRig,
+} from "./helpers/tui-rig.js";
 
 const COLS = 150;
 const ROWS = 40;
 
-function rig(opts: Parameters<typeof installScanRig>[1] = {}): { app: App; s: ScanRig; type: (k: string) => void; screen: () => string } {
+function rig(opts: Parameters<typeof installScanRig>[1] = {}): {
+  app: App;
+  s: ScanRig;
+  type: (k: string) => void;
+  screen: () => string;
+} {
   const streams = fakeStreams(COLS, ROWS);
   const app = new App(TUI_DEFAULTS, okSsh, streams.out, streams.input);
   const s = installScanRig(app, opts);
@@ -67,7 +83,9 @@ describe("the report", () => {
     const { screen } = rig();
     const text = screen();
     const left = text.split("\n").map((l) => l.split("│")[1] ?? "");
-    const units = left.map((l) => /^ [✓▶·✗ ] (\w+) +\d+/.exec(l)?.[1]).filter((u) => u !== undefined);
+    const units = left
+      .map((l) => /^ [✓▶·✗ ] (\w+) +\d+/.exec(l)?.[1])
+      .filter((u) => u !== undefined);
     expect(units).toEqual(["all", "billing", "auth", "widget"]);
     expect(text).toMatch(/✓ billing\s+5 ▲/);
     expect(text).toMatch(/▶ auth\s+3/);
@@ -76,11 +94,13 @@ describe("the report", () => {
 
   it("lists findings by validity tier (confirmed first), most severe first inside it, style grouped PER RULE with a count, a doubted one marked ?", () => {
     const items = reportItems(SCAN_FINDINGS.filter((f) => f.unit === "billing"));
-    expect(items.map((i) => (i.t === "finding" ? i.finding.fingerprint.slice(0, 2) : `style:${i.rule}×${i.findings.length}`))).toEqual([
-      "f1",
-      "style:rule 4.2×3",
-      "f2",
-    ]);
+    expect(
+      items.map((i) =>
+        i.t === "finding"
+          ? i.finding.fingerprint.slice(0, 2)
+          : `style:${i.rule}×${i.findings.length}`,
+      ),
+    ).toEqual(["f1", "style:rule 4.2×3", "f2"]);
     const { screen } = rig();
     const text = screen();
     expect(text).toContain("● P1 data-safety  billing/models.py:88");
@@ -117,10 +137,15 @@ describe("the report", () => {
     const flagged = scanFinding({
       fingerprint: "fb".padEnd(64, "0"),
       path: "billing/a.py",
-      resembles_dismissed: { fingerprint: "7f".repeat(32), reason: "by design — the engine drops it" },
+      resembles_dismissed: {
+        fingerprint: "7f".repeat(32),
+        reason: "by design — the engine drops it",
+      },
     });
     const plain = scanFinding({ fingerprint: "fc".padEnd(64, "0"), path: "billing/z.py" });
-    expect(reportItems([flagged, plain]).map((i) => (i.t === "finding" ? i.finding.fingerprint : ""))).toEqual([plain.fingerprint, flagged.fingerprint]);
+    expect(
+      reportItems([flagged, plain]).map((i) => (i.t === "finding" ? i.finding.fingerprint : "")),
+    ).toEqual([plain.fingerprint, flagged.fingerprint]);
     // The flag is re-read against the store at load: the dismissal it names must be there.
     const gone = scanFinding({
       fingerprint: "7f".repeat(32),
@@ -133,7 +158,9 @@ describe("the report", () => {
     await driving(app, () => {
       type("j");
       type("j");
-      expect(screen()).toContain("≈ looks like a finding you dismissed: by design — the engine drops it");
+      expect(screen()).toContain(
+        "≈ looks like a finding you dismissed: by design — the engine drops it",
+      );
     });
   });
 
@@ -149,7 +176,11 @@ describe("the report", () => {
   });
 
   it("a dismissed finding a re-scan no longer reports is not a promote target; an unstamped one is (scan-loop)", () => {
-    const gone = scanFinding({ fingerprint: "fc".padEnd(64, "0"), state: "dismissed", unreported: { run: "scan-9", sha: "8".repeat(40), at: "t" } });
+    const gone = scanFinding({
+      fingerprint: "fc".padEnd(64, "0"),
+      state: "dismissed",
+      unreported: { run: "scan-9", sha: "8".repeat(40), at: "t" },
+    });
     const kept = scanFinding({ fingerprint: "fd".padEnd(64, "0"), state: "dismissed" });
     expect(promotable({ t: "finding", finding: gone })).toEqual([]);
     expect(promotable({ t: "finding", finding: kept })).toEqual([kept]);
@@ -158,8 +189,12 @@ describe("the report", () => {
   it("a style group's detail carries the rule, the count and examples", () => {
     const f = SCAN_FINDINGS[2]!;
     expect(styleRule(f)).toBe("rule 4.2");
-    expect(styleRule(scanFinding({ fingerprint: "x", claim: "tabs, not spaces", kind: "indent" }))).toBe("indent");
-    expect(styleRule(scanFinding({ fingerprint: "x", claim: "see §3.1.", kind: "style" }))).toBe("rule 3.1");
+    expect(
+      styleRule(scanFinding({ fingerprint: "x", claim: "tabs, not spaces", kind: "indent" })),
+    ).toBe("indent");
+    expect(styleRule(scanFinding({ fingerprint: "x", claim: "see §3.1.", kind: "style" }))).toBe(
+      "rule 3.1",
+    );
   });
 });
 
@@ -182,7 +217,9 @@ describe("honest unknown — never 'no scan' for a record that was not read", ()
     const text = b.screen();
     expect(text).toContain("findings (—)");
     expect(text).toMatch(/UNITS \(—\)/);
-    expect(text).toMatch(/could not read — scan\/findings\.json is not a record this version reads/);
+    expect(text).toMatch(
+      /could not read — scan\/findings\.json is not a record this version reads/,
+    );
     expect(barLabels(b.app)).not.toContain("f filter");
     expect(barLabels(b.app)).not.toContain("p promote");
   });
@@ -194,8 +231,14 @@ describe("filters", () => {
       ok: true,
       filter: { state: "new", lens: "security", severity: "P1", doubted: true },
     });
-    expect(parseScanFilter("dismissed nit valid")).toEqual({ ok: true, filter: { state: "dismissed", severity: "nit", doubted: false } });
-    expect(parseScanFilter("colour=red")).toMatchObject({ ok: false, error: expect.stringContaining('"colour=red" is not a filter') });
+    expect(parseScanFilter("dismissed nit valid")).toEqual({
+      ok: true,
+      filter: { state: "dismissed", severity: "nit", doubted: false },
+    });
+    expect(parseScanFilter("colour=red")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('"colour=red" is not a filter'),
+    });
     expect(filterLabel({ lens: "security", doubted: false })).toBe("lens=security valid");
     const f2 = SCAN_FINDINGS[1]!;
     expect(matchesFilter({ lens: "placement", doubted: true }, f2)).toBe(true);
@@ -253,8 +296,13 @@ describe("triage verbs", () => {
       expect(s.asks).toHaveLength(1);
       expect(s.asks[0]!.verb).toBe("promote");
       const text = s.asks[0]!.text;
-      expect(text).toMatch(/^The owner PROMOTED these 3 scan findings from the TUI's \[8\] scan tab:/);
-      for (const n of [3, 4, 5]) expect(text).toContain(`- ${`f${n}`.padEnd(12, "0")} nit pass-style billing/views${n}.py:${n}`);
+      expect(text).toMatch(
+        /^The owner PROMOTED these 3 scan findings from the TUI's \[8\] scan tab:/,
+      );
+      for (const n of [3, 4, 5])
+        expect(text).toContain(
+          `- ${`f${n}`.padEnd(12, "0")} nit pass-style billing/views${n}.py:${n}`,
+        );
       expect(text).toContain("`scan_promote`");
       expect(app.view.noticeLine).toBe("scan promote: asked");
     });
@@ -270,14 +318,24 @@ describe("triage verbs", () => {
       expect(s.asks).toHaveLength(1);
       expect(s.asks[0]!.verb).toBe("dismiss");
       expect(s.asks[0]!.text).toContain("> the lock is taken by the caller");
-      expect(s.asks[0]!.text).toContain(`- ${"f1".padEnd(12, "0")} P1 pass-data-safety billing/models.py:88`);
+      expect(s.asks[0]!.text).toContain(
+        `- ${"f1".padEnd(12, "0")} P1 pass-data-safety billing/models.py:88`,
+      );
       expect(s.asks[0]!.text).toContain("`scan_dismiss`");
     });
   });
 
   it("a promoted or fixed finding offers neither verb — triage.ts would refuse them", async () => {
-    const promoted = scanFinding({ fingerprint: "p1".padEnd(64, "0"), state: "promoted", ticket: { sink: "tracker", ref: "", effort: "x", filed_at: "" } });
-    const fixed = scanFinding({ fingerprint: "x1".padEnd(64, "0"), severity: "P2", state: "fixed" });
+    const promoted = scanFinding({
+      fingerprint: "p1".padEnd(64, "0"),
+      state: "promoted",
+      ticket: { sink: "tracker", ref: "", effort: "x", filed_at: "" },
+    });
+    const fixed = scanFinding({
+      fingerprint: "x1".padEnd(64, "0"),
+      severity: "P2",
+      state: "fixed",
+    });
     const { app, screen } = rig({ findings: [promoted, fixed] });
     expect(barLabels(app)).not.toContain("p promote");
     expect(barLabels(app)).not.toContain("d dismiss");
@@ -326,7 +384,17 @@ describe("the stage 2 plan", () => {
       expect(app.view.noticeLine).toMatch(/stage 2 asked to start — 1 row\(s\), hard stop \$6\.10/);
 
       // The companion answers; the next poll settles it into the notice.
-      writeFileSync(join(s.home, STAGE2_RESULT_FILE), JSON.stringify({ request: req.id, key: req.key, at: "", ok: true, run: "scan-9", errors: [] }));
+      writeFileSync(
+        join(s.home, STAGE2_RESULT_FILE),
+        JSON.stringify({
+          request: req.id,
+          key: req.key,
+          at: "",
+          ok: true,
+          run: "scan-9",
+          errors: [],
+        }),
+      );
       app.hooks.onPoll?.(app);
       expect(app.view.noticeLine).toBe("stage 2 started: scan-9");
     });
@@ -346,7 +414,9 @@ describe("the stage 2 plan", () => {
     await driving(app, () => {
       type("P");
       type("\r");
-      expect(JSON.parse(readFileSync(join(s.home, STAGE2_START_FILE), "utf8")).rows).toBeUndefined();
+      expect(
+        JSON.parse(readFileSync(join(s.home, STAGE2_START_FILE), "utf8")).rows,
+      ).toBeUndefined();
     });
   });
 
@@ -369,7 +439,10 @@ describe("the stop control", () => {
       const req = JSON.parse(readFileSync(join(s.home, SCAN_STOP_FILE), "utf8"));
       expect(req).toMatchObject({ run: "scan-2", by: "tui" });
       expect(app.view.noticeLine).toContain("stop asked for scan-2");
-      writeFileSync(join(s.home, SCAN_STOP_RESULT_FILE), JSON.stringify({ request: req.id, run: "scan-2", at: "", ok: true, errors: [] }));
+      writeFileSync(
+        join(s.home, SCAN_STOP_RESULT_FILE),
+        JSON.stringify({ request: req.id, run: "scan-2", at: "", ok: true, errors: [] }),
+      );
       app.hooks.onPoll?.(app);
       expect(app.view.noticeLine).toBe("scan scan-2 stopped — what finished is in the ledger");
     });
@@ -386,7 +459,10 @@ describe("pending answers", () => {
       const second = JSON.parse(readFileSync(join(s.home, SCAN_STOP_FILE), "utf8")).id as string;
       expect(second).not.toBe(first);
       expect(s.state.pending).toEqual([{ kind: "stop", id: second }]);
-      writeFileSync(join(s.home, SCAN_STOP_RESULT_FILE), JSON.stringify({ request: second, run: "scan-2", at: "", ok: true, errors: [] }));
+      writeFileSync(
+        join(s.home, SCAN_STOP_RESULT_FILE),
+        JSON.stringify({ request: second, run: "scan-2", at: "", ok: true, errors: [] }),
+      );
       app.hooks.onPoll?.(app);
       expect(s.state.pending).toEqual([]);
     });
@@ -428,7 +504,10 @@ describe("a long finding's detail is never clipped out of reach (selfscan 9d6319
   it("the wheel scrolls the selected finding's detail down to its state and seen lines, and says how much is left", () => {
     const long = scanFinding({
       fingerprint: "long".padEnd(64, "0"),
-      evidence: Array.from({ length: 80 }, (_, i) => `evidence sentence ${i} names another line of the trace.`).join(" "),
+      evidence: Array.from(
+        { length: 80 },
+        (_, i) => `evidence sentence ${i} names another line of the trace.`,
+      ).join(" "),
       fix: "take the lock",
     });
     const { app, screen } = rig({ findings: [long] });
@@ -459,24 +538,61 @@ describe("a finding's detail paragraph reaches the detail pane (selfscan fc1128a
 
 describe("validity tiers (owner ruling 2026-09-30: the scan validator is the skeptic)", () => {
   const tiered = [
-    scanFinding({ fingerprint: "t1".padEnd(64, "0"), severity: "P3", path: "billing/a.py", validity: "confirmed", scenario: "the nightly job passes an empty batch" }),
-    scanFinding({ fingerprint: "t2".padEnd(64, "0"), severity: "P0", path: "billing/b.py", validity: "likely", scenario: "mechanism real; no caller traced" }),
+    scanFinding({
+      fingerprint: "t1".padEnd(64, "0"),
+      severity: "P3",
+      path: "billing/a.py",
+      validity: "confirmed",
+      scenario: "the nightly job passes an empty batch",
+    }),
+    scanFinding({
+      fingerprint: "t2".padEnd(64, "0"),
+      severity: "P0",
+      path: "billing/b.py",
+      validity: "likely",
+      scenario: "mechanism real; no caller traced",
+    }),
     scanFinding({
       fingerprint: "t3".padEnd(64, "0"),
       severity: "P0",
       path: "billing/c.py",
       validity: "doubtful",
-      doubt: { word: "refuted", reason: "the gate refuses it at gate.ts:40", class: "guarded-elsewhere" },
+      doubt: {
+        word: "refuted",
+        reason: "the gate refuses it at gate.ts:40",
+        class: "guarded-elsewhere",
+      },
     }),
-    scanFinding({ fingerprint: "t4".padEnd(64, "0"), severity: "P1", path: "billing/d.py", validity: null, validated: false, scenario: null }),
+    scanFinding({
+      fingerprint: "t4".padEnd(64, "0"),
+      severity: "P1",
+      path: "billing/d.py",
+      validity: null,
+      validated: false,
+      scenario: null,
+    }),
   ];
 
   it("groups the list by tier — confirmed first, whatever the severity — each tier under its own heading", () => {
     const items = reportItems(tiered);
-    expect(items.map((i) => itemValidity(i))).toEqual(["confirmed", "likely", "doubtful", "unknown"]);
+    expect(items.map((i) => itemValidity(i))).toEqual([
+      "confirmed",
+      "likely",
+      "doubtful",
+      "unknown",
+    ]);
     const { screen } = rig({ findings: tiered });
     const text = screen();
-    const order = ["CONFIRMED — the skeptic traced", "billing/a.py", "LIKELY —", "billing/b.py", "DOUBTFUL —", "billing/c.py", "UNKNOWN — no skeptic judged", "billing/d.py"];
+    const order = [
+      "CONFIRMED — the skeptic traced",
+      "billing/a.py",
+      "LIKELY —",
+      "billing/b.py",
+      "DOUBTFUL —",
+      "billing/c.py",
+      "UNKNOWN — no skeptic judged",
+      "billing/d.py",
+    ];
     const at = order.map((o) => text.indexOf(o));
     expect(at.every((x) => x >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -489,7 +605,9 @@ describe("validity tiers (owner ruling 2026-09-30: the scan validator is the ske
     await driving(app, () => {
       type("j");
       type("j");
-      expect(screen()).toContain("? doubtful — refuted [guarded-elsewhere]: the gate refuses it at gate.ts:40");
+      expect(screen()).toContain(
+        "? doubtful — refuted [guarded-elsewhere]: the gate refuses it at gate.ts:40",
+      );
       type("j");
       expect(screen()).toContain("not validated — no validator read it (validity unknown)");
     });
@@ -497,17 +615,16 @@ describe("validity tiers (owner ruling 2026-09-30: the scan validator is the ske
 
   it("the tier filter: `tier=`/bare words in the f box, and t steps all → confirmed → likely → doubtful → unknown → all", async () => {
     expect(parseScanFilter("tier=likely")).toEqual({ ok: true, filter: { validity: "likely" } });
-    expect(parseScanFilter("doubtful new")).toEqual({ ok: true, filter: { validity: "doubtful", state: "new" } });
+    expect(parseScanFilter("doubtful new")).toEqual({
+      ok: true,
+      filter: { validity: "doubtful", state: "new" },
+    });
     expect(filterLabel({ validity: "unknown" })).toBe("tier=unknown");
     expect(matchesFilter({ validity: "unknown" }, tiered[3]!)).toBe(true);
     expect(matchesFilter({ validity: "unknown" }, tiered[0]!)).toBe(false);
-    expect([undefined, "confirmed", "likely", "doubtful", "unknown"].map((v) => nextTier(v as never))).toEqual([
-      "confirmed",
-      "likely",
-      "doubtful",
-      "unknown",
-      undefined,
-    ]);
+    expect(
+      [undefined, "confirmed", "likely", "doubtful", "unknown"].map((v) => nextTier(v as never)),
+    ).toEqual(["confirmed", "likely", "doubtful", "unknown", undefined]);
     const { app, type, screen } = rig({ findings: tiered });
     await driving(app, () => {
       expect(barLabels(app)).toContain("t tier");
@@ -531,11 +648,15 @@ describe("validity tiers (owner ruling 2026-09-30: the scan validator is the ske
       type("j"); // t2, likely
       type("p");
       expect(s.asks).toHaveLength(1);
-      expect(app.view.inputBox?.target).toMatch(/NOT confirmed by the skeptic \(likely\) — type yes/);
+      expect(app.view.inputBox?.target).toMatch(
+        /NOT confirmed by the skeptic \(likely\) — type yes/,
+      );
       type("no");
       type("\r");
       expect(s.asks).toHaveLength(1);
-      expect(app.view.noticeLine).toMatch(/not asked — only confirmed findings promote without an explicit yes/);
+      expect(app.view.noticeLine).toMatch(
+        /not asked — only confirmed findings promote without an explicit yes/,
+      );
       type("p");
       type("yes");
       type("\r");

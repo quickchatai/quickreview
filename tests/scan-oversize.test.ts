@@ -18,7 +18,12 @@ import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { coveredBy, LEDGER_FILE, type LedgerEntry, type LedgerFile } from "../src/setup/ledger.js";
 import { cutRanges, planStage1, scanCasePrompt } from "../src/setup/scan.js";
-import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import {
+  ScanRunner,
+  type ScanPorts,
+  type ScanSource,
+  type ScanTree,
+} from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
 let stateDir: string;
@@ -27,16 +32,21 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
 
-const blob = (text: string): string => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+const blob = (text: string): string =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 
 /** A 6,000-line module: a top-level function every 100 lines. */
 function bigModule(tag = "v1"): string {
   const out: string[] = [];
-  for (let i = 0; i < 6000; i++) out.push(i % 100 === 0 ? `export function f${i}_${tag}() {` : `  const x${i} = ${i};`);
+  for (let i = 0; i < 6000; i++)
+    out.push(i % 100 === 0 ? `export function f${i}_${tag}() {` : `  const x${i} = ${i};`);
   return `${out.join("\n")}\n`;
 }
 
-const small = (n: number, word: string): string => Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
+const small = (n: number, word: string): string =>
+  Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
 
 const TREE1: Record<string, string> = {
   "core/state.ts": bigModule(),
@@ -70,13 +80,18 @@ function fakeSource(trees: Record<string, Record<string, string>>, head: () => s
         },
       };
     },
-    list: (sha: string) => (trees[sha] ? Object.entries(trees[sha]!).map(([path, text]) => ({ path, blob: blob(text) })) : null),
+    list: (sha: string) =>
+      trees[sha]
+        ? Object.entries(trees[sha]!).map(([path, text]) => ({ path, blob: blob(text) }))
+        : null,
   };
 }
 
 /** The focus range a case prompt names for `path`, if any. */
 function rangeIn(prompt: string, path: string): { start: number; end: number } | null {
-  const m = new RegExp(`^- ${path.replace(/\./g, "\\.")} \\(lines (\\d+)-(\\d+) of \\d+`, "m").exec(prompt);
+  const m = new RegExp(`^- ${path.replace(/\./g, "\\.")} \\(lines (\\d+)-(\\d+) of \\d+`, "m").exec(
+    prompt,
+  );
   return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
 }
 
@@ -89,17 +104,33 @@ function answer(spec: CaseSpec): string {
   for (const p of spec.files) {
     const r = rangeIn(spec.prompt, p);
     const at = r ? r.start + 1 : 2;
-    items.push(`- path: ${p}`, `  line: ${at}-${at + 1}`, "  kind: bug", "  severity: P2", `  claim: ${p} at ${at} is wrong`);
+    items.push(
+      `- path: ${p}`,
+      `  line: ${at}-${at + 1}`,
+      "  kind: bug",
+      "  severity: P2",
+      `  claim: ${p} at ${at} is wrong`,
+    );
     if (r) {
       const out = r.start > 10 ? 3 : r.end + 50;
-      items.push(`- path: ${p}`, `  line: ${out}`, "  kind: bug", "  severity: P2", `  claim: ${p} at ${out} is outside the range`);
+      items.push(
+        `- path: ${p}`,
+        `  line: ${out}`,
+        "  kind: bug",
+        "  severity: P2",
+        `  claim: ${p} at ${out} is outside the range`,
+      );
     }
   }
   return [`FINDINGS ${lens} SCAN ${spec.id} @sha`, ...items, "", "SUGGEST NONE"].join("\n");
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
@@ -128,13 +159,17 @@ function ports(cases: FakeRunner, source: ScanSource, scan: Partial<ScanConfig> 
     savedCut: () => ({ ok: true, cut: CUT }),
     settings: () => ({
       ok: true,
-      settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...scan }, riskPasses: ["pass-data-safety"] },
+      settings: {
+        scan: { ...SCAN_DEFAULTS, validator: false, ...scan },
+        riskPasses: ["pass-data-safety"],
+      },
     }),
     buildAgents: () => ({ ok: true }),
   };
 }
 
-const ledger = (): LedgerFile => JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
+const ledger = (): LedgerFile =>
+  JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
 
 async function runOnce(s: ScanRunner, opts: { delta?: boolean } = {}) {
   const p = await s.preview(opts);
@@ -218,7 +253,12 @@ describe("stage 1 over a file bigger than one case", () => {
 
   it("runs every range, drops findings outside a case's range, and the file ends covered", async () => {
     const cases = runner();
-    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1 }, () => SHA1)));
+    const s = new ScanRunner(
+      ports(
+        cases,
+        fakeSource({ [SHA1]: TREE1 }, () => SHA1),
+      ),
+    );
     // Calibration, then the rest: every range of the big file runs.
     await runOnce(s);
     const rest = await runOnce(s);
@@ -231,7 +271,11 @@ describe("stage 1 over a file bigger than one case", () => {
     expect(rows.length).toBe(rangeSpecs.length);
     expect(rows.every((e) => e.range !== undefined && e.range !== null)).toBe(true);
     // Coverage is complete: the file is covered, and a new preview has nothing left.
-    expect(coveredBy(ledger().entries, "pass-scan").has(`core/state.ts\0${blob(TREE1["core/state.ts"]!)}`)).toBe(true);
+    expect(
+      coveredBy(ledger().entries, "pass-scan").has(
+        `core/state.ts\0${blob(TREE1["core/state.ts"]!)}`,
+      ),
+    ).toBe(true);
     const again = await s.preview();
     expect(again.ok && again.preview.cases).toEqual([]);
 
@@ -273,7 +317,12 @@ describe("stage 1 over a file bigger than one case", () => {
     let head = SHA1;
     const TREE2 = { ...TREE1, "core/state.ts": bigModule("v2") };
     const cases = runner();
-    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head)));
+    const s = new ScanRunner(
+      ports(
+        cases,
+        fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head),
+      ),
+    );
     await runOnce(s);
     await runOnce(s);
     const full = cases.specs.filter((c) => c.files.includes("core/state.ts")).length;
@@ -286,13 +335,22 @@ describe("stage 1 over a file bigger than one case", () => {
     expect(d.preview.cases.every((c) => c.unit === "core")).toBe(true);
     const ran = cases.specs.slice(before).filter((c) => c.files.includes("core/state.ts"));
     expect(ran.length).toBe(full);
-    expect(coveredBy(ledger().entries, "pass-scan").has(`core/state.ts\0${blob(TREE2["core/state.ts"])}`)).toBe(true);
+    expect(
+      coveredBy(ledger().entries, "pass-scan").has(
+        `core/state.ts\0${blob(TREE2["core/state.ts"])}`,
+      ),
+    ).toBe(true);
   });
   it("a changed file with only SOME ranges re-read settles none of its findings yet", async () => {
     let head = SHA1;
     const TREE2 = { ...TREE1, "core/state.ts": bigModule("v2") };
     const cases = runner();
-    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head)));
+    const s = new ScanRunner(
+      ports(
+        cases,
+        fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head),
+      ),
+    );
     await runOnce(s);
     await runOnce(s);
     // At the new content, every range after the first fails.
@@ -300,7 +358,8 @@ describe("stage 1 over a file bigger than one case", () => {
     let seen = 0;
     const flaky = cases.run;
     cases.run = async (spec, signal, onCost) => {
-      if (spec.files.includes("core/state.ts") && seen++ > 0) return { ok: false, reason: "boom", cost_usd: 0 };
+      if (spec.files.includes("core/state.ts") && seen++ > 0)
+        return { ok: false, reason: "boom", cost_usd: 0 };
       return flaky(spec, signal, onCost);
     };
     const d = await runOnce(s, { delta: true });
@@ -310,16 +369,27 @@ describe("stage 1 over a file bigger than one case", () => {
     expect(big.some((f) => f.state === "fixed")).toBe(false);
     const q = store.question().question;
     expect(q?.unreported.filter((f) => f.path === "core/state.ts") ?? []).toEqual([]);
-    expect(coveredBy(ledger().entries, "pass-scan").has(`core/state.ts\0${blob(TREE2["core/state.ts"])}`)).toBe(false);
+    expect(
+      coveredBy(ledger().entries, "pass-scan").has(
+        `core/state.ts\0${blob(TREE2["core/state.ts"])}`,
+      ),
+    ).toBe(false);
   });
 });
 
 describe("stage 2 over a file bigger than one case", () => {
   it("cuts a row naming it into range cases, sized and priced by the ranges, and runs them all", async () => {
     const cases = runner();
-    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1 }, () => SHA1)));
+    const s = new ScanRunner(
+      ports(
+        cases,
+        fakeSource({ [SHA1]: TREE1 }, () => SHA1),
+      ),
+    );
     await runOnce(s);
-    const p = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["core/state.ts"], reason: "auth state" }] });
+    const p = await s.proposeStage2({
+      rows: [{ lens: "pass-security", files: ["core/state.ts"], reason: "auth state" }],
+    });
     if (!p.ok) throw new Error(p.errors.join("; "));
     const row = p.proposal.rows[0]!;
     expect(row.status).toBe("run");
@@ -337,17 +407,34 @@ describe("stage 2 over a file bigger than one case", () => {
     expect(run.cases.map((c) => c.id)).toEqual(row.ranges!.map((_, i) => `${row.id}#${i + 1}`));
     const ran = cases.specs.slice(before);
     expect(ran).toHaveLength(row.ranges!.length);
-    for (const [i, spec] of ran.entries()) expect(rangeIn(spec.prompt, "core/state.ts")).toEqual({ start: row.ranges![i]!.start, end: row.ranges![i]!.end });
-    expect(coveredBy(ledger().entries, "pass-security").has(`core/state.ts\0${blob(TREE1["core/state.ts"]!)}`)).toBe(true);
+    for (const [i, spec] of ran.entries())
+      expect(rangeIn(spec.prompt, "core/state.ts")).toEqual({
+        start: row.ranges![i]!.start,
+        end: row.ranges![i]!.end,
+      });
+    expect(
+      coveredBy(ledger().entries, "pass-security").has(
+        `core/state.ts\0${blob(TREE1["core/state.ts"]!)}`,
+      ),
+    ).toBe(true);
     // Covered now: the same row proposed again is free.
-    const again = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["core/state.ts"], reason: "auth state" }] });
+    const again = await s.proposeStage2({
+      rows: [{ lens: "pass-security", files: ["core/state.ts"], reason: "auth state" }],
+    });
     expect(again.ok && again.proposal.rows[0]!.status).toBe("covered");
   });
 
   it("still refuses a several-file row over one case, and says to name the big file alone", async () => {
-    const s = new ScanRunner(ports(runner(), fakeSource({ [SHA1]: TREE1 }, () => SHA1)));
+    const s = new ScanRunner(
+      ports(
+        runner(),
+        fakeSource({ [SHA1]: TREE1 }, () => SHA1),
+      ),
+    );
     await runOnce(s);
-    const r = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["core/state.ts", "lib/util.py"], reason: "x" }] });
+    const r = await s.proposeStage2({
+      rows: [{ lens: "pass-security", files: ["core/state.ts", "lib/util.py"], reason: "x" }],
+    });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.errors[0]).toMatch(/core\/state\.ts .*alone/);
   });
@@ -358,7 +445,8 @@ describe("a ranged reading cut short across runs", () => {
    * differs from `bigModule`'s. */
   function otherModule(): string {
     const out: string[] = [];
-    for (let i = 0; i < 6000; i++) out.push(i % 100 === 0 ? `export function g${i}() {` : `  let y${i} = ${i * 7};`);
+    for (let i = 0; i < 6000; i++)
+      out.push(i % 100 === 0 ? `export function g${i}() {` : `  let y${i} = ${i * 7};`);
     return `${out.join("\n")}\n`;
   }
 
@@ -366,14 +454,20 @@ describe("a ranged reading cut short across runs", () => {
     let head = SHA1;
     const TREE2 = { ...TREE1, "core/state.ts": otherModule() };
     const cases = runner();
-    const s = new ScanRunner(ports(cases, fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head)));
+    const s = new ScanRunner(
+      ports(
+        cases,
+        fakeSource({ [SHA1]: TREE1, [SHA2]: TREE2 }, () => head),
+      ),
+    );
     await runOnce(s);
     await runOnce(s);
     head = SHA2;
     let seen = 0;
     const real = cases.run;
     cases.run = async (spec, signal, onCost) => {
-      if (spec.files.includes("core/state.ts") && seen++ > 0) return { ok: false, reason: "boom", cost_usd: 0 };
+      if (spec.files.includes("core/state.ts") && seen++ > 0)
+        return { ok: false, reason: "boom", cost_usd: 0 };
       return real(spec, signal, onCost);
     };
     const x = await runOnce(s, { delta: true });
@@ -389,13 +483,19 @@ describe("a ranged reading cut short across runs", () => {
     const core = y.preview.cases.filter((c) => c.unit === "core");
     expect(core.length).toBeGreaterThanOrEqual(1);
     expect(cases.specs.slice(before).some((c) => c.files.includes("core/state.ts"))).toBe(true);
-    expect(coveredBy(ledger().entries, "pass-scan").has(`core/state.ts\0${blob(TREE2["core/state.ts"])}`)).toBe(true);
+    expect(
+      coveredBy(ledger().entries, "pass-scan").has(
+        `core/state.ts\0${blob(TREE2["core/state.ts"])}`,
+      ),
+    ).toBe(true);
   });
 
   it("findings first seen by the run that read the earlier ranges are candidates when the reading completes", async () => {
     const { s, x } = await cutShort();
     const store = new FindingsStore(stateHomeFs(stateDir));
-    const fromX = store.load().findings.filter((f) => f.path === "core/state.ts" && f.first_seen.run === x.run.id);
+    const fromX = store
+      .load()
+      .findings.filter((f) => f.path === "core/state.ts" && f.first_seen.run === x.run.id);
     expect(fromX.length).toBeGreaterThanOrEqual(1);
     await runOnce(s, { delta: true });
     // The old range-1 finding may be the one run X saw again at new content:

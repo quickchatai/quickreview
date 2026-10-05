@@ -89,8 +89,12 @@ export async function codexCommand(cmd: string, d: CodexCliDeps): Promise<number
   // incomplete, never scored under the new model/effort label.
   for (const c of cases) {
     const prior = resume ? readCodexSummary(outDir, c) : null;
-    if (resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint))) continue;
-    if (prior) d.log(`codex: ${c.instance_id} was reviewed by a different Codex/model/effort — its result is dropped`);
+    if (resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
+      continue;
+    if (prior)
+      d.log(
+        `codex: ${c.instance_id} was reviewed by a different Codex/model/effort — its result is dropped`,
+      );
     rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
     rmSync(join(outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }

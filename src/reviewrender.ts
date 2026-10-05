@@ -65,7 +65,14 @@ export interface RenderedReview {
 }
 
 type Tag = "blocker" | "question" | "nit" | "check this" | "ask your human" | "deferred";
-const TAGS: readonly Tag[] = ["blocker", "question", "nit", "check this", "ask your human", "deferred"];
+const TAGS: readonly Tag[] = [
+  "blocker",
+  "question",
+  "nit",
+  "check this",
+  "ask your human",
+  "deferred",
+];
 const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
@@ -108,7 +115,9 @@ function readPosted(raw: Record<string, unknown>, i: number, problems: string[])
   const rawTag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
   const tag: Tag = TAGS.includes(rawTag) ? rawTag : "question";
   if (!TAGS.includes(rawTag))
-    problems.push(`${id}: posted_as ${JSON.stringify(raw.posted_as)} is outside the grammar — rendered as a question`);
+    problems.push(
+      `${id}: posted_as ${JSON.stringify(raw.posted_as)} is outside the grammar — rendered as a question`,
+    );
   const severity = str(raw.severity);
   const confidence = num(raw.confidence);
   const reachability = str(raw.reachability);
@@ -199,7 +208,10 @@ export function renderReviewFromRecord(
   } = {},
 ): RenderedReview {
   const problems: string[] = [];
-  const given = (typeof record === "object" && record !== null ? record : {}) as Record<string, unknown>;
+  const given = (typeof record === "object" && record !== null ? record : {}) as Record<
+    string,
+    unknown
+  >;
   const rec: Record<string, unknown> = {
     ...given,
     verdict: given.verdict ?? opts.verdict ?? null,
@@ -211,7 +223,9 @@ export function renderReviewFromRecord(
   const posted = entries
     .filter(
       (e): e is Record<string, unknown> =>
-        typeof e === "object" && e !== null && str((e as Record<string, unknown>).disposition) === "posted",
+        typeof e === "object" &&
+        e !== null &&
+        str((e as Record<string, unknown>).disposition) === "posted",
     )
     .map((e, i) => readPosted(e, i, problems));
 
@@ -221,7 +235,10 @@ export function renderReviewFromRecord(
   const overflow: Array<{ p: Posted; why: string }> = [];
   for (const p of posted) {
     if (!p.inline || p.path === null || p.line === null) {
-      overflow.push({ p, why: p.path === null || p.line === null ? "no anchor" : "posted in the body" });
+      overflow.push({
+        p,
+        why: p.path === null || p.line === null ? "no anchor" : "posted in the body",
+      });
       continue;
     }
     if (comments.length >= INLINE_CAP) {
@@ -257,7 +274,9 @@ export function renderReviewFromRecord(
   if (!lensesLine) problems.push("no lenses_applied — the posted lenses stand in");
 
   if (opts.bodyMode === "verdict") {
-    const lines = [`**Verdict: ${verdictLabel(verdict)}** — ${counts.length ? counts.join(", ") : "no findings"}.`];
+    const lines = [
+      `**Verdict: ${verdictLabel(verdict)}** — ${counts.length ? counts.join(", ") : "no findings"}.`,
+    ];
     const one = summary ? policyFirstSentence(summary) : "";
     if (one) lines.push("", one);
     if (overflow.length) lines.push("", ...overflow.map(({ p }) => `- ${ref(p)} — ${p.title}`));
@@ -276,17 +295,16 @@ export function renderReviewFromRecord(
   section("Blockers", of("blocker").map(bullet));
   section("Nits", of("nit").map(bullet));
   section("Questions", of("question").map(bullet));
-  section(
-    "Deferred",
-    leads.filter((p) => p.tag === "deferred").map(bullet),
-  );
+  section("Deferred", leads.filter((p) => p.tag === "deferred").map(bullet));
   section(
     "For a human to double-check",
     leads.filter((p) => p.tag === "check this").map((p) => `- ${ref(p)} — ${p.title}`),
   );
   section(
     "Additional findings (not posted inline)",
-    overflow.map(({ p, why }) => `- ${bullet(p).slice(2)} — _${why}_\n\n  ${p.body.replace(/\n/g, "\n  ")}`),
+    overflow.map(
+      ({ p, why }) => `- ${bullet(p).slice(2)} — _${why}_\n\n  ${p.body.replace(/\n/g, "\n  ")}`,
+    ),
   );
   const details = str(rec.details);
   if (details) out.push("", details);
@@ -329,7 +347,10 @@ export function postedRenderOptions(
 }
 
 function postedClassOf(postedAs: unknown): PolicyClass {
-  const t = (typeof postedAs === "string" ? postedAs : "").trim().replace(/^\[|\]$/g, "").toLowerCase();
+  const t = (typeof postedAs === "string" ? postedAs : "")
+    .trim()
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase();
   return t === "blocker" || t === "question" || t === "nit" ? t : "check";
 }
 
@@ -359,7 +380,8 @@ export function applyPostingPolicyToRecord(
   record: unknown,
   policy: PostingPolicy | undefined,
 ): { record: unknown; withheld: PolicyWithheld[] } {
-  if (isDefaultPosting(policy) || typeof record !== "object" || record === null) return { record, withheld: [] };
+  if (isDefaultPosting(policy) || typeof record !== "object" || record === null)
+    return { record, withheld: [] };
   const rec = record as Record<string, unknown>;
   if (!Array.isArray(rec.findings)) return { record, withheld: [] };
   const entries = (rec.findings as unknown[]).map((e) =>
@@ -367,11 +389,17 @@ export function applyPostingPolicyToRecord(
   );
   const posted = entries.filter(
     (e): e is Record<string, unknown> =>
-      typeof e === "object" && e !== null && (e as Record<string, unknown>).disposition === "posted",
+      typeof e === "object" &&
+      e !== null &&
+      (e as Record<string, unknown>).disposition === "posted",
   );
   const byId = new Map(posted.map((e) => [String(e.id ?? ""), e]));
   const titleOf = (e: Record<string, unknown>) =>
-    typeof e.title === "string" && e.title.trim() ? e.title : typeof e.reason === "string" ? policyFirstSentence(e.reason) : "";
+    typeof e.title === "string" && e.title.trim()
+      ? e.title
+      : typeof e.reason === "string"
+        ? policyFirstSentence(e.reason)
+        : "";
   const sel = selectPosted(
     posted,
     (e) => {
@@ -391,7 +419,8 @@ export function applyPostingPolicyToRecord(
     delete item.posted_as;
     item.disposition = "withheld";
     item.word = word;
-    item.reason = `Withheld by this repo's posting policy (${word}); kept here, never posted. ${typeof item.reason === "string" ? item.reason : ""}`.trim();
+    item.reason =
+      `Withheld by this repo's posting policy (${word}); kept here, never posted. ${typeof item.reason === "string" ? item.reason : ""}`.trim();
     const line = typeof item.line === "number" ? item.line : null;
     const path = typeof item.path === "string" && item.path.trim() ? item.path : null;
     withheld.push({
@@ -400,7 +429,8 @@ export function applyPostingPolicyToRecord(
       path,
       line,
       cls: postedClassOf(item.withheld_as),
-      severity: typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
+      severity:
+        typeof item.severity === "string" && item.severity.trim() ? item.severity.trim() : null,
       title: titleOf(item),
       inline: path !== null && line !== null && item.inline !== false,
     });
@@ -418,7 +448,12 @@ export function applyPostingPolicyToRecord(
 export function renderPostedReview(
   record: unknown,
   opts: PostedRenderOptions = {},
-): { rendered: RenderedReview; record: unknown; merges: PostCheckMerge[]; withheld: PolicyWithheld[] } {
+): {
+  rendered: RenderedReview;
+  record: unknown;
+  merges: PostCheckMerge[];
+  withheld: PolicyWithheld[];
+} {
   const { dedupMerge, policy, ...renderOpts } = opts;
   const checked = dedupMerge ? postCheckRecord(record) : { record, merges: [] as PostCheckMerge[] };
   const cut = applyPostingPolicyToRecord(checked.record, policy);
@@ -441,7 +476,7 @@ export const RENDER_RECORD_FIELDS = [
   "self-sufficient — WITHOUT the tag line and WITHOUT the severity trailer;",
   "both are rendered from `posted_as`, `severity`, `confidence` and `lens`),",
   "`side` when it is `LEFT`, `start_line` for a multi-line anchor,",
-  "`same_as: \"<lead id>\"` on a follower row of a root cause posted at",
+  '`same_as: "<lead id>"` on a follower row of a root cause posted at',
   "several sites (it posts inline but is not counted twice), and",
   "`inline: false` for a finding that belongs in the body only. At the top",
   "level: `verdict`, `summary` (the plain opening paragraph), `lenses_applied`",
@@ -453,7 +488,11 @@ export const RENDER_RECORD_FIELDS = [
 /** The round prompt's `{{render_note}}` — "" unless the order says this
  * install renders its posted review (`[review] render_outputs`), so a round
  * order without the flag renders exactly as before. */
-export function renderRenderNote(order: { render_outputs?: boolean; pr: number; round_no: number }): string {
+export function renderRenderNote(order: {
+  render_outputs?: boolean;
+  pr: number;
+  round_no: number;
+}): string {
   if (!order.render_outputs) return "";
   const n = order.pr;
   const k = order.round_no;

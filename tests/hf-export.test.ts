@@ -66,7 +66,12 @@ describe("hf_export.review_for_judge", () => {
       JSON.stringify({
         review: {
           comments: [
-            { path: "a.py", start_line: 3, end_line: 4, content: "[blocker] Crash on empty input\n\n_P1 · confidence 1.00_" },
+            {
+              path: "a.py",
+              start_line: 3,
+              end_line: 4,
+              content: "[blocker] Crash on empty input\n\n_P1 · confidence 1.00_",
+            },
             { path: "b.py", start_line: 9, content: "   " },
             { path: "b.py", start_line: 9, content: "plain note" },
           ],
@@ -77,14 +82,43 @@ describe("hf_export.review_for_judge", () => {
       join(run, "cases", id, "comments.json"),
       JSON.stringify([
         { path: "a.py", line: 3, side: "RIGHT", body: "[blocker] already above" },
-        { path: "c.py", line: 12, side: "LEFT", body: "[question] Was this removal intended?\n\n_P2 · x_" },
+        {
+          path: "c.py",
+          line: 12,
+          side: "LEFT",
+          body: "[question] Was this removal intended?\n\n_P2 · x_",
+        },
       ]),
     );
     const r = py("print(json.dumps(h.review_for_judge(sys.argv[1], sys.argv[2])))", run, id);
     expect(r).toEqual([
-      { id: "C1", path: "a.py", line: 3, end_line: 4, deleted_line: false, tag: "blocker", text: "Crash on empty input" },
-      { id: "C2", path: "b.py", line: 9, end_line: 9, deleted_line: false, tag: null, text: "plain note" },
-      { id: "C3", path: "c.py", line: 12, end_line: 12, deleted_line: true, tag: "question", text: "Was this removal intended?" },
+      {
+        id: "C1",
+        path: "a.py",
+        line: 3,
+        end_line: 4,
+        deleted_line: false,
+        tag: "blocker",
+        text: "Crash on empty input",
+      },
+      {
+        id: "C2",
+        path: "b.py",
+        line: 9,
+        end_line: 9,
+        deleted_line: false,
+        tag: null,
+        text: "plain note",
+      },
+      {
+        id: "C3",
+        path: "c.py",
+        line: 12,
+        end_line: 12,
+        deleted_line: true,
+        tag: "question",
+        text: "Was this removal intended?",
+      },
     ]);
   });
 
@@ -96,12 +130,19 @@ describe("hf_export.review_for_judge", () => {
       join(run, "results", "all", `${id}.json`),
       JSON.stringify({
         review_output: [
-          { file: "x.ts", line: 5, summary: "Null deref", failure_scenario: "when the list is empty" },
+          {
+            file: "x.ts",
+            line: 5,
+            summary: "Null deref",
+            failure_scenario: "when the list is empty",
+          },
           { file: "y.ts", line: 1, summary: "  " },
         ],
       }),
     );
-    const r = py("print(json.dumps(h.review_for_judge(sys.argv[1], sys.argv[2])))", run, id) as { text: string }[];
+    const r = py("print(json.dumps(h.review_for_judge(sys.argv[1], sys.argv[2])))", run, id) as {
+      text: string;
+    }[];
     expect(r.map((c) => c.text)).toEqual(["Null deref\nwhen the list is empty"]);
   });
 });

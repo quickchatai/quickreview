@@ -109,27 +109,31 @@ const RECORD = {
 // ---- schema + parser -------------------------------------------------------
 
 describe("parseFindingsRecord", () => {
-  it("parses the documented shape, keeping lens, axes, word and reason", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const parsed = parseFindingsRecord(RECORD, 7, 2);
-    expect(parsed.status).toBe("ok");
-    const findings = parsed.record?.findings ?? [];
-    expect(findings).toHaveLength(2);
-    expect(findings[0]).toMatchObject({
-      key: "f1",
-      lens: "pass-security",
-      severity: "P1",
-      confidence: 0.9,
-      reachability: "routine",
-      disposition: "posted",
-      posted_as: "blocker",
-    });
-    expect(findings[1]).toMatchObject({
-      lens: "pass-simplicity",
-      disposition: "killed",
-      word: "duplicate",
-    });
-    expect(parsed.record?.comments_posted).toBe(3);
-  });
+  it(
+    "parses the documented shape, keeping lens, axes, word and reason",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const parsed = parseFindingsRecord(RECORD, 7, 2);
+      expect(parsed.status).toBe("ok");
+      const findings = parsed.record?.findings ?? [];
+      expect(findings).toHaveLength(2);
+      expect(findings[0]).toMatchObject({
+        key: "f1",
+        lens: "pass-security",
+        severity: "P1",
+        confidence: 0.9,
+        reachability: "routine",
+        disposition: "posted",
+        posted_as: "blocker",
+      });
+      expect(findings[1]).toMatchObject({
+        lens: "pass-simplicity",
+        disposition: "killed",
+        word: "duplicate",
+      });
+      expect(parsed.record?.comments_posted).toBe(3);
+    },
+  );
 
   it("is tolerant in the direction: digit-strings, aliases, partial entries", () => {
     const parsed = parseFindingsRecord(

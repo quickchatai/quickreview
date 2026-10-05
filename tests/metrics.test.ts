@@ -624,32 +624,36 @@ describe("schema migrations", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("adds the metrics columns once and re-opens idempotently", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const path = join(dir, "state.db");
-    for (let i = 0; i < 3; i++) {
-      const s = new StateStore(path, now);
-      const cols = (s.db.prepare("PRAGMA table_info(rounds)").all() as Array<{ name: string }>).map(
-        (c) => c.name,
-      );
-      for (const c of [
-        "additions",
-        "deletions",
-        "changed_files",
-        "backfilled",
-        "gh_review_id",
-        "gh_commit_id",
-        "trigger_ts",
-      ]) {
-        expect(cols.filter((x) => x === c)).toHaveLength(1);
+  it(
+    "adds the metrics columns once and re-opens idempotently",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const path = join(dir, "state.db");
+      for (let i = 0; i < 3; i++) {
+        const s = new StateStore(path, now);
+        const cols = (
+          s.db.prepare("PRAGMA table_info(rounds)").all() as Array<{ name: string }>
+        ).map((c) => c.name);
+        for (const c of [
+          "additions",
+          "deletions",
+          "changed_files",
+          "backfilled",
+          "gh_review_id",
+          "gh_commit_id",
+          "trigger_ts",
+        ]) {
+          expect(cols.filter((x) => x === c)).toHaveLength(1);
+        }
+        const commentCols = (
+          s.db.prepare("PRAGMA table_info(bot_comments)").all() as Array<{ name: string }>
+        ).map((c) => c.name);
+        expect(commentCols.filter((x) => x === "round_no")).toHaveLength(1);
+        expect(s.allBackfillPrMeta()).toEqual([]);
+        s.close();
       }
-      const commentCols = (
-        s.db.prepare("PRAGMA table_info(bot_comments)").all() as Array<{ name: string }>
-      ).map((c) => c.name);
-      expect(commentCols.filter((x) => x === "round_no")).toHaveLength(1);
-      expect(s.allBackfillPrMeta()).toEqual([]);
-      s.close();
-    }
-  });
+    },
+  );
 
   it("migrates a pre-existing store that has none of the new columns", () => {
     const path = join(dir, "legacy.db");

@@ -79,7 +79,9 @@ export function readDigest(fs: StateFs): DigestRead {
   }
   if (text === null) return { state: "absent" };
   const p = parseDigest(text);
-  return p.ok ? { state: "ok", digest: p.digest } : { state: "unreadable", error: `${HISTORY_DIGEST_FILE}: ${p.error}` };
+  return p.ok
+    ? { state: "ok", digest: p.digest }
+    : { state: "unreadable", error: `${HISTORY_DIGEST_FILE}: ${p.error}` };
 }
 
 // ---- the companion's view ------------------------------------------------------
@@ -134,14 +136,19 @@ export function historyPage(
   let all: string[];
   if (section === "human") {
     all = d.human.comments.map(
-      (c) => `#${c.pr} ${c.kind}${c.path ? ` ${c.path}` : ""} [${c.state}] @${c.author}: ${one(c.body)}`,
+      (c) =>
+        `#${c.pr} ${c.kind}${c.path ? ` ${c.path}` : ""} [${c.state}] @${c.author}: ${one(c.body)}`,
     );
   } else if (section === "rounds") {
     all = d.rounds.map(
-      (r) => `#${r.pr} round ${r.round_no}${r.backfilled ? " (imported)" : ""} ${r.verdict ?? "—"} ${r.finished_at ?? ""}: ${one(r.summary) || "(no summary)"}`,
+      (r) =>
+        `#${r.pr} round ${r.round_no}${r.backfilled ? " (imported)" : ""} ${r.verdict ?? "—"} ${r.finished_at ?? ""}: ${one(r.summary) || "(no summary)"}`,
     );
   } else {
-    all = d.feedback.map((f) => `#${f.pr} ${f.kind} ${f.created_at}${f.author ? ` @${f.author}` : ""}: ${one(f.body) || "(no text)"}`);
+    all = d.feedback.map(
+      (f) =>
+        `#${f.pr} ${f.kind} ${f.created_at}${f.author ? ` @${f.author}` : ""}: ${one(f.body) || "(no text)"}`,
+    );
   }
   return { total: all.length, offset: off, lines: all.slice(off, off + lim) };
 }
@@ -181,7 +188,8 @@ export function leakChecker(d: ReviewHistoryDigest): (text: string) => string[] 
   const shingles = new Set<string>();
   for (const raw of rawTexts(d)) {
     const w = words(raw);
-    for (let i = 0; i + QUOTE_WORDS <= w.length; i++) shingles.add(w.slice(i, i + QUOTE_WORDS).join(" "));
+    for (let i = 0; i + QUOTE_WORDS <= w.length; i++)
+      shingles.add(w.slice(i, i + QUOTE_WORDS).join(" "));
   }
   const authors = authorsOf(d);
   return (text) => {
@@ -213,25 +221,38 @@ export function leaksIn(text: string, d: ReviewHistoryDigest): string[] {
 
 /** Strict: the companion's list, or every reason it is not one. */
 export function normalizeThemes(raw: unknown): { ok: true; themes: HistoryTheme[] } | ThemeRefusal {
-  if (!Array.isArray(raw)) return { ok: false, errors: ["`themes` must be an array (empty is allowed: an empty history has none)"] };
+  if (!Array.isArray(raw))
+    return {
+      ok: false,
+      errors: ["`themes` must be an array (empty is allowed: an empty history has none)"],
+    };
   const errors: string[] = [];
-  if (raw.length > MAX_THEMES) errors.push(`at most ${MAX_THEMES} themes per save (got ${raw.length}) — merge the smaller ones`);
+  if (raw.length > MAX_THEMES)
+    errors.push(
+      `at most ${MAX_THEMES} themes per save (got ${raw.length}) — merge the smaller ones`,
+    );
   const themes: HistoryTheme[] = [];
   for (const [i, t] of raw.entries()) {
     const o = (t ?? {}) as Record<string, unknown>;
     const title = typeof o.title === "string" ? o.title.trim() : "";
     const summary = typeof o.summary === "string" ? o.summary.trim() : "";
     const source = o.source;
-    const weight = typeof o.weight === "string" && /^\d+$/.test(o.weight) ? Number(o.weight) : o.weight;
+    const weight =
+      typeof o.weight === "string" && /^\d+$/.test(o.weight) ? Number(o.weight) : o.weight;
     const at = `themes[${i}]`;
-    if (title === "" || title.length > THEME_TITLE_MAX) errors.push(`${at}.title must be 1..${THEME_TITLE_MAX} characters`);
-    if (summary === "" || summary.length > THEME_SUMMARY_MAX) errors.push(`${at}.summary must be 1..${THEME_SUMMARY_MAX} characters`);
-    if (/[\r\n]/.test(title) || /[\r\n]/.test(summary)) errors.push(`${at}: one line each — no newlines`);
-    if (title.startsWith("#") || summary.startsWith("#")) errors.push(`${at}: must not start with '#' (tags are the tool's to write)`);
+    if (title === "" || title.length > THEME_TITLE_MAX)
+      errors.push(`${at}.title must be 1..${THEME_TITLE_MAX} characters`);
+    if (summary === "" || summary.length > THEME_SUMMARY_MAX)
+      errors.push(`${at}.summary must be 1..${THEME_SUMMARY_MAX} characters`);
+    if (/[\r\n]/.test(title) || /[\r\n]/.test(summary))
+      errors.push(`${at}: one line each — no newlines`);
+    if (title.startsWith("#") || summary.startsWith("#"))
+      errors.push(`${at}: must not start with '#' (tags are the tool's to write)`);
     if (typeof source !== "string" || !(THEME_SOURCES as readonly string[]).includes(source)) {
       errors.push(`${at}.source must be one of ${THEME_SOURCES.join(" | ")}`);
     }
-    if (typeof weight !== "number" || !Number.isInteger(weight) || weight < 1) errors.push(`${at}.weight must be a positive integer (items behind it)`);
+    if (typeof weight !== "number" || !Number.isInteger(weight) || weight < 1)
+      errors.push(`${at}.weight must be a positive integer (items behind it)`);
     themes.push({ title, summary, source: source as ThemeSource, weight: weight as number });
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, themes };
@@ -259,7 +280,8 @@ export interface SaveThemesDeps {
   clock: () => Date;
 }
 
-export type SaveThemesResult = { ok: true; themes: HistoryTheme[]; memory: MemoryOutcome } | ThemeRefusal;
+export type SaveThemesResult =
+  { ok: true; themes: HistoryTheme[]; memory: MemoryOutcome } | ThemeRefusal;
 
 function readThemesFile(fs: StateFs): { file: HistoryThemesFile | null; error: string | null } {
   let text: string | null;
@@ -271,12 +293,16 @@ function readThemesFile(fs: StateFs): { file: HistoryThemesFile | null; error: s
   if (text === null) return { file: null, error: null };
   try {
     const f = JSON.parse(text) as HistoryThemesFile;
-    if (f.version !== HISTORY_THEMES_VERSION || !Array.isArray(f.themes)) throw new Error("not a themes file this version reads");
+    if (f.version !== HISTORY_THEMES_VERSION || !Array.isArray(f.themes))
+      throw new Error("not a themes file this version reads");
     const n = normalizeThemes(f.themes);
     if (!n.ok) throw new Error(n.errors.join("; "));
     return { file: { ...f, themes: n.themes }, error: null };
   } catch (err) {
-    return { file: null, error: `${HISTORY_THEMES_FILE}: ${String(err)} — nothing will overwrite it; move it aside to start over` };
+    return {
+      file: null,
+      error: `${HISTORY_THEMES_FILE}: ${String(err)} — nothing will overwrite it; move it aside to start over`,
+    };
   }
 }
 
@@ -287,16 +313,26 @@ function readThemesFile(fs: StateFs): { file: HistoryThemesFile | null; error: s
  * the earlier unpinned ones. Refused outright when there is no digest to have
  * condensed from, or a themes file this version cannot read is in the way.
  */
-export async function saveHistoryThemes(deps: SaveThemesDeps, raw: unknown): Promise<SaveThemesResult> {
+export async function saveHistoryThemes(
+  deps: SaveThemesDeps,
+  raw: unknown,
+): Promise<SaveThemesResult> {
   const read = readDigest(deps.state);
   if (read.state === "absent") {
-    return { ok: false, errors: ["no review history digest in the state home yet — the owner runs `qcr history pull` to fetch one"] };
+    return {
+      ok: false,
+      errors: [
+        "no review history digest in the state home yet — the owner runs `qcr history pull` to fetch one",
+      ],
+    };
   }
   if (read.state === "unreadable") return { ok: false, errors: [read.error] };
   const n = normalizeThemes(raw);
   if (!n.ok) return n;
   const leaksOf = leakChecker(read.digest);
-  const leaks = n.themes.flatMap((t, i) => leaksOf(`${t.title} ${t.summary}`).map((l) => `themes[${i}] ${l}`));
+  const leaks = n.themes.flatMap((t, i) =>
+    leaksOf(`${t.title} ${t.summary}`).map((l) => `themes[${i}] ${l}`),
+  );
   if (leaks.length > 0) return { ok: false, errors: leaks };
   const prior = readThemesFile(deps.state);
   if (prior.error !== null) return { ok: false, errors: [prior.error] };
@@ -313,7 +349,9 @@ export async function saveHistoryThemes(deps: SaveThemesDeps, raw: unknown): Pro
 
   const memory: MemoryOutcome = { written: 0, retired: 0, problems: [] };
   if (deps.memory === null) {
-    memory.problems.push("no reviewer memory in this assembly — themes saved to the state home only");
+    memory.problems.push(
+      "no reviewer memory in this assembly — themes saved to the state home only",
+    );
     return { ok: true, themes: n.themes, memory };
   }
   try {
@@ -353,7 +391,10 @@ export function readHistoryThemes(fs: StateFs): HistoryThemesFile | null {
  * an unreadable themes file as UNKNOWN, never as "no themes yet". */
 export function historyThemesState(
   fs: StateFs,
-): { state: "absent" } | { state: "unreadable"; error: string } | { state: "ok"; file: HistoryThemesFile } {
+):
+  | { state: "absent" }
+  | { state: "unreadable"; error: string }
+  | { state: "ok"; file: HistoryThemesFile } {
   const r = readThemesFile(fs);
   if (r.error !== null) return { state: "unreadable", error: r.error };
   return r.file === null ? { state: "absent" } : { state: "ok", file: r.file };

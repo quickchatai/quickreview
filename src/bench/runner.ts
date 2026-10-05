@@ -791,8 +791,8 @@ export function renderBenchOutputs(
   return renderPostedReview(
     record,
     postedRenderOptions(cfg, {
-      verdict: typeof outcome?.["verdict"] === "string" ? (outcome["verdict"] as string) : null,
-      summary: typeof outcome?.["summary"] === "string" ? (outcome["summary"] as string) : null,
+      verdict: typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null,
+      summary: typeof outcome?.["summary"] === "string" ? outcome["summary"] : null,
       lensesApplied: passes.length ? passes.join(", ") : null,
     }),
   );

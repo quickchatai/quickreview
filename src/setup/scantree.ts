@@ -20,7 +20,15 @@
 // (`<sha>.complete`), never a path inside it: a name inside the tree is one
 // the commit can occupy.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { MAX_READ_BYTES } from "./adapters.js";
 import type { ScanSource, ScanTree } from "./scanrun.js";
@@ -41,7 +49,11 @@ const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  * trees — the scan's own by default; another reader of trees (the PR
  * replay) passes its own, so neither prunes the other's.
  * `batchBytes` bounds one `cat-file --batch` call's output (tests shrink it). */
-export function gitScanSource(repoRoot: string, stateRoot: string, opts: { treesDir?: string; batchBytes?: number } = {}): ScanSource {
+export function gitScanSource(
+  repoRoot: string,
+  stateRoot: string,
+  opts: { treesDir?: string; batchBytes?: number } = {},
+): ScanSource {
   const batchBytes = opts.batchBytes ?? BYTES_PER_BATCH;
   const git = (args: string[], maxBuffer = 64 * 1024 * 1024): string | null => {
     try {
@@ -74,7 +86,11 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
     if (blobs.length === 0) return true;
     // Sizes first, so one call's output is bounded by BYTES as well as by
     // count: a repository of large assets must not need one huge buffer.
-    const checked = gitBytes(["cat-file", "--batch-check"], blobs.join("\n") + "\n", 64 * 1024 * 1024);
+    const checked = gitBytes(
+      ["cat-file", "--batch-check"],
+      blobs.join("\n") + "\n",
+      64 * 1024 * 1024,
+    );
     if (checked === null) return false;
     const sizeOf = new Map<string, number>();
     for (const line of checked.toString("utf8").split("\n")) {
@@ -93,7 +109,11 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
     }
     for (const { blobs: chunk, bytes } of chunks) {
       // Each blob's header and trailing newline on top of its bytes.
-      const out = gitBytes(["cat-file", "--batch"], chunk.join("\n") + "\n", bytes + chunk.length * 128 + 1024);
+      const out = gitBytes(
+        ["cat-file", "--batch"],
+        chunk.join("\n") + "\n",
+        bytes + chunk.length * 128 + 1024,
+      );
       if (out === null) return false;
       let at = 0;
       for (const blob of chunk) {
@@ -139,7 +159,8 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
       return SHA_RE.test(sha) ? sha : null;
     },
     open: (sha, keep) => {
-      if (!SHA_RE.test(sha)) return { ok: false, reason: `not a commit sha: ${JSON.stringify(sha)}` };
+      if (!SHA_RE.test(sha))
+        return { ok: false, reason: `not a commit sha: ${JSON.stringify(sha)}` };
       const files = list(sha);
       if (files === null) return { ok: false, reason: "git cannot list that commit's tree" };
       const root = join(treesDir, sha);
@@ -147,17 +168,24 @@ export function gitScanSource(repoRoot: string, stateRoot: string, opts: { trees
       try {
         mkdirSync(treesDir, { recursive: true });
         for (const other of readdirSync(treesDir)) {
-          const owner = other.endsWith(COMPLETE_SUFFIX) ? other.slice(0, -COMPLETE_SUFFIX.length) : other;
-          if (owner !== sha && !keep.includes(owner)) rmSync(join(treesDir, other), { recursive: true, force: true });
+          const owner = other.endsWith(COMPLETE_SUFFIX)
+            ? other.slice(0, -COMPLETE_SUFFIX.length)
+            : other;
+          if (owner !== sha && !keep.includes(owner))
+            rmSync(join(treesDir, other), { recursive: true, force: true });
         }
         if (!existsSync(marker)) {
           rmSync(root, { recursive: true, force: true });
           mkdirSync(root, { recursive: true });
-          if (!materialise(root, files)) return { ok: false, reason: "git cannot read that commit's blobs" };
+          if (!materialise(root, files))
+            return { ok: false, reason: "git cannot read that commit's blobs" };
           writeFileSync(marker, `${sha}\n`);
         }
       } catch (err) {
-        return { ok: false, reason: `cannot materialise the tree: ${err instanceof Error ? err.message : String(err)}` };
+        return {
+          ok: false,
+          reason: `cannot materialise the tree: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
       return { ok: true, tree: treeAt(sha, root, files) };
     },

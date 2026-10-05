@@ -314,7 +314,8 @@ async function main(): Promise<number> {
         const st = s?.status ?? "missing";
         tally[st] = (tally[st] ?? 0) + 1;
         const e = s?.model_errors;
-        if (s && s.status !== "ok" && e && e.rate_limited + e.overloaded + (e.usage_limit ?? 0) > 0) limited++;
+        if (s && s.status !== "ok" && e && e.rate_limited + e.overloaded + (e.usage_limit ?? 0) > 0)
+          limited++;
       }
       const ok = tally["ok"] ?? 0;
       const kinds = Object.entries(tally)
@@ -607,8 +608,8 @@ async function main(): Promise<number> {
       verbosity: health["verbosity"] ?? null,
       endpoint:
         benchAuthMode() === "api-key"
-        ? "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)"
-        : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
+          ? "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)"
+          : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)",
       flags: {
         concurrency: flagsOcr.concurrency,
         timeout_min: flagsOcr.timeoutMin,
@@ -891,9 +892,12 @@ async function main(): Promise<number> {
       const res = await fetch(`${bridgeUrl}/health`, { signal: AbortSignal.timeout(10_000) });
       health = (await res.json()) as Record<string, unknown>;
     } catch (err) {
-      throw new Error(`pragent-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`, {
-        cause: err,
-      });
+      throw new Error(
+        `pragent-review: the Codex bridge at ${bridgeUrl} is not answering (${String(err)})`,
+        {
+          cause: err,
+        },
+      );
     }
     const model = typeof health["model"] === "string" ? health["model"] : "";
     if (!model) throw new Error("pragent-review: the bridge reported no model");
@@ -926,7 +930,10 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     assertArm(outDir, "pragent");
-    writeFileSync(join(outDir, "report.md"), renderPragentReport(set, outDir, selectCases(set, only(f))));
+    writeFileSync(
+      join(outDir, "report.md"),
+      renderPragentReport(set, outDir, selectCases(set, only(f))),
+    );
     log(`report: ${join(outDir, "report.md")}`);
     return 0;
   }

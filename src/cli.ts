@@ -528,7 +528,8 @@ function intFlag(rest: string[], flag: string, usage: string): number | undefine
   return n;
 }
 
-const HISTORY_USAGE = "usage: qcr history <digest [--months <n>] [--limit <n>] | pull [--months <n>]>";
+const HISTORY_USAGE =
+  "usage: qcr history <digest [--months <n>] [--limit <n>] | pull [--months <n>]>";
 
 /**
  * `qcr history` — the review history digest setup reads.
@@ -787,13 +788,19 @@ export function cmdInstall(
   switch (rest[0]) {
     case "where": {
       const located = locateConfig({ env });
-      log(`config      ${located.path}  (${located.source}${existsSync(located.path) ? "" : ", missing"})`);
+      log(
+        `config      ${located.path}  (${located.source}${existsSync(located.path) ? "" : ", missing"})`,
+      );
       log(`config home ${located.home}`);
       log(`state home  ${stateHome(env)}`);
-      log(`profiles    ${profileSearchDirs({ root, env }).join(" → ")}  (the checkout: generic examples only)`);
+      log(
+        `profiles    ${profileSearchDirs({ root, env }).join(" → ")}  (the checkout: generic examples only)`,
+      );
       const secrets = locateSecrets({ env });
       const keys = locateKeysFile({ env });
-      log(`secrets     ${secrets.path}  (${secrets.source}; a set [github] secrets_dir overrides it)`);
+      log(
+        `secrets     ${secrets.path}  (${secrets.source}; a set [github] secrets_dir overrides it)`,
+      );
       log(`memory keys ${keys.path}  (${keys.source})`);
       // nothing reads the old places any more, so an install that
       // has not migrated is told what it is stranding, and the way out.
@@ -803,7 +810,9 @@ export function cmdInstall(
         strandedLegacySecrets(env),
       ].filter((p): p is string => p !== null);
       for (const path of stranded)
-        log(`stranded    ${path} — no longer read; \`qcr install migrate\` moves it into the homes`);
+        log(
+          `stranded    ${path} — no longer read; \`qcr install migrate\` moves it into the homes`,
+        );
       return 0;
     }
     case "migrate": {
@@ -848,9 +857,8 @@ function cmdEvents(tail: number, json: boolean): void {
 
 /** `qcr companion up|down|status` — thin over CompanionLifecycle. */
 export async function cmdCompanion(sub: string | undefined): Promise<void> {
-  const { CompanionLifecycle, companionStateWord, realDockerRunner } = await import(
-    "./tui/companion.js"
-  );
+  const { CompanionLifecycle, companionStateWord, realDockerRunner } =
+    await import("./tui/companion.js");
   const cfg = loadConfig().companion;
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
   switch (sub) {

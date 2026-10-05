@@ -143,40 +143,44 @@ const corrections = (s: StateStore) =>
   ).map((r) => ({ pr: r.pr, ...JSON.parse(r.payload) }));
 
 describe("reconcileOnce", () => {
-  it("adopts a hand-edited divergent pr_state from GitHub truth", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // Local state says #1 is merely tracked and #2 is queued; GitHub says both
-    // carry a live trigger, #3 has an outdated approval and #4 is closed.
-    // The outdated approval is metadata only: commits never queue reviews.
-    gh.open = [ref(1), ref(2), ref(3)];
-    gh.labelTriggered = [item(1)];
-    gh.teamTriggered = [item(2)];
-    gh.stale = [
-      { number: 3, head_sha: "sha3", approved_sha: "old3", approved_at: "2026-08-12T10:00:00Z" },
-    ];
-    gh.closedPrs.set(4, ref(4, { state: "closed", merged: true }));
-    seed(1, "tracked");
-    seed(2, "queued", { trigger: "2026-08-13T08:00:00Z" });
-    seed(3, "tracked");
-    seed(4, "awaiting_author");
-    const { hooks, archived } = recordingHooks();
+  it(
+    "adopts a hand-edited divergent pr_state from GitHub truth",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // Local state says #1 is merely tracked and #2 is queued; GitHub says both
+      // carry a live trigger, #3 has an outdated approval and #4 is closed.
+      // The outdated approval is metadata only: commits never queue reviews.
+      gh.open = [ref(1), ref(2), ref(3)];
+      gh.labelTriggered = [item(1)];
+      gh.teamTriggered = [item(2)];
+      gh.stale = [
+        { number: 3, head_sha: "sha3", approved_sha: "old3", approved_at: "2026-08-12T10:00:00Z" },
+      ];
+      gh.closedPrs.set(4, ref(4, { state: "closed", merged: true }));
+      seed(1, "tracked");
+      seed(2, "queued", { trigger: "2026-08-13T08:00:00Z" });
+      seed(3, "tracked");
+      seed(4, "awaiting_author");
+      const { hooks, archived } = recordingHooks();
 
-    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+      const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
-    expect(store.getPr(1)!.state).toBe("queued");
-    expect(store.getPr(2)!.state).toBe("queued"); // already correct: no correction
-    expect(store.getPr(3)!.state).toBe("tracked");
-    expect(store.getPr(3)!.stale_recheck).toBe(0);
-    expect(store.getPr(4)!.state).toBe("closed");
-    expect(archived).toEqual([4]);
-    expect(report.closed).toEqual([4]);
+      expect(store.getPr(1)!.state).toBe("queued");
+      expect(store.getPr(2)!.state).toBe("queued"); // already correct: no correction
+      expect(store.getPr(3)!.state).toBe("tracked");
+      expect(store.getPr(3)!.stale_recheck).toBe(0);
+      expect(store.getPr(4)!.state).toBe("closed");
+      expect(archived).toEqual([4]);
+      expect(report.closed).toEqual([4]);
 
-    const what = corrections(store).map((c) => `${c.pr}:${c.what}`);
-    expect(what).toContain("1:triggered-not-queued");
-    expect(what).not.toContain("3:stale-approval");
-    expect(what).toContain("4:pr-closed");
-    expect(what).not.toContain("2:triggered-not-queued");
-    expect(report.corrections).toBe(2);
-  });
+      const what = corrections(store).map((c) => `${c.pr}:${c.what}`);
+      expect(what).toContain("1:triggered-not-queued");
+      expect(what).not.toContain("3:stale-approval");
+      expect(what).toContain("4:pr-closed");
+      expect(what).not.toContain("2:triggered-not-queued");
+      expect(report.corrections).toBe(2);
+    },
+  );
 
   it("tracks a triggered PR the daemon has never seen (lost delivery)", async () => {
     gh.open = [ref(10)];

@@ -45,7 +45,10 @@ function jsonl(rel: string, content: string, mtime?: Date): string {
 describe("scanPiAuthErrors", () => {
   it("matches the live error signature, in nested per-cwd dirs, tail-only", () => {
     expect(PI_AUTH_ERROR_RE.test(ERR)).toBe(true);
-    jsonl("--opt-quickreview-sandbox--/a.jsonl", JSON.stringify({ pad: "x".repeat(200) }) + "\n" + ERR);
+    jsonl(
+      "--opt-quickreview-sandbox--/a.jsonl",
+      JSON.stringify({ pad: "x".repeat(200) }) + "\n" + ERR,
+    );
     // A file larger than the tail window with the error OUTSIDE the tail is
     // (deliberately) not matched — live failures sit at the end of the file.
     jsonl("--opt-quickreview-sandbox--/old-error.jsonl", ERR + "y".repeat(AUTH_TAIL_BYTES + 1024));
@@ -70,11 +73,18 @@ describe("scanPiAuthErrors", () => {
         ],
       },
     });
-    jsonl("--opt-quickreview-sandbox--/quoted.jsonl", toolResult + "\n" + "not json: invalid_grant\n");
+    jsonl(
+      "--opt-quickreview-sandbox--/quoted.jsonl",
+      toolResult + "\n" + "not json: invalid_grant\n",
+    );
     // The live shape: an assistant message pi stopped with an error.
     const real = JSON.stringify({
       type: "message",
-      message: { role: "assistant", stopReason: "error", errorMessage: "Provided authentication token is expired." },
+      message: {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Provided authentication token is expired.",
+      },
     });
     jsonl("--opt-quickreview-sandbox--/real.jsonl", real + "\n");
     const hits = scanPiAuthErrors(dir, 0);

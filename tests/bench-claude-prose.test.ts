@@ -52,31 +52,69 @@ const GOLDEN: Golden[] = [
     id: "cline__cline@7d18fb9",
     shape: "`- **`path:N` (severity)** —`, two distinct findings on ONE line both kept",
     want: [
-      { path: "src/integrations/editor/DiffViewProvider.ts", start: 237, starts: "**`src/integrations/editor/DiffViewProvider.ts:237` (high)** — jschardet labels plain-ASCII" },
-      { path: "src/integrations/editor/DiffViewProvider.ts", start: 237, starts: "**`src/integrations/editor/DiffViewProvider.ts:237` (medium)** — The code checks for `\"utf8\"`" },
-      { path: "src/integrations/editor/DiffViewProvider.ts", start: 49, starts: "**`src/integrations/editor/DiffViewProvider.ts:49` (medium)** — The detected encoding" },
-      { path: "src/integrations/editor/DiffViewProvider.ts", start: 238, starts: "**`src/integrations/editor/DiffViewProvider.ts:238` (medium)** — Writing the file directly" },
-      { path: "src/integrations/misc/extract-text.ts", start: 30, starts: "**`src/integrations/misc/extract-text.ts:30` (medium)** — The binary-file check" },
-      { path: "src/integrations/misc/extract-text.ts", start: 26, starts: "**`src/integrations/misc/extract-text.ts:26` (low)** — The whole file is now read" },
+      {
+        path: "src/integrations/editor/DiffViewProvider.ts",
+        start: 237,
+        starts:
+          "**`src/integrations/editor/DiffViewProvider.ts:237` (high)** — jschardet labels plain-ASCII",
+      },
+      {
+        path: "src/integrations/editor/DiffViewProvider.ts",
+        start: 237,
+        starts:
+          '**`src/integrations/editor/DiffViewProvider.ts:237` (medium)** — The code checks for `"utf8"`',
+      },
+      {
+        path: "src/integrations/editor/DiffViewProvider.ts",
+        start: 49,
+        starts:
+          "**`src/integrations/editor/DiffViewProvider.ts:49` (medium)** — The detected encoding",
+      },
+      {
+        path: "src/integrations/editor/DiffViewProvider.ts",
+        start: 238,
+        starts:
+          "**`src/integrations/editor/DiffViewProvider.ts:238` (medium)** — Writing the file directly",
+      },
+      {
+        path: "src/integrations/misc/extract-text.ts",
+        start: 30,
+        starts: "**`src/integrations/misc/extract-text.ts:30` (medium)** — The binary-file check",
+      },
+      {
+        path: "src/integrations/misc/extract-text.ts",
+        start: 26,
+        starts: "**`src/integrations/misc/extract-text.ts:26` (low)** — The whole file is now read",
+      },
     ],
   },
   {
     id: "openai__codex@8c952af",
     shape: "`1. **Title (confirmed).** `path:N` — …`: the location AFTER a bold title",
     want: [
-      { path: "codex-rs/protocol/src/models.rs", start: 51, starts: "**Reasoning items are dropped when a session resumes (confirmed).**", has: ["#[serde(default, skip_serializing)]", "core/src/rollout/recorder.rs:189"] },
-      { path: "codex-rs/protocol/src/models.rs", start: 44, starts: "**Item ids are removed everywhere, not just from API requests (plausible).**" },
+      {
+        path: "codex-rs/protocol/src/models.rs",
+        start: 51,
+        starts: "**Reasoning items are dropped when a session resumes (confirmed).**",
+        has: ["#[serde(default, skip_serializing)]", "core/src/rollout/recorder.rs:189"],
+      },
+      {
+        path: "codex-rs/protocol/src/models.rs",
+        start: 44,
+        starts: "**Item ids are removed everywhere, not just from API requests (plausible).**",
+      },
     ],
   },
   {
     id: "lvgl__lvgl@4a57db3",
-    shape: "\"no real bugs\" + a \"What I checked:\" list whose items DO carry path:line — none is a finding",
+    shape:
+      '"no real bugs" + a "What I checked:" list whose items DO carry path:line — none is a finding',
     want: [],
     skipped: { non_finding: 2, recap: 0, unlocated: 0 },
   },
   {
     id: "FreeCAD__FreeCAD@699b45c",
-    shape: "\"no real bugs\" + a list of `- **`path`:**` items with a file but no line",
+    shape: '"no real bugs" + a list of `- **`path`:**` items with a file but no line',
     want: [],
     skipped: { non_finding: 0, recap: 0, unlocated: 0 },
   },
@@ -84,39 +122,80 @@ const GOLDEN: Golden[] = [
     id: "PowerShell__PowerShell@ec952ce",
     shape: "a bare location: no backticks, no bold",
     want: [
-      { path: "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs", start: 496, starts: "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:496 — The new filter", lacks: ["The rest of the change looks correct"] },
+      {
+        path: "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs",
+        start: 496,
+        starts:
+          "src/System.Management.Automation/engine/CommandCompletion/CompletionCompleters.cs:496 — The new filter",
+        lacks: ["The rest of the change looks correct"],
+      },
     ],
   },
   {
     id: "google-gemini__gemini-cli@4c150ab",
-    shape: "a PARAGRAPH that opens with a bare location, its un-located bullets right under it as its body",
+    shape:
+      "a PARAGRAPH that opens with a bare location, its un-located bullets right under it as its body",
     want: [
-      { path: "packages/cli/src/config/config.ts", start: 372, starts: "packages/cli/src/config/config.ts:372 — ACP mode (`--experimental-acp`)", has: ["- **Cause:**", "- **Before:**"], lacks: ["Otherwise the new"] },
+      {
+        path: "packages/cli/src/config/config.ts",
+        start: 372,
+        starts: "packages/cli/src/config/config.ts:372 — ACP mode (`--experimental-acp`)",
+        has: ["- **Cause:**", "- **Before:**"],
+        lacks: ["Otherwise the new"],
+      },
     ],
   },
   {
     id: "bitcoin__bitcoin@4ba2e48",
-    shape: "numbered bold-title items with nested bullets, then a \"Summary:\" list repeating both locations (a recap)",
+    shape:
+      'numbered bold-title items with nested bullets, then a "Summary:" list repeating both locations (a recap)',
     want: [
-      { path: "src/validation.cpp", start: 3714, starts: "**Race during `InvalidateBlock` (`src/validation.cpp:3714`).**", has: ["**The problem:**", "**Second case:**"], lacks: ["Summary:"] },
-      { path: "src/validation.cpp", start: 3771, starts: "**Status change never saved (`src/validation.cpp:3771`).**", has: ["**Effect:**"] },
+      {
+        path: "src/validation.cpp",
+        start: 3714,
+        starts: "**Race during `InvalidateBlock` (`src/validation.cpp:3714`).**",
+        has: ["**The problem:**", "**Second case:**"],
+        lacks: ["Summary:"],
+      },
+      {
+        path: "src/validation.cpp",
+        start: 3771,
+        starts: "**Status change never saved (`src/validation.cpp:3771`).**",
+        has: ["**Effect:**"],
+      },
     ],
     skipped: { non_finding: 0, recap: 2, unlocated: 0 },
   },
   {
     id: "microsoft__typescript-go@b970689",
-    shape: "the sandbox's absolute `/work/repo/<owner>__<name>/` prefix, then a bare bullet recap of the same two",
+    shape:
+      "the sandbox's absolute `/work/repo/<owner>__<name>/` prefix, then a bare bullet recap of the same two",
     want: [
-      { path: "internal/parser/reparser.go", start: 120, written: "/work/repo/microsoft__typescript-go/internal/parser/reparser.go", starts: "**Parser crash on a side-effect `@import`** (confirmed)" },
-      { path: "internal/ast/utilities.go", start: 2556, written: "/work/repo/microsoft__typescript-go/internal/ast/utilities.go", starts: "**`@import` on a nested node is no longer resolved** (plausible)" },
+      {
+        path: "internal/parser/reparser.go",
+        start: 120,
+        written: "/work/repo/microsoft__typescript-go/internal/parser/reparser.go",
+        starts: "**Parser crash on a side-effect `@import`** (confirmed)",
+      },
+      {
+        path: "internal/ast/utilities.go",
+        start: 2556,
+        written: "/work/repo/microsoft__typescript-go/internal/ast/utilities.go",
+        starts: "**`@import` on a nested node is no longer resolved** (plausible)",
+      },
     ],
     skipped: { non_finding: 0, recap: 2, unlocated: 0 },
   },
   {
     id: "bitcoin__bitcoin@e98c51f",
-    shape: "\"…chose not to report:\" — a located item there is NOT a finding",
+    shape: '"…chose not to report:" — a located item there is NOT a finding',
     want: [
-      { path: "src/init.cpp", start: 1599, starts: "`src/init.cpp:1599` — A `-proxy` socket path", lacks: ["Listening"] },
+      {
+        path: "src/init.cpp",
+        start: 1599,
+        starts: "`src/init.cpp:1599` — A `-proxy` socket path",
+        lacks: ["Listening"],
+      },
     ],
     skipped: { non_finding: 1, recap: 0, unlocated: 0 },
   },
@@ -124,8 +203,18 @@ const GOLDEN: Golden[] = [
     id: "libsdl-org__SDL@96dfef3",
     shape: "`1. **Line N — …**` under a lead-in naming exactly one file",
     want: [
-      { path: "src/gpu/vulkan/SDL_gpu_vulkan.c", start: 10533, starts: "**Line 10533 — cleanup now only runs when a frame is presented.**", has: ["**Who is affected:**"] },
-      { path: "src/gpu/vulkan/SDL_gpu_vulkan.c", start: 5881, starts: "**Line 5881 — possible crash", has: ["**Fix:** move the transition"] },
+      {
+        path: "src/gpu/vulkan/SDL_gpu_vulkan.c",
+        start: 10533,
+        starts: "**Line 10533 — cleanup now only runs when a frame is presented.**",
+        has: ["**Who is affected:**"],
+      },
+      {
+        path: "src/gpu/vulkan/SDL_gpu_vulkan.c",
+        start: 5881,
+        starts: "**Line 5881 — possible crash",
+        has: ["**Fix:** move the transition"],
+      },
     ],
   },
   {
@@ -140,9 +229,14 @@ const GOLDEN: Golden[] = [
   },
   {
     id: "timescale__timescaledb@7148e5c",
-    shape: "a \"To fix it:\" numbered list with a location in it is not a finding",
+    shape: 'a "To fix it:" numbered list with a location in it is not a finding',
     want: [
-      { path: "tsl/src/bgw_policy/continuous_aggregate_api.c", start: 724, starts: "tsl/src/bgw_policy/continuous_aggregate_api.c:724 — `policy_refresh_cagg_add` never reads" },
+      {
+        path: "tsl/src/bgw_policy/continuous_aggregate_api.c",
+        start: 724,
+        starts:
+          "tsl/src/bgw_policy/continuous_aggregate_api.c:724 — `policy_refresh_cagg_add` never reads",
+      },
     ],
     skipped: { non_finding: 1, recap: 0, unlocated: 0 },
   },
@@ -165,7 +259,8 @@ describe("the prose parser, on real /code-review outputs (golden fixtures)", () 
         expect(f.written).toBe(w.written ?? w.path);
         expect(f.matched).toBe(true);
       });
-      if (g.skipped) expect(r.skipped).toEqual({ non_finding: 0, recap: 0, unlocated: 0, ...g.skipped });
+      if (g.skipped)
+        expect(r.skipped).toEqual({ non_finding: 0, recap: 0, unlocated: 0, ...g.skipped });
     });
   }
 
@@ -230,21 +325,24 @@ describe("the parser's rules, one at a time", () => {
   });
 
   it("the first location of the first line is the item's; later ones are body text", () => {
-    const s = "I found 1 issue.\n\n- `src/a.ts:198` (and line 229; same bug in `src/b.ts:12`) — a clipboard error stalls.\n";
+    const s =
+      "I found 1 issue.\n\n- `src/a.ts:198` (and line 229; same bug in `src/b.ts:12`) — a clipboard error stalls.\n";
     expect(paths(s)).toEqual(["src/a.ts:198-198"]);
   });
 
   it("ranges, extensionless files and a column", () => {
-    expect(paths("I found 3 bugs.\n\n- `src/a.ts:12-34` — x\n- **`src/Makefile:519`** — y\n- src/b.go:7:3 — z\n")).toEqual([
-      "src/a.ts:12-34",
-      "src/Makefile:519-519",
-      "src/b.go:7-7",
-    ]);
+    expect(
+      paths(
+        "I found 3 bugs.\n\n- `src/a.ts:12-34` — x\n- **`src/Makefile:519`** — y\n- src/b.go:7:3 — z\n",
+      ),
+    ).toEqual(["src/a.ts:12-34", "src/Makefile:519-519", "src/b.go:7-7"]);
     expect(findLocations("see `x/y.ts:30–28`")[0]).toMatchObject({ start: 28, end: 30 });
   });
 
   it("things that look like locations and are not", () => {
-    expect(findLocations("at 10:00, v1.2:3, https://example.com:443/x, host:8080, ratio 3:1")).toEqual([]);
+    expect(
+      findLocations("at 10:00, v1.2:3, https://example.com:443/x, host:8080, ratio 3:1"),
+    ).toEqual([]);
   });
 
   it("a paragraph finding does not take a list that has locations of its own", () => {
@@ -279,7 +377,9 @@ describe("the parser's rules, one at a time", () => {
     ];
     for (const l of yes) expect(leadInSaysFindings(l, null), l).toBe(true);
     // a neutral lead-in inherits the review's opening
-    expect(leadInSaysFindings("The diff touches three files:", "I found no bugs in this diff.")).toBe(false);
+    expect(
+      leadInSaysFindings("The diff touches three files:", "I found no bugs in this diff."),
+    ).toBe(false);
     expect(leadInSaysFindings("The diff touches three files:", "I found two problems.")).toBe(true);
     expect(leadInSaysFindings(null, null)).toBe(true);
   });

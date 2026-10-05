@@ -198,9 +198,13 @@ describe("qcr_profile_dir ≡ locateProfile", () => {
   });
 
   it("QCR_EXAMPLE_PROFILES is EXAMPLE_PROFILES", () => {
-    const r = spawnSync("bash", ["-c", '. "$1"; printf "%s\\n" "${QCR_EXAMPLE_PROFILES[@]}"', "l", locatorSh], {
-      encoding: "utf8",
-    });
+    const r = spawnSync(
+      "bash",
+      ["-c", '. "$1"; printf "%s\\n" "${QCR_EXAMPLE_PROFILES[@]}"', "l", locatorSh],
+      {
+        encoding: "utf8",
+      },
+    );
     expect(r.stdout.trim().split("\n")).toEqual([...EXAMPLE_PROFILES]);
   });
 

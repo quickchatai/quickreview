@@ -51,7 +51,15 @@
 // is built at review time, and `claude-rebuild` rebuilds it for a finished run
 // without re-reviewing anything.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeId, selectCases, type BenchCase, type CaseSet, type PrefetchMeta } from "./aacr.js";
@@ -332,7 +340,10 @@ export async function changedFilesFromStore(
   try {
     const init = await run("git", ["init", "--quiet", tmp], { env: GIT_ENV });
     if (init.code !== 0) return null;
-    writeFileSync(join(tmp, ".git", "objects", "info", "alternates"), `${join(store, "objects")}\n`);
+    writeFileSync(
+      join(tmp, ".git", "objects", "info", "alternates"),
+      `${join(store, "objects")}\n`,
+    );
     return await changedFilesIn(tmp, meta.merge_base, meta.head_commit);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -710,21 +721,24 @@ export async function reviewCaseClaude(
 
 /** save_result's shape for a case that produced nothing (with its empty view). */
 export function emptyClaudeResult(c: BenchCase, error: string): Obj {
-  return withClaudeView({
-    instance_id: c.instance_id,
-    repo: c.repo,
-    base_commit: c.base_commit,
-    head_commit: c.head_commit,
-    reviewer: "claude-code/code-review",
-    model: null,
-    started_at: new Date().toISOString(),
-    duration_seconds: 0,
-    claude_exit_code: -1,
-    retry_exhausted: null,
-    review_output_source: "stdout_fallback",
-    review_output: [],
-    stderr: error,
-  }, null);
+  return withClaudeView(
+    {
+      instance_id: c.instance_id,
+      repo: c.repo,
+      base_commit: c.base_commit,
+      head_commit: c.head_commit,
+      reviewer: "claude-code/code-review",
+      model: null,
+      started_at: new Date().toISOString(),
+      duration_seconds: 0,
+      claude_exit_code: -1,
+      retry_exhausted: null,
+      review_output_source: "stdout_fallback",
+      review_output: [],
+      stderr: error,
+    },
+    null,
+  );
 }
 
 /** A case with no prefetched store: failed WITH an empty result file. */
@@ -814,7 +828,9 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       o.log(`claude-rebuild: ${c.instance_id} — no result file, skipped`);
       continue;
     }
-    let files: string[] | null = o.filesDir ? readFilesList(join(o.filesDir, safe, "files.txt")) : null;
+    let files: string[] | null = o.filesDir
+      ? readFilesList(join(o.filesDir, safe, "files.txt"))
+      : null;
     if (!files && o.store && o.readMeta) {
       try {
         files = await changedFilesFromStore(join(o.store, safe), o.readMeta(c));
@@ -823,7 +839,11 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
       }
     }
     const md = join(o.outDir, "cases", safe, "review.md");
-    const next = withClaudeView(result, files, existsSync(md) ? readFileSync(md, "utf8") : undefined);
+    const next = withClaudeView(
+      result,
+      files,
+      existsSync(md) ? readFileSync(md, "utf8") : undefined,
+    );
     const text = JSON.stringify(next, null, 2) + "\n";
     if (readFileSync(resultFile, "utf8") !== text) changed++;
     writeFileSync(resultFile, text);
@@ -856,7 +876,9 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
     const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
     for (const f of stale) rmSync(join(all, f), { force: true });
     if (stale.length)
-      o.log(`claude-rebuild: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt view`);
+      o.log(
+        `claude-rebuild: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt view`,
+      );
   }
   const n = out.reduce((a, x) => a + x.comments, 0);
   o.log(

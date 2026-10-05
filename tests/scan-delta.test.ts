@@ -25,7 +25,12 @@ import {
 } from "../src/setup/findings.js";
 import type { LedgerEntry } from "../src/setup/ledger.js";
 import { planStage1, type PriorReading } from "../src/setup/scan.js";
-import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import {
+  ScanRunner,
+  type ScanPorts,
+  type ScanSource,
+  type ScanTree,
+} from "../src/setup/scanrun.js";
 import type { UnitCut } from "../src/setup/unitcut.js";
 
 let stateDir: string;
@@ -34,7 +39,8 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
 
-const lines = (n: number, word: string): string => Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
+const lines = (n: number, word: string): string =>
+  Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
 
 const TREE: Record<string, string> = {
   "app/models.py": lines(10, "model"),
@@ -60,18 +66,27 @@ const TREE2: Record<string, string> = {
 delete TREE2["web/index.ts"];
 
 const CUT: UnitCut = {
-  units: ["app", "lib", "web", "tools"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
+  units: ["app", "lib", "web", "tools"].map((u) => ({
+    name: u,
+    roots: [u],
+    kind: "directory",
+    note: "",
+  })),
   ignored: [],
 };
 
-const blob = (text: string): string => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+const blob = (text: string): string =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 
 const SHA1 = "1".repeat(40);
 const SHA2 = "2".repeat(40);
 const SHA3 = "3".repeat(40);
 
 function fakeSource(trees: Record<string, Record<string, string>>): ScanSource {
-  const listOf = (files: Record<string, string>) => Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) }));
+  const listOf = (files: Record<string, string>) =>
+    Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) }));
   return {
     location: "/reviewed-repo",
     resolve: (ref) => (ref in trees ? ref : null),
@@ -110,24 +125,39 @@ function finding(spec: CaseSpec, kind = "bug"): string {
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
-function runner(answer: (spec: CaseSpec) => string = (s) => finding(s), perFile: number | null = 0.01): FakeRunner {
+function runner(
+  answer: (spec: CaseSpec) => string = (s) => finding(s),
+  perFile: number | null = 0.01,
+): FakeRunner {
   const specs: CaseSpec[] = [];
   return {
     specs,
     run: async (spec) => {
       specs.push(spec);
-      return { ok: true, output: answer(spec), cost_usd: perFile === null ? null : perFile * spec.files.length };
+      return {
+        ok: true,
+        output: answer(spec),
+        cost_usd: perFile === null ? null : perFile * spec.files.length,
+      };
     },
   };
 }
 
 let now = new Date("2026-09-29T10:00:00Z");
 
-function ports(cases: FakeRunner, trees: Record<string, Record<string, string>> = { [SHA1]: TREE, [SHA2]: TREE2 }, scan: Partial<ScanConfig> = {}): ScanPorts {
+function ports(
+  cases: FakeRunner,
+  trees: Record<string, Record<string, string>> = { [SHA1]: TREE, [SHA2]: TREE2 },
+  scan: Partial<ScanConfig> = {},
+): ScanPorts {
   return {
     state: stateHomeFs(stateDir),
     clock: () => {
@@ -137,7 +167,10 @@ function ports(cases: FakeRunner, trees: Record<string, Record<string, string>> 
     cases,
     source: fakeSource(trees),
     savedCut: () => ({ ok: true, cut: CUT }),
-    settings: () => ({ ok: true, settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...scan } } }),
+    settings: () => ({
+      ok: true,
+      settings: { scan: { ...SCAN_DEFAULTS, validator: false, ...scan } },
+    }),
     buildAgents: () => ({ ok: true }),
   };
 }
@@ -157,11 +190,15 @@ async function fullScan(r: FakeRunner = runner()): Promise<void> {
   await run(s, SHA1);
   await run(s, SHA1);
   const left = await s.preview({ sha: SHA1 });
-  if (!left.ok || left.preview.cases.length > 0) throw new Error("the full scan left something unread");
+  if (!left.ok || left.preview.cases.length > 0)
+    throw new Error("the full scan left something unread");
 }
 
 const store = (): FindingsStore => new FindingsStore(stateHomeFs(stateDir));
-const byPath = (path: string): ScanFinding[] => store().load().findings.filter((f) => f.path === path);
+const byPath = (path: string): ScanFinding[] =>
+  store()
+    .load()
+    .findings.filter((f) => f.path === path);
 
 function setState(path: string, state: ScanFinding["state"]): void {
   const file = join(stateDir, FINDINGS_FILE);
@@ -191,12 +228,20 @@ describe("a delta re-scan reads only changed-hash files", () => {
 
   it("the rest of an unfinished scan is still owed: a file no scan ever read, unchanged, is in the delta", async () => {
     // Calibration only: app, web and lib read; tools never reached.
-    const s = new ScanRunner(ports(runner(), { [SHA1]: TREE, [SHA3]: { ...TREE, "app/models.py": TREE2["app/models.py"]! } }));
+    const s = new ScanRunner(
+      ports(runner(), {
+        [SHA1]: TREE,
+        [SHA3]: { ...TREE, "app/models.py": TREE2["app/models.py"]! },
+      }),
+    );
     await run(s, SHA1);
     const p = await s.preview({ sha: SHA3, delta: true });
     if (!p.ok) throw new Error(p.errors.join("; "));
     // Unread first: tools/x.py (never read) ahead of app/models.py (changed).
-    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual(["tools/x.py", "app/models.py"]);
+    expect(p.preview.cases.flatMap((c) => c.files.map((f) => f.path))).toEqual([
+      "tools/x.py",
+      "app/models.py",
+    ]);
     expect(p.preview.delta).toEqual({ since: SHA1, owed: 1 });
   });
 
@@ -210,7 +255,10 @@ describe("a delta re-scan reads only changed-hash files", () => {
 
   it("refuses with no scan to compare against, before a price exists, and when nothing changed", async () => {
     const fresh = new ScanRunner(ports(runner()));
-    expect(await fresh.preview({ sha: SHA2, delta: true })).toMatchObject({ ok: false, errors: [expect.stringMatching(/no stage-1 scan/)] });
+    expect(await fresh.preview({ sha: SHA2, delta: true })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/no stage-1 scan/)],
+    });
 
     const unpriced = new ScanRunner(ports(runner((s) => finding(s), null)));
     await run(unpriced, SHA1);
@@ -234,7 +282,11 @@ describe("a delta re-scan reads only changed-hash files", () => {
  * reported as a design finding (a reword the fingerprint cannot follow);
  * lib reports the same finding on the same code; tools reports nothing. */
 const rescanAnswer = (spec: CaseSpec): string =>
-  spec.unit === "app" ? finding(spec, "design") : spec.unit === "tools" ? "NONE\n\nSUGGEST NONE" : finding(spec);
+  spec.unit === "app"
+    ? finding(spec, "design")
+    : spec.unit === "tools"
+      ? "NONE\n\nSUGGEST NONE"
+      : finding(spec);
 
 /** The fake judge: pairs every unreported finding with a fresh one on the
  * same file — what the companion would answer for a moved-and-reworded one. */
@@ -259,16 +311,26 @@ describe("exact match first, then the companion, then fixed", () => {
   it("an exact fingerprint keeps its triage; what nothing fresh could be is fixed at once, with the scan sha", async () => {
     const { done } = await rescan();
     // lib/big.py grew, but the anchored code is the same: the same finding.
-    expect(byPath("lib/big.py")).toEqual([expect.objectContaining({ state: "dismissed", seen: 2, fixed: null })]);
+    expect(byPath("lib/big.py")).toEqual([
+      expect.objectContaining({ state: "dismissed", seen: 2, fixed: null }),
+    ]);
     // tools/x.py was re-read and reports nothing; web/index.ts is gone —
     // no fresh finding could be either (other units, other kinds): fixed.
     for (const p of ["tools/x.py", "web/index.ts"]) {
       expect(byPath(p)).toEqual([
-        expect.objectContaining({ state: "fixed", fixed: expect.objectContaining({ run: done.id, sha: SHA2, from: "new" }) }),
+        expect.objectContaining({
+          state: "fixed",
+          fixed: expect.objectContaining({ run: done.id, sha: SHA2, from: "new" }),
+        }),
       ]);
     }
     // The app finding is neither fixed nor matched: it waits on the companion.
-    expect(done.matching).toEqual({ fixed: 2, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(done.matching).toEqual({
+      fixed: 2,
+      pending: 1,
+      not_reproduced: 0,
+      dismissed_unreported: 0,
+    });
   });
 
   it("hands the companion only what an exact match missed", async () => {
@@ -276,7 +338,9 @@ describe("exact match first, then the companion, then fixed", () => {
     const { question } = store().question();
     expect(question).not.toBeNull();
     expect(question!.unreported.map((f) => f.fingerprint)).toEqual([oldApp]);
-    expect(question!.fresh).toEqual([expect.objectContaining({ path: "app/models.py", kind: "design", state: "new" })]);
+    expect(question!.fresh).toEqual([
+      expect.objectContaining({ path: "app/models.py", kind: "design", state: "new" }),
+    ]);
     // Still promoted while undecided — never fixed on a guess.
     expect(byPath("app/models.py").find((f) => f.fingerprint === oldApp)!.state).toBe("promoted");
   });
@@ -297,10 +361,22 @@ describe("exact match first, then the companion, then fixed", () => {
   it("an old finding the judge pairs with nothing is fixed; the fresh one stays new", async () => {
     const { oldApp } = await rescan();
     const { question } = store().question();
-    expect(store().match({ key: question!.key, pairs: [] })).toEqual({ ok: true, matched: 0, fixed: 1, new: 1, dismissed_unreported: 0 });
+    expect(store().match({ key: question!.key, pairs: [] })).toEqual({
+      ok: true,
+      matched: 0,
+      fixed: 1,
+      new: 1,
+      dismissed_unreported: 0,
+    });
     const app = byPath("app/models.py");
-    expect(app.find((f) => f.fingerprint === oldApp)).toMatchObject({ state: "fixed", fixed: expect.objectContaining({ sha: SHA2, from: "promoted" }) });
-    expect(app.find((f) => f.fingerprint !== oldApp)).toMatchObject({ state: "new", kind: "design" });
+    expect(app.find((f) => f.fingerprint === oldApp)).toMatchObject({
+      state: "fixed",
+      fixed: expect.objectContaining({ sha: SHA2, from: "promoted" }),
+    });
+    expect(app.find((f) => f.fingerprint !== oldApp)).toMatchObject({
+      state: "new",
+      kind: "design",
+    });
   });
 
   it("an answer is refused whole: a stale key, a stranger, a reused fingerprint", async () => {
@@ -308,8 +384,12 @@ describe("exact match first, then the companion, then fixed", () => {
     const { question } = store().question();
     const fresh = question!.fresh[0]!.fingerprint;
     expect(store().match({ key: "stale", pairs: [] })).toMatchObject({ ok: false });
-    expect(store().match({ key: question!.key, pairs: [{ old: "nope", new: fresh }] })).toMatchObject({ ok: false });
-    expect(store().match({ key: question!.key, pairs: [{ old: fresh, new: oldApp }] })).toMatchObject({ ok: false });
+    expect(
+      store().match({ key: question!.key, pairs: [{ old: "nope", new: fresh }] }),
+    ).toMatchObject({ ok: false });
+    expect(
+      store().match({ key: question!.key, pairs: [{ old: fresh, new: oldApp }] }),
+    ).toMatchObject({ ok: false });
     // Nothing moved.
     expect(store().question().question!.key).toBe(question!.key);
     expect(byPath("app/models.py").find((f) => f.fingerprint === oldApp)!.state).toBe("promoted");
@@ -353,7 +433,10 @@ describe("content read before, superseded, then back: read again (selfscan def42
     // tools case fails. The last scan is now SHA5 — whose tree holds the
     // reverted content, and the ledger read that content once, long ago.
     const SHA5 = "5".repeat(40);
-    const TREE5: Record<string, string> = { ...TREE4, "lib/util.py": `${lines(30, "util")}util_extra = 1\n` };
+    const TREE5: Record<string, string> = {
+      ...TREE4,
+      "lib/util.py": `${lines(30, "util")}util_extra = 1\n`,
+    };
     const all = { ...trees, [SHA5]: TREE5 };
     const first = new ScanRunner(ports(runner(), all));
     await run(first, SHA1);
@@ -362,11 +445,16 @@ describe("content read before, superseded, then back: read again (selfscan def42
     const failTools: FakeRunner = {
       specs: [],
       run: async (spec) =>
-        spec.unit === "tools" ? { ok: false, reason: "pi exited 1", cost_usd: 0 } : { ok: true, output: finding(spec), cost_usd: 0.01 * spec.files.length },
+        spec.unit === "tools"
+          ? { ok: false, reason: "pi exited 1", cost_usd: 0 }
+          : { ok: true, output: finding(spec), cost_usd: 0.01 * spec.files.length },
     };
     const cut = await new ScanRunner(ports(failTools, all)).preview({ sha: SHA5, delta: true });
     if (!cut.ok) throw new Error(cut.errors.join("; "));
-    expect(cut.preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort()).toEqual(["lib/util.py", "tools/x.py"]);
+    expect(cut.preview.cases.flatMap((c) => c.files.map((f) => f.path)).sort()).toEqual([
+      "lib/util.py",
+      "tools/x.py",
+    ]);
     const s = new ScanRunner(ports(failTools, all));
     const started = await s.start({ key: cut.preview.key, sha: SHA5, delta: true });
     if (!started.ok) throw new Error(started.errors.join("; "));
@@ -382,20 +470,34 @@ describe("a delta covers every file changed OR with no complete reading at its c
   // src/eodpinwatch.ts had never been read (unreadable until the NUL-as-text
   // fix) and its content had not changed since the baseline, so the delta
   // left it out as "unchanged" — a file no lens had ever read.
-  const T: Record<string, string> = { "a/read.py": lines(10, "r"), "a/never.py": lines(10, "n"), "a/changed.py": lines(10, "c") };
+  const T: Record<string, string> = {
+    "a/read.py": lines(10, "r"),
+    "a/never.py": lines(10, "n"),
+    "a/changed.py": lines(10, "c"),
+  };
   const files = Object.entries(T).map(([path, text]) => ({ path, blob: blob(text) }));
   const b = (p: string): string => blob(T[p]!);
   const at = "2026-09-01T00:00:00Z";
   const base = {
-    cut: { units: [{ name: "a", roots: ["a"], kind: "directory" as const, note: "" }], ignored: [] },
+    cut: {
+      units: [{ name: "a", roots: ["a"], kind: "directory" as const, note: "" }],
+      ignored: [],
+    },
     files,
     linesOf: (p: string) => T[p]!.split("\n").length - 1,
     exclude: [],
     budget: { maxFiles: 1, maxLines: 400 },
     // The last scan's tree held every file at this very content, except the changed one.
     delta: {
-      read: new Map([["a/read.py", b("a/read.py")], ["a/changed.py", "old-c"]]),
-      baseline: new Map([["a/read.py", b("a/read.py")], ["a/never.py", b("a/never.py")], ["a/changed.py", "old-c"]]),
+      read: new Map([
+        ["a/read.py", b("a/read.py")],
+        ["a/changed.py", "old-c"],
+      ]),
+      baseline: new Map([
+        ["a/read.py", b("a/read.py")],
+        ["a/never.py", b("a/never.py")],
+        ["a/changed.py", "old-c"],
+      ]),
     },
     history: new Map<string, PriorReading>([
       ["a/read.py", { blob: b("a/read.py"), complete: true, at }],
@@ -403,7 +505,8 @@ describe("a delta covers every file changed OR with no complete reading at its c
     ]),
     covered: new Set([`a/read.py\0${b("a/read.py")}`]),
   };
-  const planned = (plan: ReturnType<typeof planStage1>) => plan.cases.flatMap((c) => c.files.map((f) => f.path));
+  const planned = (plan: ReturnType<typeof planStage1>) =>
+    plan.cases.flatMap((c) => c.files.map((f) => f.path));
 
   it("an unchanged file never read is in the delta — unread first; an unchanged, fully-read one is not", () => {
     const plan = planStage1(base);
@@ -415,7 +518,10 @@ describe("a delta covers every file changed OR with no complete reading at its c
   it("an unchanged file whose newest reading at this content did not complete is in the delta", () => {
     const plan = planStage1({
       ...base,
-      history: new Map([...base.history, ["a/never.py", { blob: b("a/never.py"), complete: false, at }]]),
+      history: new Map([
+        ...base.history,
+        ["a/never.py", { blob: b("a/never.py"), complete: false, at }],
+      ]),
     });
     expect(planned(plan)).toEqual(["a/never.py", "a/changed.py"]);
   });
@@ -433,7 +539,11 @@ describe("a delta covers every file changed OR with no complete reading at its c
         const t = o.tree;
         return {
           ok: true,
-          tree: { ...t, lines: (p) => (p === "tools/x.py" ? null : t.lines(p)), whyUnreadable: (p) => (p === "tools/x.py" ? "binary" : null) },
+          tree: {
+            ...t,
+            lines: (p) => (p === "tools/x.py" ? null : t.lines(p)),
+            whyUnreadable: (p) => (p === "tools/x.py" ? "binary" : null),
+          },
         };
       },
     };
@@ -512,15 +622,23 @@ function row(path: string, blobHash: string, run: string, at: string): LedgerEnt
 describe("the findings store's lifecycle", () => {
   it("a fixed finding that comes back is new again; a dismissed one is never fixed and comes back dismissed", () => {
     const st = store();
-    st.report([reported("a/x.py", "fa"), reported("a/y.py", "fb")], S("r1", "s1", "2026-09-29T10:00:00Z"));
+    st.report(
+      [reported("a/x.py", "fa"), reported("a/y.py", "fb")],
+      S("r1", "s1", "2026-09-29T10:00:00Z"),
+    );
     const file = join(stateDir, FINDINGS_FILE);
     const raw = JSON.parse(readFileSync(file, "utf8")) as FindingsFile;
     raw.findings.find((f) => f.fingerprint === "fb")!.state = "dismissed";
     writeFileSync(file, JSON.stringify(raw));
     // Both files gone at s2: the untriaged one fixed, the dismissed one kept
     // dismissed and stamped (scan-loop: a scan never overwrites a dismissal).
-    expect(st.reconcile({ rows: [], tree: new Set(), run: S("r2", "s2", "2026-09-29T11:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 1 });
-    st.report([reported("a/x.py", "fa"), reported("a/y.py", "fb")], S("r3", "s3", "2026-09-29T12:00:00Z"));
+    expect(
+      st.reconcile({ rows: [], tree: new Set(), run: S("r2", "s2", "2026-09-29T11:00:00Z") }),
+    ).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 1 });
+    st.report(
+      [reported("a/x.py", "fa"), reported("a/y.py", "fb")],
+      S("r3", "s3", "2026-09-29T12:00:00Z"),
+    );
     const got = new Map(st.load().findings.map((f) => [f.fingerprint, f]));
     expect(got.get("fa")).toMatchObject({ state: "new", fixed: null, seen: 2 });
     expect(got.get("fb")).toMatchObject({ state: "dismissed", fixed: null });
@@ -530,16 +648,33 @@ describe("the findings store's lifecycle", () => {
     const st = store();
     st.report([reported("a/x.py", "fa")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     // r2 read a/x.py at new content and was interrupted before its end.
-    const rows = [row("a/x.py", "b1-a/x.py", "r1", "2026-09-29T10:00:01Z"), row("a/x.py", "b2", "r2", "2026-09-29T11:00:00Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
-    expect(st.load().findings[0]).toMatchObject({ state: "fixed", fixed: { run: "r3", sha: "s3", from: "new" } });
+    const rows = [
+      row("a/x.py", "b1-a/x.py", "r1", "2026-09-29T10:00:01Z"),
+      row("a/x.py", "b2", "r2", "2026-09-29T11:00:00Z"),
+    ];
+    expect(
+      st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") }),
+    ).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(st.load().findings[0]).toMatchObject({
+      state: "fixed",
+      fixed: { run: "r3", sha: "s3", from: "new" },
+    });
   });
 
   it("a finding its own run read is not unreported, and one never re-read stays as it was", () => {
     const st = store();
-    st.report([reported("a/x.py", "fa"), reported("b/y.py", "fb")], S("r1", "s1", "2026-09-29T10:00:00Z"));
+    st.report(
+      [reported("a/x.py", "fa"), reported("b/y.py", "fb")],
+      S("r1", "s1", "2026-09-29T10:00:00Z"),
+    );
     const rows = [row("a/x.py", "b1-a/x.py", "r1", "2026-09-29T10:00:01Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py", "b/y.py"]), run: S("r1", "s1", "2026-09-29T10:00:02Z") })).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({
+        rows,
+        tree: new Set(["a/x.py", "b/y.py"]),
+        run: S("r1", "s1", "2026-09-29T10:00:02Z"),
+      }),
+    ).toEqual({ fixed: 0, pending: 0, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.load().findings.every((f) => f.state === "new")).toBe(true);
   });
 
@@ -551,9 +686,14 @@ describe("the findings store's lifecycle", () => {
     st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") });
     const before = st.question().question!;
     // r3 read nothing new: the companion's answer to the key it read still lands.
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r3", "s3", "2026-09-29T12:00:00Z") }),
+    ).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     expect(st.question().question).toMatchObject({ key: before.key, run: "r2", sha: "s2" });
-    expect(st.match({ key: before.key, pairs: [{ old: "old", new: "fresh" }] })).toMatchObject({ ok: true, matched: 1 });
+    expect(st.match({ key: before.key, pairs: [{ old: "old", new: "fresh" }] })).toMatchObject({
+      ok: true,
+      matched: 1,
+    });
   });
 
   it("an unreported finding reported exactly again later leaves the question", () => {
@@ -561,7 +701,9 @@ describe("the findings store's lifecycle", () => {
     st.report([reported("a/x.py", "old")], S("r1", "s1", "2026-09-29T10:00:00Z"));
     st.report([reported("a/x.py", "fresh", { blob: "b2" })], S("r2", "s2", "2026-09-29T11:00:00Z"));
     const rows = [row("a/x.py", "b2", "r2", "2026-09-29T11:00:01Z")];
-    expect(st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") })).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
+    expect(
+      st.reconcile({ rows, tree: new Set(["a/x.py"]), run: S("r2", "s2", "2026-09-29T11:00:02Z") }),
+    ).toEqual({ fixed: 0, pending: 1, not_reproduced: 0, dismissed_unreported: 0 });
     // The old one comes back exactly at s3: nothing left to judge.
     st.report([reported("a/x.py", "old", { blob: "b3" })], S("r3", "s3", "2026-09-29T12:00:00Z"));
     expect(st.question().question).toBeNull();

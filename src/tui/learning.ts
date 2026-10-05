@@ -346,9 +346,13 @@ export class LearningStore {
     let improvements: ImprovementItem[] | undefined;
     let improvementsFailed: Array<"pr" | "issue"> = [];
     if (repo) {
-      const res = await app.ssh(app.cfg.ssh_host, improvementsArgv(app.cfg, repo, this.deps.issueLabel), {
-        timeoutMs: 20_000,
-      });
+      const res = await app.ssh(
+        app.cfg.ssh_host,
+        improvementsArgv(app.cfg, repo, this.deps.issueLabel),
+        {
+          timeoutMs: 20_000,
+        },
+      );
       if (res.ok) {
         // gh fails PER LIST inside a successful shell: both failing is an
         // unread pane, one failing is a partial read that says so.

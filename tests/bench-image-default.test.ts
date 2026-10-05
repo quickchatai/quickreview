@@ -27,11 +27,19 @@ function tree() {
 
 const run = (t: ReturnType<typeof tree>, env: Record<string, string>, ...args: string[]) =>
   spawnSync("bash", [join(t.here, "bench.sh"), ...args], {
-    env: { ...process.env, PATH: `${t.bin}:${process.env.PATH}`, QCR_BENCH_RUNS_DIR: t.runs, ...env },
+    env: {
+      ...process.env,
+      PATH: `${t.bin}:${process.env.PATH}`,
+      QCR_BENCH_RUNS_DIR: t.runs,
+      ...env,
+    },
     encoding: "utf8",
   });
 const lastRun = (log: string) =>
-  readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith("run ")).at(-1) ?? "";
+  readFileSync(log, "utf8")
+    .split("\n")
+    .filter((l) => l.startsWith("run "))
+    .at(-1) ?? "";
 
 describe("bench.sh: scoring defaults to the run's recorded image", () => {
   it("eval on a run arm.sh recorded uses that run's image", () => {
@@ -42,7 +50,17 @@ describe("bench.sh: scoring defaults to the run's recorded image", () => {
 
   it("an explicit QCR_BENCH_IMAGE still wins", () => {
     const t = tree();
-    run(t, { QCR_BENCH_IMAGE: "qcr-bench:x" }, "eval", "--run", "r3", "--set", "fresh10", "--judge", "mock");
+    run(
+      t,
+      { QCR_BENCH_IMAGE: "qcr-bench:x" },
+      "eval",
+      "--run",
+      "r3",
+      "--set",
+      "fresh10",
+      "--judge",
+      "mock",
+    );
     expect(lastRun(t.log)).toContain("qcr-bench:x eval fresh10 mock");
   });
 
@@ -94,7 +112,9 @@ describe("bench.sh judge: a derived set's key is cut from its parent's", () => {
     const t = derivedTree();
     writeFileSync(join(t.here, "defects", "kid.json"), "{}");
     run(t, {}, "judge-report", "--run", "r3", "--set", "kid");
-    expect(lastRun(t.log)).toContain(`type=bind,src=${join(t.here, "defects")},dst=/opt/quickreview/bench/defects`);
+    expect(lastRun(t.log)).toContain(
+      `type=bind,src=${join(t.here, "defects")},dst=/opt/quickreview/bench/defects`,
+    );
   });
 
   it("a set with no key and no defects_from still refuses", () => {

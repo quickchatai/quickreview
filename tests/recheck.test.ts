@@ -442,18 +442,22 @@ function harness(over: Partial<RecheckDeps> = {}): Harness {
 }
 
 describe("runRecheck", () => {
-  it("nudges the PR's own session once, and never again for the same trigger", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const h = harness();
-    const first = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
-    expect(first).toMatchObject({ action: "recheck", delivered: "injected" });
-    expect(h.injected).toHaveLength(1);
-    expect(h.injected[0]?.pr).toBe(PR);
-    expect(h.store.rechecksFor(PR)).toHaveLength(1);
+  it(
+    "nudges the PR's own session once, and never again for the same trigger",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const h = harness();
+      const first = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+      expect(first).toMatchObject({ action: "recheck", delivered: "injected" });
+      expect(h.injected).toHaveLength(1);
+      expect(h.injected[0]?.pr).toBe(PR);
+      expect(h.store.rechecksFor(PR)).toHaveLength(1);
 
-    const second = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
-    expect(second).toMatchObject({ action: "noop", reason: "already-rechecked" });
-    expect(h.injected).toHaveLength(1);
-  });
+      const second = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
+      expect(second).toMatchObject({ action: "noop", reason: "already-rechecked" });
+      expect(h.injected).toHaveLength(1);
+    },
+  );
 
   // Regression (live, #5290 2026-08-19): a failed inject burned the head's
   // only recheck — the claim deduped every retry forever.

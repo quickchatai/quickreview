@@ -13,8 +13,18 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const VALIDATE: PassPlanEntry = { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] };
-const BASE: PassPlanEntry = { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] };
+const VALIDATE: PassPlanEntry = {
+  lens: "pass-validate",
+  agent: "pass-validate--sol-high",
+  tier: "sol-high",
+  raisable_to: [],
+};
+const BASE: PassPlanEntry = {
+  lens: "pass-baseline",
+  agent: "pass-baseline--sol-med",
+  tier: "sol-med",
+  raisable_to: [],
+};
 
 describe("renderValidatorShardNote", () => {
   it("renders nothing with one validator, by default, or with no validator row", () => {

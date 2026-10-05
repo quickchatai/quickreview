@@ -547,7 +547,10 @@ describe("the deploy composes the real script, at full strictness", () => {
     // A deploy on record for another host (or an unscoped legacy one) is not
     // this host's deploy, and says which it was rather than "none yet".
     for (const [record, where] of [
-      [{ mode: "sync", at: "2026-08-30T10:00:00Z", host: "old-box" }, /was to "old-box", not review-box/],
+      [
+        { mode: "sync", at: "2026-08-30T10:00:00Z", host: "old-box" },
+        /was to "old-box", not review-box/,
+      ],
       [{ mode: "sync", at: "2026-08-30T10:00:00Z" }, /was to an unrecorded host, not review-box/],
     ] as const) {
       const moved = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: record } });

@@ -157,58 +157,70 @@ describe("dispatch hook", () => {
     expect(store.slackThreadForPr(5263)).toBeDefined();
   });
 
-  it("dispatches exactly as before when no announcer is wired", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queuedPr(5263);
-    const orders = await dispatchOnce({
-      cfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks,
-      now,
-    });
-    expect(orders).toHaveLength(1);
-    expect(store.allSlackThreads()).toEqual([]);
-  });
+  it(
+    "dispatches exactly as before when no announcer is wired",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queuedPr(5263);
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks,
+        now,
+      });
+      expect(orders).toHaveLength(1);
+      expect(store.allSlackThreads()).toEqual([]);
+    },
+  );
 
-  it("a Slack outage never stalls the pump — the round still dispatches", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    slack.throwAlways = true;
-    queuedPr(5263);
-    const orders = await dispatchOnce({
-      cfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks,
-      announce: announcer(),
-      now,
-    });
-    expect(orders).toHaveLength(1);
-    expect(store.runningRounds()).toHaveLength(1);
-    await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 }));
-  });
+  it(
+    "a Slack outage never stalls the pump — the round still dispatches",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      slack.throwAlways = true;
+      queuedPr(5263);
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks,
+        announce: announcer(),
+        now,
+      });
+      expect(orders).toHaveLength(1);
+      expect(store.runningRounds()).toHaveLength(1);
+      await vi.waitFor(() => expect(store.slackPost("pickup:5263")).toMatchObject({ ok: 0 }));
+    },
+  );
 
-  it("a slow Slack never holds the pump — later PRs dispatch before the pickup lands", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // A blackholed or rate-limited Slack takes tens of seconds per post
-    // (bounded retries + Retry-After). The announcement is fire-and-forget:
-    // the per-PR lane keeps its order, the pump never waits on it.
-    let release!: () => void;
-    slack.hold = new Promise<void>((r) => (release = r));
-    queuedPr(5263);
-    queuedPr(5264);
-    const orders = await dispatchOnce({
-      cfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks,
-      announce: announcer(),
-      now,
-    });
-    expect(orders.map((o) => o.pr).sort()).toEqual([5263, 5264]);
-    expect(slack.posts).toHaveLength(0);
-    release();
-    await vi.waitFor(() => expect(slack.posts).toHaveLength(2));
-    expect(store.slackThreadForPr(5263)).toBeDefined();
-    expect(store.slackThreadForPr(5264)).toBeDefined();
-  });
+  it(
+    "a slow Slack never holds the pump — later PRs dispatch before the pickup lands",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // A blackholed or rate-limited Slack takes tens of seconds per post
+      // (bounded retries + Retry-After). The announcement is fire-and-forget:
+      // the per-PR lane keeps its order, the pump never waits on it.
+      let release!: () => void;
+      slack.hold = new Promise<void>((r) => (release = r));
+      queuedPr(5263);
+      queuedPr(5264);
+      const orders = await dispatchOnce({
+        cfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks,
+        announce: announcer(),
+        now,
+      });
+      expect(orders.map((o) => o.pr).sort()).toEqual([5263, 5264]);
+      expect(slack.posts).toHaveLength(0);
+      release();
+      await vi.waitFor(() => expect(slack.posts).toHaveLength(2));
+      expect(store.slackThreadForPr(5263)).toBeDefined();
+      expect(store.slackThreadForPr(5264)).toBeDefined();
+    },
+  );
 });
 
 describe("verdict hooks", () => {

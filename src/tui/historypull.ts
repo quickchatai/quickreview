@@ -36,8 +36,7 @@ export interface HistoryPullDeps {
 }
 
 export type HistoryPullResult =
-  | { ok: true; path: string; digest: ReviewHistoryDigest }
-  | { ok: false; reason: string };
+  { ok: true; path: string; digest: ReviewHistoryDigest } | { ok: false; reason: string };
 
 /** One line an operator (or the notice line) can read. */
 export function describeDigest(d: ReviewHistoryDigest): string {
@@ -50,7 +49,9 @@ export function describeDigest(d: ReviewHistoryDigest): string {
 
 export async function pullReviewHistory(deps: HistoryPullDeps): Promise<HistoryPullResult> {
   const log = deps.log ?? ((): void => {});
-  log(`history: reading the review history on ${deps.tui.target === "local" ? "this machine" : deps.tui.ssh_host} (minutes on a busy repo)…`);
+  log(
+    `history: reading the review history on ${deps.tui.target === "local" ? "this machine" : deps.tui.ssh_host} (minutes on a busy repo)…`,
+  );
   const res = await deps.ssh(deps.tui.ssh_host, historyDigestArgv(deps.tui, deps.months), {
     timeoutMs: HISTORY_PULL_TIMEOUT_MS,
   });
@@ -59,9 +60,13 @@ export async function pullReviewHistory(deps: HistoryPullDeps): Promise<HistoryP
     return { ok: false, reason: `the VM could not produce the digest: ${why}` };
   }
   const parsed = parseDigest(res.stdout);
-  if (!parsed.ok) return { ok: false, reason: `the VM printed something that is not a digest (${parsed.error})` };
+  if (!parsed.ok)
+    return { ok: false, reason: `the VM printed something that is not a digest (${parsed.error})` };
   if (parsed.digest.repo !== deps.repo) {
-    return { ok: false, reason: `the digest is about ${parsed.digest.repo}, but this install reviews ${deps.repo} — nothing written` };
+    return {
+      ok: false,
+      reason: `the digest is about ${parsed.digest.repo}, but this install reviews ${deps.repo} — nothing written`,
+    };
   }
   const path = join(deps.stateHome, HISTORY_DIGEST_FILE);
   try {

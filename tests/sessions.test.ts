@@ -728,27 +728,31 @@ describe("injection", () => {
       symlinkSync(target, join(dir, name));
     };
 
-    it("returns null, not false, when an in-scope file cannot be read", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-      const store = new StateStore(":memory:");
-      const m = manager(() => new Date("2026-08-13T10:00:00Z"), store);
-      await m.dispatchRound(order, "ROUND PROMPT BODY");
-      const started = Date.parse("2026-08-13T10:00:00Z");
-      const jsonlDir = m.sessionDir("pr-42");
-      mkdirSync(jsonlDir, { recursive: true });
-      // The entry stats in scope — the session demonstrably wrote — but its
-      // bytes are not readable, so nothing can be concluded about the marker.
-      unreadableJsonl(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
+    it(
+      "returns null, not false, when an in-scope file cannot be read",
+      { timeout: HEAVY_TIMEOUT_MS },
+      async () => {
+        const store = new StateStore(":memory:");
+        const m = manager(() => new Date("2026-08-13T10:00:00Z"), store);
+        await m.dispatchRound(order, "ROUND PROMPT BODY");
+        const started = Date.parse("2026-08-13T10:00:00Z");
+        const jsonlDir = m.sessionDir("pr-42");
+        mkdirSync(jsonlDir, { recursive: true });
+        // The entry stats in scope — the session demonstrably wrote — but its
+        // bytes are not readable, so nothing can be concluded about the marker.
+        unreadableJsonl(jsonlDir, "2026-08-13T10-00-00-000Z_abc.jsonl");
 
-      expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
+        expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
 
-      // F4: and it says so. The flag is scan-global, so one permanently
-      // unreadable stale file would otherwise answer `null` for this PR
-      // forever, silently disabling the redelivery-vs-loss decision and
-      // reconcile's claim-release sweep.
-      const kinds = store.eventsOn(new Date().toISOString().slice(0, 10)).map((e) => e.kind);
-      expect(kinds).toContain("receipt_scan_unreadable");
-      store.close();
-    });
+        // F4: and it says so. The flag is scan-global, so one permanently
+        // unreadable stale file would otherwise answer `null` for this PR
+        // forever, silently disabling the redelivery-vs-loss decision and
+        // reconcile's claim-release sweep.
+        const kinds = store.eventsOn(new Date().toISOString().slice(0, 10)).map((e) => e.kind);
+        expect(kinds).toContain("receipt_scan_unreadable");
+        store.close();
+      },
+    );
 
     it("keeps scanning past an unreadable file — the marker may be in the next one", async () => {
       const m = manager();
@@ -1077,158 +1081,164 @@ describe("durable command ownership", () => {
     }
   });
 
-  it("composes #5454 through wire, supervisor, manager, and the real failing bridge", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const dbPath = join(root, "state", "state.db");
-    let clock = new Date("2026-09-01T08:08:00.000Z");
-    const store = new StateStore(dbPath, () => clock);
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const config = cfg();
-      config.daemon.session_command_unknown_max_checks = 0;
-      config.daemon.session_command_max_start_retries = 2;
-      config.daemon.session_bridge_ready_timeout_s = 0.05;
-      const m = manager(() => clock, store, config);
-      m.setTitleResolver(() => "PR 5454");
-      store.upsertPr({
-        number: 5454,
-        state: "queued",
-        head_sha: "e038",
-        title: "PR 5454",
-        author: "alice",
-        trigger_ts: clock.toISOString(),
-        stale_recheck: 0,
-        migration_gate: 0,
-      });
-      const payload = Buffer.from("# Author reply — PR #5454\n\noldest durable wake\n", "utf8");
-      const payloadPath = join(root, "state", "session-commands", "cmd-5454.md");
-      mkdirSync(join(root, "state", "session-commands"), { recursive: true });
-      writeFileSync(payloadPath, payload);
-      store.createSessionCommand({
-        id: "cmd-5454",
-        pr: 5454,
-        session: "pr-5454",
-        kind: "wake",
-        round_no: null,
-        payload_sha256: createHash("sha256").update(payload).digest("hex"),
-        payload_path: payloadPath,
-        inject_path: join(root, "inject", "pr-5454", "wake--cmd-cmd-5454.md"),
-        next_check_at: clock.toISOString(),
-      });
-      store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
-      for (let n = 1; n <= 4; n++)
-        store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
-      // Exact incident shape: tmux exists, but no generation receipt does.
-      liveSessions.add("pr-5454");
-      autoBridgeReady = false;
-      onNewSession = (_session, args) => {
-        const changed: Array<[string, string | undefined]> = [];
-        for (const token of args) {
-          const equals = token.indexOf("=");
-          if (equals < 1) continue;
-          const key = token.slice(0, equals);
-          if (!key.startsWith("QCR_")) continue;
-          changed.push([key, process.env[key]]);
-          process.env[key] = token.slice(equals + 1);
-        }
-        try {
-          // The daemon handed Pi the real DB path. Removing only its directory
-          // entry leaves this already-open StateStore usable while making the
-          // bridge's independent fileMustExist open fail before reservation.
-          rmSync(dbPath, { force: true });
-          const handlers = new Map<string, Array<(event?: unknown) => void>>();
-          const pi = {
-            on(event: string, handler: (event?: unknown) => void) {
-              const list = handlers.get(event) ?? [];
-              list.push(handler);
-              handlers.set(event, list);
-            },
-            sendUserMessage() {},
-          } as unknown as Pi;
-          activateInjectBridge(pi);
-          for (const handler of handlers.get("session_start") ?? []) handler({});
-        } finally {
-          for (const [key, prior] of changed) {
-            if (prior === undefined) delete process.env[key];
-            else process.env[key] = prior;
+  it(
+    "composes #5454 through wire, supervisor, manager, and the real failing bridge",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const dbPath = join(root, "state", "state.db");
+      let clock = new Date("2026-09-01T08:08:00.000Z");
+      const store = new StateStore(dbPath, () => clock);
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const config = cfg();
+        config.daemon.session_command_unknown_max_checks = 0;
+        config.daemon.session_command_max_start_retries = 2;
+        config.daemon.session_bridge_ready_timeout_s = 0.05;
+        const m = manager(() => clock, store, config);
+        m.setTitleResolver(() => "PR 5454");
+        store.upsertPr({
+          number: 5454,
+          state: "queued",
+          head_sha: "e038",
+          title: "PR 5454",
+          author: "alice",
+          trigger_ts: clock.toISOString(),
+          stale_recheck: 0,
+          migration_gate: 0,
+        });
+        const payload = Buffer.from("# Author reply — PR #5454\n\noldest durable wake\n", "utf8");
+        const payloadPath = join(root, "state", "session-commands", "cmd-5454.md");
+        mkdirSync(join(root, "state", "session-commands"), { recursive: true });
+        writeFileSync(payloadPath, payload);
+        store.createSessionCommand({
+          id: "cmd-5454",
+          pr: 5454,
+          session: "pr-5454",
+          kind: "wake",
+          round_no: null,
+          payload_sha256: createHash("sha256").update(payload).digest("hex"),
+          payload_path: payloadPath,
+          inject_path: join(root, "inject", "pr-5454", "wake--cmd-cmd-5454.md"),
+          next_check_at: clock.toISOString(),
+        });
+        store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
+        for (let n = 1; n <= 4; n++)
+          store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
+        // Exact incident shape: tmux exists, but no generation receipt does.
+        liveSessions.add("pr-5454");
+        autoBridgeReady = false;
+        onNewSession = (_session, args) => {
+          const changed: Array<[string, string | undefined]> = [];
+          for (const token of args) {
+            const equals = token.indexOf("=");
+            if (equals < 1) continue;
+            const key = token.slice(0, equals);
+            if (!key.startsWith("QCR_")) continue;
+            changed.push([key, process.env[key]]);
+            process.env[key] = token.slice(equals + 1);
           }
-        }
-      };
+          try {
+            // The daemon handed Pi the real DB path. Removing only its directory
+            // entry leaves this already-open StateStore usable while making the
+            // bridge's independent fileMustExist open fail before reservation.
+            rmSync(dbPath, { force: true });
+            const handlers = new Map<string, Array<(event?: unknown) => void>>();
+            const pi = {
+              on(event: string, handler: (event?: unknown) => void) {
+                const list = handlers.get(event) ?? [];
+                list.push(handler);
+                handlers.set(event, list);
+              },
+              sendUserMessage() {},
+            } as unknown as Pi;
+            activateInjectBridge(pi);
+            for (const handler of handlers.get("session_start") ?? []) handler({});
+          } finally {
+            for (const [key, prior] of changed) {
+              if (prior === undefined) delete process.env[key];
+              else process.env[key] = prior;
+            }
+          }
+        };
 
-      const retry = vi.spyOn(m, "retrySessionCommand");
-      const { hooks } = daemonOriginWakes({
-        hooks: m,
-        origins: new OriginStore(join(root, "state", "slack", "origin")),
-        enabled: false,
-      });
-      const supervisor = new SessionCommandSupervisor({
-        cfg: config,
-        store,
-        hooks,
-        verdictDir: join(root, "verdict"),
-        onRoundFailure: async () => "requeued",
-        now: () => clock,
-      });
-
-      await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
-      clock = new Date("2026-09-01T08:11:00.000Z");
-      await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
-      clock = new Date("2026-09-01T08:14:00.000Z");
-      await supervisor.scan();
-
-      expect(retry).toHaveBeenCalledTimes(2);
-      expect(store.getSessionCommand("cmd-5454")).toMatchObject({
-        status: "failed",
-        attempt: 0,
-        recovery_attempts: 2,
-        failure: expect.stringContaining("ledger_open"),
-      });
-      expect(store.heldWakes(5454)).toHaveLength(4);
-      expect(store.blockingSessionCommand("pr-5454")).toBeTruthy();
-      expect(store.openReviewFailure(5454)).toMatchObject({
-        command_id: "cmd-5454",
-        work_owed: 1,
-        detail: expect.stringContaining("ledger_open"),
-      });
-      expect(
-        store.recentEvents(100).filter((event) => event.kind === "session_bridge_readiness_failed"),
-      ).toHaveLength(2);
-
-      const listPrFiles = vi.fn(async () => {
-        throw new Error("blocked dispatch touched GitHub");
-      });
-      expect(
-        await dispatchOnce({
+        const retry = vi.spyOn(m, "retrySessionCommand");
+        const { hooks } = daemonOriginWakes({
+          hooks: m,
+          origins: new OriginStore(join(root, "state", "slack", "origin")),
+          enabled: false,
+        });
+        const supervisor = new SessionCommandSupervisor({
           cfg: config,
           store,
           hooks,
-          adapter: {
-            listPrFiles,
-            getPr: async () => {
-              throw new Error("blocked dispatch read PR");
-            },
-            addLabel: async () => {
-              throw new Error("blocked dispatch mutated label");
-            },
-            removeLabel: async () => {
-              throw new Error("blocked dispatch mutated label");
-            },
-            deleteTeamReviewRequest: async () => {
-              throw new Error("blocked dispatch consumed trigger");
-            },
-            createReview: async () => {
-              throw new Error("blocked dispatch posted review");
-            },
-          },
+          verdictDir: join(root, "verdict"),
+          onRoundFailure: async () => "requeued",
           now: () => clock,
-        }),
-      ).toEqual([]);
-      expect(listPrFiles).not.toHaveBeenCalled();
-      expect(store.roundsFor(5454)).toHaveLength(0);
-    } finally {
-      errors.mockRestore();
-      store.close();
-    }
-  });
+        });
+
+        await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
+        clock = new Date("2026-09-01T08:11:00.000Z");
+        await expect(supervisor.scan()).rejects.toThrow(/ledger_open/);
+        clock = new Date("2026-09-01T08:14:00.000Z");
+        await supervisor.scan();
+
+        expect(retry).toHaveBeenCalledTimes(2);
+        expect(store.getSessionCommand("cmd-5454")).toMatchObject({
+          status: "failed",
+          attempt: 0,
+          recovery_attempts: 2,
+          failure: expect.stringContaining("ledger_open"),
+        });
+        expect(store.heldWakes(5454)).toHaveLength(4);
+        expect(store.blockingSessionCommand("pr-5454")).toBeTruthy();
+        expect(store.openReviewFailure(5454)).toMatchObject({
+          command_id: "cmd-5454",
+          work_owed: 1,
+          detail: expect.stringContaining("ledger_open"),
+        });
+        expect(
+          store
+            .recentEvents(100)
+            .filter((event) => event.kind === "session_bridge_readiness_failed"),
+        ).toHaveLength(2);
+
+        const listPrFiles = vi.fn(async () => {
+          throw new Error("blocked dispatch touched GitHub");
+        });
+        expect(
+          await dispatchOnce({
+            cfg: config,
+            store,
+            hooks,
+            adapter: {
+              listPrFiles,
+              getPr: async () => {
+                throw new Error("blocked dispatch read PR");
+              },
+              addLabel: async () => {
+                throw new Error("blocked dispatch mutated label");
+              },
+              removeLabel: async () => {
+                throw new Error("blocked dispatch mutated label");
+              },
+              deleteTeamReviewRequest: async () => {
+                throw new Error("blocked dispatch consumed trigger");
+              },
+              createReview: async () => {
+                throw new Error("blocked dispatch posted review");
+              },
+            },
+            now: () => clock,
+          }),
+        ).toEqual([]);
+        expect(listPrFiles).not.toHaveBeenCalled();
+        expect(store.roundsFor(5454)).toHaveLength(0);
+      } finally {
+        errors.mockRestore();
+        store.close();
+      }
+    },
+  );
 
   it("quarantines #5454-shaped terminal residue and transfers five replies into one live command", async () => {
     const dbPath = join(root, "state", "state.db");

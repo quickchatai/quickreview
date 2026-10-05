@@ -125,7 +125,12 @@ describe("the unwedge command channel", () => {
     const { ssh } = runner([
       JSON.stringify({ ok: false, reason: "nope\u001b[2J\u001b[H\nagain\u0085" }),
     ]);
-    const out = await new CommandDrainSender(cfg, ssh, () => NOW, async () => {}).set(true);
+    const out = await new CommandDrainSender(
+      cfg,
+      ssh,
+      () => NOW,
+      async () => {},
+    ).set(true);
     expect(out).toEqual({ ok: false, reason: "nope[2J[H again" });
   });
 

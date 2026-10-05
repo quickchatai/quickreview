@@ -51,7 +51,13 @@ import {
   type SurveyPlan,
   type SurveyRate,
 } from "./survey.js";
-import { matchesQuery, normalizeTag, refOf, type MemoryEntry, type MemoryStore } from "../memory/store.js";
+import {
+  matchesQuery,
+  normalizeTag,
+  refOf,
+  type MemoryEntry,
+  type MemoryStore,
+} from "../memory/store.js";
 
 export const SURVEY_FILE = "setup/survey.json";
 export const SURVEY_VERSION = 1;
@@ -185,12 +191,20 @@ export class SurveyRunner {
   // -- the file --
 
   private load(): { file: SurveyFile; error: string | null } {
-    const empty: SurveyFile = { version: SURVEY_VERSION, current: null, last_complete: null, rate: null };
+    const empty: SurveyFile = {
+      version: SURVEY_VERSION,
+      current: null,
+      last_complete: null,
+      rate: null,
+    };
     let text: string | null;
     try {
       text = this.ports.state.read(SURVEY_FILE);
     } catch (err) {
-      return { file: empty, error: `${SURVEY_FILE} in ${this.ports.state.location} cannot be read: ${clean(err)}` };
+      return {
+        file: empty,
+        error: `${SURVEY_FILE} in ${this.ports.state.location} cannot be read: ${clean(err)}`,
+      };
     }
     if (text === null) return { file: empty, error: null };
     try {
@@ -203,7 +217,12 @@ export class SurveyRunner {
         throw new Error("`current` is not a survey run");
       }
       return {
-        file: { version: SURVEY_VERSION, current, last_complete: raw.last_complete ?? null, rate: raw.rate ?? null },
+        file: {
+          version: SURVEY_VERSION,
+          current,
+          last_complete: raw.last_complete ?? null,
+          rate: raw.rate ?? null,
+        },
         error: null,
       };
     } catch (err) {
@@ -241,7 +260,9 @@ export class SurveyRunner {
       // the old notes live without a word. An engine that can tell an outage
       // from an empty store (OpenViking's sweep) is asked that way; any part
       // unread makes the answer UNKNOWN (null).
-      const sweeper = memory as MemoryStore & { sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }> };
+      const sweeper = memory as MemoryStore & {
+        sweep?: () => Promise<{ entries: MemoryEntry[]; unread: string[] }>;
+      };
       if (typeof sweeper.sweep === "function") {
         const sweep = await sweeper.sweep();
         if (sweep.unread.length > 0) return null;
@@ -270,7 +291,10 @@ export class SurveyRunner {
     const existing = await this.surveyEntries();
     const blockers: string[] = [];
     if (this.ports.memory === null) blockers.push(noMemory());
-    if (p.plan.cases.length === 0) blockers.push("there is nothing to survey: no directive files, design docs or code to sample");
+    if (p.plan.cases.length === 0)
+      blockers.push(
+        "there is nothing to survey: no directive files, design docs or code to sample",
+      );
     return {
       ok: true,
       preview: {
@@ -297,8 +321,15 @@ export class SurveyRunner {
    * when one has completed and this is not a `resurvey`, or when there is no
    * memory to write into.
    */
-  async start(args: { key?: unknown; resurvey?: unknown }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
-    if (this.active) return { ok: false, errors: [`survey ${this.active.id} is still running — stop it or wait for it`] };
+  async start(args: {
+    key?: unknown;
+    resurvey?: unknown;
+  }): Promise<{ ok: true; run: SurveyRun } | Refusal> {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`survey ${this.active.id} is still running — stop it or wait for it`],
+      };
     if (this.starting) return { ok: false, errors: ["a survey is already starting — wait for it"] };
     const memory = this.ports.memory;
     if (memory === null) return { ok: false, errors: [noMemory()] };
@@ -321,12 +352,19 @@ export class SurveyRunner {
     const rate = file.rate ?? REFERENCE_RATE;
     const key = planKey(p.plan, p.head, rate);
     if (typeof args.key !== "string" || args.key === "") {
-      return { ok: false, errors: ["no preview key — run the survey preview, show the operator the cost, then start with its key"] };
+      return {
+        ok: false,
+        errors: [
+          "no preview key — run the survey preview, show the operator the cost, then start with its key",
+        ],
+      };
     }
     if (args.key !== key) {
       return {
         ok: false,
-        errors: [`the plan changed since that preview (key ${args.key}, now ${key}) — preview again and show the operator the new cost`],
+        errors: [
+          `the plan changed since that preview (key ${args.key}, now ${key}) — preview again and show the operator the new cost`,
+        ],
       };
     }
     if (p.plan.cases.length === 0) return { ok: false, errors: ["there is nothing to survey"] };
@@ -337,7 +375,8 @@ export class SurveyRunner {
       this.starting = true;
       try {
         const ready = await memory.ensureWritable();
-        if (!ready.ok) return { ok: false, errors: [`reviewer memory is not writable: ${ready.message}`] };
+        if (!ready.ok)
+          return { ok: false, errors: [`reviewer memory is not writable: ${ready.message}`] };
       } finally {
         this.starting = false;
       }
@@ -345,7 +384,10 @@ export class SurveyRunner {
 
     const now = this.ports.clock();
     const run: SurveyRun = {
-      id: `survey-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
+      id: `survey-${now
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d+Z$/, "Z")}`,
       started_at: now.toISOString(),
       finished_at: null,
       head: p.head,
@@ -380,7 +422,12 @@ export class SurveyRunner {
     try {
       this.store(file);
     } catch (err) {
-      return { ok: false, errors: [`could not record the survey in ${this.ports.state.location}: ${clean(err)} — nothing started`] };
+      return {
+        ok: false,
+        errors: [
+          `could not record the survey in ${this.ports.state.location}: ${clean(err)} — nothing started`,
+        ],
+      };
     }
 
     const abort = new AbortController();
@@ -408,7 +455,11 @@ export class SurveyRunner {
       run:
         run === null
           ? null
-          : { ...run, display: run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state },
+          : {
+              ...run,
+              display:
+                run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state,
+            },
       last_complete: file.last_complete,
       active: this.active !== null,
     };
@@ -429,12 +480,19 @@ export class SurveyRunner {
 
   // -- the background run --
 
-  private async drive(file: SurveyFile, run: SurveyRun, plan: SurveyPlan, signal: AbortSignal): Promise<void> {
+  private async drive(
+    file: SurveyFile,
+    run: SurveyRun,
+    plan: SurveyPlan,
+    signal: AbortSignal,
+  ): Promise<void> {
     // What this run may supersede: the survey memory that was live before it
     // wrote anything — read ONCE, not per unit (a sweep reads every entry).
     const earlier = await this.surveyEntries();
     if (earlier === null) {
-      run.problems.push("could not read memory to supersede earlier survey entries — they stay live");
+      run.problems.push(
+        "could not read memory to supersede earlier survey entries — they stay live",
+      );
     }
     const ctx = { file, run, signal, earlier: earlier ?? [], retireFailed: false };
     const repoCases = plan.cases.filter((c) => c.stage === "repo");
@@ -458,7 +516,8 @@ export class SurveyRunner {
     // answers, rather than a "re-survey" leaving two generations live.
     // Likewise a retire memory refused: the old generation is still live
     // beside the new one, so the run is partial, never "complete".
-    let complete = earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
+    let complete =
+      earlier !== null && run.cases.every((c) => c.status === "done" && c.notes_failed === 0);
     if (complete) {
       // Whatever earlier survey memory is still live belongs to a unit this
       // cut no longer has (or to @repo parts that no longer exist).
@@ -492,7 +551,13 @@ export class SurveyRunner {
   /** One case, start to finish. Resolves with the note texts it wrote (for
    * stage 1's hand-over), or null when it did not finish. */
   private async runCase(
-    ctx: { file: SurveyFile; run: SurveyRun; signal: AbortSignal; earlier: LiveSurveyEntry[]; retireFailed: boolean },
+    ctx: {
+      file: SurveyFile;
+      run: SurveyRun;
+      signal: AbortSignal;
+      earlier: LiveSurveyEntry[];
+      retireFailed: boolean;
+    },
     plan: SurveyCasePlan,
     repoNotes: string[] | null,
   ): Promise<string[] | null> {
@@ -561,7 +626,8 @@ export class SurveyRunner {
     // every note landed; a partial read keeps them.
     const mine = run.cases.filter((x) => x.unit === plan.unit);
     if (mine.every((x) => x.status === "done" && x.notes_failed === 0)) {
-      if (!(await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit))) ctx.retireFailed = true;
+      if (!(await this.supersede(run, ctx.earlier, (unit) => unit === plan.unit)))
+        ctx.retireFailed = true;
       this.store(file);
     }
     return written;
@@ -618,7 +684,7 @@ export class SurveyRunner {
         finished_at: run.finished_at,
         head: run.head,
         notes: run.cases.reduce((n, c) => n + c.notes_written, 0),
-        cost_usd: costs.every((x) => x !== null) ? costs.reduce((n, x) => n + x!, 0) : null,
+        cost_usd: costs.every((x) => x !== null) ? costs.reduce((n, x) => n + x, 0) : null,
       };
     }
     try {

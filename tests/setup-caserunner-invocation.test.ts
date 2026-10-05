@@ -51,7 +51,10 @@ describe("piInvocation — resolves pi, never the host script", () => {
     mkdirSync(join(dir, "node_modules", ".bin"));
     const link = join(dir, "node_modules", ".bin", "pi");
     symlinkSync(cli, link);
-    expect(piInvocation({ argv1: link, execPath: NODE })).toEqual({ command: NODE, prefix: [link] });
+    expect(piInvocation({ argv1: link, execPath: NODE })).toEqual({
+      command: NODE,
+      prefix: [link],
+    });
   });
 
   it("a string-valued bin counts; a non-bin file of the pi package does not", () => {
@@ -62,10 +65,22 @@ describe("piInvocation — resolves pi, never the host script", () => {
 
   it("another package's bin is not pi, nor is a missing file, nor a bun-compiled virtual path", () => {
     const root = fakePackage("vitest", { vitest: "dist/cli.js" });
-    expect(piInvocation({ argv1: join(root, "dist", "cli.js"), execPath: NODE })).toEqual({ command: "pi", prefix: [] });
-    expect(piInvocation({ argv1: join(dir, "missing.js"), execPath: NODE })).toEqual({ command: "pi", prefix: [] });
-    expect(piInvocation({ argv1: "/$bunfs/root/pi", execPath: NODE })).toEqual({ command: "pi", prefix: [] });
-    expect(piInvocation({ argv1: undefined, execPath: NODE })).toEqual({ command: "pi", prefix: [] });
+    expect(piInvocation({ argv1: join(root, "dist", "cli.js"), execPath: NODE })).toEqual({
+      command: "pi",
+      prefix: [],
+    });
+    expect(piInvocation({ argv1: join(dir, "missing.js"), execPath: NODE })).toEqual({
+      command: "pi",
+      prefix: [],
+    });
+    expect(piInvocation({ argv1: "/$bunfs/root/pi", execPath: NODE })).toEqual({
+      command: "pi",
+      prefix: [],
+    });
+    expect(piInvocation({ argv1: undefined, execPath: NODE })).toEqual({
+      command: "pi",
+      prefix: [],
+    });
   });
 
   it("a runner built with no invocation spawns pi, not the host", async () => {
@@ -73,7 +88,11 @@ describe("piInvocation — resolves pi, never the host script", () => {
     const spawn: SpawnFn = (command) => {
       calls.push(command);
       const child = new EventEmitter() as EventEmitter & ReturnType<SpawnFn>;
-      Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true });
+      Object.assign(child, {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      });
       setTimeout(() => child.emit("close", 1), 0);
       return child;
     };

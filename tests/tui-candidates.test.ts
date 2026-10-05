@@ -602,13 +602,24 @@ describe("the sweep and the empty answer", () => {
       now: () => new Date("2026-08-25T09:00:00Z"),
     });
     const snap = snapshot([
-      { number: 5181, state: "reviewing", title: "t", head_sha: "abc", stale_recheck: 0, rounds: 1 } as never,
+      {
+        number: 5181,
+        state: "reviewing",
+        title: "t",
+        head_sha: "abc",
+        stale_recheck: 0,
+        rounds: 1,
+      } as never,
     ]);
     const first = await sweeper.sweep(snap);
-    expect(first!.candidates.find((c) => c.pr === 5181)?.headline).toBe("1 round produced no verdict");
+    expect(first!.candidates.find((c) => c.pr === 5181)?.headline).toBe(
+      "1 round produced no verdict",
+    );
     writeManifest(dir, 5181, 2, "failed", null);
     const second = await sweeper.sweep(snap); // same signature, the reported round now on disk
-    expect(second!.candidates.find((c) => c.pr === 5181)?.headline).toBe("2 rounds produced no verdict");
+    expect(second!.candidates.find((c) => c.pr === 5181)?.headline).toBe(
+      "2 rounds produced no verdict",
+    );
     expect(second!.coverage.rounds_with_local_record).toBe(second!.coverage.rounds_reported);
   });
 

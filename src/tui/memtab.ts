@@ -247,13 +247,17 @@ export function renderMemoryTab(
     const fl = memoryFilterLabel(st.filter);
     const proposals = store.pinProposals.size;
     const proposalNote =
-      proposals > 0 ? ` ${WARN}☆ ${proposals} proposed pin${proposals === 1 ? "" : "s"}${RESET}` : "";
+      proposals > 0
+        ? ` ${WARN}☆ ${proposals} proposed pin${proposals === 1 ? "" : "s"}${RESET}`
+        : "";
     left.push(
       `${sectionTitle(`MEMORY (${ordered.length})`)}${budgetNote}${proposalNote}${fl !== "" ? ` ${fl}` : ""}`,
     );
     leftActions.push(undefined);
     if (store.pinProposalsError) {
-      left.push(`${WARN}⚠ ${truncate(sanitizeText(`pin proposals: ${store.pinProposalsError}`), leftW - 5)}${RESET}`);
+      left.push(
+        `${WARN}⚠ ${truncate(sanitizeText(`pin proposals: ${store.pinProposalsError}`), leftW - 5)}${RESET}`,
+      );
       leftActions.push(undefined);
     }
     if (store.memWarn) {
@@ -311,7 +315,10 @@ export function renderMemoryTab(
     ]);
     const why = store.pinProposals.get(entryKey(selected));
     if (why !== undefined) {
-      for (const l of wrap(sanitizeText(`☆ setup proposes pinning this: ${why} — p pins it`), rightW - 3))
+      for (const l of wrap(
+        sanitizeText(`☆ setup proposes pinning this: ${why} — p pins it`),
+        rightW - 3,
+      ))
         row([{ text: `${WARN}${l}${RESET}` }]);
     }
     // Leave room for the defect flags and the store rows below; a long entry

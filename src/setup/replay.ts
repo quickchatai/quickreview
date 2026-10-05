@@ -118,8 +118,10 @@ export function parseUnifiedDiff(text: string): PrFileEntry[] {
       else if (line.startsWith("deleted file mode")) status = "removed";
       else if (line.startsWith("rename from ")) renameFrom = line.slice("rename from ".length);
       else if (line.startsWith("rename to ")) renameTo = line.slice("rename to ".length);
-      else if (line.startsWith("--- ")) from = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
-      else if (line.startsWith("+++ ")) to = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
+      else if (line.startsWith("--- "))
+        from = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
+      else if (line.startsWith("+++ "))
+        to = line.slice(4) === "/dev/null" ? null : unq(line.slice(4));
       else if (line.startsWith("Binary files ")) {
         const m = /^Binary files (.+?) and (.+?) differ$/.exec(line);
         if (m) {
@@ -175,7 +177,11 @@ export function modelOf(agentText: string): string | null {
 
 /** The rate a case at `tier` with model `spec` is priced at: measured for
  * that spec here when there is one, else the tier's reference. */
-export function rateFor(spec: string | null, tier: PassTier, measured: Readonly<Record<string, ReplayRate>>): ReplayRate {
+export function rateFor(
+  spec: string | null,
+  tier: PassTier,
+  measured: Readonly<Record<string, ReplayRate>>,
+): ReplayRate {
   const m = spec !== null ? measured[spec] : undefined;
   return m ?? { usd_per_kline: REFERENCE_RATES[tier], basis: REFERENCE_BASIS };
 }
@@ -185,17 +191,32 @@ export function caseEstimate(lines: number, rate: ReplayRate): number {
 }
 
 /** What a lens reads: the diff, and every changed file it is pointed at in full. */
-export function linesRead(tree: Pick<ReplayTree, "diffLines" | "lines">, files: readonly string[]): number {
+export function linesRead(
+  tree: Pick<ReplayTree, "diffLines" | "lines">,
+  files: readonly string[],
+): number {
   return tree.diffLines + files.reduce((n, f) => n + (tree.lines(f) ?? 0), 0);
 }
 
 /** The rates measured from finished, priced cases, by model spec. */
 export function measuredRates(
-  cases: ReadonlyArray<{ model: string | null; lines: number; cost_usd: number | null; status: string }>,
+  cases: ReadonlyArray<{
+    model: string | null;
+    lines: number;
+    cost_usd: number | null;
+    status: string;
+  }>,
 ): Record<string, ReplayRate> {
   const by = new Map<string, { cost: number; lines: number; n: number }>();
   for (const c of cases) {
-    if (c.status !== "done" || c.model === null || c.cost_usd === null || c.cost_usd <= 0 || c.lines <= 0) continue;
+    if (
+      c.status !== "done" ||
+      c.model === null ||
+      c.cost_usd === null ||
+      c.cost_usd <= 0 ||
+      c.lines <= 0
+    )
+      continue;
     const t = by.get(c.model) ?? { cost: 0, lines: 0, n: 0 };
     t.cost += c.cost_usd;
     t.lines += c.lines;
@@ -220,7 +241,12 @@ export function measuredRates(
  * and each case runs once more under the new wording (scan-loop: the
  * absolute-worktree-path tasks did exactly that). */
 export function caseKey(agentText: string, prompt: string): string {
-  return createHash("sha256").update(agentText).update("\0").update(prompt).digest("hex").slice(0, 16);
+  return createHash("sha256")
+    .update(agentText)
+    .update("\0")
+    .update(prompt)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 // ---- the prompts ------------------------------------------------------------------
@@ -309,7 +335,13 @@ export function replayLensPrompt(pr: ReplayPr, tree: ReplayTree, row: LensRow): 
     `REPLAY — ${row.lens} at ${row.tier}.`,
     ...prHeader(pr, tree),
     ...(row.why ? ["", `Why this lens is in the plan: ${row.why}`] : []),
-    ...(row.focus && row.focus.length > 0 ? ["", `Your focus files (${row.focus.length}):`, ...row.focus.map((f) => `- ${f} — open ${worktreePath(tree.root, f)}`)] : []),
+    ...(row.focus && row.focus.length > 0
+      ? [
+          "",
+          `Your focus files (${row.focus.length}):`,
+          ...row.focus.map((f) => `- ${f} — open ${worktreePath(tree.root, f)}`),
+        ]
+      : []),
     "",
     `Answer with exactly your findings block headed \`FINDINGS ${row.lens} PR#${pr.number} @${tree.sha}\` (or NONE).`,
   ].join("\n");
@@ -363,7 +395,10 @@ export interface ReplayFinding extends ScanCandidate {
   validated: boolean;
 }
 
-const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((s, i) => [s, i])) as Record<string, number>;
+const SEVERITY_RANK = Object.fromEntries(SEVERITIES.map((s, i) => [s, i])) as Record<
+  string,
+  number
+>;
 
 /** Findings most severe first, then by place. */
 export function bySeverity(a: ReplayFinding, b: ReplayFinding): number {

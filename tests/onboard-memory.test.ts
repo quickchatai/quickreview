@@ -448,7 +448,9 @@ describe("placement rules", () => {
       writeFileSync(join(old, "openviking-keys.env"), "K=1\n");
       expect(resolveSecretsDir({}, home)).toBe(join(home, ".config", "qcr", "default", "secrets"));
       const documented = documentedKeysFile({}, home);
-      expect(documented).toBe(join(home, ".config", "qcr-operator", "default", "openviking-keys.env"));
+      expect(documented).toBe(
+        join(home, ".config", "qcr-operator", "default", "openviking-keys.env"),
+      );
       // A secrets dir that CONTAINS the operator home (here: ~/.config) would
       // hand review sessions the companion key — refused, never moved.
       const colliding = join(home, ".config");

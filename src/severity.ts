@@ -192,9 +192,13 @@ export function postTag(
  * absent axis, read as `routine` — is unchanged. Pinned against `postTag` at
  * every severity × reachability × confidence by tests/severity.test.ts.
  */
-export function reachabilityCappedSeverity(severity: Severity, reachability?: Reachability | null): Severity {
+export function reachabilityCappedSeverity(
+  severity: Severity,
+  reachability?: Reachability | null,
+): Severity {
   const reach = normalizeReachability(reachability);
-  if (reach === "contrived" && (severity === "P0" || severity === "P1" || severity === "P2")) return "P3";
+  if (reach === "contrived" && (severity === "P0" || severity === "P1" || severity === "P2"))
+    return "P3";
   if (reach === "plausible" && severity === "P2") return "P3";
   return severity;
 }

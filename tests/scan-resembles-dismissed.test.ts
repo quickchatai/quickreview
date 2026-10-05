@@ -15,7 +15,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateHomeFs } from "../src/setup/adapters.js";
-import { FindingsStore, dismissedLookalike, nearDuplicate, type ReportedFinding } from "../src/setup/findings.js";
+import {
+  FindingsStore,
+  dismissedLookalike,
+  nearDuplicate,
+  type ReportedFinding,
+} from "../src/setup/findings.js";
 
 let stateDir: string;
 beforeEach(() => {
@@ -38,7 +43,8 @@ function reported(fp: string, over: Partial<ReportedFinding> = {}): ReportedFind
     kind: "correctness",
     severity: "P2",
     confidence: null,
-    claim: "Sync never clears the tag header when all tags are removed from an entry, so stale tags persist.",
+    claim:
+      "Sync never clears the tag header when all tags are removed from an entry, so stale tags persist.",
     evidence: null,
     fix: null,
     detail: null,
@@ -54,7 +60,8 @@ const REWORDED = reported("a7".repeat(32), {
   blob: "b2",
   start: 226,
   end: 229,
-  claim: "Sync does not clear the tag header when all tags are removed, leaving stale tags on the entry.",
+  claim:
+    "Sync does not clear the tag header when all tags are removed, leaving stale tags on the entry.",
 });
 const UNRELATED = reported("c3".repeat(32), {
   blob: "b2",
@@ -69,7 +76,11 @@ const REASON = "by design — the engine drops an empty header itself";
 function dismissedOld(): FindingsStore {
   const st = store();
   st.report([OLD], S("r1", "2026-09-30T10:00:00Z"));
-  const d = st.update(OLD.fingerprint, (f) => ({ ...f, state: "dismissed", dismissal: { reason: REASON, at: "t1", memory: "written" } }));
+  const d = st.update(OLD.fingerprint, (f) => ({
+    ...f,
+    state: "dismissed",
+    dismissal: { reason: REASON, at: "t1", memory: "written" },
+  }));
   expect(d.ok).toBe(true);
   return st;
 }
@@ -83,7 +94,11 @@ describe("a new finding resembling a dismissed one is flagged, never dismissed",
   it("a reworded re-raise is flagged with the dismissal's fingerprint and reason; nothing changes state", () => {
     const st = dismissedOld();
     const before = st.load().findings.find((f) => f.fingerprint === OLD.fingerprint)!;
-    expect(st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"))).toEqual({ added: 1, matched: 0, merged: 0 });
+    expect(st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"))).toEqual({
+      added: 1,
+      matched: 0,
+      merged: 0,
+    });
     const all = st.load().findings;
     expect(all).toHaveLength(2);
     const fresh = all.find((f) => f.fingerprint === REWORDED.fingerprint)!;
@@ -115,18 +130,30 @@ describe("a new finding resembling a dismissed one is flagged, never dismissed",
     const st = dismissedOld();
     st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"));
     st.report([REWORDED], S("r3", "2026-09-30T12:00:00Z"));
-    expect(st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!.resembles_dismissed?.fingerprint).toBe(OLD.fingerprint);
+    expect(
+      st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!.resembles_dismissed
+        ?.fingerprint,
+    ).toBe(OLD.fingerprint);
     st.update(OLD.fingerprint, (f) => ({ ...f, state: "promoted" }));
     st.report([REWORDED], S("r4", "2026-09-30T13:00:00Z"));
-    expect(st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!.resembles_dismissed ?? null).toBeNull();
+    expect(
+      st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!.resembles_dismissed ??
+        null,
+    ).toBeNull();
   });
 
   it("the flag is re-read against the store on every load: a new reason shows, an undone dismissal drops it — no re-sighting needed", () => {
     const st = dismissedOld();
     st.report([REWORDED], S("r2", "2026-09-30T11:00:00Z"));
-    st.update(OLD.fingerprint, (f) => ({ ...f, dismissal: { reason: "second thoughts", at: "t2", memory: "written" } }));
+    st.update(OLD.fingerprint, (f) => ({
+      ...f,
+      dismissal: { reason: "second thoughts", at: "t2", memory: "written" },
+    }));
     const fresh = () => st.load().findings.find((f) => f.fingerprint === REWORDED.fingerprint)!;
-    expect(dismissedLookalike(fresh())).toEqual({ fingerprint: OLD.fingerprint, reason: "second thoughts" });
+    expect(dismissedLookalike(fresh())).toEqual({
+      fingerprint: OLD.fingerprint,
+      reason: "second thoughts",
+    });
     st.update(OLD.fingerprint, (f) => ({ ...f, state: "promoted" }));
     expect(dismissedLookalike(fresh())).toBeNull();
     expect(fresh().state).toBe("new");
@@ -141,7 +168,10 @@ describe("a new finding resembling a dismissed one is flagged, never dismissed",
 
   it("list(): a flagged finding sorts below the unflagged findings of its severity", () => {
     const st = dismissedOld();
-    const OTHER = reported("d4".repeat(32), { path: "src/z-last.ts", claim: "Another P2 entirely." });
+    const OTHER = reported("d4".repeat(32), {
+      path: "src/z-last.ts",
+      claim: "Another P2 entirely.",
+    });
     st.report([REWORDED, OTHER], S("r2", "2026-09-30T11:00:00Z"));
     const listed = st.list({ state: "new" }).findings.map((f) => f.fingerprint);
     // Path order alone would put src/openviking before src/z-last.

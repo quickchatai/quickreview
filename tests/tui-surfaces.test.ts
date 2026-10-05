@@ -34,7 +34,14 @@ import { isTab, TABS, tabDigit, tabForDigit } from "../src/tui/tabs.js";
 import { installDeployHooks } from "../src/tui/deploytab.js";
 import { installMetricsHooks } from "../src/tui/metricstab.js";
 import { installMessageHooks } from "../src/tui/msg.js";
-import { FakeChanges, changeEntry, installScanRig, learningRig, settle, type Rig } from "./helpers/tui-rig.js";
+import {
+  FakeChanges,
+  changeEntry,
+  installScanRig,
+  learningRig,
+  settle,
+  type Rig,
+} from "./helpers/tui-rig.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -146,17 +153,22 @@ describe("eight surfaces, one vocabulary", () => {
     }
   });
 
-  it("every installed surface paints its own name in the title bar and lights its own nav slot", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const rig = fullRig();
-    for (const tab of TABS) {
-      await settled(rig, tab);
-      const frame = tab === "board" ? undefined : rig.app.hooks.tabs[tab]!.screen(rig.app, 160, 40);
-      if (!frame) continue;
-      const plain = frame.lines.map(stripAnsi);
-      expect(plain[0], tab).toMatch(new RegExp(`── ${tab}\\b`));
-      expect(plain.join("\n")).toContain(`[${tabDigit(tab)} ${tab}]`);
-    }
-  });
+  it(
+    "every installed surface paints its own name in the title bar and lights its own nav slot",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const rig = fullRig();
+      for (const tab of TABS) {
+        await settled(rig, tab);
+        const frame =
+          tab === "board" ? undefined : rig.app.hooks.tabs[tab]!.screen(rig.app, 160, 40);
+        if (!frame) continue;
+        const plain = frame.lines.map(stripAnsi);
+        expect(plain[0], tab).toMatch(new RegExp(`── ${tab}\\b`));
+        expect(plain.join("\n")).toContain(`[${tabDigit(tab)} ${tab}]`);
+      }
+    },
+  );
 });
 
 describe("no hidden mode survives", () => {
@@ -258,29 +270,35 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
    * read the same function), which is the point; instead paint an extra
    * `[Z zap]` on any tab's bar and this fails for that tab.
    */
-  it("every surface paints exactly the bar its live keys declare, drawn from its vocabulary", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const rig = fullRig();
-    for (const tab of TABS) {
-      await settled(rig, tab);
-      const live = rig.app.liveKeys();
-      const frame =
-        tab === "board"
-          ? (await import("../src/tui/board.js")).renderBoard(rig.app.view, 160, 40)
-          : rig.app.hooks.tabs[tab]!.screen(rig.app, 160, 40);
-      expect(paintedCommands(frame.lines, tab, 160, live.bar), tab).toEqual(
-        live.bar.map((b) => b.label),
-      );
-      const vocab = new Set(TAB_VOCABULARY[tab].map((b) => b.key));
-      for (const b of live.bar)
-        expect(
-          vocab.has(b.key),
-          `${tab} paints ${JSON.stringify(b.key)} outside its vocabulary`,
-        ).toBe(true);
-      for (const k of live.inline) expect(TAB_INLINE_KEYS[tab]).toContain(k);
-      expect(rig.app.registeredKeys()).toEqual(registeredKeys(live));
-      expect(live.bar.length, `${tab} paints nothing — the rig is under-wired`).toBeGreaterThan(0);
-    }
-  });
+  it(
+    "every surface paints exactly the bar its live keys declare, drawn from its vocabulary",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const rig = fullRig();
+      for (const tab of TABS) {
+        await settled(rig, tab);
+        const live = rig.app.liveKeys();
+        const frame =
+          tab === "board"
+            ? (await import("../src/tui/board.js")).renderBoard(rig.app.view, 160, 40)
+            : rig.app.hooks.tabs[tab]!.screen(rig.app, 160, 40);
+        expect(paintedCommands(frame.lines, tab, 160, live.bar), tab).toEqual(
+          live.bar.map((b) => b.label),
+        );
+        const vocab = new Set(TAB_VOCABULARY[tab].map((b) => b.key));
+        for (const b of live.bar)
+          expect(
+            vocab.has(b.key),
+            `${tab} paints ${JSON.stringify(b.key)} outside its vocabulary`,
+          ).toBe(true);
+        for (const k of live.inline) expect(TAB_INLINE_KEYS[tab]).toContain(k);
+        expect(rig.app.registeredKeys()).toEqual(registeredKeys(live));
+        expect(live.bar.length, `${tab} paints nothing — the rig is under-wired`).toBeGreaterThan(
+          0,
+        );
+      }
+    },
+  );
 
   /**
    * The reverse of [T1], and what makes state-derivation worth having: a key
@@ -291,34 +309,38 @@ describe("the key law: painted ⇔ registered ⇔ answers", () => {
    * MUTATION: make the memory tab's key handler `return true` for
    * `key.kind === "char" && key.ch === "z"` — this fails naming `z` on memory.
    */
-  it("every printable a surface does not register focuses the companion column, seeded, and moves nothing else", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    for (const tab of TABS) {
-      const rig = fullRig();
-      await settled(rig, tab);
-      const running = rig.app.run();
-      const registered = rig.app.registeredKeys();
-      const stolen: string[] = [];
-      // `view.now` is the board's paint clock and moves on every repaint —
-      // the sidebar focus repaints — so it is not state a key could steal.
-      const viewSnapshot = (): string => JSON.stringify({ ...rig.app.view, now: undefined });
-      for (const ch of PRINTABLE_ASCII) {
-        if (registered.has(ch)) continue;
+  it(
+    "every printable a surface does not register focuses the companion column, seeded, and moves nothing else",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      for (const tab of TABS) {
+        const rig = fullRig();
+        await settled(rig, tab);
+        const running = rig.app.run();
+        const registered = rig.app.registeredKeys();
+        const stolen: string[] = [];
+        // `view.now` is the board's paint clock and moves on every repaint —
+        // the sidebar focus repaints — so it is not state a key could steal.
+        const viewSnapshot = (): string => JSON.stringify({ ...rig.app.view, now: undefined });
+        for (const ch of PRINTABLE_ASCII) {
+          if (registered.has(ch)) continue;
+          rig.app.sidebar!.blur();
+          const before = { tab: rig.app.tab, view: viewSnapshot() };
+          rig.streams.type(ch);
+          if (
+            !rig.app.sidebar!.focused ||
+            rig.app.tab !== before.tab ||
+            viewSnapshot() !== before.view
+          )
+            stolen.push(ch);
+        }
+        expect(stolen, `printables tab '${tab}' swallowed without registering them`).toEqual([]);
         rig.app.sidebar!.blur();
-        const before = { tab: rig.app.tab, view: viewSnapshot() };
-        rig.streams.type(ch);
-        if (
-          !rig.app.sidebar!.focused ||
-          rig.app.tab !== before.tab ||
-          viewSnapshot() !== before.view
-        )
-          stolen.push(ch);
+        rig.app.quit();
+        await running;
       }
-      expect(stolen, `printables tab '${tab}' swallowed without registering them`).toEqual([]);
-      rig.app.sidebar!.blur();
-      rig.app.quit();
-      await running;
-    }
-  });
+    },
+  );
 
   it("with no PR selected the board offers no PR verb — an unwedge with nothing under it is an action from no data", () => {
     const rig = fullRig();
@@ -340,31 +362,35 @@ describe("the board's verbs are the board's", () => {
    * [T1]; everywhere else the letter must move nothing at all — never the
    * board's verb behind the operator's back, never the selection.
    */
-  it("u, e, m, g and a do nothing off the board with no column to hand them to", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const rig = fullRig();
-    rig.app.sidebar = undefined;
-    let unwedged = 0;
-    rig.app.hooks.unwedge = () => void (unwedged += 1);
-    rig.app.selectPr(5012);
-    const running = rig.app.run();
-    let checked = 0;
-    for (const tab of TABS.filter((t) => t !== "board")) {
-      await settled(rig, tab);
-      const registered = rig.app.registeredKeys();
-      for (const k of ["u", "e", "m", "g", "a"].filter((k) => !registered.has(k))) {
-        const before = JSON.stringify(rig.app.view);
-        rig.streams.type(k);
-        checked += 1;
-        expect(unwedged, `${tab}:${k}`).toBe(0);
-        expect(rig.app.piFocused(), `${tab}:${k}`).toBe(false);
-        expect(JSON.stringify(rig.app.view), `${tab}:${k}`).toBe(before);
-        expect(rig.app.tab, `${tab}:${k}`).toBe(tab);
+  it(
+    "u, e, m, g and a do nothing off the board with no column to hand them to",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const rig = fullRig();
+      rig.app.sidebar = undefined;
+      let unwedged = 0;
+      rig.app.hooks.unwedge = () => void (unwedged += 1);
+      rig.app.selectPr(5012);
+      const running = rig.app.run();
+      let checked = 0;
+      for (const tab of TABS.filter((t) => t !== "board")) {
+        await settled(rig, tab);
+        const registered = rig.app.registeredKeys();
+        for (const k of ["u", "e", "m", "g", "a"].filter((k) => !registered.has(k))) {
+          const before = JSON.stringify(rig.app.view);
+          rig.streams.type(k);
+          checked += 1;
+          expect(unwedged, `${tab}:${k}`).toBe(0);
+          expect(rig.app.piFocused(), `${tab}:${k}`).toBe(false);
+          expect(JSON.stringify(rig.app.view), `${tab}:${k}`).toBe(before);
+          expect(rig.app.tab, `${tab}:${k}`).toBe(tab);
+        }
       }
-    }
-    expect(checked).toBeGreaterThan(20); // the rig is wired: most letters are unregistered off the board
-    rig.app.quit();
-    await running;
-  });
+      expect(checked).toBeGreaterThan(20); // the rig is wired: most letters are unregistered off the board
+      rig.app.quit();
+      await running;
+    },
+  );
 
   it("…and on the board they work", async () => {
     const rig = fullRig();

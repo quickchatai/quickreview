@@ -9,7 +9,14 @@
 // --no-extensions`, read-only tools, no memory, no fan-out (root rule 9 is
 // unchanged: no new session kind, nothing on the VM).
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,7 +69,10 @@ export type SpawnFn = (
 /** The package names pi's CLI ships under. VERIFY-ON-PIN (0.87.1, re-read at 0.99.1): the
  * pinned package is `@earendil-works/pi-coding-agent` (package.json `pi`
  * block); the legacy `@mariozechner` scope is what older installs carry. */
-export const PI_PACKAGES: readonly string[] = ["@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"];
+export const PI_PACKAGES: readonly string[] = [
+  "@earendil-works/pi-coding-agent",
+  "@mariozechner/pi-coding-agent",
+];
 
 /** True only when `script` is a `bin` entry of the pi package: the nearest
  * package.json above its real path names pi, and one of its `bin` targets
@@ -80,7 +90,12 @@ export function isPiCliEntry(script: string): boolean {
       try {
         const pkg = JSON.parse(readFileSync(pkgFile, "utf8")) as { name?: unknown; bin?: unknown };
         if (typeof pkg.name !== "string" || !PI_PACKAGES.includes(pkg.name)) return false;
-        const bins = typeof pkg.bin === "string" ? [pkg.bin] : pkg.bin && typeof pkg.bin === "object" ? Object.values(pkg.bin) : [];
+        const bins =
+          typeof pkg.bin === "string"
+            ? [pkg.bin]
+            : pkg.bin && typeof pkg.bin === "object"
+              ? Object.values(pkg.bin)
+              : [];
         return bins.some((b) => {
           if (typeof b !== "string") return false;
           try {
@@ -105,7 +120,10 @@ export function isPiCliEntry(script: string): boolean {
  * case. A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1 and 1.0.0 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
 export function piInvocation(
-  host: { argv1: string | undefined; execPath: string } = { argv1: process.argv[1], execPath: process.execPath },
+  host: { argv1: string | undefined; execPath: string } = {
+    argv1: process.argv[1],
+    execPath: process.execPath,
+  },
 ): { command: string; prefix: string[] } {
   const script = host.argv1;
   if (script && !script.startsWith("/$bunfs/") && isPiCliEntry(script)) {
@@ -122,7 +140,11 @@ export const FILE_READ_TOOLS: readonly string[] = ["read", "grep"];
  * VERIFY-ON-PIN (read from 0.99.1's dist: the JSON mode passes agent events
  * through verbatim — `tool_execution_start` carries `toolName` and `args`;
  * `read` and `grep` both take `path`): the event and argument spelling. */
-export function readPathOf(event: { type?: string; toolName?: unknown; args?: unknown }): string | null {
+export function readPathOf(event: {
+  type?: string;
+  toolName?: unknown;
+  args?: unknown;
+}): string | null {
   if (event.type !== "tool_execution_start" || typeof event.toolName !== "string") return null;
   if (!FILE_READ_TOOLS.includes(event.toolName)) return null;
   const path = (event.args as { path?: unknown } | null | undefined)?.path;
@@ -187,17 +209,27 @@ export function piCaseRunner(opts: {
   spawn?: SpawnFn;
   invocation?: { command: string; prefix: string[] };
 }): CaseRunner {
-  const spawn = opts.spawn ?? (nodeSpawn as unknown as SpawnFn);
+  const spawn = opts.spawn ?? nodeSpawn;
   return {
-    run: async (spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome> => {
-      if (!/^[a-z][a-z0-9-]*$/.test(spec.agent)) return { ok: false, reason: `not an agent name: ${JSON.stringify(spec.agent)}`, cost_usd: 0 };
+    run: async (
+      spec: CaseSpec,
+      signal: AbortSignal,
+      onCost?: (spentSoFar: number) => void,
+    ): Promise<CaseOutcome> => {
+      if (!/^[a-z][a-z0-9-]*$/.test(spec.agent))
+        return {
+          ok: false,
+          reason: `not an agent name: ${JSON.stringify(spec.agent)}`,
+          cost_usd: 0,
+        };
       let agent: AgentFile | null;
       try {
         agent = parseAgentFile(readFileSync(join(opts.agentsDir, `${spec.agent}.md`), "utf8"));
       } catch {
         return { ok: false, reason: `no agent ${spec.agent} in ${opts.agentsDir}`, cost_usd: 0 };
       }
-      if (agent === null || agent.name !== spec.agent) return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
+      if (agent === null || agent.name !== spec.agent)
+        return { ok: false, reason: `${spec.agent}.md is not an agent file`, cost_usd: 0 };
       if (signal.aborted) return { ok: false, reason: "stopped before it started", cost_usd: 0 };
 
       const tmp = mkdtempSync(join(tmpdir(), "qcr-case-"));
@@ -205,7 +237,15 @@ export function piCaseRunner(opts: {
         const promptFile = join(tmp, `${spec.agent}.md`);
         writeFileSync(promptFile, agent.systemPrompt, { mode: 0o600 });
         const inv = opts.invocation ?? piInvocation();
-        const args = [...inv.prefix, "--mode", "json", "-p", "--no-session", "--no-extensions", "--approve"];
+        const args = [
+          ...inv.prefix,
+          "--mode",
+          "json",
+          "-p",
+          "--no-session",
+          "--no-extensions",
+          "--approve",
+        ];
         if (agent.model) args.push("--model", agent.model);
         if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
         args.push("--append-system-prompt", promptFile, `Task: ${spec.prompt}`);
@@ -218,7 +258,12 @@ export function piCaseRunner(opts: {
           let buffer = "";
           const reads: string[] = [];
           const onLine = (line: string): void => {
-            let event: { type?: string; message?: Record<string, unknown>; toolName?: unknown; args?: unknown };
+            let event: {
+              type?: string;
+              message?: Record<string, unknown>;
+              toolName?: unknown;
+              args?: unknown;
+            };
             try {
               event = JSON.parse(line) as typeof event;
             } catch {
@@ -238,11 +283,19 @@ export function piCaseRunner(opts: {
                 // A listener's fault never ends the case.
               }
             }
-            const parts = Array.isArray(msg.content) ? (msg.content as Array<{ type?: string; text?: string }>) : [];
-            const text = parts.filter((p) => p.type === "text" && typeof p.text === "string").map((p) => p.text).join("\n");
+            const parts = Array.isArray(msg.content)
+              ? (msg.content as Array<{ type?: string; text?: string }>)
+              : [];
+            const text = parts
+              .filter((p) => p.type === "text" && typeof p.text === "string")
+              .map((p) => p.text)
+              .join("\n");
             if (text.trim() !== "") final = text;
             if (msg.stopReason === "error" || msg.stopReason === "aborted") {
-              failure = typeof msg.errorMessage === "string" ? msg.errorMessage : `the model stopped: ${String(msg.stopReason)}`;
+              failure =
+                typeof msg.errorMessage === "string"
+                  ? msg.errorMessage
+                  : `the model stopped: ${String(msg.stopReason)}`;
             } else {
               failure = null;
             }
@@ -251,7 +304,11 @@ export function piCaseRunner(opts: {
           try {
             child = spawn(inv.command, args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
           } catch (err) {
-            resolve({ ok: false, reason: `could not start pi: ${err instanceof Error ? err.message : String(err)}`, cost_usd: 0 });
+            resolve({
+              ok: false,
+              reason: `could not start pi: ${err instanceof Error ? err.message : String(err)}`,
+              cost_usd: 0,
+            });
             return;
           }
           const kill = (): void => {
@@ -278,16 +335,27 @@ export function piCaseRunner(opts: {
           // What a case that ended without an answer had spent: a failure
           // costs money too, and a caller holding a budget must count it.
           const spent = (): number | null => (priced ? cost : null);
-          child.on("error", (err) => finish({ ok: false, reason: `pi failed to run: ${err.message}`, cost_usd: spent() }));
+          child.on("error", (err) =>
+            finish({ ok: false, reason: `pi failed to run: ${err.message}`, cost_usd: spent() }),
+          );
           child.on("close", (code) => {
             if (buffer.trim() !== "") onLine(buffer);
             if (signal.aborted) return finish({ ok: false, reason: "stopped", cost_usd: spent() });
             if (code !== 0) {
               const tail = stderr.trim().split("\n").slice(-3).join(" / ");
-              return finish({ ok: false, reason: `pi exited ${code}${tail ? `: ${tail}` : ""}`, cost_usd: spent() });
+              return finish({
+                ok: false,
+                reason: `pi exited ${code}${tail ? `: ${tail}` : ""}`,
+                cost_usd: spent(),
+              });
             }
             if (failure !== null) return finish({ ok: false, reason: failure, cost_usd: spent() });
-            if (final.trim() === "") return finish({ ok: false, reason: "the subagent gave no answer", cost_usd: spent() });
+            if (final.trim() === "")
+              return finish({
+                ok: false,
+                reason: "the subagent gave no answer",
+                cost_usd: spent(),
+              });
             finish({ ok: true, output: final, cost_usd: priced ? cost : null, reads });
           });
         });

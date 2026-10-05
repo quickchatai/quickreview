@@ -10,11 +10,25 @@
 // PR source and a fake case runner. The source's real git half is proven
 // against a scratch repo at the end (git is the thing under test there).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { renderComparison, renderReplayPreview, renderReplayStatus, replayToolDefinitions } from "../extensions/setup-replay.js";
+import {
+  renderComparison,
+  renderReplayPreview,
+  renderReplayStatus,
+  replayToolDefinitions,
+} from "../extensions/setup-replay.js";
 import { renderApply } from "../extensions/setup.js";
 import { SCAN_LEAF_TOOLS, VALIDATE_PASS } from "../src/include.js";
 import { configHome, type InstallEnv } from "../src/install.js";
@@ -33,7 +47,13 @@ import {
   type ReplayTree,
 } from "../src/setup/replay.js";
 import { REPLAY_AGENTS_DIR, REPLAY_HOME_DIR, replaySides } from "../src/setup/replaybuild.js";
-import { compareRun, ReplayRunner, validated, type ReplayPreview, type ReplayRun } from "../src/setup/replayrun.js";
+import {
+  compareRun,
+  ReplayRunner,
+  validated,
+  type ReplayPreview,
+  type ReplayRun,
+} from "../src/setup/replayrun.js";
 import { gitReplaySource, parsePull, REPLAY_TREES_DIR } from "../src/setup/replaysource.js";
 import type { ApplyResult } from "../src/setup/tuning.js";
 
@@ -46,7 +66,11 @@ let now: Date;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "qcr-replay-"));
-  env = { HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg-config"), QCR_STATE_HOME: join(dir, "state") };
+  env = {
+    HOME: join(dir, "home"),
+    XDG_CONFIG_HOME: join(dir, "xdg-config"),
+    QCR_STATE_HOME: join(dir, "state"),
+  };
   now = new Date("2026-09-29T10:00:00Z");
   liveConfig("");
 });
@@ -59,14 +83,23 @@ function write(path: string, text: string): void {
 
 /** The live config (the full fixture), naming `profile` ("" = none). */
 function liveConfig(profile: string): void {
-  write(join(configHome(env), "config.toml"), fixtureToml.replace(/^profile = "".*$/m, `profile = ${JSON.stringify(profile)}`));
+  write(
+    join(configHome(env), "config.toml"),
+    fixtureToml.replace(/^profile = "".*$/m, `profile = ${JSON.stringify(profile)}`),
+  );
 }
 
 const stateRoot = (): string => join(dir, "state");
 
 function engine(): SetupEngine {
   return new SetupEngine({
-    repo: { location: "/r", listFiles: () => [], read: () => null, lines: () => null, head: () => null },
+    repo: {
+      location: "/r",
+      listFiles: () => [],
+      read: () => null,
+      lines: () => null,
+      head: () => null,
+    },
     state: stateHomeFs(stateRoot()),
     profiles: { root: sandbox, env },
     clock: () => now,
@@ -84,7 +117,12 @@ function answers(over: Record<string, Priority> = {}): Record<string, Priority> 
 /** The interview's write, a minute after the last. */
 function tune(over: Record<string, Priority>): ApplyResult {
   now = new Date(now.getTime() + 60_000);
-  const r = engine().profileApply({ profile: "acme", priorities: answers(over), goals: "a payments API", write: true });
+  const r = engine().profileApply({
+    profile: "acme",
+    priorities: answers(over),
+    goals: "a payments API",
+    write: true,
+  });
   if (!r.ok) throw new Error(`refused: ${(r as Refusal).errors.join("; ")}`);
   return r;
 }
@@ -93,16 +131,29 @@ function tune(over: Record<string, Priority>): ApplyResult {
 
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
-const PATCH = "@@ -1,2 +1,4 @@\n def check(t):\n-    return t\n+    if not t:\n+        raise ValueError\n+    return t\n";
+const PATCH =
+  "@@ -1,2 +1,4 @@\n def check(t):\n-    return t\n+    if not t:\n+        raise ValueError\n+    return t\n";
 
 function pr(n = 7): ReplayPr {
-  return { number: n, title: "Harden token check", body: "Fixes the empty token path.", state: "closed", merged: true, head_sha: HEAD, base_sha: BASE, merge_commit_sha: null };
+  return {
+    number: n,
+    title: "Harden token check",
+    body: "Fixes the empty token path.",
+    state: "closed",
+    merged: true,
+    head_sha: HEAD,
+    base_sha: BASE,
+    merge_commit_sha: null,
+  };
 }
 
 /** The PR's tree in the temp dir: one auth file, its diff beside it. */
 function tree(): ReplayTree {
   const root = join(dir, "tree");
-  write(join(root, "svc/auth/token.py"), "def check(t):\n    if not t:\n        raise ValueError\n    return t\n");
+  write(
+    join(root, "svc/auth/token.py"),
+    "def check(t):\n    if not t:\n        raise ValueError\n    return t\n",
+  );
   const diffPath = join(dir, "pr.diff");
   const diff = `diff --git a/svc/auth/token.py b/svc/auth/token.py\n--- a/svc/auth/token.py\n+++ b/svc/auth/token.py\n${PATCH}`;
   write(diffPath, diff);
@@ -119,11 +170,17 @@ function tree(): ReplayTree {
 
 const FILE = "svc/auth/token.py";
 
-function block(lens: string, items: Array<{ line: number; kind: string; severity: string; claim: string }>): string {
+function block(
+  lens: string,
+  items: Array<{ line: number; kind: string; severity: string; claim: string }>,
+): string {
   if (items.length === 0) return `FINDINGS ${lens} PR#7 @${HEAD}\nNONE`;
   return [
     `FINDINGS ${lens} PR#7 @${HEAD}`,
-    ...items.map((i) => `- path: ${FILE}\n  line: ${i.line}\n  kind: ${i.kind}\n  severity: ${i.severity}\n  claim: ${i.claim}`),
+    ...items.map(
+      (i) =>
+        `- path: ${FILE}\n  line: ${i.line}\n  kind: ${i.kind}\n  severity: ${i.severity}\n  claim: ${i.claim}`,
+    ),
   ].join("\n");
 }
 
@@ -137,14 +194,20 @@ interface Call {
  * read it); the validator keeps every candidate but doubts the tests lens's. */
 function fakeRunner(calls: Call[], cost: (spec: CaseSpec) => number | null = () => 0.0001) {
   return (agentsDir: string): CaseRunner => ({
-    run: async (spec: CaseSpec, _signal: AbortSignal, onCost?: (spent: number) => void): Promise<CaseOutcome> => {
+    run: async (
+      spec: CaseSpec,
+      _signal: AbortSignal,
+      onCost?: (spent: number) => void,
+    ): Promise<CaseOutcome> => {
       calls.push({ agentsDir, spec });
       const c = cost(spec);
       if (c !== null) onCost?.(c);
       const lens = spec.agent.replace(/--.*$/, "");
       let output: string;
       if (lens === VALIDATE_PASS) {
-        const part = spec.prompt.split("candidate finding(s):\n")[1]!.split("\n\nValidate every")[0]!;
+        const part = spec.prompt
+          .split("candidate finding(s):\n")[1]!
+          .split("\n\nValidate every")[0]!;
         const items = part.split(/\n(?=- path:)|\n\n/).filter((x) => x.startsWith("- path:"));
         const kept = items.filter((x) => !/kind: tests/.test(x));
         const doubted = items.filter((x) => /kind: tests/.test(x));
@@ -157,16 +220,39 @@ function fakeRunner(calls: Call[], cost: (spec: CaseSpec) => number | null = () 
           "NONE",
         ].join("\n");
       } else if (lens === "pass-baseline") {
-        output = block(lens, [{ line: 2, kind: "correctness", severity: "P2", claim: "An empty token raises instead of returning a 401." }]);
+        output = block(lens, [
+          {
+            line: 2,
+            kind: "correctness",
+            severity: "P2",
+            claim: "An empty token raises instead of returning a 401.",
+          },
+        ]);
       } else if (lens === "pass-security") {
         output = block(lens, [
-          { line: 1, kind: "authz", severity: "P1", claim: "The check accepts any non-empty token." },
-          ...(readFileSync(join(agentsDir, `${spec.agent}.md`), "utf8").includes("Severity ceiling for `pass-security`: `P0`")
-            ? [{ line: 4, kind: "timing", severity: "P2", claim: "The comparison is not constant-time." }]
+          {
+            line: 1,
+            kind: "authz",
+            severity: "P1",
+            claim: "The check accepts any non-empty token.",
+          },
+          ...(readFileSync(join(agentsDir, `${spec.agent}.md`), "utf8").includes(
+            "Severity ceiling for `pass-security`: `P0`",
+          )
+            ? [
+                {
+                  line: 4,
+                  kind: "timing",
+                  severity: "P2",
+                  claim: "The comparison is not constant-time.",
+                },
+              ]
             : []),
         ]);
       } else if (lens === "pass-tests") {
-        output = block(lens, [{ line: 2, kind: "tests", severity: "P3", claim: "No test covers the empty token." }]);
+        output = block(lens, [
+          { line: 2, kind: "tests", severity: "P3", claim: "No test covers the empty token." },
+        ]);
       } else output = block(lens, []);
       return { ok: true, output, cost_usd: c };
     },
@@ -179,10 +265,12 @@ function runner(calls: Call[], cost?: (spec: CaseSpec) => number | null): Replay
     state,
     clock: () => now,
     source: {
-      pr: async (n) => (n === 404 ? { ok: false, reason: "GitHub answered 404" } : { ok: true, pr: pr(n) }),
+      pr: async (n) =>
+        n === 404 ? { ok: false, reason: "GitHub answered 404" } : { ok: true, pr: pr(n) },
       open: () => ({ ok: true, tree: tree() }),
     },
-    sides: (req) => replaySides({ root: sandbox, env, stateRoot: stateRoot(), state, clock: () => now }, req),
+    sides: (req) =>
+      replaySides({ root: sandbox, env, stateRoot: stateRoot(), state, clock: () => now }, req),
     cases: fakeRunner(calls, cost),
     styleGuide: () => [],
     concurrency: 2,
@@ -210,7 +298,14 @@ describe("every profile write records the profile it replaces", () => {
     const b = readBaselines(stateHomeFs(stateRoot()));
     if (b.state !== "ok") throw new Error(b.error);
     expect(b.baselines).toEqual([
-      { id: r.commit!.id, taken_at: now.toISOString(), profile: "acme", existed: false, files: { "profile.toml": null }, config_named: "" },
+      {
+        id: r.commit!.id,
+        taken_at: now.toISOString(),
+        profile: "acme",
+        existed: false,
+        files: { "profile.toml": null },
+        config_named: "",
+      },
     ]);
   });
 
@@ -222,7 +317,11 @@ describe("every profile write records the profile it replaces", () => {
     const b = readBaselines(stateHomeFs(stateRoot()));
     if (b.state !== "ok") throw new Error(b.error);
     expect(b.baselines).toHaveLength(2);
-    expect(b.baselines[1]).toMatchObject({ id: second.commit!.id, existed: true, files: { "profile.toml": before } });
+    expect(b.baselines[1]).toMatchObject({
+      id: second.commit!.id,
+      existed: true,
+      files: { "profile.toml": before },
+    });
   });
 
   it("an unreadable baselines file is never overwritten, and the write still lands", () => {
@@ -232,7 +331,9 @@ describe("every profile write records the profile it replaces", () => {
     expect(r.baseline).toMatchObject({ error: expect.stringContaining("not recorded") });
     // …and the companion is TOLD, not left to find out at the replay's preview.
     expect(renderApply(r)).toContain("pass old explicitly");
-    expect(renderApply(tune({ security: "critical", tests: "ignore" }))).not.toContain("kept for a replay");
+    expect(renderApply(tune({ security: "critical", tests: "ignore" }))).not.toContain(
+      "kept for a replay",
+    );
     expect(readFileSync(join(stateRoot(), PROFILE_BASELINES_FILE), "utf8")).toBe("{not json");
   });
 });
@@ -242,7 +343,10 @@ describe("every profile write records the profile it replaces", () => {
 describe("the two sides resolve the way the daemon resolves a profile", () => {
   const state = () => stateHomeFs(stateRoot());
   const sides = (old: string | null = null, newProfile: string | null = null) =>
-    replaySides({ root: sandbox, env, stateRoot: stateRoot(), state: state(), clock: () => now }, { old, new_profile: newProfile });
+    replaySides(
+      { root: sandbox, env, stateRoot: stateRoot(), state: state(), clock: () => now },
+      { old, new_profile: newProfile },
+    );
 
   it("by default: new = the profile setup wrote, old = what reviewed before its last write", () => {
     tune({ security: "critical" });
@@ -257,7 +361,9 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     expect(r.sides.old.cfg.lenses?.["pass-tests"]).toBeUndefined();
     expect(r.sides.new.cfg.lenses?.["pass-tests"]).toEqual({ enabled: false });
     // The real profile is untouched by putting the old one back together.
-    expect(readFileSync(join(configHome(env), "profiles/acme/profile.toml"), "utf8")).toContain("[lenses.pass-tests]");
+    expect(readFileSync(join(configHome(env), "profiles/acme/profile.toml"), "utf8")).toContain(
+      "[lenses.pass-tests]",
+    );
   });
 
   it("putting the old profile back never writes through a linked profile directory into the live target", () => {
@@ -309,7 +415,9 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     if (!r.ok) throw new Error(r.errors.join("; "));
     const newSec = r.sides.new.agentText("pass-security--sol-high")!;
     expect(newSec).toContain("Severity ceiling for `pass-security`: `P0`");
-    expect(r.sides.old.agentText("pass-security--sol-high")).not.toContain("Severity ceiling for `pass-security`");
+    expect(r.sides.old.agentText("pass-security--sol-high")).not.toContain(
+      "Severity ceiling for `pass-security`",
+    );
     for (const side of ["old", "new"] as const) {
       const out = join(stateRoot(), REPLAY_AGENTS_DIR, side);
       for (const f of readdirSync(out)) {
@@ -319,7 +427,9 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
       }
     }
     // A lens the profile does not touch builds to the same bytes on both sides.
-    expect(r.sides.old.agentText("pass-baseline--sol-med")).toBe(r.sides.new.agentText("pass-baseline--sol-med"));
+    expect(r.sides.old.agentText("pass-baseline--sol-med")).toBe(
+      r.sides.new.agentText("pass-baseline--sol-med"),
+    );
   });
 
   it("old may name a write, another profile, or none; anything else is refused with the choices", () => {
@@ -345,14 +455,22 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
     now = new Date(now.getTime() + 60_000);
     const w = (over: Record<string, Priority>, guide?: string): ApplyResult => {
       now = new Date(now.getTime() + 60_000);
-      const r = engine().profileApply({ profile: "acme", priorities: answers(over), goals: "a payments API", write: true, ...(guide ? { style_guide: guide } : {}) });
+      const r = engine().profileApply({
+        profile: "acme",
+        priorities: answers(over),
+        goals: "a payments API",
+        write: true,
+        ...(guide ? { style_guide: guide } : {}),
+      });
       if (!r.ok) throw new Error((r as Refusal).errors.join("; "));
       return r;
     };
     w({ security: "critical" }, "# Guide v1\n");
     const second = w({ security: "critical", tests: "ignore" });
     w({ security: "critical", tests: "ignore" }, "# Guide v2\n");
-    expect(readFileSync(join(configHome(env), "profiles/acme/style-guide.md"), "utf8")).toBe("# Guide v2\n");
+    expect(readFileSync(join(configHome(env), "profiles/acme/style-guide.md"), "utf8")).toBe(
+      "# Guide v2\n",
+    );
     const r = sides(second.commit!.id);
     if (!r.ok) throw new Error(r.errors.join("; "));
     const home = join(stateRoot(), REPLAY_HOME_DIR, "profiles/acme");
@@ -394,11 +512,16 @@ describe("replay: cost first, subagents, side by side", () => {
     // A lens the profile does not touch is ONE case, planned on both sides.
     const base = p.cases.find((c) => c.lens === "pass-baseline")!;
     expect(base.sides.sort()).toEqual(["new", "old"]);
-    expect(plans.old.find((r) => r.lens === "pass-baseline")!.case).toBe(plans.new.find((r) => r.lens === "pass-baseline")!.case);
+    expect(plans.old.find((r) => r.lens === "pass-baseline")!.case).toBe(
+      plans.new.find((r) => r.lens === "pass-baseline")!.case,
+    );
     expect(p.shared).toBeGreaterThan(0);
     // The cost: every case priced, the total and the hard cap stated.
     expect(p.cases.every((c) => c.estimate_usd > 0)).toBe(true);
-    expect(p.estimate_usd).toBeCloseTo(p.cases.reduce((t, c) => t + c.estimate_usd, 0), 3);
+    expect(p.estimate_usd).toBeCloseTo(
+      p.cases.reduce((t, c) => t + c.estimate_usd, 0),
+      3,
+    );
     expect(p.cap_usd).toBeCloseTo(p.estimate_usd * REPLAY_CAP_FACTOR, 3);
     expect(p.rate_bases).toEqual([REFERENCE_BASIS]);
     const shown = renderReplayPreview(p);
@@ -430,7 +553,12 @@ describe("replay: cost first, subagents, side by side", () => {
     const oldDir = join(stateRoot(), REPLAY_AGENTS_DIR, "old");
     const newDir = join(stateRoot(), REPLAY_AGENTS_DIR, "new");
     // The security lens differs by side, so each side's build runs its own.
-    expect(calls.filter((c) => c.spec.agent === "pass-security--sol-high").map((c) => c.agentsDir).sort()).toEqual([newDir, oldDir]);
+    expect(
+      calls
+        .filter((c) => c.spec.agent === "pass-security--sol-high")
+        .map((c) => c.agentsDir)
+        .sort(),
+    ).toEqual([newDir, oldDir]);
     expect(calls.find((c) => c.spec.agent.startsWith("pass-tests--"))!.agentsDir).toBe(oldDir);
     // The lens reads the tree and the diff file; the task never says which side.
     const task = calls.find((c) => c.spec.agent.startsWith("pass-baseline--"))!.spec.prompt;
@@ -446,7 +574,11 @@ describe("replay: cost first, subagents, side by side", () => {
     ]);
     // Only the old profile ran the tests lens — and its validator doubted it.
     expect(c!.old_only).toHaveLength(1);
-    expect(c!.old_only[0]).toMatchObject({ lens: "pass-tests", doubt: { word: "refuted" }, validated: true });
+    expect(c!.old_only[0]).toMatchObject({
+      lens: "pass-tests",
+      doubt: { word: "refuted" },
+      validated: true,
+    });
     // Only the new profile's sol-high security lens saw the timing problem.
     expect(c!.new_only.map((f) => [f.lens, f.kind])).toEqual([["pass-security", "timing"]]);
     expect(c!.cost.shared).toBeGreaterThan(0);
@@ -474,26 +606,43 @@ describe("replay: cost first, subagents, side by side", () => {
     // lane's case kept running, unaborted, after the run had settled.
     const real = stateHomeFs(stateRoot());
     let failing = false;
-    const state = { ...real, location: real.location, write: (rel: string, text: string) => {
-      if (failing) throw new Error("disk full");
-      real.write(rel, text);
-    } } as typeof real;
+    const state = {
+      ...real,
+      location: real.location,
+      write: (rel: string, text: string) => {
+        if (failing) throw new Error("disk full");
+        real.write(rel, text);
+      },
+    } as typeof real;
     let first = true;
     const aborted: boolean[] = [];
     const rr = new ReplayRunner({
       state,
       clock: () => now,
-      source: { pr: async (n) => ({ ok: true, pr: pr(n) }), open: () => ({ ok: true, tree: tree() }) },
-      sides: (req) => replaySides({ root: sandbox, env, stateRoot: stateRoot(), state: real, clock: () => now }, req),
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          { root: sandbox, env, stateRoot: stateRoot(), state: real, clock: () => now },
+          req,
+        ),
       cases: () => ({
         run: async (spec: CaseSpec, signal: AbortSignal): Promise<CaseOutcome> => {
           if (first) {
             first = false;
             await new Promise((r) => setTimeout(r, 10));
             failing = true;
-            return { ok: true, output: block(spec.agent.replace(/--.*$/, ""), []), cost_usd: 0.0001 };
+            return {
+              ok: true,
+              output: block(spec.agent.replace(/--.*$/, ""), []),
+              cost_usd: 0.0001,
+            };
           }
-          await new Promise<void>((r) => (signal.aborted ? r() : signal.addEventListener("abort", () => r(), { once: true })));
+          await new Promise<void>((r) =>
+            signal.aborted ? r() : signal.addEventListener("abort", () => r(), { once: true }),
+          );
           aborted.push(signal.aborted);
           return { ok: false, reason: "stopped", cost_usd: 0 };
         },
@@ -515,8 +664,21 @@ describe("replay: cost first, subagents, side by side", () => {
     const rr = new ReplayRunner({
       state: stateHomeFs(stateRoot()),
       clock: () => now,
-      source: { pr: async (n) => ({ ok: true, pr: pr(n) }), open: () => ({ ok: true, tree: tree() }) },
-      sides: (req) => replaySides({ root: sandbox, env, stateRoot: stateRoot(), state: stateHomeFs(stateRoot()), clock: () => now }, req),
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
       cases: (agentsDir) => ({
         run: async (spec, signal, onCost) => {
           const out = await base(agentsDir).run(spec, signal, onCost);
@@ -536,10 +698,14 @@ describe("replay: cost first, subagents, side by side", () => {
     const run = await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
     const baseline = run.cases.find((c) => c.agent.startsWith("pass-baseline--"))!;
     expect(baseline.reads).toEqual({ pr: 0, elsewhere: 1 });
-    const other = run.cases.find((c) => c.kind === "lens" && !c.agent.startsWith("pass-baseline--"))!;
+    const other = run.cases.find(
+      (c) => c.kind === "lens" && !c.agent.startsWith("pass-baseline--"),
+    )!;
     expect(other.reads).toEqual({ pr: 2, elsewhere: 0 });
     expect(run.problems.filter((p) => p.includes("outside PR #7's worktree"))).toEqual([
-      expect.stringMatching(/pass-baseline — read none of PR #7's files: 1 file read opened outside PR #7's worktree \(\/workspace\/svc\/auth\/token\.py\)/),
+      expect.stringMatching(
+        /pass-baseline — read none of PR #7's files: 1 file read opened outside PR #7's worktree \(\/workspace\/svc\/auth\/token\.py\)/,
+      ),
     ]);
   });
 
@@ -548,7 +714,9 @@ describe("replay: cost first, subagents, side by side", () => {
     const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
     await ran(rr, previewOf(await rr.preview({ prs: [7], old: "none" })).key);
     const again = previewOf(await rr.preview({ prs: [7], old: "none" }));
-    expect(again.rate_bases.some((b) => b.startsWith("measured on this install's last replay"))).toBe(true);
+    expect(
+      again.rate_bases.some((b) => b.startsWith("measured on this install's last replay")),
+    ).toBe(true);
     expect(again.key).not.toBe(p.key);
   });
 
@@ -570,15 +738,23 @@ describe("replay: cost first, subagents, side by side", () => {
   it("the companion's tools: preview states the cost, start takes its key, status shows the comparison", async () => {
     const rr = runner([]);
     const tools = new Map(replayToolDefinitions(rr).map((t) => [t.name, t]));
-    expect([...tools.keys()]).toEqual(["setup_replay_preview", "setup_replay_start", "setup_replay_status", "setup_replay_stop"]);
-    const text = (r: { content: Array<{ text?: string }> }): string => r.content.map((c) => c.text ?? "").join("");
+    expect([...tools.keys()]).toEqual([
+      "setup_replay_preview",
+      "setup_replay_start",
+      "setup_replay_status",
+      "setup_replay_stop",
+    ]);
+    const text = (r: { content: Array<{ text?: string }> }): string =>
+      r.content.map((c) => c.text ?? "").join("");
     const pv = await tools.get("setup_replay_preview")!.execute("1", { prs: [7], old: "none" });
     const key = (pv.details as { preview: { key: string } }).preview.key;
     expect(text(pv)).toContain("It stops HARD at");
     const started = await tools.get("setup_replay_start")!.execute("2", { key });
     expect(text(started)).toContain("started");
     await rr.idle();
-    expect(text(await tools.get("setup_replay_status")!.execute("3", {}))).toContain("Only the NEW profile");
+    expect(text(await tools.get("setup_replay_status")!.execute("3", {}))).toContain(
+      "Only the NEW profile",
+    );
     expect(text(await tools.get("setup_replay_stop")!.execute("4", {}))).toContain("refused");
   });
 });
@@ -606,10 +782,25 @@ describe("replay rules", () => {
   });
 
   it("a shared cost the runner could not price reads UNKNOWN, never vanishes", () => {
-    const c = { pr: 7, title: "t", findings: { old: [], new: [] }, complete: { old: true, new: true }, both: [], old_only: [], new_only: [] };
-    const sides = { old: { profile: "", basis: "b", baseline: null }, new: { profile: "acme", basis: "b", baseline: null } };
-    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: null } }, sides)).toContain("+ unknown shared");
-    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: 0 } }, sides)).not.toContain("shared");
+    const c = {
+      pr: 7,
+      title: "t",
+      findings: { old: [], new: [] },
+      complete: { old: true, new: true },
+      both: [],
+      old_only: [],
+      new_only: [],
+    };
+    const sides = {
+      old: { profile: "", basis: "b", baseline: null },
+      new: { profile: "acme", basis: "b", baseline: null },
+    };
+    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: null } }, sides)).toContain(
+      "+ unknown shared",
+    );
+    expect(renderComparison({ ...c, cost: { old: 1, new: 2, shared: 0 } }, sides)).not.toContain(
+      "shared",
+    );
   });
 
   it("pairs the same finding across sides within a few lines; never one finding twice", () => {
@@ -624,7 +815,11 @@ describe("replay rules", () => {
   });
 
   it("a validator's answer keeps survivors under their lens, marks doubts, and counts the killed", () => {
-    const cands = [f({ lens: "pass-security", kind: "authz", start: 3, end: 3 }), f({ start: 20, end: 20 }), f({ path: "b.py", start: 5, end: 5 })];
+    const cands = [
+      f({ lens: "pass-security", kind: "authz", start: 3, end: 3 }),
+      f({ start: 20, end: 20 }),
+      f({ path: "b.py", start: 5, end: 5 }),
+    ];
     const v = validated(
       "FINDINGS pass-validate PR#1 @x\n- path: a.py\n  line: 3\n  kind: authz\n  severity: P1\n  claim: kept\nDOUBTED\n- pass-baseline a.py:20 — unverifiable: cannot see the caller\nKILLED\n- b.py:5 duplicate",
       "/t",
@@ -663,16 +858,55 @@ describe("replay rules", () => {
       "",
     ].join("\n");
     expect(parseUnifiedDiff(diff)).toEqual([
-      { filename: "x.py", additions: 2, deletions: 1, status: "modified", patch: "@@ -1 +1,2 @@\n-a\n+b\n+c" },
-      { filename: "new.py", additions: 1, deletions: 0, status: "added", patch: "@@ -0,0 +1 @@\n+n" },
-      { filename: "moved.py", additions: 0, deletions: 0, status: "renamed", previous_filename: "old.py" },
+      {
+        filename: "x.py",
+        additions: 2,
+        deletions: 1,
+        status: "modified",
+        patch: "@@ -1 +1,2 @@\n-a\n+b\n+c",
+      },
+      {
+        filename: "new.py",
+        additions: 1,
+        deletions: 0,
+        status: "added",
+        patch: "@@ -0,0 +1 @@\n+n",
+      },
+      {
+        filename: "moved.py",
+        additions: 0,
+        deletions: 0,
+        status: "renamed",
+        previous_filename: "old.py",
+      },
       { filename: "img.png", additions: 0, deletions: 0, status: "removed" },
     ]);
   });
 
   it("reads GitHub's pull answer, and refuses one without a head or base", () => {
-    const ok = parsePull(3, { number: 3, title: "t", body: null, state: "closed", merged_at: "2026-09-01T00:00:00Z", merge_commit_sha: "c".repeat(40), head: { sha: HEAD }, base: { sha: BASE } });
-    expect(ok).toEqual({ ok: true, pr: { number: 3, title: "t", body: "", state: "closed", merged: true, head_sha: HEAD, base_sha: BASE, merge_commit_sha: "c".repeat(40) } });
+    const ok = parsePull(3, {
+      number: 3,
+      title: "t",
+      body: null,
+      state: "closed",
+      merged_at: "2026-09-01T00:00:00Z",
+      merge_commit_sha: "c".repeat(40),
+      head: { sha: HEAD },
+      base: { sha: BASE },
+    });
+    expect(ok).toEqual({
+      ok: true,
+      pr: {
+        number: 3,
+        title: "t",
+        body: "",
+        state: "closed",
+        merged: true,
+        head_sha: HEAD,
+        base_sha: BASE,
+        merge_commit_sha: "c".repeat(40),
+      },
+    });
     expect(parsePull(3, { number: 3, head: {}, base: { sha: BASE } }).ok).toBe(false);
     expect(parsePull(3, { number: 4, head: { sha: HEAD }, base: { sha: BASE } }).ok).toBe(false);
   });
@@ -683,7 +917,21 @@ describe("replay rules", () => {
 describe("gitReplaySource (a scratch git repo — git is the thing under test)", () => {
   let repo: string;
   const git = (...args: string[]): string =>
-    execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { encoding: "utf8" }).trim();
+    execFileSync(
+      "git",
+      [
+        "-C",
+        repo,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      { encoding: "utf8" },
+    ).trim();
 
   beforeEach(() => {
     repo = join(dir, "repo");
@@ -694,14 +942,26 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     git("commit", "-qm", "base");
   });
 
-  const github = (data: Record<string, unknown>) => ({ get: async (path: string) => ({ ok: true as const, data: { ...data, path } }) });
+  const github = (data: Record<string, unknown>) => ({
+    get: async (path: string) => ({ ok: true as const, data: { ...data, path } }),
+  });
 
   it("asks GitHub for the PR on the configured repo only, GET-only through the reader", async () => {
     const seen: string[] = [];
-    const src = gitReplaySource({ github: { get: async (p) => (seen.push(p), { ok: false, reason: "404" }) }, repo: () => "acme/app", repoRoot: repo, stateRoot: stateRoot() });
+    const src = gitReplaySource({
+      github: { get: async (p) => (seen.push(p), { ok: false, reason: "404" }) },
+      repo: () => "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
     expect(await src.pr(5)).toEqual({ ok: false, reason: "404" });
     expect(seen).toEqual(["/repos/acme/app/pulls/5"]);
-    const bad = gitReplaySource({ github: github({}), repo: "", repoRoot: repo, stateRoot: stateRoot() });
+    const bad = gitReplaySource({
+      github: github({}),
+      repo: "",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
     expect((await bad.pr(5)).ok).toBe(false);
   });
 
@@ -717,7 +977,12 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     write(join(repo, "app/c.py"), "base moved\n");
     git("add", "-A");
     git("commit", "-qm", "base moves on");
-    const src = gitReplaySource({ github: github({}), repo: "acme/app", repoRoot: repo, stateRoot: stateRoot() });
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
     const opened = src.open({ ...pr(), head_sha: head, base_sha: git("rev-parse", "HEAD") }, []);
     if (!opened.ok) throw new Error(opened.reason);
     const t = opened.tree;
@@ -737,13 +1002,24 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     write(join(repo, "app/a.py"), "squashed\n");
     git("commit", "-qam", "squash-merged PR");
     const merge = git("rev-parse", "HEAD");
-    const src = gitReplaySource({ github: github({}), repo: "acme/app", repoRoot: repo, stateRoot: stateRoot() });
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
     const gone = "d".repeat(40);
-    const opened = src.open({ ...pr(), head_sha: gone, base_sha: gone, merge_commit_sha: merge }, []);
+    const opened = src.open(
+      { ...pr(), head_sha: gone, base_sha: gone, merge_commit_sha: merge },
+      [],
+    );
     if (!opened.ok) throw new Error(opened.reason);
     expect(opened.tree.sha).toBe(merge);
     expect(opened.tree.base).toBe(git("rev-parse", "HEAD^"));
-    const missing = src.open({ ...pr(), head_sha: gone, base_sha: gone, merge_commit_sha: null }, []);
+    const missing = src.open(
+      { ...pr(), head_sha: gone, base_sha: gone, merge_commit_sha: null },
+      [],
+    );
     expect(!missing.ok && missing.reason).toContain("pull it on the host");
   });
 });

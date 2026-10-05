@@ -74,7 +74,8 @@ export function readOnlyGrantProblem(perms: unknown): string | undefined {
   for (const [name, level] of entries) {
     if (!(name in COMPANION_GITHUB_PERMISSIONS) && !IMPLICIT_PERMISSIONS.has(name))
       return `the grant carries ${name}=${String(level)}, which was never asked for`;
-    if (level !== "read") return `the grant carries ${name}=${String(level)} — only read is allowed`;
+    if (level !== "read")
+      return `the grant carries ${name}=${String(level)} — only read is allowed`;
   }
   return undefined;
 }
@@ -145,8 +146,10 @@ export async function mintReadOnlyToken(opts: {
  * both a docker env file and safe to `source`. */
 export function renderTokenEnv(tok: ReadToken, repo: string): string {
   if (!/^[A-Za-z0-9_]+$/.test(tok.token)) throw new Error("the minted token is not a plain word");
-  if (!/^[0-9TZ:.+-]+$/.test(tok.expires_at)) throw new Error("the token expiry is not a timestamp");
-  if (!REPO_RE.test(repo)) throw new Error(`[github] repo ${JSON.stringify(repo)} is not owner/name`);
+  if (!/^[0-9TZ:.+-]+$/.test(tok.expires_at))
+    throw new Error("the token expiry is not a timestamp");
+  if (!REPO_RE.test(repo))
+    throw new Error(`[github] repo ${JSON.stringify(repo)} is not owner/name`);
   return (
     "# Minted on the host by qcr: a READ-ONLY GitHub App installation token\n" +
     "# (contents / issues / pull requests: read) for one repository. Re-minted before\n" +

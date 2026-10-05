@@ -122,18 +122,22 @@ function command(
 }
 
 describe("operator PR recovery", () => {
-  it("refuses rerun-round while durable session ownership still blocks dispatch", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    const { store, dir, pr } = setup();
-    command(store, dir, pr);
-    const pump = vi.fn(async () => {});
+  it(
+    "refuses rerun-round while durable session ownership still blocks dispatch",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const { store, dir, pr } = setup();
+      command(store, dir, pr);
+      const pump = vi.fn(async () => {});
 
-    const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
+      const result = await recoverPrForOperator({ store, pump }, pr, "rerun-round");
 
-    expect(result).toMatchObject({ ok: false, blocking_command: "cmd-round" });
-    expect(result.reason).toContain("restart-session");
-    expect(pump).not.toHaveBeenCalled();
-    expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe("cmd-round");
-  });
+      expect(result).toMatchObject({ ok: false, blocking_command: "cmd-round" });
+      expect(result.reason).toContain("restart-session");
+      expect(pump).not.toHaveBeenCalled();
+      expect(store.blockingSessionCommand(`pr-${pr}`)?.id).toBe("cmd-round");
+    },
+  );
 
   it("restart-session fences the old consumer, clears its round command, and proves redispatch", async () => {
     const { store, dir, pr } = setup();

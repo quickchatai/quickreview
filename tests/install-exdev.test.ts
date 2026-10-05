@@ -4,7 +4,15 @@
 // profile must keep pointing inside the copy — cpSync's default rewrites it to
 // an absolute path into the source tree the fallback deletes next. EXDEV is
 // forced by a mocked renameSync (one mount in a test tmpdir cannot produce it).
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";

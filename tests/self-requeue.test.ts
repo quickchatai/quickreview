@@ -530,86 +530,102 @@ function dispatchHooks(): { hooks: SessionHooks; orders: RoundOrder[] } {
 }
 
 describe("self-requeued rounds do not age the PR", () => {
-  it("priorRoundCount ignores the cancelled round; the fresh dispatch is still round_type 'first', review_no 1", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    reviewingRound(320);
-    pastDeadline();
-    const { hooks } = hooksWith(false);
-    await watcher(hooks).checkDeadlines();
+  it(
+    "priorRoundCount ignores the cancelled round; the fresh dispatch is still round_type 'first', review_no 1",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(320);
+      pastDeadline();
+      const { hooks } = hooksWith(false);
+      await watcher(hooks).checkDeadlines();
 
-    expect(store.priorRoundCount(320)).toBe(0); // verdicted-only discipline intact
-    expect(roundTypeFor(store.getPr(320)!, store.priorRoundCount(320))).toBe("first");
+      expect(store.priorRoundCount(320)).toBe(0); // verdicted-only discipline intact
+      expect(roundTypeFor(store.getPr(320)!, store.priorRoundCount(320))).toBe("first");
 
-    const d = dispatchHooks();
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks: d.hooks,
-    });
-    expect(orders).toHaveLength(1);
-    expect(orders[0]!.round_type).toBe("first");
-    expect(orders[0]!.review_no).toBe(1);
-    expect(orders[0]!.round_no).toBe(2); // round_no advances; review age does not
-  });
+      const d = dispatchHooks();
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks: d.hooks,
+      });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.round_type).toBe("first");
+      expect(orders[0]!.review_no).toBe(1);
+      expect(orders[0]!.round_no).toBe(2); // round_no advances; review age does not
+    },
+  );
 });
 
 describe("idempotency against the restart orphan-requeue", () => {
-  it("self-requeue first: the orphan sweep finds nothing running and dispatch runs exactly once", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    reviewingRound(330);
-    pastDeadline();
-    const { hooks } = hooksWith(false);
-    await watcher(hooks).checkDeadlines(); // self-requeue wins the race
+  it(
+    "self-requeue first: the orphan sweep finds nothing running and dispatch runs exactly once",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(330);
+      pastDeadline();
+      const { hooks } = hooksWith(false);
+      await watcher(hooks).checkDeadlines(); // self-requeue wins the race
 
-    // A restart lands right after: no session adopted for #330.
-    const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
-    expect(report.cancelled).toEqual([]);
-    expect(report.requeued).toEqual([]);
-    expect(events("orphaned_round_requeued")).toHaveLength(0);
+      // A restart lands right after: no session adopted for #330.
+      const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
+      expect(report.cancelled).toEqual([]);
+      expect(report.requeued).toEqual([]);
+      expect(events("orphaned_round_requeued")).toHaveLength(0);
 
-    const d = dispatchHooks();
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks: d.hooks,
-    });
-    expect(orders).toHaveLength(1); // one queued row ⇒ one round, ever
-    expect(store.runningRounds()).toHaveLength(1);
-  });
+      const d = dispatchHooks();
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks: d.hooks,
+      });
+      expect(orders).toHaveLength(1); // one queued row ⇒ one round, ever
+      expect(store.runningRounds()).toHaveLength(1);
+    },
+  );
 
-  it("orphan-requeue first: the deadline checker has nothing left to self-requeue", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    reviewingRound(331);
-    pastDeadline();
-    const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
-    expect(report.requeued).toEqual([331]);
+  it(
+    "orphan-requeue first: the deadline checker has nothing left to self-requeue",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(331);
+      pastDeadline();
+      const report = reconcileOrphanedRounds(store, [], { botLogin: "bot[bot]", now: () => clock });
+      expect(report.requeued).toEqual([331]);
 
-    const { hooks } = hooksWith(false);
-    expect(await watcher(hooks).checkDeadlines()).toEqual([]); // no running round to act on
-    expect(events("round_self_requeued")).toHaveLength(0);
+      const { hooks } = hooksWith(false);
+      expect(await watcher(hooks).checkDeadlines()).toEqual([]); // no running round to act on
+      expect(events("round_self_requeued")).toHaveLength(0);
 
-    const d = dispatchHooks();
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks: d.hooks,
-    });
-    expect(orders).toHaveLength(1);
-  });
+      const d = dispatchHooks();
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks: d.hooks,
+      });
+      expect(orders).toHaveLength(1);
+    },
+  );
 
-  it("a requeued PR whose replacement round is already running is not dispatched again", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    // The queued-while-running guard in dispatch: requeue raced a running round.
-    reviewingRound(332);
-    store.upsertPr({ ...store.getPr(332)!, state: "queued", trigger_ts: clock.toISOString() });
-    const d = dispatchHooks();
-    const orders = await dispatchOnce({
-      cfg: baseCfg,
-      store,
-      adapter: new FakeDispatchAdapter(),
-      hooks: d.hooks,
-    });
-    expect(orders).toHaveLength(0);
-  });
+  it(
+    "a requeued PR whose replacement round is already running is not dispatched again",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // The queued-while-running guard in dispatch: requeue raced a running round.
+      reviewingRound(332);
+      store.upsertPr({ ...store.getPr(332)!, state: "queued", trigger_ts: clock.toISOString() });
+      const d = dispatchHooks();
+      const orders = await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter: new FakeDispatchAdapter(),
+        hooks: d.hooks,
+      });
+      expect(orders).toHaveLength(0);
+    },
+  );
 });
 
 // 2026-08-19 (the owner): recover, don't park — a live-but-wedged session is

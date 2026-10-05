@@ -71,13 +71,28 @@ describe("renderReviewFromRecord — the inline comments", () => {
     const r = renderReviewFromRecord(
       record([
         entry({ id: "c", posted_as: "check this", title: "Confirm the cron runs once" }),
-        entry({ id: "a", posted_as: "ask your human", severity: "P2", confidence: 0.6, title: "Is EU data allowed here?" }),
-        entry({ id: "d", posted_as: "deferred", severity: "P1", title: "Pre-existing retry storm" }),
+        entry({
+          id: "a",
+          posted_as: "ask your human",
+          severity: "P2",
+          confidence: 0.6,
+          title: "Is EU data allowed here?",
+        }),
+        entry({
+          id: "d",
+          posted_as: "deferred",
+          severity: "P1",
+          title: "Pre-existing retry storm",
+        }),
       ]),
     );
     expect(CHECK_THIS_RE.test(r.comments[0]!.body)).toBe(true);
-    expect(r.comments[1]!.body.startsWith("[ask your human] [question] Is EU data allowed here?")).toBe(true);
-    expect(r.comments[2]!.body.startsWith("[deferred] [blocker] Pre-existing retry storm")).toBe(true);
+    expect(
+      r.comments[1]!.body.startsWith("[ask your human] [question] Is EU data allowed here?"),
+    ).toBe(true);
+    expect(r.comments[2]!.body.startsWith("[deferred] [blocker] Pre-existing retry storm")).toBe(
+      true,
+    );
   });
 
   it("anchors a LEFT side and a multi-line range when the record claims them", () => {
@@ -87,7 +102,11 @@ describe("renderReviewFromRecord — the inline comments", () => {
 
   it("ignores every entry that did not post", () => {
     const r = renderReviewFromRecord(
-      record([entry({}), entry({ id: "k", disposition: "killed", word: "duplicate" }), entry({ id: "d", disposition: "doubted", word: "refuted" })]),
+      record([
+        entry({}),
+        entry({ id: "k", disposition: "killed", word: "duplicate" }),
+        entry({ id: "d", disposition: "doubted", word: "refuted" }),
+      ]),
     );
     expect(r.comments).toHaveLength(1);
   });
@@ -96,22 +115,37 @@ describe("renderReviewFromRecord — the inline comments", () => {
 describe("renderReviewFromRecord — the body", () => {
   it("opens with the plain paragraph, then the verdict line, the lenses line, the sections and the footer", () => {
     const r = renderReviewFromRecord(
-      record([entry({}), entry({ id: "n", posted_as: "nit", severity: "nit", title: "Name the constant" })]),
+      record([
+        entry({}),
+        entry({ id: "n", posted_as: "nit", severity: "nit", title: "Name the constant" }),
+      ]),
       { botLogin: "qc-bot" },
     );
     const lines = r.body.split("\n");
     expect(lines[0]).toBe("This PR routes orders by region. The round found one blocker.");
     expect(r.body).toContain("**Verdict: Changes requested** — 1 blocker, 1 nit.");
     expect(r.body).toContain("_Lenses applied: pass-baseline, pass-security._");
-    expect(r.body).toContain("### Blockers\n\n- `src/api/orders.py:212` — Any user can read another tenant's order _(P1/0.90, pass-security)_");
+    expect(r.body).toContain(
+      "### Blockers\n\n- `src/api/orders.py:212` — Any user can read another tenant's order _(P1/0.90, pass-security)_",
+    );
     expect(r.body).toContain("### Nits");
-    expect(r.body.trim().endsWith("ask for a human reviewer if you want this escalated._")).toBe(true);
+    expect(r.body.trim().endsWith("ask for a human reviewer if you want this escalated._")).toBe(
+      true,
+    );
     expect(r.body).toContain("`qc-bot`");
   });
 
   it("counts root causes, not rows: a same_as follower posts inline but is neither counted nor bulleted", () => {
     const r = renderReviewFromRecord(
-      record([entry({}), entry({ id: "f2", line: 240, same_as: "f1", title: "Same root cause as src/api/orders.py:212" })]),
+      record([
+        entry({}),
+        entry({
+          id: "f2",
+          line: 240,
+          same_as: "f1",
+          title: "Same root cause as src/api/orders.py:212",
+        }),
+      ]),
     );
     expect(r.comments).toHaveLength(2);
     expect(r.body).toContain("— 1 blocker.");
@@ -120,16 +154,26 @@ describe("renderReviewFromRecord — the body", () => {
 
   it("puts check-this items under the double-check section and keeps them out of the counts", () => {
     const r = renderReviewFromRecord(
-      record([entry({ id: "c", posted_as: "check this", title: "Confirm the cron runs once" })], { verdict: "APPROVE" }),
+      record([entry({ id: "c", posted_as: "check this", title: "Confirm the cron runs once" })], {
+        verdict: "APPROVE",
+      }),
     );
     expect(r.body).toContain("**Verdict: Approved** — no findings.");
-    expect(r.body).toContain("### For a human to double-check\n\n- `src/api/orders.py:212` — Confirm the cron runs once");
+    expect(r.body).toContain(
+      "### For a human to double-check\n\n- `src/api/orders.py:212` — Confirm the cron runs once",
+    );
   });
 
   it("sends no-anchor, inline:false and over-cap findings to the body, never drops them", () => {
-    const many = Array.from({ length: 51 }, (_, i) => entry({ id: `m${i}`, line: 300 + i, title: `Defect ${i}` }));
+    const many = Array.from({ length: 51 }, (_, i) =>
+      entry({ id: `m${i}`, line: 300 + i, title: `Defect ${i}` }),
+    );
     const r = renderReviewFromRecord(
-      record([...many, entry({ id: "x", line: null, title: "File-level defect" }), entry({ id: "y", inline: false, title: "Body only" })]),
+      record([
+        ...many,
+        entry({ id: "x", line: null, title: "File-level defect" }),
+        entry({ id: "y", inline: false, title: "Body only" }),
+      ]),
     );
     expect(r.comments).toHaveLength(50);
     expect(r.in_body).toBe(3);
@@ -141,16 +185,30 @@ describe("renderReviewFromRecord — the body", () => {
   });
 
   it("appends the details block verbatim", () => {
-    const r = renderReviewFromRecord(record([], { details: "<details><summary>Checked</summary>\n\nok\n</details>" }));
+    const r = renderReviewFromRecord(
+      record([], { details: "<details><summary>Checked</summary>\n\nok\n</details>" }),
+    );
     expect(r.body).toContain("<details><summary>Checked</summary>");
   });
 });
 
 describe("renderReviewFromRecord — a thin record still renders, and says what it lacked", () => {
   it("falls back to the reason for a missing title and body, and to the caller's verdict and summary", () => {
-    const thin = { findings: [entry({ title: undefined, body: undefined, reason: "Cross-tenant read. More words." })] };
-    const r = renderReviewFromRecord(thin, { verdict: "REQUEST_CHANGES", summary: "Opening.", lensesApplied: "pass-security" });
-    expect(r.comments[0]!.body.startsWith("[blocker] Cross-tenant read.\n\nCross-tenant read. More words.")).toBe(true);
+    const thin = {
+      findings: [
+        entry({ title: undefined, body: undefined, reason: "Cross-tenant read. More words." }),
+      ],
+    };
+    const r = renderReviewFromRecord(thin, {
+      verdict: "REQUEST_CHANGES",
+      summary: "Opening.",
+      lensesApplied: "pass-security",
+    });
+    expect(
+      r.comments[0]!.body.startsWith(
+        "[blocker] Cross-tenant read.\n\nCross-tenant read. More words.",
+      ),
+    ).toBe(true);
     expect(r.body.startsWith("Opening.\n")).toBe(true);
     expect(r.body).toContain("_Lenses applied: pass-security._");
     expect(r.problems.join("\n")).toMatch(/no title/);
@@ -195,16 +253,23 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-render-"));
     try {
       mkdirSync(join(root, "state", "findings"), { recursive: true });
-      writeFileSync(join(root, "state", "findings", "pr-7-round-2.json"), JSON.stringify(record([entry({})])));
+      writeFileSync(
+        join(root, "state", "findings", "pr-7-round-2.json"),
+        JSON.stringify(record([entry({})])),
+      );
       const out = execFileSync(
         process.execPath,
         [join(ROOT, "dist", "src", "reviewrendercli.js"), root, "7", "2", "qc-bot"],
         { encoding: "utf8" },
       );
       expect(out).toContain("1 inline comment(s), 0 in the body");
-      const comments = JSON.parse(readFileSync(join(root, "state", "pr-7-round-2-comments.json"), "utf8"));
+      const comments = JSON.parse(
+        readFileSync(join(root, "state", "pr-7-round-2-comments.json"), "utf8"),
+      );
       expect(comments[0].body.startsWith("[blocker]")).toBe(true);
-      expect(readFileSync(join(root, "state", "pr-7-round-2-review.md"), "utf8")).toContain("**Verdict: Changes requested**");
+      expect(readFileSync(join(root, "state", "pr-7-round-2-review.md"), "utf8")).toContain(
+        "**Verdict: Changes requested**",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

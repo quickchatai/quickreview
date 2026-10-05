@@ -22,7 +22,18 @@
 // never a second one.
 //
 // Every method resolves; a refusal is `{ok:false, reason}`, never a throw.
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { SinkResult, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 
@@ -66,12 +77,16 @@ function stampLines(t: TrackerTicket): string {
  * `Scan-fingerprint:` line would otherwise make this ticket answer for
  * another finding — which would then never be filed. */
 function safeBody(body: string): string {
-  return body.trimEnd().replace(new RegExp(`^(\\s*)${FINGERPRINT_LINE}`, "gm"), "$1(quoted) Scan-fingerprint:");
+  return body
+    .trimEnd()
+    .replace(new RegExp(`^(\\s*)${FINGERPRINT_LINE}`, "gm"), "$1(quoted) Scan-fingerprint:");
 }
 
 /** The fingerprints a ticket's text is stamped with. */
 export function stampedFingerprints(text: string): string[] {
-  return [...text.matchAll(new RegExp(`^${FINGERPRINT_LINE} ([0-9a-f]+)\\s*$`, "gm"))].map((m) => m[1]!);
+  return [...text.matchAll(new RegExp(`^${FINGERPRINT_LINE} ([0-9a-f]+)\\s*$`, "gm"))].map(
+    (m) => m[1]!,
+  );
 }
 
 /** One header field's value (`Key: value`), or null. */
@@ -100,7 +115,9 @@ export interface IssueTrackerOptions {
 export function isIssueTracker(root: string | undefined): boolean {
   if (!root) return false;
   try {
-    return statSync(join(root, ".ids")).isDirectory() && statSync(join(root, "efforts")).isDirectory();
+    return (
+      statSync(join(root, ".ids")).isDirectory() && statSync(join(root, "efforts")).isDirectory()
+    );
   } catch {
     return false;
   }
@@ -110,7 +127,11 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
   const root = opts.root;
   const actor = opts.actor ?? "companion";
   const who = `${actor}@${opts.session ?? `scan-${process.pid}`}`;
-  const now = (): string => opts.clock().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const now = (): string =>
+    opts
+      .clock()
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
 
   const efforts = (): string[] => {
     try {
@@ -126,7 +147,10 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
   /** Every ticket file, live and archived: `[path, text]`. */
   const tickets = function* (): Generator<[string, string]> {
     for (const e of efforts()) {
-      for (const dir of [join(root, "efforts", e, "tickets"), join(root, "efforts", e, "tickets", "archive")]) {
+      for (const dir of [
+        join(root, "efforts", e, "tickets"),
+        join(root, "efforts", e, "tickets", "archive"),
+      ]) {
         let names: string[];
         try {
           names = readdirSync(dir);
@@ -182,7 +206,10 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
     const m = /^FT-(\d{4,})$/.exec(ref);
     if (!m) return null;
     for (const e of efforts()) {
-      for (const dir of [join(root, "efforts", e, "tickets"), join(root, "efforts", e, "tickets", "archive")]) {
+      for (const dir of [
+        join(root, "efforts", e, "tickets"),
+        join(root, "efforts", e, "tickets", "archive"),
+      ]) {
         let names: string[];
         try {
           names = readdirSync(dir);
@@ -206,7 +233,8 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
         writeFileSync(fd, `${who} ${now()}\n`);
         closeSync(fd);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") return { ok: false, reason: `cannot take the edit lock for FT-${id}: ${clean(err)}` };
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST")
+          return { ok: false, reason: `cannot take the edit lock for FT-${id}: ${clean(err)}` };
         let age = 0;
         try {
           age = Date.now() - statSync(lock).mtimeMs; // mtime is wall time, never the injected clock
@@ -217,7 +245,10 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
           rmSync(lock, { force: true });
           continue;
         }
-        return { ok: false, reason: `FT-${id} is being edited by someone else (its edit lock is held) — the next close retries` };
+        return {
+          ok: false,
+          reason: `FT-${id} is being edited by someone else (its edit lock is held) — the next close retries`,
+        };
       }
       try {
         return fn();
@@ -242,7 +273,10 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
         }
         const parent = mapId(t.effort);
         if (parent === null && t.effort !== "inbox") {
-          return { ok: false, reason: `effort ${t.effort} has no map to parent the ticket under — pick an effort with a map, or \`inbox\`` };
+          return {
+            ok: false,
+            reason: `effort ${t.effort} has no map to parent the ticket under — pick an effort with a map, or \`inbox\``,
+          };
         }
         // The backstop: a ticket already stamped with any of the finding's
         // fingerprints is this finding's.
@@ -301,21 +335,32 @@ export function issueTrackerSink(opts: IssueTrackerOptions): TrackerSink {
     close: async (ref, note) => {
       try {
         const path = findTicket(ref);
-        if (path === null) return { ok: false, reason: `no ticket ${ref} on the tracker at ${root}` };
+        if (path === null)
+          return { ok: false, reason: `no ticket ${ref} on the tracker at ${root}` };
         const id = ref.slice(3);
         return withLock(id, () => {
           const text = readFileSync(path, "utf8");
           const created = field(text, "Created") ?? "";
           if (!new RegExp(`\\bby ${actor}$`).test(created)) {
-            return { ok: false, reason: `${ref} was not filed by ${actor} — only the ones it filed are closed` };
+            return {
+              ok: false,
+              reason: `${ref} was not filed by ${actor} — only the ones it filed are closed`,
+            };
           }
           const status = field(text, "Status") ?? "";
           if (CLOSED_STATUSES.has(status)) return { ok: true, ref, existing: true };
           if (existsSync(join(root, ".claims", `FT-${id}`))) {
-            return { ok: false, reason: `${ref} is claimed — someone is working on it; it is left open for them` };
+            return {
+              ok: false,
+              reason: `${ref} is claimed — someone is working on it; it is left open for them`,
+            };
           }
           const ts = now();
-          let out = setField(setField(setField(text, "Status", "resolved"), "Closed", `${ts} resolved by ${actor}`), "Updated", ts);
+          let out = setField(
+            setField(setField(text, "Status", "resolved"), "Closed", `${ts} resolved by ${actor}`),
+            "Updated",
+            ts,
+          );
           if (!/^## Comments\s*$/m.test(out)) out = `${out.trimEnd()}\n\n## Comments\n`;
           out = `${out.trimEnd()}\n\n### ${ts} — ${actor} [resolution]\n\n${note.trim()}\n`;
           const tmp = `${path}.tmp-${process.pid}`;
@@ -365,9 +410,14 @@ export function markdownFindingSink(state: StateFs, clock: () => Date): TrackerS
     },
     close: async (ref, note) => {
       try {
-        if (!ref.startsWith(`${PROMOTED_DIR}/finding-`) || ref.includes("..")) return { ok: false, reason: `${ref} is not a promoted-finding file` };
+        if (!ref.startsWith(`${PROMOTED_DIR}/finding-`) || ref.includes(".."))
+          return { ok: false, reason: `${ref} is not a promoted-finding file` };
         const text = state.read(ref);
-        if (text === null) return { ok: false, reason: `${ref} is gone from the state home (moved elsewhere?) — nothing to close` };
+        if (text === null)
+          return {
+            ok: false,
+            reason: `${ref} is gone from the state home (moved elsewhere?) — nothing to close`,
+          };
         if (field(text, "Status") === "fixed") return { ok: true, ref, existing: true };
         const out = `${setField(text, "Status", "fixed").trimEnd()}\n\n## Fixed\n\n${clock().toISOString()} — ${note.trim()}\n`;
         state.write(ref, out);
@@ -381,7 +431,12 @@ export function markdownFindingSink(state: StateFs, clock: () => Date): TrackerS
 
 /** The sink this companion files into: the issue tracker when one is mounted
  * at `trackerDir`, otherwise markdown files in the state home. */
-export function scanTrackerSink(opts: { trackerDir: string | undefined; state: StateFs; clock: () => Date }): TrackerSink {
-  if (isIssueTracker(opts.trackerDir)) return issueTrackerSink({ root: opts.trackerDir!, clock: opts.clock });
+export function scanTrackerSink(opts: {
+  trackerDir: string | undefined;
+  state: StateFs;
+  clock: () => Date;
+}): TrackerSink {
+  if (isIssueTracker(opts.trackerDir))
+    return issueTrackerSink({ root: opts.trackerDir!, clock: opts.clock });
   return markdownFindingSink(opts.state, opts.clock);
 }

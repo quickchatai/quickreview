@@ -106,7 +106,9 @@ function notFoundWhere(root: string, profile: string, lookup: ProfileLookup): st
 function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup): string {
   const located = locateProfile({ root, profile, ...lookup });
   if (located) return located.dir;
-  throw new Error(`[review] profile "${profile}" not found — ${notFoundWhere(root, profile, lookup)}`);
+  throw new Error(
+    `[review] profile "${profile}" not found — ${notFoundWhere(root, profile, lookup)}`,
+  );
 }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -545,7 +547,10 @@ export function loadProfilePosting(
 
 /** The config with the profile's `[scan]` overrides applied — the profile
  * wins over config.toml, as it does for per-lens tuning. */
-export function applyProfileScan<C extends { scan: ScanConfig }>(cfg: C, overrides: Partial<ScanConfig>): C {
+export function applyProfileScan<C extends { scan: ScanConfig }>(
+  cfg: C,
+  overrides: Partial<ScanConfig>,
+): C {
   return { ...cfg, scan: { ...cfg.scan, ...overrides } };
 }
 

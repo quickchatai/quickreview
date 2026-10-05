@@ -73,11 +73,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { OPENVIKING_DEFAULTS } from "../../config.js";
-import {
-  configHome,
-  locateKeysFile,
-  locateSecrets,
-} from "../../install.js";
+import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import { configMountOf } from "./bringup.js";
 import { readTomlKey } from "./ingress.js";
@@ -176,8 +172,7 @@ export function resolveSecretsDir(
   configured?: string | null,
 ): string {
   return resolve(
-    locateSecrets({ configured, override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } })
-      .path,
+    locateSecrets({ configured, override: env.QC_SECRETS_DIR, env: { ...env, HOME: home } }).path,
   );
 }
 
@@ -267,9 +262,7 @@ export function keysFileConfinement(
   const cfgHome = configHome({ ...env, HOME: home });
   const places: Array<[string, string]> = [
     [cfgHome, `the install's config home (${cfgHome}), which the container mounts read-only`],
-    ...mounted.map(
-      (dir): [string, string] => [dir, `${dir}, which the daemon container mounts`],
-    ),
+    ...mounted.map((dir): [string, string] => [dir, `${dir}, which the daemon container mounts`]),
   ];
   for (const [dir, label] of places) {
     if (isInside(dir, path)) {
@@ -500,7 +493,10 @@ function resolvePaths(opts: MemoryStepOptions, ctx: StepContext): Resolved {
  * secrets dir and the config home: the live config's directory
  * (`configMountOf`) and the checkout. */
 function daemonMounts(ctx: StepContext): string[] {
-  return [configMountOf(ctx.adapters.paths.configPath).dir, repoRootFrom(ctx.adapters.paths.stateDir)];
+  return [
+    configMountOf(ctx.adapters.paths.configPath).dir,
+    repoRootFrom(ctx.adapters.paths.stateDir),
+  ];
 }
 
 /** Placement: root + reviewer daemon-side, both USER keys operator-side, the

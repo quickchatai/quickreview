@@ -64,17 +64,24 @@ const dehash = (text: string): string => text.replace(/(^|\s)#+(?=[\w-])/g, "$1"
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-const where = (f: ScanFinding): string => `${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`}`;
+const where = (f: ScanFinding): string =>
+  `${f.path}:${f.start === f.end ? f.start : `${f.start}-${f.end}`}`;
 
 // ---- memory spellings -------------------------------------------------------------
 
 /** A dismissed finding a re-scan settled as no longer reported (findings.ts
  * `unreported`): out of play, as a fixed one is, until a scan reports it again. */
-export const goneDismissal = (f: ScanFinding): boolean => f.state === "dismissed" && f.unreported != null;
+export const goneDismissal = (f: ScanFinding): boolean =>
+  f.state === "dismissed" && f.unreported != null;
 
 /** The dismissal note: what was dismissed and why, for PR rounds to read. */
 export function dismissalMemoryText(f: ScanFinding, reason: string): string {
-  const tags = { kind: "dismissal", lens: tagValue(f.lens), finding: tagValue(f.kind), unit: tagValue(f.unit) };
+  const tags = {
+    kind: "dismissal",
+    lens: tagValue(f.lens),
+    finding: tagValue(f.kind),
+    unit: tagValue(f.unit),
+  };
   const body =
     `Not a problem here (the operator dismissed a scan finding in ${where(f)}): ` +
     `"${oneLine(f.claim)}". Reason: ${oneLine(reason)}`;
@@ -103,7 +110,11 @@ function validityLine(f: ScanFinding): string {
 
 /** The ticket a promoted finding becomes. The body is rendered from the
  * stored finding; the companion adds at most a title and a note. */
-export function findingTicket(f: ScanFinding, effort: string, extra: { title?: string; note?: string } = {}): TrackerTicket {
+export function findingTicket(
+  f: ScanFinding,
+  effort: string,
+  extra: { title?: string; note?: string } = {},
+): TrackerTicket {
   const title = extra.title?.trim() || `[${f.severity}] ${oneLine(f.claim)}`;
   const body = [
     "## Scan finding",
@@ -129,7 +140,8 @@ export function findingTicket(f: ScanFinding, effort: string, extra: { title?: s
     effort,
     fingerprint: f.fingerprint,
     aliases: f.aliases ?? [],
-    category: f.severity === "P0" || f.severity === "P1" || f.severity === "P2" ? "bug" : "enhancement",
+    category:
+      f.severity === "P0" || f.severity === "P1" || f.severity === "P2" ? "bug" : "enhancement",
   };
 }
 
@@ -158,10 +170,19 @@ export function readScanMemory(state: StateFs): { file: ScanMemoryFile; error: s
   if (text === null) return { file: empty, error: null };
   try {
     const raw = JSON.parse(text) as Partial<ScanMemoryFile> | null;
-    if (typeof raw !== "object" || raw === null || raw.version !== SCAN_MEMORY_VERSION || typeof raw.scans !== "object" || raw.scans === null) {
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      raw.version !== SCAN_MEMORY_VERSION ||
+      typeof raw.scans !== "object" ||
+      raw.scans === null
+    ) {
       throw new Error("not a version-1 scan memory record");
     }
-    return { file: { version: SCAN_MEMORY_VERSION, scans: raw.scans as Record<string, ScanMemoryRecord> }, error: null };
+    return {
+      file: { version: SCAN_MEMORY_VERSION, scans: raw.scans },
+      error: null,
+    };
   } catch (err) {
     return {
       file: empty,
@@ -196,7 +217,14 @@ export type DismissResult =
   | Refusal;
 
 export type PromoteResult =
-  | { ok: true; finding: ScanFinding; ref: string; sink: string; existing: boolean; closed: ClosedTicket | null }
+  | {
+      ok: true;
+      finding: ScanFinding;
+      ref: string;
+      sink: string;
+      existing: boolean;
+      closed: ClosedTicket | null;
+    }
   | Refusal;
 
 type ClosedTicket = NonNullable<NonNullable<ScanFinding["ticket"]>["closed"]>;
@@ -250,21 +278,42 @@ export class ScanTriage {
    */
   async dismiss(args: { fingerprint?: unknown; reason?: unknown }): Promise<DismissResult> {
     const reason = typeof args.reason === "string" ? oneLine(args.reason) : "";
-    if (reason === "") return { ok: false, errors: ["a dismissal needs the operator's reason — it is what PR rounds will read"] };
-    if (reason.length > REASON_MAX) return { ok: false, errors: [`the reason is at most ${REASON_MAX} characters (got ${reason.length})`] };
-    if (typeof args.fingerprint !== "string") return { ok: false, errors: ["`fingerprint` is required"] };
+    if (reason === "")
+      return {
+        ok: false,
+        errors: ["a dismissal needs the operator's reason — it is what PR rounds will read"],
+      };
+    if (reason.length > REASON_MAX)
+      return {
+        ok: false,
+        errors: [`the reason is at most ${REASON_MAX} characters (got ${reason.length})`],
+      };
+    if (typeof args.fingerprint !== "string")
+      return { ok: false, errors: ["`fingerprint` is required"] };
     const found = this.ports.findings.find(args.fingerprint);
     if (!found.ok) return found;
     const f = found.finding;
     if (f.state === "promoted") {
-      return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is promoted (${f.ticket?.ref ?? "no ticket"}) — settle it on its ticket, not by a dismissal`] };
+      return {
+        ok: false,
+        errors: [
+          `${f.fingerprint.slice(0, 12)} is promoted (${f.ticket?.ref ?? "no ticket"}) — settle it on its ticket, not by a dismissal`,
+        ],
+      };
     }
-    if (f.state === "fixed") return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is already fixed — nothing to dismiss`] };
+    if (f.state === "fixed")
+      return {
+        ok: false,
+        errors: [`${f.fingerprint.slice(0, 12)} is already fixed — nothing to dismiss`],
+      };
     const again = f.state === "dismissed";
     const sameReason = again && f.dismissal?.reason === reason;
     // The memory note is written once per reason: a repeat with the same
     // reason only retries a note that did not land.
-    const memory = sameReason && f.dismissal?.memory === "written" ? "written" : await this.note(dismissalMemoryText(f, reason));
+    const memory =
+      sameReason && f.dismissal?.memory === "written"
+        ? "written"
+        : await this.note(dismissalMemoryText(f, reason));
     const at = this.ports.clock().toISOString();
     const saved = this.ports.findings.update(f.fingerprint, (cur) =>
       cur.state === "new" || cur.state === "dismissed"
@@ -284,20 +333,37 @@ export class ScanTriage {
    * skeptic): a likely, doubtful or unjudged one is refused unless
    * `unconfirmed: true` says the operator asked for it explicitly.
    */
-  async promote(args: { fingerprint?: unknown; effort?: unknown; title?: unknown; note?: unknown; unconfirmed?: unknown }): Promise<PromoteResult> {
-    if (typeof args.fingerprint !== "string") return { ok: false, errors: ["`fingerprint` is required"] };
+  async promote(args: {
+    fingerprint?: unknown;
+    effort?: unknown;
+    title?: unknown;
+    note?: unknown;
+    unconfirmed?: unknown;
+  }): Promise<PromoteResult> {
+    if (typeof args.fingerprint !== "string")
+      return { ok: false, errors: ["`fingerprint` is required"] };
     const found = this.ports.findings.find(args.fingerprint);
     if (!found.ok) return found;
     const f = found.finding;
     if (f.state === "fixed") {
-      return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is fixed (at ${f.fixed?.sha.slice(0, 12) ?? "?"}) — nothing to file`] };
+      return {
+        ok: false,
+        errors: [
+          `${f.fingerprint.slice(0, 12)} is fixed (at ${f.fixed?.sha.slice(0, 12) ?? "?"}) — nothing to file`,
+        ],
+      };
     }
     // A dismissal a re-scan no longer reports (findings.ts: sticky, stamped
     // `unreported`) is what used to read `fixed`: nothing to file either —
     // the ticket would close at the next scan. It is back in play once a
     // scan reports it again.
     if (goneDismissal(f)) {
-      return { ok: false, errors: [`${f.fingerprint.slice(0, 12)} is dismissed and no longer reported (at ${f.unreported!.sha.slice(0, 12)}) — nothing to file`] };
+      return {
+        ok: false,
+        errors: [
+          `${f.fingerprint.slice(0, 12)} is dismissed and no longer reported (at ${f.unreported!.sha.slice(0, 12)}) — nothing to file`,
+        ],
+      };
     }
     const validity = validityOf(f);
     if (validity !== "confirmed" && args.unconfirmed !== true) {
@@ -319,27 +385,59 @@ export class ScanTriage {
       const saved = this.ports.findings.update(f.fingerprint, (cur) =>
         cur.state === "fixed" || goneDismissal(cur)
           ? "it became fixed, or no longer reported, meanwhile"
-          : { ...cur, state: "promoted", ...(cur.ticket ? { ticket: { ...cur.ticket, closed: null } } : {}) },
+          : {
+              ...cur,
+              state: "promoted",
+              ...(cur.ticket ? { ticket: { ...cur.ticket, closed: null } } : {}),
+            },
       );
       if (!saved.ok) return saved;
-      return { ok: true, finding: saved.finding, ref: ticket.ref, sink: ticket.sink, existing: true, closed: ticket.closed ?? null };
+      return {
+        ok: true,
+        finding: saved.finding,
+        ref: ticket.ref,
+        sink: ticket.sink,
+        existing: true,
+        closed: ticket.closed ?? null,
+      };
     }
     const effort = typeof args.effort === "string" ? args.effort.trim() : "";
-    if (effort === "") return { ok: false, errors: ["`effort` is required — the tracker effort this finding's work belongs in"] };
+    if (effort === "")
+      return {
+        ok: false,
+        errors: ["`effort` is required — the tracker effort this finding's work belongs in"],
+      };
     const title = typeof args.title === "string" ? oneLine(args.title) : undefined;
-    if (title !== undefined && (title === "" || title.length > TITLE_MAX)) return { ok: false, errors: [`a title is 1..${TITLE_MAX} characters, one line`] };
+    if (title !== undefined && (title === "" || title.length > TITLE_MAX))
+      return { ok: false, errors: [`a title is 1..${TITLE_MAX} characters, one line`] };
     const note = typeof args.note === "string" ? args.note.trim() : undefined;
-    if (note !== undefined && note.length > NOTE_MAX) return { ok: false, errors: [`the note is at most ${NOTE_MAX} characters`] };
-    const filed = await this.ports.tracker.file(findingTicket(f, effort, { ...(title ? { title } : {}), ...(note ? { note } : {}) }));
+    if (note !== undefined && note.length > NOTE_MAX)
+      return { ok: false, errors: [`the note is at most ${NOTE_MAX} characters`] };
+    const filed = await this.ports.tracker.file(
+      findingTicket(f, effort, { ...(title ? { title } : {}), ...(note ? { note } : {}) }),
+    );
     if (!filed.ok) return { ok: false, errors: [filed.reason] };
-    const ticket = { sink: this.ports.tracker.kind, ref: filed.ref, effort, filed_at: at, closed: null };
+    const ticket = {
+      sink: this.ports.tracker.kind,
+      ref: filed.ref,
+      effort,
+      filed_at: at,
+      closed: null,
+    };
     const saved = this.ports.findings.update(f.fingerprint, (cur) =>
       cur.state === "fixed" || goneDismissal(cur)
         ? `it became fixed, or no longer reported, meanwhile — ${filed.ref} was filed; close it by hand`
         : { ...cur, state: "promoted", ticket },
     );
     if (!saved.ok) return saved;
-    return { ok: true, finding: saved.finding, ref: filed.ref, sink: ticket.sink, existing: filed.existing === true, closed: null };
+    return {
+      ok: true,
+      finding: saved.finding,
+      ref: filed.ref,
+      sink: ticket.sink,
+      existing: filed.existing === true,
+      closed: null,
+    };
   }
 
   /**
@@ -365,9 +463,18 @@ export class ScanTriage {
       const t = f.ticket;
       if (f.state !== "fixed" || f.fixed?.from !== "promoted" || !t || t.closed) continue;
       const now = this.ports.findings.load();
-      if (now.error !== null || !stillFixed(now.findings.find((x) => x.fingerprint === f.fingerprint), f)) continue;
+      if (
+        now.error !== null ||
+        !stillFixed(
+          now.findings.find((x) => x.fingerprint === f.fingerprint),
+          f,
+        )
+      )
+        continue;
       if (t.sink !== this.ports.tracker.kind) {
-        out.problems.push(`${t.ref} was filed on the ${t.sink} sink, which this companion does not have — close it by hand`);
+        out.problems.push(
+          `${t.ref} was filed on the ${t.sink} sink, which this companion does not have — close it by hand`,
+        );
         continue;
       }
       const fixed = f.fixed;
@@ -381,44 +488,70 @@ export class ScanTriage {
       }
       const closed = { at: this.ports.clock().toISOString(), sha: fixed.sha, run: fixed.run };
       const saved = this.ports.findings.update(f.fingerprint, (cur) =>
-        stillFixed(cur, f) ? { ...cur, ticket: { ...cur.ticket!, closed } } : "it was reported again while its ticket closed — reopen the ticket by hand",
+        stillFixed(cur, f)
+          ? { ...cur, ticket: { ...cur.ticket!, closed } }
+          : "it was reported again while its ticket closed — reopen the ticket by hand",
       );
-      if (!saved.ok) out.problems.push(`${t.ref} was closed but not recorded: ${saved.errors.join("; ")}`);
+      if (!saved.ok)
+        out.problems.push(`${t.ref} was closed but not recorded: ${saved.errors.join("; ")}`);
       else out.closed.push({ fingerprint: f.fingerprint, ref: t.ref, sha: fixed.sha });
     }
     return out;
   }
 
   /** What `scan_memory` would still accept for a run (the cap's view). */
-  memoryStatus(run?: string): { ok: true; sha: string; run: string; patterns: number; hotspots: string[] } | Refusal {
+  memoryStatus(
+    run?: string,
+  ): { ok: true; sha: string; run: string; patterns: number; hotspots: string[] } | Refusal {
     const r = this.pickRun(run);
     if (!r.ok) return r;
     const { file, error } = readScanMemory(this.ports.state);
     if (error !== null) return { ok: false, errors: [error] };
     const rec = file.scans[r.run.sha];
-    return { ok: true, sha: r.run.sha, run: r.run.id, patterns: rec?.patterns.length ?? 0, hotspots: Object.keys(rec?.hotspots ?? {}) };
+    return {
+      ok: true,
+      sha: r.run.sha,
+      run: r.run.id,
+      patterns: rec?.patterns.length ?? 0,
+      hotspots: Object.keys(rec?.hotspots ?? {}),
+    };
   }
 
   private pickRun(ref: unknown): { ok: true; run: ScanRunRef } | Refusal {
     const runs = this.ports.runs().filter((r) => r.state !== "running");
-    if (runs.length === 0) return { ok: false, errors: ["no finished scan run yet — scan memory is written from a scan"] };
+    if (runs.length === 0)
+      return {
+        ok: false,
+        errors: ["no finished scan run yet — scan memory is written from a scan"],
+      };
     if (ref === undefined || ref === null || ref === "") return { ok: true, run: runs[0]! };
     const hit = runs.find((r) => r.id === ref);
-    return hit ? { ok: true, run: hit } : { ok: false, errors: [`${JSON.stringify(ref)} is not a finished scan run (latest: ${runs[0]!.id})`] };
+    return hit
+      ? { ok: true, run: hit }
+      : {
+          ok: false,
+          errors: [`${JSON.stringify(ref)} is not a finished scan run (latest: ${runs[0]!.id})`],
+        };
   }
 
   /** Why `text` reads as ONE finding rather than something that recurs, or null. */
   private individual(text: string, findings: readonly ScanFinding[]): string | null {
-    if (/[\w./-]+\.[A-Za-z0-9]+:\d+/.test(text)) return "anchors to one line (path:line) — that is a finding, and findings never become memory";
+    if (/[\w./-]+\.[A-Za-z0-9]+:\d+/.test(text))
+      return "anchors to one line (path:line) — that is a finding, and findings never become memory";
     const lower = text.toLowerCase();
     for (const hex of lower.match(/[0-9a-f]{12,}/g) ?? []) {
-      if (findings.some((f) => f.fingerprint.startsWith(hex) || (f.aliases ?? []).some((a) => a.startsWith(hex)))) {
+      if (
+        findings.some(
+          (f) => f.fingerprint.startsWith(hex) || (f.aliases ?? []).some((a) => a.startsWith(hex)),
+        )
+      ) {
         return "carries a finding's fingerprint — findings never become memory";
       }
     }
     for (const f of findings) {
       const claim = oneLine(f.claim).toLowerCase();
-      if (claim.length >= QUOTE_MIN && lower.includes(claim)) return `quotes a stored finding's claim (${f.fingerprint.slice(0, 12)}) — write the pattern, not the finding`;
+      if (claim.length >= QUOTE_MIN && lower.includes(claim))
+        return `quotes a stored finding's claim (${f.fingerprint.slice(0, 12)}) — write the pattern, not the finding`;
     }
     return null;
   }
@@ -445,13 +578,21 @@ export class ScanTriage {
     const picked = this.pickRun(req.run);
     if (!picked.ok) return picked;
     const run = picked.run;
-    if (this.ports.memory === null) return { ok: false, errors: ["no reviewer memory in this assembly — nothing can be written"] };
+    if (this.ports.memory === null)
+      return {
+        ok: false,
+        errors: ["no reviewer memory in this assembly — nothing can be written"],
+      };
     const { file, error } = readScanMemory(this.ports.state);
     if (error !== null) return { ok: false, errors: [error] };
     const { findings, error: fErr } = this.ports.findings.load();
     if (fErr !== null) return { ok: false, errors: [fErr] };
     const units = this.ports.units();
-    const rec: ScanMemoryRecord = file.scans[run.sha] ?? { run: run.id, patterns: [], hotspots: {} };
+    const rec: ScanMemoryRecord = file.scans[run.sha] ?? {
+      run: run.id,
+      patterns: [],
+      hotspots: {},
+    };
 
     const errors: string[] = [];
     const rawP = req.patterns ?? [];
@@ -462,8 +603,10 @@ export class ScanTriage {
     const patterns: Array<{ text: string; occurrences: number }> = [];
     const hotspots: Array<{ unit: string; text: string }> = [];
     const textError = (at: string, text: string): void => {
-      if (text === "" || text.length > MEMORY_TEXT_MAX) errors.push(`${at}.text must be 1..${MEMORY_TEXT_MAX} characters`);
-      else if (text.startsWith("#")) errors.push(`${at}.text must not start with '#' (tags are the tool's to write)`);
+      if (text === "" || text.length > MEMORY_TEXT_MAX)
+        errors.push(`${at}.text must be 1..${MEMORY_TEXT_MAX} characters`);
+      else if (text.startsWith("#"))
+        errors.push(`${at}.text must not start with '#' (tags are the tool's to write)`);
       else {
         const why = this.individual(text, findings);
         if (why !== null) errors.push(`${at}.text ${why}`);
@@ -472,10 +615,15 @@ export class ScanTriage {
     for (const [i, raw] of (rawP as unknown[]).entries()) {
       const o = (raw ?? {}) as Record<string, unknown>;
       const text = typeof o.text === "string" ? oneLine(o.text) : "";
-      const occ = typeof o.occurrences === "string" && /^\d+$/.test(o.occurrences) ? Number(o.occurrences) : o.occurrences;
+      const occ =
+        typeof o.occurrences === "string" && /^\d+$/.test(o.occurrences)
+          ? Number(o.occurrences)
+          : o.occurrences;
       textError(`patterns[${i}]`, text);
       if (typeof occ !== "number" || !Number.isInteger(occ) || occ < 2) {
-        errors.push(`patterns[${i}].occurrences must be an integer ≥ 2 — a pattern recurs; one occurrence is a finding`);
+        errors.push(
+          `patterns[${i}].occurrences must be an integer ≥ 2 — a pattern recurs; one occurrence is a finding`,
+        );
       }
       patterns.push({ text, occurrences: occ as number });
     }
@@ -486,8 +634,10 @@ export class ScanTriage {
       const text = typeof o.text === "string" ? oneLine(o.text) : "";
       textError(`hotspots[${i}]`, text);
       if (units === null) errors.push(`hotspots[${i}]: no saved unit cut to name a unit from`);
-      else if (!units.includes(unit)) errors.push(`hotspots[${i}].unit ${JSON.stringify(unit)} is not a unit of the saved cut`);
-      else if (seenUnits.has(unit) || rec.hotspots[unit]) errors.push(`hotspots[${i}]: ${unit} already has its one hotspot for this scan`);
+      else if (!units.includes(unit))
+        errors.push(`hotspots[${i}].unit ${JSON.stringify(unit)} is not a unit of the saved cut`);
+      else if (seenUnits.has(unit) || rec.hotspots[unit])
+        errors.push(`hotspots[${i}]: ${unit} already has its one hotspot for this scan`);
       seenUnits.add(unit);
       hotspots.push({ unit, text });
     }
@@ -497,7 +647,8 @@ export class ScanTriage {
           `${MAX_PATTERNS_PER_SCAN - rec.patterns.length} left (got ${patterns.length}) — keep the strongest`,
       );
     }
-    if (patterns.length === 0 && hotspots.length === 0) errors.push("nothing to write — give patterns, hotspots or both");
+    if (patterns.length === 0 && hotspots.length === 0)
+      errors.push("nothing to write — give patterns, hotspots or both");
     if (errors.length > 0) return { ok: false, errors };
 
     const problems: string[] = [];
@@ -521,7 +672,9 @@ export class ScanTriage {
     try {
       this.ports.state.write(SCAN_MEMORY_FILE, `${JSON.stringify(file, null, 1)}\n`);
     } catch (err) {
-      problems.push(`the cap record was not saved (${clean(err)}) — memory was written, but the cap will not count these`);
+      problems.push(
+        `the cap record was not saved (${clean(err)}) — memory was written, but the cap will not count these`,
+      );
     }
     return {
       ok: true,

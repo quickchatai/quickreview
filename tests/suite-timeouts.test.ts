@@ -117,7 +117,10 @@ describe("which tests get a longer timeout", () => {
         )
           j++;
         const body = lines.slice(i, j + 1).join("\n");
-        if (body.includes("dispatchOnce(") && !/timeout: HEAVY_TIMEOUT_MS/.test(lines[i]!))
+        // The options sit before the callback's arrow, on the it( line or —
+        // once Prettier wraps a long title — on a line of their own.
+        const header = body.slice(0, Math.max(0, body.indexOf("=>")));
+        if (body.includes("dispatchOnce(") && !/timeout: HEAVY_TIMEOUT_MS/.test(header))
           bare.push(`${f}:${i + 1}`);
         i = j;
       }

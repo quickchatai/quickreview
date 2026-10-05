@@ -338,7 +338,13 @@ export const PORTRAIT_DIR = "portrait";
  * registered here (a test holds the checkout to it, and the shell mirror's
  * `QCR_EXAMPLE_PROFILES` to this list).
  */
-export const EXAMPLE_PROFILES: readonly string[] = ["default", "example-django", "minimal", "snappy", "fast"];
+export const EXAMPLE_PROFILES: readonly string[] = [
+  "default",
+  "example-django",
+  "minimal",
+  "snappy",
+  "fast",
+];
 
 /** Which of `profileSearchDirs` a profile was found in. */
 export type ProfileSource = "home" | "override" | "checkout";
@@ -524,7 +530,10 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     const from = join(fromBase, name);
     if (lstatSync(from).isSymbolicLink()) linkTargets.set(name, realpathSync(from));
   }
-  const ordered = [...names.filter((n) => !linkTargets.has(n)), ...names.filter((n) => linkTargets.has(n))];
+  const ordered = [
+    ...names.filter((n) => !linkTargets.has(n)),
+    ...names.filter((n) => linkTargets.has(n)),
+  ];
   const linkTargetNow = (real: string): string => {
     const rel = relative(realBase, real);
     if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || existsSync(real)) return real;
@@ -734,7 +743,11 @@ export function operatorHome(env: InstallEnv = process.env): string {
  * that belongs in neither home: not the state home (the companion mounts it
  * read-write) and not the config home (shipped to the VM). */
 export function operatorStateHome(env: InstallEnv = process.env): string {
-  return join(xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")), "qcr-operator", installName(env));
+  return join(
+    xdgBase(env.XDG_STATE_HOME, env, join(".local", "state")),
+    "qcr-operator",
+    installName(env),
+  );
 }
 
 /** Where the host writes the companion's down-scoped, READ-ONLY GitHub token
@@ -840,7 +853,9 @@ function ensurePrivateDir(dir: string): void {
  * with the file; the destination dirs are created 0700. Idempotent, and it
  * never overwrites a secret it did not move: a differing pair is a conflict.
  */
-export function migrateSecrets(opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {}): SecretsMigration {
+export function migrateSecrets(
+  opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {},
+): SecretsMigration {
   const env = opts.env ?? process.env;
   const from = legacySecretsDir(env);
   const to = secretsHome(env);
@@ -875,7 +890,12 @@ export function migrateSecrets(opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?
       // A home dir linked to the legacy one reads the SAME file here: the byte
       // compare would pass and the unlink below would delete the only copy.
       if (samePath(src, dest)) {
-        files.push({ name, to: dest, outcome: "skipped", why: `${dest} is the same file (a link) — nothing to move` });
+        files.push({
+          name,
+          to: dest,
+          outcome: "skipped",
+          why: `${dest} is the same file (a link) — nothing to move`,
+        });
         continue;
       }
       if (!readFileSync(src).equals(readFileSync(dest))) {
@@ -899,11 +919,16 @@ export function migrateSecrets(opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?
  * Names only — a secret's VALUE never reaches a line. */
 export function secretsMigrateReport(m: SecretsMigration): { code: number; lines: string[] } {
   if (m.kind === "nothing")
-    return { code: 0, lines: [`secrets: no legacy dir ${m.from} — nothing to move (the home is ${m.to})`] };
+    return {
+      code: 0,
+      lines: [`secrets: no legacy dir ${m.from} — nothing to move (the home is ${m.to})`],
+    };
   if (m.kind === "symlink")
     return {
       code: 0,
-      lines: [`secrets: ${m.from} is a symlink — left alone (point it, or [github] secrets_dir, at ${m.to} yourself)`],
+      lines: [
+        `secrets: ${m.from} is a symlink — left alone (point it, or [github] secrets_dir, at ${m.to} yourself)`,
+      ],
     };
   const lines: string[] = [];
   let code = 0;
@@ -982,8 +1007,11 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   }
   const mounted = legacyNames.filter((n) => n !== KEYS_FILE).sort();
   const missing = mounted.filter((n) => !existsSync(join(to, n)));
-  const differ = mounted.filter((n) => existsSync(join(to, n)) && !sameBytes(join(legacyDir, n), join(to, n)));
-  if (missing.length > 0 || differ.length > 0) return { kind: "held", file, from: value, to, missing, differ };
+  const differ = mounted.filter(
+    (n) => existsSync(join(to, n)) && !sameBytes(join(legacyDir, n), join(to, n)),
+  );
+  if (missing.length > 0 || differ.length > 0)
+    return { kind: "held", file, from: value, to, missing, differ };
   const next = text.replace(/^QCR_SECRETS_DIR=.*$/m, `QCR_SECRETS_DIR=${to}`);
   const mode = statSync(file).mode & 0o7777;
   const tmp = join(opts.root, ".env.qcr-migrate.tmp");

@@ -34,7 +34,9 @@ interface Call {
 }
 
 /** A GitHub that answers the installation lookup and the token mint. */
-function fakeGithub(grant: Record<string, unknown> = { ...COMPANION_GITHUB_PERMISSIONS, metadata: "read" }) {
+function fakeGithub(
+  grant: Record<string, unknown> = { ...COMPANION_GITHUB_PERMISSIONS, metadata: "read" },
+) {
   const calls: Call[] = [];
   const fetchFn = (async (url: string, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
@@ -204,7 +206,13 @@ describe("CompanionGithubToken — the env file the companion mounts", () => {
       signals.push(init?.signal);
       return inner(url, init);
     }) as unknown as typeof fetch;
-    await mintReadOnlyToken({ appId: "1", pem: PEM, repo: "acme/widgets", fetchFn, now: () => NOW });
+    await mintReadOnlyToken({
+      appId: "1",
+      pem: PEM,
+      repo: "acme/widgets",
+      fetchFn,
+      now: () => NOW,
+    });
     expect(signals).toHaveLength(2);
     for (const sig of signals) expect(sig).toBeInstanceOf(AbortSignal);
   });

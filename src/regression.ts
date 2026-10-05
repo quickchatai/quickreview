@@ -494,7 +494,10 @@ export interface MatchOptions {
 const DEFAULT_MATCH: Required<MatchOptions> = { threshold: 0.34, lineWindow: 12 };
 
 function normPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/^(\.\/)+/, "").replace(/\/+/g, "/");
+  return p
+    .replace(/\\/g, "/")
+    .replace(/^(\.\/)+/, "")
+    .replace(/\/+/g, "/");
 }
 
 /** The same repo file: equal repo-relative paths, or one a path-segment suffix

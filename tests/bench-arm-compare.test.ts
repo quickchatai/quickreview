@@ -203,8 +203,12 @@ describe("arm.sh", () => {
     expect(reviews).toHaveLength(1);
     expect(reviews[0]).toContain("--arm pragent --run pa-fresh10 --set fresh10");
     expect(reviews[0]).not.toContain("--phase");
-    for (const j of c.filter((x) => x.includes(" judge "))) expect(j.startsWith("IMG=qcr-bench:x ")).toBe(true);
-    const rec = JSON.parse(readFileSync(join(runs, "pa-fresh10.arm.json"), "utf8")) as Record<string, string>;
+    for (const j of c.filter((x) => x.includes(" judge ")))
+      expect(j.startsWith("IMG=qcr-bench:x ")).toBe(true);
+    const rec = JSON.parse(readFileSync(join(runs, "pa-fresh10.arm.json"), "utf8")) as Record<
+      string,
+      string
+    >;
     expect(rec.arm).toBe("pragent");
     expect(rec.image).toBe("qcr-bench-pragent:x");
   });
@@ -222,7 +226,15 @@ describe("arm.sh", () => {
       env: Record<string, string>;
     };
     expect(rec.env).toEqual({ QCR_BENCH_OCR_EFFORT: "high", QCR_BENCH_PR_TEXT: "1" });
-    const plain = await arm(["--prefix", "u", "--arm", "ocr", "--cases", `fresh10:${A}`, "--no-judge"]);
+    const plain = await arm([
+      "--prefix",
+      "u",
+      "--arm",
+      "ocr",
+      "--cases",
+      `fresh10:${A}`,
+      "--no-judge",
+    ]);
     expect(plain.code).toBe(0);
     expect(JSON.parse(readFileSync(join(runs, "u-fresh10.arm.json"), "utf8")).env).toEqual({});
   });
@@ -341,14 +353,19 @@ describe("arm.sh", () => {
     const r = await arm(["--prefix", "g", "--cases", "full+fresh10", "--no-judge"], adaptive);
     expect(r.code).toBe(0);
     expect(r.out).toContain("1 review slot(s) to start");
-    expect(r.out).toMatch(/concurrency 1 -> 2, no rate limit for 0s, every slot busy, cases waiting/);
+    expect(r.out).toMatch(
+      /concurrency 1 -> 2, no rate limit for 0s, every slot busy, cases waiting/,
+    );
     expect(r.out).not.toContain("-> 3");
     expect(Math.max(...conc())).toBe(2);
     expect(readFileSync(join(runs, ".slots", "concurrency.log"), "utf8")).toContain("1 -> 2");
   });
 
   it("a fixed cap never ramps: --parallel N, or QCR_BENCH_MAX_PARALLEL set", async () => {
-    const fixed = await arm(["--prefix", "h", "--cases", "full", "--parallel", "1", "--no-judge"], adaptive);
+    const fixed = await arm(
+      ["--prefix", "h", "--cases", "full", "--parallel", "1", "--no-judge"],
+      adaptive,
+    );
     expect(fixed.out).not.toContain("concurrency ");
     expect(Math.max(...conc())).toBe(1);
     rmSync(join(t, "conc.log"));
@@ -532,7 +549,12 @@ describe("compare.py", () => {
       writeFileSync(
         join(runs, "slim", "cases", id, "case-summary.json"),
         // A pi-review case also carries its own cost_usd: the export's price wins.
-        JSON.stringify({ arm: "pireview", cost_usd: 99, duration_seconds: 60, bench_cost_usd: cost }),
+        JSON.stringify({
+          arm: "pireview",
+          cost_usd: 99,
+          duration_seconds: 60,
+          bench_cost_usd: cost,
+        }),
       );
     }
     expect(await compare("slim=slim")).toContain("| $1.00 | 1.0 | 2/2 |");
@@ -613,12 +635,27 @@ describe("compare.py", () => {
       JSON.stringify({
         summary: {},
         eval_res: [
-          { instance_id: A, comments: [1, 2, 3].map((n) => ({ ...ref(n), semantic_match: true, matched_note: hit[n] })) },
-          { instance_id: B, comments: [1, 2, 3].map((n) => ({ ...ref(n), semantic_match: false, matched_note: "" })) },
+          {
+            instance_id: A,
+            comments: [1, 2, 3].map((n) => ({
+              ...ref(n),
+              semantic_match: true,
+              matched_note: hit[n],
+            })),
+          },
+          {
+            instance_id: B,
+            comments: [1, 2, 3].map((n) => ({
+              ...ref(n),
+              semantic_match: false,
+              matched_note: "",
+            })),
+          },
         ],
       }),
     );
-    for (const id of [A, B]) writeFileSync(join(d, `${id}.json`), JSON.stringify({ review: { comments: [{}, {}] } }));
+    for (const id of [A, B])
+      writeFileSync(join(d, `${id}.json`), JSON.stringify({ review: { comments: [{}, {}] } }));
     const key = (n: number) =>
       `f.py:${n}-${n}:${createHash("sha1").update(`ref ${n}`).digest("hex").slice(0, 12)}`;
     const ex = join(t, "exclude.json");
@@ -836,7 +873,13 @@ def _average_summaries(summaries):
     expect(files.filter((f) => /_round_2\.json$/.test(f)).length).toBe(1);
     expect(files).toContain("metrics_ocr_average.json");
     const r1 = JSON.parse(
-      readFileSync(join(out, files.find((f) => f.endsWith("_round_1.json"))!), "utf8"),
+      readFileSync(
+        join(
+          out,
+          files.find((f) => f.endsWith("_round_1.json"))!,
+        ),
+        "utf8",
+      ),
     );
     // 6 of 12 generated match, 6 of 16 expected: P .5, R .375, F1 .429 — one process's numbers.
     expect(r1.summary).toMatchObject({

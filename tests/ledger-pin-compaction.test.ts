@@ -47,7 +47,8 @@ const COMPACTION_FIELDS = interfaceFields("CompactionResult");
 /** The fields pi's own compact() copies off an extension's compaction. */
 const CONSUMED = [...CONSUMER.matchAll(/extensionCompaction\.(\w+)/g)].map((m) => m[1] as string);
 
-const OWN = "LEDGER PR #42 @ abc1234\nF1 [P1/0.9][delivery] a.py:3 — x → open thread:9\nSETTLED: T1: conceded";
+const OWN =
+  "LEDGER PR #42 @ abc1234\nF1 [P1/0.9][delivery] a.py:3 — x → open thread:9\nSETTLED: T1: conceded";
 const META = "PR #42 — the title";
 
 function prep(over: Partial<PiCompactionPreparation> = {}): PiCompactionPreparation {
@@ -110,7 +111,9 @@ describe("the pi 1.0.0 contract fixture (parsed, not restated)", () => {
   });
 
   it("compact() is a package-root export and appendEntry takes (customType, data?)", () => {
-    expect(CONTRACT).toMatch(/export \{[^}]*\bcompact\b[^}]*\} from "\.\/core\/compaction\/index\.js"/);
+    expect(CONTRACT).toMatch(
+      /export \{[^}]*\bcompact\b[^}]*\} from "\.\/core\/compaction\/index\.js"/,
+    );
     expect(CONTRACT).toContain("appendEntry<T = unknown>(customType: string, data?: T): void;");
     expect(CONSUMER).toContain("appendEntry: (customType, data) =>");
   });
@@ -131,7 +134,8 @@ describe("pinnedCompaction — a real compaction with the ledger appended verbat
     for (const key of Object.keys(result!)) expect(RESULT_KEYS.has(key)).toBe(true);
     const c = result!.compaction!;
     for (const key of Object.keys(c)) expect(COMPACTION_FIELDS.has(key)).toBe(true);
-    for (const [field, optional] of COMPACTION_FIELDS) if (!optional) expect(c).toHaveProperty(field);
+    for (const [field, optional] of COMPACTION_FIELDS)
+      if (!optional) expect(c).toHaveProperty(field);
     expect(typeof c.summary).toBe("string");
     expect(c.firstKeptEntryId).toBe("e-17");
     expect(c.tokensBefore).toBe(123_456);
@@ -162,7 +166,11 @@ describe("pinnedCompaction — a real compaction with the ledger appended verbat
     // The previous pinned copy is stripped before the summariser sees it.
     expect((p as PiCompactionPreparation).previousSummary).toBe("older summary");
     expect((p as PiCompactionPreparation).firstKeptEntryId).toBe("e-17");
-    expect(model).toEqual({ provider: "openai-codex", id: "gpt-6.1-sol", baseUrl: "https://base.example" });
+    expect(model).toEqual({
+      provider: "openai-codex",
+      id: "gpt-6.1-sol",
+      baseUrl: "https://base.example",
+    });
     expect(apiKey).toBe("tok");
     expect(headers).toEqual({ "x-h": "1" });
     expect(custom).toBe("focus");
@@ -170,15 +178,44 @@ describe("pinnedCompaction — a real compaction with the ledger appended verbat
     expect(thinking).toBe("high");
     expect(env).toEqual({ E: "1" });
     // The stream function is the registry's streamSimple (pi's agent streamFn).
-    expect((streamFn as (a: unknown, b: unknown, c: unknown) => unknown)("m", "c", "o")).toBe("stream");
+    expect((streamFn as (a: unknown, b: unknown, c: unknown) => unknown)("m", "c", "o")).toBe(
+      "stream",
+    );
     expect(ctx.modelRegistry!.streamSimple).toHaveBeenCalledWith("m", "c", "o");
   });
 
   it.each([
-    ["no compact() export", (): Parameters<typeof pinnedCompaction> => [{ preparation: prep() }, ctxWith(), "P", undefined]],
-    ["no preparation", (): Parameters<typeof pinnedCompaction> => [{}, ctxWith(), "P", defaultSummary()]],
-    ["no model", (): Parameters<typeof pinnedCompaction> => [{ preparation: prep() }, ctxWith({ model: undefined }), "P", defaultSummary()]],
-    ["no registry", (): Parameters<typeof pinnedCompaction> => [{ preparation: prep() }, ctxWith({ modelRegistry: undefined }), "P", defaultSummary()]],
+    [
+      "no compact() export",
+      (): Parameters<typeof pinnedCompaction> => [
+        { preparation: prep() },
+        ctxWith(),
+        "P",
+        undefined,
+      ],
+    ],
+    [
+      "no preparation",
+      (): Parameters<typeof pinnedCompaction> => [{}, ctxWith(), "P", defaultSummary()],
+    ],
+    [
+      "no model",
+      (): Parameters<typeof pinnedCompaction> => [
+        { preparation: prep() },
+        ctxWith({ model: undefined }),
+        "P",
+        defaultSummary(),
+      ],
+    ],
+    [
+      "no registry",
+      (): Parameters<typeof pinnedCompaction> => [
+        { preparation: prep() },
+        ctxWith({ modelRegistry: undefined }),
+        "P",
+        defaultSummary(),
+      ],
+    ],
     [
       "auth refused",
       (): Parameters<typeof pinnedCompaction> => [
@@ -204,13 +241,16 @@ describe("pinnedCompaction — a real compaction with the ledger appended verbat
         }) as unknown as CompactFn,
       ],
     ],
-  ])("%s ⇒ undefined (pi runs its default compaction), logged, never a cancel", async (_why, args) => {
-    const log = vi.fn();
-    const [event, ctx, pinned, fn] = args();
-    expect(await pinnedCompaction(event, ctx, pinned, fn, log)).toBeUndefined();
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0]![0])).toContain("pi runs its default compaction");
-  });
+  ])(
+    "%s ⇒ undefined (pi runs its default compaction), logged, never a cancel",
+    async (_why, args) => {
+      const log = vi.fn();
+      const [event, ctx, pinned, fn] = args();
+      expect(await pinnedCompaction(event, ctx, pinned, fn, log)).toBeUndefined();
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(String(log.mock.calls[0]![0])).toContain("pi runs its default compaction");
+    },
+  );
 });
 
 describe("pinnedBlock / stripPinned", () => {
@@ -273,7 +313,14 @@ describe("the session_before_compact handler as registered", () => {
     const { handler, appendEntry } = register(defaultSummary());
     const newer = "LEDGER PR #42 @ fff9999\nF1 → fixed@fff9999\nSETTLED: T1: conceded";
     const result = (await handler(
-      { type: "session_before_compact", preparation: prep(), branchEntries: entries(OWN, "chatter", newer), reason: "manual", willRetry: false, signal: new AbortController().signal },
+      {
+        type: "session_before_compact",
+        preparation: prep(),
+        branchEntries: entries(OWN, "chatter", newer),
+        reason: "manual",
+        willRetry: false,
+        signal: new AbortController().signal,
+      },
       ctxWith(),
     )) as { compaction: { summary: string } };
     expect(appendEntry).toHaveBeenCalledTimes(1);
@@ -302,7 +349,13 @@ describe("the session_before_compact handler as registered", () => {
   it("the package without compact() ⇒ undefined, but the ledger entry is still persisted", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { handler, appendEntry } = register(undefined);
-    expect(await handler({ preparation: prep(), branchEntries: entries(OWN) }, ctxWith())).toBeUndefined();
-    expect(appendEntry).toHaveBeenCalledWith(LEDGER_ENTRY_TYPE, { pr: 42, ledger: OWN, meta: META });
+    expect(
+      await handler({ preparation: prep(), branchEntries: entries(OWN) }, ctxWith()),
+    ).toBeUndefined();
+    expect(appendEntry).toHaveBeenCalledWith(LEDGER_ENTRY_TYPE, {
+      pr: 42,
+      ledger: OWN,
+      meta: META,
+    });
   });
 });

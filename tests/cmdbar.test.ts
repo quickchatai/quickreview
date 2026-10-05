@@ -113,33 +113,37 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
     return out;
   }
 
-  it("at EVERY width, every nav slot, global and command is painted whole and hits back to its key", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const rows = 40;
-    for (let cols = 16; cols <= 240; cols++) {
-      const commands = TAB_VOCABULARY.board;
-      const h = barHeight("board", cols, commands);
-      const frame = paint("board", cols, rows, commands);
-      const labels = paintedLabels(frame, rows, h);
-      const want = [
-        ...NAV.map(([, l]) => l),
-        ...GLOBALS.map(([, l]) => l),
-        ...commands.map((b) => b.label),
-      ];
-      // A label wider than the whole row is truncated by the paint (a `…`
-      // shows), never dropped: count those as present when the row is too
-      // narrow to hold the label at all.
-      const fits = (l: string): boolean => l.length + 2 <= cols - 2;
-      expect(labels, `cols=${cols}`).toEqual(want.filter(fits));
-      // Hit-test agrees with the paint: every key answers somewhere on the bar.
-      const keys = new Set<string>();
-      for (let i = 0; i < h; i++)
-        for (const r of hitRuns("board", rows - h + i, cols, rows, commands)) keys.add(r.key);
-      for (const k of [...NAV, ...GLOBALS].map(([k]) => k))
-        expect(keys.has(k), `key ${k} @ cols=${cols}`).toBe(true);
-      for (const b of commands)
-        expect(keys.has(b.key), `key ${JSON.stringify(b.key)} @ cols=${cols}`).toBe(true);
-    }
-  });
+  it(
+    "at EVERY width, every nav slot, global and command is painted whole and hits back to its key",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const rows = 40;
+      for (let cols = 16; cols <= 240; cols++) {
+        const commands = TAB_VOCABULARY.board;
+        const h = barHeight("board", cols, commands);
+        const frame = paint("board", cols, rows, commands);
+        const labels = paintedLabels(frame, rows, h);
+        const want = [
+          ...NAV.map(([, l]) => l),
+          ...GLOBALS.map(([, l]) => l),
+          ...commands.map((b) => b.label),
+        ];
+        // A label wider than the whole row is truncated by the paint (a `…`
+        // shows), never dropped: count those as present when the row is too
+        // narrow to hold the label at all.
+        const fits = (l: string): boolean => l.length + 2 <= cols - 2;
+        expect(labels, `cols=${cols}`).toEqual(want.filter(fits));
+        // Hit-test agrees with the paint: every key answers somewhere on the bar.
+        const keys = new Set<string>();
+        for (let i = 0; i < h; i++)
+          for (const r of hitRuns("board", rows - h + i, cols, rows, commands)) keys.add(r.key);
+        for (const k of [...NAV, ...GLOBALS].map(([k]) => k))
+          expect(keys.has(k), `key ${k} @ cols=${cols}`).toBe(true);
+        for (const b of commands)
+          expect(keys.has(b.key), `key ${JSON.stringify(b.key)} @ cols=${cols}`).toBe(true);
+      }
+    },
+  );
 
   it("the bar sits directly above the bottom border and is never shorter than two rows", () => {
     for (const cols of [20, 61, 81, 120]) {

@@ -35,7 +35,16 @@ export function isBinaryPath(path: string): boolean {
 /** A control byte that no text carries: C0 minus tab, LF, VT, FF, CR, and
  * ESC (terminal colour codes in logs and fixtures); plus DEL. */
 function isControl(b: number): boolean {
-  return (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0b && b !== 0x0c && b !== 0x0d && b !== 0x1b) || b === 0x7f;
+  return (
+    (b < 0x20 &&
+      b !== 0x09 &&
+      b !== 0x0a &&
+      b !== 0x0b &&
+      b !== 0x0c &&
+      b !== 0x0d &&
+      b !== 0x1b) ||
+    b === 0x7f
+  );
 }
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
@@ -72,5 +81,8 @@ export function isBinaryContent(buf: Buffer, path = ""): boolean {
  * visible `\u00XX` escape. Tab and newline are kept. */
 export function escapeControls(text: string): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return text.replace(
+    /[\u0000-\u0008\u000b-\u001f\u007f]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }

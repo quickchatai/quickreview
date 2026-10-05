@@ -1122,7 +1122,8 @@ export class VerdictWatcher {
     }
     // Every durable step of the apply has landed: from here a replay of this
     // file is inert (the done-round guard above reads this).
-    if (round) store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
+    if (round)
+      store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
     if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
     // Escalation — OFF unless the operator switched it on, and it
     // runs HERE, after the verdict has been applied, the label moved and the

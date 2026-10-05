@@ -482,18 +482,38 @@ describe("codex-review --resume with a changed configuration", () => {
     const fresh: BenchCase = { ...CASE, instance_id: "o__r@1111111" };
     const stale: BenchCase = { ...CASE, instance_id: "o__r@2222222" };
     const out = join(t, "run");
-    const fp = (model: string) => ({ qcr_commit: "c1", codex_version: "9.9.9", model, effort: "medium", timeout_min: 30 });
+    const fp = (model: string) => ({
+      qcr_commit: "c1",
+      codex_version: "9.9.9",
+      model,
+      effort: "medium",
+      timeout_min: 30,
+    });
     mkdirSync(join(out, "results", "all"), { recursive: true });
     writeFileSync(join(out, "run.json"), JSON.stringify({ reviewer: "codex", model: "old" }));
-    for (const [c, model] of [[fresh, "new"], [stale, "old"]] as const) {
+    for (const [c, model] of [
+      [fresh, "new"],
+      [stale, "old"],
+    ] as const) {
       mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
       writeFileSync(
         join(out, "cases", c.instance_id, "case-summary.json"),
-        JSON.stringify({ instance_id: c.instance_id, arm: "codex", status: "ok", fingerprint: fp(model), comments: 1 }),
+        JSON.stringify({
+          instance_id: c.instance_id,
+          arm: "codex",
+          status: "ok",
+          fingerprint: fp(model),
+          comments: 1,
+        }),
       );
       writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
     }
-    const flags: Record<string, string> = { "--out": out, "--model": "new", "--effort": "medium", "--timeout-min": "30" };
+    const flags: Record<string, string> = {
+      "--out": out,
+      "--model": "new",
+      "--effort": "medium",
+      "--timeout-min": "30",
+    };
     const env = { PATH: process.env.PATH, QCR_BENCH_COMMIT: process.env.QCR_BENCH_COMMIT };
     process.env.PATH = `${bin}:${process.env.PATH}`;
     process.env.QCR_BENCH_COMMIT = "c1";
@@ -507,7 +527,14 @@ describe("codex-review --resume with a changed configuration", () => {
         agentDir: join(t, "agent"),
         get: (k) => flags[k],
         has: (k) => k === "--resume",
-        loadSet: () => ({ name: "t", dataset: { source: "s", commit: "c", file: "f", sha256: "x" }, rule: "r", references: 2, cases: [fresh, stale], backups: [] }),
+        loadSet: () => ({
+          name: "t",
+          dataset: { source: "s", commit: "c", file: "f", sha256: "x" },
+          rule: "r",
+          references: 2,
+          cases: [fresh, stale],
+          backups: [],
+        }),
         only: undefined,
         readMeta: () => {
           throw new Error("unreached");

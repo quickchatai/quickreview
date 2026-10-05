@@ -71,7 +71,9 @@ describe("wire.ts: the memory phase is actually connected", () => {
     // `digest/<date>.md`. A readiness probe on state/digest/ never saw it, so
     // the watch never closed early and ran its whole window every night.
     expect(wire).toContain('latestDigestHeadline(join(root, "digest"))');
-    expect(wire).toMatch(/digestReady:\s*\(date\)\s*=>\s*digestWritten\(date, join\(root, "digest"\)\)/);
+    expect(wire).toMatch(
+      /digestReady:\s*\(date\)\s*=>\s*digestWritten\(date, join\(root, "digest"\)\)/,
+    );
     expect(wire).not.toMatch(/"state",\s*"digest"/);
   });
 });

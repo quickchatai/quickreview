@@ -231,7 +231,8 @@ export const SUBAGENTS = {
   maxConcurrency: 8,
 } as const;
 
-export type ConfigMirrorOutcome = "copied" | "unchanged" | "removed" | "absent" | { failed: string };
+export type ConfigMirrorOutcome =
+  "copied" | "unchanged" | "removed" | "absent" | { failed: string };
 
 /** Mirror `source` (the host's live config, or undefined when there is none)
  * into `dir/config.toml`. Pure fs, total — see `syncConfigMirror`. */
@@ -703,7 +704,9 @@ export class CompanionLifecycle {
     ]);
     if (!res.ok) {
       const none = { exists: false, running: false, mounts: new Map<string, string>() };
-      return /no such (object|container)/i.test(res.stderr) ? none : { ...none, unknown: errText(res) };
+      return /no such (object|container)/i.test(res.stderr)
+        ? none
+        : { ...none, unknown: errText(res) };
     }
     const [first = "", ...rest] = res.stdout.split("\n");
     const mounts = new Map<string, string>();
@@ -824,7 +827,9 @@ export class CompanionLifecycle {
       // the old copy is never read; say so when it is the reason.
       const stranded = `${legacySecretsDir({ ...this.env, HOME: homedir() })}/${KEYS_FILE}`;
       if (this.fs.exists(stranded))
-        notes.push(`${stranded} is no longer read — \`qcr install migrate\` moves it to ${keysFile}`);
+        notes.push(
+          `${stranded} is no longer read — \`qcr install migrate\` moves it to ${keysFile}`,
+        );
     } else {
       const names = keyNamesIn(keysText);
       const missing = KEY_NAMES.filter((n) => !names.includes(n));

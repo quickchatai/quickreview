@@ -411,7 +411,7 @@ async function runWide(
     content: [{ type: "text" as const, text: renderedParallelContent(allResults, rendered) }],
     details: { ...last?.details, mode: "parallel", results: allResults },
     ...(anyError ? { isError: true } : {}),
-  } as Awaited<ReturnType<ToolExecute>>;
+  };
 }
 
 /** The native extension's path inside the installed pi package. */

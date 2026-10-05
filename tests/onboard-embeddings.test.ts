@@ -255,7 +255,8 @@ describe("the writers that carry the answer to the boot", () => {
     // A hand-trimmed hosted opt-in over the real example config — the loader
     // supports every one of these spellings.
     const example = readFileSync(join(import.meta.dirname, "..", "config.example.toml"), "utf8");
-    const block = '\nembedding_provider = "local"\nembedding_model = "bge-small-zh-v1.5-f16"\nembedding_dimension = 512\n';
+    const block =
+      '\nembedding_provider = "local"\nembedding_model = "bge-small-zh-v1.5-f16"\nembedding_dimension = 512\n';
     expect(example).toContain(block);
     for (const replacement of [
       '\nembedding_provider = "openai"\n',
@@ -271,7 +272,9 @@ describe("the writers that carry the answer to the boot", () => {
         keyFile: loaded.embedding_key_file,
       });
     }
-    expect(declaredEmbedderOf(example.replace(block, '\nembedding_provider = "openai"\n'))).toMatchObject({
+    expect(
+      declaredEmbedderOf(example.replace(block, '\nembedding_provider = "openai"\n')),
+    ).toMatchObject({
       model: "text-embedding-3-small",
       dimension: 1536,
     });

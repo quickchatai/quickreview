@@ -372,117 +372,131 @@ const tree = async () => ({
 });
 
 describe("dispatch with ecosystem none — clean configured-off", () => {
-  it("runs no pre-check, posts nothing, logs nothing, never reads the base, and un-forces the gate", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    adapter.files = [
-      {
-        filename: "backend/chat/migrations/0042_x.py",
-        additions: 20,
-        deletions: 0,
-        status: "added",
-      },
-    ];
-    const overseer: string[] = [];
-    const policy = new AnomalyWakePolicy({
-      injectOverseer: async (m) => {
-        overseer.push(m);
-      },
-    });
-    store.setAnomalySink((sig) => policy.onAnomaly(sig));
-    const prompts: string[] = [];
-    const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
+  it(
+    "runs no pre-check, posts nothing, logs nothing, never reads the base, and un-forces the gate",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      adapter.files = [
+        {
+          filename: "backend/chat/migrations/0042_x.py",
+          additions: 20,
+          deletions: 0,
+          status: "added",
+        },
+      ];
+      const overseer: string[] = [];
+      const policy = new AnomalyWakePolicy({
+        injectOverseer: async (m) => {
+          overseer.push(m);
+        },
+      });
+      store.setAnomalySink((sig) => policy.onAnomaly(sig));
+      const prompts: string[] = [];
+      const template = readFileSync(resolve(process.cwd(), "prompts/round-first.md"), "utf8");
 
-    await dispatchOnce({
-      cfg,
-      store,
-      adapter,
-      hooks: hooks(orders, prompts),
-      ecosystem: NONE_ECOSYSTEM,
-      renderPrompt: (o) => renderRoundPrompt(template, o, undefined, undefined, NONE_ECOSYSTEM),
-      prepareWorktree: tree,
-      listBaseMigrations: async () => {
-        adapter.baseAsked++;
-        return ["backend/chat/migrations/0042_taken.py"];
-      },
-    });
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter,
+        hooks: hooks(orders, prompts),
+        ecosystem: NONE_ECOSYSTEM,
+        renderPrompt: (o) => renderRoundPrompt(template, o, undefined, undefined, NONE_ECOSYSTEM),
+        prepareWorktree: tree,
+        listBaseMigrations: async () => {
+          adapter.baseAsked++;
+          return ["backend/chat/migrations/0042_taken.py"];
+        },
+      });
 
-    // The round dispatched — configured-off costs nothing.
-    expect(orders).toHaveLength(1);
-    // No pre-check ran: the base was never read, nothing was posted.
-    expect(adapter.baseAsked).toBe(0);
-    expect(adapter.reviews).toEqual([]);
-    // Not degraded, no collisions, gate off — a first-class off, not a fault.
-    expect(orders[0]?.migration_precheck_degraded).toBe(false);
-    expect(orders[0]?.migration_collisions).toEqual([]);
-    expect(orders[0]?.migration_gate).toBe(false);
-    // No migration_* events, no anomaly, no overseer wake.
-    const migrationEvents = store.recentEvents(200).filter((e) => e.kind.startsWith("migration_"));
-    expect(migrationEvents).toEqual([]);
-    expect(store.anomalies()).toEqual([]);
-    expect(overseer).toEqual([]);
-    // And the prompt carries no migration-gate prose — the lens is NOT
-    // un-muzzled (the addendum's withdrawal binds absent the degraded note).
-    expect(prompts[0]).not.toContain("MIGRATION GATE");
-    expect(prompts[0]).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
-    expect(prompts[0]).not.toContain("ALREADY HANDLED");
-  });
+      // The round dispatched — configured-off costs nothing.
+      expect(orders).toHaveLength(1);
+      // No pre-check ran: the base was never read, nothing was posted.
+      expect(adapter.baseAsked).toBe(0);
+      expect(adapter.reviews).toEqual([]);
+      // Not degraded, no collisions, gate off — a first-class off, not a fault.
+      expect(orders[0]?.migration_precheck_degraded).toBe(false);
+      expect(orders[0]?.migration_collisions).toEqual([]);
+      expect(orders[0]?.migration_gate).toBe(false);
+      // No migration_* events, no anomaly, no overseer wake.
+      const migrationEvents = store
+        .recentEvents(200)
+        .filter((e) => e.kind.startsWith("migration_"));
+      expect(migrationEvents).toEqual([]);
+      expect(store.anomalies()).toEqual([]);
+      expect(overseer).toEqual([]);
+      // And the prompt carries no migration-gate prose — the lens is NOT
+      // un-muzzled (the addendum's withdrawal binds absent the degraded note).
+      expect(prompts[0]).not.toContain("MIGRATION GATE");
+      expect(prompts[0]).not.toContain("MIGRATION PRE-CHECK DID NOT RUN");
+      expect(prompts[0]).not.toContain("ALREADY HANDLED");
+    },
+  );
 
-  it("stays silent even in the exact setup where django degrades (no base reader)", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    adapter.files = [
-      {
-        filename: "backend/chat/migrations/0042_x.py",
-        additions: 20,
-        deletions: 0,
-        status: "added",
-      },
-    ];
-    const overseer: string[] = [];
-    const policy = new AnomalyWakePolicy({
-      injectOverseer: async (m) => {
-        overseer.push(m);
-      },
-    });
-    store.setAnomalySink((sig) => policy.onAnomaly(sig));
+  it(
+    "stays silent even in the exact setup where django degrades (no base reader)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      adapter.files = [
+        {
+          filename: "backend/chat/migrations/0042_x.py",
+          additions: 20,
+          deletions: 0,
+          status: "added",
+        },
+      ];
+      const overseer: string[] = [];
+      const policy = new AnomalyWakePolicy({
+        injectOverseer: async (m) => {
+          overseer.push(m);
+        },
+      });
+      store.setAnomalySink((sig) => policy.onAnomaly(sig));
 
-    await dispatchOnce({
-      cfg,
-      store,
-      adapter,
-      hooks: hooks(orders),
-      ecosystem: NONE_ECOSYSTEM,
-      prepareWorktree: tree,
-      // no listBaseMigrations — the django-degraded setup
-    });
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter,
+        hooks: hooks(orders),
+        ecosystem: NONE_ECOSYSTEM,
+        prepareWorktree: tree,
+        // no listBaseMigrations — the django-degraded setup
+      });
 
-    expect(orders[0]?.migration_precheck_degraded).toBe(false);
-    expect(store.anomalies()).toEqual([]);
-    expect(overseer).toEqual([]);
-    expect(store.recentEvents(200).filter((e) => e.kind.startsWith("migration_"))).toEqual([]);
-  });
+      expect(orders[0]?.migration_precheck_degraded).toBe(false);
+      expect(store.anomalies()).toEqual([]);
+      expect(overseer).toEqual([]);
+      expect(store.recentEvents(200).filter((e) => e.kind.startsWith("migration_"))).toEqual([]);
+    },
+  );
 
-  it("an explicitly-passed django ecosystem still degrades loudly in that setup — the distinction is the wiring, not luck", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    adapter.files = [
-      {
-        filename: "backend/chat/migrations/0042_x.py",
-        additions: 20,
-        deletions: 0,
-        status: "added",
-      },
-    ];
+  it(
+    "an explicitly-passed django ecosystem still degrades loudly in that setup — the distinction is the wiring, not luck",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      adapter.files = [
+        {
+          filename: "backend/chat/migrations/0042_x.py",
+          additions: 20,
+          deletions: 0,
+          status: "added",
+        },
+      ];
 
-    await dispatchOnce({
-      cfg,
-      store,
-      adapter,
-      hooks: hooks(orders),
-      ecosystem: DJANGO_ECOSYSTEM,
-      prepareWorktree: tree,
-      // no listBaseMigrations
-    });
+      await dispatchOnce({
+        cfg,
+        store,
+        adapter,
+        hooks: hooks(orders),
+        ecosystem: DJANGO_ECOSYSTEM,
+        prepareWorktree: tree,
+        // no listBaseMigrations
+      });
 
-    expect(orders[0]?.migration_precheck_degraded).toBe(true);
-    expect(orders[0]?.migration_gate).toBe(true);
-    expect(store.anomalies().map((a) => a.kind)).toEqual(["migration_precheck_degraded"]);
-  });
+      expect(orders[0]?.migration_precheck_degraded).toBe(true);
+      expect(orders[0]?.migration_gate).toBe(true);
+      expect(store.anomalies().map((a) => a.kind)).toEqual(["migration_precheck_degraded"]);
+    },
+  );
 });
 
 // ---- profile selection ------------------------------------------------------
@@ -507,23 +521,43 @@ describe("loadProfileEcosystem", () => {
   it("an absent profile.toml or absent ecosystem key means none", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "bare"), { recursive: true });
-    expect(loadProfileEcosystem(root, "bare", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none"); // no file at all
+    expect(
+      loadProfileEcosystem(root, "bare", {
+        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+      }),
+    ).toBe("none"); // no file at all
     writeFileSync(join(root, "profiles", "bare", "profile.toml"), "# no ecosystem key\n");
-    expect(loadProfileEcosystem(root, "bare", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none"); // file, no key
-    expect(loadProfileEcosystem(root, "missing-profile-dir", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toBe("none");
+    expect(
+      loadProfileEcosystem(root, "bare", {
+        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+      }),
+    ).toBe("none"); // file, no key
+    expect(
+      loadProfileEcosystem(root, "missing-profile-dir", {
+        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+      }),
+    ).toBe("none");
   });
 
   it("an unknown ecosystem value fails the boot loudly", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "p"), { recursive: true });
     writeFileSync(join(root, "profiles", "p", "profile.toml"), 'ecosystem = "rails"\n');
-    expect(() => loadProfileEcosystem(root, "p", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toThrow(/unknown ecosystem "rails"/);
+    expect(() =>
+      loadProfileEcosystem(root, "p", {
+        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+      }),
+    ).toThrow(/unknown ecosystem "rails"/);
   });
 
   it("invalid TOML fails the boot loudly, never a silent none", () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-eco-"));
     mkdirSync(join(root, "profiles", "p"), { recursive: true });
     writeFileSync(join(root, "profiles", "p", "profile.toml"), "ecosystem = [broken\n");
-    expect(() => loadProfileEcosystem(root, "p", { env: { QCR_CONFIG: join(root, "config.toml"), HOME: root } })).toThrow(/not valid TOML/);
+    expect(() =>
+      loadProfileEcosystem(root, "p", {
+        env: { QCR_CONFIG: join(root, "config.toml"), HOME: root },
+      }),
+    ).toThrow(/not valid TOML/);
   });
 });

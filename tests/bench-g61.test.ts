@@ -2,7 +2,15 @@
 // compared tool on gpt-6.1): one model knob per arm, default unchanged (gpt-6-sol,
 // the published runs), and each arm able to actually serve the new id.
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,7 +63,11 @@ function review(arm: string, env: Record<string, string>) {
 describe("bench.sh: QCR_BENCH_<ARM>_MODEL", () => {
   const cases: [string, string, string[]][] = [
     ["ocr", "QCR_BENCH_OCR_MODEL", ["OCR_BRIDGE_MODEL=gpt-6.1-sol"]],
-    ["opencode", "QCR_BENCH_OPENCODE_MODEL", ["OPENCODE_BRIDGE_MODEL=gpt-6.1-sol", "QCR_OPENCODE_MODEL=gpt-6.1-sol"]],
+    [
+      "opencode",
+      "QCR_BENCH_OPENCODE_MODEL",
+      ["OPENCODE_BRIDGE_MODEL=gpt-6.1-sol", "QCR_OPENCODE_MODEL=gpt-6.1-sol"],
+    ],
     ["codex", "QCR_BENCH_CODEX_MODEL", ["QCR_CODEX_MODEL=gpt-6.1-sol"]],
     ["pireview", "QCR_BENCH_PIREVIEW_MODEL", ["QCR_PIREVIEW_MODEL=openai-codex/gpt-6.1-sol"]],
   ];
@@ -101,15 +113,15 @@ describe("OpenCode native: a model its bundled catalog lacks is declared on the 
     expect(c["model"]).toBe("openai/gpt-6.1-sol");
     expect(c["small_model"]).toBe("openai/gpt-6.1-sol");
     expect(c["enabled_providers"]).toEqual(["openai"]);
-    const entry = (c["provider"] as Record<string, { models: Record<string, Record<string, unknown>> }>)[
-      "openai"
-    ]!.models["gpt-6.1-sol"]!;
+    const entry = (
+      c["provider"] as Record<string, { models: Record<string, Record<string, unknown>> }>
+    )["openai"]!.models["gpt-6.1-sol"]!;
     expect(entry).toEqual(nativeModelEntry("gpt-6.1-sol"));
     expect(entry["reasoning"]).toBe(true);
     // no npm / baseURL / apiKey: the built-in provider's transport and login
-    expect(Object.keys((c["provider"] as Record<string, Record<string, unknown>>)["openai"]!)).toEqual([
-      "models",
-    ]);
+    expect(
+      Object.keys((c["provider"] as Record<string, Record<string, unknown>>)["openai"]!),
+    ).toEqual(["models"]);
   });
 
   it("counts the store's assistant messages by provider/model", () => {

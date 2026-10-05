@@ -68,8 +68,25 @@ import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
 import type { ScanConfig } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
-import { FindingsStore, type FindingDoubt, type ReconcileResult, type ReportedFinding, type Validity } from "./findings.js";
-import { casesFor, coveredBy, lastScanned, Ledger, measuredRate, newestRead, partialRanges, readings, type LedgerEntry, type RateKey } from "./ledger.js";
+import {
+  FindingsStore,
+  type FindingDoubt,
+  type ReconcileResult,
+  type ReportedFinding,
+  type Validity,
+} from "./findings.js";
+import {
+  casesFor,
+  coveredBy,
+  lastScanned,
+  Ledger,
+  measuredRate,
+  newestRead,
+  partialRanges,
+  readings,
+  type LedgerEntry,
+  type RateKey,
+} from "./ledger.js";
 import {
   anchoredLines,
   calibrationCases,
@@ -94,7 +111,16 @@ import {
   type TreeFile,
   type UnreadableReason,
 } from "./scan.js";
-import { planStage2, priceStage2Row, stage2Cases, stage2CasePrompt, stage2Key, unitOwner, type Stage2Row, type Stage2RowRequest } from "./stage2.js";
+import {
+  planStage2,
+  priceStage2Row,
+  stage2Cases,
+  stage2CasePrompt,
+  stage2Key,
+  unitOwner,
+  type Stage2Row,
+  type Stage2RowRequest,
+} from "./stage2.js";
 import {
   keptRows,
   parseStage2File,
@@ -138,7 +164,11 @@ import {
  * is never credited, and a read of some other file (a CLAUDE.md, a caller)
  * is context, not the case. Pure.
  */
-export function unreadFocus(reads: readonly string[] | undefined, focus: readonly string[], root: string): string | null {
+export function unreadFocus(
+  reads: readonly string[] | undefined,
+  focus: readonly string[],
+  root: string,
+): string | null {
   if (reads === undefined) return null;
   const base = posix.normalize(`${root}/`);
   const opened = new Set(
@@ -178,7 +208,10 @@ export interface ScanSource {
   resolve(ref: string): string | null;
   /** The tree at `sha`, materialised; earlier trees other than `keep` may be
    * removed to bound the disk. */
-  open(sha: string, keep: readonly string[]): { ok: true; tree: ScanTree } | { ok: false; reason: string };
+  open(
+    sha: string,
+    keep: readonly string[],
+  ): { ok: true; tree: ScanTree } | { ok: false; reason: string };
   /** The files (and content hashes) at `sha`, listed without materialising
    * anything, or null when git cannot list them — a delta's baseline. */
   list(sha: string): TreeFile[] | null;
@@ -361,7 +394,8 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
 
 /** Why a candidate the skeptic's answer never mentioned is doubtful. */
-export const UNMENTIONED_REASON = "the skeptic listed it neither as a survivor nor under DOUBTED — kept, not upheld";
+export const UNMENTIONED_REASON =
+  "the skeptic listed it neither as a survivor nor under DOUBTED — kept, not upheld";
 
 /** A finding on its way to the store, with the skeptic's judgement. */
 interface KeptFinding {
@@ -392,7 +426,15 @@ interface CaseJob {
   units?: string[];
 }
 
-type Stage2Planned = { ok: true; proposal: StoredStage2Proposal; tree: ScanTree; settings: ScanSettings; cut: UnitCut } | Refusal;
+type Stage2Planned =
+  | {
+      ok: true;
+      proposal: StoredStage2Proposal;
+      tree: ScanTree;
+      settings: ScanSettings;
+      cut: UnitCut;
+    }
+  | Refusal;
 
 interface Planned {
   preview: ScanPreview;
@@ -445,16 +487,19 @@ export function runSummary(run: ScanRun, state: ScanRunSummary["state"]): ScanRu
 export function finishedRuns(state: StateFs): { runs: ScanRunSummary[]; error: string | null } {
   const { file, error } = readRunFile(state);
   const out: ScanRunSummary[] = [];
-  if (file.current && file.current.state !== "running") out.push(runSummary(file.current, file.current.state));
+  if (file.current && file.current.state !== "running")
+    out.push(runSummary(file.current, file.current.state));
   for (const h of file.history) {
-    if (h.state !== "running" && h.state !== "interrupted" && !out.some((r) => r.id === h.id)) out.push(h);
+    if (h.state !== "running" && h.state !== "interrupted" && !out.some((r) => r.id === h.id))
+      out.push(h);
   }
   out.sort((a, b) => (b.finished_at ?? b.started_at).localeCompare(a.finished_at ?? a.started_at));
   return { runs: out, error };
 }
 
 export class ScanRunner {
-  private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null = null;
+  private active: { id: string; sha: string; abort: AbortController; done: Promise<void> } | null =
+    null;
   private starting = false;
   private consuming = false;
   private readonly ledger: Ledger;
@@ -481,16 +526,27 @@ export class ScanRunner {
 
   // -- the plan --
 
-  private async plan(ref: string | undefined, delta = false): Promise<{ ok: true; planned: Planned } | Refusal> {
+  private async plan(
+    ref: string | undefined,
+    delta = false,
+  ): Promise<{ ok: true; planned: Planned } | Refusal> {
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
     if (!cut.ok) return cut;
     const wanted = (ref ?? "").trim() || "HEAD";
     const sha = this.ports.source.resolve(wanted);
-    if (sha === null) return { ok: false, errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`] };
+    if (sha === null)
+      return {
+        ok: false,
+        errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
+      };
     const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
-    if (!opened.ok) return { ok: false, errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`] };
+    if (!opened.ok)
+      return {
+        ok: false,
+        errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
+      };
     const tree = opened.tree;
     const { entries, error } = this.ledger.load();
     if (error !== null) return { ok: false, errors: [error] };
@@ -498,15 +554,29 @@ export class ScanRunner {
     const cfg = settings.scan;
     // A delta compares against the last scan: each file's newest content the
     // ledger read, and the tree that scan read (listed, not materialised).
-    let basis: { since: string; read: Map<string, string>; baseline: Map<string, string> } | null = null;
+    let basis: { since: string; read: Map<string, string>; baseline: Map<string, string> } | null =
+      null;
     if (delta) {
       const last = lastScanned(entries, SCAN_PASS);
-      if (last === null) return { ok: false, errors: ["no stage-1 scan to re-scan against — preview and run a full scan first"] };
+      if (last === null)
+        return {
+          ok: false,
+          errors: ["no stage-1 scan to re-scan against — preview and run a full scan first"],
+        };
       const listed = this.ports.source.list(last.sha);
       if (listed === null) {
-        return { ok: false, errors: [`cannot list the tree the last scan read (${last.sha.slice(0, 12)}) — a delta cannot tell which files are new`] };
+        return {
+          ok: false,
+          errors: [
+            `cannot list the tree the last scan read (${last.sha.slice(0, 12)}) — a delta cannot tell which files are new`,
+          ],
+        };
       }
-      basis = { since: last.sha, read: newestRead(entries, SCAN_PASS), baseline: new Map(listed.map((f) => [f.path, f.blob])) };
+      basis = {
+        since: last.sha,
+        read: newestRead(entries, SCAN_PASS),
+        baseline: new Map(listed.map((f) => [f.path, f.blob])),
+      };
     }
     const plan = planStage1({
       cut: cut.cut,
@@ -517,20 +587,31 @@ export class ScanRunner {
       partial: partialRanges(entries, SCAN_PASS),
       // Coverage first: never-read and cut-short files run before changed
       // ones, so the hard stop never starves the same tail run after run.
-      history: new Map([...readings(entries, SCAN_PASS)].map(([path, r]) => [path, { blob: r.blob, complete: r.complete, at: r.newest.at }])),
+      history: new Map(
+        [...readings(entries, SCAN_PASS)].map(([path, r]) => [
+          path,
+          { blob: r.blob, complete: r.complete, at: r.newest.at },
+        ]),
+      ),
       textOf: (p) => tree.read(p),
       exclude: cfg.exclude,
       budget: { maxFiles: cfg.case_max_files, maxLines: cfg.case_max_lines },
       ...(basis ? { delta: basis } : {}),
     });
-    const key: RateKey = { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator: cfg.validator };
+    const key: RateKey = {
+      lens: SCAN_PASS,
+      tier: cfg.tier,
+      effort: cfg.effort,
+      validator: cfg.validator,
+    };
     const rate = measuredRate(entries, key);
     const tally = casesFor(entries, key);
     const measured = rate?.cases ?? 0;
     const blockers: string[] = [];
     // Calibrated once `calibration_units` priced cases stand behind the rate —
     // or every case there is, on a repo smaller than that.
-    const calibrated = rate !== null && measured >= Math.min(cfg.calibration_units, measured + plan.cases.length);
+    const calibrated =
+      rate !== null && measured >= Math.min(cfg.calibration_units, measured + plan.cases.length);
     let mode: ScanMode;
     let cases: Array<ScanCasePlan & { estimate_usd: number | null }>;
     let cap: number;
@@ -539,9 +620,14 @@ export class ScanRunner {
       // Priced like stage 1 — a delta never calibrates, and never guesses.
       mode = "delta";
       if (rate === null) {
-        blockers.push("no measured price for stage 1 at these settings — run the calibration (an ordinary preview) before a delta re-scan");
+        blockers.push(
+          "no measured price for stage 1 at these settings — run the calibration (an ordinary preview) before a delta re-scan",
+        );
       }
-      cases = plan.cases.map((c) => ({ ...c, estimate_usd: rate === null ? null : caseEstimate(c.lines, rate) }));
+      cases = plan.cases.map((c) => ({
+        ...c,
+        estimate_usd: rate === null ? null : caseEstimate(c.lines, rate),
+      }));
       estimate = rate === null ? null : cases.reduce((n, c) => n + (c.estimate_usd ?? 0), 0);
       cap = estimate ?? 0;
     } else if (calibrated) {
@@ -557,12 +643,16 @@ export class ScanRunner {
             "a scan cannot be estimated, so none is started (check that the companion's pi reports usage cost)",
         );
       }
-      cases = calibrationCases(plan.cases, Math.max(1, cfg.calibration_units - measured)).map((c) => ({ ...c, estimate_usd: null }));
+      cases = calibrationCases(plan.cases, Math.max(1, cfg.calibration_units - measured)).map(
+        (c) => ({ ...c, estimate_usd: null }),
+      );
       estimate = null;
       cap = cfg.calibration_max_usd;
     }
     if (cases.length === 0 && delta) {
-      blockers.push(`nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`);
+      blockers.push(
+        `nothing changed to read at ${sha.slice(0, 12)} since the last scan (${basis!.since.slice(0, 12)}), and the ledger covers every other file at its content`,
+      );
     } else if (cases.length === 0) {
       blockers.push(
         plan.covered > 0
@@ -580,7 +670,12 @@ export class ScanRunner {
       key: planKey({
         mode,
         sha,
-        cases: cases.map((c) => [c.id, c.files.map((f) => `${f.path}@${f.blob}${f.range ? `:${f.range.start}-${f.range.end}` : ""}`)]),
+        cases: cases.map((c) => [
+          c.id,
+          c.files.map(
+            (f) => `${f.path}@${f.blob}${f.range ? `:${f.range.start}-${f.range.end}` : ""}`,
+          ),
+        ]),
         settings: runSettings,
         cap: Math.round(cap * 1e6),
       }),
@@ -610,20 +705,39 @@ export class ScanRunner {
 
   /** What a scan would read and cost now at `sha` (default the checkout's
    * HEAD), and the key a start must quote. */
-  async preview(args: { sha?: string; delta?: boolean } = {}): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
+  async preview(
+    args: { sha?: string; delta?: boolean } = {},
+  ): Promise<{ ok: true; preview: ScanPreview } | Refusal> {
     const p = await this.plan(args.sha, args.delta === true);
     return p.ok ? { ok: true, preview: p.planned.preview } : p;
   }
 
   /** Start the previewed run in the background. Returns once it is recorded. */
-  async start(args: { key?: unknown; sha?: string; delta?: boolean }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
+  async start(args: {
+    key?: unknown;
+    sha?: string;
+    delta?: boolean;
+  }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
+      };
     // Two starts in parallel (a model may issue tool calls concurrently) must
     // not both pass the check above while the first is still planning: that
     // would run — and pay for — the same scan twice.
-    if (this.starting) return { ok: false, errors: ["a scan is already starting — wait for it, then check scan_status"] };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a scan is already starting — wait for it, then check scan_status"],
+      };
     if (typeof args.key !== "string" || args.key === "") {
-      return { ok: false, errors: ["no preview key — preview the scan, show the operator the cost, then start with its key"] };
+      return {
+        ok: false,
+        errors: [
+          "no preview key — preview the scan, show the operator the cost, then start with its key",
+        ],
+      };
     }
     this.starting = true;
     try {
@@ -633,7 +747,11 @@ export class ScanRunner {
     }
   }
 
-  private async startPlanned(key: string, sha: string | undefined, delta: boolean): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  private async startPlanned(
+    key: string,
+    sha: string | undefined,
+    delta: boolean,
+  ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const args = { key, sha };
     const p = await this.plan(args.sha, delta);
     if (!p.ok) return p;
@@ -641,14 +759,20 @@ export class ScanRunner {
     if (args.key !== preview.key) {
       return {
         ok: false,
-        errors: [`the plan changed since that preview (key ${args.key}, now ${preview.key}) — preview again and show the operator the new cost`],
+        errors: [
+          `the plan changed since that preview (key ${args.key}, now ${preview.key}) — preview again and show the operator the new cost`,
+        ],
       };
     }
     if (preview.blockers.length > 0) return { ok: false, errors: preview.blockers };
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     const built = this.ports.buildAgents(settings);
-    if (!built.ok) return { ok: false, errors: built.errors.map((e) => `the scan agents could not be built: ${e}`) };
+    if (!built.ok)
+      return {
+        ok: false,
+        errors: built.errors.map((e) => `the scan agents could not be built: ${e}`),
+      };
 
     const cfg = settings.scan;
     const jobs: CaseJob[] = preview.cases.map((c) => ({
@@ -661,19 +785,25 @@ export class ScanRunner {
       unitOf: () => c.unit,
       suggestions: true,
     }));
-    const run = this.launch(file, {
-      mode: preview.mode,
-      sha: preview.sha,
-      plan_key: preview.key,
-      cap_usd: preview.cap_usd,
-      estimate_usd: preview.estimate_usd,
-      settings: {
-        tier: preview.settings.tier,
-        effort: preview.settings.effort,
-        validator: preview.settings.validator,
-        validate_tier: preview.settings.validate_tier,
+    const run = this.launch(
+      file,
+      {
+        mode: preview.mode,
+        sha: preview.sha,
+        plan_key: preview.key,
+        cap_usd: preview.cap_usd,
+        estimate_usd: preview.estimate_usd,
+        settings: {
+          tier: preview.settings.tier,
+          effort: preview.settings.effort,
+          validator: preview.settings.validator,
+          validate_tier: preview.settings.validate_tier,
+        },
       },
-    }, jobs, tree, settings);
+      jobs,
+      tree,
+      settings,
+    );
     return { ok: true, run };
   }
 
@@ -687,7 +817,10 @@ export class ScanRunner {
   ): ScanRun {
     const now = this.ports.clock();
     const run: ScanRun = {
-      id: `scan-${now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`,
+      id: `scan-${now
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d+Z$/, "Z")}`,
       ...head,
       started_at: now.toISOString(),
       finished_at: null,
@@ -714,7 +847,9 @@ export class ScanRunner {
         error: null,
         started_at: null,
         finished_at: null,
-        ...(head.mode === "stage2" ? { lens: job.lens, tier: job.tier, reason: job.reason, units: job.units } : {}),
+        ...(head.mode === "stage2"
+          ? { lens: job.lens, tier: job.tier, reason: job.reason, units: job.units }
+          : {}),
       })),
       problems: [],
       matching: null,
@@ -722,7 +857,10 @@ export class ScanRunner {
     // A run left `running` by a companion that is gone was interrupted.
     if (file.current !== null) {
       const prev = file.current;
-      file.history = [this.summary(prev, prev.state === "running" ? "interrupted" : prev.state), ...file.history].slice(0, RUN_HISTORY);
+      file.history = [
+        this.summary(prev, prev.state === "running" ? "interrupted" : prev.state),
+        ...file.history,
+      ].slice(0, RUN_HISTORY);
     }
     file.current = run;
     this.store(file);
@@ -752,7 +890,14 @@ export class ScanRunner {
     return {
       ok: problems.length === 0,
       problems,
-      run: run === null ? null : { ...run, display: run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state },
+      run:
+        run === null
+          ? null
+          : {
+              ...run,
+              display:
+                run.state === "running" && this.active?.id !== run.id ? "interrupted" : run.state,
+            },
       active: this.active !== null,
       history: file.history,
       ledger:
@@ -785,7 +930,8 @@ export class ScanRunner {
       const text = this.ports.state.read(SUGGESTIONS_FILE);
       if (text === null) return { suggestions: [], error: null };
       const raw = JSON.parse(text) as { version?: unknown; suggestions?: unknown };
-      if (raw.version !== RUN_VERSION || !Array.isArray(raw.suggestions)) throw new Error("not a version-1 suggestions file");
+      if (raw.version !== RUN_VERSION || !Array.isArray(raw.suggestions))
+        throw new Error("not a version-1 suggestions file");
       return { suggestions: raw.suggestions as StoredSuggestion[], error: null };
     } catch (err) {
       return { suggestions: [], error: `${SUGGESTIONS_FILE} cannot be read: ${clean(err)}` };
@@ -804,16 +950,28 @@ export class ScanRunner {
     }
   }
 
-  private async planStage2(request: Stage2RowRequest[], budgetUsd: number | null, ref: string | undefined): Promise<Stage2Planned> {
+  private async planStage2(
+    request: Stage2RowRequest[],
+    budgetUsd: number | null,
+    ref: string | undefined,
+  ): Promise<Stage2Planned> {
     const s = this.ports.settings();
     if (!s.ok) return s;
     const cut = this.ports.savedCut();
     if (!cut.ok) return cut;
     const wanted = (ref ?? "").trim() || "HEAD";
     const sha = this.ports.source.resolve(wanted);
-    if (sha === null) return { ok: false, errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`] };
+    if (sha === null)
+      return {
+        ok: false,
+        errors: [`${JSON.stringify(wanted)} names no commit in ${this.ports.source.location}`],
+      };
     const opened = this.ports.source.open(sha, this.active ? [this.active.sha] : []);
-    if (!opened.ok) return { ok: false, errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`] };
+    if (!opened.ok)
+      return {
+        ok: false,
+        errors: [`cannot read the tree at ${sha.slice(0, 12)}: ${opened.reason}`],
+      };
     const tree = opened.tree;
     const { entries, error } = this.ledger.load();
     if (error !== null) return { ok: false, errors: [error] };
@@ -872,30 +1030,50 @@ export class ScanRunner {
    * Runs nothing. The stored proposal replaces the previous one — it is what
    * the TUI shows and what a start's key must name.
    */
-  async proposeStage2(args: { rows?: unknown; budget_usd?: unknown; sha?: string }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
-    if (!Array.isArray(args.rows)) return { ok: false, errors: ["`rows` must be a list of { lens, files, tier?, reason }"] };
+  async proposeStage2(args: {
+    rows?: unknown;
+    budget_usd?: unknown;
+    sha?: string;
+  }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
+    if (!Array.isArray(args.rows))
+      return { ok: false, errors: ["`rows` must be a list of { lens, files, tier?, reason }"] };
     const request: Stage2RowRequest[] = [];
     for (const [i, r] of args.rows.entries()) {
-      if (typeof r !== "object" || r === null || Array.isArray(r)) return { ok: false, errors: [`row-${i + 1}: not a { lens, files, tier?, reason } object`] };
+      if (typeof r !== "object" || r === null || Array.isArray(r))
+        return { ok: false, errors: [`row-${i + 1}: not a { lens, files, tier?, reason } object`] };
       const o = r as Record<string, unknown>;
       request.push({
         lens: typeof o.lens === "string" ? o.lens : "",
-        files: Array.isArray(o.files) ? o.files.filter((f): f is string => typeof f === "string") : typeof o.files === "string" ? o.files.split(",") : [],
+        files: Array.isArray(o.files)
+          ? o.files.filter((f): f is string => typeof f === "string")
+          : typeof o.files === "string"
+            ? o.files.split(",")
+            : [],
         ...(typeof o.tier === "string" && o.tier.trim() !== "" ? { tier: o.tier.trim() } : {}),
         reason: typeof o.reason === "string" ? o.reason : "",
       });
     }
     let budget: number | null = null;
     if (args.budget_usd !== undefined && args.budget_usd !== null) {
-      if (typeof args.budget_usd !== "number" || !Number.isFinite(args.budget_usd) || args.budget_usd <= 0) {
-        return { ok: false, errors: ["`budget_usd` must be a positive number of dollars (or left out)"] };
+      if (
+        typeof args.budget_usd !== "number" ||
+        !Number.isFinite(args.budget_usd) ||
+        args.budget_usd <= 0
+      ) {
+        return {
+          ok: false,
+          errors: ["`budget_usd` must be a positive number of dollars (or left out)"],
+        };
       }
       budget = args.budget_usd;
     }
     const p = await this.planStage2(request, budget, args.sha);
     if (!p.ok) return p;
     try {
-      this.ports.state.write(STAGE2_FILE, `${JSON.stringify({ version: STAGE2_VERSION, proposal: p.proposal }, null, 1)}\n`);
+      this.ports.state.write(
+        STAGE2_FILE,
+        `${JSON.stringify({ version: STAGE2_VERSION, proposal: p.proposal }, null, 1)}\n`,
+      );
     } catch (err) {
       return { ok: false, errors: [`the proposal could not be stored: ${clean(err)}`] };
     }
@@ -910,16 +1088,38 @@ export class ScanRunner {
    * only some of its runnable rows (the TUI's plan pane), exactly
    * those rows, stopped hard at their total.
    */
-  async startStage2(args: { key?: unknown; rows?: unknown }): Promise<{ ok: true; run: ScanRun } | Refusal> {
-    if (this.active) return { ok: false, errors: [`scan ${this.active.id} is still running — stop it or wait for it`] };
-    if (this.starting) return { ok: false, errors: ["a scan is already starting — wait for it, then check scan_status"] };
+  async startStage2(args: {
+    key?: unknown;
+    rows?: unknown;
+  }): Promise<{ ok: true; run: ScanRun } | Refusal> {
+    if (this.active)
+      return {
+        ok: false,
+        errors: [`scan ${this.active.id} is still running — stop it or wait for it`],
+      };
+    if (this.starting)
+      return {
+        ok: false,
+        errors: ["a scan is already starting — wait for it, then check scan_status"],
+      };
     if (typeof args.key !== "string" || args.key === "") {
-      return { ok: false, errors: ["no proposal key — propose stage 2, show the operator the rows and the cost, then start with its key"] };
+      return {
+        ok: false,
+        errors: [
+          "no proposal key — propose stage 2, show the operator the rows and the cost, then start with its key",
+        ],
+      };
     }
     let keep: string[] | undefined;
     if (args.rows !== undefined && args.rows !== null) {
-      if (!Array.isArray(args.rows) || !args.rows.every((r): r is string => typeof r === "string")) {
-        return { ok: false, errors: ["`rows` must be a list of row ids (row-<n>) from the proposal"] };
+      if (
+        !Array.isArray(args.rows) ||
+        !args.rows.every((r): r is string => typeof r === "string")
+      ) {
+        return {
+          ok: false,
+          errors: ["`rows` must be a list of row ids (row-<n>) from the proposal"],
+        };
       }
       keep = args.rows;
     }
@@ -931,23 +1131,41 @@ export class ScanRunner {
     }
   }
 
-  private async startStage2Planned(key: string, keep: readonly string[] | undefined): Promise<{ ok: true; run: ScanRun } | Refusal> {
+  private async startStage2Planned(
+    key: string,
+    keep: readonly string[] | undefined,
+  ): Promise<{ ok: true; run: ScanRun } | Refusal> {
     const stored = this.stage2Proposal();
     if (stored.error !== null) return { ok: false, errors: [stored.error] };
-    if (stored.proposal === null) return { ok: false, errors: ["no stage 2 proposal — propose one first"] };
+    if (stored.proposal === null)
+      return { ok: false, errors: ["no stage 2 proposal — propose one first"] };
     if (stored.proposal.key !== key) {
-      return { ok: false, errors: [`${key} is not the latest stage 2 proposal (that is ${stored.proposal.key}) — show the operator the latest one`] };
+      return {
+        ok: false,
+        errors: [
+          `${key} is not the latest stage 2 proposal (that is ${stored.proposal.key}) — show the operator the latest one`,
+        ],
+      };
     }
-    const p = await this.planStage2(stored.proposal.request, stored.proposal.budget_usd, stored.proposal.sha);
+    const p = await this.planStage2(
+      stored.proposal.request,
+      stored.proposal.budget_usd,
+      stored.proposal.sha,
+    );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
       return {
         ok: false,
-        errors: [`the plan changed since the proposal (key ${key}, now ${p.proposal.key}: a file, a price or the settings moved) — propose again and show the operator the new cost`],
+        errors: [
+          `the plan changed since the proposal (key ${key}, now ${p.proposal.key}: a file, a price or the settings moved) — propose again and show the operator the new cost`,
+        ],
       };
     }
     if (!p.proposal.rows.some((r) => r.status === "run")) {
-      return { ok: false, errors: ["nothing to run: every row is covered by the ledger or over the budget"] };
+      return {
+        ok: false,
+        errors: ["nothing to run: every row is covered by the ledger or over the budget"],
+      };
     }
     const kept = keptRows(p.proposal.rows, keep);
     if (!kept.ok) return kept;
@@ -956,8 +1174,15 @@ export class ScanRunner {
     const { file, error } = this.load();
     if (error !== null) return { ok: false, errors: [error] };
     const built = this.ports.buildAgents(p.settings);
-    if (!built.ok) return { ok: false, errors: built.errors.map((e) => `the scan agents could not be built: ${e}`) };
-    const unitOf = unitOwner(p.cut, p.tree.files.map((f) => f.path));
+    if (!built.ok)
+      return {
+        ok: false,
+        errors: built.errors.map((e) => `the scan agents could not be built: ${e}`),
+      };
+    const unitOf = unitOwner(
+      p.cut,
+      p.tree.files.map((f) => f.path),
+    );
     // One case per row — or, for a row over a file too big for one case, one
     // per line range (`<row>#<i>`), its estimate the range's share.
     const jobs: CaseJob[] = rows.flatMap((row: Stage2Row) =>
@@ -983,7 +1208,10 @@ export class ScanRunner {
       })),
     );
     const cfg = p.settings.scan;
-    const top = rows.reduce<PassTier>((t, r) => (PASS_TIER_ORDER.indexOf(r.tier) > PASS_TIER_ORDER.indexOf(t) ? r.tier : t), rows[0]!.tier);
+    const top = rows.reduce<PassTier>(
+      (t, r) => (PASS_TIER_ORDER.indexOf(r.tier) > PASS_TIER_ORDER.indexOf(t) ? r.tier : t),
+      rows[0]!.tier,
+    );
     const run = this.launch(
       file,
       {
@@ -992,7 +1220,12 @@ export class ScanRunner {
         plan_key: key,
         cap_usd: cap,
         estimate_usd: cap,
-        settings: { tier: top, effort: "per row", validator: cfg.validator, validate_tier: cfg.validator ? top : null },
+        settings: {
+          tier: top,
+          effort: "per row",
+          validator: cfg.validator,
+          validate_tier: cfg.validator ? top : null,
+        },
       },
       jobs,
       p.tree,
@@ -1027,7 +1260,10 @@ export class ScanRunner {
         // Unreadable: answer again rather than never.
       }
       if (prev !== null && parseStartResult(prev)?.request === req.id) return null;
-      const r = await this.startStage2({ key: req.key, ...(req.rows !== undefined ? { rows: req.rows } : {}) });
+      const r = await this.startStage2({
+        key: req.key,
+        ...(req.rows !== undefined ? { rows: req.rows } : {}),
+      });
       const result: Stage2StartResult = {
         request: req.id,
         key: req.key,
@@ -1041,7 +1277,9 @@ export class ScanRunner {
       } catch (err) {
         this.ports.log?.(`setup: the stage 2 start result could not be written: ${clean(err)}`);
       }
-      this.ports.log?.(`setup: the TUI asked to start stage 2 (${req.key}): ${r.ok ? `started ${r.run.id}` : r.errors.join("; ")}`);
+      this.ports.log?.(
+        `setup: the TUI asked to start stage 2 (${req.key}): ${r.ok ? `started ${r.run.id}` : r.errors.join("; ")}`,
+      );
       return result;
     } finally {
       this.consuming = false;
@@ -1074,16 +1312,30 @@ export class ScanRunner {
     }
     if (prev !== null && parseStopResult(prev)?.request === req.id) return null;
     const errors: string[] = [];
-    if (!this.active) errors.push(`no scan is running in this companion — ${req.run} is not in flight, so there is nothing to stop (the ledger resumes it when started again)`);
-    else if (this.active.id !== req.run) errors.push(`the scan in flight is ${this.active.id}, not ${req.run} — look at the report again`);
+    if (!this.active)
+      errors.push(
+        `no scan is running in this companion — ${req.run} is not in flight, so there is nothing to stop (the ledger resumes it when started again)`,
+      );
+    else if (this.active.id !== req.run)
+      errors.push(
+        `the scan in flight is ${this.active.id}, not ${req.run} — look at the report again`,
+      );
     else this.stop();
-    const result: ScanStopResult = { request: req.id, run: req.run, at: this.ports.clock().toISOString(), ok: errors.length === 0, errors };
+    const result: ScanStopResult = {
+      request: req.id,
+      run: req.run,
+      at: this.ports.clock().toISOString(),
+      ok: errors.length === 0,
+      errors,
+    };
     try {
       this.ports.state.write(SCAN_STOP_RESULT_FILE, `${JSON.stringify(result)}\n`);
     } catch (err) {
       this.ports.log?.(`setup: the scan stop result could not be written: ${clean(err)}`);
     }
-    this.ports.log?.(`setup: the TUI asked to stop ${req.run}: ${result.ok ? "stopped" : errors.join("; ")}`);
+    this.ports.log?.(
+      `setup: the TUI asked to stop ${req.run}: ${result.ok ? "stopped" : errors.join("; ")}`,
+    );
     return result;
   }
 
@@ -1108,7 +1360,11 @@ export class ScanRunner {
     const liveTotal = (): number => [...live.values()].reduce((n, v) => n + v, 0);
     const onCost = (caseId: string, spentSoFar: number): void => {
       live.set(caseId, spentSoFar);
-      if (run.cap_usd > EPS && !signal.aborted && run.spent_usd + liveTotal() >= run.cap_usd - EPS) {
+      if (
+        run.cap_usd > EPS &&
+        !signal.aborted &&
+        run.spent_usd + liveTotal() >= run.cap_usd - EPS
+      ) {
         capHit = true;
         abort.abort();
       }
@@ -1133,7 +1389,9 @@ export class ScanRunner {
         next++;
         reserved += est;
         live.set(plan.id, 0);
-        const spent = await this.runCase(file, run, job, tree, settings, signal, (v) => onCost(plan.id, v));
+        const spent = await this.runCase(file, run, job, tree, settings, signal, (v) =>
+          onCost(plan.id, v),
+        );
         live.delete(plan.id);
         reserved -= est;
         run.spent_usd += spent;
@@ -1155,11 +1413,16 @@ export class ScanRunner {
     await Promise.all(Array.from({ length: lanes }, lane));
 
     // Never started: `skipped` when the cap kept it out, `stopped` when a stop did.
-    for (const c of run.cases) if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
+    for (const c of run.cases)
+      if (c.status === "pending") c.status = capHit ? "skipped" : "stopped";
     this.reconcile(run, tree);
     await this.closeFixedTickets(run);
     const allDone = run.cases.every((c) => c.status === "done");
-    this.settle(file, run, allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial");
+    this.settle(
+      file,
+      run,
+      allDone ? "complete" : capHit ? "capped" : signal.aborted ? "stopped" : "partial",
+    );
   }
 
   /** One case, start to finish. Resolves with what it cost (its estimate
@@ -1194,12 +1457,20 @@ export class ScanRunner {
       const spent = o.cost_usd === undefined ? null : o.cost_usd;
       cost = cost === null || spent === null ? null : cost + spent;
     };
-    const report = (base: number) => (v: number): void => {
-      seen = Math.max(seen, base + v);
-      onCost(seen);
-    };
+    const report =
+      (base: number) =>
+      (v: number): void => {
+        seen = Math.max(seen, base + v);
+        onCost(seen);
+      };
     const outcome = await this.runOne(
-      { id: ctx.caseId, unit: plan.unit, agent: `${job.lens}--${job.tier}`, files: c.files, prompt: job.prompt(ctx) },
+      {
+        id: ctx.caseId,
+        unit: plan.unit,
+        agent: `${job.lens}--${job.tier}`,
+        files: c.files,
+        prompt: job.prompt(ctx),
+      },
       signal,
       report(0),
     );
@@ -1221,9 +1492,15 @@ export class ScanRunner {
     // not stored — they were not drawn from the code. Said on the run, the
     // way a failed validator is, so a cheap empty lens cannot pass as a
     // quiet one.
-    const unread = unreadFocus(outcome.reads, plan.files.map((f) => f.path), tree.root);
+    const unread = unreadFocus(
+      outcome.reads,
+      plan.files.map((f) => f.path),
+      tree.root,
+    );
     if (unread !== null) {
-      run.problems.push(`case ${plan.id}: ${job.lens} — ${unread}; not a reading (not coverage, not a price sample) — it will be read again`);
+      run.problems.push(
+        `case ${plan.id}: ${job.lens} — ${unread}; not a reading (not coverage, not a price sample) — it will be read again`,
+      );
       return finish("failed", unread);
     }
 
@@ -1256,7 +1533,11 @@ export class ScanRunner {
         dropped++;
         continue;
       }
-      anchored.push({ cand, code: normalizeCode(lines), quoted: evidenceQuotesAnchor(cand.evidence, lines) });
+      anchored.push({
+        cand,
+        code: normalizeCode(lines),
+        quoted: evidenceQuotesAnchor(cand.evidence, lines),
+      });
     }
 
     // The validator, when this scan runs one, is the SKEPTIC (owner ruling
@@ -1268,7 +1549,12 @@ export class ScanRunner {
     // validator that failed judges nothing: its findings are kept with no
     // tier (unknown), never a guessed one.
     let validated = false;
-    let kept: KeptFinding[] = anchored.map((a) => ({ ...a, validity: null, scenario: null, doubt: null }));
+    let kept: KeptFinding[] = anchored.map((a) => ({
+      ...a,
+      validity: null,
+      scenario: null,
+      doubt: null,
+    }));
     if (settings.scan.validator && anchored.length > 0) {
       const v = await this.runOne(
         {
@@ -1276,7 +1562,13 @@ export class ScanRunner {
           unit: plan.unit,
           agent: validatorAgent(job.tier),
           files: c.files,
-          prompt: scanValidatorPrompt(plan, anchored.map((a) => a.cand), ctx, job.lens, job.label),
+          prompt: scanValidatorPrompt(
+            plan,
+            anchored.map((a) => a.cand),
+            ctx,
+            job.lens,
+            job.label,
+          ),
         },
         signal,
         report(cost ?? seen),
@@ -1286,7 +1578,9 @@ export class ScanRunner {
       const read = v.ok ? parseValidatorAnswer(v.output, tree.root) : null;
       if (read === null || !read.answered) {
         const why = v.ok ? "it answered with no survivor, NONE, DOUBTED or KILLED" : v.reason;
-        run.problems.push(`case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`);
+        run.problems.push(
+          `case ${plan.id}: the validator failed (${why}) — its findings are kept unvalidated`,
+        );
       } else {
         validated = true;
         const judged: KeptFinding[] = [];
@@ -1297,7 +1591,13 @@ export class ScanRunner {
         // neither upheld nor unmentioned — silently dropped, a kill.
         const upheld = new Set<ScanCandidate>();
         const standsFor = (s: ScanCandidate): ScanCandidate | undefined => {
-          const open = anchored.filter((a) => !upheld.has(a.cand) && a.cand.path === s.path && a.cand.start <= s.end && s.start <= a.cand.end);
+          const open = anchored.filter(
+            (a) =>
+              !upheld.has(a.cand) &&
+              a.cand.path === s.path &&
+              a.cand.start <= s.end &&
+              s.start <= a.cand.end,
+          );
           return (open.find((a) => a.cand.kind === s.kind) ?? open[0])?.cand;
         };
         for (const s of read.survivors) {
@@ -1326,7 +1626,9 @@ export class ScanRunner {
         const doubted = new Set<ScanCandidate>();
         for (const d of [...read.doubted, ...read.killed]) {
           const names = (a: (typeof anchored)[number]): boolean =>
-            a.cand.path === d.path && (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) && !doubted.has(a.cand);
+            a.cand.path === d.path &&
+            (d.line === null || (d.line >= a.cand.start && d.line <= a.cand.end)) &&
+            !doubted.has(a.cand);
           // A candidate no survivor stands for first: two candidates on the
           // same lines (a duplicate the skeptic doubts beside the one it
           // upholds) must not have the doubt land on the upheld one — its
@@ -1335,41 +1637,53 @@ export class ScanRunner {
           const hit = anchored.find((a) => names(a) && !upheld.has(a.cand)) ?? anchored.find(names);
           if (!hit) continue;
           doubted.add(hit.cand);
-          judged.push({ ...hit, validity: "doubtful", scenario: null, doubt: { word: d.word, reason: d.reason, class: d.class } });
+          judged.push({
+            ...hit,
+            validity: "doubtful",
+            scenario: null,
+            doubt: { word: d.word, reason: d.reason, class: d.class },
+          });
         }
         // Never mentioned — neither upheld nor doubted: kept, doubtful.
         for (const a of anchored) {
           if (upheld.has(a.cand) || doubted.has(a.cand)) continue;
-          judged.push({ ...a, validity: "doubtful", scenario: null, doubt: { word: "not-upheld", reason: UNMENTIONED_REASON, class: null } });
+          judged.push({
+            ...a,
+            validity: "doubtful",
+            scenario: null,
+            doubt: { word: "not-upheld", reason: UNMENTIONED_REASON, class: null },
+          });
         }
         kept = judged;
       }
     }
 
     const blobOf = new Map(tree.files.map((f) => [f.path, f.blob]));
-    const all: ReportedFinding[] = kept.map(({ cand, code, quoted, validity, scenario, doubt }) => ({
-      fingerprint: findingFingerprint({ path: cand.path, lens: job.lens, kind: cand.kind, code }),
-      unit: job.unitOf(cand.path),
-      path: cand.path,
-      blob: blobOf.get(cand.path) ?? null,
-      start: cand.start,
-      end: cand.end,
-      lens: job.lens,
-      kind: cand.kind,
-      severity: cand.severity,
-      confidence: cand.confidence,
-      reachability: cand.reachability,
-      capped_from: cand.capped_from,
-      anchor_quoted: quoted,
-      claim: cand.claim,
-      evidence: cand.evidence,
-      fix: cand.fix,
-      detail: cand.detail,
-      validated,
-      doubt,
-      validity,
-      scenario,
-    }));
+    const all: ReportedFinding[] = kept.map(
+      ({ cand, code, quoted, validity, scenario, doubt }) => ({
+        fingerprint: findingFingerprint({ path: cand.path, lens: job.lens, kind: cand.kind, code }),
+        unit: job.unitOf(cand.path),
+        path: cand.path,
+        blob: blobOf.get(cand.path) ?? null,
+        start: cand.start,
+        end: cand.end,
+        lens: job.lens,
+        kind: cand.kind,
+        severity: cand.severity,
+        confidence: cand.confidence,
+        reachability: cand.reachability,
+        capped_from: cand.capped_from,
+        anchor_quoted: quoted,
+        claim: cand.claim,
+        evidence: cand.evidence,
+        fix: cand.fix,
+        detail: cand.detail,
+        validated,
+        doubt,
+        validity,
+        scenario,
+      }),
+    );
     // One finding per fingerprint: the validator may list a candidate as a
     // survivor AND doubt it — the doubt wins, and it is counted once.
     const byFp = new Map<string, ReportedFinding>();
@@ -1420,7 +1734,9 @@ export class ScanRunner {
     try {
       this.ledger.record(rows);
     } catch (err) {
-      run.problems.push(`case ${plan.id}: the ledger refused its rows (${clean(err)}) — it will be read again`);
+      run.problems.push(
+        `case ${plan.id}: the ledger refused its rows (${clean(err)}) — it will be read again`,
+      );
       return finish("failed", "not recorded in the coverage ledger");
     }
     return finish("done", null);
@@ -1438,21 +1754,30 @@ export class ScanRunner {
     }
   }
 
-  private storeSuggestions(run: ScanRun, unit: string, found: readonly ScanSuggestion[], at: string): void {
+  private storeSuggestions(
+    run: ScanRun,
+    unit: string,
+    found: readonly ScanSuggestion[],
+    at: string,
+  ): void {
     if (found.length === 0) return;
     const { suggestions, error } = this.suggestions();
     if (error !== null) {
       run.problems.push(`deep-lens suggestions not stored: ${error}`);
       return;
     }
-    const key = (s: { unit: string; lens: string; files: string[] }): string => `${s.unit}\0${s.lens}\0${[...s.files].sort().join(",")}`;
+    const key = (s: { unit: string; lens: string; files: string[] }): string =>
+      `${s.unit}\0${s.lens}\0${[...s.files].sort().join(",")}`;
     const byKey = new Map(suggestions.map((s) => [key(s), s]));
     for (const s of found) {
       const row: StoredSuggestion = { ...s, unit, sha: run.sha, run: run.id, at };
       byKey.set(key(row), row);
     }
     try {
-      this.ports.state.write(SUGGESTIONS_FILE, `${JSON.stringify({ version: RUN_VERSION, suggestions: [...byKey.values()] }, null, 1)}\n`);
+      this.ports.state.write(
+        SUGGESTIONS_FILE,
+        `${JSON.stringify({ version: RUN_VERSION, suggestions: [...byKey.values()] }, null, 1)}\n`,
+      );
     } catch (err) {
       run.problems.push(`deep-lens suggestions not stored: ${clean(err)}`);
     }
@@ -1472,7 +1797,9 @@ export class ScanRunner {
         run: { run: run.id, sha: run.sha, at: this.ports.clock().toISOString() },
       });
     } catch (err) {
-      run.problems.push(`the findings were not reconciled (${clean(err)}) — the next run's end does it`);
+      run.problems.push(
+        `the findings were not reconciled (${clean(err)}) — the next run's end does it`,
+      );
     }
   }
 
@@ -1485,7 +1812,9 @@ export class ScanRunner {
       run.tickets_closed = r.closed.length;
       for (const p of r.problems) run.problems.push(`ticket not closed: ${p}`);
     } catch (err) {
-      run.problems.push(`the fixed findings' tickets were not closed (${clean(err)}) — the next run's end retries`);
+      run.problems.push(
+        `the fixed findings' tickets were not closed (${clean(err)}) — the next run's end retries`,
+      );
     }
   }
 

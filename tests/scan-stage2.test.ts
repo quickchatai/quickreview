@@ -17,7 +17,12 @@ import type { CaseOutcome, CaseSpec } from "../src/setup/engine.js";
 import { FindingsStore } from "../src/setup/findings.js";
 import { Ledger, LEDGER_FILE, type LedgerEntry, type LedgerFile } from "../src/setup/ledger.js";
 import { renderProposal } from "../extensions/setup-scan.js";
-import { ScanRunner, type ScanPorts, type ScanSource, type ScanTree } from "../src/setup/scanrun.js";
+import {
+  ScanRunner,
+  type ScanPorts,
+  type ScanSource,
+  type ScanTree,
+} from "../src/setup/scanrun.js";
 import { pairTests, type Stage2RowRequest } from "../src/setup/stage2.js";
 import {
   clickStartStage2,
@@ -35,7 +40,8 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
 
-const lines = (n: number, word = "x"): string => Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
+const lines = (n: number, word = "x"): string =>
+  Array.from({ length: n }, (_, i) => `${word}_${i + 1} = ${i + 1}`).join("\n") + "\n";
 
 const TREE: Record<string, string> = {
   "app/models.py": lines(10, "model"),
@@ -53,11 +59,19 @@ const TREE: Record<string, string> = {
 };
 
 const CUT: UnitCut = {
-  units: ["app", "lib", "web", "gen", "tools", "tests"].map((u) => ({ name: u, roots: [u], kind: "directory", note: "" })),
+  units: ["app", "lib", "web", "gen", "tools", "tests"].map((u) => ({
+    name: u,
+    roots: [u],
+    kind: "directory",
+    note: "",
+  })),
   ignored: [],
 };
 
-const blob = (text: string): string => createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0${text}`).digest("hex");
+const blob = (text: string): string =>
+  createHash("sha1")
+    .update(`blob ${Buffer.byteLength(text)}\0${text}`)
+    .digest("hex");
 const SHA = "1".repeat(40);
 
 function fakeSource(files: Record<string, string>): ScanSource {
@@ -74,7 +88,10 @@ function fakeSource(files: Record<string, string>): ScanSource {
         lines: (p) => (files[p] === undefined ? null : files[p]!.split("\n").length - 1),
       },
     }),
-    list: (sha) => (sha === SHA ? Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) })) : null),
+    list: (sha) =>
+      sha === SHA
+        ? Object.entries(files).map(([path, text]) => ({ path, blob: blob(text) }))
+        : null,
   };
 }
 
@@ -82,17 +99,28 @@ function fakeSource(files: Record<string, string>): ScanSource {
  * deep lens with one finding on each focus file's lines 2-3. */
 function answer(spec: CaseSpec): string {
   const lens = spec.agent.replace(/--.*$/, "");
-  if (lens === "pass-scan") return `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE\n`;
+  if (lens === "pass-scan")
+    return `FINDINGS pass-scan SCAN ${spec.id} @sha\nNONE\n\nSUGGEST NONE\n`;
   const focus = spec.prompt.split("Focus files")[1]!.split("\n\n")[0]!;
   const paths = [...focus.matchAll(/^- (\S+) \(/gm)].map((m) => m[1]!);
   return [
     `FINDINGS ${lens} SCAN ${spec.id} @sha`,
-    ...paths.flatMap((p) => [`- path: ${p}`, "  line: 2-3", "  kind: security", "  severity: P1", `  claim: ${p} trusts its caller`]),
+    ...paths.flatMap((p) => [
+      `- path: ${p}`,
+      "  line: 2-3",
+      "  kind: security",
+      "  severity: P1",
+      `  claim: ${p} trusts its caller`,
+    ]),
   ].join("\n");
 }
 
 interface FakeRunner {
-  run(spec: CaseSpec, signal: AbortSignal, onCost?: (spentSoFar: number) => void): Promise<CaseOutcome>;
+  run(
+    spec: CaseSpec,
+    signal: AbortSignal,
+    onCost?: (spentSoFar: number) => void,
+  ): Promise<CaseOutcome>;
   specs: CaseSpec[];
 }
 
@@ -136,7 +164,8 @@ function ports(
   };
 }
 
-const ledger = (): LedgerFile => JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
+const ledger = (): LedgerFile =>
+  JSON.parse(readFileSync(join(stateDir, LEDGER_FILE), "utf8")) as LedgerFile;
 
 /** Stage 1's calibration run: 3 units, $0.05 over 150 lines. */
 async function calibrate(s: ScanRunner): Promise<void> {
@@ -185,7 +214,9 @@ describe("pairing tests with their code", () => {
       "svc/tests/test_billing.py",
       "other/tests/test_billing.py",
     ];
-    expect(pairTests("src/main/java/acme/Billing.java", t)).toEqual(["src/test/java/acme/BillingTest.java"]);
+    expect(pairTests("src/main/java/acme/Billing.java", t)).toEqual([
+      "src/test/java/acme/BillingTest.java",
+    ]);
     expect(pairTests("svc/billing.py", t)).toEqual(["svc/tests/test_billing.py"]);
     expect(pairTests("svc/tests/test_billing.py", t)).toEqual([]);
   });
@@ -205,13 +236,25 @@ describe("a stage 2 proposal", () => {
     const before = cases.specs.length;
     const p = await propose(s, [CROSS]);
     const row = p.rows[0]!;
-    expect(row).toMatchObject({ id: "row-1", lens: "pass-security", tier: "sol-med", status: "run", units: ["app", "lib", "tests"] });
+    expect(row).toMatchObject({
+      id: "row-1",
+      lens: "pass-security",
+      tier: "sol-med",
+      status: "run",
+      units: ["app", "lib", "tests"],
+    });
     expect(row.files.map((f) => f.path)).toEqual(["app/views.py", "lib/util.py"]);
-    expect(row.tests.map((f) => f.path)).toEqual(["app/tests/test_views.py", "tests/lib/test_util.py"]);
+    expect(row.tests.map((f) => f.path)).toEqual([
+      "app/tests/test_views.py",
+      "tests/lib/test_util.py",
+    ]);
     expect(row.lines).toBe(20 + 30 + 8 + 12);
     // Never measured, nothing else at this tier/effort: stage 1's rate × the factor.
     expect(row.price.basis).toBe("extrapolated");
-    expect(row.estimate_usd).toBeCloseTo((70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor, 9);
+    expect(row.estimate_usd).toBeCloseTo(
+      (70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor,
+      9,
+    );
     expect(p.cap_usd).toBe(row.estimate_usd);
     expect(cases.specs.length).toBe(before);
     const stored = JSON.parse(readFileSync(join(stateDir, STAGE2_FILE), "utf8"));
@@ -227,12 +270,17 @@ describe("a stage 2 proposal", () => {
     const p = await propose(s, [CROSS]);
     expect(p.rows[0]!.effort).toBe("low");
     expect(p.rows[0]!.price).toMatchObject({ basis: "extrapolated", from: "pass-scan" });
-    expect(p.rows[0]!.estimate_usd).toBeCloseTo((70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor, 9);
+    expect(p.rows[0]!.estimate_usd).toBeCloseTo(
+      (70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor,
+      9,
+    );
   });
 
   it("refuses, as a whole, a row naming a test, an excluded or missing file, a non-deep or switched-off lens, or a tier the lens is not built at", async () => {
     const s = new ScanRunner(
-      ports(runner(), { lenses: { "pass-ui": { enabled: false }, "pass-contracts": { min_tier: "sol-high" } } }),
+      ports(runner(), {
+        lenses: { "pass-ui": { enabled: false }, "pass-contracts": { min_tier: "sol-high" } },
+      }),
     );
     await calibrate(s);
     const r = await s.proposeStage2({
@@ -256,18 +304,28 @@ describe("a stage 2 proposal", () => {
     expect(errors[2]).toMatch(/^row-4: "pass-intent" is not a deep lens/);
     expect(errors[3]).toMatch(/^row-5: pass-scan is stage 1's lens/);
     expect(errors[4]).toMatch(/^row-6: "pass-ui" is switched off/);
-    expect(errors[5]).toMatch(/^row-7: pass-contracts cannot run at "sol-med" here — one of: sol-high/);
-    expect(errors[6]).toMatch(/^row-8: pass-data-safety cannot run at "sol-med" here — one of: sol-high/);
+    expect(errors[5]).toMatch(
+      /^row-7: pass-contracts cannot run at "sol-med" here — one of: sol-high/,
+    );
+    expect(errors[6]).toMatch(
+      /^row-8: pass-data-safety cannot run at "sol-med" here — one of: sol-high/,
+    );
     expect(errors[7]).toMatch(/^row-9: no reason/);
     // Nothing stored from a refused proposal.
     expect(() => readFileSync(join(stateDir, STAGE2_FILE))).toThrow();
   });
 
   it("names migrations outright, and gives a lens with a floor its floor by default", async () => {
-    const s = new ScanRunner(ports(runner(), { lenses: { "pass-contracts": { min_tier: "sol-high" } } }));
+    const s = new ScanRunner(
+      ports(runner(), { lenses: { "pass-contracts": { min_tier: "sol-high" } } }),
+    );
     await calibrate(s);
     const p = await propose(s, [
-      { lens: "pass-data-safety", files: ["app/models.py", "app/migrations/0001_init.py"], reason: "the model and its migration" },
+      {
+        lens: "pass-data-safety",
+        files: ["app/models.py", "app/migrations/0001_init.py"],
+        reason: "the model and its migration",
+      },
       { lens: "pass-contracts", files: ["web/index.ts"], reason: "the exported API" },
     ]);
     expect(p.rows.map((r) => r.tier)).toEqual(["sol-high", "sol-high"]);
@@ -286,7 +344,9 @@ describe("a stage 2 proposal", () => {
   it("refuses a row of several files bigger than one case, paired tests included in the count", async () => {
     const s = new ScanRunner(ports(runner(), { scan: { case_max_lines: 40 } }));
     await calibrate(s);
-    const r = await s.proposeStage2({ rows: [{ lens: "pass-security", files: ["app/views.py", "lib/util.py"], reason: "two" }] });
+    const r = await s.proposeStage2({
+      rows: [{ lens: "pass-security", files: ["app/views.py", "lib/util.py"], reason: "two" }],
+    });
     expect(!r.ok && r.errors[0]).toMatch(/over one case .* split it/);
     // ONE file over one case is not refused: it is cut into line ranges
     // (tests/scan-oversize.test.ts).
@@ -333,14 +393,24 @@ describe("starting stage 2 on the operator's word", () => {
 
     const spec = cases.specs.at(-1)!;
     expect(spec.agent).toBe("pass-security--sol-med");
-    expect(spec.files).toEqual(["app/views.py", "lib/util.py", "app/tests/test_views.py", "tests/lib/test_util.py"]);
+    expect(spec.files).toEqual([
+      "app/views.py",
+      "lib/util.py",
+      "app/tests/test_views.py",
+      "tests/lib/test_util.py",
+    ]);
     expect(spec.prompt).toMatch(/stage 2, row-1: pass-security across units app, lib, tests/);
     expect(spec.prompt).toMatch(/Why this case: the views trust util's token check/);
     expect(spec.prompt).toMatch(/Their tests \(2 — read them for the contract/);
 
     const run = s.status().run!;
     expect(run).toMatchObject({ mode: "stage2", state: "complete", plan_key: p.key });
-    expect(run.cases[0]).toMatchObject({ lens: "pass-security", tier: "sol-med", units: ["app", "lib", "tests"], findings: 2 });
+    expect(run.cases[0]).toMatchObject({
+      lens: "pass-security",
+      tier: "sol-med",
+      units: ["app", "lib", "tests"],
+      findings: 2,
+    });
 
     const { findings } = new FindingsStore(stateHomeFs(stateDir)).list({ lens: "pass-security" });
     expect(findings.map((f) => [f.path, f.unit]).sort()).toEqual([
@@ -348,8 +418,15 @@ describe("starting stage 2 on the operator's word", () => {
       ["lib/util.py", "lib"],
     ]);
     const deep = ledger().entries.filter((e) => e.lens === "pass-security");
-    expect(deep.map((e) => e.path).sort()).toEqual(["app/tests/test_views.py", "app/views.py", "lib/util.py", "tests/lib/test_util.py"]);
-    expect(deep.every((e) => e.tier === "sol-med" && e.effort === "tier" && e.sha === SHA)).toBe(true);
+    expect(deep.map((e) => e.path).sort()).toEqual([
+      "app/tests/test_views.py",
+      "app/views.py",
+      "lib/util.py",
+      "tests/lib/test_util.py",
+    ]);
+    expect(deep.every((e) => e.tier === "sol-med" && e.effort === "tier" && e.sha === SHA)).toBe(
+      true,
+    );
     expect(s.status().ledger).toMatchObject({ deep_files: 4 });
   });
 
@@ -375,7 +452,10 @@ describe("starting stage 2 on the operator's word", () => {
 
     const only = await propose(s, [CROSS]);
     expect(only.runnable).toBe(0);
-    expect(await s.startStage2({ key: only.key })).toMatchObject({ ok: false, errors: [expect.stringMatching(/nothing to run/)] });
+    expect(await s.startStage2({ key: only.key })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/nothing to run/)],
+    });
   });
 
   it("an unmeasured row is priced from a factor LEARNED at the other validator setting; the run keeps its approved price, the NEXT proposal is measured", async () => {
@@ -384,9 +464,25 @@ describe("starting stage 2 on the operator's word", () => {
     // Earlier runs with the skeptic ON: stage 1 at $0.50/kline (above this
     // run's skeptic-off stage 1 — the skeptic adds work), pass-security at
     // $1.50/kline — stage 2 cost 3× stage 1 there.
-    const past = (lens: string, tier: string, effort: string, usd: number, i: number): LedgerEntry => ({
-      path: `old/${lens}-${i}.py`, blob: `b${i}`, lens, tier, effort, validator: true, sha: SHA,
-      lines: 1000, cost_usd: usd, run: "scan-old", case: `c${i}`, at: "2026-09-01T00:00:00Z",
+    const past = (
+      lens: string,
+      tier: string,
+      effort: string,
+      usd: number,
+      i: number,
+    ): LedgerEntry => ({
+      path: `old/${lens}-${i}.py`,
+      blob: `b${i}`,
+      lens,
+      tier,
+      effort,
+      validator: true,
+      sha: SHA,
+      lines: 1000,
+      cost_usd: usd,
+      run: "scan-old",
+      case: `c${i}`,
+      at: "2026-09-01T00:00:00Z",
     });
     new Ledger(stateHomeFs(stateDir)).record([
       past("pass-scan", SCAN_DEFAULTS.tier, SCAN_DEFAULTS.effort, 0.5, 1),
@@ -394,11 +490,19 @@ describe("starting stage 2 on the operator's word", () => {
     ]);
     const p = await propose(s, [CROSS]);
     const row = p.rows[0]!;
-    expect(row.price).toMatchObject({ basis: "learned", from: "pass-security", learned: { validator: true } });
+    expect(row.price).toMatchObject({
+      basis: "learned",
+      from: "pass-security",
+      learned: { validator: true },
+    });
     expect(row.estimate_usd).toBeCloseTo((70 / 1000) * STAGE1_RATE * 3, 9);
-    expect(row.estimate_usd).toBeLessThan((70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor);
+    expect(row.estimate_usd).toBeLessThan(
+      (70 / 1000) * STAGE1_RATE * SCAN_DEFAULTS.unmeasured_rate_factor,
+    );
     const shown = renderProposal(storedProposal());
-    expect(shown).toMatch(/row-1: .*\(estimate: learned from pass-security with the validator on \(×3\.00 stage 1\)/);
+    expect(shown).toMatch(
+      /row-1: .*\(estimate: learned from pass-security with the validator on \(×3\.00 stage 1\)/,
+    );
     expect(shown).toMatch(/Priced by measurement: 0 row\(s\); by estimate: 1 row\(s\)\./);
 
     await s.startStage2({ key: p.key });
@@ -406,10 +510,14 @@ describe("starting stage 2 on the operator's word", () => {
     // The approved plan stood: its hard stop is the learned estimate, whatever the case measured.
     expect(s.status().run).toMatchObject({ mode: "stage2", state: "complete", cap_usd: p.cap_usd });
 
-    const next = await propose(s, [{ lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
+    const next = await propose(s, [
+      { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" },
+    ]);
     expect(next.rows[0]!.price.basis).toBe("measured");
     expect(next.rows[0]!.price.rate.usd_per_kline).toBeCloseTo((0.04 / 70) * 1000, 9);
-    expect(renderProposal(storedProposal())).toMatch(/Priced by measurement: 1 row\(s\); by estimate: 0 row\(s\)\./);
+    expect(renderProposal(storedProposal())).toMatch(
+      /Priced by measurement: 1 row\(s\); by estimate: 0 row\(s\)\./,
+    );
   });
 
   it("refuses no key, a key that is not the latest proposal, and a proposal whose price moved since it was shown", async () => {
@@ -417,25 +525,38 @@ describe("starting stage 2 on the operator's word", () => {
     await calibrate(s);
     expect(await s.startStage2({})).toMatchObject({ ok: false });
     const first = await propose(s, [CROSS]);
-    const second = await propose(s, [{ lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
-    expect(await s.startStage2({ key: first.key })).toMatchObject({ ok: false, errors: [expect.stringMatching(/not the latest/)] });
+    const second = await propose(s, [
+      { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" },
+    ]);
+    expect(await s.startStage2({ key: first.key })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/not the latest/)],
+    });
     // Stage 1 reads tools/ — the stage-1 rate moves, so the extrapolated price does.
     const p1 = await s.preview();
     await s.start({ key: p1.ok ? p1.preview.key : "" });
     await s.idle();
-    expect(await s.startStage2({ key: second.key })).toMatchObject({ ok: false, errors: [expect.stringMatching(/plan changed since the proposal/)] });
+    expect(await s.startStage2({ key: second.key })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/plan changed since the proposal/)],
+    });
   });
 
   it("stops HARD at the approved estimate: a row whose actuals outrun it ends the run, later rows are skipped", async () => {
     const s = new ScanRunner(ports(runner(5), { scan: { concurrency: 1 } }));
     await calibrate(s);
-    const p = await propose(s, [CROSS, { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
+    const p = await propose(s, [
+      CROSS,
+      { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" },
+    ]);
     await s.startStage2({ key: p.key });
     await s.idle();
     const run = s.status().run!;
     expect(run.state).toBe("capped");
     expect(run.cases.map((c) => c.status)).toEqual(["done", "skipped"]);
-    expect(ledger().entries.some((e) => e.path === "web/index.ts" && e.lens === "pass-security")).toBe(false);
+    expect(
+      ledger().entries.some((e) => e.path === "web/index.ts" && e.lens === "pass-security"),
+    ).toBe(false);
   });
 });
 
@@ -447,18 +568,29 @@ describe("a deep lens that read nothing is not a reading (scan-loop round 7: pas
       run: async (spec, signal, onCost) => {
         const out = await inner.run(spec, signal, onCost);
         if (!out.ok || !spec.agent.startsWith("pass-concurrency--")) return out;
-        return { ok: true, output: `FINDINGS pass-concurrency SCAN ${spec.id} @sha\nNONE\n`, cost_usd: 0.028, reads: [] };
+        return {
+          ok: true,
+          output: `FINDINGS pass-concurrency SCAN ${spec.id} @sha\nNONE\n`,
+          cost_usd: 0.028,
+          reads: [],
+        };
       },
     };
     const s = new ScanRunner(ports(cases));
     await calibrate(s);
-    const row = { lens: "pass-concurrency", files: ["lib/util.py"], reason: "a read-then-write on the cache" };
+    const row = {
+      lens: "pass-concurrency",
+      files: ["lib/util.py"],
+      reason: "a read-then-write on the cache",
+    };
     const p = await propose(s, [row]);
     expect((await s.startStage2({ key: p.key })).ok).toBe(true);
     await s.idle();
     const run = s.status().run!;
     expect(run.cases[0]).toMatchObject({ lens: "pass-concurrency", status: "failed" });
-    expect(run.problems.some((m) => /pass-concurrency/.test(m) && /not a reading/.test(m))).toBe(true);
+    expect(run.problems.some((m) => /pass-concurrency/.test(m) && /not a reading/.test(m))).toBe(
+      true,
+    );
     expect(ledger().entries.some((e) => e.lens === "pass-concurrency")).toBe(false);
     // Not a price sample: the next proposal still has no measured rate for it.
     const again = await propose(s, [row]);
@@ -489,16 +621,26 @@ describe("starting stage 2 from the TUI", () => {
     expect(stage2ClickOutcome(stateDir, click.request)).toBe(`stage 2 started: ${result!.run}`);
     // Answered once: the same request never starts a second run.
     expect(await s.consumeStage2Request()).toBeNull();
-    expect(JSON.parse(readFileSync(join(stateDir, STAGE2_RESULT_FILE), "utf8")).request).toBe(click.request);
+    expect(JSON.parse(readFileSync(join(stateDir, STAGE2_RESULT_FILE), "utf8")).request).toBe(
+      click.request,
+    );
   });
 
   it("a click on a proposal that moved is refused at the TUI; one that moved after the click is refused by the companion", async () => {
     const s = new ScanRunner(ports(runner()));
     await calibrate(s);
-    expect(clickStartStage2(stateDir, "whatever")).toMatchObject({ ok: false, line: expect.stringMatching(/no stage 2 proposal/) });
+    expect(clickStartStage2(stateDir, "whatever")).toMatchObject({
+      ok: false,
+      line: expect.stringMatching(/no stage 2 proposal/),
+    });
     const first = await propose(s, [CROSS]);
-    const second = await propose(s, [{ lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
-    expect(clickStartStage2(stateDir, first.key)).toMatchObject({ ok: false, line: expect.stringMatching(/changed since it was shown/) });
+    const second = await propose(s, [
+      { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" },
+    ]);
+    expect(clickStartStage2(stateDir, first.key)).toMatchObject({
+      ok: false,
+      line: expect.stringMatching(/changed since it was shown/),
+    });
 
     const click = clickStartStage2(stateDir, second.key);
     expect(click.ok).toBe(true);
@@ -515,7 +657,10 @@ describe("starting stage 2 from the TUI", () => {
     const cases = runner();
     const s = new ScanRunner(ports(cases));
     await calibrate(s);
-    const p = await propose(s, [CROSS, { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" }]);
+    const p = await propose(s, [
+      CROSS,
+      { lens: "pass-security", files: ["web/index.ts"], reason: "the client token" },
+    ]);
     expect(p.rows.map((r) => r.status)).toEqual(["run", "run"]);
     const keptCap = p.rows[1]!.estimate_usd;
 
@@ -523,7 +668,9 @@ describe("starting stage 2 from the TUI", () => {
     expect(click.ok).toBe(true);
     if (!click.ok) return;
     expect(click.line).toContain(`1 row(s), hard stop $${keptCap.toFixed(2)}`);
-    expect(JSON.parse(readFileSync(join(stateDir, STAGE2_START_FILE), "utf8")).rows).toEqual(["row-2"]);
+    expect(JSON.parse(readFileSync(join(stateDir, STAGE2_START_FILE), "utf8")).rows).toEqual([
+      "row-2",
+    ]);
 
     const before = cases.specs.length;
     expect(await s.consumeStage2Request()).toMatchObject({ ok: true });
@@ -531,7 +678,9 @@ describe("starting stage 2 from the TUI", () => {
     const run = s.status().run!;
     expect(run.cases.map((c) => c.id)).toEqual(["row-2"]);
     expect(run.cap_usd).toBeCloseTo(keptCap, 9);
-    expect(cases.specs.slice(before).map((c) => c.files)).toEqual([["web/index.ts", "web/index.test.ts"]]);
+    expect(cases.specs.slice(before).map((c) => c.files)).toEqual([
+      ["web/index.ts", "web/index.test.ts"],
+    ]);
   });
 
   it("a narrowed click can never name a row that was not runnable, nor keep nothing — at the TUI and at the engine", async () => {
@@ -544,9 +693,18 @@ describe("starting stage 2 from the TUI", () => {
       { budget_usd: (70 / 1000) * perKline + 1e-6 },
     );
     expect(p.rows.map((r) => r.status)).toEqual(["run", "over-budget"]);
-    expect(clickStartStage2(stateDir, p.key, undefined, ["row-2"])).toMatchObject({ ok: false, line: expect.stringMatching(/not a runnable row.*row-2/) });
-    expect(clickStartStage2(stateDir, p.key, undefined, [])).toMatchObject({ ok: false, line: expect.stringMatching(/keep at least one/) });
-    expect(await s.startStage2({ key: p.key, rows: ["row-2"] })).toMatchObject({ ok: false, errors: [expect.stringMatching(/not a runnable row/)] });
+    expect(clickStartStage2(stateDir, p.key, undefined, ["row-2"])).toMatchObject({
+      ok: false,
+      line: expect.stringMatching(/not a runnable row.*row-2/),
+    });
+    expect(clickStartStage2(stateDir, p.key, undefined, [])).toMatchObject({
+      ok: false,
+      line: expect.stringMatching(/keep at least one/),
+    });
+    expect(await s.startStage2({ key: p.key, rows: ["row-2"] })).toMatchObject({
+      ok: false,
+      errors: [expect.stringMatching(/not a runnable row/)],
+    });
     expect(await s.startStage2({ key: p.key, rows: "row-1" })).toMatchObject({ ok: false });
     expect(s.status().run!.mode).toBe("calibration");
   });

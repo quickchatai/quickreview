@@ -92,60 +92,67 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     },
   ];
 
-  it("only the recorded modules are unreachable from wire.ts, cli.ts or an extension", { timeout: HEAVY_TIMEOUT_MS }, () => {
-    const files = tsFiles(join(ROOT, "src"));
-    const importsOf = (f: string): string[] =>
-      [...stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)]
-        .map((m) => join(f, "..", `${m[1]!}.ts`))
-        .filter((p) => files.includes(p));
+  it(
+    "only the recorded modules are unreachable from wire.ts, cli.ts or an extension",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const files = tsFiles(join(ROOT, "src"));
+      const importsOf = (f: string): string[] =>
+        [...stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)]
+          .map((m) => join(f, "..", `${m[1]!}.ts`))
+          .filter((p) => files.includes(p));
 
-    // The roots: the two process entrypoints, the operator one-shots, and
-    // whatever the pi extensions reach into. `smoke-session.ts` is a root
-    // rather than an orphan because `npm run smoke:session` launches it;
-    // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
-    // (bench/aacr/in-container.sh) launches it.
-    const roots = ["src/wire.ts", "src/cli.ts", "src/smoke-session.ts", "src/bench/cli.ts"].map(
-      (p) => join(ROOT, p),
-    );
-    for (const f of tsFiles(join(ROOT, "extensions"))) {
-      for (const m of stripComments(readFileSync(f, "utf8")).matchAll(/["'](\.[^"']+)\.js["']/g)) {
-        const p = join(f, "..", `${m[1]!}.ts`);
-        if (files.includes(p)) roots.push(p);
-      }
-    }
-    for (const r of roots) {
-      expect(files, `${relative(ROOT, r)} is named as an entrypoint but does not exist`).toContain(
-        r,
+      // The roots: the two process entrypoints, the operator one-shots, and
+      // whatever the pi extensions reach into. `smoke-session.ts` is a root
+      // rather than an orphan because `npm run smoke:session` launches it;
+      // `bench/cli.ts` because the qcr-bench sandbox image's entrypoint
+      // (bench/aacr/in-container.sh) launches it.
+      const roots = ["src/wire.ts", "src/cli.ts", "src/smoke-session.ts", "src/bench/cli.ts"].map(
+        (p) => join(ROOT, p),
       );
-    }
+      for (const f of tsFiles(join(ROOT, "extensions"))) {
+        for (const m of stripComments(readFileSync(f, "utf8")).matchAll(
+          /["'](\.[^"']+)\.js["']/g,
+        )) {
+          const p = join(f, "..", `${m[1]!}.ts`);
+          if (files.includes(p)) roots.push(p);
+        }
+      }
+      for (const r of roots) {
+        expect(
+          files,
+          `${relative(ROOT, r)} is named as an entrypoint but does not exist`,
+        ).toContain(r);
+      }
 
-    const seen = new Set<string>();
-    const queue = [...roots];
-    while (queue.length > 0) {
-      const f = queue.shift()!;
-      if (seen.has(f)) continue;
-      seen.add(f);
-      queue.push(...importsOf(f));
-    }
-    // If the graph walk breaks, everything is "unreachable" and the equality
-    // below fails loudly rather than passing on an empty set — but a partial
-    // break could still look plausible, so pin that most of src/ IS reached.
-    expect(
-      seen.size,
-      "the module graph walk reached almost nothing — the import scan broke",
-    ).toBeGreaterThan(files.length / 2);
+      const seen = new Set<string>();
+      const queue = [...roots];
+      while (queue.length > 0) {
+        const f = queue.shift()!;
+        if (seen.has(f)) continue;
+        seen.add(f);
+        queue.push(...importsOf(f));
+      }
+      // If the graph walk breaks, everything is "unreachable" and the equality
+      // below fails loudly rather than passing on an empty set — but a partial
+      // break could still look plausible, so pin that most of src/ IS reached.
+      expect(
+        seen.size,
+        "the module graph walk reached almost nothing — the import scan broke",
+      ).toBeGreaterThan(files.length / 2);
 
-    const unreachable = files
-      .filter((f) => !seen.has(f))
-      .map((f) => relative(ROOT, f))
-      .sort();
-    for (const e of NOT_REACHED_FROM_PRODUCTION)
-      expect(e.why.length, `${e.file} needs a reason`).toBeGreaterThan(40);
+      const unreachable = files
+        .filter((f) => !seen.has(f))
+        .map((f) => relative(ROOT, f))
+        .sort();
+      for (const e of NOT_REACHED_FROM_PRODUCTION)
+        expect(e.why.length, `${e.file} needs a reason`).toBeGreaterThan(40);
 
-    expect(
-      unreachable,
-      "a module under src/ is not reachable from any entrypoint — it runs only in its own tests. Wire it, delete it, " +
-        "or record it with what drives it. If one DROPPED off the list, delete its entry: it is live now.",
-    ).toEqual(NOT_REACHED_FROM_PRODUCTION.map((e) => e.file).sort());
-  });
+      expect(
+        unreachable,
+        "a module under src/ is not reachable from any entrypoint — it runs only in its own tests. Wire it, delete it, " +
+          "or record it with what drives it. If one DROPPED off the list, delete its entry: it is live now.",
+      ).toEqual(NOT_REACHED_FROM_PRODUCTION.map((e) => e.file).sort());
+    },
+  );
 });

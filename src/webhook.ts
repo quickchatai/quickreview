@@ -57,7 +57,14 @@ export type Interpretation =
       via: "thread_reply";
       scope: "review_comment";
     }
-  | { kind: "author_pr_comment"; pr: number; comment_id: number; body: string; author: string; created_at: string | null }
+  | {
+      kind: "author_pr_comment";
+      pr: number;
+      comment_id: number;
+      body: string;
+      author: string;
+      created_at: string | null;
+    }
   | {
       kind: "bot_comment";
       pr: number;
@@ -360,11 +367,22 @@ function interpretIssueComment(
     };
 
   const author = deps.blockedPrAuthor?.(pr);
-  if (author && comment.user?.login?.toLowerCase() === author.toLowerCase() &&
-      typeof comment.body === "string" && comment.body.trim() &&
-      Number.isSafeInteger(comment.id) && comment.id > 0)
-    return { kind: "author_pr_comment", pr, comment_id: comment.id, body: comment.body, author,
-      created_at: typeof comment.created_at === "string" ? comment.created_at : null };
+  if (
+    author &&
+    comment.user?.login?.toLowerCase() === author.toLowerCase() &&
+    typeof comment.body === "string" &&
+    comment.body.trim() &&
+    Number.isSafeInteger(comment.id) &&
+    comment.id > 0
+  )
+    return {
+      kind: "author_pr_comment",
+      pr,
+      comment_id: comment.id,
+      body: comment.body,
+      author,
+      created_at: typeof comment.created_at === "string" ? comment.created_at : null,
+    };
 
   // Ordinary chatter remains silent. A blocked author's PR-level response is
   // a separate conversation obligation, never an automatic review trigger.
@@ -514,7 +532,10 @@ export function handleDelivery(
   // number. A payload with no repository (ping, installation) is not
   // repo-scoped and passes through.
   const fullName: unknown = payload?.repository?.full_name;
-  if (typeof fullName === "string" && fullName.toLowerCase() !== deps.cfg.github.repo.toLowerCase()) {
+  if (
+    typeof fullName === "string" &&
+    fullName.toLowerCase() !== deps.cfg.github.repo.toLowerCase()
+  ) {
     deps.store.logEvent("webhook_event", null, {
       guid,
       event,
@@ -652,7 +673,9 @@ export async function applyInterpretation(
     store: StateStore;
     onPrTouched?: (pr: number) => void | Promise<void>;
     onAuthorReply?: (i: Extract<Interpretation, { kind: "author_reply" }>) => void | Promise<void>;
-    onAuthorPrComment?: (i: Extract<Interpretation, { kind: "author_pr_comment" }>) => void | Promise<void>;
+    onAuthorPrComment?: (
+      i: Extract<Interpretation, { kind: "author_pr_comment" }>,
+    ) => void | Promise<void>;
     onClosed?: (pr: number) => void | Promise<void>;
     /** Post-approval recheck triggers — none touches lifecycle. */
     onSynchronize?: (i: Extract<Interpretation, { kind: "synchronize" }>) => void | Promise<void>;

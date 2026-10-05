@@ -15,8 +15,24 @@ function snap(head: string, state = "reviewing"): StatusSnapshot {
     written_at: "2026-09-30T10:00:00Z",
     dry_run: false,
     prs: [
-      { number: 5012, state, title: "t", head_sha: head, stale_recheck: false, rounds: 1, last_verdict: null },
-      { number: 5013, state: "queued", title: "u", head_sha: "fff", stale_recheck: false, rounds: 0, last_verdict: null },
+      {
+        number: 5012,
+        state,
+        title: "t",
+        head_sha: head,
+        stale_recheck: false,
+        rounds: 1,
+        last_verdict: null,
+      },
+      {
+        number: 5013,
+        state: "queued",
+        title: "u",
+        head_sha: "fff",
+        stale_recheck: false,
+        rounds: 0,
+        last_verdict: null,
+      },
     ],
   } as unknown as StatusSnapshot;
 }
