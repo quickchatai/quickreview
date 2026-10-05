@@ -41,8 +41,8 @@ manifest (sha256 per volume, per-file counts, per-rule counts).
 
 The slim bundle (C10) holds only what compare.py, charts.py,
 final/score.sh and the ext scorers read, minus `pi-events.jsonl`: each case's
-`case-summary.json` gains `slim_cost_usd` (compare.py's own per-case figure,
-computed here from the full case dir) and `slim_cost_source`.
+`case-summary.json` gains `bench_cost_usd` (compare.py's own per-case figure,
+computed here from the full case dir) and `bench_cost_source`.
 """
 from __future__ import annotations
 
@@ -828,8 +828,8 @@ def cmd_slim(a):
         if rel.endswith("/case-summary.json"):
             s = json.loads(data)
             usd, how = slim_cost(src / os.path.dirname(rel))
-            s["slim_cost_usd"] = usd
-            s["slim_cost_source"] = how
+            s["bench_cost_usd"] = usd
+            s["bench_cost_source"] = how
             data = (json.dumps(s, indent=1, ensure_ascii=False) + "\n").encode()
             counts["case-summaries-with-slim-cost"] += 1
         name = rewrite_name(rel, counts)
@@ -873,9 +873,9 @@ Unpack it and point the tools at its `runs/`:
     runs/<run>/results/all/<iid>.json           the review in AACR-harness form
     runs/<run>/results/all/metrics_*.json       AACR-Bench's per-round metric files
     runs/<run>/cases/<iid>/case-summary.json    the case summary, plus:
-        slim_cost_usd     compare.py's per-case $ (usd_and_minutes), computed from
+        bench_cost_usd     compare.py's per-case $ (usd_and_minutes), computed from
                           the full case dir before pi-events.jsonl was left out
-        slim_cost_source  where that figure came from
+        bench_cost_source  where that figure came from
     runs/<run>.martian*/martian-scores.json, martian-report.md, score_profiles.txt,
                         results/ingest-report.json, results/<judge>/evaluations.json
                         and candidates.json (the judge's step-2 extractions)
@@ -884,7 +884,7 @@ Unpack it and point the tools at its `runs/`:
                         their file and lines), judge/JUDGE.txt
     FILES.sha256                                sha256, size and path of every file
 
-compare.py reads `slim_cost_usd` when a case has no `pi-events.jsonl`
+compare.py reads `bench_cost_usd` when a case has no `pi-events.jsonl`
 (C10). SWE-PRBench run data is in the archive only.
 
 Licence: Apache-2.0, as the run archive (its README carries the AACR notice,

@@ -16,7 +16,7 @@ same computation over the full runs and against the papers' printed numbers.
               (HF Qodo/PR-Review-Bench@a73957c, MIT).
 
 The tools run from a copy of bench/aacr in WORK; when that compare.py does not
-read `slim_cost_usd` yet (C10), the copy gets the three-line patch
+read `bench_cost_usd` yet (C10), the copy gets the three-line patch
 below, which is exactly the change the public tree needs.
 """
 from __future__ import annotations
@@ -38,10 +38,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 C10_ANCHOR = '    mins = summary["duration_seconds"] / 60 if "duration_seconds" in summary else None\n'
-C10_PATCH = ('    if not os.path.exists(ev) and "slim_cost_usd" in summary:\n'
+C10_PATCH = ('    if not os.path.exists(ev) and "bench_cost_usd" in summary:\n'
              '        # The slim re-score bundle (C10): compare.py\'s own figure, computed\n'
              '        # from pi-events.jsonl before the bundle left that file out.\n'
-             '        usd = summary["slim_cost_usd"]\n')
+             '        usd = summary["bench_cost_usd"]\n')
 
 
 def lines(path):
@@ -225,7 +225,7 @@ def main():
         s = HERE / item
         (shutil.copytree if s.is_dir() else shutil.copy2)(s, tools / item)
     src = (tools / "compare.py").read_text()
-    patched = "slim_cost_usd" not in src
+    patched = "bench_cost_usd" not in src
     if patched:
         assert C10_ANCHOR in src, "compare.py changed shape; update the C10 patch"
         (tools / "compare.py").write_text(src.replace(C10_ANCHOR, C10_PATCH + C10_ANCHOR))
@@ -443,8 +443,8 @@ def _cost(run_dir: Path):
     u, m = [], []
     for f in sorted(run_dir.glob("cases/*/case-summary.json")):
         s = json.loads(f.read_text())
-        if s.get("slim_cost_usd") is not None:
-            u.append(s["slim_cost_usd"])
+        if s.get("bench_cost_usd") is not None:
+            u.append(s["bench_cost_usd"])
         if s.get("duration_seconds"):
             m.append(s["duration_seconds"] / 60)
     return (statistics.mean(u) if u else 0.0), (statistics.mean(m) if m else 0.0)
