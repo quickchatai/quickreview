@@ -95,6 +95,16 @@ and that no other module opens a second wake channel to a PR session. The Slack
 router and the TUI alert sink inject into the **overseer** only, so neither can
 interrupt a round.
 
+One writer does reach a `pr-<n>` session from outside the daemon: the
+operator's quick-message box (`m`, `src/tui/msg.ts`), which writes the inject
+file itself over ssh and deliberately does **not** go through `wakeOrHold` — an
+operator asking a question mid-round is the operator's call. It is
+human-initiated, never automatic, and carries no verdict. It still cannot
+interrupt a turn: the inject-bridge delivers every message as a follow-up
+queued behind the running agent, never as a steer. `tests/single-shepherd.test.ts`
+names it in the exhaustive registry of modules allowed to construct an inject
+path, so a second such writer fails the suite.
+
 Known and accepted: the wake is *rendered* at claim time, so its ping-pong
 discipline counter reflects the moment the reply arrived. That counter only
 advances when the bot replies, which cannot happen while the wake is held.

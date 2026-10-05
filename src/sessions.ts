@@ -1358,12 +1358,12 @@ export class PiSessionManager implements SessionHooks {
 
   /** SessionHooks: unconsumed wake files in the PR session's inject dir —
    * still pending means the inject-bridge is retrying, not that it lost
-   * anything.
-   * VERIFY-ON-PIN: the complementary assumption — a wake CONSUMED
-   * (moved to .done/) with no JSONL activity implies a mid-turn drop, i.e.
-   * pi writes NOTHING to the session JSONL for a sendUserMessage() dropped
-   * mid-turn on 0.84.1. If a dropped prompt does leave a JSONL record, the
-   * lost-prompt net can never fire and needs a different silence signal. */
+   * anything. Its callers (reconcile's recheck-claim sweep, verdicts' silent-round check)
+   * read it as a PATIENCE signal only: a pending wake means wait.
+   * Whether a wake was delivered is never inferred from it — the retired
+   * reading ("consumed with no JSONL activity ⇒ dropped mid-turn") was
+   * replaced by the receipt token (#5362 rule ①, `wakeReceiptPresent`):
+   * present = delivered, absent = never arrived, unreadable = unknown. */
   async injectPending(pr: number): Promise<boolean> {
     const dir = this.injectDir(prSessionName(pr));
     try {
