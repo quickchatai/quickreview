@@ -579,6 +579,8 @@ describe("the checkout's profiles/ holds the generic examples", () => {
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
     for (const manifest of ["publish-manifest.json", "publish-manifest.internal.json"]) {
+      // The PUBLIC snapshot excludes the internal manifest itself.
+      if (!existsSync(join(repo, manifest))) continue;
       const excluded = (
         JSON.parse(readFileSync(join(repo, manifest), "utf8")) as { exclude: { path: string }[] }
       ).exclude.map((e) => e.path);

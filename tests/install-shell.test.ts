@@ -5,7 +5,7 @@
 // files. The real shell function, sourced into a real bash, temp homes only.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -300,7 +300,9 @@ describe("every script that reads the live config reads it through the locator",
     "operator-box-setup.sh",
   ];
   for (const script of readers) {
-    it(script, () => {
+    // The internal operator tooling (operator-box-*) is excluded from the PUBLIC
+    // snapshot (publish-manifest.json): in that assembled tree it is absent.
+    it.skipIf(!existsSync(join(repo, "scripts", script)))(script, () => {
       const text = readFileSync(join(repo, "scripts", script), "utf8");
       expect(text).toContain("install-locator.sh");
       expect(text).toContain("qcr_locate_config");
@@ -424,16 +426,18 @@ describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
 
   it("mint-token, deploy.sh, collect-secrets and the operator-box setup read secrets through it", () => {
     const at = (rel: string) => readFileSync(join(repo, rel), "utf8");
+    // scripts/operator-box-setup.sh is internal tooling the PUBLIC snapshot excludes.
+    const operator-box = existsSync(join(repo, "scripts/operator-box-setup.sh"));
     for (const rel of [
       "scripts/mint-token.sh",
       "scripts/deploy.sh",
       "deploy/collect-secrets.sh",
-      "scripts/operator-box-setup.sh",
+      ...(operator-box ? ["scripts/operator-box-setup.sh"] : []),
       "deploy/collect-slack-secrets.mjs",
     ]) {
       expect([rel, at(rel).includes("qcr_locate_secrets")]).toEqual([rel, true]);
     }
-    expect(at("scripts/operator-box-setup.sh")).toContain("qcr_locate_keys_file");
+    if (operator-box) expect(at("scripts/operator-box-setup.sh")).toContain("qcr_locate_keys_file");
   });
 
   it("mint-token finds the App credential in the config home, not the legacy dir", () => {
