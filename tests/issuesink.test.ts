@@ -246,6 +246,9 @@ const fixture = (): string =>
 
 const withSink = (toml: string): string =>
   fixture().replace(/\[sink\][\s\S]*?(?=\n\[backfill\])/, `${toml}\n`);
+/** The fixture with a tracker configured, as an operator who uses one sets it. */
+const withTracker = (toml: string): string =>
+  withSink(toml).replace(/^\[companion\]\n/m, '[companion]\ntracker_dir = "/host/tracker"\n');
 
 describe("buildIssueSink / ticketProjection", () => {
   const ssh: SshRunner = async () => ({ ok: true, stdout: "", stderr: "", code: 0 });
@@ -265,10 +268,11 @@ describe("buildIssueSink / ticketProjection", () => {
 
   it("wayfinder: root defaults from [companion] tracker_dir, and the projection follows the config", () => {
     const cfg = parseConfig(
-      withSink(
+      withTracker(
         '[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"\ntickets_effort = "review-feedback-loop"',
       ),
     );
+    expect(cfg.companion.tracker_dir).toBe("/host/tracker");
     expect(cfg.sink.root).toBe(cfg.companion.tracker_dir);
     expect(buildIssueSink(cfg, ssh).kind).toBe("wayfinder");
     expect(ticketProjection(cfg)).toEqual({
@@ -277,18 +281,22 @@ describe("buildIssueSink / ticketProjection", () => {
     });
     // tickets_effort empty ⇒ the projection reads the filer's effort.
     const same = parseConfig(
-      withSink('[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"'),
+      withTracker('[sink]\nkind = "wayfinder"\neffort = "review-sandbox"\nparent = "FT-0026"'),
     );
     expect(ticketProjection(same)!.effort).toBe("review-sandbox");
   });
 
   it("a wayfinder sink missing effort/parent is refused at parse — loud at boot, never a silent no-op", () => {
-    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\nparent = "FT-0026"'))).toThrow(
-      /non-empty `effort`/,
-    );
-    expect(() => parseConfig(withSink('[sink]\nkind = "wayfinder"\neffort = "e"'))).toThrow(
+    expect(() =>
+      parseConfig(withTracker('[sink]\nkind = "wayfinder"\nparent = "FT-0026"')),
+    ).toThrow(/non-empty `effort`/);
+    expect(() => parseConfig(withTracker('[sink]\nkind = "wayfinder"\neffort = "e"'))).toThrow(
       /non-empty `parent`/,
     );
+    // With no tracker configured anywhere, a wayfinder sink has nowhere to write.
+    expect(() =>
+      parseConfig(withSink('[sink]\nkind = "wayfinder"\neffort = "e"\nparent = "FT-0026"')),
+    ).toThrow(/requires a `root`/);
     expect(() => parseConfig(withSink('[sink]\nkind = "carrier-pigeon"'))).toThrow(/kind must be/);
   });
 

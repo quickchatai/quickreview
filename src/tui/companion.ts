@@ -391,11 +391,15 @@ export class CompanionLifecycle {
       `${this.cfg.pihome_volume}:${CONTAINER.piHome}`,
       "--volume",
       `${this.cfg.repo_dir}:${CONTAINER.workspace}:rw`,
-      "--volume",
-      `${this.cfg.tracker_dir}:${CONTAINER.tracker}:rw`,
-      "--volume",
-      `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
     );
+    // The tracker and its protocol docs are optional: mounted only when the
+    // operator configured them ([companion] tracker_dir / tracker_docs_dir).
+    if (this.cfg.tracker_dir !== "") {
+      argv.push("--volume", `${this.cfg.tracker_dir}:${CONTAINER.tracker}:rw`);
+    }
+    if (this.cfg.tracker_docs_dir !== "") {
+      argv.push("--volume", `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`);
+    }
     // the reviewed repo, READ-ONLY and only when it is really there.
     if (this.reviewedRepoPresent()) {
       argv.push("--volume", `${this.cfg.reviewed_repo_dir}:${CONTAINER.reviewedRepo}:ro`);
@@ -927,12 +931,13 @@ export class CompanionLifecycle {
     const m = new Map<string, string>([
       [CONTAINER.piHome, this.cfg.pihome_volume],
       [CONTAINER.workspace, this.cfg.repo_dir],
-      [CONTAINER.tracker, this.cfg.tracker_dir],
-      [CONTAINER.trackerDocs, this.cfg.tracker_docs_dir],
       [CONTAINER.evidence, this.cfg.evidence_dir],
       [CONTAINER.feed, this.cfg.feed_dir],
       [CONTAINER.alerts, this.cfg.alerts_dir],
     ]);
+    // Same conditions as runArgv().
+    if (this.cfg.tracker_dir !== "") m.set(CONTAINER.tracker, this.cfg.tracker_dir);
+    if (this.cfg.tracker_docs_dir !== "") m.set(CONTAINER.trackerDocs, this.cfg.tracker_docs_dir);
     // Same condition as runArgv() — see reviewedRepoPresent().
     if (this.reviewedRepoPresent()) m.set(CONTAINER.reviewedRepo, this.cfg.reviewed_repo_dir);
     // same shape as runArgv(), so a container created before these

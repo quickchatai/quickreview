@@ -345,15 +345,6 @@ const ALLOWLIST: AllowlistEntry[] = [
       "pins the shipped reviewed_repo_dir default and that a container still carrying the retired /example-app mount drifts",
   },
 
-  // -- Live-deployment defaults the private installation still boots from
-  //    (its config.toml deliberately leaves these unset). Lifting them into
-  //    the private profile/config is charted follow-up, not droppable here.
-  {
-    path: "src/config.ts",
-    tokens: ["quickchat", "issue-tracker"],
-    reason:
-      "shipped [companion] defaults the LIVE deployment boots from (live config leaves them unset); lifted with the private-profile split",
-  },
   // src/pingpong.ts held the last one ("tell them <owner> will be requested").
   // removed the sentence outright: it promised a handover had
   // retired, so the private name went with the false promise.

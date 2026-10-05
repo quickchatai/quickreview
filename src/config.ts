@@ -33,7 +33,7 @@ export interface GithubConfig {
   secrets_dir: string;
   /** The reviewed repo's default branch: the base the improvement
    * filer targets, the branch replay diffs against, and the fixture base for
-   * CLI ops. Default "main"; example-app sets "master". PR rounds do NOT
+   * CLI ops. Default "main"; a repo whose default is "master" sets it. PR rounds do NOT
    * read this — a round's base is always the PR's own `base_ref` from the
    * GitHub API. */
   base_branch: string;
@@ -45,8 +45,7 @@ export interface GithubConfig {
 
 /** Directory name of the base clone: `[github] clone_dir` when set, else the
  * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
- * `.git` stripped). The live config's repo ("example-org/example-app")
- * derives "example-app" — the legacy hardcode, now a derivation. */
+ * `.git` stripped), e.g. "acme/webapp" ⇒ "webapp". */
 export function githubCloneDir(g: GithubConfig): string {
   // ?? "": hand-rolled test configs predating omit both keys.
   const explicit = (g.clone_dir ?? "").trim();
@@ -1661,9 +1660,9 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   session: "companion",
   model: "openai-codex/gpt-6.1-sol:medium",
   repo_dir: "", // → sandboxRoot()
-  tracker_dir: "~/src/tracker",
-  tracker_docs_dir: "~/src/tracker-docs",
-  reviewed_repo_dir: "~/src/example-app", // → /reviewed-repo (ro)
+  tracker_dir: "", // → /tracker (rw) when set; empty = no tracker mount
+  tracker_docs_dir: "", // → /tracker-docs (ro) when set
+  reviewed_repo_dir: "", // → /reviewed-repo (ro) when set and present
   evidence_dir: "~/.local/share/qcr/evidence", // → /evidence (ro),
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
@@ -1799,8 +1798,8 @@ export function resolveCompanionPaths(
   return {
     ...c,
     repo_dir: c.repo_dir ? expandHome(c.repo_dir) : root,
-    tracker_dir: expandHome(c.tracker_dir),
-    tracker_docs_dir: expandHome(c.tracker_docs_dir),
+    tracker_dir: c.tracker_dir ? expandHome(c.tracker_dir) : "",
+    tracker_docs_dir: c.tracker_docs_dir ? expandHome(c.tracker_docs_dir) : "",
     reviewed_repo_dir: expandHome(c.reviewed_repo_dir),
     evidence_dir: c.evidence_dir ? expandHome(c.evidence_dir) : resolve(root, "evidence"),
     feed_dir: c.feed_dir ? expandHome(c.feed_dir) : resolve(root, "state", "companion", "feed"),

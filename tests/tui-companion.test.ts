@@ -46,6 +46,7 @@ const CFG: CompanionConfig = resolveCompanionPaths(
     ...COMPANION_DEFAULTS,
     repo_dir: "/host/review-sandbox",
     tracker_dir: "/host/tracker",
+    tracker_docs_dir: "/host/tracker-docs",
     // a path that does not exist on any machine running this suite —
     // so the default lifecycle() (real fs) is the MISSING-checkout case, and
     // the present case is opted into explicitly via withRepo().
@@ -416,8 +417,11 @@ describe("the reviewed repo, read-only", () => {
     expect(progress.some((l) => l.includes(`stale ${CONTAINER.reviewedRepo}`))).toBe(true);
   });
 
-  it("defaults the config key to the usual local checkout and expands ~", () => {
-    expect(COMPANION_DEFAULTS.reviewed_repo_dir).toBe("~/src/example-app");
+  it("has no private default path, and expands ~ in a configured one", () => {
+    // No private default: an install names its own checkout, or runs without one.
+    expect(COMPANION_DEFAULTS.reviewed_repo_dir).toBe("");
+    expect(COMPANION_DEFAULTS.tracker_dir).toBe("");
+    expect(COMPANION_DEFAULTS.tracker_docs_dir).toBe("");
     const cfg = resolveCompanionPaths(
       { ...COMPANION_DEFAULTS, reviewed_repo_dir: "~/qc" },
       "/root",
