@@ -696,7 +696,7 @@ volumes, {total / (1 << 20):.0f} MiB compressed.
 
 DOI: minted by Hugging Face at upload. Code, benchmark definition and papers:
 the QuickReview repository, `bench/aacr/`. The slim re-score bundle (no
-transcripts, about 20 MiB) is published beside this archive and is enough to
+transcripts, about 13 MiB) is published beside this archive and is enough to
 recompute every table without a model call.
 
 ## Volumes
@@ -959,37 +959,47 @@ REGREP = {
 }
 
 
+# one PCRE pass over the decompressed stream (tar headers included, so member
+# names are searched too); every match is classified afterwards by REGREP
+REGREP_SCAN = (rb"(?<![A-Za-z0-9])sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|gAAAAA[A-Za-z0-9_\-=]{100,}"
+               rb"|(?i:<owner>)(?:-review)?|quickreviewd|/home/user|src|companion-pihome|[./\w-]*claude\.env"
+               rb"|sk-|gh[psor]_")
+
+
+def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
+    """Counts of every REGREP class over one decompressed stream, with
+    samples (and their tar member) for the credential-shaped classes."""
+    rx = {k: re.compile(v) for k, v in REGREP.items()}
+    z = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    g = subprocess.Popen(["grep", "-aoP", REGREP_SCAN.decode()], stdin=z.stdout, stdout=subprocess.PIPE)
+    z.stdout.close()
+    c, hits = collections.Counter(), []
+    for line in g.stdout:
+        m = line.rstrip(b"\n")
+        for k, r in rx.items():
+            n = len(r.findall(m))
+            if n:
+                c[k] += n
+                if k in ("sk- key-shaped", "gh?_ token-shaped", "Fernet blob (gAAAAA, 100+)") and len(hits) < 20:
+                    hits.append((k, m[:24].decode(errors="replace") + "..."))
+    g.wait()
+    z.wait()
+    return c, hits
+
+
 def cmd_regrep(a):
     out = Path(a.out)
-    rx = {k: re.compile(v) for k, v in REGREP.items()}
     total = collections.Counter()
-    samples = collections.defaultdict(list)
-    report = {}
+    report, samples = {}, {}
     for vol in sorted(out.glob("*.tar.zst")):
-        c = collections.Counter()
-        p = subprocess.Popen(["zstd", "-dc", "--long=27", str(vol)], stdout=subprocess.PIPE)
-        with tarfile.open(fileobj=p.stdout, mode="r|") as t:
-            for m in t:
-                if not m.isfile():
-                    continue
-                name = m.name.encode()
-                data = t.extractfile(m).read() + b"\n" + name
-                for k, r in rx.items():
-                    hits = r.findall(data)
-                    if hits:
-                        c[k] += len(hits)
-                        if len(samples[k]) < 6 and k in ("sk- key-shaped", "gh?_ token-shaped", "Fernet blob (gAAAAA, 100+)", "owner_legacy (any case)", "/home/user"):
-                            for mm in r.finditer(data):
-                                s = data[max(0, mm.start() - 60): mm.end() + 20]
-                                samples[k].append((m.name, s.decode(errors="replace")))
-                                break
-        p.wait()
+        c, hits = regrep_stream(["zstd", "-dc", "--long=27", "-q", str(vol)])
         report[vol.name] = dict(c)
+        if hits:
+            samples[vol.name] = hits
         total.update(c)
         print(vol.name, dict(c), flush=True)
     print("TOTAL", dict(total))
-    (out / "regrep.json").write_text(json.dumps({"volumes": report, "total": dict(total),
-                                                  "samples": {k: v for k, v in samples.items()}}, indent=1) + "\n")
+    (out / "regrep.json").write_text(json.dumps({"volumes": report, "total": dict(total), "samples": samples}, indent=1) + "\n")
 
 
 def main():
