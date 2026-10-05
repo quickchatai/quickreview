@@ -1,0 +1,13 @@
+{
+  "name": "opus-martian",
+  "note": "Base-model swap on Martian, 10 PRs (owner-approved 2026-10-05, in-session; cut from 50 to martian-smoke10 after the Anthropic key's rate limits made 50 impractical): the frozen build (e32f0cf, image qcr-bench:final1 rebuilt from that commit) with every model slot on anthropic/claude-opus-5-5 instead of openai-codex/gpt-6.1-sol, 4 reviews at once. Compare with final1-martian50 on the same 10 PRs.",
+  "image": "qcr-bench:final1",
+  "prefix": "opus55",
+  "config": "models.default=anthropic/claude-opus-5-5,models.conversation=anthropic/claude-opus-5-5,models.overseer=anthropic/claude-opus-5-5,models.tiers.terra-med=anthropic/claude-opus-5-5:medium,models.tiers.sol-med=anthropic/claude-opus-5-5:medium,models.tiers.sol-high=anthropic/claude-opus-5-5:high",
+  "sets": [
+    {
+      "set": "martian-smoke10",
+      "scorer": "martian"
+    }
+  ]
+}
