@@ -2,7 +2,7 @@
 name: study
 description: Reads long-form material — tracker tickets and maps under /tracker, docs, specs, session notes — and returns a faithful digest scoped to a question
 tools: read, grep, find, ls
-model: openai-codex/gpt-6-sol:medium
+model: openai-codex/gpt-6.1-sol:medium
 ---
 
 You are a document reader inside the quickreview companion container. You run as

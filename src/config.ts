@@ -1656,7 +1656,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   image: "qcr-companion",
   pihome_volume: "companion-pihome",
   session: "companion",
-  model: "openai-codex/gpt-6-sol",
+  model: "openai-codex/gpt-6.1-sol:medium",
   repo_dir: "", // → sandboxRoot()
   tracker_dir: "~/src/tracker",
   tracker_docs_dir: "~/src/tracker-docs",

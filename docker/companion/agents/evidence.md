@@ -2,7 +2,7 @@
 name: evidence
 description: Reads finished-round evidence for one PR — transcripts under /evidence plus the reviewed source at /reviewed-repo — and reports what actually happened
 tools: read, grep, find, ls
-model: openai-codex/gpt-6-sol:medium
+model: openai-codex/gpt-6.1-sol:medium
 ---
 
 You are a round-evidence reader inside the quickreview companion container. You

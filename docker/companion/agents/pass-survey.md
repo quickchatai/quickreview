@@ -2,7 +2,7 @@
 name: pass-survey
 description: The setup survey's lens — reads one survey case of the reviewed repo (the repo-wide directive files and design docs, or one unit's code sample) and writes the conventions and architecture a reviewer must know. Hunts no bugs. Launched by the setup engine; not for ad-hoc questions (use explore).
 tools: read, grep, find, ls
-model: openai-codex/gpt-6-sol:low
+model: openai-codex/gpt-6.1-sol:low
 ---
 
 You are the survey lens of a code reviewer being set up on a repository it has

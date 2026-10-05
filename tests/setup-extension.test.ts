@@ -414,7 +414,7 @@ describe("the pass-survey agent and the case runner", () => {
   it("the agent file is a read-only leaf at low, named apart from the companion's survey skill", () => {
     expect(COMPANION_AGENTS_DIR).toBe(join(process.cwd(), "docker/companion/agents"));
     const agent = parseAgentFile(readFileSync(join(COMPANION_AGENTS_DIR, "pass-survey.md"), "utf8"))!;
-    expect(agent).toMatchObject({ name: "pass-survey", tools: ["read", "grep", "find", "ls"], model: "openai-codex/gpt-6-sol:low" });
+    expect(agent).toMatchObject({ name: "pass-survey", tools: ["read", "grep", "find", "ls"], model: "openai-codex/gpt-6.1-sol:low" });
     expect(agent.systemPrompt).toMatch(/\[convention\]/);
     expect(agent.systemPrompt).toMatch(/NONE/);
     // The companion's candidate-triage skill keeps its own name.
@@ -469,7 +469,7 @@ describe("the pass-survey agent and the case runner", () => {
     expect(command).toBe("pi");
     expect(cwd).toBe("/workspace"); // never the reviewed checkout
     expect(args.slice(0, 6)).toEqual(["--mode", "json", "-p", "--no-session", "--no-extensions", "--approve"]);
-    expect(args).toEqual(expect.arrayContaining(["--model", "openai-codex/gpt-6-sol:low", "--tools", "read,grep,find,ls", "--append-system-prompt"]));
+    expect(args).toEqual(expect.arrayContaining(["--model", "openai-codex/gpt-6.1-sol:low", "--tools", "read,grep,find,ls", "--append-system-prompt"]));
     expect(args.at(-1)).toBe("Task: SURVEY — do it");
   });
 

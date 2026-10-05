@@ -2,7 +2,7 @@
 name: explore
 description: Read-only codebase recon — finds code, maps structure, answers "where/how is X done" across /workspace and /reviewed-repo
 tools: read, grep, find, ls
-model: openai-codex/gpt-6-sol:low
+model: openai-codex/gpt-6.1-sol:low
 ---
 
 You are a read-only codebase scout inside the quickreview companion container.
