@@ -356,6 +356,16 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
 - **The write veto is not a sandbox.** The session runs as the same uid as the
   daemon. Nothing here revokes filesystem permission; every layer above is a
   refusal or a detection.
+- **The App's credentials are readable by the session.** Same uid, so
+  `cat <secrets>/app.pem` is allowed: the command-string secret check refuses
+  only the OpenViking root-key spellings (`checkSecretPaths`). A review body
+  posted through the sanctioned scripts is a channel to GitHub, so a session
+  past its instructions can publish what it reads. What IS refused (,
+  found by execution) is moving the scripts' host: `GITHUB_API=` as a command
+  prefix pointed `mint-token.sh` — and with it the App's signed JWT — at any
+  host the session named, the one outbound channel this policy otherwise
+  leaves closed. The floor for the read is the same as for G5: a uid split or a
+  mount the session cannot read, a deploy change.
 - **Layer 4 detects; it does not prevent.** The write lands, the round
   completes, the anomaly follows. It bounds the damage to one round. Its window
   is round start → round measurement, so a write made and reverted inside that
