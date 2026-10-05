@@ -439,6 +439,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the HF dataset export's scrub rules name the strings they rewrite, and its NOTICE names the copyright holder",
   },
   {
+    path: "bench/aacr/export_runs.py",
+    tokens: ["owner_legacy", "/home/user", "quickchat"],
+    reason:
+      "the run-archive export's scrub rules and re-grep name the strings they rewrite and hunt, and its README's modified-work statement names the copyright holder",
+  },
+  {
     path: "bench/aacr/hf/card.md",
     tokens: ["owner_legacy", "quickchat"],
     reason:
