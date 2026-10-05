@@ -21,13 +21,18 @@
 //   (d) no tracked file under the runtime state directories except .gitkeep
 //       markers and memory/README.md;
 //   (e) a NEGATIVE control: the same scanner, fed a planted token at a path
-//       nothing exempts, reports the violation — the lint demonstrably bites.
+//       nothing exempts, reports the violation — the lint demonstrably bites;
+//   (f): no published Markdown file links to a path the snapshot does
+//       not ship — an excluded path (a lab notebook, a moved artefact, a
+//       private doc) or one that was never tracked (tests/helpers/
+//       published-links.ts), with its own negative control.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { deadLinks } from "./helpers/published-links.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -174,6 +179,21 @@ const ALLOWLIST: AllowlistEntry[] = [
     tokens: ["owner_legacy"],
     reason:
       "fork file recorded verbatim by patch 0005; editing it would drift the file from its recorded patch",
+  },
+
+  // -- The papers' author line (C5;: both papers ship
+  //    as .tex + PDF under the author's name and affiliation).
+  {
+    path: "bench/aacr/paper/benchmark.tex",
+    tokens: ["owner_legacy", "quickchat"],
+    reason:
+      "the paper's author line and self-citation — Mateusz Jakubczak, Quickchat AI (the publishing org), as decided for publication",
+  },
+  {
+    path: "bench/aacr/paper/quickreview.tex",
+    tokens: ["owner_legacy", "quickchat"],
+    reason:
+      "the paper's author line and self-citation — Mateusz Jakubczak, Quickchat AI (the publishing org), as decided for publication",
   },
 
   // -- Legacy-acceptance folds: the token IS the tested/parsed input
@@ -713,5 +733,51 @@ describe("publishability lint", () => {
     ); // allowlisted carrier
     expect(scanFiles([{ path: "LICENSE", text: "Copyright Quickchat AI" }])).toEqual([]); // allowlisted token
     expect(scanFiles([{ path: "LICENSE", text: "my-vm" }])).not.toEqual([]); // …but only the GRANTED token
+  });
+});
+
+describe("(f) shipped links land on shipped paths", () => {
+  const tracked = trackedFiles();
+
+  it("no published Markdown file links into an excluded or untracked path", () => {
+    const files = tracked
+      .filter((p) => p.endsWith(".md") && !isExcluded(p))
+      .map((path) => ({ path, text: readFileSync(join(repoRoot, path), "utf8") }));
+    const dead = deadLinks({ tracked, exclude: manifest.exclude, files });
+    const rendered = dead
+      .slice(0, 80)
+      .map((d) => `${d.file}:${d.line} → ${d.target} (${d.kind}: ${d.resolved})`)
+      .join("\n");
+    expect(
+      dead,
+      `${dead.length} shipped link(s) the public snapshot would break — repoint each at a shipped path (the papers, a shipped doc) or an external URL (the dataset):\n${rendered}`,
+    ).toEqual([]);
+  });
+
+  it("NEGATIVE control: a link into an excluded path, and one to nothing, are both caught", () => {
+    const dead = deadLinks({
+      tracked: ["README.md", "docs/a.md", "docs/private.md", "bench/x/NOTES.md"],
+      exclude: [{ path: "docs/private.md" }, { path: "bench/x/" }],
+      files: [
+        {
+          path: "docs/a.md",
+          text: [
+            "[ok](../README.md) [ok dir](../docs/) [web](https://example.com) [anchor](#top)",
+            "[private](private.md#s) ![img](../bench/x/NOTES.md)",
+            "```",
+            "[in a fence](private.md)",
+            "```",
+            "`[inline code](private.md)` [gone](nowhere.md)",
+            '<img src="../bench/x/NOTES.md">',
+          ].join("\n"),
+        },
+      ],
+    });
+    expect(dead.map((d) => [d.line, d.resolved, d.kind])).toEqual([
+      [2, "docs/private.md", "excluded"],
+      [2, "bench/x/NOTES.md", "excluded"],
+      [6, "docs/nowhere.md", "missing"],
+      [7, "bench/x/NOTES.md", "excluded"],
+    ]);
   });
 });
