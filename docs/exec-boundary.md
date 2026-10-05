@@ -357,8 +357,12 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
   daemon. Nothing here revokes filesystem permission; every layer above is a
   refusal or a detection.
 - **The App's credentials are readable by the session.** Same uid, so
-  `cat <secrets>/app.pem` is allowed: the command-string secret check refuses
-  only the OpenViking root-key spellings (`checkSecretPaths`). A review body
+  nothing revokes the read. Since (2026-10-05) `checkSecretPaths`
+  refuses the obvious SPELLINGS — a command or a file-tool path that names
+  `app.pem`, `webhook_secret`, `tunnel_token`, the OpenAI/Slack key files or a
+  secrets dir, including globs, quoting and `../secrets` from the sandbox root
+  — but it is a belt: `d=/opt/quickreview/sec; cat ${d}rets/app_id` and
+  `grep -r 'PRIVATE KEY' /opt/quickreview` still read them. A review body
   posted through the sanctioned scripts is a channel to GitHub, so a session
   past its instructions can publish what it reads. What IS refused (,
   found by execution) is moving the scripts' host: `GITHUB_API=` as a command

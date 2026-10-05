@@ -1,8 +1,16 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import activate, {
+  APP_SECRET_FILES,
   checkBashCommand,
+  checkReadPath,
   checkReaderModes,
+  checkSecretPaths,
   checkWritePath,
+  defaultSecretPathContext,
+  type SecretPathContext,
 } from "../extensions/bash-guard.js";
 
 const allow = (cmd: string): void => {
@@ -1005,5 +1013,210 @@ describe("checkBashCommand — a regression replay session runs no sandbox scrip
       block('GH_TOKEN="$(scripts/mint-token.sh)" gh pr view 5', "replay");
       allow("cd src && git log --oneline -3");
     });
+  });
+});
+
+// ----: the App-secret belt (MC-63) -----------------------------------
+// showed by execution that `cat /opt/quickreview/secrets/app.pem` was
+// allowed, and a posted review body is a channel to GitHub. This is the owner's
+// interim belt: a SPELLING check over the session's own command line and file
+// tool paths. Variable indirection defeats it (pinned below as a known gap);
+//, the uid/mount split, is the real fix.
+describe("checkSecretPaths — the App's secret files and dir", () => {
+  // The VM's shape: the session cwd is the sandbox root, the secrets mount is
+  // its sibling, and the config home's secrets symlink sits under $HOME.
+  const VM = defaultSecretPathContext({ HOME: "/home/qcr" }, "/opt/quickreview/sandbox");
+  const refused = (cmd: string, ctx: SecretPathContext = VM): void => {
+    const res = checkSecretPaths(cmd, ctx);
+    expect(res.allowed, `${cmd} should be refused`).toBe(false);
+    expect(res.reason).toContain("App's");
+  };
+  const passes = (cmd: string, ctx: SecretPathContext = VM): void => {
+    const res = checkSecretPaths(cmd, ctx);
+    expect(res.allowed, `${cmd} → ${res.reason ?? ""}`).toBe(true);
+  };
+
+  it("re-runs the MC-63 probe: cat of the App key is refused by the full guard", () => {
+    const res = checkBashCommand("cat /opt/quickreview/secrets/app.pem");
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toContain("App's credentials");
+  });
+
+  it("refuses every secret file by name, whatever program reads it", () => {
+    for (const f of APP_SECRET_FILES) refused(`cat /opt/quickreview/secrets/${f}`);
+    refused("head -c 64 /opt/quickreview/secrets/app.pem");
+    refused("less /anywhere/webhook_secret");
+    refused("tail /x/tunnel_token");
+    refused("cat /x/openai_api_key");
+    refused("cat /x/openai_embeddings_api_key");
+    refused("cat /x/openai-other-key"); // the openai*key family
+    refused("cat /x/slack_bot_token");
+  });
+
+  it("refuses the encoders, copiers and archivers too (belt over the program check)", () => {
+    refused("base64 /opt/quickreview/secrets/app.pem");
+    refused("xxd /opt/quickreview/secrets/app.pem");
+    refused("od -c /opt/quickreview/secrets/webhook_secret");
+    refused("cp /opt/quickreview/secrets/app.pem /tmp/k");
+    refused("tar czf /tmp/s.tgz /opt/quickreview/secrets");
+    refused("git add /opt/quickreview/secrets/app.pem");
+    // through the full guard the secret reason is the one the session reads
+    expect(checkBashCommand("base64 /opt/quickreview/secrets/app.pem").reason).toContain(
+      "App's credentials",
+    );
+  });
+
+  it("refuses the secrets dir itself, in every resolved spelling", () => {
+    refused("ls /opt/quickreview/secrets");
+    refused("ls /opt/quickreview/secrets/");
+    refused("cat /opt/quickreview/secrets/app_id"); // a file the name list does not carry
+    refused("ls ~/.config/qcr/default/secrets");
+    refused("cat $HOME/.config/qcr/default/secrets/app_id");
+    refused("cat ${HOME}/.config/qcr/default/secrets/app_id");
+    refused("cat $XDG_CONFIG_HOME/qcr/$QCR_INSTALL/secrets/app_id");
+    refused("cat /root/.config/qcr/other-install/secrets/app_id");
+    refused("ls ~/.config/quickreview-bot"); // the legacy dir
+    refused("ls ../secrets"); // relative to the sandbox root
+    refused("cat ../secrets/app_id");
+    refused("cat ./../secrets/app_id");
+    refused("cat wt/../../secrets/app_id");
+    refused("cd .. && cat secrets/app_id"); // a cd earlier in the line moves the cwd
+    refused("cd /opt/quickreview/secrets && cat app_id");
+  });
+
+  it("refuses redirections and option-attached paths", () => {
+    refused("cat < /opt/quickreview/secrets/webhook_secret");
+    refused("cat </opt/quickreview/secrets/webhook_secret");
+    refused("echo x > /opt/quickreview/secrets/app_id");
+    refused("jq -n --rawfile k /opt/quickreview/secrets/app.pem '$k'");
+    refused("grep --file=/opt/quickreview/secrets/app_id x");
+    refused("grep -f/opt/quickreview/secrets/app_id x");
+    refused("K=/opt/quickreview/secrets/app_id; cat $K"); // an assignment value is a word too
+    refused("echo $(</opt/quickreview/secrets/app.pem)");
+  });
+
+  it("refuses globs that can expand onto a secret", () => {
+    refused("cat ../secrets/*");
+    refused("cat /opt/quickreview/secrets/*");
+    refused("cat /opt/quickreview/s*/a*");
+    refused("cat /opt/quickreview/*/*");
+    refused("cat /opt/*/secrets/a?p.pem");
+    refused("cat /opt/quickreview/secret[s]/app_id");
+    refused("head app.p*m");
+    refused("head /anywhere/app.pe?");
+    refused("cat /x/webhook_*");
+    refused("cat /x/openai*key");
+    refused("grep -r BEGIN --include='*.pem' /"); // a recursive read filtered to the key
+    refused("rg -g '*.pem' BEGIN /opt");
+  });
+
+  it("refuses quoted, escaped and brace-expanded spellings", () => {
+    refused("cat '/opt/quickreview/secrets/app.pem'");
+    refused('cat "/opt/quickreview/secrets/app.pem"');
+    refused("cat '/opt/quickreview/sec''rets/app_id'");
+    refused("cat /opt/quickreview/sec\\rets/app_id");
+    refused("cat app\\.pem");
+    refused("cat $'/opt/quickreview/secrets/app\\x2epem'");
+    refused("cat /opt/quickreview/secrets/app.{pem,x}");
+    refused("cat /opt/quickreview/{secrets,x}/app_id");
+    refused("bash -c 'cat /opt/quickreview/secrets/app.pem'");
+  });
+
+  it("refuses an operator-set secrets dir from the env and the live config", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ft0537-"));
+    try {
+      const cfg = join(dir, "config.toml");
+      writeFileSync(cfg, '[pi]\nsecrets_dir = "/not/this"\n[github]\nsecrets_dir = "~/creds"\n');
+      const ctx = defaultSecretPathContext(
+        {
+          HOME: "/home/op",
+          QCR_CONFIG: cfg,
+          QCR_SECRETS_MOUNT: "/mnt/s",
+          QC_SECRETS_DIR: "/srv/k",
+        },
+        "/work",
+      );
+      expect(ctx.dirs).toEqual(
+        expect.arrayContaining(["/home/op/creds", "/mnt/s", "/srv/k", "/opt/quickreview/secrets"]),
+      );
+      expect(ctx.dirs).not.toContain("/not/this");
+      refused("cat ~/creds/app_id", ctx);
+      refused("cat /mnt/s/app_id", ctx);
+      refused("cat /srv/k/*", ctx);
+      passes("cat /not/this/x", ctx);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the sanctioned scripts working — they read the secrets as subprocesses", () => {
+    passes("bash scripts/mint-token.sh");
+    passes("scripts/mint-token.sh");
+    passes('GH_TOKEN="$(scripts/mint-token.sh)" gh api repos/x/pulls/5/files');
+    passes("bash scripts/post-review.sh 5249 COMMENT /tmp/body.md");
+    passes("bash scripts/approve-pr.sh 5249 /tmp/body.md");
+    passes("bash scripts/reply-thread.sh 5249 123 /tmp/r.md");
+    // and through the full guard with this process's own context
+    expect(checkBashCommand("bash scripts/mint-token.sh").allowed).toBe(true);
+    expect(checkBashCommand('GH_TOKEN="$(scripts/mint-token.sh)" gh pr view 5').allowed).toBe(true);
+  });
+
+  it("leaves a reviewer's ordinary reads alone — patterns, not paths, are free", () => {
+    passes("grep -rn openai_api_key wt/pr-5");
+    passes("grep -rn -e webhook_secret -e tunnel_token wt/pr-5");
+    passes("rg -n --regexp=app.pem wt/pr-5");
+    passes("rg -n -A 3 webhook_secret wt/pr-5");
+    passes("git diff --name-only | xargs grep -n openai_api_key");
+    passes("sed -n '/webhook_secret/p' wt/pr-5/a.py");
+    passes("grep -rn secrets wt/pr-5");
+    passes("cat wt/pr-5/app/secrets/models.py"); // a reviewed repo's own secrets/ dir
+    passes("cat wt/pr-5/settings/openai_key.py");
+    passes("cat secrets/foo.yaml"); // the sandbox root has no secrets/ of its own
+    passes("ls *");
+    passes("rg -g '*.ts' foo");
+    passes("rg -g '*key' foo");
+    passes("cat wt/pr-5/*token*");
+    passes("git diff --stat");
+  });
+
+  it("is a SPELLING belt: variable indirection still passes (is the real fix)", () => {
+    // Pinned so nobody reads this belt as a sandbox. When the uid/mount split
+    // lands and these stop mattering, delete the belt rather than this pin.
+    passes("D=/opt/quickreview/sec; cat ${D}rets/app_id");
+    passes("grep -r 'PRIVATE KEY' /opt/quickreview");
+  });
+});
+
+describe("checkReadPath and the file-tool veto", () => {
+  const VM = defaultSecretPathContext({ HOME: "/home/qcr" }, "/opt/quickreview/sandbox");
+
+  it("refuses the App's secrets and the OpenViking root credential as a read path", () => {
+    expect(checkReadPath("/opt/quickreview/secrets/app.pem", VM).allowed).toBe(false);
+    expect(checkReadPath("../secrets/app_id", VM).allowed).toBe(false);
+    expect(checkReadPath("~/.config/qcr/default/secrets/webhook_secret", VM).allowed).toBe(false);
+    expect(checkReadPath("@/opt/quickreview/secrets/tunnel_token", VM).allowed).toBe(false);
+    expect(checkReadPath("/home/qcr/.openviking/ov.conf", VM).allowed).toBe(false);
+    expect(checkReadPath("wt/pr-5/src/app.ts", VM).allowed).toBe(true);
+    expect(checkReadPath("state/ledgers/pr-5.md", VM).allowed).toBe(true);
+  });
+
+  it("vetoes pi's read, grep, ls and edit tools on a secret path", () => {
+    let handler: ((event: Record<string, unknown>) => unknown) | undefined;
+    activate({
+      on: (event: string, h: (e: Record<string, unknown>) => unknown) => {
+        if (event === "tool_call") handler = h;
+      },
+    } as never);
+    const veto = (toolName: string, input: Record<string, unknown>): unknown =>
+      handler!({ type: "tool_call", toolName, toolCallId: "t", input });
+    expect(veto("read", { path: "/opt/quickreview/secrets/app.pem" })).toMatchObject({ block: true });
+    expect(veto("read", { path: "~/.openviking/ov.conf" })).toMatchObject({ block: true });
+    expect(veto("grep", { pattern: "BEGIN", path: "/", glob: "*.pem" })).toMatchObject({
+      block: true,
+    });
+    expect(veto("ls", { path: "/opt/quickreview/secrets" })).toMatchObject({ block: true });
+    expect(veto("edit", { path: "/opt/quickreview/secrets/app_id" })).toMatchObject({ block: true });
+    expect(veto("read", { path: "wt/pr-5/src/app.ts" })).toBeUndefined();
+    expect(veto("grep", { pattern: "openai_api_key", path: "wt/pr-5" })).toBeUndefined();
   });
 });

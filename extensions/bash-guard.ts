@@ -31,6 +31,8 @@
 //     configuration at spawn. That is not a rule this guard enforces; it is a
 //     search that no longer happens. The guard's job there is only to stop a
 //     caller RE-POINTING the pin (COMMAND_INJECTING_ENV), and that job stays.
+import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -1118,16 +1120,477 @@ const ROOT_CREDENTIAL_PATTERNS: Array<{ re: RegExp; what: string }> = [
   { re: /openviking-keys\.env/, what: "the companion's OpenViking key file" },
 ];
 
-/** The root-credential check, exported so the reason is testable on its own. */
-export function checkSecretPaths(cmd: string): BashCheck {
+/** The root-credential check, plus the App-secret belt below.
+ * Exported so the reason is testable on its own. `ctx` defaults to this
+ * process's own cwd, home and secrets dirs. */
+export function checkSecretPaths(cmd: string, ctx?: SecretPathContext): BashCheck {
+  const root = checkRootCredentialSpelling(cmd);
+  if (!root.allowed) return root;
+  return checkAppSecretWords(cmd, ctx ?? processSecretContext());
+}
+
+function checkRootCredentialSpelling(text: string): BashCheck {
   for (const { re, what } of ROOT_CREDENTIAL_PATTERNS) {
-    if (re.test(cmd)) {
+    if (re.test(text)) {
       return block(
         `exec policy: reading ${what} is never sanctioned — review sessions authenticate as the reviewer USER and nothing else`,
       );
     }
   }
   return { allowed: true };
+}
+
+/**
+ * The App-secret belt (MC-63) — and what it is NOT.
+ *
+ * showed by execution that `cat /opt/quickreview/secrets/app.pem` was
+ * allowed: `cat` is a sanctioned reader, and the check above covered only the
+ * OpenViking root-key spellings. A posted review body is a channel to GitHub,
+ * so a prompt-injected session could publish the App's private key. The owner
+ * ordered (2026-10-05) this cheap interim belt: refuse any session command, and
+ * any read/write tool call, that NAMES one of the App's secret files or the
+ * secrets dir itself.
+ *
+ * It is a SPELLING belt. Variable indirection (`d=/opt/quickreview/sec; cat
+ * ${d}rets/app.pem`), a recursive read of an ancestor (`grep -r . /opt`), a
+ * symlink, a file list fed to `xargs` — all of these still reach the files,
+ * and no amount of pattern work here closes that class (this file's own
+ * history says so four times over). The real fix is that a session
+ * cannot read the dir at all: a uid or mount split,. Until then this
+ * turns the obvious spellings into a loud refusal.
+ *
+ * The sanctioned scripts keep working because they read the secrets as
+ * SUBPROCESSES: `bash scripts/mint-token.sh` names no secret on the session's
+ * command line, and only that line is checked.
+ *
+ * How a word is judged — after quotes, backslashes and `$'…'` escapes are
+ * removed, `~`/`$HOME`/`$XDG_CONFIG_HOME`/`$QCR_INSTALL` expanded and `{a,b}`
+ * braces expanded:
+ *   · a path COMPONENT that is a secret file's name (`APP_SECRET_NAME_RE`);
+ *   · a spelling of a secrets dir on its own (`/opt/quickreview/secrets`,
+ *     `…/qcr/<install>/secrets`, the old `~/.config/quickreview-bot`);
+ *   · the word resolved against the cwd (a `cd` earlier in the same command
+ *     moves it) landing on, or inside, one of the resolved secrets dirs —
+ *     so `../secrets/app_id` from the sandbox root is caught;
+ *   · a GLOB that could expand to a secret path (`../secrets/*`,
+ *     `/opt/*` + `/s*` + `/*`), or one of whose components could match a
+ *     secret file's name with at least half of that name spelled literally
+ *     (`app.p*m`, `*.pem`, `openai*key` — but not `*`, `*key` or `*token`,
+ *     which would refuse ordinary reads).
+ * A grep/rg PATTERN and a sed SCRIPT are exempt (the first positional, or the
+ * value of `-e`): they read nothing, and a reviewer of code that handles
+ * secrets greps for `openai_api_key` as a matter of course.
+ */
+export interface SecretPathContext {
+  /** The directory a bare relative word resolves against (the session cwd). */
+  cwd: string;
+  /** For `~`, `$HOME`, `$XDG_CONFIG_HOME` and `$QCR_INSTALL` expansion. */
+  env: Readonly<Record<string, string | undefined>>;
+  /** Every secrets dir this install could be using, absolute, no trailing `/`. */
+  dirs: readonly string[];
+}
+
+/** The in-container secrets mount (deploy/ansible entrypoint `SECRETS`). */
+export const CONTAINER_SECRETS_DIR = "/opt/quickreview/secrets";
+
+/** The files the secrets dir holds, by their shipped names
+ * (deploy/collect-secrets.sh, the src/config.ts defaults). */
+export const APP_SECRET_FILES: readonly string[] = [
+  "app.pem",
+  "webhook_secret",
+  "tunnel_token",
+  "openai_api_key",
+  "openai_embeddings_api_key",
+  "slack_bot_token",
+  "slack_app_token",
+];
+const APP_SECRET_NAME_RE =
+  /^(?:app\.pem|webhook_secret|tunnel_token|openai[A-Za-z0-9_.-]*key|slack_(?:bot|app)_token)$/;
+
+/** Secrets-dir spellings recognisable without any context. */
+const SECRET_DIR_SPELLINGS: readonly RegExp[] = [
+  /^\/+opt\/+quickreview\/+secrets(?:\/|$)/,
+  /(?:^|\/)qcr\/+[^/]+\/+secrets(?:\/|$)/,
+  /(?:^|\/)\.config\/+quickreview-bot(?:\/|$)/, // the legacy dir — refused, never read
+];
+
+/**
+ * This process's secrets dirs — self-contained on purpose (no `src/` import):
+ * bash-guard is registered GLOBALLY on the VM and in the bench sandbox, and
+ * must load wherever pi finds it. Mirrors `locateSecrets` in src/install.ts:
+ * the container mount, `$QCR_SECRETS_MOUNT`, `$QC_SECRETS_DIR`,
+ * `<config home>/secrets`, the legacy `~/.config/quickreview-bot`, and a
+ * `[github] secrets_dir` read best-effort from `$QCR_CONFIG`.
+ */
+export function defaultSecretPathContext(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  cwd: string = process.cwd(),
+): SecretPathContext {
+  const home = homeFor(env);
+  const xdg = (env.XDG_CONFIG_HOME ?? "").trim() || `${home}/.config`;
+  const install = (env.QCR_INSTALL ?? "").trim() || "default";
+  const dirs = new Set<string>([
+    CONTAINER_SECRETS_DIR,
+    `${xdg}/qcr/${install}/secrets`,
+    `${home}/.config/quickreview-bot`, // the legacy dir — refused, never read
+  ]);
+  for (const v of [
+    env.QCR_SECRETS_MOUNT,
+    env.QC_SECRETS_DIR,
+    configuredSecretsDir(env.QCR_CONFIG),
+  ]) {
+    if (typeof v === "string" && v.trim() !== "") dirs.add(expandTilde(v.trim(), home));
+  }
+  return {
+    cwd,
+    env,
+    dirs: [...dirs]
+      .filter((d) => d.startsWith("/"))
+      .map((d) => posix.normalize(d).replace(/(.)\/+$/, "$1")),
+  };
+}
+
+function homeFor(env: Readonly<Record<string, string | undefined>>): string {
+  return (env.HOME ?? "").trim() || "/root";
+}
+
+function expandTilde(p: string, home: string): string {
+  if (p === "~") return home;
+  return p.startsWith("~/") ? `${home}/${p.slice(2)}` : p;
+}
+
+/** `[github] secrets_dir` from the live config, by a line scan — never a
+ * reason to fail: an unreadable config simply adds nothing. */
+function configuredSecretsDir(configPath: string | undefined): string | null {
+  if (typeof configPath !== "string" || configPath.trim() === "") return null;
+  try {
+    let section = "";
+    for (const line of readFileSync(configPath, "utf8").split("\n")) {
+      const head = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line);
+      if (head) {
+        section = head[1]!.trim();
+        continue;
+      }
+      if (section !== "github") continue;
+      const m = /^\s*secrets_dir\s*=\s*["']([^"']*)["']/.exec(line);
+      if (m && m[1]!.trim() !== "") return m[1]!.trim();
+    }
+  } catch {
+    /* unreadable config: nothing to add */
+  }
+  return null;
+}
+
+let cachedSecretDirs: SecretPathContext | null = null;
+/** The live process's context: dirs resolved once, the cwd read every call. */
+function processSecretContext(): SecretPathContext {
+  cachedSecretDirs ??= defaultSecretPathContext();
+  return { ...cachedSecretDirs, cwd: process.cwd() };
+}
+
+/** Programs whose first positional (or `-e` value) is a PATTERN or script,
+ * not a file. */
+const PATTERN_PROGRAMS = new Set(["grep", "egrep", "fgrep", "rg", "sed"]);
+/** Their options that consume the NEXT word as a value, so the value is not
+ * mistaken for the pattern. (`-e`/`--regexp`/`--expression` are handled
+ * separately: their value IS the pattern.) */
+const PATTERN_PROGRAM_VALUE_OPTS = new Set([
+  "-A",
+  "-B",
+  "-C",
+  "-m",
+  "-d",
+  "-D",
+  "-g",
+  "-t",
+  "-T",
+  "-M",
+  "-j",
+  "-E",
+  "--after-context",
+  "--before-context",
+  "--context",
+  "--max-count",
+  "--glob",
+  "--iglob",
+  "--type",
+  "--type-not",
+  "--max-columns",
+  "--threads",
+  "--encoding",
+  "--sort",
+  "--sortr",
+  "--max-depth",
+  "--color",
+  "--colors",
+  "--replace",
+  "--path-separator",
+  "--max-filesize",
+  "--ignore-file",
+  "--type-add",
+  "--engine",
+  "--devices",
+  "--directories",
+  "--binary-files",
+  "--label",
+  "--include",
+  "--exclude",
+  "--exclude-dir",
+  "--line-length",
+]);
+
+function secretBlock(word: string, why: string): BashCheck {
+  return block(
+    `exec policy: '${word}' ${why} — a review session never reads the App's credentials (app.pem, webhook_secret, tunnel_token, the OpenAI and Slack keys, or the secrets dir); the sanctioned scripts (mint-token.sh, the posting scripts) read them themselves`,
+  );
+}
+
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+function checkAppSecretWords(cmd: string, ctx: SecretPathContext): BashCheck {
+  let cwd = ctx.cwd;
+  for (const segment of splitShellSegments(cmd)) {
+    const words = segment.split(/\s+/).filter((w) => w.length > 0);
+    const exempt = patternWordIndexes(words);
+    for (let i = 0; i < words.length; i++) {
+      if (exempt.has(i)) continue;
+      const res = judgeSecretWord(words[i]!, { ...ctx, cwd });
+      if (!res.allowed) return res;
+    }
+    // A `cd` moves where every later relative word lands. Approximate on
+    // purpose (a subshell's cd leaks forward here) — that errs toward refusal.
+    const p = programIndex(words);
+    if (p >= 0 && basenameOf(dequoteShellWord(words[p]!)) === "cd") {
+      const target = words.slice(p + 1).find((w) => !w.startsWith("-"));
+      if (target !== undefined) {
+        const t = expandShellWord(dequoteShellWord(target), ctx.env);
+        if (!/[*?[$]/.test(t)) cwd = posix.resolve(cwd, t);
+      }
+    }
+  }
+  return { allowed: true };
+}
+
+/** Index of a segment's program word: past `VAR=val` prefixes and `env`. */
+function programIndex(words: readonly string[]): number {
+  let p = 0;
+  while (p < words.length && (ASSIGNMENT_RE.test(words[p]!) || /^\d*[<>]/.test(words[p]!))) p++;
+  if (p < words.length && dequoteShellWord(words[p]!) === "env") {
+    p++;
+    while (p < words.length && (words[p]!.startsWith("-") || ASSIGNMENT_RE.test(words[p]!))) p++;
+  }
+  return p < words.length ? p : -1;
+}
+
+/** Which words of a segment are a pattern/script argument of grep/rg/sed. */
+function patternWordIndexes(words: readonly string[]): Set<number> {
+  const out = new Set<number>();
+  let p = programIndex(words);
+  if (p < 0) return out;
+  // `xargs grep foo` — the pattern belongs to xargs' program.
+  if (basenameOf(dequoteShellWord(words[p]!)) === "xargs") {
+    p++;
+    while (p < words.length && words[p]!.startsWith("-")) p++;
+  }
+  if (p >= words.length || !PATTERN_PROGRAMS.has(basenameOf(dequoteShellWord(words[p]!))))
+    return out;
+  let explicit = false;
+  let firstPositional = -1;
+  for (let i = p + 1; i < words.length; i++) {
+    const w = dequoteShellWord(words[i]!);
+    if (w === "--") {
+      if (firstPositional < 0 && i + 1 < words.length) firstPositional = i + 1;
+      break;
+    }
+    if (w === "-e" || w === "--regexp" || w === "--expression") {
+      explicit = true;
+      out.add(i + 1);
+      i++;
+      continue;
+    }
+    if (/^(?:-e.|--regexp=|--expression=)/.test(w)) {
+      explicit = true;
+      out.add(i);
+      continue;
+    }
+    if (w.startsWith("-")) {
+      if (PATTERN_PROGRAM_VALUE_OPTS.has(w)) i++;
+      continue;
+    }
+    if (/^\d*[<>]/.test(w)) continue;
+    if (firstPositional < 0) firstPositional = i;
+  }
+  if (!explicit && firstPositional >= 0) out.add(firstPositional);
+  return out;
+}
+
+function basenameOf(w: string): string {
+  return w.slice(w.lastIndexOf("/") + 1);
+}
+
+/** The word bash would see: `$'…'` escapes decoded, then quotes, backslashes
+ * and backticks removed. (A glob char inside quotes is literal to bash, but
+ * judging it as a glob only errs toward refusal.) */
+function dequoteShellWord(word: string): string {
+  const ansi = word.replace(/\$'((?:\\.|[^'\\])*)'/g, (_m, body: string) =>
+    body
+      .replace(/\\x([0-9A-Fa-f]{1,2})/g, (_x, h: string) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\u([0-9A-Fa-f]{1,4})/g, (_x, h: string) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\([0-7]{1,3})/g, (_x, o: string) => String.fromCharCode(parseInt(o, 8))),
+  );
+  return ansi.replace(/["'\\`]/g, "");
+}
+
+/** `~`, `$HOME`/`${HOME}`, `$XDG_CONFIG_HOME`, `$QCR_INSTALL` — the variables
+ * a secrets path is spelled with. Anything else is left as written. */
+function expandShellWord(w: string, env: SecretPathContext["env"]): string {
+  const home = homeFor(env);
+  const vars: Record<string, string> = {
+    HOME: home,
+    XDG_CONFIG_HOME: (env.XDG_CONFIG_HOME ?? "").trim() || `${home}/.config`,
+    QCR_INSTALL: (env.QCR_INSTALL ?? "").trim() || "default",
+  };
+  let out = w.replace(
+    /\$\{?(HOME|XDG_CONFIG_HOME|QCR_INSTALL)\}?(?![A-Za-z0-9_])/g,
+    (_m, n: string) => vars[n]!,
+  );
+  if (out === "~") out = home;
+  else if (out.startsWith("~/")) out = `${home}/${out.slice(2)}`;
+  return out;
+}
+
+/** `{a,b}` brace expansion, bounded at 64 results. */
+function braceExpand(w: string, budget = 64): string[] {
+  const m = /^(.*?)\{([^{}]*,[^{}]*)\}(.*)$/.exec(w);
+  if (!m) return [w];
+  const out: string[] = [];
+  for (const alt of m[2]!.split(",")) {
+    for (const x of braceExpand(`${m[1]}${alt}${m[3]}`, budget)) {
+      out.push(x);
+      if (out.length >= budget) return out;
+    }
+  }
+  return out;
+}
+
+const GLOB_CHARS = /[*?[]/;
+
+function globToRegex(glob: string): RegExp {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!;
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
+        i++;
+      } else re += "[^/]*";
+    } else if (c === "?") re += "[^/]";
+    else if (c === "[") {
+      const close = glob.indexOf("]", i + 2);
+      if (close < 0) re += "\\[";
+      else {
+        let body = glob.slice(i + 1, close);
+        if (body.startsWith("!")) body = "^" + body.slice(1);
+        re += `[${body.replace(/\\/g, "\\\\")}]`;
+        i = close;
+      }
+    } else re += c.replace(/[.+^${}()|\\/]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** The concrete paths a glob is tried against: each dir, and each shipped
+ * file inside it. */
+function secretCandidates(dirs: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const d of dirs) {
+    out.push(d);
+    for (const f of APP_SECRET_FILES) out.push(`${d}/${f}`);
+  }
+  return out;
+}
+
+/** Do the glob's leading components match a whole secrets dir? Then whatever
+ * follows them (`app_id`, a file the name list does not carry) is inside it. */
+function globPrefixHitsDir(absGlob: string, dirs: readonly string[]): boolean {
+  const parts = absGlob.split("/").filter((c) => c.length > 0);
+  return dirs.some((d) => {
+    const dparts = d.split("/").filter((c) => c.length > 0);
+    if (parts.length < dparts.length) return false;
+    // `**` can span components; an any-depth prefix is the whole-path regex's job.
+    const prefix = parts.slice(0, dparts.length);
+    if (prefix.some((c) => c.includes("**"))) return false;
+    return globToRegex(`/${prefix.join("/")}`).test(d);
+  });
+}
+
+function judgeSecretWord(raw: string, ctx: SecretPathContext): BashCheck {
+  // Every piece of the word that could be a path: the word itself, the part
+  // after a redirection operator, after `=` (`--file=`, `VAR=`), after a
+  // short option (`-f/path`) and after an `@` (pi's and curl's file prefix).
+  const pieces = new Set<string>();
+  for (const piece of dequoteShellWord(raw).split(/[<>|;&()]+/)) {
+    if (piece === "") continue;
+    pieces.add(piece);
+    const eq = piece.indexOf("=");
+    if (eq >= 0) pieces.add(piece.slice(eq + 1));
+    if (/^-[A-Za-z]./.test(piece)) pieces.add(piece.slice(2));
+    if (piece.startsWith("@")) pieces.add(piece.slice(1));
+  }
+  for (const piece of pieces) {
+    for (const w of braceExpand(expandShellWord(piece, ctx.env))) {
+      const res = judgeSecretPath(w, ctx);
+      if (!res.allowed) return res;
+    }
+  }
+  return { allowed: true };
+}
+
+/** One expanded, unquoted word judged as a path. */
+export function judgeSecretPath(w: string, ctx: SecretPathContext): BashCheck {
+  if (w === "") return { allowed: true };
+  const components = w.split("/").filter((c) => c.length > 0);
+  for (const c of components) {
+    if (APP_SECRET_NAME_RE.test(c)) return secretBlock(w, "names one of the App's secret files");
+  }
+  for (const re of SECRET_DIR_SPELLINGS) {
+    if (re.test(w)) return secretBlock(w, "names the App's secrets dir");
+  }
+  const abs = posix.resolve(ctx.cwd, w);
+  for (const d of ctx.dirs) {
+    if (abs === d || abs.startsWith(`${d}/`))
+      return secretBlock(w, `resolves into the App's secrets dir (${d})`);
+  }
+  if (GLOB_CHARS.test(w)) {
+    const re = globToRegex(abs);
+    if (secretCandidates(ctx.dirs).some((p) => re.test(p)) || globPrefixHitsDir(abs, ctx.dirs))
+      return secretBlock(w, "is a glob that can expand into the App's secrets dir");
+    for (const c of components) {
+      if (!GLOB_CHARS.test(c)) continue;
+      const cre = globToRegex(c);
+      const literal = c.replace(/\[[^\]]*\]|[*?]/g, "").length;
+      const hit = APP_SECRET_FILES.find((f) => cre.test(f) && literal * 2 >= f.length);
+      if (hit !== undefined)
+        return secretBlock(w, `is a glob that matches the App's secret file '${hit}'`);
+    }
+  }
+  return { allowed: true };
+}
+
+/**
+ * The file TOOLS' secret veto. pi's built-in `read` takes a `path`
+ * and resolves `~` and a leading `@` itself (VERIFIED against pi 1.0.0's
+ * dist/core/tools/read.js schema and path-utils.js `resolveToCwd`), so the
+ * judgement the bash belt applies to a word applies to that path — plus the
+ * OpenViking root-credential spellings, which the read tool reached with no
+ * check at all before this.
+ */
+export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck {
+  const root = checkRootCredentialSpelling(path);
+  if (!root.allowed) return root;
+  const c = ctx ?? processSecretContext();
+  const p = path.startsWith("@") ? path.slice(1) : path;
+  return judgeSecretPath(expandShellWord(p, c.env), c);
 }
 
 /**
@@ -1597,18 +2060,49 @@ const WRITE_TOOLS = new Set([
   "apply_patch",
 ]);
 
+/** Tool names that take a file or directory path and READ it: pi's
+ * built-in `read`, and its optional `grep`/`find`/`ls` (off by default — pi
+ * 1.0.0 `DEFAULT_TOOL_NAMES` is read/bash/edit/write — but a settings layer
+ * can switch them on). Broad for the same reason as WRITE_TOOLS.
+ * // VERIFY-ON-PIN: pi's read-tool naming beyond the four built-ins. */
+const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "cat"]);
+
 /**
  * pi activation. VERIFIED (findings §5 lines 132-141): a tool_call
  * handler can return { block: true, reason } to veto the call, and event.input
- * is mutable. // VERIFY-ON-PIN: field names `toolName` and `input`/`arguments`
- * on the event payload, and (following extensions/companion-guard.ts, which
- * already vetoes writes this way) `path`/`file_path` on a write tool's input.
+ * is mutable. pi 1.0.0 emits `{ type: "tool_call", toolName, toolCallId,
+ * input }` (dist/core/agent-session.js) and its read/grep/find/ls tools take
+ * `path` (grep also `glob`) — read off the 1.0.0 dist, not yet a live session.
+ * // VERIFY-ON-PIN: field names `toolName` and `input`/`arguments` on the event
+ * payload, and (following extensions/companion-guard.ts, which already vetoes
+ * writes this way) `path`/`file_path` on a file tool's input.
  */
 export default function activate(pi: Pi): void {
   pi.on("tool_call", (event) => {
     const ev = event as ToolCallEvent;
     const input = (ev.input ?? ev.arguments) as
-      { command?: unknown; path?: unknown; file_path?: unknown; filePath?: unknown } | undefined;
+      | {
+          command?: unknown;
+          path?: unknown;
+          file_path?: unknown;
+          filePath?: unknown;
+          glob?: unknown;
+        }
+      | undefined;
+
+    // The App-secret belt on every file tool, read AND write: an
+    // `edit` that fails to match still answers with what it read.
+    if (
+      typeof ev.toolName === "string" &&
+      (READ_TOOLS.has(ev.toolName) || WRITE_TOOLS.has(ev.toolName))
+    ) {
+      for (const p of [input?.path, input?.file_path, input?.filePath, input?.glob]) {
+        if (typeof p !== "string") continue;
+        const res = checkReadPath(p);
+        if (!res.allowed)
+          return { block: true, reason: res.reason ?? "exec policy: secret path blocked" };
+      }
+    }
 
     if (ev.toolName === "bash") {
       const cmd = input?.command;
