@@ -26,10 +26,10 @@ nothing else in it changes:
   * `example-review[bot]` (and the bare app slug `example-review`) -> `<review-bot>`,
     then `the owner` (any case) -> `<owner>`;
   * `quickreviewd` -> `quickreview` (the product's old name);
-  * host paths: `/home/user/qcr-bench-runs` -> `<runs-root>`,
-    `/home/user/src/quickreview` -> `<repo>`,
-    `/home/user/.config/qcr-bench/claude.env` -> `<config>/claude.env`,
-    any other `/home/user` -> `<home>`, the docker volume `companion-pihome` -> `pi-login-volume`;
+  * host paths: `/home/user/qcr-bench-runs` -> `<runs>`,
+    `/home/user/src/quickreview` -> `<repo>`, any other
+    `/home/user` -> `<home>`, the docker volume `companion-pihome` -> `<pi-login-volume>`
+    (the same spellings as the Hugging Face dataset export);
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
     `signature` (Anthropic) becomes the empty string.
@@ -76,6 +76,7 @@ QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor
 
 B64 = rb"[A-Za-z0-9+/=_\-]"
 ESCQ = rb'\\*"\s*:\s*\\*"'  # `":"` at any JSON escaping depth
+BOT = rb"(?:\[bot\]|\\\[bot\\\]|\\\\\[bot\\\\\]|%5Bbot%5D)?"  # [bot], escaped once or twice, or URL-encoded
 
 
 def _sig_keep(m):  # a base64 `signature` value right after a JSON quote: keep the key, blank the value
@@ -86,16 +87,16 @@ RULES = [
     # (name, compiled regex, replacement, prefilter) — applied in this order. The
     # prefilter is a literal that must be in the data (or, as ("low", x), in its
     # lower-cased copy) before the regex runs: speed only, never a different result.
-    ("review-bot", re.compile(rb"[Mm][Aa][Tt][Ee][Uu][Ss][Zz]-[Rr][Ee][Vv][Ii][Ee][Ww](?:\[bot\]|\\\[bot\\\]|\\\\\[bot\\\\\]|%5Bbot%5D)?"), b"<review-bot>", ("low", b"example-review")),
+    ("review-bot", re.compile(rb"example-review" + BOT), b"<review-bot>", b"example-review"),
+    ("review-bot-other-case", re.compile(rb"(?i:example-review)" + BOT), b"<review-bot>", ("low", b"example-review")),
     ("owner", re.compile(rb"the owner"), b"<owner>", b"the owner"),
     ("owner-other-case", re.compile(rb"(?i:<owner>)"), b"<owner>", ("low", b"owner_legacy")),
     ("quickreviewd", re.compile(rb"quickreviewd"), b"quickreview", b"quickreviewd"),
-    ("runs-root", re.compile(rb"(?:/home/user/src|~/src)/qcr-bench-runs"), b"<runs-root>", b"qcr-bench-runs"),
+    ("runs", re.compile(rb"(?:/home/user/src|~/src)/qcr-bench-runs"), b"<runs>", b"qcr-bench-runs"),
     ("repo", re.compile(rb"(?:/home/user/src|~/src)/review-sandbox"), b"<repo>", b"src/quickreview"),
-    ("claude-env", re.compile(rb"/home/user/\.config/qcr-bench/claude\.env"), b"<config>/claude.env", b"claude.env"),
     ("home", re.compile(rb"/home/user(?![A-Za-z0-9_\-])"), b"<home>", b"/home/user"),
     ("home-escaped", re.compile(rb"\\/home\\/mat(?![A-Za-z0-9_\-])"), b"<home>", b"\\/home\\/mat"),
-    ("pi-login-volume", re.compile(rb"companion-pihome"), b"pi-login-volume", b"companion-pihome"),
+    ("pi-login-volume", re.compile(rb"companion-pihome"), b"<pi-login-volume>", b"companion-pihome"),
     ("blob-encrypted_content", re.compile(rb"(encrypted_content" + ESCQ + rb")" + B64 + rb"+"), rb"\1", b"encrypted_content"),
     ("blob-thinkingSignature", re.compile(rb"(thinkingSignature" + ESCQ + rb")" + B64 + rb"{40,}"), rb"\1", b"thinkingSignature"),
     ("blob-signature", re.compile(rb"(signature" + ESCQ + rb")" + B64 + rb"{100,}"), _sig_keep, b"signature"),
@@ -450,7 +451,7 @@ class VolumeWriter:
         n = len(self.volumes) + 1
         path = self.out / f"{self.stem}.part{n:02d}.tar.zst"
         self.fh = open(path, "wb")
-        self.proc = subprocess.Popen(["zstd", f"-{self.level}", "--long=27", f"-T{self.threads}", "-q", "-c"],
+        self.proc = subprocess.Popen(["zstd", f"-{self.level}", "--long=27", f"-T{self.threads}", "-B64MiB", "-q", "-c"],
                                      stdin=subprocess.PIPE, stdout=self.fh)
         self.tar = tarfile.open(fileobj=self.proc.stdin, mode="w|", format=tarfile.PAX_FORMAT)
         self.volumes.append({"path": path, "files": 0, "bytes_in": 0, "members": collections.Counter()})
@@ -597,10 +598,9 @@ def write_manifest(out: Path, src: Path, results: list, a):
         "volume_cap_bytes": a.cap,
         "rewrites_applied": [r[0] for r in RULES],
         "placeholders": {"the owner": "<owner>", "example-review[bot]": "<review-bot>", "quickreviewd": "quickreview",
-                         "/home/user/qcr-bench-runs": "<runs-root>",
+                         "/home/user/qcr-bench-runs": "<runs>",
                          "/home/user/src/quickreview": "<repo>",
-                         "/home/user/.config/qcr-bench/claude.env": "<config>/claude.env", "/home/user": "<home>",
-                         "companion-pihome": "pi-login-volume"},
+                         "/home/user": "<home>", "companion-pihome": "<pi-login-volume>"},
     })
     man_path.write_text(json.dumps(prior, indent=1, sort_keys=False) + "\n")
     lines = []
@@ -691,10 +691,11 @@ packed. Nothing else in the text changed.
   product's earlier name, not a person, so it gets the public name rather
   than a placeholder.
 - **Host paths** in driver logs and analysis: `/home/user/qcr-bench-runs`
-  became `<runs-root>`, `/home/user/src/quickreview` `<repo>`,
-  `/home/user/.config/qcr-bench/claude.env` `<config>/claude.env`, any other
-  `/home/user` `<home>`, and the docker volume `companion-pihome`
-  `pi-login-volume`. No model saw these.
+  became `<runs>`, `/home/user/src/quickreview` `<repo>`, any
+  other `/home/user` `<home>` (so the Claude Code credential file's path reads
+  `<home>/.config/qcr-bench/claude.env`; its value never appeared), and the
+  docker volume `companion-pihome` `<pi-login-volume>`. No model saw these.
+  The spellings are the same as in the Hugging Face dataset.
 - **Encrypted reasoning blobs are blanked.** The value of every
   `encrypted_content` field (OpenAI reasoning items) and of every base64
   `thinkingSignature` and `signature` (Anthropic thinking blocks) is the empty
