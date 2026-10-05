@@ -1,8 +1,9 @@
 // Daemon-side ledger freshness enforcement.
 //
 // The prompt mandate "rewrite your ledger at round end" did not stick: the
-// 2026-08-19 audit found the end-of-round ledger write missing in 0/8
-// post-deploy and skipped in 4/6 pre-deploy rounds. So the daemon now checks:
+// 2026-08-19 audit found the end-of-round ledger write made in 0 of 8
+// post-deploy rounds (missing in all eight) and skipped in 4 of 6 pre-deploy
+// rounds. So the daemon now checks:
 // after each verdicted round (once ledger-pin's mirror has had its chance,
 // i.e. AFTER compactSession) it parses `state/ledgers/pr-<n>.md` and requires
 // the header `LEDGER PR #<n> @ <round head sha>`.
