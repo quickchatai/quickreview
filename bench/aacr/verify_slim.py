@@ -326,8 +326,12 @@ def main():
             run(cmd + arms_, env=env)
             mine = json.loads((cdir / f"numbers{suffix}.json").read_text())
             theirs = json.loads((HERE / "charts" / f"numbers{suffix}.json").read_text())
-            same = _num_equal(mine.get("arms"), theirs.get("arms"))
-            chart_notes.append(f"charts.py {note}: numbers{suffix}.json arms {'IDENTICAL to' if same else 'DIFFER from'} the committed charts/numbers{suffix}.json")
+            # the committed gpt-6-sol chart data predates the product's rename
+            # (arms-gpt6sol.txt now says QuickReview where it said quickreviewd)
+            renamed = {k.replace("quickreviewd", "QuickReview"): v for k, v in (theirs.get("arms") or {}).items()}
+            same = _num_equal(mine.get("arms"), renamed)
+            how = " (arm labels quickreviewd -> QuickReview)" if renamed.keys() != (theirs.get("arms") or {}).keys() else ""
+            chart_notes.append(f"charts.py {note}: numbers{suffix}.json arms {'IDENTICAL to' if same else 'DIFFER from'} the committed charts/numbers{suffix}.json{how}")
             rep.check("charts/numbers" + suffix + ".json", "all arms", "every number", "identical to the committed file", "identical to the committed file" if same else "differs")
             print(chart_notes[-1])
 
