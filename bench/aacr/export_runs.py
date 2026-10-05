@@ -622,6 +622,15 @@ def cmd_archive(a):
 
 
 def write_manifest(out: Path, src: Path, results: list, a):
+    # one invocation per group may run side by side: the manifest's
+    # read-modify-write holds an exclusive lock, and lands by rename
+    import fcntl
+    with open(out / ".MANIFEST.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _write_manifest(out, src, results, a)
+
+
+def _write_manifest(out: Path, src: Path, results: list, a):
     man_path = out / "MANIFEST.json"
     prior = json.loads(man_path.read_text()) if man_path.exists() else {"groups": {}}
     for r in results:
@@ -642,12 +651,15 @@ def write_manifest(out: Path, src: Path, results: list, a):
                          "/home/user/src/quickreview": "<repo>",
                          "/home/user": "<home>", "companion-pihome": "<pi-login-volume>"},
     })
-    man_path.write_text(json.dumps(prior, indent=1, sort_keys=False) + "\n")
+    tmp = man_path.with_suffix(".json.partial")
+    tmp.write_text(json.dumps(prior, indent=1, sort_keys=False) + "\n")
+    tmp.rename(man_path)
     lines = []
     for g in prior["groups"].values():
         for v in g["volumes"]:
             lines.append(f"{v['sha256']}  {v['file']}")
-    (out / "SHA256SUMS").write_text("\n".join(sorted(lines, key=lambda x: x.split()[1])) + "\n")
+    (out / "SHA256SUMS.partial").write_text("\n".join(sorted(lines, key=lambda x: x.split()[1])) + "\n")
+    (out / "SHA256SUMS.partial").rename(out / "SHA256SUMS")
     print(f"wrote {man_path} and SHA256SUMS")
 
 
