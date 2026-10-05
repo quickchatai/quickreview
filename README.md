@@ -191,6 +191,16 @@ The philosophy, short, is in [**MANIFESTO.md**](MANIFESTO.md).
 
 ## What it does around the review
 
+What one pull request looks like from request to merge, on GitHub and inside
+the reviewer: the trigger, the whole-repo checkout, the repo's own rules, the
+review, replies on threads, a deferred issue, and the re-review that checks
+each fix.
+
+<p align="center">
+  <img src="docs/media/pr-lifecycle.gif" width="800"
+       alt="Animation, about two minutes: a GitHub pull-request page for PR #42 beside the PR's own reviewer bot and a lifecycle strip (tracked, queued, reviewing, awaiting author, closed). A review label triggers the bot; it checks out the whole repository, follows callers and library source, and reads the repo's written rules and CI. Lens passes report candidates, the validator drops three, and the bot posts a REQUEST_CHANGES review with two rule-citing blockers, a question and a deferred finding it files as issue #57. The author replies on two threads: the bot concedes one after checking the claim and holds the other, citing the line. After a fix and a re-request, the bot verifies and resolves the fixed threads, leaves the deferred one open, approves on green CI, and a teammate merges.">
+</p>
+
 - **Reviews on trigger, not on every PR**: a label or a team review-request
   marks a PR; everything else is ignored, and bot-authored PRs never queue.
 - **One sticky session per PR**: the same conversation follows the PR through
