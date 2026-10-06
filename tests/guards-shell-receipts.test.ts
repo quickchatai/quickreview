@@ -9,9 +9,41 @@ import { join } from "node:path";
 import { HEAD, exec, root, useGuardsShellRig } from "./helpers/guards-shell-rig.js";
 
 const s = useGuardsShellRig();
+const inlineComments = [{ path: "src/example.ts", line: 12, side: "RIGHT", body: "Optional improvement." }];
 const { run, dryrunRecords, record, bodyFile } = s;
 
 describe("posting receipts", () => {
+  it.each([
+    {},
+    [null],
+    [{ path: "src/example.ts", line: true, body: "Invalid line" }],
+    [{ path: "src/example.ts", line: 0, body: "Invalid line" }],
+    [{ path: "src/example.ts", line: 1, body: "Invalid side", side: "MIDDLE" }],
+    [{ path: "src/example.ts", line: 1 }],
+  ].map((comments) => [comments]))("approval refuses invalid inline comments before any mutation: %j", async (comments) => {
+    const commentsFile = join(s.dir, "invalid-comments.json");
+    writeFileSync(commentsFile, JSON.stringify(comments));
+    const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile]);
+    expect(res.ok).toBe(false);
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("approval refuses an unreadable comments file before any mutation", async () => {
+    const res = await run("approve-pr.sh", ["5180", bodyFile(), join(s.dir, "no-such-comments.json")]);
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("unreadable comments file");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("approval accepts an empty inline array", async () => {
+    const commentsFile = join(s.dir, "empty-comments.json");
+    writeFileSync(commentsFile, "[]");
+    const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile]);
+    expect(res.ok).toBe(true);
+    const create = dryrunRecords().find((name) => name.includes("create_review"));
+    expect(JSON.parse(readFileSync(join(s.dir, "dryrun", create!), "utf8")).body.comments).toEqual([]);
+  });
+
   const receipt = (round: number) =>
     JSON.parse(readFileSync(join(s.dir, "receipts", `pr-5180-round-${round}.json`), "utf8"));
 
@@ -121,7 +153,7 @@ describe("posting receipts", () => {
   it("confirmed approval retry bypasses changed posting guards and resumes cleanup only", async () => {
     const key = `v1:5180:12:${HEAD}`;
     const path = join(s.dir, "receipts", "pr-5180-round-12.json");
-    const args = [path, key, "5180", "12", HEAD, "APPROVE", "APPROVE", '{"event":"APPROVE"}'];
+    const args = [path, key, "5180", "12", HEAD, "APPROVE", "APPROVE", JSON.stringify({ event: "APPROVE", comments: inlineComments })];
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
       env: {
@@ -136,7 +168,7 @@ describe("posting receipts", () => {
       user: { login: "pr-author" },
     };
     s.checkRuns = [{ name: "unit", status: "completed", conclusion: "failure" }];
-    const res = await run("approve-pr.sh", ["5180", join(s.dir, "missing-body.md")], {
+    const res = await run("approve-pr.sh", ["5180", join(s.dir, "missing-body.md"), join(s.dir, "missing-comments.json")], {
       QCR_EXPECTED_HEAD: HEAD,
       QCR_ROUND_NO: "12",
       QCR_POSTING_KEY: key,
@@ -146,11 +178,14 @@ describe("posting receipts", () => {
     expect(res.out).toContain("skipping duplicate approval");
     expect(dryrunRecords().some((name) => name.includes("create_review"))).toBe(false);
     expect(dryrunRecords().some((name) => name.includes("remove_label"))).toBe(true);
+    expect(dryrunRecords().some((name) => name.includes("delete_team_review_request"))).toBe(true);
   });
 
   it("approval records the same keyed dry-run receipt before trigger cleanup", async () => {
     const key = `v1:5180:8:${HEAD}`;
-    const res = await run("approve-pr.sh", ["5180", bodyFile()], {
+    const commentsFile = join(s.dir, "inline-comments.json");
+    writeFileSync(commentsFile, JSON.stringify(inlineComments));
+    const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile], {
       QCR_EXPECTED_HEAD: HEAD,
       QCR_ROUND_NO: "8",
       QCR_POSTING_KEY: key,
@@ -167,8 +202,21 @@ describe("posting receipts", () => {
     });
     const create = dryrunRecords().find((name) => name.includes("create_review"));
     expect(create).toBeDefined();
-    expect(JSON.parse(readFileSync(join(s.dir, "dryrun", create!), "utf8")).body.commit_id).toBe(
-      HEAD,
-    );
+    const payload = JSON.parse(readFileSync(join(s.dir, "dryrun", create!), "utf8")).body;
+    expect(payload.commit_id).toBe(HEAD);
+    expect(payload.event).toBe("APPROVE");
+    expect(payload.comments).toEqual(inlineComments);
+    expect(dryrunRecords().filter((name) => name.includes("create_review"))).toHaveLength(1);
+    expect(dryrunRecords()).toHaveLength(3);
+
+    const repeated = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "8",
+      QCR_POSTING_KEY: key,
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    expect(repeated.ok).toBe(true);
+    expect(repeated.out).toContain("skipping duplicate approval");
+    expect(dryrunRecords().filter((name) => name.includes("create_review"))).toHaveLength(1);
   });
 });

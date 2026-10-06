@@ -15,7 +15,8 @@
 # Approvals are only ever added here; no step retracts or withdraws a review,
 # and none may ever be added.
 #
-# Usage: approve-pr.sh <pr-number> [review-body-file]
+# Usage: approve-pr.sh <pr-number> [review-body-file] [comments-json-file]
+# comments-json-file: inline comments in the SAME approval, never a second review.
 
 set -euo pipefail
 
@@ -31,7 +32,8 @@ die() { echo "approve-pr: $*" >&2; exit 1; }
 
 PR="${1:-}"
 BODY_FILE="${2:-}"
-[[ "$PR" =~ ^[0-9]+$ ]] || die "usage: approve-pr.sh <pr-number> [review-body-file]"
+COMMENTS_FILE="${3:-}"
+[[ "$PR" =~ ^[0-9]+$ ]] || die "usage: approve-pr.sh <pr-number> [review-body-file] [comments-json-file]"
 
 REVIEW_BODY=""
 
@@ -222,6 +224,9 @@ if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   else
     REVIEW_BODY="Automated review: approved."
   fi
+  if [[ -n "$COMMENTS_FILE" ]]; then
+    [[ -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
+  fi
   [[ -z "$POSTING_MARKER" ]] || REVIEW_BODY="$REVIEW_BODY
 
 $POSTING_MARKER"
@@ -231,8 +236,31 @@ fi
 
 # ---- 1. approve -------------------------------------------------------------
 
-REVIEW_BODY_JSON="$(REVIEW_BODY="$REVIEW_BODY" REVIEW_HEAD="$GUARD_HEAD_SHA" python3 -c \
-  'import json,os,sys; json.dump({"event":"APPROVE","body":os.environ["REVIEW_BODY"],"commit_id":os.environ["REVIEW_HEAD"]}, sys.stdout)')"
+# Confirmed retries resume cleanup even if the original scratch files are gone.
+REVIEW_BODY_JSON=""
+if [[ "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  REVIEW_BODY_JSON="$(REVIEW_BODY="$REVIEW_BODY" REVIEW_HEAD="$GUARD_HEAD_SHA" \
+    python3 - "$COMMENTS_FILE" <<'PY'
+import json, os, sys
+payload = {"event": "APPROVE", "body": os.environ["REVIEW_BODY"], "commit_id": os.environ["REVIEW_HEAD"]}
+if sys.argv[1]:
+    comments = json.load(open(sys.argv[1]))
+    if not isinstance(comments, list):
+        raise SystemExit("approve-pr: comments file must be a JSON array")
+    out = []
+    for i, c in enumerate(comments):
+        if not isinstance(c, dict) or not isinstance(c.get("path"), str) \
+           or type(c.get("line")) is not int or c["line"] < 1 \
+           or not isinstance(c.get("body"), str):
+            raise SystemExit(f"approve-pr: comment {i}: need path(str), line(int>0), body(str)")
+        if "side" in c and c["side"] not in ("RIGHT", "LEFT"):
+            raise SystemExit(f"approve-pr: comment {i}: side must be RIGHT or LEFT")
+        out.append({k: c[k] for k in ("path", "line", "side", "body") if k in c})
+    payload["comments"] = out
+json.dump(payload, sys.stdout)
+PY
+)"
+fi
 if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   python3 "$ROOT/scripts/posting-receipt.py" prepare "$POSTING_RECEIPT" "$POSTING_KEY" "$PR" "$ROUND_NO" "$GUARD_HEAD_SHA" "APPROVE" "APPROVE" "$REVIEW_BODY_JSON"
 fi
