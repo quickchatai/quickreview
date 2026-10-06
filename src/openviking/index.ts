@@ -12,6 +12,7 @@ export {
 } from "./supervisor.js";
 export type {
   Embedder,
+  LocalEmbedderStatus,
   OpenVikingHealth,
   OpenVikingStatus,
   ProcSample,
@@ -19,6 +20,19 @@ export type {
   ReembedNamespace,
   ReembedStatus,
 } from "./types.js";
+// The local English embedder (S4): the loopback service the server
+// embeds through, supervised beside it.
+export {
+  EMBEDDER_FAST_POLL_MS,
+  EMBEDDER_GATE_MAX_WAIT_MS,
+  LocalEmbedderSupervisor,
+  localEmbedderArgv,
+  localEmbedderOffReason,
+  localEmbedderSpec,
+  memoryServing,
+  type LocalEmbedderDeps,
+  type LocalEmbedderSpec,
+} from "./embedder.js";
 // The embedder migration's daemon half: drives the script's
 // `resume` once /ready passes and folds the journal into the heartbeat.
 export {

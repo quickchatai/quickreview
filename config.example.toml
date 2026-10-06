@@ -349,7 +349,8 @@ read_cache_ttl_ms = 15000
 # NOT an openviking dependency — an undeclared optional extra. Without it the
 # default local dense embedder raises EmbeddingConfigurationError at startup,
 # so the official image cannot boot (verified against a running 0.4.15 server,
-# 2026-08-20). Registry-verified pin (PyPI latest, 2026-08-20).
+# 2026-08-20). Registry-verified pin (PyPI latest, 2026-08-20). Since
+# S4 it is also the runtime of the local English embedder (below).
 llama_cpp_python_version = "0.3.35"
 host = "127.0.0.1"                # loopback ONLY — the port is never published
 port = 1933
@@ -373,24 +374,43 @@ health_timeout_ms = 2000
 # a slow retry, and every call site already degrades memory-less.
 restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]
 restart_reset_after_s = 120       # an uptime this long resets the ladder
-# The embedder. LOCAL is the shipped default: the server's own
-# llama-cpp dense embedder runs INSIDE the container, so nothing but the model
-# call ever leaves the machine — memory text included. Hosted embeddings are an
-# explicit opt-in: embedding_provider = "openai" with model
-# "text-embedding-3-small" / dimension 1536, and the credential in the secrets
-# dir under `embedding_key_file` — a SEPARATE file from pi's `openai_api_key`,
-# so either can be set without the other. ov.conf carries NO `vlm` section
-# either way: extraction, summaries and digest are off (memories are authored,
-# never extracted).
-# Changing the provider changes the vector space: the boot detects it, resets
-# the vector collection and re-embeds reviewer memory (docs/memory-embeddings.md).
+# The embedder (S4). LOCAL is the shipped default: a small
+# ENGLISH embedding model (bge-small-en-v1.5, 384 dims) served on LOOPBACK
+# inside the container by scripts/openviking-embedder.py, over the pinned
+# llama-cpp-python — so nothing but the model call ever leaves the machine,
+# memory text included. ov.conf reaches it through the engine's
+# OpenAI-COMPATIBLE client (provider "openai", api_base http://127.0.0.1:<port>/v1,
+# no key): that client is asynchronous, so a search no longer stalls the
+# server. Hosted embeddings are an explicit opt-in: embedding_provider =
+# "openai" with model "text-embedding-3-small" / dimension 1536, and the
+# credential in the secrets dir under `embedding_key_file` — a SEPARATE file
+# from pi's `openai_api_key`, so either can be set without the other. ov.conf
+# carries NO `vlm` section either way: extraction, summaries and digest are off
+# (memories are authored, never extracted).
+# Changing the embedder changes the vector space: the boot detects it, moves
+# the old vectors aside and re-embeds reviewer memory (docs/memory-embeddings.md).
 # MIRRORED into group_vars (openviking_embedding_*), whose value the VM boot
 # renders — on the VM route an opt-in is written as inventory host vars beside
 # these keys; tests/openviking.test.ts pins the SHIPPED default to local.
 embedding_provider = "local"
-embedding_model = "bge-small-zh-v1.5-f16"
-embedding_dimension = 512
+embedding_model = "bge-small-en-v1.5-f16"
+embedding_dimension = 384
 embedding_key_file = "openai_embeddings_api_key"
+# The local embedder's MODEL FILE — a rule-7 pin like `version`: the image
+# downloads the GGUF from `local_embedder_url` at BUILD time and refuses it
+# unless its sha256 matches; the service re-checks the hash at every start.
+# TRIPLE MIRROR: these == group_vars openviking_local_embedder_* == both
+# Dockerfiles' model layer (tests/openviking.test.ts,
+# tests/docker-daemon.test.ts and the scripts/deploy.sh preflight refuse on
+# drift). A changed pin needs `scripts/deploy.sh rebuild`.
+local_embedder_file = "/opt/openviking/models/bge-small-en-v1.5-f16.gguf"
+local_embedder_url = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf"
+local_embedder_sha256 = "f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999"
+# The service: loopback only, never published (mirrored as
+# openviking_local_embedder_port / _threads). One thread is the latency budget
+# the model was chosen on — ~25 ms for a round's context query.
+local_embedder_port = 1934
+local_embedder_threads = 1
 
 [companion]
 # The local companion container — an ambient pi session on the owner's

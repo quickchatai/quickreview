@@ -15,17 +15,23 @@
 //   degraded — memory answers, but its latest probe or too many recent
 //              requests failed. Visible, not woken.
 //   down     — no authenticated answer for `downAfterMs` (10 min), counted
-//              from boot when there never was one. Wakes `memory_down` — but a
-//              drain (a deploy window) defers that wake until it lifts.
+//              from boot when there never was one — OR memory answers but has
+//              not SERVED search for as long (S4: a dead embedder).
+//              Wakes `memory_down` — but a drain (a deploy window) defers that
+//              wake until it lifts.
 //   auth_failed — a credential in use is refused (401/403, "Invalid API
 //              Key") or there is no key to send. Wakes `memory_auth_failed`
 //              on the first one, on every transition, and every 6 h while it
 //              lasts. Never graced, never deferred by a drain.
 //
-// Two inputs drive it: an AUTHENTICATED probe of each credential in use (the
+// Three inputs drive it: an AUTHENTICATED probe of each credential in use (the
 // daemon's key file and the `ovcli.conf` the sessions are handed — judged
-// separately, because they can fail on different days) every `intervalMs`, and
-// the outcomes of the daemon's own requests and round seeds. It is engine-
+// separately, because they can fail on different days) every `intervalMs`, the
+// outcomes of the daemon's own requests and round seeds, and (S4)
+// whether the engine SERVES: the probe is an `fs/ls`, which needs no
+// embedding, so it kept answering while a dead embedder failed every search
+// and left every new entry unvectorized. The engine's own supervision answers
+// that (`serving`, read on every evaluation). It is engine-
 // agnostic: the probes are injected functions (`src/openviking/probe.ts` is the
 // one that speaks HTTP), the wake is an injected sink (wire.ts routes it
 // through `store.logAnomaly`, whose wake policy reaches the overseer), and what
@@ -56,6 +62,29 @@ export interface ProbeAnswer {
   code: string;
   ms: number;
   detail?: string;
+}
+
+/** Can the engine SERVE memory beyond authenticating a key — search, and
+ * vectorizing what is written (S4)? Read from the engine's own
+ * supervision (wire.ts: the server's `/ready`, which runs an embedding probe,
+ * and the local embedder's state):
+ *   `ok: true`  — serving;
+ *   `ok: false` — not serving; `reason` names why (the embedder, /ready);
+ *   `ok: null`  — nothing measured (the server is not answering at all — the
+ *                 authenticated probe judges that). Neither proves recovery
+ *                 nor failure: the not-serving clock stands. */
+export interface ServingAnswer {
+  ok: boolean | null;
+  reason?: string;
+}
+
+/** The status block's view of serving. */
+export interface ServingStatus {
+  ok: boolean | null;
+  /** When memory stopped serving (the start of this not-serving run); null
+   * while it serves or nothing has been measured. */
+  since: string | null;
+  reason?: string;
 }
 
 /** A credential's latest verdict, from a probe or from a real request. */
@@ -155,6 +184,12 @@ export interface MemoryStatus {
   provision: ProvisionSummary | null;
   /** Why `enabled` is false. */
   disabled_reason?: string;
+  /** S4: whether memory SERVES search and vectorizing — `null` while
+   * the daemon does not measure it; absent on a daemon that predates it. */
+  serving?: ServingStatus | null;
+  /** Why `state` is `down` — no authenticated answer, or memory answers but
+   * does not serve. Present only while `down`. */
+  down_cause?: "unanswered" | "not_serving";
   /** What memory still owes the [feedback] ledger (S2) — read from
    * state.db by the heartbeat; null when that read failed (UNKNOWN, never
    * "nothing owed"); absent on a daemon that predates it. */
@@ -220,6 +255,11 @@ export interface MemoryHealthDeps {
   wake: (kind: string, detail: string, message: string) => void;
   /** The deploy-window drain. Defers `memory_down` — never an auth wake. */
   draining?: () => boolean;
+  /** S4: does the engine SERVE (search, vectorizing)? Read on every
+   * evaluation — a cached, synchronous read of the supervisors. Must not
+   * throw (a throw reads as `ok: null`). Absent ⇒ not measured: the block
+   * says `serving: null` and only the probe decides. */
+  serving?: () => ServingAnswer;
   now?: () => Date;
   /** Self-rescheduling timer seam; returns its canceller. */
   schedule?: (fn: () => void, ms: number) => () => void;
@@ -273,6 +313,14 @@ export function credentialPhrase(c: CredentialStatus | null): string {
   return `${c.result}${bits || why ? ` (${bits}${why})` : ""}`;
 }
 
+/** `; NOT SERVING search since … — <reason>` while memory answers but does
+ * not serve (S4), else "". */
+export function servingPhrase(s: ServingStatus | null | undefined): string {
+  // A not-serving run stands until a measured `ok: true` ends it.
+  if (!s || (s.ok !== false && s.since === null)) return "";
+  return `; NOT SERVING search${s.since ? ` since ${s.since}` : ""}${s.reason ? ` — ${s.reason.slice(0, 200)}` : ""}`;
+}
+
 /**
  * The one-line memory status a person reads — `qcr status` prints it and the
  * TUI board banner paints a shorter cut of the same facts. An absent block
@@ -283,15 +331,18 @@ export function memoryStatusLine(m: MemoryStatus | undefined, now: Date = new Da
   if (!m.enabled) return `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
   const age = fmtDuration(now.getTime() - Date.parse(m.since));
   const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}`;
+  const serving = servingPhrase(m.serving);
   switch (m.state) {
     case "unknown":
-      return `memory: UNKNOWN — not measured yet (${age}); ${creds}`;
+      return `memory: UNKNOWN — not measured yet (${age})${serving}; ${creds}`;
     case "healthy":
       return `memory: healthy (last ok ${m.last_ok_at ?? "?"}); ${creds}`;
     case "degraded":
-      return `memory: DEGRADED for ${age}${m.last_error ? ` — last error ${m.last_error.op}: ${m.last_error.code} ${m.last_error.message.slice(0, 120)}` : ""}; ${creds}`;
+      return `memory: DEGRADED for ${age}${serving}${m.last_error ? ` — last error ${m.last_error.op}: ${m.last_error.code} ${m.last_error.message.slice(0, 120)}` : ""}; ${creds}`;
     case "down":
-      return `memory: DOWN for ${age} — no authenticated answer since ${m.last_ok_at ?? "boot"}${m.incident ? ` (incident since ${m.incident.since})` : ""}; ${creds}`;
+      if (m.down_cause === "not_serving")
+        return `memory: DOWN for ${age} — answers, but has not served search${m.serving?.since ? ` since ${m.serving.since}` : ""}${m.serving?.reason ? `: ${m.serving.reason.slice(0, 200)}` : ""}${m.incident ? ` (incident since ${m.incident.since})` : ""}; ${creds}`;
+      return `memory: DOWN for ${age} — no authenticated answer since ${m.last_ok_at ?? "boot"}${m.incident ? ` (incident since ${m.incident.since})` : ""}${serving}; ${creds}`;
     case "auth_failed":
       return `memory: AUTH FAILED for ${age}${m.incident ? ` (incident since ${m.incident.since})` : ""}; ${creds}`;
   }
@@ -356,6 +407,11 @@ export class MemoryHealthMonitor {
   private lastAuthSignature = "";
   private lastDownWakeAt: number | null = null;
   private downDeferredLogged = false;
+  /** S4: the latest serving answer, and when this not-serving run
+   * began — cleared only by a measured `ok: true`. */
+  private servingOk: boolean | null = null;
+  private servingReason: string | undefined;
+  private notServingSince: number | null = null;
   private provision: ProvisionSummary | null = null;
   private probing: Promise<void> | null = null;
   private cancel: (() => void) | null = null;
@@ -541,6 +597,18 @@ export class MemoryHealthMonitor {
       gaps: { ...this.gaps },
       incident: this.incident ?? this.storedIncident,
       provision: this.provision,
+      serving: this.deps.serving
+        ? {
+            ok: this.servingOk,
+            since: iso(this.notServingSince),
+            // The reason stays while the not-serving run does — an `ok: null`
+            // read (the server not answering) does not end it.
+            ...(this.notServingSince !== null && this.servingReason
+              ? { reason: this.servingReason }
+              : {}),
+          }
+        : null,
+      ...(this.state === "down" ? { down_cause: this.downCause(this.now().getTime()) } : {}),
     };
   }
 
@@ -548,6 +616,7 @@ export class MemoryHealthMonitor {
    * Called after every input; public so a caller can re-check on a clock. */
   evaluate(): void {
     const t = this.now().getTime();
+    this.readServing(t);
     const authBad = CREDENTIALS.filter((n) => isAuthResult(this.creds[n]));
     const next = this.derive(t, authBad);
     const prev = this.state;
@@ -572,10 +641,49 @@ export class MemoryHealthMonitor {
       return "degraded";
     }
     if (t - this.lastOkAt >= this.downAfterMs) return "down";
+    // an engine that authenticates but cannot search is not
+    // healthy — degraded at once, down (and woken) once it lasts as long as
+    // an unanswered one would.
+    if (this.notServingSince !== null) {
+      return t - this.notServingSince >= this.downAfterMs ? "down" : "degraded";
+    }
     const d = this.creds.daemon;
     if (d && d.result !== "ok" && d.result !== "absent") return "degraded";
     if (this.windowDegraded(t)) return "degraded";
     return "healthy";
+  }
+
+  /** Why `down`: no authenticated answer outranks "answers but does not
+   * serve" — a server that is not there is not serving either. */
+  private downCause(t: number): "unanswered" | "not_serving" {
+    if (this.lastOkAt === null || t - this.lastOkAt >= this.downAfterMs) return "unanswered";
+    return this.notServingSince !== null ? "not_serving" : "unanswered";
+  }
+
+  /** Fold the engine's serving answer into the not-serving clock. */
+  private readServing(t: number): void {
+    if (!this.deps.serving) return;
+    let answer: ServingAnswer;
+    try {
+      answer = this.deps.serving();
+    } catch (err) {
+      this.log("memory health: the serving read threw (read as unknown)", err);
+      answer = { ok: null };
+    }
+    const ok = answer.ok === true ? true : answer.ok === false ? false : null;
+    if (ok === true) {
+      if (this.notServingSince !== null) this.log("memory health: memory serves search again");
+      this.notServingSince = null;
+      this.servingReason = undefined;
+    } else if (ok === false) {
+      const reason = (answer.reason ?? "").trim() || "memory does not serve search";
+      if (this.notServingSince === null) {
+        this.notServingSince = t;
+        this.log(`memory health: memory is NOT serving search — ${reason}`);
+      }
+      this.servingReason = reason.slice(0, 400);
+    }
+    this.servingOk = ok;
   }
 
   private windowDegraded(t: number): boolean {
@@ -698,6 +806,23 @@ export class MemoryHealthMonitor {
     }
     this.lastDownWakeAt = t;
     this.downDeferredLogged = false;
+    if (this.downCause(t) === "not_serving") {
+      // it authenticates — the fs/ls probe answers — but nothing
+      // is searchable. Name the engine's own reason (the embedder, /ready).
+      const notServingFor = fmtDuration(t - (this.notServingSince ?? t));
+      const reason = this.servingReason ?? "memory does not serve search";
+      this.fire(
+        MEMORY_WAKE.down,
+        `reviewer memory answers but has not served search for ${notServingFor} — ${reason.slice(0, 200)}`,
+        [
+          `MEMORY DOWN — reviewer memory authenticates (its fs/ls probe answers) but has not SERVED search for ${notServingFor} (since ${new Date(this.notServingSince ?? t).toISOString()}).`,
+          `Why: ${reason.slice(0, 300)}`,
+          "Rounds are NOT blocked — they run memory-less — but no round recalls anything and nothing written is vectorized (findable) until it serves again.",
+          "Check the `openviking` block of state/status.json — `ready`, and its `embedder` block (the local embedder: state, reason, ready, restarts, last_exit, last_error) — and the daemon log. A person sees this on the TUI board and in `qcr status`; the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
+        ].join("\n"),
+      );
+      return;
+    }
     const silentFor = fmtDuration(t - (this.lastOkAt ?? this.bootAt));
     const err = this.lastError;
     this.fire(
@@ -707,7 +832,7 @@ export class MemoryHealthMonitor {
         `MEMORY DOWN — no authenticated answer from reviewer memory for ${silentFor} (${this.lastOkAt === null ? "none since the daemon booted" : `last at ${new Date(this.lastOkAt).toISOString()}`}).`,
         ...(err ? [`Last error: ${err.op} — ${err.status || "no answer"} ${err.code} ${err.message.slice(0, 200)}`] : []),
         "Rounds are NOT blocked — they run memory-less — but nothing is recalled or written until it answers again.",
-        "Check the `openviking` block of state/status.json (running, ready, restarts, last_error) and the daemon log. A person sees this on the TUI board and in `qcr status`; the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
+        "Check the `openviking` block of state/status.json (running, ready, restarts, last_error, and its `embedder` block) and the daemon log. A person sees this on the TUI board and in `qcr status`; the TUI files a tracker ticket once it is 2 h old. Re-raised every 6 h while it lasts.",
       ].join("\n"),
     );
   }

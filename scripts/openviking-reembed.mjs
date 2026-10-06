@@ -6,9 +6,13 @@
 // ---------------
 // The shipped embedder moved from a hosted model (text-embedding-3-small,
 // 1536 dims) to the server's own local dense embedder (bge-small-zh-v1.5-f16,
-// 512 dims), so nothing but the model call leaves the machine. A store that
-// was embedded under the old embedder then holds vectors the new one cannot
-// read — and OpenViking 0.4.15 REFUSES TO START on such a store:
+// 512 dims), so nothing but the model call leaves the machine — and
+// then (S4) to the local ENGLISH embedder, bge-small-en-v1.5-f16 at
+// 384 dims, served on loopback by scripts/openviking-embedder.py and reached
+// through the engine's OpenAI-compatible client (provider "openai", a loopback
+// `api_base`). Every such change is the same migration: a store that was
+// embedded under the old embedder holds vectors the new one cannot read — and
+// OpenViking 0.4.15 REFUSES TO START on such a store:
 //
 //     EmbeddingRebuildRequiredError: Existing collection embedding dimension
 //     (1536) does not match current configuration (512). Vectors are
@@ -73,7 +77,14 @@ import {
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { readSecret, serverArgv, stopServerChild, waitForReady } from "./openviking-provision.mjs";
+import {
+  embedderSpecFromFlags,
+  readSecret,
+  serverArgv,
+  startEmbedder,
+  stopServerChild,
+  waitForReady,
+} from "./openviking-provision.mjs";
 
 /** The journal, beside ov.conf under the OpenViking home. */
 export const JOURNAL_FILE = "reembed.json";
@@ -90,12 +101,25 @@ export const DEFAULT_COLLECTION = "context";
  * embedding metadata JSON (`EMBEDDING_META_MARKER`, collection_schemas.py). */
 export const META_MARKER = "\n\n[openviking.embedding]\n";
 
-/** The server's built-in local dense embedder — the ONLY local model 0.4.15
- * ships a spec for, and the one this system now runs by default. */
-export const LOCAL_EMBEDDER = Object.freeze({
+/** The server's BUILT-IN local dense embedder — the only local model 0.4.15
+ * ships a spec for, and what the server runs when ov.conf names no embedder at
+ * all. Every store embedded between S4 was built under
+ * it; `configuredEmbedder` answers it for an ov.conf without an `embedding`
+ * section, because that is what such a server really runs. */
+export const SERVER_DEFAULT_EMBEDDER = Object.freeze({
   provider: "local",
   model: "bge-small-zh-v1.5-f16",
   dimension: 512,
+});
+
+/** The local ENGLISH embedder (S4) as the engine records it — the
+ * engine's OpenAI-compatible provider pointed at the loopback service. The
+ * record the shipped default writes into a collection. Mirrors
+ * `LOCAL_EMBEDDING` in src/config.ts (tests/openviking-reembed.test.ts). */
+export const LOCAL_EMBEDDER = Object.freeze({
+  provider: "openai",
+  model: "bge-small-en-v1.5-f16",
+  dimension: 384,
 });
 
 export const DEFAULTS = {
@@ -126,19 +150,23 @@ export const DEFAULTS = {
 /** The embedder ov.conf configures, WITHOUT its credential: provider, model
  * and dimension — the three keys of the server's own compatibility check that
  * this script can state with certainty (the fourth, `model_identity`, is
- * derived from these and never differs when they agree). An ov.conf with no
- * `embedding` section runs the server's built-in local embedder. */
+ * derived from these and never differs when they agree). Spelled exactly as
+ * the SERVER spells them, because that is what it writes into a collection:
+ * the local English embedder is `openai/<model>` (its wire provider), and the
+ * loopback `api_base` that tells it apart from a hosted model is deliberately
+ * not part of the record. An ov.conf with no `embedding` section runs the
+ * server's built-in local embedder. */
 export function configuredEmbedder(conf) {
   const dense = conf?.embedding?.dense;
-  if (!dense || typeof dense !== "object") return { ...LOCAL_EMBEDDER };
+  if (!dense || typeof dense !== "object") return { ...SERVER_DEFAULT_EMBEDDER };
   const provider = String(dense.provider ?? "")
     .trim()
     .toLowerCase();
   if (provider === "" || provider === "local") {
     return {
       provider: "local",
-      model: String(dense.model ?? LOCAL_EMBEDDER.model),
-      dimension: Number(dense.dimension ?? LOCAL_EMBEDDER.dimension),
+      model: String(dense.model ?? SERVER_DEFAULT_EMBEDDER.model),
+      dimension: Number(dense.dimension ?? SERVER_DEFAULT_EMBEDDER.dimension),
     };
   }
   return { provider, model: String(dense.model ?? ""), dimension: Number(dense.dimension) };
@@ -758,6 +786,9 @@ export function parseArgs(argv, env = process.env) {
     readyTimeoutMs: Number(flags.get("ready-timeout-ms") ?? DEFAULTS.readyTimeoutMs),
     deadlineMs: Number(flags.get("deadline-ms") ?? DEFAULTS.deadlineMs),
     strict: flags.has("strict"),
+    // `rehearse` only: the local embedder to run beside the temporary server
+    // (S4) — a spec, `null`, or an error string.
+    embedder: embedderSpecFromFlags(flags),
   };
 }
 
@@ -841,6 +872,14 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
         log("openviking-reembed: rehearse needs --bin <openviking-server>");
         return 1;
       }
+      // an ov.conf on the local English embedder needs it running
+      // — the server's /ready probes it, and the reindex is nothing but
+      // embedding calls. Same flags as boot provisioning (--embedder-*),
+      // checked BEFORE anything on disk moves.
+      if (typeof cfg.embedder === "string") {
+        log(`openviking-reembed: ${cfg.embedder}`);
+        return 1;
+      }
       const base = `http://${cfg.host}:${cfg.port}`;
       const prepared = await prepare({
         home: cfg.home,
@@ -851,6 +890,18 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
         log,
       });
       if (prepared.action === "refuse") return 1;
+      let embedder = null;
+      if (cfg.embedder) {
+        const started = await startEmbedder(cfg.embedder, {
+          log,
+          readyTimeoutMs: cfg.readyTimeoutMs,
+        });
+        embedder = started.child;
+        if (!started.ready) {
+          await stopServerChild(embedder);
+          return 1;
+        }
+      }
       const child = spawn(
         cfg.bin,
         serverArgv({ config: cfg.config, host: cfg.host, port: cfg.port }),
@@ -877,6 +928,7 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
         return report.state === "completed" ? 0 : 1;
       } finally {
         await stopServerChild(child);
+        await stopServerChild(embedder);
       }
     }
     default:

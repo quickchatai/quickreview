@@ -136,6 +136,7 @@ The image versions are ARG defaults in the `Dockerfile`:
 | `PI_VERSION` / `PI_NPM_PACKAGE` | `config.toml [pi]` = `group_vars pi_version`/`pi_npm_package` |
 | `OPENVIKING_VERSION` | `config.toml [openviking] version` = `group_vars openviking_version` |
 | `LLAMA_CPP_PYTHON_VERSION` | same triple mirror (undeclared-but-required embedder dep) |
+| `LOCAL_EMBEDDER_MODEL` / `_DIR` / `_URL` / `_SHA256` | the local English embedder's model file (S4): `config.toml [openviking] local_embedder_file`/`_url`/`_sha256` = `group_vars openviking_local_embedder_*`; downloaded at build time and refused unless its sha256 matches |
 | `TMUX_VERSION`, `NODE_MAJOR`, `OPENVIKING_VENV`, `WEBHOOK_PORT` | `group_vars` |
 
 `tests/docker-daemon.test.ts` fails the moment a default drifts from

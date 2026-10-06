@@ -31,6 +31,11 @@
 #       - [openviking] extension_commit     == extensions/vendor/openviking-pi/
 #                                              upstream.json "commit"
 #         (the vendored fork rides the rsync, not the image)
+#       - [openviking] local_embedder_file/_url/_sha256/_port/_threads
+#                                           == group_vars openviking_local_embedder_*
+#         (S4: the local embedder's model file, baked into the image
+#          by a layer that interpolates the group_vars — a changed pin needs
+#          `rebuild`)
 #   * refuses to ship without a config home: sync|rebuild deliver
 #     the install's config home — the located config.toml and the profiles/
 #     beside it, never its secrets/ — to the VM by the secrets' route (a
@@ -495,6 +500,53 @@ if [[ -n "$CFG_OV" ]]; then
       'config.toml   [openviking] embedding_key_file' "$(config_table_key openviking embedding_key_file || true)" \
       'ansible (host var, else group_vars)  openviking_embedding_key_file' "$(effective_var openviking_embedding_key_file || true)"
   fi
+  # the LOCAL EMBEDDER's model file is a pin like `version` —
+  # config.toml == group_vars == the image's model layer (which interpolates
+  # these vars, so agreeing here means agreeing in the image). Its port and
+  # threads are mirrored the same way: the boot's provisioning step runs the
+  # service and renders ov.conf's api_base from the ansible values, the daemon
+  # supervises it from config.toml's — a port they disagree on is a search
+  # nothing serves. A config.toml that predates the pin names NONE of the five
+  # keys: the code defaults are the pin then (held to group_vars by
+  # tests/openviking.test.ts) and the check stands down, said aloud. One that
+  # names ANY of them is checked key by key — every named key against
+  # group_vars first, so a drift reads as the drift it is — and a partial block
+  # is then refused, never half-verified.
+  CFG_OV_LE_FILE="$(config_table_key openviking local_embedder_file || true)"
+  CFG_OV_LE_URL="$(config_table_key openviking local_embedder_url || true)"
+  CFG_OV_LE_SHA="$(config_table_key openviking local_embedder_sha256 || true)"
+  CFG_OV_LE_PORT="$(config_table_key openviking local_embedder_port || true)"
+  CFG_OV_LE_THREADS="$(config_table_key openviking local_embedder_threads || true)"
+  if [[ -n "$CFG_OV_LE_FILE$CFG_OV_LE_URL$CFG_OV_LE_SHA$CFG_OV_LE_PORT$CFG_OV_LE_THREADS" ]]; then
+    GV_LE_DIR="$(effective_var openviking_local_embedder_dir || true)"
+    GV_LE_MODEL="$(effective_var openviking_local_embedder_model || true)"
+    GV_LE_FILE=""
+    [[ -n "$GV_LE_DIR" && -n "$GV_LE_MODEL" ]] && GV_LE_FILE="$GV_LE_DIR/$GV_LE_MODEL.gguf"
+    [[ -z "$CFG_OV_LE_FILE" ]] || check_pin "local embedder model file" \
+      'config.toml   [openviking] local_embedder_file' "$CFG_OV_LE_FILE" \
+      'ansible       openviking_local_embedder_dir/<model>.gguf' "$GV_LE_FILE"
+    [[ -z "$CFG_OV_LE_URL" ]] || check_pin "local embedder model url" \
+      'config.toml   [openviking] local_embedder_url' "$CFG_OV_LE_URL" \
+      'ansible       openviking_local_embedder_url' "$(effective_var openviking_local_embedder_url || true)"
+    [[ -z "$CFG_OV_LE_SHA" ]] || check_pin "local embedder model sha256" \
+      'config.toml   [openviking] local_embedder_sha256' "$CFG_OV_LE_SHA" \
+      'ansible       openviking_local_embedder_sha256' "$(effective_var openviking_local_embedder_sha256 || true)"
+    [[ -z "$CFG_OV_LE_PORT" ]] || check_pin "local embedder port" \
+      'config.toml   [openviking] local_embedder_port' "$CFG_OV_LE_PORT" \
+      'ansible       openviking_local_embedder_port' "$(effective_var openviking_local_embedder_port || true)"
+    [[ -z "$CFG_OV_LE_THREADS" ]] || check_pin "local embedder threads" \
+      'config.toml   [openviking] local_embedder_threads' "$CFG_OV_LE_THREADS" \
+      'ansible       openviking_local_embedder_threads' "$(effective_var openviking_local_embedder_threads || true)"
+    LE_MISSING=""
+    [[ -n "$CFG_OV_LE_FILE" ]] || LE_MISSING+=" local_embedder_file"
+    [[ -n "$CFG_OV_LE_URL" ]] || LE_MISSING+=" local_embedder_url"
+    [[ -n "$CFG_OV_LE_SHA" ]] || LE_MISSING+=" local_embedder_sha256"
+    [[ -n "$CFG_OV_LE_PORT" ]] || LE_MISSING+=" local_embedder_port"
+    [[ -n "$CFG_OV_LE_THREADS" ]] || LE_MISSING+=" local_embedder_threads"
+    [[ -z "$LE_MISSING" ]] || die "config.toml [openviking] names only part of the local embedder pin — it lacks${LE_MISSING}. Name all five (the block in config.example.toml) or none, so this preflight can verify them"
+  else
+    note "config.toml names no [openviking] local_embedder_* pin — the code defaults apply (tests hold them to group_vars); add the block from config.example.toml to have this preflight verify it"
+  fi
   CFG_OV_EXT="$(config_table_key openviking extension_commit || true)"
   if [[ -n "$CFG_OV_EXT" ]]; then
     check_pin "openviking pi-extension base commit" \
@@ -581,6 +633,7 @@ print_plan() {
     echo "  memory pins  openviking $CFG_OV (config.toml == group_vars == image layer), extension ${CFG_OV_EXT:-<unset>} (config.toml == upstream.json)"
     echo "  memory auth  auth_mode ${CFG_OV_AUTH:-<unset>} (config.toml == group_vars; 'dev' means NO per-user confinement)"
     echo "  memory embed ${CFG_OV_EMBED:-<unset>} (config.toml == ansible effective value; 'local' means no memory text leaves the VM)"
+    echo "  local model  ${GV_LE_MODEL:-<code default>} sha256 ${CFG_OV_LE_SHA:-<code default>} (config.toml == group_vars == image layer; a changed pin needs rebuild)"
   else
     echo "  memory pins  <no [openviking] block in config.toml — unverified>"
   fi

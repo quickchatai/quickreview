@@ -56,10 +56,13 @@ import { applyProfilePosting, postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
 import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
 import {
+  EMBEDDER_GATE_MAX_WAIT_MS,
+  LocalEmbedderSupervisor,
   OpenVikingClient,
   OpenVikingSupervisor,
   ReembedDriver,
   keyFromFile,
+  memoryServing,
   openVikingContextAssembler,
   openVikingStore,
   type OvRequestRecord,
@@ -637,6 +640,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // awaited: there is deliberately NO boot ordering, and rounds run
   // memory-less until `/ready` passes.
   let openviking: OpenVikingSupervisor | null = null;
+  // the local English embedder the server embeds through — a
+  // second supervised child, started first; the server's first start waits
+  // (bounded) for it to serve. Off unless the rendered ov.conf routes to it.
+  let localEmbedder: LocalEmbedderSupervisor | null = null;
   // the embedder migration's daemon half — resumes the re-embed of
   // reviewer memory the entrypoint's `prepare` journalled, once /ready passes.
   // Timer-armed, never awaited; its block rides inside the heartbeat's
@@ -747,7 +754,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // journal (one small synchronous file read per heartbeat).
     openvikingStatus: () => {
       const status = openviking?.status();
-      return status && reembed ? { ...status, reembed: reembed.status() } : status;
+      if (!status) return status;
+      return {
+        ...status,
+        ...(reembed ? { reembed: reembed.status() } : {}),
+        ...(localEmbedder ? { embedder: localEmbedder.status() } : {}),
+      };
     },
     // whether memory WORKS, beside whether the server is up —
     // and (S2) what memory still owes the [feedback] ledger.
@@ -798,9 +810,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // become ready, so it starts warming while everything below builds. A
       // missing binary (any dev PC) is reported once and never retried; a
       // crash is respawned on a capped backoff ladder, forever.
+      //
+      // the local English embedder starts before it — the
+      // server's /ready probes it — and the server's FIRST start waits for it
+      // to serve, bounded (EMBEDDER_GATE_MAX_WAIT_MS). Neither is awaited here.
+      localEmbedder = new LocalEmbedderSupervisor({ cfg: cfg.openviking, repoRoot: root, log });
+      localEmbedder.start();
+      const embedderForGate = localEmbedder;
       openviking = new OpenVikingSupervisor({
         cfg: cfg.openviking,
         log,
+        startGate: {
+          open: () => embedderForGate.gateOpen(),
+          maxWaitMs: EMBEDDER_GATE_MAX_WAIT_MS,
+          what: "the local embedder",
+        },
         // The reviewer's memory root does not exist on a fresh server until
         // something creates it. The TUI does this for the companion's sake;
         // the daemon does it here for its own, each time the server comes up,
@@ -1025,6 +1049,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           },
           wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
           draining: () => d.store.drainState().draining,
+          // whether memory SERVES search — the server's /ready
+          // (it runs an embedding probe) and the local embedder. The fs/ls
+          // probe needs no embedding, so without this a dead embedder read
+          // healthy while every search failed. Cached, synchronous reads.
+          serving: () =>
+            memoryServing(
+              cfg.openviking.embedding_provider,
+              openviking?.status(),
+              localEmbedder?.status(),
+            ),
           incidents: {
             load: () => d.store.memoryIncident(),
             save: (incident) => d.store.recordMemoryIncident(incident),
@@ -1388,6 +1422,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           log("openviking: shutdown failed", err);
         }
         openviking = null;
+      }
+      // After the server: it may still be vectorizing on its way down.
+      if (localEmbedder) {
+        try {
+          await localEmbedder.stop();
+        } catch (err) {
+          log("openviking: local embedder shutdown failed", err);
+        }
+        localEmbedder = null;
       }
       // Runs before the store closes, so the goodbye is ledgered; bounded by
       // the announcer itself, so it can never delay the exit.

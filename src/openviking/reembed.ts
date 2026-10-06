@@ -36,7 +36,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { openVikingBaseUrl, type OpenVikingConfig } from "../config.js";
+import {
+  openVikingBaseUrl,
+  ovConfEmbedder,
+  type OpenVikingConfig,
+  type OvConfEmbedder,
+} from "../config.js";
 import type { Schedule } from "./supervisor.js";
 import type { Embedder, ReembedJournalStatus, ReembedStatus } from "./types.js";
 
@@ -127,6 +132,16 @@ function sameEmbedder(a: Embedder, b: Embedder): boolean {
   );
 }
 
+/** An `api_base` for comparison: absent and empty are the same, and a trailing
+ * slash means nothing. */
+function baseOf(v: unknown): string {
+  return typeof v === "string" ? v.trim().replace(/\/+$/, "") : "";
+}
+
+function describeOv(e: OvConfEmbedder): string {
+  return `${e.provider}/${e.model} (${e.dimension} dims)${e.api_base ? ` at ${e.api_base}` : ""}`;
+}
+
 export class ReembedDriver {
   private readonly deps: ReembedDriverDeps;
   private readonly schedule: Schedule;
@@ -188,27 +203,36 @@ export class ReembedDriver {
     }
   }
 
-  /** config.toml's declared embedder against the one ov.conf actually runs. */
+  /** config.toml's declared embedder against the one ov.conf actually runs.
+   * Both sides are spelled the way ov.conf spells them (`ovConfEmbedder`):
+   * `local` is the engine's OpenAI-compatible provider at the local
+   * embedder's loopback `api_base` (S4), so the `api_base` is part of
+   * the comparison — the record alone cannot tell the loopback service from a
+   * hosted model of the same name. */
   private checkDrift(): void {
     const confPath = this.deps.cfg.config_file;
     if (!this.module || !existsSync(confPath)) return;
-    let ovConf: Embedder;
+    let ovConf: OvConfEmbedder;
     try {
-      ovConf = this.module.configuredEmbedder(JSON.parse(readFileSync(confPath, "utf8")));
+      const conf = JSON.parse(readFileSync(confPath, "utf8")) as {
+        embedding?: { dense?: { api_base?: unknown } };
+      };
+      const apiBase = baseOf(conf?.embedding?.dense?.api_base);
+      ovConf = {
+        ...this.module.configuredEmbedder(conf),
+        ...(apiBase ? { api_base: apiBase } : {}),
+      };
     } catch (err) {
       this.deps.log(`openviking: could not read ${confPath} for the embedder check`, err);
       return;
     }
-    const declared: Embedder = {
-      provider: this.deps.cfg.embedding_provider,
-      model: this.deps.cfg.embedding_model,
-      dimension: this.deps.cfg.embedding_dimension,
-    };
-    if (sameEmbedder(declared, ovConf)) return;
+    const declared = ovConfEmbedder(this.deps.cfg);
+    if (sameEmbedder(declared, ovConf) && baseOf(declared.api_base) === baseOf(ovConf.api_base))
+      return;
     this.drift = { config_toml: declared, ov_conf: ovConf };
     this.deps.log(
-      `openviking: EMBEDDER DRIFT — config.toml [openviking] declares ${declared.provider}/${declared.model} (${declared.dimension} dims) ` +
-        `but ov.conf, rendered by the entrypoint, runs ${ovConf.provider}/${ovConf.model} (${ovConf.dimension} dims). The boot renders group_vars ` +
+      `openviking: EMBEDDER DRIFT — config.toml [openviking] declares ${this.deps.cfg.embedding_provider} (ov.conf should say ${describeOv(declared)}) ` +
+        `but ov.conf, rendered by the entrypoint, runs ${describeOv(ovConf)}. The boot renders group_vars ` +
         "(or the compose environment), not config.toml: align them, or the next boot resets the vector store for the wrong embedder (docs/memory-embeddings.md)",
     );
   }

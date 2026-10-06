@@ -66,6 +66,13 @@ export interface SupervisorDeps {
    * (the daemon materializes the memory root here). A throw is logged and
    * swallowed: a callback cannot take the health loop down. */
   onReady?: () => void;
+  /** S4: a precondition for the FIRST spawn — the local embedder the
+   * server's `/ready` probes. Polled every `pollMs` until `open()` holds or
+   * `maxWaitMs` has passed; past the bound the server starts anyway, said
+   * loudly (searches fail until the embedder serves — memory is degraded,
+   * never held back for good). A respawn never waits: a server crash is not
+   * the embedder's to gate, and `start()` still returns at once. */
+  startGate?: { open: () => boolean; maxWaitMs: number; pollMs?: number; what: string };
 }
 
 const defaultSchedule: Schedule = (fn, ms) => {
@@ -84,6 +91,9 @@ export class OpenVikingSupervisor {
   private readonly sampler: ProcSampler;
   private readonly schedule: Schedule;
   private readonly onReady: (() => void) | undefined;
+  private readonly startGate: SupervisorDeps["startGate"];
+  private waitingSince: number | null = null;
+  private cancelGate: (() => void) | null = null;
 
   private child: SupervisedChild | null = null;
   private childPid: number | undefined;
@@ -112,6 +122,7 @@ export class OpenVikingSupervisor {
     this.sampler = deps.sampler ?? new ProcSampler();
     this.schedule = deps.schedule ?? defaultSchedule;
     this.onReady = deps.onReady;
+    this.startGate = deps.startGate;
   }
 
   /** Spawn the server and arm the health loop. Synchronous and non-blocking:
@@ -131,8 +142,49 @@ export class OpenVikingSupervisor {
       this.log(`openviking: ${this.lastError} — not supervising (rounds run memory-less)`);
       return;
     }
+    if (this.startGate && !this.gateOpen()) {
+      this.waitingSince = this.now().getTime();
+      this.log(`openviking: waiting for ${this.startGate.what} before starting the server`);
+      this.waitForGate();
+      return;
+    }
     this.spawnChild();
     this.armHealthLoop();
+  }
+
+  private gateOpen(): boolean {
+    try {
+      return this.startGate?.open() ?? true;
+    } catch (err) {
+      // A gate that throws is no reason to keep memory down.
+      this.log("openviking: start gate threw — starting the server", err);
+      return true;
+    }
+  }
+
+  /** S4: poll the start gate on the timer seam; spawn once it opens or
+   * its bound passes. */
+  private waitForGate(): void {
+    const gate = this.startGate;
+    if (!gate || this.stopping) return;
+    this.cancelGate = this.schedule(() => {
+      this.cancelGate = null;
+      if (this.stopping) return;
+      const waited = this.now().getTime() - (this.waitingSince ?? this.now().getTime());
+      if (this.gateOpen()) {
+        this.log(`openviking: ${gate.what} is ready — starting the server`);
+      } else if (waited >= gate.maxWaitMs) {
+        this.log(
+          `openviking: ${gate.what} is not ready after ${Math.round(waited / 1000)}s — starting the server anyway; memory search fails until it serves`,
+        );
+      } else {
+        this.waitForGate();
+        return;
+      }
+      this.waitingSince = null;
+      this.spawnChild();
+      this.armHealthLoop();
+    }, gate.pollMs ?? 500);
   }
 
   private spawnChild(): void {
@@ -295,6 +347,11 @@ export class OpenVikingSupervisor {
         ...(this.proc?.rss_bytes !== undefined ? { rss_bytes: this.proc.rss_bytes } : {}),
         ...(this.proc?.cpu_pct !== undefined ? { cpu_pct: this.proc.cpu_pct } : {}),
         ...(this.health ? { checked_at: this.health.at } : {}),
+        ...(this.waitingSince !== null && this.startGate
+          ? {
+              waiting_for: `${this.startGate.what} (since ${new Date(this.waitingSince).toISOString()})`,
+            }
+          : {}),
       };
     } catch {
       return {
@@ -317,6 +374,9 @@ export class OpenVikingSupervisor {
     this.cancelRestart = null;
     this.cancelHealth?.();
     this.cancelHealth = null;
+    this.cancelGate?.();
+    this.cancelGate = null;
+    this.waitingSince = null;
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

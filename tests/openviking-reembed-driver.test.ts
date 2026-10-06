@@ -61,8 +61,14 @@ class FakeClock {
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+// The engine's BUILT-IN local embedder — what a legacy-S4 entrypoint
+// still renders.
 const LOCAL = { provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512 };
 const HOSTED = { provider: "openai", model: "text-embedding-3-small", dimension: 1536 };
+// the local English embedder as ov.conf spells it — the engine's
+// OpenAI-compatible provider at the loopback service.
+const LOCAL_EN = { provider: "openai", model: "bge-small-en-v1.5-f16", dimension: 384 };
+const LOCAL_EN_BASE = "http://127.0.0.1:1934/v1";
 
 interface FakeState {
   journal: ReturnType<ReembedModule["journalStatus"]>;
@@ -329,8 +335,22 @@ describe("config.toml against ov.conf", () => {
     );
   }
 
-  it("agreeing embedders ⇒ no drift reported", async () => {
-    ovConf({ ...LOCAL, input: "text" });
+  const renderedLocal = {
+    ...LOCAL_EN,
+    api_base: LOCAL_EN_BASE,
+    query_param: "query",
+    document_param: "passage",
+    input: "text",
+  };
+
+  it("agreeing embedders ⇒ no drift reported (the local English embedder, as the entrypoint renders it)", async () => {
+    ovConf(renderedLocal);
+    const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] });
+    expect(d.status().config_drift).toBeUndefined();
+  });
+
+  it("a trailing slash on api_base is not drift", async () => {
+    ovConf({ ...renderedLocal, api_base: `${LOCAL_EN_BASE}/` });
     const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] });
     expect(d.status().config_drift).toBeUndefined();
   });
@@ -338,10 +358,49 @@ describe("config.toml against ov.conf", () => {
   it("config.toml declaring local over an ov.conf that runs a hosted embedder is DRIFT — logged and in the heartbeat, never corrected", async () => {
     ovConf({ ...HOSTED, input: "text", api_key: "sk-should-not-appear" });
     const { d, lines } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] });
-    expect(d.status().config_drift).toEqual({ config_toml: LOCAL, ov_conf: HOSTED });
+    expect(d.status().config_drift).toEqual({
+      config_toml: { ...LOCAL_EN, api_base: LOCAL_EN_BASE },
+      ov_conf: HOSTED,
+    });
     expect(JSON.stringify(d.status())).not.toContain("sk-should-not-appear");
     expect(lines.join("\n")).toContain("EMBEDDER DRIFT");
     expect(readFileSync(join(home, "ov.conf"), "utf8")).toContain("text-embedding-3-small"); // untouched
+  });
+
+  // a `sync` without the `rebuild` keeps the image's OLD entrypoint,
+  // which still renders the engine's built-in Chinese model.
+  it("an ov.conf from an entrypoint that predates the local English embedder is DRIFT", async () => {
+    ovConf({ ...LOCAL, input: "text" });
+    const { d, lines } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] });
+    expect(d.status().config_drift).toEqual({
+      config_toml: { ...LOCAL_EN, api_base: LOCAL_EN_BASE },
+      ov_conf: LOCAL,
+    });
+    expect(lines.join("\n")).toMatch(/EMBEDDER DRIFT — config\.toml \[openviking\] declares local/);
+  });
+
+  it("the right model at another loopback port is DRIFT — the record alone cannot tell, the api_base can", async () => {
+    ovConf({ ...renderedLocal, api_base: "http://127.0.0.1:1999/v1" });
+    const { d } = await started({ journal: { state: "none" }, resumes: [], outcomes: [] });
+    expect(d.status().config_drift).toEqual({
+      config_toml: { ...LOCAL_EN, api_base: LOCAL_EN_BASE },
+      ov_conf: { ...LOCAL_EN, api_base: "http://127.0.0.1:1999/v1" },
+    });
+  });
+
+  it("a hosted opt-in over a hosted ov.conf agrees — no api_base on either side", async () => {
+    ovConf({ ...HOSTED, input: "text", api_key: "sk-x" });
+    const { d } = await started(
+      { journal: { state: "none" }, resumes: [], outcomes: [] },
+      {
+        cfg: {
+          embedding_provider: "openai",
+          embedding_model: HOSTED.model,
+          embedding_dimension: HOSTED.dimension,
+        },
+      },
+    );
+    expect(d.status().config_drift).toBeUndefined();
   });
 
   it("no ov.conf (a dev PC) ⇒ nothing to compare, nothing reported", async () => {

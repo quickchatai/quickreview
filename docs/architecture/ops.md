@@ -341,10 +341,12 @@ deliberate act after a pin bump); `verify` runs the post-deploy checks only.
   `config.toml [pi] version` against `group_vars pi_version`; the memory
   server's version and `llama_cpp_python_version` the same way; the vendored pi
   extension's base commit against its `upstream.json`; the memory auth mode,
-  key-file names and provisioned user list; and the embedder provider, model,
+  key-file names and provisioned user list; the embedder provider, model,
   dimension and key file against the **effective** ansible value (host var,
   else group var), because that is what the boot will render and an embedder
-  disagreement is a vector-store reset rather than a version bump;
+  disagreement is a vector-store reset rather than a version bump; and the
+  local English embedder's model-file pin (file, URL, sha256) with its port
+  and threads (S4);
 - `sandbox_src` actually wired in `group_vars`, or the rsync task silently
   no-ops;
 - `ansible-playbook` on this machine and an inventory to run against.

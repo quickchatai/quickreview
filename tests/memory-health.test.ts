@@ -20,7 +20,10 @@ import {
   type CredentialName,
   type MemoryIncident,
   type ProbeAnswer,
+  type ServingAnswer,
 } from "../src/memory/health.js";
+import { memoryServing } from "../src/openviking/embedder.js";
+import type { LocalEmbedderStatus, OpenVikingStatus } from "../src/openviking/types.js";
 
 const MIN = 60_000;
 const T0 = Date.parse("2026-10-06T12:00:00.000Z");
@@ -48,6 +51,8 @@ function harness(
     sessions?: ProbeAnswer;
     draining?: boolean;
     stored?: MemoryIncident | null;
+    /** S4: the engine's serving answer; absent ⇒ not wired. */
+    serving?: ServingAnswer;
   } = {},
 ) {
   let clock = T0;
@@ -59,6 +64,7 @@ function harness(
   const saved: Array<MemoryIncident | null> = [];
   let stored: MemoryIncident | null = opts.stored ?? null;
   let draining = opts.draining ?? false;
+  let serving: ServingAnswer | undefined = opts.serving;
   let probes = 0;
   const monitor = new MemoryHealthMonitor({
     probes: {
@@ -70,6 +76,7 @@ function harness(
     },
     wake: (kind, detail, message) => wakes.push({ kind, detail, message }),
     draining: () => draining,
+    ...(opts.serving ? { serving: () => serving ?? { ok: null } } : {}),
     now: () => new Date(clock),
     incidents: {
       load: () => stored,
@@ -94,6 +101,9 @@ function harness(
     },
     drain: (on: boolean) => {
       draining = on;
+    },
+    serve: (a: ServingAnswer) => {
+      serving = a;
     },
     /** Advance to `ms` after boot and probe. */
     probeAt: async (ms: number) => {
@@ -554,6 +564,162 @@ describe("memory health — the daemon's own requests and round seeds", () => {
     const h = harness();
     h.monitor.setProvision({ state: "failed", errors: ["no root key"] });
     expect(h.monitor.status().provision).toEqual({ state: "failed", errors: ["no root key"] });
+  });
+});
+
+// S4 (review): the fs/ls probe needs no embedding, so it kept
+// answering while a dead local embedder failed every search. What the engine's
+// own supervision says about SERVING now reaches a person the same way.
+describe("memory health — memory that answers but cannot search", () => {
+  const EMBEDDER_GONE: ServingAnswer = {
+    ok: false,
+    reason:
+      "the local embedder is unavailable — model file not found: /opt/openviking/models/bge-small-en-v1.5-f16.gguf",
+  };
+
+  it("fs/ls answers while the embedder is unavailable: degraded at once, DOWN and memory_down at 10 min, naming the embedder", async () => {
+    const h = harness({ serving: EMBEDDER_GONE });
+    await h.probeAt(0);
+    expect(h.monitor.status().credentials.daemon?.result).toBe("ok");
+    expect(h.monitor.currentState()).toBe("degraded");
+    expect(h.monitor.status().serving).toEqual({
+      ok: false,
+      since: new Date(T0).toISOString(),
+      reason: EMBEDDER_GONE.reason,
+    });
+    expect(h.monitor.status().down_cause).toBeUndefined();
+    await h.probeAt(9 * MIN);
+    expect(h.monitor.currentState()).toBe("degraded");
+    expect(h.wakes).toEqual([]);
+
+    await h.probeAt(10 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+    expect(h.monitor.status().down_cause).toBe("not_serving");
+    expect(h.wakes.map((w) => w.kind)).toEqual([MEMORY_WAKE.down]);
+    expect(h.wakes[0]!.detail).toMatch(/answers but has not served search for 10m/);
+    expect(h.wakes[0]!.detail).toContain("the local embedder is unavailable");
+    expect(h.wakes[0]!.message).toContain("`embedder` block");
+    expect(h.stored()).toEqual({ kind: "down", since: new Date(T0 + 10 * MIN).toISOString() });
+    // A person reads the cause, not "no authenticated answer".
+    const line = memoryStatusLine(h.monitor.status(), new Date(T0 + 10 * MIN));
+    expect(line).toMatch(/^memory: DOWN for 0s — answers, but has not served search since /);
+    expect(line).toContain("the local embedder is unavailable");
+    expect(line).not.toContain("no authenticated answer");
+  });
+
+  it("a supervised embedder that stops answering for 10 min of fake clock reads DOWN; serving again recovers and closes the incident", async () => {
+    const h = harness({ serving: { ok: true } });
+    await h.probeAt(0);
+    expect(h.monitor.currentState()).toBe("healthy");
+    h.serve({
+      ok: false,
+      reason:
+        "the local embedder on 127.0.0.1:1934 is not running (last exit code=3), 4 restart(s)",
+    });
+    await h.probeAt(2 * MIN);
+    expect(h.monitor.currentState()).toBe("degraded");
+    await h.probeAt(11 * MIN);
+    expect(h.monitor.currentState()).toBe("degraded");
+    await h.probeAt(12 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+    expect(h.wakes.map((w) => w.kind)).toEqual([MEMORY_WAKE.down]);
+    expect(h.stored()?.kind).toBe("down");
+
+    h.serve({ ok: true });
+    await h.probeAt(14 * MIN);
+    expect(h.monitor.currentState()).toBe("healthy");
+    expect(h.monitor.status().serving).toEqual({ ok: true, since: null });
+    expect(h.stored()).toBeNull();
+  });
+
+  it("an UNKNOWN serving read (the server not answering) neither starts nor ends a not-serving run", async () => {
+    const h = harness({ serving: { ok: null } });
+    await h.probeAt(0);
+    expect(h.monitor.currentState()).toBe("healthy");
+    expect(h.monitor.status().serving).toEqual({ ok: null, since: null });
+    h.serve(EMBEDDER_GONE);
+    await h.probeAt(MIN);
+    h.serve({ ok: null });
+    await h.probeAt(3 * MIN);
+    // The run stands: nothing measured that it ended.
+    expect(h.monitor.currentState()).toBe("degraded");
+    expect(h.monitor.status().serving).toEqual({
+      ok: null,
+      since: new Date(T0 + MIN).toISOString(),
+      reason: EMBEDDER_GONE.reason,
+    });
+    await h.probeAt(11 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+  });
+
+  it("no authenticated answer outranks not serving: the cause reads `unanswered`", async () => {
+    const h = harness({ serving: EMBEDDER_GONE });
+    await h.probeAt(0);
+    h.set("daemon", DEAD);
+    await h.probeAt(10 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+    expect(h.monitor.status().down_cause).toBe("unanswered");
+    expect(h.wakes[0]!.detail).toMatch(/^no authenticated answer/);
+  });
+
+  it("a drain defers the not-serving memory_down too, and it fires once the drain lifts", async () => {
+    const h = harness({ serving: EMBEDDER_GONE, draining: true });
+    await h.probeAt(0);
+    await h.probeAt(10 * MIN);
+    expect(h.monitor.currentState()).toBe("down");
+    expect(h.wakes).toEqual([]);
+    h.drain(false);
+    await h.probeAt(12 * MIN);
+    expect(h.wakes.map((w) => w.kind)).toEqual([MEMORY_WAKE.down]);
+  });
+
+  it("a hosted opt-in (embedder off, server ready) changes nothing", async () => {
+    const off: LocalEmbedderStatus = {
+      state: "off",
+      reason: "config.toml embeds through the hosted 'openai' provider",
+      model: "bge-small-en-v1.5-f16",
+      port: 1934,
+      threads: 1,
+      running: false,
+      ready: false,
+      restarts: 0,
+    };
+    const server: OpenVikingStatus = {
+      enabled: true,
+      running: true,
+      reachable: true,
+      ready: true,
+      pinned_version: "0.4.15",
+      restarts: 0,
+    };
+    const answer = memoryServing("openai", server, off);
+    expect(answer).toEqual({ ok: true });
+    const h = harness({ serving: answer });
+    await h.probeAt(0);
+    await h.probeAt(30 * MIN);
+    expect(h.monitor.currentState()).toBe("healthy");
+    expect(h.wakes).toEqual([]);
+  });
+
+  it("a daemon that does not wire the read says serving: null — never a guess", async () => {
+    const h = harness();
+    await h.probeAt(0);
+    expect(h.monitor.status().serving).toBeNull();
+    expect(h.monitor.currentState()).toBe("healthy");
+  });
+
+  it("a throwing serving read is UNKNOWN, never a crash", async () => {
+    const m = new MemoryHealthMonitor({
+      probes: { daemon: async () => OK, sessions: async () => OK },
+      wake: () => {},
+      serving: () => {
+        throw new Error("boom");
+      },
+      now: () => new Date(T0),
+    });
+    await m.probeNow();
+    expect(m.currentState()).toBe("healthy");
+    expect(m.status().serving).toEqual({ ok: null, since: null });
   });
 });
 

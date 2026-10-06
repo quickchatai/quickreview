@@ -22,6 +22,7 @@ import {
   embedderHostVars,
   embeddingsStep,
   keyFileCheck,
+  localEmbedderEnvEntries,
 } from "../src/onboard/steps/embeddings.js";
 import { readEnvKey } from "../src/onboard/steps/ingress.js";
 import { defaultSteps } from "../src/onboard/steps/index.js";
@@ -94,15 +95,15 @@ describe("the local default", () => {
     expect(r.ok).toBe(true);
     expect(config()).toBe(before);
     expect(detailOf(r.checks, "embedder")).toMatch(
-      /^local\/bge-small-zh-v1\.5-f16 \(512 dims\) — memory embeds LOCALLY/,
+      /^local\/bge-small-en-v1\.5-f16 \(384 dims\) — memory embeds LOCALLY/,
     );
     expect(detailOf(r.checks, "embedder")).toMatch(/nothing but the model call/);
     expect(detailOf(r.checks, "config.toml")).toMatch(/already said this/);
     expect(r.checks.find((c) => c.name === "embeddings-key")).toBeUndefined();
     expect(r.data).toMatchObject({
       provider: "local",
-      model: "bge-small-zh-v1.5-f16",
-      dimension: 512,
+      model: "bge-small-en-v1.5-f16",
+      dimension: 384,
     });
     expect(detailOf(r.checks, "propagation")).toMatch(
       /bring-up step \(70\) writes these into the project \.env/,
@@ -114,6 +115,33 @@ describe("the local default", () => {
     const r = await embeddingsStep().verify(ctx());
     expect(r.ok).toBe(true);
     expect(config()).toBe(before);
+  });
+
+  // the previous release REQUIRED `bge-small-zh-v1.5-f16` / 512
+  // under local. Such a config still loads (as the local English embedder),
+  // verify stays green, and confirming the default rewrites the two lines.
+  it("a config from before the local English embedder still loads, and confirming local rewrites its model and dimension", async () => {
+    writeFileSync(
+      join(root, "config.toml"),
+      config()
+        .replace(
+          'embedding_model = "bge-small-en-v1.5-f16"',
+          'embedding_model = "bge-small-zh-v1.5-f16"',
+        )
+        .replace("embedding_dimension = 384", "embedding_dimension = 512"),
+    );
+    expect(config()).toContain('embedding_model = "bge-small-zh-v1.5-f16"');
+    expect(declaredEmbedderOf(config())).toMatchObject({
+      provider: "local",
+      model: "bge-small-en-v1.5-f16",
+      dimension: 384,
+    });
+    expect((await embeddingsStep().verify(ctx())).ok).toBe(true);
+    const r = await embeddingsStep().run(ctx());
+    expect(r.ok).toBe(true);
+    expect(detailOf(r.checks, "config.toml")).toMatch(/written to/);
+    expect(config()).toContain('embedding_model = "bge-small-en-v1.5-f16"');
+    expect(config()).toContain("embedding_dimension = 384");
   });
 
   it("no config.toml yet ⇒ red, pointing at the interview", async () => {
@@ -182,8 +210,8 @@ describe("the hosted opt-in", () => {
     expect(r.ok).toBe(true);
     expect(parseConfig(config()).openviking).toMatchObject({
       embedding_provider: "local",
-      embedding_model: "bge-small-zh-v1.5-f16",
-      embedding_dimension: 512,
+      embedding_model: "bge-small-en-v1.5-f16",
+      embedding_dimension: 384,
     });
     expect(detailOf(r.checks, "existing-store")).toMatch(/moves the old vectors aside/);
     expect(detailOf(r.checks, "existing-store")).toMatch(/qcr memory reembed/);
@@ -214,8 +242,8 @@ describe("the writers that carry the answer to the boot", () => {
   it("declaredEmbedderOf reads the block and fills the loader's defaults for a config without one", () => {
     expect(declaredEmbedderOf("")).toEqual({
       provider: "local",
-      model: "bge-small-zh-v1.5-f16",
-      dimension: 512,
+      model: "bge-small-en-v1.5-f16",
+      dimension: 384,
       keyFile: "openai_embeddings_api_key",
     });
     expect(
@@ -237,10 +265,10 @@ describe("the writers that carry the answer to the boot", () => {
     const text = example
       .replace('\nembedding_provider = "local"', '\n  embedding_provider = "openai"')
       .replace(
-        '\nembedding_model = "bge-small-zh-v1.5-f16"',
+        '\nembedding_model = "bge-small-en-v1.5-f16"',
         '\n  embedding_model = "text-embedding-3-small"',
       )
-      .replace("\nembedding_dimension = 512", "\n\tembedding_dimension = 1536");
+      .replace("\nembedding_dimension = 384", "\n\tembedding_dimension = 1536");
     const loaded = parseConfig(text).openviking;
     expect(loaded.embedding_provider).toBe("openai");
     expect(declaredEmbedderOf(text)).toEqual({
@@ -256,7 +284,7 @@ describe("the writers that carry the answer to the boot", () => {
     // supports every one of these spellings.
     const example = readFileSync(join(import.meta.dirname, "..", "config.example.toml"), "utf8");
     const block =
-      '\nembedding_provider = "local"\nembedding_model = "bge-small-zh-v1.5-f16"\nembedding_dimension = 512\n';
+      '\nembedding_provider = "local"\nembedding_model = "bge-small-en-v1.5-f16"\nembedding_dimension = 384\n';
     expect(example).toContain(block);
     for (const replacement of [
       '\nembedding_provider = "openai"\n',
@@ -319,9 +347,23 @@ describe("the writers that carry the answer to the boot", () => {
     await bringUpStep({ stream }).run(c);
     const env = readFileSync(join(root, ".env"), "utf8");
     expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_PROVIDER")).toBe("local");
-    expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_MODEL")).toBe("bge-small-zh-v1.5-f16");
-    expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_DIMENSION")).toBe("512");
+    expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_MODEL")).toBe("bge-small-en-v1.5-f16");
+    expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_DIMENSION")).toBe("384");
     expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_KEY_FILE")).toBe("openai_embeddings_api_key");
+    // S4 (review): and the local embedder's port and threads — the
+    // daemon reads config.toml's, the boot renders ov.conf from these.
+    expect(readEnvKey(env, "QCR_OPENVIKING_LOCAL_EMBEDDER_PORT")).toBe("1934");
+    expect(readEnvKey(env, "QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS")).toBe("1");
+    writeFileSync(
+      join(root, "config.toml"),
+      config()
+        .replace(/^local_embedder_port\s*=.*$/m, "local_embedder_port = 1940")
+        .replace(/^local_embedder_threads\s*=.*$/m, "local_embedder_threads = 2"),
+    );
+    await bringUpStep({ stream }).run(c);
+    const moved = readFileSync(join(root, ".env"), "utf8");
+    expect(readEnvKey(moved, "QCR_OPENVIKING_LOCAL_EMBEDDER_PORT")).toBe("1940");
+    expect(readEnvKey(moved, "QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS")).toBe("2");
     // The opt-in flows through the same path on the next bring-up.
     writeFileSync(join(secretsDir, "openai_embeddings_api_key"), "sk-x");
     await embeddingsStep().run(ctx({ provider: "openai" }));
@@ -332,6 +374,27 @@ describe("the writers that carry the answer to the boot", () => {
     expect(
       readEnvKey(readFileSync(join(root, ".env"), "utf8"), "QCR_OPENVIKING_EMBEDDING_DIMENSION"),
     ).toBe("1536");
+  });
+});
+
+describe("localEmbedderEnvEntries (S4 review)", () => {
+  it("reads the loader's port and threads, and falls back to the shipped defaults", () => {
+    expect(localEmbedderEnvEntries("")).toEqual([
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", "1934"],
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", "1"],
+    ]);
+    expect(
+      localEmbedderEnvEntries(
+        "[openviking]\nlocal_embedder_port = 1_950\nlocal_embedder_threads = 3\n",
+      ),
+    ).toEqual([
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", "1950"],
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", "3"],
+    ]);
+    expect(localEmbedderEnvEntries("not = [toml")).toEqual([
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", "1934"],
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", "1"],
+    ]);
   });
 });
 

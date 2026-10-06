@@ -405,6 +405,97 @@ describe("the companion's view.json carries the block (null when unread)", () =>
   });
 });
 
+// ---- memory that answers but cannot search (FT-0546 S4 review) ---------------
+
+describe("memory that answers but does not serve search reaches every surface", () => {
+  const notServing = (over: Partial<MemoryStatus> = {}): MemoryStatus =>
+    block({
+      state: "down",
+      since: "2026-10-06T13:55:00.000Z",
+      last_ok_at: "2026-10-06T14:04:00.000Z",
+      credentials: {
+        daemon: { result: "ok", status: 200, code: "", ms: 3, at: SINCE, source: "probe" },
+        sessions: { result: "ok", status: 200, code: "", ms: 3, at: SINCE, source: "probe" },
+      },
+      incident: { kind: "down", since: "2026-10-06T13:55:00.000Z" },
+      serving: {
+        ok: false,
+        since: "2026-10-06T13:45:00.000Z",
+        reason: "the local embedder is unavailable — model file not found: /m.gguf",
+      },
+      down_cause: "not_serving",
+      ...over,
+    });
+
+  it("the board banner names the cause, never `no authenticated answer`", () => {
+    const seg = stripAnsi(memorySegment(snap(notServing()), NOW)!.text);
+    expect(seg).toBe("⛔ MEMORY DOWN 10m · search not serving");
+    const degraded = stripAnsi(
+      memorySegment(
+        snap(notServing({ state: "degraded", down_cause: undefined, incident: null })),
+        NOW,
+      )!.text,
+    );
+    expect(degraded).toContain("▲ MEMORY DEGRADED");
+    expect(degraded).toContain("· search not serving");
+    // An unanswered outage keeps its words.
+    expect(
+      stripAnsi(memorySegment(snap(notServing({ down_cause: "unanswered" })), NOW)!.text),
+    ).toContain("no authenticated answer");
+  });
+
+  it("the tracker ticket says it is not serving, and where the embedder's block is", () => {
+    const root = tempDir("qcr-tracker-");
+    mkdirSync(join(root, ".ids"), { recursive: true });
+    writeFileSync(join(root, ".ids", "0545"), "x\n");
+    mkdirSync(join(root, "efforts", "review-sandbox", "tickets"), { recursive: true });
+    const paths = { root, effort: "review-sandbox", parent: "FT-0026" };
+    const later = new Date(Date.parse("2026-10-06T13:55:00.000Z") + 3 * HOURS);
+    const out = maybeFileMemoryIncident(paths, notServing(), {
+      fresh: true,
+      now: later,
+      afterMs: 2 * HOURS,
+      memo: newIncidentFilerMemo(),
+    });
+    expect(out).toMatchObject({ kind: "filed" });
+    const dir = join(root, "efforts", "review-sandbox", "tickets");
+    const body = readFileSync(join(dir, readdirSync(dir)[0]!), "utf8");
+    expect(body).toContain(
+      "- serving search: NO since 2026-10-06T13:45:00.000Z — the local embedder is unavailable",
+    );
+    expect(body).toMatch(/its `embedder` block — the local English embedder/);
+  });
+
+  it("the companion's line and the alert body carry the reason", () => {
+    const line = memoryLine(notServing());
+    expect(line).toContain("NOT serving search since 2026-10-06T13:45:00.000Z");
+    expect(line).toContain("the local embedder is unavailable");
+    const dir = tempDir("qcr-memalert-");
+    const name = maybeWriteMemoryAlert(dir, notServing(), true, { lastWritten: "" }, () => NOW)!;
+    const alert = JSON.parse(readFileSync(join(dir, name), "utf8")) as { body: string };
+    expect(alert.body).toContain("answers, but has not served search");
+    expect(alert.body).toContain("the local embedder is unavailable");
+  });
+
+  it("a block from a daemon that predates the check says so — never `yes`", () => {
+    const { serving: _s, down_cause: _d, ...old } = notServing({ state: "down" });
+    const root = tempDir("qcr-tracker-");
+    mkdirSync(join(root, ".ids"), { recursive: true });
+    writeFileSync(join(root, ".ids", "0545"), "x\n");
+    mkdirSync(join(root, "efforts", "review-sandbox", "tickets"), { recursive: true });
+    maybeFileMemoryIncident({ root, effort: "review-sandbox", parent: "FT-0026" }, old, {
+      fresh: true,
+      now: new Date(Date.parse("2026-10-06T13:55:00.000Z") + 3 * HOURS),
+      afterMs: 2 * HOURS,
+      memo: newIncidentFilerMemo(),
+    });
+    const dir = join(root, "efforts", "review-sandbox", "tickets");
+    expect(readFileSync(join(dir, readdirSync(dir)[0]!), "utf8")).toContain(
+      "- serving search: not reported (this daemon predates the serving check)",
+    );
+  });
+});
+
 // ---- the TUI counts its own requests -----------------------------------------
 
 describe("the TUI counts its own OpenViking requests per user/op", () => {

@@ -343,10 +343,14 @@ export function memorySegment(
     case "unknown":
       return { text: `${FG.dim}mem ?${RESET}`, loud: false };
     case "degraded":
-      return { text: `${WARN}▲ MEMORY DEGRADED${age}${DRESET}`, loud: true };
+      return {
+        // memory that answers but cannot search says so.
+        text: `${WARN}▲ MEMORY DEGRADED${age}${m.serving?.ok === false ? " · search not serving" : ""}${DRESET}`,
+        loud: true,
+      };
     case "down":
       return {
-        text: `${FG.anomaly}⛔ MEMORY DOWN${age} · no authenticated answer${RESET}`,
+        text: `${FG.anomaly}⛔ MEMORY DOWN${age} · ${m.down_cause === "not_serving" ? "search not serving" : "no authenticated answer"}${RESET}`,
         loud: true,
       };
     case "auth_failed": {

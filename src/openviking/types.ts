@@ -73,8 +73,39 @@ export interface ReembedStatus extends Omit<ReembedJournalStatus, "state"> {
   last_run_at?: string;
   last_error?: string;
   /** config.toml `[openviking] embedding_*` names a different embedder than
-   * the ov.conf the entrypoint rendered — reported, never corrected here. */
-  config_drift?: { config_toml: Embedder; ov_conf: Embedder };
+   * the ov.conf the entrypoint rendered — reported, never corrected here.
+   * Both sides are spelled as ov.conf spells them (`ovConfEmbedder`): under
+   * `local` that is the engine's OpenAI-compatible provider and the loopback
+   * `api_base` of the local embedder (S4). */
+  config_drift?: {
+    config_toml: Embedder & { api_base?: string };
+    ov_conf: Embedder & { api_base?: string };
+  };
+}
+
+/**
+ * The `embedder` block inside `openviking` (S4): the local English
+ * embedder the daemon supervises beside the server. `off` = not the embedder
+ * in use (a hosted opt-in, or an ov.conf that does not route to it — `reason`
+ * says which); `unavailable` = a file it needs is missing (reported once, never
+ * retried); `supervised` = the daemon runs it, `ready` once `/health` answers.
+ */
+export interface LocalEmbedderStatus {
+  state: "off" | "unavailable" | "supervised";
+  reason?: string;
+  model: string;
+  port: number;
+  threads: number;
+  running: boolean;
+  ready: boolean;
+  restarts: number;
+  pid?: number;
+  started_at?: string;
+  last_exit?: { code: number | null; signal: string | null; at: string };
+  last_error?: string;
+  checked_at?: string;
+  rss_bytes?: number;
+  cpu_pct?: number;
 }
 
 /**
@@ -115,6 +146,11 @@ export interface OpenVikingStatus {
   cpu_pct?: number;
   /** ISO instant of the last health poll. */
   checked_at?: string;
+  /** The server's first start is held for this (S4: the local
+   * embedder its `/ready` probes), bounded. Absent once it started. */
+  waiting_for?: string;
   /** The embedder migration. Absent when no driver runs. */
   reembed?: ReembedStatus;
+  /** The local English embedder (S4). Absent when no supervisor runs. */
+  embedder?: LocalEmbedderStatus;
 }

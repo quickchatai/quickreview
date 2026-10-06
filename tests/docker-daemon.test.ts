@@ -10,12 +10,18 @@
 // secrets mount, degrade-never-block, the no-stall trust layers) and the
 // compose topology (webhook published, OpenViking port never).
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { LOCAL_EMBEDDING, OPENVIKING_DEFAULTS, parseConfig } from "../src/config.js";
+import {
+  LOCAL_EMBEDDING,
+  OPENVIKING_DEFAULTS,
+  RETIRED_LOCAL_EMBEDDING,
+  ovConfEmbedder,
+  parseConfig,
+} from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The TRACKED config.example.toml (the rule-7 pin spelling every tree
@@ -88,6 +94,51 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(dockerfile).not.toMatch(/pi-coding-agent@\d/);
   });
 
+  // the local English embedder's model file — a fourth spelling of
+  // the pin config.toml and group_vars carry.
+  it("the local embedder's model pin: ARG defaults == config.toml == group_vars", () => {
+    const ov = cfg.openviking;
+    expect(arg("LOCAL_EMBEDDER_MODEL")).toBe(LOCAL_EMBEDDING.model);
+    expect(arg("LOCAL_EMBEDDER_MODEL")).toBe(gv("openviking_local_embedder_model"));
+    expect(arg("LOCAL_EMBEDDER_DIR")).toBe(gv("openviking_local_embedder_dir"));
+    expect(`${arg("LOCAL_EMBEDDER_DIR")}/${arg("LOCAL_EMBEDDER_MODEL")}.gguf`).toBe(
+      ov.local_embedder_file,
+    );
+    expect(arg("LOCAL_EMBEDDER_URL")).toBe(ov.local_embedder_url);
+    expect(arg("LOCAL_EMBEDDER_URL")).toBe(gv("openviking_local_embedder_url"));
+    expect(arg("LOCAL_EMBEDDER_SHA256")).toBe(ov.local_embedder_sha256);
+    expect(arg("LOCAL_EMBEDDER_SHA256")).toBe(gv("openviking_local_embedder_sha256"));
+  });
+
+  it("the model layer downloads through the ARGs and hard-fails unless the sha256 matches", () => {
+    const layer = dockerfile.slice(dockerfile.indexOf('RUN mkdir -p "${LOCAL_EMBEDDER_DIR}"'));
+    expect(layer).toContain('"${LOCAL_EMBEDDER_URL}"');
+    expect(layer).toContain(
+      'echo "${LOCAL_EMBEDDER_SHA256}  ${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" | sha256sum -c -',
+    );
+    expect(layer).toMatch(/\|\| \{ echo "FATAL: the local embedder model/);
+    // The literal pin lives on the ARG lines only.
+    const nonArg = dockerfile
+      .split("\n")
+      .filter((l) => !l.startsWith("ARG "))
+      .join("\n");
+    expect(nonArg).not.toContain(cfg.openviking.local_embedder_sha256);
+    expect(nonArg).not.toContain("huggingface.co");
+  });
+
+  // Review (S4): the compose boot renders from the image's pin, not from the
+  // entrypoint's literal defaults — the image exports its ARGs to it.
+  it("the image tells its entrypoint which model file it carries", () => {
+    for (const [env, argName] of [
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL", "LOCAL_EMBEDDER_MODEL"],
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_DIR", "LOCAL_EMBEDDER_DIR"],
+      ["QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256", "LOCAL_EMBEDDER_SHA256"],
+    ] as const) {
+      expect(dockerfile).toMatch(new RegExp(`^(ENV |\\s+)${env}=\\$\\{${argName}\\}`, "m"));
+      expect(entrypoint).toContain(`\${${env}:-`);
+    }
+  });
+
   it("the image hard-fails unless the INSTALLED versions match the pins", () => {
     expect(dockerfile).toContain("importlib.metadata");
     expect(dockerfile).toContain("import llama_cpp");
@@ -146,6 +197,15 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(def("EMBEDDING_DIMENSION")).toBe(String(OPENVIKING_DEFAULTS.embedding_dimension));
     expect(def("EMBEDDING_KEY_FILE")).toBe(OPENVIKING_DEFAULTS.embedding_key_file);
     expect(def("EMBEDDING_KEY_FILE")).toBe(gv("openviking_embedding_key_file"));
+    // the local embedder's knobs default to the pin.
+    expect(def("LOCAL_EMBEDDER_MODEL")).toBe(LOCAL_EMBEDDING.model);
+    expect(def("LOCAL_EMBEDDER_DIMENSION")).toBe(String(LOCAL_EMBEDDING.dimension));
+    expect(`${def("LOCAL_EMBEDDER_DIR")}/${def("LOCAL_EMBEDDER_MODEL")}.gguf`).toBe(
+      cfg.openviking.local_embedder_file,
+    );
+    expect(def("LOCAL_EMBEDDER_SHA256")).toBe(cfg.openviking.local_embedder_sha256);
+    expect(def("LOCAL_EMBEDDER_PORT")).toBe(String(cfg.openviking.local_embedder_port));
+    expect(def("LOCAL_EMBEDDER_THREADS")).toBe(String(cfg.openviking.local_embedder_threads));
     expect(def("ROOT_KEY_FILE")).toBe(cfg.openviking.root_key_file);
     expect(def("REVIEWER_KEY_FILE")).toBe(cfg.openviking.reviewer_key_file);
     expect(def("PROVISION_USERS")).toBe(cfg.openviking.provision_users.join(","));
@@ -190,7 +250,12 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
       entrypoint.lastIndexOf("OV_CONF_RENDER"),
     );
     expect(render).toContain("provider: process.env.QCR_OV_EMBEDDING_PROVIDER");
-    expect(render).not.toContain('provider: "openai"');
+    // the ONE literal "openai" is the local embedder's WIRE
+    // provider, inside the `local` branch, beside the loopback api_base.
+    expect(render.match(/provider: "openai"/g)).toHaveLength(1);
+    expect(render).toMatch(
+      /if \(conf\.embedding\.dense\.provider === "local"\) \{[\s\S]*provider: "openai",[\s\S]*api_base: "http:\/\/127\.0\.0\.1:" \+ Number\(process\.env\.QCR_OV_LOCAL_EMBEDDER_PORT\)/,
+    );
     expect(render).not.toContain("openai_api_key");
     expect(render).toContain("process.env.QCR_OV_EMBEDDING_KEY_FILE");
     const reembed = entrypoint.indexOf('scripts/openviking-reembed.mjs" prepare');
@@ -269,7 +334,7 @@ describe("the rendered ov.conf (executed)", () => {
         entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
       ),
     );
-    execFileSync(process.execPath, [script], {
+    const result = spawnSync(process.execPath, [script], {
       env: {
         ...process.env,
         ...shellDefaults(),
@@ -278,9 +343,13 @@ describe("the rendered ov.conf (executed)", () => {
         QCR_SECRETS: secretsDir,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
     });
+    if (result.status !== 0) throw new Error(`render failed: ${result.stderr}`);
+    lastStderr = result.stderr;
     return JSON.parse(readFileSync(join(home, "ov.conf"), "utf8"));
   }
+  let lastStderr = "";
 
   it("SHIPPED DEFAULT: embeds locally with no key present and no key required — pi's key in the mount changes nothing", () => {
     const conf = render(
@@ -288,15 +357,58 @@ describe("the rendered ov.conf (executed)", () => {
       { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" },
     );
     expect(conf.embedding.dense).toEqual({
-      provider: "local",
+      provider: "openai",
       model: LOCAL_EMBEDDING.model,
       dimension: LOCAL_EMBEDDING.dimension,
+      api_base: "http://127.0.0.1:1934/v1",
+      query_param: "query",
+      document_param: "passage",
       input: "text",
     });
     const text = JSON.stringify(conf);
     expect(text).not.toContain("sk-pi-model-credential");
-    expect(text).not.toContain("openai");
+    expect([...text.matchAll(/"([a-z_]*api_key)":/g)].map((m) => m[1])).toEqual(["root_api_key"]);
+    expect([...text.matchAll(/https?:\/\/([^/:"]+)/g)].map((m) => m[1])).toEqual(["127.0.0.1"]);
     expect(conf.server.auth_mode).toBe("api_key");
+    const dense = conf.embedding.dense as Record<string, unknown>;
+    expect({
+      provider: dense.provider,
+      model: dense.model,
+      dimension: dense.dimension,
+      api_base: dense.api_base,
+    }).toEqual(ovConfEmbedder(cfg.openviking));
+  });
+
+  // a project .env the bring-up step wrote under the previous
+  // release carries the retired built-in model. Under local the pin decides.
+  it("a stale .env model under local is ignored — the pinned model renders, and it says so", () => {
+    const conf = render(
+      {
+        QCR_OV_EMBEDDING_MODEL: RETIRED_LOCAL_EMBEDDING.model,
+        QCR_OV_EMBEDDING_DIMENSION: String(RETIRED_LOCAL_EMBEDDING.dimension),
+      },
+      { openviking_root_key: "r" },
+    );
+    expect(conf.embedding.dense).toMatchObject({
+      provider: "openai",
+      model: LOCAL_EMBEDDING.model,
+      dimension: LOCAL_EMBEDDING.dimension,
+    });
+    expect(lastStderr).toMatch(/ignored under provider local/);
+  });
+
+  it("the boot's provisioning step runs the embedder beside its temporary server — only under local", () => {
+    const block = entrypoint.slice(
+      entrypoint.indexOf("OV_EMBEDDER_ARGS=()"),
+      entrypoint.indexOf('scripts/openviking-provision.mjs" \\'),
+    );
+    expect(block).toContain('if [[ "$OV_EMBEDDING_PROVIDER" == "local" ]]; then');
+    expect(block).toContain('--embedder-python "$OV_VENV/bin/python"');
+    expect(block).toContain(
+      '--embedder-file "$OV_LOCAL_EMBEDDER_DIR/$OV_LOCAL_EMBEDDER_MODEL.gguf"',
+    );
+    expect(block).toContain('--embedder-sha256 "$OV_LOCAL_EMBEDDER_SHA256"');
+    expect(entrypoint).toContain('"${OV_EMBEDDER_ARGS[@]}" \\');
   });
 
   it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob (S3)", () => {
@@ -342,6 +454,20 @@ describe("docker-compose topology", () => {
     expect(compose).toContain(
       `QCR_OPENVIKING_EMBEDDING_DIMENSION: \${QCR_OPENVIKING_EMBEDDING_DIMENSION:-${OPENVIKING_DEFAULTS.embedding_dimension}}`,
     );
+  });
+
+  // S4 (review): the daemon reads the local embedder's port and
+  // threads from config.toml; the boot renders ov.conf's api_base from these.
+  // The bring-up step mirrors the one into the other — compose must pass them.
+  it("passes the local embedder's port and threads through, defaulting to config.toml's", () => {
+    expect(compose).toContain(
+      `QCR_OPENVIKING_LOCAL_EMBEDDER_PORT: \${QCR_OPENVIKING_LOCAL_EMBEDDER_PORT:-${OPENVIKING_DEFAULTS.local_embedder_port}}`,
+    );
+    expect(compose).toContain(
+      `QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS: \${QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS:-${OPENVIKING_DEFAULTS.local_embedder_threads}}`,
+    );
+    // Model, dimension and file are the IMAGE's, never the .env's.
+    expect(compose).not.toMatch(/QCR_OPENVIKING_LOCAL_EMBEDDER_(MODEL|DIR|SHA256|DIMENSION):/);
   });
 
   it("publishes ONLY the webhook port, loopback by default", () => {

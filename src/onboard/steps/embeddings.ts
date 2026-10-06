@@ -1,9 +1,10 @@
 // The embedder step — where memory's vectors are computed, and the
 // ONLY place a new operator is asked about it.
 //
-// WHY IT IS A STEP. The shipped default is the memory engine's own LOCAL
-// embedder: it runs inside the daemon container, so nothing but the model call
-// leaves the machine — memory text included. That default needs no answer and
+// WHY IT IS A STEP. The shipped default is the LOCAL embedder — since
+// S4 a small English model served on loopback inside the daemon
+// container — so nothing but the model call leaves the machine, memory text
+// included. That default needs no answer and
 // no key, which is exactly why the step exists: an operator who WANTS hosted
 // embeddings must say so, in one place, and the whole installation then moves
 // together — config.toml, the credential file, and (through the bring-up or
@@ -104,6 +105,37 @@ export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]>
   ];
 }
 
+/**
+ * The local embedder's two RUNTIME knobs as `.env` keys (S4):
+ * docker-compose.yml passes them to the entrypoint, which renders ov.conf's
+ * `api_base` and runs the provisioning embedder on that port — while the
+ * daemon reads the same two from config.toml. Mirrored on every bring-up so
+ * they cannot disagree: a port the two disagree on is a search nothing serves.
+ * The loader's own reading of the block; a config it cannot read gives the
+ * shipped defaults, exactly as the daemon would refuse to start on it.
+ */
+export function localEmbedderEnvEntries(configText: string): Array<[string, string]> {
+  let port = OPENVIKING_DEFAULTS.local_embedder_port;
+  let threads = OPENVIKING_DEFAULTS.local_embedder_threads;
+  try {
+    const doc = parseToml(configText) as Record<string, unknown>;
+    const block = doc.openviking;
+    const ov = parseOpenViking(
+      typeof block === "object" && block !== null && !Array.isArray(block)
+        ? (block as Record<string, unknown>)
+        : {},
+    );
+    port = ov.local_embedder_port;
+    threads = ov.local_embedder_threads;
+  } catch {
+    /* the defaults — the daemon will not run on a config it cannot load */
+  }
+  return [
+    ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", String(port)],
+    ["QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS", String(threads)],
+  ];
+}
+
 /** The inventory HOST VARS for a hosted opt-in — nothing for the local
  * default, which the tracked group_vars already carry. */
 export function embedderHostVars(e: DeclaredEmbedder): Array<[string, string]> {
@@ -190,7 +222,8 @@ export function embeddingsStep(): OnboardingStep {
     id: EMBEDDINGS_STEP_ID,
     title: "Memory embeddings: local by default",
     explain:
-      "Decides where the memory engine computes its vectors. The shipped default is LOCAL: the embedder runs inside the daemon " +
+      "Decides where the memory engine computes its vectors. The shipped default is LOCAL: a small English embedding model " +
+      `(${LOCAL_EMBEDDING.model}, pinned in the image) served on loopback inside the daemon ` +
       "container, so nothing but the model call ever leaves the machine — memory text included — and no key is needed. Calling this " +
       'step with no arguments confirms that default. The alternative is OpenAI\'s hosted embeddings (`provider: "openai"`): every memory ' +
       "entry's text is then sent to OpenAI, and the credential is its OWN secrets file (openai_embeddings_api_key, via " +

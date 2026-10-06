@@ -1091,33 +1091,113 @@ export interface OpenVikingConfig {
   restart_backoff_ms: number[];
   /** A child that stayed up this long resets the backoff ladder. */
   restart_reset_after_s: number;
-  /** ov.conf `embedding.dense.provider`. `local` is the shipped
-   * default — the server's own llama-cpp embedder, in the container, so no
-   * memory text leaves the machine. `openai` is the explicit opt-in and needs
-   * `embedding_key_file` in the secrets dir. Mirrored as
-   * `openviking_embedding_provider`. */
+  /** Which embedder memory runs (S4). `local` is the shipped
+   * default: the LOCAL ENGLISH EMBEDDER (`LOCAL_EMBEDDING`) — a loopback
+   * service inside the container, so no memory text leaves the machine.
+   * `openai` is the explicit hosted opt-in and needs `embedding_key_file` in
+   * the secrets dir. Mirrored as `openviking_embedding_provider`. This is the
+   * operator's word, not ov.conf's: under `local` the entrypoint renders
+   * ov.conf's OpenAI-COMPATIBLE provider with `api_base` on loopback
+   * (`ovConfEmbedder`). */
   embedding_provider: EmbeddingProvider;
   /** ov.conf `embedding.dense.model` / `.dimension`. Under `local` they are
-   * pinned to the ONE model 0.4.15 ships a spec for (the server refuses any
-   * other dimension for it); under `openai` the operator names the hosted
-   * model and its dimension. */
+   * the local embedder's model and its fixed dimension (`LOCAL_EMBEDDING`);
+   * under `openai` the operator names the hosted model and its dimension. */
   embedding_model: string;
   embedding_dimension: number;
   /** Secrets-dir file name of the HOSTED embeddings credential — deliberately
    * NOT `openai_api_key` (pi's model credential), so the two can be set
    * independently. Read only by the ov.conf render, only under `openai`. */
   embedding_key_file: string;
+  /** The local embedder's MODEL FILE pin (S4, rule 7): the GGUF the
+   * image downloads at BUILD time from `local_embedder_url`, verified against
+   * `local_embedder_sha256` there and again by the service at every start.
+   * TRIPLE-MIRRORED like `version`: this block == group_vars
+   * (`openviking_local_embedder_*`) == both Dockerfiles' model layer —
+   * `tests/openviking.test.ts`, `tests/docker-daemon.test.ts` and the
+   * `scripts/deploy.sh` preflight refuse on drift. The file's basename is
+   * `<LOCAL_EMBEDDING.model>.gguf`; the image carries the file whatever the
+   * provider, so a hosted opt-in can come back to local without a rebuild. */
+  local_embedder_file: string;
+  local_embedder_url: string;
+  local_embedder_sha256: string;
+  /** The service listens on 127.0.0.1 at this port — never published; ov.conf's
+   * `api_base` names it. Mirrored as `openviking_local_embedder_port`. */
+  local_embedder_port: number;
+  /** llama.cpp threads for the service. One is the budget the model was chosen
+   * on (~25 ms for a round's context query): the container has two CPUs and a
+   * review round to run. Mirrored as `openviking_local_embedder_threads`. */
+  local_embedder_threads: number;
 }
 
 export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
 
-/** The server's built-in local dense embedder — the only local model
- * OpenViking 0.4.15 ships a spec for (`LOCAL_DENSE_MODEL_SPECS`), fixed at
- * 512 dims. Mirrored by `LOCAL_EMBEDDER` in scripts/openviking-reembed.mjs. */
-export const LOCAL_EMBEDDING = Object.freeze({ model: "bge-small-zh-v1.5-f16", dimension: 512 });
+/**
+ * The LOCAL ENGLISH EMBEDDER (S4, the owner's ruling R5): the model
+ * `embedding_provider = "local"` runs, served on loopback by
+ * `scripts/openviking-embedder.py` from the GGUF the image pins. Chosen by an
+ * offline retrieval evaluation over the reviewer's own memory
+ * (docs/memory-embeddings.md: MRR@10 0.56 against 0.34 for the engine's
+ * built-in Chinese-first model; ~25 ms per round query on one thread). The
+ * service's model table (`--describe`) carries the same name and dimension
+ * plus the query instruction; `tests/openviking-embedder.test.ts` holds the
+ * two together. Mirrored by `LOCAL_EMBEDDER` in scripts/openviking-reembed.mjs.
+ */
+export const LOCAL_EMBEDDING = Object.freeze({ model: "bge-small-en-v1.5-f16", dimension: 384 });
+/** The engine's BUILT-IN local embedder — what `local` meant from until
+ * S4, and what every store embedded in that time was built under. A
+ * config.toml that still spells it under `local` (the previous release
+ * REQUIRED exactly this) is read as the current local embedder rather than
+ * refused: the daemon must not stop booting over a value it used to demand.
+ * The re-embed migration carries the store across. */
+export const RETIRED_LOCAL_EMBEDDING = Object.freeze({
+  model: "bge-small-zh-v1.5-f16",
+  dimension: 512,
+});
 /** What an `openai` opt-in runs unless the operator names another model. */
 export const HOSTED_EMBEDDING = Object.freeze({ model: "text-embedding-3-small", dimension: 1536 });
+
+/** ov.conf's `embedding.dense.provider` under `local`: the engine's OpenAI-
+ * COMPATIBLE client — its async embedder — pointed at the loopback service.
+ * The wire format, never a destination. */
+export const LOCAL_EMBEDDER_WIRE_PROVIDER = "openai";
+
+/** `http://127.0.0.1:<port>/v1` — ov.conf's `api_base` under `local`. */
+export function localEmbedderBaseUrl(c: Pick<OpenVikingConfig, "local_embedder_port">): string {
+  return `http://127.0.0.1:${c.local_embedder_port}/v1`;
+}
+
+/** What ov.conf's `embedding.dense` must say for this config: provider,
+ * model and dimension as the ENGINE spells them (the record its vector
+ * collection stores), plus the loopback `api_base` under `local`. The
+ * daemon's drift check holds the rendered ov.conf to it. */
+export interface OvConfEmbedder {
+  provider: string;
+  model: string;
+  dimension: number;
+  api_base?: string;
+}
+
+export function ovConfEmbedder(
+  c: Pick<
+    OpenVikingConfig,
+    "embedding_provider" | "embedding_model" | "embedding_dimension" | "local_embedder_port"
+  >,
+): OvConfEmbedder {
+  if (c.embedding_provider === "local")
+    return {
+      provider: LOCAL_EMBEDDER_WIRE_PROVIDER,
+      model: c.embedding_model,
+      dimension: c.embedding_dimension,
+      api_base: localEmbedderBaseUrl(c),
+    };
+  return {
+    provider: c.embedding_provider,
+    model: c.embedding_model,
+    dimension: c.embedding_dimension,
+  };
+}
 
 /** [openviking] is optional in config.toml — the defaults ARE the shipped
  * configuration, exactly like [tui]/[companion]. */
@@ -1206,20 +1286,26 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   embedding_model: LOCAL_EMBEDDING.model,
   embedding_dimension: LOCAL_EMBEDDING.dimension,
   embedding_key_file: "openai_embeddings_api_key",
+  local_embedder_file: `/opt/openviking/models/${LOCAL_EMBEDDING.model}.gguf`,
+  local_embedder_url: `https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/${LOCAL_EMBEDDING.model}.gguf`,
+  local_embedder_sha256: "f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999",
+  local_embedder_port: 1934,
+  local_embedder_threads: 1,
 };
 
 /**
  * The [openviking] block, defaults filled and the embedder checked.
  *
- * The embedder is validated at LOAD time because the server validates it at
- * BOOT time, and a server that refuses to start is a silent memory outage: an
- * unknown provider, a non-positive dimension, or a `local` model/dimension the
- * server's one local spec does not match are all config errors here.
+ * The embedder is validated at LOAD time because the boot validates it too,
+ * and a memory engine that refuses to start is a silent outage: an unknown
+ * provider, a non-positive dimension, a `local` model/dimension that is not
+ * the local embedder's, or a local model-file pin that does not name that
+ * model are all config errors here.
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
   // The defaults are the LOCAL embedder: a hosted opt-in that omits the model
-  // runs HOSTED_EMBEDDING, never bge-small at 512 (which no hosted API serves).
+  // runs HOSTED_EMBEDDING, never the local model (which no hosted API serves).
   // A named hosted model with no dimension has no default to fall back on.
   if (merged.embedding_provider !== "local") {
     if (raw.embedding_model === undefined) {
@@ -1233,6 +1319,16 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
         );
       merged.embedding_dimension = HOSTED_EMBEDDING.dimension;
     }
+  } else if (
+    merged.embedding_model === RETIRED_LOCAL_EMBEDDING.model &&
+    (raw.embedding_dimension === undefined ||
+      merged.embedding_dimension === RETIRED_LOCAL_EMBEDDING.dimension)
+  ) {
+    // the previous release REQUIRED this spelling under `local`.
+    // It now means the local embedder that replaced it — the boot renders the
+    // same, and the re-embed migration moves the store across.
+    merged.embedding_model = LOCAL_EMBEDDING.model;
+    merged.embedding_dimension = LOCAL_EMBEDDING.dimension;
   }
   if (!(EMBEDDING_PROVIDERS as readonly string[]).includes(merged.embedding_provider)) {
     throw new Error(
@@ -1250,8 +1346,8 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
       merged.embedding_dimension !== LOCAL_EMBEDDING.dimension)
   ) {
     throw new Error(
-      `config.toml: [openviking] embedding_provider = "local" runs the server's built-in ${LOCAL_EMBEDDING.model} at ${LOCAL_EMBEDDING.dimension} dims — ` +
-        `it is the only local model OpenViking 0.4.15 ships; set embedding_model/embedding_dimension to it, or opt into a hosted provider`,
+      `config.toml: [openviking] embedding_provider = "local" runs the local English embedder, ${LOCAL_EMBEDDING.model} at ${LOCAL_EMBEDDING.dimension} dims — ` +
+        `the only local model the image pins; set embedding_model/embedding_dimension to it, or opt into a hosted provider`,
     );
   }
   if (
@@ -1263,7 +1359,48 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
       "config.toml: [openviking] embedding_key_file must be a bare file name inside the secrets dir",
     );
   }
+  checkLocalEmbedderPin(merged);
   return resolveOpenVikingPaths(merged);
+}
+
+/** The local embedder's model-file pin and service knobs (S4). The
+ * file and the URL must both name `LOCAL_EMBEDDING.model`: a pin for another
+ * model would put a file the service's model table does not describe under a
+ * name the vector store trusts. */
+function checkLocalEmbedderPin(c: OpenVikingConfig): void {
+  const gguf = `${LOCAL_EMBEDDING.model}.gguf`;
+  const file = c.local_embedder_file;
+  if (typeof file !== "string" || !file.startsWith("/") || !file.endsWith(`/${gguf}`)) {
+    throw new Error(
+      `config.toml: [openviking] local_embedder_file must be an absolute container path ending in /${gguf} (got '${String(file)}')`,
+    );
+  }
+  const url = c.local_embedder_url;
+  if (typeof url !== "string" || !url.startsWith("https://") || !url.endsWith(`/${gguf}`)) {
+    throw new Error(
+      `config.toml: [openviking] local_embedder_url must be an https URL ending in /${gguf} (got '${String(url)}')`,
+    );
+  }
+  if (
+    typeof c.local_embedder_sha256 !== "string" ||
+    !/^[0-9a-f]{64}$/.test(c.local_embedder_sha256)
+  ) {
+    throw new Error(
+      "config.toml: [openviking] local_embedder_sha256 must be the file's sha256, 64 lowercase hex digits",
+    );
+  }
+  const port = c.local_embedder_port;
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || port === c.port) {
+    throw new Error(
+      `config.toml: [openviking] local_embedder_port must be a TCP port other than the server's own ${c.port} (got '${String(port)}')`,
+    );
+  }
+  const threads = c.local_embedder_threads;
+  if (!Number.isInteger(threads) || threads < 1 || threads > 16) {
+    throw new Error(
+      `config.toml: [openviking] local_embedder_threads must be an integer in 1..16 (got '${String(threads)}')`,
+    );
+  }
 }
 
 /** Derived paths: `config_file`/`workspace` default off `home`, so the three

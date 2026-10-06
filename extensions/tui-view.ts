@@ -241,6 +241,7 @@ export function memoryLine(value: unknown): string {
     incident?: { kind?: unknown; since?: unknown } | null;
     credentials?: Record<string, { result?: unknown; status?: unknown; code?: unknown } | null>;
     last_error?: { op?: unknown; code?: unknown; message?: unknown } | null;
+    serving?: { ok?: unknown; since?: unknown; reason?: unknown } | null;
   };
   if (m.enabled === false) return "reviewer memory: not monitored on this daemon";
   // A scalar as text; anything else (a torn or foreign shape) as the fallback.
@@ -261,7 +262,12 @@ export function memoryLine(value: unknown): string {
     m.last_error && m.state !== "healthy"
       ? `; last error ${txt(m.last_error.op)}: ${txt(m.last_error.code)} ${txt(m.last_error.message, "").slice(0, 120)}`
       : "";
-  return `reviewer memory: ${state} since ${txt(m.since)}${incident}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}`;
+  // memory that authenticates but cannot search says so.
+  const serving =
+    m.serving && (m.serving.ok === false || typeof m.serving.since === "string")
+      ? `; NOT serving search${typeof m.serving.since === "string" ? ` since ${m.serving.since}` : ""}${typeof m.serving.reason === "string" ? ` — ${m.serving.reason.slice(0, 160)}` : ""}`
+      : "";
+  return `reviewer memory: ${state} since ${txt(m.since)}${incident}${serving}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}`;
 }
 
 export function boardAnswer(dir: string, now: Date): string {

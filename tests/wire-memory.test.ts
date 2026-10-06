@@ -214,3 +214,42 @@ describe("wire.ts: bounded sessions, shed load (S3)", () => {
     );
   });
 });
+
+// the local English embedder. Unwired, the server would start
+// with nothing on its api_base: every search and every new vector fails while
+// the server itself looks up. The tripwire is structural, like the rest.
+describe("wire.ts: the local English embedder is actually connected (S4)", () => {
+  it("the embedder supervisor starts BEFORE the server, and gates the server's first start, bounded", () => {
+    const embedderAt = wire.indexOf(
+      "new LocalEmbedderSupervisor({ cfg: cfg.openviking, repoRoot: root, log })",
+    );
+    const serverAt = wire.indexOf("openviking = new OpenVikingSupervisor({");
+    expect(embedderAt).toBeGreaterThan(0);
+    expect(embedderAt).toBeLessThan(serverAt);
+    expect(wire).toMatch(/localEmbedder\.start\(\);/);
+    expect(wire).toMatch(
+      /new OpenVikingSupervisor\(\{[\s\S]*?startGate: \{\s*open: \(\) => embedderForGate\.gateOpen\(\),\s*maxWaitMs: EMBEDDER_GATE_MAX_WAIT_MS,/,
+    );
+  });
+
+  it("its block rides the heartbeat's openviking entry, beside the reembed journal", () => {
+    expect(wire).toMatch(
+      /openvikingStatus: \(\) => \{[\s\S]*?\.\.\.\(localEmbedder \? \{ embedder: localEmbedder\.status\(\) \} : \{\}\)/,
+    );
+  });
+
+  // Review (S4): memory health's probe is an fs/ls, which needs no embedding —
+  // unwired, a dead embedder read healthy while every search failed.
+  it("memory health reads whether memory SERVES, from both supervisors", () => {
+    expect(wire).toMatch(
+      /new MemoryHealthMonitor\(\{[\s\S]*?serving: \(\) =>\s*memoryServing\(\s*cfg\.openviking\.embedding_provider,\s*openviking\?\.status\(\),\s*localEmbedder\?\.status\(\),\s*\)/,
+    );
+  });
+
+  it("shutdown stops it after the server", () => {
+    const stopServer = wire.indexOf("await openviking.stop();");
+    const stopEmbedder = wire.indexOf("await localEmbedder.stop();");
+    expect(stopServer).toBeGreaterThan(0);
+    expect(stopEmbedder).toBeGreaterThan(stopServer);
+  });
+});

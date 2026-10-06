@@ -46,7 +46,12 @@ import {
   writeAtomic,
   type StreamRunner,
 } from "./compose.js";
-import { declaredEmbedderOf, describeEmbedder, embedderEnvEntries } from "./embeddings.js";
+import {
+  declaredEmbedderOf,
+  describeEmbedder,
+  embedderEnvEntries,
+  localEmbedderEnvEntries,
+} from "./embeddings.js";
 import { readEnvKey, setEnvKey } from "./ingress.js";
 import { UID_CHOICE_KEY } from "./preflight.js";
 import { CHOICE_KEYS } from "./configfill.js";
@@ -177,8 +182,13 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       // compose file passes to the container — the ONE place the boot reads
       // it from on this route. config.toml is the truth; this is its mirror,
       // re-asserted on every bring-up so the two cannot drift apart.
-      const embedder = declaredEmbedderOf(readFileSync(ctx.adapters.paths.configPath, "utf8"));
+      const configText = readFileSync(ctx.adapters.paths.configPath, "utf8");
+      const embedder = declaredEmbedderOf(configText);
       for (const [key, value] of embedderEnvEntries(embedder)) next = setEnvKey(next, key, value);
+      // and the local embedder's port and threads — the daemon
+      // reads them from config.toml, the boot renders ov.conf from these.
+      for (const [key, value] of localEmbedderEnvEntries(configText))
+        next = setEnvKey(next, key, value);
       // the directory the compose file mounts read-only as the
       // container's config home — the one holding the config the install
       // locator found — the only config the container reads. Created here so

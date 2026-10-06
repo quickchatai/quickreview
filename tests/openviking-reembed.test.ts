@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Plain JS, dependency-free, run by the entrypoint before any build exists;
 // `tsconfig.tests.json` sets allowJs so these call sites are type-checked.
 import * as reembed from "../scripts/openviking-reembed.mjs";
+import { LOCAL_EMBEDDER_WIRE_PROVIDER, LOCAL_EMBEDDING } from "../src/config.js";
 
 const BASE = "http://127.0.0.1:19333";
 const HOSTED = { provider: "openai", model: "text-embedding-3-small", dimension: 1536 };
@@ -1056,5 +1057,161 @@ describe("cli surface", () => {
       }),
     ).toBe(2);
     expect(lines.join("\n")).toContain("prepare | resume | status | settle | rehearse");
+  });
+});
+
+// S4 (the owner's ruling R5) — the SAME migration carries a store from
+// the engine's built-in Chinese-first local model (512 dims) to the local
+// English embedder (384 dims, the engine's OpenAI-compatible provider at a
+// loopback api_base). Nothing new is needed in the script but the records:
+// the provider, the model AND the dimension all change, so it is a reset and a
+// re-embed, never a server refusing to boot.
+describe("the move to the local English embedder (S4)", () => {
+  const LOCAL_EN = {
+    provider: LOCAL_EMBEDDER_WIRE_PROVIDER,
+    model: LOCAL_EMBEDDING.model,
+    dimension: LOCAL_EMBEDDING.dimension,
+  };
+  const EN_CONF = {
+    server: { host: "127.0.0.1", port: 19333 },
+    embedding: {
+      dense: {
+        ...LOCAL_EN,
+        api_base: "http://127.0.0.1:1934/v1",
+        query_param: "query",
+        document_param: "passage",
+        input: "text",
+      },
+    },
+  };
+  const enConf = () => ({ ...EN_CONF, storage: { workspace: join(home, "workspace") } });
+
+  it("LOCAL_EMBEDDER is the record the shipped default writes — config.ts's model, as the engine spells it", () => {
+    expect(reembed.LOCAL_EMBEDDER).toEqual(LOCAL_EN);
+    expect(reembed.configuredEmbedder(EN_CONF)).toEqual(LOCAL_EN);
+    // The loopback api_base is NOT part of the record (the server never
+    // stores it); the daemon's drift check compares it separately.
+    expect(reembed.configuredEmbedder(EN_CONF)).not.toHaveProperty("api_base");
+    // …and an ov.conf with no embedding section is still the server's own
+    // built-in model, because that is what such a server runs.
+    expect(reembed.SERVER_DEFAULT_EMBEDDER).toEqual(LOCAL);
+    expect(reembed.configuredEmbedder({})).toEqual(LOCAL);
+  });
+
+  it("a store built under the built-in model (512) is moved aside and journalled for re-embedding at 384", async () => {
+    seedStore(LOCAL);
+    const lines: string[] = [];
+    const report = await reembed.prepare({
+      home,
+      conf: enConf(),
+      users: ["reviewer", "companion"],
+      base: BASE,
+      fetchFn: noServer,
+      now: () => new Date("2026-10-07T09:00:00.000Z"),
+      log: (l: string) => lines.push(l),
+    });
+    expect(report.action).toBe("reset");
+    expect(report.reason).toMatch(
+      /built under local\/bge-small-zh-v1\.5-f16 \(512 dims\), ov\.conf configures openai\/bge-small-en-v1\.5-f16 \(384 dims\)/,
+    );
+    expect(existsSync(`${collectionDir()}.pre-reembed-20261007T090000Z`)).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, "reembed.json"), "utf8"))).toMatchObject({
+      embedder: LOCAL_EN,
+      previous: { ...LOCAL, model_identity: LOCAL.model },
+      namespaces: { reviewer: { state: "pending" }, companion: { state: "operator" } },
+    });
+  });
+
+  it("a journal (hosted → built-in local, completed) does not trip the loop guard — a new embedder is a new migration", async () => {
+    seedStore(LOCAL);
+    writeFileSync(
+      join(home, "reembed.json"),
+      JSON.stringify({
+        version: 1,
+        embedder: LOCAL,
+        previous: HOSTED,
+        reset_at: "2026-09-02T15:30:00.000Z",
+        moved_to: `${collectionDir()}.pre-reembed-20260902T153000Z`,
+        namespaces: {
+          reviewer: { state: "completed" },
+          companion: { state: "completed", settled_by: "operator" },
+        },
+      }),
+    );
+    const report = await reembed.prepare({
+      home,
+      conf: enConf(),
+      users: ["reviewer", "companion"],
+      base: BASE,
+      fetchFn: noServer,
+      now: () => new Date("2026-10-07T09:00:00.000Z"),
+    });
+    expect(report.action).toBe("reset");
+    expect(reembed.journalStatus(home)).toMatchObject({
+      state: "pending",
+      embedder: LOCAL_EN,
+      awaiting_operator: ["companion"],
+    });
+  });
+
+  it("the next boot, on the store the new server built, is a no-op", async () => {
+    seedStore(LOCAL_EN);
+    const report = await reembed.prepare({
+      home,
+      conf: enConf(),
+      users: ["reviewer"],
+      base: BASE,
+      fetchFn: noServer,
+    });
+    expect(report.action).toBe("none");
+    expect(existsSync(join(home, "reembed.json"))).toBe(false);
+  });
+
+  it("rehearse takes the local embedder's --embedder-* flags; a partial set is refused before anything moves", async () => {
+    expect(
+      reembed.parseArgs([
+        "rehearse",
+        "--home",
+        home,
+        "--embedder-python",
+        "/v/bin/python",
+        "--embedder-script",
+        "/s/openviking-embedder.py",
+        "--embedder-model",
+        LOCAL_EMBEDDING.model,
+        "--embedder-file",
+        "/m.gguf",
+        "--embedder-sha256",
+        "a".repeat(64),
+        "--embedder-port",
+        "19334",
+        "--embedder-threads",
+        "1",
+      ]).embedder,
+    ).toMatchObject({ model: LOCAL_EMBEDDING.model, port: 19334, threads: 1 });
+    expect(reembed.parseArgs(["rehearse", "--home", home]).embedder).toBeNull();
+
+    seedStore(LOCAL);
+    writeFileSync(join(home, "ov.conf"), JSON.stringify(enConf()));
+    const lines: string[] = [];
+    const code = await reembed.main(
+      [
+        "rehearse",
+        "--home",
+        home,
+        "--bin",
+        "/nonexistent/openviking-server",
+        "--port",
+        "19333",
+        "--embedder-model",
+        LOCAL_EMBEDDING.model,
+      ],
+      { env: {}, log: (l: string) => lines.push(l) },
+    );
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toMatch(/the local embedder needs --embedder-python/);
+    // Nothing moved: the collection and no journal.
+    expect(existsSync(join(collectionDir(), "collection_meta.json"))).toBe(true);
+    expect(existsSync(join(home, "reembed.json"))).toBe(false);
   });
 });

@@ -275,9 +275,10 @@ however many rounds it takes.
 ### 38 — Memory embeddings: local by default
 
 Decides where the memory engine computes the vectors it stores and searches by.
-The shipped default is **local**: the embedder (llama-cpp, pinned in the image)
-runs inside the daemon container, so nothing but the model call ever leaves the
-machine — memory text included — and no key is needed. Calling the step with no
+The shipped default is **local**: a small English embedding model
+(`bge-small-en-v1.5`, its file pinned in the image, S4) is served on
+loopback inside the daemon container, so nothing but the model call ever leaves
+the machine — memory text included — and no key is needed. Calling the step with no
 arguments confirms that default and writes nothing.
 
 The alternative is OpenAI's hosted embeddings (`provider: "openai"`, optionally
@@ -529,7 +530,9 @@ streaming every line.
 
 **The first build is genuinely slow.** It compiles the memory engine's local
 embedder (llama-cpp-python) from source, which on a laptop takes anywhere from
-ten minutes to an hour depending on your CPU. That is expected, not a hang —
+ten minutes to an hour depending on your CPU. It also downloads the local
+embedder's model file (67 MB, from a pinned Hugging Face commit) and refuses it
+unless its sha256 matches the pin. That is expected, not a hang —
 the output is streamed line by line and the wizard prints an elapsed marker
 every 25 lines. Later builds reuse the cache and take seconds.
 

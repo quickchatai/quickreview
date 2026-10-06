@@ -40,6 +40,19 @@ interface OvPins {
   embedModel?: string;
   embedDimension?: string;
   embedKeyFile?: string;
+  /** S4: the local embedder's model-file pin and service knobs. */
+  localEmbedder?: LocalEmbedderPin;
+  /** Raw `[openviking]` lines for config.toml only — a partial pin block. */
+  configLines?: string[];
+}
+
+interface LocalEmbedderPin {
+  dir: string;
+  model: string;
+  url: string;
+  sha: string;
+  port: string;
+  threads: string;
 }
 
 const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
@@ -69,6 +82,16 @@ const GROUP_VARS = (piVersion: string, withSandboxSrc = true, ov?: OvPins) =>
     ...(ov?.embedKeyFile === undefined
       ? []
       : [`openviking_embedding_key_file: "${ov.embedKeyFile}"`]),
+    ...(ov?.localEmbedder === undefined
+      ? []
+      : [
+          `openviking_local_embedder_model: "${ov.localEmbedder.model}"`,
+          `openviking_local_embedder_dir: ${ov.localEmbedder.dir}`,
+          `openviking_local_embedder_url: "${ov.localEmbedder.url}"`,
+          `openviking_local_embedder_sha256: "${ov.localEmbedder.sha}"`,
+          `openviking_local_embedder_port: ${ov.localEmbedder.port}`,
+          `openviking_local_embedder_threads: ${ov.localEmbedder.threads}`,
+        ]),
     ...(withSandboxSrc ? ['sandbox_src: "/tmp/whatever"'] : ['# sandbox_src: "/tmp/whatever"']),
     "",
   ].join("\n");
@@ -108,6 +131,16 @@ const CONFIG = (piVersion: string, ov?: OvPins) =>
             ? []
             : [`embedding_dimension = ${ov.embedDimension}`]),
           ...(ov.embedKeyFile === undefined ? [] : [`embedding_key_file = "${ov.embedKeyFile}"`]),
+          ...(ov.localEmbedder === undefined
+            ? []
+            : [
+                `local_embedder_file = "${ov.localEmbedder.dir}/${ov.localEmbedder.model}.gguf"`,
+                `local_embedder_url = "${ov.localEmbedder.url}"`,
+                `local_embedder_sha256 = "${ov.localEmbedder.sha}"`,
+                `local_embedder_port = ${ov.localEmbedder.port}`,
+                `local_embedder_threads = ${ov.localEmbedder.threads}`,
+              ]),
+          ...(ov.configLines ?? []),
         ]),
     "",
   ].join("\n");
@@ -867,8 +900,8 @@ describe("deploy.sh — OpenViking pin drift", () => {
   describe("embedder drift", () => {
     const LOCAL = {
       embedProvider: "local",
-      embedModel: "bge-small-zh-v1.5-f16",
-      embedDimension: "512",
+      embedModel: "bge-small-en-v1.5-f16",
+      embedDimension: "384",
       embedKeyFile: "openai_embeddings_api_key",
     };
     const HOSTED = {
@@ -943,6 +976,116 @@ describe("deploy.sh — OpenViking pin drift", () => {
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("has no openviking embedding provider pin");
+    });
+  });
+
+  // the local English embedder's model file is a pin like the
+  // server version: config.toml == group_vars (== the image layer, which
+  // interpolates group_vars). Port and threads ride the same check.
+  describe("local embedder pin drift (S4)", () => {
+    const PIN: LocalEmbedderPin = {
+      dir: "/opt/openviking/models",
+      model: "bge-small-en-v1.5-f16",
+      url: "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf",
+      sha: "f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999",
+      port: "1934",
+      threads: "1",
+    };
+    const base = { version: "0.4.15", llama: "0.3.35" };
+
+    it("passes and names the model pin in the plan when both sides agree", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, localEmbedder: PIN },
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`local model  bge-small-en-v1.5-f16 sha256 ${PIN.sha}`);
+      expect(r.stdout).toMatch(/a changed pin needs rebuild/);
+    });
+
+    for (const [what, drifted, label] of [
+      ["sha256", { ...PIN, sha: "0".repeat(64) }, "local embedder model sha256 pin mismatch"],
+      [
+        "url",
+        { ...PIN, url: PIN.url.replace("d32f8c04", "deadbeef") },
+        "local embedder model url pin mismatch",
+      ],
+      [
+        "model file",
+        { ...PIN, model: "bge-base-en-v1.5-q8_0" },
+        "local embedder model file pin mismatch",
+      ],
+      ["port", { ...PIN, port: "1999" }, "local embedder port pin mismatch"],
+      ["threads", { ...PIN, threads: "2" }, "local embedder threads pin mismatch"],
+    ] as const) {
+      it(`REFUSES when the ${what} drifts`, () => {
+        env = makeScratch({
+          configPi: "0.84.4",
+          groupVarsPi: "0.84.4",
+          configOv: { ...base, localEmbedder: PIN },
+          groupVarsOv: { ...base, localEmbedder: drifted },
+        });
+        const r = run(env, ["--dry-run"]);
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain(label);
+      });
+    }
+
+    it("a config.toml naming the pin over a group_vars without it is fatal, never skipped", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, localEmbedder: PIN },
+        groupVarsOv: base,
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("has no local embedder model file pin");
+    });
+
+    // Review (S4): the stand-down keys on NONE of the five being named — a
+    // config.toml that names some is checked key by key, never skipped.
+    it("a partial block is checked: a port-only config.toml that drifts REFUSES as the drift it is", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, configLines: ["local_embedder_port = 1999"] },
+        groupVarsOv: { ...base, localEmbedder: PIN },
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain("local embedder port pin mismatch");
+    });
+
+    it("a partial block that agrees is still REFUSED, naming the keys it lacks — never half-verified", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: {
+          ...base,
+          configLines: ["local_embedder_port = 1934", "local_embedder_threads = 1"],
+        },
+        groupVarsOv: { ...base, localEmbedder: PIN },
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(
+        "names only part of the local embedder pin — it lacks local_embedder_file local_embedder_url local_embedder_sha256",
+      );
+    });
+
+    it("a config.toml from before the pin (no local_embedder_* keys) stands down, said aloud in the plan", () => {
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: base,
+        groupVarsOv: { ...base, localEmbedder: PIN },
+      });
+      const r = run(env, ["--dry-run"]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("local model  <code default> sha256 <code default>");
     });
   });
 

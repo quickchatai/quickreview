@@ -88,10 +88,16 @@ fi
 #   * retrieval.enable_intent = false (S3): no model-based query
 #     planning on a session search — there is no model for it.
 #   * The EMBEDDER is a knob, never a literal: `openviking_embedding_*`
-#     (group_vars, host-var override). The shipped default is the server's own
-#     LOCAL llama-cpp embedder, so no memory text leaves this machine; a hosted
-#     provider is an explicit opt-in and reads ITS OWN credential file — never
-#     pi's `openai_api_key`, so the two are set independently.
+#     (group_vars, host-var override). The shipped default is LOCAL — since
+#     S4 the local ENGLISH embedder, served on loopback in this
+#     container by scripts/openviking-embedder.py from the GGUF the image pins
+#     (`openviking_local_embedder_*`), and reached through the engine's
+#     OpenAI-COMPATIBLE async client (provider "openai", api_base
+#     127.0.0.1:{{ openviking_local_embedder_port }}, no key). No memory text
+#     leaves this machine, and a search no longer runs a model on the server's
+#     event loop. A hosted provider is an explicit opt-in and reads ITS OWN
+#     credential file — never pi's `openai_api_key`, so the two are set
+#     independently.
 #
 # The `||` is deliberate (the boot runs under `set -e`): a memory engine that
 # cannot be configured must never stop the reviewer from coming up. The daemon
@@ -151,12 +157,12 @@ if (conf.server.auth_mode === "api_key") {
 }
 // The embedder is ALWAYS written explicitly, so ov.conf states which vector
 // space the store is in and the migration check below can compare it against
-// the collection on disk. "local" is the server's own llama-cpp embedder
-// (pinned in the image) and needs no key. Any other provider is a hosted
-// opt-in and reads ITS OWN credential file. A hosted provider whose key file
-// is missing is rendered WITHOUT a key on purpose: the server then refuses to
-// start (loud, memory degrades) rather than this render silently switching
-// to another embedder — which would reset a hosted store's vectors on boot.
+// the collection on disk. "local" is the local English embedder (S4)
+// and needs no key. Any other provider is a hosted opt-in and reads ITS OWN
+// credential file. A hosted provider whose key file is missing is rendered
+// WITHOUT a key on purpose: the server then refuses to start (loud, memory
+// degrades) rather than this render silently switching to another embedder —
+// which would reset a hosted store's vectors on boot.
 conf.embedding = {
   // concurrent embedding calls bounded by the same 2-CPU knob as
   // the queue workers (the server's default is 10).
@@ -168,7 +174,29 @@ conf.embedding = {
     input: "text",
   },
 };
-if (conf.embedding.dense.provider !== "local") {
+if (conf.embedding.dense.provider === "local") {
+  // "local" is ONE embedder — the pinned model the service runs.
+  // Its name and dimension come from the pin, whatever the generic knobs say
+  // (a value they carried from the previous release is the retired built-in
+  // model, which this render no longer runs); a disagreement is said aloud.
+  const pinned = { model: "{{ openviking_local_embedder_model }}", dimension: {{ openviking_local_embedder_dimension }} };
+  if (conf.embedding.dense.model !== pinned.model || conf.embedding.dense.dimension !== pinned.dimension)
+    console.warn("openviking: openviking_embedding_model/dimension (" + conf.embedding.dense.model + ", " + conf.embedding.dense.dimension + ") ignored under provider local — the local embedder runs " + pinned.model + " at " + pinned.dimension + " dims");
+  conf.embedding.dense = {
+    // The engine's OpenAI-COMPATIBLE client — its async embedder — pointed at
+    // the loopback service. The wire format, not a destination: api_base is
+    // 127.0.0.1, there is no key, and nothing leaves the container.
+    provider: "openai",
+    model: pinned.model,
+    dimension: pinned.dimension,
+    api_base: "http://127.0.0.1:{{ openviking_local_embedder_port }}/v1",
+    // Tells the service a query from a document (input_type in the body), so
+    // a query gets the model's retrieval instruction and a document does not.
+    query_param: "query",
+    document_param: "passage",
+    input: "text",
+  };
+} else {
   const embedKeyFile = path.join(secrets, "{{ openviking_embedding_key_file }}");
   if (fs.existsSync(embedKeyFile)) {
     conf.embedding.dense.api_key = fs.readFileSync(embedKeyFile, "utf8").trim();
@@ -180,7 +208,7 @@ fs.mkdirSync(path.join(home, "workspace"), { recursive: true });
 const target = process.env.OPENVIKING_CONF || path.join(home, "ov.conf");
 fs.writeFileSync(target, JSON.stringify(conf, null, 2) + "\n", { mode: 0o600 });
 fs.chmodSync(target, 0o600);
-console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback; embedder " + conf.embedding.dense.provider + "/" + conf.embedding.dense.model + " " + conf.embedding.dense.dimension + " dims)");
+console.log("openviking: ov.conf rendered at " + target + " (no vlm section; auth_mode=" + conf.server.auth_mode + " on loopback; embedder " + conf.embedding.dense.provider + "/" + conf.embedding.dense.model + " " + conf.embedding.dense.dimension + " dims" + (conf.embedding.dense.api_base ? " at " + conf.embedding.dense.api_base : "") + ")");
 OV_CONF_RENDER
 
 # Embedder migration check — BEFORE any server starts. A store whose
@@ -216,6 +244,23 @@ fi
 # running yet, and nothing here may background a process. `|| true` plus the
 # script's own exit-0 discipline are belt and braces — an unprovisioned memory
 # engine degrades, it never stops the reviewer coming up.
+#
+# Under the LOCAL embedder (S4) the server's /ready probes the
+# loopback embedding service, so provisioning runs that too — first, for the
+# same foreground step, stopped with the server. The daemon supervises the
+# long-lived pair from config.toml's mirror of these values.
+OV_EMBEDDER_ARGS=()
+if [[ "{{ openviking_embedding_provider }}" == "local" ]]; then
+  OV_EMBEDDER_ARGS=(
+    --embedder-python "{{ openviking_venv }}/bin/python"
+    --embedder-script "$SANDBOX/scripts/openviking-embedder.py"
+    --embedder-model "{{ openviking_local_embedder_model }}"
+    --embedder-file "{{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf"
+    --embedder-sha256 "{{ openviking_local_embedder_sha256 }}"
+    --embedder-port {{ openviking_local_embedder_port }}
+    --embedder-threads {{ openviking_local_embedder_threads }}
+  )
+fi
 if [[ -f "$SANDBOX/scripts/openviking-provision.mjs" ]]; then
   node "$SANDBOX/scripts/openviking-provision.mjs" \
     --base "http://127.0.0.1:{{ openviking_port }}" \
@@ -226,6 +271,7 @@ if [[ -f "$SANDBOX/scripts/openviking-provision.mjs" ]]; then
     --bin "{{ openviking_venv }}/bin/openviking-server" \
     --config "$OV_HOME/ov.conf" \
     --host 127.0.0.1 --port {{ openviking_port }} \
+    "${OV_EMBEDDER_ARGS[@]}" \
     || echo "openviking: boot provisioning did not complete — the daemon starts and memory degrades until it does" >&2
 else
   echo "openviking: scripts/openviking-provision.mjs not synced — users not provisioned" >&2

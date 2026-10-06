@@ -77,6 +77,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/lens-yield.test.ts",
   "tests/levers.test.ts",
   "tests/onboard-llmauth.test.ts",
+  "tests/openviking-embedder.test.ts",
   "tests/openviking.test.ts",
   "tests/pibuiltins.test.ts",
   "tests/pr-checks-why.test.ts",

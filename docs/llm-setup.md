@@ -106,9 +106,10 @@ reports real dollars instead of raw token counts.
 ## Either route: memory embeddings need nothing here
 
 The memory engine (OpenViking) embeds every memory entry — and every search
-query — to store and find it. **By default it does that locally**, with its
-own llama-cpp embedder inside the daemon container
-(`config.toml [openviking] embedding_provider = "local"`, the shipped value):
+query — to store and find it. **By default it does that locally**, with a
+small English embedding model served on loopback inside the daemon container
+(`config.toml [openviking] embedding_provider = "local"`, the shipped value;
+the model file is pinned in the image):
 no key, no account, and no memory text ever leaves your machine. Nothing but
 the model call does. Neither route above changes that, and **`openai_api_key`
 is pi's model credential alone — it is never read for embeddings.**

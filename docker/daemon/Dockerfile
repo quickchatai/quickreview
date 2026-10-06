@@ -24,6 +24,10 @@ ARG PI_VERSION=1.0.0
 ARG OPENVIKING_VERSION=0.4.15
 ARG LLAMA_CPP_PYTHON_VERSION=0.3.35
 ARG OPENVIKING_VENV=/opt/openviking/venv
+ARG LOCAL_EMBEDDER_MODEL=bge-small-en-v1.5-f16
+ARG LOCAL_EMBEDDER_DIR=/opt/openviking/models
+ARG LOCAL_EMBEDDER_URL=https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-f16.gguf
+ARG LOCAL_EMBEDDER_SHA256=f0b2fef971e8366438bfd2d9aefea1b0115919389448806d290237f638bae999
 ARG WEBHOOK_PORT=8787
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -85,8 +89,9 @@ RUN test -f "$(npm root -g)/${PI_NPM_PACKAGE}/examples/extensions/subagent/index
 # llama-cpp-python is installed FIRST and deliberately: it is NOT an openviking
 # dependency but an undeclared optional extra, and without it the default local
 # dense embedder raises EmbeddingConfigurationError at startup — the official
-# image cannot boot (verified against a running 0.4.15, 2026-08-20). It is also
-# our fallback embedder when no OpenAI key is mounted.
+# image cannot boot (verified against a running 0.4.15, 2026-08-20). Since
+# S4 it is also the runtime of the local English embedder (the model
+# layer below).
 #
 # Both versions come from the ARG mirror above (== config.toml [openviking] ==
 # group_vars); a literal here would be exactly the drift the pin prevents. The
@@ -110,6 +115,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -x "${OPENVIKING_VENV}/bin/openviking-server" \
     && rm -rf /var/lib/apt/lists/* \
     || { echo "FATAL: openviking==${OPENVIKING_VERSION} / llama-cpp-python==${LLAMA_CPP_PYTHON_VERSION} failed verification" >&2; exit 1; }
+
+# The LOCAL ENGLISH EMBEDDER's model file (S4) — pinned by URL AND
+# sha256 (the ARG mirror above == config.toml [openviking] local_embedder_* ==
+# group_vars openviking_local_embedder_*). Downloaded HERE, at build time, so
+# the running container never fetches a model; the layer hard-fails unless the
+# bytes hash to the pin, and scripts/openviking-embedder.py re-checks the hash
+# at every start. Carried whatever the configured provider.
+RUN mkdir -p "${LOCAL_EMBEDDER_DIR}" \
+    && curl -fsSL --retry 3 -o "${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" "${LOCAL_EMBEDDER_URL}" \
+    && echo "${LOCAL_EMBEDDER_SHA256}  ${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" | sha256sum -c - \
+    && chmod 0444 "${LOCAL_EMBEDDER_DIR}/${LOCAL_EMBEDDER_MODEL}.gguf" \
+    || { echo "FATAL: the local embedder model ${LOCAL_EMBEDDER_MODEL} failed to download or does not match its pinned sha256" >&2; exit 1; }
+# …and the image TELLS its entrypoint which file it carries: the compose route
+# has no group_vars, so without these the boot would render the entrypoint's
+# own literal defaults, whatever ARGs this image was built with.
+ENV QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL=${LOCAL_EMBEDDER_MODEL} \
+    QCR_OPENVIKING_LOCAL_EMBEDDER_DIR=${LOCAL_EMBEDDER_DIR} \
+    QCR_OPENVIKING_LOCAL_EMBEDDER_SHA256=${LOCAL_EMBEDDER_SHA256}
 
 # The container user. 1001 matches the templated VM image; on a plain host,
 # build with REVIEW_UID=$(id -u) (compose: QCR_UID) so the bind-mounted repo

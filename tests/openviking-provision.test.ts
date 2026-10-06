@@ -344,6 +344,204 @@ describe("the temporary provisioning server", () => {
   });
 });
 
+// S4 (review) — the local embedder may not cost the boot a minute,
+// and may not take the users and keys down with it.
+describe("the provisioning embedder: a dead one ends the wait, and never blocks provisioning", () => {
+  // What a REAL 0.4.15 answered on /ready with its embedder unreachable
+  // (scratch venv, 2026-10-07): 503 after ~9.5 s, everything ok but embedding.
+  const DEAD_EMBEDDER_READY = {
+    status: "not_ready",
+    checks: {
+      agfs: { status: "ok", checks: { filesystem: "ok", multiwrite_sync: "not_supported" } },
+      vectordb: "ok",
+      api_key_manager: "ok",
+      embedding:
+        "error: provider=openai model=bge-small-en-v1.5-f16: OpenAI API error: Connection error.",
+      ollama: "not_configured",
+    },
+  };
+  const answer = (status: number, body: unknown) =>
+    (async () => ({ ok: status < 300, status, json: async () => body })) as never;
+
+  it("embedderGone names how the child went — exit codes in words, a signal, a spawn failure", () => {
+    expect(prov.embedderGone({ exitCode: null, signalCode: null })).toBeNull();
+    expect(prov.embedderGone({ exitCode: 3, signalCode: null })).toMatch(
+      /exited with code 3 — its model file is missing or does not match the pinned sha256/,
+    );
+    expect(prov.embedderGone({ exitCode: 4, signalCode: null })).toMatch(/self-check/);
+    expect(prov.embedderGone({ exitCode: 9, signalCode: null })).toBe("it exited with code 9");
+    expect(prov.embedderGone({ exitCode: null, signalCode: "SIGKILL" })).toMatch(/SIGKILL/);
+    expect(prov.embedderGone({ exitCode: null, signalCode: null }, "spawn ENOENT")).toMatch(
+      /could not be started \(spawn ENOENT\)/,
+    );
+  });
+
+  it("waitForEmbedder stops at once when the child is gone — never the whole timeout", async () => {
+    let polls = 0;
+    let sleeps = 0;
+    let exited = false;
+    const r = await prov.waitForEmbedder({
+      base: "http://127.0.0.1:1934",
+      gone: () => (exited ? "it exited with code 3" : null),
+      fetchFn: (async () => {
+        polls += 1;
+        exited = true; // it refused its sha256 while we asked
+        throw new Error("ECONNREFUSED");
+      }) as never,
+      timeoutMs: 60_000,
+      sleep: async () => {
+        sleeps += 1;
+      },
+      now: () => 0,
+    });
+    expect(r).toEqual({ ready: false, gone: "it exited with code 3" });
+    expect(polls).toBe(1);
+    expect(sleeps).toBe(0);
+  });
+
+  it("waitForEmbedder: ready on a 200; still bounded by its deadline for a live child that never answers", async () => {
+    expect(
+      await prov.waitForEmbedder({ base: "http://x", fetchFn: answer(200, {}), timeoutMs: 1000 }),
+    ).toEqual({ ready: true, gone: null });
+    let t = 0;
+    expect(
+      await prov.waitForEmbedder({
+        base: "http://x",
+        fetchFn: answer(503, {}),
+        timeoutMs: 1000,
+        sleep: async () => {
+          t += 600;
+        },
+        now: () => t,
+      }),
+    ).toEqual({ ready: false, gone: null });
+  });
+
+  it("startEmbedder over a child that exits at once returns at once, saying why", async () => {
+    let sleeps = 0;
+    const lines: string[] = [];
+    const child = {
+      pid: 7,
+      exitCode: null as number | null,
+      signalCode: null as string | null,
+      once: () => undefined,
+      kill: () => true,
+    };
+    const r = await prov.startEmbedder(
+      {
+        python: "/v/bin/python",
+        script: "/s/e.py",
+        model: "bge-small-en-v1.5-f16",
+        file: "/m.gguf",
+        sha256: "0".repeat(64),
+        port: 1934,
+        threads: 1,
+      },
+      {
+        log: (l: string) => lines.push(l),
+        exists: () => true,
+        readyTimeoutMs: 60_000,
+        spawnFn: () => {
+          setImmediate(() => {
+            child.exitCode = 3;
+          });
+          return child;
+        },
+        fetchFn: (async () => {
+          await new Promise((r) => setImmediate(r));
+          throw new Error("ECONNREFUSED");
+        }) as never,
+        sleep: async () => {
+          sleeps += 1;
+        },
+      },
+    );
+    expect(r.ready).toBe(false);
+    expect(r.detail).toMatch(
+      /did not come up on http:\/\/127\.0\.0\.1:1934: it exited with code 3/,
+    );
+    expect(sleeps).toBeLessThanOrEqual(1);
+  });
+
+  it("readyButEmbedding reads the real 0.4.15 answer — and only an embedding-ONLY failure", () => {
+    expect(prov.readyButEmbedding(DEAD_EMBEDDER_READY)).toMatch(/^error: provider=openai/);
+    // Another check failing too: not provisionable.
+    expect(
+      prov.readyButEmbedding({
+        ...DEAD_EMBEDDER_READY,
+        checks: { ...DEAD_EMBEDDER_READY.checks, vectordb: "unhealthy" },
+      }),
+    ).toBeNull();
+    expect(
+      prov.readyButEmbedding({
+        ...DEAD_EMBEDDER_READY,
+        checks: {
+          ...DEAD_EMBEDDER_READY.checks,
+          agfs: { status: "ok", checks: { filesystem: "error: io" } },
+        },
+      }),
+    ).toBeNull();
+    // Still initializing (no checks), ready, or no embedding check at all.
+    expect(prov.readyButEmbedding({ status: "not_ready", reason: "initializing" })).toBeNull();
+    expect(prov.readyButEmbedding({ status: "ready", checks: { embedding: "ok" } })).toBeNull();
+    expect(
+      prov.readyButEmbedding({ status: "not_ready", checks: { vectordb: "unhealthy" } }),
+    ).toBeNull();
+    expect(prov.readyButEmbedding(null)).toBeNull();
+  });
+
+  it("waitForProvisionable lets an embedding-only failure through, waits out initialization, and keeps its deadline", async () => {
+    expect(
+      await prov.waitForProvisionable({
+        base: BASE,
+        fetchFn: answer(503, DEAD_EMBEDDER_READY),
+        timeoutMs: 1000,
+      }),
+    ).toEqual({ ready: true, embedding: DEAD_EMBEDDER_READY.checks.embedding });
+    const seq = [answer(503, { status: "not_ready", reason: "initializing" }), answer(200, {})];
+    let i = 0;
+    expect(
+      await prov.waitForProvisionable({
+        base: BASE,
+        fetchFn: ((url: string, init: unknown) =>
+          (seq[Math.min(i++, seq.length - 1)] as unknown as (u: string, n: unknown) => unknown)(
+            url,
+            init,
+          )) as never,
+        timeoutMs: 10_000,
+        sleep: async () => undefined,
+      }),
+    ).toEqual({ ready: true, embedding: null });
+    let t = 0;
+    expect(
+      await prov.waitForProvisionable({
+        base: BASE,
+        fetchFn: answer(503, { status: "not_ready", checks: { vectordb: "unhealthy" } }),
+        timeoutMs: 1000,
+        sleep: async () => {
+          t += 600;
+        },
+        now: () => t,
+      }),
+    ).toEqual({ ready: false, embedding: null });
+    // Each call outlasts the engine's own 10 s embedding probe.
+    expect(prov.READY_PROBE_CALL_MS).toBeGreaterThan(10_000);
+  });
+
+  it("main() provisions past an embedding-only failure and carries the embedder's fate into every report", () => {
+    const src = readFileSync(resolve(process.cwd(), "scripts/openviking-provision.mjs"), "utf8");
+    const mainBody = src.slice(src.indexOf("async function main"));
+    expect(mainBody).toContain("await waitForProvisionable({ base: cfg.base");
+    expect(mainBody).not.toContain("await waitForReady(");
+    expect(mainBody).toMatch(/if \(!started\.ready\) notes\.push\(started\.detail\);/);
+    // Every report — a failure's and the finished one — goes out through
+    // finish(), which folds the notes in.
+    expect(mainBody).toMatch(
+      /const finish = \(report\) =>[\s\S]*?errors: \[\.\.\.new Set\(\[\.\.\.\(report\.errors \?\? \[\]\), \.\.\.notes\]\)\]/,
+    );
+  });
+});
+
 describe("stopServerChild — the boot can never hang on the temporary server", () => {
   // Adversarial finding (P2): the child was only ever sent SIGTERM and never
   // unref'd, so a server that trapped SIGTERM kept the node event loop alive
@@ -410,6 +608,27 @@ describe("stopServerChild — the boot can never hang on the temporary server", 
     const mainBody = src.slice(src.indexOf("async function main"));
     expect(mainBody).not.toContain('child.kill("SIGTERM")');
     expect(mainBody).toContain("stopServerChild(child)");
+  });
+
+  // under the local English embedder the server's /ready probes
+  // the loopback service, so the provisioning step runs it FIRST, for the same
+  // foreground step, and stops it on every exit path — after the server.
+  it("main() starts the local embedder before its server and stops it on every exit path, after the server", () => {
+    const src = readFileSync(resolve(process.cwd(), "scripts/openviking-provision.mjs"), "utf8");
+    const mainBody = src.slice(src.indexOf("async function main"));
+    const startEmb = mainBody.indexOf("await startEmbedder(cfg.embedder");
+    const startServer = mainBody.indexOf("child = spawn(cfg.bin, serverArgv(cfg)");
+    expect(startEmb).toBeGreaterThan(0);
+    expect(startEmb).toBeLessThan(startServer);
+    // Both stop paths (never-ready and the finally) stop the embedder too,
+    // each after the server.
+    const stops = [...mainBody.matchAll(/await stopServerChild\((child|embedder)\);/g)].map(
+      (m) => m[1],
+    );
+    expect(stops).toEqual(["child", "embedder", "child", "embedder"]);
+    // A partial flag set is reported (and reported in the provision report),
+    // never guessed into a launch.
+    expect(mainBody).toMatch(/typeof cfg\.embedder === "string"[\s\S]*?finish\(failed\(/);
   });
 });
 

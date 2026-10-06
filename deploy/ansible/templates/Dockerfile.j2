@@ -58,8 +58,9 @@ RUN test -f "$(npm root -g)/{{ pi_npm_package }}/examples/extensions/subagent/in
 # llama-cpp-python is installed FIRST and deliberately: it is NOT an openviking
 # dependency but an undeclared optional extra, and without it the default local
 # dense embedder raises EmbeddingConfigurationError at startup — the official
-# image cannot boot (verified against a running 0.4.15, 2026-08-20). It is also
-# our fallback embedder when no OpenAI key is mounted.
+# image cannot boot (verified against a running 0.4.15, 2026-08-20). Since
+# S4 it is also the runtime of the local English embedder (the model
+# layer below).
 #
 # Both versions come from group_vars (the triple mirror with config.toml
 # [openviking]); a literal here would be exactly the drift the pin prevents.
@@ -83,6 +84,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -x {{ openviking_venv }}/bin/openviking-server \
     && rm -rf /var/lib/apt/lists/* \
     || { echo "FATAL: openviking=={{ openviking_version }} / llama-cpp-python=={{ llama_cpp_python_version }} failed verification" >&2; exit 1; }
+
+# The LOCAL ENGLISH EMBEDDER's model file (S4) — pinned by URL AND
+# sha256 (group_vars openviking_local_embedder_*, the triple mirror with
+# config.toml [openviking] local_embedder_*). Downloaded HERE, at build time,
+# so the running container never fetches a model; the layer hard-fails unless
+# the bytes hash to the pin, and scripts/openviking-embedder.py re-checks the
+# hash at every start. Carried whatever the configured provider, so a hosted
+# opt-in can return to local without a rebuild. Its runtime is the
+# llama-cpp-python already pinned in the venv above.
+RUN mkdir -p {{ openviking_local_embedder_dir }} \
+    && curl -fsSL --retry 3 -o "{{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf" "{{ openviking_local_embedder_url }}" \
+    && echo "{{ openviking_local_embedder_sha256 }}  {{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf" | sha256sum -c - \
+    && chmod 0444 "{{ openviking_local_embedder_dir }}/{{ openviking_local_embedder_model }}.gguf" \
+    || { echo "FATAL: the local embedder model {{ openviking_local_embedder_model }} failed to download or does not match its pinned sha256" >&2; exit 1; }
 
 RUN useradd --create-home --uid 1001 review
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -526,8 +526,12 @@ process `host` (`"127.0.0.1"` — loopback only, the port is never published),
 `queue_concurrency` (`2`); supervision `health_interval_s` (`30`),
 `health_timeout_ms` (`2000`), `restart_backoff_ms` (array,
 `[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`);
-embeddings `embedding_provider` (`"local"`), `embedding_model`,
-`embedding_dimension` (`512`), `embedding_key_file`.
+embeddings `embedding_provider` (`"local"`), `embedding_model`
+(`"bge-small-en-v1.5-f16"` under local), `embedding_dimension` (`384` under
+local), `embedding_key_file`; the local English embedder (S4)
+`local_embedder_file`, `local_embedder_url`, `local_embedder_sha256` (the
+model-file pin), `local_embedder_port` (`1934`), `local_embedder_threads`
+(`1`).
 
 **`[tui]`** — `target` (`"ssh"` \| `"local"`, default `"ssh"`; always
 explicit, an empty `ssh_host` does not mean local), `ssh_host`, `container`

@@ -107,6 +107,7 @@ ${MEMORY_INCIDENT_LINE} ${since}
 - daemon key: ${credentialPhrase(m.credentials.daemon)}
 - sessions' ovcli.conf: ${credentialPhrase(m.credentials.sessions)}
 - last authenticated success: ${m.last_ok_at ?? "none since the daemon booted"}
+- serving search: ${servingLine(m)}
 - last error: ${err ? `${err.at} ${err.op} — ${err.status || "no answer"} ${err.code} ${err.message}` : "none recorded"}
 - boot provisioning: ${prov ? `${prov.state}${prov.at ? ` (${prov.at})` : ""}${prov.errors && prov.errors.length > 0 ? ` — ${prov.errors.join("; ")}` : ""}` : "not read"}
 - daemon requests since boot: ${requests || "none"}
@@ -118,9 +119,21 @@ ${MEMORY_INCIDENT_LINE} ${since}
   server holds for user \`reviewer\` — docs/companion-memory-access.md (never
   rotate from a session)
 - down: the supervisor's \`openviking\` block (running, ready, restarts,
-  last_error) and the daemon log
+  last_error), its \`embedder\` block — the local English embedder the server
+  searches through (state, reason, ready, restarts, last_exit, last_error) —
+  and the daemon log
 `;
   return { name, content };
+}
+
+/** The `serving` block as one phrase — UNKNOWN when unmeasured, never "yes". */
+function servingLine(m: MemoryStatus): string {
+  const s = m.serving;
+  if (s === undefined) return "not reported (this daemon predates the serving check)";
+  if (s === null) return "UNKNOWN (not measured)";
+  if (s.ok === false || s.since !== null)
+    return `NO${s.since ? ` since ${s.since}` : ""}${s.reason ? ` — ${s.reason}` : ""}`;
+  return s.ok ? "yes" : "UNKNOWN (not measured)";
 }
 
 export interface IncidentFilerMemo {

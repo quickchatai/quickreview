@@ -147,8 +147,8 @@ describe("the inventory is filled from the interview", () => {
 
   const LOCAL_EMBEDDER = {
     provider: "local",
-    model: "bge-small-zh-v1.5-f16",
-    dimension: 512,
+    model: "bge-small-en-v1.5-f16",
+    dimension: 384,
     keyFile: "openai_embeddings_api_key",
   };
 

@@ -62,7 +62,14 @@
 // TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -491,6 +498,277 @@ export async function waitForReady({
   }
 }
 
+/**
+ * The engine's own rule for one `/ready` check value (openviking 0.4.15,
+ * server/routers/system.py `_is_ready_check_ok`): ok, not configured or not
+ * supported — nested `{status, checks}` maps all the way down.
+ *
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+export function readyCheckOk(v) {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const o = /** @type {{ status?: unknown, checks?: unknown }} */ (v);
+    if (o.status !== "ok" && o.status !== "not_configured" && o.status !== "not_supported")
+      return false;
+    if (o.checks === null || o.checks === undefined) return true;
+    if (typeof o.checks !== "object") return false;
+    return Object.values(/** @type {Record<string, unknown>} */ (o.checks)).every(readyCheckOk);
+  }
+  return v === "ok" || v === "not_configured" || v === "not_supported";
+}
+
+/**
+ * Is a `/ready` answer the server saying it is up in every respect BUT its
+ * embedder (S4)? The failing `embedding` check's text, or null. The
+ * engine is then initialized, its filesystem, vector store and key manager
+ * answer — everything provisioning's admin API needs, none of which embeds.
+ *
+ * @param {unknown} body
+ * @returns {string | null}
+ */
+export function readyButEmbedding(body) {
+  if (!body || typeof body !== "object") return null;
+  const b = /** @type {{ status?: unknown, checks?: unknown }} */ (body);
+  if (b.status !== "not_ready" || !b.checks || typeof b.checks !== "object") return null;
+  const checks = /** @type {Record<string, unknown>} */ (b.checks);
+  if (!("embedding" in checks) || readyCheckOk(checks.embedding)) return null;
+  for (const [name, value] of Object.entries(checks))
+    if (name !== "embedding" && !readyCheckOk(value)) return null;
+  return typeof checks.embedding === "string" ? checks.embedding : JSON.stringify(checks.embedding);
+}
+
+/**
+ * Wait until the provisioning server can PROVISION: `/ready` passes, or fails
+ * on nothing but its embedding check. Provisioning only uses the admin API, so
+ * a dead embedder must not also leave the users and keys unwritten — that
+ * would surface downstream as an auth failure instead of an embedder fault.
+ * `{ ready, embedding }` — `embedding` is the failing check's text when that
+ * is what was let through.
+ *
+ * Each `/ready` call gets `READY_PROBE_CALL_MS`, not the 2 s `waitForReady`
+ * gives: with its embedder unreachable, 0.4.15's `/ready` answers only once
+ * its own embedding probe gives up — measured at 9.5 s against a real server
+ * (the engine bounds that probe at 10 s). A 2 s call never saw the answer.
+ */
+export const READY_PROBE_CALL_MS = 15_000;
+
+export async function waitForProvisionable({
+  base,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = DEFAULTS.readyTimeoutMs,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
+}) {
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const r = await call(
+      fetchFn,
+      `${base}/ready`,
+      { method: "GET", headers: {} },
+      READY_PROBE_CALL_MS,
+    );
+    if (r.status >= 200 && r.status < 300) return { ready: true, embedding: null };
+    const embedding = readyButEmbedding(r.body);
+    if (embedding !== null) return { ready: true, embedding };
+    if (now() >= deadline) return { ready: false, embedding: null };
+    await sleep(500);
+  }
+}
+
+// ---- the local English embedder (S4) --------------------------------
+//
+// Under `embedding_provider = "local"` the server embeds through an
+// OpenAI-compatible service on loopback (scripts/openviking-embedder.py), and
+// its `/ready` probes that service — so a provisioning server started without
+// it never becomes ready. The boot therefore runs the embedder FIRST, for
+// exactly as long as it runs the server, and stops both: still one foreground
+// step, nothing left running for the daemon to trip over (the daemon
+// supervises its own long-lived pair). The same helpers serve the re-embed
+// script's `rehearse`. src/openviking/embedder.ts builds the daemon's argv;
+// tests/openviking-embedder.test.ts holds the two spellings together.
+
+/** The line the service prints once it serves (its own READY_PREFIX). */
+export const EMBEDDER_READY_PREFIX = "openviking-embedder: ready";
+
+/**
+ * @typedef {{ python: string, script: string, model: string, file: string, sha256: string, port: number, threads: number }} EmbedderSpec
+ */
+
+/** The service's argv after the interpreter — loopback, always. */
+export function embedderArgv(spec) {
+  return [
+    spec.script,
+    "--model-path",
+    spec.file,
+    "--model-name",
+    spec.model,
+    "--sha256",
+    spec.sha256,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(spec.port),
+    "--threads",
+    String(spec.threads),
+  ];
+}
+
+/** `http://127.0.0.1:<port>` — where the service's `/health` answers. */
+export function embedderBase(spec) {
+  return `http://127.0.0.1:${spec.port}`;
+}
+
+/**
+ * The spec out of `--embedder-*` flags, or `null` when none was given (a
+ * hosted embedder: nothing to run). A partial set is an error string, never a
+ * guessed default — the boot renders all seven or none.
+ *
+ * @param {Map<string, string>} flags
+ * @returns {EmbedderSpec | null | string}
+ */
+export function embedderSpecFromFlags(flags) {
+  const keys = ["python", "script", "model", "file", "sha256", "port", "threads"];
+  const given = keys.filter((k) => flags.has(`embedder-${k}`));
+  if (given.length === 0) return null;
+  const missing = keys.filter(
+    (k) => !flags.get(`embedder-${k}`) || flags.get(`embedder-${k}`) === "true",
+  );
+  if (missing.length) return `the local embedder needs --embedder-${missing.join(", --embedder-")}`;
+  const port = Number(flags.get("embedder-port"));
+  const threads = Number(flags.get("embedder-threads"));
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    return `--embedder-port ${flags.get("embedder-port")} is not a port`;
+  if (!Number.isInteger(threads) || threads < 1)
+    return `--embedder-threads ${flags.get("embedder-threads")} is not a thread count`;
+  return {
+    python: String(flags.get("embedder-python")),
+    script: String(flags.get("embedder-script")),
+    model: String(flags.get("embedder-model")),
+    file: String(flags.get("embedder-file")),
+    sha256: String(flags.get("embedder-sha256")),
+    port,
+    threads,
+  };
+}
+
+/** The service's own exit codes (scripts/openviking-embedder.py), named. */
+const EMBEDDER_EXIT_MEANING = {
+  2: "it refused its arguments",
+  3: "its model file is missing or does not match the pinned sha256",
+  4: "the model would not load or failed its self-check",
+};
+
+/**
+ * Has the child gone — exited, been killed, or never started? A phrase, or
+ * null while it runs. A spawn failure emits `error` and never sets an exit
+ * code, so the caller passes what its `error` listener saw.
+ *
+ * @param {{ exitCode: number | null, signalCode: string | null }} child
+ * @param {string | null} spawnError
+ */
+export function embedderGone(child, spawnError = null) {
+  if (spawnError) return `it could not be started (${spawnError})`;
+  if (child.exitCode !== null && child.exitCode !== undefined) {
+    const meaning = EMBEDDER_EXIT_MEANING[child.exitCode];
+    return `it exited with code ${child.exitCode}${meaning ? ` — ${meaning}` : ""}`;
+  }
+  if (child.signalCode) return `it was killed by ${child.signalCode}`;
+  return null;
+}
+
+/**
+ * Poll the service's `/health` until it answers 200, the child is gone, or
+ * the deadline passes. `{ ready, gone }` — `gone` says how a child that died
+ * died, so a refused start (a sha256 mismatch exits in under a second) ends
+ * the wait at once instead of costing the boot the whole timeout.
+ *
+ * @param {{ base: string, gone?: () => string | null, fetchFn?: OvFetch, timeoutMs?: number, sleep?: (ms: number) => Promise<unknown>, now?: () => number }} opts
+ * @returns {Promise<{ ready: boolean, gone: string | null }>}
+ */
+export async function waitForEmbedder({
+  base,
+  gone = () => null,
+  fetchFn = /** @type {OvFetch} */ (fetch),
+  timeoutMs = DEFAULTS.readyTimeoutMs,
+  sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
+}) {
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const before = gone();
+    if (before) return { ready: false, gone: before };
+    const r = await call(fetchFn, `${base}/health`, { method: "GET", headers: {} }, 2000);
+    if (r.status === 200) return { ready: true, gone: null };
+    const after = gone();
+    if (after) return { ready: false, gone: after };
+    if (now() >= deadline) return { ready: false, gone: null };
+    await sleep(250);
+  }
+}
+
+/**
+ * Start the service for a foreground step and wait until it serves. Never
+ * throws: `{ child, ready, detail }` — a missing model file or interpreter is
+ * reported (`ready: false`, no child) rather than spawned into a crash. The
+ * child is unref'd, like the provisioning server, so it can never be what
+ * keeps node alive; the caller stops it with `stopServerChild`.
+ *
+ * The seams are typed by their use, not by node's overloads (see `OvFetch`).
+ *
+ * @typedef {{ pid?: number, exitCode: number | null, signalCode: string | null, on?: (event: "error", cb: (err: Error) => void) => unknown, once: (event: "exit", cb: () => void) => unknown, removeListener?: (event: "exit", cb: () => void) => unknown, unref?: () => void, kill: (signal?: NodeJS.Signals) => boolean }} EmbedderChild
+ * @param {EmbedderSpec} spec
+ * @param {{ log?: (line: string) => void, readyTimeoutMs?: number, spawnFn?: (cmd: string, args: string[], opts: { stdio: ["ignore", "inherit", "inherit"] }) => EmbedderChild, exists?: (path: string) => boolean, fetchFn?: OvFetch, sleep?: (ms: number) => Promise<unknown> }} [opts]
+ * @returns {Promise<{ child: EmbedderChild | null, ready: boolean, detail: string }>}
+ */
+export async function startEmbedder(
+  spec,
+  {
+    log = (line) => console.log(line),
+    readyTimeoutMs = DEFAULTS.readyTimeoutMs,
+    spawnFn = (cmd, args, opts) => spawn(cmd, args, opts),
+    exists = existsSync,
+    fetchFn,
+    sleep,
+  } = {},
+) {
+  for (const [what, path] of [
+    ["interpreter", spec.python],
+    ["service script", spec.script],
+    ["model file", spec.file],
+  ]) {
+    if (!exists(path)) {
+      const detail = `the local embedder's ${what} ${path} does not exist${what === "model file" ? " — the image carries it; this image predates it (scripts/deploy.sh rebuild)" : ""}`;
+      log(`openviking: ${detail}`);
+      return { child: null, ready: false, detail };
+    }
+  }
+  const child = spawnFn(spec.python, embedderArgv(spec), {
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  /** @type {string | null} */
+  let spawnError = null;
+  child.on?.("error", (err) => {
+    spawnError = err.message;
+    log(`openviking: could not start the local embedder (${err.message})`);
+  });
+  child.unref?.();
+  const waited = await waitForEmbedder({
+    base: embedderBase(spec),
+    gone: () => embedderGone(child, spawnError),
+    timeoutMs: readyTimeoutMs,
+    ...(fetchFn ? { fetchFn } : {}),
+    ...(sleep ? { sleep } : {}),
+  });
+  const detail = waited.ready
+    ? `local embedder ${spec.model} serving on ${embedderBase(spec)}`
+    : waited.gone
+      ? `the local embedder did not come up on ${embedderBase(spec)}: ${waited.gone} — see its log above`
+      : `the local embedder never answered on ${embedderBase(spec)} — see its log above`;
+  log(`openviking: ${detail}`);
+  return { child, ready: waited.ready, detail };
+}
+
 // ---- orchestration ----------------------------------------------------------
 
 /**
@@ -664,6 +942,9 @@ export function parseArgs(argv, env = process.env) {
     strict: flags.has("strict"),
     // where the report lands; default beside the daemon's state.
     reportPath: flags.get("report") ?? env.QCR_OV_PROVISION_REPORT ?? provisionReportPath(),
+    // the local embedder the server's `/ready` depends on — a
+    // spec, `null` (hosted: nothing to run) or an error string.
+    embedder: embedderSpecFromFlags(flags),
   };
 }
 
@@ -698,11 +979,16 @@ export async function stopServerChild(child, { graceMs = SERVER_STOP_GRACE_MS } 
       clearTimeout(timer);
       resolve(true);
     };
+    // The grace timer is deliberately NOT unref'd (S4): with the child
+    // unref'd, nothing else holds the event loop, and node used to exit
+    // mid-await — so the NEXT stop (the embedder, after the server) never sent
+    // its SIGTERM and the boot left an unsupervised embedder on the daemon's
+    // port. A ref'd timer holds node for at most `graceMs`, so it still cannot
+    // wedge the boot; the child itself stays unref'd for a SIGKILL survivor.
     const timer = setTimeout(() => {
       child.removeListener?.("exit", onExit);
       resolve(false);
     }, graceMs);
-    timer.unref?.();
     child.once("exit", onExit);
   });
   if (exited) return "terminated";
@@ -717,10 +1003,22 @@ export async function stopServerChild(child, { graceMs = SERVER_STOP_GRACE_MS } 
 async function main(argv) {
   const cfg = parseArgs(argv);
   const log = (line) => console.log(line);
+  // what the local embedder did, carried into EVERY report — so a
+  // person reading it (status.json `memory.provision`) learns the embedder
+  // failed, never only that something downstream did.
+  /** @type {string[]} */
+  const notes = [];
   // Every exit path below leaves a report for the daemon — the early ones too:
   // "provisioning never ran" is exactly what a person must hear about.
   const finish = (report) =>
-    writeProvisionReport(cfg.reportPath, provisionReportBody(report, { users: cfg.users }), log);
+    writeProvisionReport(
+      cfg.reportPath,
+      provisionReportBody(
+        { ...report, errors: [...new Set([...(report.errors ?? []), ...notes])] },
+        { users: cfg.users },
+      ),
+      log,
+    );
   const failed = (line) => {
     log(line);
     return {
@@ -733,10 +1031,28 @@ async function main(argv) {
     };
   };
   let child;
+  let embedder = null;
   if (cfg.startServer) {
     if (!cfg.bin || !cfg.config) {
       finish(failed("openviking: --start-server needs --bin and --config — skipping provisioning"));
       return cfg.strict ? 1 : 0;
+    }
+    if (typeof cfg.embedder === "string") {
+      finish(failed(`openviking: ${cfg.embedder} — skipping provisioning`));
+      return cfg.strict ? 1 : 0;
+    }
+    if (cfg.embedder) {
+      // The server's /ready probes its embedder: start that first. A dead one
+      // is logged and provisioning carries on — the admin API needs no
+      // embedding (waitForProvisionable), and the report names the failure.
+      // The daemon's own supervisor then runs the long-lived embedder, and
+      // memory health wakes on it if it stays dead (memory.serving).
+      const started = await startEmbedder(cfg.embedder, {
+        log,
+        readyTimeoutMs: cfg.readyTimeoutMs,
+      });
+      embedder = started.child;
+      if (!started.ready) notes.push(started.detail);
     }
     child = spawn(cfg.bin, serverArgv(cfg), { stdio: ["ignore", "inherit", "inherit"] });
     child.on("error", (err) =>
@@ -745,14 +1061,20 @@ async function main(argv) {
     // The child must never be what keeps node alive: the entrypoint's
     // `|| true` only fires once node EXITS.
     child.unref?.();
-    const ready = await waitForReady({ base: cfg.base, timeoutMs: cfg.readyTimeoutMs });
-    if (!ready) {
+    const waited = await waitForProvisionable({ base: cfg.base, timeoutMs: cfg.readyTimeoutMs });
+    if (waited.embedding !== null) {
+      const note = `the provisioning server's embedding check fails (${waited.embedding.slice(0, 300)}) — users provisioned regardless; memory search fails until an embedder serves`;
+      log(`openviking: ${note}`);
+      notes.push(note);
+    }
+    if (!waited.ready) {
       finish(
         failed(
           "openviking: the provisioning server never became ready — users NOT provisioned; the daemon still supervises the real one",
         ),
       );
       await stopServerChild(child);
+      await stopServerChild(embedder);
       return cfg.strict ? 1 : 0;
     }
   }
@@ -771,8 +1093,10 @@ async function main(argv) {
     finish(report);
     // Bounded stop: SIGTERM → grace → SIGKILL, child unref'd. A server that
     // traps SIGTERM must not keep node's event loop (and the container boot)
-    // alive forever.
+    // alive forever. The embedder goes last: the server may still be
+    // vectorizing on its way down.
     await stopServerChild(child);
+    await stopServerChild(embedder);
   }
   return report.ok || !cfg.strict ? 0 : 1;
 }
