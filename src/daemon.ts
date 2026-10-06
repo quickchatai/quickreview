@@ -143,6 +143,13 @@ export interface DaemonDeps {
    */
   openvikingStatus?: () => import("./openviking/types.js").OpenVikingStatus | undefined;
   /**
+   * Reviewer-memory health (S1) — the `memory` block of status.json,
+   * BESIDE `openviking`: wire.ts hands the health monitor's synchronous
+   * `status()`. Absent ⇒ no `memory` key (readers say "not reported"); a
+   * throwing implementation is swallowed like the openviking read.
+   */
+  memoryStatus?: () => import("./memory/health.js").MemoryStatus | undefined;
+  /**
    * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
    * subsystem in `onStart`, i.e. after the store exists and after this deps
    * object was assembled, so the seam is a getter rather than a value. Absent
@@ -637,6 +644,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     } catch (err) {
       log("openviking status read failed (heartbeat continues)", err);
     }
+    let memory: import("./memory/health.js").MemoryStatus | undefined;
+    try {
+      memory = deps.memoryStatus?.();
+    } catch (err) {
+      log("memory health read failed (heartbeat continues)", err);
+    }
     try {
       writeStatusJson(
         stateDir,
@@ -651,6 +664,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           threadDecisions.status(),
           roundStages.health(),
           roundStageBounds,
+          memory,
         ),
       );
     } catch (err) {

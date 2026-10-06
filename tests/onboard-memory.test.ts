@@ -11,7 +11,9 @@
 //     secrets dir (review sessions run in that container and can read it);
 //   * the four-cell confinement matrix is the verification, and an
 //     INCONCLUSIVE cell is not a pass;
-//   * declining memory is legal, loud, and writes nothing.
+//   * declining memory is legal, loud, mints nothing, and writes exactly one
+//     thing: `[openviking] enabled = false`, the daemon's word for "off"
+//     (S1 — without it memory health pages about a choice).
 //
 // The provisioning and matrix modules under test are the REAL scripts — this
 // suite drives them through a fake server rather than reimplementing them.
@@ -26,6 +28,7 @@ import {
   writeFileSync,
   mkdirSync,
 } from "node:fs";
+import { parseConfig } from "../src/config.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,6 +38,7 @@ import {
   DECLINED_CHECKS,
   MEMORY_CHOICE_KEY,
   MEMORY_STEP_ID,
+  MEMORY_SWITCH_CHECK,
   REVIEWER_KEY_FILE,
   REVIEWER_VAR,
   ROOT_KEY_FILE,
@@ -593,7 +597,22 @@ describe("the four-cell confinement matrix is the verification", () => {
 // ---- degraded and deferred paths -------------------------------------------
 
 describe("degraded modes stay legal and loud", () => {
-  it("declining writes nothing, stays green, and says what memory-less means", async () => {
+  // The fixture is a whole, loadable config.toml (memory ON), placed where
+  // the adapters say the live config is — the step parses what it writes.
+  const liveConfig = () => join(dirname(stateDir), "config.toml");
+  const placeConfig = (edit: (t: string) => string = (t) => t): string => {
+    const text = edit(
+      readFileSync(join(process.cwd(), "tests", "fixtures", "config.toml"), "utf8"),
+    );
+    mkdirSync(dirname(liveConfig()), { recursive: true });
+    writeFileSync(liveConfig(), text);
+    return text;
+  };
+  const memoryEnabled = () => parseConfig(readFileSync(liveConfig(), "utf8")).openviking.enabled;
+
+  it("declining mints nothing, tells the DAEMON memory is off, stays green, and says what memory-less means", async () => {
+    placeConfig();
+    expect(memoryEnabled()).toBe(true);
     const asked: string[] = [];
     const engine = engineWith(fakeServer().fetchFn, {}, async (q) => {
       asked.push(q);
@@ -607,11 +626,66 @@ describe("degraded modes stay legal and loud", () => {
     expect(existsSync(secretsDir)).toBe(false);
     expect(existsSync(keysFile)).toBe(false);
     expect(engine.choices()[MEMORY_CHOICE_KEY]).toBe("declined");
+    // The one write: the daemon's word for "off", so memory health reports
+    // "not monitored" instead of paging about a missing key it was told to
+    // expect (S1).
+    expect(memoryEnabled()).toBe(false);
+    expect(detailOf(result, MEMORY_SWITCH_CHECK)).toMatchObject({ ok: true });
+    expect(detailOf(result, MEMORY_SWITCH_CHECK)?.detail).toMatch(/not monitored/);
 
     // And it stays green through resume — a declined operator is never wedged.
     const reconciled = await engine.reconcile();
     expect(reconciled.demoted).toEqual([]);
     expect(DECLINED_CHECKS.every((c) => c.ok)).toBe(true);
+    // A second run is idempotent: already off, nothing rewritten.
+    const before = readFileSync(liveConfig(), "utf8");
+    const again = await runStep(engine);
+    expect(again.ok).toBe(true);
+    expect(readFileSync(liveConfig(), "utf8")).toBe(before);
+    expect(detailOf(again, MEMORY_SWITCH_CHECK)?.detail).toMatch(/already/);
+  });
+
+  it("a declined install whose config says ON again is RED on verify — the daemon would page about it", async () => {
+    placeConfig();
+    const engine = engineWith(fakeServer().fetchFn, {}, async () => "no");
+    expect((await runStep(engine)).ok).toBe(true);
+    writeFileSync(
+      liveConfig(),
+      readFileSync(liveConfig(), "utf8").replace(
+        /^(\[openviking\][\s\S]*?^)enabled = false/m,
+        "$1enabled = true",
+      ),
+    );
+    expect(memoryEnabled()).toBe(true);
+    const verified = await engine.verifyAll();
+    const row = verified.results.find((r) => r.id === MEMORY_STEP_ID)!;
+    expect(row.ok).toBe(false);
+    expect(row.failures.join(" ")).toMatch(/does not say \[openviking\] enabled = false/);
+  });
+
+  it("a decline with no config.toml yet is red, and says why — never a silent half", async () => {
+    const result = await runStep(engineWith(fakeServer().fetchFn, {}, async () => "skip"));
+    expect(result.ok).toBe(false);
+    expect(detailOf(result, MEMORY_SWITCH_CHECK)?.detail).toMatch(/config_fill/);
+    expect(existsSync(liveConfig())).toBe(false);
+    expect(existsSync(secretsDir)).toBe(false);
+  });
+
+  it("configuring over an earlier decline switches memory back ON", async () => {
+    placeConfig((t) => t.replace(/^(\[openviking\][\s\S]*?^)enabled = true/m, "$1enabled = false"));
+    expect(memoryEnabled()).toBe(false);
+    const result = await runStep(engineWith(fakeServer().fetchFn));
+    expect(result.failures).toEqual([]);
+    expect(memoryEnabled()).toBe(true);
+    expect(detailOf(result, MEMORY_SWITCH_CHECK)).toMatchObject({ ok: true });
+  });
+
+  it("configuring an install that never said off leaves its config byte-for-byte alone", async () => {
+    const text = placeConfig();
+    const result = await runStep(engineWith(fakeServer().fetchFn));
+    expect(result.failures).toEqual([]);
+    expect(readFileSync(liveConfig(), "utf8")).toBe(text);
+    expect(detailOf(result, MEMORY_SWITCH_CHECK)).toBeUndefined();
   });
 
   it("normalizes the decline answers a human actually types", () => {

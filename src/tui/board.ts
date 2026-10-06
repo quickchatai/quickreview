@@ -4,6 +4,7 @@
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
+import { fmtDuration } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -311,6 +312,63 @@ export function unknownDetailLines(conn: ConnectionDiagnosis | undefined, width:
   return lines.map((l) => truncate(l, width));
 }
 
+/**
+ * The board's reviewer-memory banner (S1), from status.json `memory`
+ * and nothing else — never from OpenViking, which is the thing that may be
+ * down. Memory was dead for five weeks while every surface a person looks at
+ * stayed quiet; this segment is the board-level half of the fix (the memory
+ * tab [2] only shows what the TUI's OWN store can reach).
+ *
+ *   `loud`  — down / refusing a key / degraded: painted right after the
+ *             daemon health, where truncation reaches it last;
+ *   `quiet` — not measured yet, not reported by this daemon, not monitored:
+ *             a short dim mark at the END of the bar — honest, never healthy,
+ *             and the first thing a narrow terminal drops;
+ *   nothing — healthy, or no snapshot at all (the whole board already says
+ *             it does not know).
+ */
+export function memorySegment(
+  snapshot: StatusSnapshot | undefined,
+  now: Date,
+): { text: string; loud: boolean } | undefined {
+  if (!snapshot) return undefined;
+  const m = snapshot.memory;
+  if (!m) return { text: `${FG.dim}mem ?${RESET}`, loud: false };
+  if (!m.enabled) return { text: `${FG.dim}mem off${RESET}`, loud: false };
+  const since = Date.parse(m.incident?.since ?? m.since);
+  const age = Number.isFinite(since) ? ` ${fmtDuration(now.getTime() - since)}` : "";
+  switch (m.state) {
+    case "healthy":
+      return undefined;
+    case "unknown":
+      return { text: `${FG.dim}mem ?${RESET}`, loud: false };
+    case "degraded":
+      return { text: `${WARN}▲ MEMORY DEGRADED${age}${DRESET}`, loud: true };
+    case "down":
+      return {
+        text: `${FG.anomaly}⛔ MEMORY DOWN${age} · no authenticated answer${RESET}`,
+        loud: true,
+      };
+    case "auth_failed": {
+      const d = m.credentials.daemon?.result;
+      const sess = m.credentials.sessions?.result;
+      const bad = (r: string | undefined): boolean => r === "auth_failed" || r === "no_key";
+      const which =
+        bad(d) && bad(sess)
+          ? "both keys"
+          : bad(d)
+            ? "daemon key"
+            : bad(sess)
+              ? "sessions' key"
+              : "a key";
+      return {
+        text: `${FG.anomaly}⛔ MEMORY AUTH FAILED${age} · ${which} refused${RESET}`,
+        loud: true,
+      };
+    }
+  }
+}
+
 /** Top-bar segments, left to right — shared by the renderer and the hit-test
  * geometry so the alert click zone can never drift from the text. */
 function barSegments(view: BoardView, alerts: boolean): string[] {
@@ -348,15 +406,20 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
       ? `${FG.anomaly}⛔ THREAD RETRY ${td.breaker_state.toUpperCase()}${td.open_until ? ` until ${td.open_until.slice(11, 19)}Z` : ""} · ${td.pending} pending · ${td.failed} failed${RESET}`
       : "";
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
+  const mem = memorySegment(s, view.now ?? new Date());
   return [
     `${HEADING}quickreview${DRESET}`,
     mode,
     health,
+    mem?.loud ? mem.text : "",
     drainSeg,
     breakerSeg,
     rounds,
     spend,
     badge,
+    // Only when `alerts` — the hit-test geometry measures the segments BEFORE
+    // the badge, and a quiet mark sits after it.
+    alerts && mem && !mem.loud ? mem.text : "",
   ].filter((x) => x !== "");
 }
 

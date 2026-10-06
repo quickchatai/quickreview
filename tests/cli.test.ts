@@ -42,9 +42,12 @@ describe("renderStatus", () => {
     expect(lines[0]).toBe("quickreview — DRY-RUN — snapshot 2026-08-13T17:04:00.000Z");
     expect(lines[1]).toBe("digest: 2 approved · 1 escalated");
     expect(lines[2]).toBe("rounds running: 2   total spend: $3.50");
-    expect(lines[4]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
+    // the memory line, every time — a snapshot with no block (an
+    // older daemon) says so, never "healthy".
+    expect(lines[3]).toContain("memory: NOT REPORTED");
+    expect(lines[5]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
-    const rows = lines.slice(5);
+    const rows = lines.slice(6);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("#1421");
     expect(rows[0]).toContain("reviewing");
@@ -90,9 +93,9 @@ describe("renderStatus", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
     const lines = out.split("\n");
-    expect(lines.slice(5)).toHaveLength(1);
+    expect(lines.slice(6)).toHaveLength(1);
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(lines[5]).toContain("Fix [2J [31m widget row 2Kend");
+    expect(lines[6]).toContain("Fix [2J [31m widget row 2Kend");
   });
 
   it("strips control bytes (incl. C1) from a session's pause reason", () => {

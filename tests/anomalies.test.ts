@@ -5,9 +5,12 @@ import {
   ANOMALY_DEDUP_WINDOW_MS,
   AnomalyWakePolicy,
   anomalySeverity,
+  detailKeyedKinds,
   renderHeartbeatMessage,
   startHeartbeat,
+  wakeKinds,
 } from "../src/anomalies.js";
+import { MEMORY_WAKE } from "../src/memory/health.js";
 import { StateStore } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -31,6 +34,43 @@ function storeWithPolicy(opts: { nowMs?: () => number; failInject?: boolean } = 
   store.setAnomalySink((s) => policy.onAnomaly(s));
   return { store, injected };
 }
+
+describe("WAKE_KINDS — pinned by deep equality", () => {
+  // Promoting a kind to WAKE is a decision, never a side effect of adding one:
+  // a new kind defaults quiet, and this list is the record of every promotion.
+  it("is exactly this set", () => {
+    expect(wakeKinds()).toEqual(
+      [
+        "eod_pinned_area_modified",
+        "findings_record_unresolved",
+        "git_config_modified",
+        "ledger_stale_unresolved",
+        "malformed",
+        "memory_auth_failed",
+        "memory_down",
+        "memory_provision_failed",
+        "migration_collision_comment_withheld",
+        "migration_precheck_degraded",
+        "overdue",
+        "pass_plan_mismatch",
+        "pi_auth_expired",
+        "policy_surface_modified",
+        "review_failed_loud",
+        "round_stranded",
+        "ungated_approval",
+      ].sort(),
+    );
+  });
+
+  // memory was dead for five weeks behind a per-round anomaly that
+  // was never a wake kind. The health monitor's three kinds ARE wakes; the
+  // counted gap row stays quiet; the dead per-round kind is gone.
+  it("the memory health kinds wake; openviking_gap stays quiet", () => {
+    for (const kind of Object.values(MEMORY_WAKE)) expect(anomalySeverity(kind), kind).toBe("wake");
+    expect(anomalySeverity("openviking_gap")).toBe("quiet");
+    expect(anomalySeverity("round_memory_degraded")).toBe("quiet");
+  });
+});
 
 describe("anomalySeverity — the map", () => {
   it("wake classes: malformed/overdue verdicts, plan≠executed, degraded migration pre-check, withheld collision comment", () => {
@@ -106,6 +146,33 @@ describe("logAnomaly → wake funnel", () => {
     store.logAnomaly("never_seen_before", 9, 1, "novel failure", "also unused");
     expect(store.anomalies()).toHaveLength(2);
     expect(injected).toEqual([]);
+  });
+
+  it("memory wakes dedup on what they SAY: a different transition wakes, an identical repeat does not", () => {
+    // the monitor raises a memory wake per TRANSITION; keyed on
+    // kind alone, a second transition inside the window was swallowed.
+    let nowMs = 1_000_000;
+    const { store, injected } = storeWithPolicy({ nowMs: () => nowMs });
+    store.logAnomaly("memory_auth_failed", null, null, "daemon auth_failed", "first");
+    nowMs += 60_000;
+    store.logAnomaly("memory_auth_failed", null, null, "daemon + sessions auth_failed", "second");
+    nowMs += 60_000;
+    store.logAnomaly("memory_auth_failed", null, null, "daemon + sessions auth_failed", "repeat");
+    expect(injected).toEqual(["first", "second"]);
+    expect(store.anomalies()).toHaveLength(3);
+    // Every other wake kind keeps the kind+pr key.
+    store.logAnomaly("overdue", 10, 1, "a");
+    store.logAnomaly("overdue", 10, 2, "b — a different detail, still the same wake");
+    expect(injected).toHaveLength(3);
+  });
+
+  it("the detail-keyed kinds are exactly the memory health kinds — pinned", () => {
+    expect(detailKeyedKinds()).toEqual([
+      "memory_auth_failed",
+      "memory_down",
+      "memory_provision_failed",
+    ]);
+    for (const kind of detailKeyedKinds()) expect(anomalySeverity(kind), kind).toBe("wake");
   });
 
   it("dedups identical kind+pr inside the window — the row is still written every time", () => {

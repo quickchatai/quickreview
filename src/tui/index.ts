@@ -768,6 +768,40 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     });
   });
 
+  // a reviewer-memory incident older than
+  // `[memory] incident_ticket_after_min` becomes ONE issue-tracker ticket
+  // (actor qcr-tui, deduped by the incident's start), read from status.json —
+  // never from memory, which is the thing that is down (the `#bug` filer reads
+  // memory, so it could never report this). Independent of the companion:
+  // the board banner and this ticket reach a person with the column off.
+  const { maybeFileMemoryIncident, newIncidentFilerMemo } = await import("./memincident.js");
+  const incidentMemo = newIncidentFilerMemo();
+  const incidentTracker =
+    full.sink.kind === "wayfinder" && full.sink.root && full.sink.effort && full.sink.parent
+      ? { root: full.sink.root, effort: full.sink.effort, parent: full.sink.parent }
+      : undefined;
+  let incidentNotice = "";
+  chainOnPoll(app, (a) => {
+    const out = maybeFileMemoryIncident(incidentTracker, a.view.snapshot?.memory, {
+      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      now: new Date(),
+      afterMs: full.memory.incident_ticket_after_min * 60_000,
+      memo: incidentMemo,
+    });
+    const line =
+      out.kind === "filed"
+        ? `memory incident filed as ${out.ticketId} (${out.file})`
+        : out.kind === "no-tracker" || out.kind === "failed"
+          ? out.line
+          : "";
+    // Each distinct line once: a tracker that keeps failing must not repaint
+    // the notice every poll.
+    if (line !== "" && line !== incidentNotice) {
+      incidentNotice = line;
+      a.notice(line);
+    }
+  });
+
   // ---- the connection triage (ruling 4) ----------------------------
   //
   // The TUI does the three-way ssh triage the operator used to do by hand, and
@@ -971,6 +1005,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
             paneFocused: app.view.piFocus === true,
             notice: app.view.noticeLine,
             deploy: deployState,
+            tuiMemoryRequests: memStore.requestCounts(),
           }),
           app.screenText(),
         );
@@ -1016,7 +1051,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // Daemon-detected pi auth failures (status.json `pi_auth_expired`) ride
     // the same pipeline: on each poll, bridge a fresh flag into one alert
     // file; the consumer above does badge + notify + inject + cooldown.
-    const { maybeWritePiAuthAlert } = await import("./alerts.js");
+    const { maybeWritePiAuthAlert, maybeWriteMemoryAlert } = await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
       try {
@@ -1024,6 +1059,22 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           full.companion.alerts_dir,
           a.view.snapshot?.pi_auth_expired,
           piAuthMem,
+        );
+      } catch {
+        // alerting is best-effort; never break the poll loop
+      }
+    });
+    // reviewer memory refusing a key or down — one desktop
+    // notification per transition, from status.json `memory` (never from
+    // OpenViking), and only from a FRESH snapshot.
+    const memoryAlertMem = { lastWritten: "" };
+    chainOnPoll(app, (a) => {
+      try {
+        maybeWriteMemoryAlert(
+          full.companion.alerts_dir,
+          a.view.snapshot?.memory,
+          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          memoryAlertMem,
         );
       } catch {
         // alerting is best-effort; never break the poll loop

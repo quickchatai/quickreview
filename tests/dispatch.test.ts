@@ -20,7 +20,7 @@ import { applyEvent } from "../src/statemachine.js";
 import { PASS_TIER_ORDER } from "../src/types.js";
 import { renderRoundPrompt, roundTemplateFile } from "../src/templates.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
-import type { ContextAssembler, MemoryRead } from "../src/memory/context.js";
+import type { ContextAssembler, MemoryRead, RoundMemory } from "../src/memory/context.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const baseCfg: Config = parseConfig(
@@ -1985,13 +1985,14 @@ describe("round-memory seeding", () => {
         "utf8",
       );
 
+      const seeded: RoundMemory[] = [];
       const started = Date.now();
       const dispatched = await dispatchOnce({
         cfg: baseCfg,
         store,
         adapter,
         hooks,
-        memory: { assembler: hung, timeoutMs: 25 },
+        memory: { assembler: hung, timeoutMs: 25, onSeeded: (m) => seeded.push(m) },
         renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
       });
       const elapsed = Date.now() - started;
@@ -2003,12 +2004,15 @@ describe("round-memory seeding", () => {
       expect(orders[0]!.prompt).toContain("MEMORY UNAVAILABLE THIS ROUND");
       expect(orders[0]!.prompt).toContain("Run the full 7-step round");
       expect(store.getPr(73)!.state).toBe("reviewing");
-      // Logged AND alerted: the gap is never silent.
+      // Logged AND handed to memory health: the gap is never silent. The
+      // timeout never reached any client observer — the seed callback is the
+      // only place the monitor sees it (S1).
       expect(memoryEvents(73)).toMatchObject([{ degraded: true }]);
-      const anomaly = store.db
-        .prepare("SELECT payload FROM events WHERE pr = 73 AND kind = 'anomaly'")
-        .get() as { payload: string };
-      expect(JSON.parse(anomaly.payload).kind).toBe("round_memory_degraded");
+      expect(seeded).toHaveLength(1);
+      expect(seeded[0]).toMatchObject({ degraded: true });
+      // No per-round anomaly any more: it was never a wake kind, so it told
+      // nobody; the health monitor owns telling a person.
+      expect(anomalies(73)).toEqual([]);
     },
   );
 
@@ -2134,14 +2138,17 @@ describe("round-memory seeding", () => {
         "2026-08-20T09:10:00Z",
         new Assembler(unreadable("connect ECONNREFUSED"), read("")),
       );
-      expect(anomalies(84)).toEqual(["round_memory_degraded"]);
+      // The unreadable round is recorded (and told to memory health), but
+      // raises no per-round anomaly (S1).
+      expect(memoryEvents(84)).toMatchObject([{ degraded: true, head_state: "unread" }]);
+      expect(anomalies(84)).toEqual([]);
       await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
       expect(anomalies(85)).toEqual(["pinned_head_emptied"]);
     },
   );
 
   it(
-    "an UNREADABLE store still degrades, still alerts the operator, and names what is missing",
+    "an UNREADABLE store still degrades, tells memory health what is missing, and raises no per-round anomaly",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(79, "2026-08-20T09:00:00Z");
@@ -2157,13 +2164,14 @@ describe("round-memory seeding", () => {
       );
       const injected: string[] = [];
       store.setAnomalySink((signal) => injected.push(signal.injectMessage ?? ""));
+      const seeded: RoundMemory[] = [];
 
       await dispatchOnce({
         cfg: baseCfg,
         store,
         adapter,
         hooks,
-        memory: { assembler: dead },
+        memory: { assembler: dead, onSeeded: (m) => seeded.push(m) },
         renderPrompt: (o, mem) => renderRoundPrompt(tpl, o, mem),
       });
 
@@ -2177,19 +2185,46 @@ describe("round-memory seeding", () => {
           gaps: [{ part: "head", reason: expect.stringContaining("unreadable: ls viking://") }],
         },
       ]);
-      expect(anomalies(79)).toEqual(["round_memory_degraded"]);
-      // The operator's alert says what is actually missing — here the head
-      // only; the context search answered (with nothing), so it is not claimed
-      // lost — and carries the reason.
-      expect(injected).toHaveLength(1);
-      expect(injected[0]).toContain("no standing-instructions head.");
-      expect(injected[0]).not.toContain("no recalled context");
-      expect(injected[0]).toContain("ECONNREFUSED");
+      // What memory health is told names what is actually missing — here the
+      // head only; the context search answered (with nothing), so it is not
+      // claimed lost — and carries the reason.
+      expect(seeded).toHaveLength(1);
+      expect(seeded[0]!.gaps).toEqual([
+        { part: "head", reason: expect.stringContaining("ECONNREFUSED") },
+      ]);
+      // The operator hears it from the health monitor on a TRANSITION, not
+      // from dispatch once per round (S1).
+      expect(anomalies(79)).toEqual([]);
+      expect(injected).toEqual([]);
     },
   );
 
   it(
-    "keeps alerting bounded while the store stays down — the per-round record does not thin",
+    "a throwing health observer costs nothing: the round still dispatches",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(86, "2026-08-20T09:00:00Z");
+      adapter.files.set(86, [file("a.ts")]);
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: {
+          assembler: new Assembler(),
+          onSeeded: () => {
+            throw new Error("observer bug");
+          },
+        },
+      });
+      expect(orders).toHaveLength(1);
+      expect(memoryEvents(86)).toHaveLength(1);
+    },
+  );
+
+  it(
+    "while the store stays down the per-round record does not thin, and dispatch itself raises no memory anomaly",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const down = new Assembler(
@@ -2205,19 +2240,23 @@ describe("round-memory seeding", () => {
         adapter.files.set(pr, [file("a.ts")]);
       }
 
+      const seeded: RoundMemory[] = [];
       await dispatchOnce({
         cfg: baseCfg,
         store,
         adapter,
         hooks,
-        memory: { assembler: down, alertCooldownMin: 60 },
+        memory: { assembler: down, onSeeded: (m) => seeded.push(m) },
       });
 
       expect(memoryEvents(75)).toHaveLength(1);
       expect(memoryEvents(76)).toHaveLength(1);
+      // Every round reaches memory health; the bounding of the ALERT is the
+      // monitor's (transition + every 6 h), not dispatch's (S1).
+      expect(seeded.map((m) => m.degraded)).toEqual([true, true]);
       expect(
         store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'anomaly'").get(),
-      ).toEqual({ c: 1 });
+      ).toEqual({ c: 0 });
     },
   );
 

@@ -39,6 +39,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { StatusSnapshot } from "../state.js";
+import type { MemoryStatus, RequestCounter } from "../memory/health.js";
 import { configDrift, configDriftText, type ConfigRead } from "./confighome.js";
 
 /** A daemon event row as `qcr events --json` emits it. */
@@ -155,6 +156,15 @@ export interface TuiView {
   /** Which pi session the board's pane is mirroring, and whether it has focus. */
   pane?: { pr?: number; focused: boolean };
   notice?: string;
+  /** Reviewer-memory health (S1): status.json's `memory` block as the
+   * TUI last read it. `null` when the TUI has no snapshot or the daemon
+   * reported no block — the companion renders that as UNKNOWN, never as
+   * healthy. */
+  memory: MemoryStatus | null;
+  /** The TUI's OWN OpenViking requests since it started, per `user/op` — so
+   * the load the TUI puts on memory is attributed from this side (the server
+   * logs no caller). Absent when no store is wired. */
+  memory_tui_requests?: Record<string, RequestCounter>;
 }
 
 const PENDING_COMMITS_MAX = 40;
@@ -180,6 +190,8 @@ export interface ViewSource {
   paneFocused?: boolean;
   notice?: string;
   screen?: string;
+  /** The TUI memory store's per-`user/op` request counts (S1). */
+  tuiMemoryRequests?: Record<string, RequestCounter>;
   deploy?: {
     loaded: boolean;
     loading?: boolean;
@@ -306,6 +318,8 @@ export function buildTuiView(src: ViewSource): TuiView {
       ? { pane: { pr: src.panePr, focused: src.paneFocused === true } }
       : {}),
     ...(src.notice ? { notice: src.notice.slice(0, 400) } : {}),
+    memory: src.snapshot?.memory ?? null,
+    ...(src.tuiMemoryRequests ? { memory_tui_requests: src.tuiMemoryRequests } : {}),
   };
 }
 

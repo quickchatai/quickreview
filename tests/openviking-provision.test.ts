@@ -13,9 +13,17 @@
 //      INCONCLUSIVE and reported, never assumed fine.
 //   3. MEMORY NEVER BLOCKS THE BOOT. Every failure path resolves a report; the
 //      module never throws, and the CLI exits 0 unless asked to be strict.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  PROVISION_WOKEN_EVENT,
+  provisionWake,
+  raiseProvisionWake,
+  readProvisionReport,
+} from "../src/openviking/provisionreport.js";
+import { StateStore, type AnomalyRecord } from "../src/state.js";
 // A plain-JS script, deliberately dependency-free so the container entrypoint
 // can run it before any TypeScript build exists. `tsconfig.tests.json` sets
 // `allowJs`, so tsc now INFERS its exported shapes and this import needs no
@@ -438,5 +446,313 @@ describe("cli surface", () => {
   it("an unreadable secret file reads as empty, never as a throw", () => {
     expect(prov.readSecret("/nonexistent/openviking_root_key")).toBe("");
     expect(prov.readSecret("")).toBe("");
+  });
+});
+
+// the boot log reached nobody, so the run now leaves a REPORT the
+// daemon reads at boot (status.json `memory.provision`, and a
+// `memory_provision_failed` wake on a failure or a recreated user).
+describe("the provisioning report", () => {
+  const listing = (users: string[]) => ({
+    match: /\/admin\/accounts\/[^/]+\/users$/,
+    method: "GET",
+    status: 200,
+    body: { users },
+  });
+
+  it("every failure lands in report.errors as a sentence", async () => {
+    const { fetchFn } = fakeFetch([
+      listing(["reviewer", "companion"]),
+      { match: /fs\/ls/, method: "GET", status: 401, body: {} },
+    ]);
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer", "companion"],
+      rootKey: "root-secret-value",
+      reviewerKey: "reviewer-secret-value",
+      fetchFn,
+      log: () => {},
+    });
+    expect(report.ok).toBe(false);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0]).toMatch(
+      /^the reviewer key does NOT authenticate against user\/reviewer \(refused/,
+    );
+  });
+
+  it("a clean run has no errors", async () => {
+    const { fetchFn } = fakeFetch([
+      listing(["reviewer"]),
+      { match: /fs\/ls/, method: "GET", status: 200, body: {} },
+    ]);
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "r",
+      reviewerKey: "k",
+      fetchFn,
+      log: () => {},
+    });
+    expect(report).toMatchObject({ ok: true, errors: [] });
+  });
+
+  it("the report body carries the verdict and never a key", async () => {
+    const { fetchFn } = fakeFetch([
+      listing([]),
+      {
+        match: /\/users$/,
+        method: "POST",
+        status: 201,
+        body: { result: { user_key: "MINTED-secret-value" } },
+      },
+      { match: /fs\/ls/, method: "GET", status: 401, body: {} },
+    ]);
+    const report = await prov.provision({
+      base: BASE,
+      account: "default",
+      users: ["reviewer"],
+      rootKey: "root-secret-value",
+      reviewerKey: "reviewer-secret-value",
+      fetchFn,
+      log: () => {},
+    });
+    const body = prov.provisionReportBody(report, {
+      users: ["reviewer"],
+      at: "2026-10-06T12:00:00.000Z",
+    });
+    expect(body).toEqual({
+      version: 1,
+      at: "2026-10-06T12:00:00.000Z",
+      ok: false,
+      users: ["reviewer"],
+      created: ["reviewer"],
+      kept: [],
+      failed: [],
+      reviewer: "refused",
+      errors: [expect.stringContaining("does NOT authenticate")],
+    });
+    expect(JSON.stringify(body)).not.toContain("secret-value");
+  });
+
+  it("is written atomically where the DAEMON reads it, and reads back as the same verdict", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-provreport-"));
+    try {
+      const path = prov.provisionReportPath(dir);
+      expect(path).toBe(join(dir, "state", "openviking", "provision.json"));
+      const ok = prov.writeProvisionReport(
+        path,
+        prov.provisionReportBody(
+          {
+            created: [],
+            kept: ["reviewer"],
+            failed: [],
+            reviewer: "refused",
+            ok: false,
+            errors: ["the reviewer key does NOT authenticate"],
+          },
+          { users: ["reviewer"], at: "2026-10-06T12:00:00.000Z" },
+        ),
+        () => {},
+      );
+      expect(ok).toBe(true);
+      // The daemon's reader (src/openviking/provisionreport.ts) agrees.
+      expect(readProvisionReport(path)).toEqual({
+        state: "failed",
+        id: expect.stringMatching(/^sha256:[0-9a-f]{16}$/),
+        at: "2026-10-06T12:00:00.000Z",
+        created: [],
+        failed: [],
+        reviewer: "refused",
+        errors: ["the reviewer key does NOT authenticate"],
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an unwritable report is a log line, never a throw", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-provreport-"));
+    try {
+      writeFileSync(join(dir, "state"), "a file where a directory must go");
+      const lines: string[] = [];
+      expect(
+        prov.writeProvisionReport(prov.provisionReportPath(dir), { ok: true }, (l: string) =>
+          lines.push(l),
+        ),
+      ).toBe(false);
+      expect(lines.join("\n")).toContain("could not write the provisioning report");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults beside the daemon's state, and --report overrides it", () => {
+    expect(prov.parseArgs([]).reportPath).toBe(prov.provisionReportPath(prov.ROOT));
+    expect(prov.parseArgs(["--report", "/tmp/x.json"]).reportPath).toBe("/tmp/x.json");
+  });
+
+  it("main() leaves a report on EVERY exit path — the early ones too", () => {
+    const src = readFileSync(resolve(process.cwd(), "scripts/openviking-provision.mjs"), "utf8");
+    const mainBody = src.slice(src.indexOf("async function main"));
+    expect(mainBody).toMatch(
+      /finish\(failed\("openviking: --start-server needs --bin and --config/,
+    );
+    expect(mainBody).toMatch(
+      /finish\(\s*failed\(\s*"openviking: the provisioning server never became ready/,
+    );
+    expect(mainBody).toMatch(/finally \{\s*finish\(report\);/);
+  });
+});
+
+describe("the daemon's reading of the report (src/openviking/provisionreport.ts)", () => {
+  const withFile = (body: string | undefined, fn: (path: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-provread-"));
+    try {
+      const path = join(dir, "provision.json");
+      if (body !== undefined) writeFileSync(path, body);
+      fn(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("no report is ABSENT and wakes nothing (a dev daemon, a script not synced)", () => {
+    withFile(undefined, (path) => {
+      const s = readProvisionReport(path);
+      expect(s).toEqual({ state: "absent" });
+      expect(provisionWake(s)).toBeNull();
+    });
+  });
+
+  it("a file that is not a report is UNREADABLE — and wakes", () => {
+    withFile("{ torn", (path) => {
+      const s = readProvisionReport(path);
+      expect(s.state).toBe("unreadable");
+      expect(provisionWake(s)?.kind).toBe("memory_provision_failed");
+    });
+    withFile('{"at":"x"}', (path) => {
+      expect(readProvisionReport(path).state).toBe("unreadable");
+    });
+  });
+
+  it("a clean report wakes nothing", () => {
+    withFile('{"ok":true,"created":[],"errors":[]}', (path) => {
+      expect(provisionWake(readProvisionReport(path))).toBeNull();
+    });
+  });
+
+  it("a provision FAILURE wakes memory_provision_failed with its errors", () => {
+    withFile(
+      JSON.stringify({
+        ok: false,
+        at: "T",
+        created: [],
+        failed: ["companion"],
+        reviewer: "refused",
+        errors: ["could not create user companion (HTTP 500)"],
+      }),
+      (path) => {
+        const w = provisionWake(readProvisionReport(path))!;
+        expect(w.kind).toBe("memory_provision_failed");
+        expect(w.detail).toContain("boot provisioning FAILED");
+        expect(w.detail).toContain("not ensured: companion");
+        expect(w.detail).toContain("reviewer key: refused");
+        expect(w.message).toContain("could not create user companion");
+      },
+    );
+  });
+
+  it("a RECREATED user wakes even when the report says ok — its distributed key is now wrong", () => {
+    withFile(JSON.stringify({ ok: true, at: "T", created: ["reviewer"], errors: [] }), (path) => {
+      const w = provisionWake(readProvisionReport(path))!;
+      expect(w.kind).toBe("memory_provision_failed");
+      expect(w.detail).toContain("had to CREATE reviewer");
+      expect(w.message).toContain("never rotated");
+    });
+  });
+});
+
+// The boot step itself — where a report BECOMES a wake (S1). Driven
+// against a real StateStore with its anomaly sink attached, which is exactly
+// the funnel wire.ts hands it: a row in the anomaly table, and the signal the
+// overseer's wake policy reads.
+describe("raiseProvisionWake — the daemon's boot step over the report", () => {
+  const withReport = (body: string | undefined, fn: (path: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-provwake-"));
+    try {
+      const path = join(dir, "provision.json");
+      if (body !== undefined) writeFileSync(path, body);
+      fn(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const harness = () => {
+    const store = new StateStore(":memory:");
+    const signals: Array<AnomalyRecord & { injectMessage?: string | undefined }> = [];
+    store.setAnomalySink((s) => signals.push(s));
+    const rows = () => store.anomalies().filter((a) => a.kind === "memory_provision_failed");
+    return { store, signals, rows };
+  };
+  const FAILED = (at: string) =>
+    JSON.stringify({ ok: false, at, created: [], failed: ["reviewer"], errors: ["boom"] });
+
+  it("a failed report writes ONE memory_provision_failed row and reaches the wake sink", () => {
+    const h = harness();
+    withReport(FAILED("2026-10-06T08:00:00.000Z"), (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(true);
+    });
+    expect(h.rows()).toHaveLength(1);
+    expect(h.signals.map((s) => s.kind)).toEqual(["memory_provision_failed"]);
+    expect(h.signals[0]!.injectMessage).toContain("MEMORY PROVISIONING");
+    expect(h.store.lastEventPayload(PROVISION_WOKEN_EVENT)).toMatchObject({
+      at: "2026-10-06T08:00:00.000Z",
+      state: "failed",
+    });
+  });
+
+  it("the SAME report on a daemon restart wakes nothing; a new report wakes again", () => {
+    const h = harness();
+    withReport(FAILED("2026-10-06T08:00:00.000Z"), (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(true);
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(false);
+    });
+    withReport(FAILED("2026-10-06T09:00:00.000Z"), (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(true);
+    });
+    expect(h.rows()).toHaveLength(2);
+  });
+
+  it("an UNREADABLE report (no `at` to key on) still wakes once, not on every restart", () => {
+    const h = harness();
+    withReport("{ torn", (path) => {
+      const s = readProvisionReport(path);
+      expect(s.state).toBe("unreadable");
+      expect(s.at).toBeUndefined();
+      expect(s.id).toMatch(/^sha256:/);
+      expect(raiseProvisionWake(h.store, s)).toBe(true);
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(false);
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(false);
+    });
+    // A different torn file is a different report.
+    withReport("{ torn differently", (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(true);
+    });
+    expect(h.rows()).toHaveLength(2);
+  });
+
+  it("an absent or clean report writes nothing", () => {
+    const h = harness();
+    withReport(undefined, (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(false);
+    });
+    withReport('{"ok":true,"at":"T","created":[],"errors":[]}', (path) => {
+      expect(raiseProvisionWake(h.store, readProvisionReport(path))).toBe(false);
+    });
+    expect(h.rows()).toEqual([]);
+    expect(h.signals).toEqual([]);
+    expect(h.store.lastEventPayload(PROVISION_WOKEN_EVENT)).toBeNull();
   });
 });

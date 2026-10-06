@@ -642,6 +642,59 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     await expect(m.archiveAndClose(42)).resolves.toBeUndefined();
   });
 
+  // the delete used to swallow every failure silently, and 79
+  // sessions of closed PRs piled up on the server with nothing to say why.
+  it("a raw-tier delete that fails is LOGGED and RECORDED — and the PR still closes", async () => {
+    const store = new StateStore(":memory:");
+    const m = new PiSessionManager({
+      cfg: cfg(),
+      root,
+      tmux: new Tmux({ exec: fakeExec }),
+      worktrees: new WorktreeManager({
+        root,
+        repo: "o/n",
+        cloneDir: "example-app",
+        cloneUrl: "/dev/null",
+        run: fakeExec,
+      }),
+      piHome: join(root, "pihome"),
+      commandStore: store,
+      ovSessions: {
+        create: async () => true,
+        remove: async () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+      },
+    });
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+    mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+    await expect(m.archiveAndClose(42)).resolves.toBeUndefined();
+    const rows = store.db
+      .prepare("SELECT pr, payload FROM events WHERE kind = 'openviking_session_delete_failed'")
+      .all() as Array<{ pr: number; payload: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pr).toBe(42);
+    expect(JSON.parse(rows[0]!.payload)).toEqual({
+      session: "pr-42",
+      error: "connect ECONNREFUSED",
+    });
+    store.close();
+  });
+
+  it("a successful raw-tier delete records nothing", async () => {
+    const store = new StateStore(":memory:");
+    const m = manager(undefined, store);
+    await m.ensurePrSession(42, "T", "wt/pr-42");
+    mkdirSync(join(root, "example-app", ".git"), { recursive: true });
+    await m.archiveAndClose(42);
+    expect(
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'openviking_session_delete_failed'")
+        .get(),
+    ).toEqual({ c: 0 });
+    store.close();
+  });
+
   it("runs memory-less when the secrets mount carries no reviewer key", async () => {
     const m = manager();
     const result = m.provisionOvCredentials();

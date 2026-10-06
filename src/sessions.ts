@@ -395,14 +395,35 @@ export class PiSessionManager implements SessionHooks {
 
   /** Delete the PR's raw-notes session and its archives — the raw tier ages
    * out by DELETE, never by `commit` (which exists to PROMOTE notes into
-   * durable memory, i.e. the extraction we deliberately switched off). */
+   * durable memory, i.e. the extraction we deliberately switched off).
+   *
+   * A failure is LOGGED and RECORDED (S1): this used to swallow every
+   * one silently, and 79 sessions of closed PRs piled up on the server with
+   * nothing to say why. Still total — the PR closes either way. */
   private async deleteOvSession(pr: number): Promise<boolean> {
     if (!this.ovSessions) return false;
+    const id = ovSessionIdForPr(pr);
+    let ok = false;
+    let error: string | undefined;
     try {
-      return await this.ovSessions.remove(ovSessionIdForPr(pr));
-    } catch {
-      return false;
+      ok = await this.ovSessions.remove(id);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
     }
+    if (!ok) {
+      console.log(
+        `[quickreviewd] sessions: openviking session ${id} was NOT deleted${error ? ` (${error})` : ""} — it lingers on the server`,
+      );
+      try {
+        this.commandStore?.logEvent("openviking_session_delete_failed", pr, {
+          session: id,
+          ...(error ? { error } : {}),
+        });
+      } catch {
+        /* recording is best-effort; the log line above already said it */
+      }
+    }
+    return ok;
   }
 
   // ---- environment -------------------------------------------------------

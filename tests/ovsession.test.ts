@@ -11,10 +11,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DISABLED_MEMORY_POLICY, OpenVikingClient } from "../src/openviking/client.js";
 import {
   OV_REVIEWER_USER,
+  keyChangeWatcher,
   openVikingSessionEnv,
   openVikingSessionLifecycle,
   ovSessionIdForPr,
   ovcliConfPathIn,
+  readOvcliKey,
   readServerRootKey,
   renderOvcliConf,
   writeOvcliConf,
@@ -333,5 +335,57 @@ describe("the pi HOME layout", () => {
     expect(ovcliConfPathIn(join(dir, "pihome"))).toBe(
       join(dir, "pihome", ".openviking", "ovcli.conf"),
     );
+  });
+});
+
+// the sessions' credential is JUDGED (read back and probed), not
+// assumed to equal the daemon's; and a key change reaches the sessions.
+describe("readOvcliKey — what the sessions are actually handed", () => {
+  it("reads the key writeOvcliConf wrote", () => {
+    const path = ovcliConfPathIn(dir);
+    writeOvcliConf(path, {
+      url: "http://127.0.0.1:1933",
+      apiKey: "sess-key-123456",
+      user: "reviewer",
+    });
+    expect(readOvcliKey(path)).toEqual({ state: "key", key: "sess-key-123456" });
+  });
+
+  it("a file written with no key reads as an empty key (sessions run keyless)", () => {
+    const path = ovcliConfPathIn(dir);
+    writeOvcliConf(path, { url: "http://127.0.0.1:1933", apiKey: "", user: "reviewer" });
+    expect(readOvcliKey(path)).toEqual({ state: "key", key: "" });
+  });
+
+  it("no file yet is ABSENT (no session born), a torn file is UNREADABLE", () => {
+    expect(readOvcliKey(join(dir, "nope", "ovcli.conf"))).toEqual({ state: "absent" });
+    const torn = join(dir, "ovcli.conf");
+    writeFileSync(torn, "{ not json");
+    expect(readOvcliKey(torn)).toEqual({ state: "unreadable", detail: "ovcli.conf is not JSON" });
+  });
+});
+
+describe("keyChangeWatcher — a rotated daemon key reaches the sessions", () => {
+  it("fires on a change, never on the first sighting or a repeat", () => {
+    let fired = 0;
+    const watch = keyChangeWatcher(() => {
+      fired += 1;
+    });
+    expect(watch("key-A")).toBe(false); // first sighting only records
+    expect(watch("key-A")).toBe(false);
+    expect(watch("key-B")).toBe(true);
+    expect(fired).toBe(1);
+  });
+
+  it("a key that disappears does not fire; one that (re)appears does", () => {
+    let fired = 0;
+    const watch = keyChangeWatcher(() => {
+      fired += 1;
+    });
+    watch(null);
+    expect(watch("key-A")).toBe(true);
+    expect(watch(null)).toBe(false);
+    expect(watch("key-A")).toBe(true);
+    expect(fired).toBe(2);
   });
 });

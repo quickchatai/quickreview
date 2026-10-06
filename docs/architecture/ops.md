@@ -478,7 +478,7 @@ cheap.
 | Command | What it does |
 |---|---|
 | `onboard` | the guided setup, and a diagnostic on a finished install |
-| `status` | render `status.json` — mode, PRs, rounds, spend, drain and holds |
+| `status` | render `status.json` — mode, PRs, rounds, spend, reviewer-memory health, drain and holds |
 | `spend`, `today` | spend totals and the current ops day |
 | `why <pr> [--json]` | the decision trail for one PR from the state store and its archive |
 | `metrics [--pr <n>] [--json]` | `src/metrics.ts` payloads, rendered or raw |

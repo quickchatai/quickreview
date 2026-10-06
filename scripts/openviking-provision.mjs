@@ -17,6 +17,10 @@
 //     present. Re-running is a no-op; a restored state volume keeps its users.
 //   * VERIFIES the reviewer key from the secrets mount actually authenticates,
 //     and says so in the boot log when it does not.
+//   * REPORTS what it found in `state/openviking/provision.json` (S1):
+//     the daemon reads it at boot, carries it in status.json `memory`, and
+//     wakes `memory_provision_failed` on a failure or a user it had to create.
+//     The boot log alone reached nobody.
 //   * NEVER ROTATES, and never mints a key for a user that already has one. A
 //     rotation would orphan the key already distributed to the companion's PC
 //     (and to this container's secrets mount) — the exact "must not orphan or
@@ -35,10 +39,10 @@
 // hand it to a pi session, and `extensions/bash-guard.ts` refuses bash commands
 // that read the files carrying it.
 //
-// MEMORY NEVER BLOCKS THE BOOT. Every failure here is a log line and exit 0:
-// an unprovisioned server means memory degrades (401s, reported once per
-// client, alerted through the existing gap path), never a reviewer that does
-// not come up. `--strict` (tests, manual runs) is the only way to get a
+// MEMORY NEVER BLOCKS THE BOOT. Every failure here is a log line, a report
+// line and exit 0: an unprovisioned server means memory degrades (401s, which
+// the daemon's memory health monitor turns into a wake and a TUI banner),
+// never a reviewer that does not come up. `--strict` (tests, manual runs) is the only way to get a
 // non-zero exit.
 //
 // MINTING lives here too, and is NOT part of the boot path.
@@ -58,8 +62,8 @@
 // TypeScript build, on a container that may have no `dist/` yet.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { PATHS, authHeaders, classify } from "./companion-memory-forward.mjs";
@@ -506,21 +510,33 @@ export async function provision({
   env = process.env,
   log = console.log,
 }) {
-  const report = { created: [], kept: [], failed: [], reviewer: "skipped", ok: true };
+  const report = {
+    created: [],
+    kept: [],
+    failed: [],
+    reviewer: "skipped",
+    ok: true,
+    // every failure as a sentence, for the report file the daemon
+    // reads — the boot log alone reached nobody.
+    errors: [],
+  };
+  const fail = (line) => {
+    log(line);
+    report.errors.push(line.replace(/^openviking: /, ""));
+    report.ok = false;
+  };
   if (!rootKey) {
-    log(
+    fail(
       "openviking: no root key in the secrets mount — users NOT provisioned; memory degrades until one is",
     );
-    report.ok = false;
     return report;
   }
   const listing = await listUsers({ base, account, rootKey, fetchFn });
   const plan = planProvision(listing.users, users);
   if (plan.unknown.length > 0) {
-    log(
+    fail(
       `openviking: could not read the user listing (${listing.detail}) — creating nothing, leaving ${plan.unknown.join(", ")} as they are`,
     );
-    report.ok = false;
   }
   for (const user of plan.keep) {
     log(`openviking: user ${user} already provisioned — left untouched (keys are never rotated)`);
@@ -532,11 +548,10 @@ export async function provision({
       log(`openviking: user ${user} ${r.existed ? "already existed" : "created"}`);
       (r.existed ? report.kept : report.created).push(user);
     } else {
-      log(
+      report.failed.push(user);
+      fail(
         `openviking: could not create user ${user} (${r.detail}) — memory for that user degrades until it exists`,
       );
-      report.failed.push(user);
-      report.ok = false;
     }
   }
   // The reviewer key is the ONE client credential this container may hold. We
@@ -549,19 +564,75 @@ export async function provision({
     if (probe.classification === "reach") {
       log(`openviking: the reviewer key authenticates against user/${reviewerUser}`);
     } else {
-      log(
+      fail(
         `openviking: the reviewer key does NOT authenticate against user/${reviewerUser} (${probe.classification}, ${probe.detail}) — ` +
           "memory degrades until the key and the server agree. NOT rotating: that would orphan the distributed key.",
       );
-      report.ok = false;
     }
   } else {
-    log(
+    fail(
       "openviking: no reviewer key in the secrets mount — the daemon and every review session start memory-less",
     );
-    report.ok = false;
   }
   return report;
+}
+
+// ---- the report file (S1) ---------------------------------------------
+//
+// What this run found, for the DAEMON to read at boot (src/openviking/
+// provisionreport.ts → status.json `memory.provision`, and a
+// `memory_provision_failed` wake on a failure or a recreated user). The boot
+// log said all of this before and reached nobody. Never carries a key.
+
+/** Where the report goes by default: `<sandbox>/state/openviking/provision.json`
+ * — the daemon resolves the same path from its own root, so neither entrypoint
+ * has to pass it (a sync, not a rebuild, ships this). */
+export function provisionReportPath(root = ROOT) {
+  return join(root, "state", "openviking", "provision.json");
+}
+
+/**
+ * The report body: the verdict, what was created / kept / not ensured, the
+ * reviewer key's classification, and every failure as a sentence.
+ *
+ * @param {{ ok?: boolean, created?: string[], kept?: string[], failed?: string[], reviewer?: string, errors?: string[] }} report
+ * @param {{ users?: string[], at?: string }} [opts]
+ */
+export function provisionReportBody(report, { users = [], at = new Date().toISOString() } = {}) {
+  return {
+    version: 1,
+    at,
+    ok: report.ok === true,
+    users: [...users],
+    created: [...(report.created ?? [])],
+    kept: [...(report.kept ?? [])],
+    failed: [...(report.failed ?? [])],
+    reviewer: report.reviewer ?? "skipped",
+    errors: [...(report.errors ?? [])],
+  };
+}
+
+/**
+ * Atomic write (temp + rename). Never throws: a report that cannot be written
+ * is a log line — provisioning must not block the boot over its own receipt.
+ *
+ * @param {string} path
+ * @param {unknown} body
+ * @param {(line: string) => void} [log]
+ */
+export function writeProvisionReport(path, body, log = console.log) {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
+    renameSync(tmp, path);
+    return true;
+  } catch (err) {
+    log(
+      `openviking: could not write the provisioning report ${path} (${err instanceof Error ? err.message : String(err)})`,
+    );
+    return false;
+  }
 }
 
 // ---- cli --------------------------------------------------------------------
@@ -591,6 +662,8 @@ export function parseArgs(argv, env = process.env) {
     port,
     readyTimeoutMs: Number(flags.get("ready-timeout-ms") ?? DEFAULTS.readyTimeoutMs),
     strict: flags.has("strict"),
+    // where the report lands; default beside the daemon's state.
+    reportPath: flags.get("report") ?? env.QCR_OV_PROVISION_REPORT ?? provisionReportPath(),
   };
 }
 
@@ -644,10 +717,25 @@ export async function stopServerChild(child, { graceMs = SERVER_STOP_GRACE_MS } 
 async function main(argv) {
   const cfg = parseArgs(argv);
   const log = (line) => console.log(line);
+  // Every exit path below leaves a report for the daemon — the early ones too:
+  // "provisioning never ran" is exactly what a person must hear about.
+  const finish = (report) =>
+    writeProvisionReport(cfg.reportPath, provisionReportBody(report, { users: cfg.users }), log);
+  const failed = (line) => {
+    log(line);
+    return {
+      created: [],
+      kept: [],
+      failed: [],
+      reviewer: "skipped",
+      ok: false,
+      errors: [line.replace(/^openviking: /, "")],
+    };
+  };
   let child;
   if (cfg.startServer) {
     if (!cfg.bin || !cfg.config) {
-      log("openviking: --start-server needs --bin and --config — skipping provisioning");
+      finish(failed("openviking: --start-server needs --bin and --config — skipping provisioning"));
       return cfg.strict ? 1 : 0;
     }
     child = spawn(cfg.bin, serverArgv(cfg), { stdio: ["ignore", "inherit", "inherit"] });
@@ -659,14 +747,16 @@ async function main(argv) {
     child.unref?.();
     const ready = await waitForReady({ base: cfg.base, timeoutMs: cfg.readyTimeoutMs });
     if (!ready) {
-      log(
-        "openviking: the provisioning server never became ready — users NOT provisioned; the daemon still supervises the real one",
+      finish(
+        failed(
+          "openviking: the provisioning server never became ready — users NOT provisioned; the daemon still supervises the real one",
+        ),
       );
       await stopServerChild(child);
       return cfg.strict ? 1 : 0;
     }
   }
-  let report = { ok: false };
+  let report = failed("openviking: provisioning did not complete");
   try {
     report = await provision({
       base: cfg.base,
@@ -678,6 +768,7 @@ async function main(argv) {
       log,
     });
   } finally {
+    finish(report);
     // Bounded stop: SIGTERM → grace → SIGKILL, child unref'd. A server that
     // traps SIGTERM must not keep node's event loop (and the container boot)
     // alive forever.

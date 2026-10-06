@@ -152,10 +152,13 @@ export interface RoundMemorySeed {
   assembler: ContextAssembler;
   maxTokens?: number;
   timeoutMs?: number;
-  /** Minimum minutes between overseer anomalies while memory stays down. The
-   * gap is logged on EVERY round regardless; only the alert is cooled down, so
-   * a store that stays down does not bury the overseer. */
-  alertCooldownMin?: number;
+  /** Told about every round's seed AFTER the round was built — the memory
+   * health monitor's view of the round path (S1, `src/memory/
+   * health.ts`). It replaces the per-round `round_memory_degraded` anomaly,
+   * which was never a wake kind and so never reached anyone: the operator is
+   * now told by the monitor, on state transitions, through status.json and
+   * the TUI. Must not throw; a throw is logged and swallowed. */
+  onSeeded?: (mem: RoundMemory) => void;
 }
 
 /** The slice of a changed file the query builder reads. */
@@ -389,8 +392,9 @@ export function renderPinnedHeadSection(mem: RoundMemory, ownerName?: string): s
  * reviewing has turned a soft dependency into a hard one.
  *
  * WHO IS TOLD when memory is down: the SESSION (this note) and the OPERATOR
- * (the `round_memory_degraded` anomaly to the overseer, src/dispatch.ts) —
- * never the PR. The note says so in as many words: the posted review is about
+ * (the memory health monitor, src/memory/health.ts — a status.json block the
+ * TUI turns into a banner, a notification and a ticket, plus an overseer wake
+ * on the transition; S1) — never the PR. The note says so in as many words: the posted review is about
  * the code, and an outage on the reviewer's side is the operator's to read
  * about, not the author's. Any doc that claims the review "says so" is wrong;
  * it is the operator who is told.

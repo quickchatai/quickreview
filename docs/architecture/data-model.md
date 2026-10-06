@@ -244,7 +244,17 @@ say — a reader must default rather than assume:
 - `pi_auth_expired` — `{ last_at, hits }` while pi sessions are failing with
   token-expired errors (`src/authwatch.ts`).
 - `openviking` — the supervised memory server's reachability, version, RSS and
-  CPU.
+  CPU (unauthenticated: whether the server is UP).
+- `memory` — reviewer-memory HEALTH (S1, `MemoryStatus` in
+  `src/memory/health.ts`): `state` (`unknown | healthy | degraded | down |
+  auth_failed`), `since`, `last_ok_at`, `last_error`, each credential's latest
+  verdict (`credentials.daemon`, `credentials.sessions`), `probe_ms`, request
+  counters per operation, gap counts, the open `incident`, and the boot
+  `provision` report (with its file fingerprint `id`). Request counters split
+  `ok`, `absent` (NOT_FOUND answers), `conflict`, `auth_failed` and `failed`.
+  `enabled: false` means not monitored — memory switched off in config.toml,
+  never a server that cannot run. What a person sees about memory is read from
+  here.
 - `draining`, `drained_deliveries`, `draining_since`, `draining_by`,
   `draining_until`, `drain_failed_loud` — the deploy-window drain.
 - `round_stage_supervisor` — `{ healthy, stale_after_s, last_attempt_at, … }`.
@@ -500,8 +510,10 @@ a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
 example, `4` in code).
 
 **`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`3000`),
-`alert_cooldown_min` (`60`), `context_quotas` (table, `{ experiences = 24,
-resources = 8 }`).
+`context_quotas` (table, `{ experiences = 24, resources = 8 }`), and memory
+health (S1): `probe_interval_s` (`120`), `down_after_min` (`10`),
+`boot_grace_min` (`5`), `rewake_h` (`6`), `incident_ticket_after_min` (`120`).
+The retired `alert_cooldown_min` is ignored if still present.
 
 **`[openviking]`** — the memory engine. `enabled` (`true`), the three pins
 `version`, `llama_cpp_python_version` and `extension_commit`; identity

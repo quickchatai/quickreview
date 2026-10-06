@@ -818,7 +818,9 @@ describe("the reviewer USER key", () => {
     expect(read()).toBeNull();
     clock = 1500;
     expect(read()).toBe(KEY);
-    // Once found it is remembered, not re-read.
+    // Inside the TTL a found key is remembered, not re-read. (Past it the file
+    // is re-stat'ed, so a rotated or removed key is noticed — S1,
+    // pinned in tests/memory-probe.test.ts.)
     rmSync(dir, { recursive: true, force: true });
     expect(read()).toBe(KEY);
   });

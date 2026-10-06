@@ -463,16 +463,24 @@ Nothing is ever re-issued. A key that already exists is read back and
 redistributed; a rotation would orphan every copy already handed out, so a file
 holding a *different* value is reported as a conflict and left alone.
 
-**Declining memory is a supported answer, with one rough edge.** The reviewer
-then runs memory-less: rounds still run and are never blocked or delayed by
-memory, the TUI's memory tab shows the store as unavailable, and the end-of-day
-curator and the `[feedback]` sink have nowhere to write. The rough edge: the
-daemon has no word for "off" yet, so a missing reviewer key is reported the
-same way as an unreadable store — every round prompt carries a short
-`MEMORY UNAVAILABLE THIS ROUND` note (the session is told to review normally
-and never to mention it in the posted review) and the overseer hears a
-`round_memory_degraded` anomaly once an hour. Loud, harmless, and yours to
-ignore until that state is given its own name.
+**Declining memory is a supported answer, and the step tells the daemon.** The
+reviewer then runs memory-less: rounds still run and are never blocked or
+delayed by memory, the TUI's memory tab shows the store as unavailable, and the
+end-of-day curator and the `[feedback]` sink have nowhere to write. Declining
+mints and places nothing; its one write is `[openviking] enabled = false` in
+config.toml — the daemon's word for "off" — so memory health reports "not
+monitored" and raises nothing (on the server route it ships with the next
+deploy sync). Configuring memory later switches it back on. The difference
+matters: with memory left ON and no reviewer key, a missing key is what it is —
+a credential failure — and memory health (S1) treats it as one: every
+round prompt carries a short `MEMORY UNAVAILABLE THIS ROUND` note (the session
+reviews normally and never mentions it in the posted review), the TUI board
+shows `MEMORY AUTH FAILED`, the overseer is woken (`memory_auth_failed`, again
+every 6 h) and, after 2 h, the TUI files one tracker ticket. On an install that
+DOES want memory, the same wake fires once, harmlessly, on a first bring-up
+before step 72 has placed the keys, and boot provisioning's first run (which
+creates the users) raises one `memory_provision_failed` — both expected on a
+fresh install.
 
 One placement detail you may see: the key file's home is
 `~/.config/qcr-operator/<install>/openviking-keys.env` — outside the secrets dir

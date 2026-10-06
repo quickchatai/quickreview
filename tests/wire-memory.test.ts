@@ -77,3 +77,111 @@ describe("wire.ts: the memory phase is actually connected", () => {
     expect(wire).not.toMatch(/"state",\s*"digest"/);
   });
 });
+
+// memory failures reach a person. Like everything above, this
+// wiring degrades silently when disconnected (no block, no wake, no banner),
+// so the tripwire is structural.
+describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
+  it("BOTH credentials in use are probed, authenticated, separately", () => {
+    expect(wire).toContain("new MemoryHealthMonitor({");
+    expect(wire).toMatch(/daemon: credentialProbe\(\{[\s\S]*?reviewerKey\(\)/);
+    expect(wire).toMatch(
+      /sessions: credentialProbe\(\{[\s\S]*?readOvcliKey\(sessions\.ovcliConfPath\(\)\)/,
+    );
+  });
+
+  it("the daemon's own requests and every round seed feed it", () => {
+    expect(wire).toMatch(
+      /apiKey: reviewerKey,[\s\S]*?onRequest: \(r\) => memoryHealth\?\.recordRequest\(r\)/,
+    );
+    expect(wire).toMatch(/onSeeded: \(mem: RoundMemory\) =>\s*memoryHealth\?\.recordRoundSeed\(/);
+    // The raw-tier client built in buildParts is counted too, late-bound.
+    expect(wire).toMatch(/onRequest: \(r\) => memoryRequests\.sink\?\.\(r\)/);
+    expect(wire).toMatch(
+      /parts\.memoryRequests\.sink = \(r\) => memoryHealth\?\.recordRequest\(r\)/,
+    );
+  });
+
+  it("its block reaches status.json beside openviking", () => {
+    expect(wire).toMatch(
+      /memoryStatus: \(\): MemoryStatus =>\s*memoryHealth\s*\? memoryHealth\.status\(\)/,
+    );
+    // Before onStart decides, the block is UNKNOWN (pending), never "off".
+    expect(wire).toContain(": pendingMemoryStatus()");
+  });
+
+  it("wakes go through the anomaly funnel, and a drain only defers memory_down", () => {
+    expect(wire).toMatch(
+      /wake: \(kind, detail, message\) => d\.store\.logAnomaly\(kind, null, null, detail, message\)/,
+    );
+    expect(wire).toMatch(/draining: \(\) => d\.store\.drainState\(\)\.draining/);
+    expect(wire).toMatch(/load: \(\) => d\.store\.memoryIncident\(\)/);
+  });
+
+  it("a changed daemon key rewrites the live sessions' ovcli.conf", () => {
+    expect(wire).toMatch(
+      /keyChangeWatcher\(\(\) => \{\s*const res = sessions\.provisionOvCredentials\(\)/,
+    );
+    expect(wire).toMatch(/beforeProbe: \(\) => \{\s*watchKey\(reviewerKey\(\)\)/);
+  });
+
+  it("the boot provisioning report is read and wakes once per report", () => {
+    // The step itself (one row, once per report, an unreadable file included)
+    // is tested against a real StateStore in openviking-provision.test.ts;
+    // this pins that the daemon's boot actually runs it, over the anomaly
+    // funnel, before the monitor starts.
+    expect(wire).toMatch(
+      /const prov = readProvisionReport\(provisionReportPath\(root\)\);\s*memoryHealth\.setProvision\(prov\);\s*raiseProvisionWake\(d\.store, prov\);\s*memoryHealth\.start\(\);/,
+    );
+  });
+
+  it("gaps are counted into a QUIET openviking_gap, rate-limited", () => {
+    // The limiter is tested in memory-probe.test.ts; this pins the wiring.
+    expect(wire).toContain("onGap: countedGap");
+    expect(wire).toMatch(
+      /const countedGap = countedGapSink\(\{\s*record: \(gap\) => memoryHealth\?\.recordGap\(gap\),\s*logAnomaly: \(kind, pr, roundNo, detail\) => d\.store\.logAnomaly\(kind, pr, roundNo, detail\),/,
+    );
+  });
+
+  it("only memory switched OFF is 'not monitored' — a configured-on memory with no server is an outage", () => {
+    expect(wire).toMatch(
+      /if \(!cfg\.openviking\.enabled\) \{\s*memoryUnmonitored = "\[openviking\] enabled = false";\s*\} else \{/,
+    );
+    // The supervisor's "enabled" folds in a missing binary; it must not
+    // decide whether memory is watched.
+    expect(wire).not.toMatch(/memoryUnmonitored = cfg\.openviking\.enabled/);
+    expect(wire).not.toMatch(/if \(!supervisor\.status\(\)\.enabled\)/);
+  });
+
+  it("the dead per-round alert knob is gone", () => {
+    expect(wire).not.toContain("alertCooldownMin");
+    expect(wire).not.toContain("alert_cooldown_min");
+    expect(MEMORY_DEFAULTS).not.toHaveProperty("alert_cooldown_min");
+    expect(MEMORY_DEFAULTS).toMatchObject({
+      probe_interval_s: 120,
+      down_after_min: 10,
+      boot_grace_min: 5,
+      rewake_h: 6,
+      incident_ticket_after_min: 120,
+    });
+  });
+});
+
+describe("tui/index.ts: memory failures reach the operator (S1)", () => {
+  const tui = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
+
+  it("the desktop notification rides the alert pipeline, from status.json", () => {
+    expect(tui).toMatch(
+      /maybeWriteMemoryAlert\(\s*full\.companion\.alerts_dir,\s*a\.view\.snapshot\?\.memory,/,
+    );
+  });
+
+  it("the tracker ticket is filed from status.json past the configured age", () => {
+    expect(tui).toMatch(/maybeFileMemoryIncident\(incidentTracker, a\.view\.snapshot\?\.memory,/);
+    expect(tui).toContain("full.memory.incident_ticket_after_min * 60_000");
+  });
+
+  it("the companion's view carries the TUI's own request counts", () => {
+    expect(tui).toContain("tuiMemoryRequests: memStore.requestCounts()");
+  });
+});

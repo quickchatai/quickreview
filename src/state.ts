@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
+import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import {
   holdActive,
   mayLift,
@@ -5107,6 +5108,53 @@ export class StateStore {
     });
   }
 
+  // ---- memory incident (S1) ---------------------------------------
+
+  /** The memory incident the health monitor last recorded as OPEN, or null
+   * when the last record closed it (or none exists). Events-table backed, so
+   * a daemon restart inside an outage continues the same incident — the TUI
+   * files one tracker ticket per incident START, and a restart must not mint
+   * a new start. An unreadable row reads as no incident (the monitor then
+   * opens a fresh one on its next measurement — a duplicate ticket at worst,
+   * never a silenced outage). */
+  memoryIncident(): MemoryIncident | null {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE kind = 'memory_incident' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string | null } | undefined;
+    if (!row?.payload) return null;
+    try {
+      const p = JSON.parse(row.payload) as { kind?: unknown; since?: unknown; closed?: unknown };
+      if (p.closed === true) return null;
+      if ((p.kind === "auth_failed" || p.kind === "down") && typeof p.since === "string")
+        return { kind: p.kind, since: p.since };
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Record the open incident (or its close, with null). */
+  recordMemoryIncident(incident: MemoryIncident | null): void {
+    this.logEvent("memory_incident", null, incident ?? { closed: true });
+  }
+
+  /** The newest event of `kind`'s payload as an object, or null (none, or not
+   * an object). For once-per-X marks kept in the events table. */
+  lastEventPayload(kind: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1")
+      .get(kind) as { payload: string | null } | undefined;
+    if (!row?.payload) return null;
+    try {
+      const p: unknown = JSON.parse(row.payload);
+      return p && typeof p === "object" && !Array.isArray(p)
+        ? (p as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ---- overseer heartbeat --------------------------------------
 
   /** Record that the daily heartbeat fired for `date` (local "YYYY-MM-DD"). */
@@ -5692,6 +5740,14 @@ export interface StatusSnapshot {
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
    * from a daemon with no supervisor wired — readers must default. */
   openviking?: OpenVikingStatus;
+  /** Reviewer-memory HEALTH (S1, src/memory/health.ts) — beside the
+   * unauthenticated `openviking` block, never instead of it: whether memory
+   * actually works with the credentials in use, judged by an authenticated
+   * probe per credential and by the daemon's own requests. What a person
+   * sees about memory (TUI banner, notification, tracker ticket, `qcr
+   * status`, the companion's view) is read from here. Absent in snapshots
+   * from an older daemon — readers say "not reported", never "healthy". */
+  memory?: MemoryStatus;
   /** Deploy-window drain (2026-08-25): present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
@@ -5780,6 +5836,7 @@ export function buildStatusSnapshot(
   threadDecisions?: StatusSnapshot["thread_decisions"],
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
   roundStageBounds?: RoundStageBounds,
+  memory?: MemoryStatus,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -5955,6 +6012,7 @@ export function buildStatusSnapshot(
         }
       : {}),
     ...(openviking ? { openviking } : {}),
+    ...(memory ? { memory } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(roundStageSupervisor || pipelineCauses.length > 0

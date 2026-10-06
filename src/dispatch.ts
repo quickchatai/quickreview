@@ -385,18 +385,6 @@ async function directiveEscalationFor(
 }
 
 /**
- * When this daemon last alerted the overseer about memory being down, per
- * store (the store IS the daemon instance's identity, same as `activePumps`).
- *
- * The gap is EVENT-logged on every affected round — the record is never
- * thinned. Only the overseer ALERT is cooled down: a context store that stays
- * down would otherwise mint one anomaly inject per round forever, which buries
- * the anomalies that need reading. A cold-start daemon alerts on its first
- * degraded round, which is the sample that matters.
- */
-const memoryAlertAt = new WeakMap<StateStore, number>();
-
-/**
  * Seed one round's prompt with memory: the guaranteed pinned head
  * plus EXACTLY ONE budgeted context block, queried from the PR's title and
  * diff shape.
@@ -409,7 +397,14 @@ const memoryAlertAt = new WeakMap<StateStore, number>();
  * It cannot fail a round. `assembleRoundMemory` is total (deadline + swallowed
  * throws); the extra try/catch here is belt-and-braces for a client that
  * breaks the contract, and the outcome is identical either way: log the gap,
- * alert the overseer, dispatch memory-less.
+ * tell the memory health monitor (`seed.onSeeded`), dispatch memory-less.
+ *
+ * There is no per-round memory anomaly any more (S1). The old
+ * `round_memory_degraded` was never a WAKE kind, so its "alert" reached
+ * nobody for five weeks; the monitor (src/memory/health.ts) now owns telling
+ * a person, on state transitions rather than once per round. The
+ * `round_memory_seeded` event stays — it is the per-round record, and it is
+ * what the monitor is fed from.
  */
 async function seedRoundMemory(
   deps: DispatchDeps,
@@ -478,32 +473,14 @@ async function seedRoundMemory(
       ].join("\n"),
     );
   }
-  if (!mem.degraded) return mem;
-
-  log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
-  const missing = [
-    ...(mem.gaps.some((g) => g.part === "head") ? ["no standing-instructions head"] : []),
-    ...(mem.gaps.some((g) => g.part === "context") ? ["no recalled context"] : []),
-  ].join(" and ");
-  const nowMs = (deps.now ? deps.now() : new Date()).getTime();
-  const cooldownMs = (seed.alertCooldownMin ?? 60) * 60_000;
-  const last = memoryAlertAt.get(deps.store);
-  if (last !== undefined && nowMs - last < cooldownMs) return mem;
-  memoryAlertAt.set(deps.store, nowMs);
-  deps.store.logAnomaly(
-    "round_memory_degraded",
-    order.pr,
-    order.round_no,
-    `context store did not answer at round build (${describeGaps(mem)}); the round was dispatched memory-less`,
-    [
-      `ANOMALY (memory) — PR #${order.pr} round ${order.round_no}`,
-      `The context store did not answer when this round was built (${describeGaps(mem)}), so the round prompt carries ${missing}.`,
-      "The round itself was dispatched normally and on time — memory never blocks or delays a review. But a memory " +
-        "engine that stays down means every round is running blind: check the openviking supervisor's status " +
-        "(state/status.json) and the daemon log.",
-      `Further memory alerts are suppressed for ${seed.alertCooldownMin ?? 60} minutes; the per-round record stays in the round_memory_seeded events.`,
-    ].join("\n"),
-  );
+  try {
+    seed.onSeeded?.(mem);
+  } catch (err) {
+    log(`dispatch: #${order.pr} memory health observer threw (ignored)`, err);
+  }
+  if (mem.degraded) {
+    log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
+  }
   return mem;
 }
 

@@ -60,9 +60,28 @@ import {
   keyFromFile,
   openVikingContextAssembler,
   openVikingStore,
+  type OvRequestRecord,
 } from "./openviking/index.js";
-import { OV_REVIEWER_KEY_SECRET, openVikingSessionLifecycle } from "./memory/ovsession.js";
+import {
+  OV_REVIEWER_KEY_SECRET,
+  keyChangeWatcher,
+  openVikingSessionLifecycle,
+  readOvcliKey,
+} from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import {
+  MemoryHealthMonitor,
+  disabledMemoryStatus,
+  pendingMemoryStatus,
+  type MemoryStatus,
+} from "./memory/health.js";
+import { credentialProbe } from "./openviking/probe.js";
+import {
+  provisionReportPath,
+  raiseProvisionWake,
+  readProvisionReport,
+} from "./openviking/provisionreport.js";
+import { countedGapSink } from "./openviking/gapsink.js";
 import { recoverPrForOperator } from "./operator-recovery.js";
 import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
@@ -95,6 +114,10 @@ export interface ProductionParts {
   gate: MutationGate;
   adapter: GitHubAdapter;
   sessions: PiSessionManager;
+  /** Late-bound observer for the raw-tier client's requests (S1):
+   * buildParts builds that client before the memory health monitor exists,
+   * so createProductionDaemon points `sink` at the monitor once it does. */
+  memoryRequests?: { sink: ((record: OvRequestRecord) => void) | null };
 }
 
 export function buildParts(root = sandboxRoot(), loaded = loadConfig()): ProductionParts {
@@ -119,6 +142,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   // OpenViking session a PR's pi attaches to. Its own client, on the reviewer
   // USER key — never ADMIN/ROOT. Both directions are total, so a store that is
   // down or unkeyed costs the raw tier and never a session.
+  const memoryRequests: NonNullable<ProductionParts["memoryRequests"]> = { sink: null };
   const ovSessions = openVikingSessionLifecycle(
     new OpenVikingClient({
       baseUrl: openVikingBaseUrl(cfg.openviking),
@@ -126,7 +150,11 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
       user: cfg.openviking.user,
       account: cfg.openviking.account,
       timeoutMs: cfg.openviking.request_timeout_ms,
+      // Counted with the daemon's other requests (S1).
+      onRequest: (r) => memoryRequests.sink?.(r),
     }),
+    // A delete that fails used to be silent; the lifecycle now says so.
+    { log: (msg) => console.log(`[quickreviewd] ${msg}`) },
   );
   const sessions = new PiSessionManager({
     cfg,
@@ -134,7 +162,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
     ovSessions,
     configPath: liveConfigPath(),
   });
-  return { cfg, root, minter, gate, adapter, sessions };
+  return { cfg, root, minter, gate, adapter, sessions, memoryRequests };
 }
 
 // exit-code checked, cwd mandatory — the first runner returned stdout
@@ -601,6 +629,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // shape = "tunnel-file" — a daemon without the tunnel shape configured
   // never starts the watcher.
   let webhookHeal: WebhookHealer | null = null;
+  // reviewer-memory HEALTH — the authenticated probe of each
+  // credential in use, fed by the daemon's own requests and round seeds, and
+  // the one source of the status.json `memory` block every person-facing
+  // surface reads. Built in onStart (it needs the store and the server's
+  // config); until then the block reads `unknown` — never healthy, never off.
+  let memoryHealth: MemoryHealthMonitor | null = null;
+  /** Why memory is NOT monitored on this daemon; null while still deciding. */
+  let memoryUnmonitored: string | null = null;
+  if (parts.memoryRequests) parts.memoryRequests.sink = (r) => memoryHealth?.recordRequest(r);
 
   // The origin store is built HERE, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
@@ -641,7 +678,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       assembler: lateAssembler,
       maxTokens: cfg.memory.context_tokens,
       timeoutMs: cfg.memory.context_timeout_ms,
-      alertCooldownMin: cfg.memory.alert_cooldown_min,
+      // Every seed, after the round was built, feeds memory health — a seed
+      // that timed out reaches no client observer, so this is the only place
+      // it is seen (S1; replaces the per-round anomaly).
+      onSeeded: (mem: RoundMemory) =>
+        memoryHealth?.recordRoundSeed({
+          degraded: mem.degraded,
+          ms: mem.ms,
+          reasons: mem.gaps.map((g) => `${g.part}: ${g.reason}`),
+        }),
     },
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
@@ -687,6 +732,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const status = openviking?.status();
       return status && reembed ? { ...status, reembed: reembed.status() } : status;
     },
+    // whether memory WORKS, beside whether the server is up.
+    memoryStatus: (): MemoryStatus =>
+      memoryHealth
+        ? memoryHealth.status()
+        : memoryUnmonitored !== null
+          ? disabledMemoryStatus(memoryUnmonitored)
+          : pendingMemoryStatus(),
 
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
@@ -711,6 +763,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // so the round path's first sweep lists a real (empty) tree instead
         // of leaning on how the server spells a missing one.
         onReady: () => {
+          // Memory health re-measures at once rather than at its next tick:
+          // a server that just came up should read healthy (or say why not)
+          // in seconds, not minutes.
+          void memoryHealth?.probeNow();
           const store = memoryStore;
           if (!store?.ensureWritable) return;
           void store.ensureWritable().then(
@@ -807,14 +863,28 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // so a key that lands after boot is picked up without a restart — and an
       // ABSENT key degrades exactly like a dead server, which is the correct
       // behaviour on a dev PC. Never an ADMIN or ROOT key.
+      // ONE key source for the client, the health probe and the key-change
+      // watcher (S1): it re-stats the file every TTL and the client
+      // drops its cache on a 401, so a rotated key is re-read — the cache
+      // that held a dead key forever is what kept memory down for a month.
+      const reviewerKey = keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET));
+      // The counted `openviking_gap`: every gap counted into the memory
+      // block, and a QUIET anomaly row at most once an hour per op:code that
+      // carries the running count (src/openviking/gapsink.ts).
+      const countedGap = countedGapSink({
+        record: (gap) => memoryHealth?.recordGap(gap),
+        logAnomaly: (kind, pr, roundNo, detail) => d.store.logAnomaly(kind, pr, roundNo, detail),
+        log,
+      });
       const memoryClient = new OpenVikingClient({
         baseUrl: openVikingBaseUrl(cfg.openviking),
-        apiKey: keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET)),
+        apiKey: reviewerKey,
         user: cfg.openviking.user,
         account: cfg.openviking.account,
         timeoutMs: cfg.openviking.request_timeout_ms,
         log,
-        onGap: (gap) => log("openviking gap", gap),
+        onGap: countedGap,
+        onRequest: (r) => memoryHealth?.recordRequest(r),
       });
       const memory = openVikingStore(memoryClient, {
         defaultCategory: cfg.openviking.default_category,
@@ -841,6 +911,78 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         searchTimeoutMs: cfg.openviking.search_timeout_ms,
         log,
       });
+
+      // Reviewer-memory health (S1). "Not monitored" is reserved
+      // for memory switched OFF — `[openviking] enabled = false`, which is
+      // what declining memory in onboarding writes. Memory configured ON
+      // whose server cannot run (a binary missing after a rebuild, a venv
+      // path drifted from `[openviking] bin`) IS monitored: its probes go
+      // unreachable and it reads `down` within 10 minutes, because that is an
+      // outage, not a choice — painting it like a deliberate off is the
+      // quiet failure this slice exists to remove.
+      if (!cfg.openviking.enabled) {
+        memoryUnmonitored = "[openviking] enabled = false";
+      } else {
+        // A rotated daemon key reaches the SESSIONS too: their ovcli.conf is
+        // rewritten the moment the key changes, not at the next session birth.
+        const watchKey = keyChangeWatcher(() => {
+          const res = sessions.provisionOvCredentials();
+          log(
+            `openviking: the reviewer key changed — sessions' ovcli.conf ${res.written ? "rewritten" : "NOT rewritten"}${res.keyed ? "" : ` (${res.reason || "no key"})`}`,
+          );
+          d.store.logEvent("openviking_key_changed", null, {
+            ovcli_written: res.written,
+            keyed: res.keyed,
+            reason: res.reason,
+          });
+        });
+        const probeBase = {
+          baseUrl: openVikingBaseUrl(cfg.openviking),
+          user: cfg.openviking.user,
+          account: cfg.openviking.account,
+          timeoutMs: cfg.openviking.request_timeout_ms,
+        };
+        memoryHealth = new MemoryHealthMonitor({
+          probes: {
+            daemon: credentialProbe({
+              ...probeBase,
+              key: () => ({ state: "key", key: reviewerKey() ?? "" }),
+            }),
+            sessions: credentialProbe({
+              ...probeBase,
+              key: () => readOvcliKey(sessions.ovcliConfPath()),
+            }),
+          },
+          beforeProbe: () => {
+            watchKey(reviewerKey());
+          },
+          wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
+          draining: () => d.store.drainState().draining,
+          incidents: {
+            load: () => d.store.memoryIncident(),
+            save: (incident) => d.store.recordMemoryIncident(incident),
+          },
+          where: {
+            daemon: `secrets/${OV_REVIEWER_KEY_SECRET}`,
+            sessions: "ovcli.conf in the pi HOME",
+          },
+          log,
+          // Floors: a mistyped 0 must not become a tight probe loop or a
+          // wake on every probe.
+          intervalMs: Math.max(10, cfg.memory.probe_interval_s) * 1000,
+          downAfterMs: Math.max(1, cfg.memory.down_after_min) * 60_000,
+          bootGraceMs: Math.max(0, cfg.memory.boot_grace_min) * 60_000,
+          rewakeMs: Math.max(1, cfg.memory.rewake_h) * 3_600_000,
+        });
+        // This boot's provisioning report (the entrypoint ran the script
+        // before us): into the block, and ONE wake per report when it says
+        // anything is wrong — keyed by the report's fingerprint, so a daemon
+        // restart inside the same container does not repeat it.
+        const prov = readProvisionReport(provisionReportPath(root));
+        memoryHealth.setProvision(prov);
+        raiseProvisionWake(d.store, prov);
+        memoryHealth.start();
+      }
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store
@@ -1098,6 +1240,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     },
 
     async onStop(reason = "shutdown") {
+      memoryHealth?.stop();
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();

@@ -108,7 +108,31 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // Stable incident state suppresses duplicates; this wake is the first loud
   // transition, while status/TUI/Slack heartbeat keep it persistently visible.
   "review_failed_loud",
+  // reviewer memory, from src/memory/health.ts. Memory was dead
+  // for five weeks (2026-09-03..10-02) behind an unlisted, per-round
+  // `round_memory_degraded` that never woke anyone. These three are raised
+  // by the health monitor on TRANSITIONS (and every 6 h while an outage
+  // lasts), never per round, so they cannot spam:
+  //   memory_auth_failed — a credential in use is refused, or there is none;
+  //                        never graced, never deferred by a drain;
+  //   memory_down        — no authenticated answer for 10 min (5 min boot
+  //                        grace); a drain defers it until it lifts;
+  //   memory_provision_failed — the boot's provisioning report says a user
+  //                        could not be ensured, the reviewer key does not
+  //                        authenticate, or a user was (re)created.
+  // The overseer is NOT the person this is for (it already knew for 33
+  // days): the same facts ride status.json `memory`, which the TUI turns into
+  // a board banner, a desktop notification and a tracker ticket.
+  "memory_auth_failed",
+  "memory_down",
+  "memory_provision_failed",
 ]);
+
+/** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by
+ * deep equality: promoting a kind to wake is a decision, never a side effect. */
+export function wakeKinds(): string[] {
+  return [...WAKE_KINDS].sort();
+}
 
 /**
  * Two cancellation kinds are DELIBERATELY unlisted above, for
@@ -132,6 +156,29 @@ export function anomalySeverity(kind: string): AnomalySeverity {
 /** Identical kind+pr inside this window injects once (the row is still
  * written every time — dedup is about the wake, never the audit trail). */
 export const ANOMALY_DEDUP_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Kinds whose RAISER already rate-limits them to transitions, so the generic
+ * dedup keys on what the wake SAYS (kind + pr + detail) rather than on kind +
+ * pr alone (S1). The memory health monitor raises `memory_auth_failed`
+ * on each transition (a new credential failing, a relapse) and every 6 h; the
+ * boot raises `memory_provision_failed` once per report. Keyed on kind alone,
+ * a SECOND transition inside 10 minutes — the sessions' credential failing
+ * after the daemon's — was swallowed until the 6 h re-wake. Keyed on the
+ * detail, a different transition always reaches the overseer, while an
+ * identical repeat (a credential flapping between refused and accepted) is
+ * still held back by the window. Pinned by deep equality in
+ * `tests/anomalies.test.ts`.
+ */
+const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
+  "memory_auth_failed",
+  "memory_down",
+  "memory_provision_failed",
+]);
+
+export function detailKeyedKinds(): string[] {
+  return [...DETAIL_KEYED_KINDS].sort();
+}
 
 /** What logAnomaly forwards: the record plus the caller's richer wake text. */
 export interface AnomalySignal extends AnomalyRecord {
@@ -166,7 +213,7 @@ export class AnomalyWakePolicy {
 
   onAnomaly(signal: AnomalySignal): void {
     if (anomalySeverity(signal.kind) !== "wake") return;
-    const key = `${signal.kind}#${signal.pr ?? "-"}`;
+    const key = `${signal.kind}#${signal.pr ?? "-"}${DETAIL_KEYED_KINDS.has(signal.kind) ? `#${signal.detail}` : ""}`;
     const nowMs = this.now().getTime();
     const prev = this.lastInject.get(key);
     if (prev !== undefined && nowMs - prev < this.windowMs) {

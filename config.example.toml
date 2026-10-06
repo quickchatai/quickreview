@@ -246,11 +246,24 @@ subagent_max_concurrency = 12
 [memory]
 # Round seeding — how much memory rides each round prompt and how
 # long the daemon waits for it. Memory NEVER blocks or delays a round: past
-# the deadline the round dispatches memory-less, logs the gap, and alerts on
-# a cooldown so a store that stays down cannot bury the overseer.
+# the deadline the round dispatches memory-less and logs the gap.
 context_tokens = 2000
 context_timeout_ms = 3000
-alert_cooldown_min = 60
+# Memory health (S1, src/memory/health.ts) — how an outage reaches a
+# person. Every probe_interval_s the daemon lists the reviewer memories root
+# AUTHENTICATED, once with its own key and once with the sessions' ovcli.conf.
+# A refused credential wakes memory_auth_failed at once (never graced, never
+# held by a drain); no authenticated answer for down_after_min wakes
+# memory_down (a server still warming up reads "unknown" for boot_grace_min;
+# a drain holds the wake until it lifts). Either re-wakes every rewake_h while
+# it lasts. The state rides status.json `memory`: the TUI board banner, its
+# desktop notification, `qcr status`, and ONE tracker ticket the TUI files for
+# an incident older than incident_ticket_after_min.
+probe_interval_s = 120
+down_after_min = 10
+boot_grace_min = 5
+rewake_h = 6
+incident_ticket_after_min = 120
 # WHICH scopes the round's one context search may draw from, and how many items
 # each may contribute. `context_tokens` above is the budget; this is the
 # corpus — the two bind independently.

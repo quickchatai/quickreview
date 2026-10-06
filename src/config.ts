@@ -1130,9 +1130,22 @@ export interface MemoryConfig {
   /** Deadline for the head + block assembly, after which the round proceeds
    * memory-less. */
   context_timeout_ms: number;
-  /** Minimum minutes between degraded-memory overseer anomalies. The gap is
-   * logged every round regardless; only the alert is cooled down. */
-  alert_cooldown_min: number;
+  /** Memory health (S1, `src/memory/health.ts`): how often the
+   * daemon's AUTHENTICATED probe lists the reviewer memories root with each
+   * credential in use (its key file and the sessions' ovcli.conf). Replaces
+   * the per-round `alert_cooldown_min` (an alert that never woke anyone; a
+   * leftover key in a live config.toml is ignored). */
+  probe_interval_s: number;
+  /** No authenticated answer for this long ⇒ `down` (wakes `memory_down`). */
+  down_after_min: number;
+  /** After boot, a server still warming up reads `unknown`, not degraded,
+   * for this long. Never applies to an authentication failure. */
+  boot_grace_min: number;
+  /** An outage that lasts re-wakes the overseer this often. */
+  rewake_h: number;
+  /** The TUI files ONE tracker ticket for a memory incident older than this
+   * (sourced from status.json, never from memory). */
+  incident_ticket_after_min: number;
   /** Which OpenViking scopes the round's context search may draw from, and how
    * many items each may contribute. Keys must be server quota buckets;
    * `src/openviking/client.ts` drops unknown ones with a gap. An EMPTY map
@@ -1144,7 +1157,11 @@ export interface MemoryConfig {
 export const MEMORY_DEFAULTS: MemoryConfig = {
   context_tokens: 2000,
   context_timeout_ms: 3000,
-  alert_cooldown_min: 60,
+  probe_interval_s: 120,
+  down_after_min: 10,
+  boot_grace_min: 5,
+  rewake_h: 6,
+  incident_ticket_after_min: 120,
   context_quotas: { experiences: 24, resources: 8 },
 };
 

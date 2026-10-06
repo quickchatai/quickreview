@@ -41,7 +41,8 @@ companion→TUI action channel is wired into `src/tui/index.ts`.
 | companion container lifecycle and pi argv | `src/tui/companion.ts` |
 | the companion image | `docker/companion/Dockerfile`, `docker/companion/entrypoint.sh` |
 | TUI → companion ambient files | `src/tui/feed.ts` |
-| companion → TUI alerts | `src/tui/alerts.ts` |
+| companion → TUI alerts (and the status.json-sourced pi-auth / memory alerts) | `src/tui/alerts.ts` |
+| the memory-incident tracker ticket | `src/tui/memincident.ts` |
 | companion → TUI actions | `src/tui/actions.ts` |
 | daily conversation rollover | `src/tui/rollover.ts` |
 | the companion's tool-call vetoes | `extensions/companion-guard.ts` |
@@ -278,6 +279,12 @@ Rendering:
 - `BoardView.dryRun` is `boolean | undefined` and initialises to `undefined`
   (`src/tui/app.ts`); `modeBadge` (`src/tui/design.ts`) renders `MODE UNKNOWN`
   for that, and `LIVE` / `DRY-RUN` only once a heartbeat has proved one.
+- Reviewer memory (S1, `memorySegment` in `src/tui/board.ts`, read
+  from status.json `memory` and never from OpenViking): `⛔ MEMORY AUTH
+  FAILED` / `⛔ MEMORY DOWN` / `▲ MEMORY DEGRADED` sit right after the daemon
+  health in the board's top bar; an unmeasured or unreported state is a dim
+  `mem ?` (`mem off` when memory is switched off in config.toml) at the end — never nothing, which
+  would read healthy. Only `healthy` paints nothing.
 
 Derived actions and published facts:
 
@@ -289,10 +296,17 @@ Derived actions and published facts:
   direction does not match the observed state
   ([`tui-actions-wiring.md`](../tui-actions-wiring.md)).
 - Every companion-facing field the TUI could not read is `null` in
-  `view.json` — `dry_run`, `total`, `by_state` are all `T | null`
+  `view.json` — `dry_run`, `total`, `by_state` and `memory` are all `T | null`
   (`TuiView` in `src/tui/feed.ts`) — and `extensions/tui-view.ts` renders an
   explicit unknown rather than dropping the line, because a dropped line reads
   as "nothing to report".
+- The memory desktop notification (`maybeWriteMemoryAlert`,
+  `src/tui/alerts.ts`) and the memory-incident ticket
+  (`src/tui/memincident.ts`) act only on a FRESH snapshot (poll health `ok`
+  or `pipeline_unhealthy`): a stale one may describe an outage that has
+  already ended. The ticket is one per incident start, filed as `qcr-tui`
+  into a `[sink] kind = "wayfinder"` tracker once the incident is older than
+  `[memory] incident_ticket_after_min`.
 
 ## The startup contract
 

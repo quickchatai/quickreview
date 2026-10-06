@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { zoneDateString } from "../eod.js";
+import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
 
 export type AlertTier = "notice" | "alert";
 
@@ -469,5 +470,58 @@ export function maybeWritePiAuthAlert(
     }),
   );
   mem.lastWritten = flag.last_at;
+  return name;
+}
+
+// ---- reviewer memory unusable → the same alert pipeline (S1) -------
+
+export interface MemoryAlertMemory {
+  /** `<state>@<since>` of the transition the last written file covered. */
+  lastWritten: string;
+}
+
+/**
+ * Bridge from status.json `memory` into the alert pipeline: ONE alert-tier
+ * file per TRANSITION into `auth_failed` or `down` — badge, notify-send,
+ * overseer inject and the per-cause cooldown all come from the existing
+ * consumer, exactly like `maybeWritePiAuthAlert`. Memory was dead for five
+ * weeks while the only party told was the overseer; this is the desktop
+ * notification half of reaching a person.
+ *
+ * Sourced from the daemon's snapshot, NEVER from OpenViking (the thing that is
+ * down), and only from FRESH data: `fresh` is the poller's verdict — a stale
+ * snapshot's memory state may long have changed, and an alert built from it
+ * would be news about the past. Leaving the bad states re-arms it, so the next
+ * outage notifies again.
+ */
+export function maybeWriteMemoryAlert(
+  alertsDir: string,
+  memory: MemoryStatus | undefined,
+  fresh: boolean,
+  mem: MemoryAlertMemory,
+  now: () => Date = () => new Date(),
+): string | undefined {
+  if (!fresh || !memory || !memory.enabled) return undefined;
+  if (memory.state !== "auth_failed" && memory.state !== "down") {
+    mem.lastWritten = "";
+    return undefined;
+  }
+  const key = `${memory.state}@${memory.since}`;
+  if (mem.lastWritten === key) return undefined;
+  const auth = memory.state === "auth_failed";
+  const name = `${now().toISOString().replace(/[:.]/g, "-")}-memory-${auth ? "auth-failed" : "down"}.json`;
+  mkdirSync(alertsDir, { recursive: true });
+  writeFileSync(
+    join(alertsDir, name),
+    JSON.stringify({
+      tier: "alert",
+      cause: auth ? "memory-auth-failed" : "memory-down",
+      pr: null,
+      title: auth ? "reviewer memory: a key is refused" : "reviewer memory: down",
+      body: `${memoryStatusLine(memory, now())} — rounds run memory-less and nothing is learned until it is fixed (the TUI board shows it; qcr status has the detail).`,
+      ts: now().toISOString(),
+    }),
+  );
+  mem.lastWritten = key;
   return name;
 }

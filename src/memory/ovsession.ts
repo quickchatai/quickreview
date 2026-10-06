@@ -255,6 +255,51 @@ export function ovcliConfPathIn(piHome: string): string {
   return join(piHome, ".openviking", "ovcli.conf");
 }
 
+/**
+ * The key the sessions are actually handed, read back out of `ovcli.conf`
+ * (S1) — what the memory health probe authenticates with, so the
+ * SESSIONS' credential is judged, not assumed to equal the daemon's. `absent`
+ * is no file yet (no session born); `unreadable` is a file a session could not
+ * use either. The key is returned to the caller and never logged.
+ */
+export function readOvcliKey(
+  path: string,
+): { state: "key"; key: string } | { state: "absent" } | { state: "unreadable"; detail: string } {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "absent" }
+      : { state: "unreadable", detail: `ovcli.conf could not be read (${(err as Error).message})` };
+  }
+  try {
+    const parsed = JSON.parse(raw) as { api_key?: unknown };
+    return { state: "key", key: typeof parsed?.api_key === "string" ? parsed.api_key.trim() : "" };
+  } catch {
+    return { state: "unreadable", detail: "ovcli.conf is not JSON" };
+  }
+}
+
+/**
+ * Notice when the daemon's key CHANGES (S1). Call `check()` with the
+ * current key on a cadence (the health probe's tick); `onChange` fires when a
+ * non-null key differs from the last one seen — the first sighting only
+ * records. wire.ts rewrites the live sessions' `ovcli.conf` from it, so a
+ * rotated key reaches the sessions without waiting for a session to be born.
+ * Returns whether this call fired. Never logs the key.
+ */
+export function keyChangeWatcher(onChange: () => void): (key: string | null) => boolean {
+  let last: string | null | undefined;
+  return (key) => {
+    const prev = last;
+    last = key;
+    if (prev === undefined || key === null || key === prev) return false;
+    onChange();
+    return true;
+  };
+}
+
 // ---- the environment a session is launched with -----------------------------
 
 export interface OvSessionEnvOptions {

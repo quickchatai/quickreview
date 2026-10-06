@@ -44,7 +44,13 @@ import {
   type MemoryStore,
   type MemoryWriteResult,
 } from "../memory/store.js";
-import { OpenVikingClient, type HttpFetch, type OvGap } from "../openviking/client.js";
+import {
+  OpenVikingClient,
+  type HttpFetch,
+  type OvGap,
+  type OvRequestRecord,
+} from "../openviking/client.js";
+import { countOutcome, emptyRequestCounter, type RequestCounter } from "../memory/health.js";
 import { OpenVikingStore } from "../openviking/store.js";
 import { keysFilePath, MEMORY } from "./companion.js";
 
@@ -301,6 +307,10 @@ function userKey(user: MemoryUser, key: (name: string) => string | null): () => 
  * amortization, which has its own store.
  */
 export class TuiMemoryStore implements HealthyMemoryStore {
+  /** The TUI's own requests, per `user/op` (S1): the server logs no
+   * caller, so load is attributed from the client side — the daemon counts
+   * its own in status.json, the TUI its own here (published in view.json). */
+  private readonly counts: Record<string, RequestCounter> = {};
   private readonly ns: Namespace[];
   private readonly writeUser: MemoryUser;
   private readonly baseUrl: string;
@@ -348,6 +358,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
         const slot = this.ns.find((n) => n.user === user);
         if (slot) slot.gaps.push(gap);
       },
+      onRequest: (r) => this.countRequest(user, r),
     });
     const store = new OpenVikingStore({
       client,
@@ -356,6 +367,15 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       ...(opts.log ? { log: opts.log } : {}),
     });
     return store;
+  }
+
+  private countRequest(user: MemoryUser, r: OvRequestRecord): void {
+    countOutcome((this.counts[`${user}/${r.op}`] ??= emptyRequestCounter()), r.outcome);
+  }
+
+  /** A copy of this TUI's request counts since it started, per `user/op`. */
+  requestCounts(): Record<string, RequestCounter> {
+    return Object.fromEntries(Object.entries(this.counts).map(([k, c]) => [k, { ...c }]));
   }
 
   /** Every entry BOTH trees hold, ids namespaced, oldest first. */

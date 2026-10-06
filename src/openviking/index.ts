@@ -44,6 +44,7 @@ export {
   QUOTA_CATEGORIES,
   batchWriteLanded,
   buildContextSearchBody,
+  isAuthFailure,
   keyFromFile,
   ovFailed,
   type BatchWriteOperation,
@@ -55,12 +56,14 @@ export {
   type ContextSearchResult,
   type HttpFetch,
   type HttpResponse,
+  type KeyFileSource,
   type KeySource,
   type OpenVikingClientOptions,
   type OvDirEntry,
   type OvGap,
   type OvFailure,
   type OvOutcome,
+  type OvRequestRecord,
   type OvSessionResult,
   type TimeField,
 } from "./client.js";
@@ -89,3 +92,13 @@ export {
   openVikingContextAssembler,
   type OpenVikingContextOptions,
 } from "./context.js";
+// The AUTHENTICATED probe and the boot provisioning report (S1) —
+// what the memory health monitor (src/memory/health.ts) is fed from.
+export {
+  classifyProbe,
+  credentialProbe,
+  probeKeyFrom,
+  type CredentialProbeOptions,
+  type ProbeKey,
+} from "./probe.js";
+export { provisionReportPath, provisionWake, readProvisionReport } from "./provisionreport.js";

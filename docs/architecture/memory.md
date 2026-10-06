@@ -27,7 +27,8 @@ migration have their own page: [../memory-embeddings.md](../memory-embeddings.md
 | A PR session's identity, credential file and raw-notes tier | `src/memory/ovsession.ts` |
 | The one-time import from the retired file engine | `src/memory/import.ts`, `src/memory/legacy-file.ts`, `scripts/import-pi-memory.mjs` |
 | The engine process: spawn, restart ladder, heartbeat block | `src/openviking/supervisor.ts`, `proc.ts`, `types.ts` |
-| The health gate (`/health`, `/ready`) | `src/openviking/health.ts` |
+| The health gate (`/health`, `/ready`) — unauthenticated: is the server up | `src/openviking/health.ts` |
+| Memory HEALTH — does memory work with the credentials in use, and who is told | `src/memory/health.ts`, `src/openviking/probe.ts`, `src/openviking/provisionreport.ts`, `src/tui/memincident.ts` |
 | HTTP: the single write route, determinism pins, auth | `src/openviking/client.ts` |
 | `MemoryStore` over the engine (entries as files, pin/retire) | `src/openviking/store.ts` |
 | `ContextAssembler` over the engine (head + block) | `src/openviking/context.ts` |
@@ -140,7 +141,7 @@ operator hourly about a healthy system.
 
 Defaults (`ROUND_CONTEXT_DEFAULTS`): 2000 tokens, a 3000 ms deadline for the
 whole seed, 6 chars/token for the defensive clamp, 600 chars of query. The configured knobs are `[memory] context_tokens`, `context_timeout_ms`,
-`alert_cooldown_min`, `context_quotas`.
+`context_quotas` (and the memory-health knobs, below).
 
 `roundContextQuery({ title, files })` builds the one query: the PR title plus
 its diff shape (top directory areas at two segments deep, top file
@@ -231,6 +232,73 @@ heartbeat's pin-drift check reads against `[openviking] version`.
 timeout, 503, unparseable body) and never rejects. `/ready` is skipped when
 `/health` did not answer: there is nothing to learn from a second connection
 refusal.
+
+**Up is not working.** Both of those endpoints are unauthenticated: from
+2026-09-03 to 10-02 they said "ready" every 30 s while every round's memory
+read was refused with `Invalid API Key` and nothing was written. That is what
+the next section is for.
+
+### Memory health — `src/memory/health.ts` (S1)
+
+The state a person sees: `unknown` (nothing measured yet; never painted
+healthy), `healthy`, `degraded` (answers, but the latest probe or too many
+recent requests failed — visible, not woken), `down` (no authenticated answer
+for `[memory] down_after_min`, counted from boot when there never was one;
+`boot_grace_min` keeps a warming server `unknown`) and `auth_failed` (a
+credential in use is refused, or there is none to send).
+
+Two inputs. An AUTHENTICATED probe (`src/openviking/probe.ts`: `fs/ls` of
+`viking://user/<user>/memories`, a `NOT_FOUND` root counting as authenticated)
+of each credential in use every `probe_interval_s` — the daemon's key file and
+the `ovcli.conf` the sessions are handed, judged and reported separately,
+because they can fail on different days. And the daemon's own requests (the
+client's `onRequest`) and round seeds (dispatch's `onSeeded`, the only place a
+seed that timed out is seen). A `NOT_FOUND` answer to a real request is
+`absent` — authenticated, counted on its own, and never a failure, exactly as
+the probe and the store read it.
+
+Only memory switched OFF (`[openviking] enabled = false`, which declining memory
+in onboarding writes) is "not monitored". Memory configured ON whose server
+cannot run — a binary missing after a rebuild — is monitored and reads `down`:
+an outage, not a choice.
+
+Wakes, through the ordinary anomaly funnel (`src/anomalies.ts` lists all three
+as WAKE): `memory_auth_failed` on the first refusal, on every transition and
+every `rewake_h` while it lasts — never graced and never held by a drain;
+`memory_down` on entering `down` and every `rewake_h` — a drain (a deploy
+window) defers it until it lifts; `memory_provision_failed` once per boot
+report that says a user could not be ensured, the reviewer key does not
+authenticate, or a user had to be CREATED (its freshly minted key was
+discarded on purpose, so every distributed copy of the old one is wrong) —
+"once" keyed by the report file's fingerprint, so a report that cannot even be
+parsed does not wake again on every restart. The wake policy dedups these three
+kinds on what they SAY (kind and detail), not on the kind alone: the monitor
+already raises them only on transitions, so a different transition inside the
+generic 10-minute window still reaches the overseer, while an identical repeat
+is still held back.
+
+An incident (a continuous `auth_failed`/`down` run) closes only on a MEASURED
+recovery — `healthy`, or `degraded` with an authenticated answer since the
+incident began. A daemon restarted inside an outage passes through `degraded`
+with no answer when its boot grace ends; that decides nothing, so the outage
+keeps its start (and its one ticket).
+
+The overseer is not the audience — it reported the outage in 33 digests nobody
+read. The `memory` block of `state/status.json` is: `qcr status` prints it, the
+TUI board paints a banner in its top bar, the TUI raises one desktop
+notification per transition into `auth_failed`/`down`, the TUI files ONE
+issue-tracker ticket for an incident older than `incident_ticket_after_min`
+(deduped by the incident's start, which survives a daemon restart in the
+events table), and the companion's `view.json` carries the block (`null` when
+unread). All of these read status.json — never OpenViking, the thing that may
+be down.
+
+`keyFromFile` re-stats the key file every TTL and the client drops its cache
+on a 401, so a rotated key is re-read; when the daemon's key changes, the
+sessions' `ovcli.conf` is rewritten at once. Every client gap is counted in the
+block and written as a QUIET `openviking_gap` row at most once an hour per
+`op:code` (`src/openviking/gapsink.ts`). A failed raw-tier `DELETE` is logged and recorded
+(`openviking_session_delete_failed`).
 
 ### The HTTP client — `src/openviking/client.ts`
 
@@ -372,10 +440,10 @@ The three outcomes render differently, and the difference matters:
 | `degraded` | "memory unavailable this round — review without it", explicitly non-blocking |
 
 **Who is told when memory is down:** the session (that note) and the operator
-(a `round_memory_degraded` overseer anomaly from `src/dispatch.ts`, on an
-`alert_cooldown_min` cooldown so a store that stays down cannot bury the
-overseer). **Not the PR.** The posted review is about the code; an outage on
-the reviewer's side is the operator's to read about.
+— through memory health (above), on state transitions, never once per round.
+The per-round `round_memory_degraded` anomaly it replaces was never a wake
+kind and told nobody (S1). **Not the PR.** The posted review is about
+the code; an outage on the reviewer's side is the operator's to read about.
 
 There is a second, narrower alert: when the store answers and the pinned area
 is **empty** while a previously seeded round recorded a non-empty head, the
@@ -383,7 +451,8 @@ daemon raises a one-shot anomaly on that transition. An empty head on its own
 never alerts — that is a fresh install.
 
 Every round also writes a `round_memory_seeded` event with the query, the
-budget, the sizes and the gaps, so the per-round record survives the cooldown.
+budget, the sizes and the gaps — the per-round record, and what memory health
+is fed from.
 
 ## Sessions' own memory access
 

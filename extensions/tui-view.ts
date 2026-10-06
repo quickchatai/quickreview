@@ -114,6 +114,8 @@ interface ViewJson {
   pane?: Record<string, unknown>;
   screen?: Record<string, unknown>;
   notice?: string;
+  /** status.json `memory` as the TUI read it (S1); `null` = unread. */
+  memory?: Record<string, unknown> | null;
 }
 
 function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: string } {
@@ -219,6 +221,49 @@ export function deployAnswer(dir: string, now: Date): string {
   return `${head}\n${lines.join("\n")}${tail}`;
 }
 
+/**
+ * Reviewer memory as ONE sentence (S1): its health state, since when,
+ * the incident if one is open, and each credential's verdict. `null` (the TUI
+ * could not read it, or the daemon reports no block) is an explicit UNKNOWN —
+ * memory was dead for five weeks while every surface stayed quiet, and a
+ * dropped line here would be one more quiet surface. A view written before
+ * the field existed (`undefined`) says so too.
+ */
+export function memoryLine(value: unknown): string {
+  if (value === undefined)
+    return "reviewer memory: UNKNOWN (this TUI build publishes no memory field)";
+  if (value === null || typeof value !== "object")
+    return "reviewer memory: UNKNOWN (the TUI has not been able to read it — the daemon reported no memory block, or there is no snapshot)";
+  const m = value as {
+    enabled?: unknown;
+    state?: unknown;
+    since?: unknown;
+    incident?: { kind?: unknown; since?: unknown } | null;
+    credentials?: Record<string, { result?: unknown; status?: unknown; code?: unknown } | null>;
+    last_error?: { op?: unknown; code?: unknown; message?: unknown } | null;
+  };
+  if (m.enabled === false) return "reviewer memory: not monitored on this daemon";
+  // A scalar as text; anything else (a torn or foreign shape) as the fallback.
+  const txt = (v: unknown, fallback = "?"): string =>
+    typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : fallback;
+  const cred = (name: string, label: string): string => {
+    const c = m.credentials?.[name];
+    if (!c) return `${label} not probed yet`;
+    const status = typeof c.status === "number" && c.status > 0 ? ` ${c.status}` : "";
+    return `${label} ${txt(c.result)}${c.result === "ok" || c.result === "absent" ? "" : `${status} ${txt(c.code, "")}`.trimEnd()}`;
+  };
+  const state = txt(m.state, "unknown").toUpperCase();
+  const incident =
+    m.incident && typeof m.incident.since === "string"
+      ? `; incident (${txt(m.incident.kind)}) open since ${m.incident.since}`
+      : "";
+  const err =
+    m.last_error && m.state !== "healthy"
+      ? `; last error ${txt(m.last_error.op)}: ${txt(m.last_error.code)} ${txt(m.last_error.message, "").slice(0, 120)}`
+      : "";
+  return `reviewer memory: ${state} since ${txt(m.since)}${incident}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}`;
+}
+
 export function boardAnswer(dir: string, now: Date): string {
   const { view, mtimeMs, error } = loadView(dir);
   if (error !== undefined || !view) return error ?? "no view";
@@ -234,6 +279,7 @@ export function boardAnswer(dir: string, now: Date): string {
     fmt("max concurrent rounds", b.max_concurrent_rounds),
     fmt("spend today (USD)", b.today_spend_usd),
     fmt("snapshot written at", b.snapshot_written_at),
+    memoryLine(view.memory),
     fmt("selected PR", view.selected),
     fmt("pi pane", view.pane),
     fmt("notice line", view.notice),
@@ -278,7 +324,7 @@ export function toolDefinitions(
       name: "tui_board",
       label: "TUI board state",
       description:
-        "A small projection of the board behind the screen: tab, daemon health, PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
+        "A small projection of the board behind the screen: tab, daemon health, reviewer-memory health, PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
         READ_ONLY,
       promptSnippet: "Read the board summary and the selected PR",
       parameters: NO_PARAMS,

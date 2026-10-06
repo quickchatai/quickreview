@@ -36,7 +36,7 @@
 //      every user key in plaintext. The key is supplied by the caller, read
 //      lazily, and NEVER logged — `redact()` scrubs it out of every failure
 //      message at construction, before any caller can log or render one.
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 /** The `fetch` slice this client uses — the whole network seam. */
 export interface HttpFetch {
@@ -90,6 +90,61 @@ export type OvOutcome<T> = { ok: true; status: number; result: T } | OvFailure;
  * read `conflict` off it without re-narrowing. */
 export function ovFailed(status: number, code: string, message: string): OvFailure {
   return { ok: false, status, code, message, conflict: status === 409 || code === "CONFLICT" };
+}
+
+/** Server error codes that mean "this key does not authenticate here". */
+const AUTH_CODES = new Set([
+  "UNAUTHENTICATED",
+  "UNAUTHORIZED",
+  "PERMISSION_DENIED",
+  "FORBIDDEN",
+  "INVALID_API_KEY",
+]);
+
+/**
+ * Is this answer an authentication failure (S1)?
+ *
+ * A 401/403, an auth error code, or the message the 0.4.15 server actually
+ * sends on a bad key ("Invalid API Key"), which it has been seen to wrap in an
+ * HTTP-200 error envelope. Five weeks of rounds read that answer as "memory
+ * unavailable" and nobody was told; this predicate is what lets every reader
+ * call it what it is. `no_key` (nothing to send at all) is NOT this — callers
+ * that care treat it alongside, by code.
+ */
+export function isAuthFailure(status: number, code: string, message = ""): boolean {
+  if (status === 401 || status === 403) return true;
+  if (AUTH_CODES.has(code.toUpperCase())) return true;
+  return /invalid api key|unauthenticated|unauthori[sz]ed/i.test(message);
+}
+
+/**
+ * Is this answer a NOT_FOUND (S1)? The server authenticates a key
+ * before it resolves a path, so a NOT_FOUND is an authenticated ANSWER — the
+ * path is not there — never an outage. The store already reads it as "absent,
+ * known-empty" and ovsession's delete as the desired end state; the probe and
+ * the request observer read it the same way through this one predicate.
+ */
+export function isNotFound(status: number, code: string): boolean {
+  return status === 404 || code === "NOT_FOUND";
+}
+
+/** One request, as the client's observer sees it (S1): what was
+ * asked, how it ended, how long it took. Never the key, never a header, never
+ * a body — it is a counter's input, not a log line. */
+export interface OvRequestRecord {
+  op: string;
+  /** `ok` — answered; `absent` — a NOT_FOUND answer (authenticated; the path
+   * is not there — an answer, not a failure); `conflict` — a 409 precondition
+   * refusal (an answer, not a failure); `auth` — the key did not
+   * authenticate, or there was no key to send; `failed` — everything else
+   * (transport, 5xx, bad body). */
+  outcome: "ok" | "absent" | "conflict" | "auth" | "failed";
+  status: number;
+  code: string;
+  /** Wall-clock ms the request took (0 when nothing was sent). */
+  ms: number;
+  /** The failure message, already scrubbed of the key. Absent on success. */
+  message?: string;
 }
 
 // ---- request/response shapes ------------------------------------------------
@@ -300,29 +355,75 @@ export interface OpenVikingClientOptions {
   /** Called for every gap, so the daemon can raise an overseer anomaly. Must
    * not throw; a throwing sink is swallowed rather than escaping a call. */
   onGap?: (gap: OvGap) => void;
+  /** Called once per request with its outcome (S1) — successes too,
+   * which `onGap` never sees. The daemon counts its own requests per
+   * operation and feeds the memory health monitor from here; the TUI counts
+   * its own. Must not throw; a throwing observer is swallowed. */
+  onRequest?: (record: OvRequestRecord) => void;
+  /** Millisecond clock for `OvRequestRecord.ms`. Tests inject one. */
+  clock?: () => number;
 }
 
-/** Reads a key file once and remembers the answer (including "not there"),
- * retrying at most every `ttlMs` — a secret that lands after boot is picked up
- * without a restart, and a missing one does not stat the disk per request. */
+/** A key read lazily from a file: call it for the current key, and
+ * `invalidate()` it when the server says the key is wrong, so the next call
+ * re-reads the file instead of re-sending a key the server refused. */
+export interface KeyFileSource {
+  (): string | null;
+  invalidate(): void;
+}
+
+/**
+ * Reads a key file and remembers the answer (including "not there"),
+ * re-checking at most every `ttlMs`.
+ *
+ * A secret that lands after boot is picked up without a restart, and a missing
+ * one does not stat the disk per request. Since S1 a FOUND key is no
+ * longer remembered forever: every `ttlMs` the file is re-stat'ed, and a file
+ * whose identity (inode, size or mtime) changed is re-read — so a rotated key
+ * reaches the daemon within one TTL, and a removed one stops being sent. A 401
+ * from the server calls `invalidate()` (see `OpenVikingClient`), which makes
+ * the very next request re-read the file. The cache that held a dead key for
+ * the life of the process is what kept memory down from 2026-09-03 to 10-02.
+ */
 export function keyFromFile(
   path: string,
   ttlMs = 60_000,
   now: () => number = Date.now,
-): () => string | null {
+): KeyFileSource {
   let cached: string | null = null;
+  let signature: string | null = null;
   let checkedAt = -Infinity;
-  return () => {
-    if (cached !== null || now() - checkedAt < ttlMs) return cached;
+  const read = (): string | null => {
+    if (now() - checkedAt < ttlMs) return cached;
     checkedAt = now();
+    let sig: string;
+    try {
+      const st = statSync(path);
+      sig = `${st.ino}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      // Gone (or unreadable): a key that is no longer on disk is no longer
+      // ours to send. A keyless client is loud (`no_key`), never silent.
+      cached = null;
+      signature = null;
+      return cached;
+    }
+    if (sig === signature && cached !== null) return cached;
     try {
       const value = readFileSync(path, "utf8").trim();
       cached = value === "" ? null : value;
+      signature = sig;
     } catch {
       cached = null;
+      signature = null;
     }
     return cached;
   };
+  const source = read as KeyFileSource;
+  source.invalidate = () => {
+    checkedAt = -Infinity;
+    signature = null;
+  };
+  return source;
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -330,6 +431,8 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 export class OpenVikingClient {
   private readonly baseUrl: string;
   private readonly key: () => string | null;
+  /** The key source's cache-drop, when it has one (`keyFromFile`). */
+  private readonly invalidateKey: (() => void) | undefined;
   private readonly user: string;
   private readonly account: string;
   private readonly peerId: string;
@@ -337,12 +440,17 @@ export class OpenVikingClient {
   private readonly fetchFn: HttpFetch;
   private readonly log: (msg: string, extra?: unknown) => void;
   private readonly onGap: ((gap: OvGap) => void) | undefined;
+  private readonly onRequest: ((record: OvRequestRecord) => void) | undefined;
+  private readonly clock: () => number;
   private keyGapReported = false;
 
   constructor(opts: OpenVikingClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     const source = opts.apiKey;
     this.key = typeof source === "function" ? () => source() ?? null : () => source ?? null;
+    const invalidate =
+      typeof source === "function" ? (source as Partial<KeyFileSource>).invalidate : undefined;
+    this.invalidateKey = typeof invalidate === "function" ? () => invalidate() : undefined;
     this.user = opts.user ?? "reviewer";
     this.account = opts.account ?? "";
     this.peerId = opts.peerId ?? "";
@@ -350,6 +458,17 @@ export class OpenVikingClient {
     this.fetchFn = opts.fetchFn ?? defaultFetch;
     this.log = opts.log ?? (() => {});
     this.onGap = opts.onGap;
+    this.onRequest = opts.onRequest;
+    this.clock = opts.clock ?? Date.now;
+  }
+
+  /** Hand one request's outcome to the observer — never throws. */
+  private observe(record: OvRequestRecord): void {
+    try {
+      this.onRequest?.(record);
+    } catch {
+      // A counter that throws must not become a memory outage.
+    }
   }
 
   /** The user tree this client's key is confined to — the root every memory
@@ -397,7 +516,9 @@ export class OpenVikingClient {
     if (!key) {
       // Reported ONCE per client: a keyless deployment is a standing condition
       // (a dev PC with no secret), and every call would otherwise raise the
-      // same anomaly. It must still never look like success.
+      // same anomaly. It must still never look like success — and the
+      // observer hears EVERY one, because the health monitor counts it as an
+      // authentication failure rather than as quiet.
       if (!this.keyGapReported) {
         this.keyGapReported = true;
         this.report({
@@ -408,8 +529,17 @@ export class OpenVikingClient {
             "no OpenViking reviewer key configured — every memory call degrades until one is",
         });
       }
+      this.observe({
+        op,
+        outcome: "auth",
+        status: 0,
+        code: "no_key",
+        ms: 0,
+        message: "no OpenViking key configured",
+      });
       return ovFailed(0, "no_key", "no OpenViking reviewer key configured");
     }
+    const started = this.clock();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
@@ -434,8 +564,17 @@ export class OpenVikingClient {
     } catch (err) {
       const gap: OvGap = { op, status: 0, code: "transport", message: this.redact(errText(err)) };
       this.report(gap);
+      this.observe({
+        op,
+        outcome: "failed",
+        status: 0,
+        code: gap.code,
+        ms: this.clock() - started,
+        message: gap.message,
+      });
       return ovFailed(gap.status, gap.code, gap.message);
     }
+    const ms = this.clock() - started;
 
     // Every OpenViking answer is a `{status, result, error}` envelope. Anything
     // else — an nginx error page, a bare `null`, a truncated body — is NOT an
@@ -461,6 +600,14 @@ export class OpenVikingClient {
           message: `response was not an OpenViking envelope (${raw.length} bytes)`,
         };
         this.report(gap);
+        this.observe({
+          op,
+          outcome: "failed",
+          status: gap.status,
+          code: gap.code,
+          ms,
+          message: gap.message,
+        });
         return ovFailed(gap.status, gap.code, gap.message);
       }
       body = {};
@@ -472,12 +619,34 @@ export class OpenVikingClient {
         typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`,
       );
       const outcome = ovFailed(res.status, code, message);
+      const auth = isAuthFailure(res.status, code, message);
       // A 409 is the precondition working as designed; it is an answer, not a
       // gap, so it is not alerted on.
       if (!outcome.conflict) this.report({ op, status: res.status, code, message });
+      this.observe({
+        op,
+        outcome: outcome.conflict
+          ? "conflict"
+          : auth
+            ? "auth"
+            : isNotFound(res.status, code)
+              ? "absent"
+              : "failed",
+        status: res.status,
+        code,
+        ms,
+        message,
+      });
+      // The key we sent was refused: drop the source's cache so the NEXT
+      // request reads the file again — a rotated key must not wait out a TTL
+      // behind a 401 (S1). Last, deliberately: `report()` reads the
+      // key to redact with, and a read after the drop would re-cache the very
+      // key that was just refused for another full TTL.
+      if (auth) this.invalidateKey?.();
       return outcome;
     }
 
+    this.observe({ op, outcome: "ok", status: res.status, code: "", ms });
     return { ok: true, status: res.status, result: (body.result ?? body) as T };
   }
 

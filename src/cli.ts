@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
+import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
   isLoudCancelCause,
@@ -74,6 +75,9 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   lines.push(
     `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
   );
+  // whether reviewer memory WORKS, every time — an absent block
+  // (older daemon) and an unmeasured one say so, never "healthy".
+  lines.push(oneLine(memoryStatusLine(snapshot.memory, new Date(snapshot.written_at))));
   if (snapshot.draining) {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +

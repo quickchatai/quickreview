@@ -56,8 +56,13 @@
 // documented memory-less mode — rounds still run (context assembly resolves
 // empty and never blocks or delays a round), the TUI's Memory tab paints its
 // store row red, the EOD curator and the [feedback] sink have nowhere to write.
-// The step records the choice, writes NOTHING, and stays green so the wizard
-// finishes. It never wedges and never crashes.
+// The step records the choice, mints and places nothing, and writes exactly ONE
+// thing: `[openviking] enabled = false` in config.toml — the daemon's word for
+// "off" (S1). Without it the daemon cannot tell a declined install from
+// a broken one: memory health reads a missing reviewer key as the credential
+// failure it would be on an install that wanted memory, and wakes the overseer,
+// paints the board and files a ticket for a choice. Configuring memory later
+// switches it back on. It never wedges and never crashes.
 import {
   chmodSync,
   existsSync,
@@ -72,10 +77,12 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { OPENVIKING_DEFAULTS } from "../../config.js";
+import { OPENVIKING_DEFAULTS, parseConfig } from "../../config.js";
 import { configHome, locateKeysFile, locateSecrets } from "../../install.js";
 import { CHOICE_KEYS, type MemoryChoice } from "../choices.js";
 import { configMountOf } from "./bringup.js";
+import { readTextOrNull, writeAtomic } from "./compose.js";
+import { assertNoDryRunEdit, patchToml, type TomlEdit } from "./configfill.js";
 import { readTomlKey } from "./ingress.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 
@@ -417,10 +424,94 @@ export const DECLINED_CHECKS: readonly CheckResult[] = [
     detail:
       "memory setup DECLINED — running memory-less, which is a legal mode: rounds still run (context assembly resolves " +
       "empty and never blocks or delays a round), the TUI's Memory tab paints its MEMORY STORE row red, and the EOD " +
-      "curator and the [feedback] sink have nowhere to write. Nothing was minted or written. Re-run this step after " +
+      "curator and the [feedback] sink have nowhere to write. No key was minted or placed. Re-run this step after " +
       "clearing the recorded choice to set memory up later.",
   },
 ];
+
+/** The check row that reports the daemon's on/off switch. */
+export const MEMORY_SWITCH_CHECK = "memory-switch";
+
+function configPathOf(ctx: StepContext): string {
+  const recorded = ctx.choices[CHOICE_KEYS.configPath];
+  return typeof recorded === "string" && recorded ? recorded : ctx.adapters.paths.configPath;
+}
+
+/**
+ * Tell the DAEMON the operator's answer (S1): `[openviking] enabled =
+ * false` on a decline — its word for "off", under which memory health reports
+ * "not monitored" and raises nothing — and back to `true` when memory is
+ * configured over an earlier decline. Configuring never ADDS the key: an
+ * install that never said "off" stays exactly as it is. The patched text is
+ * parsed by the daemon's own loader before it is written, like every other
+ * wizard config write. Returns the row to report, or null when there is
+ * nothing to say (configuring an install that is already on).
+ */
+function switchMemory(ctx: StepContext, on: boolean): CheckResult | null {
+  const path = configPathOf(ctx);
+  const text = readTextOrNull(path);
+  if (text === null) {
+    return on
+      ? null
+      : {
+          name: MEMORY_SWITCH_CHECK,
+          ok: false,
+          detail:
+            `${path} does not exist yet, so the daemon cannot be told memory is OFF — without that it reads the missing ` +
+            "reviewer key as a credential failure and wakes the overseer about it. Run the config_fill step, then this step again",
+        };
+  }
+  const current = readTomlKey(text, "openviking", "enabled");
+  if (on && current !== "false") return null;
+  if (!on && current === "false") {
+    return {
+      name: MEMORY_SWITCH_CHECK,
+      ok: true,
+      detail: `[openviking] enabled = false already in ${path} — the daemon reports memory "not monitored" and raises no memory alert`,
+    };
+  }
+  const edits: TomlEdit[] = [
+    { section: "openviking", key: "enabled", value: on ? "true" : "false" },
+  ];
+  assertNoDryRunEdit(edits);
+  const patched = patchToml(text, edits);
+  try {
+    parseConfig(patched);
+  } catch (err) {
+    return {
+      name: MEMORY_SWITCH_CHECK,
+      ok: false,
+      detail: `[openviking] enabled = ${on ? "true" : "false"} would not load in ${path}: ${String(err)} — nothing was written`,
+    };
+  }
+  writeAtomic(path, patched);
+  return {
+    name: MEMORY_SWITCH_CHECK,
+    ok: true,
+    detail: on
+      ? `[openviking] enabled = true written to ${path} (it said false from an earlier decline) — memory is monitored again`
+      : `[openviking] enabled = false written to ${path} — the daemon's word for "off": memory health reports "not monitored" ` +
+        "and raises no memory alert. Ship it with the next deploy sync on the server route",
+  };
+}
+
+/** Verify's half of the switch: a declined install must still SAY off. */
+function switchStillOff(ctx: StepContext): CheckResult {
+  const path = configPathOf(ctx);
+  const text = readTextOrNull(path);
+  const current = text === null ? null : readTomlKey(text, "openviking", "enabled");
+  return current === "false"
+    ? { name: MEMORY_SWITCH_CHECK, ok: true, detail: `[openviking] enabled = false in ${path}` }
+    : {
+        name: MEMORY_SWITCH_CHECK,
+        ok: false,
+        detail:
+          text === null
+            ? `${path} is not readable — the daemon cannot be told memory is OFF; run this step again`
+            : `memory was declined but ${path} does not say [openviking] enabled = false — the daemon will read the missing ` +
+              "reviewer key as a credential failure and wake the overseer; run this step again",
+      };
+}
 
 // ---- the step ---------------------------------------------------------------
 
@@ -642,11 +733,16 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     async run(ctx): Promise<StepReport> {
       const choice = await askChoice(ctx);
       ctx.recordChoice(CHOICE_KEYS.memory, choice);
-      if (choice === "declined")
-        return { ok: true, checks: [...DECLINED_CHECKS], data: { declined: true } };
+      const switched = switchMemory(ctx, choice === "configure");
+      if (choice === "declined") {
+        const declined = [...DECLINED_CHECKS, ...(switched ? [switched] : [])];
+        return { ok: declined.every((c) => c.ok), checks: declined, data: { declined: true } };
+      }
 
       const { secretsDir, keys, base, account } = resolvePaths(opts, ctx);
-      const checks: CheckResult[] = [];
+      // A failed switch-on stays in `checks` and turns the step red at the end;
+      // the keys are still worth placing.
+      const checks: CheckResult[] = switched ? [switched] : [];
       if (keys.unsafe) {
         checks.push({ name: "key-file-location", ok: false, detail: keys.note });
         return { ok: false, checks };
@@ -756,7 +852,8 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
 
     async verify(ctx): Promise<StepReport> {
       if (ctx.choices[MEMORY_CHOICE_KEY] === "declined" || ctx.data.declined === true) {
-        return { ok: true, checks: [...DECLINED_CHECKS] };
+        const declined = [...DECLINED_CHECKS, switchStillOff(ctx)];
+        return { ok: declined.every((c) => c.ok), checks: declined };
       }
       const { secretsDir, keys, base, env, home, mounted } = resolvePaths(opts, ctx);
       const keysPath = typeof ctx.data.keys_file === "string" ? ctx.data.keys_file : keys.path;
