@@ -299,6 +299,16 @@ describe("the rendered ov.conf (executed)", () => {
     expect(conf.server.auth_mode).toBe("api_key");
   });
 
+  it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob (S3)", () => {
+    const conf = render({}, { openviking_root_key: "r" });
+    expect(conf.retrieval).toEqual({ enable_intent: false });
+    expect(conf.embedding.max_concurrent).toBe(cfg.openviking.queue_concurrency);
+    expect(
+      render({ QCR_OV_QUEUE_CONCURRENCY: "1" }, { openviking_root_key: "r" }).embedding
+        .max_concurrent,
+    ).toBe(1);
+  });
+
   it("OPT-IN: the hosted provider reads its OWN key file; without one it renders no key rather than switching embedder", () => {
     const hosted = {
       QCR_OV_EMBEDDING_PROVIDER: "openai",

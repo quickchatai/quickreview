@@ -137,8 +137,11 @@ fi
 #     does, and that confinement exists only in api_key mode — which is why
 #     the root key is read from the read-only secrets mount here and never
 #     written as a literal.
-#   * workers/queue_workers are cut for a 2-CPU cap: CPU is the measured cost
+#   * workers/queue_workers — and embedding.max_concurrent, on the same knob
+#     (S3) — are cut for a 2-CPU cap: CPU is the measured cost
 #     (~1.63 core-seconds per ~500 B write), not RAM.
+#   * retrieval.enable_intent = false (S3): no model-based query
+#     planning on a session search — there is no model for it.
 #   * The EMBEDDER is a knob, never a literal — $QCR_OPENVIKING_
 #     EMBEDDING_*. The shipped default is the server's own LOCAL llama-cpp
 #     embedder, so no memory text leaves this machine; a hosted provider is an
@@ -183,6 +186,12 @@ const conf = {
     session_skill_extraction_enabled: false,
     link_enabled: false,
   },
+  // S3. No model-based intent analysis / query planning on a search
+  // that carries a session id: this deployment configures no model for it,
+  // every attempt failed on a missing key, and in list mode an error there
+  // fails the whole search (retrieval_config.py `enable_intent`). The raw
+  // query is searched, exactly as for a search without a session.
+  retrieval: { enable_intent: false },
   log: { level: "INFO", output: "stdout" },
 };
 // The read-only secrets mount — one constant, taken from $SECRETS above so a
@@ -213,6 +222,9 @@ if (conf.server.auth_mode === "api_key") {
 // start (loud, memory degrades) rather than this render silently switching
 // to another embedder — which would reset a hosted store's vectors on boot.
 conf.embedding = {
+  // concurrent embedding calls bounded by the same 2-CPU knob as
+  // the queue workers (the server's default is 10).
+  max_concurrent: Number(process.env.QCR_OV_QUEUE_CONCURRENCY),
   dense: {
     provider: process.env.QCR_OV_EMBEDDING_PROVIDER,
     model: process.env.QCR_OV_EMBEDDING_MODEL,

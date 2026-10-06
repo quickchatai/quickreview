@@ -368,6 +368,20 @@ export type SessionCommandRetryResult =
 export type RoundRecoveryDisposition =
   "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled";
 
+/** What one stale raw-tier sweep did (S3,
+ * `PiSessionManager.sweepStaleOvSessions`): the `pr-<n>` OpenViking sessions
+ * of closed PRs it deleted, the ones it could not, and what it left for a
+ * later pass. `error` = the server's session list could not be read, so
+ * nothing was attempted. */
+export interface OvSessionSweepReport {
+  listed: number;
+  stale: number;
+  deleted: string[];
+  failed: string[];
+  deferred: number;
+  error?: string;
+}
+
 export interface SessionHooks {
   /** Ensure the per-PR session exists (birth on first trigger) and inject the
    * rendered round prompt. */
@@ -378,6 +392,11 @@ export interface SessionHooks {
   injectOverseer(message: string): Promise<void>;
   /** PR merged/closed: archive session JSONL + ledger, drop worktree, kill tmux. */
   archiveAndClose(pr: number): Promise<void>;
+  /** The reconcile pass's sweep over the raw tier (S3): delete the
+   * OpenViking sessions of closed PRs that are still on the server, bounded
+   * per pass. Optional — stubs and a daemon with no raw tier omit it (null =
+   * no raw tier managed). Never a reconcile error: memory never blocks. */
+  sweepStaleOvSessions?(): Promise<OvSessionSweepReport | null>;
   /** After a round's verdict lands: compact the sticky conversation. Cache
    * re-reads were 41% of measured cost (2026-08-14 mining) and sessions never
    * compacted on their own. Optional — stubs may omit it. */

@@ -60,6 +60,7 @@ import {
 } from "../src/openviking/client.js";
 import { OpenVikingStore, entryFrom, sha256Prefixed } from "../src/openviking/store.js";
 import { StateStore } from "../src/state.js";
+import { listedFileStat } from "./helpers/ov-listing.js";
 
 const TZ = "Europe/Warsaw";
 const KEY = "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
@@ -144,12 +145,11 @@ class FakeServer {
       const prefix = `${u.searchParams.get("uri")}/`;
       const rows: unknown[] = [];
       const subdirs = new Set<string>();
-      for (const k of this.files.keys()) {
+      for (const [k, content] of this.files) {
         if (!k.startsWith(prefix)) continue;
         const rest = k.slice(prefix.length);
         if (rest.includes("/")) subdirs.add(rest.split("/")[0]!);
-        else
-          rows.push({ uri: k, name: rest, isDir: false, size: 1, modTime: "2026-10-06T00:00:00Z" });
+        else rows.push({ uri: k, name: rest, isDir: false, ...listedFileStat(content) });
       }
       for (const d of subdirs)
         rows.push({ uri: `${prefix}${d}`, name: d, isDir: true, size: 0, modTime: "" });

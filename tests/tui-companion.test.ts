@@ -30,6 +30,7 @@ import {
 import {
   CompanionLifecycle,
   CONTAINER,
+  MEMORY,
   mirrorConfigFile,
   PUBLIC_DNS,
   SUBAGENTS,
@@ -37,6 +38,7 @@ import {
   type DockerResult,
   type DockerRunner,
 } from "../src/tui/companion.js";
+import { RETIRED_FILE_ENV } from "../extensions/vendor/openviking-pi/qcr-recall.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -1259,6 +1261,17 @@ describe("the install's homes and the read-only GitHub token", () => {
     // The token itself never rides an argv: only the path of its env file.
     expect(lc.runArgv().join(" ")).not.toMatch(/QCR_GITHUB_READ_TOKEN|GH_TOKEN|GITHUB_TOKEN/);
     expect(lc.spawnArgv()).toContain(`QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/github-read.env`);
+  });
+
+  it("tells the companion's recall where the TUI publishes its retired memories (S3)", () => {
+    const argv = withFiles([]).lc.spawnArgv();
+    // The extension's own variable name, at the state-home mount — where the
+    // TUI's store writes `MEMORY.retiredFile` on the host side.
+    expect(RETIRED_FILE_ENV).toBe("QCR_OV_RETIRED_FILE");
+    const set = `${RETIRED_FILE_ENV}=${CONTAINER.stateHome}/${MEMORY.retiredFile}`;
+    expect(argv).toContain(set);
+    expect(argv.indexOf(set)).toBeLessThan(argv.indexOf("pi"));
+    expect(MEMORY.retiredFile).toBe("openviking/companion-retired-uris.json");
   });
 
   it("tells pi where the homes are — in variables the install locator actually reads", () => {

@@ -968,6 +968,26 @@ export class OpenVikingClient {
     });
   }
 
+  /**
+   * The ids of every session the key can see (S3) — what the
+   * stale-session sweep lists. The server swallows its OWN listing failures
+   * into an empty list (`session_service.py` `sessions()`), so `[]` means "none
+   * listed", never proof that none exist.
+   */
+  async listSessions(): Promise<OvOutcome<string[]>> {
+    const res = await this.request<unknown>("session_list", "/api/v1/sessions", {
+      method: "GET",
+    });
+    if (!res.ok) return res;
+    const rows = Array.isArray(res.result) ? res.result : [];
+    const ids = rows
+      .map((r) =>
+        r && typeof r === "object" ? str((r as Record<string, unknown>)["session_id"]) : "",
+      )
+      .filter((id) => id !== "");
+    return { ok: true, status: res.status, result: [...new Set(ids)] };
+  }
+
   /** Removes the session's messages and archives (verified: the tree is gone).
    * Sessions are absent from the search corpus, so this frees disk, not
    * recall. */

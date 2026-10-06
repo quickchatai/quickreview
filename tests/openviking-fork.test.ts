@@ -1,4 +1,4 @@
-// The vendored OpenViking pi extension — provenance + the five
+// The vendored OpenViking pi extension — provenance + the seven
 // patches. Two kinds of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import { isLeafProcess, LEAF_ARGV_FLAGS } from "../extensions/vendor/openviking-pi/qcr-leaf.js";
-import { withoutRootKey } from "../extensions/vendor/openviking-pi/config.js";
+import { loadConfig, withoutRootKey } from "../extensions/vendor/openviking-pi/config.js";
 import {
   namespaceNote,
   namespaceOfUri,
@@ -58,6 +58,23 @@ import {
 } from "../extensions/vendor/openviking-pi/qcr-honest.js";
 import { BUSY_RETRY_DEFAULTS } from "../src/openviking/client.js";
 import { SyncManager } from "../extensions/vendor/openviking-pi/sync.js";
+import { RecallManager } from "../extensions/vendor/openviking-pi/recall.js";
+import {
+  budgetedFetch,
+  COMMIT_REFUSED,
+  hasRetiredHeader,
+  isCommitPath,
+  MAX_RECALL_EXCLUSIONS,
+  raceBudget,
+  RECALL_WAIT_MS,
+  RecallBudgetSpent,
+  readRetiredUris,
+  refuseCommits,
+  renderContextEntry,
+  RETIRED_FILE_ENV,
+  retiredGuard,
+} from "../extensions/vendor/openviking-pi/qcr-recall.js";
+import { parseHashTags } from "../src/memory/eventtags.js";
 import { OVClient } from "../extensions/vendor/openviking-pi/client.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -114,7 +131,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(7); // 0000 scaffolding + six numbered
+    expect(upstream.patches.length).toBe(8); // 0000 scaffolding + seven numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -980,7 +997,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
     });
 
     it("ships the patch, recorded in the series, with its markers", () => {
-      expect(upstream.patches.at(-1)).toBe("0006-writes-that-stick-and-honest-errors.patch");
+      expect(upstream.patches).toContain("0006-writes-that-stick-and-honest-errors.patch");
       const patch = read(join("patches", "0006-writes-that-stick-and-honest-errors.patch"));
       expect(patch).toContain("QCR PATCH 6");
       for (const f of [
@@ -996,5 +1013,465 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
       expect(read("NOTICE")).toContain('6. A "directory busy" 409 is retried');
       expect(read("README.md")).toContain("### 0006 — writes that stick");
     });
+  });
+});
+
+// ---- PATCH 7 (S3) ----------------------------------------------------
+
+describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
+  const ROOT = "viking://user/reviewer/memories";
+  const SEARCH_OK = (entries: Array<Record<string, unknown>>) => ({
+    ok: true,
+    status: 200,
+    result: {
+      entries,
+      rendered: entries.map((e) => renderContextEntry(e)).join("\n"),
+      digest: "",
+      stats: {},
+    },
+  });
+  const entry = (name: string, text: string) => ({
+    uri: `${ROOT}/experiences/${name}`,
+    category: "experiences",
+    score: 0.6,
+    detail: "full",
+    text,
+  });
+  /** The real loadConfig over the vendored config.json, with no credential. */
+  const loaded = () => loadConfig(FORK);
+  /** A stub OVClient: `fetchJSON(path, init, timeoutMs)` answers through `answer`. */
+  type Seen = Array<{ path: string; body: Record<string, unknown> | undefined; timeoutMs: number }>;
+  type Init = { body?: string } | undefined;
+  const clientOf = (
+    answer: (path: string, init: Init, timeoutMs: number) => Promise<unknown>,
+    seen: Seen = [],
+  ) =>
+    ({
+      async fetchJSON(path: string, init?: Init, timeoutMs = 10000) {
+        seen.push({
+          path,
+          body: init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : undefined,
+          timeoutMs,
+        });
+        return answer(path, init, timeoutMs);
+      },
+    }) as unknown as ConstructorParameters<typeof RecallManager>[0];
+
+  it("the recall wait is capped at 500 ms — a caller can ask for less, never more", () => {
+    expect(RECALL_WAIT_MS).toBe(500);
+  });
+
+  it("returns on time from a recall that never answers, and keeps no late result", async () => {
+    let settle: (v: unknown) => void = () => {};
+    const never = new Promise((r) => (settle = r));
+    const seen: Seen = [];
+    const recall = new RecallManager(
+      clientOf(() => never, seen),
+      loaded(),
+      () => "pr-42",
+    );
+    recall.queueSearch("does the retry loop cap its backoff?");
+    const t0 = Date.now();
+    const block = await recall.searchPending(40);
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(block).toBeNull();
+    // The only request carried the time left on the deadline as its timeout.
+    expect(seen.map((s) => s.path)).toEqual(["/api/v1/search/search"]);
+    expect(seen[0]!.timeoutMs).toBeLessThanOrEqual(40);
+    // A late answer is dropped: the next context event of this run injects nothing.
+    settle(SEARCH_OK([entry("a.md", "late")]));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await recall.searchPending()).toBeNull();
+  });
+
+  it("asking for MORE than the cap gets the cap — the request's timeout and the wait both", async () => {
+    // A server that never answers: without the clamp the request would carry
+    // a 60 s timeout and the hook would wait the whole of it.
+    const seen: Seen = [];
+    const recall = new RecallManager(
+      clientOf(() => new Promise(() => {}), seen),
+      loaded(),
+      () => "pr-42",
+    );
+    recall.queueSearch("does the retry loop cap its backoff?");
+    const t0 = Date.now();
+    expect(await recall.searchPending(60_000)).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(RECALL_WAIT_MS + 200);
+    expect(seen.map((s) => s.path)).toEqual(["/api/v1/search/search"]);
+    expect(seen[0]!.timeoutMs).toBeGreaterThan(0);
+    expect(seen[0]!.timeoutMs).toBeLessThanOrEqual(RECALL_WAIT_MS);
+  });
+
+  it("sends nothing past the deadline — no /search/recall, no raw-find fallback", async () => {
+    const seen: Seen = [];
+    // The context face 'aborts' at its timeout (what the real client does).
+    const recall = new RecallManager(
+      clientOf(
+        (_p, _i, timeoutMs) =>
+          new Promise((r) =>
+            setTimeout(() => r({ ok: false, status: 0, error: { message: "aborted" } }), timeoutMs),
+          ),
+        seen,
+      ),
+      loaded(),
+      () => "pr-42",
+    );
+    recall.queueSearch("does the retry loop cap its backoff?");
+    expect(await recall.searchPending(30)).toBeNull();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(seen.map((s) => s.path)).toEqual(["/api/v1/search/search"]);
+  });
+
+  it("a fast answer is injected; inside the budget a failure may still fall back", async () => {
+    const recall = new RecallManager(
+      clientOf(async () => SEARCH_OK([entry("a.md", "cap the backoff at 30 s")])),
+      loaded(),
+      () => "pr-42",
+    );
+    recall.queueSearch("does the retry loop cap its backoff?");
+    const block = await recall.searchPending();
+    expect(block).toContain("cap the backoff at 30 s");
+    expect(recall.injectRecall([{ role: "user", content: "q" }])[0].content).toContain(
+      "<openviking-context>",
+    );
+    // A context face that fails FAST leaves budget for the /search/recall
+    // preset — the fallback is bounded, not banned.
+    const seen: Seen = [];
+    const fallback = new RecallManager(
+      clientOf(
+        async (path) =>
+          path === "/api/v1/search/search"
+            ? { ok: false, status: 500, error: { message: "boom" } }
+            : { ok: true, status: 200, result: { rendered: "<memory>from the preset</memory>" } },
+        seen,
+      ),
+      loaded(),
+      () => "pr-42",
+    );
+    fallback.queueSearch("does the retry loop cap its backoff?");
+    expect(await fallback.searchPending()).toContain("from the preset");
+    expect(seen.map((x) => x.path)).toEqual(["/api/v1/search/search", "/api/v1/search/recall"]);
+  });
+
+  it("query expansion is OFF in code — config.json, the env override and the request body", async () => {
+    expect(JSON.parse(read("config.json")).recallQueryExpansion).toBe("off");
+    const prior = process.env.OPENVIKING_RECALL_QUERY_EXPANSION;
+    process.env.OPENVIKING_RECALL_QUERY_EXPANSION = "auto";
+    try {
+      const cfg = loaded();
+      expect(cfg.recallQueryExpansion).toBe("off");
+      expect(cfg.recallQueryExpansionConfigured).toBe(true);
+      const seen: Seen = [];
+      const recall = new RecallManager(
+        clientOf(async () => SEARCH_OK([]), seen),
+        cfg,
+        () => "pr-42",
+      );
+      recall.queueSearch("does the retry loop cap its backoff?");
+      await recall.searchPending();
+      expect(seen[0]!.body).toMatchObject({
+        mode: "context",
+        session_id: "pr-42",
+        query_expansion: "off",
+      });
+    } finally {
+      if (prior === undefined) delete process.env.OPENVIKING_RECALL_QUERY_EXPANSION;
+      else process.env.OPENVIKING_RECALL_QUERY_EXPANSION = prior;
+    }
+    expect(code("config.ts")).toMatch(
+      /config\.recallQueryExpansion = "off";\s*config\.recallQueryExpansionConfigured = true;/,
+    );
+  });
+
+  it("a retired entry is never recalled: excluded by the daemon's list, dropped by its own header", async () => {
+    const seen: Seen = [];
+    const retiredUri = `${ROOT}/experiences/old.md`;
+    const recall = new RecallManager(
+      clientOf(
+        async () =>
+          SEARCH_OK([
+            entry("live.md", "cap the backoff at 30 s"),
+            // Retired since the daemon last published — its header says so.
+            entry("fresh-retire.md", "#retired #feedback the backoff is uncapped"),
+            // Retire quoted in prose is NOT a retirement (header-only rule).
+            entry("quote.md", 'the author said "mark it #retired" — still live'),
+          ]),
+        seen,
+      ),
+      loaded(),
+      () => "pr-42",
+      { retiredUris: () => [retiredUri] },
+    );
+    recall.queueSearch("does the retry loop cap its backoff?");
+    const block = (await recall.searchPending())!;
+    expect(seen[0]!.body?.["exclude_uris"]).toEqual([retiredUri]);
+    expect(block).toContain("cap the backoff at 30 s");
+    expect(block).toContain("still live");
+    expect(block).not.toContain("uncapped");
+    // The re-rendered block keeps the server's envelope.
+    expect(block).toContain(`<memory uri="${ROOT}/experiences/live.md" type="experiences"`);
+  });
+
+  it("the header rule is the store's own — pinned against parseHashTags", () => {
+    for (const text of [
+      "#retired x",
+      "#feedback #retired kind=bug pr=1 x",
+      "#RETIRED x",
+      "#feedback kind=bug #retired x",
+      "x #retired",
+      'quote "#retired"',
+      "",
+      "   #retired",
+      "#retired-ish x",
+    ]) {
+      expect(hasRetiredHeader(text), text).toBe(parseHashTags(text).includes("retired"));
+    }
+  });
+
+  it("reads the daemon's published list totally, capped at the server's 200", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-retired-"));
+    const file = join(dir, "retired-uris.json");
+    expect(readRetiredUris(undefined)).toEqual([]);
+    expect(readRetiredUris(join(dir, "missing.json"))).toEqual([]);
+    writeFileSync(file, "{not json");
+    expect(readRetiredUris(file)).toEqual([]);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        uris: [
+          ...Array.from({ length: 250 }, (_, i) => `${ROOT}/experiences/${i}.md`),
+          "https://elsewhere",
+          42,
+        ],
+      }),
+    );
+    const uris = readRetiredUris(file);
+    expect(uris).toHaveLength(MAX_RECALL_EXCLUSIONS);
+    expect(uris.every((u) => u.startsWith("viking://"))).toBe(true);
+  });
+
+  it("the fallbacks inside the budget are filtered too — /search/recall's entries and the raw find's memories", async () => {
+    const retiredUri = `${ROOT}/experiences/old.md`;
+    const live = entry("live.md", "cap the backoff at 30 s");
+    const byList = { ...entry("old.md", "the backoff is uncapped") };
+    const byHeader = entry("fresh-retire.md", "#retired #feedback the backoff is uncapped");
+    type Answer = { ok: boolean; result: Record<string, unknown> };
+    const guarded = retiredGuard(
+      async (path): Promise<Answer> =>
+        path === "/api/v1/search/recall"
+          ? {
+              ok: true,
+              result: {
+                entries: [live, byList, byHeader],
+                rendered: "<memory>all three, as the server rendered them</memory>",
+                digest: "written from all three",
+              },
+            }
+          : {
+              ok: true,
+              result: {
+                memories: [
+                  { uri: retiredUri, abstract: "the backoff is uncapped" },
+                  { uri: byHeader.uri, abstract: "#retired the backoff is uncapped" },
+                  { uri: live.uri, abstract: "cap the backoff at 30 s" },
+                ],
+              },
+            },
+      () => [retiredUri],
+    );
+    const body = { method: "POST", body: JSON.stringify({ query: "q" }) };
+    const preset = (await guarded("/api/v1/search/recall", body)) as Answer;
+    expect((preset.result["entries"] as Array<{ uri: string }>).map((e) => e.uri)).toEqual([
+      live.uri,
+    ]);
+    expect(preset.result["rendered"]).toBe(renderContextEntry(live));
+    expect(preset.result["digest"]).toBe("");
+    const find = (await guarded("/api/v1/search/find", body)) as Answer;
+    expect((find.result["memories"] as Array<{ uri: string }>).map((m) => m.uri)).toEqual([
+      live.uri,
+    ]);
+  });
+
+  it("merges the published list after the request's own exclusions, capped at the server's 200", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const guarded = retiredGuard(
+      async (_path, init: { body: string }) => (
+        seen.push(JSON.parse(init.body) as Record<string, unknown>),
+        { ok: true, result: {} }
+      ),
+      () => Array.from({ length: 150 }, (_, i) => `${ROOT}/experiences/r${i}.md`),
+    );
+    const have = Array.from({ length: 100 }, (_, i) => `${ROOT}/experiences/h${i}.md`);
+    await guarded("/api/v1/search/search", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", mode: "context", exclude_uris: have }),
+    });
+    const sent = seen[0]!["exclude_uris"] as string[];
+    expect(sent).toHaveLength(MAX_RECALL_EXCLUSIONS);
+    expect(sent.slice(0, 100)).toEqual(have);
+    expect(sent[100]).toBe(`${ROOT}/experiences/r0.md`);
+  });
+
+  it("a list-mode search never gets exclude_uris (the server rejects it there)", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const guarded = retiredGuard(
+      async (_path, init: { body: string }) => (
+        seen.push(JSON.parse(init.body) as Record<string, unknown>),
+        { ok: true, result: {} }
+      ),
+      () => [`${ROOT}/experiences/old.md`],
+    );
+    await guarded("/api/v1/search/search", {
+      method: "POST",
+      body: JSON.stringify({ query: "q" }),
+    });
+    await guarded("/api/v1/search/recall", {
+      method: "POST",
+      body: JSON.stringify({ query: "q" }),
+    });
+    expect(seen[0]!["exclude_uris"]).toBeUndefined();
+    expect(seen[1]!["exclude_uris"]).toEqual([`${ROOT}/experiences/old.md`]);
+  });
+
+  it("the budget throws once spent — the chain ends before it sends anything", async () => {
+    let clock = 1000;
+    const sent: string[] = [];
+    const f = budgetedFetch(
+      async (path, _i, o) => (sent.push(`${path}@${o.timeoutMs}`), { ok: true }),
+      1500,
+      () => clock,
+    );
+    await f("/a", undefined, { timeoutMs: 10_000 });
+    clock = 1400;
+    await f("/b");
+    clock = 1500;
+    await expect(f("/c")).rejects.toBeInstanceOf(RecallBudgetSpent);
+    expect(sent).toEqual(["/a@500", "/b@100"]);
+    expect((await raceBudget(Promise.reject(new Error("x")), 50, "fallback")).value).toBe(
+      "fallback",
+    );
+    expect(await raceBudget(Promise.resolve("v"), 0, "fallback")).toEqual({
+      value: "fallback",
+      timedOut: true,
+    });
+  });
+
+  describe("nothing commits", () => {
+    const stub = () => {
+      const calls: string[] = [];
+      return {
+        calls,
+        client: {
+          connected: true,
+          async getSession(id: string) {
+            calls.push(`get ${id}`);
+            return { session_id: id, pending_tokens: 999_999 };
+          },
+          async addMessagePayload() {
+            calls.push("add");
+            return true;
+          },
+          async commitSessionResponse() {
+            calls.push("commit");
+            return { result: { trace_id: "t" } };
+          },
+          async fetchJSON(path: string) {
+            calls.push(`fetch ${path}`);
+            return { ok: true, result: {} };
+          },
+        } as unknown as ConstructorParameters<typeof SyncManager>[0],
+      };
+    };
+
+    it("a synced turn past any token count neither reads the session nor commits", async () => {
+      const { client, calls } = stub();
+      const sync = new SyncManager(client, loaded());
+      expect(await sync.ensureSession({ OPENVIKING_SESSION_ID: "pr-42" })).toBe(true);
+      calls.length = 0;
+      const branch = [
+        { type: "message", message: { role: "user", content: "hello there, reviewer" } },
+        {
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+        },
+      ];
+      const synced = await sync.syncBranch(branch);
+      // The turn WAS synced (per-turn sync stays, R3) — the old code would
+      // have read the session here and committed at its 999,999 pending tokens.
+      expect(synced.added).toBeGreaterThan(0);
+      expect(calls).toContain("add");
+      expect(calls.filter((c) => c === "commit" || c.startsWith("get "))).toEqual([]);
+      expect(await sync.commit()).toBeNull();
+      expect(calls).not.toContain("commit");
+    });
+
+    it("a commit an older build queued on disk is dropped on replay, never sent", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "qcr-pending-"));
+      const prior = process.env.OPENVIKING_PENDING_DIR;
+      process.env.OPENVIKING_PENDING_DIR = dir;
+      try {
+        const { enqueue, listPending } =
+          (await import("../extensions/vendor/openviking-pi/shared/pending-queue.mjs")) as unknown as {
+            enqueue: (type: string, sessionId: string, payload: unknown) => Promise<unknown>;
+            listPending: () => Promise<unknown[]>;
+          };
+        await enqueue("commitSession", "pr-42", { keep_recent_count: 10 });
+        const { client, calls } = stub();
+        const sync = new SyncManager(client, loaded());
+        await sync.replayPending();
+        expect(calls.filter((c) => c.includes("/commit"))).toEqual([]);
+        expect(await listPending()).toEqual([]);
+      } finally {
+        if (prior === undefined) delete process.env.OPENVIKING_PENDING_DIR;
+        else process.env.OPENVIKING_PENDING_DIR = prior;
+      }
+      expect(isCommitPath("/api/v1/sessions/pr-42/commit")).toBe(true);
+      expect(isCommitPath("/api/v1/sessions/pr-42/messages")).toBe(false);
+      expect(await refuseCommits(async () => ({ ok: true }))("/api/v1/sessions/x/commit")).toEqual(
+        COMMIT_REFUSED,
+      );
+    });
+
+    it("no hook and no command commits — structure", () => {
+      const index = code("index.ts");
+      const shutdown = index.slice(
+        index.indexOf('pi.on("session_shutdown"'),
+        index.indexOf('pi.on("agent_end"'),
+      );
+      expect(shutdown).not.toMatch(/commit/i);
+      expect(index).not.toMatch(/sync\.commit\(|takeover\.commitAndAdvance\(|takeover\.shutdown\(/);
+      expect(code("sync.ts")).not.toMatch(
+        /commitIfNeeded|commitSessionResponse|enqueue\("commitSession"/,
+      );
+      expect(JSON.parse(read("config.json"))).not.toHaveProperty("commitTokenThreshold");
+    });
+  });
+
+  it("the context hook awaits recall on the capped budget, and only there", () => {
+    const index = code("index.ts");
+    const hook = index.slice(index.indexOf('pi.on("context"'), index.indexOf('pi.on("tool_call"'));
+    expect(hook).toContain("await recall.searchPending(RECALL_WAIT_MS);");
+    expect(index.match(/searchPending\(/g)).toHaveLength(1);
+    // The retired list comes from the file the daemon publishes.
+    expect(index).toContain("readRetiredUris(process.env[RETIRED_FILE_ENV])");
+    expect(RETIRED_FILE_ENV).toBe("QCR_OV_RETIRED_FILE");
+  });
+
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches.at(-1)).toBe("0007-bounded-recall-no-commit.patch");
+    const patch = read(join("patches", "0007-bounded-recall-no-commit.patch"));
+    expect(patch).toContain("QCR PATCH 7");
+    for (const f of [
+      "qcr-recall.ts",
+      "recall.ts",
+      "sync.ts",
+      "index.ts",
+      "config.ts",
+      "config.json",
+    ]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("7. The context hook waits at most 500 ms for recall");
+    expect(read("README.md")).toContain("### 0007 — bounded recall, no commit");
   });
 });

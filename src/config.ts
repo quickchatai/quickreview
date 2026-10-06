@@ -1078,7 +1078,8 @@ export interface OpenVikingConfig {
   /** ov.conf `server.workers` — one worker on a 2-CPU cap. */
   workers: number;
   /** ov.conf `queue_workers.*.max_concurrent` — reduced from the shipped
-   * defaults (4/4/8) for the same 2-CPU cap. */
+   * defaults (4/4/8) for the same 2-CPU cap — and, since S3,
+   * `embedding.max_concurrent` too (the server's default is 10). */
   queue_concurrency: number;
   /** Health-poll cadence; the heartbeat reports the CACHED sample, so
    * status.json writing never waits on the network. */

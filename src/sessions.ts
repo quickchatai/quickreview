@@ -39,6 +39,10 @@ import {
   openVikingSessionEnv,
   ovSessionIdForPr,
   ovcliConfPathIn,
+  ovRetiredPathIn,
+  planStaleOvSessions,
+  OV_SESSION_SWEEP_BUDGET_MS,
+  OV_SESSION_SWEEP_MAX,
   writeOvcliConf,
   type OvSessionLifecycle,
   type OvcliWriteResult,
@@ -52,7 +56,12 @@ import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
-import type { RoundOrder, SessionCommandRetryResult, SessionHooks } from "./types.js";
+import type {
+  OvSessionSweepReport,
+  RoundOrder,
+  SessionCommandRetryResult,
+  SessionHooks,
+} from "./types.js";
 import { identityVars } from "./include.js";
 import { renderConversationSystemPrompt, renderOverseerSystemPrompt } from "./templates.js";
 import { WorktreeManager } from "./worktrees.js";
@@ -247,6 +256,10 @@ export class PiSessionManager implements SessionHooks {
   private readonly configPath: string | undefined;
   private readonly prSessionBirths = new Map<number, Promise<string>>();
   private injectSeq = 0;
+  /** Stale-session deletes that failed, by session id → when (ms). A failed
+   * id waits an hour before the sweep tries it again, so a delete the server
+   * keeps refusing costs one log line an hour, not ten every pass. */
+  private readonly ovSweepFailedAt = new Map<string, number>();
 
   constructor(opts: PiSessionManagerOptions) {
     this.cfg = opts.cfg;
@@ -358,6 +371,12 @@ export class PiSessionManager implements SessionHooks {
   /** The reviewer credential file every session resolves its key from. */
   ovcliConfPath(): string {
     return ovcliConfPathIn(this.piHome);
+  }
+
+  /** Where the daemon publishes the retired URIs the sessions' recall
+   * excludes (S3) — beside ovcli.conf. */
+  ovRetiredPath(): string {
+    return ovRetiredPathIn(this.piHome);
   }
 
   /**
@@ -498,6 +517,7 @@ export class PiSessionManager implements SessionHooks {
         peerId: session,
         cliConfigPath: this.ovcliConfPath(),
         serverConfigPath: this.cfg.openviking?.config_file,
+        retiredFile: this.ovRetiredPath(),
         ...(pr === undefined ? {} : { ovSessionId: ovSessionIdForPr(pr) }),
       }),
     );
@@ -1456,6 +1476,141 @@ export class PiSessionManager implements SessionHooks {
     await this.tmux.killSession(session);
     if (await this.tmux.hasSession(session)) {
       throw new Error(`session ${session} survived kill; recovery must not dispatch beside it`);
+    }
+  }
+
+  /**
+   * The reconcile sweep over the raw tier (S3): delete the `pr-<n>`
+   * OpenViking sessions of PRs the registry says are CLOSED — the ones
+   * `archiveAndClose` failed to delete (79 on the VM on 2026-10-06, most from
+   * before failures were even logged) or never got to. Bounded per pass
+   * (`OV_SESSION_SWEEP_MAX`), every outcome logged and recorded. A PR whose pi
+   * session is still alive keeps its raw tier until that session is gone (its
+   * turn sync would otherwise write into nothing), and an id whose delete
+   * failed waits an hour. Null when no raw tier is managed (memory switched
+   * off — `[openviking] enabled = false` runs no server to ask — no
+   * lifecycle, or one that cannot list). Total: a dead server is a report,
+   * never a throw.
+   */
+  async sweepStaleOvSessions(
+    max: number = OV_SESSION_SWEEP_MAX,
+  ): Promise<OvSessionSweepReport | null> {
+    if (this.cfg.openviking?.enabled === false) return null;
+    const lifecycle = this.ovSessions;
+    if (!lifecycle?.list) return null;
+    let listed: Awaited<ReturnType<NonNullable<OvSessionLifecycle["list"]>>>;
+    try {
+      listed = await lifecycle.list();
+    } catch (err) {
+      listed = { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    if (!listed.ok) {
+      console.log(
+        `[quickreviewd] sessions: stale openviking-session sweep could not list sessions (${listed.reason}) — nothing deleted this pass`,
+      );
+      return { listed: 0, stale: 0, deleted: [], failed: [], deferred: 0, error: listed.reason };
+    }
+    const nowMs = this.now().getTime();
+    const plan = planStaleOvSessions(
+      listed.ids,
+      (pr) => {
+        const row = this.commandStore?.getPr(pr);
+        if (!row) return "unknown";
+        return row.state === "closed" ? "closed" : "open";
+      },
+      Number.MAX_SAFE_INTEGER,
+    );
+    const report: OvSessionSweepReport = {
+      listed: listed.ids.length,
+      stale: plan.remove.length,
+      deleted: [],
+      failed: [],
+      deferred: 0,
+    };
+    const bound = Math.max(0, Math.floor(max));
+    let attempted = 0;
+    // The pass rides the reconcile poll, so it must not hold it: after the
+    // first failed delete (a struggling server — each one can cost the
+    // lifecycle's whole deadline) and once `OV_SESSION_SWEEP_BUDGET_MS` has
+    // gone, the rest wait for a later pass.
+    let stopped = false;
+    for (const id of plan.remove) {
+      const failedAt = this.ovSweepFailedAt.get(id);
+      if (failedAt !== undefined && nowMs - failedAt < 3_600_000) {
+        report.deferred += 1;
+        continue;
+      }
+      if (
+        stopped ||
+        attempted >= bound ||
+        this.now().getTime() - nowMs >= OV_SESSION_SWEEP_BUDGET_MS
+      ) {
+        report.deferred += 1;
+        continue;
+      }
+      const pr = Number(id.slice(3));
+      // A closed PR whose pi is still running (archiveAndClose failed to kill
+      // it) keeps its raw tier until the session is gone.
+      let alive = false;
+      try {
+        alive = await this.tmux.hasSession(prSessionName(pr));
+      } catch {
+        alive = false;
+      }
+      // The plan read the registry once; the probe and earlier deletes have
+      // awaited since. A PR reopened and re-triggered in that window is
+      // having its `pr-<n>` reused or recreated — re-check right before the
+      // delete, and leave alone a PR whose session birth is in flight.
+      if (this.commandStore?.getPr(pr)?.state !== "closed" || this.prSessionBirths.has(pr)) {
+        report.deferred += 1;
+        continue;
+      }
+      if (alive) {
+        report.deferred += 1;
+        continue;
+      }
+      attempted += 1;
+      let ok = false;
+      let error: string | undefined;
+      try {
+        ok = await lifecycle.remove(id);
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+      if (ok) {
+        this.ovSweepFailedAt.delete(id);
+        report.deleted.push(id);
+        console.log(
+          `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} deleted (stale-session sweep)`,
+        );
+        this.recordSweepEvent("openviking_session_deleted", pr, { session: id, source: "sweep" });
+      } else {
+        stopped = true;
+        this.ovSweepFailedAt.set(id, nowMs);
+        report.failed.push(id);
+        console.log(
+          `[quickreviewd] sessions: openviking session ${id} of closed PR #${pr} was NOT deleted by the stale-session sweep${error ? ` (${error})` : ""} — retried in an hour`,
+        );
+        this.recordSweepEvent("openviking_session_delete_failed", pr, {
+          session: id,
+          source: "sweep",
+          ...(error ? { error } : {}),
+        });
+      }
+    }
+    if (report.stale > 0) {
+      console.log(
+        `[quickreviewd] sessions: stale openviking-session sweep — ${report.stale} stale, ${report.deleted.length} deleted, ${report.failed.length} failed, ${report.deferred} left for a later pass`,
+      );
+    }
+    return report;
+  }
+
+  private recordSweepEvent(kind: string, pr: number, payload: Record<string, unknown>): void {
+    try {
+      this.commandStore?.logEvent(kind, pr, payload);
+    } catch {
+      /* recording is best-effort; the log line already said it */
     }
   }
 

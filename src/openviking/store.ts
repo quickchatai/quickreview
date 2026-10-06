@@ -217,6 +217,36 @@ interface SweepRun {
   retired: string[];
 }
 
+/**
+ * What one sweep cost (S3): how many files the listing named, how many
+ * were READ, how many were answered from the per-file cache because their
+ * size and modification time had not moved, and whether this was a periodic
+ * FULL refresh (every file read). Observability and tests; never a decision.
+ */
+export interface SweepStats {
+  full: boolean;
+  listed: number;
+  reread: number;
+  reused: number;
+}
+
+/** What the incremental sweep remembers of one file. `sig` is the
+ * `size:modTime` of the listing that PRECEDED the read, so the bytes are never
+ * older than the signature they are filed under (a write in between only
+ * costs one more read); null when the listing carried no usable modTime — such
+ * a file is read on every sweep. `entry` null = the file read empty. */
+interface KnownFile {
+  sig: string | null;
+  entry: MemoryEntry | null;
+  retired: boolean;
+}
+
+/** A listed file's change signature, or null when it cannot vouch for one. */
+function signatureOf(file: { size: number; modTime: string }): string | null {
+  if (file.modTime.trim() === "") return null;
+  return `${file.size}:${file.modTime}`;
+}
+
 export interface OpenVikingStoreOptions {
   client: OpenVikingClient;
   /** Defaults to the client's own `user/<user>/memories` root. */
@@ -232,10 +262,35 @@ export interface OpenVikingStoreOptions {
    * head EVERY round — without a cache that is the memory engine's largest
    * recurring cost, and CPU is the resource to watch on the 2-core quota. */
   cacheTtlMs?: number;
+  /** How often a sweep re-reads EVERY file (S3). In between, a sweep
+   * still lists every category but reads only the files whose size or
+   * modification time moved since this store last read them — the TUI's
+   * candidate sweeper, the companion and the daemon each re-read all ~176
+   * files every few minutes before (about 716 reads per 10 min). The full
+   * refresh is the belt for a change the listing did not show. `0` makes
+   * every sweep full. */
+  fullRefreshMs?: number;
+  /** Called with the retired URIs whenever that list changes (and once, at
+   * the first completed sweep). The daemon publishes it beside the sessions'
+   * ovcli.conf so the vendored extension's recall can exclude retired entries
+   * (PATCH 7). Must not throw; a throw is swallowed. */
+  onRetired?: (uris: readonly string[]) => void;
+  /** The retired list a previous process last published (what `onRetired`
+   * wrote — `readRetiredUrisFile`), or null when there is none. It is the
+   * list this store starts from: a sweep that cannot read everything only
+   * ever ADDS to it (only a complete sweep may shrink it), so a daemon that
+   * boots while the server is still warming up never wipes the sessions'
+   * exclusions with an empty first sweep. A function is called once, at the
+   * first sweep or `retiredUris()` — the TUI builds its store before the first
+   * paint, which reads no file. */
+  initialRetired?: readonly string[] | null | (() => readonly string[] | null);
 }
 
 const DEFAULT_READ_CONCURRENCY = 8;
 const DEFAULT_CACHE_TTL_MS = 15_000;
+/** One full re-read an hour per store: the incremental sweeps in between
+ * read only what changed. */
+export const DEFAULT_FULL_REFRESH_MS = 60 * 60_000;
 
 export class OpenVikingStore implements MemoryStore {
   private readonly client: OpenVikingClient;
@@ -248,6 +303,23 @@ export class OpenVikingStore implements MemoryStore {
   private readonly ensuredRoots = new Set<string>();
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
+  private readonly fullRefreshMs: number;
+  private readonly onRetired: ((uris: readonly string[]) => void) | undefined;
+  /** The per-file cache behind the incremental sweep (S3), keyed by
+   * entry id. Survives `invalidate()` on purpose: invalidating means "list
+   * again", and the listing says which files moved. */
+  private known = new Map<string, KnownFile>();
+  /** When the last FULL re-read happened (ms), or null before the first. */
+  private lastFullAt: number | null = null;
+  /** Sweeps of different generations can overlap; only a sweep that STARTED
+   * after the one whose file cache is adopted may replace it. */
+  private sweepSeq = 0;
+  private adoptedSeq = 0;
+  /** Files this store rewrote, by id → the sweep sequence current at the
+   * write: a sweep that started before it may have read the old bytes, so its
+   * record of that file is never adopted. */
+  private forgotten = new Map<string, number>();
+  private stats: SweepStats | null = null;
 
   private cache: { at: number; run: SweepRun } | null = null;
   private inFlight: { gen: number; run: Promise<SweepRun> } | null = null;
@@ -256,8 +328,11 @@ export class OpenVikingStore implements MemoryStore {
   private generation = 0;
   /** Retired URIs from the last sweep that completed un-raced by a write,
    * plus every retire this store has written since. Never expires — see
-   * `retiredUris`. Null until one sweep has finished. */
+   * `retiredUris`. Null until one sweep has finished (or `initialRetired`
+   * seeded it). Only a sweep that read EVERYTHING may shrink it. */
   private knownRetired: string[] | null = null;
+  /** `initialRetired`, not yet taken (see `takeRetiredSeed`). */
+  private retiredSeed: (() => readonly string[] | null) | null;
 
   constructor(opts: OpenVikingStoreOptions) {
     this.client = opts.client;
@@ -267,6 +342,32 @@ export class OpenVikingStore implements MemoryStore {
     this.log = opts.log ?? (() => {});
     this.concurrency = Math.max(1, opts.readConcurrency ?? DEFAULT_READ_CONCURRENCY);
     this.cacheTtlMs = opts.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.fullRefreshMs = Math.max(0, opts.fullRefreshMs ?? DEFAULT_FULL_REFRESH_MS);
+    this.onRetired = opts.onRetired;
+    const seed = opts.initialRetired;
+    this.retiredSeed =
+      seed === undefined || seed === null ? null : typeof seed === "function" ? seed : () => seed;
+  }
+
+  /** Start `knownRetired` from `initialRetired`, once, before anything reads
+   * or replaces it. A seed that throws is no seed. */
+  private takeRetiredSeed(): void {
+    const seed = this.retiredSeed;
+    if (seed === null) return;
+    this.retiredSeed = null;
+    if (this.knownRetired !== null) return;
+    let uris: readonly string[] | null = null;
+    try {
+      uris = seed();
+    } catch {
+      uris = null;
+    }
+    if (uris) this.knownRetired = [...new Set(uris)].sort();
+  }
+
+  /** What the last COMPLETED sweep cost, or null before the first. */
+  lastSweepStats(): SweepStats | null {
+    return this.stats === null ? null : { ...this.stats };
   }
 
   uriOf(id: string): string {
@@ -274,7 +375,11 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /** Drop the sweep cache. Called after every successful write so a caller
-   * that writes and immediately re-reads sees its own edit. */
+   * that writes and immediately re-reads sees its own edit. The next sweep
+   * LISTS again and re-reads every file whose size or modification time moved
+   * (S3) — the per-file cache is not dropped, because the listing is
+   * what says which files changed; a write through THIS store also forgets
+   * the file it wrote, so even a same-size edit inside one clock tick is read. */
   invalidate(): void {
     this.cache = null;
     this.generation += 1;
@@ -346,9 +451,11 @@ export class OpenVikingStore implements MemoryStore {
    * cache is nearly always cold at a round; waiting here would put a whole
    * store sweep in series in front of the search. Retirements are rare and
    * this store records its own the moment they land, so a list one round old
-   * costs at most one round's recall of an entry retired elsewhere.
+   * costs at most one round's recall of an entry retired elsewhere. (A store
+   * seeded with `initialRetired` answers from that until its first sweep.)
    */
   async retiredUris(): Promise<string[]> {
+    this.takeRetiredSeed();
     if (this.knownRetired !== null) return [...this.knownRetired];
     return [...(await this.sweepRun()).retired];
   }
@@ -366,13 +473,42 @@ export class OpenVikingStore implements MemoryStore {
     return run;
   }
 
+  /**
+   * One sweep, INCREMENTAL since S3: every category is listed, and a
+   * file is read only when its listed size or modification time differs from
+   * the read this store already holds (or it has none, or the listing carries
+   * no modTime) — except on a periodic FULL refresh (`fullRefreshMs`), which
+   * reads everything. A file that fails to read is unread exactly as before
+   * and forgotten, so the next sweep tries it again; a category that fails to
+   * LIST keeps its files' cached reads for when it lists again, but none of
+   * them is served while it does not.
+   */
   private async runSweep(gen: number): Promise<SweepRun> {
+    this.takeRetiredSeed();
+    const seq = (this.sweepSeq += 1);
+    const startedAt = this.now().getTime();
+    const full =
+      this.fullRefreshMs === 0 ||
+      this.lastFullAt === null ||
+      startedAt - this.lastFullAt >= this.fullRefreshMs;
     const unread: string[] = [];
-    const retired: string[] = [];
-    const files = await this.listFiles(unread);
-    const entries: MemoryEntry[] = [];
+    let retired: string[] = [];
+    const listing = await this.listFiles(unread);
+    const { files } = listing;
+    const prior = this.known;
+    const next = new Map<string, KnownFile>();
     let vanished = 0;
+    let reread = 0;
+    let reused = 0;
     await pool(files, this.concurrency, async (file) => {
+      const sig = signatureOf(file);
+      const had = prior.get(file.id);
+      if (!full && sig !== null && had !== undefined && had.sig === sig) {
+        next.set(file.id, had);
+        reused += 1;
+        return;
+      }
+      reread += 1;
       const uri = this.uriOf(file.id);
       const res = await this.client.readContent(uri);
       if (!res.ok) {
@@ -381,21 +517,32 @@ export class OpenVikingStore implements MemoryStore {
         return;
       }
       const entry = entryFrom(file.id, res.result, file.modTime);
-      if (entry.text === "") return;
-      // Header-only, like `pinned`: a [feedback] entry quoting "#retired"
-      // must not vanish from every read. `retire` writes the tag at the head.
-      if (parseHashTags(entry.text).includes(RETIRED_TAG)) {
-        retired.push(uri);
+      if (entry.text === "") {
+        next.set(file.id, { sig, entry: null, retired: false });
         return;
       }
-      entries.push(entry);
+      // Header-only, like `pinned`: a [feedback] entry quoting "#retired"
+      // must not vanish from every read. `retire` writes the tag at the head.
+      next.set(file.id, {
+        sig,
+        entry,
+        retired: parseHashTags(entry.text).includes(RETIRED_TAG),
+      });
     });
+    const entries: MemoryEntry[] = [];
+    for (const file of files) {
+      const known = next.get(file.id);
+      if (!known || known.entry === null) continue;
+      if (known.retired) retired.push(this.uriOf(file.id));
+      else entries.push(known.entry);
+    }
     // One file gone between the listing and the read is a race (the companion
     // can forget an entry; this store never deletes). EVERY listed file gone
     // is not a race — it is a server whose listing and content disagree — and
     // a head built on it could be missing every standing instruction, so it
-    // is unread rather than an exact, empty answer.
-    if (files.length > 0 && vanished === files.length) {
+    // is unread rather than an exact, empty answer. (Only a sweep that READ
+    // every listed file can say that; the hourly full refresh is one.)
+    if (files.length > 0 && reread === files.length && vanished === files.length) {
       unread.push(
         `read ${this.root}: all ${files.length} listed files answered NOT_FOUND — the listing and the content disagree`,
       );
@@ -403,13 +550,56 @@ export class OpenVikingStore implements MemoryStore {
     entries.sort((a, b) =>
       a.ts !== b.ts ? (a.ts < b.ts ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
+    // A sweep that could not read everything never SHRINKS the retired list:
+    // the published list is what every session's recall excludes, and a root
+    // or category that failed to list, or a file that failed to read, says
+    // nothing about whether its entries are still retired. It keeps what was
+    // known (the last list, the cached reads it could not re-check) and adds
+    // what it saw; only a complete sweep may drop a URI.
+    if (unread.length > 0) {
+      const keep = new Set(retired);
+      for (const uri of this.knownRetired ?? []) keep.add(uri);
+      for (const [id, known] of prior) if (known.retired && !next.has(id)) keep.add(this.uriOf(id));
+      retired = [...keep];
+    }
     retired.sort();
+    // The file cache: what this sweep read or kept, plus the cached reads of
+    // any category it could not list (kept for when it lists again). A root
+    // that could not be listed changes nothing.
+    if (listing.rootListed && seq > this.adoptedSeq) {
+      for (const [id, known] of prior) {
+        const dir = id.includes("/") ? id.slice(0, id.indexOf("/")) : "";
+        if (listing.failedDirs.has(dir) && !next.has(id)) next.set(id, known);
+      }
+      for (const [id, at] of this.forgotten) {
+        if (at >= seq) next.delete(id);
+        else this.forgotten.delete(id);
+      }
+      this.known = next;
+      this.adoptedSeq = seq;
+      if (full) this.lastFullAt = startedAt;
+    }
     const run: SweepRun = { sweep: { entries, unread }, retired };
+    this.stats = { full, listed: files.length, reread, reused };
     if (gen === this.generation) {
       this.cache = { at: this.now().getTime(), run };
-      this.knownRetired = [...retired];
+      this.setKnownRetired([...retired]);
     }
     return run;
+  }
+
+  /** Record the retired list, telling `onRetired` when it changed (and the
+   * first time it is known at all). */
+  private setKnownRetired(next: string[]): void {
+    const prev = this.knownRetired;
+    this.knownRetired = next;
+    if (this.onRetired === undefined) return;
+    if (prev !== null && prev.length === next.length && prev.every((u, i) => u === next[i])) return;
+    try {
+      this.onRetired([...next]);
+    } catch {
+      /* the publication is best-effort; the store never throws */
+    }
   }
 
   /**
@@ -422,34 +612,48 @@ export class OpenVikingStore implements MemoryStore {
    * A listing that fails is recorded in `unread` — except NOT_FOUND, which is
    * an absent directory and therefore a known-empty one (see `MemorySweep`).
    */
-  private async listFiles(unread: string[]): Promise<Array<{ id: string; modTime: string }>> {
+  private async listFiles(unread: string[]): Promise<{
+    files: Array<{ id: string; size: number; modTime: string }>;
+    /** The root answered (an absent root is an answer: known-empty). */
+    rootListed: boolean;
+    /** Categories whose listing failed (not NOT_FOUND) — their cached reads
+     * are kept for when they list again. */
+    failedDirs: Set<string>;
+  }> {
+    const failedDirs = new Set<string>();
     const top = await this.client.ls(this.root);
     if (!top.ok) {
-      if (top.code !== "NOT_FOUND") unread.push(`ls ${this.root}: ${top.message}`);
-      return [];
+      if (top.code !== "NOT_FOUND") {
+        unread.push(`ls ${this.root}: ${top.message}`);
+        return { files: [], rootListed: false, failedDirs };
+      }
+      return { files: [], rootListed: true, failedDirs };
     }
-    const out: Array<{ id: string; modTime: string }> = [];
+    const out: Array<{ id: string; size: number; modTime: string }> = [];
     const dirs: string[] = [];
     for (const row of top.result) {
       if (row.isDir) {
         if (!row.name.startsWith(".")) dirs.push(row.name);
       } else if (isTextFile(row.name)) {
-        out.push({ id: row.name, modTime: row.modTime });
+        out.push({ id: row.name, size: row.size, modTime: row.modTime });
       }
     }
     await pool(dirs, this.concurrency, async (dir) => {
       const uri = `${this.root}/${dir}`;
       const sub = await this.client.ls(uri);
       if (!sub.ok) {
-        if (sub.code !== "NOT_FOUND") unread.push(`ls ${uri}: ${sub.message}`);
+        if (sub.code !== "NOT_FOUND") {
+          unread.push(`ls ${uri}: ${sub.message}`);
+          failedDirs.add(dir);
+        }
         return;
       }
       for (const row of sub.result) {
         if (!row.isDir && isTextFile(row.name))
-          out.push({ id: `${dir}/${row.name}`, modTime: row.modTime });
+          out.push({ id: `${dir}/${row.name}`, size: row.size, modTime: row.modTime });
       }
     });
-    return out;
+    return { files: out, rootListed: true, failedDirs };
   }
 
   /**
@@ -505,6 +709,10 @@ export class OpenVikingStore implements MemoryStore {
       if (entry.hash !== op.expect) {
         // Caught before the round trip, but the server's 409 is the real
         // guard — this is only a cheaper, clearer version of the same answer.
+        // The caller's copy may have come from this store's own file cache,
+        // which a same-size rewrite inside one modTime second cannot move:
+        // forget the file, so the re-read the refusal asks for is a real one.
+        this.forget(op.id);
         return {
           ok: false,
           message: "refused: the entry changed since you read it — re-read it and retry",
@@ -522,7 +730,7 @@ export class OpenVikingStore implements MemoryStore {
       if (res.ok && op.op === "retire" && this.knownRetired !== null) {
         const uri = this.uriOf(op.id);
         if (!this.knownRetired.includes(uri))
-          this.knownRetired = [...this.knownRetired, uri].sort();
+          this.setKnownRetired([...this.knownRetired, uri].sort());
       }
       return res;
     } catch (err) {
@@ -647,7 +855,7 @@ export class OpenVikingStore implements MemoryStore {
       wait: false,
     });
     if (res.ok && batchWriteLanded(res.result, uri)) {
-      this.invalidate();
+      this.forget(id);
       await this.mirrorTags(uri, body);
       return { ok: true, message: `updated ${id}` };
     }
@@ -656,12 +864,27 @@ export class OpenVikingStore implements MemoryStore {
         ok: false,
         message: `memory write failed: the server accepted the batch without writing ${id}`,
       };
-    if (res.conflict)
+    if (res.conflict) {
+      // Somebody else wrote it: the cached read is stale too (see apply).
+      this.forget(id);
       return {
         ok: false,
         message: "refused: the entry changed since you read it — re-read it and retry",
       };
+    }
     return { ok: false, message: `memory write failed: ${res.message}` };
+  }
+
+  /**
+   * Drop the sweep cache AND this file's cached read: the next sweep reads it
+   * whatever its listing says — and a sweep already in flight, which may have
+   * read the old bytes, cannot put them back. After a write through this store,
+   * and after a refusal that proved the cached bytes stale.
+   */
+  private forget(id: string): void {
+    this.invalidate();
+    this.known.delete(id);
+    this.forgotten.set(id, this.sweepSeq);
   }
 
   /**

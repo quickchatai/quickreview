@@ -8,9 +8,8 @@
   "minQueryLength": 3,
   "profileTokenBudget": 10000,
   "resumeContextBudget": 32000,
-  "commitTokenThreshold": 20000,
-  "commitKeepRecentCount": 10,
-  "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below is belt-and-braces only — config.ts forces it off in code (PATCH 1).",
+  "recallQueryExpansion": "off",
+  "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below and recallQueryExpansion above are belt-and-braces only — config.ts forces takeover off (PATCH 1) and query expansion off (PATCH 7) in code. There is no commitTokenThreshold: nothing commits a session (PATCH 7).",
   "takeover": {
     "enabled": false,
     "tokenThreshold": 30000,

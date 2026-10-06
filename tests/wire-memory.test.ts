@@ -187,3 +187,30 @@ describe("tui/index.ts: memory failures reach the operator (S1)", () => {
     expect(tui).toContain("tuiMemoryRequests: memStore.requestCounts()");
   });
 });
+
+describe("wire.ts: bounded sessions, shed load (S3)", () => {
+  it("the daemon's store publishes the retired list where the sessions' recall reads it", () => {
+    expect(wire).toMatch(
+      /openVikingStore\(memoryClient, \{[\s\S]*?onRetired: \(uris\) => \{\s*writeRetiredUris\(sessions\.ovRetiredPath\(\), uris,/,
+    );
+  });
+
+  it("…starting from the list the last daemon published, so a warming-up first sweep wipes nothing", () => {
+    expect(wire).toMatch(
+      /openVikingStore\(memoryClient, \{[\s\S]*?initialRetired: readRetiredUrisFile\(sessions\.ovRetiredPath\(\)\),/,
+    );
+  });
+
+  it("the TUI's ONE memory store publishes the companion tree's retired list into the state home the companion mounts", () => {
+    const tui = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
+    expect(tui).toMatch(
+      /const memStore = tuiMemoryStore\(\{\s*retiredFiles: \{ companion: join\(memStateHome\(\), COMPANION_MEMORY\.retiredFile\) \},\s*\}\);/,
+    );
+  });
+
+  it("the reconcile pass's raw-tier sweep survives the daemon-origin wrap", () => {
+    expect(wire).toMatch(
+      /hooks\.sweepStaleOvSessions\s*\?\s*\{ sweepStaleOvSessions: \(\) => hooks\.sweepStaleOvSessions!\(\) \}/,
+    );
+  });
+});

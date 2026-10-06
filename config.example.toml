@@ -362,7 +362,7 @@ home = "/opt/quickreview/state/openviking"
 # ov.conf is TEMPLATED at boot by the entrypoint — the interactive
 # `openviking-server init` wizard is never invoked in-container.
 workers = 1                       # ov.conf server.workers, 2-CPU cap
-queue_concurrency = 2             # ov.conf queue_workers.* (defaults are 4/4/8)
+queue_concurrency = 2             # ov.conf queue_workers.* (defaults 4/4/8) and embedding.max_concurrent (default 10)
 # Health gate is /ready, NEVER `doctor`: doctor makes live provider calls and
 # exits 1 when no `vlm` is configured, which is our normal state. /health is
 # unauthenticated and carries the version the drift check reads. The heartbeat

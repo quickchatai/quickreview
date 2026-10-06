@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need six
+upstream ships it as an `examples/` directory, not a package, and we need seven
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the six patches was tried as configuration first and does not
+Every one of the seven patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Six numbered behaviour patches, applied in order over the vendored upstream
+Seven numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all seven, in order, to a
+`git apply`-able diffs — verified by applying all eight, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -266,6 +266,60 @@ Touches: `qcr-honest.ts` (new), `qcr-write.ts` (`buildBatchWriteRequest`,
 `statResponse` envelopes), `config.ts` (`rereadApiKey`), `tools.ts`,
 `index.ts` (the banner, the re-reader).
 
+### 0007 — bounded recall, no commit (S3)
+
+Owner ruling R3 (2026-10-06): PR sessions keep this extension, bounded — the
+per-turn recall wait is capped at 500 ms and query expansion is off. Four
+changes:
+
+* **The `context` hook waits at most 500 ms for recall.** It used to await
+  the whole recall before every provider request: a context search that could
+  spend a 15 s expansion fuse, then a `/search/recall` fallback with its own
+  10 s, then a raw find — against a server whose local embedder blocks its one
+  event loop (search p50 22 s, max 155 s, 2026-10-03..06). Now every request
+  of one recall runs on ONE deadline (`qcr-recall.ts` `budgetedFetch`): each
+  gets the time left as its own timeout, and once none is left the next
+  request is not sent — the fetch throws, which ends the fallback chain where
+  it stands. `raceBudget` returns the hook on time whatever the chain is doing.
+  A recall that misses the deadline leaves this run without a block; a late
+  answer is dropped, never injected into a later turn (that would rewrite a
+  message the provider has already cached). A caller may ask for less than
+  `RECALL_WAIT_MS`, never more.
+* **Query expansion is off — in code.** `config.json` says
+  `"recallQueryExpansion": "off"`, and `config.ts` forces it (and the
+  `Configured` flag that makes the request body carry it) after every
+  override, including `OPENVIKING_RECALL_QUERY_EXPANSION`, the way PATCH 1
+  forces takeover: a ruling is not a knob. Expansion is a model call the
+  server makes before retrieval whenever a search carries a session id; this
+  deployment runs no model for it. (`ov.conf retrieval.enable_intent = false`
+  turns the server's own query planning off too — the entrypoints.)
+* **A retired entry is never recalled.** Retire is a `#retired` header tag and
+  the file stays in the indexed root. The daemon publishes the retired URIs
+  it sees beside the sessions' ovcli.conf (`QCR_OV_RETIRED_FILE`,
+  `src/memory/ovsession.ts` `writeRetiredUris`), and the TUI publishes the
+  companion tree's into the state home the companion mounts (the same
+  variable, set on the companion's pi); `retiredGuard` sends them as
+  `exclude_uris` on a context search (never on list mode, which rejects the
+  field) and drops any recalled entry whose own text opens with the tag,
+  re-rendering the block in the server's envelope. The header rule is
+  `parseHashTags`', pinned against it by test — a `#retired` quoted in prose
+  is not a retirement.
+* **Nothing commits a session.**: commit exists to promote session
+  notes into memories through an extraction model this deployment does not
+  run, so every commit archived the raw notes and produced nothing (143
+  archives on the VM, 0 overviews). The 20k-token threshold commit (and the
+  session GET after every synced turn that decided it), the commit on
+  `session_shutdown` and the `/viking commit` command are gone;
+  `SyncManager.commit()` sends nothing and queues nothing, and a commit an
+  older build queued on disk is answered with a final refusal on replay, so
+  it is dropped, never sent. Per-turn sync STAYS (R3); the raw tier ages out
+  by the daemon's DELETE when the PR closes (and its reconcile sweep).
+
+Touches: `qcr-recall.ts` (new), `recall.ts` (the bounded, retired-aware
+search), `sync.ts` (no commit, the replay refusal), `index.ts` (the hook's
+budget, the retired list, no shutdown commit, the command, the banner),
+`config.ts` (expansion forced off), `config.json`.
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -278,16 +332,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all six patches, then:
+# 3. Re-verify all seven patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all six** patches — a patch that no
+verification below. A bump re-verifies **all seven** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the six patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the seven patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the
@@ -315,6 +369,12 @@ real compaction with this fork loaded. The second half of that is the open
 item — "does a no-op second handler drop ledger-pin's pinned block?" —
 which this patch series makes moot by construction rather than by measurement.
 Fold both into `npm run smoke:session`.
+
+Also unverified live, for 0007: that pi awaits the `context` handler before
+the provider request exactly as upstream's comment says (the 500 ms bound is
+unit-tested on the recall manager and pinned structurally on the hook), and
+that the pinned server takes `exclude_uris` on the context face as the
+daemon's own search already does. Fold both into the session smoke.
 
 Also unverified live: a `viking_read`/`viking_write` through the SECOND
 (reviewer) client from the companion's pi. The key and the server-side

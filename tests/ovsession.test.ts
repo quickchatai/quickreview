@@ -16,11 +16,18 @@ import {
   openVikingSessionLifecycle,
   ovSessionIdForPr,
   ovcliConfPathIn,
+  ovRetiredPathIn,
+  OV_SESSION_SWEEP_MAX,
+  planStaleOvSessions,
+  prOfOvSessionId,
   readOvcliKey,
+  readRetiredUrisFile,
   readServerRootKey,
   renderOvcliConf,
   writeOvcliConf,
+  writeRetiredUris,
 } from "../src/memory/ovsession.js";
+import { readRetiredUris } from "../extensions/vendor/openviking-pi/qcr-recall.js";
 
 let dir: string;
 
@@ -186,6 +193,20 @@ describe("session environment", () => {
     expect(Object.keys(env).some((k) => /KEY|TOKEN|SECRET/i.test(k))).toBe(false);
   });
 
+  it("names the retired-URIs file the extension's recall excludes by (S3)", () => {
+    const env = openVikingSessionEnv({
+      baseUrl: "http://h:1933",
+      peerId: "pr-42",
+      cliConfigPath: "/home/review/.openviking/ovcli.conf",
+      retiredFile: "/home/review/.openviking/retired-uris.json",
+    });
+    expect(env.QCR_OV_RETIRED_FILE).toBe("/home/review/.openviking/retired-uris.json");
+    expect(
+      openVikingSessionEnv({ baseUrl: "http://h:1933", peerId: "p", cliConfigPath: "/c" })
+        .QCR_OV_RETIRED_FILE,
+    ).toBeUndefined();
+  });
+
   it("omits the session id when there is no raw tier (the overseer)", () => {
     const env = openVikingSessionEnv({
       baseUrl: "http://h:1933",
@@ -224,6 +245,17 @@ function fakeServer() {
     if (url.endsWith("/api/v1/sessions") && init.method === "POST") {
       sessions.set(body["session_id"], { policy: body["memory_policy"], notes: [] });
       return ok({ session_id: body["session_id"] });
+    }
+    // The server's list shape (session_service.py `sessions()`).
+    if (url.endsWith("/api/v1/sessions") && init.method === "GET") {
+      return ok(
+        [...sessions.keys()].map((id) => ({
+          session_id: id,
+          uri: `viking://user/reviewer/sessions/${id}`,
+          is_dir: true,
+          mod_time: "2026-08-25T10:00:00Z",
+        })),
+      );
     }
     if (url.includes("/api/v1/sessions/") && init.method === "DELETE") {
       const id = decodeURIComponent(url.slice(url.lastIndexOf("/") + 1));
@@ -404,5 +436,133 @@ describe("keyChangeWatcher — a rotated daemon key reaches the sessions", () =>
     expect(watch(null)).toBe(false);
     expect(watch("key-A")).toBe(true);
     expect(fired).toBe(2);
+  });
+});
+
+// ---- S3: the retired list and the stale-session sweep --------------
+
+describe("the retired-URIs file (S3)", () => {
+  it("lives beside ovcli.conf and round-trips into what the extension's recall reads", () => {
+    const home = join(dir, "pihome");
+    const path = ovRetiredPathIn(home);
+    expect(path).toBe(join(home, ".openviking", "retired-uris.json"));
+    const uris = [
+      "viking://user/reviewer/memories/experiences/a.md",
+      "viking://user/reviewer/memories/experiences/b.md",
+    ];
+    expect(writeRetiredUris(path, uris, { now: () => new Date("2026-10-06T12:00:00Z") })).toBe(
+      true,
+    );
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      uris,
+      written_at: "2026-10-06T12:00:00.000Z",
+    });
+    // The DAEMON's writer and the EXTENSION's reader agree on the shape.
+    expect(readRetiredUris(path)).toEqual(uris);
+    // Rewritten whole: an emptied list is published as empty.
+    writeRetiredUris(path, []);
+    expect(readRetiredUris(path)).toEqual([]);
+  });
+
+  it("a disk that refuses costs the list, never a throw", () => {
+    const blocker = join(dir, "file");
+    writeFileSync(blocker, "x");
+    const logs: string[] = [];
+    expect(
+      writeRetiredUris(join(blocker, "sub", "retired-uris.json"), ["viking://x"], {
+        log: (m) => logs.push(m),
+      }),
+    ).toBe(false);
+    expect(logs.join(" ")).toContain("could not publish the retired list");
+  });
+
+  it("reads back what was published — the seed a restarted store starts from — and null for nothing to protect", () => {
+    const path = join(dir, "pihome", ".openviking", "retired-uris.json");
+    expect(readRetiredUrisFile(path)).toBeNull(); // no file yet
+    const uris = [
+      "viking://user/reviewer/memories/experiences/a.md",
+      "viking://user/reviewer/memories/experiences/b.md",
+    ];
+    writeRetiredUris(path, [...uris, uris[0]!]);
+    expect(readRetiredUrisFile(path)).toEqual(uris);
+    writeRetiredUris(path, []);
+    expect(readRetiredUrisFile(path)).toEqual([]);
+    writeFileSync(path, "{ not json");
+    expect(readRetiredUrisFile(path)).toBeNull();
+    writeFileSync(path, JSON.stringify({ uris: ["/etc/passwd", 7, "viking://user/x.md"] }));
+    expect(readRetiredUrisFile(path)).toEqual(["viking://user/x.md"]);
+  });
+});
+
+describe("the stale-session sweep plan (S3)", () => {
+  const state = (closed: number[], open: number[]) => (pr: number) =>
+    closed.includes(pr)
+      ? ("closed" as const)
+      : open.includes(pr)
+        ? ("open" as const)
+        : ("unknown" as const);
+
+  it("deletes only pr-<n> sessions of CLOSED PRs — open, unknown and foreign ids are left alone", () => {
+    const plan = planStaleOvSessions(
+      ["pr-12", "pr-3", "pr-40", "pr-99", "overseer", "pi-abc123", "pr-x", "pr-0"],
+      state([3, 12], [40]),
+    );
+    expect(plan).toEqual({ remove: ["pr-3", "pr-12"], deferred: 0, kept: 2, foreign: 4 });
+  });
+
+  it("is bounded per pass, lowest PR first, and says how many it left", () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `pr-${100 - i}`);
+    const plan = planStaleOvSessions(ids, () => "closed");
+    expect(plan.remove).toHaveLength(OV_SESSION_SWEEP_MAX);
+    expect(plan.remove[0]).toBe("pr-76");
+    expect(plan.deferred).toBe(25 - OV_SESSION_SWEEP_MAX);
+    expect(planStaleOvSessions(ids, () => "closed", 0).remove).toEqual([]);
+  });
+
+  it("reads only the exact pr-<n> spelling as a PR's raw tier", () => {
+    expect(prOfOvSessionId("pr-5263")).toBe(5263);
+    for (const id of ["pr-", "pr-0", "pr-1a", "PR-5", "xpr-5", "pr-5/x", "overseer"])
+      expect(prOfOvSessionId(id)).toBeNull();
+  });
+});
+
+describe("lifecycle.list (S3)", () => {
+  it("lists the server's sessions through the real client", async () => {
+    const server = fakeServer();
+    const client = new OpenVikingClient({
+      baseUrl: "http://127.0.0.1:1933",
+      apiKey: "reviewer-key",
+      fetchFn: server.fetchFn,
+    });
+    const life = openVikingSessionLifecycle(client);
+    await life.create("pr-1");
+    await life.create("pr-2");
+    expect(await life.list!()).toEqual({ ok: true, ids: ["pr-1", "pr-2"] });
+  });
+
+  it("a failure, a throw and a hang are each a reason, never a rejection", async () => {
+    const base = {
+      createSession: async () => ({ ok: true, status: 200 }),
+      deleteSession: async () => ({ ok: true, status: 200 }),
+    };
+    const failing = openVikingSessionLifecycle({
+      ...base,
+      listSessions: async () => ({ ok: false as const, status: 401, message: "Invalid API Key" }),
+    });
+    expect(await failing.list!()).toEqual({ ok: false, reason: "401: Invalid API Key" });
+    const throwing = openVikingSessionLifecycle({
+      ...base,
+      listSessions: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    expect(await throwing.list!()).toMatchObject({ ok: false });
+    const hanging = openVikingSessionLifecycle(
+      { ...base, listSessions: () => new Promise<never>(() => {}) },
+      { timeoutMs: 10 },
+    );
+    expect(await hanging.list!()).toMatchObject({ ok: false });
+    // An api with no listing gives a lifecycle with no list — no sweep.
+    expect(openVikingSessionLifecycle(base).list).toBeUndefined();
   });
 });

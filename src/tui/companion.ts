@@ -207,6 +207,13 @@ export const MEMORY = {
   peerId: "companion",
   /** The vendored patched OpenViking pi extension, inside /workspace. */
   extension: `${CONTAINER.workspace}/extensions/vendor/openviking-pi/index.ts`,
+  /** The companion namespace's RETIRED URIs, relative to the state home
+   * (S3). The TUI's memory store publishes them there on the host
+   * (no daemon sweeps the companion's tree); the extension's per-turn recall
+   * reads them from the mount (`QCR_OV_RETIRED_FILE`, set in `piEnvPrefix`)
+   * and sends them as `exclude_uris`, so a retired companion memory is never
+   * recalled — not only one whose own text still opens with the tag. */
+  retiredFile: "openviking/companion-retired-uris.json",
 } as const;
 
 /** The first-party subagents glue — loads pi's OWN subagent
@@ -594,6 +601,8 @@ export class CompanionLifecycle {
       `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
       // survey and scan fan out one case per unit — see SUBAGENTS.
       `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,
+      // the retired URIs the recall excludes — see MEMORY.retiredFile.
+      `QCR_OV_RETIRED_FILE=${CONTAINER.stateHome}/${MEMORY.retiredFile}`,
     ];
   }
 

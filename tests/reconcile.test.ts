@@ -527,6 +527,75 @@ describe("reconcileOnce", () => {
   });
 });
 
+// the raw-tier sweep rides the reconcile pass — after the
+// closed-sync, so a PR closed THIS pass is already closed when it runs — and
+// it is never an error of the pass: the boot's first healthy pass lifts a
+// deploy drain, and memory must not be able to hold that.
+describe("the stale raw-tier sweep rides the reconcile pass (S3)", () => {
+  it("runs after the closed-sync and lands its outcome on the report and the pass event", async () => {
+    gh.closedPrs.set(4, ref(4, { state: "closed", merged: true }));
+    seed(4, "tracked");
+    const order: string[] = [];
+    const { hooks: base } = recordingHooks();
+    const hooks: SessionHooks = {
+      ...base,
+      async archiveAndClose(pr) {
+        order.push(`close ${pr}`);
+      },
+      async sweepStaleOvSessions() {
+        // The PR closed this pass is already closed in the registry.
+        order.push(`sweep (pr 4 ${store.getPr(4)!.state})`);
+        return { listed: 3, stale: 1, deleted: ["pr-4"], failed: [], deferred: 0 };
+      },
+    };
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(order).toEqual(["close 4", "sweep (pr 4 closed)"]);
+    expect(report.ov_sessions).toEqual({
+      listed: 3,
+      stale: 1,
+      deleted: ["pr-4"],
+      failed: [],
+      deferred: 0,
+    });
+    expect(report.errors).toEqual([]);
+    const pass = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'reconcile_pass'")
+      .get() as { payload: string };
+    expect(JSON.parse(pass.payload)).toMatchObject({
+      ov_sessions_deleted: 1,
+      ov_sessions_failed: 0,
+    });
+  });
+
+  it("a sweep that cannot list, or throws, is NEVER an error of the pass", async () => {
+    const { hooks: base } = recordingHooks();
+    const failing: SessionHooks = {
+      ...base,
+      async sweepStaleOvSessions() {
+        return { listed: 0, stale: 0, deleted: [], failed: [], deferred: 0, error: "401" };
+      },
+    };
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks: failing });
+    expect(report.errors).toEqual([]);
+    expect(report.ov_sessions?.error).toBe("401");
+    const throwing: SessionHooks = {
+      ...base,
+      async sweepStaleOvSessions() {
+        throw new Error("boom");
+      },
+    };
+    const report2 = await reconcileOnce({ cfg, store, adapter: gh, hooks: throwing });
+    expect(report2.errors).toEqual([]);
+    expect(report2.ov_sessions).toBeUndefined();
+  });
+
+  it("no raw tier managed ⇒ no sweep and nothing on the report", async () => {
+    const { hooks } = recordingHooks();
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks });
+    expect(report.ov_sessions).toBeUndefined();
+  });
+});
+
 describe("withheld-approval backstop", () => {
   // The webhook `ci_completed` is the fast path; this is the reconcile sweep
   // cigate.ts promises for a lost delivery.

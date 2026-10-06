@@ -7,6 +7,8 @@ import type { OVConfig } from "./config.js";
 import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs";
 import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
 import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
+// [QCR PATCH 7]
+import { refuseCommits } from "./qcr-recall.js";
 
 // --- SyncManager ---
 
@@ -91,7 +93,9 @@ export class SyncManager {
   async replayPending(): Promise<void> {
     if (!this.client.connected) return;
     await replayPending(
-      (path: string, init?: any) => this.client.fetchJSON(path, init, 10000),
+      // [QCR PATCH 7] A commit an older build queued on disk is answered with
+      // a final refusal here — dropped from the queue, never sent.
+      refuseCommits((path: string, init?: any) => this.client.fetchJSON(path, init, 10000)),
       (stage: string, data: unknown) =>
         debugLog(`${stage}: ${JSON.stringify(data)}`),
     );
@@ -122,9 +126,10 @@ export class SyncManager {
     if (added === extracted.payloads.length) {
       this.syncedEntryCount = extracted.nextEntryCount;
     }
-    if (added > 0 && !this.config.takeoverEnabled) {
-      await this.commitIfNeeded();
-    }
+    // [QCR PATCH 7] was `if (added > 0 && !takeoverEnabled) await
+    // this.commitIfNeeded()` — a session GET after every synced turn and a
+    // commit at 20k pending tokens. Commit is never called; the
+    // per-turn sync above stays (owner ruling R3).
     return { added, tokens, allDelivered };
   }
 
@@ -136,39 +141,18 @@ export class SyncManager {
     return { accepted: true, delivered: false };
   }
 
-  async commitIfNeeded(): Promise<void> {
-    if (!this.ovSessionId) return;
-    const meta = await this.client.getSession(this.ovSessionId);
-    const pending = Number(meta?.pending_tokens || 0);
-    if (pending >= this.config.commitTokenThreshold) {
-      await this.commit();
-    }
-  }
-
-  async commit(opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {}): Promise<any | null> {
-    if (!this.ovSessionId) return null;
-    const response = await this.client.commitSessionResponse(
-      this.ovSessionId,
-      opts.keepRecentCount,
-    );
-    const result = response.result;
-    if (!result) {
-      debugLog(
-        `commit: session=${this.ovSessionId} ok=false status=${response.status ?? 0} ` +
-          `trace_id=${response.traceId || "none"} ` +
-          `error=${response.error?.message || response.error?.code || "unknown"}`,
-      );
-      if (opts.queueOnFailure !== false) {
-        await enqueue("commitSession", this.ovSessionId, {
-          keep_recent_count: opts.keepRecentCount ?? this.config.commitKeepRecentCount,
-        });
-      }
-      return null;
-    }
-    debugLog(
-      `commit: session=${this.ovSessionId} ok=true trace_id=${result.trace_id || "none"}`,
-    );
-    return result;
+  // [QCR PATCH 7] `commitIfNeeded()` is DELETED (it read the session after
+  // every synced turn to decide a commit), and `commit()` never sends one:
+  // commit exists to PROMOTE session notes into memories through an
+  // extraction model this deployment does not configure, so each one archived
+  // the raw notes and produced nothing (143 archives on the VM, 0 overviews).
+  // It also queues nothing, so a refused commit cannot come back on replay.
+  // The signature stays for the takeover manager, which config.ts forces off.
+  async commit(
+    _opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {},
+  ): Promise<any | null> {
+    if (this.ovSessionId) debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
+    return null;
   }
 
   async shutdown(): Promise<void> {

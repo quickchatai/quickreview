@@ -54,7 +54,7 @@ openviking_port: 1933                 # loopback only — NEVER a published port
 # and survives an image rebuild. Must equal config.toml [openviking] home.
 openviking_home: /opt/quickreview/state/openviking
 openviking_workers: 1                 # ov.conf server.workers (2-CPU cap)
-openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8)
+openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8) + embedding.max_concurrent (10)
 # The embedder. LOCAL is the shipped default: the server's own
 # llama-cpp dense embedder (the pinned llama_cpp_python above) runs INSIDE the
 # container, so no memory text ever leaves the machine — nothing but the model

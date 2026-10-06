@@ -355,6 +355,26 @@ describe("the rendered ov.conf (executed)", () => {
     });
   });
 
+  // two server knobs that shed load, verified against the pinned
+  // 0.4.15's own config models (both `extra: "forbid"` — a misspelt key would
+  // stop the server booting, so the executed render is the proof).
+  it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob", () => {
+    const { conf } = render({}, { openviking_root_key: "r" });
+    expect(conf.retrieval).toEqual({ enable_intent: false });
+    expect(conf.embedding.max_concurrent).toBe(Number(gv("openviking_queue_concurrency")));
+    expect(conf.embedding.max_concurrent).toBe(cfg.openviking.queue_concurrency);
+    // Bounded well under the server's default of 10.
+    expect(conf.embedding.max_concurrent).toBeLessThan(4);
+    // The knob, never a literal.
+    const body = entrypoint.slice(
+      entrypoint.indexOf("<<'OV_CONF_RENDER'"),
+      entrypoint.lastIndexOf("\nOV_CONF_RENDER"),
+    );
+    expect(body).toMatch(
+      /conf\.embedding = \{\s*(?:\/\/[^\n]*\n\s*)*max_concurrent: \{\{ openviking_queue_concurrency \}\},/,
+    );
+  });
+
   it("OPT-IN with no embeddings key renders NO key — never a silent fallback to another embedder", () => {
     const { conf } = render(
       {

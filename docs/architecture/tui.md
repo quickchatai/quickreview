@@ -352,6 +352,21 @@ refusing a remote-driven action in `src/tui/index.ts` — and must not be wired
 into the reloader. A reload at an awkward moment is visible and recoverable;
 a reload that never fires is neither. Pinned by `tests/tui-reload.test.ts`.
 
+**The process chain stays two deep** (S3). Node cannot replace its
+own image, so a re-exec runs the new build as a child with the terminal
+inherited and waits. It used to do that at every reload, so each generation
+sat frozen in `spawnSync` under the next — 14 `cli.js tui --resume-state`
+processes, about 200 MB each, on the owner's PC on 2026-10-06. Now the first
+TUI to reload becomes the **supervisor** (`superviseReloads`): it runs every
+later build as its own child, handing each `QCR_TUI_SUPERVISOR_PID`, and a
+TUI whose parent is that supervisor reloads by **exiting** with
+`RELOAD_EXIT_CODE` (75) after its teardown; the supervisor starts the next
+build with the snapshot the exiting one wrote (`tui-resume-<its pid>.json`).
+The exit handler skips the terminal restore on that one code, so the next
+build inherits the alt screen and raw mode exactly as a frozen generation used
+to leave them — no flash of the shell between builds. The supervisor exits
+with the last build's code. Nothing about *when* a reload fires changed.
+
 `scripts/dev-tui.sh` (`npm run dev`) owns both halves in one terminal and one
 process group:
 

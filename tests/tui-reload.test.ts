@@ -4,10 +4,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HotReloader,
+  isSupervised,
   parseResumeArg,
   readResumeState,
+  realReexec,
   reexecArgv,
+  RELOAD_EXIT_CODE,
   resumeStatePath,
+  resumeStatePathBeside,
+  SUPERVISOR_ENV,
+  superviseReloads,
+  type ReexecIo,
   type ReloaderOptions,
   type ReloadState,
   type WatchFn,
@@ -256,6 +263,147 @@ describe("argv plumbing", () => {
       "--resume-state",
       "/s2.json",
     ]);
+  });
+});
+
+// ---- the chain stays two deep (S3) -----------------------------------
+//
+// Each reload used to run the new build as a child of the old one and wait,
+// so every generation stayed alive, frozen, under the next: 14 `cli.js tui
+// --resume-state` processes on the owner's PC on 2026-10-06. The first TUI to
+// reload now SUPERVISES — every later build is its child — and a supervised
+// TUI that wants a reload EXITS. Still no condition on when a reload fires.
+
+describe("the reload chain stays two processes deep, however many reloads (S3)", () => {
+  /** A simulated process tree. Each spawned "TUI" runs `life` — it reloads
+   * `reloads` times across the whole tree, then quits with `finalCode`. */
+  function simulate(reloads: number, finalCode: number | null = 0) {
+    let nextPid = 101;
+    let depth = 1; // the first TUI
+    let maxDepth = 1;
+    let reloadsLeft = reloads;
+    const spawns: Array<{ by: number; pid: number; argv: string[]; env: NodeJS.ProcessEnv }> = [];
+    const exits: Array<{ pid: number; code: number }> = [];
+
+    const ioFor = (pid: number, ppid: number, env: NodeJS.ProcessEnv, argv: string[]): ReexecIo => {
+      let exited: number | undefined;
+      const io: ReexecIo = {
+        argv,
+        env,
+        pid,
+        ppid,
+        exit: (code) => {
+          exited = code;
+          exits.push({ pid, code });
+        },
+        spawn: (childArgv, childEnv) => {
+          const childPid = nextPid++;
+          spawns.push({ by: pid, pid: childPid, argv: childArgv, env: childEnv });
+          depth += 1;
+          maxDepth = Math.max(maxDepth, depth);
+          const status = runTui(childPid, pid, childEnv, childArgv);
+          depth -= 1;
+          return { status, pid: childPid };
+        },
+      };
+      // Expose what this process exited with, for runTui.
+      (io as ReexecIo & { exited: () => number | undefined }).exited = () => exited;
+      return io;
+    };
+
+    /** One TUI process: a build lands → it reloads (if any are left), else quits. */
+    const runTui = (pid: number, ppid: number, env: NodeJS.ProcessEnv, argv: string[]) => {
+      const io = ioFor(pid, ppid, env, argv) as ReexecIo & { exited: () => number | undefined };
+      if (reloadsLeft > 0) {
+        reloadsLeft -= 1;
+        realReexec(resumeStatePath("/sandbox", pid), () => {}, io);
+        return io.exited() ?? null;
+      }
+      return finalCode;
+    };
+
+    const first = ioFor(100, 1, { PATH: "/bin" }, ["/x/dist/src/cli.js", "tui", "--no-companion"]);
+    reloadsLeft -= 1;
+    realReexec(resumeStatePath("/sandbox", 100), () => {}, first);
+    return { spawns, exits, maxDepth };
+  }
+
+  it("five reloads: one supervisor, every build its direct child, never three deep", () => {
+    const { spawns, exits, maxDepth } = simulate(5);
+    expect(maxDepth).toBe(2);
+    expect(spawns).toHaveLength(5);
+    // Every build was started by the FIRST process — none by a build.
+    expect(new Set(spawns.map((s) => s.by))).toEqual(new Set([100]));
+    // …and each carried the supervisor's pid, so it knows to exit to reload.
+    for (const s of spawns) expect(s.env[SUPERVISOR_ENV]).toBe("100");
+    // The supervised builds exited with the reload code; the last one quit,
+    // and the supervisor exited with its code.
+    expect(exits.filter((e) => e.code === RELOAD_EXIT_CODE).map((e) => e.pid)).toEqual([
+      101, 102, 103, 104,
+    ]);
+    expect(exits.at(-1)).toEqual({ pid: 100, code: 0 });
+  });
+
+  it("each build resumes from the snapshot the PREVIOUS build wrote", () => {
+    const { spawns } = simulate(3);
+    expect(spawns.map((s) => s.argv.slice(-2))).toEqual([
+      ["--resume-state", "/sandbox/state/tui-resume-100.json"],
+      ["--resume-state", "/sandbox/state/tui-resume-101.json"],
+      ["--resume-state", "/sandbox/state/tui-resume-102.json"],
+    ]);
+    // Flags survive, the state flag is never duplicated.
+    for (const s of spawns)
+      expect(s.argv.slice(0, 3)).toEqual(["/x/dist/src/cli.js", "tui", "--no-companion"]);
+    expect(resumeStatePathBeside("/sandbox/state/tui-resume-100.json", 7)).toBe(
+      "/sandbox/state/tui-resume-7.json",
+    );
+  });
+
+  it("the last build's exit is the supervisor's exit — a crash stays a crash, a signal reads 0", () => {
+    expect(simulate(2, 1).exits.at(-1)).toEqual({ pid: 100, code: 1 });
+    expect(simulate(2, null).exits.at(-1)).toEqual({ pid: 100, code: 0 });
+  });
+
+  it("only a TUI whose PARENT is the named supervisor exits to reload — a leaked variable changes nothing", () => {
+    expect(isSupervised({ env: { [SUPERVISOR_ENV]: "100" }, ppid: 100 })).toBe(true);
+    expect(isSupervised({ env: { [SUPERVISOR_ENV]: "100" }, ppid: 555 })).toBe(false);
+    expect(isSupervised({ env: { [SUPERVISOR_ENV]: "" }, ppid: 0 })).toBe(false);
+    expect(isSupervised({ env: {}, ppid: 100 })).toBe(false);
+    // An unsupervised TUI handed a stray variable becomes a supervisor itself.
+    const spawned: string[][] = [];
+    const exits: number[] = [];
+    realReexec("/s/state/tui-resume-9.json", undefined, {
+      argv: ["/x/cli.js", "tui"],
+      env: { [SUPERVISOR_ENV]: "4242" },
+      pid: 9,
+      ppid: 1,
+      spawn: (argv) => (spawned.push(argv), { status: 0, pid: 10 }),
+      exit: (code) => void exits.push(code),
+    });
+    expect(spawned).toEqual([["/x/cli.js", "tui", "--resume-state", "/s/state/tui-resume-9.json"]]);
+    expect(exits).toEqual([0]);
+  });
+
+  it("the supervisor's loop is exactly that — no predicate decides whether a build runs", () => {
+    let n = 0;
+    const code = superviseReloads("/s/state/tui-resume-1.json", {
+      argv: ["/x/cli.js", "tui"],
+      env: {},
+      pid: 1,
+      ppid: 0,
+      spawn: () => ({ status: ++n < 4 ? RELOAD_EXIT_CODE : 0, pid: 100 + n }),
+      exit: () => {},
+    });
+    expect(n).toBe(4);
+    expect(code).toBe(0);
+  });
+
+  it("the TUI leaves the terminal to the next build on a reload exit, and restores it on every other", () => {
+    const src = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
+    expect(src).toMatch(
+      /process\.on\("exit", \(code\) => \{\s*if \(code === RELOAD_EXIT_CODE\) return;\s*restoreTerminal\(\);/,
+    );
+    expect(src).not.toMatch(/process\.on\("exit", restoreTerminal\)/);
   });
 });
 

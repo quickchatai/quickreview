@@ -69,6 +69,8 @@ import {
   keyChangeWatcher,
   openVikingSessionLifecycle,
   readOvcliKey,
+  readRetiredUrisFile,
+  writeRetiredUris,
 } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
 import {
@@ -539,6 +541,11 @@ export function daemonOriginWakes(opts: {
               hooks.retrySessionCommand!(commandId, reason),
           }
         : {}),
+      // The reconcile pass's raw-tier sweep (S3) — dropped here, the
+      // 79 stale sessions would never be deleted in production.
+      ...(hooks.sweepStaleOvSessions
+        ? { sweepStaleOvSessions: () => hooks.sweepStaleOvSessions!() }
+        : {}),
       injectOverseer: (message) => wake("overseer-wake", message),
     },
   };
@@ -927,6 +934,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         defaultCategory: cfg.openviking.default_category,
         cacheTtlMs: cfg.openviking.read_cache_ttl_ms,
         log,
+        // the sessions' own recall (vendored PATCH 7) excludes
+        // retired entries by this list, published beside their ovcli.conf
+        // whenever the store's sweep sees it change.
+        onRetired: (uris) => {
+          writeRetiredUris(sessions.ovRetiredPath(), uris, {
+            log: (msg) => log(msg),
+          });
+        },
+        // …starting from the list the last daemon published, so a first sweep
+        // that cannot read everything (the server still warming up) adds to
+        // the sessions' exclusions and never wipes them.
+        initialRetired: readRetiredUrisFile(sessions.ovRetiredPath()),
       });
       feedback = new FeedbackEngine({
         store: d.store,

@@ -34,6 +34,8 @@ import {
   tuiMemoryStore,
   type MemoryUser,
 } from "../src/tui/memory.js";
+import { listedFileStat } from "./helpers/ov-listing.js";
+import { readRetiredUrisFile } from "../src/memory/ovsession.js";
 
 const KEYS: Record<MemoryUser, string> = {
   reviewer: "cWNy.cmV2aWV3ZXI.reviewer-user-key",
@@ -123,18 +125,13 @@ class FakeOpenViking {
     const prefix = `${uri.replace(/\/+$/, "")}/`;
     const dirs = new Set<string>();
     const rows: Array<Record<string, unknown>> = [];
-    for (const key of this.files.keys()) {
+    for (const [key, content] of this.files) {
       if (!key.startsWith(prefix)) continue;
       const rest = key.slice(prefix.length);
       const cut = rest.indexOf("/");
-      if (cut < 0)
-        rows.push({
-          uri: key,
-          name: rest,
-          isDir: false,
-          size: 1,
-          modTime: "2026-08-20T15:30:00.000Z",
-        });
+      // Size and mtime move with the bytes, as on the real server — the
+      // store's sweep is incremental and re-reads only what moved.
+      if (cut < 0) rows.push({ uri: key, name: rest, isDir: false, ...listedFileStat(content) });
       else dirs.add(rest.slice(0, cut));
     }
     for (const dir of dirs)
@@ -240,6 +237,25 @@ describe("TuiMemoryStore — both user trees", () => {
     });
     expect(nsId("companion", "a/b.md")).toBe("companion:a/b.md");
     expect(MEMORY_USERS).toEqual(["reviewer", "companion"]);
+  });
+
+  // the TUI's candidate sweeper and memory tab read BOTH trees
+  // every few minutes with no sweep cache (`cacheTtlMs: 0`). With the
+  // incremental sweep a poll of an unchanged store lists and reads nothing.
+  it("a repeat read lists both trees but re-reads only what changed", async () => {
+    const store = wire(server);
+    const readsOf = (user: MemoryUser) => store.requestCounts()[`${user}/read`]?.total ?? 0;
+    await store.read();
+    expect(readsOf("reviewer")).toBe(2);
+    expect(readsOf("companion")).toBe(1);
+    await store.read();
+    expect(readsOf("reviewer")).toBe(2);
+    expect(readsOf("companion")).toBe(1);
+    server.seed("reviewer", "20260821T000000-dddd4444.md", "#adjudication a new one");
+    const after = await store.read();
+    expect(readsOf("reviewer")).toBe(3);
+    expect(readsOf("companion")).toBe(1);
+    expect(after.map((e) => e.text)).toContain("#adjudication a new one");
   });
 
   it("edits COMPANION memory — the verb routes to the companion key, which the server confines", async () => {
@@ -366,6 +382,51 @@ describe("TuiMemoryStore — both user trees", () => {
     expect(defectEntries(await store.read()).map((e) => e.text)).toEqual([
       "#bug #operations guard 2 suppressed a same-head substantive review.",
     ]);
+  });
+});
+
+// S3 (review): the companion's own recall (the vendored extension)
+// excludes retired entries by a published list, and no daemon sweeps the
+// companion's tree — the TUI's store does, and publishes it into the state
+// home the companion mounts (`MEMORY.retiredFile`, `QCR_OV_RETIRED_FILE`).
+describe("TuiMemoryStore — the companion tree's retired list", () => {
+  it("publishes the companion tree's retired URIs, keeps them up to date, and never wipes them on an outage", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-tui-retired-"));
+    try {
+      const file = join(dir, "openviking", "companion-retired-uris.json");
+      const server = new FakeOpenViking();
+      server.seed("reviewer", "20260819T000000-r.md", "#retired a reviewer lesson");
+      const old = server.seed("companion", "20260819T000000-a.md", "#retired an old note");
+      server.seed("companion", "20260820T000000-b.md", "#manual a live note");
+      const build = () =>
+        tuiMemoryStore({
+          baseUrl: "http://127.0.0.1:1933",
+          fetchFn: server.fetch,
+          key: (name) =>
+            ({ OPENVIKING_REVIEWER_KEY: KEYS.reviewer, OPENVIKING_COMPANION_KEY: KEYS.companion })[
+              name
+            ] ?? null,
+          keysFile: "/home/user/.config/qcr-operator/default/openviking-keys.env",
+          now: () => NOW,
+          retiredFiles: { companion: file },
+        });
+      const store = build();
+      const entries = await store.read();
+      // Only the companion tree's list, and only where it was asked for.
+      expect(readRetiredUrisFile(file)).toEqual([old]);
+      // A retire through the TUI reaches the file at once.
+      const live = entries.find((e) => e.id.startsWith("companion:"))!;
+      expect((await store.apply({ op: "retire", ...refOf(live) })).ok).toBe(true);
+      const both = [old, `${rootOf("companion")}/experiences/20260820T000000-b.md`].sort();
+      expect(readRetiredUrisFile(file)).toEqual(both);
+      // A restarted TUI whose forward is not up yet: its first sweep fails
+      // and the file the last one wrote stands.
+      server.down.add("companion");
+      await build().read();
+      expect(readRetiredUrisFile(file)).toEqual(both);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

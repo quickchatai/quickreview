@@ -494,6 +494,9 @@ describe("birth", () => {
         "PATH",
         "QCR_INJECT_DIR",
         "QCR_LEDGER_FILE",
+        // where the daemon publishes the retired URIs the
+        // extension's recall excludes — a path, not a credential.
+        "QCR_OV_RETIRED_FILE",
         "QCR_OV_SESSION_ID",
         "QCR_PI_VERSION",
         "QCR_PR",
@@ -506,6 +509,9 @@ describe("birth", () => {
         "TERM",
       ]);
       expect(env.QCR_SUBAGENT_MAX_CONCURRENCY).toBe("6");
+      expect(env.QCR_OV_RETIRED_FILE).toBe(
+        join(root, "pihome", ".openviking", "retired-uris.json"),
+      );
       // No credential of any kind reached the environment.
       for (const [k, v] of Object.entries(env)) {
         expect(k, `${k} must not look like an OpenViking key`).not.toMatch(/OPENVIKING.*KEY/);
@@ -693,6 +699,203 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
         .get(),
     ).toEqual({ c: 0 });
     store.close();
+  });
+
+  // 79 sessions of closed PRs sat on the server (a delete that
+  // failed silently before S1, or a close the daemon never saw). The reconcile
+  // pass sweeps them: closed PRs only, bounded, every outcome logged.
+  describe("the stale raw-tier sweep", () => {
+    const pr = (store: StateStore, number: number, state: "closed" | "tracked") =>
+      store.upsertPr({
+        number,
+        state,
+        head_sha: "abc",
+        title: "t",
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+    const sweeper = (
+      store: StateStore,
+      listed: string[] | Error,
+      remove: (id: string) => Promise<boolean> = async () => true,
+      now = () => new Date("2026-10-06T12:00:00Z"),
+      config: Config = cfg(),
+    ) => {
+      const removed: string[] = [];
+      const listCalls: number[] = [];
+      const m = new PiSessionManager({
+        cfg: config,
+        root,
+        tmux: new Tmux({ exec: fakeExec }),
+        worktrees: new WorktreeManager({
+          root,
+          repo: "o/n",
+          cloneDir: "example-app",
+          cloneUrl: "/dev/null",
+          run: fakeExec,
+        }),
+        piHome: join(root, "pihome"),
+        commandStore: store,
+        now,
+        ovSessions: {
+          create: async () => true,
+          remove: async (id: string) => (removed.push(id), remove(id)),
+          list: async () => {
+            listCalls.push(1);
+            return listed instanceof Error
+              ? { ok: false as const, reason: listed.message }
+              : { ok: true as const, ids: listed };
+          },
+        },
+      });
+      return { m, removed, listCalls };
+    };
+    const events = (store: StateStore, kind: string) =>
+      (
+        store.db.prepare("SELECT pr, payload FROM events WHERE kind = ?").all(kind) as Array<{
+          pr: number;
+          payload: string;
+        }>
+      ).map((r) => ({ pr: r.pr, ...(JSON.parse(r.payload) as Record<string, unknown>) }));
+
+    it("deletes the sessions of CLOSED PRs only, and records each one", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 1, "closed");
+      pr(store, 2, "tracked");
+      pr(store, 3, "closed");
+      const { m, removed } = sweeper(store, ["pr-1", "pr-2", "pr-3", "pr-404", "overseer"]);
+      const report = await m.sweepStaleOvSessions();
+      expect(removed).toEqual(["pr-1", "pr-3"]);
+      expect(report).toEqual({
+        listed: 5,
+        stale: 2,
+        deleted: ["pr-1", "pr-3"],
+        failed: [],
+        deferred: 0,
+      });
+      expect(events(store, "openviking_session_deleted")).toEqual([
+        { pr: 1, session: "pr-1", source: "sweep" },
+        { pr: 3, session: "pr-3", source: "sweep" },
+      ]);
+      store.close();
+    });
+
+    it("is bounded per pass — the rest are left for the next", async () => {
+      const store = new StateStore(":memory:");
+      const ids: string[] = [];
+      for (let n = 1; n <= 13; n++) {
+        pr(store, n, "closed");
+        ids.push(`pr-${n}`);
+      }
+      const { m, removed } = sweeper(store, ids);
+      const first = await m.sweepStaleOvSessions();
+      expect(removed).toHaveLength(10);
+      expect(first).toMatchObject({ stale: 13, deferred: 3 });
+    });
+
+    it("a closed PR whose pi still runs keeps its raw tier until the session is gone", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 7, "closed");
+      liveSessions.add("pr-7");
+      const { m, removed } = sweeper(store, ["pr-7"]);
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: [], deferred: 1 });
+      expect(removed).toEqual([]);
+      liveSessions.delete("pr-7");
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: ["pr-7"] });
+    });
+
+    it("a delete that fails is logged and recorded, and waits an hour before the next try", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 9, "closed");
+      let clock = new Date("2026-10-06T12:00:00Z");
+      let ok = false;
+      const { m, removed } = sweeper(
+        store,
+        ["pr-9"],
+        async () => ok,
+        () => clock,
+      );
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ failed: ["pr-9"], deleted: [] });
+      expect(events(store, "openviking_session_delete_failed")).toEqual([
+        { pr: 9, session: "pr-9", source: "sweep" },
+      ]);
+      clock = new Date("2026-10-06T12:30:00Z");
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ failed: [], deferred: 1 });
+      expect(removed).toEqual(["pr-9"]);
+      clock = new Date("2026-10-06T13:01:00Z");
+      ok = true;
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: ["pr-9"] });
+    });
+
+    it("never holds the reconcile poll: a failed delete ends the pass, and so does its time budget", async () => {
+      const store = new StateStore(":memory:");
+      for (const n of [1, 2, 3]) pr(store, n, "closed");
+      const failing = sweeper(store, ["pr-1", "pr-2", "pr-3"], async () => false);
+      expect(await failing.m.sweepStaleOvSessions()).toMatchObject({
+        failed: ["pr-1"],
+        deferred: 2,
+      });
+      expect(failing.removed).toEqual(["pr-1"]);
+      // A server slow enough that each delete takes 6 s: the second is the last.
+      let ms = Date.parse("2026-10-06T12:00:00Z");
+      const slow = sweeper(
+        store,
+        ["pr-1", "pr-2", "pr-3"],
+        async () => ((ms += 6_000), true),
+        () => new Date(ms),
+      );
+      expect(await slow.m.sweepStaleOvSessions()).toMatchObject({
+        deleted: ["pr-1", "pr-2"],
+        deferred: 1,
+      });
+    });
+
+    it("a list it cannot read deletes nothing and says why — never a throw", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 1, "closed");
+      const { m, removed } = sweeper(store, new Error("401: Invalid API Key"));
+      expect(await m.sweepStaleOvSessions()).toEqual({
+        listed: 0,
+        stale: 0,
+        deleted: [],
+        failed: [],
+        deferred: 0,
+        error: "401: Invalid API Key",
+      });
+      expect(removed).toEqual([]);
+      // No raw tier managed at all ⇒ no sweep.
+      expect(await manager().sweepStaleOvSessions()).toBeNull();
+    });
+
+    it("memory switched off runs no sweep at all — no list sent to a server that is not running", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 1, "closed");
+      const off = { ...cfg(), openviking: { ...cfg().openviking, enabled: false } } as Config;
+      const { m, removed, listCalls } = sweeper(store, ["pr-1"], undefined, undefined, off);
+      expect(await m.sweepStaleOvSessions()).toBeNull();
+      expect(listCalls).toEqual([]);
+      expect(removed).toEqual([]);
+    });
+
+    it("re-reads the registry right before each delete: a PR reopened after the plan keeps its raw tier", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 1, "closed");
+      pr(store, 2, "closed");
+      // While pr-1's delete is in flight, PR #2 is reopened and re-triggered
+      // — dispatch is about to reuse `pr-2`.
+      const { m, removed } = sweeper(store, ["pr-1", "pr-2"], async (id) => {
+        if (id === "pr-1") pr(store, 2, "tracked");
+        return true;
+      });
+      expect(await m.sweepStaleOvSessions()).toMatchObject({
+        stale: 2,
+        deleted: ["pr-1"],
+        deferred: 1,
+      });
+      expect(removed).toEqual(["pr-1"]);
+    });
   });
 
   it("runs memory-less when the secrets mount carries no reviewer key", async () => {

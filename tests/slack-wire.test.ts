@@ -496,6 +496,8 @@ describe("origin cause, not recency (the belt)", () => {
           optionalCalls.push("retrySessionCommand"),
           "retried" as const
         ),
+        // dropped by the wrap, the stale raw tier is never swept.
+        sweepStaleOvSessions: async () => (optionalCalls.push("sweepStaleOvSessions"), null),
       },
       origins: runtime.origins,
       enabled: true,
@@ -506,12 +508,14 @@ describe("origin cause, not recency (the belt)", () => {
     expect(fullHooks.wakeReceiptPresent).toBeDefined();
     expect(fullHooks.redeliverRound).toBeDefined();
     expect(fullHooks.retrySessionCommand).toBeDefined();
+    expect(fullHooks.sweepStaleOvSessions).toBeDefined();
     await fullHooks.sessionAlive!(42);
     await fullHooks.killSession!(43);
     await fullHooks.roundPromptAccepted!(42, 1, 0);
     await fullHooks.wakeReceiptPresent!(42, "marker", 0);
     await fullHooks.redeliverRound!(42, 1);
     await fullHooks.retrySessionCommand!("cmd", "reason");
+    await fullHooks.sweepStaleOvSessions!();
     expect(probed).toEqual([42]);
     expect(killedPrs).toEqual([43]);
     expect(optionalCalls).toEqual([
@@ -519,6 +523,7 @@ describe("origin cause, not recency (the belt)", () => {
       "wakeReceiptPresent",
       "redeliverRound",
       "retrySessionCommand",
+      "sweepStaleOvSessions",
     ]);
 
     writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });

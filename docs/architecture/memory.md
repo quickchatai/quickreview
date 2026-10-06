@@ -186,6 +186,42 @@ respawned tmux session keeps its notes); a 404 on delete is the desired end
 state. Both are bounded by a deadline and swallow every throw — a PR whose
 session could not be created simply runs without a raw tier.
 
+**Stale sessions are swept** (S3). A close the daemon never saw, or a
+delete that failed — silently, before S1 — left 79 sessions of closed PRs on
+the server. Each reconcile pass, after its closed-sync, lists the sessions
+(`lifecycle.list`, `GET /api/v1/sessions`) and deletes the `pr-<n>` ones whose
+PR the registry says is closed (`planStaleOvSessions`): at most
+`OV_SESSION_SWEEP_MAX` (10) a pass, lowest PR first; an open PR, one the
+registry does not know, and any id that is not `pr-<n>` are left alone; a
+closed PR whose pi is still alive keeps its raw tier until the session is
+gone, and the registry is read again right before each delete, so a PR
+reopened while the pass was running (or one whose session birth is in flight)
+keeps its `pr-<n>`; memory switched off (`[openviking] enabled = false`) runs
+no sweep at all; a failed delete ends the pass (the server is struggling) and that id
+waits an hour; and a pass stops starting deletes after 10 s
+(`OV_SESSION_SWEEP_BUDGET_MS`) — it rides the reconcile poll and must not hold
+it. Every outcome is a log line and an
+`openviking_session_deleted` / `openviking_session_delete_failed` event
+(`source: "sweep"`), and the pass's `reconcile_pass` event carries the counts.
+It is never an error of the pass — the boot's first healthy pass lifts a
+deploy drain, and memory must not be able to hold that.
+
+**The retired list reaches the sessions' recall.** Whenever the daemon's store
+sweep sees the set of retired URIs change, `writeRetiredUris` rewrites
+`<pi HOME>/.openviking/retired-uris.json` beside `ovcli.conf`, and every
+session is launched with `QCR_OV_RETIRED_FILE` naming it; the extension's
+recall excludes them (patch 7, below). A derived list of URIs, not a write
+into memory. **Only a complete sweep may shrink it**: a sweep that could not
+list the root or a category, or read a file, keeps every URI it knew (the
+last list, the cached reads it could not re-check) and adds what it saw, and
+the daemon's store starts from the file the last daemon wrote
+(`readRetiredUrisFile`, the store's `initialRetired`) — so a restart while
+the server is still warming up never wipes the sessions' exclusions. The
+companion's recall gets the same list for ITS tree from the TUI: the TUI's
+store publishes the companion namespace's retired URIs into the state home
+(`MEMORY.retiredFile`, `openviking/companion-retired-uris.json`), which the
+companion mounts and names in `QCR_OV_RETIRED_FILE`.
+
 `writeOvcliConf(path, identity)` drops the reviewer credential into the pi HOME
 at 0600, and its **refusal is the point of the function**. The upstream
 credential resolver ends its fallback chain at the server's own `root_api_key`,
@@ -387,6 +423,24 @@ unread, because a namespace nobody has written to yet is known-empty. The two
 share one cached, single-flight sweep (`read_cache_ttl_ms`), so the round path
 and the TUI poll never double the server's load.
 
+**The sweep is incremental** (S3). Every category is still listed on
+every sweep, but a file is read only when its listed size or modification time
+differs from the read this store already holds — a periodic **full** refresh
+(`fullRefreshMs`, an hour by default) reads everything again, a file whose
+listing carries no modification time is read every time, and a write through
+the store forgets the file it wrote — and so does a hash refusal, which
+proves the cached bytes stale (a same-size rewrite inside one modification
+second is invisible to the listing until the full refresh; the re-read the
+refusal asks for must be a real one). A file that fails to read is `unread` as
+before and forgotten, so the next sweep tries again; a category that fails to
+list is `unread` and serves none of its files, but keeps their cached reads
+for when it lists again. `invalidate()` therefore means "list again", not "read
+everything again" — the listing is what says which files moved. The TUI's
+candidate sweeper and memory tab, the companion's setup tools and the daemon
+all hold `OpenVikingStore`s, so all of them stopped re-reading the whole store
+(about 716 `content/read` per 10 minutes on the live server before).
+`lastSweepStats()` says what the last sweep listed, read and reused.
+
 `search()` is **free-text and tag matching over the entries, not a vector
 search**. That is deliberate: `search()` returns *addressable* entries, each
 carrying the hash a management verb writes back with, while the engine's
@@ -483,7 +537,7 @@ is fed from.
 
 A review session is not limited to the block the daemon pasted. The vendored pi
 extension (`extensions/vendor/openviking-pi/`, provenance in `upstream.json`,
-seven recorded patches) gives it `viking_search`, `viking_read`, `viking_browse`,
+eight recorded patches) gives it `viking_search`, `viking_read`, `viking_browse`,
 `viking_write` and `viking_archive_expand`. It is passed per spawn with
 `--extension` (`SessionSpec.extensionPaths`, `src/sessions.ts`) rather than
 registered globally, and subagent children are launched with no argv
@@ -511,6 +565,17 @@ Two of those patches matter here:
   results found." / "No content at …" (which is all any PR session ever saw,
   two of them during the five-week bad-key outage); and a refused key is
   re-read once from the ovcli.conf the daemon rewrites on a rotation.
+- Patch 7 (S3, owner ruling R3) bounds the session's ambient memory
+  work. The `context` hook waits at most **500 ms** for recall
+  (`RECALL_WAIT_MS`): every request of one recall runs on that one deadline,
+  nothing is sent once it has passed (so no `/search/recall` or raw-find
+  fallback outlives it), and a late answer is dropped rather than injected
+  into a later turn. Query expansion is forced off in code. A retired entry is
+  never recalled: the daemon's published list goes out as `exclude_uris` and
+  any recalled entry whose own header says `#retired` is dropped. And nothing
+  commits a session — not at 20k pending tokens, not at shutdown, not on
+  `/viking commit`, not from a commit an older build queued on disk. Per-turn
+  sync into the PR's raw tier stays.
 
 ## Writers into memory
 
@@ -820,7 +885,8 @@ store mutation and can be refused. The second is the rubric-proposal surface
 
 1. **Memory never blocks or delays a round.** Every call on the round path is
    bounded by a deadline and swallows every throw. The worst case is a
-   memory-less prompt, on time.
+   memory-less prompt, on time. Inside the session the same holds per turn:
+   the extension's recall waits at most 500 ms (patch 7).
 2. **Empty is not degraded.** A store that answered with nothing has answered.
    Only a read that did not happen is a gap, and only a gap alerts.
 3. **The pinned head is exact.** It is read from stored bytes, never from a
@@ -850,9 +916,10 @@ store mutation and can be refused. The second is the rubric-proposal surface
 | Round seeding, gaps, empty-vs-degraded, rendering | `tests/round-memory.test.ts` |
 | Entry-header tag parsing, `[feedback]` ingest, day addendum | `tests/feedback.test.ts` |
 | Writes that stick: busy vs precondition 409, named notes, the feedback ledger and backfill pump, EOD deferral and retries | `tests/memory-writes.test.ts` |
-| PR session lifecycle, credential refusal, session env | `tests/ovsession.test.ts` |
+| PR session lifecycle, credential refusal, session env, the stale-session plan, the retired list | `tests/ovsession.test.ts` |
+| The stale-session sweep in the session manager and the reconcile pass | `tests/sessions.test.ts`, `tests/reconcile.test.ts` |
 | Supervisor, health gate, proc sampling, heartbeat block | `tests/openviking.test.ts` |
-| Client routes, determinism pins, store, assembler | `tests/openviking-store.test.ts` |
+| Client routes, determinism pins, store (incl. the incremental sweep), assembler | `tests/openviking-store.test.ts` |
 | Vendored extension pin and its patches | `tests/openviking-fork.test.ts` |
 | Embedder migration (script and daemon halves) | `tests/openviking-reembed.test.ts`, `tests/openviking-reembed-driver.test.ts` |
 | The one-time import from the file engine | `tests/memory-import.test.ts` |

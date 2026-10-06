@@ -19,6 +19,7 @@ import {
   parseResumeArg,
   readResumeState,
   realReexec,
+  RELOAD_EXIT_CODE,
   resumeStatePath,
 } from "./reload.js";
 import { killInFlightSsh, runnerFor, transportOf } from "./remote.js";
@@ -379,7 +380,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
     out.write(MOUSE_OFF + ALT_SCREEN_OFF);
   };
-  process.on("exit", restoreTerminal);
+  // A reload under the supervisor (S3) exits with RELOAD_EXIT_CODE so
+  // the next build takes over THIS terminal state — the alt screen, mouse
+  // reporting and raw mode stay exactly as they are, as they did when the old
+  // generation simply froze. Restoring here would flash the shell between
+  // builds. Every other exit restores.
+  process.on("exit", (code) => {
+    if (code === RELOAD_EXIT_CODE) return;
+    restoreTerminal();
+  });
   process.on("SIGINT", () => {
     restoreTerminal();
     exit(130);
@@ -558,7 +567,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // keys. Every memory surface in the TUI shares this instance — a second one
   // would mean a second sweep and a second health opinion.
   const { tuiMemoryStore, tuiMemoryBaseUrl } = await import("./memory.js");
-  const memStore = tuiMemoryStore();
+  // the companion namespace's retired URIs, published into the
+  // state home the companion mounts — its recall excludes them.
+  const { MEMORY: COMPANION_MEMORY } = await import("./companion.js");
+  const { stateHome: memStateHome } = await import("../install.js");
+  const memStore = tuiMemoryStore({
+    retiredFiles: { companion: join(memStateHome(), COMPANION_MEMORY.retiredFile) },
+  });
   // the TUI brings the memory forward up itself, so the Memory tab
   // works without the operator installing the systemd unit first. It ADOPTS a
   // forward that is already listening (the unit, or another qcr tui) and stops

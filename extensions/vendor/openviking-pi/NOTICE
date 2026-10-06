@@ -42,6 +42,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      `viking_write` writes several entries as one batch, a refused key is
      re-read once, and tool failures are reported as failures rather than
      as empty results (2026-10-06).
+  7. The context hook waits at most 500 ms for recall (every recall request,
+     fallbacks included, on that one deadline), query expansion is off,
+     retired memory entries are never recalled, and sessions are never
+     committed (2026-10-06).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

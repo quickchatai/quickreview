@@ -16,6 +16,18 @@
 // awkward moment is visible and recoverable; a reload that never happens is
 // neither. If a surface cannot survive a re-exec, fix that surface — do not
 // re-add a condition here.
+//
+// THE CHAIN STAYS TWO PROCESSES DEEP (S3). Node cannot replace its own
+// image, so a re-exec runs the new build as a CHILD and waits for it. It used
+// to do that at every reload: each generation sat frozen inside `spawnSync`
+// under the next, and a day of edits left a chain of them — 14 live on the
+// owner's PC on 2026-10-06, ~200 MB each, every one still holding whatever its
+// teardown had not released. Now the FIRST process to reload becomes the
+// SUPERVISOR: it runs each new build as its child, in a loop, and a child that
+// wants a reload simply EXITS with `RELOAD_EXIT_CODE` after its teardown — the
+// supervisor runs the next build beside it, never under it. Depth: the
+// supervisor plus the live TUI, whatever the number of reloads. Still no
+// condition of any kind on WHEN a reload fires; only on how it is executed.
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
@@ -116,13 +128,25 @@ export class HotReloader {
   }
 }
 
+/** The snapshot file name of one TUI process. */
+function resumeStateName(pid: number): string {
+  return `tui-resume-${pid}.json`;
+}
+
 /** Where THIS process writes its hot-reload snapshot. Per pid, never one
  * shared name: two TUIs on one install watch the same dist/ and reload within
  * ms of each other on one tsc emit, so a shared file let one clobber the
  * other's view and the first reader consume it. The path reaches the new
  * build through `--resume-state`, which deletes it on read. */
 export function resumeStatePath(root: string, pid: number = process.pid): string {
-  return join(root, "state", `tui-resume-${pid}.json`);
+  return join(root, "state", resumeStateName(pid));
+}
+
+/** The snapshot path of process `pid`, beside `file` — how a supervisor finds
+ * the snapshot its child wrote (the child wrote it with `resumeStatePath`
+ * under the same root, so the directory is the supervisor's own). */
+export function resumeStatePathBeside(file: string, pid: number): string {
+  return join(dirname(file), resumeStateName(pid));
 }
 
 /** `--resume-state <path>` out of an argv, plus the argv with it removed. */
@@ -172,9 +196,73 @@ export function reexecArgv(argv: string[], stateFile: string): string[] {
   return [entry!, ...rest, "--resume-state", stateFile];
 }
 
+/** The exit code a SUPERVISED TUI uses to say "run the new build" (
+ * S3). 75 is EX_TEMPFAIL, "try again" — distinct from every exit the TUI
+ * makes on its own (0 quit, 1 crash, 2 no terminal, 130/143 on a signal). */
+export const RELOAD_EXIT_CODE = 75;
+
+/** Set on every TUI a supervisor runs: the SUPERVISOR's pid. A TUI follows the
+ * exit protocol only when that pid is its own parent, so the variable leaking
+ * into something the TUI starts (a shell on the real terminal, the companion)
+ * can never make an unsupervised TUI exit instead of reloading. */
+export const SUPERVISOR_ENV = "QCR_TUI_SUPERVISOR_PID";
+
+/** What the re-exec touches — real process calls in production, fakes in
+ * tests. `argv` is `process.argv.slice(1)`: the entry point, then the flags. */
+export interface ReexecIo {
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+  pid: number;
+  ppid: number;
+  /** Run the build to completion with the terminal inherited. */
+  spawn: (argv: string[], env: NodeJS.ProcessEnv) => { status: number | null; pid?: number };
+  exit: (code: number) => void;
+}
+
+function processIo(): ReexecIo {
+  return {
+    argv: process.argv.slice(1),
+    env: process.env,
+    pid: process.pid,
+    ppid: process.ppid,
+    spawn: (argv, env) => {
+      const res = spawnSync(process.execPath, argv, { stdio: "inherit", env });
+      return { status: res.status, pid: res.pid };
+    },
+    exit: (code) => process.exit(code),
+  };
+}
+
+/** Is this TUI the child of a reload supervisor (and so should EXIT to
+ * reload)? Only when the supervisor named in the env is its parent. */
+export function isSupervised(io: Pick<ReexecIo, "env" | "ppid">): boolean {
+  const raw = io.env[SUPERVISOR_ENV];
+  if (raw === undefined || raw.trim() === "") return false;
+  return Number(raw) === io.ppid;
+}
+
 /**
- * Production re-exec: run the new build to completion in our place, then exit
- * with its code. spawnSync keeps the terminal on one process at a time.
+ * The supervisor's loop: run the build, and while it exits asking for a
+ * reload, run the next one with the snapshot that child wrote. Returns the
+ * last child's exit code (a signal death counts as 0, as it always did).
+ * One process deep beneath the supervisor, however many reloads.
+ */
+export function superviseReloads(firstStateFile: string, io: ReexecIo): number {
+  const env = { ...io.env, [SUPERVISOR_ENV]: String(io.pid) };
+  let stateFile = firstStateFile;
+  for (;;) {
+    const res = io.spawn(reexecArgv(io.argv, stateFile), env);
+    if (res.status !== RELOAD_EXIT_CODE || res.pid === undefined) return res.status ?? 0;
+    stateFile = resumeStatePathBeside(stateFile, res.pid);
+  }
+}
+
+/**
+ * Production re-exec. A TUI under a supervisor EXITS with `RELOAD_EXIT_CODE`
+ * and the supervisor runs the new build; the first TUI to reload BECOMES the
+ * supervisor, running every later build as its child (see the header), then
+ * exits with the last one's code. spawnSync keeps the terminal on one process
+ * at a time.
  *
  * `teardown` is the LAST code this generation runs. `app.quit()` only resolves
  * a promise, so `App.teardown()` is a microtask — and the `spawnSync` below
@@ -185,9 +273,17 @@ export function reexecArgv(argv: string[], stateFile: string): string[] {
  * in-flight ssh children: their timeouts live on the loop that is about to
  * stop (see `killInFlightSsh` in remote.ts).
  */
-export function realReexec(stateFile: string, teardown?: () => void): void {
+export function realReexec(
+  stateFile: string,
+  teardown?: () => void,
+  io: ReexecIo = processIo(),
+): void {
   teardown?.();
-  const argv = reexecArgv(process.argv.slice(1), stateFile);
-  const res = spawnSync(process.execPath, argv, { stdio: "inherit" });
-  process.exit(res.status ?? 0);
+  if (isSupervised(io)) {
+    // The snapshot is already on disk (HotReloader wrote it before calling
+    // us); the supervisor finds it by our pid.
+    io.exit(RELOAD_EXIT_CODE);
+    return;
+  }
+  io.exit(superviseReloads(stateFile, io));
 }

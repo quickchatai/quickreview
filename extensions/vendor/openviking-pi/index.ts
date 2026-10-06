@@ -11,7 +11,7 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Six numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Seven numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
@@ -24,6 +24,10 @@
  *             is not), viking_write takes several entries as ONE batch, a
  *             refused key is re-read once, and no failure reads as "No
  *             results found".
+ *   PATCH 7 — bounded recall, no commit: the context hook waits at most
+ *             500 ms for recall (every request of it on one deadline, no
+ *             fallback past it), query expansion is off in code, retired
+ *             entries are never recalled, and nothing commits a session.
  * ────────────────────────────────────────────────────────────────────────────
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -41,6 +45,8 @@ import { createTakeoverManager } from "./takeover.js";
 import { isLeafProcess } from "./qcr-leaf.js";
 // [QCR PATCH 5]
 import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
+// [QCR PATCH 7]
+import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
 
 export default async function (pi: ExtensionAPI) {
   // [QCR PATCH 2] Decided once, from argv, before anything else: a
@@ -79,7 +85,12 @@ export default async function (pi: ExtensionAPI) {
   }));
   const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
   const sync = new SyncManager(client, config);
-  const recall = new RecallManager(client, config, () => sync.sessionId);
+  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
+  // re-read for every recall (a small local file), so a retirement reaches a
+  // running session without a restart.
+  const recall = new RecallManager(client, config, () => sync.sessionId, {
+    retiredUris: () => readRetiredUris(process.env[RETIRED_FILE_ENV]),
+  });
   const debugLog = (message: string) => {
     const file = process.env.OV_DEBUG_LOG;
     if (!file) return;
@@ -254,7 +265,10 @@ export default async function (pi: ExtensionAPI) {
 
     // Keep recall synchronous with the provider request so the current prompt
     // still receives current-query memory, without blocking user-message UI.
-    await recall.searchPending();
+    // [QCR PATCH 7] …but never for longer than RECALL_WAIT_MS (owner ruling
+    // R3): every request of the recall shares that one deadline, and a recall
+    // that misses it leaves this run without a block — the turn goes on.
+    await recall.searchPending(RECALL_WAIT_MS);
 
     const afterTakeover = config.takeoverEnabled
       ? takeover.transformContext(event.messages as any)
@@ -273,8 +287,8 @@ export default async function (pi: ExtensionAPI) {
   // --- turn_end ---
   pi.on("turn_end", async (event, ctx) => {
     if (!connected || bypassed || !config.syncTurns) return;
-    // [QCR PATCH 2] No turn sync and therefore no threshold auto-commit from
-    // a leaf — a commit there would archive the SHEPHERD's session.
+    // [QCR PATCH 2] No turn sync from a leaf. ([QCR PATCH 7]: the threshold
+    // auto-commit that rode the sync is gone everywhere — sync.ts.)
     if (leaf) return;
 
     const branch = ctx.sessionManager.getBranch();
@@ -309,12 +323,11 @@ export default async function (pi: ExtensionAPI) {
     // [QCR PATCH 2] A leaf exits after every pass; it commits nothing.
     if (leaf) return;
 
+    // [QCR PATCH 7] was `takeover.shutdown()` / `sync.commit()` — a commit on
+    // every shutdown.: commit is never called (it only promotes notes
+    // through an extraction model this deployment does not run); the PR's raw
+    // tier ages out by the daemon's DELETE when the PR closes.
     await sync.shutdown();
-    if (config.takeoverEnabled) {
-      await takeover.shutdown();
-    } else {
-      await sync.commit();
-    }
   });
 
   // --- agent_end ---
@@ -335,20 +348,12 @@ export default async function (pi: ExtensionAPI) {
       }
 
       if (args?.trim() === "commit") {
-        await sync.shutdown();
-        const commitResult = config.takeoverEnabled ? null : await sync.commit();
-        const ok = config.takeoverEnabled
-          ? await takeover.commitAndAdvance()
-          : commitResult !== null;
-        if (ok) {
-          ctx.ui.notify(
-            "OpenViking: committed successfully" +
-              (commitResult?.trace_id ? ` (trace_id=${commitResult.trace_id})` : ""),
-            "info",
-          );
-        } else {
-          ctx.ui.notify("OpenViking: commit failed", "error");
-        }
+        // [QCR PATCH 7] No manual commit either — say so rather
+        // than report a "failed" commit that was never attempted.
+        ctx.ui.notify(
+          "OpenViking: session commit is disabled in this deployment — durable memory is written with viking_write",
+          "info",
+        );
         return;
       }
 
@@ -432,12 +437,11 @@ function updateStatus(
 ): void {
   const setter = ctx?.ui?.setStatus;
   if (typeof setter !== "function") return;
-  const threshold = config.takeoverEnabled
-    ? config.takeoverTokenThreshold
-    : config.commitTokenThreshold;
+  // [QCR PATCH 7] was ` · ✎ ${commitTokenThreshold}` — a commit threshold
+  // that no longer exists.
   const pending = config.takeoverEnabled && takeoverState
-    ? ` · ctx ${takeoverState.coveredUserTurns ?? 0} · ~${takeoverState.pendingTokens ?? 0}/${threshold}`
-    : ` · ✎ ${threshold}`;
+    ? ` · ctx ${takeoverState.coveredUserTurns ?? 0} · ~${takeoverState.pendingTokens ?? 0}/${config.takeoverTokenThreshold}`
+    : " · no commit";
   const status = `${connected ? "OV ✓" : "OV ✗"} · ↩${added}${pending} · ${sessionId ? sessionId.slice(0, 12) : "none"}`;
   try {
     setter(status);

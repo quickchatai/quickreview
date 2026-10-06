@@ -1,0 +1,794 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -42,6 +42,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+      `viking_write` writes several entries as one batch, a refused key is
+      re-read once, and tool failures are reported as failures rather than
+      as empty results (2026-10-06).
++  7. The context hook waits at most 500 ms for recall (every recall request,
++     fallbacks included, on that one deadline), query expansion is off,
++     retired memory entries are never recalled, and sessions are never
++     committed (2026-10-06).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig, ambient type declarations for uninstalled packages, three unused
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need six
++upstream ships it as an `examples/` directory, not a package, and we need seven
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the six patches was tried as configuration first and does not
++Every one of the seven patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Six numbered behaviour patches, applied in order over the vendored upstream
++Seven numbered behaviour patches, applied in order over the vendored upstream
+ files, plus one unnumbered scaffolding patch. They live in `patches/` as
+-`git apply`-able diffs — verified by applying all seven, in order, to a
++`git apply`-able diffs — verified by applying all eight, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+ byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+@@ -266,6 +266,58 @@ Touches: `qcr-honest.ts` (new), `qcr-write.ts` (`buildBatchWriteRequest`,
+ `statResponse` envelopes), `config.ts` (`rereadApiKey`), `tools.ts`,
+ `index.ts` (the banner, the re-reader).
+ 
++### 0007 — bounded recall, no commit (S3)
++
++Owner ruling R3 (2026-10-06): PR sessions keep this extension, bounded — the
++per-turn recall wait is capped at 500 ms and query expansion is off. Four
++changes:
++
++* **The `context` hook waits at most 500 ms for recall.** It used to await
++  the whole recall before every provider request: a context search that could
++  spend a 15 s expansion fuse, then a `/search/recall` fallback with its own
++  10 s, then a raw find — against a server whose local embedder blocks its one
++  event loop (search p50 22 s, max 155 s, 2026-10-03..06). Now every request
++  of one recall runs on ONE deadline (`qcr-recall.ts` `budgetedFetch`): each
++  gets the time left as its own timeout, and once none is left the next
++  request is not sent — the fetch throws, which ends the fallback chain where
++  it stands. `raceBudget` returns the hook on time whatever the chain is doing.
++  A recall that misses the deadline leaves this run without a block; a late
++  answer is dropped, never injected into a later turn (that would rewrite a
++  message the provider has already cached). A caller may ask for less than
++  `RECALL_WAIT_MS`, never more.
++* **Query expansion is off — in code.** `config.json` says
++  `"recallQueryExpansion": "off"`, and `config.ts` forces it (and the
++  `Configured` flag that makes the request body carry it) after every
++  override, including `OPENVIKING_RECALL_QUERY_EXPANSION`, the way PATCH 1
++  forces takeover: a ruling is not a knob. Expansion is a model call the
++  server makes before retrieval whenever a search carries a session id; this
++  deployment runs no model for it. (`ov.conf retrieval.enable_intent = false`
++  turns the server's own query planning off too — the entrypoints.)
++* **A retired entry is never recalled.** Retire is a `#retired` header tag and
++  the file stays in the indexed root. The daemon publishes the retired URIs
++  it sees beside the sessions' ovcli.conf (`QCR_OV_RETIRED_FILE`,
++  `src/memory/ovsession.ts` `writeRetiredUris`); `retiredGuard` sends them as
++  `exclude_uris` on a context search (never on list mode, which rejects the
++  field) and drops any recalled entry whose own text opens with the tag,
++  re-rendering the block in the server's envelope. The header rule is
++  `parseHashTags`', pinned against it by test — a `#retired` quoted in prose
++  is not a retirement.
++* **Nothing commits a session.**: commit exists to promote session
++  notes into memories through an extraction model this deployment does not
++  run, so every commit archived the raw notes and produced nothing (143
++  archives on the VM, 0 overviews). The 20k-token threshold commit (and the
++  session GET after every synced turn that decided it), the commit on
++  `session_shutdown` and the `/viking commit` command are gone;
++  `SyncManager.commit()` sends nothing and queues nothing, and a commit an
++  older build queued on disk is answered with a final refusal on replay, so
++  it is dropped, never sent. Per-turn sync STAYS (R3); the raw tier ages out
++  by the daemon's DELETE when the PR closes (and its reconcile sweep).
++
++Touches: `qcr-recall.ts` (new), `recall.ts` (the bounded, retired-aware
++search), `sync.ts` (no commit, the replay refusal), `index.ts` (the hook's
++budget, the retired list, no shutdown commit, the command, the banner),
++`config.ts` (expansion forced off), `config.json`.
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+@@ -278,16 +330,16 @@ git -C /tmp/ov checkout <new-tag>
+ for p in extensions/vendor/openviking-pi/patches/0*.patch; do
+   git apply --3way "$p" || echo "RESOLVE: $p"
+ done
+-# 3. Re-verify all six patches, then:
++# 3. Re-verify all seven patches, then:
+ timeout 900 npm test && npm run build
+ ```
+ 
+ Then update `extension_commit` and `version` in `config.toml [openviking]`,
+ the base commit in `NOTICE` and in the table above, and re-run the live
+-verification below. A bump re-verifies **all six** patches — a patch that no
++verification below. A bump re-verifies **all seven** patches — a patch that no
+ longer applies is a patch whose reason may have changed, not a patch to drop.
+ 
+-`tests/openviking-fork.test.ts` is the guard rail: it asserts the six patches
++`tests/openviking-fork.test.ts` is the guard rail: it asserts the seven patches
+ are still present (markers, and the *absence* of what each one removed) and
+ that the pinned commit here matches `config.toml`. It cannot tell you whether
+ upstream grew a *new* compaction handler or a *new* write tool — read the
+@@ -316,6 +368,12 @@ item — "does a no-op second handler drop ledger-pin's pinned block?" 
+ which this patch series makes moot by construction rather than by measurement.
+ Fold both into `npm run smoke:session`.
+ 
++Also unverified live, for 0007: that pi awaits the `context` handler before
++the provider request exactly as upstream's comment says (the 500 ms bound is
++unit-tested on the recall manager and pinned structurally on the hook), and
++that the pinned server takes `exclude_uris` on the context face as the
++daemon's own search already does. Fold both into the session smoke.
++
+ Also unverified live: a `viking_read`/`viking_write` through the SECOND
+ (reviewer) client from the companion's pi. The key and the server-side
+ confinement are proven; the extension-side routing is covered by unit tests
+diff --git a/extensions/vendor/openviking-pi/config.json b/extensions/vendor/openviking-pi/config.json
+--- a/extensions/vendor/openviking-pi/config.json
++++ b/extensions/vendor/openviking-pi/config.json
+@@ -8,9 +8,8 @@
+   "minQueryLength": 3,
+   "profileTokenBudget": 10000,
+   "resumeContextBudget": 32000,
+-  "commitTokenThreshold": 20000,
+-  "commitKeepRecentCount": 10,
+-  "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below is belt-and-braces only — config.ts forces it off in code (PATCH 1).",
++  "recallQueryExpansion": "off",
++  "_qcr_fork": "Vendored + patched fork of the OpenViking pi extension; see README.md. takeover.enabled below and recallQueryExpansion above are belt-and-braces only — config.ts forces takeover off (PATCH 1) and query expansion off (PATCH 7) in code. There is no commitTokenThreshold: nothing commits a session (PATCH 7).",
+   "takeover": {
+     "enabled": false,
+     "tokenThreshold": 30000,
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -235,6 +235,17 @@ export function loadConfig(extensionDir: string): OVConfig {
+   config.captureMode = config.captureMode === "keyword" ? "keyword" : "semantic";
+   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
+   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
++  // [QCR PATCH 7] Query expansion is OFF, in code — owner ruling R3 (
++  // S3). It is a model call the server makes before retrieval whenever a
++  // search carries a session id, this deployment configures no model for it
++  // (every call failed on a missing key), and it sat on the 15 s fuse the
++  // context hook used to wait out. config.json says "off" too, but like
++  // takeover in PATCH 1 a knob — or the OPENVIKING_RECALL_QUERY_EXPANSION env
++  // override above — is something an operator can flip, and this one is a
++  // ruling. `Configured` is what makes the request body carry the "off"
++  // (recall-core.mjs sends nothing, i.e. the server's "auto", otherwise).
++  config.recallQueryExpansion = "off";
++  config.recallQueryExpansionConfigured = true;
+   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
+   config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
+   return config;
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -11,7 +11,7 @@
+  *
+  * ── QCR FORK ────────────────────────────────────────────────────────────────
+  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
+- * extension. Six numbered patches; every hunk carries a `[QCR PATCH n]`
++ * extension. Seven numbered patches; every hunk carries a `[QCR PATCH n]`
+  * marker so a rebase is a search, not an audit. See README.md here.
+  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
+  *             the sole owner of compaction) and takeover forced off.
+@@ -24,6 +24,10 @@
+  *             is not), viking_write takes several entries as ONE batch, a
+  *             refused key is re-read once, and no failure reads as "No
+  *             results found".
++ *   PATCH 7 — bounded recall, no commit: the context hook waits at most
++ *             500 ms for recall (every request of it on one deadline, no
++ *             fallback past it), query expansion is off in code, retired
++ *             entries are never recalled, and nothing commits a session.
+  * ────────────────────────────────────────────────────────────────────────────
+  */
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+@@ -41,6 +45,8 @@ import { createTakeoverManager } from "./takeover.js";
+ import { isLeafProcess } from "./qcr-leaf.js";
+ // [QCR PATCH 5]
+ import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
++// [QCR PATCH 7]
++import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
+ 
+ export default async function (pi: ExtensionAPI) {
+   // [QCR PATCH 2] Decided once, from argv, before anything else: a
+@@ -79,7 +85,12 @@ export default async function (pi: ExtensionAPI) {
+   }));
+   const namespaces = [{ name: ownNamespaceName(config.user), client }, ...extraNamespaces];
+   const sync = new SyncManager(client, config);
+-  const recall = new RecallManager(client, config, () => sync.sessionId);
++  // [QCR PATCH 7] The retired URIs the daemon publishes beside ovcli.conf,
++  // re-read for every recall (a small local file), so a retirement reaches a
++  // running session without a restart.
++  const recall = new RecallManager(client, config, () => sync.sessionId, {
++    retiredUris: () => readRetiredUris(process.env[RETIRED_FILE_ENV]),
++  });
+   const debugLog = (message: string) => {
+     const file = process.env.OV_DEBUG_LOG;
+     if (!file) return;
+@@ -254,7 +265,10 @@ export default async function (pi: ExtensionAPI) {
+ 
+     // Keep recall synchronous with the provider request so the current prompt
+     // still receives current-query memory, without blocking user-message UI.
+-    await recall.searchPending();
++    // [QCR PATCH 7] …but never for longer than RECALL_WAIT_MS (owner ruling
++    // R3): every request of the recall shares that one deadline, and a recall
++    // that misses it leaves this run without a block — the turn goes on.
++    await recall.searchPending(RECALL_WAIT_MS);
+ 
+     const afterTakeover = config.takeoverEnabled
+       ? takeover.transformContext(event.messages as any)
+@@ -273,8 +287,8 @@ export default async function (pi: ExtensionAPI) {
+   // --- turn_end ---
+   pi.on("turn_end", async (event, ctx) => {
+     if (!connected || bypassed || !config.syncTurns) return;
+-    // [QCR PATCH 2] No turn sync and therefore no threshold auto-commit from
+-    // a leaf — a commit there would archive the SHEPHERD's session.
++    // [QCR PATCH 2] No turn sync from a leaf. ([QCR PATCH 7]: the threshold
++    // auto-commit that rode the sync is gone everywhere — sync.ts.)
+     if (leaf) return;
+ 
+     const branch = ctx.sessionManager.getBranch();
+@@ -309,12 +323,11 @@ export default async function (pi: ExtensionAPI) {
+     // [QCR PATCH 2] A leaf exits after every pass; it commits nothing.
+     if (leaf) return;
+ 
++    // [QCR PATCH 7] was `takeover.shutdown()` / `sync.commit()` — a commit on
++    // every shutdown.: commit is never called (it only promotes notes
++    // through an extraction model this deployment does not run); the PR's raw
++    // tier ages out by the daemon's DELETE when the PR closes.
+     await sync.shutdown();
+-    if (config.takeoverEnabled) {
+-      await takeover.shutdown();
+-    } else {
+-      await sync.commit();
+-    }
+   });
+ 
+   // --- agent_end ---
+@@ -335,20 +348,12 @@ export default async function (pi: ExtensionAPI) {
+       }
+ 
+       if (args?.trim() === "commit") {
+-        await sync.shutdown();
+-        const commitResult = config.takeoverEnabled ? null : await sync.commit();
+-        const ok = config.takeoverEnabled
+-          ? await takeover.commitAndAdvance()
+-          : commitResult !== null;
+-        if (ok) {
+-          ctx.ui.notify(
+-            "OpenViking: committed successfully" +
+-              (commitResult?.trace_id ? ` (trace_id=${commitResult.trace_id})` : ""),
+-            "info",
+-          );
+-        } else {
+-          ctx.ui.notify("OpenViking: commit failed", "error");
+-        }
++        // [QCR PATCH 7] No manual commit either — say so rather
++        // than report a "failed" commit that was never attempted.
++        ctx.ui.notify(
++          "OpenViking: session commit is disabled in this deployment — durable memory is written with viking_write",
++          "info",
++        );
+         return;
+       }
+ 
+@@ -432,12 +437,11 @@ function updateStatus(
+ ): void {
+   const setter = ctx?.ui?.setStatus;
+   if (typeof setter !== "function") return;
+-  const threshold = config.takeoverEnabled
+-    ? config.takeoverTokenThreshold
+-    : config.commitTokenThreshold;
++  // [QCR PATCH 7] was ` · ✎ ${commitTokenThreshold}` — a commit threshold
++  // that no longer exists.
+   const pending = config.takeoverEnabled && takeoverState
+-    ? ` · ctx ${takeoverState.coveredUserTurns ?? 0} · ~${takeoverState.pendingTokens ?? 0}/${threshold}`
+-    : ` · ✎ ${threshold}`;
++    ? ` · ctx ${takeoverState.coveredUserTurns ?? 0} · ~${takeoverState.pendingTokens ?? 0}/${config.takeoverTokenThreshold}`
++    : " · no commit";
+   const status = `${connected ? "OV ✓" : "OV ✗"} · ↩${added}${pending} · ${sessionId ? sessionId.slice(0, 12) : "none"}`;
+   try {
+     setter(status);
+diff --git a/extensions/vendor/openviking-pi/recall.ts b/extensions/vendor/openviking-pi/recall.ts
+--- a/extensions/vendor/openviking-pi/recall.ts
++++ b/extensions/vendor/openviking-pi/recall.ts
+@@ -1,12 +1,22 @@
+ import type { OVClient } from "./client.js";
+ import type { OVConfig } from "./config.js";
+ import { buildRecallBlock } from "./shared/recall-core.mjs";
++// [QCR PATCH 7]
++import { budgetedFetch, raceBudget, RECALL_WAIT_MS, retiredGuard } from "./qcr-recall.js";
+ 
+ export interface RecallCache {
+   block: string | null;
+   promptText: string;      // the query this cache is for
+ }
+ 
++/** [QCR PATCH 7] What the recall manager needs beyond the client. */
++export interface RecallOptions {
++  /** The retired URIs to exclude (the daemon's published list). */
++  retiredUris?: () => readonly string[];
++  /** Millisecond clock for the recall deadline. Tests inject one. */
++  now?: () => number;
++}
++
+ export class RecallManager {
+   private client: OVClient;
+   private config: OVConfig;
+@@ -15,18 +25,37 @@ export class RecallManager {
+   // Read lazily: the session manager that owns this id is constructed after the
+   // recall manager, and the id only exists once a session has been opened.
+   private sessionId: () => string | null;
++  // [QCR PATCH 7]
++  private retiredUris: () => readonly string[];
++  private now: () => number;
+ 
+-  constructor(client: OVClient, config: OVConfig, sessionId: () => string | null = () => null) {
++  constructor(
++    client: OVClient,
++    config: OVConfig,
++    sessionId: () => string | null = () => null,
++    opts: RecallOptions = {},
++  ) {
+     this.client = client;
+     this.config = config;
+     this.sessionId = sessionId;
++    this.retiredUris = opts.retiredUris ?? (() => []);
++    this.now = opts.now ?? Date.now;
+   }
+ 
+   queueSearch(userQuery: string): void {
+     this.pendingPrompt = userQuery;
+   }
+ 
+-  async searchPending(): Promise<string | null> {
++  /**
++   * [QCR PATCH 7] Bounded: the whole recall — every request of it, fallbacks
++   * included — runs on ONE deadline `budgetMs` from now, capped at
++   * `RECALL_WAIT_MS` (owner ruling R3, S3). A recall that misses it is
++   * "no recall for this run": the turn proceeds, and a late answer is dropped
++   * rather than injected into a later turn (that would rewrite a message the
++   * provider has already cached). Retired entries are excluded and filtered
++   * (`retiredGuard`).
++   */
++  async searchPending(budgetMs: number = RECALL_WAIT_MS): Promise<string | null> {
+     if (!this.pendingPrompt) return this.cache.block;
+ 
+     const userQuery = this.pendingPrompt;
+@@ -36,20 +65,28 @@ export class RecallManager {
+       return null;
+     }
+ 
+-    const block = await buildRecallBlock(
+-      // 10s is this extension's own budget for a bare retrieval; when the
+-      // request also spends a server fuse the helper hands down a longer
+-      // deadline, and ignoring it would abort a request still inside its fuse.
+-      (path: string, init?: any, options?: any) =>
+-        this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
+-      this.config as any,
+-      userQuery,
+-      {
++    const budget = Math.max(0, Math.min(Number(budgetMs) || 0, RECALL_WAIT_MS));
++    const deadline = this.now() + budget;
++    const fetch = retiredGuard(
++      budgetedFetch(
++        // 10s was this extension's own budget for a bare retrieval; the
++        // deadline above now caps every request at the time left on it.
++        (path: string, init?: any, options?: any) =>
++          this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
++        deadline,
++        this.now,
++      ),
++      this.retiredUris,
++    );
++    const { value: block } = await raceBudget(
++      buildRecallBlock(fetch, this.config as any, userQuery, {
+         actorPeerId: this.config.peerId,
+-        // Passing the OV session id is what turns on server-side query
+-        // expansion and the cross-turn dedup ledger.
++        // The OV session id buys the cross-turn dedup ledger; query
++        // expansion, which it would also turn on, is forced off in config.ts.
+         sessionId: this.sessionId() ?? "",
+-      },
++      }),
++      deadline - this.now(),
++      null as string | null,
+     );
+     this.cache = { block, promptText: userQuery };
+     return block;
+diff --git a/extensions/vendor/openviking-pi/sync.ts b/extensions/vendor/openviking-pi/sync.ts
+--- a/extensions/vendor/openviking-pi/sync.ts
++++ b/extensions/vendor/openviking-pi/sync.ts
+@@ -7,6 +7,8 @@ import type { OVConfig } from "./config.js";
+ import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs";
+ import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
+ import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
++// [QCR PATCH 7]
++import { refuseCommits } from "./qcr-recall.js";
+ 
+ // --- SyncManager ---
+ 
+@@ -91,7 +93,9 @@ export class SyncManager {
+   async replayPending(): Promise<void> {
+     if (!this.client.connected) return;
+     await replayPending(
+-      (path: string, init?: any) => this.client.fetchJSON(path, init, 10000),
++      // [QCR PATCH 7] A commit an older build queued on disk is answered with
++      // a final refusal here — dropped from the queue, never sent.
++      refuseCommits((path: string, init?: any) => this.client.fetchJSON(path, init, 10000)),
+       (stage: string, data: unknown) =>
+         debugLog(`${stage}: ${JSON.stringify(data)}`),
+     );
+@@ -122,9 +126,10 @@ export class SyncManager {
+     if (added === extracted.payloads.length) {
+       this.syncedEntryCount = extracted.nextEntryCount;
+     }
+-    if (added > 0 && !this.config.takeoverEnabled) {
+-      await this.commitIfNeeded();
+-    }
++    // [QCR PATCH 7] was `if (added > 0 && !takeoverEnabled) await
++    // this.commitIfNeeded()` — a session GET after every synced turn and a
++    // commit at 20k pending tokens. Commit is never called; the
++    // per-turn sync above stays (owner ruling R3).
+     return { added, tokens, allDelivered };
+   }
+ 
+@@ -136,39 +141,18 @@ export class SyncManager {
+     return { accepted: true, delivered: false };
+   }
+ 
+-  async commitIfNeeded(): Promise<void> {
+-    if (!this.ovSessionId) return;
+-    const meta = await this.client.getSession(this.ovSessionId);
+-    const pending = Number(meta?.pending_tokens || 0);
+-    if (pending >= this.config.commitTokenThreshold) {
+-      await this.commit();
+-    }
+-  }
+-
+-  async commit(opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {}): Promise<any | null> {
+-    if (!this.ovSessionId) return null;
+-    const response = await this.client.commitSessionResponse(
+-      this.ovSessionId,
+-      opts.keepRecentCount,
+-    );
+-    const result = response.result;
+-    if (!result) {
+-      debugLog(
+-        `commit: session=${this.ovSessionId} ok=false status=${response.status ?? 0} ` +
+-          `trace_id=${response.traceId || "none"} ` +
+-          `error=${response.error?.message || response.error?.code || "unknown"}`,
+-      );
+-      if (opts.queueOnFailure !== false) {
+-        await enqueue("commitSession", this.ovSessionId, {
+-          keep_recent_count: opts.keepRecentCount ?? this.config.commitKeepRecentCount,
+-        });
+-      }
+-      return null;
+-    }
+-    debugLog(
+-      `commit: session=${this.ovSessionId} ok=true trace_id=${result.trace_id || "none"}`,
+-    );
+-    return result;
++  // [QCR PATCH 7] `commitIfNeeded()` is DELETED (it read the session after
++  // every synced turn to decide a commit), and `commit()` never sends one:
++  // commit exists to PROMOTE session notes into memories through an
++  // extraction model this deployment does not configure, so each one archived
++  // the raw notes and produced nothing (143 archives on the VM, 0 overviews).
++  // It also queues nothing, so a refused commit cannot come back on replay.
++  // The signature stays for the takeover manager, which config.ts forces off.
++  async commit(
++    _opts: { queueOnFailure?: boolean; keepRecentCount?: number } = {},
++  ): Promise<any | null> {
++    if (this.ovSessionId) debugLog(`commit: session=${this.ovSessionId} refused (QCR PATCH 7)`);
++    return null;
+   }
+ 
+   async shutdown(): Promise<void> {
+diff --git a/extensions/vendor/openviking-pi/qcr-recall.ts b/extensions/vendor/openviking-pi/qcr-recall.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-recall.ts
+@@ -0,0 +1,288 @@
++// QCR FORK — file added by PATCH 7 (bounded recall, no commit). Not upstream.
++// S3, owner ruling R3: "PR sessions keep the OpenViking extension,
++// bounded: the per-turn recall wait is capped at 500 ms and query expansion is
++// off."
++//
++// The pure half of three fixes, kept free of pi and of the OV client so
++// `tests/openviking-fork.test.ts` can exercise it (`index.ts` cannot be
++// imported from a test).
++//
++// 1. RECALL NEVER HOLDS A TURN PAST ITS BUDGET. The `context` hook awaited
++//    the recall search before every provider request, and that search could
++//    spend a 15 s expansion fuse and then a `/search/recall` fallback with its
++//    own 10 s — on a server whose local embedder blocks its one event loop
++//    (search p50 22 s, max 155 s, 2026-10-03..06). `budgetedFetch` gives every
++//    request of one recall the time left on ONE deadline and starts nothing
++//    once it has passed (it throws, which ends the fallback chain before it
++//    sends a request); `raceBudget` is the belt that returns the hook on time
++//    whatever the chain is doing.
++// 2. A RETIRED ENTRY IS NEVER RECALLED. Retire is a `#retired` header tag and
++//    the file stays in the indexed root, so a semantic search finds it. The
++//    daemon already knows the retired set (its store sweep) and publishes the
++//    URIs to a file beside the sessions' ovcli.conf (`QCR_OV_RETIRED_FILE`);
++//    `retiredGuard` sends them as `exclude_uris`, and drops any recalled entry
++//    whose own text opens with the tag (the header-only rule of
++//    `src/memory/eventtags.ts` `parseHashTags` — a `#retired` quoted further
++//    in is prose, not a retirement).
++// 3. NOTHING COMMITS.: commit exists to PROMOTE session notes into
++//    memories through an extraction model this deployment never configures,
++//    so every commit archived the raw notes and produced nothing (143 archives
++//    on the VM, 0 overviews). The commit calls are gone from sync/index; a
++//    commit queued on disk by an older build is refused here, never replayed.
++import { readFileSync } from "node:fs";
++
++/** The longest the `context` hook waits for recall before the turn proceeds
++ * without it (R3). A cap: a caller may ask for less, never for more. */
++export const RECALL_WAIT_MS = 500;
++
++/** The server's `MAX_EXCLUDE_URIS` (context_assembler/params.py). */
++export const MAX_RECALL_EXCLUSIONS = 200;
++
++/** Where the daemon publishes the retired URIs. Not a secret: the URIs of
++ * retired entries the session's own key can already list. */
++export const RETIRED_FILE_ENV = "QCR_OV_RETIRED_FILE";
++
++/** The seam's retirement tag (src/openviking/store.ts `RETIRED_TAG`). */
++export const RETIRED_TAG = "retired";
++
++/** The answer shape of `OVClient.fetchJSON`, loosened so this file does not
++ * import the client. */
++export interface FetchAnswer {
++  ok: boolean;
++  status?: number;
++  result?: any;
++  error?: any;
++  traceId?: string;
++}
++
++export type FetchLike = (path: string, init?: any, options?: any) => Promise<FetchAnswer>;
++
++/** Thrown by a budgeted fetch once the deadline has passed. It ends the
++ * recall chain where it stands — nothing further is sent, and nothing is
++ * cached from a request that was never made — and `raceBudget` turns it into
++ * "no recall this turn". */
++export class RecallBudgetSpent extends Error {
++  constructor() {
++    super("recall budget spent");
++    this.name = "RecallBudgetSpent";
++  }
++}
++
++/**
++ * Every request of one recall shares ONE deadline. A request gets the time
++ * left on it as its own timeout (the client aborts it there), and once none is
++ * left nothing is started — the `/search/recall` and raw-find fallbacks
++ * included, which used to double the load exactly when the server was slow.
++ */
++export function budgetedFetch(
++  inner: FetchLike,
++  deadlineAt: number,
++  now: () => number = Date.now,
++): FetchLike {
++  return async (path, init, options) => {
++    const remaining = Math.floor(deadlineAt - now());
++    if (remaining <= 0) throw new RecallBudgetSpent();
++    const asked = Number(options?.timeoutMs);
++    const timeoutMs = Number.isFinite(asked) && asked > 0 ? Math.min(asked, remaining) : remaining;
++    return inner(path, init, { ...(options ?? {}), timeoutMs });
++  };
++}
++
++/**
++ * `work`, or `fallback` once `ms` have passed. Never rejects: a recall that
++ * throws is a recall that found nothing. The work is NOT cancelled — under a
++ * `budgetedFetch` it has nothing left to send by then — and a late answer is
++ * discarded, never injected into a later turn of the same run (that would
++ * rewrite a message the provider has already cached).
++ */
++export async function raceBudget<T>(
++  work: Promise<T>,
++  ms: number,
++  fallback: T,
++): Promise<{ value: T; timedOut: boolean }> {
++  const settled = work.then(
++    (value) => ({ value, timedOut: false }),
++    () => ({ value: fallback, timedOut: false }),
++  );
++  if (!(ms > 0)) return { value: fallback, timedOut: true };
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  try {
++    return await Promise.race([
++      settled,
++      new Promise<{ value: T; timedOut: boolean }>((resolve) => {
++        timer = setTimeout(() => resolve({ value: fallback, timedOut: true }), ms);
++        (timer as { unref?: () => void }).unref?.();
++      }),
++    ]);
++  } finally {
++    if (timer !== undefined) clearTimeout(timer);
++  }
++}
++
++/**
++ * Does this text OPEN with the `#retired` tag? Header-only, exactly like
++ * `parseHashTags` (src/memory/eventtags.ts): the leading run of `#tag` tokens
++ * is the header and the scan stops at the first word that is not one, so a
++ * `[feedback]` entry quoting "mark it #retired" is not hidden by its prose.
++ * `tests/openviking-fork.test.ts` pins the two parsers against each other.
++ */
++export function hasRetiredHeader(text: unknown): boolean {
++  for (const token of String(text ?? "").split(/\s+/)) {
++    if (token === "") continue;
++    if (!token.startsWith("#")) return false;
++    if (token.slice(1).toLowerCase() === RETIRED_TAG) return true;
++  }
++  return false;
++}
++
++/**
++ * The retired URIs the daemon published (`{"uris": [...]}`), or `[]`.
++ * Total: no path, no file, a garbled file — all mean "no exclusions", and the
++ * header filter in `retiredGuard` still applies.
++ */
++export function readRetiredUris(
++  path: string | undefined,
++  read: (p: string) => string = defaultRead,
++): string[] {
++  if (!path || path.trim() === "") return [];
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(read(path.trim()));
++  } catch {
++    return [];
++  }
++  const raw = (parsed as { uris?: unknown })?.uris;
++  if (!Array.isArray(raw)) return [];
++  const out: string[] = [];
++  for (const uri of raw) {
++    if (typeof uri !== "string" || !uri.startsWith("viking://") || out.includes(uri)) continue;
++    out.push(uri);
++    if (out.length >= MAX_RECALL_EXCLUSIONS) break;
++  }
++  return out;
++}
++
++function defaultRead(p: string): string {
++  return readFileSync(p, "utf8");
++}
++
++/** One assembled entry exactly as the server renders it
++ * (`retrieve/context_assembler/render.py` `render_entry`), so a block we had
++ * to re-render after dropping a retired entry reads like the server's. */
++export function renderContextEntry(entry: {
++  uri?: unknown;
++  category?: unknown;
++  score?: unknown;
++  detail?: unknown;
++  text?: unknown;
++}): string {
++  const attr = (v: unknown) =>
++    String(v ?? "")
++      .replace(/&/g, "&amp;")
++      .replace(/"/g, "&quot;")
++      .replace(/</g, "&lt;");
++  const score = Number(entry.score);
++  const head =
++    `<memory uri="${attr(entry.uri)}" type="${attr(entry.category)}"` +
++    ` score="${(Number.isFinite(score) ? score : 0).toFixed(2)}" detail="${String(entry.detail ?? "")}"`;
++  const text = String(entry.text ?? "");
++  if (text === "") return `${head} />`;
++  return `${head}>\n${text.replace(/<(\/?)memory(?=[\s/>])/gi, "<\\$1memory")}\n</memory>`;
++}
++
++const CONTEXT_PATHS = new Set(["/api/v1/search/search", "/api/v1/search/recall"]);
++const FIND_PATH = "/api/v1/search/find";
++
++/**
++ * Retired entries out of every recall request this fetch carries:
++ *   * a context search or the `/search/recall` preset is SENT the published
++ *     retired URIs as `exclude_uris` (merged with any it already carried,
++ *     capped at the server's 200) — list-mode search rejects the field, so
++ *     only a `mode: "context"` body gets it;
++ *   * whatever comes back is FILTERED: an entry the list names, or whose own
++ *     text opens with `#retired`, is dropped, and the rendered block is
++ *     rebuilt from what is left (the digest with it — it was written from the
++ *     dropped entry too);
++ *   * the raw-find fallback's `memories` are filtered the same way.
++ */
++export function retiredGuard(inner: FetchLike, retired: () => readonly string[]): FetchLike {
++  return async (path, init, options) => {
++    let excluded: readonly string[] = [];
++    try {
++      excluded = retired();
++    } catch {
++      excluded = [];
++    }
++    const excludedSet = new Set(excluded);
++    let sent = init;
++    if (CONTEXT_PATHS.has(path) && typeof init?.body === "string" && excluded.length > 0) {
++      try {
++        const body = JSON.parse(init.body) as Record<string, unknown>;
++        if (path !== "/api/v1/search/search" || body["mode"] === "context") {
++          const have = Array.isArray(body["exclude_uris"])
++            ? (body["exclude_uris"] as unknown[]).filter((u): u is string => typeof u === "string")
++            : [];
++          body["exclude_uris"] = [...new Set([...have, ...excluded])].slice(0, MAX_RECALL_EXCLUSIONS);
++          sent = { ...init, body: JSON.stringify(body) };
++        }
++      } catch {
++        sent = init;
++      }
++    }
++    const res = await inner(path, sent, options);
++    if (!res?.ok || !res.result || typeof res.result !== "object") return res;
++    const isRetired = (uri: unknown, text: unknown) =>
++      (typeof uri === "string" && excludedSet.has(uri)) || hasRetiredHeader(text);
++    if (CONTEXT_PATHS.has(path) && Array.isArray(res.result.entries)) {
++      const entries = res.result.entries as Array<Record<string, unknown>>;
++      const kept = entries.filter((e) => !isRetired(e?.["uri"], e?.["text"] ?? e?.["content"]));
++      if (kept.length === entries.length) return res;
++      return {
++        ...res,
++        result: {
++          ...res.result,
++          entries: kept,
++          rendered: kept.map(renderContextEntry).join("\n"),
++          digest: "",
++        },
++      };
++    }
++    if (path === FIND_PATH && Array.isArray(res.result.memories)) {
++      const memories = res.result.memories as Array<Record<string, unknown>>;
++      const kept = memories.filter(
++        (m) => !isRetired(m?.["uri"], m?.["abstract"] ?? m?.["overview"]),
++      );
++      if (kept.length === memories.length) return res;
++      return { ...res, result: { ...res.result, memories: kept } };
++    }
++    return res;
++  };
++}
++
++/** Is this the commit route of a session? */
++export function isCommitPath(path: string): boolean {
++  return /^\/api\/v1\/sessions\/[^/]+\/commit(?:[?#].*)?$/.test(path);
++}
++
++/** What a refused commit answers: a 400 the pending queue treats as final
++ * (`retryable.mjs`), so a commit an older build queued is dropped, not
++ * retried. */
++export const COMMIT_REFUSED: FetchAnswer = Object.freeze({
++  ok: false,
++  status: 400,
++  result: null,
++  error: Object.freeze({
++    code: "QCR_COMMIT_DISABLED",
++    message:
++      "session commit is disabled in this fork: it only promotes notes through an " +
++      "extraction model this deployment does not run",
++  }),
++}) as FetchAnswer;
++
++/** A fetch that never sends a session commit. */
++export function refuseCommits(inner: FetchLike): FetchLike {
++  return async (path, init, options) => {
++    if (isCommitPath(path)) return { ...COMMIT_REFUSED };
++    return inner(path, init, options);
++  };
++}

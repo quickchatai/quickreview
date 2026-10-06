@@ -235,6 +235,17 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.captureMode = config.captureMode === "keyword" ? "keyword" : "semantic";
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
+  // [QCR PATCH 7] Query expansion is OFF, in code — owner ruling R3 (
+  // S3). It is a model call the server makes before retrieval whenever a
+  // search carries a session id, this deployment configures no model for it
+  // (every call failed on a missing key), and it sat on the 15 s fuse the
+  // context hook used to wait out. config.json says "off" too, but like
+  // takeover in PATCH 1 a knob — or the OPENVIKING_RECALL_QUERY_EXPANSION env
+  // override above — is something an operator can flip, and this one is a
+  // ruling. `Configured` is what makes the request body carry the "off"
+  // (recall-core.mjs sends nothing, i.e. the server's "auto", otherwise).
+  config.recallQueryExpansion = "off";
+  config.recallQueryExpansionConfigured = true;
   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
   config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
   return config;

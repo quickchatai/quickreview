@@ -49,6 +49,7 @@ import { refOf } from "../src/memory/store.js";
 import { readPinnedFromSweep } from "../src/eodpinwatch.js";
 import type { ContextAssembler } from "../src/memory/context.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
+import { listedFileStat } from "./helpers/ov-listing.js";
 
 const KEY =
   "cWNy.cmV2aWV3ZXI.a2V5LWZvci10ZXN0cy1vbmx5LW5vdC1hLXJlYWwta2V5";
@@ -224,18 +225,13 @@ class FakeOpenViking {
     const prefix = `${uri.replace(/\/+$/, "")}/`;
     const dirs = new Set<string>();
     const rows: Array<Record<string, unknown>> = [];
-    for (const key of this.files.keys()) {
+    for (const [key, content] of this.files) {
       if (!key.startsWith(prefix)) continue;
       const rest = key.slice(prefix.length);
       const cut = rest.indexOf("/");
-      if (cut < 0)
-        rows.push({
-          uri: key,
-          name: rest,
-          isDir: false,
-          size: 1,
-          modTime: "2026-08-20T15:30:00.000Z",
-        });
+      // Size and mtime move with the bytes, as on the real server — the
+      // store's sweep is incremental and re-reads only what moved.
+      if (cut < 0) rows.push({ uri: key, name: rest, isDir: false, ...listedFileStat(content) });
       else dirs.add(rest.slice(0, cut));
     }
     // A directory made by `fs/mkdir` and still empty is listed too — the whole
@@ -1408,7 +1404,15 @@ describe("a write outruns an older in-flight sweep", () => {
     };
     let ms = NOW.getTime();
     const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
-    const store = new OpenVikingStore({ client, now: () => new Date(ms), cacheTtlMs: 60_000 });
+    // Every sweep FULL (S3): the race under test needs the expired
+    // sweep to READ the entry, which an incremental sweep of an unchanged file
+    // would not.
+    const store = new OpenVikingStore({
+      client,
+      now: () => new Date(ms),
+      cacheTtlMs: 60_000,
+      fullRefreshMs: 0,
+    });
     await store.apply({ op: "note", text: "v1" });
     const [entry] = await store.read();
     ms += 120_000; // the cached sweep expires
@@ -1445,7 +1449,15 @@ describe("a sweep that read before a write never fills the cache", () => {
     };
     let ms = NOW.getTime();
     const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
-    const store = new OpenVikingStore({ client, now: () => new Date(ms), cacheTtlMs: 60_000 });
+    // Every sweep FULL (S3): the race under test needs the expired
+    // sweep to READ the entry, which an incremental sweep of an unchanged file
+    // would not.
+    const store = new OpenVikingStore({
+      client,
+      now: () => new Date(ms),
+      cacheTtlMs: 60_000,
+      fullRefreshMs: 0,
+    });
     await store.apply({ op: "note", text: "v1" });
     const [entry] = await store.read();
     ms += 120_000;
@@ -1530,5 +1542,473 @@ describe("the pinned watchdog reads fresh through a shared, cached store", () =>
     // edited pin's hash, never the cached pre-edit one.
     expect(pinned).toHaveLength(1);
     expect(pinned[0]!.hash).not.toBe(warm.entries[0]!.hash);
+  });
+});
+
+// ---- the incremental sweep (S3) -------------------------------------
+//
+// Every category is listed every sweep, but a file is READ only when its listed
+// size or modification time moved since this store last read it — except on
+// the periodic full refresh. Before this, the TUI's candidate sweeper, the
+// companion and the daemon each re-read all ~176 files every few minutes
+// (about 716 content/read per 10 min on the live server).
+describe("the incremental sweep (S3)", () => {
+  const reads = (server: FakeOpenViking) =>
+    server.calls.filter((c) => c.path === "/api/v1/content/read").length;
+  const ROOT_EXP = `${ROOT}/experiences`;
+
+  function seeded(): { server: FakeOpenViking; store: OpenVikingStore; clock: { ms: number } } {
+    const server = new FakeOpenViking();
+    server.files.set(`${ROOT_EXP}/20260801T000000-a.md`, "#feedback one\n");
+    server.files.set(`${ROOT_EXP}/20260802T000000-b.md`, "#pinned two\n");
+    server.files.set(`${ROOT_EXP}/20260803T000000-c.md`, "three\n");
+    const clock = { ms: NOW.getTime() };
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: server.fetch,
+    });
+    const store = new OpenVikingStore({
+      client,
+      now: () => new Date(clock.ms),
+      cacheTtlMs: 0,
+    });
+    return { server, store, clock };
+  }
+
+  it("re-reads only what moved: an unchanged store costs listings and no reads", async () => {
+    const { server, store } = seeded();
+    expect((await store.read()).map((e) => e.text)).toEqual([
+      "#feedback one",
+      "#pinned two",
+      "three",
+    ]);
+    expect(reads(server)).toBe(3);
+    expect(store.lastSweepStats()).toEqual({ full: true, listed: 3, reread: 3, reused: 0 });
+
+    // Nothing moved: the second sweep lists and reads nothing.
+    const before = reads(server);
+    const again = await store.read();
+    expect(again.map((e) => e.text)).toEqual(["#feedback one", "#pinned two", "three"]);
+    expect(reads(server) - before).toBe(0);
+    expect(store.lastSweepStats()).toEqual({ full: false, listed: 3, reread: 0, reused: 3 });
+    // …but it DID list: a sweep is never served from nothing.
+    expect(server.calls.filter((c) => c.path === "/api/v1/fs/ls").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("an out-of-band edit, a new file and a deleted file are each seen on the next sweep", async () => {
+    const { server, store } = seeded();
+    await store.read();
+    const before = reads(server);
+    // The curator rewrites one entry (not through this store), the companion
+    // adds one, and one is removed.
+    server.files.set(
+      `${ROOT_EXP}/20260801T000000-a.md`,
+      "#feedback one, rewritten by the curator\n",
+    );
+    server.files.set(`${ROOT_EXP}/20260804T000000-d.md`, "four\n");
+    server.files.delete(`${ROOT_EXP}/20260803T000000-c.md`);
+    const after = await store.read();
+    expect(after.map((e) => e.text)).toEqual([
+      "#feedback one, rewritten by the curator",
+      "#pinned two",
+      "four",
+    ]);
+    // Exactly the edited file and the new one were read.
+    expect(reads(server) - before).toBe(2);
+    expect(store.lastSweepStats()).toMatchObject({ full: false, reread: 2, reused: 1 });
+  });
+
+  it("re-reads EVERYTHING once the full-refresh interval has passed", async () => {
+    const { server, store, clock } = seeded();
+    await store.read();
+    clock.ms += 30 * 60_000;
+    const before = reads(server);
+    await store.read();
+    expect(reads(server) - before).toBe(0);
+    clock.ms += 31 * 60_000; // past the default hour since the last full read
+    await store.read();
+    expect(reads(server) - before).toBe(3);
+    expect(store.lastSweepStats()?.full).toBe(true);
+  });
+
+  it("a listing with no modification time vouches for nothing — such a file is read every sweep", async () => {
+    const server = new FakeOpenViking();
+    server.files.set(`${ROOT_EXP}/20260801T000000-a.md`, "one\n");
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: async (url, init) => {
+        const res = await server.fetch(url, init);
+        if (!url.includes("/api/v1/fs/ls")) return res;
+        const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+        for (const row of body.result) row["modTime"] = "";
+        return json(200, body);
+      },
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    await store.read();
+    await store.read();
+    await store.read();
+    expect(reads(server)).toBe(3);
+  });
+
+  it("a write through the store forgets what it wrote — even a same-size edit inside one clock tick is read", async () => {
+    const server = new FakeOpenViking();
+    // A listing that never moves (a coarse clock and an equal size): only the
+    // store's own memory of the write can know the file changed.
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: async (url, init) => {
+        const res = await server.fetch(url, init);
+        if (!url.includes("/api/v1/fs/ls")) return res;
+        const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+        for (const row of body.result) {
+          row["size"] = 7;
+          row["modTime"] = "2026-08-20T15:30:00.000Z";
+        }
+        return json(200, body);
+      },
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    await store.apply({ op: "note", text: "aaaaaa" });
+    const [entry] = await store.read();
+    expect((await store.apply({ op: "edit", ...refOf(entry!), text: "bbbbbb" })).ok).toBe(true);
+    expect((await store.read()).map((e) => e.text)).toEqual(["bbbbbb"]);
+  });
+
+  it("a sweep that read the OLD bytes before a same-size write cannot put them back", async () => {
+    const server = new FakeOpenViking();
+    let gate: Promise<void> | null = null;
+    let hit: () => void = () => {};
+    const hitP = new Promise<void>((r) => (hit = r));
+    let release: () => void = () => {};
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: async (url, init) => {
+        const res = await server.fetch(url, init);
+        if (url.includes("/api/v1/fs/ls")) {
+          // A listing that never moves: only the store's memory of its own
+          // write can tell it the file changed.
+          const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+          for (const row of body.result) {
+            row["size"] = 7;
+            row["modTime"] = "2026-08-20T15:30:00.000Z";
+          }
+          return json(200, body);
+        }
+        if (gate && url.includes("/api/v1/content/read")) {
+          const held = gate;
+          gate = null;
+          hit();
+          await held;
+        }
+        return res;
+      },
+    });
+    // The address and hash come from another store, so `store` itself has
+    // read nothing yet: its first sweep (a full one) is the stale one.
+    const writer = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    await writer.apply({ op: "note", text: "aaaaaa" });
+    const [entry] = await writer.read();
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    gate = new Promise<void>((r) => (release = r));
+    const stale = store.sweep(); // reads "aaaaaa", held
+    await hitP;
+    expect((await store.apply({ op: "edit", ...refOf(entry!), text: "bbbbbb" })).ok).toBe(true);
+    release();
+    expect((await stale).entries.map((e) => e.text)).toEqual(["aaaaaa"]);
+    // The next sweep is incremental and the listing never moved: only the
+    // store's own record of the write keeps the stale read from being reused.
+    expect((await store.read()).map((e) => e.text)).toEqual(["bbbbbb"]);
+    expect(store.lastSweepStats()).toMatchObject({ full: false, reread: 1 });
+  });
+
+  it("a failed re-read is unread and forgotten — the next sweep reads it again", async () => {
+    const { server } = seeded();
+    const target = `${ROOT_EXP}/20260802T000000-b.md`;
+    server.files.set(target, "#pinned two, edited\n");
+    let fail = true;
+    const realFetch = server.fetch;
+    const failing = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) =>
+          fail && url.includes("/api/v1/content/read") && url.includes(encodeURIComponent(target))
+            ? Promise.reject(new Error("socket hang up"))
+            : realFetch(url, init),
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+    });
+    await failing.read(); // its first sweep: the target's read fails
+    fail = false;
+    expect((await failing.sweep()).unread).toEqual([]);
+    fail = true;
+    server.files.set(target, "#pinned two, edited again\n");
+    const broken = await failing.sweep();
+    expect(broken.unread).toHaveLength(1);
+    expect(broken.entries.map((e) => e.text)).not.toContain("#pinned two, edited");
+    fail = false;
+    const healed = await failing.sweep();
+    expect(healed.unread).toEqual([]);
+    expect(healed.entries.map((e) => e.text)).toContain("#pinned two, edited again");
+  });
+
+  it("a category that fails to LIST is unread and serves nothing — and its cached reads survive for when it lists again", async () => {
+    const { server } = seeded();
+    const realFetch = server.fetch;
+    let failList = false;
+    const flaky = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) =>
+          failList &&
+          url.includes("/api/v1/fs/ls") &&
+          url.includes(encodeURIComponent(`${ROOT_EXP}`))
+            ? json(500, { status: "error", error: { code: "INTERNAL", message: "boom" } })
+            : realFetch(url, init),
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+    });
+    await flaky.read();
+    failList = true;
+    const down = await flaky.sweep();
+    expect(down.entries).toEqual([]);
+    expect(down.unread.join(" ")).toContain("experiences");
+    failList = false;
+    const before = reads(server);
+    const back = await flaky.sweep();
+    expect(back.entries).toHaveLength(3);
+    expect(reads(server) - before).toBe(0);
+  });
+
+  it("publishes the retired list at the first sweep, again only when it changes, and at once on a retire it wrote", async () => {
+    const server = new FakeOpenViking();
+    server.files.set(`${ROOT_EXP}/20260801T000000-a.md`, "#retired old lesson\n");
+    server.files.set(`${ROOT_EXP}/20260802T000000-b.md`, "live lesson\n");
+    const published: string[][] = [];
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: server.fetch,
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      onRetired: (uris) => published.push([...uris]),
+    });
+    const [live] = await store.read();
+    expect(published).toEqual([[`${ROOT_EXP}/20260801T000000-a.md`]]);
+    await store.read();
+    expect(published).toHaveLength(1); // unchanged ⇒ not republished
+    expect((await store.apply({ op: "retire", ...refOf(live!) })).ok).toBe(true);
+    expect(published.at(-1)).toEqual([
+      `${ROOT_EXP}/20260801T000000-a.md`,
+      `${ROOT_EXP}/20260802T000000-b.md`,
+    ]);
+    // A throwing publisher never breaks the store.
+    const throwing = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: server.fetch,
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      onRetired: () => {
+        throw new Error("disk full");
+      },
+    });
+    await expect(throwing.read()).resolves.toEqual([]);
+  });
+
+  // Review of S3: the published list is what every session's recall excludes,
+  // so a sweep that could not read part of the store must not shrink it.
+  it("a sweep that cannot read everything never shrinks the published retired list — only a complete one may", async () => {
+    const server = new FakeOpenViking();
+    const A = `${ROOT_EXP}/20260801T000000-a.md`;
+    const B = `${ROOT_EXP}/20260802T000000-b.md`;
+    server.files.set(A, "#retired old lesson\n");
+    server.files.set(B, "live lesson\n");
+    let mode: "ok" | "root" | "category" | "read" = "ok";
+    const published: string[][] = [];
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) => {
+          const u = new URL(url);
+          const target = u.searchParams.get("uri") ?? "";
+          const boom = () =>
+            json(500, { status: "error", error: { code: "INTERNAL", message: "boom" } });
+          const ls = u.pathname === "/api/v1/fs/ls";
+          if (mode === "root" && ls && target === ROOT) return boom();
+          if (mode === "category" && ls && target === ROOT_EXP) return boom();
+          if (mode === "read" && u.pathname === "/api/v1/content/read" && target === A)
+            return boom();
+          return server.fetch(url, init);
+        },
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      // Every sweep re-reads every file, so the failed read really is A's.
+      fullRefreshMs: 0,
+      onRetired: (uris) => published.push([...uris]),
+    });
+    await store.read();
+    expect(published).toEqual([[A]]);
+    for (const m of ["root", "category", "read"] as const) {
+      mode = m;
+      expect((await store.sweep()).unread.length).toBeGreaterThan(0);
+      expect(published).toEqual([[A]]);
+      expect(await store.retiredUris()).toEqual([A]);
+    }
+    // A complete sweep may shrink it: the entry was un-retired out of band.
+    mode = "ok";
+    server.files.set(A, "old lesson, back in force\n");
+    await store.read();
+    expect(published.at(-1)).toEqual([]);
+  });
+
+  it("starts from the list a previous process published: a first sweep that cannot list wipes nothing", async () => {
+    const server = new FakeOpenViking();
+    const A = `${ROOT_EXP}/20260801T000000-a.md`;
+    server.files.set(A, "#retired old lesson\n");
+    server.files.set(`${ROOT_EXP}/20260802T000000-b.md`, "live lesson\n");
+    let down = true;
+    const published: string[][] = [];
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) =>
+          down
+            ? json(503, { status: "error", error: { code: "UNAVAILABLE", message: "warming up" } })
+            : server.fetch(url, init),
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      onRetired: (uris) => published.push([...uris]),
+      initialRetired: [A, `${ROOT_EXP}/20260709T000000-z.md`],
+    });
+    // Before any sweep, the seed answers the round's exclusion list.
+    expect(await store.retiredUris()).toEqual([A, `${ROOT_EXP}/20260709T000000-z.md`].sort());
+    expect((await store.sweep()).unread.length).toBeGreaterThan(0);
+    expect(published).toEqual([]); // unchanged ⇒ the file the last daemon wrote stands
+    down = false;
+    await store.read();
+    // The first complete sweep is exact (z is gone from the store).
+    expect(published).toEqual([[A]]);
+    // A seed given as a function is read once, lazily — never at construction
+    // (the TUI builds its store before the first paint).
+    let calls = 0;
+    const lazy = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: server.fetch,
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      initialRetired: () => ((calls += 1), [A]),
+    });
+    expect(calls).toBe(0);
+    expect(await lazy.retiredUris()).toEqual([A]);
+    await lazy.read();
+    expect(calls).toBe(1);
+  });
+
+  it("a refusal that proves the cached read stale forgets it — the re-read it asks for is real", async () => {
+    const server = new FakeOpenViking();
+    // A listing that never moves: a same-size rewrite inside one modTime
+    // second, which the incremental sweep cannot see.
+    const client = new OpenVikingClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      user: "reviewer",
+      fetchFn: async (url, init) => {
+        const res = await server.fetch(url, init);
+        if (!url.includes("/api/v1/fs/ls")) return res;
+        const body = JSON.parse(await res.text()) as { result: Array<Record<string, unknown>> };
+        for (const row of body.result) {
+          row["size"] = 7;
+          row["modTime"] = "2026-08-20T15:30:00.000Z";
+        }
+        return json(200, body);
+      },
+    });
+    const store = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    const other = new OpenVikingStore({ client, now: () => NOW, cacheTtlMs: 0 });
+    await store.apply({ op: "note", text: "aaaaaa" });
+    const [mine] = await store.read();
+    const [theirs] = await other.read();
+    expect((await other.apply({ op: "edit", ...refOf(theirs!), text: "bbbbbb" })).ok).toBe(true);
+    // The other writer's edit is invisible to the listing…
+    expect((await store.read()).map((e) => e.text)).toEqual(["aaaaaa"]);
+    const refused = await store.apply({ op: "pin", ...refOf(mine!) });
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain("re-read it and retry");
+    // …until the refusal forgets it: the retry it asks for now succeeds.
+    const [fresh] = await store.read();
+    expect(fresh!.text).toBe("bbbbbb");
+    expect((await store.apply({ op: "pin", ...refOf(fresh!) })).ok).toBe(true);
+  });
+
+  it("an older sweep that finishes after a newer one never replaces the newer one's file cache", async () => {
+    const server = new FakeOpenViking();
+    const X = `${ROOT_EXP}/20260801T000000-x.md`;
+    server.files.set(X, "one\n");
+    let gate: Promise<void> | null = null;
+    let hit: () => void = () => {};
+    const hitP = new Promise<void>((r) => (hit = r));
+    let release: () => void = () => {};
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: async (url, init) => {
+          const res = await server.fetch(url, init);
+          if (gate && url.includes("/api/v1/content/read")) {
+            const held = gate;
+            gate = null;
+            hit();
+            await held;
+          }
+          return res;
+        },
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+    });
+    gate = new Promise<void>((r) => (release = r));
+    const older = store.sweep(); // lists X at its first signature, read held
+    await hitP;
+    store.invalidate();
+    server.files.set(X, "one, and then some\n"); // the listing moves
+    expect((await store.sweep()).entries.map((e) => e.text)).toEqual(["one, and then some"]);
+    release();
+    await older;
+    // The third sweep sees the same listing as the second: with the newer
+    // cache kept, nothing is read again.
+    await store.sweep();
+    expect(store.lastSweepStats()).toEqual({ full: false, listed: 1, reread: 0, reused: 1 });
   });
 });

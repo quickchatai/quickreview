@@ -52,6 +52,7 @@ import {
 } from "../openviking/client.js";
 import { countOutcome, emptyRequestCounter, type RequestCounter } from "../memory/health.js";
 import { OpenVikingStore } from "../openviking/store.js";
+import { readRetiredUrisFile, writeRetiredUris } from "../memory/ovsession.js";
 import { keysFilePath, MEMORY } from "./companion.js";
 
 export { matchesQuery, normalizeTag, refOf } from "../memory/store.js";
@@ -279,6 +280,13 @@ export interface TuiMemoryOptions {
   namespaces?: Array<{ user: MemoryUser; store: MemoryStore }>;
   /** Where an unaddressed write (`add`/`note`) lands. */
   writeUser?: MemoryUser;
+  /** Where to publish a namespace's RETIRED URIs (S3), by user: the
+   * companion's own recall (the vendored extension, `QCR_OV_RETIRED_FILE`)
+   * excludes them, and no daemon sweeps the companion's tree — this store
+   * does. Read back as the store's seed, lazily (never before the first
+   * paint). Production passes the companion's; tests pass a temp path or
+   * nothing, so a test never writes into a real state home. */
+  retiredFiles?: Partial<Record<MemoryUser, string>>;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -360,11 +368,21 @@ export class TuiMemoryStore implements HealthyMemoryStore {
       },
       onRequest: (r) => this.countRequest(user, r),
     });
+    const retiredFile = opts.retiredFiles?.[user];
+    const log = opts.log;
     const store = new OpenVikingStore({
       client,
       cacheTtlMs: 0,
       ...(opts.now ? { now: opts.now } : {}),
-      ...(opts.log ? { log: opts.log } : {}),
+      ...(log ? { log } : {}),
+      ...(retiredFile !== undefined
+        ? {
+            onRetired: (uris: readonly string[]) => {
+              writeRetiredUris(retiredFile, uris, log ? { log: (msg) => log(msg) } : {});
+            },
+            initialRetired: () => readRetiredUrisFile(retiredFile),
+          }
+        : {}),
     });
     return store;
   }

@@ -72,6 +72,11 @@ export interface OvSessionApi {
     sessionId: string,
   ): Promise<{ ok: boolean; status: number; conflict?: boolean; busy?: boolean }>;
   deleteSession(sessionId: string): Promise<{ ok: boolean; status: number }>;
+  /** Every session the key can see (S3). Optional: a lifecycle over
+   * an api without it has no stale-session sweep. */
+  listSessions?(): Promise<
+    { ok: true; status: number; result: string[] } | { ok: false; status: number; message?: string }
+  >;
 }
 
 /** What `PiSessionManager` calls at a PR session's birth and death. */
@@ -80,6 +85,9 @@ export interface OvSessionLifecycle {
   create(sessionId: string): Promise<boolean>;
   /** Removes the session's messages and archives. */
   remove(sessionId: string): Promise<boolean>;
+  /** The session ids the server lists, or why it could not (S3).
+   * Optional, like the api call under it. Total: never rejects. */
+  list?(): Promise<{ ok: true; ids: string[] } | { ok: false; reason: string }>;
 }
 
 export interface OvSessionLifecycleOptions {
@@ -155,6 +163,94 @@ export function openVikingSessionLifecycle(
       log(`openviking: could not delete session ${sessionId} (${out.status || "no answer"}) — it will linger on the server`);
       return false;
     },
+    ...(api.listSessions
+      ? {
+          async list(): Promise<{ ok: true; ids: string[] } | { ok: false; reason: string }> {
+            const noAnswer = { ok: false as const, status: 0, message: "no answer" };
+            let out:
+              | { ok: true; status: number; result: string[] }
+              | { ok: false; status: number; message?: string } = noAnswer;
+            try {
+              out = await withDeadline(api.listSessions!(), timeoutMs, noAnswer);
+            } catch (err) {
+              out = { ok: false, status: 0, message: err instanceof Error ? err.message : String(err) };
+            }
+            if (out.ok) return { ok: true, ids: out.result };
+            return { ok: false, reason: `${out.status || "no answer"}${out.message ? `: ${out.message}` : ""}` };
+          },
+        }
+      : {}),
+  };
+}
+
+// ---- the stale-session sweep (S3) -----------------------------------
+
+/** How many stale sessions one reconcile pass deletes. 79 were stale on the
+ * VM on 2026-10-06; at one pass every 5 minutes the backlog clears in under an
+ * hour, and no pass ever sends a burst of deletes at the server. */
+export const OV_SESSION_SWEEP_MAX = 10;
+
+/** How long one pass may spend deleting before it leaves the rest for the
+ * next: the sweep rides the reconcile poll and must never hold it up. */
+export const OV_SESSION_SWEEP_BUDGET_MS = 10_000;
+
+/** `pr-<n>` → n, or null for any other id (never touched by the sweep). */
+export function prOfOvSessionId(id: string): number | null {
+  const m = /^pr-(\d+)$/.exec(id);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/** What the registry says about a PR, as far as the sweep cares. */
+export type OvSweepPrState = "open" | "closed" | "unknown";
+
+export interface StaleOvSessionPlan {
+  /** `pr-<n>` sessions of CLOSED PRs to delete this pass, lowest PR first. */
+  remove: string[];
+  /** Stale sessions beyond this pass's bound — a later pass takes them. */
+  deferred: number;
+  /** `pr-<n>` sessions kept: the PR is open, or the registry does not know it
+   * (unknown is never read as closed). */
+  kept: number;
+  /** Listed ids that are not `pr-<n>` — never the sweep's to touch. */
+  foreign: number;
+}
+
+/**
+ * Which listed sessions the reconcile sweep may delete (S3). Pure.
+ *
+ * The raw tier is meant to age out by DELETE when its PR closes
+ * (`archiveAndClose`), but a delete that failed — silently, before S1 — or a
+ * close the daemon never saw left 79 sessions of closed PRs on the server. The
+ * sweep removes exactly those: a `pr-<n>` session whose PR the registry says
+ * is CLOSED. An open PR, a PR the registry does not know, and any id that is
+ * not `pr-<n>` are left alone.
+ */
+export function planStaleOvSessions(
+  ids: readonly string[],
+  prState: (pr: number) => OvSweepPrState,
+  max: number = OV_SESSION_SWEEP_MAX,
+): StaleOvSessionPlan {
+  const stale: Array<{ id: string; pr: number }> = [];
+  let kept = 0;
+  let foreign = 0;
+  for (const id of new Set(ids)) {
+    const pr = prOfOvSessionId(id);
+    if (pr === null) {
+      foreign += 1;
+      continue;
+    }
+    if (prState(pr) === "closed") stale.push({ id, pr });
+    else kept += 1;
+  }
+  stale.sort((a, b) => a.pr - b.pr);
+  const bound = Math.max(0, Math.floor(max));
+  return {
+    remove: stale.slice(0, bound).map((s) => s.id),
+    deferred: Math.max(0, stale.length - bound),
+    kept,
+    foreign,
   };
 }
 
@@ -263,6 +359,69 @@ export function ovcliConfPathIn(piHome: string): string {
   return join(piHome, ".openviking", "ovcli.conf");
 }
 
+/** Where the daemon publishes the RETIRED entries' URIs for the sessions'
+ * recall (S3, vendored PATCH 7), beside their ovcli.conf. */
+export function ovRetiredPathIn(piHome: string): string {
+  return join(piHome, ".openviking", "retired-uris.json");
+}
+
+/**
+ * Publish the retired URIs the daemon's store sweep found (S3).
+ *
+ * Retire is a `#retired` header tag and the file stays in the indexed root, so
+ * a semantic search still finds it. The daemon's own context search excludes
+ * them (`retiredUris()`); the vendored extension's per-turn recall reads THIS
+ * file and sends them as `exclude_uris` too (`qcr-recall.ts`). Not a secret —
+ * URIs the reviewer key can already list — and not a write into memory: a
+ * derived list, rewritten whole and atomically whenever it changes. Total:
+ * a disk that refuses costs the sessions their exclusion list (they still
+ * drop any recalled entry whose own header says `#retired`), never a throw.
+ */
+export function writeRetiredUris(
+  path: string,
+  uris: readonly string[],
+  opts: { now?: () => Date; log?: (msg: string) => void } = {},
+): boolean {
+  const body = `${JSON.stringify(
+    { uris: [...uris], written_at: (opts.now ?? (() => new Date()))().toISOString() },
+    null,
+    2,
+  )}\n`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, body, { mode: 0o644 });
+    renameSync(tmp, path);
+    return true;
+  } catch (err) {
+    opts.log?.(
+      `openviking: could not publish the retired list to ${path} (${(err as Error).message}) — session recall excludes retired entries by their header only`,
+    );
+    return false;
+  }
+}
+
+/**
+ * The retired URIs a previous process last published with `writeRetiredUris`
+ * — the seed a fresh store starts from (`OpenVikingStoreOptions.initialRetired`),
+ * so its first sweep, if it cannot read everything, adds to that list rather
+ * than wiping it. Null for no file or one that does not parse: there is then
+ * nothing to protect. Total.
+ */
+export function readRetiredUrisFile(path: string): string[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  const raw = (parsed as { uris?: unknown } | null)?.uris;
+  if (!Array.isArray(raw)) return null;
+  return [
+    ...new Set(raw.filter((u): u is string => typeof u === "string" && u.startsWith("viking://"))),
+  ];
+}
+
 /**
  * The key the sessions are actually handed, read back out of `ovcli.conf`
  * (S1) — what the memory health probe authenticates with, so the
@@ -326,6 +485,9 @@ export interface OvSessionEnvOptions {
   /** The OpenViking session to ATTACH to. Omitted for the overseer: it owns no
    * PR and therefore no raw tier. */
   ovSessionId?: string;
+  /** Where the daemon publishes the retired URIs (`ovRetiredPathIn`), read
+   * by the extension's recall (S3). */
+  retiredFile?: string;
 }
 
 /**
@@ -357,5 +519,8 @@ export function openVikingSessionEnv(opts: OvSessionEnvOptions): NodeJS.ProcessE
     env.OPENVIKING_CONFIG_FILE = opts.serverConfigPath.trim();
   }
   if (opts.ovSessionId && opts.ovSessionId.trim() !== "") env.QCR_OV_SESSION_ID = opts.ovSessionId.trim();
+  if (opts.retiredFile && opts.retiredFile.trim() !== "") {
+    env.QCR_OV_RETIRED_FILE = opts.retiredFile.trim();
+  }
   return env;
 }

@@ -20,7 +20,7 @@ import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
-import type { SessionHooks } from "./types.js";
+import type { OvSessionSweepReport, SessionHooks } from "./types.js";
 
 export interface ReconcileSearchItem {
   number: number;
@@ -111,6 +111,11 @@ export interface ReconcileReport {
   captured_comments: number;
   corrections: number;
   errors: string[];
+  /** The raw-tier sweep's outcome (S3) — present only when the hooks
+   * manage a raw tier. Deliberately NOT part of `errors`: memory never
+   * blocks, and the boot's first healthy pass (which lifts a deploy drain)
+   * must not wait on the memory engine. */
+  ov_sessions?: OvSessionSweepReport;
 }
 
 function correction(
@@ -742,6 +747,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
+  // ---- the raw-tier sweep (S3) -------------------------------------
+  // The `pr-<n>` OpenViking sessions of closed PRs that are still on the
+  // server (a delete that failed, a close the daemon never saw) — bounded per
+  // pass, every outcome logged by the hook. Run AFTER the closed-sync above,
+  // so a PR closed this pass is already closed in the registry. Never an
+  // error of this pass, whatever happens: memory never blocks reconcile.
+  if (deps.hooks.sweepStaleOvSessions) {
+    try {
+      const swept = await deps.hooks.sweepStaleOvSessions();
+      if (swept) report.ov_sessions = swept;
+    } catch (err) {
+      (deps.log ?? (() => {}))("reconcile: stale openviking-session sweep threw", err);
+    }
+  }
+
   // The retired-park migration that used to run here is GONE. It
   // drained the last five `awaiting_human` rows on the live install on
   // 2026-08-19T17:04Z and never fired again; the state is no longer a member
@@ -754,6 +774,13 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     captured_comments: report.captured_comments,
     corrections: report.corrections,
     errors: report.errors.length,
+    ...(report.ov_sessions
+      ? {
+          ov_sessions_deleted: report.ov_sessions.deleted.length,
+          ov_sessions_failed: report.ov_sessions.failed.length,
+          ...(report.ov_sessions.error ? { ov_sessions_error: report.ov_sessions.error } : {}),
+        }
+      : {}),
   });
   return report;
 }
