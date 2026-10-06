@@ -11,11 +11,18 @@
 //
 //   1. reviewer memory — one TAGGED EVENT ENTRY per signal:
 //      `#feedback` plus the `k=v` event tags `kind`/`pr`/`day`/`signal`,
-//      appended verbatim through the ONE MemoryStore seam
+//      written verbatim through the ONE MemoryStore seam
 //      (src/memory/store.ts) as a `note` op. The daemon does not grow a
-//      second writer, it does not know which engine is behind the seam, and
-//      the write is BEST EFFORT under a deadline — memory is a sink, the
-//      SQLite `feedback_signals` ledger is the record;
+//      second writer and it does not know which engine is behind the seam.
+//      Since S2 the write STICKS: the ledger row records its memory
+//      state (`pending` → `written`, or `failed`/`skipped`), the entry has a
+//      deterministic address in the `events` area (`feedbackEntryName`,
+//      created-if-absent, so a replay of a write that landed but timed out
+//      finds its own entry), the ingest attempt runs under a deadline, and
+//      whatever it did not land the backfill pump (`FeedbackMemoryPump`)
+//      writes while memory is healthy — loudly (`memory_write_backlog`) when
+//      it cannot. 36 of 39 signals were dropped on the floor before this.
+//      The SQLite `feedback_signals` ledger is still the record;
 //   2. the same-day validator addendum — regenerated on every explicit
 //      [feedback] comment and composed into pass-validate's BUILT body
 //      (the owner, 2026-08-20: "ingestable at least into the memory for a day,
@@ -34,7 +41,7 @@
 import { opsDay } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
-import type { MemoryStore } from "./memory/store.js";
+import type { MemoryEntry, MemoryStore, MemoryWriteResult } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
 
 /** A comment opts into the loop by STARTING with the tag (case-insensitive). */
@@ -286,6 +293,638 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
   };
 }
 
+// ---- the ledger row → its memory entry (S2) -------------------------
+
+/** The area of reviewer memory signals live in — the §1 `events/`
+ * directory, beside `kind=bug`/ops signals. Not `experiences/`: that is the
+ * curator's, and a batch-write locks the directory it writes into, so a
+ * feedback write landing during the EOD sweep would make one of them busy. */
+export const FEEDBACK_EVENTS_CATEGORY = "events";
+
+/** How many failed writes the pump spends on one row (while memory is
+ * healthy) before it gives up on it — loudly. Giving up is not forever: the
+ * pump re-queues given-up rows on its first healthy tick after a start and
+ * once a day (`requeueFailedMs`). */
+export const FEEDBACK_MEMORY_MAX_ATTEMPTS = 12;
+
+/** `2026-09-11T10:15:00.123Z` → `20260911T101500`; "" when it is not one. */
+function isoStamp(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(iso);
+  return m ? `${m[1]}${m[2]}${m[3]}T${m[4]}${m[5]}${m[6]}` : "";
+}
+
+/**
+ * The deterministic entry name for a ledger row: `fb-<kind>-<pr>-<signal id>`,
+ * behind the row's own UTC stamp. Every input is the row's and none changes,
+ * so every attempt — the ingest's, every backfill tick's, a replay after a
+ * restart — addresses the SAME entry, and `create_if_absent` turns a replay
+ * into "already there" instead of a second entry. The stamp is the row's
+ * `created_at`, not the write time, so an entry backfilled weeks later still
+ * sorts and day-groups where the signal happened (the store reads an entry's
+ * time from that stamp).
+ */
+export function feedbackEntryName(
+  row: Pick<FeedbackSignalRow, "id" | "kind" | "pr" | "created_at">,
+): string {
+  const stamp = isoStamp(row.created_at);
+  return `${stamp === "" ? "" : `${stamp}-`}fb-${row.kind}-${row.pr}-${row.id}`;
+}
+
+/** The event a ledger row recorded, rebuilt from the row alone — so the
+ * ingest and every later backfill render the SAME bytes. Null for a kind
+ * this build does not know. */
+export function feedbackEventFromRow(row: FeedbackSignalRow): FeedbackEvent | null {
+  switch (row.kind) {
+    case "feedback_comment":
+      return {
+        kind: "feedback_comment",
+        pr: row.pr,
+        comment_id: row.comment_id ?? 0,
+        in_reply_to_id: row.in_reply_to_id,
+        author: row.author ?? "",
+        body: row.body ?? "",
+        scope:
+          row.scope === "issue_comment" || row.scope === "review" ? row.scope : "review_comment",
+      };
+    case "review_set_aside":
+      return {
+        kind: "review_set_aside",
+        pr: row.pr,
+        review_id: row.review_id ?? 0,
+        by: row.author ?? "",
+        stale: false,
+      };
+    case "merged_over_block":
+      return { kind: "merged_over_block", pr: row.pr };
+    case "bot_comment_deleted":
+      return { kind: "bot_comment_deleted", pr: row.pr, comment_id: row.comment_id ?? 0 };
+    case "trigger_withdrawn":
+      return { kind: "trigger_withdrawn", pr: row.pr, by: row.author ?? "" };
+    default:
+      return null;
+  }
+}
+
+/** The memory entry text for a ledger row, or null for an unknown kind. */
+export function memoryEntryForRow(row: FeedbackSignalRow): string | null {
+  const e = feedbackEventFromRow(row);
+  return e ? memoryEntryFor(e, row.day) : null;
+}
+
+/**
+ * A pre-S2 row's entry, if one landed after all. Before S2 a signal
+ * was written under a fresh random name in `experiences/`, and a write that
+ * timed out could still have landed — its row was ledgered as a failure. So
+ * before backfilling such a row the pump looks for its entry among what the
+ * store holds: the same `signal`/`pr`/`day` event tags (header-only, so a
+ * quoted comment cannot fake them) and, for a signal with an id, that id in
+ * the text. Without this check the backfill would duplicate exactly the
+ * entries whose answer was lost.
+ */
+export function legacyFeedbackEntry(
+  row: FeedbackSignalRow,
+  entries: readonly MemoryEntry[],
+): MemoryEntry | null {
+  const id = row.comment_id ?? row.review_id;
+  const idRe = id !== null ? new RegExp(`(^|\\D)${id}(\\D|$)`) : null;
+  for (const e of entries) {
+    const tags = parseEventTags(e.text);
+    if (tags["kind"] !== FEEDBACK_EVENT_KIND) continue;
+    if (tags["signal"] !== row.kind || tags["pr"] !== String(row.pr) || tags["day"] !== row.day)
+      continue;
+    if (idRe && !idRe.test(e.text)) continue;
+    return e;
+  }
+  return null;
+}
+
+/** What `ledgerFeedbackSignal` did with one event. */
+export interface LedgeredSignal {
+  result: IngestResult;
+  /** The new row — null for a duplicate or a stale dismissal. */
+  row: FeedbackSignalRow | null;
+  day: string;
+}
+
+/**
+ * The LEDGER half of an ingest, on its own: dedupe, record, event. Needs
+ * nothing but the state store, so the daemon can ledger a signal that
+ * arrives before the engine (and its memory store) is built — it used to
+ * DROP those. The new row starts `pending` in memory (the pump writes it),
+ * or `skipped` when memory is switched off.
+ */
+export function ledgerFeedbackSignal(
+  store: StateStore,
+  e: FeedbackEvent,
+  opts: { timezone: string; now?: Date; memoryEnabled?: boolean },
+): LedgeredSignal {
+  const now = opts.now ?? new Date();
+  const day = opsDay(opts.timezone, now);
+  if (e.kind === "review_set_aside" && e.stale) {
+    // GitHub's own stale-on-push dismissal — mechanics, not a human verdict.
+    store.logEvent("feedback_signal_stale", e.pr, {
+      kind: e.kind,
+      review_id: e.review_id,
+    });
+    return { result: "skipped_stale", row: null, day };
+  }
+  const memoryOff = opts.memoryEnabled === false;
+  const row = store.recordFeedbackSignalRow({
+    kind: e.kind,
+    pr: e.pr,
+    comment_id:
+      e.kind === "feedback_comment" || e.kind === "bot_comment_deleted" ? e.comment_id : null,
+    review_id: e.kind === "review_set_aside" ? e.review_id : null,
+    in_reply_to_id: e.kind === "feedback_comment" ? e.in_reply_to_id : null,
+    scope: e.kind === "feedback_comment" ? e.scope : null,
+    author:
+      e.kind === "feedback_comment"
+        ? e.author
+        : e.kind === "review_set_aside" || e.kind === "trigger_withdrawn"
+          ? e.by
+          : null,
+    body: e.kind === "feedback_comment" ? e.body : null,
+    day,
+    memory_state: memoryOff ? "skipped" : "pending",
+    memory_note: memoryOff ? "memory switched off ([openviking] enabled = false)" : null,
+  });
+  if (!row) return { result: "duplicate", row: null, day };
+  store.logEvent("feedback_signal", e.pr, { kind: e.kind, day, signal: row.id });
+  return { result: "recorded", row, day };
+}
+
+/** How one write attempt for one row ended. */
+export type FeedbackWriteOutcome =
+  /** In memory now (written, or found already there). */
+  | "written"
+  /** Not in memory; still owed — the pump retries it. */
+  | "pending"
+  /** Not in memory, and the attempt cap is spent — given up on, loudly. */
+  | "failed";
+
+export interface FeedbackWriteDeps {
+  store: StateStore;
+  memory: MemoryStore;
+  /** Deadline for one write. A store that hangs costs this, never more. */
+  timeoutMs?: number;
+  maxAttempts?: number;
+  log?: (msg: string, extra?: unknown) => void;
+  /** Told when a row is given up on (its last attempt failed). */
+  onGaveUp?: (row: FeedbackSignalRow, error: string) => void;
+}
+
+/**
+ * One attempt to put one ledger row's entry into memory, through the seam,
+ * at the row's deterministic address. Never rejects: a refusal, a throw and
+ * a hang all end with the row still `pending` (or `failed` at the cap) and a
+ * `feedback_memory_write_failed` event naming the signal.
+ */
+export async function writeFeedbackMemory(
+  deps: FeedbackWriteDeps,
+  row: FeedbackSignalRow,
+): Promise<FeedbackWriteOutcome> {
+  const log = deps.log ?? (() => {});
+  const max = deps.maxAttempts ?? FEEDBACK_MEMORY_MAX_ATTEMPTS;
+  const text = memoryEntryForRow(row);
+  const fail = (error: string): FeedbackWriteOutcome => {
+    const attempts = row.memory_attempts + 1;
+    const gaveUp = text === null || attempts >= max;
+    deps.store.markFeedbackMemory(row.id, { state: gaveUp ? "failed" : "pending", error });
+    log(`feedback: memory write for signal #${row.id} failed (attempt ${attempts})`, error);
+    deps.store.logEvent("feedback_memory_write_failed", row.pr, {
+      kind: row.kind,
+      signal: row.id,
+      attempt: attempts,
+      error,
+      ...(gaveUp ? { gave_up: true } : {}),
+    });
+    if (gaveUp) {
+      try {
+        deps.onGaveUp?.(row, error);
+      } catch (err) {
+        log("feedback: give-up sink threw", err);
+      }
+    }
+    return gaveUp ? "failed" : "pending";
+  };
+  if (text === null) return fail(`unknown signal kind '${row.kind}' — no entry can be rendered`);
+  const budget = deps.timeoutMs ?? FEEDBACK_MEMORY_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // `note`, not `add`: the entry carries its own tags and must be stored
+    // verbatim — never dressed up as the operator's own words.
+    const write = (async () =>
+      deps.memory.apply({
+        op: "note",
+        text,
+        name: feedbackEntryName(row),
+        category: FEEDBACK_EVENTS_CATEGORY,
+      }))();
+    // A write that never settles must not hold the caller. The race already
+    // attaches a handler to `write`, so a rejection arriving after the
+    // deadline won is handled, never an unhandled rejection. The write may
+    // still land after the deadline — the row stays `pending`, and the next
+    // attempt addresses the same entry and finds it there.
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`memory write timed out after ${budget}ms`)),
+        budget,
+      );
+      timer.unref?.();
+    });
+    const res: MemoryWriteResult = await Promise.race([write, deadline]);
+    if (!res.ok) return fail(res.message);
+    const uri =
+      res.uri ??
+      deps.memory.uriOf?.(`${FEEDBACK_EVENTS_CATEGORY}/${feedbackEntryName(row)}.md`) ??
+      `${FEEDBACK_EVENTS_CATEGORY}/${feedbackEntryName(row)}.md`;
+    deps.store.markFeedbackMemory(row.id, { state: "written", uri, error: null });
+    if (res.existed) {
+      log(`feedback: signal #${row.id}'s entry was already in memory (${uri}) — kept`);
+    }
+    return "written";
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+// ---- the backfill pump (S2) -----------------------------------------
+
+/** The wake the pump raises (listed in `src/anomalies.ts` WAKE_KINDS). */
+export const MEMORY_WRITE_BACKLOG_KIND = "memory_write_backlog";
+
+export const FEEDBACK_PUMP_DEFAULTS = Object.freeze({
+  intervalMs: 60_000,
+  /** At most this many rows per tick: a backfill of a month's losses must
+   * not become a write storm on a 2-CPU server. */
+  batch: 20,
+  /** The backlog wakes when the oldest owed row is older than this. */
+  backlogAfterMs: 2 * 3_600_000,
+  /** …and again this often while it lasts. */
+  rewakeMs: 6 * 3_600_000,
+  /** Consecutive failed writes that end a tick early: memory is plainly not
+   * taking writes, and the next tick (or health) will say so. */
+  stopAfterFailures: 3,
+  /** Rows given up on go back in the queue this often (and on the first
+   * healthy tick after a start — a deploy is what usually fixes the cause). */
+  requeueFailedMs: 24 * 3_600_000,
+});
+
+export interface FeedbackMemoryPumpDeps extends FeedbackWriteDeps {
+  /** Write only while this is true — `memory health == healthy`. A backfill
+   * into a store that is down, or one whose key is refused, is just more
+   * failures (and more load on a server that is already struggling). */
+  healthy: () => boolean;
+  /** The health state, for the wake text — and the backlog is not judged
+   * while it reads `unknown` (memory health's boot grace: nothing has been
+   * measured, and the pump has not had one healthy tick to write anything). */
+  healthState?: () => string;
+  /** Raise a WAKE-class anomaly (wire.ts: `store.logAnomaly`). Never throws. */
+  wake: (kind: string, detail: string, message: string) => void;
+  /** Every entry the store holds, and whether the read was complete —
+   * consulted only for pre-S2 rows (`legacyFeedbackEntry`). A partial read
+   * defers those rows rather than risking a duplicate. Defaults to
+   * `memory.read()`, taken as complete. */
+  readEntries?: () => Promise<{ entries: MemoryEntry[]; complete: boolean }>;
+  now?: () => Date;
+  /** Self-rescheduling timer seam; returns its canceller. */
+  schedule?: (fn: () => void, ms: number) => () => void;
+  intervalMs?: number;
+  batch?: number;
+  backlogAfterMs?: number;
+  rewakeMs?: number;
+  requeueFailedMs?: number;
+}
+
+export interface FeedbackPumpTick {
+  /** Rows the tick tried (written or not). */
+  attempted: number;
+  written: number;
+  /** Rows given up on this tick. */
+  failed: number;
+  /** Pre-S2 rows found already in memory (no write needed). */
+  found: number;
+  /** True when memory was not healthy, so nothing was attempted. */
+  held: boolean;
+  /** Pending rows left after the tick. */
+  pending: number;
+  /** Given-up rows this tick put back in the queue. */
+  requeued?: number;
+}
+
+const defaultPumpSchedule = (fn: () => void, ms: number): (() => void) => {
+  const t = setTimeout(fn, ms);
+  t.unref?.();
+  return () => clearTimeout(t);
+};
+
+function fmtAge(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * The feedback ledger's backfill pump: every `intervalMs`, while memory is
+ * healthy, it writes up to `batch` owed rows (oldest first) through the same
+ * `note` op on the same seam — a retry on the one route, never a second
+ * channel. It covers everything the ingest attempt did not land: a write that
+ * failed or timed out, a signal that arrived before the engine existed, and
+ * the 2026-08-31..10-02 losses the boot migration marked owed. Then it checks
+ * the backlog: a row owed for longer than `backlogAfterMs` (measured from
+ * when it became owed, `memory_owed_since` — never from the signal's own
+ * date, or a September loss queued today would wake at once) wakes
+ * `memory_write_backlog`, and again every `rewakeMs` while it lasts — a
+ * cadence kept in state.db, so a restart does not wake again at once. The
+ * backlog is not judged while memory health reads `unknown` (its boot
+ * grace). A row given up on wakes it at once — a signal memory will not take
+ * is a loss a person must hear about, not a log line — and goes back in the
+ * queue on the next start's first healthy tick and once a day after, so a
+ * fixed cause is all it takes for it to land.
+ */
+export class FeedbackMemoryPump {
+  private readonly now: () => Date;
+  private readonly schedule: (fn: () => void, ms: number) => () => void;
+  private readonly log: (msg: string, extra?: unknown) => void;
+  private readonly intervalMs: number;
+  private readonly batch: number;
+  private readonly backlogAfterMs: number;
+  private readonly rewakeMs: number;
+  private cancel: (() => void) | null = null;
+  private stopped = false;
+  private running: Promise<FeedbackPumpTick> | null = null;
+  private readonly requeueFailedMs: number;
+  /** Undefined until read from state.db on the first check. */
+  private lastBacklogWakeAt: number | null | undefined = undefined;
+  private lastRequeueAt: number | null = null;
+
+  constructor(private readonly deps: FeedbackMemoryPumpDeps) {
+    this.now = deps.now ?? (() => new Date());
+    this.schedule = deps.schedule ?? defaultPumpSchedule;
+    this.log = deps.log ?? (() => {});
+    this.intervalMs = Math.max(1000, deps.intervalMs ?? FEEDBACK_PUMP_DEFAULTS.intervalMs);
+    this.batch = Math.max(1, deps.batch ?? FEEDBACK_PUMP_DEFAULTS.batch);
+    this.backlogAfterMs = deps.backlogAfterMs ?? FEEDBACK_PUMP_DEFAULTS.backlogAfterMs;
+    this.rewakeMs = deps.rewakeMs ?? FEEDBACK_PUMP_DEFAULTS.rewakeMs;
+    this.requeueFailedMs = Math.max(
+      60_000,
+      deps.requeueFailedMs ?? FEEDBACK_PUMP_DEFAULTS.requeueFailedMs,
+    );
+  }
+
+  start(): void {
+    if (this.stopped || this.cancel) return;
+    const loop = (): void => {
+      if (this.stopped) return;
+      void this.tick().finally(() => {
+        if (!this.stopped) this.cancel = this.schedule(loop, this.intervalMs);
+      });
+    };
+    this.cancel = this.schedule(loop, this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.cancel?.();
+    this.cancel = null;
+  }
+
+  /** One pass. Coalesced (a call while one runs joins it); never rejects. */
+  tick(): Promise<FeedbackPumpTick> {
+    if (this.running) return this.running;
+    this.running = this.runTick()
+      .catch((err): FeedbackPumpTick => {
+        this.log("feedback pump: tick failed", err);
+        return { attempted: 0, written: 0, failed: 0, found: 0, held: false, pending: -1 };
+      })
+      .finally(() => {
+        this.running = null;
+      });
+    return this.running;
+  }
+
+  private async runTick(): Promise<FeedbackPumpTick> {
+    const out: FeedbackPumpTick = {
+      attempted: 0,
+      written: 0,
+      failed: 0,
+      found: 0,
+      held: false,
+      pending: 0,
+    };
+    let healthy = false;
+    try {
+      healthy = this.deps.healthy();
+    } catch {
+      healthy = false;
+    }
+    if (!healthy) out.held = true;
+    else {
+      out.requeued = this.requeueGivenUp();
+      await this.pump(out);
+    }
+    out.pending = this.checkBacklog();
+    return out;
+  }
+
+  /** On the first healthy tick after a start, then once a day: rows given
+   * up on go back in the queue (`failed` is never a permanent exclusion). */
+  private requeueGivenUp(): number {
+    const t = this.now().getTime();
+    if (this.lastRequeueAt !== null && t - this.lastRequeueAt < this.requeueFailedMs) return 0;
+    this.lastRequeueAt = t;
+    const n = this.deps.store.requeueFailedFeedbackMemory();
+    if (n > 0)
+      this.log(
+        `feedback pump: ${n} given-up signal(s) back in the queue — memory gets another try`,
+      );
+    return n;
+  }
+
+  private async pump(out: FeedbackPumpTick): Promise<void> {
+    let rows = this.deps.store.pendingFeedbackMemory(this.batch);
+    if (rows.length === 0) return;
+    const cutoff = this.deps.store.feedbackLegacyCutoff();
+    const legacy = (r: FeedbackSignalRow): boolean => cutoff !== null && r.created_at < cutoff;
+    let entries: MemoryEntry[] | null = null;
+    if (cutoff !== null && rows.some(legacy)) {
+      let why = "";
+      try {
+        const read = this.deps.readEntries
+          ? await this.deps.readEntries()
+          : { entries: await this.deps.memory.read(), complete: true };
+        if (read.complete) entries = read.entries;
+        else why = "the memory read was partial";
+      } catch (err) {
+        why = `the memory read failed (${err instanceof Error ? err.message : String(err)})`;
+      }
+      if (entries === null) {
+        // A pre-S2 row is never written blind — its entry may have landed
+        // under a name nobody recorded — so without a complete read it
+        // waits, says why, and does not hold the newer rows behind it.
+        this.log(`feedback pump: ${why} — pre-S2 rows wait for a complete one`);
+        for (const r of rows.filter(legacy)) {
+          this.deps.store.markFeedbackMemory(r.id, {
+            state: "pending",
+            error: `waiting for a complete memory read before backfilling a pre-S2 signal: ${why}`,
+            attempted: false,
+          });
+        }
+        rows = this.deps.store.pendingFeedbackMemory(this.batch, cutoff);
+        if (rows.length === 0) return;
+      }
+    }
+    let streak = 0;
+    const gaveUp: Array<{ row: FeedbackSignalRow; error: string }> = [];
+    try {
+      for (const row of rows) {
+        if (this.stopped) return;
+        if (await this.pumpOne(row, entries, legacy(row), out, gaveUp)) {
+          streak = 0;
+          continue;
+        }
+        streak += 1;
+        if (streak >= FEEDBACK_PUMP_DEFAULTS.stopAfterFailures) {
+          this.log(`feedback pump: ${streak} writes in a row failed — stopping this tick`);
+          return;
+        }
+      }
+      if (out.written + out.found > 0)
+        this.log(`feedback pump: ${out.written} written, ${out.found} found already in memory`);
+    } finally {
+      // ONE wake per tick for every row given up on — a systematic refusal
+      // must not turn into twenty wakes.
+      if (gaveUp.length > 0) this.gaveUp(gaveUp);
+    }
+  }
+
+  /** One row. True when it is settled (written, or a pre-S2 row found
+   * already in memory); false when its write failed. */
+  private async pumpOne(
+    row: FeedbackSignalRow,
+    entries: MemoryEntry[] | null,
+    isLegacy: boolean,
+    out: FeedbackPumpTick,
+    gaveUp: Array<{ row: FeedbackSignalRow; error: string }>,
+  ): Promise<boolean> {
+    if (isLegacy && entries !== null) {
+      const found = legacyFeedbackEntry(row, entries);
+      if (found) {
+        const uri = this.deps.memory.uriOf?.(found.id) ?? found.id;
+        this.deps.store.markFeedbackMemory(row.id, {
+          state: "written",
+          uri,
+          error: null,
+          attempted: false,
+        });
+        out.found += 1;
+        return true;
+      }
+    }
+    out.attempted += 1;
+    const outcome = await writeFeedbackMemory(
+      { ...this.deps, onGaveUp: (r, error) => gaveUp.push({ row: r, error }) },
+      row,
+    );
+    if (outcome === "written") {
+      out.written += 1;
+      return true;
+    }
+    if (outcome === "failed") out.failed += 1;
+    return false;
+  }
+
+  /** Rows given up on this tick: one wake, naming them. */
+  private gaveUp(rows: Array<{ row: FeedbackSignalRow; error: string }>): void {
+    const ids = rows.map((r) => `#${r.row.id}`).join(", ");
+    const first = rows[0]!;
+    const detail = `gave up on ${rows.length} feedback signal(s) (${ids.slice(0, 200)}): ${first.error.slice(0, 200)}`;
+    this.raise(
+      detail,
+      [
+        `MEMORY WRITE GIVEN UP — ${rows.length} [feedback] signal(s) could not be written to reviewer memory: ${ids}.`,
+        ...rows
+          .slice(0, 5)
+          .map(
+            (r) =>
+              `- #${r.row.id} (PR #${r.row.pr}, ${r.row.kind}, ${r.row.day}): ${r.error.slice(0, 200)}`,
+          ),
+        `Memory refused each of them ${this.deps.maxAttempts ?? FEEDBACK_MEMORY_MAX_ATTEMPTS} times while it read healthy.`,
+        "The signals themselves are safe in the feedback_signals ledger (memory_state = failed); the entries they should have produced are not in memory — find out why memory refuses them.",
+        "Once the cause is fixed nothing else is needed: given-up signals go back in the queue on the daemon's next start and once a day.",
+      ].join("\n"),
+    );
+  }
+
+  /** The backlog check, every tick. Returns the pending count. */
+  private checkBacklog(): number {
+    const backlog = this.deps.store.feedbackMemoryBacklog();
+    const oldest = backlog.oldest_pending;
+    const since = backlog.oldest_pending_at;
+    const t = this.now().getTime();
+    if (this.lastBacklogWakeAt === undefined) {
+      const at = this.deps.store.feedbackBacklogWokenAt();
+      const parsed = at === null ? Number.NaN : Date.parse(at);
+      this.lastBacklogWakeAt = Number.isFinite(parsed) ? parsed : null;
+    }
+    if (!oldest || since === null) {
+      if (this.lastBacklogWakeAt !== null) {
+        this.log("feedback pump: memory write backlog cleared");
+        this.lastBacklogWakeAt = null;
+        this.recordWoken(null);
+      }
+      return backlog.pending;
+    }
+    let state = "unknown";
+    try {
+      state = this.deps.healthState?.() ?? (this.deps.healthy() ? "healthy" : "not healthy");
+    } catch {
+      state = "unknown";
+    }
+    // Memory health's boot grace: nothing measured yet, and the pump has
+    // not had a healthy tick to write anything — no wake on an unmeasured
+    // state (the same rule S1's health wakes follow).
+    if (state === "unknown") return backlog.pending;
+    const age = t - Date.parse(since);
+    if (!(age > this.backlogAfterMs)) return backlog.pending;
+    if (this.lastBacklogWakeAt !== null && t - this.lastBacklogWakeAt < this.rewakeMs)
+      return backlog.pending;
+    this.lastBacklogWakeAt = t;
+    this.recordWoken(new Date(t).toISOString());
+    const detail = `${backlog.pending} feedback signal(s) owed to memory; oldest #${oldest.id} waited ${fmtAge(age)}`;
+    this.raise(
+      detail,
+      [
+        `MEMORY WRITE BACKLOG — ${backlog.pending} [feedback] signal(s) are ledgered but not in reviewer memory${backlog.failed > 0 ? ` (and ${backlog.failed} given up on)` : ""}.`,
+        `The oldest — signal #${oldest.id}, PR #${oldest.pr}, ${oldest.kind}, ${oldest.day} — has been owed for ${fmtAge(age)}${oldest.memory_last_error ? `; its last write said: ${oldest.memory_last_error.slice(0, 200)}` : ""}.`,
+        state === "healthy"
+          ? `Memory health: healthy. The backfill pump is writing owed signals (at most ${this.batch} a tick); if this wake repeats, the writes themselves are failing — read the last error above.`
+          : `Memory health: ${state}. The backfill pump writes owed signals (at most ${this.batch} a tick) ONLY while memory is healthy, so this clears by itself once it is.`,
+        "Nothing is lost: every signal is in the feedback_signals ledger. `qcr status` shows the memory block.",
+      ].join("\n"),
+    );
+    return backlog.pending;
+  }
+
+  private recordWoken(at: string | null): void {
+    try {
+      this.deps.store.recordFeedbackBacklogWoken(at);
+    } catch (err) {
+      this.log("feedback pump: could not record the backlog wake", err);
+    }
+  }
+
+  private raise(detail: string, message: string): void {
+    try {
+      this.deps.wake(MEMORY_WRITE_BACKLOG_KIND, detail, message);
+    } catch (err) {
+      this.log("feedback pump: wake sink threw", err);
+    }
+  }
+}
+
 // ---- the engine -------------------------------------------------------------
 
 export interface FeedbackEngineDeps {
@@ -305,9 +944,14 @@ export interface FeedbackEngineDeps {
    * hands it the OpenViking store; tests pass a fake. */
   memory: MemoryStore;
   /** How long the sink waits for the memory write before giving up on it and
-   * returning (the signal is already ledgered). A store that hangs must not
-   * hold the webhook path open. */
+   * returning (the signal is already ledgered, and stays owed). A store that
+   * hangs must not hold the webhook path open. */
   memoryTimeoutMs?: number;
+  /** False when memory is switched off (`[openviking] enabled = false`): rows
+   * are ledgered `skipped` and nothing is written. Default true. */
+  memoryEnabled?: boolean;
+  /** Told when a row is given up on (the pump's wake). */
+  onGaveUp?: (row: FeedbackSignalRow, error: string) => void;
   log?: (msg: string, extra?: unknown) => void;
   now?: () => Date;
 }
@@ -331,39 +975,32 @@ export class FeedbackEngine {
 
   /** Deterministic ingest: dedupe → ledger → memory entry → (explicit
    * comments only) agents rebuild. Never throws — the webhook path must
-   * survive a broken memory file. */
+   * survive a broken memory store. A memory write that does not land here
+   * leaves the row `pending` for the backfill pump: memory is a sink, the
+   * ledger is the record, and the record now says what memory still owes. */
   async ingest(e: FeedbackEvent): Promise<IngestResult> {
     const now = this.deps.now?.() ?? new Date();
-    const day = opsDay(this.deps.timezone, now);
-    if (e.kind === "review_set_aside" && e.stale) {
-      // GitHub's own stale-on-push dismissal — mechanics, not a human verdict.
-      this.deps.store.logEvent("feedback_signal_stale", e.pr, {
-        kind: e.kind,
-        review_id: e.review_id,
-      });
-      return "skipped_stale";
-    }
-    const inserted = this.deps.store.recordFeedbackSignal({
-      kind: e.kind,
-      pr: e.pr,
-      comment_id:
-        e.kind === "feedback_comment" || e.kind === "bot_comment_deleted" ? e.comment_id : null,
-      review_id: e.kind === "review_set_aside" ? e.review_id : null,
-      in_reply_to_id: e.kind === "feedback_comment" ? e.in_reply_to_id : null,
-      scope: e.kind === "feedback_comment" ? e.scope : null,
-      author:
-        e.kind === "feedback_comment"
-          ? e.author
-          : e.kind === "review_set_aside" || e.kind === "trigger_withdrawn"
-            ? e.by
-            : null,
-      body: e.kind === "feedback_comment" ? e.body : null,
-      day,
+    const { result, row, day } = ledgerFeedbackSignal(this.deps.store, e, {
+      timezone: this.deps.timezone,
+      now,
+      memoryEnabled: this.deps.memoryEnabled !== false,
     });
-    if (!inserted) return "duplicate";
-    this.deps.store.logEvent("feedback_signal", e.pr, { kind: e.kind, day });
+    if (result !== "recorded" || !row) return result;
 
-    await this.writeMemory(e, day);
+    if (row.memory_state === "pending") {
+      await writeFeedbackMemory(
+        {
+          store: this.deps.store,
+          memory: this.memory,
+          ...(this.deps.memoryTimeoutMs !== undefined
+            ? { timeoutMs: this.deps.memoryTimeoutMs }
+            : {}),
+          log: this.log,
+          ...(this.deps.onGaveUp ? { onGaveUp: this.deps.onGaveUp } : {}),
+        },
+        row,
+      );
+    }
 
     if (e.kind === "feedback_comment") {
       try {
@@ -374,42 +1011,5 @@ export class FeedbackEngine {
       }
     }
     return "recorded";
-  }
-
-  /**
-   * The sink half: one tagged event entry, best effort. Memory is a SINK, not
-   * the ledger — the signal is already in `feedback_signals` and both the
-   * same-day addendum and the EOD curator re-derive it from there — so a
-   * refusal, a throw and a hang all end the same way: logged, ledgered as an
-   * anomaly, never raised. Nothing below can reject.
-   */
-  private async writeMemory(e: FeedbackEvent, day: string): Promise<void> {
-    const budget = this.deps.memoryTimeoutMs ?? FEEDBACK_MEMORY_TIMEOUT_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      // `note`, not `add`: the entry carries its own tags and must be stored
-      // verbatim — never dressed up as the operator's own words.
-      const write = (async () => this.memory.apply({ op: "note", text: memoryEntryFor(e, day) }))();
-      // A write that never settles must not hold the webhook path open. The
-      // race already attaches a handler to `write`, so a rejection arriving
-      // after the deadline won is handled, never an unhandled rejection.
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`memory write timed out after ${budget}ms`)),
-          budget,
-        );
-        timer.unref?.();
-      });
-      const res = await Promise.race([write, deadline]);
-      if (!res.ok) throw new Error(res.message);
-    } catch (err) {
-      this.log("feedback: memory write failed", err);
-      this.deps.store.logEvent("feedback_memory_write_failed", e.pr, {
-        kind: e.kind,
-        error: String(err),
-      });
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
   }
 }

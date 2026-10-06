@@ -155,6 +155,42 @@ export interface MemoryStatus {
   provision: ProvisionSummary | null;
   /** Why `enabled` is false. */
   disabled_reason?: string;
+  /** What memory still owes the [feedback] ledger (S2) — read from
+   * state.db by the heartbeat; null when that read failed (UNKNOWN, never
+   * "nothing owed"); absent on a daemon that predates it. */
+  feedback_writes?: FeedbackWritesStatus | null;
+}
+
+/** The [feedback] ledger's memory backlog, as the status block carries it. */
+export interface FeedbackWritesStatus {
+  /** Signals not yet in memory; the backfill pump writes them while healthy. */
+  pending: number;
+  /** Signals the pump gave up on (memory kept refusing them). */
+  failed: number;
+  /** Since when the longest-owed signal has been owed; null when none is. */
+  oldest_pending_at: string | null;
+}
+
+/** `; 3 [feedback] signals owed to memory (oldest 5h12m), 1 given up` — or
+ * "" when nothing is owed (and from a daemon that does not report it). A
+ * ledger the daemon could not read is said to be UNKNOWN: a dropped clause
+ * would read as "nothing owed". */
+export function feedbackWritesPhrase(
+  w: FeedbackWritesStatus | null | undefined,
+  now: Date,
+): string {
+  if (w === null) return "; [feedback] memory backlog UNKNOWN (the daemon could not read its ledger)";
+  if (!w || (w.pending === 0 && w.failed === 0)) return "";
+  const parts: string[] = [];
+  if (w.pending > 0) {
+    const age =
+      w.oldest_pending_at !== null
+        ? ` (oldest ${fmtDuration(now.getTime() - Date.parse(w.oldest_pending_at))})`
+        : "";
+    parts.push(`${w.pending} [feedback] signal${w.pending === 1 ? "" : "s"} owed to memory${age}`);
+  }
+  if (w.failed > 0) parts.push(`${w.failed} given up`);
+  return `; ${parts.join(", ")}`;
 }
 
 /** The three memory kinds `src/anomalies.ts` lists as WAKE (S1). */
@@ -246,7 +282,7 @@ export function memoryStatusLine(m: MemoryStatus | undefined, now: Date = new Da
   if (!m) return "memory: NOT REPORTED (this daemon predates the memory health block)";
   if (!m.enabled) return `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
   const age = fmtDuration(now.getTime() - Date.parse(m.since));
-  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}`;
+  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}`;
   switch (m.state) {
     case "unknown":
       return `memory: UNKNOWN — not measured yet (${age}); ${creds}`;

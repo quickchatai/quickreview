@@ -1146,6 +1146,13 @@ export interface MemoryConfig {
   /** The TUI files ONE tracker ticket for a memory incident older than this
    * (sourced from status.json, never from memory). */
   incident_ticket_after_min: number;
+  /** Writes that stick (S2): how often the backfill pump writes the
+   * [feedback] signals memory still owes (at most 20 a tick, only while
+   * memory health reads healthy). */
+  backfill_interval_s: number;
+  /** An owed signal older than this wakes `memory_write_backlog` (and again
+   * every `rewake_h` while the backlog lasts). */
+  write_backlog_after_min: number;
   /** Which OpenViking scopes the round's context search may draw from, and how
    * many items each may contribute. Keys must be server quota buckets;
    * `src/openviking/client.ts` drops unknown ones with a gap. An EMPTY map
@@ -1162,6 +1169,8 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   boot_grace_min: 5,
   rewake_h: 6,
   incident_ticket_after_min: 120,
+  backfill_interval_s: 60,
+  write_backlog_after_min: 120,
   context_quotas: { experiences: 24, resources: 8 },
 };
 

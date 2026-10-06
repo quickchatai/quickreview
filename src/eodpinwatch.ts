@@ -297,9 +297,14 @@ export interface EodPinWatch {
   /**
    * Wrap the EOD timer's `injectOverseer`. The returned function opens the
    * watch window and then delegates — it adds no await ahead of the inject and
-   * cannot reject on the watchdog's behalf.
+   * cannot reject on the watchdog's behalf. `date` is the day the sweep is
+   * for (a drain-deferred day fires later than its own evening); the window
+   * is named after it and its digest is what closes the window. Without one
+   * the window takes today's date.
    */
-  wrapInject(inner: (message: string) => Promise<void>): (message: string) => Promise<void>;
+  wrapInject(
+    inner: (message: string, date?: string) => Promise<void>,
+  ): (message: string, date?: string) => Promise<void>;
   /** True while a sweep window is open. */
   isOpen(): boolean;
   /** Resolves when the most recent window CLOSE has been judged; resolves
@@ -460,15 +465,19 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
     w.timer = setT(() => poll(w), pollMs);
   };
 
-  const open = (): void => {
+  const open = (forDate?: string): void => {
     if (stopped) return;
     const previous = win;
-    // A second fire while a window is open should not happen (fires are a day
-    // apart) — judge the old one on what it has rather than losing it.
+    // A second fire while a window is open should not happen: the EOD timer
+    // holds every fire while `isOpen()` (its `sweepInFlight`), drain-deferred
+    // days included — judge the old one on what it has rather than losing it.
     if (previous) close(previous, "superseded");
 
     const at = now();
-    const date = zoneDateString(at, deps.timeZone);
+    const date =
+      forDate !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(forDate)
+        ? forDate
+        : zoneDateString(at, deps.timeZone);
     let digestPreexisting = false;
     if (deps.digestReady) {
       try {
@@ -496,17 +505,17 @@ export function startEodPinWatch(deps: EodPinWatchDeps): EodPinWatch {
 
   return {
     wrapInject(inner) {
-      return (message: string): Promise<void> => {
+      return (message: string, date?: string): Promise<void> => {
         // Everything the watchdog does at fire time is inside this try, and
         // nothing in it is awaited: the injection below runs in the same tick
         // whatever the store is doing. This is the "never delays the sweep"
         // property, and it is structural rather than a timeout.
         try {
-          open();
+          open(date);
         } catch (err) {
           log("eod pin watch: could not open the window — sweep proceeds unwatched", err);
         }
-        return inner(message);
+        return inner(message, date);
       };
     },
     isOpen: () => win !== null,

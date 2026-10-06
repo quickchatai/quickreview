@@ -1023,6 +1023,52 @@ export interface FeedbackSignalRow {
   /** Ops-day token (YYYY-MM-DD, [ops] timezone) — the same-day addendum's key. */
   day: string;
   created_at: string;
+  /** The signal's reviewer-memory entry (S2): `pending` — owed, the
+   * backfill pump writes it; `written` — in memory (`memory_uri` names it,
+   * or NULL for a pre-S2 entry written under an unrecorded name); `failed` —
+   * memory refused it `FEEDBACK_MEMORY_MAX_ATTEMPTS` times and the pump gave
+   * up, loudly; `skipped` — memory is switched off. NULL only before the boot
+   * migration has classified a pre-S2 row. */
+  memory_state: FeedbackMemoryState | null;
+  memory_attempts: number;
+  memory_last_error: string | null;
+  memory_uri: string | null;
+  /** Since when memory has owed this row: its insert, the migration that
+   * classified a pre-S2 row owed, or the re-queue of a row given up on. NULL
+   * for a row that was never owed (written at once, skipped). */
+  memory_owed_since: string | null;
+}
+
+/** Where a feedback signal's memory entry stands (S2). */
+export type FeedbackMemoryState = "pending" | "written" | "failed" | "skipped";
+
+/** The feedback ledger's memory backlog, for the backlog wake and the
+ * status.json `memory` block. */
+export interface FeedbackMemoryBacklog {
+  pending: number;
+  failed: number;
+  /** Since when the longest-owed pending row has been owed
+   * (`memory_owed_since`, else its `created_at`); null when none is pending. */
+  oldest_pending_at: string | null;
+  /** That row. */
+  oldest_pending: FeedbackSignalRow | null;
+}
+
+/** What `recordFeedbackSignal` takes: the ledger row's natural fields, plus
+ * the memory state it starts in (S2; `pending` by default) and an
+ * optional note for `memory_last_error` (why a row starts `skipped`). */
+export interface FeedbackSignalInput {
+  kind: string;
+  pr: number;
+  comment_id?: number | null;
+  review_id?: number | null;
+  in_reply_to_id?: number | null;
+  scope?: string | null;
+  author?: string | null;
+  body?: string | null;
+  day: string;
+  memory_state?: FeedbackMemoryState;
+  memory_note?: string | null;
 }
 
 /** One captured human comment. `tagged` is 0/1 (SQLite boolean). */
@@ -1334,6 +1380,21 @@ export class StateStore {
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE review_failures ADD COLUMN next_retry_at TEXT",
+      // the feedback ledger tracks its own memory write, so a
+      // signal memory did not take is OWED, not lost. `memory_state` is
+      // nullable on purpose: NULL means "a row from before this column", and
+      // the boot's data migration classifies those once
+      // (`classifyLegacyFeedbackMemory`). Every row written since carries a
+      // state from its insert.
+      "ALTER TABLE feedback_signals ADD COLUMN memory_state TEXT",
+      "ALTER TABLE feedback_signals ADD COLUMN memory_attempts INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE feedback_signals ADD COLUMN memory_last_error TEXT",
+      "ALTER TABLE feedback_signals ADD COLUMN memory_uri TEXT",
+      // …and since when it has been OWED: the insert for a new row, the
+      // migration's instant for a pre-S2 row, the re-queue's for a row given
+      // up on and queued again. The backlog wake measures from it — a
+      // September signal queued today has waited minutes, not weeks.
+      "ALTER TABLE feedback_signals ADD COLUMN memory_owed_since TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1414,6 +1475,87 @@ export class StateStore {
     if (info.changes > 0)
       this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
     this.classifyLegacyCancellations();
+    this.classifyLegacyFeedbackMemory();
+  }
+
+  /**
+   * S2 backfill classification: a feedback row from before the
+   * memory columns has no memory state. Its write was attempted once, at
+   * ingest, and a failure left exactly one trace — a
+   * `feedback_memory_write_failed` event for that PR and kind, logged right
+   * after the row. Each such event marks the row it followed (same PR and
+   * kind, the newest created at or before the event that no earlier event
+   * already claimed) `pending`, with the event's error, so the pump writes it
+   * — 2026-08-31..10-02 lost 36 of 39. One row per event, never two events
+   * on one row: two [feedback] comments from one review submission are
+   * interpreted concurrently, so both rows can precede both failure events,
+   * and the old payload names no signal — matching each event to a DISTINCT
+   * row is what keeps the count of owed rows equal to the count of failures.
+   * (Which of two such rows failed cannot be told apart; marking the wrong
+   * one owed is caught by the pump, which finds an entry that landed before
+   * writing it.) The owed rows are owed since the migration.
+   * Every other legacy row is `written`: its entry exists under a name
+   * nobody recorded (`memory_uri` stays NULL). Idempotent: only NULL states
+   * are touched, and the run is recorded as `feedback_memory_ledger_migrated`
+   * with its instant — the pump's cut-off for checking whether a legacy
+   * row's entry landed after all (a write that timed out may have).
+   */
+  private classifyLegacyFeedbackMemory(): void {
+    const rows = this.db
+      .prepare(
+        "SELECT id, kind, pr, created_at FROM feedback_signals WHERE memory_state IS NULL ORDER BY id",
+      )
+      .all() as Array<{ id: number; kind: string; pr: number; created_at: string }>;
+    if (rows.length === 0) return;
+    const failures = this.db
+      .prepare(
+        "SELECT ts, pr, payload FROM events WHERE kind = 'feedback_memory_write_failed' ORDER BY id",
+      )
+      .all() as Array<{ ts: string; pr: number | null; payload: string | null }>;
+    const owed = new Map<number, string>();
+    for (const ev of failures) {
+      let kind = "";
+      let error = "";
+      try {
+        const p = JSON.parse(ev.payload ?? "{}") as {
+          kind?: unknown;
+          error?: unknown;
+          signal?: unknown;
+        };
+        // An S2-era failure names its signal, whose row already has a state.
+        if (typeof p.signal === "number") continue;
+        kind = typeof p.kind === "string" ? p.kind : "";
+        error = typeof p.error === "string" ? p.error : "";
+      } catch {
+        continue;
+      }
+      let match: { id: number; created_at: string } | null = null;
+      for (const r of rows) {
+        if (r.pr !== ev.pr || r.kind !== kind || r.created_at > ev.ts || owed.has(r.id)) continue;
+        if (!match || r.created_at >= match.created_at) match = r;
+      }
+      if (match) owed.set(match.id, error || "write failed before S2");
+    }
+    const at = this.ts();
+    const markPending = this.db.prepare(
+      `UPDATE feedback_signals SET memory_state = 'pending', memory_attempts = 1,
+         memory_last_error = ?, memory_owed_since = ? WHERE id = ? AND memory_state IS NULL`,
+    );
+    const markWritten = this.db.prepare(
+      "UPDATE feedback_signals SET memory_state = 'written' WHERE id = ? AND memory_state IS NULL",
+    );
+    this.db.transaction(() => {
+      for (const r of rows) {
+        const error = owed.get(r.id);
+        if (error !== undefined) markPending.run(error, at, r.id);
+        else markWritten.run(r.id);
+      }
+    })();
+    this.logEvent("feedback_memory_ledger_migrated", null, {
+      at,
+      pending: owed.size,
+      written: rows.length - owed.size,
+    });
   }
 
   /** backfill: read the historical cancellation prose into
@@ -4660,22 +4802,22 @@ export class StateStore {
 
   /** Record one feedback signal; false when its natural key already exists
    * (webhook redelivery, reconcile overlap). */
-  recordFeedbackSignal(sig: {
-    kind: string;
-    pr: number;
-    comment_id?: number | null;
-    review_id?: number | null;
-    in_reply_to_id?: number | null;
-    scope?: string | null;
-    author?: string | null;
-    body?: string | null;
-    day: string;
-  }): boolean {
+  recordFeedbackSignal(sig: FeedbackSignalInput): boolean {
+    return this.recordFeedbackSignalRow(sig) !== null;
+  }
+
+  /** Record one feedback signal and return its row, or null when its natural
+   * key already exists. A new row starts `pending` in memory (S2)
+   * unless the caller says memory is off (`skipped`). */
+  recordFeedbackSignalRow(sig: FeedbackSignalInput): FeedbackSignalRow | null {
+    const memoryState: FeedbackMemoryState = sig.memory_state ?? "pending";
+    const now = this.ts();
     const info = this.db
       .prepare(
         `INSERT OR IGNORE INTO feedback_signals
-           (kind, pr, comment_id, review_id, in_reply_to_id, scope, author, body, day, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (kind, pr, comment_id, review_id, in_reply_to_id, scope, author, body, day, created_at,
+            memory_state, memory_last_error, memory_owed_since)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         sig.kind,
@@ -4687,9 +4829,144 @@ export class StateStore {
         sig.author ?? null,
         sig.body ?? null,
         sig.day,
-        this.ts(),
+        now,
+        memoryState,
+        sig.memory_note ?? null,
+        memoryState === "pending" ? now : null,
+      );
+    if (info.changes === 0) return null;
+    return this.feedbackSignal(Number(info.lastInsertRowid));
+  }
+
+  /** One feedback row by id, or null. */
+  feedbackSignal(id: number): FeedbackSignalRow | null {
+    const row = this.db.prepare("SELECT * FROM feedback_signals WHERE id = ?").get(id) as
+      FeedbackSignalRow | undefined;
+    return row ?? null;
+  }
+
+  /** The rows memory still owes, oldest first (S2's backfill pump);
+   * with `createdSince`, only rows created at or after it. */
+  pendingFeedbackMemory(limit: number, createdSince?: string): FeedbackSignalRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM feedback_signals WHERE memory_state = 'pending' AND created_at >= ?
+          ORDER BY created_at, id LIMIT ?`,
+      )
+      .all(createdSince ?? "", Math.max(0, Math.floor(limit))) as FeedbackSignalRow[];
+  }
+
+  /** Record one memory-write outcome on a feedback row. `attempted` counts
+   * the attempt. Only a `pending` row moves — a written, failed or skipped
+   * row is final, so a late answer from an earlier attempt cannot undo it. */
+  markFeedbackMemory(
+    id: number,
+    outcome: {
+      state: FeedbackMemoryState;
+      uri?: string | null;
+      error?: string | null;
+      attempted?: boolean;
+    },
+  ): boolean {
+    const info = this.db
+      .prepare(
+        `UPDATE feedback_signals
+            SET memory_state = ?,
+                memory_uri = COALESCE(?, memory_uri),
+                memory_last_error = ?,
+                memory_attempts = memory_attempts + ?
+          WHERE id = ? AND memory_state = 'pending'`,
+      )
+      .run(
+        outcome.state,
+        outcome.uri ?? null,
+        outcome.error ?? null,
+        outcome.attempted === false ? 0 : 1,
+        id,
       );
     return info.changes > 0;
+  }
+
+  /** What memory still owes the feedback ledger (S2). */
+  feedbackMemoryBacklog(): FeedbackMemoryBacklog {
+    const counts = this.db
+      .prepare(
+        `SELECT SUM(memory_state = 'pending') AS pending, SUM(memory_state = 'failed') AS failed
+           FROM feedback_signals`,
+      )
+      .get() as { pending: number | null; failed: number | null };
+    const oldest =
+      (this.db
+        .prepare(
+          `SELECT * FROM feedback_signals WHERE memory_state = 'pending'
+            ORDER BY COALESCE(memory_owed_since, created_at), id LIMIT 1`,
+        )
+        .get() as FeedbackSignalRow | undefined) ?? null;
+    return {
+      pending: counts.pending ?? 0,
+      failed: counts.failed ?? 0,
+      oldest_pending_at: oldest ? (oldest.memory_owed_since ?? oldest.created_at) : null,
+      oldest_pending: oldest,
+    };
+  }
+
+  /**
+   * Put every row the pump gave up on back in the queue (S2):
+   * `failed` → `pending`, its attempts reset and its owed-since set to now,
+   * its last error kept. `failed` means "memory refused it N times while it
+   * read healthy" — a cause a deploy or an operator can fix — so it is never
+   * a permanent exclusion; the pump calls this on its first healthy tick
+   * after a start and once a day. Returns how many rows moved.
+   */
+  requeueFailedFeedbackMemory(): number {
+    const at = this.ts();
+    const ids = (
+      this.db
+        .prepare("SELECT id FROM feedback_signals WHERE memory_state = 'failed'")
+        .all() as Array<{
+        id: number;
+      }>
+    ).map((r) => r.id);
+    if (ids.length === 0) return 0;
+    const info = this.db
+      .prepare(
+        `UPDATE feedback_signals
+            SET memory_state = 'pending', memory_attempts = 0, memory_owed_since = ?
+          WHERE memory_state = 'failed'`,
+      )
+      .run(at);
+    this.logEvent("feedback_memory_requeued", null, {
+      at,
+      count: info.changes,
+      ids: ids.slice(0, 50),
+    });
+    return info.changes;
+  }
+
+  /** When the pump last raised the backlog wake for the backlog that is
+   * still open, or null (never, or that backlog cleared). Events-table
+   * backed, so a restart inside a backlog keeps the re-wake cadence instead
+   * of waking again at once. */
+  feedbackBacklogWokenAt(): string | null {
+    const p = this.lastEventPayload("memory_write_backlog_woken");
+    return p && typeof p["at"] === "string" ? p["at"] : null;
+  }
+
+  /** Record a backlog wake (its instant), or the backlog clearing (null). */
+  recordFeedbackBacklogWoken(at: string | null): void {
+    this.logEvent(
+      "memory_write_backlog_woken",
+      null,
+      at === null ? { at: null, cleared: true } : { at },
+    );
+  }
+
+  /** When the boot migration classified the pre-S2 feedback rows, or null
+   * if it never had any to classify. A pending row created before it may
+   * have landed in memory under an unrecorded name; the pump checks. */
+  feedbackLegacyCutoff(): string | null {
+    const p = this.lastEventPayload("feedback_memory_ledger_migrated");
+    return p && typeof p["at"] === "string" ? p["at"] : null;
   }
 
   /** The day's explicit [feedback] comments — the same-day validator
@@ -5153,6 +5430,23 @@ export class StateStore {
     } catch {
       return null;
     }
+  }
+
+  // ---- deferred EOD sweeps (S2) -----------------------------------
+
+  /** The ops days whose EOD sweep a drain held back and that have not fired
+   * yet, oldest first. Events-table backed (last record wins), so a deferred
+   * sweep survives the restart a deploy-window drain is usually FOR. */
+  eodDeferredDates(): string[] {
+    const p = this.lastEventPayload("eod_deferred");
+    const dates = p?.["dates"];
+    if (!Array.isArray(dates)) return [];
+    return dates.filter((d): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  }
+
+  /** Record the deferred set (the whole list — the last record wins). */
+  recordEodDeferred(dates: string[]): void {
+    this.logEvent("eod_deferred", null, { dates: [...new Set(dates)].sort() });
   }
 
   // ---- overseer heartbeat --------------------------------------

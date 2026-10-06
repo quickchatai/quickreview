@@ -2,8 +2,10 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { OVClient } from "./client.js";
 import type { SyncManager } from "./sync.js";
-// [QCR PATCH 4]
-import { buildWriteRequest } from "./qcr-write.js";
+// [QCR PATCH 4] (the batch builder and its router are [QCR PATCH 6])
+import { buildBatchWriteRequest, routeWrite } from "./qcr-write.js";
+// [QCR PATCH 6]
+import { failureText, isNotFound, isPreconditionConflict } from "./qcr-honest.js";
 // [QCR PATCH 5]
 import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
 
@@ -57,9 +59,13 @@ export function registerTools(
   /** Every answer names the tree it came from — the model must never have to
    * infer which memory it just touched. */
   const scoped = (ns: ToolNamespace, text: string) => (multi ? `[${ns.name}] ${text}` : text);
-  /** Route one call, or explain why it cannot be routed. */
-  const pick = (params: any): { ok: true; ns: ToolNamespace } | { ok: false; error: string } => {
-    const routed = routeNamespace(params ?? {}, names);
+  /** Route one call, or explain why it cannot be routed. [QCR PATCH 6] The
+   * write tool passes its own router: a batch routes by its entries. */
+  const pick = (
+    params: any,
+    route: (p: any, n: readonly string[]) => ReturnType<typeof routeNamespace> = routeNamespace,
+  ): { ok: true; ns: ToolNamespace } | { ok: false; error: string } => {
+    const routed = route(params ?? {}, names);
     if (!routed.ok) return { ok: false, error: routed.error };
     return { ok: true, ns: spaces.find((s) => s.name.toLowerCase() === routed.namespace) ?? own };
   };
@@ -92,10 +98,20 @@ export function registerTools(
       if (!ns.client.connected) {
         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
       }
-      const results = await ns.client.find(params.query, {
+      const res = await ns.client.find(params.query, {
         targetUri: params.scope,
         topK: params.limit ?? 10,
       });
+      // [QCR PATCH 6] A failure is said as one — never "No results found".
+      if (!res.ok) {
+        return {
+          content: [{ type: "text", text: scoped(ns, failureText(res, "searched")) }],
+          details: multi
+            ? { namespace: ns.name, error: true, status: res.status }
+            : { error: true, status: res.status },
+        };
+      }
+      const results = res.result ?? [];
       if (results.length === 0) {
         return { content: [{ type: "text", text: scoped(ns, "No results found.") }] };
       }
@@ -135,12 +151,20 @@ export function registerTools(
       if (!ns.client.connected) {
         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
       }
-      let content: string | null = null;
-      switch (params.level) {
-        case "abstract": content = await ns.client.abstract(params.uri); break;
-        case "overview": content = await ns.client.overview(params.uri); break;
-        case "full":     content = await ns.client.readContent(params.uri); break;
+      // [QCR PATCH 6] One envelope-returning read: "No content" only when the
+      // server said the path is not there (or holds nothing) — a refused key
+      // or a dead server is named as such.
+      const level = params.level === "abstract" || params.level === "overview" ? params.level : "full";
+      const res = await ns.client.readLevel(params.uri, level);
+      if (!res.ok && !isNotFound(res)) {
+        return {
+          content: [{ type: "text", text: scoped(ns, failureText(res, "read")) }],
+          details: multi
+            ? { namespace: ns.name, error: true, status: res.status }
+            : { error: true, status: res.status },
+        };
       }
+      const content = res.ok && typeof res.result === "string" ? res.result : "";
       if (!content) {
         return { content: [{ type: "text", text: scoped(ns, `No content at ${params.uri}`) }] };
       }
@@ -175,12 +199,22 @@ export function registerTools(
       }
       const uri = params.uri ?? "viking://";
       if (params.action === "stat") {
-        const info = await ns.client.stat(uri);
+        // [QCR PATCH 6] "Not found" only when it is not found.
+        const st = await ns.client.statResponse(uri);
+        if (!st.ok && !isNotFound(st)) {
+          return { content: [{ type: "text", text: scoped(ns, failureText(st, "listed")) }] };
+        }
+        const info = st.ok ? st.result : null;
         if (!info) return { content: [{ type: "text", text: scoped(ns, `Not found: ${uri}`) }] };
         return { content: [{ type: "text", text: scoped(ns, JSON.stringify(info, null, 2)) }] };
       }
       // list
-      const entries = await ns.client.ls(uri);
+      // [QCR PATCH 6] "Empty directory" only when it IS empty (or absent).
+      const listed = await ns.client.lsResponse(uri);
+      if (!listed.ok && !isNotFound(listed)) {
+        return { content: [{ type: "text", text: scoped(ns, failureText(listed, "listed")) }] };
+      }
+      const entries = listed.ok ? (listed.result ?? []) : [];
       if (entries.length === 0) {
         return { content: [{ type: "text", text: scoped(ns, `Empty directory: ${uri}`) }] };
       }
@@ -210,20 +244,32 @@ export function registerTools(
       name: "viking_write",
       label: "Viking Write",
       description:
-        "Durably write a memory file to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote." + nsNote,
-      promptSnippet: "Durably write a memory file to OpenViking",
+        "Durably write memory files to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. One entry: `uri` + `content`. Several (a day's lessons): `entries`, written as ONE batch that lands whole or not at all. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote." + nsNote,
+      promptSnippet: "Durably write memory files to OpenViking",
       promptGuidelines: [
         "Write one self-contained fact or lesson per file; a memory read months later has no conversation around it.",
+        "Several entries at once go in ONE call as `entries` — never as parallel calls into the same directory.",
         "Prefer mode 'create' with a fresh filename. Only 'replace' an entry you just read, passing its hash as expect_hash.",
-        "A 409 means someone else edited the file — re-read it and decide, never retry blindly.",
+        "A 409 REFUSED means the file changed (or already exists) — re-read it and decide, never retry blindly. A busy directory is retried for you; if it stays busy, try again in a minute.",
         ...nsGuidelines,
       ],
       parameters: Type.Object({
-        uri: Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md')" }),
-        content: Type.String({ description: "Markdown body of the memory" }),
+        uri: Type.Optional(Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md'). With `content`, for ONE entry." })),
+        content: Type.Optional(Type.String({ description: "Markdown body of the memory (one entry)" })),
         tags: Type.Optional(Type.Array(Type.String(), { description: "Convention tags without '#', e.g. ['pinned','review-ops']" })),
         mode: Type.Optional(StringEnum(["create", "replace"] as const)),
         expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
+        // [QCR PATCH 6] several entries, one batch-write under one root.
+        entries: Type.Optional(Type.Array(
+          Type.Object({
+            uri: Type.String({ description: "Target viking:// URI, ending in .md" }),
+            content: Type.String({ description: "Markdown body of the memory" }),
+            tags: Type.Optional(Type.Array(Type.String())),
+            mode: Type.Optional(StringEnum(["create", "replace"] as const)),
+            expect_hash: Type.Optional(Type.String()),
+          }),
+          { description: "Several entries written as ONE batch (instead of uri + content). They must share a directory; the batch lands whole or not at all." },
+        )),
         wait: Type.Optional(Type.Boolean({ description: "Block until the search index is refreshed (slow — costs ~1.6 core-seconds). Default false; the bytes are durable either way." })),
         ...nsParam,
       }),
@@ -233,7 +279,9 @@ export function registerTools(
       ) {
         // [QCR PATCH 5] Route BEFORE building the request: a write under the
         // wrong key is the one mistake here that is both silent and durable.
-        const routed = pick(params);
+        // [QCR PATCH 6] A batch routes by its entries' own addresses, every
+        // one by the single-write rule, and may not straddle trees.
+        const routed = pick(params, routeWrite);
         if (!routed.ok) {
           return { content: [{ type: "text", text: `${routed.error} Nothing was written.` }], details: { written: false } };
         }
@@ -241,50 +289,65 @@ export function registerTools(
         if (!ns.client.connected) {
           return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable — nothing was written.") }] };
         }
-        const built = buildWriteRequest(params ?? {});
+        const built = buildBatchWriteRequest(params ?? {});
         if (!built.ok) {
           return { content: [{ type: "text", text: built.error }], details: { written: false } };
         }
 
         const res = await ns.client.batchWrite(built.request);
         if (!res.ok) {
+          // [QCR PATCH 6] Only a PRECONDITION 409 is "someone edited this";
+          // a busy directory was retried (and named as busy if it stayed so),
+          // and a refused key is named as the outage it is.
+          const conflict = isPreconditionConflict(res);
           const message = res.error?.message || `HTTP ${res.status ?? 0}`;
-          const conflict = res.status === 409;
           return {
             content: [{
               type: "text",
               text: scoped(ns, conflict
-                ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.request.operations[0]?.uri} and decide on the current content.`
-                : `Write failed: ${message} Nothing was written.`),
+                ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.entries.map((e) => e.uri).join(", ")} and decide on the current content.`
+                : failureText(res, "written")),
             }],
             details: multi
-              ? { namespace: ns.name, written: false, status: res.status, conflict }
-              : { written: false, status: res.status, conflict },
+              ? { namespace: ns.name, written: false, status: res.status, conflict, busy: res.stillBusy }
+              : { written: false, status: res.status, conflict, busy: res.stillBusy },
           };
         }
 
         const result = res.result;
-        const uri = built.request.operations[0]?.uri ?? "";
-        const outcome = (result?.created ?? []).includes(uri)
-          ? "created"
-          : (result?.updated ?? []).includes(uri)
-            ? "updated"
-            : (result?.unchanged ?? []).includes(uri)
-              ? "unchanged (byte-identical)"
-              : "written";
-        // Best effort, deliberately after the durable write and never fatal:
-        // the tags are already in the body text.
-        const tagged = built.tags.length > 0 ? await ns.client.setTags(uri, built.tags) : true;
-        const details = { written: true, uri, outcome, hash: built.hash, tags: built.tags, tagged, result };
+        const lines: string[] = [];
+        const written: Array<Record<string, unknown>> = [];
+        for (const entry of built.entries) {
+          const outcome = (result?.created ?? []).includes(entry.uri)
+            ? "created"
+            : (result?.updated ?? []).includes(entry.uri)
+              ? "updated"
+              : (result?.unchanged ?? []).includes(entry.uri)
+                ? "unchanged (byte-identical)"
+                : "written";
+          // Best effort, deliberately after the durable write and never fatal:
+          // the tags are already in the body text.
+          const tagged = entry.tags.length > 0 ? await ns.client.setTags(entry.uri, entry.tags) : true;
+          written.push({ uri: entry.uri, outcome, hash: entry.hash, tags: entry.tags, tagged });
+          lines.push(
+            `${entry.uri} ${outcome}. hash=${entry.hash}` +
+              (entry.tags.length > 0
+                ? ` tags=${entry.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
+                : ""),
+          );
+        }
+        const single = built.entries.length === 1 ? written[0]! : null;
+        const details = single
+          ? { written: true, ...single, result, busyRetries: res.busyRetries }
+          : { written: true, entries: written, result, busyRetries: res.busyRetries };
         return {
           content: [{
             type: "text",
             text: scoped(ns,
-              `${uri} ${outcome}. hash=${built.hash}` +
-              (built.tags.length > 0
-                ? ` tags=${built.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
-                : "") +
-              " Pass that hash as expect_hash to replace this entry later."),
+              lines.join("\n") +
+              (built.entries.length === 1
+                ? " Pass that hash as expect_hash to replace this entry later."
+                : "\nPass an entry's hash as expect_hash to replace it later.")),
           }],
           details: multi ? { namespace: ns.name, ...details } : details,
         };

@@ -21,7 +21,11 @@
 //   2. `replace_if_hash` with a stale `base_hash` returns 409 CONFLICT and
 //      leaves the file verifiably unchanged. That is a clean, ordinary answer
 //      ("someone edited this since you read it") — `conflict: true` on the
-//      outcome, never an exception.
+//      outcome, never an exception. The SAME status and code also mean "the
+//      directory was locked by another writer" (`details.conflict_type =
+//      "path_busy"`: batch-write's root lock is a zero-timeout try-lock), and
+//      that one is NOT a refusal — nothing was checked. It is told apart by
+//      `details.conflict_type` alone and retried here (S2).
 //   3. SEARCH IS `POST /api/v1/search/search` with `mode: "context"`, and the
 //      determinism knobs are pinned OFF here rather than left to the caller:
 //      `rewrite` and `query_expansion` both invoke a server-side LLM, and the
@@ -75,6 +79,17 @@ export interface OvGap {
  * `conflict` is broken out of the failure arm because it is the one refusal
  * that is not a gap: a 409 means the optimistic-concurrency precondition did
  * its job. Callers surface it to an operator; nothing alerts on it.
+ *
+ * `busy` is the OTHER 409 (S2), and it is never a `conflict`. The
+ * server takes a zero-timeout try-lock on a batch-write's root directory, and
+ * a second writer into the same directory gets `409 CONFLICT` with
+ * `details.conflict_type = "path_busy"` and `retryable: true` — nothing was
+ * checked and nothing was written. Reading that as "the precondition refused"
+ * is what dropped 6 of 8 EOD writes on 2026-10-05: the caller was told to
+ * re-read a file nobody had touched. The client retries a busy answer itself
+ * (bounded, jittered — see `BUSY_RETRY_DEFAULTS`); one that is still busy
+ * when the budget runs out comes back `busy: true, conflict: false`, an
+ * ordinary failure.
  */
 export interface OvFailure {
   ok: false;
@@ -82,14 +97,74 @@ export interface OvFailure {
   code: string;
   message: string;
   conflict: boolean;
+  busy: boolean;
 }
 
 export type OvOutcome<T> = { ok: true; status: number; result: T } | OvFailure;
 
 /** Returns the FAILURE arm, not the union: a caller that builds one wants to
- * read `conflict` off it without re-narrowing. */
-export function ovFailed(status: number, code: string, message: string): OvFailure {
-  return { ok: false, status, code, message, conflict: status === 409 || code === "CONFLICT" };
+ * read `conflict` off it without re-narrowing. A busy answer is never a
+ * conflict, whatever its status says. */
+export function ovFailed(status: number, code: string, message: string, busy = false): OvFailure {
+  return {
+    ok: false,
+    status,
+    code,
+    message,
+    conflict: !busy && (status === 409 || code === "CONFLICT"),
+    busy,
+  };
+}
+
+/** The `details.conflict_type` the server stamps on a lock it could not take
+ * (`server/error_mapping.py`, `ResourceBusyError` / `LockAcquisitionError`). */
+export const BUSY_CONFLICT_TYPE = "path_busy";
+
+/**
+ * Is this error envelope the server's "directory busy, try again" answer
+ * (S2)? Keyed on `details.conflict_type`, never on the message text
+ * and never on the status alone: a hash-precondition 409 carries the same
+ * status and code, and it must stay a refusal.
+ */
+export function isBusyConflict(status: number, error: unknown): boolean {
+  if (status !== 409 || !error || typeof error !== "object") return false;
+  const details = (error as { details?: unknown }).details;
+  if (!details || typeof details !== "object") return false;
+  return (details as { conflict_type?: unknown }).conflict_type === BUSY_CONFLICT_TYPE;
+}
+
+/** How hard the client retries a busy answer: at most `retries` more
+ * attempts, the n-th after a jittered `min(capMs, baseMs·2ⁿ)` wait (half to
+ * all of it), and never past `budgetMs` from the first attempt — the bound
+ * is ≤10 s in total, so a lock held for longer comes back as a failure the
+ * caller can see rather than a request that hangs. */
+export const BUSY_RETRY_DEFAULTS = Object.freeze({
+  retries: 4,
+  baseMs: 250,
+  capMs: 2000,
+  budgetMs: 10_000,
+});
+
+export interface BusyRetryOptions {
+  retries?: number;
+  baseMs?: number;
+  capMs?: number;
+  budgetMs?: number;
+}
+
+/** The wait before busy retry number `retry` (0-based): full exponential
+ * step, capped, then jittered into [½, 1] of it so writers that collided once
+ * do not collide again in lockstep. Pure — `random` is injected. */
+export function busyRetryDelay(
+  retry: number,
+  random: () => number = Math.random,
+  opts: BusyRetryOptions = {},
+): number {
+  const base = opts.baseMs ?? BUSY_RETRY_DEFAULTS.baseMs;
+  const cap = opts.capMs ?? BUSY_RETRY_DEFAULTS.capMs;
+  const step = Math.min(cap, base * 2 ** Math.max(0, retry));
+  const r = Math.min(1, Math.max(0, random()));
+  return Math.round(step * (0.5 + r / 2));
 }
 
 /** Server error codes that mean "this key does not authenticate here". */
@@ -362,6 +437,12 @@ export interface OpenVikingClientOptions {
   onRequest?: (record: OvRequestRecord) => void;
   /** Millisecond clock for `OvRequestRecord.ms`. Tests inject one. */
   clock?: () => number;
+  /** The busy-retry bound (S2) — `BUSY_RETRY_DEFAULTS` when absent. */
+  busyRetry?: BusyRetryOptions;
+  /** The wait between busy retries. Tests inject an instant one. */
+  sleep?: (ms: number) => Promise<void>;
+  /** The jitter source for busy retries. Tests inject a fixed one. */
+  random?: () => number;
 }
 
 /** A key read lazily from a file: call it for the current key, and
@@ -442,6 +523,9 @@ export class OpenVikingClient {
   private readonly onGap: ((gap: OvGap) => void) | undefined;
   private readonly onRequest: ((record: OvRequestRecord) => void) | undefined;
   private readonly clock: () => number;
+  private readonly busyRetry: Required<BusyRetryOptions>;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
   private keyGapReported = false;
 
   constructor(opts: OpenVikingClientOptions) {
@@ -460,6 +544,9 @@ export class OpenVikingClient {
     this.onGap = opts.onGap;
     this.onRequest = opts.onRequest;
     this.clock = opts.clock ?? Date.now;
+    this.busyRetry = { ...BUSY_RETRY_DEFAULTS, ...(opts.busyRetry ?? {}) };
+    this.sleep = opts.sleep ?? defaultSleep;
+    this.random = opts.random ?? Math.random;
   }
 
   /** Hand one request's outcome to the observer — never throws. */
@@ -506,12 +593,61 @@ export class OpenVikingClient {
    * One request, total. Every failure mode — no key, connection refused,
    * timeout, non-JSON body, `{status:"error"}` envelope, a `fetch` seam that
    * throws synchronously — comes back as the failure arm of `OvOutcome`.
+   *
+   * A BUSY answer (`409 path_busy`, see `OvFailure`) is retried here, for
+   * every operation: the server answers busy before it checks or writes
+   * anything, so a repeat can never double a write. Each retried busy answer
+   * is observed as an answer (`conflict` — the server is up and took the
+   * key); one still busy when `BUSY_RETRY_DEFAULTS` runs out is reported as
+   * the gap it is and returned `busy: true`. A hash-precondition 409 is never
+   * retried: it is the refusal it says it is.
    */
   async request<T>(
     op: string,
     path: string,
     init: { method: string; body?: unknown; timeoutMs?: number },
   ): Promise<OvOutcome<T>> {
+    const started = this.clock();
+    for (let retry = 0; ; retry += 1) {
+      const { res, ms } = await this.attempt<T>(op, path, init);
+      if (res.ok || !res.busy) return res;
+      const delay = busyRetryDelay(retry, this.random, this.busyRetry);
+      const elapsed = this.clock() - started;
+      if (retry >= this.busyRetry.retries || elapsed + delay > this.busyRetry.budgetMs) {
+        const message = `${res.message} — still busy after ${retry} ${retry === 1 ? "retry" : "retries"} (${elapsed} ms); nothing was written`;
+        this.report({ op, status: res.status, code: BUSY_CONFLICT_TYPE, message });
+        this.observe({
+          op,
+          outcome: "failed",
+          status: res.status,
+          code: BUSY_CONFLICT_TYPE,
+          ms,
+          message,
+        });
+        return ovFailed(res.status, res.code, message, true);
+      }
+      this.observe({
+        op,
+        outcome: "conflict",
+        status: res.status,
+        code: BUSY_CONFLICT_TYPE,
+        ms,
+        message: res.message,
+      });
+      this.log(
+        `openviking: ${op} answered busy (${BUSY_CONFLICT_TYPE}) — retry ${retry + 1} in ${delay} ms`,
+      );
+      await this.sleep(delay);
+    }
+  }
+
+  /** One attempt of `request()`. Observes and reports everything except a
+   * busy answer, which `request()` decides about (retry, or report once). */
+  private async attempt<T>(
+    op: string,
+    path: string,
+    init: { method: string; body?: unknown; timeoutMs?: number },
+  ): Promise<{ res: OvOutcome<T>; ms: number }> {
     const key = this.key();
     if (!key) {
       // Reported ONCE per client: a keyless deployment is a standing condition
@@ -537,7 +673,7 @@ export class OpenVikingClient {
         ms: 0,
         message: "no OpenViking key configured",
       });
-      return ovFailed(0, "no_key", "no OpenViking reviewer key configured");
+      return { res: ovFailed(0, "no_key", "no OpenViking reviewer key configured"), ms: 0 };
     }
     const started = this.clock();
     const headers: Record<string, string> = {
@@ -572,7 +708,7 @@ export class OpenVikingClient {
         ms: this.clock() - started,
         message: gap.message,
       });
-      return ovFailed(gap.status, gap.code, gap.message);
+      return { res: ovFailed(gap.status, gap.code, gap.message), ms: this.clock() - started };
     }
     const ms = this.clock() - started;
 
@@ -608,7 +744,7 @@ export class OpenVikingClient {
           ms,
           message: gap.message,
         });
-        return ovFailed(gap.status, gap.code, gap.message);
+        return { res: ovFailed(gap.status, gap.code, gap.message), ms };
       }
       body = {};
     }
@@ -618,6 +754,11 @@ export class OpenVikingClient {
       const message = this.redact(
         typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`,
       );
+      // The directory lock was held (S2): nothing was checked or
+      // written. `request()` retries it — not observed or reported here.
+      if (isBusyConflict(res.status, body.error)) {
+        return { res: ovFailed(res.status, code, message, true), ms };
+      }
       const outcome = ovFailed(res.status, code, message);
       const auth = isAuthFailure(res.status, code, message);
       // A 409 is the precondition working as designed; it is an answer, not a
@@ -643,11 +784,11 @@ export class OpenVikingClient {
       // key to redact with, and a read after the drop would re-cache the very
       // key that was just refused for another full TTL.
       if (auth) this.invalidateKey?.();
-      return outcome;
+      return { res: outcome, ms };
     }
 
     this.observe({ op, outcome: "ok", status: res.status, code: "", ms });
-    return { ok: true, status: res.status, result: (body.result ?? body) as T };
+    return { res: { ok: true, status: res.status, result: (body.result ?? body) as T }, ms };
   }
 
   // ---- content ---------------------------------------------------------------
@@ -881,3 +1022,9 @@ function timeoutSignal(ms: number): AbortSignal | undefined {
 }
 
 const defaultFetch: HttpFetch = (url, init) => fetch(url, init);
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    t.unref?.();
+  });

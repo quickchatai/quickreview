@@ -126,6 +126,17 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "memory_auth_failed",
   "memory_down",
   "memory_provision_failed",
+  // writes that stick. `memory_write_backlog` — a [feedback]
+  // signal ledgered but still not in reviewer memory 2 h later (the backfill
+  // pump writes owed rows only while memory is healthy), or rows the pump
+  // gave up on. Raised by the pump on the crossing and every 6 h while it
+  // lasts, never per row. Before this, 36 of 39 signals' memory writes failed
+  // and each one was a log line.
+  "memory_write_backlog",
+  // the EOD sweep's inject failed four times (one try and three
+  // backed-off retries). The day's curation did not happen; before this it
+  // was one "EOD injection failed" log line.
+  "eod_inject_failed",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by
@@ -174,6 +185,10 @@ const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
   "memory_auth_failed",
   "memory_down",
   "memory_provision_failed",
+  // the pump raises it on the backlog crossing (every 6 h while
+  // it lasts) and once per tick that gave rows up — a give-up minutes after a
+  // backlog wake is a different fact and must still reach the overseer.
+  "memory_write_backlog",
 ]);
 
 export function detailKeyedKinds(): string[] {

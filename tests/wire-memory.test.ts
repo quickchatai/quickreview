@@ -103,8 +103,10 @@ describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
   });
 
   it("its block reaches status.json beside openviking", () => {
+    // the block is the monitor's status plus the [feedback]
+    // ledger's memory backlog.
     expect(wire).toMatch(
-      /memoryStatus: \(\): MemoryStatus =>\s*memoryHealth\s*\? memoryHealth\.status\(\)/,
+      /memoryStatus: \(\): MemoryStatus => \{\s*const base = memoryHealth\s*\? memoryHealth\.status\(\)/,
     );
     // Before onStart decides, the block is UNKNOWN (pending), never "off".
     expect(wire).toContain(": pendingMemoryStatus()");

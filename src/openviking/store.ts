@@ -86,6 +86,10 @@ const LINK_RE = /\[\[([^\]]+)\]\]/g;
  * we interpolate is exactly the mistake worth making structurally impossible. */
 const ID_RE = /^(?:[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+\.(?:md|txt)$/;
 
+/** A memory AREA a write may name (S2): one lowercase segment —
+ * `experiences`, `events`, … (the §1 layout). */
+const CATEGORY_RE = /^[a-z][a-z0-9_-]*$/;
+
 export function validEntryId(id: string): boolean {
   return ID_RE.test(id) && !id.includes("..");
 }
@@ -239,8 +243,9 @@ export class OpenVikingStore implements MemoryStore {
   private readonly category: string;
   private readonly now: () => Date;
   private readonly log: (msg: string, extra?: unknown) => void;
-  /** One lazy mkdir per store instance — a second NOT_FOUND is a real error. */
-  private rootEnsured = false;
+  /** Category roots known to exist: one lazy mkdir per root per store
+   * instance — a second NOT_FOUND is a real error. */
+  private readonly ensuredRoots = new Set<string>();
   private readonly concurrency: number;
   private readonly cacheTtlMs: number;
 
@@ -299,9 +304,9 @@ export class OpenVikingStore implements MemoryStore {
    */
   async ensureWritable(): Promise<MemoryWriteResult> {
     const uri = `${this.root}/${this.category}`;
-    if (this.rootEnsured) return { ok: true, message: `${uri} ready` };
+    if (this.ensuredRoots.has(uri)) return { ok: true, message: `${uri} ready` };
     if (await this.client.mkdir(uri)) {
-      this.rootEnsured = true;
+      this.ensuredRoots.add(uri);
       return { ok: true, message: `${uri} ready` };
     }
     return { ok: false, message: `could not create the memory root ${uri}` };
@@ -475,7 +480,8 @@ export class OpenVikingStore implements MemoryStore {
   async apply(op: MemoryOp): Promise<MemoryWriteResult> {
     try {
       if (op.op === "add") return await this.create(renderEntryBody(op.text, [MANUAL_TAG]));
-      if (op.op === "note") return await this.create(renderEntryBody(op.text));
+      if (op.op === "note")
+        return await this.create(renderEntryBody(op.text), op.category ?? this.category, op.name);
       if (!validEntryId(op.id))
         return {
           ok: false,
@@ -553,17 +559,38 @@ export class OpenVikingStore implements MemoryStore {
    * than a silent overwrite of somebody else's memory, so a collision is
    * retried under a fresh name — two writers in the same second is ordinary,
    * losing one of their entries is not.
+   *
+   * A NAMED create (S2, `note` with `name`) is never renamed: the
+   * address IS the writer's idempotency key. The server answers a replay of
+   * the same bytes `unchanged` (landed — a plain success), and a 409 there
+   * means the address already holds other bytes, which is KEPT and reported
+   * `existed`. Only the precondition 409 means that: a BUSY 409 never
+   * reaches here as a conflict (the client retries it, then fails it).
    */
-  private async create(body: string): Promise<MemoryWriteResult> {
+  private async create(
+    body: string,
+    category: string = this.category,
+    name?: string,
+  ): Promise<MemoryWriteResult> {
     if (body.trim() === "") return { ok: false, message: "refused: an empty memory entry" };
+    if (!CATEGORY_RE.test(category))
+      return {
+        ok: false,
+        message: `refused: '${category}' is not a memory area this store can spell`,
+      };
+    if (name !== undefined && !validEntryId(`${category}/${name}.md`))
+      return { ok: false, message: `refused: '${name}' is not an entry name this store can spell` };
+    const dir = `${this.root}/${category}`;
     const ts = tsFromModTime(this.now().toISOString());
     const stamp = stampOf(ts);
+    let mkdirTried = false;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const suffix = createHash("sha256").update(`${body}#${attempt}`).digest("hex").slice(0, 8);
-      const id = `${this.category}/${stamp}-${suffix}.md`;
+      const id =
+        name !== undefined ? `${category}/${name}.md` : `${category}/${stamp}-${suffix}.md`;
       const uri = this.uriOf(id);
       const res = await this.client.batchWrite({
-        root_uri: `${this.root}/${this.category}`,
+        root_uri: dir,
         operations: [{ uri, content: body, precondition: { kind: "create_if_absent" } }],
         // The bytes are durable without waiting; only searchability lags, and
         // ~1.6 core-seconds of index refresh must never sit on a caller.
@@ -572,7 +599,8 @@ export class OpenVikingStore implements MemoryStore {
       if (res.ok && batchWriteLanded(res.result, uri)) {
         this.invalidate();
         await this.mirrorTags(uri, body);
-        return { ok: true, message: `wrote ${id}` };
+        const same = res.result.unchanged.includes(uri);
+        return { ok: true, message: same ? `already present: ${id}` : `wrote ${id}`, uri };
       }
       if (res.ok)
         return {
@@ -584,17 +612,26 @@ export class OpenVikingStore implements MemoryStore {
       // than creating it. Make it once, here, and let the loop retry — the
       // alternative is a bootstrap step that a restart or a new category
       // silently outlives.
-      if (res.code === "NOT_FOUND" && !this.rootEnsured) {
-        // Set only on success: a transient mkdir failure must leave the next
-        // write (and ensureWritable) free to try again. One attempt per call
-        // still holds — a failed mkdir falls through to the refusal below.
-        if (await this.client.mkdir(`${this.root}/${this.category}`)) {
-          this.rootEnsured = true;
-          this.log(`openviking: created the memory root ${this.root}/${this.category}`);
+      if (res.code === "NOT_FOUND" && !this.ensuredRoots.has(dir) && !mkdirTried) {
+        mkdirTried = true;
+        // Recorded only on success: a transient mkdir failure must leave the
+        // next write (and ensureWritable) free to try again. One attempt per
+        // call still holds — a failed mkdir falls through to the refusal below.
+        if (await this.client.mkdir(dir)) {
+          this.ensuredRoots.add(dir);
+          this.log(`openviking: created the memory root ${dir}`);
           continue;
         }
       }
       if (!res.conflict) return { ok: false, message: `memory write failed: ${res.message}` };
+      if (name !== undefined) {
+        return {
+          ok: true,
+          existed: true,
+          uri,
+          message: `kept ${id}: an entry is already there with other bytes (never overwritten)`,
+        };
+      }
       this.log(`openviking: memory name ${id} taken — retrying under a fresh name`);
     }
     return { ok: false, message: "refused: could not find a free name for this entry" };

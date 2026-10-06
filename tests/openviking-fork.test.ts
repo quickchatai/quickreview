@@ -40,6 +40,23 @@ import {
   renderMemoryBody,
   sha256Prefixed,
 } from "../extensions/vendor/openviking-pi/qcr-write.js";
+import {
+  buildBatchWriteRequest,
+  commonParentUri,
+  MAX_BATCH_ENTRIES,
+  routeWrite,
+} from "../extensions/vendor/openviking-pi/qcr-write.js";
+import {
+  BUSY_RETRY,
+  failureText,
+  isAuthFailure,
+  isBusy,
+  isNotFound,
+  isPreconditionConflict,
+  shouldRekey,
+  withBusyRetry,
+} from "../extensions/vendor/openviking-pi/qcr-honest.js";
+import { BUSY_RETRY_DEFAULTS } from "../src/openviking/client.js";
 import { SyncManager } from "../extensions/vendor/openviking-pi/sync.js";
 import { OVClient } from "../extensions/vendor/openviking-pi/client.js";
 
@@ -97,7 +114,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(6); // 0000 scaffolding + five numbered
+    expect(upstream.patches.length).toBe(7); // 0000 scaffolding + six numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -605,6 +622,379 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       const at = tools.indexOf('name: "viking_archive_expand"');
       expect(at).toBeGreaterThan(-1);
       expect(tools.slice(at)).toContain("await client.overview(uri)");
+    });
+  });
+});
+
+// ---- PATCH 6 (S2) ----------------------------------------------------
+
+describe("PATCH 6 — writes that stick, errors that say so", () => {
+  const BUSY_409 = {
+    ok: false,
+    status: 409,
+    error: {
+      code: "CONFLICT",
+      message: "resource is busy and cannot be written now",
+      details: { conflict_type: "path_busy", retryable: true },
+    },
+  };
+  const PRECONDITION_409 = {
+    ok: false,
+    status: 409,
+    error: {
+      code: "CONFLICT",
+      message: "Batch write replace precondition failed; content hash changed.",
+    },
+  };
+  const ROOT = "viking://user/reviewer/memories";
+
+  it("tells a busy 409 from a precondition 409 by details.conflict_type alone", () => {
+    expect(isBusy(BUSY_409)).toBe(true);
+    expect(isPreconditionConflict(BUSY_409)).toBe(false);
+    expect(isBusy(PRECONDITION_409)).toBe(false);
+    expect(isPreconditionConflict(PRECONDITION_409)).toBe(true);
+    expect(isBusy({ ok: false, status: 409, error: { message: "resource is busy" } })).toBe(false);
+    expect(isBusy({ ok: true, status: 200 })).toBe(false);
+  });
+
+  it("retries ONLY a busy answer, jittered and bounded — the daemon client's rule", async () => {
+    expect(BUSY_RETRY).toEqual({ ...BUSY_RETRY_DEFAULTS });
+    let calls = 0;
+    const sleeps: number[] = [];
+    let clock = 0;
+    const hooks = {
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+        clock += ms;
+      },
+      now: () => clock,
+      random: () => 0.5,
+    };
+    const ok = await withBusyRetry(
+      async () => (++calls <= 2 ? BUSY_409 : { ok: true, status: 200 }),
+      hooks,
+    );
+    expect(ok).toMatchObject({ ok: true, busyRetries: 2, stillBusy: false });
+    expect(sleeps).toHaveLength(2);
+
+    calls = 0;
+    const refused = await withBusyRetry(async () => (++calls, PRECONDITION_409), hooks);
+    expect(calls).toBe(1);
+    expect(refused).toMatchObject({ ok: false, status: 409, busyRetries: 0, stillBusy: false });
+
+    sleeps.length = 0;
+    clock = 0;
+    const stuck = await withBusyRetry(async () => BUSY_409, hooks);
+    expect(stuck.stillBusy).toBe(true);
+    expect(stuck.busyRetries).toBeLessThanOrEqual(BUSY_RETRY.retries);
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(BUSY_RETRY.budgetMs);
+  });
+
+  it("never renders a failure as an empty answer", () => {
+    const auth = failureText(
+      { ok: false, status: 401, error: { code: "UNAUTHENTICATED", message: "Invalid API Key" } },
+      "searched",
+    );
+    expect(auth).toContain("REFUSED this session's key");
+    expect(auth).toContain("Invalid API Key");
+    expect(auth).toContain("not an empty result");
+    // The 0.4.15 server has wrapped a bad key in a non-401 envelope.
+    expect(isAuthFailure({ ok: false, status: 500, error: { message: "Invalid API Key" } })).toBe(
+      true,
+    );
+    const dead = failureText({ ok: false, status: 0, error: { message: "fetch failed" } }, "read");
+    expect(dead).toContain("did not answer");
+    expect(dead).toContain("not an empty result");
+    expect(failureText({ ...BUSY_409, stillBusy: true }, "written")).toContain("path_busy");
+    expect(failureText({ ...BUSY_409, stillBusy: true }, "written")).toContain(
+      "Nobody's edit was refused",
+    );
+    for (const t of [auth, dead]) {
+      expect(t).not.toContain("No results");
+      expect(t).not.toContain("No content");
+    }
+    expect(isNotFound({ ok: false, status: 404, error: { code: "NOT_FOUND" } })).toBe(true);
+    expect(isNotFound({ ok: false, status: 401 })).toBe(false);
+  });
+
+  it("re-keys only on an auth failure, and only to a DIFFERENT key", () => {
+    const refused = { ok: false, status: 401, error: { code: "UNAUTHENTICATED" } };
+    expect(shouldRekey(refused, "old", "new")).toBe(true);
+    expect(shouldRekey(refused, "old", "old")).toBe(false);
+    expect(shouldRekey(refused, "old", "")).toBe(false);
+    expect(shouldRekey(PRECONDITION_409, "old", "new")).toBe(false);
+  });
+
+  it("writes several entries as ONE batch-write under their common directory", () => {
+    const built = buildBatchWriteRequest({
+      entries: [
+        { uri: `${ROOT}/experiences/a.md`, content: "lesson a", tags: ["lesson"] },
+        { uri: `${ROOT}/experiences/b.md`, content: "lesson b" },
+      ],
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.request.root_uri).toBe(`${ROOT}/experiences`);
+    expect(built.request.operations.map((o) => o.uri)).toEqual([
+      `${ROOT}/experiences/a.md`,
+      `${ROOT}/experiences/b.md`,
+    ]);
+    expect(built.request.operations.every((o) => o.precondition.kind === "create_if_absent")).toBe(
+      true,
+    );
+    expect(built.entries.map((e) => e.hash)).toEqual(
+      built.request.operations.map((o) => sha256Prefixed(o.content)),
+    );
+    expect(built.request.wait).toBe(false);
+    // One entry the old way is the same request PATCH 4 built.
+    const one = buildBatchWriteRequest({ uri: `${ROOT}/experiences/a.md`, content: "x" });
+    expect(one.ok && one.request.operations).toEqual(
+      (() => {
+        const b = buildWriteRequest({ uri: `${ROOT}/experiences/a.md`, content: "x" });
+        return b.ok && b.request.operations;
+      })(),
+    );
+    expect(commonParentUri([`${ROOT}/a/x.md`, `${ROOT}/a/b/y.md`])).toBe(`${ROOT}/a`);
+  });
+
+  it("routes a batch by its ENTRIES — a reviewer-only batch is never refused as two trees", () => {
+    // The companion: its own tree first, the reviewer's second. A batch has
+    // no top-level uri, so routing the bare params fell back to `companion`
+    // and then refused every reviewer entry as "more than one memory tree".
+    const TWO = ["companion", "reviewer"];
+    const R = "viking://user/reviewer/memories/experiences";
+    const C = "viking://user/companion/memories/experiences";
+    const reviewerOnly = {
+      entries: [
+        { uri: `${R}/a.md`, content: "x" },
+        { uri: `${R}/b.md`, content: "y" },
+      ],
+    };
+    expect(routeWrite(reviewerOnly, TWO)).toEqual({ ok: true, namespace: "reviewer" });
+    expect(routeWrite({ ...reviewerOnly, namespace: "reviewer" }, TWO)).toEqual({
+      ok: true,
+      namespace: "reviewer",
+    });
+    // An explicit namespace that disagrees with the entries is refused.
+    const clash = routeWrite({ ...reviewerOnly, namespace: "companion" }, TWO);
+    expect(clash.ok).toBe(false);
+    // A batch that really does straddle the two trees is refused, naming both.
+    const straddle = routeWrite(
+      {
+        entries: [
+          { uri: `${R}/a.md`, content: "x" },
+          { uri: `${C}/b.md`, content: "y" },
+        ],
+      },
+      TWO,
+    );
+    expect(straddle.ok).toBe(false);
+    expect(!straddle.ok && straddle.error).toMatch(
+      /more than one memory tree \(reviewer and companion\)/,
+    );
+    // The reserved-word form names no tree: with no namespace it is our own.
+    expect(
+      routeWrite({ entries: [{ uri: "viking://user/memories/x.md", content: "x" }] }, TWO),
+    ).toEqual({ ok: true, namespace: "companion" });
+    // One entry the old way routes exactly as routeNamespace does.
+    expect(routeWrite({ uri: `${R}/a.md`, content: "x" }, TWO)).toEqual(
+      routeNamespace({ uri: `${R}/a.md` }, TWO),
+    );
+    // A single-namespace process (every review session) is a constant.
+    expect(routeWrite(reviewerOnly, ["reviewer"])).toEqual({ ok: true, namespace: "reviewer" });
+  });
+
+  it("refuses a batch it cannot send whole", () => {
+    const bad: unknown[] = [
+      { entries: [] },
+      { entries: "nope" },
+      {
+        uri: `${ROOT}/experiences/a.md`,
+        content: "x",
+        entries: [{ uri: `${ROOT}/experiences/b.md`, content: "y" }],
+      },
+      {
+        entries: [
+          { uri: `${ROOT}/experiences/a.md`, content: "x" },
+          { uri: `${ROOT}/experiences/a.md`, content: "y" },
+        ],
+      },
+      {
+        entries: [
+          { uri: `${ROOT}/experiences/a.md`, content: "x" },
+          { uri: `${ROOT}/experiences/b.md`, content: "  " },
+        ],
+      },
+      { entries: [{ uri: `${ROOT}/experiences/a.md`, content: "x", mode: "replace" }] },
+      {
+        entries: Array.from({ length: MAX_BATCH_ENTRIES + 1 }, (_, i) => ({
+          uri: `${ROOT}/experiences/${i}.md`,
+          content: "x",
+        })),
+      },
+    ];
+    for (const input of bad) expect(buildBatchWriteRequest(input as never).ok).toBe(false);
+  });
+
+  describe("the client", () => {
+    const realFetch = globalThis.fetch;
+    const cfg = {
+      endpoint: "http://127.0.0.1:1933",
+      apiKey: "old",
+      account: "",
+      user: "reviewer",
+      peerId: "",
+      userAgent: "",
+    };
+    const reply = (status: number, body: unknown) =>
+      ({ ok: status >= 200 && status < 300, status, json: async () => body }) as never;
+    const restore = () => {
+      globalThis.fetch = realFetch;
+    };
+
+    it("find() surfaces a refused key instead of an empty list", async () => {
+      globalThis.fetch = (async () =>
+        reply(401, {
+          status: "error",
+          error: { code: "UNAUTHENTICATED", message: "Invalid API Key" },
+        })) as never;
+      try {
+        const res = await new OVClient(cfg as never).find("migrations");
+        expect(res.ok).toBe(false);
+        expect(res.status).toBe(401);
+        expect(failureText(res, "searched")).toContain("Invalid API Key");
+      } finally {
+        restore();
+      }
+    });
+
+    it("find() still answers an empty list for an empty store", async () => {
+      globalThis.fetch = (async () =>
+        reply(200, { status: "ok", result: { memories: [], total: 0 } })) as never;
+      try {
+        expect(await new OVClient(cfg as never).find("x")).toMatchObject({ ok: true, result: [] });
+      } finally {
+        restore();
+      }
+    });
+
+    it("batchWrite retries a busy directory and lands", async () => {
+      let n = 0;
+      globalThis.fetch = (async () =>
+        ++n === 1
+          ? reply(409, { status: "error", error: BUSY_409.error })
+          : reply(200, {
+              status: "ok",
+              result: { root_uri: "r", created: ["u"], updated: [], unchanged: [] },
+            })) as never;
+      try {
+        const c = new OVClient(cfg as never);
+        c.retryHooks = { sleep: async () => {}, random: () => 0 };
+        const res = await c.batchWrite({ root_uri: "r", operations: [], wait: false });
+        expect(res.ok).toBe(true);
+        expect(res.busyRetries).toBe(1);
+        expect(n).toBe(2);
+      } finally {
+        restore();
+      }
+    });
+
+    it("re-reads a refused key ONCE and retries with the new one", async () => {
+      const seen: string[] = [];
+      globalThis.fetch = (async (_url: unknown, init: { headers: Record<string, string> }) => {
+        const auth = init.headers["Authorization"] ?? "";
+        seen.push(auth);
+        return auth === "Bearer new"
+          ? reply(200, { status: "ok", result: "content" })
+          : reply(401, {
+              status: "error",
+              error: { code: "UNAUTHENTICATED", message: "Invalid API Key" },
+            });
+      }) as never;
+      try {
+        const c = new OVClient(cfg as never);
+        c.rekey = () => "new";
+        expect(await c.readLevel(`${ROOT}/experiences/a.md`, "full")).toMatchObject({
+          ok: true,
+          result: "content",
+        });
+        expect(seen).toEqual(["Bearer old", "Bearer new"]);
+        // The same key twice is not retried: a second refusal would be all it buys.
+        seen.length = 0;
+        const stuck = new OVClient(cfg as never);
+        stuck.rekey = () => "old";
+        expect((await stuck.readLevel(`${ROOT}/experiences/a.md`, "full")).ok).toBe(false);
+        expect(seen).toEqual(["Bearer old"]);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("structure — the parts no test can call", () => {
+    it("no tool turns a failure into 'No results' / 'No content' / 'Empty directory'", () => {
+      const tools = code("tools.ts");
+      const search = tools.slice(
+        tools.indexOf('name: "viking_search"'),
+        tools.indexOf('name: "viking_read"'),
+      );
+      expect(search).toContain('failureText(res, "searched")');
+      expect(search.indexOf("if (!res.ok)")).toBeLessThan(search.indexOf("No results found."));
+      const readTool = tools.slice(
+        tools.indexOf('name: "viking_read"'),
+        tools.indexOf('name: "viking_browse"'),
+      );
+      expect(readTool).toContain('failureText(res, "read")');
+      expect(readTool).toContain("isNotFound(res)");
+      const browse = tools.slice(
+        tools.indexOf('name: "viking_browse"'),
+        tools.indexOf('name: "viking_write"'),
+      );
+      expect(browse).toContain("failureText(listed");
+      expect(browse).toContain("failureText(st");
+      // The old collapsing calls are gone from the tools.
+      expect(tools).not.toMatch(/ns\.client\.(abstract|overview|readContent|ls|stat)\(/);
+    });
+
+    it("viking_write builds ONE batch and calls only a precondition 409 a refusal", () => {
+      const tools = code("tools.ts");
+      const write = tools.slice(
+        tools.indexOf('name: "viking_write"'),
+        tools.indexOf("viking_archive_expand"),
+      );
+      expect(write).toContain("buildBatchWriteRequest(params");
+      // A batch is routed by its entries, never by the bare top-level params.
+      expect(write).toContain("pick(params, routeWrite)");
+      expect(write).toContain("entries: Type.Optional(Type.Array(");
+      expect(write).toContain("isPreconditionConflict(res)");
+      expect(write).not.toContain("res.status === 409");
+      expect(write.match(/ns\.client\.batchWrite\(/g)).toHaveLength(1);
+    });
+
+    it("re-keys through the root-key guard, on the primary client only", () => {
+      expect(code("config.ts")).toMatch(
+        /export function rereadApiKey[\s\S]*?withoutRootKey\(resolveOpenVikingCredentials\(env\), env\)/,
+      );
+      expect(code("index.ts")).toContain("client.rekey = () => rereadApiKey()");
+      expect(code("index.ts").match(/\.rekey =/g)).toHaveLength(1);
+    });
+
+    it("ships the patch, recorded in the series, with its markers", () => {
+      expect(upstream.patches.at(-1)).toBe("0006-writes-that-stick-and-honest-errors.patch");
+      const patch = read(join("patches", "0006-writes-that-stick-and-honest-errors.patch"));
+      expect(patch).toContain("QCR PATCH 6");
+      for (const f of [
+        "qcr-honest.ts",
+        "qcr-write.ts",
+        "client.ts",
+        "config.ts",
+        "tools.ts",
+        "index.ts",
+      ]) {
+        expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+      }
+      expect(read("NOTICE")).toContain('6. A "directory busy" 409 is retried');
+      expect(read("README.md")).toContain("### 0006 — writes that stick");
     });
   });
 });

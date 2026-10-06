@@ -264,6 +264,15 @@ down_after_min = 10
 boot_grace_min = 5
 rewake_h = 6
 incident_ticket_after_min = 120
+# Writes that stick (S2): every [feedback] signal is ledgered with
+# its memory state, and whatever memory has not taken yet the backfill pump
+# writes every backfill_interval_s (at most 20 a tick, only while memory
+# reads healthy). A signal owed for longer than write_backlog_after_min wakes
+# memory_write_backlog (and again every rewake_h while the backlog lasts). A
+# signal memory refused 12 times is given up on, loudly, and queued again at
+# the daemon's next start and once a day.
+backfill_interval_s = 60
+write_backlog_after_min = 120
 # WHICH scopes the round's one context search may draw from, and how many items
 # each may contribute. `context_tokens` above is the budget; this is the
 # corpus — the two bind independently.

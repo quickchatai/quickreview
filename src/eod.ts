@@ -204,6 +204,9 @@ export function renderEodPrompt(
 
 export type TimerHandle = unknown;
 
+/** Why a day's sweep was deferred. */
+export type EodHoldReason = "draining" | "sweep_in_flight";
+
 export interface EodTimerDeps {
   timeHHMM: string;
   timeZone: string;
@@ -217,24 +220,60 @@ export interface EodTimerDeps {
    * A throw here never loses the sweep: the prompt just goes out bare. */
   dayContext?: (date: string) => string;
   /** Deploy-window drain (2026-08-25): when this returns true at fire time
-   * the sweep is SKIPPED for that day — never queued — and `onHeld` fires
-   * instead. A throwing probe counts as "not held": a broken check must not
-   * silently eat the sweep. */
+   * the sweep is DEFERRED (S2 — it used to be skipped for the day):
+   * `onHeld` fires, the day joins the `deferred` set, and it fires once this
+   * returns false again — checked every `deferPollMs`, and across a restart
+   * when `deferred` persists the set. A throwing probe counts as "not held":
+   * a broken check must not silently eat the sweep. */
   shouldHold?: () => boolean;
-  onHeld?: (date: string) => void;
-  /** SessionHooks.injectOverseer. */
-  injectOverseer: (message: string) => Promise<void>;
+  /** True while an earlier sweep is still being worked — wire.ts: the
+   * pinned-area watch window is open. A day whose fire comes up
+   * then is deferred behind it like a drained one, so two sweeps never run
+   * at once: the curator works one day at a time, and the watch judges each
+   * day's window on that day's work. A throwing probe counts as "not in
+   * flight". */
+  sweepInFlight?: () => boolean;
+  /** A day was deferred: `draining` (the drain), or `sweep_in_flight` (an
+   * earlier day's sweep is still open or still retrying its inject). */
+  onHeld?: (date: string, why: EodHoldReason) => void;
+  /** Where the deferred days survive a restart (wire.ts: state.db). Without
+   * it they live as long as this timer. */
+  deferred?: { load(): string[]; save(dates: string[]): void };
+  /** How often a deferred sweep re-checks the drain. */
+  deferPollMs?: number;
+  /** Called when a deferred day finally fires, before its injection. */
+  onDeferredFire?: (date: string) => void;
+  /** SessionHooks.injectOverseer. `date` is the day the prompt sweeps — a
+   * deferred day's, not today's — so a wrapper (the pin watch) can name the
+   * window after the day it watches. */
+  injectOverseer: (message: string, date: string) => Promise<void>;
+  /** The waits before each RETRY of a failed injection (S2) — its
+   * length is the retry count. Defaults to `EOD_DEFAULTS.retryBackoffMs`. */
+  retryBackoffMs?: readonly number[];
+  /** Every attempt failed: the day's sweep did not reach the overseer.
+   * wire.ts raises the `eod_inject_failed` wake. */
+  onInjectFailed?: (date: string, err: unknown, attempts: number) => void;
   now?: () => Date;
   setTimer?: (cb: () => void, ms: number) => TimerHandle;
   clearTimer?: (handle: TimerHandle) => void;
   /** Called after a successful injection, with the local date that fired. */
   onFire?: (date: string) => void;
+  /** Every failed attempt, retried or not. */
   onError?: (err: unknown) => void;
 }
+
+export const EOD_DEFAULTS = Object.freeze({
+  /** A deferred sweep looks for the drain to lift this often. */
+  deferPollMs: 60_000,
+  /** Three retries of a failed injection: after 1, 5 and 15 minutes. */
+  retryBackoffMs: Object.freeze([60_000, 300_000, 900_000]),
+});
 
 export interface EodTimer {
   /** The instant the currently-armed timer is aiming at. */
   nextFire(): Date;
+  /** The days a drain deferred that have not fired yet (S2). */
+  deferredDates(): string[];
   stop(): void;
 }
 
@@ -247,20 +286,154 @@ export function promptReader(path: string): () => string {
  * Arm the daily EOD injection: at each fire, render prompts/eod-sweep.md with
  * the zone-local date and inject it into the overseer, then reschedule.
  * Long waits are chunked around the 2^31-1 ms setTimeout ceiling.
+ *
+ * Two S2 guarantees ride on top. A drain DEFERS the day rather than
+ * skipping it: the date joins a persisted set and fires, oldest first and
+ * one at a time, once the drain lifts — a deploy-window drain is usually
+ * followed by a restart, which is why the set is persisted. "One at a time"
+ * means one SWEEP at a time, not one inject: a day never fires while another
+ * fire is in flight or `sweepInFlight` says the last sweep is still being
+ * worked, and a day whose hour comes up then is deferred behind it. And an injection
+ * that fails is retried (`retryBackoffMs`) before `onInjectFailed` says the
+ * day's curation did not happen; a deferred day leaves the set only once its
+ * fire has finished, so a restart mid-retry fires it again rather than never.
  */
+/** Run an observer callback; a throw from it is swallowed — it must never
+ * turn into a lost or a doubled sweep. */
+function safely(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // an observer's problem, not the sweep's
+  }
+}
+
 export function startEodTimer(deps: EodTimerDeps): EodTimer {
   const now = deps.now ?? (() => new Date());
   const setT = deps.setTimer ?? ((cb, ms) => setTimeout(cb, ms));
   const clearT = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const backoff = deps.retryBackoffMs ?? EOD_DEFAULTS.retryBackoffMs;
+  const deferPollMs = Math.max(1, deps.deferPollMs ?? EOD_DEFAULTS.deferPollMs);
 
   let target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
   let handle: TimerHandle | null = null;
+  let pollHandle: TimerHandle | null = null;
+  /** Pending retry waits: stop() cancels the timer AND releases the waiter,
+   * so a fire in its backoff ends ("stopped") instead of hanging forever. */
+  const waits = new Map<TimerHandle, () => void>();
   let stopped = false;
+  let deferred: string[] = [];
+  try {
+    deferred = [...new Set(deps.deferred?.load() ?? [])].sort();
+  } catch {
+    deferred = [];
+  }
+  /** A fire (the day's own, or a deferred one) is in flight — injecting or
+   * waiting out a retry. One at a time. */
+  let firing = false;
+
+  const persist = (): void => {
+    try {
+      deps.deferred?.save(deferred);
+    } catch {
+      // The in-memory set still fires it; only a restart could lose it.
+    }
+  };
+
+  const held = (): boolean => {
+    try {
+      return deps.shouldHold?.() === true;
+    } catch {
+      return false;
+    }
+  };
+
+  /** Another sweep is still running: ours, or the one the watch window is
+   * open for. */
+  const busy = (): boolean => {
+    if (firing) return true;
+    try {
+      return deps.sweepInFlight?.() === true;
+    } catch {
+      return false;
+    }
+  };
 
   const arm = (): void => {
     if (stopped) return;
     const delay = Math.max(0, target.getTime() - now().getTime());
     handle = setT(tick, Math.min(delay, MAX_TIMEOUT_MS));
+  };
+
+  const wait = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const h = setT(() => {
+        waits.delete(h);
+        resolve();
+      }, ms);
+      waits.set(h, resolve);
+    });
+
+  /** Render and inject one day's sweep, retrying a failed injection.
+   * `stopped` — the timer was stopped before the day was settled either way. */
+  const fire = async (date: string): Promise<"delivered" | "failed" | "stopped"> => {
+    let context = "";
+    try {
+      context = deps.dayContext?.(date) ?? "";
+    } catch {
+      // context is best-effort; the sweep itself must still fire
+    }
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt <= backoff.length; attempt += 1) {
+      if (stopped) return "stopped";
+      try {
+        await deps.injectOverseer(
+          renderEodPrompt(deps.readPrompt(), date, context, deps.identity),
+          date,
+        );
+      } catch (err) {
+        lastErr = err;
+        safely(() => deps.onError?.(err));
+        if (attempt < backoff.length) await wait(backoff[attempt]!);
+        continue;
+      }
+      // Outside the try: a throwing observer must not read as a failed
+      // injection and re-inject a sweep that was delivered.
+      safely(() => deps.onFire?.(date));
+      return "delivered";
+    }
+    if (stopped) return "stopped";
+    safely(() => deps.onInjectFailed?.(date, lastErr, backoff.length + 1));
+    return "failed";
+  };
+
+  const armPoll = (): void => {
+    if (stopped || pollHandle !== null || deferred.length === 0) return;
+    pollHandle = setT(poll, deferPollMs);
+  };
+
+  /** A deferred day fires once the drain has lifted — oldest first, one at
+   * a time, never while another sweep is in flight; it leaves the set only
+   * when its fire has finished. */
+  const poll = (): void => {
+    pollHandle = null;
+    if (stopped || deferred.length === 0) return;
+    if (busy() || held()) {
+      armPoll();
+      return;
+    }
+    const date = deferred[0]!;
+    firing = true;
+    safely(() => deps.onDeferredFire?.(date));
+    void fire(date).then((outcome) => {
+      firing = false;
+      // Stopped before the day was settled (a shutdown during the retries):
+      // it stays in the persisted set, so the next boot fires it again.
+      if (outcome === "stopped") return;
+      deferred = deferred.filter((d) => d !== date);
+      persist();
+      armPoll();
+    });
   };
 
   const tick = (): void => {
@@ -270,45 +443,43 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       return;
     }
     const date = zoneDateString(target, deps.timeZone);
-    let held = false;
-    try {
-      held = deps.shouldHold?.() === true;
-    } catch {
-      held = false;
-    }
-    if (held) {
-      deps.onHeld?.(date);
+    const why: EodHoldReason | null = held() ? "draining" : busy() ? "sweep_in_flight" : null;
+    if (why !== null) {
+      if (!deferred.includes(date)) {
+        deferred = [...deferred, date].sort();
+        persist();
+      }
+      safely(() => deps.onHeld?.(date, why));
+      armPoll();
       target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
       arm();
       return;
     }
-    void (async () => {
-      try {
-        let context = "";
-        try {
-          context = deps.dayContext?.(date) ?? "";
-        } catch {
-          // context is best-effort; the sweep itself must still fire
-        }
-        await deps.injectOverseer(renderEodPrompt(deps.readPrompt(), date, context, deps.identity));
-        deps.onFire?.(date);
-      } catch (err) {
-        deps.onError?.(err);
-      } finally {
-        if (!stopped) {
-          target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
-          arm();
-        }
+    firing = true;
+    void fire(date).finally(() => {
+      firing = false;
+      if (!stopped) {
+        target = nextEodFire(now(), deps.timeHHMM, deps.timeZone);
+        arm();
       }
-    })();
+    });
   };
 
   arm();
+  // A day a drain deferred before a restart still fires once it lifts.
+  armPoll();
   return {
     nextFire: () => target,
+    deferredDates: () => [...deferred],
     stop: () => {
       stopped = true;
       if (handle !== null) clearT(handle);
+      if (pollHandle !== null) clearT(pollHandle);
+      for (const [h, release] of waits) {
+        clearT(h);
+        release();
+      }
+      waits.clear();
     },
   };
 }

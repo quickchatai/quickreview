@@ -52,6 +52,20 @@ function readServerRootKey(env: Record<string, string | undefined> = process.env
   }
 }
 
+/**
+ * [QCR PATCH 6] The primary key as its source says NOW — the same resolver and
+ * the same root-key guard `loadConfig` used at load. The client calls it after
+ * an auth failure: the daemon rewrites the sessions' ovcli.conf when its key
+ * rotates (S1), and a running session must not keep the dead one.
+ */
+export function rereadApiKey(env: Record<string, string | undefined> = process.env): string {
+  try {
+    return withoutRootKey(resolveOpenVikingCredentials(env), env).apiKey;
+  } catch {
+    return "";
+  }
+}
+
 /** Hand-maintained: this extension ships no manifest to read a version from. */
 export const EXTENSION_VERSION = "0.1.0";
 

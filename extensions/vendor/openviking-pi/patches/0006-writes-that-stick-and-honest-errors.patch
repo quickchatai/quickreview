@@ -1,0 +1,996 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -38,6 +38,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+      removed.
+   5. The memory tools can address a second OpenViking user namespace, built
+      from a second USER key when one is present in the environment.
++  6. A "directory busy" 409 is retried (a precondition 409 is not),
++     `viking_write` writes several entries as one batch, a refused key is
++     re-read once, and tool failures are reported as failures rather than
++     as empty results (2026-10-06).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig, ambient type declarations for uninstalled packages, three unused
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need five
++upstream ships it as an `examples/` directory, not a package, and we need six
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the five patches was tried as configuration first and does not
++Every one of the six patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Five numbered behaviour patches, applied in order over the vendored upstream
++Six numbered behaviour patches, applied in order over the vendored upstream
+ files, plus one unnumbered scaffolding patch. They live in `patches/` as
+-`git apply`-able diffs — verified by applying all six, in order, to a
++`git apply`-able diffs — verified by applying all seven, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+ byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+@@ -224,6 +224,48 @@ Touches: `qcr-namespaces.ts` (new), `config.ts` (`withoutRootKey` generic +
+ `env`), `index.ts` (client construction, health probe, the advertised
+ namespaces), `tools.ts` (routing, the `namespace` parameter, prefixed answers).
+ 
++### 0006 — writes that stick, errors that say so (S2)
++
++Four changes, one reason: memory writes were dropped and memory failures were
++read as empty answers.
++
++* **A busy 409 is retried; a precondition 409 is not.** The server's
++  batch-write takes a zero-timeout try-lock on its root directory, and a
++  second writer into the same directory gets `409 CONFLICT` with
++  `details.conflict_type = "path_busy"` and `retryable: true` — nothing was
++  checked or written. The tool used to answer every 409 with "someone else
++  edited the file — re-read it, never retry", for files nobody had touched:
++  6 of the 8 EOD writes on 2026-10-05 died that way. `batchWrite` and
++  `setTags` now retry exactly that answer, jittered and bounded (≤10 s,
++  `qcr-honest.ts` `BUSY_RETRY`, the same rule as the daemon's client); a
++  hash-precondition 409 carries no `path_busy` and stays a refusal.
++* **`viking_write` takes several entries as ONE batch-write.** `entries[]`
++  (or the old `uri` + `content` for one) — one request under the entries'
++  deepest common directory, so a day's lessons take the directory lock once
++  and land whole or not at all. The frozen EOD seed already said "it batches,
++  so write today's entries in one call"; now it is true. A batch is routed by
++  its entries' own addresses (`routeWrite`): in a two-key process (the
++  companion) a batch of reviewer-tree entries goes to the reviewer key
++  without naming the namespace, and one that straddles both trees is refused.
++* **No failure reads as "No results found".** `find()` returns the envelope
++  instead of collapsing every failure to `[]`, and `viking_search`,
++  `viking_read` and `viking_browse` name a refused key, a dead server or a
++  busy directory as what it is (`failureText`): every PR-session memory call
++  in history came back "No results found." or "No content at …", two of them
++  inside the five-week `Invalid API Key` outage. "No content" / "Not found" /
++  "Empty directory" now mean exactly that (a NOT_FOUND or an empty answer).
++* **A refused key is re-read once.** The primary client's key is re-resolved
++  from its source after an auth failure (`rereadApiKey` in `config.ts`) and
++  the request retried once, only if the key actually changed — the daemon
++  rewrites the sessions' `ovcli.conf` when its key rotates, and a running
++  session used to keep sending the dead one until it died.
++
++Touches: `qcr-honest.ts` (new), `qcr-write.ts` (`buildBatchWriteRequest`,
++`routeWrite`),
++`client.ts` (`rekey`, busy retry, `find` / `readLevel` / `lsResponse` /
++`statResponse` envelopes), `config.ts` (`rereadApiKey`), `tools.ts`,
++`index.ts` (the banner, the re-reader).
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+@@ -236,16 +278,16 @@ git -C /tmp/ov checkout <new-tag>
+ for p in extensions/vendor/openviking-pi/patches/0*.patch; do
+   git apply --3way "$p" || echo "RESOLVE: $p"
+ done
+-# 3. Re-verify all five patches, then:
++# 3. Re-verify all six patches, then:
+ timeout 900 npm test && npm run build
+ ```
+ 
+ Then update `extension_commit` and `version` in `config.toml [openviking]`,
+ the base commit in `NOTICE` and in the table above, and re-run the live
+-verification below. A bump re-verifies **all five** patches — a patch that no
++verification below. A bump re-verifies **all six** patches — a patch that no
+ longer applies is a patch whose reason may have changed, not a patch to drop.
+ 
+-`tests/openviking-fork.test.ts` is the guard rail: it asserts the five patches
++`tests/openviking-fork.test.ts` is the guard rail: it asserts the six patches
+ are still present (markers, and the *absence* of what each one removed) and
+ that the pinned commit here matches `config.toml`. It cannot tell you whether
+ upstream grew a *new* compaction handler or a *new* write tool — read the
+diff --git a/extensions/vendor/openviking-pi/client.ts b/extensions/vendor/openviking-pi/client.ts
+--- a/extensions/vendor/openviking-pi/client.ts
++++ b/extensions/vendor/openviking-pi/client.ts
+@@ -1,4 +1,11 @@
+ import type { OVConfig } from "./config.js";
++// [QCR PATCH 6]
++import {
++  shouldRekey,
++  withBusyRetry,
++  type BusyRetryHooks,
++  type BusyRetryNote,
++} from "./qcr-honest.js";
+ 
+ // --- OV API Response Shapes ---
+ // All OV responses wrap in: { status: "ok"|"error", result: T, error?: {...}, ... }
+@@ -101,6 +108,17 @@ export class OVClient {
+ 
+   private resolvedSpaces: Map<string, string> = new Map();
+ 
++  /** [QCR PATCH 6] Re-reads this client's key from its source (the
++   * ovcli.conf the daemon rewrites when its key rotates). Set by index.ts on
++   * the primary client only — an env-supplied key cannot change in-process.
++   * On an auth failure the request is retried ONCE, and only when the
++   * re-read key differs (`shouldRekey`). */
++  rekey: (() => string) | null = null;
++
++  /** [QCR PATCH 6] The busy retry's clock and sleep — real ones in pi; a
++   * test injects instant ones. */
++  retryHooks: BusyRetryHooks = {};
++
+   private static RESERVED_USER = new Set(["memories"]);
+   private static RESERVED_AGENT = new Set(["memories", "skills", "instructions", "workspaces"]);
+ 
+@@ -128,6 +146,28 @@ export class OVClient {
+ 
+   /** Core fetch wrapper. Returns { ok, result } after parsing OV's { status, result } envelope. */
+   async fetchJSON<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<OVResponse<T>> {
++    const res = await this.fetchOnce<T>(path, init, timeoutMs);
++    // [QCR PATCH 6] A refused key is re-read once from its source: the daemon
++    // rewrites the sessions' ovcli.conf the moment its key rotates, and a
++    // session that kept the key it loaded with stayed locked out until it
++    // died. Retried only when the re-read key is actually different.
++    if (!res.ok && this.rekey) {
++      let fresh = "";
++      try {
++        fresh = this.rekey() ?? "";
++      } catch {
++        fresh = "";
++      }
++      if (shouldRekey(res, this.apiKey, fresh)) {
++        this.apiKey = fresh;
++        return this.fetchOnce<T>(path, init, timeoutMs);
++      }
++    }
++    return res;
++  }
++
++  /** [QCR PATCH 6] One attempt of `fetchJSON` (the upstream body, unchanged). */
++  private async fetchOnce<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<OVResponse<T>> {
+     try {
+       const controller = new AbortController();
+       const timer = setTimeout(() => controller.abort(), timeoutMs);
+@@ -264,11 +304,16 @@ export class OVClient {
+ 
+   // ========== Search ==========
+ 
+-  /** POST /api/v1/search/find — basic vector search */
++  /** POST /api/v1/search/find — basic vector search.
++   *
++   * [QCR PATCH 6] Returns the ENVELOPE, not a bare list: upstream returned
++   * `[]` for every failure, a refused key included, so `viking_search`
++   * answered "No results found." through five weeks of `Invalid API Key`. A
++   * failure is now a failure the tool can name (`failureText`). */
+   async find(
+     query: string,
+     opts?: { targetUri?: string; topK?: number; scoreThreshold?: number },
+-  ): Promise<OVSearchResult[]> {
++  ): Promise<OVResponse<OVSearchResult[]>> {
+     const body: Record<string, unknown> = { query };
+     if (opts?.targetUri) body.target_uri = opts.targetUri;
+     if (opts?.topK) body.limit = opts.topK;
+@@ -277,7 +322,8 @@ export class OVClient {
+     const res = await this.fetchJSON<any>("/api/v1/search/find", {
+       method: "POST", body: JSON.stringify(body),
+     }, 10000);
+-    if (!res.ok || !res.result) return [];
++    if (!res.ok) return { ...res, result: null };
++    if (!res.result) return { ok: true, result: [], traceId: res.traceId };
+ 
+     // OV returns { memories: [...], resources: [...], skills: [...], total }
+     const all: OVSearchResult[] = [];
+@@ -298,7 +344,7 @@ export class OVClient {
+         }
+       }
+     }
+-    return all;
++    return { ok: true, result: all, traceId: res.traceId };
+   }
+ 
+   // ========== Content ==========
+@@ -317,11 +363,19 @@ export class OVClient {
+   async batchWrite(
+     request: { root_uri: string; operations: unknown[]; wait: boolean },
+     timeoutMs = 30000,
+-  ): Promise<OVResponse<OVBatchWriteResult>> {
+-    return this.fetchJSON<OVBatchWriteResult>(
+-      "/api/v1/content/batch-write",
+-      { method: "POST", body: JSON.stringify(request) },
+-      timeoutMs,
++  ): Promise<OVResponse<OVBatchWriteResult> & BusyRetryNote> {
++    // [QCR PATCH 6] A BUSY 409 (`details.conflict_type = "path_busy"`: the
++    // directory lock was held, nothing was checked or written) is retried,
++    // jittered and bounded; a precondition 409 is returned as the refusal it
++    // is. See qcr-honest.ts.
++    return withBusyRetry(
++      () =>
++        this.fetchJSON<OVBatchWriteResult>(
++          "/api/v1/content/batch-write",
++          { method: "POST", body: JSON.stringify(request) },
++          timeoutMs,
++        ),
++      this.retryHooks,
+     );
+   }
+ 
+@@ -333,14 +387,61 @@ export class OVClient {
+    */
+   async setTags(uri: string, tags: string[], mode: "append" | "replace" = "append"): Promise<boolean> {
+     if (tags.length === 0) return true;
+-    const res = await this.fetchJSON<any>(
+-      "/api/v1/fs/attrs/set_tags",
+-      { method: "POST", body: JSON.stringify({ uri, tags, mode }) },
+-      10000,
++    // [QCR PATCH 6] set_tags takes the same lock family; a busy answer is
++    // retried like a write's.
++    const res = await withBusyRetry(
++      () =>
++        this.fetchJSON<any>(
++          "/api/v1/fs/attrs/set_tags",
++          { method: "POST", body: JSON.stringify({ uri, tags, mode }) },
++          10000,
++        ),
++      this.retryHooks,
+     );
+     return res.ok;
+   }
+ 
++  /** [QCR PATCH 6] One read at a detail level, as an ENVELOPE — `abstract`,
++   * `overview` and `readContent` below collapse every failure to null, which
++   * the tools used to render as "No content at …" for a refused key too. */
++  async readLevel(uri: string, level: "abstract" | "overview" | "full"): Promise<OVResponse<string>> {
++    const path = level === "full" ? "read" : level;
++    return this.fetchJSON<string>(
++      `/api/v1/content/${path}?uri=${encodeURIComponent(uri)}`,
++      undefined, 10000,
++    );
++  }
++
++  /** [QCR PATCH 6] `fs/ls` as an envelope (`ls()` keeps upstream's `[]`). */
++  async lsResponse(uri: string): Promise<OVResponse<OVDirEntry[]>> {
++    const res = await this.fetchJSON<any[]>(
++      `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}`,
++      undefined, 10000,
++    );
++    if (!res.ok) return { ...res, result: null };
++    const rows = Array.isArray(res.result) ? res.result : [];
++    return {
++      ok: true,
++      result: rows.map(e => ({
++        uri: e.uri ?? "",
++        name: e.name ?? uriBasename(e.uri ?? ""),
++        isDir: e.isDir ?? false,
++        size: e.size ?? 0,
++        mode: e.mode ?? 0,
++        modTime: e.modTime ?? "",
++        abstract: e.abstract ?? "",
++      })),
++    };
++  }
++
++  /** [QCR PATCH 6] `fs/stat` as an envelope (`stat()` keeps upstream's null). */
++  async statResponse(uri: string): Promise<OVResponse<OVStatInfo>> {
++    return this.fetchJSON<OVStatInfo>(
++      `/api/v1/fs/stat?uri=${encodeURIComponent(uri)}`,
++      undefined, 10000,
++    );
++  }
++
+   /** GET /api/v1/content/abstract — L0 summary */
+   async abstract(uri: string): Promise<string | null> {
+     const res = await this.fetchJSON<string>(
+diff --git a/extensions/vendor/openviking-pi/config.ts b/extensions/vendor/openviking-pi/config.ts
+--- a/extensions/vendor/openviking-pi/config.ts
++++ b/extensions/vendor/openviking-pi/config.ts
+@@ -52,6 +52,20 @@ function readServerRootKey(env: Record<string, string | undefined> = process.env
+   }
+ }
+ 
++/**
++ * [QCR PATCH 6] The primary key as its source says NOW — the same resolver and
++ * the same root-key guard `loadConfig` used at load. The client calls it after
++ * an auth failure: the daemon rewrites the sessions' ovcli.conf when its key
++ * rotates (S1), and a running session must not keep the dead one.
++ */
++export function rereadApiKey(env: Record<string, string | undefined> = process.env): string {
++  try {
++    return withoutRootKey(resolveOpenVikingCredentials(env), env).apiKey;
++  } catch {
++    return "";
++  }
++}
++
+ /** Hand-maintained: this extension ships no manifest to read a version from. */
+ export const EXTENSION_VERSION = "0.1.0";
+ 
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -11,7 +11,7 @@
+  *
+  * ── QCR FORK ────────────────────────────────────────────────────────────────
+  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
+- * extension. Five numbered patches; every hunk carries a `[QCR PATCH n]`
++ * extension. Six numbered patches; every hunk carries a `[QCR PATCH n]`
+  * marker so a rebase is a search, not an audit. See README.md here.
+  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
+  *             the sole owner of compaction) and takeover forced off.
+@@ -20,12 +20,16 @@
+  *   PATCH 4 — viking_write (durable content/batch-write), the ONLY write tool.
+  *   PATCH 5 — a second memory namespace (the companion's reviewer key), tools
+  *             only; a leaf and a single-keyed review session are unchanged.
++ *   PATCH 6 — writes that stick: a busy 409 is retried (a precondition 409
++ *             is not), viking_write takes several entries as ONE batch, a
++ *             refused key is re-read once, and no failure reads as "No
++ *             results found".
+  * ────────────────────────────────────────────────────────────────────────────
+  */
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+ import { appendFileSync, mkdirSync } from "node:fs";
+ import { dirname } from "node:path";
+-import { loadConfigFromModuleUrl, type OVConfig } from "./config.js";
++import { loadConfigFromModuleUrl, rereadApiKey, type OVConfig } from "./config.js";
+ import { OVClient } from "./client.js";
+ import { RecallManager } from "./recall.js";
+ import { SyncManager } from "./sync.js";
+@@ -51,6 +55,11 @@ export default async function (pi: ExtensionAPI) {
+ 
+   // --- Initialize modules ---
+   const client = new OVClient(config);
++  // [QCR PATCH 6] The primary key is re-read from its source after an auth
++  // failure (the daemon rewrites ovcli.conf on a key rotation). The extra
++  // namespaces' keys come from the environment, which cannot change
++  // in-process, so they get no re-reader.
++  client.rekey = () => rereadApiKey();
+   // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
+   // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
+   // local pi read AND write reviewer memory as well as its own. Same base URL,
+diff --git a/extensions/vendor/openviking-pi/qcr-write.ts b/extensions/vendor/openviking-pi/qcr-write.ts
+--- a/extensions/vendor/openviking-pi/qcr-write.ts
++++ b/extensions/vendor/openviking-pi/qcr-write.ts
+@@ -22,6 +22,8 @@
+ // therefore the ONE write path — findings §3.3.
+ 
+ import { createHash } from "node:crypto";
++// [QCR PATCH 6] a batch is routed by its entries (`routeWrite`)
++import { routeNamespace, type NamespaceRoute } from "./qcr-namespaces.js";
+ 
+ /** Memory targets keep a text-extension allowlist server-side; these are the
+  * two we ever author. */
+@@ -219,3 +221,178 @@ export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult
+     },
+   };
+ }
++
++// ---- [QCR PATCH 6] several entries, ONE batch-write -------------------------
++//
++// The EOD curator writes a day's lessons together, and the frozen sweep seed
++// already tells it "it batches, so write today's entries in one call" — which
++// was not true: one `viking_write` was one file, so a day's entries went out
++// as parallel calls into ONE directory, and the server's zero-timeout
++// directory lock answered most of them busy (6 of 8 on 2026-10-05). One
++// request with every entry under one root takes that lock once. The server
++// checks every precondition before it writes anything, so the batch lands
++// whole or not at all.
++
++/** The most entries one call may carry (the server's own cap is 256). */
++export const MAX_BATCH_ENTRIES = 64;
++
++export interface BatchEntryInput {
++  uri?: unknown;
++  content?: unknown;
++  tags?: unknown;
++  mode?: unknown;
++  expect_hash?: unknown;
++}
++
++/** One entry (`uri` + `content`, as `WriteRequestInput`) or several
++ * (`entries`) — every field optional, since either form leaves the other's
++ * fields out. */
++export interface BatchWriteInput {
++  uri?: unknown;
++  content?: unknown;
++  tags?: unknown;
++  mode?: unknown;
++  expect_hash?: unknown;
++  wait?: unknown;
++  entries?: unknown;
++}
++
++export interface BatchEntryBuilt {
++  uri: string;
++  body: string;
++  hash: string;
++  tags: string[];
++}
++
++export interface BatchRequestOk {
++  ok: true;
++  request: BatchWriteRequest;
++  entries: BatchEntryBuilt[];
++}
++
++export type BatchRequestResult = BatchRequestOk | WriteRequestError;
++
++/** The deepest directory every URI sits under (`viking://a/b/c.md` and
++ * `viking://a/b/d/e.md` → `viking://a/b`); "" when they share none. */
++export function commonParentUri(uris: readonly string[]): string {
++  const dirs = uris.map((u) => parentUri(u));
++  if (dirs.length === 0 || dirs.some((d) => d === "")) return "";
++  const split = dirs.map((d) => d.slice("viking://".length).split("/"));
++  const first = split[0]!;
++  let depth = first.length;
++  for (const parts of split.slice(1)) {
++    let i = 0;
++    while (i < depth && i < parts.length && parts[i] === first[i]) i += 1;
++    depth = i;
++  }
++  return depth === 0 ? "" : `viking://${first.slice(0, depth).join("/")}`;
++}
++
++/**
++ * Which memory tree a `viking_write` call writes into. One entry routes
++ * exactly as every other tool call does (`routeNamespace` over its `uri` and
++ * `namespace`). A batch carries no top-level `uri`, so it routes by its
++ * ENTRIES: each one by that same rule (its own `uri`, the call's
++ * `namespace`), and every entry must land in the same tree. Routing the bare
++ * top-level params instead fell back to this process's own tree, and then
++ * refused a batch whose every entry was in the reviewer's as "more than one
++ * memory tree" — which was false.
++ */
++export function routeWrite(
++  params: BatchWriteInput & { namespace?: unknown },
++  names: readonly string[],
++): NamespaceRoute {
++  if (!Array.isArray(params.entries) || params.entries.length === 0) {
++    return routeNamespace(params, names);
++  }
++  let routed: string | null = null;
++  for (const [i, raw] of params.entries.entries()) {
++    const entry = (raw && typeof raw === "object" ? raw : {}) as BatchEntryInput;
++    const each = routeNamespace({ uri: entry.uri, namespace: params.namespace }, names);
++    if (!each.ok) return { ok: false, error: `Entry ${i + 1}: ${each.error}` };
++    if (routed !== null && each.namespace !== routed) {
++      return {
++        ok: false,
++        error: `The entries address more than one memory tree (${routed} and ${each.namespace}) — write each tree's entries in a separate call.`,
++      };
++    }
++    routed = each.namespace;
++  }
++  return { ok: true, namespace: routed! };
++}
++
++/**
++ * Validate + assemble ONE `content/batch-write` for one or many entries.
++ * Either `uri` + `content` (one entry — exactly `buildWriteRequest`) or
++ * `entries[]`, never both. Every entry is validated by the same rules as a
++ * single write (`create_if_absent` by default, `replace` only with its
++ * `expect_hash`); they must not repeat a target, and they share one root —
++ * the deepest directory they all sit under.
++ */
++export function buildBatchWriteRequest(input: BatchWriteInput): BatchRequestResult {
++  const hasSingle = input.uri !== undefined || input.content !== undefined;
++  if (input.entries === undefined) {
++    const one = buildWriteRequest({
++      uri: input.uri,
++      content: input.content,
++      tags: input.tags,
++      mode: input.mode,
++      expect_hash: input.expect_hash,
++      wait: input.wait,
++    });
++    if (!one.ok) return one;
++    return {
++      ok: true,
++      request: one.request,
++      entries: [
++        { uri: one.request.operations[0]!.uri, body: one.body, hash: one.hash, tags: one.tags },
++      ],
++    };
++  }
++  if (hasSingle) {
++    return {
++      ok: false,
++      error: "Give either `uri` + `content` (one entry) or `entries` (several) — not both.",
++    };
++  }
++  if (!Array.isArray(input.entries) || input.entries.length === 0) {
++    return { ok: false, error: "`entries` must be a non-empty list of {uri, content, …}." };
++  }
++  if (input.entries.length > MAX_BATCH_ENTRIES) {
++    return {
++      ok: false,
++      error: `Too many entries (${input.entries.length}); one call carries at most ${MAX_BATCH_ENTRIES}.`,
++    };
++  }
++  const built: BatchEntryBuilt[] = [];
++  const operations: BatchWriteOperation[] = [];
++  for (const [i, raw] of input.entries.entries()) {
++    const entry = (raw && typeof raw === "object" ? raw : {}) as BatchEntryInput;
++    const one = buildWriteRequest({
++      uri: entry.uri,
++      content: entry.content,
++      tags: entry.tags,
++      mode: entry.mode,
++      expect_hash: entry.expect_hash,
++    });
++    if (!one.ok) return { ok: false, error: `Entry ${i + 1}: ${one.error} Nothing was written.` };
++    const op = one.request.operations[0]!;
++    if (operations.some((o) => o.uri === op.uri)) {
++      return { ok: false, error: `Entry ${i + 1}: "${op.uri}" appears twice in one batch.` };
++    }
++    operations.push(op);
++    built.push({ uri: op.uri, body: one.body, hash: one.hash, tags: one.tags });
++  }
++  const root = commonParentUri(operations.map((o) => o.uri));
++  if (!root) {
++    return {
++      ok: false,
++      error: "The entries share no directory, so they cannot go in one batch — write them in separate calls.",
++    };
++  }
++  return {
++    ok: true,
++    entries: built,
++    request: { root_uri: root, operations, wait: input.wait === true },
++  };
++}
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -2,8 +2,10 @@ import { Type } from "typebox";
+ import { StringEnum } from "@earendil-works/pi-ai";
+ import type { OVClient } from "./client.js";
+ import type { SyncManager } from "./sync.js";
+-// [QCR PATCH 4]
+-import { buildWriteRequest } from "./qcr-write.js";
++// [QCR PATCH 4] (the batch builder and its router are [QCR PATCH 6])
++import { buildBatchWriteRequest, routeWrite } from "./qcr-write.js";
++// [QCR PATCH 6]
++import { failureText, isNotFound, isPreconditionConflict } from "./qcr-honest.js";
+ // [QCR PATCH 5]
+ import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
+ 
+@@ -57,9 +59,13 @@ export function registerTools(
+   /** Every answer names the tree it came from — the model must never have to
+    * infer which memory it just touched. */
+   const scoped = (ns: ToolNamespace, text: string) => (multi ? `[${ns.name}] ${text}` : text);
+-  /** Route one call, or explain why it cannot be routed. */
+-  const pick = (params: any): { ok: true; ns: ToolNamespace } | { ok: false; error: string } => {
+-    const routed = routeNamespace(params ?? {}, names);
++  /** Route one call, or explain why it cannot be routed. [QCR PATCH 6] The
++   * write tool passes its own router: a batch routes by its entries. */
++  const pick = (
++    params: any,
++    route: (p: any, n: readonly string[]) => ReturnType<typeof routeNamespace> = routeNamespace,
++  ): { ok: true; ns: ToolNamespace } | { ok: false; error: string } => {
++    const routed = route(params ?? {}, names);
+     if (!routed.ok) return { ok: false, error: routed.error };
+     return { ok: true, ns: spaces.find((s) => s.name.toLowerCase() === routed.namespace) ?? own };
+   };
+@@ -92,10 +98,20 @@ export function registerTools(
+       if (!ns.client.connected) {
+         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+-      const results = await ns.client.find(params.query, {
++      const res = await ns.client.find(params.query, {
+         targetUri: params.scope,
+         topK: params.limit ?? 10,
+       });
++      // [QCR PATCH 6] A failure is said as one — never "No results found".
++      if (!res.ok) {
++        return {
++          content: [{ type: "text", text: scoped(ns, failureText(res, "searched")) }],
++          details: multi
++            ? { namespace: ns.name, error: true, status: res.status }
++            : { error: true, status: res.status },
++        };
++      }
++      const results = res.result ?? [];
+       if (results.length === 0) {
+         return { content: [{ type: "text", text: scoped(ns, "No results found.") }] };
+       }
+@@ -135,12 +151,20 @@ export function registerTools(
+       if (!ns.client.connected) {
+         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+-      let content: string | null = null;
+-      switch (params.level) {
+-        case "abstract": content = await ns.client.abstract(params.uri); break;
+-        case "overview": content = await ns.client.overview(params.uri); break;
+-        case "full":     content = await ns.client.readContent(params.uri); break;
++      // [QCR PATCH 6] One envelope-returning read: "No content" only when the
++      // server said the path is not there (or holds nothing) — a refused key
++      // or a dead server is named as such.
++      const level = params.level === "abstract" || params.level === "overview" ? params.level : "full";
++      const res = await ns.client.readLevel(params.uri, level);
++      if (!res.ok && !isNotFound(res)) {
++        return {
++          content: [{ type: "text", text: scoped(ns, failureText(res, "read")) }],
++          details: multi
++            ? { namespace: ns.name, error: true, status: res.status }
++            : { error: true, status: res.status },
++        };
+       }
++      const content = res.ok && typeof res.result === "string" ? res.result : "";
+       if (!content) {
+         return { content: [{ type: "text", text: scoped(ns, `No content at ${params.uri}`) }] };
+       }
+@@ -175,12 +199,22 @@ export function registerTools(
+       }
+       const uri = params.uri ?? "viking://";
+       if (params.action === "stat") {
+-        const info = await ns.client.stat(uri);
++        // [QCR PATCH 6] "Not found" only when it is not found.
++        const st = await ns.client.statResponse(uri);
++        if (!st.ok && !isNotFound(st)) {
++          return { content: [{ type: "text", text: scoped(ns, failureText(st, "listed")) }] };
++        }
++        const info = st.ok ? st.result : null;
+         if (!info) return { content: [{ type: "text", text: scoped(ns, `Not found: ${uri}`) }] };
+         return { content: [{ type: "text", text: scoped(ns, JSON.stringify(info, null, 2)) }] };
+       }
+       // list
+-      const entries = await ns.client.ls(uri);
++      // [QCR PATCH 6] "Empty directory" only when it IS empty (or absent).
++      const listed = await ns.client.lsResponse(uri);
++      if (!listed.ok && !isNotFound(listed)) {
++        return { content: [{ type: "text", text: scoped(ns, failureText(listed, "listed")) }] };
++      }
++      const entries = listed.ok ? (listed.result ?? []) : [];
+       if (entries.length === 0) {
+         return { content: [{ type: "text", text: scoped(ns, `Empty directory: ${uri}`) }] };
+       }
+@@ -210,20 +244,32 @@ export function registerTools(
+       name: "viking_write",
+       label: "Viking Write",
+       description:
+-        "Durably write a memory file to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote." + nsNote,
+-      promptSnippet: "Durably write a memory file to OpenViking",
++        "Durably write memory files to OpenViking (content/batch-write). Use this — not a session message — for anything that must survive the session: review lessons, project gotchas, decisions. One entry: `uri` + `content`. Several (a day's lessons): `entries`, written as ONE batch that lands whole or not at all. mode 'create' fails if the file exists; mode 'replace' requires expect_hash and fails if the file changed since you read it. Returns the hash of what it wrote." + nsNote,
++      promptSnippet: "Durably write memory files to OpenViking",
+       promptGuidelines: [
+         "Write one self-contained fact or lesson per file; a memory read months later has no conversation around it.",
++        "Several entries at once go in ONE call as `entries` — never as parallel calls into the same directory.",
+         "Prefer mode 'create' with a fresh filename. Only 'replace' an entry you just read, passing its hash as expect_hash.",
+-        "A 409 means someone else edited the file — re-read it and decide, never retry blindly.",
++        "A 409 REFUSED means the file changed (or already exists) — re-read it and decide, never retry blindly. A busy directory is retried for you; if it stays busy, try again in a minute.",
+         ...nsGuidelines,
+       ],
+       parameters: Type.Object({
+-        uri: Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md')" }),
+-        content: Type.String({ description: "Markdown body of the memory" }),
++        uri: Type.Optional(Type.String({ description: "Target viking:// URI, ending in .md (e.g. 'viking://user/reviewer/memories/experiences/pr-5312-migration.md'). With `content`, for ONE entry." })),
++        content: Type.Optional(Type.String({ description: "Markdown body of the memory (one entry)" })),
+         tags: Type.Optional(Type.Array(Type.String(), { description: "Convention tags without '#', e.g. ['pinned','review-ops']" })),
+         mode: Type.Optional(StringEnum(["create", "replace"] as const)),
+         expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
++        // [QCR PATCH 6] several entries, one batch-write under one root.
++        entries: Type.Optional(Type.Array(
++          Type.Object({
++            uri: Type.String({ description: "Target viking:// URI, ending in .md" }),
++            content: Type.String({ description: "Markdown body of the memory" }),
++            tags: Type.Optional(Type.Array(Type.String())),
++            mode: Type.Optional(StringEnum(["create", "replace"] as const)),
++            expect_hash: Type.Optional(Type.String()),
++          }),
++          { description: "Several entries written as ONE batch (instead of uri + content). They must share a directory; the batch lands whole or not at all." },
++        )),
+         wait: Type.Optional(Type.Boolean({ description: "Block until the search index is refreshed (slow — costs ~1.6 core-seconds). Default false; the bytes are durable either way." })),
+         ...nsParam,
+       }),
+@@ -233,7 +279,9 @@ export function registerTools(
+       ) {
+         // [QCR PATCH 5] Route BEFORE building the request: a write under the
+         // wrong key is the one mistake here that is both silent and durable.
+-        const routed = pick(params);
++        // [QCR PATCH 6] A batch routes by its entries' own addresses, every
++        // one by the single-write rule, and may not straddle trees.
++        const routed = pick(params, routeWrite);
+         if (!routed.ok) {
+           return { content: [{ type: "text", text: `${routed.error} Nothing was written.` }], details: { written: false } };
+         }
+@@ -241,50 +289,65 @@ export function registerTools(
+         if (!ns.client.connected) {
+           return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable — nothing was written.") }] };
+         }
+-        const built = buildWriteRequest(params ?? {});
++        const built = buildBatchWriteRequest(params ?? {});
+         if (!built.ok) {
+           return { content: [{ type: "text", text: built.error }], details: { written: false } };
+         }
+ 
+         const res = await ns.client.batchWrite(built.request);
+         if (!res.ok) {
++          // [QCR PATCH 6] Only a PRECONDITION 409 is "someone edited this";
++          // a busy directory was retried (and named as busy if it stayed so),
++          // and a refused key is named as the outage it is.
++          const conflict = isPreconditionConflict(res);
+           const message = res.error?.message || `HTTP ${res.status ?? 0}`;
+-          const conflict = res.status === 409;
+           return {
+             content: [{
+               type: "text",
+               text: scoped(ns, conflict
+-                ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.request.operations[0]?.uri} and decide on the current content.`
+-                : `Write failed: ${message} Nothing was written.`),
++                ? `Write REFUSED (409): ${message} Nothing was written. Re-read ${built.entries.map((e) => e.uri).join(", ")} and decide on the current content.`
++                : failureText(res, "written")),
+             }],
+             details: multi
+-              ? { namespace: ns.name, written: false, status: res.status, conflict }
+-              : { written: false, status: res.status, conflict },
++              ? { namespace: ns.name, written: false, status: res.status, conflict, busy: res.stillBusy }
++              : { written: false, status: res.status, conflict, busy: res.stillBusy },
+           };
+         }
+ 
+         const result = res.result;
+-        const uri = built.request.operations[0]?.uri ?? "";
+-        const outcome = (result?.created ?? []).includes(uri)
+-          ? "created"
+-          : (result?.updated ?? []).includes(uri)
+-            ? "updated"
+-            : (result?.unchanged ?? []).includes(uri)
+-              ? "unchanged (byte-identical)"
+-              : "written";
+-        // Best effort, deliberately after the durable write and never fatal:
+-        // the tags are already in the body text.
+-        const tagged = built.tags.length > 0 ? await ns.client.setTags(uri, built.tags) : true;
+-        const details = { written: true, uri, outcome, hash: built.hash, tags: built.tags, tagged, result };
++        const lines: string[] = [];
++        const written: Array<Record<string, unknown>> = [];
++        for (const entry of built.entries) {
++          const outcome = (result?.created ?? []).includes(entry.uri)
++            ? "created"
++            : (result?.updated ?? []).includes(entry.uri)
++              ? "updated"
++              : (result?.unchanged ?? []).includes(entry.uri)
++                ? "unchanged (byte-identical)"
++                : "written";
++          // Best effort, deliberately after the durable write and never fatal:
++          // the tags are already in the body text.
++          const tagged = entry.tags.length > 0 ? await ns.client.setTags(entry.uri, entry.tags) : true;
++          written.push({ uri: entry.uri, outcome, hash: entry.hash, tags: entry.tags, tagged });
++          lines.push(
++            `${entry.uri} ${outcome}. hash=${entry.hash}` +
++              (entry.tags.length > 0
++                ? ` tags=${entry.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
++                : ""),
++          );
++        }
++        const single = built.entries.length === 1 ? written[0]! : null;
++        const details = single
++          ? { written: true, ...single, result, busyRetries: res.busyRetries }
++          : { written: true, entries: written, result, busyRetries: res.busyRetries };
+         return {
+           content: [{
+             type: "text",
+             text: scoped(ns,
+-              `${uri} ${outcome}. hash=${built.hash}` +
+-              (built.tags.length > 0
+-                ? ` tags=${built.tags.map((t) => `#${t}`).join(" ")}${tagged ? "" : " (body only — the retrieval tag list was not updated)"}`
+-                : "") +
+-              " Pass that hash as expect_hash to replace this entry later."),
++              lines.join("\n") +
++              (built.entries.length === 1
++                ? " Pass that hash as expect_hash to replace this entry later."
++                : "\nPass an entry's hash as expect_hash to replace it later.")),
+           }],
+           details: multi ? { namespace: ns.name, ...details } : details,
+         };
+diff --git a/extensions/vendor/openviking-pi/qcr-honest.ts b/extensions/vendor/openviking-pi/qcr-honest.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/vendor/openviking-pi/qcr-honest.ts
+@@ -0,0 +1,183 @@
++// QCR FORK — file added by PATCH 6 (writes that stick, errors that say so).
++// Not upstream. S2.
++//
++// The pure half of three fixes, kept free of pi and of the OV client so
++// `tests/openviking-fork.test.ts` can exercise it (`tools.ts` cannot be
++// imported from a test: it pulls `typebox` and `@earendil-works/pi-ai`).
++//
++// 1. A BUSY 409 IS RETRIED, A PRECONDITION 409 IS NOT. The server's
++//    batch-write takes a zero-timeout try-lock on its root directory; a
++//    second writer into the same directory gets `409 CONFLICT` with
++//    `details.conflict_type = "path_busy"` and `retryable: true` — nothing was
++//    checked and nothing was written (server/error_mapping.py). The tool used
++//    to tell the model "someone else edited the file — re-read it, never
++//    retry", for a file nobody had touched: 6 of the 8 EOD writes on
++//    2026-10-05 died that way. `withBusyRetry` retries ONLY that answer,
++//    jittered and bounded (≤10 s in total); a hash-precondition 409 carries
++//    the same status and code but no `path_busy`, and stays a refusal.
++// 2. AN ERROR IS NEVER "NO RESULTS". `find()` turned every failure — a
++//    refused key included — into an empty list, so `viking_search` said "No
++//    results found." through five weeks of `Invalid API Key` (every PR-session
++//    memory call in history returned that, or "No content at …").
++//    `failureText` names what actually happened, and says plainly that it is
++//    an outage, not an empty answer.
++// 3. A ROTATED KEY IS PICKED UP. The extension reads its key once, at load;
++//    the daemon rewrites the sessions' ovcli.conf when its key changes
++//    (S1), but a running session kept sending the dead one.
++//    `shouldRekey` is the rule the client applies on an auth failure: re-read
++//    the credential once, and retry once only if it actually changed.
++
++/** What a client answer looks like here — the `OVResponse` shape, loosened
++ * so this file does not import the client. */
++export interface AnswerLike {
++  ok: boolean;
++  status?: number;
++  error?: unknown;
++}
++
++/** The `details.conflict_type` the server stamps on a lock it could not take. */
++export const BUSY_CONFLICT_TYPE = "path_busy";
++
++/** Retry bound for a busy answer: at most `retries` more attempts, the n-th
++ * after a jittered `min(capMs, baseMs·2ⁿ)` wait (half to all of it), never
++ * past `budgetMs` from the first attempt. Mirrors the daemon client's
++ * `BUSY_RETRY_DEFAULTS` (src/openviking/client.ts) — two processes, one rule. */
++export const BUSY_RETRY = Object.freeze({
++  retries: 4,
++  baseMs: 250,
++  capMs: 2000,
++  budgetMs: 10_000,
++});
++
++/** Is this answer the server's "directory busy, try again"? Keyed on
++ * `details.conflict_type` alone — never the message, never the status alone. */
++export function isBusy(res: AnswerLike): boolean {
++  if (res.ok || res.status !== 409) return false;
++  const error = res.error;
++  if (!error || typeof error !== "object") return false;
++  const details = (error as { details?: unknown }).details;
++  if (!details || typeof details !== "object") return false;
++  return (details as { conflict_type?: unknown }).conflict_type === BUSY_CONFLICT_TYPE;
++}
++
++/** Is this answer a precondition refusal — a 409 that is NOT busy? */
++export function isPreconditionConflict(res: AnswerLike): boolean {
++  return !res.ok && res.status === 409 && !isBusy(res);
++}
++
++/** The wait before busy retry `retry` (0-based). Pure — `random` injected. */
++export function busyDelay(retry: number, random: () => number = Math.random): number {
++  const step = Math.min(BUSY_RETRY.capMs, BUSY_RETRY.baseMs * 2 ** Math.max(0, retry));
++  const r = Math.min(1, Math.max(0, random()));
++  return Math.round(step * (0.5 + r / 2));
++}
++
++export interface BusyRetryHooks {
++  sleep?: (ms: number) => Promise<void>;
++  random?: () => number;
++  now?: () => number;
++}
++
++/** What `withBusyRetry` adds to the answer it returns. */
++export interface BusyRetryNote {
++  /** How many busy answers were retried. */
++  busyRetries: number;
++  /** True when the LAST answer was still busy — the budget ran out. */
++  stillBusy: boolean;
++}
++
++const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
++
++/**
++ * Run `attempt` and retry it while — and only while — it answers busy, within
++ * `BUSY_RETRY`. Safe for any request: a busy answer means the server took no
++ * lock, so it checked and wrote nothing, and a repeat cannot double a write.
++ */
++export async function withBusyRetry<T extends AnswerLike>(
++  attempt: () => Promise<T>,
++  hooks: BusyRetryHooks = {},
++): Promise<T & BusyRetryNote> {
++  const sleep = hooks.sleep ?? defaultSleep;
++  const random = hooks.random ?? Math.random;
++  const now = hooks.now ?? Date.now;
++  const started = now();
++  for (let retry = 0; ; retry += 1) {
++    const res = await attempt();
++    if (!isBusy(res)) return { ...res, busyRetries: retry, stillBusy: false };
++    const delay = busyDelay(retry, random);
++    if (retry >= BUSY_RETRY.retries || now() - started + delay > BUSY_RETRY.budgetMs) {
++      return { ...res, busyRetries: retry, stillBusy: true };
++    }
++    await sleep(delay);
++  }
++}
++
++/** Server error codes that mean "this key does not authenticate here". */
++const AUTH_CODES = new Set([
++  "UNAUTHENTICATED",
++  "UNAUTHORIZED",
++  "PERMISSION_DENIED",
++  "FORBIDDEN",
++  "INVALID_API_KEY",
++]);
++
++function errorField(error: unknown, field: "code" | "message"): string {
++  if (!error || typeof error !== "object") return "";
++  const v = (error as Record<string, unknown>)[field];
++  return typeof v === "string" ? v : "";
++}
++
++/** A refused key: 401/403, an auth code, or the 0.4.15 server's own words
++ * ("Invalid API Key"), which it has been seen to send inside an error
++ * envelope. Same rule as the daemon's `isAuthFailure`. */
++export function isAuthFailure(res: AnswerLike): boolean {
++  if (res.ok) return false;
++  if (res.status === 401 || res.status === 403) return true;
++  if (AUTH_CODES.has(errorField(res.error, "code").toUpperCase())) return true;
++  return /invalid api key|unauthenticated|unauthori[sz]ed/i.test(errorField(res.error, "message"));
++}
++
++/** Should an auth failure be retried with a re-read key? Only once, and only
++ * when the credential source actually yields a DIFFERENT, non-empty key —
++ * re-sending the refused one would just be a second refusal. */
++export function shouldRekey(res: AnswerLike, current: string, reread: string): boolean {
++  return isAuthFailure(res) && reread !== "" && reread !== current;
++}
++
++/** Is this answer a NOT_FOUND — the path is not there (an authenticated
++ * answer, not an outage)? */
++export function isNotFound(res: AnswerLike): boolean {
++  return !res.ok && (res.status === 404 || errorField(res.error, "code") === "NOT_FOUND");
++}
++
++/**
++ * The honest sentence for a failed call, rendered to the model verbatim.
++ * `what` completes "nothing was …" — `searched`, `read`, `listed`, `written`.
++ * Never "No results found": an outage must not read like an empty memory.
++ */
++export function failureText(res: AnswerLike & Partial<BusyRetryNote>, what: string): string {
++  const status = res.status ?? 0;
++  const code = errorField(res.error, "code");
++  const message = errorField(res.error, "message").slice(0, 300);
++  const said = [status ? `HTTP ${status}` : "", code].filter((x) => x !== "").join(" ");
++  if (isAuthFailure(res)) {
++    return (
++      `OpenViking REFUSED this session's key (${said || "auth"}${message ? `: ${message}` : ""}) — ` +
++      `memory is unavailable to this session, so nothing was ${what}. ` +
++      "This is an outage, not an empty result; the daemon's memory health reports it."
++    );
++  }
++  if (isBusy(res) || res.stillBusy) {
++    return (
++      `OpenViking kept that memory directory busy (409 ${BUSY_CONFLICT_TYPE}) past the retry budget — ` +
++      `nothing was ${what}. Nobody's edit was refused: another write held the lock. Try again in a minute.`
++    );
++  }
++  if (status === 0) {
++    return (
++      `OpenViking did not answer (${message || "no response"}) — nothing was ${what}. ` +
++      "This is an outage, not an empty result."
++    );
++  }
++  return `OpenViking error (${said}${message ? `: ${message}` : ""}) — nothing was ${what}.`;
++}

@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need five
+upstream ships it as an `examples/` directory, not a package, and we need six
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the five patches was tried as configuration first and does not
+Every one of the six patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Five numbered behaviour patches, applied in order over the vendored upstream
+Six numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all six, in order, to a
+`git apply`-able diffs — verified by applying all seven, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -224,6 +224,48 @@ Touches: `qcr-namespaces.ts` (new), `config.ts` (`withoutRootKey` generic +
 `env`), `index.ts` (client construction, health probe, the advertised
 namespaces), `tools.ts` (routing, the `namespace` parameter, prefixed answers).
 
+### 0006 — writes that stick, errors that say so (S2)
+
+Four changes, one reason: memory writes were dropped and memory failures were
+read as empty answers.
+
+* **A busy 409 is retried; a precondition 409 is not.** The server's
+  batch-write takes a zero-timeout try-lock on its root directory, and a
+  second writer into the same directory gets `409 CONFLICT` with
+  `details.conflict_type = "path_busy"` and `retryable: true` — nothing was
+  checked or written. The tool used to answer every 409 with "someone else
+  edited the file — re-read it, never retry", for files nobody had touched:
+  6 of the 8 EOD writes on 2026-10-05 died that way. `batchWrite` and
+  `setTags` now retry exactly that answer, jittered and bounded (≤10 s,
+  `qcr-honest.ts` `BUSY_RETRY`, the same rule as the daemon's client); a
+  hash-precondition 409 carries no `path_busy` and stays a refusal.
+* **`viking_write` takes several entries as ONE batch-write.** `entries[]`
+  (or the old `uri` + `content` for one) — one request under the entries'
+  deepest common directory, so a day's lessons take the directory lock once
+  and land whole or not at all. The frozen EOD seed already said "it batches,
+  so write today's entries in one call"; now it is true. A batch is routed by
+  its entries' own addresses (`routeWrite`): in a two-key process (the
+  companion) a batch of reviewer-tree entries goes to the reviewer key
+  without naming the namespace, and one that straddles both trees is refused.
+* **No failure reads as "No results found".** `find()` returns the envelope
+  instead of collapsing every failure to `[]`, and `viking_search`,
+  `viking_read` and `viking_browse` name a refused key, a dead server or a
+  busy directory as what it is (`failureText`): every PR-session memory call
+  in history came back "No results found." or "No content at …", two of them
+  inside the five-week `Invalid API Key` outage. "No content" / "Not found" /
+  "Empty directory" now mean exactly that (a NOT_FOUND or an empty answer).
+* **A refused key is re-read once.** The primary client's key is re-resolved
+  from its source after an auth failure (`rereadApiKey` in `config.ts`) and
+  the request retried once, only if the key actually changed — the daemon
+  rewrites the sessions' `ovcli.conf` when its key rotates, and a running
+  session used to keep sending the dead one until it died.
+
+Touches: `qcr-honest.ts` (new), `qcr-write.ts` (`buildBatchWriteRequest`,
+`routeWrite`),
+`client.ts` (`rekey`, busy retry, `find` / `readLevel` / `lsResponse` /
+`statResponse` envelopes), `config.ts` (`rereadApiKey`), `tools.ts`,
+`index.ts` (the banner, the re-reader).
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -236,16 +278,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all five patches, then:
+# 3. Re-verify all six patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all five** patches — a patch that no
+verification below. A bump re-verifies **all six** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the five patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the six patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the

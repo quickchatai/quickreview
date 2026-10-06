@@ -30,8 +30,10 @@ import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import {
   FeedbackEngine,
+  FeedbackMemoryPump,
   dayScopedRebuild,
   feedbackDayAddendum,
+  ledgerFeedbackSignal,
   type FeedbackEvent,
 } from "./feedback.js";
 import {
@@ -611,10 +613,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let commands: CommandWatcher | null = null;
   let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
-  // built in onStart (it needs the store). Signals arriving in the
-  // boot gap between the webhook binding and onStart are dropped with a log —
-  // the tuning loop is best-effort, never lifecycle.
+  // built in onStart (it needs the memory store). A signal arriving
+  // in the boot gap between the webhook binding and onStart is LEDGERED
+  // (S2 — it used to be dropped): its row starts `pending`, the
+  // backfill pump writes its memory entry, and the agents rebuild once the
+  // engine exists so a same-day [feedback] comment still reaches the
+  // validator.
   let feedback: FeedbackEngine | null = null;
+  let feedbackLedgeredEarly = false;
+  // the [feedback] ledger's backfill pump — writes what memory
+  // still owes while memory health reads healthy, and wakes
+  // `memory_write_backlog` when an owed signal ages past the threshold.
+  let feedbackPump: FeedbackMemoryPump | null = null;
   // the OpenViking server, supervised as a child of this process.
   // Started FIRST in onStart so it warms up while the agents build — but never
   // awaited: there is deliberately NO boot ordering, and rounds run
@@ -732,18 +742,45 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       const status = openviking?.status();
       return status && reembed ? { ...status, reembed: reembed.status() } : status;
     },
-    // whether memory WORKS, beside whether the server is up.
-    memoryStatus: (): MemoryStatus =>
-      memoryHealth
+    // whether memory WORKS, beside whether the server is up —
+    // and (S2) what memory still owes the [feedback] ledger.
+    memoryStatus: (): MemoryStatus => {
+      const base = memoryHealth
         ? memoryHealth.status()
         : memoryUnmonitored !== null
           ? disabledMemoryStatus(memoryUnmonitored)
-          : pendingMemoryStatus(),
+          : pendingMemoryStatus();
+      try {
+        const b = daemon.store.feedbackMemoryBacklog();
+        return {
+          ...base,
+          feedback_writes: {
+            pending: b.pending,
+            failed: b.failed,
+            oldest_pending_at: b.oldest_pending_at,
+          },
+        };
+      } catch (err) {
+        // Unread is UNKNOWN, never "nothing owed" (honest-unknown).
+        log("memory status: could not read the [feedback] memory backlog", err);
+        return { ...base, feedback_writes: null };
+      }
+    },
 
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
       if (!feedback) {
-        log("feedback: signal before engine ready — dropped", e.kind);
+        // Before the engine exists the signal is LEDGERED, never dropped
+        // (S2): its row waits `pending` for the backfill pump.
+        const res = ledgerFeedbackSignal(daemon.store, e, {
+          timezone: cfg.ops.timezone,
+          memoryEnabled: cfg.openviking.enabled,
+        });
+        if (res.result === "recorded") feedbackLedgeredEarly = true;
+        log(
+          `feedback: signal before engine ready — ledgered (${res.result}); memory is written by the backfill`,
+          e.kind,
+        );
         return;
       }
       await feedback.ingest(e);
@@ -896,8 +933,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timezone: cfg.ops.timezone,
         rebuildAgents,
         memory,
+        // Memory switched off: signals are ledgered `skipped`, never owed.
+        memoryEnabled: cfg.openviking.enabled,
         log,
       });
+      // Same-day [feedback] comments ledgered in the boot gap reach the
+      // validator's addendum now (the boot build above may predate them).
+      if (feedbackLedgeredEarly) {
+        try {
+          rebuildAgents();
+        } catch (err) {
+          log("feedback: agents rebuild for boot-gap signals failed", err);
+        }
+      }
       memoryStore = memory;
       memorySweep = memory;
       memoryAssembler = openVikingContextAssembler({
@@ -982,6 +1030,30 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         memoryHealth.setProvision(prov);
         raiseProvisionWake(d.store, prov);
         memoryHealth.start();
+
+        // Writes that stick (S2): the backfill pump. It writes owed
+        // [feedback] signals through the SAME `note` op on the same store —
+        // a retry on the one route, never a second channel — only while
+        // health reads healthy, and wakes `memory_write_backlog` past the
+        // threshold. Pre-S2 rows are checked against a COMPLETE sweep first
+        // (an entry whose write timed out may have landed after all).
+        const health = memoryHealth;
+        feedbackPump = new FeedbackMemoryPump({
+          store: d.store,
+          memory,
+          healthy: () => health.currentState() === "healthy",
+          healthState: () => health.currentState(),
+          readEntries: async () => {
+            const sweep = await memory.sweep();
+            return { entries: sweep.entries, complete: sweep.unread.length === 0 };
+          },
+          wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
+          log,
+          intervalMs: Math.max(10, cfg.memory.backfill_interval_s) * 1000,
+          backlogAfterMs: Math.max(1, cfg.memory.write_backlog_after_min) * 60_000,
+          rewakeMs: Math.max(1, cfg.memory.rewake_h) * 3_600_000,
+        });
+        feedbackPump.start();
       }
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
@@ -1189,15 +1261,53 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // "none" explicit).
         dayContext: (date) => eodDigestContext(d.store, date, cfg.eod.timezone),
         // Deploy-window drain: the sweep does not fire into a board being
-        // drained for a deploy — skipped for the day, loudly.
+        // drained for a deploy — it is DEFERRED (S2; it used to be
+        // skipped for the day): the day is persisted in state.db and fires
+        // once the drain lifts, across a restart too.
         shouldHold: () => d.store.drainState().draining,
-        onHeld: (date) => {
-          d.store.logEvent("eod_skipped_draining", null, { date });
-          log(`EOD sweep for ${date} skipped — draining`);
+        // One sweep at a time: while the pinned-area watch window of the
+        // last sweep is open, the next day (a deferred one above all — they
+        // queue back to back after a drain) waits behind it, so each window
+        // judges its own day's work under its own date.
+        sweepInFlight: () => pinWatch?.isOpen() === true,
+        deferred: {
+          load: () => d.store.eodDeferredDates(),
+          save: (dates) => d.store.recordEodDeferred(dates),
+        },
+        onHeld: (date, why) => {
+          d.store.logEvent(
+            why === "draining" ? "eod_deferred_draining" : "eod_deferred_behind_sweep",
+            null,
+            { date },
+          );
+          log(
+            why === "draining"
+              ? `EOD sweep for ${date} deferred — draining; it fires once the drain lifts`
+              : `EOD sweep for ${date} deferred — an earlier sweep is still in flight; it fires after`,
+          );
+        },
+        onDeferredFire: (date) => {
+          d.store.logEvent("eod_deferred_fired", null, { date });
+          log(`EOD sweep for ${date} firing — the drain that deferred it has lifted`);
         },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => log(`EOD sweep injected for ${date}`),
-        onError: (err) => log("EOD injection failed", err),
+        onError: (err) => log("EOD injection failed (retried with backoff)", err),
+        // Three retries failed too: the day's curation did not happen.
+        onInjectFailed: (date, err, attempts) => {
+          const why = err instanceof Error ? err.message : String(err);
+          d.store.logAnomaly(
+            "eod_inject_failed",
+            null,
+            null,
+            `EOD sweep for ${date} not injected after ${attempts} attempts: ${why.slice(0, 200)}`,
+            [
+              `EOD INJECT FAILED — the EOD sweep for ${date} could not be delivered to the overseer (${attempts} attempts, backed off).`,
+              `Last error: ${why.slice(0, 300)}`,
+              "That day's curation did not run: no digest, no lessons. Check the overseer session (`qcr status`), then re-run the sweep by hand if the day matters.",
+            ].join("\n"),
+          );
+        },
       });
       log(`EOD timer armed for ${eod.nextFire().toISOString()}`);
 
@@ -1241,6 +1351,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
 
     async onStop(reason = "shutdown") {
       memoryHealth?.stop();
+      feedbackPump?.stop();
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();

@@ -180,6 +180,10 @@ down_after_min = 10
 boot_grace_min = 5
 rewake_h = 6
 incident_ticket_after_min = 120
+# Writes that stick (S2): the [feedback] backfill pump's cadence and
+# the age past which an owed signal wakes memory_write_backlog.
+backfill_interval_s = 60
+write_backlog_after_min = 120
 # WHICH scopes the round's one context search may draw from, and how many items
 # each may contribute. `context_tokens` above is the budget; this is the
 # corpus — the two bind independently.

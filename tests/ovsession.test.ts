@@ -68,6 +68,23 @@ describe("lifecycle", () => {
     expect(await life.create("pr-7")).toBe(true);
   });
 
+  it("a BUSY 409 is not 'already there' — nothing was created (S2)", async () => {
+    const logs: string[] = [];
+    const busy = openVikingSessionLifecycle(
+      {
+        ...api({}),
+        createSession: async () => ({ ok: false, status: 409, conflict: false, busy: true }),
+      },
+      { log: (m) => logs.push(m) },
+    );
+    expect(await busy.create("pr-7")).toBe(false);
+    expect(logs.join("\n")).not.toContain("already exists — reusing it");
+    expect(logs.join("\n")).toContain("could not create session pr-7");
+    // A plain 409 (no busy flag — an older client's answer) is still a reuse.
+    const plain = openVikingSessionLifecycle(api({ create: { ok: false, status: 409 } }));
+    expect(await plain.create("pr-7")).toBe(true);
+  });
+
   it("treats a missing session as deleted — 404 is the desired end state", async () => {
     const life = openVikingSessionLifecycle(api({ delete: { ok: false, status: 404 } }));
     expect(await life.remove("pr-7")).toBe(true);

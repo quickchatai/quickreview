@@ -68,7 +68,9 @@ export interface OvSessionApi {
   /** Creates with `memory_policy` fully disabled — the policy is the client's,
    * not a parameter here, because a session created without it queues a failed
    * extraction task on every commit. */
-  createSession(sessionId: string): Promise<{ ok: boolean; status: number; conflict?: boolean }>;
+  createSession(
+    sessionId: string,
+  ): Promise<{ ok: boolean; status: number; conflict?: boolean; busy?: boolean }>;
   deleteSession(sessionId: string): Promise<{ ok: boolean; status: number }>;
 }
 
@@ -118,17 +120,23 @@ export function openVikingSessionLifecycle(
 ): OvSessionLifecycle {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_LIFECYCLE_TIMEOUT_MS;
   const log = opts.log ?? (() => {});
-  const fail: { ok: boolean; status: number; conflict?: boolean } = { ok: false, status: 0, conflict: false };
+  const fail: { ok: boolean; status: number; conflict?: boolean; busy?: boolean } = {
+    ok: false,
+    status: 0,
+    conflict: false,
+  };
   return {
     async create(sessionId: string): Promise<boolean> {
-      let out: { ok: boolean; status: number; conflict?: boolean } = fail;
+      let out: { ok: boolean; status: number; conflict?: boolean; busy?: boolean } = fail;
       try {
         out = await withDeadline(api.createSession(sessionId), timeoutMs, fail);
       } catch {
         out = fail;
       }
       if (out.ok) return true;
-      if (out.conflict === true || out.status === 409) {
+      // A BUSY 409 (S2: a lock the client's retries could not get)
+      // is not "already there" — nothing was created.
+      if (out.conflict === true || (out.status === 409 && out.busy !== true)) {
         log(`openviking: session ${sessionId} already exists — reusing it`);
         return true;
       }

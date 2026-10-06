@@ -1,4 +1,11 @@
 import type { OVConfig } from "./config.js";
+// [QCR PATCH 6]
+import {
+  shouldRekey,
+  withBusyRetry,
+  type BusyRetryHooks,
+  type BusyRetryNote,
+} from "./qcr-honest.js";
 
 // --- OV API Response Shapes ---
 // All OV responses wrap in: { status: "ok"|"error", result: T, error?: {...}, ... }
@@ -101,6 +108,17 @@ export class OVClient {
 
   private resolvedSpaces: Map<string, string> = new Map();
 
+  /** [QCR PATCH 6] Re-reads this client's key from its source (the
+   * ovcli.conf the daemon rewrites when its key rotates). Set by index.ts on
+   * the primary client only — an env-supplied key cannot change in-process.
+   * On an auth failure the request is retried ONCE, and only when the
+   * re-read key differs (`shouldRekey`). */
+  rekey: (() => string) | null = null;
+
+  /** [QCR PATCH 6] The busy retry's clock and sleep — real ones in pi; a
+   * test injects instant ones. */
+  retryHooks: BusyRetryHooks = {};
+
   private static RESERVED_USER = new Set(["memories"]);
   private static RESERVED_AGENT = new Set(["memories", "skills", "instructions", "workspaces"]);
 
@@ -128,6 +146,28 @@ export class OVClient {
 
   /** Core fetch wrapper. Returns { ok, result } after parsing OV's { status, result } envelope. */
   async fetchJSON<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<OVResponse<T>> {
+    const res = await this.fetchOnce<T>(path, init, timeoutMs);
+    // [QCR PATCH 6] A refused key is re-read once from its source: the daemon
+    // rewrites the sessions' ovcli.conf the moment its key rotates, and a
+    // session that kept the key it loaded with stayed locked out until it
+    // died. Retried only when the re-read key is actually different.
+    if (!res.ok && this.rekey) {
+      let fresh = "";
+      try {
+        fresh = this.rekey() ?? "";
+      } catch {
+        fresh = "";
+      }
+      if (shouldRekey(res, this.apiKey, fresh)) {
+        this.apiKey = fresh;
+        return this.fetchOnce<T>(path, init, timeoutMs);
+      }
+    }
+    return res;
+  }
+
+  /** [QCR PATCH 6] One attempt of `fetchJSON` (the upstream body, unchanged). */
+  private async fetchOnce<T>(path: string, init?: RequestInit, timeoutMs = 10000): Promise<OVResponse<T>> {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -264,11 +304,16 @@ export class OVClient {
 
   // ========== Search ==========
 
-  /** POST /api/v1/search/find — basic vector search */
+  /** POST /api/v1/search/find — basic vector search.
+   *
+   * [QCR PATCH 6] Returns the ENVELOPE, not a bare list: upstream returned
+   * `[]` for every failure, a refused key included, so `viking_search`
+   * answered "No results found." through five weeks of `Invalid API Key`. A
+   * failure is now a failure the tool can name (`failureText`). */
   async find(
     query: string,
     opts?: { targetUri?: string; topK?: number; scoreThreshold?: number },
-  ): Promise<OVSearchResult[]> {
+  ): Promise<OVResponse<OVSearchResult[]>> {
     const body: Record<string, unknown> = { query };
     if (opts?.targetUri) body.target_uri = opts.targetUri;
     if (opts?.topK) body.limit = opts.topK;
@@ -277,7 +322,8 @@ export class OVClient {
     const res = await this.fetchJSON<any>("/api/v1/search/find", {
       method: "POST", body: JSON.stringify(body),
     }, 10000);
-    if (!res.ok || !res.result) return [];
+    if (!res.ok) return { ...res, result: null };
+    if (!res.result) return { ok: true, result: [], traceId: res.traceId };
 
     // OV returns { memories: [...], resources: [...], skills: [...], total }
     const all: OVSearchResult[] = [];
@@ -298,7 +344,7 @@ export class OVClient {
         }
       }
     }
-    return all;
+    return { ok: true, result: all, traceId: res.traceId };
   }
 
   // ========== Content ==========
@@ -317,11 +363,19 @@ export class OVClient {
   async batchWrite(
     request: { root_uri: string; operations: unknown[]; wait: boolean },
     timeoutMs = 30000,
-  ): Promise<OVResponse<OVBatchWriteResult>> {
-    return this.fetchJSON<OVBatchWriteResult>(
-      "/api/v1/content/batch-write",
-      { method: "POST", body: JSON.stringify(request) },
-      timeoutMs,
+  ): Promise<OVResponse<OVBatchWriteResult> & BusyRetryNote> {
+    // [QCR PATCH 6] A BUSY 409 (`details.conflict_type = "path_busy"`: the
+    // directory lock was held, nothing was checked or written) is retried,
+    // jittered and bounded; a precondition 409 is returned as the refusal it
+    // is. See qcr-honest.ts.
+    return withBusyRetry(
+      () =>
+        this.fetchJSON<OVBatchWriteResult>(
+          "/api/v1/content/batch-write",
+          { method: "POST", body: JSON.stringify(request) },
+          timeoutMs,
+        ),
+      this.retryHooks,
     );
   }
 
@@ -333,12 +387,59 @@ export class OVClient {
    */
   async setTags(uri: string, tags: string[], mode: "append" | "replace" = "append"): Promise<boolean> {
     if (tags.length === 0) return true;
-    const res = await this.fetchJSON<any>(
-      "/api/v1/fs/attrs/set_tags",
-      { method: "POST", body: JSON.stringify({ uri, tags, mode }) },
-      10000,
+    // [QCR PATCH 6] set_tags takes the same lock family; a busy answer is
+    // retried like a write's.
+    const res = await withBusyRetry(
+      () =>
+        this.fetchJSON<any>(
+          "/api/v1/fs/attrs/set_tags",
+          { method: "POST", body: JSON.stringify({ uri, tags, mode }) },
+          10000,
+        ),
+      this.retryHooks,
     );
     return res.ok;
+  }
+
+  /** [QCR PATCH 6] One read at a detail level, as an ENVELOPE — `abstract`,
+   * `overview` and `readContent` below collapse every failure to null, which
+   * the tools used to render as "No content at …" for a refused key too. */
+  async readLevel(uri: string, level: "abstract" | "overview" | "full"): Promise<OVResponse<string>> {
+    const path = level === "full" ? "read" : level;
+    return this.fetchJSON<string>(
+      `/api/v1/content/${path}?uri=${encodeURIComponent(uri)}`,
+      undefined, 10000,
+    );
+  }
+
+  /** [QCR PATCH 6] `fs/ls` as an envelope (`ls()` keeps upstream's `[]`). */
+  async lsResponse(uri: string): Promise<OVResponse<OVDirEntry[]>> {
+    const res = await this.fetchJSON<any[]>(
+      `/api/v1/fs/ls?uri=${encodeURIComponent(uri)}`,
+      undefined, 10000,
+    );
+    if (!res.ok) return { ...res, result: null };
+    const rows = Array.isArray(res.result) ? res.result : [];
+    return {
+      ok: true,
+      result: rows.map(e => ({
+        uri: e.uri ?? "",
+        name: e.name ?? uriBasename(e.uri ?? ""),
+        isDir: e.isDir ?? false,
+        size: e.size ?? 0,
+        mode: e.mode ?? 0,
+        modTime: e.modTime ?? "",
+        abstract: e.abstract ?? "",
+      })),
+    };
+  }
+
+  /** [QCR PATCH 6] `fs/stat` as an envelope (`stat()` keeps upstream's null). */
+  async statResponse(uri: string): Promise<OVResponse<OVStatInfo>> {
+    return this.fetchJSON<OVStatInfo>(
+      `/api/v1/fs/stat?uri=${encodeURIComponent(uri)}`,
+      undefined, 10000,
+    );
   }
 
   /** GET /api/v1/content/abstract — L0 summary */

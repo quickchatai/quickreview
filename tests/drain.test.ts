@@ -3,8 +3,10 @@
 //   * POST /webhook answers 200 and the delivery is DROPPED — not interpreted,
 //     not recorded (the owner chose dropping over recording; the reconcile poll
 //     is the single recovery path) — but COUNTED, so the lift can say how many;
-//   * the dispatch pump starts no rounds; recheck nudges, ping-pong replies
-//     and the EOD sweep do not fire; in-flight rounds run to their natural end;
+//   * the dispatch pump starts no rounds; recheck nudges and ping-pong replies
+//     do not fire, and the EOD sweep is DEFERRED until the drain lifts
+//     (S2 — it used to be skipped for the day); in-flight rounds run
+//     to their natural end;
 //   * the flag is a persistent DB row (it must survive the restart it exists
 //     for), surfaced in status.json, `qcr status` and the board's top bar;
 //   * the boot's FIRST healthy reconcile pass lifts it (`drain_lifted`); a
@@ -316,7 +318,10 @@ describe("recheck while draining", () => {
 // ---- EOD sweep ---------------------------------------------------------------
 
 describe("EOD sweep while draining", () => {
-  it("skips the day's fire (onHeld, no inject) and re-arms for the next day", async () => {
+  // a drain DEFERS the day's sweep (it used to skip it). The
+  // deferred day fires on the first poll after the lift; the full contract
+  // (persistence across a restart, retries) is in tests/memory-writes.test.ts.
+  it("defers the day's fire (onHeld, no inject), re-arms for the next day, and fires the deferred day once the drain lifts", async () => {
     let clock = new Date("2026-08-25T09:00:00Z");
     const timers: Array<{ cb: () => void; ms: number }> = [];
     const injected: string[] = [];
@@ -343,13 +348,22 @@ describe("EOD sweep while draining", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(injected).toEqual([]);
     expect(held).toEqual(["2026-08-25"]);
-    expect(timers).toHaveLength(2); // re-armed for tomorrow
-    // Next day, drain lifted: the sweep fires normally.
+    // Re-armed for tomorrow, plus the deferred day's drain poll.
+    expect(timers).toHaveLength(3);
+    expect(timer.deferredDates()).toEqual(["2026-08-25"]);
+    const poll = timers.find((t) => t.ms === 60_000)!;
+    const tomorrow = timers.find((t, i) => i > 0 && t.ms !== 60_000)!;
+    // The drain lifts: the deferred day fires on the next poll.
     draining = false;
-    clock = new Date("2026-08-26T16:00:00Z");
-    timers[1]!.cb();
+    poll.cb();
     await new Promise((r) => setTimeout(r, 0));
-    expect(injected).toEqual(["sweep 2026-08-26"]);
+    expect(injected).toEqual(["sweep 2026-08-25"]);
+    expect(timer.deferredDates()).toEqual([]);
+    // Next day: the sweep fires normally.
+    clock = new Date("2026-08-26T16:00:00Z");
+    tomorrow.cb();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(injected).toEqual(["sweep 2026-08-25", "sweep 2026-08-26"]);
     timer.stop();
   });
 });

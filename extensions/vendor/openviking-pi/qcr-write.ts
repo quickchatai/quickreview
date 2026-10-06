@@ -22,6 +22,8 @@
 // therefore the ONE write path — findings §3.3.
 
 import { createHash } from "node:crypto";
+// [QCR PATCH 6] a batch is routed by its entries (`routeWrite`)
+import { routeNamespace, type NamespaceRoute } from "./qcr-namespaces.js";
 
 /** Memory targets keep a text-extension allowlist server-side; these are the
  * two we ever author. */
@@ -217,5 +219,180 @@ export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult 
       // lags. "OpenViking must never block or delay a review round."
       wait: input.wait === true,
     },
+  };
+}
+
+// ---- [QCR PATCH 6] several entries, ONE batch-write -------------------------
+//
+// The EOD curator writes a day's lessons together, and the frozen sweep seed
+// already tells it "it batches, so write today's entries in one call" — which
+// was not true: one `viking_write` was one file, so a day's entries went out
+// as parallel calls into ONE directory, and the server's zero-timeout
+// directory lock answered most of them busy (6 of 8 on 2026-10-05). One
+// request with every entry under one root takes that lock once. The server
+// checks every precondition before it writes anything, so the batch lands
+// whole or not at all.
+
+/** The most entries one call may carry (the server's own cap is 256). */
+export const MAX_BATCH_ENTRIES = 64;
+
+export interface BatchEntryInput {
+  uri?: unknown;
+  content?: unknown;
+  tags?: unknown;
+  mode?: unknown;
+  expect_hash?: unknown;
+}
+
+/** One entry (`uri` + `content`, as `WriteRequestInput`) or several
+ * (`entries`) — every field optional, since either form leaves the other's
+ * fields out. */
+export interface BatchWriteInput {
+  uri?: unknown;
+  content?: unknown;
+  tags?: unknown;
+  mode?: unknown;
+  expect_hash?: unknown;
+  wait?: unknown;
+  entries?: unknown;
+}
+
+export interface BatchEntryBuilt {
+  uri: string;
+  body: string;
+  hash: string;
+  tags: string[];
+}
+
+export interface BatchRequestOk {
+  ok: true;
+  request: BatchWriteRequest;
+  entries: BatchEntryBuilt[];
+}
+
+export type BatchRequestResult = BatchRequestOk | WriteRequestError;
+
+/** The deepest directory every URI sits under (`viking://a/b/c.md` and
+ * `viking://a/b/d/e.md` → `viking://a/b`); "" when they share none. */
+export function commonParentUri(uris: readonly string[]): string {
+  const dirs = uris.map((u) => parentUri(u));
+  if (dirs.length === 0 || dirs.some((d) => d === "")) return "";
+  const split = dirs.map((d) => d.slice("viking://".length).split("/"));
+  const first = split[0]!;
+  let depth = first.length;
+  for (const parts of split.slice(1)) {
+    let i = 0;
+    while (i < depth && i < parts.length && parts[i] === first[i]) i += 1;
+    depth = i;
+  }
+  return depth === 0 ? "" : `viking://${first.slice(0, depth).join("/")}`;
+}
+
+/**
+ * Which memory tree a `viking_write` call writes into. One entry routes
+ * exactly as every other tool call does (`routeNamespace` over its `uri` and
+ * `namespace`). A batch carries no top-level `uri`, so it routes by its
+ * ENTRIES: each one by that same rule (its own `uri`, the call's
+ * `namespace`), and every entry must land in the same tree. Routing the bare
+ * top-level params instead fell back to this process's own tree, and then
+ * refused a batch whose every entry was in the reviewer's as "more than one
+ * memory tree" — which was false.
+ */
+export function routeWrite(
+  params: BatchWriteInput & { namespace?: unknown },
+  names: readonly string[],
+): NamespaceRoute {
+  if (!Array.isArray(params.entries) || params.entries.length === 0) {
+    return routeNamespace(params, names);
+  }
+  let routed: string | null = null;
+  for (const [i, raw] of params.entries.entries()) {
+    const entry = (raw && typeof raw === "object" ? raw : {}) as BatchEntryInput;
+    const each = routeNamespace({ uri: entry.uri, namespace: params.namespace }, names);
+    if (!each.ok) return { ok: false, error: `Entry ${i + 1}: ${each.error}` };
+    if (routed !== null && each.namespace !== routed) {
+      return {
+        ok: false,
+        error: `The entries address more than one memory tree (${routed} and ${each.namespace}) — write each tree's entries in a separate call.`,
+      };
+    }
+    routed = each.namespace;
+  }
+  return { ok: true, namespace: routed! };
+}
+
+/**
+ * Validate + assemble ONE `content/batch-write` for one or many entries.
+ * Either `uri` + `content` (one entry — exactly `buildWriteRequest`) or
+ * `entries[]`, never both. Every entry is validated by the same rules as a
+ * single write (`create_if_absent` by default, `replace` only with its
+ * `expect_hash`); they must not repeat a target, and they share one root —
+ * the deepest directory they all sit under.
+ */
+export function buildBatchWriteRequest(input: BatchWriteInput): BatchRequestResult {
+  const hasSingle = input.uri !== undefined || input.content !== undefined;
+  if (input.entries === undefined) {
+    const one = buildWriteRequest({
+      uri: input.uri,
+      content: input.content,
+      tags: input.tags,
+      mode: input.mode,
+      expect_hash: input.expect_hash,
+      wait: input.wait,
+    });
+    if (!one.ok) return one;
+    return {
+      ok: true,
+      request: one.request,
+      entries: [
+        { uri: one.request.operations[0]!.uri, body: one.body, hash: one.hash, tags: one.tags },
+      ],
+    };
+  }
+  if (hasSingle) {
+    return {
+      ok: false,
+      error: "Give either `uri` + `content` (one entry) or `entries` (several) — not both.",
+    };
+  }
+  if (!Array.isArray(input.entries) || input.entries.length === 0) {
+    return { ok: false, error: "`entries` must be a non-empty list of {uri, content, …}." };
+  }
+  if (input.entries.length > MAX_BATCH_ENTRIES) {
+    return {
+      ok: false,
+      error: `Too many entries (${input.entries.length}); one call carries at most ${MAX_BATCH_ENTRIES}.`,
+    };
+  }
+  const built: BatchEntryBuilt[] = [];
+  const operations: BatchWriteOperation[] = [];
+  for (const [i, raw] of input.entries.entries()) {
+    const entry = (raw && typeof raw === "object" ? raw : {}) as BatchEntryInput;
+    const one = buildWriteRequest({
+      uri: entry.uri,
+      content: entry.content,
+      tags: entry.tags,
+      mode: entry.mode,
+      expect_hash: entry.expect_hash,
+    });
+    if (!one.ok) return { ok: false, error: `Entry ${i + 1}: ${one.error} Nothing was written.` };
+    const op = one.request.operations[0]!;
+    if (operations.some((o) => o.uri === op.uri)) {
+      return { ok: false, error: `Entry ${i + 1}: "${op.uri}" appears twice in one batch.` };
+    }
+    operations.push(op);
+    built.push({ uri: op.uri, body: one.body, hash: one.hash, tags: one.tags });
+  }
+  const root = commonParentUri(operations.map((o) => o.uri));
+  if (!root) {
+    return {
+      ok: false,
+      error: "The entries share no directory, so they cannot go in one batch — write them in separate calls.",
+    };
+  }
+  return {
+    ok: true,
+    entries: built,
+    request: { root_uri: root, operations, wait: input.wait === true },
   };
 }

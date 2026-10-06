@@ -38,6 +38,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      removed.
   5. The memory tools can address a second OpenViking user namespace, built
      from a second USER key when one is present in the environment.
+  6. A "directory busy" 409 is retried (a precondition 409 is not),
+     `viking_write` writes several entries as one batch, a refused key is
+     re-read once, and tool failures are reported as failures rather than
+     as empty results (2026-10-06).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

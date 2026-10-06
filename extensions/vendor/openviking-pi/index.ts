@@ -11,7 +11,7 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Five numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Six numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
@@ -20,12 +20,16 @@
  *   PATCH 4 — viking_write (durable content/batch-write), the ONLY write tool.
  *   PATCH 5 — a second memory namespace (the companion's reviewer key), tools
  *             only; a leaf and a single-keyed review session are unchanged.
+ *   PATCH 6 — writes that stick: a busy 409 is retried (a precondition 409
+ *             is not), viking_write takes several entries as ONE batch, a
+ *             refused key is re-read once, and no failure reads as "No
+ *             results found".
  * ────────────────────────────────────────────────────────────────────────────
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { loadConfigFromModuleUrl, type OVConfig } from "./config.js";
+import { loadConfigFromModuleUrl, rereadApiKey, type OVConfig } from "./config.js";
 import { OVClient } from "./client.js";
 import { RecallManager } from "./recall.js";
 import { SyncManager } from "./sync.js";
@@ -51,6 +55,11 @@ export default async function (pi: ExtensionAPI) {
 
   // --- Initialize modules ---
   const client = new OVClient(config);
+  // [QCR PATCH 6] The primary key is re-read from its source after an auth
+  // failure (the daemon rewrites ovcli.conf on a key rotation). The extra
+  // namespaces' keys come from the environment, which cannot change
+  // in-process, so they get no re-reader.
+  client.rekey = () => rereadApiKey();
   // [QCR PATCH 5] A SECOND client, and only when a second USER key is in the
   // environment: the companion's `OPENVIKING_REVIEWER_KEY`, which lets the
   // local pi read AND write reviewer memory as well as its own. Same base URL,

@@ -256,6 +256,11 @@ const row = (over: Partial<FeedbackSignalRow>): FeedbackSignalRow => ({
   body: "[feedback] the `race` guard demand was over-specific",
   day: "2026-08-20",
   created_at: "2026-08-20T10:00:00Z",
+  memory_state: "written",
+  memory_attempts: 1,
+  memory_last_error: null,
+  memory_uri: null,
+  memory_owed_since: null,
   ...over,
 });
 

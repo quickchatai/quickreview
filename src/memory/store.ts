@@ -88,6 +88,17 @@ export function refOf(e: MemoryEntry): MemoryRef {
  * writer appending an entry that already carries its own tag and must be
  * stored verbatim. Collapsing them would let the daemon's `#feedback` lines
  * masquerade as the operator's own words.
+ *
+ * A `note` may carry a deterministic ADDRESS (S2): `name` (a plain
+ * file stem) and `category` (the area it belongs in — the §1 layout:
+ * `events` for signals, `experiences` for lessons). That is the shape an
+ * idempotent writer needs: the note is created at exactly that address or
+ * not at all, so a replay of a write that landed but whose answer was lost
+ * finds its own entry instead of minting a second one. A replay of the SAME
+ * bytes is a plain success; an entry already there with OTHER bytes is kept,
+ * untouched, and reported `existed` — never overwritten, never duplicated.
+ * Without `name` a note lands under a fresh name in the store's default area,
+ * exactly as before.
  */
 export type MemoryOp =
   | ({ op: "retire" } & MemoryRef)
@@ -95,12 +106,19 @@ export type MemoryOp =
   | ({ op: "unpin" } & MemoryRef)
   | ({ op: "edit"; text: string } & MemoryRef)
   | { op: "add"; text: string }
-  | { op: "note"; text: string };
+  | { op: "note"; text: string; name?: string; category?: string };
 
 /** Applied, or refused with a reason fit to show an operator. */
 export interface MemoryWriteResult {
   ok: boolean;
   message: string;
+  /** Where the entry now lives, as the engine addresses it (OpenViking: its
+   * `viking://` URI). Set by a store that knows; absent on a refusal. */
+  uri?: string;
+  /** A named `note` found an entry already at its address holding other
+   * bytes, and kept it (`ok` is true: the address is taken by this writer's
+   * entry, and nothing was overwritten). */
+  existed?: boolean;
 }
 
 export interface MemorySearchOptions {
@@ -140,6 +158,10 @@ export interface MemoryStore extends MemorySource {
    * Resolves with a refusal rather than throwing, like `apply`.
    */
   ensureWritable?(): Promise<MemoryWriteResult>;
+  /** OPTIONAL: an entry id as the engine addresses it (the `uri` a write
+   * result carries) — so a caller that FOUND an entry by reading can record
+   * the same address one it WROTE would have. */
+  uriOf?(id: string): string;
 }
 
 /** Normalize a tag for comparison: leading `#`s dropped, lowercased. */

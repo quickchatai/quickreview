@@ -41,6 +41,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   it("is exactly this set", () => {
     expect(wakeKinds()).toEqual(
       [
+        "eod_inject_failed",
         "eod_pinned_area_modified",
         "findings_record_unresolved",
         "git_config_modified",
@@ -49,6 +50,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
         "memory_auth_failed",
         "memory_down",
         "memory_provision_failed",
+        "memory_write_backlog",
         "migration_collision_comment_withheld",
         "migration_precheck_degraded",
         "overdue",
@@ -166,11 +168,14 @@ describe("logAnomaly → wake funnel", () => {
     expect(injected).toHaveLength(3);
   });
 
-  it("the detail-keyed kinds are exactly the memory health kinds — pinned", () => {
+  it("the detail-keyed kinds are exactly the memory kinds — pinned", () => {
+    // S2 adds the write backlog: its raiser (the backfill pump) fires
+    // on the crossing, every 6 h, and once per tick that gave rows up.
     expect(detailKeyedKinds()).toEqual([
       "memory_auth_failed",
       "memory_down",
       "memory_provision_failed",
+      "memory_write_backlog",
     ]);
     for (const kind of detailKeyedKinds()) expect(anomalySeverity(kind), kind).toBe("wake");
   });

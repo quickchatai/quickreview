@@ -92,6 +92,15 @@ Four shape decisions are load-bearing:
 that already carries its own tags and must be stored verbatim. Collapsing them
 would let the daemon's `#feedback` lines masquerade as the operator's words.
 
+A `note` may carry a deterministic address (S2): `name` plus
+`category` (the area — `events` for signals). It is then created at exactly
+that address or not at all: a replay of the same bytes is a plain success
+(the engine answers "unchanged"), and an entry already there with other bytes
+is kept and reported `existed` — never overwritten, never duplicated. That is
+what makes a writer's retry idempotent when a write landed but its answer was
+lost. A write result may name the entry's engine address (`uri`); the
+optional `uriOf(id)` gives the same address for an entry found by reading.
+
 `ensureWritable()` is optional on the interface and implemented only by the
 OpenViking store — see [Materializing a namespace](#materializing-a-namespace).
 
@@ -308,6 +317,19 @@ returns `OvOutcome<T>`, never a rejection. `conflict` is broken out of the
 failure arm because a 409 is not a gap — it means the optimistic-concurrency
 precondition did its job.
 
+A 409 is not always that, though (S2). Batch-write takes a
+**zero-timeout try-lock** on its root directory, and a second writer into the
+same directory gets `409 CONFLICT` with `details.conflict_type = "path_busy"`
+and `retryable: true` — nothing was checked and nothing was written. That one
+is `busy`, never `conflict`: `request()` retries it for every operation
+(jittered, `min(2 s, 250 ms·2ⁿ)` halved-to-full, at most 4 retries and never
+past 10 s from the first attempt — `BUSY_RETRY_DEFAULTS`), observes each
+retried answer as an answer, and returns `busy: true` with one gap only when
+the lock is still held at the end. It is told apart by `details.conflict_type`
+alone; a hash-precondition 409 has the same status and code and stays a
+refusal. Reading every 409 as a refusal is what dropped 6 of 8 EOD writes on
+2026-10-05.
+
 Four facts about the pinned server version shape this module:
 
 1. **Writes go through `content/batch-write`, exclusively.** For
@@ -318,7 +340,10 @@ Four facts about the pinned server version shape this module:
    footer and round-trip exactly. **There is no `content/write` wrapper in this
    client**: the footgun is removed by absence, not by a comment.
 2. **`replace_if_hash` with a stale `base_hash` returns 409 and leaves the file
-   unchanged** — an ordinary answer, surfaced as `conflict: true`.
+   unchanged** — an ordinary answer, surfaced as `conflict: true`. The same
+   check passes **identical** bytes on an existing target as `unchanged`
+   whatever the precondition, which is what makes a named `create_if_absent`
+   idempotent.
 3. **Search is one route with the determinism knobs pinned off.**
    `buildContextSearchBody` sets `mode: "context"`, `rewrite: false` and
    `query_expansion: "off"` and does **not** expose them as parameters: both
@@ -458,7 +483,7 @@ is fed from.
 
 A review session is not limited to the block the daemon pasted. The vendored pi
 extension (`extensions/vendor/openviking-pi/`, provenance in `upstream.json`,
-six recorded patches) gives it `viking_search`, `viking_read`, `viking_browse`,
+seven recorded patches) gives it `viking_search`, `viking_read`, `viking_browse`,
 `viking_write` and `viking_archive_expand`. It is passed per spawn with
 `--extension` (`SessionSpec.extensionPaths`, `src/sessions.ts`) rather than
 registered globally, and subagent children are launched with no argv
@@ -475,6 +500,17 @@ Two of those patches matter here:
   (`qcr-write.ts`) validates URIs and the strict tag grammar.
 - Patch 1 removes the upstream compaction handler so `extensions/ledger-pin.ts`
   owns compaction alone.
+- Patch 6 (S2) makes those writes stick and those failures honest: a
+  busy 409 is retried and a precondition 409 is not (`qcr-honest.ts`, the
+  same rule as the daemon client); `viking_write` takes several `entries` as
+  ONE batch-write under their common directory, so the EOD curator's day of
+  lessons takes the directory lock once, and routes the batch by the
+  entries' own addresses (`routeWrite`), so a two-key process writes a
+  reviewer-only batch without naming the namespace; `find()` and the read/browse tools
+  return the server's answer instead of collapsing every failure into "No
+  results found." / "No content at …" (which is all any PR session ever saw,
+  two of them during the five-week bad-key outage); and a refused key is
+  re-read once from the ovcli.conf the daemon rewrites on a rotation.
 
 ## Writers into memory
 
@@ -495,8 +531,22 @@ into the overseer session. Two things ride alongside:
   grouped cancellation summary from `src/digest.ts`. The sweep is told to carry
   them into the digest verbatim.
 - `shouldHold` — a deploy-window drain probe. When it returns true the sweep is
-  **skipped for that day**, never queued, and the skip is logged. A throwing
+  **deferred** (S2; it used to be skipped for the day): the date joins
+  a set persisted in `state.db` (`eod_deferred` events) and fires — oldest
+  first, one at a time — on the first minute-poll after the drain lifts, also
+  after a restart, which is what a deploy-window drain usually precedes. A
+  deferred day leaves the set only when its fire has finished. A throwing
   probe counts as "not held": a broken check must not silently eat the sweep.
+- `sweepInFlight` — one SWEEP at a time, not one inject: no day fires while
+  another fire is in flight or the pinned-area watch window of the last sweep
+  is still open (wire.ts: `pinWatch.isOpen()`), and a day whose hour comes up
+  then is deferred behind it. Days deferred by a drain otherwise fire a minute
+  apart, and the curator would still be on the first when the second arrived.
+  The inject carries the day it sweeps, so the watch names each window after
+  that day and closes it on that day's digest.
+- A failed injection is retried three times (after 1, 5 and 15 minutes); when
+  all four attempts fail, `eod_inject_failed` wakes — the day's curation did
+  not happen, which used to be one log line.
 
 The curator authors its learnings into memory through the extension's write
 tool, never into a file.
@@ -554,13 +604,50 @@ Two sinks, and one of them is authoritative:
 1. **The ledger is the record.** `feedback_signals` in `src/state.ts`, deduped
    per kind. Ingest is: dedupe → ledger → memory → (explicit comments only)
    agents rebuild.
-2. **Memory is a sink.** One tagged event entry per signal — `#feedback` plus
-   the `k=v` run `kind` / `pr` / `day` / `signal` — appended through the seam
-   as a `note` op (never `add`: it must not be dressed up as the operator's own
-   words). The write is best-effort under a deadline
-   (`FEEDBACK_MEMORY_TIMEOUT_MS`, 10 s): a refusal, a throw and a hang all end
-   the same way — logged, ledgered as an anomaly, never raised. A wedged store
-   costs the webhook path seconds and nothing else.
+2. **Memory is a sink — and since S2 the ledger says what it owes.**
+   One tagged event entry per signal — `#feedback` plus the `k=v` run `kind` /
+   `pr` / `day` / `signal` — written through the seam as a `note` op (never
+   `add`: it must not be dressed up as the operator's own words) at a
+   deterministic address in the `events/` area:
+   `<created_at stamp>-fb-<kind>-<pr>-<signal id>`, created-if-absent
+   (`feedbackEntryName`). `events/`, not `experiences/`, because a batch-write
+   locks its directory and the EOD curator writes `experiences/`. The row
+   carries `memory_state` (`pending` → `written`, or `failed` / `skipped`),
+   `memory_attempts`, `memory_last_error` and `memory_uri`. The ingest attempt
+   runs under a deadline (`FEEDBACK_MEMORY_TIMEOUT_MS`, 10 s): a refusal, a
+   throw and a hang all leave the row `pending`, with a
+   `feedback_memory_write_failed` event naming the signal — a wedged store
+   costs the webhook path seconds and nothing else. A signal that arrives
+   before the engine exists (the boot gap) is ledgered `pending` by
+   `ledgerFeedbackSignal`, never dropped. Memory switched off ledgers rows
+   `skipped`.
+
+   **The backfill pump** (`FeedbackMemoryPump`, every
+   `[memory] backfill_interval_s`) writes up to 20 owed rows a tick, oldest
+   first, through the same `note` op — a retry on the one route, not a second
+   channel — and only while memory health reads `healthy`. The deterministic
+   address makes the replay of a write that landed but timed out find its own
+   entry. Rows from before S2 were classified once at boot: those a
+   `feedback_memory_write_failed` event followed are `pending` (the
+   2026-08-31..10-02 losses), the rest `written` with no recorded address;
+   before writing such a row the pump looks for an entry that landed after all
+   (same header `signal`/`pr`/`day` tags and id) in a COMPLETE sweep, and a
+   partial sweep makes those rows wait rather than risk a duplicate. The
+   classification gives each failure event its own row (the newest one at or
+   before it that no earlier event claimed), so two comments from one review
+   submission that both failed are both owed. A row memory refuses 12 times
+   while healthy is given up on (`failed`) — loudly, and not for good: given-up
+   rows go back in the queue on the pump's first healthy tick after a start
+   and once a day, so a fixed cause is all it takes. A row owed for longer
+   than `[memory] write_backlog_after_min` (2 h) wakes `memory_write_backlog`
+   — on the crossing and every `rewake_h`, a cadence kept in `state.db` so a
+   restart does not wake again at once — and a tick that gave rows up wakes
+   it once. "Owed for" runs from `memory_owed_since` (the insert, the
+   migration for a pre-S2 row, the re-queue for a given-up one), never from
+   the signal's own date, and the backlog is not judged while memory health
+   reads `unknown` (its boot grace). status.json's `memory.feedback_writes`
+   and `qcr status` show what is owed — `null`, rendered UNKNOWN, when the
+   daemon could not read its ledger.
 
 The store is **injected**, not constructed here. A sink that could conjure its
 own engine would be a second opinion about where memory lives.
@@ -750,8 +837,10 @@ store mutation and can be refused. The second is the rubric-proposal surface
 8. **Curation never touches pinned entries**, and the watchdog exists so that
    rule is detectable rather than merely instructed.
 9. **The ledger is the record, memory is a sink.** A signal that failed to
-   reach memory is still recorded, and every derived surface re-derives from
-   the ledger.
+   reach memory is still recorded — as OWED (`memory_state = pending`), so the
+   backfill writes it — and every derived surface re-derives from the ledger.
+10. **A busy 409 is not a refusal.** Only `details.conflict_type =
+    "path_busy"` is retried; a precondition 409 never is.
 
 ## Tests
 
@@ -760,6 +849,7 @@ store mutation and can be refused. The second is the rubric-proposal surface
 | Seam vocabulary, ops, matching | `tests/memory-store.test.ts` |
 | Round seeding, gaps, empty-vs-degraded, rendering | `tests/round-memory.test.ts` |
 | Entry-header tag parsing, `[feedback]` ingest, day addendum | `tests/feedback.test.ts` |
+| Writes that stick: busy vs precondition 409, named notes, the feedback ledger and backfill pump, EOD deferral and retries | `tests/memory-writes.test.ts` |
 | PR session lifecycle, credential refusal, session env | `tests/ovsession.test.ts` |
 | Supervisor, health gate, proc sampling, heartbeat block | `tests/openviking.test.ts` |
 | Client routes, determinism pins, store, assembler | `tests/openviking-store.test.ts` |
