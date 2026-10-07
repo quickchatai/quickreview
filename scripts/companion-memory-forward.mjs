@@ -36,18 +36,35 @@
 // adopt-or-bind from the TUI — is identical: this file stays the ONE relay
 // implementation for both topologies.
 //
+// RELAY CAP (F1). Every relay is one ssh session on the forward's one
+// shared connection, and sshd refuses sessions past its MaxSessions (10) —
+// each refused relay then quietly opens a full ssh login of its own. So at
+// most `--max-relays` (6) relays are open at once; a request beyond that
+// waits its turn, a relay between requests hands its slot over, and a request
+// that waits too long gets an honest 503 — see "the relay cap" below. The
+// systemd unit and the TUI both parse through `parseArgs`, so both carry it.
+//
 // SUBCOMMANDS
 //   run              the forwarder itself (what the systemd unit executes)
 //   install          create the docker network + write/enable the user unit
 //   uninstall        stop + disable the unit (network and keys left alone)
-//   status           unit state, network, endpoint, one live probe
+//   status           unit state, network, endpoint, the relay cap and the
+//                    running forward's live counts, one live probe
 //   ensure-network   idempotent docker network create (the unit's ExecStartPre)
 //   verify           the two-key reach + confinement proof (see docs/)
 //
 // Zero dependencies, no repo build needed: systemd must be able to run this
 // from a bare checkout at boot.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -72,7 +89,34 @@ export const DEFAULTS = {
   remotePort: 1933,
   sudo: true,
   unit: "qcr-memory-forward",
+  // F1 — the relay cap. Every relay is one ssh SESSION on the
+  // forward's one shared connection, and sshd refuses the session past its
+  // `MaxSessions` (10 on the VM, the OpenSSH default). 6 leaves room for
+  // relays still closing and for anything else that shares the ControlPath.
+  maxRelays: 6,
+  /** Requests that may wait for a relay; one more is refused at once. */
+  queueMax: 64,
+  /** How long one request may wait for a relay before it is refused. */
+  queueTimeoutS: 15,
 };
+
+/** OpenSSH's default sshd `MaxSessions`: session channels per connection.
+ * Verified on the VM (`sshd -T | grep maxsessions` → 10, 2026-10-07). */
+export const SSHD_DEFAULT_MAX_SESSIONS = 10;
+
+/**
+ * The forward's OWN ssh control socket (F1). Its relays multiplex
+ * over one master connection, and every relay is a session on it; a path of
+ * its own keeps the operator's interactive ssh — whose `~/.ssh/config`
+ * ControlPath is a different file — off that connection's session budget.
+ * `%C` (a hash of the local host, remote host, port and user) keeps the path
+ * short enough for a unix socket. Until F1 the default was
+ * `~/.ssh/cm-%r@%h:%p`: already separate from the VM config's
+ * `~/.ssh/sockets/…`, but the stock example name a config might share.
+ */
+export function defaultControlPath(home = homedir()) {
+  return join(home, ".ssh", "qcr-memfwd-%C");
+}
 
 /**
  * The keys file (0600, two USER keys) — the install locator's rule
@@ -131,7 +175,9 @@ export function relayArgv(cfg) {
     "ServerAliveCountMax=3",
     // A shared control connection turns a per-request ssh handshake into a
     // channel open on an existing socket. Without it every HTTP connection
-    // would pay a full login.
+    // would pay a full login. Each relay is one SESSION on that connection,
+    // and sshd caps sessions per connection (`MaxSessions`) — which is what
+    // `createForwarder`'s relay cap stays under (F1).
     "-o",
     "ControlMaster=auto",
     "-o",
@@ -196,11 +242,21 @@ export function relayFailureCause(cfg, text, deps = {}) {
       remedy: `ssh -v ${cfg.sshHost} true`,
     };
   }
+  // There is deliberately no cause for sshd refusing a session past its
+  // MaxSessions (F1 review): the mux client does not fail on that —
+  // it gives up on the shared connection and opens a full ssh login of its
+  // own, and under `-q` it says neither. Nothing reaches stderr to match; the
+  // relay cap is what keeps relays inside the shared connection.
   if (/control socket|mux_client|multiplexing/i.test(s)) {
+    // The forward's master lives at ITS OWN ControlPath, so a bare
+    // `ssh -O exit <host>` would address the operator's master (the one in
+    // ~/.ssh/config) and leave the wedged one standing.
     return {
       key: "mux",
-      cause: `the shared ssh ControlMaster for ${cfg.sshHost} is wedged`,
-      remedy: `ssh -O exit ${cfg.sshHost}`,
+      cause: `the forward's own ssh ControlMaster for ${cfg.sshHost}${cfg.controlPath ? ` (${cfg.controlPath})` : ""} is wedged`,
+      remedy: cfg.controlPath
+        ? `ssh -o 'ControlPath=${cfg.controlPath}' -O exit ${cfg.sshHost}`
+        : `ssh -O exit ${cfg.sshHost}`,
     };
   }
   return {
@@ -353,79 +409,782 @@ export function realRelaySpawner(cfg) {
   return () => spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
 }
 
+// ---- the relay cap (F1) ---------------------------------------------
+//
+// THE DEFECT (2026-10-07). Every accepted TCP connection got its own relay —
+// one `ssh … docker exec …` — and every relay is one SESSION on the forward's
+// one shared ssh connection. sshd allows `MaxSessions` (10) of those per
+// connection and refuses the rest. A refused relay does not stop there: the
+// mux client gives up on the shared connection and opens a full ssh login of
+// its own through the bastion, saying nothing under `-q`. On the VM those
+// extra logins failed (2026-08-26, docs/memory-forward-connection-research.md:
+// 16 concurrent probes, exactly 10 answered, ssh exiting 255), so a burst —
+// the store's 8-way read sweep (`qcr memory relayout`) beside the TUI's polls
+// and the companion — had its extra connections closed under it, and the
+// callers saw `fetch failed`.
+//
+// THE CAP. At most `maxRelays` relays are open at once, counted from spawn to
+// the child's EXIT (a killed relay still holds its session until ssh is gone).
+// A connection that has a request to send and no relay waits in a FIFO queue
+// (`queueMax` deep); a request that waits `queueTimeoutMs` — or arrives at a
+// full queue — gets an HTTP 503 in OpenViking's own error envelope and a clean
+// close, never a hang and never a bare reset.
+//
+// WHY A QUEUE ALONE IS NOT ENOUGH. Every client here keeps its connections
+// alive between requests (undici, browsers). A connection holding a relay and
+// looping on it never closes, so a queue that only advanced on a close would
+// starve whoever waited behind a busy sweep. So a relay YIELDS: when its
+// connection is BETWEEN requests and somebody is waiting, the relay is
+// stopped and its slot goes to the head of the queue; the connection itself
+// stays open, and its next request waits its turn for a new relay. "Between
+// requests" is read off the bytes by `createExchangeTracker` — a whole
+// request, then a whole Content-Length response, and nothing since — never
+// guessed from a quiet line. A connection that is not plain request/response
+// HTTP/1.1 (a websocket, a chunked or close-delimited body, a pipelined
+// request) is never stopped: it keeps its relay to the end, as every
+// connection did before F1.
+//
+// A relay that yields has served its connection for `minLeaseMs` (so a hot
+// loop pays one relay start per second, not one per request), or has been
+// quiet for `idleYieldMs` (an idle keep-alive connection, which may never send
+// again). No bytes ever cross from one connection's relay to another's: a
+// yielded relay is killed, and the next request starts a fresh one.
+
+/** Internal timings. `opts.timings` overrides them (tests). */
+export const RELAY_TIMINGS = {
+  /** A relay serving a busy connection yields at a request boundary only
+   * after this long — bounds the cost of fairness to one relay start a second. */
+  minLeaseMs: 1_000,
+  /** …or as soon as its connection has been idle (between requests) this long. */
+  idleYieldMs: 200,
+  /** SIGTERM → SIGKILL, and the slot is counted free at the SIGKILL. */
+  killGraceMs: 3_000,
+  /** While anyone waits, how often idle relays are looked for. */
+  rebalanceMs: 100,
+  /** A refused connection: how long its client gets to read the 503. */
+  refuseLingerMs: 2_000,
+  /** A relay that exited mid-exchange: how long to wait for its last bytes. */
+  relayCloseGraceMs: 1_000,
+  /** A waiting connection's held bytes past which its socket is paused. */
+  holdLimitBytes: 256 * 1024,
+  /** At most one stats-file write per this window. */
+  statsEveryMs: 500,
+  /** One "queueing" line per window, however many bursts. */
+  logWindowMs: 60_000,
+};
+
 /**
- * The listener. One TCP server per bind address; every accepted connection gets
- * its own relay child, and either side closing tears the pair down.
+ * The cap, the queue depth and the wait, off `cfg` (`parseArgs` fills all
+ * three — so the systemd unit and the TUI, which both parse through it, carry
+ * the same cap; a cfg built by hand falls back to the defaults).
+ */
+export function forwardLimits(cfg) {
+  return {
+    maxRelays: cfg?.maxRelays ?? DEFAULTS.maxRelays,
+    queueMax: cfg?.queueMax ?? DEFAULTS.queueMax,
+    queueTimeoutMs: cfg?.queueTimeoutMs ?? DEFAULTS.queueTimeoutS * 1000,
+  };
+}
+
+/** Longest message head the tracker reads before it calls the stream opaque. */
+const MAX_HEAD_BYTES = 64 * 1024;
+
+/** `name: value` lines → lowercase name → values; null when malformed. */
+function parseHeaderLines(lines) {
+  const headers = new Map();
+  for (const line of lines) {
+    const i = line.indexOf(":");
+    if (i <= 0 || /^[ \t]/.test(line)) return null; // obs-fold or garbage
+    const name = line.slice(0, i).trim().toLowerCase();
+    const list = headers.get(name) ?? [];
+    list.push(line.slice(i + 1).trim());
+    headers.set(name, list);
+  }
+  return headers;
+}
+
+/** A body length the bytes declare: a number, `undefined` when nothing is
+ * declared, `null` when it is chunked, malformed or contradictory. */
+function declaredLength(headers) {
+  if (headers.has("transfer-encoding")) return null;
+  const values = headers.get("content-length");
+  if (!values) return undefined;
+  const all = new Set(values.flatMap((v) => v.split(",")).map((v) => v.trim()));
+  if (all.size !== 1) return null;
+  const [only] = [...all];
+  return /^\d{1,15}$/.test(only) ? Number(only) : null;
+}
+
+/**
+ * Where one connection's HTTP/1.1 exchange stands, read off its bytes — just
+ * enough to know when its relay is BETWEEN requests and may be handed over.
+ *
+ * It frames only what it can frame exactly: a request (Content-Length body or
+ * none) and its response (a Content-Length body; none for HEAD, 204, 304).
+ * Anything else — chunked or close-delimited bodies, a 1xx or 101 upgrade, an
+ * `Upgrade` or `Expect` request, a second request sent before the first
+ * response came back, a server speaking unasked, a head over 64 KiB — makes
+ * the stream OPAQUE for good, and an opaque connection is never stopped. The
+ * tracker never changes a byte; it only watches.
+ */
+export function createExchangeTracker() {
+  /** idle | request-head | request-body | response-wait | response-head |
+   * response-body | opaque */
+  let phase = "idle";
+  let head = "";
+  let remaining = 0;
+  let method = "";
+  let exchanges = 0;
+
+  const opaque = () => {
+    phase = "opaque";
+    head = "";
+  };
+
+  /** Consume head bytes from `off`; the offset past the head once it is
+   * whole (after `onHead`), else the end of the buffer. */
+  const takeHead = (buf, off, onHead) => {
+    const window = buf.toString("latin1", off, Math.min(buf.length, off + MAX_HEAD_BYTES + 4));
+    const combined = head + window;
+    const end = combined.indexOf("\r\n\r\n", Math.max(0, head.length - 3));
+    if (end === -1) {
+      head = combined;
+      if (head.length > MAX_HEAD_BYTES) opaque();
+      return buf.length;
+    }
+    const consumed = end + 4 - head.length;
+    const text = combined.slice(0, end);
+    head = "";
+    onHead(text);
+    return off + consumed;
+  };
+
+  const startRequest = (text) => {
+    const lines = text.split("\r\n");
+    const m = /^([A-Z]+) \S+ HTTP\/1\.[01]$/.exec(lines[0] ?? "");
+    const headers = parseHeaderLines(lines.slice(1));
+    if (!m || !headers || headers.has("upgrade") || headers.has("expect")) return opaque();
+    const len = declaredLength(headers);
+    if (len === null) return opaque();
+    method = m[1];
+    remaining = len ?? 0; // a request that declares nothing has no body
+    phase = remaining > 0 ? "request-body" : "response-wait";
+  };
+
+  const startResponse = (text) => {
+    const lines = text.split("\r\n");
+    const m = /^HTTP\/1\.[01] (\d{3})(?: |$)/.exec(lines[0] ?? "");
+    const headers = parseHeaderLines(lines.slice(1));
+    if (!m || !headers) return opaque();
+    const status = Number(m[1]);
+    if (status < 200) return opaque(); // 1xx, 101 upgrade: not one request, one answer
+    let len = 0;
+    if (method !== "HEAD" && status !== 204 && status !== 304) {
+      const declared = declaredLength(headers);
+      // No length is a body that ends at the close: nothing marks its end.
+      if (declared === null || declared === undefined) return opaque();
+      len = declared;
+    }
+    remaining = len;
+    if (remaining > 0) phase = "response-body";
+    else {
+      phase = "idle";
+      exchanges += 1;
+    }
+  };
+
+  return {
+    /** Bytes the client sent. */
+    client(buf) {
+      let off = 0;
+      while (off < buf.length) {
+        if (phase === "opaque") return;
+        if (phase === "idle") {
+          phase = "request-head";
+          continue;
+        }
+        if (phase === "request-head") {
+          off = takeHead(buf, off, startRequest);
+          continue;
+        }
+        if (phase === "request-body") {
+          const n = Math.min(remaining, buf.length - off);
+          remaining -= n;
+          off += n;
+          if (remaining === 0) phase = "response-wait";
+          continue;
+        }
+        // Client bytes while a response is owed: pipelining, or a protocol
+        // that talks both ways at once. Either way, no boundary to trust.
+        return opaque();
+      }
+    },
+    /** Bytes the server (the relay) sent. */
+    server(buf) {
+      let off = 0;
+      while (off < buf.length) {
+        if (phase === "opaque") return;
+        if (phase === "response-wait") {
+          phase = "response-head";
+          continue;
+        }
+        if (phase === "response-head") {
+          off = takeHead(buf, off, startResponse);
+          continue;
+        }
+        if (phase === "response-body") {
+          const n = Math.min(remaining, buf.length - off);
+          remaining -= n;
+          off += n;
+          if (remaining === 0) {
+            phase = "idle";
+            exchanges += 1;
+          }
+          continue;
+        }
+        // The server spoke unasked, or before the request was whole.
+        return opaque();
+      }
+    },
+    /** Nothing in flight: no request begun, or the last response is whole. */
+    atRest: () => phase === "idle",
+    opaque: () => phase === "opaque",
+    phase: () => phase,
+    exchanges: () => exchanges,
+  };
+}
+
+/**
+ * The answer a refused request gets: an HTTP 503 in OpenViking's own
+ * `{status, error}` envelope, so a caller's client reports WHY ("the memory
+ * forward is busy …") where a bare close read as `fetch failed`.
+ */
+export function busyResponse(message) {
+  const body = JSON.stringify({ status: "error", error: { code: "FORWARD_BUSY", message } });
+  return (
+    "HTTP/1.1 503 Service Unavailable\r\n" +
+    "Content-Type: application/json\r\n" +
+    `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+    "Retry-After: 1\r\n" +
+    "Connection: close\r\n" +
+    "\r\n" +
+    body
+  );
+}
+
+const seconds = (ms) => `${Math.round(ms / 100) / 10}s`;
+
+/**
+ * The listener. One TCP server per bind address; every connection that has
+ * a request to send gets a relay child — at most `maxRelays` at once (above) —
+ * and either side closing tears the pair down.
  *
  * Failure is always local and always survivable: a relay that cannot start
  * closes that one connection (the extension sees a connection error, degrades,
  * and the in-container watcher alerts) — the forwarder keeps listening.
+ *
+ * @param {Record<string, any>} cfg
+ * @param {{
+ *   log?: (line: string) => void,
+ *   spawnRelay?: () => any,
+ *   now?: () => number,
+ *   collapser?: { fail: (cause: { key: string, cause: string, remedy: string }) => void, ok: () => void },
+ *   timings?: Partial<typeof RELAY_TIMINGS>,
+ * }} [opts]
  */
 export function createForwarder(cfg, opts = {}) {
   const log = opts.log ?? ((line) => console.log(`[memory-forward] ${line}`));
   const spawnRelay = opts.spawnRelay ?? realRelaySpawner(cfg);
+  const now = opts.now ?? (() => Date.now());
+  const limits = forwardLimits(cfg);
+  const t = { ...RELAY_TIMINGS, ...(opts.timings ?? {}) };
   const servers = [];
-  // Every in-flight socket↔child pair. Tracked so close() can tear them down:
-  // `server.close()` only stops ACCEPTING, and each relay is an ssh + a remote
-  // docker exec, so a caller that stops the forwarder and keeps running would
-  // strand one process trio per open connection. That caller now exists — the
-  // TUI owns a forward for as long as it is up (src/tui/memforward.ts) — where
-  // before only systemd did, and a process exiting cleaned up for free.
-  const pairs = new Set();
+  // Every accepted connection not yet closed. Tracked so close() can tear
+  // them down: `server.close()` only stops ACCEPTING, and each relay is an ssh
+  // + a remote docker exec, so a caller that stops the forwarder and keeps
+  // running would strand one process trio per open connection. That caller
+  // exists — the TUI owns a forward for as long as it is up
+  // (src/tui/memforward.ts) — where before only systemd did.
+  const conns = new Set();
+  /** Connections with a request waiting for a relay, oldest first. */
+  let queue = [];
+  /** Relay children spawned and not yet exited: the sessions on the master. */
+  let open = 0;
+  /** Of those, the ones already told to stop — slots on their way back. */
+  let retiring = 0;
+  let closed = false;
+  let ticker = null;
+  const counters = {
+    accepted: 0,
+    /** Requests that ever had to wait (the live count is `queued`). */
+    enqueued: 0,
+    servedFromQueue: 0,
+    yielded: 0,
+    refusedTimeout: 0,
+    refusedFull: 0,
+    longestWaitMs: 0,
+    peakOpen: 0,
+    peakQueued: 0,
+  };
 
   // one actionable line per cause, not one symptom line per relay.
   const collapser =
     opts.collapser ?? createFailureCollapser({ log, ...(opts.now ? { now: opts.now } : {}) });
 
-  const onConnection = (socket) => {
+  // ---- what the operator reads ------------------------------------------
+  let episode = false;
+  let lastQueueLogAt = Number.NEGATIVE_INFINITY;
+  let lastRefusalLogAt = Number.NEGATIVE_INFINITY;
+  let summaryOwed = false;
+  let summaryBase = { ...counters };
+  let longestSinceSummary = 0;
+  const startEpisode = () => {
+    if (episode) return;
+    episode = true;
+    const at = now();
+    if (at - lastQueueLogAt < t.logWindowMs) return;
+    lastQueueLogAt = at;
+    summaryOwed = true;
+    log(
+      `relay cap reached: ${open}/${limits.maxRelays} relays open — requests wait (up to ${limits.queueMax}, ${seconds(limits.queueTimeoutMs)} each) and a relay between requests hands its slot over`,
+    );
+  };
+  const endEpisode = () => {
+    if (!episode) return;
+    episode = false;
+    if (!summaryOwed) return;
+    summaryOwed = false;
+    const d = (k) => counters[k] - summaryBase[k];
+    const refused = d("refusedTimeout") + d("refusedFull");
+    log(
+      `relay queue drained: ${d("servedFromQueue")} request(s) waited for a relay (longest ${longestSinceSummary}ms), ${d("yielded")} relay(s) handed over between requests, ${refused} refused`,
+    );
+    summaryBase = { ...counters };
+    longestSinceSummary = 0;
+  };
+
+  // ---- stats: the `status` subcommand's live view -------------------------
+  let statsTimer = null;
+  let statsWritten = false;
+  const stats = () => {
+    let leased = 0;
+    let unyielding = 0;
+    for (const c of conns) {
+      if (!c.lease) continue;
+      leased += 1;
+      if (c.tracker.opaque()) unyielding += 1;
+    }
+    return {
+      ...counters,
+      maxRelays: limits.maxRelays,
+      queueMax: limits.queueMax,
+      queueTimeoutMs: limits.queueTimeoutMs,
+      open,
+      leased,
+      unyielding,
+      queued: queue.length,
+      connections: conns.size,
+    };
+  };
+  const writeStats = () => {
+    statsTimer = null;
+    if (closed || !cfg.statsFile) return;
+    const snapshot = {
+      pid: process.pid,
+      port: cfg.port,
+      transport: cfg.local ? "local docker" : cfg.sshHost,
+      ...(cfg.local ? {} : { controlPath: cfg.controlPath }),
+      updatedAt: new Date(now()).toISOString(),
+      ...stats(),
+    };
+    try {
+      const tmp = `${cfg.statsFile}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
+      renameSync(tmp, cfg.statsFile);
+      statsWritten = true;
+    } catch (err) {
+      if (!statsWritten) log(`cannot write the stats file ${cfg.statsFile}: ${errText(err)}`);
+    }
+  };
+  const scheduleStats = () => {
+    if (closed || !cfg.statsFile || statsTimer) return;
+    statsTimer = setTimeout(writeStats, t.statsEveryMs);
+    statsTimer.unref?.();
+  };
+
+  // ---- the slots ------------------------------------------------------------
+  const startTicker = () => {
+    if (ticker || closed) return;
+    ticker = setInterval(rebalance, t.rebalanceMs);
+    ticker.unref?.();
+  };
+  const stopTicker = () => {
+    if (ticker) clearInterval(ticker);
+    ticker = null;
+  };
+
+  /** Stop a relay. Its slot is free once the child has EXITED — the ssh
+   * session is gone then — or at the SIGKILL, whichever comes first. */
+  const retire = (lease) => {
+    if (lease.retiring) return;
+    lease.retiring = true;
+    if (lease.released) return;
+    retiring += 1;
+    try {
+      lease.child.kill();
+    } catch {
+      /* already gone */
+    }
+    lease.killTimer = setTimeout(() => {
+      try {
+        lease.child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      lease.release();
+    }, t.killGraceMs);
+    lease.killTimer.unref?.();
+  };
+
+  const dequeue = (conn) => {
+    if (!conn.queued) return;
+    conn.queued = false;
+    if (conn.queueTimer) clearTimeout(conn.queueTimer);
+    conn.queueTimer = null;
+    queue = queue.filter((c) => c !== conn);
+    if (queue.length === 0) {
+      stopTicker();
+      endEpisode();
+    }
+  };
+
+  const pump = () => {
+    if (closed) return;
+    while (queue.length > 0 && open < limits.maxRelays) {
+      const conn = queue.shift();
+      conn.queued = false;
+      if (conn.queueTimer) clearTimeout(conn.queueTimer);
+      conn.queueTimer = null;
+      const waited = now() - conn.queuedAt;
+      counters.servedFromQueue += 1;
+      counters.longestWaitMs = Math.max(counters.longestWaitMs, waited);
+      longestSinceSummary = Math.max(longestSinceSummary, waited);
+      grant(conn);
+    }
+    if (queue.length === 0) {
+      stopTicker();
+      endEpisode();
+    } else rebalance();
+  };
+
+  /** Hand waiters the slots of relays that are between requests: the
+   * longest-quiet first, and only as many as are still needed. */
+  function rebalance() {
+    if (closed || queue.length === 0) return stopTicker();
+    const at = now();
+    const ready = [...conns]
+      .filter(
+        (c) =>
+          c.lease &&
+          !c.lease.retiring &&
+          !c.lease.released &&
+          c.tracker.atRest() &&
+          (at - c.lease.startedAt >= t.minLeaseMs || at - c.lastActive >= t.idleYieldMs),
+      )
+      .sort((a, b) => a.lastActive - b.lastActive);
+    for (const c of ready) {
+      if (queue.length <= retiring) break;
+      park(c);
+    }
+    startTicker();
+  }
+
+  /** A connection that just lost its relay BETWEEN requests reads again. A
+   * pause the old relay's full stdin set would otherwise stand for good: its
+   * lift is that child's 'drain', which never comes from a child that is gone,
+   * so the next request would be neither read nor queued. The hold limit's
+   * own pause (`heldBytes` over it) is left standing. */
+  const resumeAfterRelay = (conn) => {
+    if (conn.socket.isPaused?.() && conn.heldBytes <= t.holdLimitBytes) conn.socket.resume();
+  };
+
+  /** Take a connection's relay away BETWEEN requests. The connection stays
+   * open; its next request asks for a relay again. */
+  const park = (conn) => {
+    const lease = conn.lease;
+    conn.lease = null;
+    counters.yielded += 1;
+    retire(lease);
+    resumeAfterRelay(conn);
+    scheduleStats();
+  };
+
+  /** A connection with bytes to send and no relay asks for one. */
+  const wantRelay = (conn) => {
+    if (conn.queued || conn.closed || conn.refused || conn.finishing || conn.lease) return;
+    if (queue.length === 0 && open < limits.maxRelays) return grant(conn);
+    if (queue.length >= limits.queueMax) return refuse(conn, "full");
+    conn.queued = true;
+    conn.queuedAt = now();
+    queue.push(conn);
+    counters.enqueued += 1;
+    counters.peakQueued = Math.max(counters.peakQueued, queue.length);
+    conn.queueTimer = setTimeout(() => {
+      if (!conn.queued) return;
+      dequeue(conn);
+      refuse(conn, "timeout");
+    }, limits.queueTimeoutMs);
+    conn.queueTimer.unref?.();
+    startEpisode();
+    rebalance();
+    scheduleStats();
+  };
+
+  /** A clean "no": the 503 envelope, a FIN, and the rest of the request read
+   * and dropped — closing with unread bytes would RESET the answer away. */
+  const refuse = (conn, why) => {
+    if (conn.refused || conn.closed) return;
+    conn.refused = true;
+    dequeue(conn);
+    if (why === "full") counters.refusedFull += 1;
+    else counters.refusedTimeout += 1;
+    const state = `${open}/${limits.maxRelays} relays open, ${queue.length} waiting`;
+    const message =
+      why === "full"
+        ? `the memory forward's wait queue is full (${state}) — retry shortly`
+        : `the memory forward is at its relay cap and this request waited ${seconds(limits.queueTimeoutMs)} for a relay (${state}) — retry shortly`;
+    const at = now();
+    if (at - lastRefusalLogAt >= t.logWindowMs) {
+      lastRefusalLogAt = at;
+      log(
+        `refused a request — ${why === "full" ? `the wait queue is full (${limits.queueMax})` : `it waited ${seconds(limits.queueTimeoutMs)} for a relay`}; ${state} (more refusals are counted, not logged, for a minute)`,
+      );
+    }
+    conn.held = [];
+    conn.heldBytes = 0;
+    try {
+      if (!conn.tracker.opaque() && conn.socket.writable) conn.socket.write(busyResponse(message));
+      conn.socket.end();
+    } catch {
+      /* the client is already gone */
+    }
+    if (conn.socket.isPaused?.()) conn.socket.resume();
+    conn.lingerTimer = setTimeout(() => closeConn(conn), t.refuseLingerMs);
+    conn.lingerTimer.unref?.();
+    scheduleStats();
+  };
+
+  const closeConn = (conn) => {
+    if (conn.closed) return;
+    conn.closed = true;
+    conns.delete(conn);
+    dequeue(conn);
+    for (const k of ["lingerTimer", "finishTimer"]) if (conn[k]) clearTimeout(conn[k]);
+    if (conn.lease) {
+      retire(conn.lease);
+      conn.lease = null;
+    }
+    conn.socket.destroy();
+    scheduleStats();
+  };
+
+  const writeToRelay = (conn, lease, chunk) => {
+    let ok = true;
+    try {
+      ok = lease.child.stdin.write(chunk);
+    } catch {
+      return; // a dying relay; its exit settles the connection
+    }
+    if (ok) return;
+    conn.socket.pause();
+    lease.child.stdin.once?.("drain", () => {
+      if (conn.lease === lease && !conn.closed) conn.socket.resume();
+    });
+  };
+
+  /** The current relay ended. Between requests (the server closed an idle
+   * keep-alive connection) the connection simply lives on without one;
+   * mid-exchange the client must see the loss, so its side ends too — after
+   * the relay's last bytes have reached it. */
+  const relayEnded = (conn, lease) => {
+    if (conn.closed || conn.lease !== lease) return;
+    if (conn.tracker.atRest()) {
+      conn.lease = null;
+      resumeAfterRelay(conn);
+      return;
+    }
+    conn.finishing = true;
+    const finish = () => {
+      if (conn.closed || conn.lease !== lease) return;
+      conn.lease = null;
+      try {
+        conn.socket.end();
+      } catch {
+        /* already gone */
+      }
+      conn.lingerTimer = setTimeout(() => closeConn(conn), t.refuseLingerMs);
+      conn.lingerTimer.unref?.();
+    };
+    if (lease.stdioClosed) return finish();
+    lease.onStdioClosed = finish;
+    conn.finishTimer = setTimeout(finish, t.relayCloseGraceMs);
+    conn.finishTimer.unref?.();
+  };
+
+  const onRelayData = (conn, lease, chunk) => {
+    if (conn.closed || conn.lease !== lease) return; // a stopped relay's late bytes go nowhere
+    // The first byte back from the container IS the proof that the whole chain
+    // works, so it is what clears a collapsed failure — self-recovery with no
+    // restart, which is the half asked for beyond the rate limit.
+    if (!lease.moved) {
+      lease.moved = true;
+      collapser.ok();
+    }
+    conn.lastActive = now();
+    conn.tracker.server(chunk);
+    if (!conn.socket.write(chunk)) {
+      lease.child.stdout.pause?.();
+      conn.socket.once("drain", () => lease.child.stdout.resume?.());
+    }
+    if (queue.length > 0 && conn.tracker.atRest()) rebalance();
+  };
+
+  function grant(conn) {
     let child;
     try {
       child = spawnRelay();
     } catch (err) {
       collapser.fail(relayFailureCause(cfg, errText(err)));
-      socket.destroy();
+      closeConn(conn);
       return;
     }
-    // Evidence for the cause: ssh writes the reason to stderr and then exits
-    // 255, so the exit code alone can never name it.
-    let stderrText = "";
-    let moved = false;
-    const pair = { socket, child };
-    pairs.add(pair);
-    const done = () => {
-      pairs.delete(pair);
-      socket.destroy();
-      try {
-        child.kill();
-      } catch {
-        /* already gone */
-      }
+    open += 1;
+    counters.peakOpen = Math.max(counters.peakOpen, open);
+    const lease = {
+      child,
+      startedAt: now(),
+      moved: false,
+      // Evidence for the cause: ssh writes the reason to stderr and then exits
+      // 255, so the exit code alone can never name it.
+      stderrText: "",
+      retiring: false,
+      released: false,
+      stdioClosed: false,
+      onStdioClosed: null,
+      killTimer: null,
+      release: () => {},
     };
-    socket.on("error", done);
-    socket.on("close", done);
+    lease.release = () => {
+      if (lease.released) return;
+      lease.released = true;
+      open -= 1;
+      if (lease.retiring) retiring -= 1;
+      if (lease.killTimer) clearTimeout(lease.killTimer);
+      pump();
+      scheduleStats();
+    };
+    conn.lease = lease;
+    conn.lastActive = now();
     child.on?.("error", (err) => {
-      collapser.fail(relayFailureCause(cfg, errText(err)));
-      done();
+      if (!lease.retiring) collapser.fail(relayFailureCause(cfg, errText(err)));
+      lease.release();
+      if (conn.lease === lease) {
+        conn.lease = null;
+        closeConn(conn);
+      }
     });
     child.on?.("exit", (code) => {
       // A relay that carried bytes and then exited is a closed connection, not
-      // a failure — only one that never moved anything is worth a cause.
-      if (code && !moved) collapser.fail(relayFailureCause(cfg, stderrText));
-      socket.destroy();
+      // a failure — only one that never moved anything is worth a cause. One
+      // WE stopped is neither.
+      if (code && !lease.moved && !lease.retiring)
+        collapser.fail(relayFailureCause(cfg, lease.stderrText));
+      lease.release();
+      relayEnded(conn, lease);
+    });
+    child.on?.("close", () => {
+      lease.stdioClosed = true;
+      lease.onStdioClosed?.();
     });
     child.stderr?.on?.("data", (d) => {
-      stderrText = `${stderrText}${String(d)}`.slice(-2000);
+      lease.stderrText = `${lease.stderrText}${String(d)}`.slice(-2000);
     });
-    socket.pipe(child.stdin);
-    child.stdout.pipe(socket);
-    // The first byte back from the container IS the proof that the whole chain
-    // works, so it is what clears a collapsed failure — self-recovery with no
-    // restart, which is the half asked for beyond the rate limit.
-    child.stdout.on?.("data", () => {
-      if (moved) return;
-      moved = true;
-      collapser.ok();
+    // An EPIPE on a dying relay surfaces through its exit, never as a throw.
+    child.stdin?.on?.("error", () => {});
+    child.stdout?.on?.("error", () => {});
+    child.stdout.on("data", (d) => onRelayData(conn, lease, d));
+    const held = conn.held;
+    conn.held = [];
+    conn.heldBytes = 0;
+    // Lift the hold limit's pause BEFORE the flush, so a pause the flush
+    // itself sets (the relay's stdin full) stands. Resuming only flows on the
+    // next tick, after the held bytes are written: the order holds.
+    if (conn.socket.isPaused?.()) conn.socket.resume();
+    for (const chunk of held) writeToRelay(conn, lease, chunk);
+    if (conn.clientEnded) {
+      try {
+        child.stdin.end();
+      } catch {
+        /* already gone */
+      }
+    }
+    scheduleStats();
+  }
+
+  const onConnection = (socket) => {
+    if (closed) {
+      socket.destroy();
+      return;
+    }
+    counters.accepted += 1;
+    const conn = {
+      socket,
+      tracker: createExchangeTracker(),
+      lease: null,
+      held: [],
+      heldBytes: 0,
+      queued: false,
+      queuedAt: 0,
+      queueTimer: null,
+      lingerTimer: null,
+      finishTimer: null,
+      lastActive: now(),
+      refused: false,
+      finishing: false,
+      clientEnded: false,
+      closed: false,
+    };
+    conns.add(conn);
+    socket.on("data", (chunk) => {
+      if (conn.closed || conn.refused || conn.finishing) return; // read and dropped
+      conn.lastActive = now();
+      conn.tracker.client(chunk);
+      const lease = conn.lease;
+      if (lease && !lease.retiring) {
+        writeToRelay(conn, lease, chunk);
+        return;
+      }
+      conn.held.push(chunk);
+      conn.heldBytes += chunk.length;
+      if (conn.heldBytes > t.holdLimitBytes) socket.pause();
+      wantRelay(conn);
     });
+    socket.on("end", () => {
+      conn.clientEnded = true;
+      if (conn.lease && !conn.lease.retiring) {
+        try {
+          conn.lease.child.stdin.end();
+        } catch {
+          /* already gone */
+        }
+      }
+    });
+    socket.on("error", () => closeConn(conn));
+    socket.on("close", () => closeConn(conn));
+    // A free slot is taken at once, as every connection did before the cap;
+    // with none free, nothing is owed until the client actually asks.
+    if (queue.length === 0 && open < limits.maxRelays) grant(conn);
+    else scheduleStats();
   };
 
   return {
@@ -444,31 +1203,129 @@ export function createForwarder(cfg, opts = {}) {
         const addr = server.address();
         if (addr)
           log(
-            `listening on ${addr.address}:${addr.port} → ${cfg.local ? "local docker" : cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort}`,
+            `listening on ${addr.address}:${addr.port} → ${cfg.local ? "local docker" : cfg.sshHost} ${cfg.container} ${cfg.remoteHost}:${cfg.remotePort} — at most ${limits.maxRelays} relays at once, up to ${limits.queueMax} requests wait ${seconds(limits.queueTimeoutMs)}`,
           );
       }
-      return servers.filter((s) => s.address() !== null).length;
+      const bound = servers.filter((s) => s.address() !== null).length;
+      if (bound > 0 && !cfg.local && limits.maxRelays >= SSHD_DEFAULT_MAX_SESSIONS)
+        log(
+          `WARNING: --max-relays ${limits.maxRelays} is not under sshd's default MaxSessions (${SSHD_DEFAULT_MAX_SESSIONS}) — a relay past the server's limit is refused on the shared connection and quietly opens a full ssh login of its own, which can fail; check \`ssh ${cfg.sshHost} sudo sshd -T | grep -i maxsessions\``,
+        );
+      if (bound > 0) writeStats();
+      return bound;
     },
     /** Stop accepting AND tear down what is still in flight. Both halves are
      * required: without the second, a still-running caller leaks one ssh +
      * remote node per open connection. */
     close() {
       for (const s of servers) s.close();
-      for (const { socket, child } of [...pairs]) {
-        try {
-          child.kill();
-        } catch {
-          /* already gone */
-        }
-        socket.destroy();
+      closed = true;
+      stopTicker();
+      if (statsTimer) clearTimeout(statsTimer);
+      statsTimer = null;
+      for (const conn of [...conns]) {
+        if (conn.queueTimer) clearTimeout(conn.queueTimer);
+        conn.queued = false;
+        closeConn(conn);
       }
-      pairs.clear();
+      queue = [];
+      if (statsWritten && cfg.statsFile) {
+        // Only OUR file: another forward may have taken the port since.
+        try {
+          const mine = JSON.parse(readFileSync(cfg.statsFile, "utf8")).pid === process.pid;
+          if (mine) unlinkSync(cfg.statsFile);
+        } catch {
+          /* gone already, or not ours to read */
+        }
+      }
     },
-    /** In-flight relay count — the test's handle on the teardown above. */
-    liveRelays: () => pairs.size,
+    /** Connections holding a relay — the test's handle on the teardown above. */
+    liveRelays: () => [...conns].filter((c) => c.lease).length,
+    /** The cap, the queue and what they have done (F1). */
+    stats,
     /** Bound ports (the test asks for the ephemeral one). */
     addresses: () => servers.map((s) => s.address()).filter(Boolean),
   };
+}
+
+/**
+ * Where the running forward writes its live counts for `status` (F1):
+ * `$XDG_RUNTIME_DIR/qcr-memory-forward-<port>.json` — the same directory the
+ * systemd unit's `%t` names, so the CLI and the unit agree. No runtime dir, no
+ * file: `status` then says the counts are unknown rather than guessing.
+ */
+export function statsFilePath(env = process.env, port = DEFAULTS.port) {
+  const dir = (env.XDG_RUNTIME_DIR ?? "").trim();
+  if (dir === "" || !isAbsolute(dir)) return null;
+  return join(dir, `qcr-memory-forward-${port}.json`);
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM";
+  }
+}
+
+/**
+ * Read the running forward's stats file: `live`, `stale` (its pid is gone),
+ * `absent`, `unreadable`, or `off` (no path) — never a guessed zero.
+ *
+ * @param {string | null | undefined} path
+ * @param {{ read?: (p: string) => string, alive?: (pid: number) => boolean }} [deps]
+ */
+export function readForwardStats(path, deps = {}) {
+  if (!path) return { state: "off" };
+  let text;
+  try {
+    text = (deps.read ?? ((p) => readFileSync(p, "utf8")))(path);
+  } catch (err) {
+    return err?.code === "ENOENT"
+      ? { state: "absent" }
+      : { state: "unreadable", error: errText(err) };
+  }
+  let snapshot;
+  try {
+    snapshot = JSON.parse(text);
+  } catch {
+    return { state: "unreadable", error: "not JSON" };
+  }
+  if (!snapshot || typeof snapshot !== "object")
+    return { state: "unreadable", error: "not a stats object" };
+  return { state: (deps.alive ?? pidAlive)(snapshot.pid) ? "live" : "stale", snapshot };
+}
+
+/** What `status` prints about the cap — the running forward's own numbers
+ * when it is live, this command's settings otherwise, never a made-up count. */
+export function describeForwardStats(cfg, read) {
+  const lim = forwardLimits(cfg);
+  const capLine = (s, whose) =>
+    `relay cap${whose}: ${s.maxRelays} at once (sshd's default MaxSessions is ${SSHD_DEFAULT_MAX_SESSIONS}); up to ${s.queueMax} requests wait ${seconds(s.queueTimeoutMs)} each`;
+  if (read.state !== "live") {
+    const why = {
+      off: "no stats file (XDG_RUNTIME_DIR is not set)",
+      absent: `no forward has written ${cfg.statsFile} (none running on this port, or one started before F1)`,
+      unreadable: `${cfg.statsFile} is unreadable (${read.error})`,
+      stale: `${cfg.statsFile} names pid ${read.snapshot?.pid}, which is not running`,
+    }[read.state];
+    return [capLine(lim, " (this command's settings)"), `live relays: unknown — ${why}`];
+  }
+  const s = read.snapshot;
+  const lines = [capLine(s, "")];
+  lines.push(
+    `live relays (pid ${s.pid}, as of ${s.updatedAt}): ${s.open}/${s.maxRelays} open, ${s.queued} waiting, ${s.unyielding ?? 0} held by connections that cannot hand over (peak ${s.peakOpen} open, ${s.peakQueued} waiting)`,
+  );
+  lines.push(
+    `since start: ${s.servedFromQueue} request(s) waited for a relay (longest ${s.longestWaitMs}ms), ${s.yielded} relay(s) handed over between requests, refused ${s.refusedTimeout} on timeout and ${s.refusedFull} on a full queue`,
+  );
+  if (s.maxRelays !== lim.maxRelays)
+    lines.push(
+      `(this command would use ${lim.maxRelays}; the running forward was started with other settings)`,
+    );
+  return lines;
 }
 
 // ---- systemd ----------------------------------------------------------------
@@ -507,6 +1364,9 @@ export function unitText(cfg, env = process.env) {
     cfg.gateway,
     ...(cfg.sudo ? [] : ["--no-sudo"]),
     ...(cfg.identity ? ["--identity", cfg.identity] : []),
+    // F1: the cap and the control socket ride the unit only when they
+    // differ from the defaults, so a later default reaches an installed unit.
+    ...unitLimitArgs(cfg),
   ].join(" ");
   // name the transport truthfully — a local unit that claimed to
   // forward "OpenViking on my-vm" is the line an operator reads first in
@@ -530,6 +1390,23 @@ NoNewPrivileges=yes
 [Install]
 WantedBy=default.target
 `;
+}
+
+/**
+ * The non-default relay settings as `run` flags for the unit's ExecStart.
+ * A control path is written with `%` doubled: systemd expands `%C`, `%h`,
+ * `%r`, `%p` itself in ExecStart, and those are also ssh's tokens.
+ */
+export function unitLimitArgs(cfg, home = homedir()) {
+  const lim = forwardLimits(cfg);
+  const out = [];
+  if (lim.maxRelays !== DEFAULTS.maxRelays) out.push("--max-relays", String(lim.maxRelays));
+  if (lim.queueMax !== DEFAULTS.queueMax) out.push("--queue-max", String(lim.queueMax));
+  if (lim.queueTimeoutMs !== DEFAULTS.queueTimeoutS * 1000)
+    out.push("--queue-timeout", String(Math.round(lim.queueTimeoutMs / 1000)));
+  if (!cfg.local && cfg.controlPath && cfg.controlPath !== defaultControlPath(home))
+    out.push("--control-path", cfg.controlPath.replaceAll("%", "%%"));
+  return out;
 }
 
 export function unitPath(cfg, home = homedir()) {
@@ -777,6 +1654,19 @@ export function parseArgs(argv, env = process.env) {
     else flags.set(name, "true");
   }
   const num = (k, d) => (flags.has(k) ? Number(flags.get(k)) : d);
+  // F1: a positive whole number from a flag, else the env, else the
+  // default. A bad value REFUSES rather than falling back: a cap silently
+  // replaced by something else is the defect this exists to prevent.
+  const count = (flag, envName, d) => {
+    const fromEnv = (env[envName] ?? "").trim();
+    const raw = flags.has(flag) ? String(flags.get(flag)) : fromEnv !== "" ? fromEnv : undefined;
+    if (raw === undefined) return d;
+    if (!/^\d+$/.test(raw) || Number(raw) < 1)
+      throw new Error(
+        `--${flag} (${envName}) must be a whole number of at least 1, got ${JSON.stringify(raw)}`,
+      );
+    return Number(raw);
+  };
   const gateway = flags.get("gateway") ?? env.QCR_MEMORY_GATEWAY ?? DEFAULTS.gateway;
   const port = num("port", Number(env.QCR_MEMORY_PORT ?? DEFAULTS.port));
   const sshHost = flags.get("ssh-host") ?? env.QCR_SSH_HOST ?? DEFAULTS.sshHost;
@@ -805,7 +1695,14 @@ export function parseArgs(argv, env = process.env) {
     remotePort: num("remote-port", DEFAULTS.remotePort),
     sudo: !flags.has("no-sudo"),
     identity: flags.get("identity"),
-    controlPath: flags.get("control-path") ?? join(homedir(), ".ssh", "cm-%r@%h:%p"),
+    controlPath: flags.get("control-path") ?? defaultControlPath(),
+    // F1 — one parser, so the systemd unit and the TUI (which runs
+    // this same parseArgs) carry the same cap.
+    maxRelays: count("max-relays", "QCR_MEMORY_MAX_RELAYS", DEFAULTS.maxRelays),
+    queueMax: count("queue-max", "QCR_MEMORY_QUEUE_MAX", DEFAULTS.queueMax),
+    queueTimeoutMs:
+      count("queue-timeout", "QCR_MEMORY_QUEUE_TIMEOUT_S", DEFAULTS.queueTimeoutS) * 1000,
+    statsFile: flags.get("stats-file") ?? statsFilePath(env, port),
     unit: flags.get("unit") ?? DEFAULTS.unit,
     write: flags.has("write"),
     base: flags.get("base") ?? `http://127.0.0.1:${port}`,
@@ -901,6 +1798,8 @@ async function status(cfg) {
     `docker network ${cfg.network}: ${net.status === 0 ? `gateway ${net.stdout.trim()}` : "absent"}`,
   );
   console.log(`endpoint for the container: http://${cfg.gateway}:${cfg.port}`);
+  // F1: the cap, and the running forward's own live counts.
+  for (const line of describeForwardStats(cfg, readForwardStats(cfg.statsFile))) console.log(line);
   for (const probe of ["/health", "/ready"]) {
     try {
       const res = await fetch(`http://127.0.0.1:${cfg.port}${probe}`, {

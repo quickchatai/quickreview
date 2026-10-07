@@ -138,8 +138,13 @@ export class LearningStore {
   /** One-line status of the last verb (also mirrored to app.notice). */
   status?: string;
   filedTotal = 0;
-  /**: where the memory forward stands. */
-  forward?: ForwardStatus;
+  /**: where the memory forward stands — read from the forward at
+   * every paint, never kept from the last memory reload: an OWNED forward's
+   * row carries its relay counts, which move between reloads (F1).
+   * No forward = undefined, which the tab paints as "starting…". */
+  get forward(): ForwardStatus | undefined {
+    return this.deps.forward?.view();
+  }
   /**: entry key (memtab `entryKey`) → why setup proposes pinning it.
    * Only proposals whose entry still holds the proposed content count. */
   pinProposals = new Map<string, string>();
@@ -180,7 +185,6 @@ export class LearningStore {
     this.digestFetcher = deps.digestFetcher ?? new SshDigestFetcher(app.cfg, app.ssh);
     this.now = deps.now ?? (() => new Date());
     this.tickets = deps.readTickets ? { kind: "unread" } : { kind: "unconfigured" };
-    if (deps.forward) this.forward = deps.forward.view();
   }
 
   /** Called after each part finishes loading — the tabs re-bind selections. */
@@ -235,7 +239,7 @@ export class LearningStore {
    * transport nobody tried to start. */
   private async loadMemoryPart(): Promise<void> {
     if (this.deps.forward) {
-      this.forward = await this.deps.forward.ensure();
+      await this.deps.forward.ensure();
       this.app.repaint();
     }
     const wasError = this.memError;

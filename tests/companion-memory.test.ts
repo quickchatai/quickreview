@@ -502,10 +502,16 @@ describe("the memory forward", () => {
       key: "host",
       remedy: "ssh -v my-vm true",
     });
+    // F1: the forward's master lives at ITS OWN ControlPath, so the
+    // remedy must name that socket — a bare `ssh -O exit my-vm` addresses
+    // the operator's master from ~/.ssh/config and leaves the wedged one up.
     expect(cause("Control socket connect(/home/x/.ssh/cm): Connection refused")).toMatchObject({
       key: "mux",
-      remedy: "ssh -O exit my-vm",
+      remedy: "ssh -o 'ControlPath=/home/x/.ssh/cm-%r@%h:%p' -O exit my-vm",
     });
+    // No cause exists for a session sshd refused past its MaxSessions: under
+    // `-q` the mux client says nothing about it and falls back to a full login
+    // of its own (F1 review), so there is no stderr to name it from.
     // The docker daemon's own refusal also says "permission denied" — it must
     // not be mistaken for an ssh key problem and send the operator to ssh-add.
     expect(

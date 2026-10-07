@@ -33,13 +33,42 @@
 // runs on the owner's PC as him, exactly as the unit runs it (root CLAUDE.md
 // rule 8). The forward carries bytes; the KEYS stay in the keys file that
 // `src/tui/memory.ts` reads.
+//
+// THE RELAY CAP (F1) rides the same route: `parseArgs` fills
+// `maxRelays`/`queueMax`/`queueTimeoutMs` from the same flags and `QCR_MEMORY_*`
+// env the unit reads, and nothing here passes a second value — a forward the
+// TUI binds is capped exactly as the unit's is. While it is ours, `view()`
+// carries its live counts; an ADOPTED forward's counts belong to another
+// process, so they are not painted at all (`companion-memory-forward.mjs
+// status` reads them) rather than painted as zero.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+
+/** What the forward's `stats()` reports (F1) — the fields painted. */
+export interface ForwardStats {
+  maxRelays: number;
+  queueMax: number;
+  /** Relay children open now: the ssh sessions on the forward's connection. */
+  open: number;
+  /** Requests waiting for a relay. */
+  queued: number;
+  refusedTimeout: number;
+  refusedFull: number;
+  [k: string]: unknown;
+}
 
 /** What `createForwarder` hands back — the half of it this module uses. */
 export interface ForwarderHandle {
   listen(): Promise<number>;
   close(): void;
+  /** F1. Optional: a handle without it is painted without counts. */
+  stats?(): ForwardStats;
+}
+
+/** One line for the MEMORY STORE row: the cap and where it stands. */
+export function relaySummary(s: ForwardStats): string {
+  const refused = s.refusedTimeout + s.refusedFull;
+  return `relays ${s.open}/${s.maxRelays} open, ${s.queued} waiting${refused > 0 ? `, ${refused} refused since start` : ""}`;
 }
 
 /** The slice of `scripts/companion-memory-forward.mjs` we depend on. Declared
@@ -172,6 +201,20 @@ export class MemoryForward {
   }
 
   view(): ForwardStatus {
+    // A forward we own reports its relay cap live (F1). Read at each
+    // view() — the memory tab takes one at every paint (`LearningStore.forward`
+    // is a getter over this), and the TUI repaints on every poll — never a
+    // count kept from the moment it was bound or the last memory reload.
+    if (this.status.state === "owned" && this.handle?.stats) {
+      try {
+        return {
+          ...this.status,
+          detail: `${this.status.detail} · ${relaySummary(this.handle.stats())}`,
+        };
+      } catch {
+        /* a stats read that fails costs the counts, never the row */
+      }
+    }
     return { ...this.status };
   }
 

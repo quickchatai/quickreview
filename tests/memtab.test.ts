@@ -511,6 +511,18 @@ describe("memory forward on the tab", () => {
     expect(order).toContain("read");
   });
 
+  it("paints the forward as it stands at THIS paint — an owned forward's relay counts move between memory reloads (FT-0546 F1)", async () => {
+    let counts = "relays 1/6 open, 0 waiting";
+    const now = () => ({ ...UP, detail: `ours · ${counts}` });
+    const rig = await loaded({ forward: { view: now, ensure: () => Promise.resolve(now()) } });
+    expect(screenOf(rig)).toContain("relays 1/6 open, 0 waiting");
+    // A relayout starts queueing; no memory reload happens in between.
+    counts = "relays 6/6 open, 3 waiting";
+    const screen = screenOf(rig);
+    expect(screen).toContain("relays 6/6 open, 3 waiting");
+    expect(screen).not.toContain("relays 1/6 open");
+  });
+
   it("W is a registered memory-tab key — the companion column must not swallow it", async () => {
     const rig = await loaded();
     expect(rig.app.registeredKeys().has("W")).toBe(true);
