@@ -6,7 +6,9 @@
 // that re-arms AFTER each tick finishes (unref'd), a coalesced tick (a call
 // while one runs joins it) and a `stopped` flag — plus a STRICT mutex, never
 // SingleFlight: SingleFlight abandons an overdue pass and starts a second
-// beside it, and two archivers on one PR's files is exactly the hazard.
+// beside it, and two archivers on one PR's files is exactly the hazard. A
+// restore takes the mutex WITH PRIORITY: a running pass checks between files,
+// batches and phases and yields to it.
 //
 //   - Start: never on the boot pass. No tick does any work before the
 //     daemon's first HEALTHY reconcile plus `[archive] start_delay_min`.
@@ -15,40 +17,71 @@
 //     `[daemon] event_loop_starved_throttle_ratio` of its periods), or while
 //     either mount's free space is below `disk_headroom_gb` — or UNKNOWN (a
 //     failed statfs is a hold, never a guess). An unknown load reading is not
-//     a hold.
+//     a hold, but the file phase then runs at its minimum: one PR, half the
+//     rate.
 //   - Mode `off` arms no timer at all.
 //
 // Every tick computes the PLAN (src/archive/plan.ts) — what a pass would move
 // — and reports it through status.json `archive`. A `plan` tick writes no
-// file, no directory and no row. In mode `on` (S2) the tick first
-// runs the DB PHASE (src/archive/dbmove.ts): the reader-less event rows and
-// the old webhook deliveries move into the month's archive database under
-// `archive/db/` (≤ 2 s of synchronous time a tick), and after the plan it
-// SEALS a month whose rows can no longer arrive (src/archive/seal.ts). The
-// holds are re-read after the DB phase and again before sealing (a hold that
-// came up mid-tick ends the tick `held`), and no seal starts once the tick
-// budget is spent. The per-PR files are not moved by this build in any mode:
-// they are planned.
+// file, no directory and no row. In mode `on` a tick, in order:
 //
-// A refusal that needs a person (a row read back different, a month whose
-// counts or gzip do not verify, a listed file gone, a `.gz` already in place)
+//   1. once per daemon start, CRASH RECOVERY (§7.6): stray `.partial` files
+//      in the archive dirs of PRs left `archiving`/`restoring`, and stray
+//      `.restore-partial` files at their restore targets, are deleted;
+//   2. RESTORES (§8.3) of every PR the registry no longer calls closed whose
+//      row is not `restored` — never held by a drain;
+//   3. the holds;
+//   4. the DB PHASE (src/archive/dbmove.ts, S2): the reader-less event rows
+//      and old webhook deliveries into `archive/db/`;
+//   5. the plan;
+//   6. the FILE PHASE (S3): the plan's eligible PRs, oldest close first, each
+//      through `prarchive.ts` — at most `max_prs_per_tick`, no new file after
+//      `tick_budget_s`, the disk checked before every file (§7.7);
+//   7. SEALING finished months (src/archive/seal.ts).
+//
+// A refusal that needs a person (a copy or a row read back different, a
+// manifest that cannot be read, a month whose counts or gzip do not verify)
 // is the quiet anomaly `archive_verify_failed` — raised once per incident and
-// again only after `ANOMALY_REPEAT_MS`, so a persistent one is a few rows a
-// day, never one a tick.
+// again only after `ANOMALY_REPEAT_MS`. Two are WAKES (src/anomalies.ts):
+// `archive_disk_low` (free space below the headroom, once per incident and
+// every 6 h) and `archive_restore_failed` (a reopened PR's archive did not
+// come back; its session is born anyway, and the receipt guard keeps the
+// archived window unknown).
 import { statfs as fsStatfs } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { ArchiveConfig } from "../config.js";
 import type { DaemonLoadStatus } from "../eventloop.js";
 import { DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO } from "../eventloop.js";
 import type { StateStore } from "../state.js";
+import { yieldToLoop } from "../yieldloop.js";
 import { ArchiveDb, ManifestUnreadable, archiveDbDir } from "./archivedb.js";
 import { DbMover, type DbMoveResult } from "./dbmove.js";
-import { computePlan, type ArchivePlan, type PlanMemo } from "./plan.js";
+import type { OutsideFacts } from "./eligibility.js";
+import { removeRestorePartial, sweepPartials, type StepFn } from "./gzfile.js";
+import {
+  LIVE_SESSIONS_DEADLINE_MS,
+  askLiveSessions,
+  computePlan,
+  type ArchivePlan,
+  type PlanMemo,
+} from "./plan.js";
+import { archivePr, type PrPassResult } from "./prarchive.js";
+import { SpanMeter, injectDirOf, listLiveTree, topLevelInjectFiles } from "./prfiles.js";
+import {
+  RESTORE_RETRY_MS,
+  RESTORE_WAIT_MS,
+  restorePr,
+  restoreTargets,
+  type RestoreResult,
+} from "./restore.js";
+import { archiveRow, inFlightRows, reopenedRows } from "./rows.js";
 import { SEAL_PROBLEMS, recoverSeals, sealDue, type SealResult } from "./seal.js";
 import {
   pendingArchiveStatus,
   type ArchiveDbStatus,
   type ArchiveDisk,
+  type ArchiveFilesStatus,
   type ArchiveHoldReason,
   type ArchiveState,
   type ArchiveStatus,
@@ -111,29 +144,54 @@ export function archivePolicy(c: ArchiveConfig): ArchivePolicy {
   };
 }
 
-/** A strict mutex: holders run one at a time, in arrival order. */
+/**
+ * A strict mutex: holders run one at a time — in arrival order, except that a
+ * PRIORITY waiter (a restore) is served before every ordinary one. The holder
+ * is never interrupted; it asks `priorityWaiting()` at its own boundaries and
+ * releases early.
+ */
 export class StrictMutex {
-  private tail: Promise<void> = Promise.resolve();
-  private holders = 0;
+  private locked = false;
+  private readonly waiters: Array<{ grant: () => void; priority: boolean }> = [];
 
-  async acquire(): Promise<() => void> {
-    let release!: () => void;
-    const turn = new Promise<void>((r) => (release = r));
-    const prev = this.tail;
-    this.tail = prev.then(() => turn);
-    await prev;
-    this.holders += 1;
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
-      this.holders -= 1;
-      release();
-    };
+  acquire(priority = false): Promise<() => void> {
+    return new Promise((resolve) => {
+      const grant = (): void => {
+        this.locked = true;
+        let done = false;
+        resolve(() => {
+          if (done) return;
+          done = true;
+          this.handOn();
+        });
+      };
+      if (!this.locked) {
+        grant();
+        return;
+      }
+      const waiter = { grant, priority };
+      if (priority) {
+        // After the priority waiters already queued, before every ordinary one.
+        const at = this.waiters.findIndex((w) => !w.priority);
+        if (at === -1) this.waiters.push(waiter);
+        else this.waiters.splice(at, 0, waiter);
+      } else this.waiters.push(waiter);
+    });
+  }
+
+  private handOn(): void {
+    const next = this.waiters.shift();
+    if (next) next.grant();
+    else this.locked = false;
   }
 
   held(): boolean {
-    return this.holders > 0;
+    return this.locked;
+  }
+
+  /** Is a priority waiter (a restore) queued behind the holder? */
+  priorityWaiting(): boolean {
+    return this.waiters.some((w) => w.priority);
   }
 }
 
@@ -198,9 +256,14 @@ export interface ArchiverDeps {
   /** Live tmux session names; null = tmux could not be asked. Default: none
    * answer — every candidate holds `tmux_unknown`. */
   liveSessions?: () => Promise<readonly string[] | null>;
-  /** The daemon's in-flight session births. */
+  /** The daemon's in-flight session births. Absent = not observable: the
+   * file phase then moves nothing (`births_unknown`), never a guess. */
   birthInFlight?: (pr: number) => boolean;
   statfs?: (path: string) => Promise<StatfsLike>;
+  /** How long `beforeBirth` waits for a restore (default RESTORE_WAIT_MS). */
+  restoreWaitMs?: number;
+  /** Crash-injection seam (tests): every file-protocol step. */
+  step?: StepFn;
   /** Seam: the plan computation (default: src/archive/plan.ts). */
   plan?: (opts: { signal: AbortSignal; memo: PlanMemo }) => Promise<ArchivePlan>;
   /** The DB mover's pause between batches (default: a real 100 ms timer). */
@@ -259,6 +322,33 @@ export class Archiver {
   /** Rows moved since the plan last counted them, so the backlog status
    * shows falls between plans. */
   private movedSincePlan = { events: 0, deliveries: 0 };
+  /** The file phase (S3). */
+  private files: ArchiveFilesStatus | null = null;
+  /** Crash recovery (§7.6) has run once this start. */
+  private filesRecovered = false;
+  /** PRs whose crash recovery failed (an unreadable archive or live dir), by
+   * why: retried every tick, and their archive pass held meanwhile — one
+   * unreadable dir never stops the restores or another PR's work. */
+  private readonly recoveryOwed = new Map<number, string>();
+  /** Plan candidates this plan's file phase is done with (archived, held, or
+   * failed to verify — the next plan offers them again). */
+  private doneSincePlan = new Set<number>();
+  /** What the file phase archived since the plan counted it. */
+  private filesSincePlan = { prs: 0, bytes: 0 };
+  /** Why a planned PR was not archived when its pass ran (its fresh
+   * eligibility, an unreadable manifest, …). */
+  private readonly fileHeld = new Map<number, string>();
+  /** Restores started by a birth, by PR: shared by every caller, each waiting
+   * until the flight's own deadline. */
+  private readonly restoring = new Map<number, { promise: Promise<unknown>; deadline: number }>();
+  /** When each PR's last restore attempt ran (ms) — a failed one is retried
+   * only after RESTORE_RETRY_MS. */
+  private readonly restoreAttempted = new Map<number, number>();
+  /** The disk-low incident: since when, when its wake last fired, and the
+   * archive-mount free space it needs to be over (the headroom plus the
+   * largest file that did not fit in it). */
+  private diskIncident: { since: number; raisedAt: number; need: number } | null = null;
+  private birthsUnknownLogged = false;
   private dbCache: {
     at: number;
     totals: ArchiveTotals | null;
@@ -285,7 +375,7 @@ export class Archiver {
     }
     if (this.policy.mode === "on")
       this.log(
-        "archive: mode on — event and delivery rows move to archive/db; the per-PR files are planned only (this build does not move them)",
+        "archive: mode on — reopened PRs are restored, event and delivery rows move to archive/db, closed PRs' files to archive/pr-<n>/",
       );
     const loop = (): void => {
       if (this.stopped) return;
@@ -363,34 +453,34 @@ export class Archiver {
       if (!healthy) return this.hold("awaiting_reconcile");
       const opens = healthy.getTime() + this.policy.startDelayMs;
       if (at.getTime() < opens) return this.hold("start_delay", new Date(opens).toISOString());
-      // The load holds — synchronous, nothing touched.
-      let load: DaemonLoadStatus | undefined;
-      try {
-        load = this.deps.load?.();
-      } catch {
-        load = undefined;
+      const on = this.policy.mode === "on";
+      // Mode on: crash recovery (once per start), then the restores of reopened
+      // PRs — before the tick's holds, because a drain never holds a restore
+      // (a stalled loop or a starved CPU does: `tickRestores` checks those).
+      if (on) {
+        this.state = "running";
+        this.runningSince = at.toISOString();
+        await this.recoverFiles();
+        await this.tickRestores();
       }
-      const loadReason = loadHold({
-        draining: this.deps.store.drainState().draining,
-        load,
-        starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
-      });
+      // The load holds — synchronous, nothing touched.
+      const loadReason = this.loadReason();
       if (loadReason) return this.hold(loadReason);
       // The disk: statfs on both mounts. Unknown holds, never a guess.
       const diskReason = await this.checkDisk();
       if (diskReason) return this.hold(diskReason);
       this.heldReason = null;
       this.heldUntil = null;
-      const on = this.policy.mode === "on";
       // The DB phase (mode on only) runs before everything else that moves.
       let failure: string | null = null;
       if (on) {
         this.state = "running";
-        this.runningSince = at.toISOString();
+        this.runningSince ??= at.toISOString();
         failure = await this.dbPhase();
         // A hold that came up during it (the mover stops on one) ends the tick.
         const midway = failure === null ? this.loadReason() : null;
         if (midway) return this.hold(midway);
+        if (this.mutex.priorityWaiting()) return this.yieldToRestore(at);
       }
       // The plan — recomputed at most every PLAN_REFRESH_MS.
       let planned = false;
@@ -400,6 +490,9 @@ export class Archiver {
         const plan = await this.computePlan();
         this.plan = plan;
         this.movedSincePlan = { events: 0, deliveries: 0 };
+        this.filesSincePlan = { prs: 0, bytes: 0 };
+        this.doneSincePlan = new Set();
+        this.fileHeld.clear();
         this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, plan.max_sync_span_ms);
         this.dbCache = null;
         planned = true;
@@ -409,6 +502,14 @@ export class Archiver {
             `${plan.held.length} held, ${plan.orphans.length} orphan dir(s); took ${plan.took_ms} ms ` +
             `(longest sync span ${plan.max_sync_span_ms} ms)${on ? "" : "; nothing moved"}`,
         );
+      }
+      // The file phase (mode on): the eligible PRs' files into archive/pr-<n>/.
+      if (on && failure === null) {
+        if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
+        const files = await this.filePhase(at);
+        if (files.failure) failure = files.failure;
+        else if (files.hold) return this.hold(files.hold);
+        if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
       }
       // Sealing comes last (§10), and only after a DB phase that did not fail.
       // It starts nothing under a hold (re-read now, the disk included) or once
@@ -432,6 +533,474 @@ export class Archiver {
     } finally {
       release();
     }
+  }
+
+  /** A restore is waiting for the mutex: end this tick here (nothing is cut
+   * mid-file; the next tick resumes). */
+  private yieldToRestore(at: Date, planned = false): ArchiveTick {
+    this.log("archive: yielding the rest of this tick to a restore");
+    this.state = "idle";
+    this.lastSuccessAt = at.toISOString();
+    return { state: "idle", held_reason: null, planned };
+  }
+
+  // ---- restores (§8.2–§8.4) ------------------------------------------------
+
+  /**
+   * Awaited by the session manager before a PR session is born (§8.3). With
+   * no archive row, or a `restored` one, it returns at once (a synchronous
+   * read). Otherwise it starts the PR's restore (or joins the one running)
+   * and waits for it — at most `restoreWaitMs` from when that restore began.
+   * It never throws and never refuses a birth: a failed or slow restore lets
+   * the birth go ahead, and the receipt guard keeps the archived window
+   * unknown meanwhile. Mode `on` only (file work); a restore failed within
+   * RESTORE_RETRY_MS is not retried by a birth.
+   */
+  async beforeBirth(pr: number): Promise<void> {
+    if (this.stopped || this.policy.mode !== "on") return;
+    let flight = this.restoring.get(pr);
+    if (!flight) {
+      let row: ReturnType<typeof archiveRow>;
+      try {
+        row = archiveRow(this.deps.store, pr);
+        if (!row || row.state === "restored") return;
+        if (this.deps.store.getPr(pr)?.state === "closed") return;
+      } catch (err) {
+        this.log(`archive: beforeBirth could not read pr-${pr}'s archive row`, err);
+        return;
+      }
+      if (row.state === "restore_failed" && !this.restoreRetryDue(pr)) return;
+      flight = this.startRestore(pr);
+    }
+    await waitAtMost(flight.promise, flight.deadline - performance.now());
+  }
+
+  private restoreRetryDue(pr: number): boolean {
+    const last = this.restoreAttempted.get(pr);
+    return last === undefined || this.now().getTime() - last >= RESTORE_RETRY_MS;
+  }
+
+  /** The load holds a tick's restores obey: every one but the drain (§10). */
+  private restoreLoadHold(): ArchiveHoldReason | null {
+    let load: DaemonLoadStatus | undefined;
+    try {
+      load = this.deps.load?.();
+    } catch {
+      load = undefined;
+    }
+    return loadHold({
+      draining: false,
+      load,
+      starvedRatio: this.deps.starvedRatio ?? DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
+    });
+  }
+
+  /** Room for a restored file of `bytes` on the LIVE (state) mount, plus the
+   * headroom (§7.7): null = room; `disk_low`, or `disk_unknown` when statfs
+   * failed — never a guess. */
+  private async liveRoomFor(bytes: number): Promise<"disk_low" | "disk_unknown" | null> {
+    const statfs = this.deps.statfs ?? ((p: string) => fsStatfs(p));
+    let free: number;
+    try {
+      free = await freeBytes(join(this.deps.root, "state"), statfs);
+    } catch (err) {
+      this.log(
+        "archive: statfs of the live mount failed before a restored file — disk UNKNOWN",
+        err,
+      );
+      return "disk_unknown";
+    }
+    return free >= bytes + this.policy.diskHeadroomBytes ? null : "disk_low";
+  }
+
+  /** A restore outside a tick: the mutex taken WITH PRIORITY. */
+  private startRestore(pr: number): { promise: Promise<unknown>; deadline: number } {
+    const promise = (async () => {
+      const release = await this.mutex.acquire(true);
+      try {
+        if (this.stopped) return null;
+        const row = archiveRow(this.deps.store, pr);
+        if (!row || row.state === "restored") return null;
+        return await this.restoreOne(pr, "reopen");
+      } catch (err) {
+        if (!this.abort.signal.aborted) this.log(`archive: pr-${pr} restore threw`, err);
+        return null;
+      } finally {
+        release();
+      }
+    })();
+    const flight = {
+      promise,
+      deadline: performance.now() + (this.deps.restoreWaitMs ?? RESTORE_WAIT_MS),
+    };
+    this.restoring.set(pr, flight);
+    void promise.finally(() => {
+      if (this.restoring.get(pr) === flight) this.restoring.delete(pr);
+    });
+    return flight;
+  }
+
+  /** One restore; the mutex is held by the caller. */
+  private async restoreOne(pr: number, trigger: "reopen" | "operator"): Promise<RestoreResult> {
+    this.restoreAttempted.set(pr, this.now().getTime());
+    const r = await restorePr(
+      {
+        store: this.deps.store,
+        root: this.deps.root,
+        sessionsRoot: this.deps.sessionsRoot,
+        now: this.now,
+        bytesPerS: this.policy.maxBytesPerS,
+        signal: this.abort.signal,
+        log: this.log,
+        roomFor: (bytes) => this.liveRoomFor(bytes),
+        ...(this.deps.step ? { step: this.deps.step } : {}),
+      },
+      pr,
+      trigger,
+    );
+    this.dbCache = null;
+    if (r.outcome === "restored") {
+      this.raised.delete(`restore:${pr}`);
+      this.deps.store.logEvent("archive_pr_restored", pr, {
+        trigger,
+        restored: r.restored,
+        present: r.present,
+        live_differs: r.liveDiffers,
+      });
+    } else if (r.outcome === "failed")
+      this.raiseWake(
+        "archive_restore_failed",
+        pr,
+        `restore:${pr}`,
+        `PR #${pr} was reopened but its archived files could not be restored: ${r.error ?? "unknown"}. ` +
+          "Its session is born anyway; receipts of its pre-close wakes read UNKNOWN (never absent) until a restore succeeds.",
+      );
+    return r;
+  }
+
+  /** The tick's restores, first and before any other work: every PR the
+   * registry no longer calls closed whose row is not `restored`. */
+  private async tickRestores(): Promise<void> {
+    let rows: ReturnType<typeof reopenedRows>;
+    try {
+      rows = reopenedRows(this.deps.store);
+    } catch (err) {
+      this.log("archive: could not list the PRs to restore", err);
+      return;
+    }
+    for (const row of rows) {
+      if (this.stopped) return;
+      if (row.state === "restore_failed" && !this.restoreRetryDue(row.pr)) continue;
+      // A drain never holds a restore (§10); a stalled loop or a starved CPU
+      // does — the tick's restores wait for the next tick (a birth's own
+      // restore is not held: the birth is waiting on it).
+      const load = this.restoreLoadHold();
+      if (load) {
+        this.log(`archive: the restores wait for the next tick — ${load}`);
+        return;
+      }
+      try {
+        await this.restoreOne(row.pr, "reopen");
+      } catch (err) {
+        if (this.abort.signal.aborted) throw err;
+        this.log(`archive: pr-${row.pr} restore threw`, err);
+      }
+    }
+  }
+
+  /** Crash recovery (§7.6), once per daemon start before any file work: the
+   * stray temporaries of PRs a crash left `archiving` or `restoring` (or a
+   * restore left `restore_failed`). The archive gzips with no entry are
+   * settled by the PR's next pass. A PR whose dirs cannot be read is that
+   * PR's problem alone: the quiet anomaly, its pass held (`recovery_failed`)
+   * and its recovery retried every tick — the restores, the other PRs and
+   * every later phase go on. */
+  private async recoverFiles(): Promise<void> {
+    if (this.filesRecovered && this.recoveryOwed.size === 0) return;
+    let rows: ReturnType<typeof inFlightRows>;
+    try {
+      rows = inFlightRows(this.deps.store);
+    } catch (err) {
+      this.log(
+        "archive: crash recovery could not list the rows in flight — retried next tick",
+        err,
+      );
+      return;
+    }
+    for (const pr of [...this.recoveryOwed.keys()])
+      if (!rows.some((r) => r.pr === pr)) this.recoveryOwed.delete(pr);
+    const todo = this.filesRecovered ? rows.filter((r) => this.recoveryOwed.has(r.pr)) : rows;
+    let removed = 0;
+    for (const row of todo) {
+      this.abort.signal.throwIfAborted();
+      try {
+        removed += await sweepPartials(join(this.deps.root, "archive", `pr-${row.pr}`));
+        for (const t of await restoreTargets(this.deps.root, this.deps.sessionsRoot, row.pr))
+          if (await removeRestorePartial(t)) removed += 1;
+        this.recoveryOwed.delete(row.pr);
+      } catch (err) {
+        if (this.abort.signal.aborted) throw err;
+        const why = err instanceof Error ? err.message : String(err);
+        this.recoveryOwed.set(row.pr, why);
+        this.raiseQuiet(
+          `recovery:${row.pr}`,
+          `archive crash recovery: pr-${row.pr}: ${why} — its temporaries are left as found and its archive pass is held until recovery succeeds`,
+        );
+      }
+      await yieldToLoop();
+    }
+    this.filesRecovered = true;
+    if (removed > 0) this.log(`archive: crash recovery removed ${removed} stray temporary file(s)`);
+  }
+
+  // ---- the file phase (§7) ---------------------------------------------------
+
+  /** Why no new file may start now: stopping, a restore waiting, the tick
+   * budget spent, or a hold. */
+  private fileStop(at: Date): string | null {
+    if (this.stopped) return "stopping";
+    if (this.mutex.priorityWaiting()) return "restore_pending";
+    if (this.now().getTime() - at.getTime() >= this.policy.tickBudgetMs) return "budget";
+    return this.loadReason();
+  }
+
+  /** The eligibility facts outside the database, asked fresh for one PR. */
+  private async outsideFacts(pr: number): Promise<OutsideFacts> {
+    const names = await askLiveSessions(
+      this.deps.liveSessions ?? (async () => null),
+      LIVE_SESSIONS_DEADLINE_MS,
+      this.abort.signal,
+    );
+    let injectFiles: string[] | null;
+    try {
+      injectFiles = await topLevelInjectFiles(injectDirOf(this.deps.root, pr));
+    } catch {
+      injectFiles = null;
+    }
+    return {
+      tmuxAlive: names === null ? null : names.includes(`pr-${pr}`),
+      birthInFlight: false,
+      injectFiles,
+    };
+  }
+
+  /** Room for one file of `bytes` (§7.7): the archive mount needs the file
+   * plus the headroom, the state mount the headroom. */
+  private async diskFor(bytes: number): Promise<"disk_low" | "disk_unknown" | null> {
+    return this.checkDisk(bytes);
+  }
+
+  /** Does the last disk reading have the headroom itself on both mounts (so
+   * a `disk_low` it gave was one file too large, not a low disk)? */
+  private headroomHolds(): boolean {
+    const d = this.disk;
+    return d !== null && d.archive_free >= d.headroom && d.state_free >= d.headroom;
+  }
+
+  /**
+   * The plan's eligible PRs, oldest close first. Returns a failure (the live
+   * tree could not be listed), or the hold that stopped it, or neither.
+   */
+  private async filePhase(
+    at: Date,
+  ): Promise<{ failure: string | null; hold: ArchiveHoldReason | null }> {
+    const startedAt = this.now().toISOString();
+    const birthInFlight = this.deps.birthInFlight;
+    const blank = (outcome: string, held: string | null): ArchiveFilesStatus => ({
+      last_run_at: startedAt,
+      outcome,
+      held_reason: held,
+      prs_started: 0,
+      prs_archived: 0,
+      prs_partial: 0,
+      prs_held: 0,
+      transcripts: 0,
+      state_files: 0,
+      bytes_in: 0,
+      bytes_out: 0,
+      removed: 0,
+      duplicates_removed: 0,
+      verify_failures: 0,
+    });
+    if (!birthInFlight) {
+      if (!this.birthsUnknownLogged)
+        this.log("archive: session births are not observable here — no per-PR file is moved");
+      this.birthsUnknownLogged = true;
+      this.files = blank("held", "births_unknown");
+      return { failure: null, hold: null };
+    }
+    const plan = this.plan;
+    const queue = plan
+      ? [...plan.candidates.map((c) => c.pr), ...plan.empty].filter(
+          (pr) => !this.doneSincePlan.has(pr),
+        )
+      : [];
+    if (queue.length === 0) {
+      this.files = blank("none", null);
+      return { failure: null, hold: null };
+    }
+    let load: DaemonLoadStatus | undefined;
+    try {
+      load = this.deps.load?.();
+    } catch {
+      load = undefined;
+    }
+    // An UNKNOWN load reading runs at the minimum: one PR, half the rate.
+    const unknown = !load || load.event_loop?.state !== "ok" || load.cpu?.state !== "measured";
+    const maxPrs = unknown ? 1 : this.policy.maxPrsPerTick;
+    const bytesPerS = unknown
+      ? Math.max(1, Math.floor(this.policy.maxBytesPerS / 2))
+      : this.policy.maxBytesPerS;
+    const meter = new SpanMeter();
+    let listing: Awaited<ReturnType<typeof listLiveTree>>;
+    try {
+      listing = await listLiveTree(this.deps.root, this.deps.sessionsRoot, meter);
+    } catch (err) {
+      if (this.abort.signal.aborted) throw err;
+      this.files = blank("failed", null);
+      return {
+        failure: `archive files: the live tree could not be listed: ${(err as Error).message}`,
+        hold: null,
+      };
+    }
+    const run = blank("done", null);
+    let hold: ArchiveHoldReason | null = null;
+    for (const pr of queue) {
+      const owed = this.recoveryOwed.get(pr);
+      if (owed !== undefined) {
+        // Its crash recovery failed: nothing of it moves until that succeeds.
+        this.fileHeld.set(pr, "recovery_failed");
+        this.doneSincePlan.add(pr);
+        continue;
+      }
+      const stop = this.fileStop(at);
+      if (stop) {
+        run.outcome =
+          stop === "budget" ? "budget" : stop === "restore_pending" ? "yielded" : "held";
+        run.held_reason = stop;
+        if (isHoldReason(stop)) hold = stop;
+        break;
+      }
+      if (run.prs_started >= maxPrs) break;
+      run.prs_started += 1;
+      let r: PrPassResult;
+      try {
+        r = await archivePr(
+          {
+            store: this.deps.store,
+            root: this.deps.root,
+            sessionsRoot: this.deps.sessionsRoot,
+            listing,
+            now: this.now,
+            afterDays: this.policy.afterDays,
+            level: this.policy.gzipLevel,
+            bytesPerS,
+            signal: this.abort.signal,
+            outside: (n) => this.outsideFacts(n),
+            birthInFlight,
+            diskFor: (bytes) => this.diskFor(bytes),
+            stopReason: () => this.fileStop(at),
+            verifyFailed: (key, detail) => this.raiseQuiet(key, detail),
+            log: this.log,
+            meter,
+            ...(this.deps.step ? { step: this.deps.step } : {}),
+          },
+          pr,
+        );
+      } catch (err) {
+        if (this.abort.signal.aborted) throw err;
+        // One PR's I/O failure is that PR's: its row stays `archiving` (the
+        // guard armed) and the next plan offers it again.
+        this.log(`archive: pr-${pr} pass failed`, err);
+        this.fileHeld.set(pr, "error");
+        this.doneSincePlan.add(pr);
+        run.prs_held += 1;
+        continue;
+      }
+      run.transcripts += r.transcripts;
+      run.state_files += r.stateFiles;
+      run.bytes_in += r.bytesIn;
+      run.bytes_out += r.bytesOut;
+      run.removed += r.removed;
+      run.duplicates_removed += r.duplicatesRemoved;
+      run.verify_failures += r.verifyFailures;
+      if (r.outcome === "archived") {
+        run.prs_archived += 1;
+        this.doneSincePlan.add(pr);
+        this.fileHeld.delete(pr);
+        const plannedPr = plan?.candidates.find((c) => c.pr === pr);
+        this.filesSincePlan.prs += 1;
+        this.filesSincePlan.bytes += plannedPr?.bytes ?? 0;
+        if (r.removed + r.duplicatesRemoved + r.transcripts + r.stateFiles > 0)
+          this.deps.store.logEvent("archive_pr_archived", pr, {
+            transcripts: r.transcripts,
+            reused: r.reused,
+            state_files: r.stateFiles,
+            bytes_in: r.bytesIn,
+            bytes_out: r.bytesOut,
+            removed: r.removed,
+            duplicates_removed: r.duplicatesRemoved,
+            stale_inject: r.staleInjects,
+          });
+      } else if (r.outcome === "held") {
+        run.prs_held += 1;
+        this.fileHeld.set(pr, r.reason ?? "held");
+        this.doneSincePlan.add(pr);
+      } else if (r.reason === "disk_low" && this.headroomHolds()) {
+        // The mounts have their headroom, just not room for THIS PR's next
+        // file: that PR waits (held disk_low, the wake raised once for the
+        // incident) and the phase goes on to the next PR — one large file
+        // never stops every other PR's smaller ones.
+        run.prs_partial += 1;
+        this.fileHeld.set(pr, "disk_low");
+        this.doneSincePlan.add(pr);
+      } else {
+        run.prs_partial += 1;
+        // Stopped by the tick (budget, a hold, a restore): resumed next tick.
+        // Stopped by the PR itself (a verify failure, a changed source): the
+        // next plan offers it again.
+        if (
+          !["budget", "stopping", "restore_pending"].includes(r.reason ?? "") &&
+          !isHoldReason(r.reason ?? "")
+        ) {
+          this.fileHeld.set(pr, r.reason ?? "incomplete");
+          this.doneSincePlan.add(pr);
+        }
+        if (r.reason && isHoldReason(r.reason)) {
+          hold = r.reason;
+          run.outcome = "held";
+          run.held_reason = r.reason;
+          break;
+        }
+      }
+      await yieldToLoop();
+    }
+    this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+    this.files = run;
+    if (run.prs_started > 0) this.dbCache = null;
+    if (run.removed + run.transcripts + run.state_files + run.duplicates_removed > 0)
+      this.deps.store.logEvent("archive_pass", null, {
+        phase: "files",
+        outcome: run.outcome,
+        prs_archived: run.prs_archived,
+        prs_partial: run.prs_partial,
+        prs_held: run.prs_held,
+        transcripts: run.transcripts,
+        state_files: run.state_files,
+        bytes_in: run.bytes_in,
+        bytes_out: run.bytes_out,
+        removed: run.removed,
+        duplicates_removed: run.duplicates_removed,
+        verify_failures: run.verify_failures,
+      });
+    this.log(
+      `archive: files — ${run.prs_archived} PR(s) archived, ${run.prs_partial} partial, ${run.prs_held} held; ` +
+        `${run.transcripts} transcript(s), ${run.state_files} state file(s), ${run.removed} removed` +
+        (run.duplicates_removed ? `, ${run.duplicates_removed} legacy duplicate(s) removed` : "") +
+        (run.verify_failures ? `, ${run.verify_failures} VERIFY FAILURE(S)` : "") +
+        ` (${run.outcome}${run.held_reason ? `: ${run.held_reason}` : ""})`,
+    );
+    return { failure: null, hold };
   }
 
   /** The archive databases, opened on first use (mode `on` only). */
@@ -464,6 +1033,7 @@ export class Archiver {
   /** The hold, re-read before every batch and every seal. */
   private batchHold(): string | null {
     if (this.stopped) return "stopping";
+    if (this.mutex.priorityWaiting()) return "restore_pending";
     return this.loadReason();
   }
 
@@ -651,8 +1221,15 @@ export class Archiver {
     });
   }
 
-  /** Free space on both mounts against the headroom; records the reading. */
-  private async checkDisk(): Promise<ArchiveHoldReason | null> {
+  /**
+   * Free space on both mounts against the headroom — plus, for a file about
+   * to be archived, its size on the archive mount (§7.7); records the
+   * reading. A failed statfs is UNKNOWN (a hold, never a guess). In mode `on`
+   * a low reading is the `archive_disk_low` wake, once per incident (the
+   * incident ends at the first reading with room for what raised it) and
+   * again every ANOMALY_REPEAT_MS while it lasts.
+   */
+  private async checkDisk(fileBytes = 0): Promise<"disk_low" | "disk_unknown" | null> {
     const statfs = this.deps.statfs ?? ((p: string) => fsStatfs(p));
     const headroom = this.policy.diskHeadroomBytes;
     let archiveFree: number;
@@ -668,7 +1245,64 @@ export class Archiver {
       return "disk_unknown";
     }
     this.disk = { archive_free: archiveFree, state_free: stateFree, headroom };
-    return archiveFree < headroom || stateFree < headroom ? "disk_low" : null;
+    const low = archiveFree < fileBytes + headroom || stateFree < headroom;
+    if (this.policy.mode === "on")
+      this.noteDisk(low, { archiveFree, stateFree, headroom, fileBytes });
+    return low ? "disk_low" : null;
+  }
+
+  private noteDisk(
+    low: boolean,
+    r: { archiveFree: number; stateFree: number; headroom: number; fileBytes: number },
+  ): void {
+    const nowMs = this.now().getTime();
+    const need = r.fileBytes + r.headroom;
+    if (!low) {
+      // An incident ends only at a reading with room for what raised it. A
+      // reading that tested less — the tick's headroom-only check, or a
+      // smaller file — says nothing about the file that did not fit; ending
+      // the incident on it re-raised the wake on every tick.
+      if (this.diskIncident && r.archiveFree >= this.diskIncident.need) {
+        this.log("archive: free disk is back above the headroom");
+        this.diskIncident = null;
+      }
+      return;
+    }
+    if (this.diskIncident) {
+      this.diskIncident.need = Math.max(this.diskIncident.need, need);
+      if (nowMs - this.diskIncident.raisedAt < ANOMALY_REPEAT_MS) return;
+    }
+    this.diskIncident = {
+      since: this.diskIncident?.since ?? nowMs,
+      raisedAt: nowMs,
+      need: Math.max(this.diskIncident?.need ?? 0, need),
+    };
+    const detail =
+      `archive held: free disk below the headroom — archive mount ${r.archiveFree} B free` +
+      (r.fileBytes > 0 ? ` (a ${r.fileBytes} B file needs ${r.fileBytes + r.headroom})` : "") +
+      `, state mount ${r.stateFree} B free, headroom ${r.headroom} B. No file is started until there is room.`;
+    try {
+      this.deps.store.logAnomaly("archive_disk_low", null, null, detail);
+    } catch (err) {
+      this.log("archive: could not raise archive_disk_low", err);
+    }
+  }
+
+  /** A WAKE kind, once per incident (`key`) and again only after
+   * ANOMALY_REPEAT_MS. */
+  private raiseWake(kind: string, pr: number | null, key: string, detail: string): void {
+    const nowMs = this.now().getTime();
+    const last = this.raised.get(key);
+    if (last !== undefined && nowMs - last < ANOMALY_REPEAT_MS) {
+      this.log(`archive: ${detail} (${kind} already raised for ${key})`);
+      return;
+    }
+    this.raised.set(key, nowMs);
+    try {
+      this.deps.store.logAnomaly(kind, pr, null, detail);
+    } catch (err) {
+      this.log(`archive: could not raise ${kind}`, err);
+    }
   }
 
   /** The database figures, re-read at most every STATUS_DB_TTL_MS; each is
@@ -766,7 +1400,8 @@ export class Archiver {
       plan_at: plan?.computed_at ?? null,
       backlog: plan
         ? {
-            ...plan.backlog,
+            prs: Math.max(0, plan.backlog.prs - this.filesSincePlan.prs),
+            bytes: Math.max(0, plan.backlog.bytes - this.filesSincePlan.bytes),
             event_rows: Math.max(0, plan.backlog.event_rows - this.movedSincePlan.events),
             delivery_rows: Math.max(0, plan.backlog.delivery_rows - this.movedSincePlan.deliveries),
           }
@@ -777,16 +1412,46 @@ export class Archiver {
       // when they could not be counted — never a guessed 0).
       verify_failures_24h: db.verifyFailures,
       restores: db.restores,
-      held_prs: plan
-        ? {
-            count: plan.held.length,
-            first: plan.held.slice(0, 20).map((h) => ({ pr: h.pr, reason: h.reason })),
-          }
-        : null,
+      held_prs: plan ? this.heldPrs(plan) : null,
       orphans: plan ? { count: plan.orphans.length, first: plan.orphans.slice(0, 20) } : null,
       freelist_pages: db.freelist,
       max_sync_span_ms: this.maxSyncSpanMs,
       db: this.db ? { ...this.db } : null,
+      files: this.files ? { ...this.files } : null,
     };
   }
+
+  /** The plan's held PRs, and the planned ones whose own pass was held. */
+  private heldPrs(plan: ArchivePlan): NonNullable<ArchiveStatus["held_prs"]> {
+    const all = new Map<number, string>(plan.held.map((h) => [h.pr, h.reason]));
+    for (const [pr, reason] of this.fileHeld) all.set(pr, reason);
+    const list = [...all].sort((a, b) => a[0] - b[0]);
+    return { count: list.length, first: list.slice(0, 20).map(([pr, reason]) => ({ pr, reason })) };
+  }
+}
+
+const HOLD_REASONS: ReadonlySet<string> = new Set([
+  "draining",
+  "loop_stalled",
+  "cpu_starved",
+  "disk_low",
+  "disk_unknown",
+]);
+const isHoldReason = (r: string): r is ArchiveHoldReason => HOLD_REASONS.has(r);
+
+/** Wait for `p`, but never longer than `ms` (a real, unref'd timer). */
+async function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
+  if (!(ms > 0)) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    p.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolveWait) => {
+      timer = setTimeout(resolveWait, ms);
+      timer.unref?.();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
 }

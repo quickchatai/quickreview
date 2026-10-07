@@ -57,7 +57,8 @@ import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
-import { ReceiptIndex, type ReceiptIndexStats } from "./receiptscan.js";
+import { RECEIPT_SCOPE_SLACK_MS, ReceiptIndex, type ReceiptIndexStats } from "./receiptscan.js";
+import { RESTORE_WAIT_MS } from "./archive/restore.js";
 import type {
   OvSessionSweepReport,
   RoundOrder,
@@ -264,6 +265,9 @@ export class PiSessionManager implements SessionHooks {
   private readonly ovSweepFailedAt = new Map<string, number>();
   /** The receipt scan's index: each session file's receipt tokens, read once. */
   private readonly receipts = new ReceiptIndex();
+  /** Awaited before a PR session is born (§8.3): the archiver's
+   * restore of a reopened PR's archived files. Unset ⇒ nothing to wait for. */
+  private beforeBirthHook?: (pr: number) => Promise<void>;
 
   constructor(opts: PiSessionManagerOptions) {
     this.cfg = opts.cfg;
@@ -694,7 +698,42 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
+  /** Late production binding (wire.ts): the archiver's `beforeBirth`. */
+  setBeforeBirth(fn: (pr: number) => Promise<void>): void {
+    this.beforeBirthHook = fn;
+  }
+
+  /**
+   * §8.3: before a PR session is born, its archived transcripts and
+   * session-command payloads go back (a reopen) — so the #5362 receipts of
+   * its pre-close wakes are read from the real files again. Bounded at
+   * RESTORE_WAIT_MS (the archiver bounds it too), and it never refuses the
+   * birth: a slow or failed restore lets the session be born, and the receipt
+   * guard keeps the archived window unknown, never absent.
+   */
+  private async awaitBeforeBirth(pr: number): Promise<void> {
+    const hook = this.beforeBirthHook;
+    if (!hook) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        hook(pr),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, RESTORE_WAIT_MS + 5_000);
+          timer.unref?.();
+        }),
+      ]);
+    } catch (err) {
+      console.log(
+        `[quickreviewd] sessions: the archive restore before pr-${pr}'s birth failed (${String(err)}) — born anyway`,
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private async birthPrSession(pr: number, title: string, worktree: string): Promise<string> {
+    await this.awaitBeforeBirth(pr);
     const session = prSessionName(pr);
     if (await this.tmux.hasSession(session)) {
       if (this.currentBridgeReady(session)) return session;
@@ -1069,12 +1108,54 @@ export class PiSessionManager implements SessionHooks {
         since_ms: sinceMs,
         root,
       });
+    // ARCHIVED IS NEVER ABSENT (§8.1, #5362 rule ①). The archiver
+    // moves a closed PR's transcripts out of this dir; once a reopened PR's
+    // reborn session writes a fresh JSONL, a scan for a pre-close wake reads
+    // only that file and answers `false` — and the claim sweep would release
+    // a nudge that may well have landed. While the PR's archive is not
+    // restored and could hold a file in this query's scope (its newest
+    // archived mtime reaches the scope floor), a live `false` is UNKNOWN. A
+    // live `true` stays true; a wake sent after the reopen is past every
+    // archived mtime and is answered from the live files exactly as before.
+    if (answer === false) {
+      const scope = this.archiveScopeOf(pr);
+      if (
+        scope === "unreadable" ||
+        (scope !== null &&
+          scope.state !== "restored" &&
+          scope.max_mtime_ms !== null &&
+          sinceMs - RECEIPT_SCOPE_SLACK_MS <= scope.max_mtime_ms)
+      ) {
+        this.commandStore?.logEvent("receipt_archived_unknown", pr, {
+          marker,
+          since_ms: sinceMs,
+          archive_state: scope === "unreadable" ? "unreadable" : scope.state,
+          max_mtime_ms: scope === "unreadable" ? null : scope.max_mtime_ms,
+        });
+        return null;
+      }
+    }
     // Nothing to read at all (a session that has not written since the wake)
     // is genuinely ambiguous on a slow first tool call — but every caller asks
     // only after the stall grace, by which point a session that received its
     // prompt has certainly written. So in-scope files without the marker are
     // reported as the absence they are.
     return answer;
+  }
+
+  /** The PR's archive row as the receipt guard reads it; "unreadable" when
+   * the read failed (then a live `false` is unknown too — never a guess). */
+  private archiveScopeOf(
+    pr: number,
+  ): { state: string; max_mtime_ms: number | null } | null | "unreadable" {
+    // A store without the archive ledger (a narrow test double) has nothing
+    // archived; a real store whose read fails is UNKNOWN.
+    if (typeof this.commandStore?.archiveScope !== "function") return null;
+    try {
+      return this.commandStore.archiveScope(pr);
+    } catch {
+      return "unreadable";
+    }
   }
 
   /** What the receipt index has read so far (status/diagnostics). */
@@ -1294,6 +1375,8 @@ export class PiSessionManager implements SessionHooks {
     if (title === undefined) {
       throw new Error(`no live session ${session} — dispatch a round to birth it first`);
     }
+    // A reopened PR's archive comes back before its session does.
+    await this.awaitBeforeBirth(pr);
     const worktree = this.worktrees.worktreePath(pr);
     try {
       await this.worktrees.ensureWorktree(pr);

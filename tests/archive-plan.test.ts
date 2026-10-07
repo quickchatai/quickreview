@@ -594,7 +594,7 @@ describe("PLAN MODE WRITES NOTHING (acceptance 6)", () => {
   );
 
   it(
-    "mode `on` moves only the old reader-less event rows and deliveries into archive/db — no per-PR file is touched",
+    "mode `on` without a births observer moves only the old reader-less event rows and deliveries — no per-PR file is touched (births unknown)",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = fixture();
@@ -630,6 +630,9 @@ describe("PLAN MODE WRITES NOTHING (acceptance 6)", () => {
           mode: "on",
           state: "idle",
           db: { outcome: "caught_up", events_moved: 2, deliveries_moved: 2 },
+          // the per-PR files move only where the daemon's
+          // in-flight births can be read — here they cannot, so nothing moves.
+          files: { outcome: "held", held_reason: "births_unknown", prs_started: 0 },
         });
         // The two old reader-less rows left; the fact kind and the young row stayed.
         const after = kinds();

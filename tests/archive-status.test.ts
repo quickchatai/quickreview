@@ -241,6 +241,53 @@ describe("readArchiveStatus — total over whatever JSON is there", () => {
   });
 });
 
+describe("the file phase's block (S3)", () => {
+  const files = {
+    last_run_at: "2026-10-21T12:00:00.000Z",
+    outcome: "done",
+    held_reason: null,
+    prs_started: 2,
+    prs_archived: 2,
+    prs_partial: 0,
+    prs_held: 0,
+    transcripts: 5,
+    state_files: 40,
+    bytes_in: 3 * 1024 * 1024,
+    bytes_out: 900 * 1024,
+    removed: 45,
+    duplicates_removed: 1,
+    verify_failures: 0,
+  };
+
+  it("is read back whole; absent (an older daemon) and null read as null; a bad field is unreadable", () => {
+    const ok = JSON.parse(JSON.stringify({ ...planned(), mode: "on", state: "idle", files }));
+    expect(readArchiveStatus(ok)).toEqual({ kind: "read", view: ok });
+    const { files: _f, ...older } = ok;
+    expect(readArchiveStatus(older)).toMatchObject({ kind: "read", view: { files: null } });
+    expect(readArchiveStatus({ ...ok, files: { ...files, removed: "45" } })).toEqual({
+      kind: "unreadable",
+      why: 'files.removed is "45", not a number',
+    });
+  });
+
+  it("rides the qcr status line: what moved, a hold, a failure — and nothing before it has run", () => {
+    const on = { ...planned(), mode: "on" as const, state: "idle" as const };
+    expect(archiveStatusLine({ ...on, files })).toContain(
+      "files: 2 PR(s) archived last run (3.0 MB → 900.0 KB, 45 live file(s) removed, 1 legacy duplicate(s); done)",
+    );
+    expect(
+      archiveStatusLine({
+        ...on,
+        files: { ...files, outcome: "held", held_reason: "births_unknown", prs_started: 0 },
+      }),
+    ).toContain("files HELD (births_unknown)");
+    expect(archiveStatusLine({ ...on, files: { ...files, verify_failures: 2 } })).toContain(
+      "2 VERIFY FAILURE(S)",
+    );
+    expect(archiveStatusLine({ ...on, files: null })).not.toContain("files");
+  });
+});
+
 describe("the one line `qcr status` prints", () => {
   it("says what it knows, and UNKNOWN for what it does not", () => {
     expect(archiveStatusLine(undefined)).toBe(

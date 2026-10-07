@@ -4936,6 +4936,18 @@ export class StateStore {
     this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
   }
 
+  /** The receipt guard's read (docs/archiving.md §8.1): the PR's
+   * archive row — its state and the newest original mtime among the
+   * transcripts the archiver moved — or null when the PR was never archived.
+   * One primary-key read; `sessions.wakeReceiptPresent` turns a live `false`
+   * into UNKNOWN while an unrestored archive could hold the marker. */
+  archiveScope(pr: number): { state: string; max_mtime_ms: number | null } | null {
+    return (
+      (this.db.prepare("SELECT state, max_mtime_ms FROM archive_prs WHERE pr = ?").get(pr) as
+        { state: string; max_mtime_ms: number | null } | undefined) ?? null
+    );
+  }
+
   /** The recheck claims the undelivered-nudge sweep must still ask about
    * (#5362 W2): a claim whose nudge never landed suppresses the reconcile
    * push-backstop forever, and unlike a round there is no deadline underneath

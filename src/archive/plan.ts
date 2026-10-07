@@ -2,7 +2,7 @@
 // archive pass WOULD move, computed without moving, writing or reading the
 // contents of anything.
 //
-//   - Inventory: one async `readdir` of each live directory the per-PR
+//   - Inventory (`prfiles.ts`, shared with the archive pass): one async `readdir` of each live directory the per-PR
 //     artifacts sit in (§7.2), grouped by PR; a recursive async walk only
 //     inside an ELIGIBLE PR's own dirs; an async `lstat` per file for its
 //     size. No synchronous directory walk anywhere (`authwatch.ts` and
@@ -21,15 +21,25 @@
 // one listing's grouping) with a real event-loop turn (`yieldToLoop`) between
 // them, and the longest is measured. Plan mode writes nothing: no file, no
 // directory, no row.
-import type { Dirent } from "node:fs";
-import { lstat, readdir, stat } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { prEligibility, type IneligibleReason } from "./eligibility.js";
 import { rowAge } from "./dbmove.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
+import {
+  ARTIFACT_CLASSES,
+  PR_DIR,
+  SpanMeter,
+  listLiveTree,
+  prInventory,
+  topLevelInjectFiles,
+  type ArtifactClass,
+} from "./prfiles.js";
+
+export { ARTIFACT_CLASSES, SpanMeter, type ArtifactClass };
 
 const DAY_MS = 86_400_000;
 
@@ -41,21 +51,6 @@ export const COUNT_WINDOW_ROWS = 2000;
  * little over `Tmux.listSessionsKnown`'s own kill, so the real one answers
  * null itself first. */
 export const LIVE_SESSIONS_DEADLINE_MS = 12_000;
-
-/** The per-PR artifact classes that LEAVE the live tree (§7.2). */
-export const ARTIFACT_CLASSES = [
-  "transcripts",
-  "round_prompts",
-  "session_commands",
-  "findings",
-  "posting_receipts",
-  "round_files",
-  "session_files",
-  "inject_done",
-  "stale_injects",
-  "verdicts",
-] as const;
-export type ArtifactClass = (typeof ARTIFACT_CLASSES)[number];
 
 export interface Tally {
   files: number;
@@ -182,57 +177,11 @@ export interface PlanDeps {
   signal?: AbortSignal;
 }
 
-/** Measures the synchronous spans it is handed. */
-export class SpanMeter {
-  max = 0;
-  measure<T>(fn: () => T): T {
-    const t0 = performance.now();
-    try {
-      return fn();
-    } finally {
-      const d = performance.now() - t0;
-      if (d > this.max) this.max = d;
-    }
-  }
-}
-
 const emptyTally = (): Tally => ({ files: 0, bytes: 0 });
 const add = (t: Tally, bytes: number): void => {
   t.files += 1;
   t.bytes += bytes;
 };
-
-/** Directory entries, [] when the directory does not exist; any other
- * failure is thrown — a listing the plan could not read is not "empty". */
-async function listDir(dir: string): Promise<Dirent[]> {
-  try {
-    return await readdir(dir, { withFileTypes: true });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw err;
-  }
-}
-
-/** A regular file's size; null when it is gone or not a regular file. */
-async function fileSize(path: string): Promise<number | null> {
-  try {
-    const st = await lstat(path);
-    return st.isFile() ? st.size : null;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-/** Every regular file under `dir` (recursive, symlinks never followed). */
-async function walkFiles(dir: string, out: string[], signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  for (const e of await listDir(dir)) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) await walkFiles(p, out, signal);
-    else if (e.isFile()) out.push(p);
-  }
-}
 
 /**
  * Ask which tmux sessions live — bounded and abortable. A throw, or no answer
@@ -290,34 +239,6 @@ async function deviceOf(path: string): Promise<number | null> {
       p = up;
     }
   }
-}
-
-type Groups = Map<number, string[]>;
-const push = (g: Groups, pr: number, path: string): void => {
-  const list = g.get(pr);
-  if (list) list.push(path);
-  else g.set(pr, [path]);
-};
-
-/** Group a listing's entries by the PR number `re` captures. */
-function groupBy(
-  meter: SpanMeter,
-  dir: string,
-  entries: Dirent[],
-  re: RegExp,
-  want: "file" | "dir" | "any" = "file",
-): Groups {
-  return meter.measure(() => {
-    const g: Groups = new Map();
-    for (const e of entries) {
-      if (want === "file" && !e.isFile()) continue;
-      if (want === "dir" && !e.isDirectory()) continue;
-      if (want === "any" && !e.isFile() && !e.isDirectory()) continue;
-      const m = re.exec(e.name);
-      if (m) push(g, Number(m[1]), join(dir, e.name));
-    }
-    return g;
-  });
 }
 
 /**
@@ -426,17 +347,6 @@ function watermark(store: StateStore, name: string): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-const PR_DIR = /^pr-(\d+)$/;
-const PR_PREFIX = /^pr-(\d+)-/;
-const ROUND_PROMPT = /^pr-(\d+)-round-\d+\.md$/;
-const STATE_ROUND = /^pr-(\d+)-round-\d+-(?:passes|review\.md|comments\.json)$/;
-const SESSION_PROMPT = /^pr-(\d+)\.md$/;
-const SESSION_STATE = /^pr-(\d+)\.(?:json|bridge-.+\.json)$/;
-const PROGRESS = /^pr-(\d+)\.json$/;
-const LEDGER = /^pr-(\d+)\.md$/;
-const VERDICT = /(?:^|-)pr-(\d+)-/;
-const INJECT_RECOVERY = /\.operator-recovery-/;
-
 /** Compute the plan. Reads only; throws when a live directory cannot be
  * listed (an unreadable listing is never "nothing there"). */
 export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
@@ -447,7 +357,6 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
   const filesCutoff = new Date(now.getTime() - deps.afterDays * DAY_MS).toISOString();
   const eventsCutoff = new Date(now.getTime() - deps.eventsAfterDays * DAY_MS).toISOString();
   const stateDir = join(root, "state");
-  const commandsDir = resolve(stateDir, "session-commands") + sep;
 
   // ---- the registry, and what tmux says is alive ---------------------------
   const registry = meter.measure(
@@ -484,44 +393,10 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
           }),
         );
 
-  // ---- one readdir per live directory, grouped by PR ------------------------
-  const sessionsTop = await listDir(deps.sessionsRoot);
-  const sessionDirs = groupBy(meter, deps.sessionsRoot, sessionsTop, PR_DIR, "dir");
-  const injectDirs = groupBy(
-    meter,
-    join(root, "inject"),
-    await listDir(join(root, "inject")),
-    PR_DIR,
-    "dir",
-  );
-  const archiveDirs = groupBy(
-    meter,
-    join(root, "archive"),
-    await listDir(join(root, "archive")),
-    PR_DIR,
-    "dir",
-  );
-  const flat: Array<[ArtifactClass | "ledger", Groups]> = [];
-  const listing = async (
-    cls: ArtifactClass | "ledger",
-    dir: string,
-    re: RegExp,
-    want: "file" | "dir" | "any" = "file",
-  ): Promise<void> => {
-    flat.push([cls, groupBy(meter, dir, await listDir(dir), re, want)]);
-  };
-  await listing("round_prompts", join(stateDir, "round-prompts"), ROUND_PROMPT);
-  await listing("findings", join(stateDir, "findings"), PR_PREFIX);
-  await listing("posting_receipts", join(stateDir, "posting-receipts"), PR_PREFIX);
-  await listing("round_files", stateDir, STATE_ROUND, "any");
-  await listing("session_files", join(stateDir, "session-prompts"), SESSION_PROMPT);
-  await listing("session_files", join(stateDir, "sessions"), SESSION_STATE);
-  await listing("session_files", join(stateDir, "round-progress"), PROGRESS);
-  await listing("verdicts", join(root, "verdict", "processed"), VERDICT, "any");
-  await listing("verdicts", join(root, "verdict", "failed"), VERDICT, "any");
-  await listing("ledger", join(stateDir, "ledgers"), LEDGER);
+  // ---- one readdir per live directory, grouped by PR (prfiles.ts) -----------
+  const listing = await listLiveTree(root, deps.sessionsRoot, meter);
 
-  const orphans = [...sessionDirs.keys()]
+  const orphans = [...listing.sessionDirs.keys()]
     .filter((pr) => !known.has(pr))
     .sort((a, b) => a - b)
     .map((pr) => `pr-${pr}`);
@@ -544,16 +419,11 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     signal?.throwIfAborted();
     await yieldToLoop();
     // The PR's inject dir: its top-level wakes are an eligibility input.
-    let injectFiles: string[] | null = [];
-    const injectDir = injectDirs.get(pr)?.[0];
-    if (injectDir) {
-      try {
-        injectFiles = (await listDir(injectDir))
-          .filter((e) => e.isFile() && e.name.endsWith(".md"))
-          .map((e) => join(injectDir, e.name));
-      } catch {
-        injectFiles = null;
-      }
+    let injectFiles: string[] | null;
+    try {
+      injectFiles = await topLevelInjectFiles(listing.injectDirs.get(pr)?.[0]);
+    } catch {
+      injectFiles = null;
     }
     const e = meter.measure(() =>
       prEligibility(store, pr, {
@@ -602,75 +472,17 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     const ledger: Tally = emptyTally();
     const legacy: Tally = emptyTally();
     try {
-      // Transcripts: every *.jsonl under pi-sessions/pr-<n>/, not just the newest.
-      for (const dir of sessionDirs.get(c.pr) ?? []) {
-        const files: string[] = [];
-        await walkFiles(dir, files, signal);
-        for (const f of files) {
-          if (!f.endsWith(".jsonl")) continue;
-          const size = await fileSize(f);
-          if (size !== null) tally("transcripts", size);
-        }
-      }
-      // The flat per-PR state files (and the passes dirs, walked).
-      for (const [cls, groups] of flat) {
-        for (const p of groups.get(c.pr) ?? []) {
-          const files: string[] = [];
-          const size = await fileSize(p);
-          if (size !== null) files.push(p);
-          else await walkFiles(p, files, signal);
-          for (const f of files) {
-            const s = f === p ? size! : await fileSize(f);
-            if (s === null) continue;
-            if (cls === "ledger") add(ledger, s);
-            else tally(cls, s);
-          }
-        }
-      }
-      // Session-command payloads: the PR's terminal command rows, under
-      // state/session-commands/ only.
-      const payloads = meter.measure(
-        () =>
-          store.db
-            .prepare(
-              "SELECT payload_path FROM session_commands WHERE pr = ? AND status IN ('acked', 'cancelled', 'failed')",
-            )
-            .all(c.pr) as Array<{ payload_path: string }>,
-      );
-      for (const { payload_path } of payloads) {
-        if (!resolve(payload_path).startsWith(commandsDir)) continue;
-        const size = await fileSize(payload_path);
-        if (size !== null) tally("session_commands", size);
-      }
-      // inject/pr-<n>/: delivered wakes (.done/, .terminal/), quarantines, and
-      // the top-level leftovers whose command row is terminal.
-      const injectDir = injectDirs.get(c.pr)?.[0];
-      if (injectDir) {
-        for (const e of await listDir(injectDir)) {
-          const p = join(injectDir, e.name);
-          if (e.isDirectory() && (e.name === ".done" || e.name === ".terminal")) {
-            const files: string[] = [];
-            await walkFiles(p, files, signal);
-            for (const f of files) {
-              const s = await fileSize(f);
-              if (s !== null) tally("inject_done", s);
-            }
-          } else if (e.isFile() && INJECT_RECOVERY.test(e.name)) {
-            const s = await fileSize(p);
-            if (s !== null) tally("inject_done", s);
-          }
-        }
-        for (const f of c.stale) {
-          const s = await fileSize(f);
-          if (s !== null) tally("stale_injects", s);
-        }
-      }
-      // The legacy uncompressed copy in archive/pr-<n>/.
-      const archiveDir = archiveDirs.get(c.pr)?.[0];
-      if (archiveDir) {
-        const s = await fileSize(join(archiveDir, "session.jsonl"));
-        if (s !== null) add(legacy, s);
-      }
+      const inv = await prInventory(listing, c.pr, {
+        store,
+        root,
+        staleInjects: c.stale,
+        signal,
+        meter,
+      });
+      for (const t of inv.transcripts) tally("transcripts", t.size);
+      for (const f of inv.small) tally(f.cls, f.size);
+      if (inv.ledger) add(ledger, inv.ledger.size);
+      if (inv.legacy) add(legacy, inv.legacy.size);
     } catch (err) {
       if (signal?.aborted) throw err;
       counts.held += 1;

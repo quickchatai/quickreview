@@ -161,6 +161,25 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // blocking wait). Raised by the watch at most once per
   // `event_loop_wake_cooldown_min` (60), so it cannot spam.
   "daemon_event_loop_stalled",
+  // S3 (src/archive/archiver.ts), added deliberately:
+  //   archive_disk_low       — free space on the archive or state mount is
+  //                            below `[archive] disk_headroom_gb` (plus the
+  //                            next file's size); the archiver starts no file.
+  //                            Raised once per incident (it ends only at a
+  //                            reading with room for what raised it) and every
+  //                            6 h while it lasts, never per file or per tick.
+  //   archive_restore_failed — a reopened PR's archived transcripts or
+  //                            payloads could not be restored (a corrupt or
+  //                            missing archive record, or no room on the live
+  //                            mount). Its session is
+  //                            born anyway and the receipt guard keeps the
+  //                            archived window UNKNOWN (never absent), so the
+  //                            PR's pre-close recheck claims stay standing
+  //                            until a person looks. Once per incident per PR.
+  // The archiver's verify failures stay the QUIET `archive_verify_failed`
+  // (a status counter; a source that fails to verify is simply kept).
+  "archive_disk_low",
+  "archive_restore_failed",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by

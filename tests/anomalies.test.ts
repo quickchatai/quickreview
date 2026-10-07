@@ -43,6 +43,8 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   it("is exactly this set", () => {
     expect(wakeKinds()).toEqual(
       [
+        "archive_disk_low",
+        "archive_restore_failed",
         "daemon_event_loop_stalled",
         "eod_curation_missing",
         "eod_inject_failed",

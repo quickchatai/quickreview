@@ -694,9 +694,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // whatever memory does. It starts no work before the first healthy
   // reconcile plus `[archive] start_delay_min`, holds while draining, stalled,
   // starved or short of disk. Every tick plans (status.json `archive` says
-  // what a pass would move); in mode `on` it also moves the old reader-less
-  // event rows and webhook deliveries into archive/db/ and seals finished
-  // months (S2). The per-PR files are planned only in this build.
+  // what a pass would move); in mode `on` it also restores reopened PRs,
+  // moves the old reader-less event rows and webhook deliveries into
+  // archive/db/ (S2), moves closed PRs' files into archive/pr-<n>/ (S3) and
+  // seals finished months.
   let archiver: Archiver | null = null;
   // the lesson SHADOW LEDGER — every round's selection through
   // OpenViking (bounded, `[memory] delivery`), the marks a delivered
@@ -1397,6 +1398,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       archiver.start();
+      // A reopened PR's archive comes back BEFORE its session is born (§8.3):
+      // both birth paths await this, bounded, and never refuse the birth.
+      const archiveRef = archiver;
+      sessions.setBeforeBirth((pr) => archiveRef.beforeBirth(pr));
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store

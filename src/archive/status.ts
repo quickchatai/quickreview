@@ -75,6 +75,29 @@ export interface ArchiveDbStatus {
   months_sealed: number;
 }
 
+/** The file phase (S3, docs/archiving.md §7): what the last run of
+ * the per-PR archiver did. Null until it has run (never in plan mode). */
+export interface ArchiveFilesStatus {
+  last_run_at: string;
+  /** `done` | `budget` | `yielded` (to a restore) | `held` | `none` (nothing
+   * eligible) | `failed`. */
+  outcome: string;
+  /** For `held`: why — a hold reason, or `births_unknown` (the daemon's
+   * births could not be observed, so nothing moves). */
+  held_reason: string | null;
+  prs_started: number;
+  prs_archived: number;
+  prs_partial: number;
+  prs_held: number;
+  transcripts: number;
+  state_files: number;
+  bytes_in: number;
+  bytes_out: number;
+  removed: number;
+  duplicates_removed: number;
+  verify_failures: number;
+}
+
 /** status.json `archive`. */
 export interface ArchiveStatus {
   mode: ArchiveMode;
@@ -82,8 +105,8 @@ export interface ArchiveStatus {
    *   `unknown` — not measured yet (the archiver has not ticked);
    *   `off`     — `[archive] mode = "off"`: no timer armed;
    *   `plan`    — the last tick computed a plan and moved nothing by design;
-   *   `idle`    — on: the last tick ran its phases (the DB rows moved or
-   *               caught up — see `db`; the per-PR files are planned only);
+   *   `idle`    — on: the last tick ran its phases (restores, the DB rows,
+   *               the per-PR files, sealing — see `db` and `files`);
    *   `running` — a tick is in progress (`running_since`);
    *   `held`    — the last tick started nothing (`held_reason`);
    *   `failed`  — the last tick failed (`last_error`).
@@ -118,6 +141,9 @@ export interface ArchiveStatus {
   /** The DB phase; null before it has run (and always in plan mode). Absent
    * from an older daemon's block, read as null. */
   db: ArchiveDbStatus | null;
+  /** The file phase; null before it has run (and always in plan mode).
+   * Absent from an older daemon's block, read as null. */
+  files: ArchiveFilesStatus | null;
 }
 
 /** The block before the archiver exists (the daemon is still assembling):
@@ -143,6 +169,7 @@ export function pendingArchiveStatus(mode: ArchiveMode): ArchiveStatus {
     freelist_pages: null,
     max_sync_span_ms: null,
     db: null,
+    files: null,
   };
 }
 
@@ -227,6 +254,38 @@ function readDb(v: unknown): ArchiveDbStatus | null {
   return out;
 }
 
+const FILES_NUMBERS = [
+  "prs_started",
+  "prs_archived",
+  "prs_partial",
+  "prs_held",
+  "transcripts",
+  "state_files",
+  "bytes_in",
+  "bytes_out",
+  "removed",
+  "duplicates_removed",
+  "verify_failures",
+] as const;
+
+/** The `files` sub-block: absent (an older daemon) and null read as null. */
+function readFiles(v: unknown): ArchiveFilesStatus | null {
+  if (v === undefined || v === null) return null;
+  if (!isObj(v)) return bad(`files is ${shown(v)}, not an object or null`);
+  if (!isStr(v.last_run_at)) bad(`files.last_run_at is ${shown(v.last_run_at)}, not a string`);
+  if (!isStr(v.outcome)) bad(`files.outcome is ${shown(v.outcome)}, not a string`);
+  const out = {
+    last_run_at: v.last_run_at as string,
+    outcome: v.outcome as string,
+    held_reason: strOrNull(v, "held_reason"),
+  } as ArchiveFilesStatus;
+  for (const k of FILES_NUMBERS) {
+    if (!isNum(v[k])) bad(`files.${k} is ${shown(v[k])}, not a number`);
+    out[k] = v[k] as number;
+  }
+  return out;
+}
+
 /** status.json `archive` read back — total over whatever JSON is there. */
 export function readArchiveStatus(v: unknown): ArchiveStatusRead {
   if (v === undefined) return { kind: "absent" };
@@ -290,6 +349,7 @@ export function readArchiveStatus(v: unknown): ArchiveStatusRead {
       freelist_pages: numOrNull(v, "freelist_pages"),
       max_sync_span_ms: numOrNull(v, "max_sync_span_ms"),
       db: readDb(v.db),
+      files: readFiles(v.files),
     };
     return { kind: "read", view };
   } catch (err) {
@@ -349,6 +409,21 @@ export function dbPhrase(s: ArchiveStatus): string {
   return `${moved} (${tail}); ${months}`;
 }
 
+/** The file phase in a few words; "" before it has run. */
+export function filesPhrase(s: ArchiveStatus): string {
+  const f = s.files;
+  if (!f) return "";
+  if (f.outcome === "failed") return `files FAILED at ${f.last_run_at}`;
+  if (f.outcome === "held" && f.prs_started === 0)
+    return `files HELD (${f.held_reason ?? "reason unknown"}) at ${f.last_run_at}`;
+  if (f.outcome === "none") return "files: nothing eligible last run";
+  const verify = f.verify_failures > 0 ? `, ${f.verify_failures} VERIFY FAILURE(S)` : "";
+  return (
+    `files: ${f.prs_archived} PR(s) archived last run (${fmtBytes(f.bytes_in)} → ${fmtBytes(f.bytes_out)}, ` +
+    `${f.removed} live file(s) removed${f.duplicates_removed ? `, ${f.duplicates_removed} legacy duplicate(s)` : ""}${verify}; ${f.outcome})`
+  );
+}
+
 /**
  * The one archive line `qcr status` prints. An absent block (an older
  * daemon), an unmeasured one and one this build cannot read whole each say
@@ -367,6 +442,8 @@ export function archiveStatusLine(v: unknown): string {
   if (s.verify_failures_24h) extras.push(`${s.verify_failures_24h} verify failure(s) in 24h`);
   const db = dbPhrase(s);
   if (db) extras.push(db);
+  const files = filesPhrase(s);
+  if (files) extras.push(files);
   const tail = extras.length > 0 ? `; ${extras.join("; ")}` : "";
   const mode = `mode ${s.mode}`;
   switch (s.state) {
