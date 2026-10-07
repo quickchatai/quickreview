@@ -43,6 +43,7 @@
 // path. `recordRoundSeed` is told about a seed after the round was built.
 
 import { curationPhrase, type CurationStatus } from "../learner/status.js";
+import { lessonDeliveryPhrase, type LessonDeliveryStatus } from "./shadowstatus.js";
 
 export type MemoryHealthState = "unknown" | "healthy" | "degraded" | "down" | "auth_failed";
 
@@ -208,6 +209,13 @@ export interface MemoryStatus {
    * daemon could not read its ledger (UNKNOWN); absent when no learner runs
    * and on a daemon that predates it. */
   curation?: CurationStatus | null;
+  /** The lesson shadow ledger (S9a, src/lessonshadow.ts): the
+   * `[memory] delivery` switch, the operator's kill switch, and the last
+   * seven days of would-demote marks joined with what humans did — the
+   * headline the owner reads before switching delivery on. null when the
+   * daemon could not read its ledger (UNKNOWN); absent on a daemon that
+   * predates it. */
+  lessons?: LessonDeliveryStatus | null;
 }
 
 /** The finding-case ledger as the status block carries it (S7). A
@@ -364,7 +372,7 @@ export function memoryStatusLine(m: MemoryStatus | undefined, now: Date = new Da
   if (!m) return "memory: NOT REPORTED (this daemon predates the memory health block)";
   if (!m.enabled) return `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
   const age = fmtDuration(now.getTime() - Date.parse(m.since));
-  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}${curationPhrase(m.curation)}`;
+  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}${curationPhrase(m.curation)}${lessonDeliveryPhrase(m.lessons)}`;
   const serving = servingPhrase(m.serving);
   switch (m.state) {
     case "unknown":

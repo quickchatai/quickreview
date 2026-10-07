@@ -22,6 +22,11 @@ import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./command
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
+import { LessonLedger } from "./lessonledger.js";
+import { RoundLessonSelector, type RoundLessonHook } from "./lessonselect.js";
+import { lessonDeliveryStatus, markRound } from "./lessonshadow.js";
+import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
+import { lessonFindClient, openVikingLessonEngine } from "./openviking/lessonfind.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -652,6 +657,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // `eod_lessons_not_persisted`. Only where memory is switched on: with it off
   // there is nowhere a lesson could land.
   let learner: Learner | null = null;
+  // the lesson SHADOW LEDGER — every round's selection through
+  // OpenViking (bounded, never awaited, `[memory] delivery`), the marks a
+  // delivered dont-raise lesson would have left on its posted findings, and
+  // the operator's kill switch. Built in onStart (it needs the state store);
+  // the selector only where memory is on. Nothing here changes a prompt.
+  let lessonLedger: LessonLedger | null = null;
+  let lessonSelector: RoundLessonSelector | null = null;
+  const lateLessons: RoundLessonHook = {
+    start: (order, files) => lessonSelector?.start(order, files),
+  };
+  /** The status headline, recomputed at most once a minute (the heartbeat
+   * runs far more often, and the report reads several tables). */
+  let lessonStatusCache: { at: number; value: LessonDeliveryStatus | null } | null = null;
   // the OpenViking server, supervised as a child of this process.
   // Started FIRST in onStart so it warms up while the agents build — but never
   // awaited: there is deliberately NO boot ordering, and rounds run
@@ -738,6 +756,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         );
       },
     },
+    // the round's lesson selection (shadow ledger), started by
+    // dispatch and never awaited; and the matcher, told when a round's
+    // findings record lands.
+    lessons: lateLessons,
+    onFindingsRecorded: ({ pr, roundNo }) => {
+      if (!lessonLedger) return;
+      try {
+        markRound(lessonLedger, daemon.store, pr, roundNo);
+      } catch (err) {
+        log(`lessons: #${pr} round ${roundNo} shadow marking failed (ignored)`, err);
+      }
+    },
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
     // auto-merge comparison in the base clone names the hand-resolved files.
@@ -810,6 +840,22 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           cases = null;
         }
         base.case_writes = cases;
+      }
+      // the lesson shadow ledger's headline. Unread is UNKNOWN
+      // (null), never "nothing happened".
+      if (lessonLedger) {
+        const nowMs = Date.now();
+        if (!lessonStatusCache || nowMs - lessonStatusCache.at >= 60_000) {
+          let value: LessonDeliveryStatus | null;
+          try {
+            value = lessonDeliveryStatus(lessonLedger, cfg.memory.delivery);
+          } catch (err) {
+            log("memory status: could not read the lesson ledger", err);
+            value = null;
+          }
+          lessonStatusCache = { at: nowMs, value };
+        }
+        base.lessons = lessonStatusCache.value;
       }
       // the day's EOD curation and the lessons' balance. Unread is
       // UNKNOWN (null), never "all well".
@@ -1054,6 +1100,44 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         searchTimeoutMs: cfg.openviking.search_timeout_ms,
         log,
       });
+
+      // the lesson shadow ledger and the round's selection. The
+      // ledger (and so the operator's kill switch) always; the selector only
+      // where memory is on — with it off there is nothing to select from.
+      lessonLedger = new LessonLedger(d.store);
+      if (cfg.openviking.enabled && cfg.memory.delivery !== "off") {
+        // Its OWN client — no health observer, no counted gap — so a find
+        // the round's budget aborts never reads as memory failing (the
+        // health window would otherwise call a slow-but-working server
+        // DEGRADED and pause the case writer, the pump and the learner).
+        const lessonEngine = openVikingLessonEngine(
+          lessonFindClient({
+            baseUrl: openVikingBaseUrl(cfg.openviking),
+            apiKey: reviewerKey,
+            user: cfg.openviking.user,
+            account: cfg.openviking.account,
+            timeoutMs: cfg.openviking.request_timeout_ms,
+            log,
+          }),
+          memory,
+        );
+        lessonSelector = new RoundLessonSelector({
+          ledger: lessonLedger,
+          mode: () => cfg.memory.delivery,
+          engine: () => lessonEngine,
+          budgetMs: cfg.memory.delivery_budget_ms,
+          log,
+        });
+      }
+      log(
+        `lessons: [memory] delivery = ${cfg.memory.delivery}` +
+          (cfg.memory.delivery === "on"
+            ? " — delivery is not built yet (S9b): runs exactly as shadow, no prompt changes"
+            : cfg.memory.delivery === "shadow"
+              ? " — selection and the shadow ledger only; no prompt, task file or agent changes"
+              : " — nothing selected, nothing recorded") +
+          (lessonLedger.lessonsOff() ? "; the operator's kill switch is OFF" : ""),
+      );
 
       // Reviewer-memory health (S1). "Not monitored" is reserved
       // for memory switched OFF — `[openviking] enabled = false`, which is
@@ -1326,6 +1410,22 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);
         },
+        // the operator's lesson kill switch — reached only for a
+        // command the sealed commands/operator/ channel delivered (commands.ts
+        // refuses every other issuer, twice). State in state.db.
+        lessonSwitch(change, file) {
+          if (!lessonLedger)
+            return { ok: false, reason: "the lesson ledger is not built on this daemon yet" };
+          const r = lessonLedger.apply(change, file);
+          lessonStatusCache = null;
+          return {
+            ok: true,
+            changed: r.changed,
+            lessons_off: r.lessons_off,
+            suppressed: r.suppressed.length,
+            ...("uri" in change ? { uri: change.uri } : {}),
+          };
+        },
         // the EOD curator's receipt for the day's outcomes packet.
         curationReceipt(receipt) {
           if (!learner)
@@ -1540,6 +1640,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       feedbackPump?.stop();
       caseWriter?.stop();
       learner?.stop();
+      // a selection still in its prefetch settles within its
+      // budget (≤ 2 s); let it record before the server and the store go.
+      if (lessonSelector) {
+        const selector = lessonSelector;
+        lessonSelector = null;
+        await Promise.race([
+          selector.idle(),
+          new Promise<void>((r) => setTimeout(r, 2_500).unref?.()),
+        ]);
+      }
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();

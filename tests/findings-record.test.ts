@@ -26,7 +26,7 @@ import type { GateResult } from "../src/gate.js";
 import { RecheckWatcher } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
-import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { VerdictWatcher, type VerdictAdapter, type VerdictDeps } from "../src/verdicts.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -464,7 +464,11 @@ function hooksOf(injects: string[]): SessionHooks {
 }
 
 describe("VerdictWatcher round-end findings check", () => {
-  function setup(): { watcher: VerdictWatcher; injects: string[]; adapter: FakeAdapter } {
+  function setup(over: Partial<VerdictDeps> = {}): {
+    watcher: VerdictWatcher;
+    injects: string[];
+    adapter: FakeAdapter;
+  } {
     const injects: string[] = [];
     const adapter = new FakeAdapter();
     const watcher = new VerdictWatcher({
@@ -479,6 +483,7 @@ describe("VerdictWatcher round-end findings check", () => {
       parseRetries: 0,
       retryDelayMs: 1,
       ledgerCheckDelayMs: 0, // inline; the settle delay is pinned in verdicts.test.ts
+      ...over,
     });
     return { watcher, injects, adapter };
   }
@@ -533,6 +538,26 @@ describe("VerdictWatcher round-end findings check", () => {
     const round = store.roundsFor(100)[0];
     expect(round?.comments_posted).toBe(5);
     expect(round?.verdict).toBe("REQUEST_CHANGES");
+  });
+
+  it("tells onFindingsRecorded (the lesson shadow ledger's matcher) once the round's record landed", async () => {
+    verdicted(100);
+    writeRecord("pr-100-round-1.json", { ...RECORD, pr: 100, round_no: 1 });
+    const told: Array<{ pr: number; roundNo: number; roundId: number | null; rows: number }> = [];
+    const { watcher } = setup({
+      onFindingsRecorded: (t) => told.push({ ...t, rows: store.findingsForRound(100, 1).length }),
+    });
+    await watcher.sweep();
+    const round = store.roundsFor(100)[0]!;
+    expect(told).toEqual([{ pr: 100, roundNo: 1, roundId: round.id, rows: 2 }]);
+  });
+
+  it("a record that never arrives tells onFindingsRecorded nothing", async () => {
+    verdicted(100);
+    const told: unknown[] = [];
+    const { watcher } = setup({ onFindingsRecorded: (t) => told.push(t) });
+    await watcher.sweep();
+    expect(told).toEqual([]);
   });
 
   it("A RECORD THAT NEVER ARRIVES DOES NOT WEDGE THE ROUND", async () => {

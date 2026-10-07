@@ -25,6 +25,8 @@
 // lives in `changelog-store.ts`.
 import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
 import { parseEventTags } from "../memory/eventtags.js";
+import { lessonHeadline } from "../memory/shadowstatus.js";
+import type { StatusSnapshot } from "../state.js";
 import type { App } from "./app.js";
 import type {
   ChangeEntry,
@@ -384,6 +386,9 @@ export function renderFeedbackTab(
   rows: number,
   repo: string | undefined,
   now: Date,
+  /** The daemon's last status.json — the lesson headline's only source;
+   * undefined until the first heartbeat is read. */
+  snapshot?: StatusSnapshot,
 ): Frame {
   const frame = new Frame(cols, rows);
   const inbox = feedbackInbox(store.entries, st.showArchived);
@@ -586,6 +591,16 @@ export function renderFeedbackTab(
   if (st.result) row([{ text: truncate(st.result, rightW - 2) }]);
   row([{ text: "" }]);
 
+  // The lesson shadow ledger's headline (S9a) — the evidence the
+  // owner reads before switching `[memory] delivery` on.
+  const lessons = lessonsHeadline(snapshot);
+  row([
+    { text: sectionTitle(lessons.title) },
+    { text: "qcr lessons shadow-report has it per lesson and per lens", dim: true },
+  ]);
+  for (const l of lessons.lines) row([{ text: truncate(l, rightW - 2) }]);
+  row([{ text: "" }]);
+
   const read = store.tickets;
   const filed = read.kind === "read" ? read.tickets : undefined;
   const actionable = filed?.filter(isActionableTicket) ?? [];
@@ -677,6 +692,59 @@ export function renderFeedbackTab(
   return frame;
 }
 
+/**
+ * The LESSONS section (S9a): status.json `memory.lessons`, painted
+ * honest-unknown — no snapshot yet is "not read yet", a daemon whose status
+ * carries no memory block or no lesson block says so, and a ledger the daemon
+ * could not read (null) is UNKNOWN. None of the four ever reads as zero
+ * marks, which would tell the owner a lesson harmed nothing.
+ */
+export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
+  title: string;
+  lines: string[];
+} {
+  if (!snapshot)
+    return {
+      title: "LESSONS (—)",
+      lines: [emptyLine({ kind: "unread", how: "waiting for the daemon's status.json" })],
+    };
+  const memory = snapshot.memory;
+  if (!memory)
+    return {
+      title: "LESSONS (—)",
+      lines: [
+        emptyLine({
+          kind: "unreadable",
+          why: "this daemon reports no memory block — the lesson ledger is UNKNOWN",
+        }),
+      ],
+    };
+  const s = memory.lessons;
+  if (s === undefined)
+    return {
+      title: "LESSONS (—)",
+      lines: [
+        emptyLine({
+          kind: "unreadable",
+          why: "this daemon does not report the lesson shadow ledger (it predates S9a) — UNKNOWN",
+        }),
+      ],
+    };
+  if (s === null)
+    return {
+      title: "LESSONS (—)",
+      lines: [`${WARN}${STRONG}${lessonHeadline(null)}${RESET}`],
+    };
+  const title =
+    s.delivery === "off"
+      ? "LESSONS (delivery off)"
+      : s.lessons_off
+        ? "LESSONS (kill switch OFF)"
+        : `LESSONS (${s.delivering ? "on" : "shadow"}, ${s.window_days}d)`;
+  const line = lessonHeadline(s);
+  return { title, lines: [s.lessons_off ? `${WARN}${STRONG}${line}${RESET}` : line] };
+}
+
 /** Install the feedback surface over the shared learning store and the
  * change register. */
 export function installFeedbackTab(
@@ -761,6 +829,7 @@ export function installFeedbackTab(
         rows,
         theApp.view.repo,
         store.now(),
+        theApp.view.snapshot,
       );
       lastZones = frame.zones as Zone<FeedbackAction>[];
       return frame;

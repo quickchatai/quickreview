@@ -192,6 +192,9 @@ export interface VerdictDeps {
    * and it passes the dir.
    */
   findingsDir?: string;
+  /** Told when a round's findings record lands (S9a — the lesson
+   * shadow ledger's matcher). Absent ⇒ nothing is told. Must not throw. */
+  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
   /** Parse retries for partially-written files. */
@@ -1413,6 +1416,7 @@ export class VerdictWatcher {
         findingsDir,
         inject: (n, message) => this.deps.hooks.inject(n, message),
         log: this.log.bind(this),
+        ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
       },
       { pr, roundNo, roundId, headSha, planned },
     );

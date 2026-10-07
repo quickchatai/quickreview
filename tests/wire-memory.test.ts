@@ -276,3 +276,47 @@ describe("wire.ts: the local English embedder is actually connected (S4)", () =>
     expect(stopEmbedder).toBeGreaterThan(stopServer);
   });
 });
+
+// the lesson shadow ledger — every slice below degrades silently
+// (no selector ⇒ no ledger rows, no hook ⇒ no marks), so these are tripwires.
+describe("wire.ts: the lesson shadow ledger is actually connected", () => {
+  const daemon = readFileSync(join(process.cwd(), "src", "daemon.ts"), "utf8");
+
+  it("the daemon is handed the late-bound selection hook and the findings matcher", () => {
+    expect(wire).toMatch(/lessons: lateLessons,/);
+    expect(wire).toMatch(/start: \(order, files\) => lessonSelector\?\.start\(order, files\)/);
+    expect(wire).toMatch(
+      /onFindingsRecorded: \(\{ pr, roundNo \}\) => \{[\s\S]*?markRound\(lessonLedger, daemon\.store, pr, roundNo\)/,
+    );
+    // …and the daemon passes both on: the hook to every dispatch pump, the
+    // matcher to the verdict watcher's findings check.
+    expect(daemon).toMatch(/\.\.\.\(deps\.lessons \? \{ lessons: deps\.lessons \} : \{\}\)/);
+    expect(daemon).toMatch(
+      /\.\.\.\(deps\.onFindingsRecorded \? \{ onFindingsRecorded: deps\.onFindingsRecorded \} : \{\}\)/,
+    );
+  });
+
+  it("the selector reads the switch and the budget from config, through the OpenViking engine on its OWN client", () => {
+    // Its own client: a find the round's budget aborts must never reach the
+    // memory-health window or the counted gap (the shared client's
+    // observers) — so the engine is never built on `memoryClient`.
+    expect(wire).toMatch(
+      /const lessonEngine = openVikingLessonEngine\(\s*lessonFindClient\(\{[^}]*apiKey: reviewerKey,[^}]*\}\),\s*memory,\s*\);/,
+    );
+    expect(wire).not.toMatch(/openVikingLessonEngine\(\s*memoryClient/);
+    const lessonClientCall = /lessonFindClient\(\{[^}]*\}\)/.exec(wire)?.[0] ?? "";
+    expect(lessonClientCall).not.toMatch(/onRequest|onGap|memoryHealth|countedGap/);
+    expect(wire).toMatch(
+      /new RoundLessonSelector\(\{\s*ledger: lessonLedger,\s*mode: \(\) => cfg\.memory\.delivery,\s*engine: \(\) => lessonEngine,\s*budgetMs: cfg\.memory\.delivery_budget_ms,/,
+    );
+    expect(wire).toMatch(/if \(cfg\.openviking\.enabled && cfg\.memory\.delivery !== "off"\)/);
+  });
+
+  it("the kill switch is wired to the ledger, and the headline reaches the memory status block", () => {
+    expect(wire).toMatch(
+      /lessonSwitch\(change, file\) \{[\s\S]*?lessonLedger\.apply\(change, file\)/,
+    );
+    expect(wire).toMatch(/base\.lessons = lessonStatusCache\.value;/);
+    expect(wire).toMatch(/lessonDeliveryStatus\(lessonLedger, cfg\.memory\.delivery\)/);
+  });
+});

@@ -194,7 +194,51 @@ export async function cmdOutcomes(rest: string[], json: boolean): Promise<number
   }
 }
 
-export const LESSONS_USAGE = "usage: qcr lessons [mine] [--json]";
+export const LESSONS_USAGE =
+  "usage: qcr lessons [mine] [--json] | qcr lessons shadow-report [--days <n>] [--json] | " +
+  "qcr lessons off|on | qcr lessons suppress|unsuppress <experiences/<file>.md | viking://… URI>";
+
+/** The S9a subcommands of `qcr lessons`: the shadow report, and the
+ * operator's kill switch (written into the root-sealed commands/operator/). */
+export type LessonsSubcommand =
+  | { kind: "shadow-report"; days: number }
+  | { kind: "switch"; command: "lessons-off" | "lessons-on" }
+  | { kind: "switch"; command: "suppress-lesson" | "unsuppress-lesson"; target: string };
+
+/** `qcr lessons shadow-report|off|on|suppress|unsuppress …`, or null when
+ * `rest` is the S8 table (`[mine]`). An unknown flag or a missing target is
+ * refused. */
+export function parseLessonsSubcommand(rest: readonly string[]): LessonsSubcommand | null {
+  const [head, ...tail] = rest;
+  switch (head) {
+    case "shadow-report": {
+      let days = 14;
+      for (let i = 0; i < tail.length; i++) {
+        if (tail[i] === "--days") {
+          const n = Number(tail[i + 1]);
+          if (!Number.isInteger(n) || n < 1 || n > 365) throw new Error(LESSONS_USAGE);
+          days = n;
+          i += 1;
+        } else throw new Error(LESSONS_USAGE);
+      }
+      return { kind: "shadow-report", days };
+    }
+    case "off":
+    case "on":
+      if (tail.length > 0) throw new Error(LESSONS_USAGE);
+      return { kind: "switch", command: head === "off" ? "lessons-off" : "lessons-on" };
+    case "suppress":
+    case "unsuppress":
+      if (tail.length !== 1 || !tail[0]) throw new Error(LESSONS_USAGE);
+      return {
+        kind: "switch",
+        command: head === "suppress" ? "suppress-lesson" : "unsuppress-lesson",
+        target: tail[0],
+      };
+    default:
+      return null;
+  }
+}
 
 /** `qcr lessons` arguments (S8): `mine` or nothing. An unknown token
  * is refused, so a mistyped `mine` cannot quietly print yesterday's table. */
@@ -272,6 +316,9 @@ export function renderLessons(opts: {
  * there is one). It reads no memory and writes none.
  */
 export async function cmdLessons(rest: string[], json: boolean): Promise<number> {
+  const sub = parseLessonsSubcommand(rest);
+  if (sub?.kind === "shadow-report") return cmdShadowReport(sub.days, json);
+  if (sub?.kind === "switch") return cmdLessonSwitch(sub);
   const { mine } = parseLessonsArgs(rest);
   const cfg = loadConfig();
   const { Learner, learnerKnobsOf } = await import("./learner/learner.js");
@@ -307,6 +354,60 @@ export async function cmdLessons(rest: string[], json: boolean): Promise<number>
   } finally {
     store.close();
   }
+}
+
+/**
+ * `qcr lessons shadow-report [--days N]` (S9a): the lesson shadow
+ * ledger joined with what humans did — per lesson and per lens, the findings
+ * a delivered dont-raise lesson would have demoted that humans then FIXED
+ * (harm), refuted or set aside (help), or not yet; and the look-for lessons
+ * whose class later showed a human-raised miss. state.db only.
+ */
+async function cmdShadowReport(days: number, json: boolean): Promise<number> {
+  const cfg = loadConfig();
+  const { LessonLedger } = await import("./lessonledger.js");
+  const { renderShadowReport, shadowReport } = await import("./lessonshadow.js");
+  const store = openStore();
+  try {
+    const report = shadowReport(new LessonLedger(store), { days, mode: cfg.memory.delivery });
+    console.log(json ? JSON.stringify(report) : renderShadowReport(report));
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * `qcr lessons off|on|suppress|unsuppress` (S9a): the operator's kill
+ * switch, written AS ROOT into the sealed commands/operator/ (the drain's
+ * channel) and confirmed by the daemon's own result file.
+ */
+async function cmdLessonSwitch(
+  sub: Extract<LessonsSubcommand, { kind: "switch" }>,
+): Promise<number> {
+  const cfg = loadConfig();
+  const { runnerFor } = await import("./tui/remote.js");
+  const { LessonSwitchSender, lessonUriOf } = await import("./tui/lessonswitch.js");
+  const cmd: import("./tui/lessonswitch.js").LessonSwitchCommand =
+    "target" in sub
+      ? { command: sub.command, uri: lessonUriOf(sub.target, cfg.openviking.user) }
+      : { command: sub.command };
+  console.log(
+    `${cmd.command}${"uri" in cmd ? ` ${cmd.uri}` : ""} → ${cfg.tui.ssh_host}:${cfg.tui.remote_sandbox_root}/commands/operator/`,
+  );
+  const res = await new LessonSwitchSender(cfg.tui, runnerFor(cfg.tui)).send(cmd);
+  if (!res.ok) {
+    console.log(`✖ refused: ${res.reason ?? "no reason given"}`);
+    if (res.issuer === "session")
+      console.log(
+        "  the daemon found commands/operator/ UNSEALED (writable by its own uid), so it served the file as a session's — check the directory is root-owned 0755 in the container",
+      );
+    return 1;
+  }
+  console.log(
+    `✓ ${res.changed === false ? "already so" : "done"} — lessons ${res.lessons_off ? "OFF (kill switch)" : "on"}; ${res.suppressed ?? "?"} suppressed`,
+  );
+  return 0;
 }
 
 /** Foreign free text (a PR title, a session's pause reason) headed for the
@@ -1562,7 +1663,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage

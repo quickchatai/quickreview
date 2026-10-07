@@ -517,6 +517,14 @@ export interface FindingsCheckDeps {
    * mid-round holds rather than interleaving (rule 9 S4). */
   inject: (pr: number, message: string) => Promise<void>;
   log?: (msg: string, extra?: unknown) => void;
+  /**
+   * Told every time a round's findings record LANDS in `round_findings`
+   * (S9a): the lesson shadow ledger marks the round's posted
+   * findings a selected dont-raise lesson would have touched
+   * (src/lessonshadow.ts). Runs after `findings_recorded`; must not throw —
+   * a throw is logged and swallowed, the record stands either way.
+   */
+  onRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
 }
 
 export interface FindingsCheckTarget {
@@ -569,6 +577,11 @@ export async function enforceFindingsRecord(
       comments_posted: parsed.record.comments_posted,
       ...(parsed.note ? { note: parsed.note } : {}),
     });
+    try {
+      deps.onRecorded?.({ pr, roundNo, roundId });
+    } catch (err) {
+      log?.(`findings: #${pr} round ${roundNo} onRecorded hook threw (ignored)`, err);
+    }
     // the round's posted output against the three rules. A quiet
     // anomaly (anomalies.ts wakes nobody for this kind) — a durable, queryable
     // row is the point, and no round is ever held open for it.

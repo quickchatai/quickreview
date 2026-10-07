@@ -130,6 +130,16 @@ deploy time or the log could not be read.
 
 ### feedback
 
+Under the loop, a LESSONS line: the lesson shadow ledger's 7-day headline
+from status.json `memory.lessons` (S9a) — the `[memory] delivery`
+switch, the operator's kill switch, and the posted findings a selected
+dont-raise lesson would have demoted, split into what humans then fixed
+(harm), refuted or set aside (help) and still unknown. It is the evidence to
+read before switching delivery on; `qcr lessons shadow-report` has it per
+lesson and per lens. Honest-unknown: no status yet, a daemon that reports no
+memory or no lesson block, and a ledger the daemon could not read each say
+so — never a zero.
+
 | key | does |
 | --- | --- |
 | `t` | focus the next pane: inbox → proposed → changed |

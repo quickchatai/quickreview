@@ -62,6 +62,7 @@ import {
   type DeltaList,
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
+import type { RoundLessonHook } from "./lessonselect.js";
 import { findStyleGuide } from "./styleguide.js";
 import { findCiLinters, lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { LENS_PLANNING } from "./lensplanning.js";
@@ -142,6 +143,16 @@ export interface DispatchDeps {
    * on the prompt, never a precondition for a round.
    */
   memory?: RoundMemorySeed;
+  /**
+   * The round's lesson selection (S9a, src/lessonselect.ts): started
+   * once per round, AFTER the round was handed to its session (seed, prompt
+   * and marker done), and NEVER awaited — under `[memory] delivery =
+   * "shadow"` (and `on`, until S9b builds delivery) nothing the session sees
+   * depends on it, and starting it after the seed keeps its finds out of the
+   * seed's way on the server's one-thread embedder. Absent ⇒ nothing runs.
+   * Must not throw (a throw is logged and swallowed).
+   */
+  lessons?: RoundLessonHook;
   /** SETTLED digest carried from the session ledger (B3/B4). When absent,
    * the digest comes from `ledgerCarry`'s SETTLED items. */
   settledDigest?: (pr: number) => string;
@@ -1590,10 +1601,12 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
 
-      // The ONE memory call of this round, placed after the worktree
-      // and the order so the context is seeded from the same sha the passes
-      // read. It is bounded and total: the worst case is this round's prompt
-      // arriving memory-less a couple of seconds later.
+      // The ONE memory call this round WAITS for, placed after the
+      // worktree and the order so the context is seeded from the same sha the
+      // passes read. It is bounded and total: the worst case is this round's
+      // prompt arriving memory-less a couple of seconds later. (The lesson
+      // selection, S9a, is the only other one, and it starts after
+      // the handoff, unawaited.)
       store.stampPostingKey(roundId, order.posting_key!);
       // The order's plan can outgrow the one startRound recorded — the repo's
       // style guide is read off the prepared tree and adds pass-style — and the
@@ -1619,6 +1632,19 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
+      // the round's lesson selection — the shadow ledger's
+      // input. Started only now, with the round handed off, and never
+      // awaited: it changes nothing in this round's prompt, task files or
+      // agents, so nothing is gained by starting it sooner — and starting it
+      // before the seed would queue its finds ahead of the round's own
+      // memory search on the server's one-thread embedder.
+      if (deps.lessons) {
+        try {
+          deps.lessons.start(order, files);
+        } catch (err) {
+          log(`dispatch: #${row.number} lesson selection not started (ignored)`, err);
+        }
+      }
 
       setPrGates(store, row.number, gate);
       applyEvent(

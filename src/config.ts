@@ -1276,6 +1276,49 @@ export interface MemoryConfig {
    * takes the default — the search is never left to the server's own balance
    * across every scope (see the comment in config.toml). */
   context_quotas: Record<string, number>;
+  /**
+   * How curated lessons and past finding cases reach a review (S9):
+   *   `off`    — nothing runs: no selection, no shadow ledger;
+   *   `shadow` — the SHIPPED value: every round selects lessons and cases
+   *              through OpenViking (one bounded prefetch, never delaying the
+   *              round) and the shadow ledger records what WOULD have been
+   *              delivered and which posted findings a delivered dont-raise
+   *              lesson would have touched — and NO prompt, task file or
+   *              agent changes;
+   *   `on`     — delivery. Not built yet (S9b): until it is, `on` runs
+   *              exactly what `shadow` runs and says so at boot.
+   * The owner switches it to `on` after reading `qcr lessons shadow-report`.
+   */
+  delivery: MemoryDelivery;
+  /** The round's ONE lesson prefetch may take at most this long (ms) — then
+   * whatever arrived is used and every find still out is a recorded timeout.
+   * Clamped to 1…2000: the contract's hard ceiling is 2 s. */
+  delivery_budget_ms: number;
+}
+
+/** The values `[memory] delivery` takes (S9). */
+export const MEMORY_DELIVERY_MODES = ["off", "shadow", "on"] as const;
+export type MemoryDelivery = (typeof MEMORY_DELIVERY_MODES)[number];
+/** The contract's hard ceiling on the lesson prefetch (S9). */
+export const LESSON_PREFETCH_MAX_MS = 2000;
+
+/**
+ * The [memory] block, defaults filled and the S9 delivery switch checked: an
+ * unknown `delivery` value REFUSES to load (a misspelt `"onn"` must not
+ * quietly mean shadow, or off), and the prefetch budget is clamped to the
+ * contract's ceiling.
+ */
+export function parseMemory(raw: Record<string, unknown>): MemoryConfig {
+  const m = { ...MEMORY_DEFAULTS, ...(raw as Partial<MemoryConfig>) };
+  if (!(MEMORY_DELIVERY_MODES as readonly unknown[]).includes(m.delivery))
+    throw new Error(
+      `[memory] delivery must be one of ${MEMORY_DELIVERY_MODES.map((v) => `"${v}"`).join(", ")} (got ${JSON.stringify(m.delivery)})`,
+    );
+  const budget = Number(m.delivery_budget_ms);
+  m.delivery_budget_ms = Number.isFinite(budget)
+    ? Math.max(1, Math.min(LESSON_PREFETCH_MAX_MS, Math.floor(budget)))
+    : LESSON_PREFETCH_MAX_MS;
+  return m;
 }
 
 export const MEMORY_DEFAULTS: MemoryConfig = {
@@ -1300,6 +1343,8 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   lessons_digest_backfill_from: "2026-08-31",
   lessons_digest_backfill_to: "2026-10-02",
   context_quotas: { experiences: 24 },
+  delivery: "shadow",
+  delivery_budget_ms: LESSON_PREFETCH_MAX_MS,
 };
 
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
@@ -2152,7 +2197,7 @@ export function parseConfig(toml: string): Config {
         Partial<Pick<Config["pi"], "subagent_max_concurrency">>),
     },
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
-    memory: { ...MEMORY_DEFAULTS, ...((raw.memory ?? {}) as Partial<MemoryConfig>) },
+    memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
     tui: { ...TUI_DEFAULTS, ...((raw.tui ?? {}) as Partial<TuiConfig>) },
     companion,
     sink: parseSink((raw.sink ?? {}) as Record<string, any>, companion),

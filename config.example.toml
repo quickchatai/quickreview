@@ -305,6 +305,22 @@ lessons_recall_window_days = 14
 lessons_recurrence_days = 90
 lessons_digest_backfill_from = "2026-08-31"
 lessons_digest_backfill_to = "2026-10-02"
+# How curated lessons and past finding cases reach a review (S9).
+#   "off"    — nothing runs: no selection, no shadow ledger.
+#   "shadow" — (the shipped value) every round selects the lessons and cases
+#              it WOULD carry, through OpenViking — one prefetch per round,
+#              at most delivery_budget_ms (≤ 2000) and never delaying the
+#              round — and the shadow ledger records them, plus every posted
+#              finding a delivered dont-raise lesson would have touched. No
+#              prompt, task file or agent changes.
+#   "on"     — delivery. Not built yet: until it is, "on" runs exactly what
+#              "shadow" runs (the daemon says so at boot).
+# Read `qcr lessons shadow-report` (and the `lessons` clause of `qcr status`)
+# before switching to "on". The operator's kill switch sits beside this one:
+# `qcr lessons off|on` and `qcr lessons suppress|unsuppress <lesson>`, through
+# the root-sealed commands/operator/ channel only, stored in state.db.
+delivery = "shadow"
+delivery_budget_ms = 2000
 # HOW MANY items the round's one context search may draw from each area it
 # searches. `context_tokens` above is the budget; this is the corpus — the two
 # bind independently.

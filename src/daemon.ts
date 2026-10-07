@@ -84,6 +84,12 @@ export interface DaemonDeps {
    *. Absent ⇒ rounds render memory-less, which is a supported
    * state, not a failure. */
   memory?: import("./memory/context.js").RoundMemorySeed;
+  /** The round's lesson selection (S9a, src/lessonselect.ts) —
+   * started per round by dispatch, never awaited. Absent ⇒ nothing runs. */
+  lessons?: import("./lessonselect.js").RoundLessonHook;
+  /** Told when a round's findings record lands (S9a — the lesson
+   * shadow ledger's matcher). */
+  onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
   /** Profile lens-heuristics extension: the selected repo profile's
@@ -264,6 +270,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.now ? { now: deps.now } : {}),
     // The durable reasoning record — same dir the round prompts pin.
     findingsDir: join(root, "state", "findings"),
+    // the lesson shadow ledger marks the round's posted findings.
+    ...(deps.onFindingsRecorded ? { onFindingsRecorded: deps.onFindingsRecorded } : {}),
     log,
   });
   const roundStages = new SessionCommandSupervisor({
@@ -590,6 +598,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           (deps.renderPrompt ? deps.renderPrompt(order, memory) : JSON.stringify(order, null, 2)) +
           prConversation.context(order.pr),
         ...(deps.memory ? { memory: deps.memory } : {}),
+        ...(deps.lessons ? { lessons: deps.lessons } : {}),
         ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
         ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
         // (MC-18): every round order re-hands the PR's ledger, read

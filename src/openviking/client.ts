@@ -384,6 +384,36 @@ export function buildContextSearchBody(
   return body;
 }
 
+/** Options of a `/search/find` (S9a). */
+export interface FindOptions {
+  /** The area(s) searched — one directory URI, or a list (the server takes
+   * one; vendored patch 0011 sends a list the same way). */
+  targetUri: string | readonly string[];
+  /** Hits asked for (the server's `limit`). */
+  limit?: number;
+  timeoutMs?: number;
+}
+
+/** One `/search/find` hit from the memories bucket. */
+export interface FindResultHit {
+  uri: string;
+  score: number;
+  text: string;
+}
+
+/**
+ * The exact body of a `/search/find` — pure, so its determinism is testable:
+ * the query, the area(s) and the limit, and NOTHING that turns a server-side
+ * LLM on. No `session_id` (the expansion stage keys on one) and no
+ * `score_threshold` (the caller's filters decide, not a similarity floor).
+ */
+export function buildFindBody(query: string, opts: FindOptions): Record<string, unknown> {
+  const target = Array.isArray(opts.targetUri) ? [...opts.targetUri] : opts.targetUri;
+  const body: Record<string, unknown> = { query, target_uri: target };
+  if (opts.limit !== undefined) body["limit"] = Math.max(1, Math.floor(opts.limit));
+  return body;
+}
+
 /**
  * The session memory policy every session this system creates MUST carry.
  *
@@ -954,6 +984,43 @@ export class OpenVikingClient {
           ? result["stats"]
           : {}) as Record<string, unknown>,
       },
+    };
+  }
+
+  /**
+   * A plain vector search INSIDE one or more areas (`POST /api/v1/search/find`,
+   * S9a): the hits the server ranks by similarity under `target_uri`,
+   * never a global top K filtered afterwards. The memories bucket only; each
+   * hit's text is its abstract (the stored content itself in a deployment
+   * without a VLM — §3.3), else its overview.
+   *
+   * Deterministic by construction: no `session_id` is sent, so the server
+   * runs no query expansion (that stage keys on a session), and there is no
+   * rewrite stage on this route at all.
+   */
+  async find(query: string, opts: FindOptions): Promise<OvOutcome<FindResultHit[]>> {
+    const res = await this.request<unknown>("find", "/api/v1/search/find", {
+      method: "POST",
+      body: buildFindBody(query, opts),
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    });
+    if (!res.ok) return res;
+    const result = (res.result && typeof res.result === "object" ? res.result : {}) as Record<
+      string,
+      unknown
+    >;
+    const memories = Array.isArray(result["memories"]) ? result["memories"] : [];
+    return {
+      ok: true,
+      status: res.status,
+      result: memories
+        .filter((m): m is Record<string, unknown> => !!m && typeof m === "object")
+        .map((m) => ({
+          uri: str(m["uri"]),
+          score: typeof m["score"] === "number" && Number.isFinite(m["score"]) ? m["score"] : 0,
+          text: str(m["abstract"]) || str(m["overview"]),
+        }))
+        .filter((h) => h.uri !== ""),
     };
   }
 

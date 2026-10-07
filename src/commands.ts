@@ -37,6 +37,7 @@ import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
 import { BRANCH_MAX, BRANCH_RE, isBranchName, SLUG_RE } from "./improvements.js";
 import type { LeverIssuer } from "./levers.js";
+import type { LessonSwitchChange } from "./lessonledger.js";
 import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
@@ -69,6 +70,38 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "retry-thread-decision",
   "eod-curation-receipt",
 ] as const;
+
+/**
+ * The OPERATOR'S commands (S9a): the lesson kill switch. They are not
+ * in `COMMAND_WHITELIST` — the vocabulary a session (the overseer, the EOD
+ * curator, a Slack turn) may write — and they validate ONLY for a file the
+ * watcher found in the root-sealed `commands/operator/` directory (,
+ * `operatorSealVerdict`). A session's command file cannot spell them: in the
+ * session directories, and in an UNSEALED operator directory (served as a
+ * session's), they are refused at validation, and `executeCommand` refuses
+ * them again for any issuer but the operator. Their state lives in state.db
+ * (src/lessonledger.ts), never as a memory tag anyone holding a key could
+ * write.
+ */
+export type OperatorCommandName =
+  "lessons-off" | "lessons-on" | "suppress-lesson" | "unsuppress-lesson";
+
+export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
+  "lessons-off",
+  "lessons-on",
+  "suppress-lesson",
+  "unsuppress-lesson",
+] as const;
+
+/** A lesson the operator names: the full memory URI of one entry
+ * (`viking://user/<user>/memories/<area>/<file>.md`) — `qcr lessons
+ * suppress` expands a bare `experiences/<file>.md` to it. */
+export const LESSON_URI_RE =
+  /^viking:\/\/user\/[A-Za-z0-9_-]{1,64}\/memories\/(?:[a-z][a-z0-9_-]*\/){1,2}[A-Za-z0-9._-]{1,200}\.md$/;
+
+function isOperatorCommand(name: string): name is OperatorCommandName {
+  return (OPERATOR_COMMANDS as readonly string[]).includes(name);
+}
 
 /**
  * Retired command spellings, folded to their current name at validate time
@@ -113,7 +146,13 @@ export type Command =
   /** S8: the EOD curator's answer to the day's outcomes packet — per
    * candidate, adopted / declined (with a reason) / refused (the write
    * failed). Schema in src/learner/receipt.ts. */
-  | ({ command: "eod-curation-receipt" } & CurationReceipt);
+  | ({ command: "eod-curation-receipt" } & CurationReceipt)
+  /** S9a — the OPERATOR's lesson kill switch (`OPERATOR_COMMANDS`):
+   * never valid in a session's file. */
+  | { command: "lessons-off" }
+  | { command: "lessons-on" }
+  | { command: "suppress-lesson"; uri: string }
+  | { command: "unsuppress-lesson"; uri: string };
 
 /** Who a command directory's writer is. Decided by WHICH DIRECTORY a
  * file arrived in and whether the operator seal held — never by a field in
@@ -158,6 +197,12 @@ export interface CommandDeps {
   /** S8: the learner's receipt handler. Optional like `drain`: a
    * daemon wired without the learner rejects the command with a reason. */
   curationReceipt?(receipt: CurationReceipt): Promise<FileOutcome | void> | FileOutcome | void;
+  /** S9a: the operator's lesson kill switch (state.db). Reached only
+   * for an OPERATOR-issued command; optional like `drain`. */
+  lessonSwitch?(
+    change: LessonSwitchChange,
+    file: string,
+  ): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(payload: {
@@ -205,14 +250,31 @@ function forMinField(
   return { ok: true, value: v };
 }
 
+/** Where a command file came from, as far as validation needs to know: the
+ * operator's commands (`OPERATOR_COMMANDS`) validate only from the sealed
+ * operator channel. The default is the bounded side. */
+export interface ValidateOptions {
+  issuer?: CommandIssuer;
+}
+
 /** Validate a parsed command file against the whitelist + per-command schema. */
-export function validateCommand(raw: unknown): ValidationResult {
+export function validateCommand(raw: unknown, opts: ValidateOptions = {}): ValidationResult {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, reason: "command file must be a JSON object" };
   }
   const obj = raw as Record<string, unknown>;
   const name = obj["command"];
   if (typeof name !== "string") return { ok: false, reason: "missing 'command' field" };
+  if (isOperatorCommand(name)) {
+    if (opts.issuer !== "operator")
+      return {
+        ok: false,
+        reason:
+          `command '${name}' is the OPERATOR's alone: it is accepted only from the root-sealed commands/operator/ ` +
+          "channel (`qcr lessons off|on|suppress|unsuppress`), never from a session's command file",
+      };
+    return validateOperatorCommand(name, obj);
+  }
   // Legacy-name fold FIRST: an aliased spelling validates against — and parses
   // into — its current name, so downstream (tier table, dispatch, result
   // files) never sees the retired spelling.
@@ -434,6 +496,34 @@ export function validateCommand(raw: unknown): ValidationResult {
   }
 }
 
+/** The operator commands' strict schemas (the issuer was checked first). */
+function validateOperatorCommand(
+  name: OperatorCommandName,
+  obj: Record<string, unknown>,
+): ValidationResult {
+  switch (name) {
+    case "lessons-off":
+    case "lessons-on": {
+      const err = fieldError(obj, []);
+      if (err) return { ok: false, reason: err };
+      return { ok: true, command: { command: name } };
+    }
+    case "suppress-lesson":
+    case "unsuppress-lesson": {
+      const err = fieldError(obj, ["uri"]);
+      if (err) return { ok: false, reason: err };
+      const uri = obj["uri"];
+      if (typeof uri !== "string" || !LESSON_URI_RE.test(uri) || uri.includes(".."))
+        return {
+          ok: false,
+          reason:
+            "'uri' must be one memory entry's full URI (viking://user/<user>/memories/<area>/<file>.md)",
+        };
+      return { ok: true, command: { command: name, uri } };
+    }
+  }
+}
+
 // ---- tier enforcement (S3) ----------------------------------------
 
 /**
@@ -518,6 +608,11 @@ export function authorizeCommand(
   command: Command,
   origin: OriginRecord | null,
 ): AuthorizationResult {
+  if (isOperatorCommand(command.command))
+    return {
+      ok: false,
+      reason: `tier: '${command.command}' is the operator's alone (commands/operator/), never a Slack turn's`,
+    };
   if (origin === null) return { ok: true };
   const row = TIER_TABLE[command.command];
   const pr = targetPr(command);
@@ -636,6 +731,29 @@ export async function executeCommand(
       return normalize(
         await deps.curationReceipt({ day: command.day, decisions: command.decisions }),
       );
+    }
+    case "lessons-off":
+    case "lessons-on":
+    case "suppress-lesson":
+    case "unsuppress-lesson": {
+      // The belt behind validation's brace: whoever reached this function,
+      // only an operator-stamped context may flip the kill switch.
+      if (ctx.issuer !== "operator")
+        return {
+          ok: false,
+          reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
+        };
+      if (!deps.lessonSwitch)
+        return { ok: false, reason: `${command.command} is not wired on this daemon` };
+      const change: LessonSwitchChange =
+        command.command === "lessons-off"
+          ? { action: "off" }
+          : command.command === "lessons-on"
+            ? { action: "on" }
+            : command.command === "suppress-lesson"
+              ? { action: "suppress", uri: command.uri }
+              : { action: "unsuppress", uri: command.uri };
+      return normalize(await deps.lessonSwitch(change, ctx.file));
     }
   }
 }
@@ -1073,7 +1191,7 @@ export class CommandWatcher {
           true,
         );
       }
-      const validation = validateCommand(read.value);
+      const validation = validateCommand(read.value, { issuer });
       if (!validation.ok) {
         const attempted = (read.value as { command?: unknown } | null)?.command;
         return this.finish(
