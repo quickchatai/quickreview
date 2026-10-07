@@ -12,7 +12,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderRenderNote, renderReviewFromRecord, renderedFooter } from "../src/reviewrender.js";
+import {
+  postedRenderOptions,
+  renderPostedReview,
+  renderRenderNote,
+  renderReviewFromRecord,
+  renderedFooter,
+} from "../src/reviewrender.js";
+import { renderBenchOutputs } from "../src/bench/runner.js";
+import { parseFindingsRecord } from "../src/findingsrecord.js";
+import { findingMarker, parseFindingMarker, stripFindingMarkers } from "../src/findingkey.js";
 import { reviewFooter } from "../src/posting.js";
 import { CHECK_THIS_RE } from "../src/severity.js";
 
@@ -267,11 +276,102 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
         readFileSync(join(root, "state", "pr-7-round-2-comments.json"), "utf8"),
       );
       expect(comments[0].body.startsWith("[blocker]")).toBe(true);
+      // the live route stamps the finding's marker.
+      expect(comments[0].body.endsWith("\n\n<!-- qcr:f=2:f1 -->")).toBe(true);
       expect(readFileSync(join(root, "state", "pr-7-round-2-review.md"), "utf8")).toContain(
         "**Verdict: Changes requested**",
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// S6 (outcome capture): the live render route stamps every inline
+// comment with a hidden marker naming its finding, so the daemon can link the
+// posted comment back to its `round_findings` row. Only on request — the bench
+// never asks, and its outputs must stay byte-identical.
+describe("the finding marker (S6)", () => {
+  const rec = () =>
+    record([
+      entry({ id: "F1" }),
+      entry({ id: "F2", path: "src/b.py", line: 9, posted_as: "nit", severity: "P3" }),
+      entry({ id: "F3", path: null, line: null, title: "No anchor" }),
+      entry({ id: "F4", disposition: "killed", word: "duplicate" }),
+    ]);
+
+  it("is absent unless asked for: the default render is byte-for-byte the pinned format", () => {
+    const plain = renderReviewFromRecord(rec());
+    for (const c of plain.comments) expect(c.body).not.toContain("qcr:f=");
+    expect(plain.body).not.toContain("qcr:f=");
+    expect(plain.comments[0]!.body).toBe(
+      "[blocker] Any user can read another tenant's order\n\n" +
+        "Any authenticated user can fetch another tenant's order by id.\n\norders.py:212 reads the id and never checks the tenant.\n\n" +
+        "_P1 · confidence 0.90 · lens pass-security_",
+    );
+  });
+
+  it("asked for, it is appended to every inline comment and nothing else changes", () => {
+    const plain = renderReviewFromRecord(rec());
+    const marked = renderReviewFromRecord(rec(), { findingMarkers: { roundNo: 3 } });
+    expect(marked.body).toBe(plain.body); // the in-body finding gets none
+    expect(marked.comments.map((c) => c.body)).toEqual(
+      plain.comments.map((c, i) => `${c.body}\n\n${findingMarker(3, ["F1", "F2"][i]!)}`),
+    );
+    expect(marked.comments.map((c) => ({ ...c, body: stripFindingMarkers(c.body) }))).toEqual(
+      plain.comments,
+    );
+    expect(marked.comments.map((c) => parseFindingMarker(c.body))).toEqual([
+      { round_no: 3, key: "F1" },
+      { round_no: 3, key: "F2" },
+    ]);
+  });
+
+  it("names the key the record parser stores, for an entry with no id too", () => {
+    const r = record([
+      entry({ id: undefined, lens: "pass-ui", path: "a.tsx", line: 4 }),
+      entry({ id: undefined, disposition: "killed", path: "b.ts", line: 1 }),
+      entry({ id: undefined, lens: "pass-baseline", path: "c.ts", line: 8 }),
+    ]);
+    const marked = renderReviewFromRecord(r, { findingMarkers: { roundNo: 1 } });
+    const parsed = parseFindingsRecord(r, 7, 1).record!.findings.filter(
+      (f) => f.disposition === "posted",
+    );
+    expect(marked.comments.map((c) => parseFindingMarker(c.body)?.key)).toEqual(
+      parsed.map((f) => f.key),
+    );
+    expect(parsed.map((f) => f.key)).toEqual(["pass-ui@a.tsx:4#0", "pass-baseline@c.ts:8#2"]);
+  });
+
+  it("encodes a hostile key so it can neither close the comment nor break the line", () => {
+    const key = "x --> <b>\nboom";
+    const m = findingMarker(2, key);
+    expect(m).toMatch(/^<!-- qcr:f=2:[A-Za-z0-9%._~]+ -->$/);
+    expect(parseFindingMarker(`body\n\n${m}`)).toEqual({ round_no: 2, key });
+  });
+
+  it("never throws on a key with a lone surrogate — it names the key the state database stores", () => {
+    // `JSON.parse` accepts "\ud800"; encodeURIComponent throws URIError on it,
+    // and the render route has no catch around the marker.
+    const key = JSON.parse('"F\\ud800x"') as string;
+    expect(() => encodeURIComponent(key)).toThrow(URIError);
+    const m = findingMarker(4, key);
+    expect(m).toMatch(/^<!-- qcr:f=4:[A-Za-z0-9%._~]+ -->$/);
+    // SQLite stores the lone surrogate as U+FFFD; the marker names that key.
+    expect(parseFindingMarker(m)).toEqual({ round_no: 4, key: "F�x" });
+    const r = record([entry({ id: key })]);
+    const marked = renderReviewFromRecord(r, { findingMarkers: { roundNo: 4 } });
+    expect(marked.comments.map((c) => parseFindingMarker(c.body))).toEqual([
+      { round_no: 4, key: "F�x" },
+    ]);
+  });
+
+  it("the bench route never carries it, and renders exactly what renderPostedReview renders", () => {
+    const cfg = { review: { dedup_merge: true }, github: { bot_login: "qc-bot" } };
+    const bench = renderBenchOutputs(structuredClone(rec()), undefined, cfg);
+    const plain = renderPostedReview(structuredClone(rec()), postedRenderOptions(cfg));
+    expect(JSON.stringify(bench.rendered)).toBe(JSON.stringify(plain.rendered));
+    expect(JSON.stringify(bench.rendered)).not.toContain("qcr:f=");
+    expect(postedRenderOptions(cfg)).not.toHaveProperty("findingMarkers");
   });
 });

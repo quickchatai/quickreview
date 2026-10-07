@@ -33,6 +33,7 @@ import {
   buildWakeMessage,
   type AuthorReplyEvent,
 } from "./pingpong.js";
+import { OutcomeCapture, type AnchorGit } from "./outcomes.js";
 import { reconcileOnce, type ReconcileAdapter } from "./reconcile.js";
 import {
   RecheckWatcher,
@@ -89,6 +90,11 @@ export interface DaemonDeps {
    * extra per-lens selection predicates, loaded once at assembly by wire.ts.
    * Absent ⇒ dispatch selects with the compiled-in generic core alone. */
   heuristics?: import("./heuristics.js").HeuristicsExtension;
+  /** The outcome capture's git read (S6): did the code at a posted
+   * finding's anchor change between two commits? wire.ts passes the
+   * WorktreeManager (read-only git in the base clone). Absent ⇒ every such
+   * question is unknown, and only the evidence that needs no git decides. */
+  outcomeGit?: AnchorGit;
   /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
    * conflict resolutions are never trivial). wire.ts passes the
    * WorktreeManager's git-level auto-merge comparison. */
@@ -509,6 +515,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   // explicit `drain off`. Consequence the owner accepted: in a multi-deploy
   // window each healthy boot lifts the drain, so the operator re-drains
   // before each step.
+  // Outcome capture (S6): what became of every posted finding. It
+  // reads only (state.db, the base clone) and rides the reconcile pass.
+  const outcomes = new OutcomeCapture({
+    store,
+    botLogin: cfg.github.bot_login,
+    ...(deps.outcomeGit ? { git: deps.outcomeGit } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+    log,
+  });
+
   let firstReconcileSeen = false;
   const reconcile = async (): Promise<void> => {
     const bootFirstPass = !firstReconcileSeen;
@@ -534,6 +550,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             deps.onFeedback?.({ kind: "merged_over_block", pr }),
           );
         },
+        outcomes,
       });
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +

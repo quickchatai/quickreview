@@ -48,6 +48,9 @@ import {
   type InstallEnv,
 } from "./install.js";
 import { operatorCommandWriteScript } from "./tui/unwedge.js";
+import { MutationGate } from "./gate.js";
+import type { GitHubAdapter } from "./github.js";
+import type { OutcomeCapture } from "./outcomes.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
@@ -57,6 +60,136 @@ function stateDir(): string {
 
 function openStore(): StateStore {
   return new StateStore(join(stateDir(), "state.db"));
+}
+
+export const OUTCOMES_USAGE =
+  "usage: qcr outcomes [--days <n>] [--capture] [--read-github] [--json]";
+
+/** `qcr outcomes` flags (S6). An unknown token is refused, so a
+ * mistyped `--capture` cannot quietly print a stale table. */
+export function parseOutcomesArgs(rest: readonly string[]): {
+  days: number;
+  capture: boolean;
+  readGithub: boolean;
+} {
+  let days = 30;
+  let capture = false;
+  let readGithub = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--capture") capture = true;
+    else if (a === "--read-github") readGithub = true;
+    else if (a === "--days") {
+      const n = Number(rest[++i]);
+      if (!Number.isInteger(n) || n <= 0) throw new Error(OUTCOMES_USAGE);
+      days = n;
+    } else throw new Error(OUTCOMES_USAGE);
+  }
+  if (readGithub && !capture) throw new Error(`${OUTCOMES_USAGE} (--read-github needs --capture)`);
+  return { days, capture, readGithub };
+}
+
+/**
+ * The gate behind `qcr outcomes --read-github` (S6): it can only
+ * RECORD. Dry-run, so every ordinary kind is written to `dryrunDir` and never
+ * executed; and an executor that refuses, so even the one class the gate runs
+ * in dry-run (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The read the
+ * command makes goes direct, as every adapter read does; nothing can write.
+ */
+export function recordOnlyGate(dryrunDir: string): MutationGate {
+  return new MutationGate(true, dryrunDir, async () => {
+    throw new Error("qcr outcomes performs no mutations");
+  });
+}
+
+/**
+ * The `--capture` half of `qcr outcomes`: every PR with a posted finding
+ * recorded since `since`, oldest number first — with `read`, ONE read of its
+ * inline comments first for the link facts (a failed read is reported and the
+ * PR is captured from what the state database holds) — then captured.
+ * Returns the PRs captured.
+ */
+export async function captureOutcomesWindow(opts: {
+  store: StateStore;
+  outcomes: Pick<OutcomeCapture, "observeBotComments" | "capturePr">;
+  since: string;
+  read?: Pick<GitHubAdapter, "listReviewCommentsFull">;
+  write?: (line: string) => void;
+}): Promise<number[]> {
+  const write = opts.write ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const prs = (
+    opts.store.db
+      .prepare(
+        "SELECT DISTINCT pr FROM round_findings WHERE disposition = 'posted' AND recorded_at >= ? ORDER BY pr",
+      )
+      .all(opts.since) as Array<{ pr: number }>
+  ).map((r) => r.pr);
+  for (const pr of prs) {
+    if (opts.read) {
+      try {
+        opts.outcomes.observeBotComments(pr, await opts.read.listReviewCommentsFull(pr));
+      } catch (err) {
+        write(`outcomes #${pr}: could not read its comments: ${String(err)}`);
+      }
+    }
+    const r = await opts.outcomes.capturePr(pr);
+    write(
+      `outcomes #${pr}: ${r.posted} posted, ${r.linked} comment(s) linked, ${r.unmatched} unmatched, ${r.changed} fate(s) changed`,
+    );
+  }
+  return prs;
+}
+
+/**
+ * `qcr outcomes` (S6): what became of the findings posted in the last
+ * `--days` (default 30) — the fate table per lens, how many posted findings
+ * are linked to their comment, and the whole-review signals per review.
+ * `--capture` first re-captures every PR with a posted finding in the window
+ * from state.db and the base clone's git (the daemon does this on its own for
+ * open and just-closed PRs; this reaches the older ones). `--read-github` adds
+ * ONE read per such PR — its inline comments, for the link facts — through a
+ * gate that can only record (`recordOnlyGate`). Nothing is ever written to
+ * GitHub.
+ */
+export async function cmdOutcomes(rest: string[], json: boolean): Promise<number> {
+  const { days, capture, readGithub } = parseOutcomesArgs(rest);
+  const cfg = loadConfig();
+  const { OutcomeCapture, renderOutcomeSummary } = await import("./outcomes.js");
+  const { WorktreeManager } = await import("./worktrees.js");
+  const { githubCloneDir } = await import("./config.js");
+  const root = sandboxRoot();
+  const worktrees = new WorktreeManager({
+    root,
+    repo: cfg.github.repo,
+    cloneDir: githubCloneDir(cfg.github),
+  });
+  const store = openStore();
+  try {
+    const outcomes = new OutcomeCapture({
+      store,
+      botLogin: cfg.github.bot_login,
+      ...(existsSync(worktrees.basePath) ? { git: worktrees } : {}),
+    });
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    if (capture) {
+      let read: GitHubAdapter | undefined;
+      if (readGithub) {
+        const { TokenMinter } = await import("./githubAuth.js");
+        const { GitHubAdapter } = await import("./github.js");
+        read = new GitHubAdapter(
+          cfg,
+          new TokenMinter(cfg.github.secrets_dir),
+          recordOnlyGate(join(stateDir(), "dryrun")),
+        );
+      }
+      await captureOutcomesWindow({ store, outcomes, since, ...(read ? { read } : {}) });
+    }
+    const summary = outcomes.summary(since);
+    console.log(json ? JSON.stringify(summary) : renderOutcomeSummary(summary));
+    return 0;
+  } finally {
+    store.close();
+  }
 }
 
 /** Foreign free text (a PR title, a session's pause reason) headed for the
@@ -1229,6 +1362,10 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdHistory(rest);
       return;
     }
+    case "outcomes": {
+      process.exitCode = await cmdOutcomes(rest, json);
+      return;
+    }
     case "regression": {
       process.exitCode = await cmdRegression(rest, json);
       return;
@@ -1304,7 +1441,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage

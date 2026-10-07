@@ -30,6 +30,44 @@ export interface WorktreeManagerOptions {
   cloneDir?: string;
 }
 
+/** One `@@ -a,b +c,d @@` hunk of a zero-context diff: the old side's first
+ * line and how many lines it removed (0 = a pure insertion after `old_start`). */
+export interface DiffHunk {
+  old_start: number;
+  old_count: number;
+}
+
+/** The hunks of `git diff -U0` output (one file's, or several — only the
+ * headers are read). */
+export function parseDiffHunks(diff: string): DiffHunk[] {
+  const out: DiffHunk[] = [];
+  for (const m of diff.matchAll(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/gm))
+    out.push({ old_start: Number(m[1]), old_count: m[2] === undefined ? 1 : Number(m[2]) });
+  return out;
+}
+
+/** How near an anchored line a change must land to count as touching it
+ * (S6): a fix rarely edits only the one line a comment points at. */
+export const ANCHOR_WINDOW = 3;
+
+/** Does any hunk change the old side within `window` lines of `line`? A null
+ * line (a finding anchored to the file, not a line) is touched by any hunk. */
+export function hunksTouchLine(
+  hunks: readonly DiffHunk[],
+  line: number | null,
+  window = ANCHOR_WINDOW,
+): boolean {
+  if (line === null) return hunks.length > 0;
+  return hunks.some((h) => {
+    const start = h.old_start;
+    // A pure insertion sits between old_start and old_start + 1.
+    const end = h.old_count === 0 ? h.old_start + 1 : h.old_start + h.old_count - 1;
+    return start <= line + window && end >= line - window;
+  });
+}
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i;
+
 /** What one round's worktree preparation established about the tree on disk. */
 export interface WorktreeFacts {
   path: string;
@@ -358,6 +396,137 @@ export class WorktreeManager {
       return { login, name: name.trim(), email: email.trim() };
     }
     return null;
+  }
+
+  /** Memo for `anchorTouched`: a diff between two commits never changes. */
+  private readonly hunkMemo = new Map<string, DiffHunk[]>();
+  /** Commits `anchorTouched` has seen in the clone (only a present one is
+   * remembered: a missing one may be fetched by the next round). */
+  private readonly presentCommits = new Set<string>();
+  /** Memo for `pathAt`, over commits known present: a tree never changes. */
+  private readonly pathMemo = new Map<string, boolean>();
+  /** Memo for `introducedBetween` — definite answers only. */
+  private readonly betweenMemo = new Map<string, boolean>();
+
+  /**
+   * Did the change from `from` to `to` touch `path` within `window` lines of
+   * `line`, on the `from` side (S6, outcome capture: "the code at the
+   * finding's anchor changed")? Read-only git in the base clone, no fetch:
+   * a commit the clone does not hold makes the answer unknown (`null`), never
+   * a guess — and so does a `path` that `from` does not hold (a LEFT-side
+   * anchor on a file the PR deletes, an imprecise body-only path): an empty
+   * diff of a file that is not there proves nothing about an anchor in it.
+   * A file `to` deletes is touched. Answers are memoised — commits are
+   * immutable.
+   */
+  async anchorTouched(
+    path: string,
+    line: number | null,
+    from: string,
+    to: string,
+    window = ANCHOR_WINDOW,
+  ): Promise<boolean | null> {
+    if (!path || !SHA_RE.test(from) || !SHA_RE.test(to)) return null;
+    const key = `${from}..${to}\0${path}`;
+    let hunks = this.hunkMemo.get(key);
+    if (!hunks) {
+      try {
+        for (const sha of [from, to]) if (!(await this.present(sha))) return null;
+        if (!(await this.pathAt(from, path))) return null;
+        if (from === to) hunks = [];
+        else {
+          const res = await this.git([
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            "-U0",
+            from,
+            to,
+            "--",
+            path,
+          ]);
+          hunks = parseDiffHunks(res.stdout);
+        }
+      } catch {
+        return null;
+      }
+      if (this.hunkMemo.size >= 5000) this.hunkMemo.clear();
+      this.hunkMemo.set(key, hunks);
+    }
+    return hunksTouchLine(hunks, line, window);
+  }
+
+  /**
+   * Is `sha` a commit that `to` contains and `from` does not — a commit made
+   * after the head a finding was raised at, and part of the PR since (
+   * S6: a human reply citing "Fixed in <sha>" counts only when the sha is
+   * such a commit, so a UUID segment, a colour or the commit that introduced
+   * the behaviour is no fix)? Read-only git in the base clone, no fetch.
+   * `null` — unknown — when any of the three is not a commit the clone holds
+   * (an abbreviation that is ambiguous included); never a guess. Definite
+   * answers are memoised.
+   */
+  async introducedBetween(sha: string, from: string, to: string): Promise<boolean | null> {
+    if (!SHA_RE.test(sha) || !SHA_RE.test(from) || !SHA_RE.test(to)) return null;
+    const key = `${sha.toLowerCase()}\0${from}\0${to}`;
+    const known = this.betweenMemo.get(key);
+    if (known !== undefined) return known;
+    try {
+      for (const c of [from, to]) if (!(await this.present(c))) return null;
+      const resolved = await this.run(
+        "git",
+        ["rev-parse", "--verify", "--quiet", `${sha}^{commit}`],
+        { cwd: this.basePath },
+      );
+      if (resolved.code !== 0) return null;
+      const commit = resolved.stdout.trim();
+      if (!SHA_RE.test(commit)) return null;
+      const inTo = await this.isAncestor(commit, to);
+      if (inTo === null) return null;
+      let answer = false;
+      if (inTo) {
+        const inFrom = await this.isAncestor(commit, from);
+        if (inFrom === null) return null;
+        answer = !inFrom;
+      }
+      if (this.betweenMemo.size >= 5000) this.betweenMemo.clear();
+      this.betweenMemo.set(key, answer);
+      return answer;
+    } catch {
+      return null;
+    }
+  }
+
+  /** `hasCommit`, remembering a present commit. */
+  private async present(sha: string): Promise<boolean> {
+    if (this.presentCommits.has(sha)) return true;
+    if (!(await this.hasCommit(sha))) return false;
+    if (this.presentCommits.size >= 5000) this.presentCommits.clear();
+    this.presentCommits.add(sha);
+    return true;
+  }
+
+  /** Does the (present) commit `sha` hold `path`? */
+  private async pathAt(sha: string, path: string): Promise<boolean> {
+    const key = `${sha}\0${path}`;
+    const known = this.pathMemo.get(key);
+    if (known !== undefined) return known;
+    const res = await this.run("git", ["cat-file", "-e", `${sha}:${path}`], {
+      cwd: this.basePath,
+    });
+    const answer = res.code === 0;
+    if (this.pathMemo.size >= 5000) this.pathMemo.clear();
+    this.pathMemo.set(key, answer);
+    return answer;
+  }
+
+  /** `git merge-base --is-ancestor`: 0 yes, 1 no, anything else unknown. */
+  private async isAncestor(a: string, b: string): Promise<boolean | null> {
+    const res = await this.run("git", ["merge-base", "--is-ancestor", a, b], {
+      cwd: this.basePath,
+    });
+    return res.code === 0 ? true : res.code === 1 ? false : null;
   }
 
   /** True when `sha` is present in the base clone (no fetch needed). */

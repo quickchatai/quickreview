@@ -93,6 +93,11 @@ export interface ReviewCommentFull {
   in_reply_to_id: number | null;
   /** When GitHub authored it. Optional for the same reason. */
   created_at?: string | null;
+  /** The line in the commit the comment was POSTED on. `line` follows the
+   * diff as the branch moves (and goes null once outdated); this does not, so
+   * it is what the outcome capture matches a finding's anchor by (
+   * S6). Optional: older callers never read it. */
+  original_line?: number | null;
 }
 
 function toReviewCommentFull(c: any): ReviewCommentFull {
@@ -106,6 +111,7 @@ function toReviewCommentFull(c: any): ReviewCommentFull {
     pull_request_review_id: c.pull_request_review_id ?? null,
     in_reply_to_id: c.in_reply_to_id ?? null,
     created_at: c.created_at ?? null,
+    original_line: c.original_line ?? null,
   };
 }
 

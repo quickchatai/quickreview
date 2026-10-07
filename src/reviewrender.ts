@@ -21,6 +21,7 @@
 // renders the review the record describes.
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
+import { findingMarker, findingRecordKey } from "./findingkey.js";
 import {
   firstSentence as policyFirstSentence,
   isDefaultPosting,
@@ -77,6 +78,8 @@ const SEVERITIES = new Set(["P0", "P1", "P2", "P3", "nit"]);
 
 interface Posted {
   id: string;
+  /** The entry's `round_findings` key (src/findingkey.ts) — what a marker names. */
+  recordKey: string;
   path: string | null;
   line: number | null;
   start_line: number | null;
@@ -110,7 +113,12 @@ function firstSentence(text: string): string {
   return (m ? m[1]! : text.trim()).replace(/\s+/g, " ");
 }
 
-function readPosted(raw: Record<string, unknown>, i: number, problems: string[]): Posted {
+function readPosted(
+  raw: Record<string, unknown>,
+  i: number,
+  problems: string[],
+  recordKey: string,
+): Posted {
   const id = str(raw.id) ?? `#${i + 1}`;
   const rawTag = (str(raw.posted_as) ?? "").toLowerCase().replace(/^\[|\]$/g, "") as Tag;
   const tag: Tag = TAGS.includes(rawTag) ? rawTag : "question";
@@ -138,6 +146,7 @@ function readPosted(raw: Record<string, unknown>, i: number, problems: string[])
   const start = num(raw.start_line);
   return {
     id,
+    recordKey,
     path: str(raw.path),
     line,
     start_line: start !== null && line !== null && start < line ? start : null,
@@ -205,6 +214,11 @@ export function renderReviewFromRecord(
     /** The profile's `[posting] body`: `verdict` renders the verdict line,
      * one sentence and a bullet per finding with no inline anchor. */
     bodyMode?: "full" | "verdict";
+    /** S6: append the hidden `<!-- qcr:f=<round>:<key> -->` marker to
+     * every inline comment, so the posted comment links back to its finding.
+     * The LIVE route only (src/reviewrendercli.ts): the bench never passes it,
+     * so its outputs stay byte-identical. */
+    findingMarkers?: { roundNo: number };
   } = {},
 ): RenderedReview {
   const problems: string[] = [];
@@ -221,13 +235,17 @@ export function renderReviewFromRecord(
   const entries = Array.isArray(rec.findings) ? (rec.findings as unknown[]) : [];
   if (!Array.isArray(rec.findings)) problems.push("the record has no findings array");
   const posted = entries
+    // The index in the WHOLE findings array is what the record parser keys a
+    // key-less entry by, so it is taken before the filter.
+    .map((e, index) => ({ e, index }))
     .filter(
-      (e): e is Record<string, unknown> =>
-        typeof e === "object" &&
-        e !== null &&
-        str((e as Record<string, unknown>).disposition) === "posted",
+      (x): x is { e: Record<string, unknown>; index: number } =>
+        typeof x.e === "object" &&
+        x.e !== null &&
+        str((x.e as Record<string, unknown>).disposition) === "posted",
     )
-    .map((e, i) => readPosted(e, i, problems));
+    .map(({ e, index }, i) => readPosted(e, i, problems, findingRecordKey(e, index)));
+  const markers = opts.findingMarkers;
 
   // Inline: every posted entry with an anchor, unless the record put it in the
   // body; the first 50, the rest overflow to the body (round-first.md step 6).
@@ -250,7 +268,9 @@ export function renderReviewFromRecord(
       line: p.line,
       side: p.side,
       ...(p.start_line !== null ? { start_line: p.start_line } : {}),
-      body: commentText(p),
+      body: markers
+        ? `${commentText(p)}\n\n${findingMarker(markers.roundNo, p.recordKey)}`
+        : commentText(p),
     });
   }
 
@@ -332,6 +352,10 @@ export interface PostedRenderOptions {
   dedupMerge?: boolean;
   /** The profile's `[posting]` policy; absent or all-default ⇒ no cut. */
   policy?: PostingPolicy;
+  /** S6: the live route's hidden finding markers (see
+   * `renderReviewFromRecord`). Never set by `postedRenderOptions`, so a
+   * caller that does not ask — the bench — renders exactly as before. */
+  findingMarkers?: { roundNo: number };
 }
 
 export function postedRenderOptions(

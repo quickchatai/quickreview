@@ -205,6 +205,45 @@ describe("parseFindingsRecord", () => {
     expect(normalizeDisposition(undefined)).toBe("unknown");
   });
 
+  // the title is KEPT (it used to be dropped — the outcome linker
+  // matches a hand-written comment's title line against it), and every entry's
+  // key follows the one rule the live render route stamps into its marker.
+  it("keeps a posted entry's title, on one line and capped, and never invents one", () => {
+    const parsed = parseFindingsRecord(
+      {
+        findings: [
+          { id: "F1", lens: "pass-ui", disposition: "posted", title: "  Two\n  lines  " },
+          { id: "F2", lens: "pass-ui", disposition: "posted", reason: "No title here. More." },
+          { id: "F3", lens: "pass-ui", disposition: "posted", title: "x".repeat(500) },
+        ],
+      },
+      7,
+      1,
+    );
+    const f = parsed.record!.findings;
+    expect(f.map((e) => e.title?.length ?? null)).toEqual([9, null, 300]);
+    expect(f[0]!.title).toBe("Two lines");
+  });
+
+  it("a key-less entry is keyed `<lens>@<path>:<line>#<index>` over the whole array", () => {
+    const parsed = parseFindingsRecord(
+      {
+        findings: [
+          { lens: "pass-ui", disposition: "killed", path: "a.ts", line: 1 },
+          { name: "pass-tests", disposition: "posted", path: "b.ts", line: "7" },
+          { key: "K", lens: "pass-ui", disposition: "posted" },
+        ],
+      },
+      7,
+      1,
+    );
+    expect(parsed.record!.findings.map((e) => e.key)).toEqual([
+      "pass-ui@a.ts:1#0",
+      "pass-tests@b.ts:7#1",
+      "K",
+    ]);
+  });
+
   it("readFindingsRecord distinguishes missing from unparseable", () => {
     expect(readFindingsRecord(join(findingsDir(), "nope.json"), 7, 2).status).toBe("missing");
     writeRecord("pr-7-round-2.json", "{ not json");

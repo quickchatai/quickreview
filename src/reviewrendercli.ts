@@ -8,7 +8,12 @@
 //
 // The render step is `renderPostedReview` with `postedRenderOptions(cfg)` —
 // the same two calls the bench runner makes (src/bench/runner.ts
-// renderBenchOutputs), pinned equal by tests/dedup-parity.test.ts.
+// renderBenchOutputs), pinned equal by tests/dedup-parity.test.ts. One thing
+// is this route's alone (S6): every inline comment carries the hidden
+// `<!-- qcr:f=<round>:<finding key> -->` marker, which is how the daemon links
+// a posted comment back to its `round_findings` row. The bench never asks for
+// it, so its outputs stay byte-identical (the parity test strips the marker
+// and compares the rest).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";
@@ -46,7 +51,10 @@ export function renderRound(
   } catch (err) {
     return { error: `cannot read ${recordPath}: ${String(err)}` };
   }
-  const out = renderPostedReview(record, postedRenderOptions(cfg));
+  const out = renderPostedReview(record, {
+    ...postedRenderOptions(cfg),
+    findingMarkers: { roundNo: round },
+  });
   const body = join(root, "state", `pr-${pr}-round-${round}-review.md`);
   const comments = join(root, "state", `pr-${pr}-round-${round}-comments.json`);
   writeFileSync(body, out.rendered.body);

@@ -4,6 +4,12 @@
 // (scripts/render-review.sh → src/reviewrendercli.ts renderRound) and the
 // bench route (src/bench/runner.ts renderBenchOutputs) post the same set, write
 // the same body and record the same dispositions.
+//
+// ONE difference is the live route's alone (S6): each inline comment
+// it renders ends with the hidden `<!-- qcr:f=<round>:<key> -->` marker that
+// links the posted comment back to its finding. The bench never carries it,
+// so `bothRoutes` checks the marker and STRIPS it before the comparison — what
+// remains must be byte-identical.
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +17,7 @@ import { join } from "node:path";
 import { renderRound } from "../src/reviewrendercli.js";
 import { renderBenchOutputs } from "../src/bench/runner.js";
 import type { PostedRenderConfig } from "../src/reviewrender.js";
+import { parseFindingMarker, stripFindingMarkers } from "../src/findingkey.js";
 
 const RECORD = {
   verdict: "REQUEST_CHANGES",
@@ -85,10 +92,30 @@ function bothRoutes(cfg: PostedRenderConfig) {
     writeFileSync(recPath, JSON.stringify(RECORD));
     const live = renderRound(root, 7, 1, cfg);
     if ("error" in live) throw new Error(live.error);
-    const liveComments = JSON.parse(readFileSync(live.comments, "utf8"));
+    const markedComments = JSON.parse(readFileSync(live.comments, "utf8")) as Array<{
+      body: string;
+      path: string;
+      line: number;
+    }>;
     const liveBody = readFileSync(live.body, "utf8");
     const liveRecord = JSON.parse(readFileSync(recPath, "utf8"));
     const bench = renderBenchOutputs(structuredClone(RECORD), undefined, cfg);
+    // Every live comment carries exactly one marker, naming round 1 and the
+    // record entry posted at that anchor; no bench comment and neither body
+    // carries one.
+    const posted = (liveRecord.findings as Array<Record<string, unknown>>).filter(
+      (f) => f.disposition === "posted",
+    );
+    for (const c of markedComments) {
+      expect(c.body.match(/<!-- qcr:f=/g)).toHaveLength(1);
+      const m = parseFindingMarker(c.body)!;
+      expect(m.round_no).toBe(1);
+      const f = posted.find((e) => e.id === m.key)!;
+      expect([f.path, f.line]).toEqual([c.path, c.line]);
+    }
+    for (const c of bench.rendered.comments) expect(c.body).not.toContain("qcr:f=");
+    expect(liveBody).not.toContain("qcr:f=");
+    const liveComments = markedComments.map((c) => ({ ...c, body: stripFindingMarkers(c.body) }));
     return {
       live: { comments: liveComments, body: liveBody, record: liveRecord },
       bench: { comments: bench.rendered.comments, body: bench.rendered.body, record: bench.record },

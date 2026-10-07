@@ -8,10 +8,12 @@ import {
   buildWakeMessage,
   classifyThreadDecisionError,
   MAX_EXCHANGES_PER_FINDING,
+  normalizeThreadOutcome,
   PingPongLedger,
   postReply,
   ThreadDecisionWatcher,
   threadIdOf,
+  validateThreadDecision,
   wakeResponsePath,
   writeWakeResponse,
   type AuthorReplyEvent,
@@ -82,6 +84,41 @@ describe("exchange cap", () => {
   it("persists across ledger instances on the same db", () => {
     ledger.recordExchange(4000, 77);
     expect(new PingPongLedger(db).exchanges(4000)).toBe(1);
+  });
+});
+
+describe("the thread decision's outcome field (S6)", () => {
+  const base = { pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "r" };
+  it("folds the known spellings onto fixed | refuted | held", () => {
+    expect(["fixed", "Fix", "addressed"].map(normalizeThreadOutcome)).toEqual([
+      "fixed",
+      "fixed",
+      "fixed",
+    ]);
+    expect(["refuted", "REFUTE"].map(normalizeThreadOutcome)).toEqual(["refuted", "refuted"]);
+    expect(["held", "hold", "upheld", "keep-open"].map(normalizeThreadOutcome)).toEqual([
+      "held",
+      "held",
+      "held",
+      "held",
+    ]);
+  });
+  it("drops anything else — 'conceded' included, which means fixed and refuted alike — and never rejects", () => {
+    for (const outcome of ["conceded", "unknown", "maybe", 3, null]) {
+      const r = validateThreadDecision({ ...base, outcome });
+      expect(r.ok).toBe(true);
+      expect(r.ok && "outcome" in r.value).toBe(false);
+    }
+    const ok = validateThreadDecision({ ...base, outcome: "fixed" });
+    expect(ok.ok && ok.value.outcome).toBe("fixed");
+  });
+  it("the wake asks for it in both shapes, as optional", () => {
+    const msg = buildWakeMessage(event, {}, ledger.discipline(4000));
+    expect(msg).toContain('"outcome":"fixed|refuted|held"');
+    expect(msg).toContain("Leave it out when you cannot tell.");
+    for (let i = 0; i < 3; i++) ledger.recordExchange(4000, 77);
+    const capped = buildWakeMessage(event, {}, ledger.discipline(4000));
+    expect(capped).toContain('"outcome":"fixed|refuted|held"');
   });
 });
 
@@ -257,6 +294,57 @@ describe("structured thread decision", () => {
       "pingpong_decision_malformed",
       77,
       expect.objectContaining({ file: name }),
+    );
+  });
+
+  // the decision file's optional `outcome` is the session's own
+  // account of the finding's fate. It is recorded on the applied event — the
+  // outcome capture's strongest evidence for the thread — and changes nothing
+  // the daemon does with the decision.
+  it("records the decision's outcome on the applied event, and nothing else changes", async () => {
+    ledger.claimAuthorMessage(event);
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "resolve",
+        reply: "Agreed — it does not apply here.",
+        outcome: "Refuted",
+      }),
+    );
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.resolveOwnReviewThread).toHaveBeenCalledWith(77, 4000);
+    expect(h.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_decision_applied",
+      77,
+      expect.objectContaining({ thread_id: 4000, comment_id: 5001, outcome: "refuted" }),
+    );
+  });
+
+  it("a decision without an outcome applies exactly as before and records none", async () => {
+    ledger.claimAuthorMessage(event);
+    const h = harness();
+    const name = "pr-77-thread-4000-comment-5001.json";
+    writeFileSync(
+      join(root, name),
+      JSON.stringify({
+        pr: 77,
+        thread_id: 4000,
+        comment_id: 5001,
+        resolution: "keep_open",
+        reply: "Holding.",
+      }),
+    );
+    expect(await h.watcher.handleFile(name)).toBe(true);
+    expect(h.resolveOwnReviewThread).not.toHaveBeenCalled();
+    expect(h.store.logEvent).toHaveBeenCalledWith(
+      "pingpong_decision_applied",
+      77,
+      expect.objectContaining({ resolution: "keep_open", outcome: null }),
     );
   });
 

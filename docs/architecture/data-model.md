@@ -77,7 +77,7 @@ a database property rather than a convention.
 | `events` | the append-only daemon event log the CLI, TUI and digest read | `id` (PK), `ts`, `kind`, `pr`, `payload` | `logEvent`, `recentEvents`, `eventsOn`, `anomalies` |
 | `pr_comments` | a local copy of every human comment on a tracked PR (identity is GitHub's own `(source, comment_id)`) | `id` (PK), `pr`, `source`, `comment_id`, `author`, `body`, `tagged`, `captured_via` | `recordPrComment`, `prComments`, `hasPrComment` |
 | `feedback_signals` | the tuning-loop ledger: tagged comments plus behavioural signals, deduped per kind | `id` (PK), `kind`, `pr`, `comment_id`, `review_id`, `scope`, `day` | `recordFeedbackSignal`, `feedbackCommentsForDay` |
-| `round_findings` | the durable per-finding reasoning record, parsed out of the session-written findings file | `id` (PK), `pr`, `round_no`, `finding_key`, `lens`, `severity`, `disposition`, `reason` | `recordRoundFindings`, `roundFindings`, `findingsForRound`, `concededFindings` |
+| `round_findings` | the durable per-finding reasoning record, parsed out of the session-written findings file | `id` (PK), `pr`, `round_no`, `finding_key`, `lens`, `lens_ids`, `title`, `severity`, `disposition`, `reason` | `recordRoundFindings`, `roundFindings`, `findingsForRound`, `concededFindings` |
 | `backfill_pr_meta` | PR metadata imported by the one-shot history backfill | `pr` (PK), `title`, `author`, `merged`, `imported_at` | `upsertBackfillPrMeta`, `backfillPrMeta`, `allBackfillPrMeta` |
 
 `feedback_signals` carries three partial unique indexes rather than one:
@@ -87,7 +87,29 @@ on `(kind, review_id)`, and keyless kinds on `(kind, pr, day)`. `scope` is
 distinct, which would void the comment-key dedupe.
 
 `round_findings` has a unique index on `(pr, round_no, finding_key)`, so
-re-recording a round replaces its rows instead of doubling them.
+re-recording a round replaces its rows instead of doubling them. `lens_ids`
+(S6) is a JSON array of the known pass ids the free-text `lens` names
+(`src/lensids.ts`; `[]` for an entry raised outside any lens), filled at boot
+for rows recorded before the column; `title` is the posted comment's title as
+the record wrote it, null when it wrote none.
+
+#### Outcome capture (S6)
+
+`src/outcomes.ts` creates and owns four more tables on the same file, the way
+`src/pingpong.ts` owns its ledger's:
+
+| Table | Purpose | Key columns |
+| --- | --- | --- |
+| `finding_comments` | one row per ROOT inline comment the bot posted, with its link facts and its link to a `round_findings` row (NULL = unmatched) | `comment_id` (PK), `pr`, `review_id`, `path`, `line` (the line it was posted on; a row only a human reply named holds the reply's drifting line until the bot's own comment is read, which re-opens its link), `marker_round`, `marker_key`, `source`, `round_no`, `finding_key`, `via` |
+| `finding_outcomes` | one fate per posted finding, the rule that decided it and when | `(pr, round_no, finding_key)` (PK), `comment_id`, `fate`, `basis`, `evidence`, `decided_at`, `human_replies`, `carried_to`, `fate_changed_at` |
+| `review_outcomes` | a whole-review signal (a set-aside, a merge over a block), recorded per review | `signal_id` (PK, the `feedback_signals` row), `pr`, `kind`, `round_no`, `gh_review_id` |
+| `outcome_capture_marks` | the input fingerprint a PR was last captured at, so an unmoved PR is skipped | `pr` (PK), `signature`, `captured_at` |
+
+`via` says how a comment was linked, most trusted first: `marker` (the hidden
+`<!-- qcr:f=<round>:<key> -->` the live render route appends), `thread_id`
+(the record named it), `path_line`, `path_line_title`, `path_line_tag`. The
+fate set is closed: `fixed`, `refuted_conceded`, `upheld_after_reply`,
+`open_at_close`, `unknown`. Nothing here is written to GitHub.
 
 ### 1.4 Operator controls and filing
 

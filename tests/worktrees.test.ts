@@ -11,7 +11,9 @@ import {
   WorktreeManager,
   cloneUrlFor,
   ensureLocallyIgnored,
+  hunksTouchLine,
   localExcludePath,
+  parseDiffHunks,
 } from "../src/worktrees.js";
 import type { ExecFn } from "../src/tmux.js";
 
@@ -435,6 +437,111 @@ describe("lastHumanAuthor", () => {
     expect(await m.lastHumanAuthor(tip, ["never-touched.md"])).toBeNull();
     expect(await m.lastHumanAuthor(tip, [])).toBeNull();
     expect(await m.lastHumanAuthor("not-a-sha", ["CLAUDE.md"])).toBeNull();
+  });
+});
+
+// S6 (outcome capture): did the code at a posted finding's anchor
+// change between two commits? Read-only git in the base clone, no fetch; a
+// commit the clone does not hold is UNKNOWN (null), never a guess.
+describe("anchorTouched (S6)", () => {
+  const lines = (n: number, edit: Record<number, string> = {}) =>
+    Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join("\n") + "\n";
+
+  it("answers whether a change landed within the window of the anchored line", async () => {
+    const base = commit("app.py", lines(40));
+    const near = commit("app.py", lines(40, { 22: "changed 22" }));
+    const far = commit("app.py", lines(40, { 22: "changed 22", 35: "changed 35" }));
+    const other = commit("other.py", "x\n");
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.anchorTouched("app.py", 20, base, near)).toBe(true); // 2 lines away
+    expect(await m.anchorTouched("app.py", 10, base, near)).toBe(false);
+    expect(await m.anchorTouched("app.py", 35, near, far)).toBe(true);
+    expect(await m.anchorTouched("app.py", 20, far, other)).toBe(false); // app.py untouched
+    expect(await m.anchorTouched("app.py", null, base, near)).toBe(true); // a file-level anchor
+    expect(await m.anchorTouched("app.py", 20, base, base)).toBe(false);
+  });
+
+  it("is unknown — never a guess — for a commit the clone does not hold, or a non-sha", async () => {
+    const base = commit("app.py", lines(5));
+    const m = mgr();
+    await m.ensureBaseClone();
+    const later = commit("app.py", lines(5, { 3: "x" })); // committed after the clone: not fetched
+    expect(await m.anchorTouched("app.py", 3, base, later)).toBeNull();
+    expect(await m.anchorTouched("app.py", 3, "not-a-sha", base)).toBeNull();
+    expect(await m.anchorTouched("", 3, base, base)).toBeNull();
+  });
+
+  it("is unknown for a path the `from` commit does not hold — an empty diff of no file proves nothing", async () => {
+    const base = commit("gone.py", lines(10));
+    git(origin, "rm", "-q", "gone.py");
+    git(origin, "commit", "-q", "-m", "delete gone.py");
+    const deleted = git(origin, "rev-parse", "HEAD").trim();
+    const after = commit("app.py", lines(5));
+    const m = mgr();
+    await m.ensureBaseClone();
+    // In neither commit (`git diff` exits 0 with no output for such a path).
+    expect(await m.anchorTouched("no/such/file.py", 4, base, after)).toBeNull();
+    // A LEFT-side anchor on a file the PR deletes: its head no longer holds it.
+    expect(await m.anchorTouched("gone.py", 4, deleted, after)).toBeNull();
+    expect(await m.anchorTouched("gone.py", 4, deleted, deleted)).toBeNull();
+    // A file that `to` deletes WAS touched.
+    expect(await m.anchorTouched("gone.py", 4, base, deleted)).toBe(true);
+    // Present and untouched is still a definite no.
+    expect(await m.anchorTouched("gone.py", 4, base, base)).toBe(false);
+  });
+});
+
+// a reply's "Fixed in <sha>" counts only when <sha> is a commit
+// made after the reviewed head and carried by a later one.
+describe("introducedBetween (S6)", () => {
+  it("is true only for a commit `to` contains and `from` does not", async () => {
+    const reviewed = commit("app.py", "a\n");
+    const fix = commit("app.py", "b\n");
+    const later = commit("other.py", "c\n");
+    const m = mgr();
+    await m.ensureBaseClone();
+    expect(await m.introducedBetween(fix, reviewed, later)).toBe(true);
+    expect(await m.introducedBetween(fix.slice(0, 7), reviewed, later)).toBe(true); // abbreviated
+    expect(await m.introducedBetween(fix.toUpperCase(), reviewed, later)).toBe(true);
+    // the commit that introduced the behaviour: already in the reviewed head
+    expect(await m.introducedBetween(reviewed, reviewed, later)).toBe(false);
+    // a later commit the head it is checked against does not contain
+    expect(await m.introducedBetween(later, reviewed, fix)).toBe(false);
+  });
+
+  it("is unknown — never a guess — for a token that is no commit the clone holds", async () => {
+    const reviewed = commit("app.py", "a\n");
+    const m = mgr();
+    await m.ensureBaseClone();
+    const unfetched = commit("app.py", "b\n");
+    expect(await m.introducedBetween("550e8400", reviewed, reviewed)).toBeNull(); // a UUID segment
+    expect(await m.introducedBetween(unfetched, reviewed, reviewed)).toBeNull();
+    expect(await m.introducedBetween(reviewed, reviewed, unfetched)).toBeNull();
+    expect(await m.introducedBetween("not-a-sha", reviewed, reviewed)).toBeNull();
+  });
+});
+
+describe("parseDiffHunks / hunksTouchLine", () => {
+  it("reads -U0 hunk headers, a count of 0 being a pure insertion", () => {
+    const diff = [
+      "diff --git a/x b/x",
+      "@@ -10 +10 @@",
+      "@@ -20,3 +20,0 @@",
+      "@@ -30,0 +31,2 @@",
+    ].join("\n");
+    const hunks = parseDiffHunks(diff);
+    expect(hunks).toEqual([
+      { old_start: 10, old_count: 1 },
+      { old_start: 20, old_count: 3 },
+      { old_start: 30, old_count: 0 },
+    ]);
+    expect(hunksTouchLine(hunks, 13)).toBe(true); // 10 + 3
+    expect(hunksTouchLine(hunks, 14)).toBe(false);
+    expect(hunksTouchLine(hunks, 25)).toBe(true); // 22 + 3
+    expect(hunksTouchLine(hunks, 34)).toBe(true); // insertion after 30, 31 + 3
+    expect(hunksTouchLine(hunks, 35)).toBe(false);
+    expect(hunksTouchLine([], null)).toBe(false);
   });
 });
 

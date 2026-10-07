@@ -166,7 +166,15 @@ cannot stall the daemon (failures land in `report.errors`):
 7. **withheld-approval backstop** — retries an approval withheld for red CI
    (§6).
 8. **bot-comment registry backfill** and **human-comment capture sweep** —
-   bounded to `COMMENT_SWEEP_MAX_PRS` (25) PRs per pass, freshest first.
+   bounded to `COMMENT_SWEEP_MAX_PRS` (25) PRs per pass, freshest first. The
+   sweep's read also carries the bot's OWN inline comments; it hands them to
+   the outcome capture instead of discarding them (S6).
+9. **outcome capture** (`src/outcomes.ts`, S6) — links each posted
+   comment to its finding and records each posted finding's fate (fixed,
+   refuted and conceded, upheld after a reply, open at close, unknown) from
+   state.db and the base clone's git alone. Open PRs and PRs closed in the last
+   day, at most 25 a pass and no new one past 10 s, an unmoved PR skipped. Read-only and outside
+   `report.errors`: it is bookkeeping, and the pass's health never waits on it.
 
 `reconcileOrphanedRounds()` runs at startup: a round whose tmux session did not
 survive a restart is cancelled with the quiet `orphan_sweep` cause and the PR is

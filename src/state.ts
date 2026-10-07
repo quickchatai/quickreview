@@ -18,6 +18,7 @@ import {
 } from "./levers.js";
 import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
 import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
+import { canonicalLensIds } from "./lensids.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
  * the park was retired on 2026-08-19 (the review is never handed to
@@ -368,6 +369,12 @@ export interface RoundFindingRow {
   raised_in_round: number | null;
   thread_id: number | null;
   recorded_at: string;
+  /** The posted comment's title as the record wrote it (S6); null
+   * when the record carries none. */
+  title: string | null;
+  /** Canonical lens ids, a JSON array (`src/lensids.ts`, S6). Null
+   * only on a row the boot migration has not reached yet. */
+  lens_ids: string | null;
 }
 
 /**
@@ -393,6 +400,7 @@ export interface RoundFindingInput {
   posted_as?: string | null;
   raised_in_round?: number | null;
   thread_id?: number | null;
+  title?: string | null;
 }
 
 /** PR lifecycle facts for PRs the daemon never tracked (M2 backfill fills it).
@@ -1395,6 +1403,14 @@ export class StateStore {
       // up on and queued again. The backlog wake measures from it — a
       // September signal queued today has waited minutes, not weeks.
       "ALTER TABLE feedback_signals ADD COLUMN memory_owed_since TEXT",
+      // S6 (outcome capture): the posted comment's one-line title as
+      // the session wrote it (null when the record carries none — it is never
+      // invented), and the canonical lens ids parsed from the free-text
+      // `lens` (src/lensids.ts; JSON array, `[]` = raised outside any known
+      // lens). Both nullable and additive; the boot fills `lens_ids` for rows
+      // recorded before the column (`fillLensIds`).
+      "ALTER TABLE round_findings ADD COLUMN title TEXT",
+      "ALTER TABLE round_findings ADD COLUMN lens_ids TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -1476,6 +1492,25 @@ export class StateStore {
       this.logEvent("rounds_expired", null, { count: info.changes, one_shot: true });
     this.classifyLegacyCancellations();
     this.classifyLegacyFeedbackMemory();
+    this.fillLensIds();
+  }
+
+  /**
+   * canonical lens ids for every recorded finding that has none
+   * yet — the rows recorded before the column existed. Parsed from the raw
+   * `lens` by the one parser the recorder uses, so the two never disagree.
+   * Idempotent: only NULL rows are touched, and a parsed row is never NULL
+   * again (`[]` is an answer).
+   */
+  private fillLensIds(): void {
+    const rows = this.db
+      .prepare("SELECT id, lens FROM round_findings WHERE lens_ids IS NULL")
+      .all() as Array<{ id: number; lens: string }>;
+    if (rows.length === 0) return;
+    const set = this.db.prepare("UPDATE round_findings SET lens_ids = ? WHERE id = ?");
+    this.db.transaction(() => {
+      for (const r of rows) set.run(JSON.stringify(canonicalLensIds(r.lens)), r.id);
+    })();
   }
 
   /**
@@ -2018,17 +2053,17 @@ export class StateStore {
       `INSERT INTO round_findings
          (pr, round_id, round_no, head_sha, finding_key, path, line, lens, tier, unplanned,
           severity, confidence, reachability, kind, disposition, axis, word, reason, evidence,
-          posted_as, raised_in_round, thread_id, recorded_at)
+          posted_as, raised_in_round, thread_id, recorded_at, title, lens_ids)
        VALUES
          (@pr, @round_id, @round_no, @head_sha, @finding_key, @path, @line, @lens, @tier, @unplanned,
           @severity, @confidence, @reachability, @kind, @disposition, @axis, @word, @reason, @evidence,
-          @posted_as, @raised_in_round, @thread_id, @recorded_at)
+          @posted_as, @raised_in_round, @thread_id, @recorded_at, @title, @lens_ids)
        ON CONFLICT(pr, round_no, finding_key) DO UPDATE SET
          round_id=@round_id, head_sha=@head_sha, path=@path, line=@line, lens=@lens, tier=@tier,
          unplanned=@unplanned, severity=@severity, confidence=@confidence, reachability=@reachability,
          kind=@kind, disposition=@disposition, axis=@axis, word=@word, reason=@reason,
          evidence=@evidence, posted_as=@posted_as, raised_in_round=@raised_in_round,
-         thread_id=@thread_id, recorded_at=@recorded_at`,
+         thread_id=@thread_id, recorded_at=@recorded_at, title=@title, lens_ids=@lens_ids`,
     );
     const write = this.db.transaction((rows: readonly RoundFindingInput[]) => {
       for (const f of rows) {
@@ -2058,6 +2093,8 @@ export class StateStore {
           raised_in_round: f.raised_in_round ?? null,
           thread_id: f.thread_id ?? null,
           recorded_at: at,
+          title: f.title ?? null,
+          lens_ids: JSON.stringify(canonicalLensIds(f.lens)),
         });
       }
     });
@@ -3306,6 +3343,16 @@ export class StateStore {
 
   isBotComment(commentId: number): boolean {
     return this.botCommentPr(commentId) !== undefined;
+  }
+
+  /** The round a registered bot comment was attributed to, when it was
+   * (S6: the outcome linker's fallback when the comment's review id
+   * names no round). */
+  botCommentRound(commentId: number): number | null {
+    const row = this.db
+      .prepare("SELECT round_no FROM bot_comments WHERE comment_id = ?")
+      .get(commentId) as { round_no: number | null } | undefined;
+    return row?.round_no ?? null;
   }
 
   // ---- reviewed-head mark (guard 2; reuses it) -----------
@@ -4979,6 +5026,14 @@ export class StateStore {
       .all(day) as FeedbackSignalRow[];
   }
 
+  /** Every feedback signal on one PR, oldest first (S6: the
+   * review-level outcomes are read from here). */
+  feedbackSignalsFor(pr: number): FeedbackSignalRow[] {
+    return this.db
+      .prepare("SELECT * FROM feedback_signals WHERE pr = ? ORDER BY id")
+      .all(pr) as FeedbackSignalRow[];
+  }
+
   /** Every feedback signal recorded at or after `since` (an ISO instant),
    * oldest first — the review history digest's feedback half. */
   feedbackSignalsSince(since: string): FeedbackSignalRow[] {
@@ -5604,6 +5659,34 @@ export class StateStore {
     return this.db
       .prepare("SELECT ts, kind, pr, payload FROM events WHERE ts LIKE ? ORDER BY id")
       .all(`${dateIso}%`) as any;
+  }
+
+  /** Every event of the given kinds for one PR, oldest first, its payload
+   * decoded (an undecodable payload reads as `{}`) — the outcome capture's
+   * read of the ping-pong decisions, resolves, pushes and closes (S6). */
+  prEvents(
+    pr: number,
+    kinds: readonly string[],
+  ): Array<{ id: number; ts: string; kind: string; payload: Record<string, unknown> }> {
+    if (kinds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id, ts, kind, payload FROM events WHERE pr = ? AND kind IN (${kinds
+          .map(() => "?")
+          .join(",")}) ORDER BY id`,
+      )
+      .all(pr, ...kinds) as Array<{ id: number; ts: string; kind: string; payload: string | null }>;
+    return rows.map((r) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(r.payload ?? "{}") as unknown;
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed))
+          payload = parsed as Record<string, unknown>;
+      } catch {
+        /* undecodable: an empty payload */
+      }
+      return { id: r.id, ts: r.ts, kind: r.kind, payload };
+    });
   }
 
   /** Newest-last tail of the event log — the TUI events strip. */

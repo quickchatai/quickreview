@@ -65,7 +65,11 @@ lives where both routes run the same code:
   - the record marks it `merged` with `word: post-check`.
 
   `tests/dedup-parity.test.ts` pins that both routes produce the same posted set
-  from the same findings record.
+  from the same findings record. The one difference is the live route's alone
+  (S6): each inline comment it renders ends with a hidden
+  `<!-- qcr:f=<round>:<finding key> -->` marker that links the posted comment
+  to its finding. The parity test checks the marker and strips it before the
+  comparison, and the bench never carries one.
 - **Posting.** The default profile sets `[posting] repeat_sites = false`, so
   follower rows of one root cause are withheld (`repeat-site`) wherever the
   policy is applied.

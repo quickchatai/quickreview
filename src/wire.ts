@@ -727,6 +727,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
     // auto-merge comparison in the base clone names the hand-resolved files.
     resolvedFilesInMerges: (from, to, pr) => sessions.worktrees.resolvedFilesInMerges(from, to, pr),
+    // Outcome capture (S6): did the code at a posted finding's anchor
+    // change? Read-only git in the same base clone, no fetch, memoised.
+    outcomeGit: sessions.worktrees,
     // One network fetch per round, before the order is built: the PR head and
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.

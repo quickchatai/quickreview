@@ -24,6 +24,7 @@
 // a wedged PR (rule 9; the map has spent enough on wedges).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { findingRecordKey } from "./findingkey.js";
 import { WITHHOLD_WORDS } from "./postingpolicy.js";
 import { isSanctionedTag } from "./severity.js";
 import type { StateStore } from "./state.js";
@@ -214,7 +215,14 @@ export interface FindingsRecordEntry {
    * finding (a concession, an escalation). Null = raised this round. */
   raised_in_round: number | null;
   thread_id: number | null;
+  /** The posted comment's one-line title, as the session wrote it (
+   * S6: kept, where it used to be dropped). Null when the entry has none —
+   * never derived from the reason. */
+  title: string | null;
 }
+
+/** Cap on a recorded title — a title is one line, never a body. */
+const TITLE_CAP = 300;
 
 export interface FindingsRecordFile {
   pr: number;
@@ -367,7 +375,9 @@ export function parseFindingsRecord(
         ? "doubted"
         : written;
     if (word !== null && !isKnownVocabularyWord(word)) unknownWord++;
-    const key = str(e.id) ?? str(e.key) ?? `${lens || "?"}@${path ?? "?"}:${line ?? "?"}#${i}`;
+    // The ONE key rule (src/findingkey.ts) — the live render route stamps the
+    // same key into the comment it posts, so the two always name one row.
+    const key = findingRecordKey(e, i);
     const raisedIn = (() => {
       const r = num(e.raised_in_round);
       return r === null ? null : Math.trunc(r);
@@ -412,6 +422,10 @@ export function parseFindingsRecord(
       thread_id: (() => {
         const t = num(e.thread_id);
         return t === null ? null : Math.trunc(t);
+      })(),
+      title: (() => {
+        const t = str(e.title);
+        return t === null ? null : t.replace(/\s+/g, " ").slice(0, TITLE_CAP);
       })(),
     });
   }

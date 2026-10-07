@@ -342,6 +342,12 @@ export class PingPongLedger {
  * discipline rules are restated every time because a compacted session may no
  * longer hold them verbatim.
  */
+/** The decision file's `outcome` field, as the wake states it (S6). */
+const OUTCOME_FIELD_NOTE =
+  "`outcome` records what became of the finding: `fixed` (the code at the head now " +
+  "addresses it), `refuted` (you accept the author's argument — it was wrong or does " +
+  "not apply) or `held` (you keep it open). Leave it out when you cannot tell.";
+
 export function buildWakeMessage(
   event: AuthorReplyEvent,
   ctx: ThreadContext,
@@ -375,7 +381,9 @@ export function buildWakeMessage(
       "Inspect the current code and rationale anyway. Write the structured response file",
       `\`verdict/pr-${event.pr}-thread-${threadIdOf(event)}-comment-${event.comment_id}.json\` with`,
       `{"pr":${event.pr},"thread_id":${threadIdOf(event)},"comment_id":${event.comment_id},` +
-        '"resolution":"resolve|keep_open","reply":"","reason":"why","human_requested":false}.',
+        '"resolution":"resolve|keep_open","reply":"","reason":"why","human_requested":false,' +
+        '"outcome":"fixed|refuted|held"}.',
+      OUTCOME_FIELD_NOTE,
       "The daemon may resolve a satisfied thread, but it will not post a fourth reply.",
       "Mark the finding `conceded` or `held` in the ledger; only an explicit",
       "review re-request can start another round.",
@@ -396,8 +404,9 @@ export function buildWakeMessage(
       "  atomically, with this shape:",
       `  {"pr":${event.pr},"thread_id":${threadIdOf(event)},"comment_id":${event.comment_id},` +
         '"resolution":"resolve|keep_open","reply":"brief reply","reason":"why",' +
-        '"human_requested":false}.',
+        '"human_requested":false,"outcome":"fixed|refuted|held"}.',
       "  Use `resolve` only when the code addresses the finding or the rationale is satisfactory.",
+      `  ${OUTCOME_FIELD_NOTE}`,
       "  The daemon posts the reply and, for `resolve`, resolves this bot-owned thread.",
       "- If they ask for a human, set `human_requested: true` in that response file.",
       "  The daemon records the request for the operator; it is NOT a handover, so",
@@ -489,6 +498,43 @@ export async function postReply(
 
 export const THREAD_DECISION_RE = /^pr-(\d+)-thread-(\d+)-comment-(\d+)\.json$/;
 
+/**
+ * What became of the finding, in the session's judgement at the time of the
+ * reply (S6, outcome capture): `fixed` — the code at the head now
+ * addresses it; `refuted` — the author's argument holds, the finding was wrong
+ * or does not apply, and the reviewer concedes; `held` — the reviewer keeps it
+ * open. A RECORD, read by `src/outcomes.ts`; it changes nothing the daemon
+ * does with the decision (the resolution still decides the resolve).
+ */
+export type ThreadOutcome = "fixed" | "refuted" | "held";
+
+const THREAD_OUTCOME_ALIASES: Readonly<Record<string, ThreadOutcome>> = {
+  fixed: "fixed",
+  fix: "fixed",
+  addressed: "fixed",
+  refuted: "refuted",
+  refute: "refuted",
+  held: "held",
+  hold: "held",
+  upheld: "held",
+  kept: "held",
+  keep_open: "held",
+};
+
+/** The outcome a decision file names, folded onto the closed set. Anything
+ * else — absent, `unknown`, `conceded` (which the ledger uses for fixes and
+ * refutations alike), a typo — is no outcome: never a guess, and never a
+ * reason to refuse the decision, whose reply must still be posted. */
+export function normalizeThreadOutcome(raw: unknown): ThreadOutcome | undefined {
+  if (typeof raw !== "string") return undefined;
+  return THREAD_OUTCOME_ALIASES[
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_")
+  ];
+}
+
 export interface ThreadDecision {
   pr: number;
   thread_id: number;
@@ -497,6 +543,8 @@ export interface ThreadDecision {
   reply: string;
   reason?: string;
   human_requested?: boolean;
+  /** S6 — optional; see `ThreadOutcome`. */
+  outcome?: ThreadOutcome;
 }
 
 export function validateThreadDecision(
@@ -515,6 +563,11 @@ export function validateThreadDecision(
     return { ok: false, error: "reason must be a string" };
   if (v.human_requested !== undefined && typeof v.human_requested !== "boolean")
     return { ok: false, error: "human_requested must be boolean" };
+  // Tolerant on purpose: an outcome the parser does not know is dropped, never
+  // a rejection — rejecting would drop the reply with it.
+  const outcome = normalizeThreadOutcome(v.outcome);
+  if (outcome) v.outcome = outcome;
+  else delete v.outcome;
   return { ok: true, value: v as unknown as ThreadDecision };
 }
 
@@ -1005,6 +1058,9 @@ export class ThreadDecisionWatcher {
         comment_id: d.comment_id,
         resolution: d.resolution,
         human_requested: d.human_requested ?? false,
+        // the session's own account of the finding's fate — the
+        // outcome capture's strongest evidence for this thread.
+        outcome: d.outcome ?? null,
       });
       this.archive(name);
       return true;

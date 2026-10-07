@@ -18,6 +18,7 @@ import { recheckPromptMarker } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
 import { DEFAULT_ROUND_STALL_GRACE_MIN, type Config } from "./config.js";
 import type { IssueCommentFull, PrRef, ReviewCommentFull, ReviewFull } from "./github.js";
+import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "./types.js";
@@ -98,6 +99,11 @@ export interface ReconcileDeps {
    * be permanent evidence loss). Default on when the adapter can read;
    * `false` disables it for a poll that must stay cheap. */
   captureComments?: boolean;
+  /** The outcome capture (S6): handed the bot's OWN inline comments
+   * from the comment sweep's existing read (no extra GitHub call), then run
+   * as its own bounded step after it. Absent ⇒ no outcome capture. Its
+   * failures are its own and never reach `errors`. */
+  outcomes?: Pick<OutcomeCapture, "observeBotComments" | "sweep">;
 }
 
 export interface ReconcileReport {
@@ -116,6 +122,10 @@ export interface ReconcileReport {
    * blocks, and the boot's first healthy pass (which lifts a deploy drain)
    * must not wait on the memory engine. */
   ov_sessions?: OvSessionSweepReport;
+  /** The outcome capture's pass (S6), when it captured anything or
+   * failed. Like `ov_sessions`, deliberately NOT part of `errors`: it is
+   * bookkeeping, and the boot's first healthy pass must not wait on it. */
+  outcomes?: OutcomeSweepReport;
 }
 
 function correction(
@@ -666,6 +676,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         const n = local.number;
         let rows: CapturedComment[];
         let reviewsFetched: ReviewFull[] = [];
+        let inlineFetched: ReviewCommentFull[] = [];
         try {
           const [inline, top, reviews] = await Promise.all([
             adapter.listReviewCommentsFull!(n),
@@ -673,6 +684,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             adapter.listReviewsFull!(n),
           ]);
           reviewsFetched = reviews;
+          inlineFetched = inline;
           rows = [
             ...inline.map((c) => capturedFromReviewComment(n, c)),
             ...top.map((c) => capturedFromIssueComment(n, c)),
@@ -681,6 +693,16 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         } catch (err) {
           report.errors.push(`comment-capture #${n}: ${String(err)}`);
           continue;
+        }
+        // the bot's own inline comments in this very read are the
+        // link facts the outcome capture needs (which finding each one
+        // carried) — kept here, at no extra API call. Never breaks the sweep.
+        if (deps.outcomes) {
+          try {
+            deps.outcomes.observeBotComments(n, inlineFetched);
+          } catch (err) {
+            (deps.log ?? (() => {}))(`reconcile: outcome facts #${n} failed`, err);
+          }
         }
         for (const c of rows) {
           if (!isHumanCapture(c, botLogin)) continue;
@@ -745,6 +767,21 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         store.markCommentSweep(n, sweepMark(local));
       }
     });
+  }
+
+  // ---- outcome capture (S6) -----------------------------------------
+  // What became of every posted finding: link each bot comment to its finding,
+  // then decide each finding's fate from the replies, thread decisions, pushes
+  // and later rounds already recorded. Local reads only (state.db and the base
+  // clone's git) — no GitHub call and no gate. Bounded and change-gated inside
+  // `sweep`, and never an error of this pass: it is bookkeeping.
+  if (deps.outcomes) {
+    try {
+      const swept = await deps.outcomes.sweep();
+      if (swept.captured > 0 || swept.errors.length > 0) report.outcomes = swept;
+    } catch (err) {
+      (deps.log ?? (() => {}))("reconcile: outcome capture failed", err);
+    }
   }
 
   // ---- the raw-tier sweep (S3) -------------------------------------
