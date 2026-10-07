@@ -70,7 +70,15 @@ export const BASH_RULES: BashRule[] = [
   {
     // the gate's shell route. The companion holds no App key, so
     // these would fail anyway — refused by name so that stays a boundary.
-    pattern: /(^|[\s/;&|])(post-review|approve-pr|reply-thread|mint-token)\.sh\b/,
+    // Refused when RUN, never when read (2026-10-06, the owner: the companion
+    // was refused a `git diff` of approve-pr.sh while finishing a fix to it):
+    // the script name in command position — at the start of a command, after
+    // a separator, `$(`, a backtick, `-exec`, or behind env assignments and
+    // the wrappers that run their argument (bash/sh/source/./env/sudo/exec/
+    // xargs/timeout/eval…). `git diff`, `cat`, `grep` and an editor name it
+    // as an ARGUMENT and pass.
+    pattern:
+      /(^|[;&|\n(`{]|\$\(|-exec(dir)?\s)\s*(([A-Za-z_]\w*=\S*|sudo|env|exec|nohup|command|time|eval|xargs|bash|sh|zsh|dash|source|\.|timeout(\s+-\S+)*\s+\S+)(\s+-\S+)*\s+)*['"]?(\S*\/)?(post-review|approve-pr|reply-thread|mint-token)\.sh\b/,
     reason:
       "rule 8: the companion never touches the gate — the posting scripts and mint-token.sh are the daemon's route to GitHub, not yours.",
   },

@@ -30,6 +30,23 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("/workspace/scripts/approve-pr.sh 1")).toMatch(/gate/);
     expect(bashBlockReason("scripts/reply-thread.sh 1 2 x")).toMatch(/gate/);
     expect(bashBlockReason("TOKEN=$(scripts/mint-token.sh)")).toMatch(/gate/);
+    for (const cmd of [
+      "./scripts/approve-pr.sh 1",
+      "cd /workspace && scripts/approve-pr.sh 1",
+      "true; bash -x scripts/post-review.sh 1 COMMENT b.md",
+      "source scripts/mint-token.sh",
+      ". scripts/mint-token.sh",
+      "QCR_ROUND_NO=3 scripts/approve-pr.sh 1",
+      "sudo -E env A=1 scripts/approve-pr.sh 1",
+      "timeout 30 scripts/approve-pr.sh 1",
+      "echo 1 | xargs scripts/approve-pr.sh",
+      "find scripts -name x -exec scripts/approve-pr.sh {} \\;",
+      "T=`scripts/mint-token.sh`",
+      'eval "scripts/approve-pr.sh 1"',
+      "(scripts/approve-pr.sh 1)",
+    ]) {
+      expect(bashBlockReason(cmd), cmd).toMatch(/gate/);
+    }
     // Write-shaped API calls with the token: PUT/PATCH/DELETE, REST POST
     // (explicit or implied by a data flag), GraphQL mutations.
     const auth = 'curl -H "Authorization: Bearer $QCR_GITHUB_READ_TOKEN"';
@@ -48,6 +65,22 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("gh api repos/o/r/pulls")).toMatch(/rule 8/);
     expect(bashBlockReason("git push")).toMatch(/rule 8/);
     expect(bashBlockReason("scripts/deploy.sh sync")).toMatch(/rule 8/);
+  });
+
+  it("lets the companion READ the gate's scripts — refused when run, never when read (2026-10-06)", () => {
+    for (const cmd of [
+      "git diff scripts/approve-pr.sh",
+      "git diff -- scripts/approve-pr.sh tests/guards-shell-receipts.test.ts",
+      "git log --oneline -5 -- scripts/post-review.sh",
+      "cat scripts/approve-pr.sh",
+      "sed -n 1,40p scripts/reply-thread.sh",
+      "grep -n comments scripts/post-review.sh scripts/approve-pr.sh",
+      "rg -n start_line scripts/approve-pr.sh",
+      "git add scripts/approve-pr.sh && git commit -m '[companion] x'",
+      "npx vitest run tests/guards-shell-receipts.test.ts # exercises approve-pr.sh",
+    ]) {
+      expect(bashBlockReason(cmd), cmd).toBeUndefined();
+    }
   });
 
   it("lets the companion READ GitHub with its token", () => {
