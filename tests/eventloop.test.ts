@@ -26,6 +26,7 @@ import {
   eventLoopPolicy,
   parseCpuStat,
   readCgroupCpuStat,
+  stallShortPhrase,
   type CpuStat,
   type CpuStatRead,
   type DaemonLoadStatus,
@@ -633,6 +634,84 @@ describe("the watch: figures, state, thresholds", () => {
     r.advance(301 * S);
     expect(r.monitor.evaluate().event_loop.state).toBe("unknown");
   });
+
+  it("a FORWARD wall-clock step (a resume, an NTP step): two samples are not a sustained p99 — the samples must cover the window", () => {
+    const r = rig();
+    r.monitor.start();
+    steady(r, 6 * MIN);
+    expect(r.monitor.evaluate().event_loop).toMatchObject({ state: "ok", covered_s: 300 });
+    // The wall clock jumps an hour; the monotonic delays stay small. The
+    // window now holds only what came after.
+    r.advance(60 * MIN);
+    r.sample(2_100); // one hiccup, under stall_max, over stall_p99
+    r.advance(500);
+    r.sample(5);
+    const e = r.monitor.evaluate().event_loop;
+    expect(e.samples).toBe(2);
+    expect(e.p99_ms).toBe(2_100);
+    expect(e.state).toBe("ok");
+    expect(e.stall).toBeNull();
+    expect(e.covered_s).toBe(3); // 2.6 s + 0.5 s back from the first sample's end
+    expect(r.raised).toEqual([]);
+    // Once the samples cover a window again, a sustained p99 is judged again.
+    for (let t = 0; t < 5 * MIN; t += 2_600) {
+      r.advance(2_600);
+      r.sample(2_100);
+    }
+    const again = r.monitor.evaluate().event_loop;
+    expect(again.state).toBe("stalled");
+    expect(again.stall?.trigger).toBe("p99");
+    expect(again.covered_s).toBe(300);
+    expect(r.raised).toHaveLength(1);
+  });
+
+  it("a BACKWARD wall-clock step: a sample stamped after now is dropped — an old stall does not stand for the length of the step", () => {
+    const r = rig({ knobs: { event_loop_wake_cooldown_min: 5 } });
+    r.monitor.start();
+    r.advance(15 * S);
+    r.sample(15_000);
+    expect(r.monitor.evaluate().event_loop.state).toBe("stalled");
+    expect(r.raised).toHaveLength(1);
+    r.advance(-60 * MIN);
+    steady(r, 10 * S);
+    const back = r.monitor.evaluate();
+    const e = back.event_loop;
+    expect(e.state).toBe("ok");
+    expect(e.max_ms).toBe(1);
+    // cpu.stat readings from "the future" go too: never a negative window.
+    expect(back.cpu).toMatchObject({
+      state: "unknown",
+      reason: "one reading so far — a ratio needs two",
+    });
+    // Past the cooldown, still nothing to wake about.
+    for (let i = 0; i < 30; i++) {
+      steady(r, 15 * S);
+      r.monitor.evaluate();
+    }
+    expect(r.monitor.status().event_loop.state).toBe("ok");
+    expect(r.raised).toHaveLength(1);
+    // The longest delay since start is history, kept.
+    expect(r.monitor.status().event_loop.longest_stall?.ms).toBe(15_000);
+  });
+
+  it("before the samples span a window, a high p99 is not sustained; covered_s says how much they span", () => {
+    const r = rig({ knobs: { event_loop_window_s: 120 } });
+    r.monitor.start();
+    for (let t = 0; t < 115 * S; t += 2_500) {
+      r.advance(2_500);
+      r.sample(2_000);
+    }
+    const short = r.monitor.evaluate().event_loop;
+    expect(short.state).toBe("ok");
+    expect(short.covered_s).toBe(115);
+    for (let t = 0; t < 5 * S; t += 2_500) {
+      r.advance(2_500);
+      r.sample(2_000);
+    }
+    const full = r.monitor.evaluate().event_loop;
+    expect(full.covered_s).toBe(120);
+    expect(full.state).toBe("stalled");
+  });
 });
 
 describe("the wake — at most once per cooldown", () => {
@@ -758,13 +837,51 @@ describe("the cause: CPU starved vs the loop itself blocked — each from its ow
   });
 
   it("the starved ratio is the configured one: at 0.5, a 39%-throttled stall is not starvation", () => {
-    const st = stall(cpuCounter(0.39).read, 0.96, { event_loop_starved_throttle_ratio: 0.5 });
+    // The daemon off CPU across the stall, so only the throttling can speak.
+    const st = stall(cpuCounter(0.39).read, 0.1, { event_loop_starved_throttle_ratio: 0.5 });
     expect(st.event_loop.thresholds.starved_throttle_ratio).toBe(0.5);
-    expect(st.event_loop.stall?.cause).toBe("loop_blocked");
+    expect(st.event_loop.stall?.cause).toBe("unknown");
     expect(
-      stall(cpuCounter(0.5).read, 0.96, { event_loop_starved_throttle_ratio: 0.5 }).event_loop.stall
+      stall(cpuCounter(0.5).read, 0.1, { event_loop_starved_throttle_ratio: 0.5 }).event_loop.stall
         ?.cause,
     ).toBe("cpu_starved");
+  });
+
+  it("the STALL'S OWN evidence wins: on CPU for most of the delay in a container throttled past the ratio ⇒ the loop itself blocked, the throttling named beside it", () => {
+    // The post-drain burst: the container 39% throttled over the window, and
+    // the daemon on CPU for 95% of a 25 s delay. A throttle lasts only until
+    // the next ~100 ms CFS period; the daemon's own work held the loop.
+    const st = stall(cpuCounter(0.39).read, 0.95);
+    expect(st.cpu).toMatchObject({ state: "measured", throttled_ratio: 0.393 });
+    expect(st.event_loop.stall).toMatchObject({ cause: "loop_blocked", busy_share: 0.95 });
+    const detail = st.event_loop.stall!.detail;
+    expect(detail).toContain(
+      "the loop itself blocked: the daemon was on CPU for 95% of the delay, so its own synchronous work held the loop (the container was also throttled in 39% of its CFS periods",
+    );
+    expect(detail).toContain("a throttle lasts only until the next CFS period");
+    expect(detail).not.toContain("CPU starved");
+    expect(detail).not.toContain("only 39%");
+    // …and the same stall with the daemon OFF CPU is CPU starved.
+    expect(stall(cpuCounter(0.39).read, 0.1).event_loop.stall?.cause).toBe("cpu_starved");
+  });
+
+  it("the review's probe: a 30 s delay the daemon spent 29 s of on CPU, the window 25% throttled ⇒ loop_blocked, never cpu_starved", () => {
+    const r = rig({ readCpuStat: cpuCounter(0.25).read });
+    r.monitor.start();
+    steady(r, 30 * S);
+    r.monitor.evaluate();
+    r.advance(30 * S);
+    r.monitor.record(30_000, new Date(r.clock.ms), { cpuMs: 29_000, spanMs: 30_500 });
+    const st = r.monitor.evaluate();
+    expect(st.cpu).toMatchObject({ state: "measured", throttled_ratio: 0.253 });
+    expect(st.event_loop.stall).toMatchObject({
+      trigger: "max",
+      cause: "loop_blocked",
+      busy_share: 0.951,
+    });
+    expect(r.raised[0]!.detail).toContain("the container was also throttled in 25%");
+    expect(r.raised[0]!.message).toContain("The loop itself blocked means");
+    expect(r.raised[0]!.message).not.toContain("CPU starved means");
   });
 
   it("barely throttled and the daemon ON CPU across the stall ⇒ the loop itself blocked", () => {
@@ -830,6 +947,23 @@ describe("the cause: CPU starved vs the loop itself blocked — each from its ow
     expect(busy.event_loop.max_ms).toBe(2_600);
     expect(busy.event_loop.stall?.detail).toContain("on CPU for 88% of the window");
     expect(run(0.1, 0.99).event_loop.stall?.cause).toBe("unknown");
+  });
+
+  it("a sustained stall in a throttled container: the window's busy share still decides first", () => {
+    const run = (busyShare: number): DaemonLoadStatus => {
+      const r = rig({ readCpuStat: cpuCounter(0.39).read, knobs: { event_loop_window_s: 120 } });
+      r.monitor.start();
+      for (let i = 0; i < 40; i++) {
+        r.advance(3_000);
+        r.sample(2_500, busyShare);
+      }
+      return r.monitor.evaluate();
+    };
+    expect(run(0.9).event_loop.stall).toMatchObject({ trigger: "p99", cause: "loop_blocked" });
+    expect(run(0.9).event_loop.stall?.detail).toContain(
+      "on CPU for 90% of the window, so its own synchronous work held the loop (the container was also throttled in 39%",
+    );
+    expect(run(0.1).event_loop.stall).toMatchObject({ trigger: "p99", cause: "cpu_starved" });
   });
 
   it("no cgroup file ⇒ cpu UNKNOWN with its reason, and the stall's cause unknown", () => {
@@ -1171,6 +1305,16 @@ function snap(daemon?: DaemonLoadStatus): StatusSnapshot {
   };
 }
 
+/** A block as a reader gets it back: parsed JSON, to be bent out of shape. */
+function json(d: DaemonLoadStatus): Record<string, Record<string, unknown>> {
+  return JSON.parse(JSON.stringify(d)) as Record<string, Record<string, unknown>>;
+}
+
+/** A snapshot whose `daemon` is whatever JSON a file held. */
+function rawSnap(daemon: unknown): StatusSnapshot {
+  return { ...snap(), daemon: daemon as DaemonLoadStatus };
+}
+
 function view(daemon?: DaemonLoadStatus, over: Partial<BoardView> = {}): BoardView {
   return {
     health: { kind: "ok", heartbeatAgeS: 2 },
@@ -1224,6 +1368,62 @@ describe("`qcr status` — the daemon event-loop line", () => {
     expect(lines[2]).toContain("memory:");
     expect(lines[3]).toMatch(/^daemon event loop: STALLED/);
   });
+
+  it("an UNREADABLE block — a newer daemon's state, a missing event_loop or cpu, a wrong type — is UNKNOWN with why, and `qcr status` still prints", () => {
+    const ok = json(okBlock());
+    const line = (d: unknown): string => renderStatus(rawSnap(d)).split("\n")[3]!;
+    expect(line({})).toBe(
+      "daemon event loop: UNKNOWN (unreadable block: the daemon block carries no event_loop); container CPU throttling: UNKNOWN — the daemon block carries no cpu figures",
+    );
+    expect(line({ ...ok, event_loop: { ...ok.event_loop, state: "draining" } })).toMatch(
+      /^daemon event loop: UNKNOWN \(unreadable block: state "draining" is not one this build knows\); container CPU: throttled in 39%/,
+    );
+    expect(line({ event_loop: ok.event_loop })).toMatch(
+      /^daemon event loop: ok — p50 3ms .*; container CPU throttling: UNKNOWN — the daemon block carries no cpu figures$/,
+    );
+    expect(line({ ...ok, cpu: { ...ok.cpu, throttled_s: "lots" } })).toMatch(
+      /container CPU throttling: UNKNOWN — the cpu figures are unreadable \(cpu\.throttled_s is "lots", not a number\)$/,
+    );
+    expect(line({ ...ok, cpu: { state: "melted" } })).toContain(
+      'the cpu figures are unreadable (state "melted" is not one this build knows)',
+    );
+    expect(line({ ...ok, event_loop: { ...ok.event_loop, longest_stall: 5 } })).toContain(
+      "UNKNOWN (unreadable block: event_loop.longest_stall is unreadable)",
+    );
+    expect(line(null)).toContain(
+      "UNKNOWN (unreadable block: the daemon block is null, not an object)",
+    );
+    expect(line("stalled")).toContain('the daemon block is "stalled", not an object');
+    expect(line([])).toContain("the daemon block is an array, not an object");
+  });
+
+  it("is TOTAL: every field of a real block deleted or retyped — nothing throws, and a broken `state` never reads ok", () => {
+    for (const block of [okBlock(), stalledBlock(), stalledBlock("blocked"), unknownBlock()]) {
+      const real = json(block);
+      for (const part of ["event_loop", "cpu"] as const) {
+        const keys = Object.keys(real[part] as object);
+        for (const k of keys)
+          for (const bad of [undefined, null, "x", 7, {}, []]) {
+            const mutated = json(block);
+            const target = mutated[part] as Record<string, unknown>;
+            if (bad === undefined) delete target[k];
+            else target[k] = bad;
+            const where = `${part}.${k} = ${JSON.stringify(bad)}`;
+            let out = "";
+            expect(() => (out = daemonLoadLine(mutated)), where).not.toThrow();
+            expect(typeof out, where).toBe("string");
+            expect(() => renderStatus(rawSnap(mutated)), where).not.toThrow();
+            expect(() => eventLoopSegment(rawSnap(mutated)), where).not.toThrow();
+            expect(
+              () => renderBoard(view(undefined, { snapshot: rawSnap(mutated) }), 220, 30),
+              where,
+            ).not.toThrow();
+            if (part === "event_loop" && k === "state")
+              expect(out, where).toMatch(/^daemon event loop: UNKNOWN \(unreadable block/);
+          }
+      }
+    }
+  });
 });
 
 describe("the TUI board — a top-bar banner, the way memory incidents are", () => {
@@ -1255,6 +1455,32 @@ describe("the TUI board — a top-bar banner, the way memory incidents are", () 
     }
     // No snapshot at all: the board already says it knows nothing.
     expect(eventLoopSegment(undefined)).toBeUndefined();
+  });
+
+  it("an unreadable block is the quiet `loop ?` — never nothing (which reads ok), never a throw out of the paint", () => {
+    const ok = json(okBlock());
+    const stalled = json(stalledBlock());
+    for (const d of [
+      {},
+      null,
+      { ...ok, event_loop: { ...ok.event_loop, state: "draining" } }, // a newer daemon
+      { ...stalled, event_loop: { ...stalled.event_loop, max_ms: "70s" } },
+    ]) {
+      const seg = eventLoopSegment(rawSnap(d))!;
+      expect(seg.loud).toBe(false);
+      expect(stripAnsi(seg.text)).toBe("loop ?");
+      expect(
+        stripAnsi(renderBoard(view(undefined, { snapshot: rawSnap(d) }), 220, 30).lines[0]!),
+      ).toContain("loop ?");
+    }
+    // A stall whose cpu figures are missing is still a stall — the cause from
+    // what the block says, the throttling simply not named.
+    const noCpu = { event_loop: stalled.event_loop };
+    expect(stripAnsi(eventLoopSegment(rawSnap(noCpu))!.text)).toBe(
+      "⛔ DAEMON LOOP STALLED 1m10s · CPU starved",
+    );
+    expect(stallShortPhrase({})).toBe("DAEMON LOOP ? · unreadable block");
+    expect(stallShortPhrase(undefined)).toBe("DAEMON LOOP ? · not reported");
   });
 
   it("neither the banner nor the quiet mark shifts the alert badge's click zone", () => {

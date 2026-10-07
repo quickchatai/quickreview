@@ -290,8 +290,9 @@ Rendering:
   stall is a loud `⛔ DAEMON LOOP STALLED <max> · <cause>` (`⛔ DAEMON LOOP
   SLOW p99 …` for a sustained one) right after the memory banner, its cause
   `CPU starved (<n>% throttled)`, `loop itself blocked (on CPU <n>%)` or
-  `cause unknown`; an unmeasured state, or a snapshot from a daemon that
-  reports no `daemon` block, is a dim `loop ?` at the end. Only `ok` paints
+  `cause unknown`; an unmeasured state, a snapshot from a daemon that
+  reports no `daemon` block, or a block this build cannot read whole (a newer
+  daemon's state, a missing field), is a dim `loop ?` at the end. Only `ok` paints
   nothing. Neither moves the alert badge's click zone.
 
 Derived actions and published facts:

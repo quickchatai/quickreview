@@ -25,17 +25,33 @@
 //     container can be starved by host contention without reaching its quota.
 //
 // A stall past the thresholds — one delay of `stall_max` or more, or a p99 of
-// `stall_p99` or more over a FULL window (sustained) — is state `stalled`,
-// shown in status.json `daemon.event_loop`, `qcr status`, the TUI board's top
-// bar and the companion's view, and raises the WAKE kind
+// `stall_p99` or more over a window the samples COVER (sustained) — is state
+// `stalled`, shown in status.json `daemon.event_loop`, `qcr status`, the TUI
+// board's top bar and the companion's view, and raises the WAKE kind
 // `daemon_event_loop_stalled` (src/anomalies.ts) at most once per cooldown.
-// The wake NAMES THE CAUSE, and only from evidence: "CPU starved" when the
-// container was throttled in at least `starved_throttle_ratio` of its periods
-// over the window; else "the loop itself blocked" when the daemon was on CPU
-// for at least LOOP_BUSY_SHARE of the stall (its own synchronous work held the
-// loop); else "cause unknown" — with what was and was not seen (not throttled
-// and not busy leaves host contention or a blocking wait, e.g. synchronous disk
-// I/O; a figure that could not be read says so).
+// The wake NAMES THE CAUSE, and only from evidence, the stall's OWN first:
+// "the loop itself blocked" when the daemon was on CPU for at least
+// LOOP_BUSY_SHARE of the stall (its own synchronous work held the loop — the
+// container's throttling, if any, is named beside it); else "CPU starved" when
+// the container was throttled in at least `starved_throttle_ratio` of its
+// periods over the window; else "cause unknown" — with what was and was not
+// seen (not throttled and not busy leaves host contention or a blocking wait,
+// e.g. synchronous disk I/O; a figure that could not be read says so). The
+// order matters: CFS throttling pauses the container only until the next
+// period (~100 ms), so it cannot itself make a multi-second delay the daemon
+// spent on CPU, and the throttle ratio is the WINDOW's while the busy share is
+// the stall's own.
+//
+// The window is read on the wall clock (its samples carry when they ended) and
+// the delays on the monotonic one. A wall-clock step (a resume, an NTP step)
+// must neither fabricate nor prolong a stall: a sample stamped after "now" is
+// dropped, and the p99 trigger needs the samples themselves to cover the
+// window — never just time since start.
+//
+// status.json is read back by `qcr status` and the TUI board as parsed JSON
+// from whichever daemon wrote it, so every reader here is TOTAL: a block this
+// build cannot read whole is UNKNOWN with why (`readDaemonLoad`), never a
+// throw and never ok.
 //
 // Nothing here touches GitHub, memory or a round; the wake is an injected sink
 // (daemon.ts routes it through `store.logAnomaly`, whose wake policy reaches
@@ -71,6 +87,15 @@ export const DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO = 0.2;
  * reads ≥ 0.66 when it was the daemon's own work.
  */
 export const LOOP_BUSY_SHARE = 0.5;
+
+/**
+ * How far short of the window its samples may reach and still COVER it — the
+ * sampler's own granularity. Each sample spans the sampler's interval plus its
+ * delay, back to the previous tick, so a sampler that ran throughout covers
+ * the whole window; one whose earlier samples left it (a forward wall-clock
+ * step, a fresh start) does not, and its p99 is not "sustained".
+ */
+const COVERAGE_SLACK_MS = 2 * SAMPLE_INTERVAL_MS;
 
 /** The resolved, clamped thresholds (from `[daemon] event_loop_*`). */
 export interface EventLoopPolicy {
@@ -282,9 +307,10 @@ export function driftSampler(opts: DriftSamplerOptions = {}): LoopDelaySampler {
 
 export type EventLoopState = "unknown" | "ok" | "stalled";
 
-/** Why a stall happened, as far as the evidence goes: the cgroup's throttling
- * says `cpu_starved`, the daemon's own CPU time across the stall says
- * `loop_blocked`, and neither is `unknown` — never a cause by elimination. */
+/** Why a stall happened, as far as the evidence goes: the daemon's own CPU
+ * time across the stall says `loop_blocked` (and wins — it is the stall's own
+ * evidence), else the cgroup's throttling over the window says `cpu_starved`,
+ * and neither is `unknown` — never a cause by elimination. */
 export type StallCause = "cpu_starved" | "loop_blocked" | "unknown";
 
 export interface EventLoopStatus {
@@ -298,7 +324,8 @@ export interface EventLoopStatus {
   /** The evaluation these figures come from; null before the first. */
   evaluated_at: string | null;
   sample_interval_ms: number;
-  /** The configured window, and how much of it the watch has been running. */
+  /** The configured window, and how much of it the samples cover (0 with
+   * none) — what "over the last …" means everywhere this block is read. */
   window_s: number;
   covered_s: number;
   samples: number;
@@ -409,13 +436,16 @@ const pct = (r: number): string => `${Math.round(r * 100)}%`;
  * The cause half of a stall sentence — each cause from its evidence, and an
  * unknown one saying what was and was not seen. `busyShare` is the daemon's
  * own CPU time across the stall as a share of its wall time (null: not
- * measured); `span` names what that span was ("the delay", "the window").
+ * measured); `span` names what that span was ("the delay", "the window");
+ * `starvedRatio` is the policy's, so a loop-blocked stall in a container
+ * throttled past it says the container was ALSO throttled, never "only".
  */
 export function causePhrase(
   cause: StallCause,
   cpu: CpuThrottleStatus,
   busyShare: number | null = null,
   span = "the delay",
+  starvedRatio = DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO,
 ): string {
   const over = cpu.state === "measured" ? `over ${fmtMs(cpu.window_s * 1000)}` : "";
   if (cause === "cpu_starved" && cpu.state === "measured")
@@ -424,8 +454,15 @@ export function causePhrase(
     cpu.state === "measured"
       ? `the container was throttled in only ${pct(cpu.throttled_ratio)} of its CFS periods ${over}`
       : `no CPU throttling figures (${cpu.reason})`;
-  if (cause === "loop_blocked" && busyShare !== null)
-    return `the loop itself blocked: the daemon was on CPU for ${pct(busyShare)} of ${span}, so its own synchronous work held the loop (${cpu.state === "measured" ? throttle : `container throttling unknown: ${cpu.reason}`})`;
+  if (cause === "loop_blocked" && busyShare !== null) {
+    const beside =
+      cpu.state !== "measured"
+        ? `container throttling unknown: ${cpu.reason}`
+        : cpu.throttled_ratio >= starvedRatio
+          ? `the container was also throttled in ${pct(cpu.throttled_ratio)} of its CFS periods (${cpu.throttled_s.toFixed(1)}s throttled) ${over} — a throttle lasts only until the next CFS period, so that is not what held the loop`
+          : throttle;
+    return `the loop itself blocked: the daemon was on CPU for ${pct(busyShare)} of ${span}, so its own synchronous work held the loop (${beside})`;
+  }
   const busy =
     busyShare === null
       ? `the daemon's own CPU time across ${span} was not measured`
@@ -587,7 +624,13 @@ export class DaemonLoadMonitor {
   private compute(nowMs: number): DaemonLoadStatus {
     const p = this.deps.policy;
     const windowStart = nowMs - p.windowMs;
-    this.samples = this.samples.filter((s) => s.at >= windowStart);
+    // A sample stamped after now comes from before a BACKWARD wall-clock step:
+    // it cannot be placed in this window, and kept it would hold an old stall
+    // in the window for as long as the step.
+    this.samples = this.samples.filter((s) => s.at >= windowStart && s.at <= nowMs);
+    // The same for cpu.stat readings: one from "the future" would make a
+    // negative window of deltas.
+    this.cpuReadings = this.cpuReadings.filter((r) => r.at <= nowMs);
     // Keep the newest reading at or before the window's start as the baseline,
     // so the deltas span the whole window once there is one that old.
     let base = 0;
@@ -603,7 +646,16 @@ export class DaemonLoadMonitor {
     const p50 = n > 0 ? percentile(lags, 50) : null;
     const p99 = n > 0 ? percentile(lags, 99) : null;
     const max = maxSample?.lag ?? null;
-    const fullWindow = nowMs - this.startedAt >= p.windowMs;
+    // How much of the window the samples COVER: each spans the sampler's
+    // interval plus its delay, back to the previous tick. Time since start is
+    // not it — after a FORWARD wall-clock step (a resume, an NTP step) the
+    // window holds only the samples since, and a "p99 over the last 5m" from
+    // two of them would be their max.
+    let coverStart = nowMs;
+    for (const s of this.samples)
+      coverStart = Math.min(coverStart, s.at - (s.spanMs ?? s.lag + SAMPLE_INTERVAL_MS));
+    const coveredMs = n > 0 ? Math.max(0, Math.min(p.windowMs, nowMs - coverStart)) : 0;
+    const fullWindow = n > 0 && nowMs - coverStart >= p.windowMs - COVERAGE_SLACK_MS;
 
     let state: EventLoopState = "unknown";
     let stall: EventLoopStatus["stall"] = null;
@@ -619,13 +671,19 @@ export class DaemonLoadMonitor {
         // Each cause from its own evidence, never by elimination: a low
         // throttle ratio alone does not mean the daemon blocked itself — the
         // shared VM can starve the container without it reaching its quota.
+        // And the STALL'S OWN evidence first: the busy share is measured
+        // across this stall, the throttle ratio across the whole window, and
+        // a throttle lasts only until the next CFS period (~100 ms) — a
+        // daemon on CPU for most of a 30 s delay held the loop itself, however
+        // throttled the container was (a post-drain burst: 39%).
+        const starved = cpu.state === "measured" && cpu.throttled_ratio >= p.starvedRatio;
         const cause: StallCause =
-          cpu.state === "measured" && cpu.throttled_ratio >= p.starvedRatio
-            ? "cpu_starved"
-            : busyShare !== null && busyShare >= LOOP_BUSY_SHARE
-              ? "loop_blocked"
+          busyShare !== null && busyShare >= LOOP_BUSY_SHARE
+            ? "loop_blocked"
+            : starved
+              ? "cpu_starved"
               : "unknown";
-        const win = fmtMs(Math.min(p.windowMs, nowMs - this.startedAt));
+        const win = fmtMs(coveredMs);
         const what =
           trigger === "max"
             ? `event loop stalled ${fmtMs(max)} (the longest delay in the last ${win}; p99 ${fmtMs(p99)})`
@@ -635,7 +693,7 @@ export class DaemonLoadMonitor {
           trigger,
           cause,
           busy_share: busyShare === null ? null : Math.round(busyShare * 1000) / 1000,
-          detail: `${what} — ${causePhrase(cause, cpu, busyShare, span)}`,
+          detail: `${what} — ${causePhrase(cause, cpu, busyShare, span, p.starvedRatio)}`,
         };
       } else {
         state = "ok";
@@ -650,7 +708,7 @@ export class DaemonLoadMonitor {
         evaluated_at: this.evaluatedAt === null ? null : iso(this.evaluatedAt),
         sample_interval_ms: SAMPLE_INTERVAL_MS,
         window_s: p.windowMs / 1000,
-        covered_s: Math.round(Math.max(0, Math.min(p.windowMs, nowMs - this.startedAt)) / 1000),
+        covered_s: Math.round(coveredMs / 1000),
         samples: n,
         p50_ms: p50 === null ? null : round1(p50),
         p99_ms: p99 === null ? null : round1(p99),
@@ -744,18 +802,187 @@ export class DaemonLoadMonitor {
   }
 }
 
+// ---- reading the block back --------------------------------------------------
+//
+// `qcr status` and the TUI board read status.json `daemon` as parsed JSON from
+// whichever daemon wrote it — an older one, a newer one with a state this
+// build does not know, a hand-edited or truncated file. The type on
+// `StatusSnapshot.daemon` is the WRITER's promise, not something a reader may
+// trust, so the readers below check every field they render and answer
+// UNKNOWN with why for anything they cannot read whole — never a throw (one
+// would take all of `qcr status` or a board paint with it) and never ok.
+
+/** What a reader renders of `event_loop` — each field checked. */
+export interface EventLoopView {
+  state: EventLoopState;
+  since: string;
+  started_at: string;
+  samples: number;
+  covered_s: number;
+  p50_ms: number | null;
+  p99_ms: number | null;
+  max_ms: number | null;
+  longest_stall: { ms: number; ended_at: string } | null;
+  /** `trigger` and `cause` as written: one this build does not know renders
+   * as the plain stall / "cause unknown", never as a guess. */
+  stall: { trigger: string; cause: string; busy_share: number | null; detail: string } | null;
+  last_wake_at: string | null;
+}
+
+export interface DaemonLoadView {
+  event_loop: EventLoopView;
+  cpu: CpuThrottleStatus;
+}
+
+/** status.json `daemon` as a reader finds it. `absent`: a daemon that
+ * predates the block; `unreadable`: a block whose `event_loop` this build
+ * cannot read whole (its `cpu` still read on its own). */
+export type DaemonLoadRead =
+  | { kind: "absent" }
+  | { kind: "unreadable"; why: string; cpu: CpuThrottleStatus }
+  | { kind: "read"; view: DaemonLoadView };
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isStr = (v: unknown): v is string => typeof v === "string";
+const EVENT_LOOP_STATES: readonly EventLoopState[] = ["unknown", "ok", "stalled"];
+
+/** A value from the block, as a reason names it: short, quoted, escaped. */
+function shown(v: unknown): string {
+  if (isStr(v)) return JSON.stringify(v.slice(0, 40));
+  if (v === null || v === undefined || typeof v === "number" || typeof v === "boolean")
+    return String(v);
+  return Array.isArray(v) ? "an array" : `a${typeof v === "object" ? "n" : ""} ${typeof v}`;
+}
+
+/** The block's `cpu` as a reader may render it: the figures when they are all
+ * there, else UNKNOWN with why. */
+export function readCpuThrottle(v: unknown): CpuThrottleStatus {
+  const source = isObj(v) && isStr(v.source) ? v.source : CGROUP_CPU_STAT;
+  const unknown = (reason: string): CpuThrottleStatus => ({
+    state: "unknown",
+    source,
+    reason,
+    at: null,
+  });
+  const unreadable = (why: string): CpuThrottleStatus =>
+    unknown(`the cpu figures are unreadable (${why})`);
+  if (v === undefined) return unknown("the daemon block carries no cpu figures");
+  if (!isObj(v)) return unreadable(`cpu is ${shown(v)}, not an object`);
+  if (v.state === "unknown") {
+    if (!isStr(v.reason)) return unreadable("an unknown state with no reason");
+    return { state: "unknown", source, reason: v.reason, at: isStr(v.at) ? v.at : null };
+  }
+  if (v.state !== "measured")
+    return unreadable(`state ${shown(v.state)} is not one this build knows`);
+  if (!isStr(v.at)) return unreadable(`cpu.at is ${shown(v.at)}, not a string`);
+  const nums = [
+    "window_s",
+    "periods",
+    "throttled_periods",
+    "throttled_ratio",
+    "throttled_s",
+    "usage_s",
+  ] as const;
+  for (const k of nums)
+    if (!isNum(v[k])) return unreadable(`cpu.${k} is ${shown(v[k])}, not a number`);
+  return {
+    state: "measured",
+    source,
+    at: v.at,
+    window_s: v.window_s as number,
+    periods: v.periods as number,
+    throttled_periods: v.throttled_periods as number,
+    throttled_ratio: v.throttled_ratio as number,
+    throttled_s: v.throttled_s as number,
+    usage_s: v.usage_s as number,
+  };
+}
+
+function readEventLoop(v: unknown): { ok: true; view: EventLoopView } | { ok: false; why: string } {
+  const bad = (why: string) => ({ ok: false as const, why });
+  if (v === undefined) return bad("the daemon block carries no event_loop");
+  if (!isObj(v)) return bad(`event_loop is ${shown(v)}, not an object`);
+  if (!EVENT_LOOP_STATES.includes(v.state as EventLoopState))
+    return bad(`state ${shown(v.state)} is not one this build knows`);
+  for (const k of ["since", "started_at"] as const)
+    if (!isStr(v[k])) return bad(`event_loop.${k} is ${shown(v[k])}, not a string`);
+  for (const k of ["samples", "covered_s"] as const)
+    if (!isNum(v[k])) return bad(`event_loop.${k} is ${shown(v[k])}, not a number`);
+  for (const k of ["p50_ms", "p99_ms", "max_ms"] as const)
+    if (v[k] !== null && !isNum(v[k]))
+      return bad(`event_loop.${k} is ${shown(v[k])}, not a number or null`);
+  if (v.last_wake_at !== null && !isStr(v.last_wake_at))
+    return bad(`event_loop.last_wake_at is ${shown(v.last_wake_at)}, not a string or null`);
+  const l = v.longest_stall;
+  if (l !== null && !(isObj(l) && isNum(l.ms) && isStr(l.ended_at)))
+    return bad("event_loop.longest_stall is unreadable");
+  const s = v.stall;
+  if (
+    s !== null &&
+    !(
+      isObj(s) &&
+      isStr(s.trigger) &&
+      isStr(s.cause) &&
+      (s.busy_share === null || isNum(s.busy_share)) &&
+      isStr(s.detail)
+    )
+  )
+    return bad("event_loop.stall is unreadable");
+  return {
+    ok: true,
+    view: {
+      state: v.state as EventLoopState,
+      since: v.since as string,
+      started_at: v.started_at as string,
+      samples: v.samples as number,
+      covered_s: v.covered_s as number,
+      p50_ms: v.p50_ms as number | null,
+      p99_ms: v.p99_ms as number | null,
+      max_ms: v.max_ms as number | null,
+      longest_stall: l === null ? null : { ms: l.ms as number, ended_at: l.ended_at as string },
+      stall:
+        s === null
+          ? null
+          : {
+              trigger: s.trigger as string,
+              cause: s.cause as string,
+              busy_share: s.busy_share as number | null,
+              detail: s.detail as string,
+            },
+      last_wake_at: v.last_wake_at as string | null,
+    },
+  };
+}
+
+/** status.json `daemon` read back — total over whatever JSON is there. */
+export function readDaemonLoad(v: unknown): DaemonLoadRead {
+  if (v === undefined) return { kind: "absent" };
+  const cpu = readCpuThrottle(isObj(v) ? v.cpu : undefined);
+  if (!isObj(v))
+    return { kind: "unreadable", why: `the daemon block is ${shown(v)}, not an object`, cpu };
+  const e = readEventLoop(v.event_loop);
+  return e.ok
+    ? { kind: "read", view: { event_loop: e.view, cpu } }
+    : { kind: "unreadable", why: e.why, cpu };
+}
+
 // ---- what a person reads -----------------------------------------------------
 
 /** The board banner's words for a stall (no colour): what held, and the
  * cause in a few words — `DAEMON LOOP STALLED 1m10s · CPU starved (39%
- * throttled)`. */
-export function stallShortPhrase(d: DaemonLoadStatus): string {
-  const e = d.event_loop;
+ * throttled)`. Total over parsed JSON: a block it cannot read says so. */
+export function stallShortPhrase(d: unknown): string {
+  const r = readDaemonLoad(d);
+  if (r.kind === "absent") return "DAEMON LOOP ? · not reported";
+  if (r.kind === "unreadable") return "DAEMON LOOP ? · unreadable block";
+  const { event_loop: e, cpu } = r.view;
   const what =
     e.stall?.trigger === "p99"
       ? `DAEMON LOOP SLOW p99 ${fmtMs(e.p99_ms ?? 0)}`
       : `DAEMON LOOP STALLED ${fmtMs(e.max_ms ?? 0)}`;
-  const throttled = d.cpu.state === "measured" ? ` (${pct(d.cpu.throttled_ratio)} throttled)` : "";
+  const throttled = cpu.state === "measured" ? ` (${pct(cpu.throttled_ratio)} throttled)` : "";
   const busy = typeof e.stall?.busy_share === "number" ? `on CPU ${pct(e.stall.busy_share)}` : null;
   const cause =
     e.stall?.cause === "cpu_starved"
@@ -775,12 +1002,18 @@ export function cpuThrottlePhrase(c: CpuThrottleStatus): string {
 /**
  * The one-line event-loop status a person reads — `qcr status` prints it; the
  * TUI board paints a shorter cut of the same facts. An absent block (an older
- * daemon) and an `unknown` state say so; neither ever reads ok.
+ * daemon), an `unknown` state and a block this build cannot read whole (a
+ * newer daemon's state, a missing field) each say so; none ever reads ok, and
+ * none throws.
  */
-export function daemonLoadLine(d: DaemonLoadStatus | undefined): string {
-  if (!d) return "daemon event loop: NOT REPORTED (this daemon predates the event-loop block)";
-  const e = d.event_loop;
-  const cpu = cpuThrottlePhrase(d.cpu);
+export function daemonLoadLine(d: unknown): string {
+  const r = readDaemonLoad(d);
+  if (r.kind === "absent")
+    return "daemon event loop: NOT REPORTED (this daemon predates the event-loop block)";
+  if (r.kind === "unreadable")
+    return `daemon event loop: UNKNOWN (unreadable block: ${r.why}); ${cpuThrottlePhrase(r.cpu)}`;
+  const { event_loop: e, cpu: c } = r.view;
+  const cpu = cpuThrottlePhrase(c);
   const longest = e.longest_stall
     ? `; longest since ${e.started_at}: ${fmtMs(e.longest_stall.ms)} (ended ${e.longest_stall.ended_at})`
     : "";
@@ -788,12 +1021,8 @@ export function daemonLoadLine(d: DaemonLoadStatus | undefined): string {
     e.samples > 0 && e.p50_ms !== null && e.p99_ms !== null && e.max_ms !== null
       ? `p50 ${fmtMs(e.p50_ms)} · p99 ${fmtMs(e.p99_ms)} · max ${fmtMs(e.max_ms)} over ${fmtMs(e.covered_s * 1000)} (${e.samples} samples)`
       : "";
-  switch (e.state) {
-    case "unknown":
-      return `daemon event loop: UNKNOWN — no sample in the window yet${longest}; ${cpu}`;
-    case "ok":
-      return `daemon event loop: ok — ${figures}${longest}; ${cpu}`;
-    case "stalled":
-      return `daemon event loop: STALLED since ${e.since} — ${e.stall?.detail ?? figures}${longest}${e.last_wake_at ? `; overseer woken ${e.last_wake_at}` : ""}`;
-  }
+  if (e.state === "stalled")
+    return `daemon event loop: STALLED since ${e.since} — ${e.stall?.detail ?? figures}${longest}${e.last_wake_at ? `; overseer woken ${e.last_wake_at}` : ""}`;
+  if (e.state === "ok") return `daemon event loop: ok — ${figures}${longest}; ${cpu}`;
+  return `daemon event loop: UNKNOWN — no sample in the window yet${longest}; ${cpu}`;
 }

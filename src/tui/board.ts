@@ -4,7 +4,7 @@
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
-import { stallShortPhrase } from "../eventloop.js";
+import { readDaemonLoad, stallShortPhrase } from "../eventloop.js";
 import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
 import { fmtDuration } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
@@ -401,21 +401,26 @@ export function curationSegment(snapshot: StatusSnapshot | undefined): string | 
  * went unanswered for ~70 s at a time and no surface said so.
  *
  *   `loud`  — stalled: painted beside the memory banner, with the cause the
- *             evidence names (CPU starved / the loop itself blocked /
+ *             evidence names (the loop itself blocked / CPU starved /
  *             cause unknown);
- *   `quiet` — not measured yet, or not reported by this daemon (an older one):
- *             a short dim `loop ?` at the END of the bar — honest, never ok;
+ *   `quiet` — not measured yet, not reported by this daemon (an older one),
+ *             or a block this build cannot read whole (a newer daemon's state,
+ *             a missing field): a short dim `loop ?` at the END of the bar —
+ *             honest, never ok;
  *   nothing — ok, or no snapshot at all.
+ *
+ * The block is parsed JSON, read through `readDaemonLoad`: nothing in it can
+ * throw out of a paint.
  */
 export function eventLoopSegment(
   snapshot: StatusSnapshot | undefined,
 ): { text: string; loud: boolean } | undefined {
   if (!snapshot) return undefined;
-  const d = snapshot.daemon;
-  if (!d?.event_loop || d.event_loop.state === "unknown")
+  const r = readDaemonLoad(snapshot.daemon);
+  if (r.kind !== "read" || r.view.event_loop.state === "unknown")
     return { text: `${FG.dim}loop ?${RESET}`, loud: false };
-  if (d.event_loop.state !== "stalled") return undefined;
-  return { text: `${FG.anomaly}⛔ ${stallShortPhrase(d)}${RESET}`, loud: true };
+  if (r.view.event_loop.state === "ok") return undefined;
+  return { text: `${FG.anomaly}⛔ ${stallShortPhrase(snapshot.daemon)}${RESET}`, loud: true };
 }
 
 /** Top-bar segments, left to right — shared by the renderer and the hit-test

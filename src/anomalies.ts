@@ -155,9 +155,10 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // `event_loop_stall_p99_s` (2 s) over a full window. While it is held no
   // webhook, /health, verdict or status write runs; on 2026-10-07 /health went
   // unanswered for ~70 s at a time and nothing measured it. The detail names
-  // the cause, each from its own evidence: CPU starved (the cgroup's
-  // throttling), the loop itself blocked (the daemon on CPU across the
-  // stall), or unknown (neither — host contention or a blocking wait). Raised by the watch at most once per
+  // the cause, each from its own evidence, the stall's own first: the loop
+  // itself blocked (the daemon on CPU across the stall), CPU starved (the
+  // cgroup's throttling), or unknown (neither — host contention or a
+  // blocking wait). Raised by the watch at most once per
   // `event_loop_wake_cooldown_min` (60), so it cannot spam.
   "daemon_event_loop_stalled",
 ]);

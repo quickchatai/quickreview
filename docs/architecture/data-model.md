@@ -316,11 +316,15 @@ say — a reader must default rather than assume:
   `covered_s`, `samples`, `max_at`), the `longest_stall` since `started_at`
   with `began_at`/`ended_at`, the `thresholds`, the `stall` (`trigger`
   `max|p99`; `cause` `cpu_starved | loop_blocked | unknown`, each from its
-  own evidence — `cpu_starved` from the throttling below, `loop_blocked` from
-  `busy_share`, the daemon process's own CPU time across the stall as a share
-  of its wall time (the longest delay's span for `max`, the window for `p99`;
-  null when not measured) at 0.5 or more, `unknown` when neither; `detail`)
-  and `last_wake_at`. `cpu`: the container's CFS throttling over the same window
+  own evidence — `loop_blocked` from `busy_share`, the daemon process's own
+  CPU time across the stall as a share of its wall time (the longest delay's
+  span for `max`, the window for `p99`; null when not measured) at 0.5 or
+  more, which wins as the stall's own evidence; else `cpu_starved` from the
+  throttling below; `unknown` when neither; `detail`) and `last_wake_at`.
+  `covered_s` is how much of the window the samples span, and `p99` is judged
+  only once they span it all. A reader (`qcr status`, the board) checks every
+  field it renders (`readDaemonLoad`): a block it cannot read whole is
+  UNKNOWN with why. `cpu`: the container's CFS throttling over the same window
   from `/sys/fs/cgroup/cpu.stat` deltas — `periods`, `throttled_periods`,
   `throttled_ratio`, `throttled_s`, `usage_s` — or `state: "unknown"` with
   the `reason`, never a zero. A stall wakes `daemon_event_loop_stalled`.

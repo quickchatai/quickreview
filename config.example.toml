@@ -125,12 +125,13 @@ round_stage_supervisor_stale_s = 180
 # L2: the daemon watches its own event loop (status.json
 # `daemon.event_loop`, `qcr status`, the TUI board). One delay of
 # event_loop_stall_max_s or more, or a p99 of event_loop_stall_p99_s or more
-# over a full window, is a stall: it wakes the overseer
+# over a window its samples cover, is a stall: it wakes the overseer
 # (`daemon_event_loop_stalled`) at most once per cooldown, naming the cause —
-# "CPU starved" when the container (/sys/fs/cgroup/cpu.stat, over the same
-# window) was throttled in event_loop_starved_throttle_ratio of its CFS periods
-# or more; else "the loop itself blocked" when the daemon itself was on CPU for
-# most of the stall; else "cause unknown" (host contention or a blocking wait).
+# "the loop itself blocked" when the daemon itself was on CPU for most of the
+# stall (the stall's own evidence wins; any throttling is named beside it);
+# else "CPU starved" when the container (/sys/fs/cgroup/cpu.stat, over the
+# same window) was throttled in event_loop_starved_throttle_ratio of its CFS
+# periods or more; else "cause unknown" (host contention or a blocking wait).
 event_loop_window_s = 300
 event_loop_stall_max_s = 10
 event_loop_stall_p99_s = 2
