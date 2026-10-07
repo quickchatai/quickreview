@@ -521,6 +521,28 @@ reads read-only. Nothing is granted to it by this: no ssh, no credential, no
 network reach. Copying happens on completion rather than on demand, because a
 round that has finished is a round whose evidence is complete.
 
+The sweep that finds those rounds asks the daemon `qcr why <n> --json` only
+for a PR whose snapshot signature moved, and it is built not to load the
+container (L1). Its per-PR progress — which signature each PR was
+last cleanly reconciled at — is kept in `state/tui-evidence-sweep.json`
+beside the TUI's other state files, written temp + rename and stamped with
+the evidence store it describes, so a re-exec resumes instead of re-asking
+about every PR. A record that cannot be read, or that describes another
+store, counts as empty and says so on the notice line; an entry that says the
+store held a PR's evidence is not believed once that evidence is gone from
+disk (an entry for a PR whose rounds were all still running stored nothing,
+and is believed). The `why` execs are paced — at most one per `[tui]
+evidence_why_interval_s` (default 10 s, clamped 5–600 s), counted from the
+end of the previous one, or from the copier's start for the first, whatever
+the poll cadence and however often the TUI re-execs — and none at all runs
+while the board's last status shows the daemon draining or its heartbeat
+older than `stale_after_s`. A round that finished during such a hold is
+copied as a backfill once it lifts, verdict only, because the PR's current
+ledger, prompt and transcript may by then be a later round's. PRs needing a
+`why` are taken in a rotation by number: a failed one moves the rotation past
+itself, so it is retried after the others rather than first every time, and
+one still draining a backlog of rounds keeps its turn until it is done.
+
 **Day rollover** (`src/tui/rollover.ts`). On the first TUI start of a new ops
 day — never mid-use — the companion's conversation is archived date-stamped,
 the tmux session killed and respawned, and the opening context handed over as

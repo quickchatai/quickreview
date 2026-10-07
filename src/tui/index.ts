@@ -738,7 +738,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // store the companion reads read-only. Its dir is CREATED in the bring-up,
   // before the container starts — the mount source must exist first, or docker
   // invents it root-owned and the copier can never write into it.
-  const { EvidenceCopier, EvidenceStore } = await import("./evidence.js");
+  const {
+    EvidenceCopier,
+    EvidenceStore,
+    SWEEP_PROGRESS_FILE,
+    SweepProgressFile,
+    evidenceWhyIntervalMs,
+  } = await import("./evidence.js");
   const evidence = new EvidenceStore(full.companion.evidence_dir);
 
   // ambient feed + alert pipeline + startup healing. All of it hangs
@@ -773,9 +779,16 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // nothing else: the poll keeps polling and the board keeps painting. Runs
   // whether or not the companion is up — the record is worth keeping either
   // way, and it is what the companion will read when it next starts.
+  //
+  // L1: its per-PR progress lives beside the TUI's other state files,
+  // so a re-exec (every local build) resumes instead of re-running `qcr why`
+  // for every PR, and its `why` execs are paced by `evidence_why_interval_s`
+  // and held while the board's last status shows a drain or a stale heartbeat.
   const evidenceCopier = new EvidenceCopier(cfg, evidence, runner, {
     sessionDir: full.pi.session_dir,
     timeoutMs: Math.max(5, cfg.evidence_timeout_s) * 1000,
+    whyIntervalMs: evidenceWhyIntervalMs(cfg),
+    progress: new SweepProgressFile(join(sandboxRoot(), "state", SWEEP_PROGRESS_FILE)),
     onNotice: (text) => app.notice(text),
   });
   chainOnPoll(app, (a) => {

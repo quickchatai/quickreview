@@ -19,11 +19,26 @@
 //
 // Retention: evidence is kept indefinitely by the owner's explicit choice
 // — not by omission. Do not add a TTL or a cleanup sweep.
-import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+//
+// Load (L1, after the 2026-10-07 post-drain burst): the sweep's
+// per-PR progress is kept on disk (`SweepProgressFile`), so a TUI re-exec —
+// every local `dist/` rebuild — resumes instead of re-running `qcr why` for
+// every PR; and the `why` execs are paced (`evidence_why_interval_s`) and held
+// entirely while the board's last status shows the daemon draining or its
+// heartbeat stale, so the sweep can never be the thing that saturates the
+// container.
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";
-import { whyArgv, type SshRunner } from "./remote.js";
+import { whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
  * output too: lens passes run as subagent children inside the PR's one
@@ -221,6 +236,166 @@ export function prSignature(pr: StatusSnapshot["prs"][number]): string {
   return `${pr.rounds ?? 0}/${pr.last_verdict ?? ""}/${pr.state}/${pr.head_sha}`;
 }
 
+// ---- pacing and holds (L1) ----------------------------------------
+
+/** `[tui] evidence_why_interval_s` — the shipped default and its bounds. A
+ * value outside the bounds is clamped, a non-number is the default: the knob
+ * tunes the pace, it can never switch the pacing off. */
+export const EVIDENCE_WHY_INTERVAL_DEFAULT_S = 10;
+export const EVIDENCE_WHY_INTERVAL_MIN_S = 5;
+export const EVIDENCE_WHY_INTERVAL_MAX_S = 600;
+
+/** The minimum gap, in ms, between the END of one sweep `why` exec and the
+ * start of the next. */
+export function evidenceWhyIntervalMs(cfg: Pick<TuiConfig, "evidence_why_interval_s">): number {
+  const raw: unknown = cfg.evidence_why_interval_s;
+  const s = typeof raw === "number" && Number.isFinite(raw) ? raw : EVIDENCE_WHY_INTERVAL_DEFAULT_S;
+  return Math.min(EVIDENCE_WHY_INTERVAL_MAX_S, Math.max(EVIDENCE_WHY_INTERVAL_MIN_S, s)) * 1000;
+}
+
+/** Why a sweep did nothing at all this poll. */
+export type SweepHold = "draining" | "heartbeat-stale";
+
+/**
+ * The board's last status says the daemon should not be asked for anything
+ * now: it is draining (a deploy window — the container is busy finishing
+ * rounds), or its heartbeat is older than `[tui] stale_after_s` (the same
+ * bound the board's DATA STALE banner uses — the daemon writes `heartbeat`
+ * and `written_at` together). A heartbeat that cannot be read is not a fresh
+ * one (honest-unknown). A heartbeat AHEAD of this clock is clock skew between
+ * the PC and the VM, not staleness.
+ */
+export function sweepHold(
+  snapshot: StatusSnapshot,
+  nowMs: number,
+  staleAfterS: number,
+): SweepHold | undefined {
+  if (snapshot.draining === true) return "draining";
+  const beat = typeof snapshot.heartbeat === "string" ? Date.parse(snapshot.heartbeat) : NaN;
+  if (!Number.isFinite(beat) || nowMs - beat > staleAfterS * 1000) return "heartbeat-stale";
+  return undefined;
+}
+
+// ---- the sweep's progress record (L1) -----------------------------
+
+/** File name of the record, beside the TUI's other state files
+ * (`<sandbox root>/state/`). */
+export const SWEEP_PROGRESS_FILE = "tui-evidence-sweep.json";
+export const SWEEP_PROGRESS_VERSION = 1;
+
+/** One PR's entry: the snapshot signature it was last cleanly reconciled at,
+ * and whether the store held anything for it once that reconcile was done.
+ * `stored: false` is the ordinary case of a PR whose rounds were all still
+ * RUNNING (or that had none): the reconcile was clean and copied nothing, so
+ * no `pr-<n>` dir exists — and a missing dir proves nothing lost. Only an
+ * entry that says the store held the PR's evidence can be caught out by that
+ * evidence having gone. */
+export interface SweepEntry {
+  sig: string;
+  stored: boolean;
+}
+
+/** On disk: what `EvidenceCopier.reconciled` holds, and which store it is
+ * about. An entry here means "this PR, at this snapshot signature, was
+ * cleanly reconciled into THIS store" — a claim about the store, so the store
+ * is named in the record and a record about another store is not believed. */
+export interface SweepProgressRecord {
+  version: typeof SWEEP_PROGRESS_VERSION;
+  store_dir: string;
+  updated_at: string;
+  /** PR number (decimal string key) → its entry. */
+  reconciled: Record<string, SweepEntry>;
+}
+
+/** Four answers, never a throw. `absent` (first run) and `read` are the only
+ * ones that are not news; `unreadable` and `other-store` are each treated as
+ * an EMPTY record with a notice — never as "all reconciled". */
+export type SweepProgressRead =
+  | { kind: "absent" }
+  | { kind: "read"; reconciled: Map<number, SweepEntry> }
+  | { kind: "unreadable"; reason: string }
+  | { kind: "other-store"; storeDir: string };
+
+/** The seam the copier keeps its progress through (a fake in tests). */
+export interface SweepProgressStore {
+  read(storeDir: string): SweepProgressRead;
+  /** Atomic replace. May throw; the copier owns the notice. */
+  write(storeDir: string, reconciled: ReadonlyMap<number, SweepEntry>, at: Date): void;
+}
+
+/** Parse a record's text against the store it must describe. Strict: one
+ * malformed entry makes the whole record unreadable, because a half-believed
+ * record is a record nobody can reason about. */
+export function parseSweepProgress(text: string, storeDir: string): SweepProgressRead {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { kind: "unreadable", reason: `not JSON (${msg(err)})` };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return { kind: "unreadable", reason: "not an object" };
+  const rec = parsed as Partial<Record<keyof SweepProgressRecord, unknown>>;
+  if (rec.version !== SWEEP_PROGRESS_VERSION)
+    return { kind: "unreadable", reason: `unknown version ${JSON.stringify(rec.version)}` };
+  if (typeof rec.store_dir !== "string" || rec.store_dir === "")
+    return { kind: "unreadable", reason: "no store_dir" };
+  const entries = rec.reconciled;
+  if (typeof entries !== "object" || entries === null || Array.isArray(entries))
+    return { kind: "unreadable", reason: "no reconciled map" };
+  const reconciled = new Map<number, SweepEntry>();
+  for (const [key, raw] of Object.entries(entries)) {
+    const entry = raw as Partial<Record<keyof SweepEntry, unknown>> | null;
+    if (
+      !/^[1-9]\d*$/.test(key) ||
+      typeof entry !== "object" ||
+      entry === null ||
+      Array.isArray(entry) ||
+      typeof entry.sig !== "string" ||
+      entry.sig === "" ||
+      typeof entry.stored !== "boolean"
+    )
+      return { kind: "unreadable", reason: `malformed entry ${JSON.stringify(key)}` };
+    reconciled.set(Number(key), { sig: entry.sig, stored: entry.stored });
+  }
+  if (resolve(rec.store_dir) !== resolve(storeDir))
+    return { kind: "other-store", storeDir: rec.store_dir };
+  return { kind: "read", reconciled };
+}
+
+/** The record as a file: read whole, written temp + rename. */
+export class SweepProgressFile implements SweepProgressStore {
+  constructor(readonly path: string) {}
+
+  read(storeDir: string): SweepProgressRead {
+    let text: string;
+    try {
+      text = readFileSync(this.path, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+      return { kind: "unreadable", reason: msg(err) };
+    }
+    return parseSweepProgress(text, storeDir);
+  }
+
+  write(storeDir: string, reconciled: ReadonlyMap<number, SweepEntry>, at: Date): void {
+    const record: SweepProgressRecord = {
+      version: SWEEP_PROGRESS_VERSION,
+      store_dir: storeDir,
+      updated_at: at.toISOString(),
+      reconciled: Object.fromEntries(
+        [...reconciled]
+          .sort(([a], [b]) => a - b)
+          .map(([pr, { sig, stored }]) => [String(pr), { sig, stored }]),
+      ),
+    };
+    mkdirSync(dirname(this.path), { recursive: true });
+    const tmp = `${this.path}.tmp-${process.pid}`;
+    writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`);
+    renameSync(tmp, this.path); // atomic: a re-exec never reads a torn record
+  }
+}
+
 /** The local store: one dir per PR, one dir per round, manifest written last. */
 export class EvidenceStore {
   constructor(readonly dir: string) {}
@@ -241,6 +416,11 @@ export class EvidenceStore {
    */
   has(pr: number, round: number): boolean {
     return existsSync(join(this.roundDir(pr, round), MANIFEST_NAME));
+  }
+
+  /** Whether the store holds anything at all for a PR (one stat, no walk). */
+  hasPr(pr: number): boolean {
+    return existsSync(join(this.dir, `pr-${pr}`));
   }
 
   /** Round numbers already copied for a PR (used only for reporting). */
@@ -278,6 +458,16 @@ export interface CopierDeps {
   timeoutMs: number;
   onNotice?: (text: string) => void;
   now?: () => Date;
+  /** L1: where the sweep keeps its per-PR progress across a re-exec
+   * or restart. Absent = in memory only (the pre-L1 behaviour, kept for the
+   * unit harness); the TUI always passes the file. */
+  progress?: SweepProgressStore;
+  /** L1: the minimum gap between the END of one `why` exec and the
+   * start of the next — and between the copier's construction and its first
+   * `why`, so the pace holds across a re-exec — and with it at most one `why`
+   * per sweep. Absent or 0 = unpaced (the unit harness); the TUI always
+   * passes `evidenceWhyIntervalMs(cfg)`, which cannot be 0. */
+  whyIntervalMs?: number;
 }
 
 export interface SweepReport {
@@ -285,6 +475,13 @@ export interface SweepReport {
   copied: string[];
   /** Human note for a PR whose copy could not complete (retried next poll). */
   failures: string[];
+  /** Set when the sweep did nothing because of the board's last status. */
+  held?: SweepHold;
+  /** Set when a PR needed a `why` and the pace said not yet. */
+  paced?: boolean;
+  /** Notes about the progress record itself (unreadable, another store's,
+   * not saved) — announced once, never per poll. */
+  progress?: string[];
 }
 
 /**
@@ -292,11 +489,34 @@ export interface SweepReport {
  * no second scheduler and no timer of its own: `sweep()` is called by the poll
  * hook, never awaited by it, and a sweep already in flight makes the next call a
  * no-op, so a wedged ssh can stall this and nothing else.
+ *
+ * Order (L1): PRs needing a `why` are visited in a ROTATION by number
+ * starting at `nextFrom`. A failed PR moves the rotation past itself, so under
+ * pacing — one `why` per sweep — it is retried only after every other pending
+ * PR has had its turn (retried, never starving the rest). A PR that
+ * made progress but still has a backlog (more than `ROUNDS_PER_SWEEP` rounds)
+ * keeps the rotation on itself, so its backlog drains on consecutive turns.
  */
 export class EvidenceCopier {
   private busy = false;
-  /** Last snapshot signature per PR that was fully reconciled. */
-  private readonly reconciled = new Map<number, string>();
+  /** Last snapshot signature per PR that was fully reconciled, and whether
+   * the store held anything for it then. Persisted through `deps.progress`
+   * (L1), loaded on the first sweep. */
+  private readonly reconciled = new Map<number, SweepEntry>();
+  /** The record has been loaded (or there is none to load). */
+  private loaded = false;
+  /** `reconciled` changed since the record was last written. */
+  private dirty = false;
+  /** A failed record write was announced; quiet until one succeeds. */
+  private writeFailAnnounced = false;
+  /** Rotation start: the next `why` goes to the first pending PR whose number
+   * is ≥ this, wrapping around. */
+  private nextFrom = 0;
+  /** When the last `why` exec RETURNED (ms since epoch), for the pace. A
+   * paced copier starts it at CONSTRUCTION: every TUI re-exec builds a new
+   * copier, and one that could fire at once would let a run of local builds
+   * — each a new generation — send `why`s faster than the interval. */
+  private lastWhyEndMs: number | undefined;
   /** When THIS copier first saw each PR (ms since epoch). A round that
    * finished before that moment is a BACKFILL: its pr-current roles (ledger,
    * prompt, transcript) are skipped rather than stamped in as if today's
@@ -304,6 +524,16 @@ export class EvidenceCopier {
    * purpose: after a TUI restart everything already copied has a manifest,
    * and anything not yet copied is honestly "first seen now". */
   private readonly firstSeen = new Map<number, number>();
+  /** The last sweep was HELD (L1). */
+  private held = false;
+  /** When the first sweep after a hold ran (ms since epoch; 0 = never held).
+   * The copier was not looking while it was held, so a round that finished
+   * before this moment did not finish under its watch either — a backfill,
+   * exactly as one that finished before `firstSeen`. It matters most after a
+   * drain: new rounds start the moment it lifts, so by the time the held
+   * rounds are copied the PR's current ledger, prompt and transcript may
+   * already be the next round's. */
+  private watchResumedMs = 0;
   /** Rounds whose failure has already been announced — so a VM that stays
    * unreachable degrades to silence rather than a notice every 3 seconds. */
   private readonly announced = new Set<string>();
@@ -313,7 +543,9 @@ export class EvidenceCopier {
     readonly store: EvidenceStore,
     private readonly ssh: SshRunner,
     private readonly deps: CopierDeps,
-  ) {}
+  ) {
+    if ((deps.whyIntervalMs ?? 0) > 0) this.lastWhyEndMs = this.nowMs();
+  }
 
   /** True while a sweep is in flight (the poll hook's re-entry guard). */
   get running(): boolean {
@@ -331,44 +563,186 @@ export class EvidenceCopier {
     this.busy = true;
     try {
       this.store.ensure();
-      const nowMs = (this.deps.now?.() ?? new Date()).getTime();
-      for (const pr of snapshot.prs)
-        if (!this.firstSeen.has(pr.number)) this.firstSeen.set(pr.number, nowMs);
-      for (const pr of [...snapshot.prs].sort((a, b) => a.number - b.number)) {
-        const sig = prSignature(pr);
-        if (this.reconciled.get(pr.number) === sig) continue;
-        if ((pr.rounds ?? 0) === 0) {
-          this.reconciled.set(pr.number, sig);
-          continue;
-        }
-        const before = report.copied.length;
-        const ok = await this.reconcilePr(pr.number, report);
-        // Only a clean reconcile retires the signature; anything else is
-        // retried on the next poll, which is what "survives a wedged ssh"
-        // means here.
-        if (ok) this.reconciled.set(pr.number, sig);
-        // Successful work is bounded to one PR per sweep: the poll runs every
-        // few seconds and a backlog drains across ticks without ever holding
-        // the loop. A FAILURE does not consume the sweep — a failed PR keeps
-        // its stale signature, so stopping on it would make one permanently
-        // failing PR the first pick every tick and starve all the others
-        // forever. Move on to the next PR instead.
-        if (ok || report.copied.length > before) break;
-      }
+      this.loadProgress(report);
+      await this.visit(snapshot, report);
     } catch (err) {
       report.failures.push(`evidence sweep failed: ${msg(err)}`);
     } finally {
+      this.saveProgress(report);
       this.busy = false;
     }
+    for (const note of report.progress ?? []) this.deps.onNotice?.(note);
     for (const note of report.copied) this.deps.onNotice?.(note);
     for (const note of report.failures) this.deps.onNotice?.(note);
     return report;
   }
 
+  /** The sweep's one pass over the snapshot (the caller owns busy, the
+   * record and the notices). */
+  private async visit(snapshot: StatusSnapshot, report: SweepReport): Promise<void> {
+    const nowMs = this.nowMs();
+    for (const pr of snapshot.prs)
+      if (!this.firstSeen.has(pr.number)) this.firstSeen.set(pr.number, nowMs);
+    // L1: the board's last status says leave the daemon alone — no
+    // `why`, no listing, no fetch. The hold is visible on the board itself
+    // (the drain badge, DATA STALE), so it is not a notice.
+    const hold = sweepHold(snapshot, nowMs, this.cfg.stale_after_s);
+    if (hold !== undefined) {
+      report.held = hold;
+      this.held = true;
+      return;
+    }
+    // Back from a hold: the watch restarts now (see `watchResumedMs`).
+    if (this.held) {
+      this.held = false;
+      this.watchResumedMs = nowMs;
+    }
+    const byNumber = [...snapshot.prs].sort((a, b) => a.number - b.number);
+    // A PR with no rounds costs nothing: retired without a `why`, whatever
+    // the pace says.
+    for (const pr of byNumber) if ((pr.rounds ?? 0) === 0) this.retire(pr.number, prSignature(pr));
+    const pending = byNumber.filter(
+      (pr) => this.reconciled.get(pr.number)?.sig !== prSignature(pr),
+    );
+    const start = pending.findIndex((pr) => pr.number >= this.nextFrom);
+    const rotation = start <= 0 ? pending : [...pending.slice(start), ...pending.slice(0, start)];
+    for (const pr of rotation) {
+      if (!this.whyDue()) {
+        report.paced = true;
+        return;
+      }
+      const sig = prSignature(pr);
+      const before = report.copied.length;
+      const ok = await this.reconcilePr(pr.number, report);
+      // Only a clean reconcile retires the signature; anything else is
+      // retried on a later poll, which is what "survives a wedged ssh"
+      // means here.
+      if (ok) this.retire(pr.number, sig);
+      const progressed = report.copied.length > before;
+      // A backlog still draining keeps the rotation on this PR; a finished
+      // PR or a FAILED one moves it on — a failure must not make the same
+      // PR the first pick every turn.
+      this.nextFrom = !ok && progressed ? pr.number : pr.number + 1;
+      // Successful work is bounded to one PR per sweep: the poll runs every
+      // few seconds and a backlog drains across ticks without ever holding
+      // the loop. A FAILURE does not consume the sweep — a failed PR keeps
+      // its stale signature, so stopping on it would make one permanently
+      // failing PR the first pick every tick and starve all the others
+      // forever. Move on to the next PR instead (when the pace allows; it
+      // otherwise waits for the next turn of the rotation).
+      if (ok || progressed) return;
+    }
+  }
+
+  private nowMs(): number {
+    return (this.deps.now?.() ?? new Date()).getTime();
+  }
+
+  /** May a `why` run now? Unpaced (the unit harness) always; paced, only once
+   * the full interval has passed since the previous one RETURNED — measured
+   * from the end, so a `why` slowed by a starved container is followed by the
+   * same idle gap as a fast one, never by another `why` at once — or, before
+   * the first, since this copier was built. */
+  private whyDue(): boolean {
+    const interval = this.deps.whyIntervalMs ?? 0;
+    if (interval <= 0 || this.lastWhyEndMs === undefined) return true;
+    return this.nowMs() - this.lastWhyEndMs >= interval;
+  }
+
+  /** Record a clean reconcile, with whether the store now holds anything
+   * for the PR (one stat, only when the signature moved). */
+  private retire(pr: number, sig: string): void {
+    if (this.reconciled.get(pr)?.sig === sig) return;
+    this.reconciled.set(pr, { sig, stored: this.store.hasPr(pr) });
+    this.dirty = true;
+  }
+
+  private note(report: SweepReport, text: string): void {
+    (report.progress ??= []).push(text);
+  }
+
+  /**
+   * First sweep only: believe the record where it can be believed. An entry
+   * that says the store held the PR's evidence is kept only while the store
+   * still holds that PR — a record cannot vouch for evidence that is no
+   * longer on disk. An entry that says the store held nothing (its rounds
+   * were all still running, or it had none) is believed without a dir: there
+   * was never one to lose.
+   */
+  private loadProgress(report: SweepReport): void {
+    if (this.loaded) return;
+    this.loaded = true;
+    const progress = this.deps.progress;
+    if (!progress) return;
+    const read = progress.read(this.store.dir);
+    switch (read.kind) {
+      case "absent":
+        return;
+      case "unreadable":
+        this.dirty = true; // replace it with a readable one at the next save
+        this.note(
+          report,
+          `evidence: sweep progress record unreadable (${read.reason}) — re-checking every PR`,
+        );
+        return;
+      case "other-store":
+        this.dirty = true;
+        this.note(
+          report,
+          `evidence: sweep progress record is for another store (${read.storeDir}) — re-checking every PR`,
+        );
+        return;
+      case "read": {
+        let gone = 0;
+        for (const [pr, entry] of read.reconciled) {
+          if (entry.stored && !this.store.hasPr(pr)) {
+            gone += 1;
+            continue;
+          }
+          this.reconciled.set(pr, entry);
+        }
+        if (gone > 0) {
+          this.dirty = true;
+          this.note(
+            report,
+            `evidence: ${gone} PR${gone === 1 ? "" : "s"} in the sweep record ${gone === 1 ? "has" : "have"} no evidence on disk — re-checking ${gone === 1 ? "it" : "them"}`,
+          );
+        }
+        return;
+      }
+    }
+  }
+
+  /** Write the record when it changed. A failed write costs a notice (once)
+   * and a retry at the next sweep (a temp file and a rename, local) — never
+   * the sweep itself. */
+  private saveProgress(report: SweepReport): void {
+    const progress = this.deps.progress;
+    if (!progress || !this.dirty) return;
+    try {
+      progress.write(this.store.dir, this.reconciled, this.deps.now?.() ?? new Date());
+      this.dirty = false;
+      this.writeFailAnnounced = false;
+    } catch (err) {
+      if (!this.writeFailAnnounced) {
+        this.writeFailAnnounced = true;
+        this.note(
+          report,
+          `evidence: sweep progress not saved (${msg(err)}) — a restart re-checks every PR`,
+        );
+      }
+    }
+  }
+
   private async reconcilePr(pr: number, report: SweepReport): Promise<boolean> {
-    const res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr), {
-      timeoutMs: this.deps.timeoutMs,
-    });
+    let res: RemoteResult;
+    try {
+      res = await this.ssh(this.cfg.ssh_host, whyArgv(this.cfg, pr), {
+        timeoutMs: this.deps.timeoutMs,
+      });
+    } finally {
+      this.lastWhyEndMs = this.nowMs();
+    }
     if (!res.ok)
       return this.fail(report, `pr-${pr}`, `evidence: #${pr} — could not read round list (ssh)`);
     // The round list is what `qcr why --json` PROVES; anything else that came
@@ -404,14 +778,15 @@ export class EvidenceCopier {
     if (!listed.ok)
       return this.fail(report, key, `evidence: ${key} — could not list artefacts (ssh)`);
     const files = parseManifest(listed.stdout, this.cfg.remote_sandbox_root);
-    // A round that finished before this copier first saw the PR is a BACKFILL:
-    // the pr-current roles on the VM are the PR's files as of TODAY, not that
-    // round's, so copying them would fabricate round evidence. Verdict only.
-    // An unparseable/absent finished_at is treated as backfill — the honest
+    // A round that finished before this copier first saw the PR — or before
+    // it came back from a hold (L1) — is a BACKFILL: the pr-current
+    // roles on the VM are the PR's files as of TODAY, not that round's, so
+    // copying them would fabricate round evidence. Verdict only. An
+    // unparseable/absent finished_at is treated as backfill — the honest
     // direction, since freshness cannot be shown.
-    const firstSeenAt = this.firstSeen.get(pr) ?? 0;
+    const watchedFrom = Math.max(this.firstSeen.get(pr) ?? 0, this.watchResumedMs);
     const finishedMs = round.finished_at === null ? NaN : Date.parse(round.finished_at);
-    const backfill = !Number.isFinite(finishedMs) || finishedMs < firstSeenAt;
+    const backfill = !Number.isFinite(finishedMs) || finishedMs < watchedFrom;
     const skipped = backfill ? PR_CURRENT_ROLES.filter((r) => files.some((f) => f.role === r)) : [];
     const toCopy = backfill ? files.filter((f) => f.role === "verdict") : files;
     const written: RoundManifest["files"] = [];

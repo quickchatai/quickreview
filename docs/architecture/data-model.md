@@ -243,6 +243,7 @@ losing the review record, except `state.db` itself.
 | `state/onboarding/` | `checklist.json`, `config.candidate.toml`, `pi-sessions/` | `src/onboard/` | the wizard's own state |
 | `state/changes/` | `change-register.json` | `src/tui/index.ts` | the TUI change log |
 | `state/tui-deploy-runs/`, `state/tui-deploy-ceremony.json`, `state/tui-resume-<pid>.json`, `state/tui-help-shown` | JSON / markers | the TUI | deploy run logs and small per-operator markers |
+| `state/tui-evidence-sweep.json` | JSON | `SweepProgressFile` (`src/tui/evidence.ts`) | the evidence sweep's per-PR progress (L1): the signature each PR was last cleanly reconciled at and whether the store then held its evidence (`{sig, stored}`), and the evidence store it describes; written temp + rename. Unreadable or another store's ⇒ treated as empty, with a notice |
 | `state/tsc-watch.log` | text | `npm run dev` | the TypeScript watcher's output, kept off-screen so a stray compiler line cannot corrupt the alt-screen frame |
 
 ---
@@ -595,7 +596,8 @@ explicit, an empty `ssh_host` does not mean local), `ssh_host`, `container`
 (`"quickreview-sandbox"`), `remote_state_dir` (`"/opt/quickreview/state"`),
 `remote_sandbox_root` (`"/opt/quickreview/sandbox"`), `sudo_docker` (`true`),
 `poll_interval_s` (`3`), `stale_after_s` (`90`), `msg_timeout_s` (`30`),
-`evidence_timeout_s` (`60`).
+`evidence_timeout_s` (`60`), `evidence_why_interval_s` (`10`, clamped to
+5–600: the evidence sweep's minimum gap between `qcr why` execs, L1).
 
 **`[companion]`** — every key is commented out in the example because
 `COMPANION_DEFAULTS` is the shipped configuration: `enabled` (`true`),

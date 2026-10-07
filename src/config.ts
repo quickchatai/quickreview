@@ -83,6 +83,12 @@ export interface TuiConfig {
    * Every artefact fetch is killed at this age, so a wedged ssh control master
    * costs one sweep and nothing else — never the poll, never the paint loop. */
   evidence_timeout_s: number;
+  /** L1: the evidence sweep's pace — the minimum gap between the end of
+   * one `qcr why` exec and the start of the next (each costs the container
+   * ~0.5–1 s of CPU), whatever the poll cadence. Clamped to 5–600 s
+   * (`evidenceWhyIntervalMs`, src/tui/evidence.ts); the pacing cannot be
+   * switched off. */
+  evidence_why_interval_s: number;
 }
 
 /** The local companion container. Host paths are expanded; empty
@@ -1928,6 +1934,7 @@ export const TUI_DEFAULTS: TuiConfig = {
   stale_after_s: 90,
   msg_timeout_s: 30,
   evidence_timeout_s: 60,
+  evidence_why_interval_s: 10,
 };
 
 /** [companion] is optional in config.toml, exactly like [tui]. */

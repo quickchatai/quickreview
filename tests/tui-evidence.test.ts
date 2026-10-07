@@ -2,7 +2,15 @@
 // reads. The invariants under test are the ones the ticket is made of: copy on
 // completion (not on demand), never copy the same round twice, never let a
 // wedged ssh become the TUI's problem, and grant the companion nothing.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,16 +18,25 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TUI_DEFAULTS, type TuiConfig } from "../src/config.js";
 import type { StatusSnapshot } from "../src/state.js";
 import {
+  EVIDENCE_WHY_INTERVAL_DEFAULT_S,
+  EVIDENCE_WHY_INTERVAL_MAX_S,
+  EVIDENCE_WHY_INTERVAL_MIN_S,
   EvidenceCopier,
   EvidenceStore,
   MANIFEST_NAME,
   MAX_FILE_BYTES,
+  SWEEP_PROGRESS_FILE,
+  SweepProgressFile,
+  evidenceWhyIntervalMs,
   fetchArgv,
   finishedRounds,
   manifestArgv,
   parseManifest,
+  parseSweepProgress,
   prSignature,
   readWhyRounds,
+  sweepHold,
+  type SweepProgressStore,
   type WhyRound,
 } from "../src/tui/evidence.js";
 import type { RemoteResult, SshRunner } from "../src/tui/remote.js";
@@ -456,5 +473,725 @@ describe("large and awkward payloads", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---- L1: the sweep keeps its progress, and its pace -----------------
+//
+// The 2026-10-07 post-drain burst: the sweep's signature map lived only in
+// memory, so every TUI re-exec (every local `dist/` rebuild, every deploy)
+// re-ran `qcr why <n> --json` for all ~400 PRs, one every 2–3 s for ~20 min —
+// about 40% of one container CPU while six drained rounds fought for the
+// other 160%.
+
+/** A clock the test moves by hand, starting BEFORE the fixture rounds'
+ * finished_at (09:00) and the snapshot's heartbeat (10:00), as the copier
+ * tests above do — so every round is fresh and the heartbeat is not stale. */
+function handClock(start = "2026-08-25T08:00:00Z"): {
+  now: () => Date;
+  advance: (s: number) => void;
+  ms: () => number;
+} {
+  let t = Date.parse(start);
+  return { now: () => new Date(t), advance: (s) => void (t += s * 1000), ms: () => t };
+}
+
+const isWhy = (script: string): boolean => script.includes("cli.js") && script.includes(" why ");
+const whyPr = (script: string): number => Number(/ why (\d+) /.exec(script)![1]);
+
+describe("L1 — the sweep's progress survives a re-exec", () => {
+  let dir: string;
+  let store: EvidenceStore;
+  let recordPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-evidence-l1-"));
+    store = new EvidenceStore(join(dir, "evidence"));
+    recordPath = join(dir, "state", SWEEP_PROGRESS_FILE);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const copier = (
+    ssh: SshRunner,
+    opts: {
+      notices?: string[];
+      progress?: SweepProgressStore;
+      whyIntervalMs?: number;
+      now?: () => Date;
+    } = {},
+  ): EvidenceCopier =>
+    new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      onNotice: (t) => opts.notices?.push(t),
+      now: opts.now ?? (() => new Date("2026-08-25T08:00:00Z")),
+      progress: opts.progress ?? new SweepProgressFile(recordPath),
+      ...(opts.whyIntervalMs !== undefined ? { whyIntervalMs: opts.whyIntervalMs } : {}),
+    });
+
+  const THREE = snapshot([
+    { number: 1, rounds: 1 },
+    { number: 2, rounds: 1 },
+    { number: 3, rounds: 1 },
+    { number: 4, rounds: 0 },
+  ]);
+
+  async function reconcileAll(c: EvidenceCopier, snap = THREE): Promise<void> {
+    for (let i = 0; i < 5; i++) await c.sweep(snap);
+  }
+
+  it("a restarted copier resumes: a PR reconciled before the re-exec costs no `why` after it", async () => {
+    const { ssh, scripts } = fakeVm([round(1)]);
+    await reconcileAll(copier(ssh));
+    expect([1, 2, 3].every((pr) => store.has(pr, 1))).toBe(true);
+
+    // The record is on disk, written whole, and names the store it is about.
+    const record = JSON.parse(readFileSync(recordPath, "utf8"));
+    expect(record.version).toBe(1);
+    expect(record.store_dir).toBe(store.dir);
+    expect(Object.keys(record.reconciled)).toEqual(["1", "2", "3", "4"]);
+    // Each entry says whether the store held the PR's evidence once it was
+    // reconciled — the zero-round PR never had any.
+    expect(record.reconciled["1"]).toEqual({ sig: prSignature(THREE.prs[0]!), stored: true });
+    expect(record.reconciled["4"]).toEqual({ sig: prSignature(THREE.prs[3]!), stored: false });
+    expect(readdirSync(join(dir, "state")).filter((f) => f.includes(".tmp"))).toEqual([]);
+
+    // The re-exec: a NEW copier over the same record re-polls nothing at all.
+    const before = scripts.length;
+    const notices: string[] = [];
+    const report = await copier(ssh, { notices }).sweep(THREE);
+    expect(scripts.slice(before)).toEqual([]);
+    expect(report).toEqual({ copied: [], failures: [] });
+    expect(notices).toEqual([]); // a clean resume is not news
+
+    // …and a PR whose signature moved since is re-polled — that one only.
+    const moved = snapshot([
+      { number: 1, rounds: 1 },
+      { number: 2, rounds: 1, last_verdict: "APPROVE" },
+      { number: 3, rounds: 1 },
+      { number: 4, rounds: 0 },
+    ]);
+    await copier(ssh).sweep(moved);
+    expect(scripts.slice(before).filter(isWhy).map(whyPr)).toEqual([2]);
+  });
+
+  it("an unreadable record is treated as EMPTY with a notice — never as all reconciled", async () => {
+    const { ssh, scripts } = fakeVm([round(1)]);
+    await reconcileAll(copier(ssh)); // the evidence is all on disk…
+    writeFileSync(recordPath, "{torn"); // …but the record of it is not readable
+
+    const notices: string[] = [];
+    const c = copier(ssh, { notices });
+    const before = scripts.length;
+    await reconcileAll(c);
+    // Every PR with rounds is re-checked (one `why` each — the manifests on
+    // disk mean nothing is fetched again)…
+    expect(
+      scripts
+        .slice(before)
+        .filter(isWhy)
+        .map(whyPr)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 2, 3]);
+    expect(scripts.slice(before).some((s) => s.includes("head -c"))).toBe(false);
+    // …the operator is told once, and the record is replaced by a readable one.
+    expect(notices.filter((n) => n.includes("unreadable"))).toEqual([
+      expect.stringMatching(
+        /^evidence: sweep progress record unreadable \(not JSON .*\) — re-checking every PR$/,
+      ),
+    ]);
+    expect(new SweepProgressFile(recordPath).read(store.dir).kind).toBe("read");
+  });
+
+  it("a record that is not a file at all (EISDIR) is unreadable, not absent", () => {
+    mkdirSync(recordPath, { recursive: true });
+    const read = new SweepProgressFile(recordPath).read(store.dir);
+    expect(read.kind).toBe("unreadable");
+  });
+
+  it("no record (the first start) is quietly empty", async () => {
+    expect(new SweepProgressFile(recordPath).read(store.dir)).toEqual({ kind: "absent" });
+    const { ssh } = fakeVm([round(1)]);
+    const notices: string[] = [];
+    await copier(ssh, { notices }).sweep(snapshot([{ number: 1, rounds: 1 }]));
+    expect(notices).toEqual(["evidence: pr-1 round 1 copied (4 files)"]);
+  });
+
+  it("parseSweepProgress: strict — one bad entry makes the whole record unreadable", () => {
+    const ok = (reconciled: unknown, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ version: 1, store_dir: "/s", updated_at: "x", reconciled, ...extra });
+    const entry = { sig: "1//tracked/abc", stored: true };
+    expect(
+      parseSweepProgress(ok({ "5306": entry, "7": { sig: "0//new/x", stored: false } }), "/s"),
+    ).toEqual({
+      kind: "read",
+      reconciled: new Map([
+        [5306, entry],
+        [7, { sig: "0//new/x", stored: false }],
+      ]),
+    });
+    for (const bad of [
+      ok({ abc: entry }),
+      ok({ "0": entry }),
+      ok({ "12": "1//tracked/abc" }),
+      ok({ "12": 7 }),
+      ok({ "12": null }),
+      ok({ "12": [entry] }),
+      ok({ "12": { sig: "", stored: true } }),
+      ok({ "12": { sig: 7, stored: true } }),
+      ok({ "12": { sig: "1//tracked/abc" } }),
+      ok({ "12": { sig: "1//tracked/abc", stored: "yes" } }),
+      ok({ "12": entry, "13": { stored: false } }),
+      ok([entry]),
+      ok({}, { version: 2 }),
+      ok({}, { store_dir: 7 }),
+      JSON.stringify([]),
+      "null",
+      "{torn",
+    ])
+      expect(parseSweepProgress(bad, "/s").kind, bad).toBe("unreadable");
+  });
+
+  it("a record about ANOTHER store is not believed (evidence_dir moved)", async () => {
+    new SweepProgressFile(recordPath).write(
+      join(dir, "elsewhere"),
+      new Map([
+        [1, { sig: prSignature(snapshot([{ number: 1, rounds: 1 }]).prs[0]!), stored: true }],
+      ]),
+      new Date(),
+    );
+    const { ssh, scripts } = fakeVm([round(1)]);
+    const notices: string[] = [];
+    await copier(ssh, { notices }).sweep(snapshot([{ number: 1, rounds: 1 }]));
+    expect(scripts.filter(isWhy).map(whyPr)).toEqual([1]);
+    expect(store.has(1, 1)).toBe(true);
+    expect(notices[0]).toMatch(
+      /^evidence: sweep progress record is for another store \(.*elsewhere\)/,
+    );
+  });
+
+  it("a record cannot vouch for evidence that is no longer on disk", async () => {
+    const { ssh, scripts } = fakeVm([round(1)]);
+    await reconcileAll(copier(ssh));
+    rmSync(join(store.dir, "pr-2"), { recursive: true, force: true });
+
+    const notices: string[] = [];
+    const before = scripts.length;
+    await reconcileAll(copier(ssh, { notices }));
+    // Only the PR whose evidence vanished is re-checked; the zero-round PR
+    // (its entry says the store held nothing, so it never had a dir) is still
+    // believed.
+    expect(scripts.slice(before).filter(isWhy).map(whyPr)).toEqual([2]);
+    expect(store.has(2, 1)).toBe(true);
+    expect(notices[0]).toBe(
+      "evidence: 1 PR in the sweep record has no evidence on disk — re-checking it",
+    );
+  });
+
+  it("a record that cannot be saved costs one notice, never the sweep", async () => {
+    let writes = 0;
+    const broken: SweepProgressStore = {
+      read: () => ({ kind: "absent" }),
+      write: () => {
+        writes += 1;
+        throw new Error("EROFS: read-only file system");
+      },
+    };
+    const { ssh } = fakeVm([round(1)]);
+    const notices: string[] = [];
+    const c = copier(ssh, { notices, progress: broken });
+    await reconcileAll(c);
+    expect([1, 2, 3].every((pr) => store.has(pr, 1))).toBe(true);
+    expect(writes).toBeGreaterThan(1); // retried at the next sweep…
+    expect(notices.filter((n) => n.includes("not saved"))).toEqual([
+      "evidence: sweep progress not saved (EROFS: read-only file system) — a restart re-checks every PR",
+    ]); // …announced once
+  });
+
+  it("only a clean reconcile is recorded — a failed PR is not in the record", async () => {
+    const { ssh } = fakeVm([round(1)], {
+      fail: (s) => s.includes("head -c") && s.includes("pr-2/"),
+    });
+    await reconcileAll(copier(ssh));
+    const record = JSON.parse(readFileSync(recordPath, "utf8"));
+    expect(Object.keys(record.reconciled)).toEqual(["1", "3", "4"]);
+  });
+
+  it("a PR whose rounds were all still RUNNING is believed after a re-exec: no `why`, no false alarm", async () => {
+    // A clean reconcile that copied nothing leaves no `pr-<n>` dir — and a
+    // missing dir is then not lost evidence, so every re-exec while a first
+    // round is in flight must not re-check the PR and say evidence is gone.
+    const rounds = [round(1, "running")];
+    const { ssh, scripts } = fakeVm(rounds);
+    const snap = snapshot([{ number: 1, rounds: 1 }]);
+    await copier(ssh).sweep(snap);
+    expect(store.hasPr(1)).toBe(false);
+    expect(JSON.parse(readFileSync(recordPath, "utf8")).reconciled["1"]).toEqual({
+      sig: prSignature(snap.prs[0]!),
+      stored: false,
+    });
+
+    const before = scripts.length;
+    const notices: string[] = [];
+    for (let i = 0; i < 3; i++) await copier(ssh, { notices }).sweep(snap); // three re-execs
+    expect(scripts.slice(before)).toEqual([]);
+    expect(notices).toEqual([]);
+
+    // The round finishes: the signature moves and the PR is read again.
+    rounds[0] = round(1);
+    await copier(ssh).sweep(snapshot([{ number: 1, rounds: 1, last_verdict: "APPROVE" }]));
+    expect(store.has(1, 1)).toBe(true);
+  });
+
+  it("the record is replaced atomically: a write that fails leaves the previous record whole", () => {
+    const file = new SweepProgressFile(recordPath);
+    const first = new Map([[1, { sig: "1//tracked/a", stored: true }]]);
+    file.write(store.dir, first, new Date());
+    // The temp name is taken (a directory sits there), so the write fails
+    // before the rename — and a direct write over the record would not have.
+    mkdirSync(`${recordPath}.tmp-${process.pid}`);
+    expect(() =>
+      file.write(store.dir, new Map([[2, { sig: "1//tracked/b", stored: true }]]), new Date()),
+    ).toThrow();
+    expect(file.read(store.dir)).toEqual({ kind: "read", reconciled: first });
+  });
+
+  it("an unchanged record is not rewritten — the steady state costs no disk write", async () => {
+    const file = new SweepProgressFile(recordPath);
+    let writes = 0;
+    const counting: SweepProgressStore = {
+      read: (s) => file.read(s),
+      write: (s, r, at) => {
+        writes += 1;
+        file.write(s, r, at);
+      },
+    };
+    const { ssh } = fakeVm([round(1)]);
+    const c = copier(ssh, { progress: counting });
+    await reconcileAll(c);
+    const settled = writes;
+    expect(settled).toBeGreaterThan(0);
+    await c.sweep(THREE);
+    await c.sweep(THREE);
+    expect(writes).toBe(settled);
+  });
+
+  it("a save that fails, then succeeds, then fails again is announced again", async () => {
+    const state = { broken: true };
+    const flaky: SweepProgressStore = {
+      read: () => ({ kind: "absent" }),
+      write: () => {
+        if (state.broken) throw new Error("ENOSPC: no space left on device");
+      },
+    };
+    const { ssh } = fakeVm([]);
+    const notices: string[] = [];
+    const c = copier(ssh, { notices, progress: flaky });
+    // Zero-round PRs whose signature moves each sweep: every sweep has a
+    // change to save, and none needs a `why`.
+    const at = (sha: string) => snapshot([{ number: 1, rounds: 0, head_sha: sha }]);
+    await c.sweep(at("a")); // fails — announced
+    await c.sweep(at("b")); // fails — quiet
+    state.broken = false;
+    await c.sweep(at("c")); // saved — the announcement is reset
+    state.broken = true;
+    await c.sweep(at("d")); // fails — announced again
+    expect(notices.filter((n) => n.includes("not saved"))).toHaveLength(2);
+  });
+
+  describe("a record the copier does not believe is replaced even when nothing is retired", () => {
+    // The first sweep after loading it is HELD (a drain), so no PR is
+    // reconciled and nothing else makes the record dirty.
+    const held = { ...THREE, draining: true };
+
+    it("an unreadable record", async () => {
+      mkdirSync(dirname(recordPath), { recursive: true });
+      writeFileSync(recordPath, "{torn");
+      const report = await copier(fakeVm([]).ssh).sweep(held);
+      expect(report.held).toBe("draining");
+      expect(new SweepProgressFile(recordPath).read(store.dir)).toEqual({
+        kind: "read",
+        reconciled: new Map(),
+      });
+    });
+
+    it("another store's record", async () => {
+      new SweepProgressFile(recordPath).write(
+        join(dir, "elsewhere"),
+        new Map([[1, { sig: "1//tracked/abc", stored: true }]]),
+        new Date(),
+      );
+      await copier(fakeVm([]).ssh).sweep(held);
+      expect(new SweepProgressFile(recordPath).read(store.dir)).toEqual({
+        kind: "read",
+        reconciled: new Map(),
+      });
+    });
+
+    it("a record vouching for evidence that is gone", async () => {
+      const { ssh } = fakeVm([round(1)]);
+      await reconcileAll(copier(ssh));
+      rmSync(join(store.dir, "pr-2"), { recursive: true, force: true });
+      await copier(ssh).sweep(held);
+      const read = new SweepProgressFile(recordPath).read(store.dir);
+      expect(read.kind === "read" && [...read.reconciled.keys()]).toEqual([1, 3, 4]);
+    });
+  });
+});
+
+describe("L1 — the sweep is paced, and held while the daemon is busy", () => {
+  let dir: string;
+  let store: EvidenceStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-evidence-pace-"));
+    store = new EvidenceStore(dir);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const build = (
+    ssh: SshRunner,
+    clock: ReturnType<typeof handClock>,
+    extra: { progress?: SweepProgressStore } = {},
+  ): EvidenceCopier =>
+    new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      now: clock.now,
+      whyIntervalMs: 10_000,
+      ...extra,
+    });
+
+  /** A paced copier built one interval ago: its pace starts at construction
+   * (tested on its own below), so the clock is moved past that first wait and
+   * the test starts where a `why` is due. */
+  const paced = (ssh: SshRunner, clock: ReturnType<typeof handClock>): EvidenceCopier => {
+    const c = build(ssh, clock);
+    clock.advance(10);
+    return c;
+  };
+
+  /** The VM, with each `why` taking `whyS` seconds of the hand clock. */
+  function slowWhyVm(
+    clock: ReturnType<typeof handClock>,
+    whyS: number,
+    rounds: WhyRound[] = [round(1)],
+    fail?: (script: string) => boolean,
+  ): { ssh: SshRunner; whys: number[]; scripts: string[] } {
+    const inner = fakeVm(rounds, fail ? { fail } : {});
+    const whys: number[] = [];
+    const ssh: SshRunner = async (host, argv, opts) => {
+      const script = argv.join(" ");
+      if (isWhy(script)) {
+        whys.push(whyPr(script));
+        clock.advance(whyS);
+      }
+      return inner.ssh(host, argv, opts);
+    };
+    return { ssh, whys, scripts: inner.scripts };
+  }
+
+  const PRS = snapshot([
+    { number: 1, rounds: 1 },
+    { number: 2, rounds: 1 },
+    { number: 3, rounds: 1 },
+  ]);
+
+  it("at most one `why` per interval, measured from the END of the last — whatever the poll cadence", async () => {
+    const clock = handClock();
+    const { ssh, whys } = slowWhyVm(clock, 4); // a starved container: 4 s a `why`
+    const c = paced(ssh, clock);
+
+    await c.sweep(PRS); // t=0: one `why` (ends at t=4)
+    expect(whys).toEqual([1]);
+
+    // The 3-second poll keeps calling; nothing runs until 10 s after t=4.
+    for (const t of [3, 3, 3]) {
+      clock.advance(t); // t=7, 10, 13
+      const report = await c.sweep(PRS);
+      expect(report.paced).toBe(true);
+    }
+    expect(whys).toEqual([1]);
+    clock.advance(1); // t=14 = 4 + 10
+    await c.sweep(PRS);
+    expect(whys).toEqual([1, 2]);
+  });
+
+  it("a `why` that FAILS at the ssh is paced too, measured from its end — a wedged ssh cannot burst", async () => {
+    const clock = handClock();
+    // PR 1's `why` itself fails, after 4 s (a starved container timing out).
+    const { ssh, whys } = slowWhyVm(clock, 4, [round(1)], (s) => isWhy(s) && whyPr(s) === 1);
+    const c = paced(ssh, clock);
+    await c.sweep(PRS); // t=0: PR 1's `why` fails at t=4 — and the sweep stops there
+    expect(whys).toEqual([1]);
+    clock.advance(9); // t=13
+    expect((await c.sweep(PRS)).paced).toBe(true);
+    expect(whys).toEqual([1]);
+    clock.advance(1); // t=14 = 4 + 10: the rotation has moved past PR 1
+    await c.sweep(PRS);
+    expect(whys).toEqual([1, 2]);
+  });
+
+  it("a PR failing at the FETCH waits its turn in the rotation (under pacing)", async () => {
+    const clock = handClock();
+    // PR 1 fails at the fetch every time; 2 and 3 are healthy.
+    const { ssh, whys } = slowWhyVm(
+      clock,
+      0,
+      [round(1)],
+      (s) => s.includes("head -c") && s.includes("pr-1/"),
+    );
+    const c = paced(ssh, clock);
+    for (let i = 0; i < 4; i++) {
+      const before = whys.length;
+      await c.sweep(PRS);
+      expect(whys.length - before).toBeLessThanOrEqual(1); // never two in one sweep
+      clock.advance(10);
+    }
+    // 1 failed → the rotation moved on to 2, then 3, and only THEN back to 1.
+    expect(whys).toEqual([1, 2, 3, 1]);
+    expect(store.has(2, 1)).toBe(true);
+    expect(store.has(3, 1)).toBe(true);
+    expect(store.has(1, 1)).toBe(false); // still failing, still retried
+  });
+
+  it("a PR with a backlog keeps its turn until it drains (one PR's work per sweep)", async () => {
+    const clock = handClock();
+    const five = [1, 2, 3, 4, 5].map((n) => round(n));
+    const { ssh, whys } = slowWhyVm(clock, 0, five);
+    const c = paced(ssh, clock);
+    const snap = snapshot([
+      { number: 1, rounds: 5 },
+      { number: 2, rounds: 5 },
+    ]);
+    await c.sweep(snap); // PR 1 rounds 1–3
+    clock.advance(10);
+    await c.sweep(snap); // PR 1 rounds 4–5, reconciled
+    expect(store.copiedRounds(1)).toEqual([1, 2, 3, 4, 5]);
+    expect(store.copiedRounds(2)).toEqual([]);
+    clock.advance(10);
+    await c.sweep(snap);
+    expect(whys).toEqual([1, 1, 2]);
+  });
+
+  it("zero-round PRs are retired without a `why`, whatever the pace says", async () => {
+    const clock = handClock();
+    const { ssh, whys } = slowWhyVm(clock, 0);
+    const c = paced(ssh, clock);
+    await c.sweep(snapshot([{ number: 1, rounds: 1 }]));
+    // Inside the interval: the new zero-round PRs cost nothing and wait for nothing.
+    await c.sweep(
+      snapshot([
+        { number: 1, rounds: 1 },
+        { number: 7, rounds: 0 },
+        { number: 8, rounds: 0 },
+      ]),
+    );
+    expect(whys).toEqual([1]);
+  });
+
+  it("no `why` at all while the board's last status shows the daemon DRAINING", async () => {
+    const clock = handClock();
+    const { ssh, scripts } = slowWhyVm(clock, 0);
+    const c = paced(ssh, clock);
+    const draining = { ...PRS, draining: true };
+    const report = await c.sweep(draining);
+    expect(report.held).toBe("draining");
+    expect(scripts).toEqual([]);
+    // The drain lifts: the sweep resumes on the next poll.
+    clock.advance(3);
+    await c.sweep(PRS);
+    expect(scripts.filter(isWhy).map(whyPr)).toEqual([1]);
+  });
+
+  it("no `why` at all while the heartbeat is stale (older than [tui] stale_after_s)", async () => {
+    // The snapshot's heartbeat is 10:00:00; stale_after_s is 90. `paced`
+    // moves each clock 10 s on, so these sweep at 10:01:31 and 10:01:30.
+    const at = (iso: string) => handClock(iso);
+    const stale = at("2026-08-25T10:01:21Z");
+    const vm = slowWhyVm(stale, 0);
+    expect((await paced(vm.ssh, stale).sweep(PRS)).held).toBe("heartbeat-stale");
+    expect(vm.scripts).toEqual([]);
+
+    const edge = at("2026-08-25T10:01:20Z");
+    const vm2 = slowWhyVm(edge, 0);
+    expect((await paced(vm2.ssh, edge).sweep(PRS)).held).toBeUndefined();
+    expect(vm2.scripts.filter(isWhy)).toHaveLength(1);
+  });
+
+  it("the pace holds across a re-exec: a new copier waits one interval from its construction", async () => {
+    // Every local build re-execs the TUI and builds a new copier. A PR that
+    // always fails stays pending in every generation — a generation that
+    // could fire at once would send its `why` on every build.
+    const clock = handClock();
+    const recordPath = join(dir, "state", SWEEP_PROGRESS_FILE);
+    const progress = new SweepProgressFile(recordPath);
+    const { ssh, whys } = slowWhyVm(clock, 0, [round(1)], (s) => isWhy(s) && whyPr(s) === 1);
+    const one = snapshot([{ number: 1, rounds: 1 }]);
+
+    const first = build(ssh, clock, { progress });
+    expect((await first.sweep(one)).paced).toBe(true); // not even the first at once
+    clock.advance(10);
+    await first.sweep(one);
+    expect(whys).toEqual([1]);
+
+    // Builds every 3 s, each a fresh generation over the same record: none of
+    // them sends a `why` inside its first interval.
+    for (let i = 0; i < 3; i++) {
+      const next = build(ssh, clock, { progress });
+      expect((await next.sweep(one)).paced).toBe(true);
+      clock.advance(3);
+    }
+    expect(whys).toEqual([1]);
+
+    const settled = build(ssh, clock, { progress });
+    clock.advance(10);
+    await settled.sweep(one);
+    expect(whys).toEqual([1, 1]);
+  });
+
+  it("an UNPACED copier (the unit harness) asks at once — only a paced one waits at construction", async () => {
+    const clock = handClock();
+    const { ssh, whys } = slowWhyVm(clock, 0);
+    const c = new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      now: clock.now,
+    });
+    await c.sweep(snapshot([{ number: 1, rounds: 1 }]));
+    expect(whys).toEqual([1]);
+  });
+
+  it("sweepHold: a heartbeat that cannot be read is not fresh; one AHEAD of this clock is skew, not staleness", () => {
+    const now = Date.parse("2026-08-25T10:00:00Z");
+    const snap = (patch: Partial<StatusSnapshot>) => ({ ...PRS, ...patch }) as StatusSnapshot;
+    expect(sweepHold(snap({ heartbeat: "2026-08-25T10:00:00Z" }), now, 90)).toBeUndefined();
+    expect(sweepHold(snap({ heartbeat: "2026-08-25T10:05:00Z" }), now, 90)).toBeUndefined();
+    expect(sweepHold(snap({ heartbeat: "not a date" }), now, 90)).toBe("heartbeat-stale");
+    expect(sweepHold({ ...PRS, heartbeat: undefined } as unknown as StatusSnapshot, now, 90)).toBe(
+      "heartbeat-stale",
+    );
+    expect(sweepHold(snap({ draining: false }), now, 90)).toBeUndefined();
+    expect(sweepHold(snap({ draining: true }), now, 90)).toBe("draining");
+  });
+
+  it("the interval knob is bounded: default ≥ 10 s, clamped, and pacing cannot be switched off", () => {
+    expect(EVIDENCE_WHY_INTERVAL_DEFAULT_S).toBeGreaterThanOrEqual(10);
+    expect(TUI_DEFAULTS.evidence_why_interval_s).toBe(EVIDENCE_WHY_INTERVAL_DEFAULT_S);
+    expect(evidenceWhyIntervalMs(TUI_DEFAULTS)).toBe(10_000);
+    expect(evidenceWhyIntervalMs({ evidence_why_interval_s: 30 })).toBe(30_000);
+    expect(evidenceWhyIntervalMs({ evidence_why_interval_s: 0 })).toBe(
+      EVIDENCE_WHY_INTERVAL_MIN_S * 1000,
+    );
+    expect(evidenceWhyIntervalMs({ evidence_why_interval_s: -5 })).toBe(
+      EVIDENCE_WHY_INTERVAL_MIN_S * 1000,
+    );
+    expect(evidenceWhyIntervalMs({ evidence_why_interval_s: 1e9 })).toBe(
+      EVIDENCE_WHY_INTERVAL_MAX_S * 1000,
+    );
+    // A TOML typo ("10") or a missing key in an older config is the default.
+    for (const bad of ["10", undefined, Number.NaN])
+      expect(evidenceWhyIntervalMs({ evidence_why_interval_s: bad as unknown as number })).toBe(
+        EVIDENCE_WHY_INTERVAL_DEFAULT_S * 1000,
+      );
+  });
+
+  it("the TUI wires both: the paced interval from config and the record beside its state files", () => {
+    const index = readFileSync(join(repoRoot, "src/tui/index.ts"), "utf8");
+    const wiring = /new EvidenceCopier\(cfg, evidence, runner, \{([\s\S]*?)\n {2}\}\);/.exec(
+      index,
+    )?.[1];
+    expect(wiring).toBeDefined();
+    expect(wiring).toContain("whyIntervalMs: evidenceWhyIntervalMs(cfg)");
+    expect(wiring).toContain(
+      'progress: new SweepProgressFile(join(sandboxRoot(), "state", SWEEP_PROGRESS_FILE))',
+    );
+  });
+});
+
+describe("L1 — a round that finished during a hold is a backfill", () => {
+  let dir: string;
+  let store: EvidenceStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-evidence-hold-"));
+    store = new EvidenceStore(dir);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const done = (n: number, finishedAt: string): WhyRound => ({
+    round_no: n,
+    status: "done",
+    verdict: "APPROVE",
+    finished_at: finishedAt,
+  });
+
+  it("copies its verdict only once the hold lifts; a round finishing after that is copied whole", async () => {
+    // The 2026-10-07 shape: rounds finish during a drain, and the moment it
+    // lifts new rounds start — so the PR's ledger, prompt and transcript are
+    // already the next round's by the time the held rounds are copied.
+    const clock = handClock("2026-08-25T10:00:00Z");
+    const rounds: WhyRound[] = [];
+    const { ssh } = fakeVm(rounds);
+    const c = new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      now: clock.now,
+    });
+    const at = (prs: Array<Partial<StatusSnapshot["prs"][number]>>, extra = {}): StatusSnapshot => ({
+      ...snapshot(prs),
+      heartbeat: clock.now().toISOString(),
+      ...extra,
+    });
+
+    // 10:00 — the copier first sees the PR, during a drain.
+    expect((await c.sweep(at([{ number: 5306, rounds: 0 }], { draining: true }))).held).toBe(
+      "draining",
+    );
+    // 10:05 — round 1 finishes while the sweep is held. 12:00 — the drain lifts.
+    rounds.push(done(1, "2026-08-25T10:05:00Z"));
+    clock.advance(2 * 3600);
+    await c.sweep(at([{ number: 5306, rounds: 1, last_verdict: "APPROVE" }]));
+    const rd1 = store.roundDir(5306, 1);
+    expect(readdirSync(rd1).sort()).toEqual([MANIFEST_NAME, "verdict.json"]);
+    const m1 = JSON.parse(readFileSync(join(rd1, MANIFEST_NAME), "utf8"));
+    expect(m1.skipped_stale.sort()).toEqual(["ledger", "prompt", "transcript"]);
+
+    // 12:01 — round 2 finishes with the copier watching: copied whole.
+    rounds.push(done(2, "2026-08-25T12:01:00Z"));
+    clock.advance(120);
+    await c.sweep(at([{ number: 5306, rounds: 2, last_verdict: "REQUEST_CHANGES" }]));
+    const m2 = JSON.parse(readFileSync(join(store.roundDir(5306, 2), MANIFEST_NAME), "utf8"));
+    expect(m2.skipped_stale).toEqual([]);
+    expect(m2.files.map((f: { role: string }) => f.role).sort()).toEqual([
+      "ledger",
+      "prompt",
+      "transcript",
+      "verdict",
+    ]);
+  });
+
+  it("a stale heartbeat is a hold too: a round that finished behind it is a backfill", async () => {
+    const clock = handClock("2026-08-25T10:00:00Z");
+    const rounds: WhyRound[] = [];
+    const { ssh } = fakeVm(rounds);
+    const c = new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      now: clock.now,
+    });
+    const beat = "2026-08-25T10:00:00Z";
+    await c.sweep({ ...snapshot([{ number: 9, rounds: 0 }]), heartbeat: beat }); // watching
+    clock.advance(600); // 10:10 — the board's data is stale (the VM unreachable)
+    expect(
+      (await c.sweep({ ...snapshot([{ number: 9, rounds: 0 }]), heartbeat: beat })).held,
+    ).toBe("heartbeat-stale");
+    rounds.push(done(1, "2026-08-25T10:12:00Z"));
+    clock.advance(600); // 10:20 — fresh data again
+    await c.sweep({
+      ...snapshot([{ number: 9, rounds: 1, last_verdict: "APPROVE" }]),
+      heartbeat: clock.now().toISOString(),
+    });
+    expect(readdirSync(store.roundDir(9, 1)).sort()).toEqual([MANIFEST_NAME, "verdict.json"]);
   });
 });
