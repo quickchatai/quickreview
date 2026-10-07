@@ -107,7 +107,13 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    programs allowlisted for *reading*: `sed -i` and its `w`/`r`/`e` script
    commands (including a script glued to `-e`/`--expression`),
    `sort -o`/`--compress-program`, and `find -exec`/`-delete`/`-fprintf` and
-   kin. `awk` used to be a fourth and is now off the allowlist entirely. This is
+   kin. `awk` used to be a fourth and is now off the allowlist entirely. git's
+   read verbs have two such modes of their own, refused since the S8b
+   review: the diff options' `--output=<file>` (`git log`/`show`/`diff` WRITE
+   their output there — a committed blob or a `--format=format:` string makes
+   the bytes anything) and `git grep`'s `-O<cmd>`/`--open-files-in-pager`
+   (which RUNS `<cmd>`), and every git option is judged as git receives it,
+   inner quotes removed (`--up"load"-pack=` was allowed until then). This is
    the pattern-based layer and it stays pattern-based: its job is to narrow the
    surface and to stop a caller *lifting* layer 1, both of which are
    command-shaped acts.
@@ -117,8 +123,15 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    boundaries cannot drift. Every output-redirection spelling bash has
    (`>`, `>>`, `&>`, `&>>`, `>&f`, `{v}>`, `<>`, `>|`, fd-prefixed) is folded
    onto `>`/`>>` first (`normalizeRedirections`), and a target is judged by the
-   name bash would OPEN — quotes and backslashes inside the word removed. It
-   refuses two closed, documented sets:
+   name bash would OPEN — quotes and backslashes inside the word removed. Since
+   the S8b review it is also judged over the redirections bash would
+   actually PERFORM (`redirectTargets`, which reads quotes): an operator glued
+   to the word before it (`printf x>config.toml`, which no whitespace token
+   showed), `$'…'`/`$"…"` names, and a target bash EXPANDS — a pathname
+   pattern (`> config.tom?`, `> retired-uri[s].json`) or a one-element
+   sequence brace (`> recall-hint{s..s}/…`) is judged by every protected name
+   it can expand onto (`protectedPatternHit`), while a `>` inside a quoted grep
+   pattern stays text. It refuses three closed, documented sets:
    - **git's configuration surface** (`isGitConfigSurface`): anything
      inside a `.git` directory, `.gitconfig`, `<any>/git/config`,
      `.gitattributes` — git's own config locations, not attacks.
@@ -128,6 +141,12 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
      pass bodies included), and pi's project dir `.pi/**` (pi 0.99 bump). These are the files that decide what every layer
      here DOES; the boundary protected git's configuration and, until,
      not its own. See "The policy surface" below.
+   - **the memory-scope files a session's own recall reads**
+     (`isMemoryScopeSurface`, S8b): `recall-hints/**` (the daemon's
+     per-session recall hint — the only memory areas the session's recall and
+     memory tools may reach) and `retired-uris.json` (the retired entries its
+     recall excludes), both in the session's pi home. See "The memory scope"
+     below.
 4. **Integrity across the round** — `gitConfigWatchPaths` /
    `policySurfaceWatchPaths` / `fingerprintRoundIntegrity` / `integrityChanges`
    in `src/execboundary.ts`. `dispatch` hashes every file git reads
@@ -270,7 +289,8 @@ The post-hoc audit (`src/usage.ts`) gained the matching telemetry kinds —
 `policy_surface_write` (a redirection, `sed -i` or write-tool target on the
 policy surface, dequoted, every spelling) and `policy_relocation` (a `QCR_*`
 relocator, at the top level or inside a `bash -c` payload) — so a write that
-somehow gets past the guard is at least *seen*, never silent.
+somehow gets past the guard is at least *seen*, never silent. (S8b
+added `memory_scope_write` the same way, for the memory-scope files below.)
 
 Layers 1 and 3 make the git-config-executes-shell family *impossible* at all
 three of git's config scopes for the write paths they can see; layer 4 catches
@@ -278,6 +298,55 @@ the ones they cannot see, which is every one that goes through a variable or a
 program body. Layer 5 notices the terminal harm whatever caused it. Layer 2
 remains an enumeration, and that is now acceptable, because it is no longer the
 only thing standing between a session and an ungated approval.
+
+## The memory scope — a session cannot widen its own recall (S8b)
+
+The daemon publishes two files into a PR session's pi home, beside its
+`ovcli.conf` (`src/memory/ovsession.ts`), and the vendored OpenViking
+extension reads them on every prompt: the RECALL HINT
+(`.openviking/recall-hints/<session>.json` — the round's query and the memory
+areas a round may read, `experiences/` alone; vendored patches 0008, 0009 and
+0011 bound the recall AND the session's `viking_search`/`viking_read`/
+`viking_browse` to those areas) and the RETIRED list
+(`.openviking/retired-uris.json` — entries the recall excludes). The extension
+takes the hint's areas as given (`toolScopeAreas`, run against a tampered file
+in `tests/exec-boundary.test.ts`), so one write of
+`{"areas":["finding-cases","events"]}` widened the session's own memory reach
+to the finding cases and feedback events no review round may read, until the
+daemon wrote the hint again at the next round; an emptied retired list brought
+retired entries back into every recall. Neither was on the protected list —
+the integration review noted it.
+
+They join the write veto as a third set, `MEMORY_SCOPE_SURFACE`, through the
+same predicate (`isProtectedWriteTarget`) both channels read, every
+redirection spelling and `sed -i` included, with their own refusal
+(`memory-scope file`). Matched as a SHAPE — the distinctive name under any
+prefix (`recall-hints/…`, `retired-uris.json`, and the writer's
+`.tmp-<pid>` temps), because the guard does not know the pi home and a `cd`
+into `.openviking/` drops that part of the spelling. The audit gained the
+matching `memory_scope_write` kind. **Layer 4 does not watch them**, and that
+is deliberate: the daemon rewrites the hint at every round's dispatch, so a
+round-boundary hash would report its own work (the `state/agents/**`
+reasoning) — the write veto is the protection these files have.
+
+That made the veto's REACH the whole of the protection, and the S8b review
+falsified G6 as first written with four spellings that each name a file and
+each overwrote the real one in a scratch dir: a pathname pattern in the
+redirection target (`> recall-hint?/pr-1.json`, `> retired-uri[s].json`,
+`> retired-uris.js*`), a one-element sequence brace (`> recall-hint{s..s}/…`,
+one word, so no "ambiguous redirect"), an operator glued to the word before it
+(`printf x>retired-uris.json`), and a read verb's own write option
+(`git show HEAD:<blob> --output=<hint>`, `git log --format=format:<text>
+--output=<hint>` — no redirection at all, and the blob can ride the PR under
+review). All four are closed for all three protected sets — the quote-aware
+redirection scan and its pattern judgement in layer 3, `--output` in layer 2 —
+and sit in round 10 of the corpus, replayed against the compiled guard; the
+audit sees each (`memory_scope_write`, or `reader_write_or_exec` for a git
+write mode onto no protected path), and its memory-scope shapes are now the
+guard's own (`recall-hints/…` or the dir, `retired-uris.json` and its
+`.tmp-<pid>`; a `docs/recall-hints.md` or `retired-uris.json.bak` is neither,
+in both). Closing `--output` turned up `git grep -O<cmd>`, which RUNS `<cmd>`:
+arbitrary execution through a read verb, closed in the same change.
 
 ## The guarantees, stated so they can be falsified
 
@@ -329,6 +398,16 @@ outright. *Falsify it by* writing any of those paths from a real session — via
 the write tool, a redirection, or a `bash -c` payload — and getting an
 `allowed` result on the compiled `dist/` guard, with no
 `policy_surface_modified` wake at round end.
+
+**G6 — a review session cannot write the memory-scope files its own recall
+reads through either write channel, in any spelling that names them**
+(S8b): no `write`/`edit` tool call, redirection (glued or spaced,
+quoted or not, `$'…'`), redirection target bash expands (a pathname pattern,
+a sequence brace) or `sed -i` lands on a `recall-hints/…` path or a
+`retired-uris.json`, and no git read verb writes one through `--output`.
+*Falsify it by* writing either from a real session with a command that names
+the file, literally or as a pattern, and getting an `allowed` result on the
+compiled `dist/` guard.
 
 ### What is NOT guaranteed — say so rather than implying otherwise
 
@@ -433,6 +512,17 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
   rule 2), so the over-reach costs a loud refusal on a write nobody makes; but
   it is over-reach, and a legitimate future write under one of those names
   would have to be re-homed rather than exempted.
+- **G6 is a write veto by name, with no layer 4 behind it.** A write that
+  names neither `recall-hints` nor `retired-uris.json`, literally or as a
+  pattern that can expand onto one — a `cd` into the hint dir first, then
+  `> pr-5249.json`; a variable (`T=retired-uris.json; … > $T`); a name built
+  by command substitution — is not seen, and because the daemon rewrites the
+  hint every round there is no round-boundary hash to catch it either. The
+  same is true of a writer the guard does not know is one: the program
+  allowlist is what keeps that set small (`tee`, `cp`, `mv`, `dd` are off
+  it), and layer 2 is not claimed closed. The damage is bounded to that session until its next
+  round's hint, and the extension still reads only memory areas by name
+  (`AREA_RE`). The floor is the same as G5's: a uid or mount split.
 - **Layer 4 does not watch `state/agents/**`**, because the daemon rebuilds it
   mid-round; the write veto is the only protection the built pass bodies have.
   And a `dist/` rewritten by a development `tsc --watch` while a LOCAL daemon

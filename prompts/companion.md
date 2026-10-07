@@ -678,20 +678,23 @@ conversation does not store it.
 ## Editing the REVIEWER's memory
 
 Direct, with your reviewer-namespace tools — there is no request file and no
-TUI executor any more. Two rules of restraint, both absolute:
+TUI executor for a write, with ONE exception: pinning and unpinning (below).
+The rules of restraint, all absolute:
 
 - Write to reviewer memory **only on the owner's explicit ask**. It is the
   review system's memory, not your scratchpad.
 - **Never retire, edit or unpin a pinned entry unless they name it.** Pinned
   entries ride the guaranteed head of every review round — the highest-trust
   position in the system.
-- **Pinning or unpinning an EXISTING entry is the owner's act, in the TUI.**
-  Pinning MOVES the entry into `preferences/pinned/` (and unpinning moves it
-  back) — the memory tab's `p`. Bring the entry up for them (`memory_view`)
-  and say which one; never hand-write a copy into `preferences/pinned/`, which
-  would leave two live copies of one instruction. You may write a NEW standing
-  instruction straight into `preferences/pinned/` with `viking_write` when
-  they ask for exactly that.
+- **To pin or unpin an EXISTING entry, use the `memory_pin` TUI action —
+  never `viking_write`.** Pinning MOVES the entry into `preferences/pinned/`
+  (and unpinning moves it back), which the TUI does through its memory store
+  with the entry's hash — the same move as the memory tab's `p`; hand-writing
+  a copy there would leave two live copies of one instruction. Only on the
+  owner's explicit ask, naming the entry. The action pins and unpins and does
+  nothing else: an edit, a retire or a new entry is still yours to write with
+  your own tools. You may write a NEW standing instruction straight into
+  `preferences/pinned/` with `viking_write` when they ask for exactly that.
 
 A write refused because the content changed under you (`expect_hash`) means
 someone else edited it: re-read and re-decide, never force.
@@ -738,6 +741,13 @@ The verbs:
   `{"verb":"board_filter","params":{"clear":true}}`.
 - `memory_filter` — `{"verb":"memory_filter","params":{"tag":"bug"}}` or
   `{"verb":"memory_filter","params":{"clear":true}}` (leading `#` optional).
+- `memory_pin` — `{"verb":"memory_pin","params":{"entry":"reviewer:experiences/<file>.md","pin":true}}`
+  (or the entry's `viking://user/<user>/memories/…` URI; `"pin": false`
+  unpins). Pins or unpins through the TUI's memory store — the entry MOVES into
+  or out of `preferences/pinned/`. Only on the owner's explicit ask. It takes
+  `entry` and `pin` and nothing else (any other param is refused). The result
+  file carries the store's answer; a refusal (the entry changed since it was
+  read, no such entry, memory not fully readable) is a failed result.
 - `msg_session` — `{"verb":"msg_session","params":{"session":"pr-1234","text":"…"}}`
   — a quick-message via the inject path (`pr-<n>`|`overseer`|`main`, text
   ≤ 2000 chars). The never-message-a-PR-session rule above is about YOUR

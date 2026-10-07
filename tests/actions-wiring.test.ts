@@ -3,7 +3,7 @@
 // the seven surfaces) plus the filter consumption invariant: render
 // and verb handlers share ONE filtered ordering, so selection movement and
 // x/p/e can never address a hidden row.
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import { FeedWriter } from "../src/tui/feed.js";
 import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
 import type { CompanionSidebar } from "../src/tui/sidebar.js";
 import { decodeKey } from "../src/tui/keys.js";
-import { timelineOrder } from "../src/tui/memory.js";
+import { timelineOrder, type MemoryHealth } from "../src/tui/memory.js";
 import {
   legacyBlockHash as blockHash,
   parseLegacyMemory as parseMemory,
@@ -375,7 +375,7 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(readdirSync(feedDir)).toContain("snapshot.json"); // …and the feed wrote
   });
 
-  it("a companion memory_pin request writes NOTHING through the TUI's store (rule 8)", async () => {
+  it("memory_pin pins through the TUI's ONE store, with the hash a fresh read carries (S5, R7)", async () => {
     const rig = makeRig();
     const target = (await rig.mem.read()).find((e) => e.text.includes("stale recheck flag"))!;
     const dir = actionDir();
@@ -384,8 +384,162 @@ describe("actions wiring: the watcher on a real App", () => {
       params: { entry: target.id, pin: true },
     });
     const [res] = await processTuiActions(dir, rig.driver);
+    expect(res!.ok).toBe(true);
+    expect(res!.trace).toMatch(/^companion ▸ memory pin → /);
+    const op = rig.mem.applied.at(-1) as MemoryOp & { expect?: string };
+    expect(op).toMatchObject({ op: "pin", id: target.id, ts: target.ts, expect: target.hash });
+    // No keystroke, no tab change: a memory write is not a synthesized key.
+    expect(rig.app.tab).toBe("board");
+
+    // An entry memory does not hold is a FAILED result, and nothing is written.
+    const before = rig.mem.applied.length;
+    drop(dir, "2026-10-07T10-00-01-pin.json", {
+      verb: "memory_pin",
+      params: { entry: "reviewer:experiences/no-such.md", pin: true },
+    });
+    const [missing] = await processTuiActions(dir, rig.driver);
+    expect(missing!.ok).toBe(false);
+    expect(missing!.message).toMatch(/no memory entry/);
+    expect(rig.mem.applied).toHaveLength(before);
+  });
+
+  it("memory_pin unpins a pinned entry, and an entry already where it was asked to be is answered, not rewritten", async () => {
+    const pinnedMd = `<!-- 2026-10-01 09:00:00 [0a0a0a0a] -->
+#pinned #manual never approve a migration without the base check.
+`;
+    const mem = new FakeMemory(pinnedMd);
+    const rig = makeRig(mem);
+    const [target] = await mem.read();
+    expect(target!.pinned).toBe(true);
+    const dir = actionDir();
+    drop(dir, "2026-10-07T10-00-00-pin.json", {
+      verb: "memory_pin",
+      params: { entry: target!.id, pin: true },
+    });
+    drop(dir, "2026-10-07T10-00-01-unpin.json", {
+      verb: "memory_pin",
+      params: { entry: target!.id, pin: false },
+    });
+    const [already, unpinned] = await processTuiActions(dir, rig.driver);
+    expect(already!.ok).toBe(true);
+    expect(already!.message).toContain("is already pinned");
+    expect(unpinned!.ok).toBe(true);
+    expect(unpinned!.trace).toMatch(/^companion ▸ memory unpin → /);
+    // The ONLY op this channel ever hands the store is pin or unpin (R7).
+    expect(mem.applied.map((o) => o.op)).toEqual(["unpin"]);
+  });
+
+  // MUTATION: drop `if (!res.ok) throw new Error(res.message)` from the
+  // driver's `memoryPin` (src/tui/index.ts) — the store's refusal is written
+  // to the result file as a SUCCESS, its message as the trace (R7: "the
+  // result file carries the store's answer").
+  it("memory_pin carries the store's REFUSAL into a failed result — a stale hash is never reported as done", async () => {
+    /** A store that refuses every write, as a moved-under-you entry does. */
+    class RefusingMemory extends FakeMemory {
+      override apply(op: MemoryOp): Promise<{ ok: boolean; message: string }> {
+        this.applied.push(op);
+        return Promise.resolve({
+          ok: false,
+          message: "refused: the entry changed since you read it",
+        });
+      }
+    }
+    const mem = new RefusingMemory();
+    const rig = makeRig(mem);
+    let reloads = 0;
+    const reload = rig.learning.store.reloadMemory.bind(rig.learning.store);
+    rig.learning.store.reloadMemory = () => {
+      reloads += 1;
+      reload();
+    };
+    const target = (await mem.read()).find((e) => e.text.includes("stale recheck flag"))!;
+    const dir = actionDir();
+    drop(dir, "2026-10-07T10-00-00-pin.json", {
+      verb: "memory_pin",
+      params: { entry: target.id, pin: true },
+    });
+    const [res] = await processTuiActions(dir, rig.driver);
     expect(res!.ok).toBe(false);
-    expect(res!.message).toContain("unknown verb 'memory_pin'");
-    expect(rig.mem.applied).toHaveLength(0);
+    expect(res!.message).toMatch(/changed since you read it/);
+    expect(res!.trace).toBeUndefined();
+    // The file the companion reads says the same.
+    const written = JSON.parse(
+      readFileSync(join(dir, "2026-10-07T10-00-00-pin.result.json"), "utf8"),
+    ) as { ok: boolean; message: string };
+    expect(written.ok).toBe(false);
+    expect(written.message).toMatch(/changed since you read it/);
+    // It was attempted once, as a pin, and the tab's view re-read memory after
+    // it, so what the operator sees is what the store holds.
+    expect(mem.applied.map((o) => o.op)).toEqual(["pin"]);
+    expect(reloads).toBe(1);
+  });
+
+  it("memory_pin never answers 'no such entry' from a read that did not read everything (honest-unknown)", async () => {
+    /** A store whose last read could not see one namespace whole. */
+    class PartialMemory extends FakeMemory {
+      constructor(private readonly h: MemoryHealth) {
+        super();
+      }
+      health(): MemoryHealth {
+        return this.h;
+      }
+    }
+    const cases: Array<{ health: MemoryHealth; ref: string; expect: RegExp }> = [
+      // The reviewer tree did not answer at all.
+      {
+        health: {
+          ok: false,
+          namespaces: [
+            { user: "reviewer", ok: false, reason: "cannot reach OpenViking", unreadable: 0 },
+            { user: "companion", ok: true, unreadable: 0 },
+          ],
+          warning: "reviewer memory unreachable",
+        },
+        ref: "reviewer:experiences/no-such.md",
+        expect: /memory not fully readable .*reviewer: cannot reach OpenViking/,
+      },
+      // It answered, but listed entries it could not read — by URI this time.
+      {
+        health: {
+          ok: true,
+          namespaces: [
+            {
+              user: "reviewer",
+              ok: true,
+              reason: "2 of 9 reviewer entries could not be read",
+              unreadable: 2,
+            },
+            { user: "companion", ok: true, unreadable: 0 },
+          ],
+        },
+        ref: "viking://user/reviewer/memories/experiences/no-such.md",
+        expect: /memory not fully readable .*2 of 9 reviewer entries could not be read/,
+      },
+      // Only the OTHER tree is degraded: "no such entry" is still a fact.
+      {
+        health: {
+          ok: false,
+          namespaces: [
+            { user: "reviewer", ok: true, unreadable: 0 },
+            { user: "companion", ok: false, reason: "no key", unreadable: 0 },
+          ],
+        },
+        ref: "reviewer:experiences/no-such.md",
+        expect: /no memory entry/,
+      },
+    ];
+    for (const [i, c] of cases.entries()) {
+      const mem = new PartialMemory(c.health);
+      const rig = makeRig(mem);
+      const dir = actionDir();
+      drop(dir, `2026-10-07T10-00-0${i}-pin.json`, {
+        verb: "memory_pin",
+        params: { entry: c.ref, pin: true },
+      });
+      const [res] = await processTuiActions(dir, rig.driver);
+      expect(res!.ok, c.ref).toBe(false);
+      expect(res!.message, c.ref).toMatch(c.expect);
+      expect(mem.applied).toHaveLength(0);
+    }
   });
 });

@@ -7,7 +7,10 @@
 //      the operator's word (`qcr lessons mine`): every human outcome becomes a
 //      row of `lesson_candidates`, deduplicated by a deterministic ref, with a
 //      class. The first mine also turns the digests' lost "Learnings" into
-//      candidates (`source = digest-backfill`).
+//      candidates (`source = digest-backfill`), and — by the owner's ruling
+//      R6 — a post-approval recheck's APPROVE → REQUEST_CHANGES reversal is
+//      one too (`source = recheck`): the reviewer's OWN conclusion, labelled
+//      so, offered after every other source.
 //   2. PACKET (src/learner/packet.ts) — at the day's EOD fire: candidates
 //      first offered more than `lessons_expiry_ops_days` ago are EXPIRED
 //      (recorded on the row, in an event, and in the packet's own list — never
@@ -55,6 +58,7 @@ import {
   mineFeedback,
   mineHumanRecall,
   minePostMerge,
+  mineRecheckFlips,
   mineTaggedComments,
   RECALL_SCAN_LIMITS,
   reviewFateCandidates,
@@ -499,8 +503,10 @@ export class Learner {
     run("feedback", () => mineFeedback(this.store, since));
     run("tagged comments", () => mineTaggedComments(this.store, since));
     run("human recall", () => mineHumanRecall(this.store, since, this.deps.botLogin));
-    // Not mined: the recheck's own APPROVE → REQUEST_CHANGES flips — the
-    // reviewer's conclusion, not a person's (miner.ts header).
+    // The recheck's own APPROVE → REQUEST_CHANGES reversals — the REVIEWER's
+    // conclusion, a candidate only by the owner's ruling R6, gated on a
+    // standing APPROVE and one per (PR, head) (miner.ts header).
+    run("recheck reversals", () => mineRecheckFlips(this.store, since));
     if (this.deps.git) {
       try {
         const r = await minePostMerge(this.store, {
@@ -849,7 +855,10 @@ export class Learner {
         ids: expired.map((e) => e.id),
         after_ops_days: this.cfg.lessons_expiry_ops_days,
       });
-    // Offer: queued candidates, look-for first, up to the day's cap.
+    // Offer: queued candidates, look-for first, up to the day's cap — the
+    // reviewer's own recheck reversals (R6) after EVERY other source, so its
+    // own conclusions never queue a person's outcome behind them (the
+    // integration review's 37-of-40 first packet).
     const offeredToday = (
       db.prepare("SELECT COUNT(*) AS n FROM lesson_candidates WHERE offered_day = ?").get(day) as {
         n: number;
@@ -860,7 +869,8 @@ export class Learner {
       const fresh = db
         .prepare(
           `SELECT id FROM lesson_candidates WHERE status = 'open' AND offered_day IS NULL
-            ORDER BY CASE polarity WHEN 'look-for' THEN 0 ELSE 1 END,
+            ORDER BY CASE source WHEN 'recheck' THEN 1 ELSE 0 END,
+                     CASE polarity WHEN 'look-for' THEN 0 ELSE 1 END,
                      CASE source WHEN 'recall' THEN 0 WHEN 'fate' THEN 1 WHEN 'feedback' THEN 2
                                  WHEN 'tagged-comment' THEN 2 ELSE 3 END,
                      occurred_at DESC, id
@@ -939,9 +949,15 @@ export class Learner {
         candidates: rows.map(toPacket),
       };
     });
-    // Misses first, then the busiest classes.
+    // The reviewer's own recheck reversals (R6) after every other cluster —
+    // the same demotion as the first offer, because a busy reversal class
+    // would otherwise lead the packet on recurrence alone; then misses first,
+    // then the busiest classes.
+    const reviewerOnly = (c: PacketCluster): boolean =>
+      c.candidates.every((x) => x.source === "recheck");
     clusters.sort(
       (a, b) =>
+        Number(reviewerOnly(a)) - Number(reviewerOnly(b)) ||
         Number(b.polarity === "look-for") - Number(a.polarity === "look-for") ||
         b.recurrence - a.recurrence ||
         a.class.localeCompare(b.class),

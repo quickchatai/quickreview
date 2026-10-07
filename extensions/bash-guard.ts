@@ -25,7 +25,9 @@
 //     `<clone>/.git/config` with no suspicious token in the command at all)
 //     and,, this system's OWN policy surface (`isPolicySurface`
 //     — config.toml, the sanctioned scripts, the compiled guard, the seeds),
-//     which seven rounds of hardening had never protected;
+//     which seven rounds of hardening had never protected; and, since
+//     S8b, the memory-scope files a session's own recall reads
+//     (`isMemoryScopeSurface` — the recall hint and the retired list);
 //   · the global/XDG/system scopes are closed OUTSIDE this file entirely, by
 //     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
 //     configuration at spawn. That is not a rule this guard enforces; it is a
@@ -527,7 +529,50 @@ const GIT_COMMAND_INJECTING_OPTS =
 const GIT_COMMAND_INJECTING_OPTS_AFTER_VERB =
   /^(?:--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
 
-function checkGit(args: string[]): BashCheck {
+/**
+ * The read verbs' own WRITE option (S8b review). `--output=<file>`
+ * (and `--output <file>`) is a diff option: `git log`, `git show`, `git diff`
+ * and every verb that takes diff options write their output INTO THAT FILE,
+ * and `--format=format:<text>` or a committed blob (`git show HEAD:<path>`)
+ * makes the bytes anything at all. VERIFIED on this host (git 2.55):
+ * `git show HEAD:a.json --output <dir>/o2` wrote the blob byte for byte. It
+ * named a protected path in plain sight and walked past the write veto,
+ * which reads redirections and `sed -i` only. A reviewer reads output on
+ * stdout; it never needs git to write a file. Exact name only: git refuses
+ * an abbreviation (`--outp`, `--outpu` — ambiguous with
+ * `--output-indicator-*`), and `--output-indicator-new` is a read option.
+ */
+const GIT_OUTPUT_FILE_OPT = /^--output(?:=|$)/;
+
+/**
+ * `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O[<cmd>]` RUNS the named
+ * program on the matching files — VERIFIED: `git grep -O"touch <f>" a` and
+ * `git grep -nO…` created the file. Found while closing `--output`; it is
+ * arbitrary execution through a read verb, not a config relocation, so it
+ * is its own rule. parse-options accepts any unique abbreviation of the long
+ * form (`--op`, `--open=…` VERIFIED), and `-O` can end a short cluster
+ * (`-nO<cmd>`) — so a short cluster is walked letter by letter, stopping at
+ * the options that take the rest of the word as their value.
+ */
+const GIT_GREP_PAGER_LONG = "open-files-in-pager";
+const GIT_GREP_SHORT_WITH_VALUE = new Set(["A", "B", "C", "e", "f", "m"]);
+function isGitGrepPagerOpt(a: string): boolean {
+  const long = /^--([a-z-]+)(?:=|$)/.exec(a);
+  if (long) return long[1]!.length >= 2 && GIT_GREP_PAGER_LONG.startsWith(long[1]!);
+  if (!/^-[^-]/.test(a)) return false;
+  for (const ch of a.slice(1)) {
+    if (ch === "O") return true;
+    if (GIT_GREP_SHORT_WITH_VALUE.has(ch)) return false;
+  }
+  return false;
+}
+
+function checkGit(rawGitArgs: string[]): BashCheck {
+  // Judged as git RECEIVES them: bash removes inner quotes and backslashes
+  // before git parses an option, so `--up"load"-pack=…`, `--git-"dir"=…` and
+  // `--out"put"=…` are the options they spell (the first two VERIFIED
+  // allowed before this, S8b review).
+  const args = rawGitArgs.map(dequote).filter((a) => a.length > 0);
   // Leading global options, before the verb.
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) {
@@ -547,6 +592,16 @@ function checkGit(args: string[]): BashCheck {
     if (GIT_COMMAND_INJECTING_OPTS_AFTER_VERB.test(a)) {
       return block(
         `exec policy: 'git ${verb} ${a}' can hand git a command to run — the reviewer never executes anything`,
+      );
+    }
+    if (GIT_OUTPUT_FILE_OPT.test(a)) {
+      return block(
+        `exec policy: 'git ${verb} ${a}' makes git WRITE its output into a file of the caller's choosing — the reviewer reads git's output on stdout and never writes a file through it.`,
+      );
+    }
+    if (verb === "grep" && isGitGrepPagerOpt(a)) {
+      return block(
+        `exec policy: 'git grep ${a}' runs a program on the matching files — the reviewer never executes anything. Read the matches on stdout.`,
       );
     }
   }
@@ -1743,12 +1798,60 @@ export function isPolicySurface(path: string): boolean {
   return POLICY_SURFACE_RE.some((re) => re.test(p));
 }
 
+/**
+ * The MEMORY-SCOPE files (S8b) — what decides how far a PR session's
+ * OWN memory recall may reach. The daemon publishes both into the session's
+ * pi home, beside its `ovcli.conf` (src/memory/ovsession.ts), and the vendored
+ * OpenViking extension reads them on every prompt:
+ *
+ *   · `recall-hints/<session>.json` — the RECALL HINT (S5,
+ *     `ovRecallHintPathIn`): the round's query and the memory AREAS the
+ *     session's recall and its memory tools may reach (`experiences/` alone —
+ *     vendored patches 0008/0009/0011). One write of
+ *     `{"areas":["finding-cases","events"]}` widens the session's own scope to
+ *     the finding cases and the feedback events no round may read (S9), until
+ *     the daemon writes the hint again at the next round.
+ *   · `retired-uris.json` — the RETIRED list (S3, `ovRetiredPathIn`)
+ *     the recall excludes. Emptied, it brings retired entries back into every
+ *     prompt's recall.
+ *
+ * A review session READS memory and never writes either file; the daemon does,
+ * whole and atomically, every round. Matched as a SHAPE like the policy
+ * surface — the distinctive name under ANY prefix, because the guard does not
+ * know the pi home (and a `cd` into `.openviking/` drops that part of the
+ * spelling) — and NOT watched by layer 4: the daemon rewrites the hint at
+ * every round's dispatch, so a round-boundary hash would read its own work as
+ * a change (the `state/agents/**` reasoning). The write veto is the
+ * protection these files have.
+ */
+export const MEMORY_SCOPE_SURFACE = ["recall-hints/", "retired-uris.json"] as const;
+const MEMORY_SCOPE_SURFACE_RE = [
+  /(^|\/)recall-hints(\/|$)/, // the hint dir, any file in it (its `.tmp-<pid>` too)
+  /(^|\/)retired-uris\.json(\.tmp-[^/]*)?$/, // the retired list, and its atomic-write temp
+];
+
+/** Is this path one of the memory-scope files a session's recall reads?
+ * Exported so both write boundaries ask ONE question. */
+export function isMemoryScopeSurface(path: string): boolean {
+  const p = path.replace(/^['"]+|['"]+$/g, "").replace(/\/+$/, "");
+  if (p.length === 0) return false;
+  return MEMORY_SCOPE_SURFACE_RE.some((re) => re.test(p));
+}
+
 /** The full set a session may not write, from ONE definition: git's own config
- * and hook surface and this system's policy surface. Both
- * the write/edit tool veto (`checkWritePath`) and the shell-redirection / sed
- * scan (`checkProtectedWrites`) refuse exactly this, so they cannot drift. */
+ * and hook surface, this system's policy surface and the
+ * memory-scope files its own recall reads (S8b). Both the write/edit
+ * tool veto (`checkWritePath`) and the shell-redirection / sed scan
+ * (`checkProtectedWrites`) refuse exactly this, so they cannot drift. */
 export function isProtectedWriteTarget(path: string): boolean {
-  return isGitConfigSurface(path) || isPolicySurface(path);
+  return isGitConfigSurface(path) || isPolicySurface(path) || isMemoryScopeSurface(path);
+}
+
+/** Veto reason for a memory-scope write target. */
+function memoryScopeWriteBlock(path: string): BashCheck {
+  return block(
+    `exec policy: '${path}' is a memory-scope file the daemon writes for this session's recall (the recall hint or the retired list) — writing it would widen what this session's own memory recall may reach. The reviewer reads memory; it never sets its own scope.`,
+  );
 }
 
 /** Veto reason for a policy-surface write target. */
@@ -1758,15 +1861,91 @@ function policySurfaceWriteBlock(path: string): BashCheck {
   );
 }
 
-/** Whichever refusal fits the target — git's config surface keeps its own,
- * more specific message. */
+/** Whichever refusal fits the target — git's config surface and the memory
+ * scope keep their own, more specific messages. */
 function protectedWriteBlock(path: string): BashCheck {
-  return isGitConfigSurface(path) ? gitConfigWriteBlock(path) : policySurfaceWriteBlock(path);
+  if (isGitConfigSurface(path)) return gitConfigWriteBlock(path);
+  if (isMemoryScopeSurface(path)) return memoryScopeWriteBlock(path);
+  return policySurfaceWriteBlock(path);
 }
 
 function gitConfigWriteBlock(path: string): BashCheck {
   return block(
     `exec policy: '${path}' is part of git's configuration surface — writing it makes an ORDINARY git command (a plain 'git diff') execute a program of the writer's choosing. The reviewer reads code; it never configures git.`,
+  );
+}
+
+/**
+ * A redirection target is EXPANDED by bash before the file is opened
+ * (S8b review): pathname expansion (`*`, `?`, `[…]`) turns a pattern
+ * matching one existing file into that file, and a sequence brace with one
+ * element (`{s..s}`) is one word — `> recall-hint?/pr-1.json`,
+ * `> retired-uri[s].json`, `> retired-uris.js*` and `> recall-hint{s..s}/…`
+ * each overwrote the real file (VERIFIED on this host), while the literal
+ * name check saw none of them. So a target carrying either syntax is judged
+ * by every protected NAME it could expand onto: each brace group is widened
+ * to `*`, each pattern component is replaced by each protected component
+ * name it matches (`globToRegex`), and every resulting path is put to the
+ * same `isProtectedWriteTarget` — for all three sets, git's config surface
+ * (`.gi?/config`) and the policy surface (`config.tom?`) included. A pattern
+ * no protected name can satisfy (`> /tmp/out-*.txt`) is left alone.
+ */
+const BRACE_GROUP_RE = /\{[^{}]*(?:,|\.\.)[^{}]*\}/g;
+/** The component names the protected sets are spelled with: what a pattern
+ * component is tried against. One representative temp name stands for the
+ * retired list's `.tmp-<pid>`. */
+const PROTECTED_COMPONENT_NAMES: readonly string[] = [
+  ".git",
+  ".gitconfig",
+  "git",
+  "config",
+  ".gitattributes",
+  ...POLICY_SURFACE_FILES,
+  ...POLICY_SURFACE_DIRS,
+  "recall-hints",
+  "retired-uris.json",
+  "retired-uris.json.tmp-1",
+];
+/** Past this many candidate paths a pattern is refused without enumerating
+ * the rest — a target that broad is no reviewer's write. */
+const PATTERN_CANDIDATE_CAP = 512;
+
+/** The protected path a redirection-target PATTERN can expand onto, or null
+ * (also null for a target with no pattern syntax at all). */
+export function protectedPatternHit(target: string): string | null {
+  const widened = target.replace(BRACE_GROUP_RE, "*");
+  if (!GLOB_CHARS.test(widened)) return null;
+  let paths = [""];
+  const parts = widened.split("/");
+  for (const [k, part] of parts.entries()) {
+    const options = [part];
+    if (GLOB_CHARS.test(part)) {
+      const re = globToRegex(part);
+      for (const name of PROTECTED_COMPONENT_NAMES) if (re.test(name)) options.push(name);
+    }
+    const next: string[] = [];
+    for (const p of paths) for (const o of options) next.push(k === 0 ? o : `${p}/${o}`);
+    if (next.length > PATTERN_CANDIDATE_CAP) return target;
+    paths = next;
+  }
+  return paths.find((p) => isProtectedWriteTarget(p)) ?? null;
+}
+
+/** One redirection target (dequoted), judged literally and as a pattern. */
+function judgeRedirectTarget(target: string): BashCheck {
+  if (isProtectedWriteTarget(target)) return protectedWriteBlock(target);
+  const hit = protectedPatternHit(target);
+  if (hit === null) return { allowed: true };
+  if (hit === target)
+    return block(
+      `exec policy: '${target}' is a pattern too broad to judge — bash expands it before it opens the file, and it may name a protected file. Name the file you write.`,
+    );
+  const literal = protectedWriteBlock(hit);
+  return block(
+    (literal.reason ?? "").replace(
+      `'${hit}'`,
+      `'${target}' (a pattern bash expands before it opens the file — it can name '${hit}')`,
+    ),
   );
 }
 
@@ -1811,7 +1990,8 @@ export function normalizeRedirections(cmd: string): string {
 /**
  * Shell redirections and `sed -i` whose target is a PROTECTED write surface —
  * git's config/hook surface OR this system's own policy surface
- *: config.toml, scripts/, dist/, extensions/, prompts/agents/seeds.
+ *: config.toml, scripts/, dist/, extensions/, prompts/agents/seeds
+ * OR the memory-scope files a session's recall reads (S8b).
  *
  * The segment splitter deliberately skips redirection remnants when hunting for
  * the program token, so `cat evil > config.toml` and `printf '…' > .git/config`
@@ -1870,7 +2050,81 @@ export function checkProtectedWrites(cmd: string): BashCheck {
     }
     if (sedInPlace && isProtectedWriteTarget(dequote(t))) return protectedWriteBlock(dequote(t));
   }
+  // The whitespace scan above is quote-blind on purpose (over-broad: a quoted
+  // `> config.toml` inside a pattern is refused too) and therefore cannot see
+  // two things bash does (S8b review): an operator GLUED to the word
+  // before it (`printf x>retired-uris.json` — `x>` is no token it knows), and
+  // a target bash EXPANDS (`> retired-uri[s].json`). Both are judged here,
+  // over the redirections bash would actually perform — `redirectTargets`
+  // reads quotes, so a `>` inside a quoted grep pattern is no write and its
+  // `.*` is never mistaken for a pattern target.
+  for (const target of redirectTargets(normalizeRedirections(cmd))) {
+    const res = judgeRedirectTarget(target);
+    if (!res.allowed) return res;
+  }
   return { allowed: true };
+}
+
+/**
+ * The target of every UNQUOTED output redirection in a command (after
+ * `normalizeRedirections` has folded the spellings onto `>`/`>>`), each with
+ * its quoting removed as bash removes it — `$'…'` and `$"…"` included. A
+ * `>` inside single or double quotes, or escaped, is text, not an operator;
+ * one glued to the word before it (`x>file`) is an operator. Process
+ * substitution (`>(…)`) names no file and yields nothing. Exported because
+ * `src/usage.ts` borrows it the way it borrows `splitShellSegments` — the
+ * TOKENISER, not the policy.
+ */
+export function redirectTargets(cmd: string): string[] {
+  const out: string[] = [];
+  let q: '"' | "'" | null = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (q === "'") {
+      if (c === "'") q = null;
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (q === '"') {
+      if (c === '"') q = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      q = c;
+      continue;
+    }
+    if (c !== ">") continue;
+    let j = i + 1;
+    if (cmd[j] === ">") j++;
+    while (j < cmd.length && (cmd[j] === " " || cmd[j] === "\t")) j++;
+    // One shell word: up to the first unquoted blank or metacharacter.
+    const start = j;
+    let wq: '"' | "'" | null = null;
+    for (; j < cmd.length; j++) {
+      const d = cmd[j]!;
+      if (wq !== null) {
+        if (d === wq) wq = null;
+        else if (wq === '"' && d === "\\") j++;
+        continue;
+      }
+      if (d === "\\") {
+        j++;
+        continue;
+      }
+      if (d === "'" || d === '"') {
+        wq = d;
+        continue;
+      }
+      if (/[\s;&|()<>]/.test(d)) break;
+    }
+    const raw = cmd.slice(start, Math.min(j, cmd.length));
+    if (raw.length > 0) out.push(dequoteShellWord(raw.replace(/\$"/g, '"')));
+    i = j - 1;
+  }
+  return out;
 }
 
 /** Pure policy check over a full bash command string: split into segments
@@ -2037,10 +2291,11 @@ export function checkReaderModes(
  * two boundaries `isProtectedWriteTarget` binds — the other is the shell
  * redirection / `sed -i` scan in `checkProtectedWrites`, and both read the same
  * predicate so a session cannot write through one what it is refused through the
- * other. Refuses git's config/hook surface and this system's own policy surface
- * (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds); everything
- * else a session writes — the verdict file, the ledger, /tmp bodies — is
- * allowed. This is not a write allowlist.
+ * other. Refuses git's config/hook surface, this system's own policy surface
+ * (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds) and the
+ * memory-scope files its recall reads (the recall hint, the retired list —
+ * S8b); everything else a session writes — the verdict file, the
+ * ledger, /tmp bodies — is allowed. This is not a write allowlist.
  */
 export function checkWritePath(path: string): BashCheck {
   return isProtectedWriteTarget(path) ? protectedWriteBlock(path) : { allowed: true };

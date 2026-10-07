@@ -46,12 +46,26 @@
 //       can only sit on the PR's diff, and a push after the approval is
 //       audited by the recheck, which either upholds it (the approval then
 //       covers the new head) or flips it (and the approval ends).
-//       NOT a source: the recheck's own APPROVE → REQUEST_CHANGES flip. It
-//       is the reviewer's conclusion, and the beliefs are "learned only from
-//       people" (MANIFESTO.md) — on the live store 37 of a first packet's 40
-//       offers were flips quoting the bot's own reasoning, 21 of the 48 were
-//       no flip at all, and every human-sourced candidate queued behind them
-//       (integration review). Restoring it needs the owner's ruling.
+//   recheck (look-for)                 a post-approval recheck's APPROVE →
+//       REQUEST_CHANGES REVERSAL (`recheck_request_changes`) — the REVIEWER's
+//       own conclusion, never a person's, a source only by the owner's ruling
+//       R6 (2026-10-07, "Yes, as candidates"), which amends "learned only
+//       from people" (MANIFESTO.md) for this one source and only as a
+//       candidate the curator decides. The integration review withdrew it
+//       first, on the live store's evidence: 37 of a first packet's 40 offers
+//       were flips, 21 of the 48 flip events reversed no approval at all, and
+//       every human-sourced candidate queued behind them. So, three gates
+//       (`mineRecheckFlips`): it counts only when the bot's standing verdict
+//       just BEFORE the event was APPROVE (`verdictAt`, the event itself
+//       excluded — a second decision file at the same head finds the first
+//       flip standing); there is ONE candidate per (PR, head) (a duplicate
+//       wake mints nothing); and the packet labels the quote as the
+//       reviewer's own re-check conclusion (`quoteAuthor`) and offers these
+//       only after every human-sourced and digest candidate — and its
+//       clusters after every other cluster — in classes of their own
+//       (`recheck.<top directory>`, `recheckClass`) that no human source can
+//       produce, so a reversal never joins or counts toward a human class's
+//       recurrence and coverage, and unrelated reversals are not one bucket.
 //   digest-backfill                    the "Learnings" bullets of the digests
 //       written while memory refused every write (2026-08-31..10-02 by
 //       default) — candidates, never lessons directly. The bullets are the
@@ -60,13 +74,15 @@
 //
 // CLASSES. Every candidate has a class slug the packet clusters by and a
 // lesson names to cover it: a finding's `<lens>.<kind>` (`baseline.authz`), a
-// miss's `missed.<top directory>`, a whole-review signal's `review.<signal>`,
-// a digest bullet's `<lens>.<type>`. Deterministic, header-safe
-// (`LESSON_CLASS_RE`).
+// miss's `missed.<top directory>`, a recheck reversal's `recheck.<top
+// directory>` (a first segment no other source produces: no lens is named
+// `recheck`), a whole-review signal's `review.<signal>`, a digest bullet's
+// `<lens>.<type>`. Deterministic, header-safe (`LESSON_CLASS_RE`).
 //
 // Every quoted word rides in `quote`, capped at 400 characters, and is fenced
 // as data when rendered (src/memory/datafence.ts); whose words they are is
-// `quoteAuthor` (a person's, or the review system's own digest bullet).
+// `quoteAuthor` (a person's, the review system's own digest bullet, or the
+// reviewer's own re-check conclusion).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -76,7 +92,11 @@ import { LESSON_CLASS_RE } from "../memory/lessons.js";
 import type { StateStore } from "../state.js";
 import type { PostMergeScan } from "../worktrees.js";
 
-export type CandidateSource = "fate" | "feedback" | "tagged-comment" | "recall" | "digest-backfill";
+/** Where a candidate came from. `recheck` is the one source that is the
+ * REVIEWER's own conclusion (owner ruling R6) — every other is a person's
+ * outcome, or (`digest-backfill`) the overseer's lost digest bullets. */
+export type CandidateSource =
+  "fate" | "feedback" | "tagged-comment" | "recall" | "recheck" | "digest-backfill";
 
 export type CandidateKind =
   | "refuted_conceded"
@@ -90,14 +110,18 @@ export type CandidateKind =
   | "human_root_comment"
   | "human_request_changes"
   | "post_merge_change"
+  | "recheck_flip"
   | "digest_learning";
 
 /** Whose words a candidate's `quote` is: a person's (a reply, a comment, a
- * commit subject) or the review system's own (a digest bullet the overseer
- * wrote). The packet labels them — the curator must never read the bot's
- * own conclusion as a human's evidence. */
-export function quoteAuthor(kind: CandidateKind): "person" | "review-system" {
-  return kind === "digest_learning" ? "review-system" : "person";
+ * commit subject), the review system's own (a digest bullet the overseer
+ * wrote), or the REVIEWER's own re-check conclusion (its reason for
+ * reversing its own approval — R6). The packet labels them — the curator
+ * must never read the bot's own conclusion as a human's evidence. */
+export function quoteAuthor(kind: CandidateKind): "person" | "review-system" | "reviewer-recheck" {
+  if (kind === "digest_learning") return "review-system";
+  if (kind === "recheck_flip") return "reviewer-recheck";
+  return "person";
 }
 
 /** Which way a lesson from this evidence would point. `review` — a
@@ -162,6 +186,21 @@ export function missedClass(path: string | null | undefined): string {
   if (!path) return "missed.review";
   const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
   return safeClass(`missed.${top || "root"}`, "missed.review");
+}
+
+/** A recheck REVERSAL's class (owner ruling R6): `recheck.<top directory>` of
+ * the first anchor its findings record names (`recheck.root` for a file at
+ * the root, `recheck.review` with no record). The `recheck.` first segment is
+ * reserved to this source — `missedClass` writes `missed.`, a finding's and a
+ * digest bullet's first segment is a known lens (none is named `recheck`) or
+ * `review`/`feedback`/`digest` — so the reviewer's own reversals never share
+ * a cluster, a recurrence count or a covering lesson with a class human
+ * evidence built (a reviewed repo's `recheck/` directory included), and
+ * reversals in unrelated areas are not one bucket a single lesson "covers". */
+export function recheckClass(path: string | null | undefined): string {
+  if (!path) return "recheck.review";
+  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
+  return safeClass(`recheck.${top || "root"}`, "recheck.review");
 }
 
 // ---- small helpers ------------------------------------------------------------
@@ -284,19 +323,30 @@ function prAuthor(store: StateStore, pr: number): string | null {
  * (`recheck_request_changes`, which posts REQUEST_CHANGES without a
  * `verdict_applied` of its own) when that came later — or null when none had
  * been applied. A human comment after a flip is not "after the bot approved",
- * and a PR merged after one was not bot-approved at the merge. */
-export function verdictAt(store: StateStore, pr: number, atIso: string): string | null {
+ * and a PR merged after one was not bot-approved at the merge.
+ *
+ * `beforeEventId` reads the verdict standing just BEFORE one event of the
+ * events table (R6: a recheck flip is judged by what stood before IT — the
+ * flip itself, and anything logged after it in the same millisecond, never
+ * count). */
+export function verdictAt(
+  store: StateStore,
+  pr: number,
+  atIso: string,
+  opts: { beforeEventId?: number } = {},
+): string | null {
   // The events table stamps `toISOString()`; GitHub's own times carry no
   // milliseconds. Compare like with like.
   const t = Date.parse(atIso);
   if (Number.isFinite(t)) atIso = new Date(t).toISOString();
+  const before = opts.beforeEventId ?? Number.MAX_SAFE_INTEGER;
   const row = store.db
     .prepare(
       `SELECT kind, json_extract(payload, '$.verdict') AS verdict FROM events
-        WHERE kind IN ('verdict_applied', 'recheck_request_changes') AND pr = ? AND ts <= ?
+        WHERE kind IN ('verdict_applied', 'recheck_request_changes') AND pr = ? AND ts <= ? AND id < ?
         ORDER BY id DESC LIMIT 1`,
     )
-    .get(pr, atIso) as { kind: string; verdict: string | null } | undefined;
+    .get(pr, atIso, before) as { kind: string; verdict: string | null } | undefined;
   if (row?.kind === "recheck_request_changes") return "REQUEST_CHANGES";
   return row?.verdict ?? null;
 }
@@ -767,6 +817,116 @@ export function mineHumanRecall(
       quote: quoteOf(c.body),
       evidence: [`pr:${c.pr}`, `${rc ? "review" : "comment"}:${c.comment_id}`],
       occurred_at: at,
+    });
+  }
+  return out;
+}
+
+// ---- 3b. recheck reversals: the REVIEWER's own conclusion (owner ruling R6) ----
+
+/** A recheck head as the recheck's own key (`recheck:<head12>:` in
+ * src/recheck.ts): the first 12 hex characters, lowercased — so a full sha
+ * and its prefix are one head. Null for anything that is not a sha. */
+export function recheckHeadKey(head: unknown): string | null {
+  if (typeof head !== "string" || !/^[0-9a-f]{7,40}$/i.test(head)) return null;
+  return head.slice(0, 12).toLowerCase();
+}
+
+/** The posted rows of the recheck's own findings record at that head (the
+ * reasoning behind the reversal) — its lens ids and first anchor.
+ * Empty when it wrote none, or the record cannot be read. */
+function recheckFindings(
+  store: StateStore,
+  pr: number,
+  head12: string,
+): { lens_ids: string[]; path: string | null; line: number | null } {
+  const prefix = `recheck:${head12}:`;
+  try {
+    const rows = store.db
+      .prepare(
+        `SELECT lens, lens_ids, path, line FROM round_findings
+          WHERE pr = ? AND substr(finding_key, 1, ?) = ? AND disposition = 'posted' ORDER BY id`,
+      )
+      .all(pr, prefix.length, prefix) as Array<{
+      lens: string;
+      lens_ids: string | null;
+      path: string | null;
+      line: number | null;
+    }>;
+    const lens = [...new Set(rows.flatMap((r) => lensIdsOf(r.lens_ids, r.lens)))];
+    const anchored = rows.find((r) => r.path);
+    return { lens_ids: lens, path: anchored?.path ?? null, line: anchored?.line ?? null };
+  } catch {
+    return { lens_ids: [], path: null, line: null };
+  }
+}
+
+/**
+ * R6 (the owner, 2026-10-07, "Yes, as candidates"): a post-approval recheck's
+ * APPROVE → REQUEST_CHANGES REVERSAL is a look-for CANDIDATE — the reviewer's
+ * own conclusion, so never a lesson on its own and never a person's evidence.
+ * The gates the integration review asked for if it ever came back:
+ *   * the bot's standing verdict just BEFORE the event was APPROVE
+ *     (`verdictAt`, the event itself excluded): a decision "reversing" a
+ *     verdict that already stood at REQUEST_CHANGES — a second decision file,
+ *     a duplicate wake after the first flip — reverses nothing;
+ *   * ONE candidate per (PR, head) — `recheck-flip:<pr>:<head12>`, the
+ *     recheck's own head key — so duplicate wake events at one head mint
+ *     nothing, whichever of them passed the gate first;
+ *   * worded as the reviewer's re-check in the summary, and the quote (its
+ *     own reason) labelled as such in the packet (`quoteAuthor`).
+ * Lens and anchor come from the recheck's own findings record when it wrote
+ * one; the class is `recheckClass` of that anchor — a class no human source
+ * produces, so a reversal never joins, or counts toward, a class human
+ * evidence built.
+ */
+export function mineRecheckFlips(store: StateStore, sinceIso: string): CandidateDraft[] {
+  const rows = store.db
+    .prepare(
+      `SELECT id, ts, pr, payload FROM events WHERE kind = 'recheck_request_changes' AND ts >= ? ORDER BY id`,
+    )
+    .all(sinceIso) as Array<{ id: number; ts: string; pr: number | null; payload: string | null }>;
+  const out: CandidateDraft[] = [];
+  const minted = new Set<string>();
+  for (const e of rows) {
+    if (e.pr === null) continue;
+    let head: unknown = null;
+    let reason: unknown = null;
+    try {
+      const p = JSON.parse(e.payload ?? "{}") as { head_sha?: unknown; reason?: unknown };
+      head = p.head_sha;
+      reason = p.reason;
+    } catch {
+      /* no detail: no head, so no (PR, head) key — below */
+    }
+    // No head, no key: a reversal that cannot be told apart from its own
+    // duplicates is not minted at all.
+    const head12 = recheckHeadKey(head);
+    if (head12 === null) continue;
+    const ref = `recheck-flip:${e.pr}:${head12}`;
+    if (minted.has(ref)) continue;
+    if (verdictAt(store, e.pr, e.ts, { beforeEventId: e.id }) !== "APPROVE") continue;
+    minted.add(ref);
+    const sha = head as string;
+    const f = recheckFindings(store, e.pr, head12);
+    out.push({
+      ref,
+      source: "recheck",
+      kind: "recheck_flip",
+      polarity: "look-for",
+      class: recheckClass(f.path),
+      lens_ids: f.lens_ids,
+      pr: e.pr,
+      round_no: null,
+      finding_key: null,
+      path: f.path,
+      line: f.line,
+      summary: oneLine(
+        `PR #${e.pr}: the REVIEWER's own post-approval re-check reversed its APPROVE to REQUEST_CHANGES at ${sha.slice(0, 7)}${f.path ? `, first${where(f)}` : ""} — the reviewer's conclusion, no person's; was the miss in the code it had approved?`,
+      ),
+      quote: quoteOf(typeof reason === "string" ? reason : null),
+      evidence: [`pr:${e.pr}`, `commit:${sha.toLowerCase()}`],
+      occurred_at: e.ts,
     });
   }
   return out;

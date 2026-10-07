@@ -10,8 +10,13 @@ import activate, {
   checkSecretPaths,
   checkWritePath,
   defaultSecretPathContext,
+  isMemoryScopeSurface,
+  MEMORY_SCOPE_SURFACE,
+  protectedPatternHit,
+  redirectTargets,
   type SecretPathContext,
 } from "../extensions/bash-guard.js";
+import { ovRecallHintPathIn, ovRetiredPathIn } from "../src/memory/ovsession.js";
 
 const allow = (cmd: string): void => {
   const res = checkBashCommand(cmd);
@@ -876,6 +881,230 @@ describe("checkWritePath / this system's own policy surface", () => {
     allow("printf '%s\\n' x > /tmp/body.md");
     allow("cat body.md >> /tmp/notes.md");
     allow("echo x > verdict/pr-5249-round-2.json");
+  });
+});
+
+// ---- S8b: a session cannot widen its own memory recall -------------
+//
+// The daemon publishes two files into a PR session's pi home that decide how
+// far its OWN memory recall reaches (src/memory/ovsession.ts): the recall hint
+// (`recall-hints/<session>.json` — the round's query and the ONLY areas its
+// recall and memory tools may read, `experiences/`) and the retired list
+// (`retired-uris.json` — entries the recall must exclude). Both lived in the
+// pi HOME and neither was on the protected list, so one redirection widened
+// the session's scope to the finding cases and feedback events no round may
+// read (vendored patches 0009/0011), until the daemon rewrote the hint. The
+// integration review noted it; this closes it at the write boundary, through
+// the same predicate both channels read.
+describe("checkWritePath / the memory-scope files a session's recall reads (S8b)", () => {
+  const PI_HOME = "/opt/quickreview/pihome";
+  const HINT = ovRecallHintPathIn(PI_HOME, "pr-5249");
+  const RETIRED = ovRetiredPathIn(PI_HOME);
+  const writeBlocked = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} should be refused`).toBe(false);
+    expect(res.reason).toContain("memory-scope file");
+  };
+  const writeOk = (p: string): void => {
+    const res = checkWritePath(p);
+    expect(res.allowed, `${p} → ${res.reason ?? ""}`).toBe(true);
+  };
+
+  // MUTATION: drop either entry of MEMORY_SCOPE_SURFACE_RE in
+  // extensions/bash-guard.ts (or `isMemoryScopeSurface` from
+  // `isProtectedWriteTarget`) — the matching lines here AND in the
+  // redirection test below fail, because both read the one predicate.
+  it("refuses the very paths the daemon writes, through the write tool", () => {
+    // The writer's own path functions, so the guard and the daemon cannot
+    // drift to two spellings of the same file.
+    expect(HINT).toBe("/opt/quickreview/pihome/.openviking/recall-hints/pr-5249.json");
+    expect(RETIRED).toBe("/opt/quickreview/pihome/.openviking/retired-uris.json");
+    writeBlocked(HINT);
+    writeBlocked(RETIRED);
+    // Relative, home-relative, and from inside `.openviking/` (a `cd` drops
+    // that part of the spelling — the name itself is the shape).
+    writeBlocked("pihome/.openviking/recall-hints/pr-5249.json");
+    writeBlocked("~/.openviking/recall-hints/pr-1.json");
+    writeBlocked("$HOME/.openviking/retired-uris.json");
+    writeBlocked("recall-hints/pr-5249.json");
+    writeBlocked("./retired-uris.json");
+    // The atomic-write temps, and the hint dir itself (a FILE planted there
+    // would stop the daemon creating the dir).
+    writeBlocked(`${HINT}.tmp-123`);
+    writeBlocked(`${RETIRED}.tmp-123`);
+    writeBlocked("/opt/quickreview/pihome/.openviking/recall-hints");
+    expect([...MEMORY_SCOPE_SURFACE]).toEqual(["recall-hints/", "retired-uris.json"]);
+  });
+
+  it("closes the same files when the write rides a shell redirection or sed -i, in every spelling", () => {
+    block(`printf '{"query":"x","areas":["finding-cases","events"]}' > ${HINT}`, "memory-scope");
+    block(`echo '{"uris":[]}' > ${RETIRED}`, "memory-scope");
+    block(`cat /tmp/x >> ~/.openviking/recall-hints/pr-5249.json`, "memory-scope");
+    block(`cat /tmp/x &>${RETIRED}`, "memory-scope");
+    block(`cat /tmp/x {v}>${HINT}`, "memory-scope");
+    block(`printf x 1<>${RETIRED}`, "memory-scope");
+    block(`cat /tmp/x >| ${HINT}`, "memory-scope");
+    block(`cat /tmp/x > "$HOME/.openviking/retired-uris.json"`, "memory-scope");
+    block(`cat /tmp/x > ~/.openviking/recall-hints/pr-5249.js"on"`, "memory-scope");
+    block(`cat /tmp/x > retired-uri"s".json`, "memory-scope");
+    block(`sed -i 's/experiences/finding-cases/' ${HINT}`, "memory-scope");
+    block(`bash -c 'git status; printf x > ${RETIRED}'`, "memory-scope");
+    // The indirect writers stay refused as programs whatever their target.
+    block(`echo x | tee ${HINT}`);
+    block(`cp /tmp/x ${RETIRED}`);
+  });
+
+  // The S8b review falsified G6 as first written: each of these NAMES the
+  // file and each overwrote the real one in a scratch dir (bash 5, git 2.55),
+  // while a literal-name check allowed it. MUTATION: drop the
+  // `redirectTargets` loop from `checkProtectedWrites` — the pattern, brace,
+  // glued and ANSI-C lines fail; drop `GIT_OUTPUT_FILE_OPT` from `checkGit` —
+  // the `--output` lines fail.
+  it("closes the spellings that name the file without spelling it: patterns, braces, a glued operator, git's --output", () => {
+    // Pathname expansion: a pattern matching one existing file IS that file.
+    block("echo x > ~/.openviking/recall-hint?/pr-5249.json", "memory-scope");
+    block("echo x > ~/.openviking/recall-h*/pr-5249.json", "memory-scope");
+    block(`echo '{"uris":[]}' > ${PI_HOME}/.openviking/retired-uri[s].json`, "memory-scope");
+    block("echo x > ~/.openviking/retired-uris.js*", "memory-scope");
+    block("cat /tmp/x > retired-uris.json.tmp-*", "memory-scope");
+    // A one-element sequence brace is one word, so it is no ambiguous redirect.
+    block("printf x > ~/.openviking/recall-hint{s..s}/pr-5249.json", "memory-scope");
+    // The operator glued to the word before it, and bash's own quote forms.
+    block(`printf '{"uris":[]}'>~/.openviking/retired-uris.json`, "memory-scope");
+    block("printf x > $'retired-uris.json'", "memory-scope");
+    block(`printf x > $"retired-uris.json"`, "memory-scope");
+    block("bash -c 'git status; printf x > retired-uri[s].json'", "memory-scope");
+    // The read verbs' own file write — no redirection at all.
+    block(
+      `git log -1 --format='format:{"query":"x","areas":["events"]}' --output="$HOME/.openviking/recall-hints/pr-5.json"`,
+      "WRITE its output",
+    );
+    block(`git show HEAD:hint.json --output=${HINT}`, "WRITE its output");
+    block(`git diff --output ${RETIRED}`, "WRITE its output");
+    // The refusal names the pattern AND what it can expand onto.
+    expect(checkBashCommand("echo x > retired-uri[s].json").reason).toContain(
+      "'retired-uri[s].json' (a pattern bash expands before it opens the file — it can name 'retired-uris.json')",
+    );
+  });
+
+  it("a pattern no protected name can satisfy, and a `>` inside a quoted pattern, stay allowed", () => {
+    allow("printf x > /tmp/review-*.md");
+    allow("printf x > /tmp/out[1].txt");
+    allow(`rg -n "a >.*" src/`);
+    allow(`rg -n "<b>.*</b>" src/`);
+    allow("rg -n '=> *' src/");
+    allow("cat a 2>/dev/null");
+    allow("diff <(cat a) <(cat b)");
+    expect(protectedPatternHit("/tmp/out-*.txt")).toBeNull();
+    expect(protectedPatternHit("plain/path.json")).toBeNull();
+    expect(protectedPatternHit("~/.openviking/recall-hint?/pr-1.json")).toBe(
+      "~/.openviking/recall-hints/pr-1.json",
+    );
+  });
+
+  it("still allows READING them, and every write a session legitimately makes", () => {
+    allow(`cat ${HINT}`);
+    allow(`jq . ${RETIRED}`);
+    allow("rg -n recall-hints src/");
+    allow("printf '%s' x > /tmp/review-body.md");
+    writeOk("/opt/quickreview/state/ledger/pr-5249.md");
+    writeOk("verdict/pr-5249-round-2.json");
+    // A NAME that merely contains the words is not the file.
+    writeOk("docs/recall-hints.md");
+    writeOk("notes/my-retired-uris.json");
+    writeOk("/tmp/retired-uris.json.bak");
+    expect(isMemoryScopeSurface("src/memory/ovsession.ts")).toBe(false);
+    expect(isMemoryScopeSurface("")).toBe(false);
+  });
+
+  it("the pi hookup refuses the write tool on them", () => {
+    let handler: ((event: Record<string, unknown>) => unknown) | undefined;
+    activate({
+      on: (event: string, h: (e: Record<string, unknown>) => unknown) => {
+        if (event === "tool_call") handler = h;
+      },
+    } as never);
+    expect(
+      handler!({ toolName: "write", input: { path: HINT, content: '{"areas":["events"]}' } }),
+    ).toMatchObject({ block: true, reason: expect.stringContaining("memory-scope file") });
+    expect(handler!({ toolName: "edit", input: { file_path: RETIRED } })).toMatchObject({
+      block: true,
+    });
+    expect(handler!({ toolName: "read", input: { path: HINT } })).toBeUndefined();
+  });
+});
+
+// ---- S8b review: git's read verbs in their write and exec modes ------
+//
+// The S8b review found `git show/log/diff --output=<file>` writing any bytes
+// (a committed blob, a `--format=format:` string) to any path — the write veto
+// reads redirections and `sed -i` only, so a protected path in plain sight
+// walked past it. Closing it turned up a second, worse one in the same
+// family: `git grep -O<cmd>` RUNS <cmd>. And git receives its options with
+// the shell's quotes removed, so a quote inside an option name
+// (`--up"load"-pack=`) spelled a refused option the guard did not recognise.
+describe("git's own write and exec options (S8b review)", () => {
+  // MUTATION: drop `GIT_OUTPUT_FILE_OPT` from `checkGit` — every --output
+  // line fails.
+  it("refuses --output on every read verb that takes diff options, quoted or not", () => {
+    for (const cmd of [
+      "git diff --output=/tmp/x",
+      "git diff HEAD --output /tmp/x",
+      "git log -p --output=/tmp/x",
+      "git show HEAD:a.json --output /tmp/x",
+      "git diff-tree -p HEAD --output=/tmp/x",
+      "git range-diff a...b --output=/tmp/x",
+      `git log --out"put"=/tmp/x`,
+      `git log "--output=/tmp/x"`,
+    ])
+      block(cmd, "WRITE its output");
+    // Read options that only look like it.
+    allow("git diff --output-indicator-new=+ HEAD");
+    allow("git log -O order.txt -p");
+    allow("git show -c HEAD");
+  });
+
+  // MUTATION: drop the `verb === "grep" && isGitGrepPagerOpt(a)` check — the
+  // -O and --open-files-in-pager lines fail.
+  it("refuses git grep's pager option, in every spelling git accepts", () => {
+    for (const cmd of [
+      `git grep -O"touch /tmp/pwned" x`,
+      "git grep -Otouch x",
+      "git grep -nOtouch x",
+      "git grep -O x",
+      "git grep --open-files-in-pager=touch x",
+      "git grep --open-files-in-pager x",
+      "git grep --op=touch x",
+      "git grep --open=touch x",
+    ])
+      block(cmd, "runs a program");
+    // Its other options, including ones whose VALUE contains an O.
+    allow("git grep -n foo src/");
+    allow("git grep -eFOO src/");
+    allow("git grep -n -e Options src/");
+    allow("git grep -A3 -n foo");
+    allow("git grep -C 2 foo");
+    allow("git grep --or -e a -e b");
+    // Not grep: `-O` is git log's order file.
+    allow("git log -O order.txt");
+  });
+
+  // MUTATION: judge `rawGitArgs` instead of the dequoted `args` in `checkGit`
+  // — the two quoted option names are allowed again.
+  it("judges each option as git receives it — quotes inside an option name removed", () => {
+    block(`git ls-remote --up"load"-pack=touch origin`, "hand git a command");
+    block(`git --git-"dir"=/tmp/evil diff`, "hand git a command");
+    block(`git fetch --upload-pack='touch x' origin`, "hand git a command");
+    allow(`git log --format="%H %s" -5`);
+    allow(`git show "HEAD:src/a b.ts"`);
+  });
+});
+
+describe("redirectTargets — the redirections bash would perform", () => {
+  it("reads quotes: a `>` inside quotes is text, one glued to a word is an operator", () => {
+    expect(
+      redirectTargets(`echo a>b "x>y" 'p > q' 2>/dev/null >> "c d" >(tee x) > $'e' \\> f`),
+    ).toEqual(["b", "/dev/null", "c d", "e"]);
   });
 });
 

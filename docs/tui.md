@@ -202,9 +202,12 @@ container's state is known; the board offers no `u` until a PR is selected).
 
 `prompts/companion.md` documents the action channel: `switch_tab` takes the
 eight names above, `digest_day` pages the digest tab to a day, `memory_view`
-filters the memory timeline by tag and jumps to a day, and `memory_filter`
-sets or clears the tag filter. There is no memory-WRITE
-verb: rule 8 retired the companion-asks-the-TUI-to-write channel, so a
-`memory_pin` verb (S5) was withdrawn by the integration review —
-pinning an existing entry is the operator's `p`. The vocabulary there is this
+filters the memory timeline by tag and jumps to a day, `memory_filter` sets
+or clears the tag filter, and `memory_pin` pins or unpins one EXISTING entry
+through the TUI's memory store — the same move as `p`, answered in the result
+file (a refusal is a failed result). It is the channel's only memory verb and
+does nothing but pin and unpin: the owner's ruling R7 (2026-10-07)
+amended rule 8 for exactly this, after the integration review had withdrawn
+the verb as the retired companion-asks-the-TUI-to-write channel. Every other
+memory write is the companion's own. The vocabulary there is this
 vocabulary.

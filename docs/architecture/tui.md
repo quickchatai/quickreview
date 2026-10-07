@@ -503,7 +503,10 @@ files validated against a strict schema and executed against a `TuiDriver`
 supplied at wiring time. The verb set is closed and is exactly what the
 operator's own keyboard can do — tab switches, PR selection, filters, digest
 and memory paging, metrics window/PR, quick-messages, overseer injects, the
-deploy-tab buttons. Requests execute instantly; there is no confirmation step,
+deploy-tab buttons, and (`memory_pin`, the owner's ruling R7 on —
+root rule 8's fourth amendment) the memory tab's `p`: pin or unpin one
+existing entry through the TUI's `MemoryStore`, awaited so the result file
+carries the store's answer, and nothing else about memory. Requests execute instantly; there is no confirmation step,
 and the executed trace lands on the notice line. Idempotency comes from
 **archive-before-execute**: a request is moved to `.done/` before it runs, so
 a crash mid-execute cannot re-run it (a double-send or a double-arm is worse

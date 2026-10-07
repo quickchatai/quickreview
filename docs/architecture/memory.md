@@ -132,7 +132,7 @@ The §1 areas (ratified 2026-08-20, built in S5), under
 
 | Area | Holds | Written by |
 |---|---|---|
-| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (the TUI's `p`) |
+| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (the TUI's `p`, the companion's `memory_pin` action — R7) |
 | `preferences/` | unpinned standing instructions — the owner's own words (`#manual`) | the TUI's `n`, an unpin |
 | `experiences/` | curated lessons, conventions, setup/scan notes — the ONLY area a round's context block searches | the EOD curator, setup, scans |
 | `finding-cases/` | finding cases (S7) | — |
@@ -188,7 +188,10 @@ before memory is asked, and the daemon writes it, with the round-search areas,
 to the session's `QCR_OV_RECALL_HINT_FILE` (`writeRecallHint`), so the
 vendored extension's per-prompt recall (patch 8) searches for this PR inside
 `experiences/` instead of embedding the round order's fixed header across
-every scope.
+every scope. The session's own shell may not write that file (S8b:
+`MEMORY_SCOPE_SURFACE` in `extensions/bash-guard.ts`, beside the retired list
+below) — its areas bound the session's recall and memory tools, so a session
+that could rewrite it could widen its own reach.
 
 `pinnedHeadState(mem)` names the three states so no caller reconstructs them:
 `populated`, `empty` (answered, nothing pinned — not a gap), `unread`.
@@ -242,7 +245,8 @@ sweep sees the set of retired URIs change, `writeRetiredUris` rewrites
 `<pi HOME>/.openviking/retired-uris.json` beside `ovcli.conf`, and every
 session is launched with `QCR_OV_RETIRED_FILE` naming it; the extension's
 recall excludes them (patch 7, below). A derived list of URIs, not a write
-into memory. **Only a complete sweep may shrink it**: a sweep that could not
+into memory, and not one a session may write: the bash guard refuses it at
+both write boundaries (S8b). **Only a complete sweep may shrink it**: a sweep that could not
 list the root or a category, or read a file, keeps every URI it knew (the
 last list, the cached reads it could not re-check) and adds what it saw, and
 the daemon's store starts from the file the last daemon wrote

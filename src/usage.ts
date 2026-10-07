@@ -17,7 +17,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 // The guard's TOKENISER — not its policy. The rules below stay an
 // independent implementation on purpose (see execViolationKind).
-import { normalizeRedirections, splitShellSegments } from "../extensions/bash-guard.js";
+import {
+  normalizeRedirections,
+  redirectTargets,
+  splitShellSegments,
+} from "../extensions/bash-guard.js";
 import { join } from "node:path";
 
 export interface UsageFs {
@@ -344,12 +348,18 @@ export type ExecViolationKind =
   | "git_config_surface_write"
   /** A read-only-allowlisted program (awk/sed/sort/find) used in a write or
    * exec mode — the four primitives the first review found this audit
-   * blind to. */
+   * blind to — and git's read verbs in theirs: `--output=<file>` (the diff
+   * options' file write) and `git grep -O<cmd>` (S8b review). */
   | "reader_write_or_exec"
   /** A write landing on THIS system's own policy surface — config.toml,
    * scripts/, dist/, extensions/, prompts/agents/seeds, .pi/. The
    * one-level-out analogue of `git_config_surface_write`. */
   | "policy_surface_write"
+  /** A write landing on a MEMORY-SCOPE file — the recall hint
+   * (`recall-hints/<session>.json`) or the retired list
+   * (`retired-uris.json`) a session's own memory recall reads (S8b).
+   * Writing either widens what that recall may reach. */
+  | "memory_scope_write"
   /** A session env-prefix that relocates this system's policy inputs
    * (`QCR_CONFIG=` and kin), at the top level or laundered inside a
    * `bash -c '…'` payload. */
@@ -429,12 +439,19 @@ const GIT_CONFIG_INJECTION_RE =
  */
 const GIT_CONFIG_SURFACE_PATH_RE = /(?:^|\/)(?:\.git\/|\.gitconfig$|git\/config$|\.gitattributes$)/;
 
+/** The operators that WRITE the word after them: a redirection (`>`, `>>`,
+ * every other spelling folded onto those by `normalizeRedirections`) and the
+ * diff options' `--output=<file>` / `--output <file>`, which `git log`,
+ * `git show` and `git diff` write into (S8b review — the guard
+ * refuses it; this is what makes a write that got past it visible). */
+const WRITE_OPERATOR = String.raw`(?:>>?|--output[=\s])\s*`;
+
 /** The same surface as a bash WRITE: a redirection target, or `sed -i`'s. A
  * bare mention is not enough — `git show HEAD:.gitattributes` is a legitimate
  * read of a file the PR touched, and auditing it as a config write would be
  * the kind of routine false line that teaches an operator to skip the event. */
 const GIT_CONFIG_SURFACE_WRITE_RE =
-  /(?:>>?\s*\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes)|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes))/;
+  /(?:(?:>>?|--output[=\s])\s*\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes)|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+\S*(?:\.git\/\S*|\.gitconfig|git\/config|\.gitattributes))/;
 
 /**
  * A write landing on THIS system's own policy surface — the same
@@ -448,7 +465,8 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * the guard, kept an independent implementation on purpose. */
 const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
-  String.raw`(?:>>?\s*` +
+  String.raw`(?:` +
+    WRITE_OPERATOR +
     POLICY_SURFACE_TARGET +
     String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` +
     POLICY_SURFACE_TARGET +
@@ -460,6 +478,123 @@ const POLICY_SURFACE_WRITE_RE = new RegExp(
  * (the built `state/agents/…` included — `agents/` follows a slash). */
 const POLICY_SURFACE_PATH_RE =
   /(?:^|\/)(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
+
+/**
+ * A write landing on a MEMORY-SCOPE file (S8b) — the same SHAPE again:
+ * a redirection or a `sed -i` whose target is the recall hint dir
+ * (`recall-hints/`) or the retired list (`retired-uris.json`), at any prefix.
+ * A review session never writes either; the daemon does, every round. Mirrors
+ * `isMemoryScopeSurface` in the guard, kept an independent implementation on
+ * purpose.
+ */
+const MEMORY_SCOPE_TARGET = String.raw`(?:\S*\/)?(?:recall-hints(?:\/\S*)?|retired-uris\.json(?:\.tmp-\S*)?)(?=[\s;&|()<>]|$)`;
+const MEMORY_SCOPE_WRITE_RE = new RegExp(
+  String.raw`(?:` +
+    WRITE_OPERATOR +
+    MEMORY_SCOPE_TARGET +
+    String.raw`|\bsed\s+(?:-\S+\s+)*-[a-zA-Z]*i\S*(?:\s+\S+)*?\s+` +
+    MEMORY_SCOPE_TARGET +
+    String.raw`)`,
+);
+
+/** The same memory-scope files as a WRITE-TOOL target path: the hint dir and
+ * anything in it, the retired list and its atomic-write temp — the guard's
+ * shapes, so the audit flags exactly what the guard refuses (a
+ * `docs/recall-hints.md` or a `retired-uris.json.bak` is neither). */
+const MEMORY_SCOPE_PATH_RE = /(?:^|\/)(?:recall-hints(?:\/|$)|retired-uris\.json(?:\.tmp-[^/]*)?$)/;
+
+/**
+ * A write target spelled as a PATTERN (S8b review): bash expands a
+ * redirection target before it opens the file, so `> retired-uri[s].json`,
+ * `> recall-hint?/pr-1.json`, `> config.tom?` and `> recall-hint{s..s}/…`
+ * write the protected file while no literal name above matches. Each pattern
+ * component (a brace group widened to `*`) is tried against the protected
+ * component names and the substituted paths are classified by the path
+ * rules — the guard's `protectedPatternHit` is the same idea, and this is an
+ * independent implementation of it on purpose.
+ */
+const PATTERN_SYNTAX_RE = /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/;
+const SURFACE_COMPONENT_NAMES: readonly string[] = [
+  ".git",
+  ".gitconfig",
+  "git",
+  "config",
+  ".gitattributes",
+  "config.toml",
+  "AGENTS.override.md",
+  "AGENTS.md",
+  "AGENTS.MD",
+  "CLAUDE.md",
+  "CLAUDE.MD",
+  "scripts",
+  "dist",
+  "extensions",
+  "prompts",
+  "agents",
+  "seeds",
+  ".pi",
+  "recall-hints",
+  "retired-uris.json",
+  "retired-uris.json.tmp-1",
+];
+
+/** A shell pattern component as an anchored regex: `*`, `?`, `[…]`/`[!…]`. */
+function componentPatternRe(c: string): RegExp {
+  let re = "";
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i]!;
+    if (ch === "*") re += ".*";
+    else if (ch === "?") re += ".";
+    else if (ch === "[" && c.indexOf("]", i + 2) > 0) {
+      const close = c.indexOf("]", i + 2);
+      const body = c.slice(i + 1, close);
+      re += `[${body.startsWith("!") ? `^${body.slice(1)}` : body}]`.replace(/\\/g, "\\\\");
+      i = close;
+    } else re += ch.replace(/[.+^${}()|\\/[\]]/g, "\\$&");
+  }
+  try {
+    return new RegExp(`^${re}$`);
+  } catch {
+    return /^$/;
+  }
+}
+
+/** Which protected surface a write-tool target path is, if any. */
+function surfacePathKind(path: string): ExecViolationKind | null {
+  if (GIT_CONFIG_SURFACE_PATH_RE.test(path)) return "git_config_surface_write";
+  if (MEMORY_SCOPE_PATH_RE.test(path)) return "memory_scope_write";
+  if (POLICY_SURFACE_PATH_RE.test(path)) return "policy_surface_write";
+  return null;
+}
+
+/** The surface a PATTERN write target can expand onto, if any. */
+function patternTargetKind(target: string): ExecViolationKind | null {
+  if (!PATTERN_SYNTAX_RE.test(target)) return null;
+  const parts = target.replace(/\{[^{}]*(?:,|\.\.)[^{}]*\}/g, "*").split("/");
+  let paths = [""];
+  for (const [k, part] of parts.entries()) {
+    const options = [part];
+    if (/[*?[]/.test(part)) {
+      const re = componentPatternRe(part);
+      for (const n of SURFACE_COMPONENT_NAMES) if (re.test(n)) options.push(n);
+    }
+    paths = paths.flatMap((p) => options.map((o) => (k === 0 ? o : `${p}/${o}`)));
+    // Too broad to enumerate: a pattern this wide over a write is itself the
+    // line — the policy surface is the widest set it could reach.
+    if (paths.length > 512) return "policy_surface_write";
+  }
+  for (const p of paths) {
+    const kind = surfacePathKind(p);
+    if (kind !== null) return kind;
+  }
+  return null;
+}
+
+/** Every `--output` target in one (dequoted) segment. The redirection
+ * targets come from the guard's quote-aware `redirectTargets` — its
+ * tokeniser, borrowed like `splitShellSegments`, so a `>` inside a quoted
+ * grep pattern is no write here either. */
+const OUTPUT_TARGET_RE = /--output[=\s]\s*([^\s;&|()<>]+)/g;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
  * `QCR_` inputs the guard refuses in `POLICY_RELOCATING_ENV` (`QCR_INSTALL`
@@ -546,6 +681,10 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
   sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
+  // S8b review: the diff options' `--output=<file>` on any verb, and
+  // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
+  // abbreviation of the long form; `-O` ending a short cluster).
+  git: /(?:^|\s)--output(?:=|\s|$)|\bgit\s+(?:-C\s+\S+\s+|-\S+\s+)*grep\b.*?\s(?:--op[a-z-]*(?:=|\s|$)|-[A-Za-z]*O)/,
 };
 
 /** The first real program token in a segment: `VAR=val` prefixes, `env` and its
@@ -587,12 +726,28 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // con"fig".toml` and `> config\.toml` are `config.toml`.
   const bare = segment.replace(/["'\\]/g, "");
   if (GIT_CONFIG_SURFACE_WRITE_RE.test(bare)) return "git_config_surface_write";
+  if (MEMORY_SCOPE_WRITE_RE.test(bare)) return "memory_scope_write";
   if (POLICY_SURFACE_WRITE_RE.test(bare)) return "policy_surface_write";
+  // The same surfaces once more, over the writes bash would actually perform
+  // (S8b review): every unquoted redirection's target with its
+  // quoting removed as bash removes it (`> $'retired-uris.json'`), and every
+  // `--output` target — each named literally, or as a PATTERN bash expands
+  // (`> retired-uri[s].json`).
+  for (const target of [
+    ...redirectTargets(segment),
+    ...[...bare.matchAll(OUTPUT_TARGET_RE)].map((m) => m[1]!),
+  ]) {
+    const kind = surfacePathKind(target) ?? patternTargetKind(target);
+    if (kind !== null) return kind;
+  }
   const prog = segmentProgram(segment);
   if (prog !== null) {
     // Checked BEFORE the reader skip below: these programs are readers by
-    // default and writers on a flag, and the flag is the whole point.
-    if (READER_MODE_AUDIT[prog]?.test(segment)) return "reader_write_or_exec";
+    // default and writers on a flag, and the flag is the whole point. git's
+    // rule reads the DEQUOTED segment, as git receives its options
+    // (`--out"put"=…` is `--output=…`).
+    if (READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment))
+      return "reader_write_or_exec";
     if (AUDIT_READERS.has(prog)) return null;
   }
   // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
@@ -729,9 +884,7 @@ export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
     const targets: string[] = [];
     writeTargetsIn(rec, targets);
     for (const target of targets) {
-      let kind: ExecViolationKind | null = null;
-      if (GIT_CONFIG_SURFACE_PATH_RE.test(target)) kind = "git_config_surface_write";
-      else if (POLICY_SURFACE_PATH_RE.test(target)) kind = "policy_surface_write";
+      const kind = surfacePathKind(target);
       if (kind === null) continue;
       const key = `write ${target}`;
       if (!seen.has(key)) seen.set(key, kind);

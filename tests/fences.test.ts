@@ -583,6 +583,9 @@ describe("no env prefix can move the posting guards' own configuration", () => {
       "QCR_CONFIG=/tmp/x.toml bash scripts/approve-pr.sh 5 b.md",
       "scripts/pr-self.sh 5 reviews",
       "gh pr review 5 --approve",
+      // the memory-scope files a session's own recall reads.
+      `printf '{"areas":["events"]}' > ~/.openviking/recall-hints/pr-5.json`,
+      "cat ~/.openviking/recall-hints/pr-5.json",
     ]) {
       expect(compiled.checkBashCommand(cmd).allowed, `compiled: ${cmd}`).toBe(
         source.checkBashCommand(cmd).allowed,

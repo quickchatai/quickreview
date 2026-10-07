@@ -23,12 +23,21 @@ from this recipe.
 > …)` takes instead of `memState`; and the `changes` tab is the CHANGED pane of
 > `[7] feedback`. `docs/tui.md` is the current vocabulary.
 
-> **Added and withdrawn 2026-10-07 (S5, integration review).** A
-> `memory_pin` verb let the companion pin through the TUI's `MemoryStore`. That
-> is the companion→TUI memory-write channel rule 8 retired ("the companion
-> writes memory itself instead of asking the TUI to"), so it was removed; the
-> verb is refused as unknown (`tests/actions.test.ts`). Restoring it, or giving
-> the companion its own move verb, is the owner's call.
+> **Added 2026-10-07 (S5), withdrawn by the integration review the
+> same morning, restored by the owner's ruling R7 (S8b — root
+> CLAUDE.md rule 8's fourth amendment).** `memory_pin` — `{"entry": "<TUI id
+> or viking:// URI>", "pin": true|false}` — pins or unpins one EXISTING memory
+> entry, and is the channel's one memory verb and its one ASYNCHRONOUS verb:
+> `TuiDriver.memoryPin` returns a promise (a fresh read through the TUI's
+> `MemoryStore`, then the `pin`/`unpin` op, which MOVES the entry into or out
+> of `preferences/pinned/` — the memory tab's `p`), `executeTuiAction` returns
+> it, and `processTuiActions` awaits it, so the result file carries the
+> store's answer and a refusal is a failed result. It is a memory write, not a
+> keystroke: no tab switch, no `prep()`. Bounded to pin and unpin: the parser
+> refuses any param but `entry` and `pin`, `TuiDriver` has no other memory
+> method, and the only ops the driver hands the store are `pin` and `unpin`
+> (`tests/actions.test.ts`, `tests/actions-wiring.test.ts`). Every other
+> memory write stays the companion's own, with its own keys.
 
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
