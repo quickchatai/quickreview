@@ -57,6 +57,7 @@ import { buildPipelineStatus, buildStatusSnapshot, StateStore, writeStatusJson }
 import { PiAuthWatch } from "./authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
 import { parseRoundProgress } from "./round-progress.js";
+import { SingleFlight } from "./singleflight.js";
 import { yieldToLoop } from "./yieldloop.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
@@ -215,6 +216,9 @@ const VERDICT_SWEEP_S = 10;
 const DEADLINE_TICK_S = 60;
 const STATUS_TICK_S = 30;
 const AUTHWATCH_TICK_S = 60;
+/** A reconcile pass running this many poll intervals is abandoned (logged as
+ * the quiet anomaly `reconcile_pass_overdue`) and the next one starts. */
+export const RECONCILE_OVERDUE_INTERVALS = 3;
 
 export interface Daemon {
   start(): Promise<void>;
@@ -673,27 +677,47 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   // passes ended within 21 s at 13:55 on 2026-10-07 — and every overlap paid
   // every step again. A tick that finds a pass running is skipped; an
   // explicit call waits for it and then runs its own pass.
-  let reconcileRunning: Promise<void> | null = null;
+  //
+  // The guard is BOUNDED (review fix): it covers reconcileOnce and the drain
+  // lift only — the conversation sweep and the dispatch pump run after it is
+  // released, each behind its own lock — and a pass still running after
+  // RECONCILE_OVERDUE_INTERVALS poll intervals is abandoned, so one hung await
+  // can never stop every later pass (and with them the backstop and the
+  // undelivered-recheck sweep, #5362 rule ④).
+  const reconcileFlight = new SingleFlight({
+    overdueMs: () => RECONCILE_OVERDUE_INTERVALS * cfg.daemon.poll_interval_s * 1000,
+    onOverdue: (ageMs) => {
+      const detail =
+        `a reconcile pass has run ${Math.round(ageMs / 1000)} s ` +
+        `(over ${RECONCILE_OVERDUE_INTERVALS} poll intervals of ${cfg.daemon.poll_interval_s} s) ` +
+        `without settling — no longer waited for; the next pass starts beside it`;
+      log(`reconcile: ${detail}`);
+      store.logAnomaly("reconcile_pass_overdue", null, null, detail);
+    },
+  });
   const reconcile = async (): Promise<void> => {
-    while (reconcileRunning) await reconcileRunning;
-    const pass = reconcilePass();
-    reconcileRunning = pass;
-    try {
-      await pass;
-    } finally {
-      if (reconcileRunning === pass) reconcileRunning = null;
-    }
+    if (!(await reconcileFlight.run(reconcilePass))) return;
+    // Outside the single-flight: both have their own locks (PrConversation's
+    // `busy`, dispatch's per-store active pump), and a pump that hangs on a
+    // worktree fetch must not hold the next reconcile pass back.
+    await guard("reconcile", async () => {
+      await prConversation.sweep();
+      await pump();
+    });
   };
   const reconcileTick = (): void => {
-    if (reconcileRunning) {
+    if (reconcileFlight.running()) {
       log("reconcile: the previous pass is still running — this tick skipped");
       return;
     }
     void reconcile();
   };
-  const reconcilePass = async (): Promise<void> => {
+  /** The guarded part of a pass; true when it completed (the follow-ups run
+   * only then, as they did when they sat at the end of this body). */
+  const reconcilePass = async (): Promise<boolean> => {
     const bootFirstPass = !firstReconcileSeen;
     firstReconcileSeen = true;
+    let completed = false;
     await guard("reconcile", async () => {
       const report = await reconcileOnce({
         cfg,
@@ -736,9 +760,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         );
         threadDecisions.requestSweep();
       }
-      await prConversation.sweep();
-      await pump();
+      completed = true;
     });
+    return completed;
   };
 
   const pump = async (): Promise<void> => {

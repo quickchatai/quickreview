@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, parseConfig, type Config } from "../src/config.js";
-import { createDaemon, type DaemonAdapter } from "../src/daemon.js";
+import { createDaemon, RECONCILE_OVERDUE_INTERVALS, type DaemonAdapter } from "../src/daemon.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrRef } from "../src/github.js";
 import { ReceiptIndex } from "../src/receiptscan.js";
@@ -380,6 +380,130 @@ describe("the daemon's reconcile (boot stall)", () => {
       } finally {
         await daemon.stop();
         store.close();
+      }
+    },
+  );
+
+  /** Poll until `cond` holds, up to `ms` — real timers, so a test under load
+   * waits rather than fails, and a real hang still fails. */
+  async function until(cond: () => boolean, ms = 10_000): Promise<boolean> {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) return false;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return true;
+  }
+  const overdueAnomalies = (store: StateStore): number =>
+    store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'anomaly'")
+      .all()
+      .filter((r) => String((r as { payload: string }).payload).includes("reconcile_pass_overdue"))
+      .length;
+
+  it(
+    "a dispatch pump that never settles does not hold the next reconcile pass back",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // Review finding (boot stall): the guard was held across the
+      // pass's trailing `await pump()`, and dispatch's own lock makes every
+      // pump wait for one already running — so a worktree fetch hung on a dead
+      // connection held every later pass, the backstop and the receipt sweep
+      // with it. The pump now runs after the guard is released.
+      const QUEUED = 7002;
+      const store = new StateStore(":memory:");
+      store.upsertPr({
+        number: QUEUED,
+        state: "queued",
+        head_sha: `sha${QUEUED}`,
+        title: `PR ${QUEUED}`,
+        author: "alice",
+        trigger_ts: "2026-10-07T09:00:00Z",
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+      let calls = 0;
+      let prepared = 0;
+      const lines: string[] = [];
+      const daemon = createDaemon({
+        cfg: { ...loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml")), dry_run: true },
+        root,
+        store,
+        adapter: adapter({
+          listOpenPrs: async () => {
+            calls++;
+            return [ref(PR), ref(QUEUED)];
+          },
+          getPr: async (n: number) => ref(n),
+        }),
+        // The fetch that never answers: the pump that reaches it never settles.
+        prepareWorktree: () => {
+          prepared++;
+          return new Promise(() => {});
+        },
+        listen: false,
+        log: (m) => lines.push(m),
+      });
+      try {
+        void daemon.pump();
+        expect(await until(() => prepared === 1)).toBe(true);
+        void daemon.reconcile(); // its pass completes, then its pump waits forever
+        expect(await until(() => lines.some((l) => l.startsWith("reconcile: open=")))).toBe(true);
+        void daemon.reconcile();
+        // The second pass runs now — not after the hung pump, and not after the
+        // overdue bound (three 300 s poll intervals).
+        expect(await until(() => calls === 2)).toBe(true);
+        expect(overdueAnomalies(store)).toBe(0);
+      } finally {
+        // Nothing here waits on the hung pump; the store stays open under it.
+        await daemon.stop();
+      }
+    },
+  );
+
+  it(
+    "a reconcile pass that never settles is abandoned after the overdue bound, and the poll goes on",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const base = loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml"));
+      const intervalS = 0.2;
+      const store = new StateStore(":memory:");
+      const startedAt: number[] = [];
+      const lines: string[] = [];
+      const daemon = createDaemon({
+        cfg: { ...base, dry_run: true, daemon: { ...base.daemon, poll_interval_s: intervalS } },
+        root,
+        store,
+        adapter: adapter({
+          listOpenPrs: async () => {
+            startedAt.push(performance.now());
+            // The first tick's pass hangs forever; every other pass answers.
+            if (startedAt.length === 2) await new Promise(() => {});
+            return [ref(PR)];
+          },
+        }),
+        listen: false,
+        log: (m) => lines.push(m),
+      });
+      try {
+        await daemon.start(); // the boot pass: call 1
+        expect(await until(() => startedAt.length >= 3)).toBe(true);
+        // Ticks during the hung pass were skipped while it was not overdue:
+        // the next pass started no sooner than three intervals after it.
+        expect(startedAt[2]! - startedAt[1]!).toBeGreaterThanOrEqual(
+          RECONCILE_OVERDUE_INTERVALS * intervalS * 1000 - 100,
+        );
+        expect(overdueAnomalies(store)).toBe(1);
+        expect(lines.some((l) => l.includes("no longer waited for"))).toBe(true);
+      } finally {
+        await daemon.stop();
+        // Every pass but the hung one logs its summary: let one that started
+        // before the stop finish. The store is never closed under a pass.
+        await until(
+          () =>
+            lines.filter((l) => l.startsWith("reconcile: open=")).length >= startedAt.length - 1,
+          5_000,
+        );
       }
     },
   );

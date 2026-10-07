@@ -21,9 +21,20 @@
 //     recheck and session-command markers alike). A file is scanned once for
 //     EVERY such token, and the set of tokens found is kept with the offset the
 //     scan reached. A later query for any token is a set lookup; a file that
-//     grew is scanned only from where the last scan stopped (JSONL is
-//     append-only). A file that shrank, was replaced (dev/ino), or whose bytes
-//     before the old end changed (the tail check) is rescanned from 0.
+//     grew is scanned only from where the last scan stopped. A file that
+//     shrank, was replaced (dev/ino), or whose last ≤ 511 bytes before the old
+//     end changed (the tail check) is rescanned from 0.
+//   - That rests on ONE assumption the old scan never needed: a session file
+//     is APPEND-ONLY — pi writes its session JSONL by appending entries, and
+//     nothing rewrites one in place (VERIFY-ON-PIN: pi 1.0.0's session manager
+//     was not at hand to check). The checks above catch the rewrites that
+//     break it visibly — shorter, replaced, or changed just before the old
+//     end — and nothing more. A file whose dev, ino, size and mtime are all
+//     unchanged is trusted without a read; one rewritten in place to at least
+//     its old length whose tail window still matches is trusted as an append,
+//     its earlier bytes never re-read — a token removed there still reads
+//     present, one added there reads ABSENT. Re-reading the whole file to rule
+//     that out is exactly the cost this index exists to remove.
 //   - Bytes are searched raw (`Buffer.indexOf` on the ASCII prefix), never
 //     decoded: the tokens are deliberately plain ASCII, so they survive JSON
 //     string encoding byte for byte, a byte match is exactly the old
@@ -92,7 +103,9 @@ interface FileEntry {
   /** Bytes [0, scanned) have been searched. */
   scanned: number;
   /** The last ≤ OVERLAP bytes before `scanned` — re-read and compared before
-   * an incremental scan, so a rewrite in place is caught, not trusted. */
+   * an incremental scan, so a rewrite that changes them is rescanned from 0.
+   * Bytes before this window are not compared (the append-only assumption in
+   * the header). */
   tail: Buffer;
   /** Every receipt token found in [0, scanned). */
   tokens: Set<string>;
@@ -231,6 +244,7 @@ export class ReceiptIndex {
       }
     }
     const cached = this.files.get(path);
+    // Unchanged identity, size and mtime: trusted as unchanged, no byte read.
     if (
       cached &&
       cached.dev === st.dev &&
@@ -274,8 +288,9 @@ export class ReceiptIndex {
       let pos = 0;
       let have = 0;
       if (cached && cached.dev === st.dev && cached.ino === st.ino && st.size >= cached.scanned) {
-        // Append-only growth: verify the bytes before the old end are the ones
-        // the last scan saw, then continue from there with them as the carry.
+        // Append-only growth: verify the window of bytes just before the old
+        // end is the one the last scan saw, then continue from there with it as
+        // the carry. Bytes before the window are trusted, not re-read.
         const tailLen = cached.tail.length;
         const { bytesRead } = await fh.read(buf, 0, tailLen, cached.scanned - tailLen);
         this.counters.bytes_read += bytesRead;

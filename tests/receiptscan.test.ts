@@ -10,6 +10,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -187,7 +188,7 @@ describe("ReceiptIndex — each byte read once, in chunks, never one span", () =
     expect((await idx.present(root, first, SINCE)).answer).toBe(true);
   });
 
-  it("a file rewritten in place is rescanned from 0, never trusted", async () => {
+  it("a file rewritten in place — its tail window changed, or shorter — is rescanned from 0", async () => {
     const idx = new ReceiptIndex();
     const marker = roundPromptMarker(42, 1);
     const f = join(root, "s.jsonl");
@@ -200,6 +201,25 @@ describe("ReceiptIndex — each byte read once, in chunks, never one span", () =
     // Shorter: rescanned from 0 too.
     writeFileSync(f, userLine(marker).slice(0, 10));
     expect((await idx.present(root, marker, SINCE)).answer).toBe(false);
+  });
+
+  it("a file REPLACED under its name is rescanned even at the same size and mtime", async () => {
+    // The hit path trusts an unchanged (dev, ino, size, mtime) without reading
+    // a byte; a rename-over gives the name a new inode, and that is checked.
+    const idx = new ReceiptIndex();
+    const marker = roundPromptMarker(42, 1);
+    const f = join(root, "s.jsonl");
+    const body = userLine(marker);
+    writeFileSync(f, body);
+    const at = new Date(Date.now() - 5_000);
+    utimesSync(f, at, at);
+    expect((await idx.present(root, marker, SINCE)).answer).toBe(true);
+    const tmp = join(root, "s.jsonl.tmp");
+    writeFileSync(tmp, "x".repeat(body.length - 1) + "\n"); // same size, no token
+    utimesSync(tmp, at, at);
+    renameSync(tmp, f);
+    expect((await idx.present(root, marker, SINCE)).answer).toBe(false);
+    expect(idx.stats()).toMatchObject({ full_scans: 2, hits: 0 });
   });
 
   it("concurrent queries for one cold file share ONE scan", async () => {
