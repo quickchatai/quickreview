@@ -20,6 +20,13 @@ import {
   type Config,
 } from "./config.js";
 import { dispatchOnce, type DispatchAdapter } from "./dispatch.js";
+import {
+  DaemonLoadMonitor,
+  EVENT_LOOP_WAKE_KIND,
+  eventLoopPolicy,
+  type DaemonLoadMonitorDeps,
+  type DaemonLoadStatus,
+} from "./eventloop.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
 import { TokenMinter } from "./githubAuth.js";
@@ -165,6 +172,24 @@ export interface DaemonDeps {
    */
   memoryStatus?: () => import("./memory/health.js").MemoryStatus | undefined;
   /**
+   * Seams of the daemon's event-loop watch (L2, src/eventloop.ts):
+   * the sampler, the cpu.stat reader, the clock and the evaluation timer.
+   * Absent ⇒ the real drift sampler and /sys/fs/cgroup/cpu.stat. The watch
+   * itself is always built — it is the daemon measuring itself, not a feature.
+   */
+  eventLoop?: Partial<
+    Pick<
+      DaemonLoadMonitorDeps,
+      | "sampler"
+      | "readCpuStat"
+      | "cpuStatPath"
+      | "now"
+      | "evaluateEveryMs"
+      | "setTimer"
+      | "clearTimer"
+    >
+  >;
+  /**
    * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
    * subsystem in `onStart`, i.e. after the store exists and after this deps
    * object was assembled, so the seam is a getter rather than a value. Absent
@@ -207,6 +232,9 @@ export interface Daemon {
    * the finding-case writer (S7, wire.ts), which reads its tables and
    * runs its capture for the PRs its backfill covers. */
   readonly outcomes: OutcomeCapture;
+  /** The daemon's event-loop watch (L2) — its status() is
+   * status.json `daemon`. */
+  readonly load: DaemonLoadMonitor;
 }
 
 function readWebhookSecret(cfg: Config): string {
@@ -345,6 +373,16 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   store.setAnomalySink((signal) => wakePolicy.onAnomaly(signal));
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
+
+  // L2: the daemon measures its own event loop and the container's
+  // CPU throttling. A stall wakes through the ONE anomaly funnel (WAKE kind
+  // `daemon_event_loop_stalled`), rate-limited by the watch's cooldown.
+  const load = new DaemonLoadMonitor({
+    policy: eventLoopPolicy(cfg.daemon),
+    raise: (detail, message) => store.logAnomaly(EVENT_LOOP_WAKE_KIND, null, null, detail, message),
+    log,
+    ...deps.eventLoop,
+  });
 
   // The lazy announcer seam: a thin forwarder so the verdict watcher (built
   // once, here) reaches whatever wire.ts assembles later — and swallows the
@@ -770,6 +808,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     } catch (err) {
       log("memory health read failed (heartbeat continues)", err);
     }
+    let daemonLoad: DaemonLoadStatus | undefined;
+    try {
+      daemonLoad = load.status();
+    } catch (err) {
+      log("event-loop watch read failed (heartbeat continues)", err);
+    }
     try {
       writeStatusJson(
         stateDir,
@@ -785,6 +829,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           roundStages.health(),
           roundStageBounds,
           memory,
+          daemonLoad,
         ),
       );
     } catch (err) {
@@ -802,6 +847,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     store,
     cfg,
     outcomes,
+    load,
     reconcile,
     pump,
     retryDueReviewFailures,
@@ -812,6 +858,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     async start(): Promise<void> {
       log(`starting — ${cfg.dry_run ? "DRY-RUN" : "LIVE"} — repo ${cfg.github.repo}`);
       store.logEvent("daemon_start", null, { dry_run: cfg.dry_run, port: cfg.server.port });
+      // First, so a boot that holds the loop is measured too.
+      load.start();
 
       if (deps.listen !== false) {
         const secret = deps.webhookSecret ?? readWebhookSecret(cfg);
@@ -953,6 +1001,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       if (deps.onStop) await guard("onStop", async () => deps.onStop!());
       for (const t of timers) clearInterval(t);
       timers.length = 0;
+      load.stop();
       verdicts.stop();
       threadDecisions.stop();
       rechecks.stop();

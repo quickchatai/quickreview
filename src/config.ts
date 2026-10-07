@@ -1662,6 +1662,16 @@ export interface Config {
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
     round_stage_supervisor_stale_s?: number;
+    /** L2: the daemon's event-loop watch (src/eventloop.ts). All
+     * optional — `eventLoopPolicy` defaults each (300 s window, a 10 s single
+     * delay or a 2 s p99 over a full window is a stall, one wake per 60 min,
+     * "CPU starved" from 20% of CFS periods throttled) and clamps a number
+     * into range; a non-number falls back to the default. */
+    event_loop_window_s?: number;
+    event_loop_stall_max_s?: number;
+    event_loop_stall_p99_s?: number;
+    event_loop_wake_cooldown_min?: number;
+    event_loop_starved_throttle_ratio?: number;
     /** Zombie-round expiry horizon: a round stuck `overdue` for
      * longer than this — and whose PR has since verdicted or closed, so a
      * rerun would never touch it — moves to terminal `expired`.

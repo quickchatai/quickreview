@@ -150,6 +150,16 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // ticket per incident — until something makes the failure good.
   "eod_curation_missing",
   "eod_lessons_not_persisted",
+  // L2 (src/eventloop.ts): the daemon's OWN event loop was held — one
+  // delay of `[daemon] event_loop_stall_max_s` (10 s) or more, or a p99 of
+  // `event_loop_stall_p99_s` (2 s) over a full window. While it is held no
+  // webhook, /health, verdict or status write runs; on 2026-10-07 /health went
+  // unanswered for ~70 s at a time and nothing measured it. The detail names
+  // the cause, each from its own evidence: CPU starved (the cgroup's
+  // throttling), the loop itself blocked (the daemon on CPU across the
+  // stall), or unknown (neither — host contention or a blocking wait). Raised by the watch at most once per
+  // `event_loop_wake_cooldown_min` (60), so it cannot spam.
+  "daemon_event_loop_stalled",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by

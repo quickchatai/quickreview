@@ -46,9 +46,14 @@ describe("renderStatus", () => {
     // the memory line, every time — a snapshot with no block (an
     // older daemon) says so, never "healthy".
     expect(lines[3]).toContain("memory: NOT REPORTED");
-    expect(lines[5]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
+    // L2: the daemon's event-loop line, every time — the same
+    // honest-unknown for a snapshot with no block.
+    expect(lines[4]).toBe(
+      "daemon event loop: NOT REPORTED (this daemon predates the event-loop block)",
+    );
+    expect(lines[6]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
-    const rows = lines.slice(6);
+    const rows = lines.slice(7);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("#1421");
     expect(rows[0]).toContain("reviewing");
@@ -94,9 +99,9 @@ describe("renderStatus", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
     const lines = out.split("\n");
-    expect(lines.slice(6)).toHaveLength(1);
+    expect(lines.slice(7)).toHaveLength(1);
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(lines[6]).toContain("Fix [2J [31m widget row 2Kend");
+    expect(lines[7]).toContain("Fix [2J [31m widget row 2Kend");
   });
 
   it("strips control bytes (incl. C1) from a session's pause reason", () => {

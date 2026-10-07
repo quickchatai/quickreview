@@ -39,6 +39,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { StatusSnapshot } from "../state.js";
+import type { DaemonLoadStatus } from "../eventloop.js";
 import type { MemoryStatus, RequestCounter } from "../memory/health.js";
 import { configDrift, configDriftText, type ConfigRead } from "./confighome.js";
 
@@ -165,6 +166,11 @@ export interface TuiView {
    * the load the TUI puts on memory is attributed from this side (the server
    * logs no caller). Absent when no store is wired. */
   memory_tui_requests?: Record<string, RequestCounter>;
+  /** The daemon's own load (L2): status.json's `daemon` block — its
+   * event-loop lag and the container's CPU throttling — as the TUI last read
+   * it. `null` when the TUI has no snapshot or the daemon reported no block;
+   * the companion renders that as UNKNOWN, never as ok. */
+  daemon: DaemonLoadStatus | null;
 }
 
 const PENDING_COMMITS_MAX = 40;
@@ -319,6 +325,7 @@ export function buildTuiView(src: ViewSource): TuiView {
       : {}),
     ...(src.notice ? { notice: src.notice.slice(0, 400) } : {}),
     memory: src.snapshot?.memory ?? null,
+    daemon: src.snapshot?.daemon ?? null,
     ...(src.tuiMemoryRequests ? { memory_tui_requests: src.tuiMemoryRequests } : {}),
   };
 }

@@ -116,6 +116,8 @@ interface ViewJson {
   notice?: string;
   /** status.json `memory` as the TUI read it (S1); `null` = unread. */
   memory?: Record<string, unknown> | null;
+  /** status.json `daemon` as the TUI read it (L2); `null` = unread. */
+  daemon?: Record<string, unknown> | null;
 }
 
 function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: string } {
@@ -306,6 +308,60 @@ export function memoryLine(value: unknown): string {
   return `reviewer memory: ${state} since ${txt(m.since)}${incident}${serving}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}${curation}`;
 }
 
+/**
+ * The daemon's own event loop as ONE sentence (L2): ok / STALLED (with
+ * the cause its evidence names — the container's throttling, the daemon's own
+ * CPU across the stall, or neither) / UNKNOWN, its p50/p99/max
+ * over the window, and the container's throttling beside it. `null` (the TUI
+ * could not read it, or the daemon reports no block) is an explicit UNKNOWN —
+ * on 2026-10-07 the daemon's /health went unanswered for ~70 s at a time and
+ * no surface said so. A view written before the field existed says so too.
+ */
+export function daemonLoadLine(value: unknown): string {
+  if (value === undefined)
+    return "daemon event loop: UNKNOWN (this TUI build publishes no daemon field)";
+  if (value === null || typeof value !== "object")
+    return "daemon event loop: UNKNOWN (the TUI has not been able to read it — the daemon reported no event-loop block, or there is no snapshot)";
+  const d = value as {
+    event_loop?: {
+      state?: unknown;
+      since?: unknown;
+      p50_ms?: unknown;
+      p99_ms?: unknown;
+      max_ms?: unknown;
+      covered_s?: unknown;
+      longest_stall?: { ms?: unknown; ended_at?: unknown } | null;
+      stall?: { detail?: unknown } | null;
+    } | null;
+    cpu?: {
+      state?: unknown;
+      reason?: unknown;
+      throttled_ratio?: unknown;
+      throttled_s?: unknown;
+      window_s?: unknown;
+    } | null;
+  };
+  const num = (v: unknown): string =>
+    typeof v === "number" && Number.isFinite(v) ? String(v) : "?";
+  const e = d.event_loop;
+  const c = d.cpu;
+  const cpu =
+    c && c.state === "measured"
+      ? `container CPU throttled in ${typeof c.throttled_ratio === "number" ? Math.round(c.throttled_ratio * 100) : "?"}% of CFS periods (${num(c.throttled_s)}s) over ${num(c.window_s)}s`
+      : `container CPU throttling UNKNOWN${c && typeof c.reason === "string" ? ` (${c.reason.slice(0, 160)})` : ""}`;
+  if (!e || typeof e !== "object")
+    return `daemon event loop: UNKNOWN (the block carries no event_loop); ${cpu}`;
+  const figures = `p50 ${num(e.p50_ms)}ms, p99 ${num(e.p99_ms)}ms, max ${num(e.max_ms)}ms over ${num(e.covered_s)}s`;
+  const longest =
+    e.longest_stall && typeof e.longest_stall.ended_at === "string"
+      ? `; longest ${num(e.longest_stall.ms)}ms ended ${e.longest_stall.ended_at}`
+      : "";
+  if (e.state === "stalled")
+    return `daemon event loop: STALLED since ${typeof e.since === "string" ? e.since : "?"} — ${e.stall && typeof e.stall.detail === "string" ? e.stall.detail.slice(0, 400) : figures}${longest}`;
+  if (e.state === "ok") return `daemon event loop: ok — ${figures}${longest}; ${cpu}`;
+  return `daemon event loop: UNKNOWN (not measured yet)${longest}; ${cpu}`;
+}
+
 export function boardAnswer(dir: string, now: Date): string {
   const { view, mtimeMs, error } = loadView(dir);
   if (error !== undefined || !view) return error ?? "no view";
@@ -322,6 +378,7 @@ export function boardAnswer(dir: string, now: Date): string {
     fmt("spend today (USD)", b.today_spend_usd),
     fmt("snapshot written at", b.snapshot_written_at),
     memoryLine(view.memory),
+    daemonLoadLine(view.daemon),
     fmt("selected PR", view.selected),
     fmt("pi pane", view.pane),
     fmt("notice line", view.notice),
@@ -366,7 +423,7 @@ export function toolDefinitions(
       name: "tui_board",
       label: "TUI board state",
       description:
-        "A small projection of the board behind the screen: tab, daemon health, reviewer-memory health, PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
+        "A small projection of the board behind the screen: tab, daemon health, reviewer-memory health, the daemon's event-loop lag and CPU throttling, PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
         READ_ONLY,
       promptSnippet: "Read the board summary and the selected PR",
       parameters: NO_PARAMS,

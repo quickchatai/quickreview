@@ -10,6 +10,7 @@ import {
   startHeartbeat,
   wakeKinds,
 } from "../src/anomalies.js";
+import { EVENT_LOOP_WAKE_KIND } from "../src/eventloop.js";
 import { MEMORY_WAKE } from "../src/memory/health.js";
 import { LEARNER_WAKE } from "../src/learner/learner.js";
 import { StateStore } from "../src/state.js";
@@ -42,6 +43,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   it("is exactly this set", () => {
     expect(wakeKinds()).toEqual(
       [
+        "daemon_event_loop_stalled",
         "eod_curation_missing",
         "eod_inject_failed",
         "eod_lessons_not_persisted",
@@ -75,6 +77,13 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   it("the learner's two kinds wake", () => {
     for (const kind of Object.values(LEARNER_WAKE))
       expect(anomalySeverity(kind), kind).toBe("wake");
+  });
+
+  // L2: the daemon's own event loop held — spelled once in
+  // src/eventloop.ts; the watch's cooldown rate-limits it, not the detail.
+  it("the event-loop stall wakes, keyed on kind (not detail)", () => {
+    expect(anomalySeverity(EVENT_LOOP_WAKE_KIND)).toBe("wake");
+    expect(detailKeyedKinds()).not.toContain(EVENT_LOOP_WAKE_KIND);
   });
 
   it("the memory health kinds wake; openviking_gap stays quiet", () => {

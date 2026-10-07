@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
+import { daemonLoadLine } from "./eventloop.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
@@ -429,6 +430,10 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   // whether reviewer memory WORKS, every time — an absent block
   // (older daemon) and an unmeasured one say so, never "healthy".
   lines.push(oneLine(memoryStatusLine(snapshot.memory, new Date(snapshot.written_at))));
+  // L2: the daemon's own event loop and the container's CPU
+  // throttling, every time — an absent block (older daemon) and an unmeasured
+  // one say so, never "ok".
+  lines.push(oneLine(daemonLoadLine(snapshot.daemon)));
   if (snapshot.draining) {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +

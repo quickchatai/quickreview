@@ -4,6 +4,7 @@
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
+import { stallShortPhrase } from "../eventloop.js";
 import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
 import { fmtDuration } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
@@ -394,6 +395,29 @@ export function curationSegment(snapshot: StatusSnapshot | undefined): string | 
     : `${FG.anomaly}⛔ LESSONS NOT PERSISTED ${c.day ?? "?"} · ${c.not_persisted}${earlierPhrase(c)}${RESET}`;
 }
 
+/**
+ * The board's event-loop banner (L2), from status.json `daemon` and
+ * nothing else: the daemon measuring its own loop. On 2026-10-07 its /health
+ * went unanswered for ~70 s at a time and no surface said so.
+ *
+ *   `loud`  — stalled: painted beside the memory banner, with the cause the
+ *             evidence names (CPU starved / the loop itself blocked /
+ *             cause unknown);
+ *   `quiet` — not measured yet, or not reported by this daemon (an older one):
+ *             a short dim `loop ?` at the END of the bar — honest, never ok;
+ *   nothing — ok, or no snapshot at all.
+ */
+export function eventLoopSegment(
+  snapshot: StatusSnapshot | undefined,
+): { text: string; loud: boolean } | undefined {
+  if (!snapshot) return undefined;
+  const d = snapshot.daemon;
+  if (!d?.event_loop || d.event_loop.state === "unknown")
+    return { text: `${FG.dim}loop ?${RESET}`, loud: false };
+  if (d.event_loop.state !== "stalled") return undefined;
+  return { text: `${FG.anomaly}⛔ ${stallShortPhrase(d)}${RESET}`, loud: true };
+}
+
 /** Top-bar segments, left to right — shared by the renderer and the hit-test
  * geometry so the alert click zone can never drift from the text. */
 function barSegments(view: BoardView, alerts: boolean): string[] {
@@ -433,11 +457,13 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
   const mem = memorySegment(s, view.now ?? new Date());
   const curation = curationSegment(s) ?? "";
+  const loop = eventLoopSegment(s);
   return [
     `${HEADING}quickreview${DRESET}`,
     mode,
     health,
     mem?.loud ? mem.text : "",
+    loop?.loud ? loop.text : "",
     curation,
     drainSeg,
     breakerSeg,
@@ -447,6 +473,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
     // Only when `alerts` — the hit-test geometry measures the segments BEFORE
     // the badge, and a quiet mark sits after it.
     alerts && mem && !mem.loud ? mem.text : "",
+    alerts && loop && !loop.loud ? loop.text : "",
   ].filter((x) => x !== "");
 }
 

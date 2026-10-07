@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
+import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import {
   holdActive,
@@ -6157,6 +6158,15 @@ export interface StatusSnapshot {
    * status`, the companion's view) is read from here. Absent in snapshots
    * from an older daemon — readers say "not reported", never "healthy". */
   memory?: MemoryStatus;
+  /** The daemon's own load (L2, src/eventloop.ts): `event_loop` — its
+   * event-loop delay, p50/p99/max over the last window, the longest stall
+   * since start and when, and whether that is a stall (with the cause its
+   * evidence names: the cgroup's throttling, the daemon's own CPU time across
+   * the stall, or neither) — and `cpu`, the container's CFS throttling over the
+   * same window from /sys/fs/cgroup/cpu.stat (UNKNOWN with its reason when
+   * that cannot be read). Absent in snapshots from an older daemon — readers
+   * say "not reported", never "ok". */
+  daemon?: DaemonLoadStatus;
   /** Deploy-window drain (2026-08-25): present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
@@ -6246,6 +6256,7 @@ export function buildStatusSnapshot(
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
   roundStageBounds?: RoundStageBounds,
   memory?: MemoryStatus,
+  daemonLoad?: DaemonLoadStatus,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
@@ -6422,6 +6433,7 @@ export function buildStatusSnapshot(
       : {}),
     ...(openviking ? { openviking } : {}),
     ...(memory ? { memory } : {}),
+    ...(daemonLoad ? { daemon: daemonLoad } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(roundStageSupervisor || pipelineCauses.length > 0

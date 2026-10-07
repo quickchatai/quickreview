@@ -310,6 +310,20 @@ say — a reader must default rather than assume:
   received`) and counts, every `unresolved` failure, the oldest of them as the
   `incident` the TUI files one ticket for, and the look-for : don't-raise
   `balance` of the lessons in force (null until memory was read in full).
+- `daemon` — the daemon's own load (L2, `DaemonLoadStatus` in
+  `src/eventloop.ts`). `event_loop`: `state` (`unknown | ok | stalled`),
+  `since`, p50/p99/max of the event-loop delay over the window (`window_s`,
+  `covered_s`, `samples`, `max_at`), the `longest_stall` since `started_at`
+  with `began_at`/`ended_at`, the `thresholds`, the `stall` (`trigger`
+  `max|p99`; `cause` `cpu_starved | loop_blocked | unknown`, each from its
+  own evidence — `cpu_starved` from the throttling below, `loop_blocked` from
+  `busy_share`, the daemon process's own CPU time across the stall as a share
+  of its wall time (the longest delay's span for `max`, the window for `p99`;
+  null when not measured) at 0.5 or more, `unknown` when neither; `detail`)
+  and `last_wake_at`. `cpu`: the container's CFS throttling over the same window
+  from `/sys/fs/cgroup/cpu.stat` deltas — `periods`, `throttled_periods`,
+  `throttled_ratio`, `throttled_s`, `usage_s` — or `state: "unknown"` with
+  the `reason`, never a zero. A stall wakes `daemon_event_loop_stalled`.
 - `draining`, `drained_deliveries`, `draining_since`, `draining_by`,
   `draining_until`, `drain_failed_loud` — the deploy-window drain.
 - `round_stage_supervisor` — `{ healthy, stale_after_s, last_attempt_at, … }`.
@@ -540,6 +554,11 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `session_command_unknown_max_checks` | number | `1` |
 | `session_command_max_start_retries` | number | `2` |
 | `round_stage_supervisor_stale_s` | number | `180` |
+| `event_loop_window_s` | number | `300` (clamped 60–3600; L2, `src/eventloop.ts`) |
+| `event_loop_stall_max_s` | number | `10` (one delay this long is a stall; clamped 1–600) |
+| `event_loop_stall_p99_s` | number | `2` (a p99 this high over a full window is a stall; clamped 0.1–60) |
+| `event_loop_wake_cooldown_min` | number | `60` (one `daemon_event_loop_stalled` wake per cooldown; clamped 5–1440) |
+| `event_loop_starved_throttle_ratio` | number | `0.2` (a stall with this share of CFS periods throttled or more is "CPU starved") |
 | `expire_overdue_after_h` | number | `24` (0 disables the sweep) |
 
 **`[eod]`** — `time` (`"18:00"`), `timezone` (defaults from `[ops]`),

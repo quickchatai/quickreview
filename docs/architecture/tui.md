@@ -285,6 +285,14 @@ Rendering:
   health in the board's top bar; an unmeasured or unreported state is a dim
   `mem ?` (`mem off` when memory is switched off in config.toml) at the end — never nothing, which
   would read healthy. Only `healthy` paints nothing.
+- The daemon's own event loop (L2, `eventLoopSegment` in
+  `src/tui/board.ts`, read from status.json `daemon` and nothing else): a
+  stall is a loud `⛔ DAEMON LOOP STALLED <max> · <cause>` (`⛔ DAEMON LOOP
+  SLOW p99 …` for a sustained one) right after the memory banner, its cause
+  `CPU starved (<n>% throttled)`, `loop itself blocked (on CPU <n>%)` or
+  `cause unknown`; an unmeasured state, or a snapshot from a daemon that
+  reports no `daemon` block, is a dim `loop ?` at the end. Only `ok` paints
+  nothing. Neither moves the alert badge's click zone.
 
 Derived actions and published facts:
 
@@ -296,8 +304,8 @@ Derived actions and published facts:
   direction does not match the observed state
   ([`tui-actions-wiring.md`](../tui-actions-wiring.md)).
 - Every companion-facing field the TUI could not read is `null` in
-  `view.json` — `dry_run`, `total`, `by_state` and `memory` are all `T | null`
-  (`TuiView` in `src/tui/feed.ts`) — and `extensions/tui-view.ts` renders an
+  `view.json` — `dry_run`, `total`, `by_state`, `memory` and `daemon` are all
+  `T | null` (`TuiView` in `src/tui/feed.ts`) — and `extensions/tui-view.ts` renders an
   explicit unknown rather than dropping the line, because a dropped line reads
   as "nothing to report".
 - The memory desktop notification (`maybeWriteMemoryAlert`,
