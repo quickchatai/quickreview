@@ -52,13 +52,6 @@ export interface TuiDriver {
   digestDay(date: string): void;
   /** The memory tab: `tag` filters the timeline, `day` jumps to that day's entries. */
   memoryView(opts: { day?: string; tag?: string }): void;
-  /** Pin or unpin one memory entry (S5) through the TUI's ONE
-   * `MemoryStore` — the same verb as the memory tab's `p`: the entry MOVES
-   * into `preferences/pinned/` (the round's guaranteed head) or back out.
-   * `entry` is the TUI's id (`reviewer:experiences/x.md`) or the entry's
-   * `viking://user/<user>/memories/…` URI. Resolves with the store's message;
-   * REJECTS on a refusal, so the result file says it failed. */
-  memoryPin(entry: string, pin: boolean): Promise<string>;
   setBoardFilter(f: BoardFilter | null): void;
   setMemoryFilter(tag: string | null): void;
   msgSession(session: string, text: string): void;
@@ -77,7 +70,6 @@ export type TuiAction =
   | { verb: "memory_view"; day?: string; tag?: string }
   | { verb: "board_filter"; filter: BoardFilter | null }
   | { verb: "memory_filter"; tag: string | null }
-  | { verb: "memory_pin"; entry: string; pin: boolean }
   | { verb: "msg_session"; session: string; text: string }
   | { verb: "overseer_inject"; text: string }
   | { verb: "deploy_tab"; action: "deploy" | "stop" | "start" | "abort" };
@@ -209,23 +201,6 @@ export function parseTuiAction(
         return { ok: false, error: "memory_filter needs tag (or clear: true)" };
       return { ok: true, action: { verb, tag } };
     }
-    case "memory_pin": {
-      const entry = p["entry"];
-      if (
-        typeof entry !== "string" ||
-        entry.trim() === "" ||
-        entry.length > 300 ||
-        /\s|\.\./.test(entry.trim())
-      )
-        return {
-          ok: false,
-          error:
-            "memory_pin needs entry: the TUI's id (reviewer:experiences/<file>.md) or its viking:// URI",
-        };
-      if (p["pin"] !== true && p["pin"] !== false)
-        return { ok: false, error: "memory_pin needs pin: true (pin) or false (unpin)" };
-      return { ok: true, action: { verb, entry: entry.trim(), pin: p["pin"] } };
-    }
     case "msg_session": {
       const session = p["session"];
       if (typeof session !== "string" || !isValidSessionName(session))
@@ -259,9 +234,14 @@ export function parseTuiAction(
 
 /** Run one parsed action against the driver; returns the one-line human trace
  * for the notice line. The driver's methods are the whole side-effect surface.
- * A memory write (`memory_pin`) is asynchronous and resolves once the store
- * has answered; every other verb is synchronous. */
-export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Promise<string> {
+ *
+ * There is deliberately NO memory-write verb. Rule 8 retired the
+ * companion-asks-the-TUI-to-write channel (the companion holds its
+ * own keys and writes memory itself — "two write paths is the thing this
+ * retired"); a `memory_pin` verb built in S5 brought it back and was
+ * withdrawn by the integration review. Pinning an existing entry is the
+ * operator's `p` in the memory tab until the owner rules otherwise. */
+export function executeTuiAction(a: TuiAction, driver: TuiDriver): string {
   switch (a.verb) {
     case "switch_tab":
       driver.switchTab(a.tab);
@@ -297,10 +277,6 @@ export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Prom
       return a.tag === null
         ? "companion ▸ memory filter cleared"
         : `companion ▸ memory filter → #${a.tag}`;
-    case "memory_pin":
-      return driver
-        .memoryPin(a.entry, a.pin)
-        .then((message) => `companion ▸ memory ${a.pin ? "pin" : "unpin"} → ${message}`);
     case "msg_session":
       driver.msgSession(a.session, a.text);
       return `companion ▸ msg ${a.session} (${a.text.length} chars)`;

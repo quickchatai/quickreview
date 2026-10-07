@@ -399,12 +399,18 @@ This covers every install that ran the engine's built-in local model, the
 live one included. Nothing is run on the store by hand: the migration is the
 boot. In order:
 
-1. **Update `config.toml`.** Set `embedding_model = "bge-small-en-v1.5-f16"`
-   and `embedding_dimension = 384`, and copy the `local_embedder_*` block from
-   `config.example.toml`. An old config still loads (it is read as the new
-   model), but the deploy preflight compares the strings with `group_vars` and
-   refuses until they agree. Without the `local_embedder_*` block the code
-   defaults apply, and the preflight says it could not verify them.
+1. **Leave `config.toml`'s model as it is.** Under `local`, the previous
+   release REQUIRED `embedding_model = "bge-small-zh-v1.5-f16"` /
+   `embedding_dimension = 512`, and it refuses the new spelling at load. Both
+   the daemon's parser and the deploy preflight read the old spelling as
+   `bge-small-en-v1.5-f16` / 384 (the preflight says so in one note line), so
+   the same file loads on both releases and a rollback of the code never
+   strands the config (integration review). Optionally copy the five
+   `local_embedder_*` keys from `config.example.toml` — the previous release
+   ignores unknown keys — so the preflight verifies the model-file pin rather
+   than noting that the code defaults apply. Spell the new model only once the
+   previous release is gone for good; from then on, a rollback must revert
+   `config.toml` together with the code.
 2. **Rehearse on a copy first** (below) if the store matters to you. It does
    here.
 3. **Deploy with `scripts/deploy.sh rebuild`, not `sync`.** The model file and
@@ -428,15 +434,31 @@ boot. In order:
    `completed`.
 5. **Rebuild the companion namespace from the PC** and receipt it (the
    section above).
-6. **Rollback**, if ever needed:
-   1. Stop the container.
-   2. Restore the previous embedder in config/inventory and rebuild the
-      previous image.
-   3. Move the new `context` aside and move `context.pre-reembed-<ts>` back
-      to `context`.
-   4. Delete `reembed.json` and start.
+6. **Rollback**, if ever needed — prefer the boring route:
+   1. Check out the previous release, with `config.toml` reverted with it if
+      it was edited (left as step 1 says, it needs nothing).
+   2. `scripts/deploy.sh rebuild`. The previous release's boot `prepare`
+      sees a collection built under `openai/bge-small-en-v1.5-f16` (384) and
+      an ov.conf configuring the built-in local model (512): it RESETS the
+      collection and journals the reviewer namespace pending, and its daemon
+      re-embeds ALL of reviewer memory — everything written since the deploy
+      included. Rebuild the companion namespace from the PC with `qcr memory
+      reembed --user companion`, as in the section above.
+   3. Before starting the previous code, take the memory tree back to a shape
+      it reads: see "Rolling back the code" in
+      `docs/memory-context-engine.md` ("Deploy and verify") — the finding
+      cases and the pinned area need a step of their own.
 
-   Nothing was deleted, so step 3 is a rename.
+   The manual rename route (stop; move the new `context` aside; move the
+   NEWEST `context.pre-reembed-<ts>` back to `context` — the volume may also
+   hold an older one, which is not it; delete `reembed.json`;
+   start) restores only the vectors of records that existed at the deploy's
+   reset. Everything written since — curator lessons, `events/` entries, the
+   relayout's moves, the finding cases — then has NO vectors under the
+   restored embedder and nothing re-embeds it: invisible to search. If you
+   take that route anyway, finish from the PC with `scripts/qcr memory reembed
+   --user companion,reviewer` (an upsert: safe on records that kept their
+   vectors).
 
 If the daemon reports `openviking.embedder.state = "off"` with the reason
 "ov.conf does not route embeddings to http://127.0.0.1:1934/v1 … rebuild",

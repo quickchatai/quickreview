@@ -379,11 +379,15 @@ export function memorySegment(
  * `memory.curation` alone: loud when the day's curation did not reach memory
  * — no receipt (`missing`), or a lesson refused or not found
  * (`not_persisted`). Both are also overseer wakes; this is the half a PERSON
- * sees, beside the memory banner. Nothing otherwise: an unread block is the
- * memory line's to say (`qcr status`), and a quiet day is quiet.
+ * sees, beside the memory banner. A block the daemon could not read (`null`)
+ * is a dim `curation ?` — honest-unknown: painting nothing would read the
+ * same as a quiet day, which `qcr status` and the companion's view both call
+ * UNKNOWN. Nothing for a daemon that reports no block (`undefined`: memory
+ * off, or an older daemon), and a quiet day is quiet.
  */
 export function curationSegment(snapshot: StatusSnapshot | undefined): string | undefined {
   const c = snapshot?.memory?.curation;
+  if (c === null && snapshot?.memory) return `${FG.dim}curation ?${RESET}`;
   if (!curationNeedsAttention(c) || !c) return undefined;
   return c.state === "missing"
     ? `${FG.anomaly}⛔ EOD CURATION MISSING ${c.day ?? "?"} · ${c.offered} candidate${c.offered === 1 ? "" : "s"}, no receipt${earlierPhrase(c)}${RESET}`

@@ -170,6 +170,12 @@ export function memoryServing(
     }
   }
   if (!server || !server.running || !server.reachable) return { ok: null };
+  // One failed `/ready` poll is no verdict: the probe runs an embedding on the
+  // one-thread local embedder, which a case batch may hold for a few seconds,
+  // and a single slow probe used to flip memory health to degraded and pause
+  // every pump until the next poll (integration review). Unknown
+  // keeps the not-serving clock where it stands; the second in a row decides.
+  if (!server.ready && server.not_ready_polls === 1) return { ok: null };
   if (!server.ready) {
     const off =
       provider === "local" && embedder?.state === "off" && embedder.reason

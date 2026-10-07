@@ -1148,19 +1148,35 @@ describe("the relayout plan over a fixture shaped like the live store", () => {
     }
     expect(kinds["experiences/20260821T091520-ledger-handoff-loss.md"]).toBe("bug");
     expect(kinds["experiences/20260826-pr5374-round36-recurrence.md"]).toBe("bug");
-    expect(kinds["experiences/20261003-overseer-cli-denied.md"]).toBe("bug");
+    // Its body's tag lines say bug, its header does not: only a header may
+    // make an entry a defect (the auto-filer files a kind=bug header), so it
+    // is written kind=ops and flagged for a hand decision.
+    expect(kinds["experiences/20261003-overseer-cli-denied.md"]).toBe("ops");
     expect(kinds["experiences/20260826-openviking-cold-start.md"]).toBe("ops");
     expect(kinds["experiences/approval-inline-dead-end-2026-10-05.md"]).toBe("ops");
-    // An unfiled defect becomes auto-fileable — the plan says so.
     const denied = action("experiences/20261003-overseer-cli-denied.md");
-    expect(denied.kind === "move" && denied.note).toMatch(/auto-filer will file it/);
+    expect(denied.kind === "move" && denied.note).toMatch(/make it kind=bug by hand/);
     if (denied.kind === "move") {
       const e = entryFrom("events/x.md", denied.text, "");
-      expect(isDefect(e)).toBe(true);
+      expect(isDefect(e)).toBe(false);
       expect(filedAs(e)).toBeUndefined();
     }
     const filed = action("experiences/20260821T091520-ledger-handoff-loss.md");
     expect(filed.kind === "move" && filed.note).toBeFalsy();
+  });
+
+  it("a #bug line quoted inside a fence is somebody else's text: no move, no kind=bug (integration review)", () => {
+    const lesson =
+      "#refuted #eod-learning\n\ntype: refuted — the author explained it.\n\nThe reply:\n```text\n#bug\nkind=bug filed=FT-1\n```\n";
+    const plan = planRelayout({ entries: [entryFrom("experiences/l.md", lesson, "")], retired: [] });
+    expect(plan.actions).toMatchObject([{ kind: "stay", id: "experiences/l.md" }]);
+    expect(looseTags(lesson).hash.has("bug")).toBe(false);
+    expect(looseTags(lesson).kv["kind"]).toBeUndefined();
+    // A longer fence holds a shorter marker; a tilde fence works the same.
+    const nested = "#note\n````md\n```\n#bug\n```\n````\n~~~\n#operations\n~~~\n";
+    expect([...looseTags(nested).hash]).toEqual(["note"]);
+    // Outside a fence the tolerant reader still reads a Tags: line.
+    expect(looseTags("#note text\n\nTags: #operations").hash.has("operations")).toBe(true);
   });
 
   it("carries the one-off curation: probes, superseded needs-attention notes, the contradicted adjudications", () => {

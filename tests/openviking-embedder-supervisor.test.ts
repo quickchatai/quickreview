@@ -586,6 +586,23 @@ describe("memoryServing — does memory serve search?", () => {
     expect(a.reason).toMatch(/the local embedder is off — ov\.conf does not route/);
   });
 
+  it("ONE failed /ready poll is unknown — a busy embedder answering slowly is no verdict; the second decides", () => {
+    expect(
+      memoryServing("local", server({ ready: false, not_ready_polls: 1, last_error: "timeout" }), emb()),
+    ).toEqual({ ok: null });
+    const two = memoryServing(
+      "local",
+      server({ ready: false, not_ready_polls: 2, last_error: "timeout" }),
+      emb(),
+    );
+    expect(two.ok).toBe(false);
+    expect(two.reason).toMatch(/\/ready fails \(timeout\)/);
+    // A dead embedder is still not serving at once, whatever the count.
+    expect(
+      memoryServing("local", server({ ready: false, not_ready_polls: 1 }), emb({ state: "unavailable", running: false, ready: false })).ok,
+    ).toBe(false);
+  });
+
   it("an ov.conf that predates it (the engine embeds itself) serves when /ready passes — not an outage", () => {
     expect(
       memoryServing(

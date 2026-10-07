@@ -37,18 +37,26 @@
 //   recall (look-for)                  a human REQUEST_CHANGES review, or a
 //       human root inline comment, on a PR whose standing bot verdict before
 //       it was APPROVE (not the PR's author; a recheck's flip to
-//       REQUEST_CHANGES ends the approval — `verdictAt`); a post-approval
-//       recheck's APPROVE → REQUEST_CHANGES flip; and, for a bot-approved PR
-//       that merged, a later commit within `recall_window_days` that changed
-//       lines the PR had changed (`WorktreeManager.postMergeTouches`,
-//       read-only git). "Lines the bot approved" is read as "the PR's diff
-//       while the bot's approval stood": an inline comment can only sit on
-//       the PR's diff, and a push after the approval is audited by the
-//       recheck, which either upholds it (the approval then covers the new
-//       head) or flips it (and the approval ends).
+//       REQUEST_CHANGES ends the approval — `verdictAt`); and, for a
+//       bot-approved PR that merged, a later commit within
+//       `recall_window_days` that changed lines the PR had changed
+//       (`WorktreeManager.postMergeTouches`, read-only git) — ONE candidate
+//       per (PR, commit), its paths listed. "Lines the bot approved" is read
+//       as "the PR's diff while the bot's approval stood": an inline comment
+//       can only sit on the PR's diff, and a push after the approval is
+//       audited by the recheck, which either upholds it (the approval then
+//       covers the new head) or flips it (and the approval ends).
+//       NOT a source: the recheck's own APPROVE → REQUEST_CHANGES flip. It
+//       is the reviewer's conclusion, and the beliefs are "learned only from
+//       people" (MANIFESTO.md) — on the live store 37 of a first packet's 40
+//       offers were flips quoting the bot's own reasoning, 21 of the 48 were
+//       no flip at all, and every human-sourced candidate queued behind them
+//       (integration review). Restoring it needs the owner's ruling.
 //   digest-backfill                    the "Learnings" bullets of the digests
 //       written while memory refused every write (2026-08-31..10-02 by
-//       default) — candidates, never lessons directly.
+//       default) — candidates, never lessons directly. The bullets are the
+//       OVERSEER's words (the review system's own), and the packet labels
+//       them so (`quoteAuthor`), never as a person's.
 //
 // CLASSES. Every candidate has a class slug the packet clusters by and a
 // lesson names to cover it: a finding's `<lens>.<kind>` (`baseline.authz`), a
@@ -56,8 +64,9 @@
 // a digest bullet's `<lens>.<type>`. Deterministic, header-safe
 // (`LESSON_CLASS_RE`).
 //
-// Everything another person wrote rides in `quote`, capped at 400 characters,
-// and is fenced as data when rendered (src/memory/datafence.ts).
+// Every quoted word rides in `quote`, capped at 400 characters, and is fenced
+// as data when rendered (src/memory/datafence.ts); whose words they are is
+// `quoteAuthor` (a person's, or the review system's own digest bullet).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -80,9 +89,16 @@ export type CandidateKind =
   | "tagged_comment"
   | "human_root_comment"
   | "human_request_changes"
-  | "recheck_flip"
   | "post_merge_change"
   | "digest_learning";
+
+/** Whose words a candidate's `quote` is: a person's (a reply, a comment, a
+ * commit subject) or the review system's own (a digest bullet the overseer
+ * wrote). The packet labels them — the curator must never read the bot's
+ * own conclusion as a human's evidence. */
+export function quoteAuthor(kind: CandidateKind): "person" | "review-system" {
+  return kind === "digest_learning" ? "review-system" : "person";
+}
 
 /** Which way a lesson from this evidence would point. `review` — a
  * whole-review signal (no lens, no finding); `ops` — about the review
@@ -235,9 +251,16 @@ function findingOfComment(
   return link ? findingRow(store, pr, link.round_no, link.finding_key) : undefined;
 }
 
+/** A PR-chosen file path in a daemon-written line: one line, no control
+ * byte, no backtick, code-quoted — it sits OUTSIDE the data fences, so a
+ * crafted file name must not read as prose (integration review). */
+export function pathText(path: string): string {
+  return `\`${oneLine(path, 200).replace(/`/g, "'")}\``;
+}
+
 function where(f: { path: string | null; line: number | null }): string {
   if (!f.path) return "";
-  return ` at ${f.path}${f.line !== null ? `:${f.line}` : ""}`;
+  return ` at ${pathText(f.path)}${f.line !== null ? `:${f.line}` : ""}`;
 }
 
 function findingPhrase(f: FindingFacts): string {
@@ -290,6 +313,7 @@ interface OutcomeRow {
   fate: string;
   basis: string | null;
   decided_at: string | null;
+  human_replies?: number;
   carried_to: string | null;
   fate_changed_at: string;
 }
@@ -338,6 +362,36 @@ function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
     .all(pr) as OutcomeRow[];
 }
 
+/** Did a human reply anywhere along the chain from `root` to `end`? */
+function chainHasHumanReply(rows: readonly OutcomeRow[], root: OutcomeRow): boolean {
+  const byKey = new Map(rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+  const seen = new Set<string>();
+  let at: OutcomeRow | undefined = root;
+  while (at) {
+    const k = `${at.round_no}:${at.finding_key}`;
+    if (seen.has(k)) break;
+    seen.add(k);
+    if ((at.human_replies ?? 0) > 0) return true;
+    at = at.carried_to ? byKey.get(at.carried_to) : undefined;
+  }
+  return false;
+}
+
+/**
+ * What the fate says happened, in words the record supports. A refutation
+ * with no human reply on the chain is the REVIEWER's own concession on
+ * re-check (S6's `conceded_unchanged`), never "a human refuted it"; an
+ * upheld fate is a human reply the bot kept standing — the record shows a
+ * reply, not that it was pushback (live: 42 of 91 quoted "Fixed…"/"Done").
+ */
+export function fateSummary(fate: string, humanReplied: boolean): string {
+  if (fate === "refuted_conceded")
+    return humanReplied
+      ? "a human refuted it and the bot conceded"
+      : "the reviewer conceded it on re-check (no human reply recorded)";
+  return "a human replied and the bot kept it standing";
+}
+
 /** The candidate of one finding chain, named by its root, read from its END's
  * fate (the chain's latest posting is the one humans answered last). */
 function fateDraft(
@@ -345,6 +399,7 @@ function fateDraft(
   pr: number,
   root: OutcomeRow,
   end: OutcomeRow,
+  rows: readonly OutcomeRow[] = [root, end],
 ): CandidateDraft {
   const at = end.decided_at ?? end.fate_changed_at;
   const f = findingRow(store, pr, root.round_no, root.finding_key);
@@ -364,9 +419,10 @@ function fateDraft(
     path: f?.path ?? null,
     line: f?.line ?? null,
     summary: oneLine(
-      `PR #${pr}: ${f ? findingPhrase(f) : `finding ${root.finding_key}`} — ${
-        refuted ? "a human refuted it and the bot conceded" : "a human pushed back and the bot held"
-      }${end.basis ? ` (${end.basis})` : ""}`,
+      `PR #${pr}: ${f ? findingPhrase(f) : `finding ${root.finding_key}`} — ${fateSummary(
+        end.fate,
+        chainHasHumanReply(rows, root),
+      )}${end.basis ? ` (${end.basis})` : ""}`,
     ),
     quote: quoteOf(latestReply(store, pr, end.comment_id ?? root.comment_id)),
     evidence: [
@@ -390,11 +446,12 @@ export function mineFates(store: StateStore, sinceIso: string): CandidateDraft[]
   ).map((r) => r.pr);
   const out: CandidateDraft[] = [];
   for (const pr of prs) {
-    for (const { root, end } of chainRoots(outcomeRows(store, pr))) {
+    const rows = outcomeRows(store, pr);
+    for (const { root, end } of chainRoots(rows)) {
       if (!isCandidateFate(end.fate)) continue;
       const at = end.decided_at ?? end.fate_changed_at;
       if (at < sinceIso) continue;
-      out.push(fateDraft(store, pr, root, end));
+      out.push(fateDraft(store, pr, root, end, rows));
     }
   }
   return out;
@@ -438,7 +495,7 @@ export function reviewFateCandidates(
       out.set(
         c.id,
         isCandidateFate(chain.end.fate)
-          ? { kind: "current", draft: fateDraft(store, c.pr, chain.root, chain.end) }
+          ? { kind: "current", draft: fateDraft(store, c.pr, chain.root, chain.end, entry.rows) }
           : { kind: "gone", why: `its fate is now ${chain.end.fate}` },
       );
       continue;
@@ -715,47 +772,6 @@ export function mineHumanRecall(
   return out;
 }
 
-export function mineRecheckFlips(store: StateStore, sinceIso: string): CandidateDraft[] {
-  const rows = store.db
-    .prepare(
-      `SELECT id, ts, pr, payload FROM events WHERE kind = 'recheck_request_changes' AND ts >= ? ORDER BY id`,
-    )
-    .all(sinceIso) as Array<{ id: number; ts: string; pr: number | null; payload: string | null }>;
-  const out: CandidateDraft[] = [];
-  for (const e of rows) {
-    if (e.pr === null) continue;
-    let head = "";
-    let reason: string | null = null;
-    try {
-      const p = JSON.parse(e.payload ?? "{}") as { head_sha?: unknown; reason?: unknown };
-      if (typeof p.head_sha === "string") head = p.head_sha;
-      if (typeof p.reason === "string") reason = p.reason;
-    } catch {
-      /* no detail */
-    }
-    out.push({
-      ref: `recheck-flip:${e.id}`,
-      source: "recall",
-      kind: "recheck_flip",
-      polarity: "look-for",
-      class: "missed.recheck",
-      lens_ids: [],
-      pr: e.pr,
-      round_no: null,
-      finding_key: null,
-      path: null,
-      line: null,
-      summary: oneLine(
-        `PR #${e.pr}: a post-approval recheck flipped APPROVE → REQUEST_CHANGES${head ? ` at ${head.slice(0, 7)}` : ""} — was it in the approved code?`,
-      ),
-      quote: quoteOf(reason),
-      evidence: [`pr:${e.pr}`, ...(/^[0-9a-f]{7,40}$/.test(head) ? [`commit:${head}`] : [])],
-      occurred_at: e.ts,
-    });
-  }
-  return out;
-}
-
 /** The reader post-merge recall needs (`WorktreeManager`). */
 export interface RecallGit {
   postMergeTouches(q: {
@@ -766,16 +782,80 @@ export interface RecallGit {
   }): Promise<PostMergeScan | null>;
 }
 
-/** How many merged PRs one mine scans with git, and how often an unknown
- * answer is retried before the PR is given up on. */
-export const RECALL_SCAN_LIMITS = Object.freeze({ prsPerMine: 10, attempts: 3 });
+/** How many merged PRs one scan pass reads with git, how long it may take,
+ * how often an in-window PR is re-read, and how often an unknown answer is
+ * retried before the PR is given up on. The learner runs a pass on EVERY
+ * 5-minute tick (`prsPerTick`) as well as in the day's mine (`prsPerMine`):
+ * ten a day could not keep up with ~8 bot-approved merges a day plus a
+ * first-deploy backlog of hundreds (integration review). */
+export const RECALL_SCAN_LIMITS = Object.freeze({
+  prsPerMine: 10,
+  prsPerTick: 3,
+  /** Wall time one pass may start new scans in. */
+  budgetMs: 20_000,
+  /** A PR still inside its window is re-read at most this often. */
+  rescanMs: DAY_MS,
+  attempts: 3,
+});
+
+/** One later commit's touches of a PR's lines, as ONE candidate: a single
+ * commit touching many files (a translation sweep, a rename) is one event. */
+function postMergeDraft(
+  row: { pr: number; merged_at: string },
+  commit: string,
+  touches: readonly PostMergeScan["touches"][number][],
+  nowIso: string,
+): CandidateDraft {
+  const first = touches[0]!;
+  const spans = touches.map(
+    (t) => `${pathText(t.path)}:${t.start}${t.end !== t.start ? `-${t.end}` : ""}`,
+  );
+  const shown = spans.slice(0, 4).join(", ");
+  const more = spans.length > 4 ? ` and ${spans.length - 4} more` : "";
+  const paths = [...new Set(touches.map((t) => t.path))];
+  return {
+    ref: `post-merge:${row.pr}:${commit}`,
+    source: "recall",
+    kind: "post_merge_change",
+    polarity: "look-for",
+    class: missedClass(first.path),
+    lens_ids: [],
+    pr: row.pr,
+    round_no: null,
+    finding_key: null,
+    path: first.path,
+    line: first.start,
+    summary: oneLine(
+      `PR #${row.pr} (bot-approved, merged ${row.merged_at.slice(0, 10)}): commit ${commit.slice(0, 7)} on ${first.committed_at.slice(0, 10)} changed lines the PR had changed — ${shown}${more}`,
+      500,
+    ),
+    quote: quoteOf(first.subject),
+    evidence: [
+      `pr:${row.pr}`,
+      `commit:${commit}`,
+      ...paths
+        .slice(0, 10)
+        .filter((p) => /^[^\s,]{1,200}$/.test(p))
+        .map((p) => `path:${p}`),
+    ],
+    occurred_at: first.committed_at || nowIso,
+  };
+}
 
 /**
  * Post-merge recall: every PR merged within the horizon whose standing bot
- * verdict at the merge was APPROVE is scanned (≤ `prsPerMine` a mine, the
- * oldest first) until its window has passed — commits keep landing for
- * `windowDays` after a merge. A git answer of "unknown" (no merge commit names
- * the PR, the branch not fetched) is retried, then given up on, recorded.
+ * verdict at the merge was APPROVE is scanned until its window has passed —
+ * commits keep landing for `windowDays` after a merge. A git answer of
+ * "unknown" (no merge commit names the PR, the branch not fetched) is
+ * retried, then given up on, recorded.
+ *
+ * One pass reads at most `maxPrs` PRs and starts none after `budgetMs`. The
+ * ORDER (`tierOf`): a window that passed since its last read gets its final
+ * read first; then in-window PRs never read, the one closing soonest first (a
+ * fresh miss is worth most while its class is still live), then in-window
+ * re-reads; the stale backlog — closed windows never read, the most recent
+ * first — and closed PRs still owed come last. A PR is re-read at most once
+ * per `rescanMs`.
  */
 export async function minePostMerge(
   store: StateStore,
@@ -786,6 +866,12 @@ export async function minePostMerge(
     baseBranch: string;
     git: RecallGit;
     log?: (msg: string, extra?: unknown) => void;
+    /** PRs this pass reads (default `RECALL_SCAN_LIMITS.prsPerMine`). */
+    maxPrs?: number;
+    /** Wall time after which no new read starts. */
+    budgetMs?: number;
+    /** The wall clock the budget is measured on (tests inject one). */
+    clock?: () => number;
   },
 ): Promise<{ drafts: CandidateDraft[]; scanned: number; unknown: number }> {
   const merges = store.db
@@ -799,13 +885,42 @@ export async function minePostMerge(
     "INSERT OR IGNORE INTO learner_recall_scans (pr, merged_at) VALUES (?, ?)",
   );
   for (const m of merges) ins.run(m.pr, m.merged_at);
-  const due = store.db
-    .prepare("SELECT * FROM learner_recall_scans WHERE done = 0 ORDER BY merged_at LIMIT ?")
-    .all(RECALL_SCAN_LIMITS.prsPerMine * 3) as Array<{
+  const nowMs = opts.now.getTime();
+  const windowMs = opts.windowDays * DAY_MS;
+  const all = store.db.prepare("SELECT * FROM learner_recall_scans WHERE done = 0").all() as Array<{
     pr: number;
     merged_at: string;
     attempts: number;
+    last_scan_at: string | null;
   }>;
+  const endOf = (r: { merged_at: string }) => Date.parse(r.merged_at) + windowMs;
+  /** The read a PR is due, as a priority tier (lower first), or null. */
+  const tierOf = (r: { merged_at: string; last_scan_at: string | null }): number | null => {
+    const open = endOf(r) >= nowMs;
+    const last = r.last_scan_at === null ? NaN : Date.parse(r.last_scan_at);
+    if (!Number.isFinite(last)) return open ? 1 : 3; // never read
+    if (!open && last <= endOf(r)) return 0; // its window passed since: the final read
+    if (nowMs - last < RECALL_SCAN_LIMITS.rescanMs) return null; // read recently
+    return open ? 2 : 4; // a re-read: in-window, or a closed one still owed
+  };
+  // Tiers: 0 the final read of a window that just passed, 1 an in-window PR
+  // never read, 2 an in-window re-read, 3 the closed never-read backlog,
+  // 4 a closed PR still owed (an unknown answer, a clone not fetched far
+  // enough). Inside a tier: open windows closing soonest first, closed ones
+  // most recent first.
+  const eligible = all
+    .map((r) => ({ r, tier: tierOf(r) }))
+    .filter((x): x is { r: (typeof all)[number]; tier: number } => x.tier !== null)
+    .sort(
+      (a, b) =>
+        a.tier - b.tier ||
+        (endOf(a.r) >= nowMs ? endOf(a.r) - endOf(b.r) : endOf(b.r) - endOf(a.r)) ||
+        a.r.pr - b.r.pr,
+    )
+    .map((x) => x.r);
+  const maxPrs = Math.max(0, opts.maxPrs ?? RECALL_SCAN_LIMITS.prsPerMine);
+  const clock = opts.clock ?? (() => performance.now());
+  const started = clock();
   const drafts: CandidateDraft[] = [];
   let scanned = 0;
   let unknown = 0;
@@ -814,10 +929,11 @@ export async function minePostMerge(
     `UPDATE learner_recall_scans SET attempts = ?, last_scan_at = ?, merge_commit = ?, touches = ?,
        base_ref = ?, done = ?, outcome = ? WHERE pr = ?`,
   );
-  for (const row of due) {
-    if (scanned >= RECALL_SCAN_LIMITS.prsPerMine) break;
-    const windowEnd = Date.parse(row.merged_at) + opts.windowDays * DAY_MS;
-    const closed = opts.now.getTime() > windowEnd;
+  for (const row of eligible) {
+    if (scanned >= maxPrs) break;
+    if (opts.budgetMs !== undefined && scanned > 0 && clock() - started >= opts.budgetMs) break;
+    const windowEnd = Date.parse(row.merged_at) + windowMs;
+    const closed = nowMs > windowEnd;
     if (verdictAt(store, row.pr, row.merged_at) !== "APPROVE") {
       finish.run(row.attempts, nowIso, null, null, null, 1, "not bot-approved at merge", row.pr);
       continue;
@@ -859,27 +975,10 @@ export async function minePostMerge(
       );
       continue;
     }
-    for (const t of scan.touches) {
-      drafts.push({
-        ref: `post-merge:${row.pr}:${t.commit}:${t.path}`,
-        source: "recall",
-        kind: "post_merge_change",
-        polarity: "look-for",
-        class: missedClass(t.path),
-        lens_ids: [],
-        pr: row.pr,
-        round_no: null,
-        finding_key: null,
-        path: t.path,
-        line: t.start,
-        summary: oneLine(
-          `PR #${row.pr} (bot-approved, merged ${row.merged_at.slice(0, 10)}): commit ${t.commit.slice(0, 7)} on ${t.committed_at.slice(0, 10)} changed ${t.path}:${t.start}${t.end !== t.start ? `-${t.end}` : ""}, lines the PR had changed`,
-        ),
-        quote: quoteOf(t.subject),
-        evidence: [`pr:${row.pr}`, `commit:${t.commit}`],
-        occurred_at: t.committed_at || nowIso,
-      });
-    }
+    const byCommit = new Map<string, PostMergeScan["touches"]>();
+    for (const t of scan.touches) byCommit.set(t.commit, [...(byCommit.get(t.commit) ?? []), t]);
+    for (const [commit, touches] of byCommit)
+      drafts.push(postMergeDraft(row, commit, touches, nowIso));
     // Done only once the window has passed AND the clone holds it: the
     // learner never fetches, and a clone whose base tip predates the window's
     // end has not seen its last commits — reading that as "nothing more

@@ -15,7 +15,7 @@
 //   experiences/         curated lessons, written by the EOD curator (and the
 //                        setup/scan notes) — the ONLY area the round's context
 //                        block searches.
-//   cases/               one document per posted finding and its fate (S7),
+//   finding-cases/               one document per posted finding and its fate (S7),
 //                        written by the daemon (src/cases.ts); never listed by
 //                        the whole-tree sweep, never searched by a round.
 //   events/              feedback, bug and ops signals, with `k=v` tags
@@ -36,7 +36,7 @@ export const EXPERIENCES_AREA = "experiences";
 /** Feedback, bug and ops signals. */
 export const EVENTS_AREA = "events";
 /** Finding cases (S7). */
-export const CASES_AREA = "cases";
+export const CASES_AREA = "finding-cases";
 
 /** Every area of the layout, most specific first. */
 export const MEMORY_AREAS: readonly string[] = [
@@ -57,7 +57,7 @@ export const MEMORY_AREAS: readonly string[] = [
 export const ROUND_SEARCH_AREAS: readonly string[] = [EXPERIENCES_AREA];
 
 /**
- * Areas the store's whole-tree SWEEP does not list (S7): `cases/`.
+ * Areas the store's whole-tree SWEEP does not list (S7): `finding-cases/`.
  * A case is a document the daemon derives from state.db and rewrites itself
  * (src/cases.ts) — one per posted finding a human answered or whose fate is
  * known, so hundreds of them, growing every day. Listing them would put every
@@ -152,7 +152,7 @@ export const MEMORY_LAYOUT_NOTE = [
   "- `preferences/pinned/` — THE PINNED AREA: the owner's standing instructions,",
   "  delivered verbatim in every round. Never write, move, retire or rewrite",
   "  anything under it.",
-  "- `cases/` — finding CASES, written by the daemon: one per posted finding a",
+  "- `finding-cases/` — finding CASES, written by the daemon: one per posted finding a",
   "  human answered or whose fate is known (fixed, refuted, upheld, or left open",
   "  at the PR's close), with the humans' replies quoted as data. Search them",
   "  (`viking_search`) for the evidence behind a learning;",

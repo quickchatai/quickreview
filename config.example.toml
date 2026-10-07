@@ -274,10 +274,10 @@ incident_ticket_after_min = 120
 backfill_interval_s = 60
 write_backlog_after_min = 120
 # Finding cases (S7, src/cases.ts): one document per posted finding a
-# human answered or whose fate is known, in reviewer memory's `cases/` — the
+# human answered or whose fate is known, in reviewer memory's `finding-cases/` — the
 # learner's context, searched by the EOD curator and the companion, never by a
 # review round. Every cases_interval_s the daemon works out from state.db which
-# cases are new or changed and, only while memory reads healthy, writes up to 20
+# cases are new or changed and, only while memory reads healthy, writes up to 5
 # (one batch-write) and backfills two more PRs from the last cases_backfill_days
 # days (resumable; 0 turns the backfill off).
 cases_interval_s = 120

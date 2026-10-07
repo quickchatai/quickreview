@@ -54,10 +54,16 @@
 //   refuted_conceded    — the session's decision said `refuted`; a later round
 //                         recorded it `conceded` with the code at its anchor
 //                         unchanged and no sha cited; or the session resolved
-//                         the thread with no push since the review.
+//                         the thread with no push since the review. The last
+//                         two are INFERRED from the session's own act, so a
+//                         human reply that accepts the point (`concedesPoint`:
+//                         "fair catch", "fixed", "updated the description")
+//                         turns them into `unknown`, basis `conflict:…`.
 //   upheld_after_reply  — a human replied and the bot held: the decision said
 //                         `held` or kept the thread open, or the next round
-//                         posted the finding again.
+//                         posted the finding again. A thread kept open right
+//                         after a reply citing a commit is no hold: a fix git
+//                         verified stands, one it cannot check is `unknown`.
 //   open_at_close       — none of the above, and the PR is closed.
 //   unknown             — none of the above, and the PR is open.
 // A `conceded` record is NOT read as a refutation on its own: on the live
@@ -108,6 +114,10 @@ export const FINDING_FATES: readonly FindingFate[] = [
 ];
 
 type DecisiveFate = "fixed" | "refuted_conceded" | "upheld_after_reply";
+/** What one piece of evidence can say: a decisive fate, or `unknown` — a
+ * rule that would have decided, held back by evidence that contradicts it
+ * (its basis names the conflict). The latest piece still wins. */
+type EvidenceFate = DecisiveFate | "unknown";
 
 /** How a posted comment was linked to its finding, most trusted first. */
 export type LinkVia = "marker" | "thread_id" | "path_line" | "path_line_title" | "path_line_tag";
@@ -130,8 +140,9 @@ export interface AnchorGit {
   introducedBetween(sha: string, from: string, to: string): Promise<boolean | null>;
 }
 
-/** Bump when a rule changes, so every PR is re-captured once. */
-export const OUTCOME_RULES_VERSION = 1;
+/** Bump when a rule changes, so every PR is re-captured once. 2: the
+ * integration review's linker and fate fixes. */
+export const OUTCOME_RULES_VERSION = 2;
 /** PRs captured per reconcile pass. */
 export const OUTCOME_SWEEP_MAX_PRS = 25;
 /** How long after a close a PR is still captured — the close is evidence. */
@@ -354,19 +365,23 @@ function lensIdsOf(row: RoundFindingRow): string[] {
 }
 
 /**
- * Which entry of the round `e` names in `raised_in_round` is `e` again? The
- * one carrying `e`'s key; else — same path, a shared lens, within
- * `CONTINUATION_LINES` — the single nearest one (a file-level line counts as
- * the farthest near one). A tie is nobody's: two findings a few lines apart
- * in one file and one lens must not both inherit one entry's fate. Returns
- * the owner's key, or null.
+ * Which entry of the round `e` names in `raised_in_round` is `e` again? Only
+ * an entry on the same path, sharing a lens, within `CONTINUATION_LINES`:
+ * the one carrying `e`'s key when it is such an entry, else the single
+ * nearest such entry (a file-level line counts as the farthest near one). A
+ * tie is nobody's: two findings a few lines apart in one file and one lens
+ * must not both inherit one entry's fate. Returns the owner's key, or null.
+ *
+ * An equal key ALONE is no match: sessions number their keys per round (f1,
+ * f2, …), so a later round's `f1` is usually a different finding. On the
+ * live store 4 of 5 key-only carries sat more than 10 lines apart — one
+ * carried line 233's finding onto line 968's and merged their cases
+ * (integration review).
  */
 export function predecessorOf(
   round: readonly RoundFindingRow[],
   e: RoundFindingRow,
 ): string | null {
-  const keyed = round.find((s) => s.finding_key === e.finding_key);
-  if (keyed) return keyed.path === e.path ? keyed.finding_key : null;
   const ids = lensIdsOf(e);
   const dist = (s: RoundFindingRow) =>
     s.line === null || e.line === null ? CONTINUATION_LINES : Math.abs(s.line - e.line);
@@ -377,6 +392,8 @@ export function predecessorOf(
       lensIdsOf(s).some((id) => ids.includes(id)) &&
       dist(s) <= CONTINUATION_LINES,
   );
+  const keyed = candidates.find((s) => s.finding_key === e.finding_key);
+  if (keyed) return keyed.finding_key;
   if (candidates.length === 0) return null;
   const best = Math.min(...candidates.map(dist));
   const nearest = candidates.filter((s) => dist(s) === best);
@@ -384,21 +401,40 @@ export function predecessorOf(
 }
 
 const fkey = (round: number, key: string): string => `${round}\u0000${key}`;
-const FATE_RANK: Record<DecisiveFate, number> = {
+const FATE_RANK: Record<EvidenceFate, number> = {
   fixed: 3,
   refuted_conceded: 2,
   upheld_after_reply: 1,
+  unknown: 0,
 };
 
 interface Evidence {
-  fate: DecisiveFate;
+  fate: EvidenceFate;
   basis: string;
   at: number;
   detail: string;
 }
 
-/** The latest decisive evidence; at one instant, fixed > refuted > upheld. */
-export function decideFate<E extends { fate: DecisiveFate; at: number }>(
+/**
+ * Does a human reply ACCEPT the finding — agree it was right, or say it was
+ * fixed or the description corrected? A deliberately small lexicon, read
+ * only to hold back a refutation the record would otherwise infer from the
+ * session's own act (it resolved the thread, or a later round conceded) with
+ * the anchored code unchanged. On the live store about half of those
+ * "refutations" were agreements: "fair catch", "You are right, … I have
+ * corrected it", "Updated: the description now says …", a fix made away
+ * from the anchor (integration review). It over-matches on purpose
+ * — a hit only turns a refutation into `unknown`, never into a fix.
+ */
+const CONCESSION_RE =
+  /\b(?:you(?:'|\u2019)?re (?:right|correct)|you are (?:right|correct)|(?:good|fair|great|nice) (?:catch|point|spot)|fixed|addressed|corrected|updated|amended|reworded|clarified|agreed|accepted|acknowledged|my (?:omission|mistake|bad)|will fix|made (?:it )?part of this pr)\b|^\s*done\b/im;
+
+export function concedesPoint(text: string | null | undefined): boolean {
+  return typeof text === "string" && CONCESSION_RE.test(text);
+}
+
+/** The latest evidence; at one instant, fixed > refuted > upheld > unknown. */
+export function decideFate<E extends { fate: EvidenceFate; at: number }>(
   evidence: readonly E[],
 ): E | null {
   let best: E | null = null;
@@ -559,19 +595,31 @@ export class OutcomeCapture {
    * comment, when read, replaces these facts (and re-opens their link). */
   private ingestLocalFacts(pr: number, posted: readonly RoundFindingRow[]): void {
     const insert = this.store.db.prepare(
-      `INSERT OR IGNORE INTO finding_comments (comment_id, pr, path, line, source, seen_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO finding_comments (comment_id, pr, path, line, created_at, source, seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // The registry knows when the bot posted the comment. Without it a
+    // reply- or record-sourced row has no posting time, and a fate rule
+    // falls back to the ROUND's record time — a later round's, on a link
+    // the registry contradicts (integration review).
+    const backfill = this.store.db.prepare(
+      "UPDATE finding_comments SET created_at = ? WHERE comment_id = ? AND created_at IS NULL",
     );
     const seen = this.ts();
+    const add = (commentId: number, path: string | null, line: number | null, source: string) => {
+      const postedAt = this.store.botCommentPostedAt(commentId);
+      insert.run(commentId, pr, path, line, postedAt, source, seen);
+      if (postedAt !== null) backfill.run(postedAt, commentId);
+    };
     this.store.db.transaction(() => {
       for (const c of this.store.prComments(pr)) {
         if (c.source !== "review_comment" || c.in_reply_to_id === null) continue;
         if (!this.store.isBotComment(c.in_reply_to_id)) continue;
-        insert.run(c.in_reply_to_id, pr, c.path, c.line, "reply", seen);
+        add(c.in_reply_to_id, c.path, c.line, "reply");
       }
       for (const f of posted) {
         if (f.thread_id === null || !this.store.isBotComment(f.thread_id)) continue;
-        insert.run(f.thread_id, pr, f.path, f.line, "record", seen);
+        add(f.thread_id, f.path, f.line, "record");
       }
     })();
   }
@@ -605,10 +653,25 @@ export class OutcomeCapture {
   }
 
   /**
-   * Link every unlinked bot comment of a PR to its finding (see the module
-   * header for the order). A marker link is final; a fallback link is kept
-   * until the comment shows a marker or its facts change
-   * (`observeBotComments` re-opens it then). Returns the counts after.
+   * Link every bot comment of a PR to its finding (see the module header for
+   * the order). A marker link is final. Every other comment is resolved
+   * AGAIN on every capture, from its facts alone, so the result never
+   * depends on the order comments are visited or on what an earlier pass
+   * linked (integration review,: a second capture of the live store
+   * moved a link and a fate).
+   *
+   *   * The round: the one the comment's review id names, else the one the
+   *     registry (`bot_comments.round_no`) attributes it to. When either is
+   *     known, ONLY that round's findings are candidates — a comment whose
+   *     round holds no posted finding at its path and line is unmatched,
+   *     never linked to another round's finding (36 of 998 such links on the
+   *     live store named a round the registry contradicts). Only a comment
+   *     neither names falls back to the first round recorded after it was
+   *     posted.
+   *   * A finding two comments could claim by fallback is NEITHER's, and one
+   *     a marker claims is the marker's.
+   *
+   * Returns the counts after.
    */
   linkComments(pr: number): { linked: number; unmatched: number } {
     const rows = this.store.roundFindings(pr);
@@ -622,20 +685,12 @@ export class OutcomeCapture {
     const reviewRound = new Map<number, number>();
     for (const r of this.store.roundsFor(pr))
       if (r.gh_review_id !== null) reviewRound.set(r.gh_review_id, r.round_no);
-    const takenBy = new Map<string, number>();
-    for (const c of comments)
-      if (c.finding_key !== null && c.round_no !== null)
-        takenBy.set(fkey(c.round_no, c.finding_key), c.comment_id);
-    const free = (f: RoundFindingRow, c: FindingCommentRow): boolean => {
-      const owner = takenBy.get(fkey(f.round_no, f.finding_key));
-      return owner === undefined || owner === c.comment_id;
-    };
 
     const update = this.store.db.prepare(
       "UPDATE finding_comments SET round_no = ?, finding_key = ?, via = ?, linked_at = ? WHERE comment_id = ?",
     );
     const unlink = this.store.db.prepare(
-      "UPDATE finding_comments SET round_no = NULL, finding_key = NULL, via = NULL, linked_at = NULL WHERE comment_id = ? AND via != 'marker'",
+      "UPDATE finding_comments SET round_no = NULL, finding_key = NULL, via = NULL, linked_at = NULL WHERE comment_id = ?",
     );
     const at = this.ts();
     const resolve = (c: FindingCommentRow): { f: RoundFindingRow; via: LinkVia } | null => {
@@ -647,29 +702,27 @@ export class OutcomeCapture {
         // Parsed, and the key is not in it (the record was rewritten after
         // rendering): the fallback below may still place it.
       }
-      const byThread = posted.filter((f) => f.thread_id === c.comment_id && free(f, c));
+      const byThread = posted.filter((f) => f.thread_id === c.comment_id);
       if (byThread.length === 1) return { f: byThread[0]!, via: "thread_id" };
       if (c.path === null || c.line === null) return null;
-      const here = posted.filter((f) => f.path === c.path && f.line === c.line && free(f, c));
+      const here = posted.filter((f) => f.path === c.path && f.line === c.line);
       if (here.length === 0) return null;
       const exactRound = c.review_id !== null ? reviewRound.get(c.review_id) : undefined;
+      const named = exactRound ?? this.store.botCommentRound(c.comment_id) ?? undefined;
       let pool: RoundFindingRow[];
-      if (exactRound !== undefined) pool = here.filter((f) => f.round_no === exactRound);
+      if (named !== undefined) pool = here.filter((f) => f.round_no === named);
       else {
-        const registered = this.store.botCommentRound(c.comment_id);
-        pool = registered !== null ? here.filter((f) => f.round_no === registered) : [];
-        if (pool.length === 0) {
-          const rounds = [...new Set(here.map((f) => f.round_no))].sort((a, b) => a - b);
-          if (rounds.length === 1) pool = here;
-          else {
-            // The comment's round is the first whose record was parsed after
-            // the comment was posted (a record is written after posting).
-            const created = ms(c.created_at);
-            if (created === null) return null;
-            const round = rounds.find((r) => (recorded.get(r)?.at ?? -Infinity) >= created);
-            pool = round === undefined ? [] : here.filter((f) => f.round_no === round);
-          }
-        }
+        // The comment's round is the first whose record was parsed after the
+        // comment was posted (a record is written after posting).
+        const rounds = [...new Set(here.map((f) => f.round_no))].sort((a, b) => a - b);
+        const created = ms(c.created_at);
+        const round =
+          created === null
+            ? rounds.length === 1
+              ? rounds[0]
+              : undefined
+            : rounds.find((r) => (recorded.get(r)?.at ?? -Infinity) >= created);
+        pool = round === undefined ? [] : here.filter((f) => f.round_no === round);
       }
       if (pool.length === 1) return { f: pool[0]!, via: "path_line" };
       if (pool.length === 0 || c.head === null) return null;
@@ -682,27 +735,47 @@ export class OutcomeCapture {
       return null;
     };
 
+    // Pass 1: every comment's own answer, from its facts alone.
+    const hits = new Map<number, { f: RoundFindingRow; via: LinkVia } | null>();
+    const claims = new Map<string, { marker: number[]; fallback: number[] }>();
+    for (const c of comments) {
+      const hit =
+        c.via === "marker" && c.round_no !== null && c.finding_key !== null
+          ? (() => {
+              const f = byKey.get(fkey(c.round_no!, c.finding_key!));
+              return f ? { f, via: "marker" as LinkVia } : resolve(c);
+            })()
+          : resolve(c);
+      hits.set(c.comment_id, hit);
+      if (!hit) continue;
+      const k = fkey(hit.f.round_no, hit.f.finding_key);
+      const claim = claims.get(k) ?? { marker: [], fallback: [] };
+      (hit.via === "marker" ? claim.marker : claim.fallback).push(c.comment_id);
+      claims.set(k, claim);
+    }
+    // Pass 2: a finding goes to its marker (the earliest comment, when a
+    // retried posting stamped one marker twice), else to its one fallback
+    // claimant; contested by fallbacks alone, it goes to nobody.
     this.store.db.transaction(() => {
       for (const c of comments) {
-        if (c.via === "marker") continue;
-        if (c.finding_key !== null && c.marker_key === null) continue;
-        const hit = resolve(c);
-        if (!hit) continue;
+        const hit = hits.get(c.comment_id) ?? null;
+        let keep: { f: RoundFindingRow; via: LinkVia } | null = null;
+        if (hit) {
+          const claim = claims.get(fkey(hit.f.round_no, hit.f.finding_key))!;
+          if (hit.via === "marker") keep = Math.min(...claim.marker) === c.comment_id ? hit : null;
+          else keep = claim.marker.length === 0 && claim.fallback.length === 1 ? hit : null;
+        }
+        if (!keep) {
+          if (c.finding_key !== null) unlink.run(c.comment_id);
+          continue;
+        }
         if (
-          c.finding_key === hit.f.finding_key &&
-          c.round_no === hit.f.round_no &&
-          c.via === hit.via
+          c.finding_key === keep.f.finding_key &&
+          c.round_no === keep.f.round_no &&
+          c.via === keep.via
         )
           continue;
-        if (c.finding_key !== null && c.round_no !== null)
-          takenBy.delete(fkey(c.round_no, c.finding_key));
-        // Only a marker can land on a finding another comment holds (every
-        // fallback checks `free`): the marker is exact, so the other comment's
-        // guess is the one that goes.
-        const owner = takenBy.get(fkey(hit.f.round_no, hit.f.finding_key));
-        if (owner !== undefined && owner !== c.comment_id) unlink.run(owner);
-        takenBy.set(fkey(hit.f.round_no, hit.f.finding_key), c.comment_id);
-        update.run(hit.f.round_no, hit.f.finding_key, hit.via, at, c.comment_id);
+        update.run(keep.f.round_no, keep.f.finding_key, keep.via, at, c.comment_id);
       }
     })();
     const counts = this.store.db
@@ -906,6 +979,10 @@ export class OutcomeCapture {
       ms(link?.created_at) ?? facts.recorded.get(f.round_no)?.at ?? ms(f.recorded_at) ?? 0;
     const replies = thread !== null ? (facts.replies.get(thread) ?? []) : [];
     const replyAt = (r: PrCommentRow) => ms(r.created_at) ?? ms(r.captured_at) ?? 0;
+    /** A human reply in the thread, no later than `at`, that accepts the
+     * point (`concedesPoint`) — the latest one, or null. */
+    const humanConceded = (at: number): PrCommentRow | null =>
+      [...replies].reverse().find((r) => replyAt(r) <= at && concedesPoint(r.body)) ?? null;
 
     // 1. A human reply that cites a commit made after the review — "Fixed in
     //    3f2a9c1", checked in git. One git cannot check is no evidence, and no
@@ -940,13 +1017,33 @@ export class OutcomeCapture {
             at: d.at,
             detail: `thread decision on reply ${d.comment_id}: ${d.outcome}`,
           });
-        } else if (d.resolution === "keep_open")
-          evidence.push({
-            fate: "upheld_after_reply",
-            basis: "kept_open",
-            at: d.at,
-            detail: `thread decision on reply ${d.comment_id}: keep_open`,
-          });
+        } else if (d.resolution === "keep_open") {
+          // Keeping a thread open right after "Fixed in <sha>" is the
+          // session not having re-verified the new head yet — not the bot
+          // holding against a human (integration review,: 64 of 92
+          // live `kept_open` fates followed a sha-citing reply). When the
+          // human reply it answered cites a commit: a fix git verified
+          // stands (nothing is added — `sha_cited` is the evidence); one git
+          // cannot check yet leaves the finding undecided.
+          const answered = [...replies].reverse().find((r) => replyAt(r) <= d.at) ?? null;
+          const citesSha = answered !== null && citedShas(answered.body).length > 0;
+          if (citesSha && cited.state === "verified" && replyAt(cited.reply) <= d.at) continue;
+          evidence.push(
+            citesSha && cited.state === "unverified"
+              ? {
+                  fate: "unknown",
+                  basis: "conflict:kept_open_after_unverified_sha",
+                  at: d.at,
+                  detail: `kept open after reply ${answered!.comment_id} cited a commit git could not check`,
+                }
+              : {
+                  fate: "upheld_after_reply",
+                  basis: "kept_open",
+                  at: d.at,
+                  detail: `thread decision on reply ${d.comment_id}: keep_open`,
+                },
+          );
+        }
       }
       // 3. The session's resolves, where its decision did not say why. A
       //    thread a human had already resolved is still the session's resolve
@@ -969,12 +1066,22 @@ export class OutcomeCapture {
         const head = since[since.length - 1]?.head_sha ?? null;
         if (head === null) {
           if (cited.state === "unverified") continue;
-          evidence.push({
-            fate: "refuted_conceded",
-            basis: "resolved_no_change",
-            at: r.at,
-            detail: `resolved with no push since the review${who}`,
-          });
+          const accepted = humanConceded(r.at);
+          evidence.push(
+            accepted
+              ? {
+                  fate: "unknown",
+                  basis: "conflict:resolved_no_change",
+                  at: r.at,
+                  detail: `resolved with no push since the review${who}, but reply ${accepted.comment_id} accepts the point`,
+                }
+              : {
+                  fate: "refuted_conceded",
+                  basis: "resolved_no_change",
+                  at: r.at,
+                  detail: `resolved with no push since the review${who}`,
+                },
+          );
           continue;
         }
         if ((await this.touched(f, head)) === true)
@@ -1001,13 +1108,24 @@ export class OutcomeCapture {
           at,
           detail: `round ${e.round_no} recorded it conceded after ${fixCited ? "a cited commit" : "the anchored lines changed"}`,
         });
-      else if (changed === false && cited.state === "none")
-        evidence.push({
-          fate: "refuted_conceded",
-          basis: "conceded_unchanged",
-          at,
-          detail: `round ${e.round_no} recorded it conceded with the anchored lines unchanged`,
-        });
+      else if (changed === false && cited.state === "none") {
+        const accepted = humanConceded(at);
+        evidence.push(
+          accepted
+            ? {
+                fate: "unknown",
+                basis: "conflict:conceded_unchanged",
+                at,
+                detail: `round ${e.round_no} recorded it conceded with the anchored lines unchanged, but reply ${accepted.comment_id} accepts the point (a fix may sit away from the anchor)`,
+              }
+            : {
+                fate: "refuted_conceded",
+                basis: "conceded_unchanged",
+                at,
+                detail: `round ${e.round_no} recorded it conceded with the anchored lines unchanged`,
+              },
+        );
+      }
     }
 
     // Posted again, provably the same finding: CARRIED — this row inherits the
@@ -1147,16 +1265,19 @@ export class OutcomeCapture {
     this.store.db.transaction(() => {
       for (const { f, chain } of decided) {
         const best = decideFate(chain.evidence);
+        // A latest piece of evidence that is a CONFLICT reads `unknown`, PR
+        // open or closed — its basis says why — and is decided by nobody.
         const fate: FindingFate = best
           ? best.fate
           : facts.closedAt !== null
             ? "open_at_close"
             : "unknown";
-        const decidedAt = best
-          ? new Date(best.at).toISOString()
-          : facts.closedAt !== null
-            ? new Date(facts.closedAt).toISOString()
-            : null;
+        const decidedAt =
+          best && best.fate !== "unknown"
+            ? new Date(best.at).toISOString()
+            : !best && facts.closedAt !== null
+              ? new Date(facts.closedAt).toISOString()
+              : null;
         fates[fate]++;
         if (existing.get(fkey(f.round_no, f.finding_key)) !== fate) changed++;
         upsert.run({

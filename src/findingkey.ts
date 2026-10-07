@@ -62,12 +62,24 @@ function encodeMarkerKey(key: string): string {
 /** Matches a marker anywhere in a comment body. */
 export const FINDING_MARKER_RE = /<!--\s*qcr:f=(\d+):([A-Za-z0-9%._~]+)\s*-->/;
 
-/** The marker a comment body carries, if any. A malformed one is no marker. */
+const FINDING_MARKER_ALL_RE = new RegExp(FINDING_MARKER_RE.source, "g");
+
+/**
+ * The marker a comment body carries, if any. A malformed one is no marker.
+ *
+ * The LAST marker in the body is the real one: the render route appends it
+ * after the finding's text (`reviewrender.ts`), and that text is the
+ * reviewer's, which may quote PR content — a marker-shaped string a PR
+ * carries (or this repo's own tests, in a self-review) and the finding
+ * quotes comes BEFORE it. Taking the first match would link the comment to
+ * whatever finding the quoted text names (integration review).
+ */
 export function parseFindingMarker(
   body: string | null | undefined,
 ): { round_no: number; key: string } | null {
   if (typeof body !== "string") return null;
-  const m = FINDING_MARKER_RE.exec(body);
+  let m: RegExpExecArray | null = null;
+  for (const hit of body.matchAll(FINDING_MARKER_ALL_RE)) m = hit;
   if (!m) return null;
   try {
     const key = decodeURIComponent(m[2]!);

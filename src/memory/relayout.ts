@@ -25,8 +25,11 @@
 //     `kind=feedback`) → `events/`.
 //   * The ops family (`#bug`, `#operations`, `#openviking`, `#review-ops`,
 //     `kind=bug|ops`, `area=operations`) → `events/`, its header given
-//     `kind=bug` (a defect: `#bug`, `kind=bug` or a `filed=` ticket) or
-//     `kind=ops`, and `area=operations`.
+//     `kind=bug` when the HEADER already says it is a defect (`#bug`,
+//     `kind=bug` or a `filed=` ticket — a `kind=bug` header is what the TUI's
+//     auto-filer files, so only a header may grant it), else `kind=ops`, and
+//     `area=operations`. One whose tag LINES alone say bug is written
+//     `kind=ops` and flagged for a hand decision.
 //   * Everything else stays where it is — lessons and conventions in
 //     `experiences/` above all.
 //
@@ -36,8 +39,10 @@
 // entry's TAG LINES — a line made only of `#tags` / `k=v`, or a trailing
 // `Tags: #bug #operations` — because the curator wrote half of the ops notes
 // with their tags there, where the header parser never looks. That reader is
-// tolerant on purpose and only ever moves an entry OUT of the round's search
-// scope, never into a more trusted place.
+// tolerant on purpose, but never inside a fenced block (a quoted reply's
+// `#bug` line is somebody else's text), it only ever moves an entry OUT of
+// the round's search scope, never into a more trusted place, and it never
+// mints a `kind=bug` header (integration review).
 //
 // NEVER A DELETE. A move is a new copy plus a `#retired #moved` stub at the
 // old address; a retirement is the `#retired` tag. Every write is a
@@ -129,7 +134,20 @@ const HASH_TOKEN = /^#([^\s#]+)$/;
 export function looseTags(text: string): { hash: Set<string>; kv: Record<string, string> } {
   const hash = new Set(parseHashTags(text));
   const kv: Record<string, string> = { ...parseEventTags(text) };
+  // An open fence: its marker character and length (CommonMark: a closing
+  // fence is the same character, at least as long).
+  let fence: { ch: string; len: number } | null = null;
   for (const raw of text.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(raw);
+    if (fence) {
+      if (marker && marker[1]![0] === fence.ch && marker[1]!.length >= fence.len && raw.trim() === marker[1])
+        fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { ch: marker[1]![0]!, len: marker[1]!.length };
+      continue;
+    }
     const line = raw.trim().replace(/^Tags:\s*/i, "");
     if (line === "") continue;
     const tokens = line.split(/\s+/);
@@ -190,18 +208,23 @@ function decide(e: MemoryEntry, adjudicated: ReadonlySet<string>): Decision {
     loose.kv["kind"] === "ops" ||
     loose.kv["area"] === "operations";
   if (ops) {
-    const bug =
+    // Only the HEADER may make an entry a defect: a `kind=bug` header is what
+    // the TUI's auto-filer files (src/tui/memory.ts `isDefect`, header-only
+    // for exactly this reason), and a tag line in the body is text.
+    const headerDefect =
+      headHash.has("bug") || headKv["kind"] === "bug" || headKv["filed"] !== undefined;
+    const bodySaysBug =
       loose.hash.has("bug") || loose.kv["kind"] === "bug" || loose.kv["filed"] !== undefined;
-    const kind = bug ? "bug" : "ops";
+    const kind = headerDefect ? "bug" : "ops";
     const text = withHeaderTags(e.text, { kind, area: "operations" });
-    const wasDefect = headHash.has("bug") || headKv["kind"] === "bug";
-    const filed = parseEventTags(text)["filed"] !== undefined;
     return {
       dest: EVENTS_AREA,
       why: `ops note (kind=${kind})`,
       ...(text !== e.text.trim() ? { text } : {}),
-      ...(bug && !wasDefect && !filed
-        ? { note: "now a kind=bug header with no filed= ticket — the TUI's auto-filer will file it" }
+      ...(!headerDefect && bodySaysBug
+        ? {
+            note: "its tag lines say bug but its header does not — written kind=ops; make it kind=bug by hand if it is a defect (the TUI's auto-filer then files it)",
+          }
         : {}),
     };
   }

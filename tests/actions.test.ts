@@ -40,10 +40,6 @@ function mockDriver(overrides: Partial<TuiDriver> = {}): {
     msgSession: (session, text) => calls.push(["msgSession", session, text]),
     overseerInject: (text) => calls.push(["overseerInject", text]),
     deployTab: (action) => calls.push(["deployTab", action]),
-    memoryPin: (entry, pin) => {
-      calls.push(["memoryPin", entry, pin]);
-      return Promise.resolve(`moved ${entry}`);
-    },
     ...overrides,
   };
   return { calls, driver };
@@ -317,72 +313,13 @@ describe("executeTuiAction — driver dispatch + traces", () => {
   });
 });
 
-describe("memory_pin — pin/unpin through the TUI's one store (S5)", () => {
-  it("parses an id or a viking:// URI and an explicit pin flag", () => {
+describe("no memory-write verb — rule 8 (integration review)", () => {
+  it("memory_pin is refused as an unknown verb: the companion writes memory itself, never through the TUI", () => {
     expect(
-      ok({ verb: "memory_pin", params: { entry: "reviewer:experiences/a.md", pin: true } }),
-    ).toEqual({
-      verb: "memory_pin",
-      entry: "reviewer:experiences/a.md",
-      pin: true,
-    });
-    expect(
-      ok({
-        verb: "memory_pin",
-        params: { entry: " viking://user/reviewer/memories/preferences/pinned/a.md ", pin: false },
-      }),
-    ).toEqual({
-      verb: "memory_pin",
-      entry: "viking://user/reviewer/memories/preferences/pinned/a.md",
-      pin: false,
-    });
-  });
-
-  it("refuses a missing, spaced, traversing or oversized entry, and a pin that is not a boolean", () => {
-    for (const entry of [undefined, "", "a b.md", "reviewer:../x.md", "x".repeat(301), 7])
-      expect(err({ verb: "memory_pin", params: { entry, pin: true } })).toMatch(
-        /memory_pin needs entry/,
-      );
-    for (const pin of [undefined, "true", 1])
-      expect(
-        err({ verb: "memory_pin", params: { entry: "reviewer:experiences/a.md", pin } }),
-      ).toMatch(/memory_pin needs pin/);
-  });
-
-  it("waits for the store's answer and reports it — a refusal is a FAILED result", async () => {
-    const { calls, driver } = mockDriver();
-    await expect(
-      executeTuiAction(
-        { verb: "memory_pin", entry: "reviewer:experiences/a.md", pin: true },
-        driver,
-      ),
-    ).resolves.toBe("companion ▸ memory pin → moved reviewer:experiences/a.md");
-    expect(calls).toEqual([["memoryPin", "reviewer:experiences/a.md", true]]);
-
-    const dir = mkdtempSync(join(tmpdir(), "tui-actions-pin-"));
-    try {
-      writeFileSync(
-        join(dir, "2026-10-07T10-00-00-pin.json"),
-        JSON.stringify({
-          verb: "memory_pin",
-          params: { entry: "reviewer:experiences/a.md", pin: false },
-        }),
-      );
-      const refusing = mockDriver({
-        memoryPin: () => Promise.reject(new Error("refused: the entry changed since you read it")),
-      });
-      const [res] = await processTuiActions(dir, refusing.driver);
-      expect(res).toMatchObject({
-        ok: false,
-        message: expect.stringMatching(/changed since you read it/),
-      });
-      const result = JSON.parse(
-        readFileSync(join(dir, "2026-10-07T10-00-00-pin.result.json"), "utf8"),
-      );
-      expect(result.ok).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      err({ verb: "memory_pin", params: { entry: "reviewer:experiences/a.md", pin: true } }),
+    ).toContain("unknown verb 'memory_pin'");
+    const source = readFileSync(join(process.cwd(), "src", "tui", "actions.ts"), "utf8");
+    expect(source).not.toMatch(/memoryPin|case "memory_pin"/);
   });
 });
 

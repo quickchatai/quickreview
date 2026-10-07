@@ -26,6 +26,8 @@ import { createHash } from "node:crypto";
 import { routeNamespace, type NamespaceRoute } from "./qcr-namespaces.js";
 // [QCR PATCH 10] a typed lesson's header is rendered from `lesson`
 import { withLessonHeader } from "./qcr-lesson.js";
+// [QCR PATCH 11] …and only from `lesson`: never typed by hand
+import { handTypedLessonRefusal } from "./qcr-lesson.js";
 
 /** Memory targets keep a text-extension allowlist server-side; these are the
  * two we ever author. */
@@ -199,6 +201,10 @@ export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult 
     if (!lesson.ok) return { ok: false, error: lesson.error };
     content = lesson.content;
     if (!tags.tags.includes("lesson") && tags.tags.length < MAX_TAGS) tags.tags.push("lesson");
+  } else {
+    // [QCR PATCH 11]
+    const handTyped = handTypedLessonRefusal(input.content);
+    if (handTyped) return { ok: false, error: handTyped };
   }
 
   const body = renderMemoryBody(content, tags.tags);

@@ -487,14 +487,34 @@ if [[ -n "$CFG_OV" ]]; then
   # ships.
   CFG_OV_EMBED="$(config_table_key openviking embedding_provider || true)"
   if [[ -n "$CFG_OV_EMBED" ]]; then
+    CFG_OV_EMBED_MODEL="$(config_table_key openviking embedding_model || true)"
+    CFG_OV_EMBED_DIM="$(config_table_key openviking embedding_dimension || true)"
+    # S4 (integration review): read config.toml the way the daemon's
+    # parser does (src/config.ts) — under `local`, the previous release's
+    # REQUIRED spelling (the engine's built-in Chinese-first model, 512 dims,
+    # `RETIRED_LOCAL_EMBEDDING`) means the local English embedder that
+    # replaced it (`LOCAL_EMBEDDING`). So the live config.toml needs no edit
+    # for this deploy, and the same file keeps loading on the previous release
+    # (which refuses the new spelling) — a rollback cannot strand it. Both
+    # pairs are pinned to config.ts by tests/deploy.test.ts.
+    RETIRED_LOCAL_EMBED_MODEL="bge-small-zh-v1.5-f16"
+    RETIRED_LOCAL_EMBED_DIM="512"
+    LOCAL_EMBED_MODEL="bge-small-en-v1.5-f16"
+    LOCAL_EMBED_DIM="384"
+    if [[ "$CFG_OV_EMBED" == "local" && "$CFG_OV_EMBED_MODEL" == "$RETIRED_LOCAL_EMBED_MODEL" \
+          && ( -z "$CFG_OV_EMBED_DIM" || "$CFG_OV_EMBED_DIM" == "$RETIRED_LOCAL_EMBED_DIM" ) ]]; then
+      note "config.toml spells the retired local embedder ($RETIRED_LOCAL_EMBED_MODEL/${CFG_OV_EMBED_DIM:-default}) — read as $LOCAL_EMBED_MODEL/$LOCAL_EMBED_DIM, exactly as the daemon's parser reads it"
+      CFG_OV_EMBED_MODEL="$LOCAL_EMBED_MODEL"
+      CFG_OV_EMBED_DIM="$LOCAL_EMBED_DIM"
+    fi
     check_pin "openviking embedding provider" \
       'config.toml   [openviking] embedding_provider' "$CFG_OV_EMBED" \
       'ansible (host var, else group_vars)  openviking_embedding_provider' "$(effective_var openviking_embedding_provider || true)"
     check_pin "openviking embedding model" \
-      'config.toml   [openviking] embedding_model' "$(config_table_key openviking embedding_model || true)" \
+      'config.toml   [openviking] embedding_model' "$CFG_OV_EMBED_MODEL" \
       'ansible (host var, else group_vars)  openviking_embedding_model' "$(effective_var openviking_embedding_model || true)"
     check_pin "openviking embedding dimension" \
-      'config.toml   [openviking] embedding_dimension' "$(config_table_key openviking embedding_dimension || true)" \
+      'config.toml   [openviking] embedding_dimension' "$CFG_OV_EMBED_DIM" \
       'ansible (host var, else group_vars)  openviking_embedding_dimension' "$(effective_var openviking_embedding_dimension || true)"
     check_pin "openviking embeddings key file" \
       'config.toml   [openviking] embedding_key_file' "$(config_table_key openviking embedding_key_file || true)" \

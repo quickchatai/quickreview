@@ -197,7 +197,7 @@ export interface MemoryStatus {
    * "nothing owed"); absent on a daemon that predates it. */
   feedback_writes?: FeedbackWritesStatus | null;
   /** The finding-case ledger (S7, src/cases.ts) — what the daemon
-   * owes `cases/`, has written, and why not. null when the ledger could not
+   * owes `finding-cases/`, has written, and why not. null when the ledger could not
    * be read (UNKNOWN, never "nothing owed"); absent when no case writer runs
    * (memory switched off) and on a daemon that predates it. */
   case_writes?: CaseWritesStatus | null;

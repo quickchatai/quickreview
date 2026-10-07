@@ -124,6 +124,11 @@ export interface OpenVikingStatus {
   reachable: boolean;
   /** `/ready` returned 200 on the last poll — the gate that matters. */
   ready: boolean;
+  /** Consecutive polls where `/health` answered but `/ready` did not (0 once
+   * ready again or unreachable). One slow `/ready` — it runs an embedding,
+   * and the one-thread embedder may be busy with a case batch — is no
+   * verdict on its own (`memoryServing`). Absent from an older daemon. */
+  not_ready_polls?: number;
   /** Server-reported version. */
   version?: string;
   /** config.toml `[openviking] version` — the triple-mirrored pin. */

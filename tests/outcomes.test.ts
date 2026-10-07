@@ -32,6 +32,7 @@ import {
   OutcomeCapture,
   citedSha,
   citedShas,
+  concedesPoint,
   commentHead,
   decideFate,
   renderOutcomeSummary,
@@ -525,6 +526,73 @@ describe("the linker", () => {
       [951, "record", "F2", "thread_id"],
     ]);
   });
+
+  it("a comment the registry attributes to a round never links to ANOTHER round's finding", () => {
+    // Live #5725: a round-1 comment whose reply had drifted onto a line a
+    // round-30 finding sat on was linked to round 30.
+    const h = harness();
+    h.round(H1, [posted({ key: "F1", line: 10 })]);
+    h.round(H2, [posted({ key: "G1", line: 16 })]);
+    h.store.registerBotComment(970, PR, "review_comment", 1);
+    h.store.recordPrComment({
+      pr: PR,
+      source: "review_comment",
+      comment_id: 971,
+      in_reply_to_id: 970,
+      thread_id: 970,
+      author: "alice",
+      author_type: "User",
+      path: "workers/ingest.py",
+      line: 16, // GitHub's current line: drifted onto round 2's G1
+      body: "why?",
+      created_at: h.tick(1),
+    });
+    expect(h.capture.linkComments(PR)).toEqual({ linked: 0, unmatched: 1 });
+    expect(h.capture.commentsFor(PR)[0]).toMatchObject({ comment_id: 970, finding_key: null });
+  });
+
+  it("a reply-sourced row carries the registry's posting time, not the record's", () => {
+    const h = harness();
+    h.round(H1, [posted({ key: "F1" })]);
+    h.store.registerBotComment(975, PR, "review_comment", 1);
+    const postedAt = h.store.botCommentPostedAt(975);
+    expect(postedAt).not.toBeNull();
+    humanReply(h.store, { id: 976, root: 975, body: "why?", at: h.tick(1) });
+    h.capture.linkComments(PR);
+    expect(h.capture.commentsFor(PR)[0]).toMatchObject({
+      source: "reply",
+      created_at: postedAt,
+      finding_key: "F1",
+    });
+  });
+
+  it("a finding two comments could claim by fallback is neither's, and capture is idempotent", async () => {
+    const h = harness();
+    h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [botComment({ id: 980 }), botComment({ id: 981 })]);
+    expect(h.capture.linkComments(PR)).toEqual({ linked: 0, unmatched: 2 });
+    // The order the comments are visited in decides nothing: capture twice,
+    // and nothing moves.
+    await h.capture.capturePr(PR);
+    const first = JSON.stringify([h.capture.commentsFor(PR), h.capture.outcomesFor(PR)]);
+    await h.capture.capturePr(PR);
+    expect(
+      JSON.stringify([h.capture.commentsFor(PR), h.capture.outcomesFor(PR)]).replace(
+        /"(linked_at|updated_at|seen_at)":"[^"]*"/g,
+        "",
+      ),
+    ).toBe(first.replace(/"(linked_at|updated_at|seen_at)":"[^"]*"/g, ""));
+    // One of them gains a marker: the finding is the marker's, the other
+    // stays unmatched.
+    h.capture.observeBotComments(PR, [
+      botComment({ id: 981, body: `[blocker] t\n\n${findingMarker(1, "F1")}` }),
+    ]);
+    h.capture.linkComments(PR);
+    expect(h.capture.commentsFor(PR).map((c) => [c.comment_id, c.finding_key, c.via])).toEqual([
+      [980, null, null],
+      [981, "F1", "marker"],
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -689,6 +757,106 @@ describe("the fate table", () => {
     h.tick();
     resolvedThread(h.store, 800, 805);
     expect(await fate(h)).toEqual([["F1", "refuted_conceded", "resolved_no_change"]]);
+  });
+
+  it("an inferred refutation the human reply contradicts is unknown, its basis naming the conflict", async () => {
+    // Live: "fair catch", "Updated: the description now says …", a fix made
+    // away from the anchor — all read refuted_conceded before.
+    const resolved = threaded();
+    humanReply(resolved.store, {
+      id: 840,
+      root: 800,
+      body: "This one is a fair catch and I am not going to argue it is wrong. I updated the PR description accordingly.",
+      at: resolved.tick(),
+    });
+    resolved.tick();
+    resolvedThread(resolved.store, 800, 840);
+    expect(await fate(resolved)).toEqual([["F1", "unknown", "conflict:resolved_no_change"]]);
+    expect(resolved.capture.outcomesFor(PR)[0]).toMatchObject({ decided_at: null });
+    expect(resolved.capture.outcomesFor(PR)[0]!.evidence).toContain("reply 840 accepts the point");
+
+    const conceded = threaded(fakeGit({ "workers/ingest.py@a1..b2": false }));
+    humanReply(conceded.store, {
+      id: 841,
+      root: 800,
+      body: "Made part of this PR: the client now passes timeout=(5, 30).",
+      at: conceded.tick(),
+    });
+    conceded.tick();
+    conceded.round(H2, [concededAgain()]);
+    expect(await fate(conceded)).toEqual([["F1", "unknown", "conflict:conceded_unchanged"]]);
+
+    // Closed, a conflict still reads unknown — not open_at_close.
+    const closed = threaded(undefined, "closed");
+    humanReply(closed.store, { id: 842, root: 800, body: "You are right, corrected.", at: closed.tick() });
+    closed.tick();
+    resolvedThread(closed.store, 800, 842);
+    closed.store.logEvent("pr_closed", PR, { merged: true, source: "webhook" });
+    expect(await fate(closed)).toEqual([["F1", "unknown", "conflict:resolved_no_change"]]);
+  });
+
+  it("concedesPoint: the acceptance lexicon, and the refutations it leaves alone", () => {
+    for (const yes of [
+      "This one is a fair catch and I am not going to argue it is wrong",
+      "Good catch…",
+      "Correct, and it was my omission. The description now says plainly",
+      "Updated: the description now says 60s lease",
+      "You are right, and the PR description overclaimed. I have corrected it.",
+      "You're right.",
+      "Done",
+      "Fixed in 432a199f79",
+      "Accepted and documented in the PR",
+    ])
+      expect(concedesPoint(yes), yes).toBe(true);
+    for (const no of [
+      "This is intentional.",
+      "Not reachable from here.",
+      "I disagree.",
+      "Out of scope here.",
+      "ok",
+      "The current behaviour is correct by design.",
+      "",
+      null,
+    ])
+      expect(concedesPoint(no), String(no)).toBe(false);
+  });
+
+  it("a thread kept open right after a sha-citing reply is no hold: a verified fix stands, an unchecked one is unknown", async () => {
+    // Live #5725 r73 f3: 'Fixed in `432a199f79`' at 18:43:43, keep_open 37 s
+    // later — stored as upheld_after_reply.
+    const verified = threaded(fakeGit({}, { "432a199f79": true }));
+    verified.push(H2);
+    humanReply(verified.store, {
+      id: 850,
+      root: 800,
+      body: "Fixed in `432a199f79`",
+      at: verified.tick(),
+    });
+    verified.tick();
+    resolvedThread(verified.store, 800, 850, { resolution: "keep_open" });
+    expect(await fate(verified)).toEqual([["F1", "fixed", "sha_cited"]]);
+
+    const unchecked = threaded(); // no git
+    humanReply(unchecked.store, {
+      id: 851,
+      root: 800,
+      body: "Fixed in 432a199f79",
+      at: unchecked.tick(),
+    });
+    unchecked.tick();
+    resolvedThread(unchecked.store, 800, 851, { resolution: "keep_open" });
+    expect(await fate(unchecked)).toEqual([
+      ["F1", "unknown", "conflict:kept_open_after_unverified_sha"],
+    ]);
+
+    // The human argued on after the fix; the bot held: upheld, as before.
+    const argued = threaded(fakeGit({}, { "432a199f79": true }));
+    argued.push(H2);
+    humanReply(argued.store, { id: 852, root: 800, body: "Fixed in 432a199f79", at: argued.tick() });
+    humanReply(argued.store, { id: 853, root: 800, body: "And the rest is fine.", at: argued.tick() });
+    argued.tick();
+    resolvedThread(argued.store, 800, 853, { resolution: "keep_open" });
+    expect(await fate(argued)).toEqual([["F1", "upheld_after_reply", "kept_open"]]);
   });
 
   it("a resolve after a push that changed the anchored lines is fixed", async () => {
@@ -883,6 +1051,33 @@ describe("the fate table", () => {
       ["F2", null],
       ["X", null],
     ]);
+  });
+
+  it("an equal key alone is no match: per-round key numbering is a coincidence, not identity", async () => {
+    // Live #5725: r1 f1 at line 233 'carried' onto r4 f1 at line 968.
+    const far = harness({ git: fakeGit({}) });
+    far.round(H1, [posted({ key: "f1", line: 233 })]);
+    far.tick(5);
+    far.round(H2, [posted({ key: "f1", line: 968, raised_in_round: 1 })]);
+    await far.capture.capturePr(PR);
+    expect(far.capture.outcomesFor(PR).map((o) => [o.round_no, o.carried_to])).toEqual([
+      [1, null],
+      [2, null],
+    ]);
+    // Same key, another lens, two lines away: not this finding either.
+    const otherLens = harness({ git: fakeGit({}) });
+    otherLens.round(H1, [posted({ key: "f1", line: 40 })]);
+    otherLens.tick(5);
+    otherLens.round(H2, [posted({ key: "f1", line: 42, lens: "pass-security", raised_in_round: 1 })]);
+    await otherLens.capture.capturePr(PR);
+    expect(otherLens.capture.outcomesFor(PR)[0]!.carried_to).toBeNull();
+    // Same key nearby, same lens: carried, as before.
+    const near = harness({ git: fakeGit({}) });
+    near.round(H1, [posted({ key: "f1", line: 40 })]);
+    near.tick(5);
+    near.round(H2, [posted({ key: "f1", line: 44, raised_in_round: 1 })]);
+    await near.capture.capturePr(PR);
+    expect(near.capture.outcomesFor(PR)[0]!.carried_to).toBe("2:f1");
   });
 
   it("no evidence: open_at_close once the PR closed, unknown while it is open", async () => {

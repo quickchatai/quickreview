@@ -3357,6 +3357,15 @@ export class StateStore {
   /** The round a registered bot comment was attributed to, when it was
    * (S6: the outcome linker's fallback when the comment's review id
    * names no round). */
+  /** When a registered bot comment was posted (S6: the posting time
+   * of a comment the linker knows only from a reply or a record). */
+  botCommentPostedAt(commentId: number): string | null {
+    const row = this.db
+      .prepare("SELECT posted_at FROM bot_comments WHERE comment_id = ?")
+      .get(commentId) as { posted_at: string | null } | undefined;
+    return row?.posted_at ?? null;
+  }
+
   botCommentRound(commentId: number): number | null {
     const row = this.db
       .prepare("SELECT round_no FROM bot_comments WHERE comment_id = ?")

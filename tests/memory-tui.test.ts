@@ -580,7 +580,11 @@ describe("the EOD curation (status.json memory.curation) reaches a person", () =
     ).toBe("⛔ LESSONS NOT PERSISTED 2026-10-06 · 2");
     for (const quiet of ["received", "awaiting", "nothing", "no_packet", "packet_ready"] as const)
       expect(curationSegment(snap(healthy(curation({ state: quiet }))))).toBeUndefined();
-    expect(curationSegment(snap(healthy(null)))).toBeUndefined();
+    // Unread is UNKNOWN, never quiet (honest-unknown); a daemon that reports
+    // no block at all (memory off, an older daemon) paints nothing.
+    expect(stripAnsi(curationSegment(snap(healthy(null)))!)).toBe("curation ?");
+    expect(stripAnsi(topBar(view(healthy(null)), 220))).toContain("curation ?");
+    expect(curationSegment(snap(healthy(undefined)))).toBeUndefined();
     const bar = stripAnsi(topBar(view(healthy(curation())), 220));
     expect(bar).toContain("EOD CURATION MISSING");
     expect(bar.indexOf("EOD CURATION MISSING")).toBeLessThan(bar.indexOf("rounds"));

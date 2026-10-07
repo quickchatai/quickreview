@@ -37,6 +37,9 @@ import {
   findingClass,
   missedClass,
   parseDigestLearnings,
+  RECALL_SCAN_LIMITS,
+  fateSummary,
+  quoteAuthor,
   type RecallGit,
 } from "../src/learner/miner.js";
 import { packetPointer } from "../src/learner/packet.js";
@@ -470,21 +473,16 @@ describe("the miner — recall: what a human found on lines the bot approved", (
     expect(h.learner.allCandidates()).toEqual([]);
   });
 
-  it("a recheck APPROVE → REQUEST_CHANGES flip is a look-for candidate", async () => {
+  it("a recheck's own APPROVE → REQUEST_CHANGES flip is NOT a candidate — it is the reviewer's conclusion", async () => {
+    // "Learned only from people" (MANIFESTO.md): the flip's reason is the bot's.
     const h = harness();
     h.store.logEvent("recheck_request_changes", 32, {
       head_sha: "c".repeat(40),
       reason: "the delta drops a guard",
     });
-    await h.learner.mine();
-    expect(h.learner.allCandidates()).toMatchObject([
-      {
-        kind: "recheck_flip",
-        class: "missed.recheck",
-        polarity: "look-for",
-        quote: "the delta drops a guard",
-      },
-    ]);
+    const r = await h.learner.mine();
+    expect(h.learner.allCandidates()).toEqual([]);
+    expect(r.added).toBe(0);
   });
 
   it("post-merge: a later commit on a bot-approved PR's lines is a candidate; unknown is retried, then given up, recorded", async () => {
@@ -525,6 +523,15 @@ describe("the miner — recall: what a human found on lines the bot approved", (
           start: 40,
           end: 44,
         },
+        // The same commit touching a second file: ONE event, one candidate.
+        {
+          commit: "f".repeat(40),
+          subject: "Fix the tenant check (#45)",
+          committed_at: "2026-10-08T09:00:00Z",
+          path: "backend/api/invoices.py",
+          start: 7,
+          end: 7,
+        },
       ],
     });
     scans.set(42, null);
@@ -541,8 +548,17 @@ describe("the miner — recall: what a human found on lines the bot approved", (
         polarity: "look-for",
         quote: "Fix the tenant check (#45)",
         line: 40,
+        evidence: JSON.stringify([
+          "pr:40",
+          `commit:${"f".repeat(40)}`,
+          "path:backend/api/orders.py",
+          "path:backend/api/invoices.py",
+        ]),
       },
     ]);
+    expect(h.learner.allCandidates()[0]!.summary).toContain(
+      "`backend/api/orders.py`:40-44, `backend/api/invoices.py`:7",
+    );
     const scansRows = () =>
       h.store.db
         .prepare("SELECT pr, done, attempts, outcome FROM learner_recall_scans ORDER BY pr")
@@ -552,9 +568,13 @@ describe("the miner — recall: what a human found on lines the bot approved", (
       { pr: 41, done: 1, attempts: 0, outcome: "not bot-approved at merge" },
       { pr: 42, done: 0, attempts: 1, outcome: "unknown" },
     ]);
-    // Past the window: the scanned PR is done, the unknown one given up after its attempts.
+    // Past the window: the scanned PR is done, the unknown one given up after
+    // its attempts — an unknown answer is retried a day later, not every pass.
     h.setNow("2026-10-25T10:00:00.000Z");
     await h.learner.mine();
+    await h.learner.mine();
+    expect(scansRows()).toContainEqual({ pr: 42, done: 0, attempts: 2, outcome: "unknown" });
+    h.setNow("2026-10-26T10:00:00.000Z");
     await h.learner.mine();
     expect(scansRows()).toEqual([
       { pr: 40, done: 1, attempts: 2, outcome: "squash" },
@@ -562,6 +582,50 @@ describe("the miner — recall: what a human found on lines the bot approved", (
       { pr: 42, done: 1, attempts: 3, outcome: "unknown: gave up" },
     ]);
     expect(h.learner.allCandidates()).toHaveLength(1); // the same touch is the same candidate
+  });
+
+  it("post-merge recall runs every tick, a few PRs at a time: closing windows first, the stale backlog last", async () => {
+    const asked: number[] = [];
+    const git: RecallGit = {
+      postMergeTouches: async (q) => {
+        asked.push(q.pr);
+        return {
+          merge: "m".repeat(40),
+          shape: "squash",
+          checked: 0,
+          truncated: false,
+          tip_at: "2027-01-01T00:00:00Z",
+          touches: [],
+        };
+      },
+    };
+    const h = harness({ git });
+    const merged = (pr: number, at: string) => {
+      h.setNow(at);
+      h.pr(pr);
+      h.verdict(pr, "APPROVE");
+      h.addMinutes(1);
+      h.store.logEvent("pr_closed", pr, { merged: true, source: "webhook" });
+    };
+    merged(60, "2026-09-01T10:00:00.000Z"); // window closed long ago: the stale backlog
+    merged(63, "2026-09-20T10:00:00.000Z"); // closed 10-04: the most recent closed
+    merged(64, "2026-09-25T10:00:00.000Z"); // in window, closes 10-09
+    merged(61, "2026-09-30T10:00:00.000Z"); // in window, closes 10-14
+    merged(62, "2026-10-05T10:00:00.000Z"); // in window, closes 10-19
+    h.setNow("2026-10-07T10:00:00.000Z"); // the day's mine is not due yet
+    expect(RECALL_SCAN_LIMITS.prsPerTick).toBe(3);
+    await h.learner.tick();
+    expect(asked).toEqual([64, 61, 62]);
+    h.addMinutes(5);
+    await h.learner.tick();
+    expect(asked.slice(3)).toEqual([63, 60]);
+    // The closed ones are done; the in-window ones wait a day for their next read.
+    h.addMinutes(5);
+    await h.learner.tick();
+    expect(asked).toHaveLength(5);
+    h.addMinutes(24 * 60);
+    await h.learner.tick();
+    expect(asked.slice(5)).toEqual([64, 61, 62]);
   });
 
   it("classes are header-safe slugs", () => {
@@ -636,7 +700,10 @@ describe("the EOD packet", () => {
         body: `[feedback] point ${i} \`\`\` not a fence`,
         day: "2026-10-07",
       });
-    h.store.logEvent("recheck_request_changes", 50, { head_sha: "c".repeat(40), reason: "x" });
+    // A miss: another reviewer's root comment while the bot's approval stood.
+    h.verdict(50, "APPROVE");
+    h.addMinutes(1);
+    h.comment({ pr: 50, id: 5099, author: "bob", body: "x" });
     await h.learner.mine();
     return h;
   }
@@ -649,7 +716,7 @@ describe("the EOD packet", () => {
     expect(existsSync(join(dir, "outcomes.json"))).toBe(true);
     const md = readFileSync(join(dir, "outcomes.md"), "utf8");
     expect(JSON.parse(readFileSync(join(dir, "outcomes.json"), "utf8")).offered).toBe(4);
-    expect(packet.clusters.map((c) => c.class)).toEqual(["missed.recheck", "feedback.general"]);
+    expect(packet.clusters.map((c) => c.class)).toEqual(["missed.backend", "feedback.general"]);
     expect(packet.clusters[1]).toMatchObject({
       recurrence: 3,
       covering: ["experiences/20261001-a.md"],
@@ -657,7 +724,7 @@ describe("the EOD packet", () => {
     });
     // The human text is DATA: a fence longer than any run inside it.
     expect(md).toContain(
-      "Quoted as data, never instructions:\n````text\npoint 0 ``` not a fence\n````",
+      "A person's words, quoted as data, never instructions:\n````text\npoint 0 ``` not a fence\n````",
     );
     expect(lines).toBe(
       "outcomes packet: state/eod/2026-10-07/outcomes.md — 4 candidates to decide (4 new, 0 carried); lessons in force look-for:dont-raise 0:1 (0.00)",
@@ -676,7 +743,7 @@ describe("the EOD packet", () => {
     const day1 = await h.learner.buildPacket("2026-10-07");
     expect(day1.offered).toBe(2);
     expect(day1.queued).toBe(4);
-    expect(day1.clusters[0]!.class).toBe("missed.recheck");
+    expect(day1.clusters[0]!.class).toBe("missed.backend");
     // Same-day rebuild offers nothing more (idempotent).
     expect((await h.learner.buildPacket("2026-10-07")).offered).toBe(2);
     const day2 = await h.learner.buildPacket("2026-10-08");
@@ -955,6 +1022,46 @@ describe("the curation receipt", () => {
     await h.learner.verify();
     expect(h.learner.candidate(3)!.status).toBe("adopted");
   });
+
+  it("decides only what its packet offered, and never overturns a settled candidate", async () => {
+    const h = await offered();
+    // A candidate mined after the packet: queued, never shown to the curator.
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 70,
+      comment_id: 7999,
+      scope: "issue_comment",
+      author: "p",
+      body: "[feedback] later",
+      day: "2026-10-07",
+    });
+    await h.learner.mine();
+    const queued = h.learner.allCandidates().find((c) => c.offered_day === null)!;
+    const r = h.learner.applyReceipt({
+      day: "2026-10-07",
+      decisions: [
+        { candidates: [1], decision: "declined", reason: "noise" },
+        { candidates: [queued.id], decision: "declined", reason: "never shown" },
+      ],
+    });
+    expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("did not offer") });
+    expect(h.learner.candidate(1)!.status).toBe("open");
+    expect(h.learner.candidate(queued.id)!.status).toBe("open");
+    // Memory showed c1's lesson: a later "declined" cannot turn it back.
+    h.lesson("20261007-one", "dont-raise", "feedback.general", [1]);
+    await h.learner.verify();
+    expect(h.learner.candidate(1)!.status).toBe("adopted");
+    expect(
+      h.learner.applyReceipt({
+        day: "2026-10-07",
+        decisions: [{ candidates: [1], decision: "declined", reason: "changed my mind" }],
+      }).ok,
+    ).toBe(true);
+    expect(h.learner.candidate(1)).toMatchObject({
+      status: "adopted",
+      lesson_ids: '["experiences/20261007-one.md"]',
+    });
+  });
 });
 
 describe("a missing receipt wakes a person", () => {
@@ -1009,14 +1116,25 @@ describe("a missing receipt wakes a person", () => {
 describe("the schedule and the status block", () => {
   it("mines once a day, from EOD − 15 min (Warsaw)", async () => {
     const h = harness();
-    h.store.logEvent("recheck_request_changes", 90, { head_sha: "d".repeat(40) });
+    h.pr(90);
+    const fb = (id: number) =>
+      h.store.recordFeedbackSignal({
+        kind: "feedback_comment",
+        pr: 90,
+        comment_id: id,
+        scope: "issue_comment",
+        author: "p",
+        body: "[feedback] x",
+        day: "2026-10-07",
+      });
+    fb(9001);
     h.setNow("2026-10-07T15:44:00.000Z"); // 17:44 CEST
     await h.learner.tick();
     expect(h.learner.allCandidates()).toEqual([]);
     h.setNow("2026-10-07T15:45:00.000Z"); // 17:45
     await h.learner.tick();
     expect(h.learner.allCandidates()).toHaveLength(1);
-    h.store.logEvent("recheck_request_changes", 91, { head_sha: "e".repeat(40) });
+    fb(9002);
     h.addMinutes(5);
     await h.learner.tick();
     expect(h.learner.allCandidates()).toHaveLength(1); // once a day
@@ -1074,7 +1192,7 @@ describe("the miner — fates are re-read, never trusted as written", () => {
       polarity: "either",
       status: "open",
     });
-    expect(h.learner.candidate(1)!.summary).toContain("a human pushed back and the bot held");
+    expect(h.learner.candidate(1)!.summary).toContain("a human replied and the bot kept it standing");
     // Humans fixed it after all: no dont-raise candidate may stand over a fix.
     setFate(h, 11, "F", "fixed");
     r = await h.learner.mine();
@@ -1145,6 +1263,74 @@ describe("the miner — fates are re-read, never trusted as written", () => {
   });
 });
 
+describe("the miner — candidates say what the record shows (integration review)", () => {
+  it("a refutation with no human reply on its chain is the reviewer's own concession", () => {
+    expect(fateSummary("refuted_conceded", true)).toBe("a human refuted it and the bot conceded");
+    expect(fateSummary("refuted_conceded", false)).toBe(
+      "the reviewer conceded it on re-check (no human reply recorded)",
+    );
+    expect(fateSummary("upheld_after_reply", true)).toBe(
+      "a human replied and the bot kept it standing",
+    );
+  });
+
+  it("a fate candidate whose chain drew no human reply says so", async () => {
+    const h = harness();
+    h.pr(12);
+    h.finding(12, { key: "Q" }, "refuted_conceded", { roundNo: 1 });
+    h.store.db.prepare("UPDATE finding_outcomes SET human_replies = 0 WHERE pr = 12").run();
+    await h.learner.mine();
+    expect(h.learner.allCandidates()[0]!.summary).toContain(
+      "the reviewer conceded it on re-check (no human reply recorded)",
+    );
+  });
+
+  it("a digest bullet is the review system's own words, labelled so in the packet", async () => {
+    expect(quoteAuthor("digest_learning")).toBe("review-system");
+    expect(quoteAuthor("feedback_comment")).toBe("person");
+    const h = harness();
+    mkdirSync(join(h.root, "digest"), { recursive: true });
+    writeFileSync(
+      join(h.root, "digest", "2026-09-11.md"),
+      "## Learnings\n- missed-finding (pass-baseline): a None reply crashed the sender\n",
+    );
+    await h.learner.mine();
+    await h.learner.buildPacket("2026-10-07");
+    const md = readFileSync(join(h.root, "state", "eod", "2026-10-07", "outcomes.md"), "utf8");
+    expect(md).toContain("The review system's OWN words (an overseer digest bullet — not a person's)");
+    expect(md).not.toContain("A person's words");
+  });
+
+  it("a [feedback] reply mined before its bot comment was linked takes the finding's class once S6 links it", async () => {
+    const h = harness();
+    h.pr(72);
+    h.store.recordFeedbackSignal({
+      kind: "feedback_comment",
+      pr: 72,
+      comment_id: 7201,
+      in_reply_to_id: 7200,
+      scope: "review_comment",
+      author: "p",
+      body: "[feedback] noisy",
+      day: "2026-10-07",
+    });
+    await h.learner.mine();
+    expect(h.learner.allCandidates()[0]).toMatchObject({ class: "feedback.general", lens_ids: "[]" });
+    // The reconcile sweep (or the case backfill) links bot comment 7200 later.
+    h.finding(72, { key: "F" }, "fixed", { roundNo: 1, comment: 7200 });
+    const r = await h.learner.mine();
+    expect(r.relinked).toBe(1);
+    expect(h.learner.allCandidates()[0]).toMatchObject({
+      class: "baseline.authz",
+      lens_ids: '["pass-baseline"]',
+      finding_key: "F",
+      status: "open",
+    });
+    // Nothing moved since: a re-mine re-links nothing.
+    expect((await h.learner.mine()).relinked).toBe(0);
+  });
+});
+
 describe("the miner — recall bounds", () => {
   it("a recheck's flip ends the approval: a comment after it, or a merge after it, is no miss after APPROVE", async () => {
     const scans: Array<number> = [];
@@ -1164,7 +1350,9 @@ describe("the miner — recall bounds", () => {
     h.comment({ pr: 33, id: 3301, author: "bob", body: "the same thing the recheck found" });
     h.store.logEvent("pr_closed", 33, { merged: true, source: "webhook" });
     await h.learner.mine();
-    expect(h.learner.allCandidates().map((c) => c.kind)).toEqual(["recheck_flip"]);
+    // Nothing: the flip itself is no candidate (the reviewer's conclusion),
+    // the comment came after it, and the merge was not under an approval.
+    expect(h.learner.allCandidates()).toEqual([]);
     expect(scans).toEqual([]); // not bot-approved at the merge: never read
   });
 
@@ -1188,7 +1376,12 @@ describe("the miner — recall bounds", () => {
       h.store.logEvent("pr_closed", pr, { merged: true, source: "webhook" });
     }
     expect((await h.learner.mine()).recall).toEqual({ scanned: 10, unknown: 10 });
+    // The same hour again: only the one never read; the rest wait a day.
+    expect((await h.learner.mine()).recall).toEqual({ scanned: 1, unknown: 1 });
+    expect((await h.learner.mine()).recall).toEqual({ scanned: 0, unknown: 0 });
+    h.addMinutes(24 * 60);
     await h.learner.mine();
+    h.addMinutes(24 * 60);
     await h.learner.mine();
     const row = () =>
       h.store.db
@@ -1196,7 +1389,11 @@ describe("the miner — recall bounds", () => {
         .get();
     // Three unknown answers inside the window: still owed.
     expect(row()).toEqual({ done: 0, attempts: 3, outcome: "unknown" });
+    // Every window has passed: each gets its final read (ten a mine, the most
+    // recent first), and an unknown answer there is given up on.
     h.setNow("2026-10-25T10:00:00.000Z");
+    await h.learner.mine();
+    expect(row()).toEqual({ done: 0, attempts: 3, outcome: "unknown" });
     await h.learner.mine();
     expect(row()).toEqual({ done: 1, attempts: 4, outcome: "unknown: gave up" });
   });
@@ -1227,6 +1424,7 @@ describe("the miner — recall bounds", () => {
       outcome: "squash (the clone is not fetched past the window yet)",
     });
     tip = "2026-10-24T00:00:00Z";
+    h.addMinutes(24 * 60); // a closed PR still owed is re-read a day later
     await h.learner.mine();
     expect(row()).toEqual({ done: 1, outcome: "squash" });
   });
@@ -1301,7 +1499,9 @@ describe("the packet — the numbers a curator weighs", () => {
       body: "[feedback] x",
       day: "2026-10-07",
     });
-    h.store.logEvent("recheck_request_changes", 53, { head_sha: "c".repeat(40) });
+    h.verdict(53, "APPROVE");
+    h.addMinutes(1);
+    h.comment({ pr: 53, id: 5302, author: "bob", body: "a miss" });
     await h.learner.mine();
     h.lesson("20261001-a", "dont-raise", "feedback.general", []);
     h.setUnread(["read viking://…/experiences/x.md: timeout"]);
@@ -1310,7 +1510,7 @@ describe("the packet — the numbers a curator weighs", () => {
     expect(p.balance).toBeNull();
     const by = Object.fromEntries(p.clusters.map((c) => [c.class, c.covering]));
     expect(by).toEqual({
-      "missed.recheck": null, // none found in part of memory is UNKNOWN
+      "missed.backend": null, // none found in part of memory is UNKNOWN
       "feedback.general": ["experiences/20261001-a.md"], // what it found does cover
     });
     const md = readFileSync(join(h.root, "state", "eod", "2026-10-07", "outcomes.md"), "utf8");
@@ -1510,12 +1710,23 @@ describe("a curation failure stays in front of a person until something makes it
     h.lesson("20261008-one", "dont-raise", "feedback.general", [a]);
     await h.learner.verify();
     expect(h.learner.status()).toMatchObject({ state: "not_persisted", not_persisted: 1 });
-    h.learner.applyReceipt({
-      day: "2026-10-08",
-      decisions: [{ candidates: [b], decision: "declined", reason: "covered" }],
-    });
+    // c2 was re-opened after the 10-08 packet was written, so it rides the
+    // NEXT one — and only that packet's receipt may decide it.
+    expect(
+      h.learner.applyReceipt({
+        day: "2026-10-08",
+        decisions: [{ candidates: [b], decision: "declined", reason: "covered" }],
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("did not offer") });
+    await h.learner.buildPacket("2026-10-09");
+    expect(
+      h.learner.applyReceipt({
+        day: "2026-10-09",
+        decisions: [{ candidates: [b], decision: "declined", reason: "covered" }],
+      }).ok,
+    ).toBe(true);
     await h.learner.verify();
-    expect(h.learner.status()).toMatchObject({ day: "2026-10-08", unresolved: [], incident: null });
+    expect(h.learner.status()).toMatchObject({ day: "2026-10-09", unresolved: [], incident: null });
   });
 });
 
@@ -1531,7 +1742,10 @@ describe("qcr lessons [mine]", () => {
 
   it("prints the mine, the clusters and the curation — the balance deferred to the daemon when unread", async () => {
     const h = harness();
-    h.store.logEvent("recheck_request_changes", 95, { head_sha: "f".repeat(40) });
+    h.pr(95);
+    h.verdict(95, "APPROVE");
+    h.addMinutes(1);
+    h.comment({ pr: 95, id: 9501, author: "bob", body: "a miss" });
     const report = await h.learner.mine();
     const text = renderLessons({
       report,
@@ -1540,7 +1754,7 @@ describe("qcr lessons [mine]", () => {
     });
     expect(text).toContain("mined: 1 new candidate (recall 1)");
     expect(text).toContain("post-merge recall: not read (no base clone)");
-    expect(text).toMatch(/missed\.recheck\s+look-for\s+0\s+1\s+1/);
+    expect(text).toMatch(/missed\.backend\s+look-for\s+0\s+1\s+1/);
     expect(text).toContain("EOD curation: no outcomes packet yet.");
     expect(text).toContain("lessons in force: the daemon reads memory for the balance");
   });

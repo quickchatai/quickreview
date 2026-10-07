@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need ten
+upstream ships it as an `examples/` directory, not a package, and we need eleven
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the ten patches was tried as configuration first and does not
+Every one of the eleven patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Ten numbered behaviour patches, applied in order over the vendored upstream
+Eleven numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all eleven, in order, to a
+`git apply`-able diffs — verified by applying all twelve, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -355,7 +355,7 @@ in the chain), `index.ts` (the hint, the banner).
 PATCH 8 kept the per-prompt RECALL inside the round's areas, but a PR session
 also holds the explicit tools, and `viking_search` sent whatever `scope` the
 model chose straight to the server — so a review round could reach the
-daemon's finding cases (`cases/`, which quote PR authors' replies: untrusted
+daemon's finding cases (`finding-cases/`, which quote PR authors' replies: untrusted
 text) and the full-text `[feedback]` events, both of which the spec keeps out
 of a round until S9 decides how they are delivered.
 
@@ -403,6 +403,38 @@ raise X", or which candidate it adopted.
 Touches: `qcr-lesson.ts` (new), `qcr-write.ts` (the builder), `tools.ts` (the
 schema and one guideline).
 
+### 0011 — the review session's memory boundary, closed (integration review)
+
+PATCHES 8 and 9 drew the boundary — a PR session's recall and tools reach the
+round's areas (`experiences/`) only — and the integration review found three
+ways through it once the case backfill filled `finding-cases/`:
+
+* **The recall failed OPEN.** With no hint file yet — a recheck or ping-pong
+  wake before the PR's next full round, i.e. every live PR right after the
+  deploy, or a hint write that failed — the recall searched the whole tree,
+  cases and full-text `[feedback]` events included, while the tools in the
+  same state already failed closed. `recallScope` (qcr-hint.ts) now asks with
+  the prompt INSIDE the round's areas whenever the hint variable is set; only a
+  session without the variable (the overseer, the companion) is unscoped.
+* **A scoped search ranked across the tree and filtered afterwards.** `find`
+  answered the top K of the WHOLE user root and the tool dropped what lay
+  outside the areas — with ~1,800 cases beside ~180 curated entries, mostly
+  "No results found." `viking_search` and the recall's raw-find fallback now
+  send the areas as the server's `target_uri` LIST (`scopedFindTargets`;
+  `client.find` takes a list), so the server ranks inside them; the fallback's
+  skills source is not asked at all in a scoped session. The post-filter stays
+  as the belt.
+* **A PR session could write what reaches every round.** `viking_write` in a
+  scoped session refuses `experiences/`, `preferences/` (the pinned head
+  included) and `finding-cases/` (`scopedWriteRefusal`): a review session
+  reads untrusted PR text, and a lesson is curated from people's outcomes, not
+  from its conclusions. And in ANY session a hand-typed `#lesson` header (no
+  `lesson` parameter) is refused (`handTypedLessonRefusal`) — the header is the
+  tool's to write; a typed one would adopt learner candidates unchecked.
+
+Touches: `qcr-hint.ts`, `qcr-lesson.ts`, `qcr-write.ts`, `tools.ts`,
+`index.ts`, `client.ts`.
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -415,7 +447,7 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all ten patches, then:
+# 3. Re-verify all eleven patches, then:
 timeout 900 npm test && npm run build
 ```
 

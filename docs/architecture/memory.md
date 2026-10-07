@@ -132,10 +132,10 @@ The §1 areas (ratified 2026-08-20, built in S5), under
 
 | Area | Holds | Written by |
 |---|---|---|
-| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (TUI `p`, the companion's `memory_pin` action) |
+| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (the TUI's `p`) |
 | `preferences/` | unpinned standing instructions — the owner's own words (`#manual`) | the TUI's `n`, an unpin |
 | `experiences/` | curated lessons, conventions, setup/scan notes — the ONLY area a round's context block searches | the EOD curator, setup, scans |
-| `cases/` | finding cases (S7) | — |
+| `finding-cases/` | finding cases (S7) | — |
 | `events/` | feedback, bug and ops signals with `k=v` tags (`kind=feedback|bug|ops`) | the `[feedback]` sink, the curator (`kind=bug`) |
 
 **Pinned is placement.** An entry is pinned because it sits in

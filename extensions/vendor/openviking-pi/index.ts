@@ -56,7 +56,9 @@ import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
 // [QCR PATCH 7]
 import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
 // [QCR PATCH 8]
-import { readRecallHint, RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
+import { RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
+// [QCR PATCH 11]
+import { recallScope } from "./qcr-hint.js";
 // [QCR PATCH 9]
 import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
 
@@ -243,9 +245,12 @@ export default async function (pi: ExtensionAPI) {
     // that hook, so recall latency does not delay the message appearing.
     // [QCR PATCH 8] A PR session asks with its PR's query, inside the round's
     // areas — the daemon's hint, re-read for every prompt (a small local
-    // file). No hint (the overseer, the companion): the prompt, unscoped.
-    const hint = readRecallHint(process.env[RECALL_HINT_FILE_ENV]);
-    recall.queueSearch(hint ? hint.query : event.prompt, hint ? hint.areas : null);
+    // file). No hint variable (the overseer, the companion): the prompt,
+    // unscoped. [QCR PATCH 11] A PR session whose hint is not there yet (a
+    // recheck or ping-pong wake before its next round) asks with the prompt
+    // INSIDE the round's areas — fail closed, as the tools do.
+    const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);
+    recall.queueSearch(plan.query, plan.areas);
 
     // Compose system prompt additions
     const parts: string[] = [];

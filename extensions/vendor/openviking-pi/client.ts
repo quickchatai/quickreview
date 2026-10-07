@@ -312,10 +312,13 @@ export class OVClient {
    * failure is now a failure the tool can name (`failureText`). */
   async find(
     query: string,
-    opts?: { targetUri?: string; topK?: number; scoreThreshold?: number },
+    // [QCR PATCH 11] a `target_uri` LIST too (the server takes one): a scoped
+    // session searches inside its areas, not across the tree.
+    opts?: { targetUri?: string | string[]; topK?: number; scoreThreshold?: number },
   ): Promise<OVResponse<OVSearchResult[]>> {
     const body: Record<string, unknown> = { query };
-    if (opts?.targetUri) body.target_uri = opts.targetUri;
+    if (Array.isArray(opts?.targetUri) ? opts.targetUri.length > 0 : opts?.targetUri)
+      body.target_uri = opts!.targetUri;
     if (opts?.topK) body.limit = opts.topK;
     if (opts?.scoreThreshold) body.score_threshold = opts.scoreThreshold;
 

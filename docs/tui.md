@@ -75,7 +75,7 @@ overlay and setup are about the whole repo.
 
 ### memory
 
-The timeline lists every area of the store but `cases/`: the daemon's
+The timeline lists every area of the store but `finding-cases/`: the daemon's
 finding cases (S7) are derived from state.db, number in the
 hundreds, and are rewritten by the daemon alone, so the store's sweep never
 lists them. Search them through the companion or OpenViking Studio (`W`).
@@ -202,7 +202,9 @@ container's state is known; the board offers no `u` until a PR is selected).
 
 `prompts/companion.md` documents the action channel: `switch_tab` takes the
 eight names above, `digest_day` pages the digest tab to a day, `memory_view`
-filters the memory timeline by tag and jumps to a day, `memory_filter` sets or
-clears the tag filter, and `memory_pin` (S5) pins or unpins one entry
-through the TUI's memory store — the same move as `p`, answered in the result
-file (a refusal is a failed result). The vocabulary there is this vocabulary.
+filters the memory timeline by tag and jumps to a day, and `memory_filter`
+sets or clears the tag filter. There is no memory-WRITE
+verb: rule 8 retired the companion-asks-the-TUI-to-write channel, so a
+`memory_pin` verb (S5) was withdrawn by the integration review —
+pinning an existing entry is the operator's `p`. The vocabulary there is this
+vocabulary.

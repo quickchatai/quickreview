@@ -641,7 +641,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // `memory_write_backlog` when an owed signal ages past the threshold.
   let feedbackPump: FeedbackMemoryPump | null = null;
   // the finding-case writer — one document per posted finding a
-  // human answered or whose fate is known, into reviewer memory's `cases/`,
+  // human answered or whose fate is known, into reviewer memory's `finding-cases/`,
   // through the same store; backfills the last 60 days. Writes only while
   // memory health reads healthy.
   let caseWriter: CaseWriter | null = null;
@@ -1171,7 +1171,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // Finding cases (S7): the learner's context. Rendered from
         // state.db (round_findings, the outcome capture's tables, the human
         // replies, the feedback ledger) and written through the SAME store's
-        // `putDocuments` — one batch-write under `cases/` a tick, every case
+        // `putDocuments` — one batch-write under `finding-cases/` a tick, every case
         // under its own precondition — only while memory reads healthy. Its
         // backfill reads a PR's inline comments through the adapter (a read:
         // never the gate) and runs the outcome capture for PRs nothing

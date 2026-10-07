@@ -3,7 +3,7 @@
 // Two writers put words other people wrote into reviewer memory: the
 // [feedback] sink (a human's `[feedback]` comment, in full, into `events/`)
 // and the case writer (a finding's claim and the human replies in its thread,
-// into `cases/`). Both quote that text inside a fenced block so a reader —
+// into `finding-cases/`). Both quote that text inside a fenced block so a reader —
 // the EOD curator, the companion, a later lesson miner — sees exactly where
 // the quoted words start and stop, and nothing inside can pass for the
 // entry's own prose:

@@ -22,13 +22,45 @@
 // [QCR PATCH 9] (S7) The same areas bound the session's memory
 // TOOLS: in a PR session `viking_search` keeps only hits inside them and
 // `viking_read` / `viking_browse` refuse a memory URI outside them. Cases
-// (`cases/`, the daemon's finding cases — human replies quoted as data) and
+// (`finding-cases/`, the daemon's finding cases — human replies quoted as data) and
 // feedback events are the learner's context, not a round's, until S9.
+//
+// [QCR PATCH 11] (integration review) Three holes in that boundary:
+//   * the RECALL failed OPEN: a PR session whose hint was not written yet (a
+//     recheck or ping-pong wake before its next full round — every live PR
+//     right after the deploy) recalled across the whole tree, cases and
+//     feedback events included. It now fails CLOSED, as the tools always did
+//     (`recallScope`);
+//   * a scoped SEARCH asked the server for a global top-K and filtered after:
+//     with ~1,800 cases beside ~180 curated entries, the top 10 was mostly
+//     cases and the session's search said "No results found." Both the tool
+//     and the recall's raw-find fallback now name the areas as the server's
+//     `target_uri` list (`scopedFindTargets`, `scopeGuard`);
+//   * a PR session could WRITE a lesson or a pinned entry from its own
+//     conclusions while reading untrusted PR text: `viking_write` now refuses
+//     `experiences/`, `preferences/` (the pinned head included) and
+//     `finding-cases/` in a scoped session (`scopedWriteRefusal`).
 import { readFileSync } from "node:fs";
 import { renderContextEntry, type FetchLike } from "./qcr-recall.js";
 
 /** Where the daemon publishes this session's hint (PR sessions only). */
 export const RECALL_HINT_FILE_ENV = "QCR_OV_RECALL_HINT_FILE";
+
+/** [QCR PATCH 11] What one recall asks and where: the hint's query and
+ * areas when the daemon published one; for a PR session (the hint variable
+ * set) whose hint cannot be read, the prompt INSIDE the round's areas — never
+ * the whole tree; for any other session (no variable: the overseer, the
+ * companion) the prompt, unscoped, as upstream. Total. */
+export function recallScope(
+  path: string | undefined,
+  prompt: string,
+  read: (p: string) => string = defaultRead,
+): { query: string; areas: readonly string[] | null } {
+  const hint = readRecallHint(path, read);
+  if (hint) return { query: hint.query, areas: hint.areas };
+  if (!path || path.trim() === "") return { query: prompt, areas: null };
+  return { query: prompt, areas: toolScopeAreas(path, read) ?? DEFAULT_ROUND_AREAS };
+}
 
 /** The daemon caps its query at 600 characters (`ROUND_CONTEXT_DEFAULTS`);
  * a longer one in the file is cut, not refused. */
@@ -115,6 +147,24 @@ export function scopeGuard(inner: FetchLike, areas: () => readonly string[] | nu
         if (path !== "/api/v1/search/search" || body["mode"] === "context") {
           const n = Math.max(1, Math.floor(Number(body["limit"]) || DEFAULT_AREA_QUOTA));
           body["quotas"] = Object.fromEntries(scope.map((a) => [a, n]));
+          sent = { ...init, body: JSON.stringify(body) };
+        }
+      } catch {
+        sent = init;
+      }
+    }
+    // [QCR PATCH 11] The raw-find fallback names its target: a memories ROOT
+    // becomes the areas inside it (one request, a `target_uri` list — the
+    // server ranks inside them, so cases can never crowd a lesson out of the
+    // top K), and the skills source is not asked at all.
+    if (path === FIND_PATH && typeof init?.body === "string") {
+      try {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        const target = typeof body["target_uri"] === "string" ? body["target_uri"] : "";
+        if (target !== "" && memoryAreaOf(target) === null)
+          return { ok: true, status: 200, result: { memories: [], resources: [], skills: [] } };
+        if (target === "" || memoryAreaOf(target) === "") {
+          body["target_uri"] = scopedFindTargets(scope, target === "" ? undefined : target);
           sent = { ...init, body: JSON.stringify(body) };
         }
       } catch {
@@ -211,6 +261,42 @@ export function browsableInScope(uri: unknown, areas: readonly string[]): boolea
   if (typeof uri !== "string" || DOT_SEGMENT.test(uri)) return false;
   const area = memoryAreaOf(uri);
   return area === null || area === "" || areas.includes(area);
+}
+
+/** [QCR PATCH 11] Where a scoped session's search is sent: the model's own
+ * scope when it lies inside one of the areas, else every area under the
+ * memories root it named (or the user's own, `viking://user/memories`) — a
+ * `target_uri` list, so the server ranks INSIDE the areas rather than across
+ * the whole tree with the rest filtered away afterwards. */
+export function scopedFindTargets(areas: readonly string[], scope?: string): string[] {
+  if (typeof scope === "string" && readableInScope(scope, areas)) return [scope];
+  let root = "viking://user/memories";
+  if (typeof scope === "string" && memoryAreaOf(scope) === "" && !DOT_SEGMENT.test(scope))
+    root = scope.replace(/\/+$/, "");
+  return areas.map((a) => `${root}/${a}`);
+}
+
+/** [QCR PATCH 11] The memory areas a scoped (PR) session may never write:
+ * curated lessons and the owner's words — both reach every round — and the
+ * daemon's own finding cases. A review session reads untrusted PR text; what
+ * it concludes is not a lesson until a person's outcome makes it one. */
+export const SCOPED_WRITE_REFUSED_AREAS: readonly string[] = [
+  "experiences",
+  "preferences",
+  "finding-cases",
+];
+
+/** The refusal for a scoped session's write into a protected area, or null. */
+export function scopedWriteRefusal(uris: readonly string[]): string | null {
+  const hit = uris.find((u) => {
+    const area = memoryAreaOf(u);
+    return area !== null && SCOPED_WRITE_REFUSED_AREAS.includes(area);
+  });
+  if (hit === undefined) return null;
+  return (
+    `Refusing to write ${hit}: a review session does not write ${SCOPED_WRITE_REFUSED_AREAS.map((a) => `${a}/`).join(", ")} — ` +
+    "lessons are curated from people's outcomes at the end of the day, the pinned instructions are the owner's, and cases are the daemon's. Nothing was written."
+  );
 }
 
 /** The sentence a refused tool call answers with. */

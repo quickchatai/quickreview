@@ -3,7 +3,7 @@
 // WHAT. For every finding the reviewer POSTED that drew a human response or
 // reached a fate (any fate but `unknown`, which is the PR still being open),
 // the daemon keeps ONE case document in reviewer memory's
-// `cases/` area (the §1 layout, src/memory/layout.ts): a header the
+// `finding-cases/` area (the §1 layout, src/memory/layout.ts): a header the
 // learner can filter on — PR, rounds, lens ids, kind, severity, path and line
 // range, fate, dates, thread URL — and a body with the finding's claim and the
 // human replies in its thread, quoted as DATA and attributed by ROLE (the
@@ -32,7 +32,7 @@
 //
 // HOW IT IS WRITTEN. Through the one memory seam (`MemoryStore.putDocuments`,
 // src/memory/store.ts → src/openviking/store.ts): ONE batch-write per tick
-// under `cases/`, every case under its own precondition — created when this
+// under `finding-cases/`, every case under its own precondition — created when this
 // writer never wrote it, replaced only under the hash of the bytes this writer
 // last wrote there. The name is deterministic (`caseName`: PR, round and a
 // hash of the finding's key), so a replay finds its own document. A case is
@@ -49,7 +49,7 @@
 // always refuses, so the read-back says what the address holds; one it never
 // sent is simply forgotten. What counts as this writer's: a document
 // carrying the case's own header (`#case kind=case case=<its id>`) — a case
-// is derived data, a render of state.db, and nobody else writes in `cases/`
+// is derived data, a render of state.db, and nobody else writes in `finding-cases/`
 // (the curator and the companion are told never to), so such a document is
 // adopted and replaced whatever its body says. A document without that header
 // (somebody else's entry) and a case somebody RETIRED (`#retired` without
@@ -131,8 +131,14 @@ export const PROBE_EXPECT = `sha256:${"0".repeat(64)}`;
 
 export const CASE_DEFAULTS = Object.freeze({
   intervalMs: 120_000,
-  /** Cases written per tick — ONE batch-write. */
-  batch: 20,
+  /** Cases written per tick — ONE batch-write. Paced by EMBEDDING cost, not
+   * by request count: every case is embedded in full on the server's one
+   * local-embedder thread (S4; a 512-token case costs 0.5–0.75 s there), and
+   * a PR session's 500 ms recall and the supervisor's `/ready` probe wait on
+   * that same thread. Five a tick holds the lock for ~3 s in 120 s; twenty
+   * held it 10–15 s, long enough to miss recalls and fail a probe through
+   * the ~6 h first-deploy backfill (integration review). */
+  batch: 5,
   backfillDays: 60,
   /** PRs the backfill covers per tick… */
   backfillPrsPerTick: 2,
@@ -256,7 +262,7 @@ export function caseId(pr: number, roundNo: number, findingKey: string): string 
   return `${Math.trunc(pr)}-r${Math.trunc(roundNo)}-${sha256hex(findingKey).slice(0, 16)}`;
 }
 
-/** The case's deterministic file stem in `cases/`: `case-<caseId>`. */
+/** The case's deterministic file stem in `finding-cases/`: `case-<caseId>`. */
 export function caseName(pr: number, roundNo: number, findingKey: string): string {
   return `case-${caseId(pr, roundNo, findingKey)}`;
 }
@@ -272,12 +278,14 @@ export function caseDigest(text: string): string {
   return sha256hex(caseBytes(text));
 }
 
-/** A header value: no whitespace (the tag grammar's one rule). */
-function tagValue(v: string): string {
+/** A header value: no whitespace (the tag grammar's one rule) and no
+ * control byte — a PR author names its files, and git allows an ESC or a
+ * BEL in a file name; neither may reach memory raw (integration review). */
+export function tagValue(v: string): string {
   return v
     .trim()
     .replace(/%/g, "%25")
-    .replace(/\s/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`);
+    .replace(/[\s\u0000-\u001f\u007f-\u009f]/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`);
 }
 
 /** An enumerated word as a header value: `check this` → `check-this`. */
@@ -542,7 +550,12 @@ function threadUrl(repo: string, pr: number, commentId: number): string {
 
 function postingLine(m: CaseMember): string {
   const r = m.row;
-  const where = r.path ? `${r.path}${r.line !== null ? `:${r.line}` : ""}` : "no file";
+  // The path is the PR author's choice — a file name may hold a newline or a
+  // control byte, which raw here would let it forge a section of this
+  // document outside the data fences. One line, cleaned, code-quoted.
+  const where = r.path
+    ? `\`${inline(r.path, 200)}\`${r.line !== null ? `:${r.line}` : ""}`
+    : "no file";
   const as = r.posted_as ? ` as [${inline(r.posted_as, 30)}]` : "";
   const thread = m.comment ? ` (comment ${m.comment.comment_id})` : " (its comment not linked)";
   return `round ${r.round_no}${as} on ${where}${thread}`;

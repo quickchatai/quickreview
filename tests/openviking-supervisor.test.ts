@@ -450,6 +450,34 @@ describe("OpenVikingSupervisor", () => {
     expect(fired).toBe(2);
   });
 
+  it("counts consecutive polls that reached the server but not its /ready — reset by ready or unreachable", async () => {
+    let ready = false;
+    let up = true;
+    const h = harness(
+      {},
+      {
+        fetchFn: async (url) => {
+          if (!up) throw new Error("ECONNREFUSED");
+          return url.endsWith("/health")
+            ? jsonRes(200, { version: "0.4.15" })
+            : jsonRes(ready ? 200 : 503, {});
+        },
+      },
+    );
+    h.sup.start();
+    await h.sup.poll();
+    expect(h.sup.status().not_ready_polls).toBe(1);
+    await h.sup.poll();
+    expect(h.sup.status().not_ready_polls).toBe(2);
+    ready = true;
+    await h.sup.poll();
+    expect(h.sup.status().not_ready_polls).toBe(0);
+    ready = false;
+    up = false;
+    await h.sup.poll();
+    expect(h.sup.status().not_ready_polls).toBe(0);
+  });
+
   it("flags version drift against the triple-mirrored pin", async () => {
     const h = harness(
       {},

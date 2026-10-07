@@ -233,6 +233,8 @@ export function renderLessons(opts: {
       out.push(
         `fate candidates re-read: ${f.revised} revised, ${f.withdrawn} withdrawn, ${f.reinstated} reinstated`,
       );
+    if ((r.relinked ?? 0) > 0)
+      out.push(`feedback candidates re-linked to their finding: ${r.relinked}`);
     for (const e of r.errors) out.push(`source error: ${oneLine(e)}`);
     out.push("");
   }

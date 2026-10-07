@@ -53,6 +53,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      same memory areas (2026-10-07).
  10. `viking_write` takes a structured `lesson` and writes the lesson's
      header line from it, refusing unknown lens ids (2026-10-07).
+ 11. A review session's recall fails closed to its memory areas when its
+     hint is missing, its search ranks inside those areas, and it may not
+     write lessons, pinned entries or cases; a hand-typed lesson header is
+     refused (2026-10-07).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

@@ -18,7 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { githubCloneDir } from "../src/config.js";
+import { githubCloneDir, LOCAL_EMBEDDING, RETIRED_LOCAL_EMBEDDING } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const deploySh = join(root, "scripts", "deploy.sh");
@@ -964,6 +964,44 @@ describe("deploy.sh — OpenViking pin drift", () => {
       const r = run(env, ["--dry-run"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("openviking embedding dimension pin mismatch");
+    });
+
+    it("reads the RETIRED local spelling as the parser does: the live config.toml needs no edit (integration review)", () => {
+      // The previous release REQUIRED bge-small-zh-v1.5-f16/512 under local
+      // and refuses the new spelling, so editing config.toml before a deploy
+      // (or forgetting to revert it on a rollback) broke one release or the
+      // other. The parser maps it; the preflight must agree.
+      for (const embedDimension of ["512", undefined]) {
+        env = makeScratch({
+          configPi: "0.84.4",
+          groupVarsPi: "0.84.4",
+          configOv: {
+            ...base,
+            ...LOCAL,
+            embedModel: "bge-small-zh-v1.5-f16",
+            ...(embedDimension === undefined ? { embedDimension: undefined } : { embedDimension }),
+          },
+          groupVarsOv: { ...base, ...LOCAL },
+        });
+        const r = run(env, ["--dry-run"]);
+        expect(r.code, `${String(embedDimension)}: ${r.stderr}`).toBe(0);
+        expect(r.stdout).toContain("memory embed local");
+      }
+      // A retired model with ANOTHER dimension is no spelling the parser
+      // maps: still refused.
+      env = makeScratch({
+        configPi: "0.84.4",
+        groupVarsPi: "0.84.4",
+        configOv: { ...base, ...LOCAL, embedModel: "bge-small-zh-v1.5-f16", embedDimension: "768" },
+        groupVarsOv: { ...base, ...LOCAL },
+      });
+      expect(run(env, ["--dry-run"]).code).toBe(1);
+      // The shell's two pairs are the parser's.
+      const sh = readFileSync(join(process.cwd(), "scripts", "deploy.sh"), "utf8");
+      expect(sh).toContain(`RETIRED_LOCAL_EMBED_MODEL="${RETIRED_LOCAL_EMBEDDING.model}"`);
+      expect(sh).toContain(`RETIRED_LOCAL_EMBED_DIM="${RETIRED_LOCAL_EMBEDDING.dimension}"`);
+      expect(sh).toContain(`LOCAL_EMBED_MODEL="${LOCAL_EMBEDDING.model}"`);
+      expect(sh).toContain(`LOCAL_EMBED_DIM="${LOCAL_EMBEDDING.dimension}"`);
     });
 
     it("a config.toml naming the embedder over a group_vars without it is fatal, never skipped", () => {

@@ -55,8 +55,8 @@ import {
   mineFeedback,
   mineHumanRecall,
   minePostMerge,
-  mineRecheckFlips,
   mineTaggedComments,
+  RECALL_SCAN_LIMITS,
   reviewFateCandidates,
   type CandidateDraft,
   type CandidateKind,
@@ -322,6 +322,9 @@ export interface MineReport {
    * place, withdrawn (their fate is no longer a candidate's, or their chain's
    * root changed), and withdrawn ones reinstated. */
   fates: { revised: number; withdrawn: number; reinstated: number };
+  /** Undecided feedback / tagged-comment candidates whose finding link (and
+   * so class, lens and anchor) S6 made or moved since they were minted. */
+  relinked: number;
   errors: string[];
 }
 
@@ -479,6 +482,7 @@ export class Learner {
       recall: null,
       digest: null,
       fates: { revised: 0, withdrawn: 0, reinstated: 0 },
+      relinked: 0,
       errors: [],
     };
     const drafts: CandidateDraft[] = [];
@@ -495,7 +499,8 @@ export class Learner {
     run("feedback", () => mineFeedback(this.store, since));
     run("tagged comments", () => mineTaggedComments(this.store, since));
     run("human recall", () => mineHumanRecall(this.store, since, this.deps.botLogin));
-    run("recheck flips", () => mineRecheckFlips(this.store, since));
+    // Not mined: the recheck's own APPROVE → REQUEST_CHANGES flips — the
+    // reviewer's conclusion, not a person's (miner.ts header).
     if (this.deps.git) {
       try {
         const r = await minePostMerge(this.store, {
@@ -505,6 +510,7 @@ export class Learner {
           baseBranch: this.deps.baseBranch,
           git: this.deps.git,
           log: this.log,
+          maxPrs: RECALL_SCAN_LIMITS.prsPerMine,
         });
         drafts.push(...r.drafts);
         report.recall = { scanned: r.scanned, unknown: r.unknown };
@@ -514,6 +520,11 @@ export class Learner {
     }
     for (const d of drafts) report.seen[d.source] = (report.seen[d.source] ?? 0) + 1;
     report.added_by_source = this.insert(drafts);
+    try {
+      report.relinked = this.relink(drafts);
+    } catch (err) {
+      report.errors.push(`relink: ${err instanceof Error ? err.message : String(err)}`);
+    }
     try {
       report.fates = this.reviseFates(since);
     } catch (err) {
@@ -541,6 +552,86 @@ export class Learner {
     report.added = Object.values(report.added_by_source).reduce((n, v) => n + (v ?? 0), 0);
     this.store.logEvent("lessons_mined", null, report);
     return report;
+  }
+
+  /**
+   * An undecided `[feedback]` reply, tagged comment or deleted bot comment
+   * takes its class, lens and anchor from S6's link of the bot comment it
+   * answered — a link the reconcile sweep or the case backfill may make only
+   * AFTER the candidate was mined, which left it `feedback.general` with no
+   * lens for good (`INSERT OR IGNORE` never revisits a row; integration
+   * review: 11 of 14 live `feedback.general` replies answered a comment
+   * linked later). Every mine re-derives them from today's drafts, as
+   * `reviseFates` does for fates. Decided candidates are history.
+   */
+  private relink(drafts: readonly CandidateDraft[]): number {
+    const stmt = this.store.db.prepare(
+      `UPDATE lesson_candidates SET class = ?, lens_ids = ?, round_no = ?, finding_key = ?, path = ?,
+         line = ?, summary = ?, evidence = ?, updated_at = ?
+       WHERE ref = ? AND status = 'open' AND source IN ('feedback', 'tagged-comment')
+         AND (class IS NOT ? OR lens_ids IS NOT ? OR round_no IS NOT ? OR finding_key IS NOT ?
+              OR path IS NOT ? OR line IS NOT ? OR summary IS NOT ?)`,
+    );
+    const at = this.ts();
+    let n = 0;
+    this.store.db.transaction(() => {
+      for (const d of drafts) {
+        if (d.source !== "feedback" && d.source !== "tagged-comment") continue;
+        const lens = JSON.stringify(d.lens_ids);
+        n += stmt.run(
+          d.class,
+          lens,
+          d.round_no,
+          d.finding_key,
+          d.path,
+          d.line,
+          d.summary,
+          JSON.stringify(d.evidence),
+          at,
+          d.ref,
+          d.class,
+          lens,
+          d.round_no,
+          d.finding_key,
+          d.path,
+          d.line,
+          d.summary,
+        ).changes;
+      }
+    })();
+    return n;
+  }
+
+  /**
+   * Post-merge recall between mines (`RECALL_SCAN_LIMITS.prsPerTick` PRs and
+   * `budgetMs` a tick): the day's mine alone read ten merged PRs a day
+   * against ~8 bot-approved merges a day and a first-deploy backlog in the
+   * hundreds. Git only, read-only; what it finds is inserted at once and
+   * offered by the next packet. Never throws.
+   */
+  private async recallStep(): Promise<void> {
+    if (!this.deps.git) return;
+    const now = this.now();
+    const since = new Date(now.getTime() - this.cfg.lessons_mine_days * DAY_MS).toISOString();
+    try {
+      const r = await minePostMerge(this.store, {
+        sinceIso: since,
+        now,
+        windowDays: this.cfg.lessons_recall_window_days,
+        baseBranch: this.deps.baseBranch,
+        git: this.deps.git,
+        log: this.log,
+        maxPrs: RECALL_SCAN_LIMITS.prsPerTick,
+        budgetMs: RECALL_SCAN_LIMITS.budgetMs,
+      });
+      const added = this.insert(r.drafts).recall ?? 0;
+      if (r.scanned > 0 || added > 0)
+        this.log(
+          `learner: post-merge recall read ${r.scanned} merged PR(s), ${added} new candidate(s)${r.unknown ? `, ${r.unknown} unknown` : ""}`,
+        );
+    } catch (err) {
+      this.log("learner: post-merge recall failed", err);
+    }
   }
 
   /**
@@ -943,16 +1034,24 @@ export class Learner {
 
   /**
    * Apply a validated `eod-curation-receipt`. All or nothing: a day with no
-   * packet, or a candidate id the learner never minted, refuses the whole
-   * receipt (the curator fixes it and writes it again). `adopted` waits for
-   * memory to show the lesson (`adopting`); `declined` is final; `refused`
-   * keeps the candidate open and wakes `eod_lessons_not_persisted` at once.
+   * packet, a candidate id the learner never minted, or one that day's packet
+   * did not OFFER, refuses the whole receipt (the curator fixes it and writes
+   * it again) — a receipt decides what its packet put in front of the
+   * curator, never a queued candidate nobody showed it (integration review,
+   *). `adopted` waits for memory to show the lesson (`adopting`);
+   * `declined` is final; `refused` keeps the candidate open and wakes
+   * `eod_lessons_not_persisted` at once. A candidate already settled since
+   * the packet — adopted (memory showed its lesson), withdrawn or expired —
+   * keeps its status whatever the receipt says: memory's evidence and the
+   * learner's own record outrank a later claim (only `refused`, as before,
+   * re-opens an expired one, with a fresh clock).
    */
   applyReceipt(receipt: CurationReceipt): FileOutcome {
     const row = this.curation(receipt.day);
     if (!row?.packet_at)
       return { ok: false, reason: `no outcomes packet was written for ${receipt.day}` };
     const ids = receipt.decisions.flatMap((d) => d.candidates);
+    const offered = new Set(json<number[]>(row.offered, []));
     const known = new Set(
       ids.length === 0
         ? []
@@ -970,6 +1069,12 @@ export class Learner {
         ok: false,
         reason: `unknown candidate id(s): ${unknown.map(candidateLabel).join(", ")} — nothing was recorded; send the receipt again without them`,
       };
+    const notOffered = ids.filter((id) => !offered.has(id));
+    if (notOffered.length > 0)
+      return {
+        ok: false,
+        reason: `candidate id(s) the ${receipt.day} packet did not offer: ${notOffered.map(candidateLabel).join(", ")} — nothing was recorded; decide only what that packet offered`,
+      };
     const at = this.ts();
     const today = this.today();
     const db = this.store.db;
@@ -979,19 +1084,24 @@ export class Learner {
       for (const d of receipt.decisions) {
         for (const id of d.candidates) {
           if (d.decision === "adopted") {
-            // An adoption memory already showed stands; anything else waits
-            // for the lesson to be found.
+            // An adoption memory already showed stands; an undecided one
+            // waits for the lesson to be found; a settled one is left alone.
             db.prepare(
-              `UPDATE lesson_candidates SET status = CASE WHEN status = 'adopted' THEN 'adopted' ELSE 'adopting' END,
+              `UPDATE lesson_candidates SET status = CASE WHEN status IN ('open', 'adopting') THEN 'adopting' ELSE status END,
                  receipt_day = ?, receipt_at = ?, claimed_lesson = ?, reason = COALESCE(?, reason), updated_at = ?
                WHERE id = ?`,
             ).run(receipt.day, at, d.lesson ?? null, d.reason ?? null, at, id);
             counts.adopted += 1;
           } else if (d.decision === "declined") {
+            // Only an undecided candidate is declined: a declination never
+            // overwrites a memory-verified adoption, a withdrawal or an expiry.
             db.prepare(
               `UPDATE lesson_candidates SET status = 'declined', decided_at = ?, decided_day = ?, reason = ?,
-                 receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ?`,
+                 receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ? AND status IN ('open', 'adopting')`,
             ).run(at, receipt.day, d.reason ?? null, receipt.day, at, at, id);
+            db.prepare(
+              "UPDATE lesson_candidates SET receipt_day = ?, receipt_at = ?, updated_at = ? WHERE id = ? AND status NOT IN ('open', 'adopting', 'declined')",
+            ).run(receipt.day, at, at, id);
             counts.declined += 1;
           } else {
             // A refused write puts the candidate back in the packet with a
@@ -1100,6 +1210,7 @@ export class Learner {
           this.log("learner: mine failed", err);
         }
       }
+      await this.recallStep();
       try {
         this.checkMissing();
       } catch (err) {

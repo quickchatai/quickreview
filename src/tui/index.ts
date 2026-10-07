@@ -11,9 +11,7 @@ import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
 import { visiblePrs } from "./filters.js";
-import { storeHealth } from "./memory.js";
-import { findMemoryEntry, memoryOrder, memoryRefUnread } from "./memtab.js";
-import { refOf } from "../memory/store.js";
+import { memoryOrder } from "./memtab.js";
 import { reselect } from "./model.js";
 import { isTab } from "./tabs.js";
 import {
@@ -219,36 +217,6 @@ export function buildTuiDriver(
         mem.selKey = `${ordered[i]!.ts}|${ordered[i]!.id}#${ordered[i]!.block}`;
       }
       app.repaint();
-    },
-    memoryPin: async (ref, pin) => {
-      // A memory write, not a keystroke: no tab switch and no focus change
-      // (prep is for synthesized keys). It goes through the ONE store — the
-      // same verb the tab's `p` uses — against the entry as a NEW read finds
-      // it (the tab may never have been opened). That read lists every tree
-      // again (the TUI's store keeps no sweep cache; a file the listing shows
-      // unchanged may come from its per-file cache), and the write re-reads
-      // the file and refuses a stale hash — never applied blind.
-      const memory = learning.store.memory;
-      const entry = findMemoryEntry(await memory.read(), ref);
-      if (!entry) {
-        // Not found in a read that did not read everything is NOT "no such
-        // entry" — honest-unknown's second half: a fact published to the
-        // companion from no data.
-        const unread = memoryRefUnread(storeHealth(memory), ref);
-        if (unread)
-          throw new Error(
-            `memory not fully readable — '${ref}' may be there; nothing was written: ${unread}`,
-          );
-        throw new Error(`no memory entry '${ref}' — its id or URI, as memory lists it`);
-      }
-      if (entry.pinned === pin) return `${entry.id} is already ${pin ? "pinned" : "unpinned"}`;
-      const res = await memory.apply({
-        op: pin ? "pin" : "unpin",
-        ...refOf(entry),
-      });
-      learning.store.reloadMemory();
-      if (!res.ok) throw new Error(res.message);
-      return res.message;
     },
     setBoardFilter: (f) => {
       prep();

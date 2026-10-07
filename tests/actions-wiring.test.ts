@@ -17,7 +17,7 @@ import { FeedWriter } from "../src/tui/feed.js";
 import { buildTuiDriver, chainOnPoll } from "../src/tui/index.js";
 import type { CompanionSidebar } from "../src/tui/sidebar.js";
 import { decodeKey } from "../src/tui/keys.js";
-import { timelineOrder, type MemoryHealth } from "../src/tui/memory.js";
+import { timelineOrder } from "../src/tui/memory.js";
 import {
   legacyBlockHash as blockHash,
   parseLegacyMemory as parseMemory,
@@ -375,7 +375,7 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(readdirSync(feedDir)).toContain("snapshot.json"); // …and the feed wrote
   });
 
-  it("memory_pin pins through the TUI's ONE store, with the hash a fresh read carries (S5)", async () => {
+  it("a companion memory_pin request writes NOTHING through the TUI's store (rule 8)", async () => {
     const rig = makeRig();
     const target = (await rig.mem.read()).find((e) => e.text.includes("stale recheck flag"))!;
     const dir = actionDir();
@@ -384,91 +384,8 @@ describe("actions wiring: the watcher on a real App", () => {
       params: { entry: target.id, pin: true },
     });
     const [res] = await processTuiActions(dir, rig.driver);
-    expect(res!.ok).toBe(true);
-    expect(res!.trace).toMatch(/^companion ▸ memory pin → /);
-    const op = rig.mem.applied.at(-1) as MemoryOp & { expect?: string };
-    expect(op).toMatchObject({ op: "pin", id: target.id, ts: target.ts, expect: target.hash });
-    // No keystroke, no tab change: a memory write is not a synthesized key.
-    expect(rig.app.tab).toBe("board");
-
-    // An entry memory does not hold is a FAILED result, and nothing is written.
-    const before = rig.mem.applied.length;
-    drop(dir, "2026-10-07T10-00-01-pin.json", {
-      verb: "memory_pin",
-      params: { entry: "reviewer:experiences/no-such.md", pin: true },
-    });
-    const [missing] = await processTuiActions(dir, rig.driver);
-    expect(missing!.ok).toBe(false);
-    expect(missing!.message).toMatch(/no memory entry/);
-    expect(rig.mem.applied).toHaveLength(before);
-  });
-
-  it("memory_pin never answers 'no such entry' from a read that did not read everything (honest-unknown)", async () => {
-    /** A store whose last read could not see one namespace whole. */
-    class PartialMemory extends FakeMemory {
-      constructor(private readonly h: MemoryHealth) {
-        super();
-      }
-      health(): MemoryHealth {
-        return this.h;
-      }
-    }
-    const cases: Array<{ health: MemoryHealth; ref: string; expect: RegExp }> = [
-      // The reviewer tree did not answer at all.
-      {
-        health: {
-          ok: false,
-          namespaces: [
-            { user: "reviewer", ok: false, reason: "cannot reach OpenViking", unreadable: 0 },
-            { user: "companion", ok: true, unreadable: 0 },
-          ],
-          warning: "reviewer memory unreachable",
-        },
-        ref: "reviewer:experiences/no-such.md",
-        expect: /memory not fully readable .*reviewer: cannot reach OpenViking/,
-      },
-      // It answered, but listed entries it could not read — by URI this time.
-      {
-        health: {
-          ok: true,
-          namespaces: [
-            {
-              user: "reviewer",
-              ok: true,
-              reason: "2 of 9 reviewer entries could not be read",
-              unreadable: 2,
-            },
-            { user: "companion", ok: true, unreadable: 0 },
-          ],
-        },
-        ref: "viking://user/reviewer/memories/experiences/no-such.md",
-        expect: /memory not fully readable .*2 of 9 reviewer entries could not be read/,
-      },
-      // Only the OTHER tree is degraded: "no such entry" is still a fact.
-      {
-        health: {
-          ok: false,
-          namespaces: [
-            { user: "reviewer", ok: true, unreadable: 0 },
-            { user: "companion", ok: false, reason: "no key", unreadable: 0 },
-          ],
-        },
-        ref: "reviewer:experiences/no-such.md",
-        expect: /no memory entry/,
-      },
-    ];
-    for (const [i, c] of cases.entries()) {
-      const mem = new PartialMemory(c.health);
-      const rig = makeRig(mem);
-      const dir = actionDir();
-      drop(dir, `2026-10-07T10-00-0${i}-pin.json`, {
-        verb: "memory_pin",
-        params: { entry: c.ref, pin: true },
-      });
-      const [res] = await processTuiActions(dir, rig.driver);
-      expect(res!.ok, c.ref).toBe(false);
-      expect(res!.message, c.ref).toMatch(c.expect);
-      expect(mem.applied).toHaveLength(0);
-    }
+    expect(res!.ok).toBe(false);
+    expect(res!.message).toContain("unknown verb 'memory_pin'");
+    expect(rig.mem.applied).toHaveLength(0);
   });
 });

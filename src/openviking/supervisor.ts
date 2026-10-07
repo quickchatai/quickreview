@@ -105,6 +105,8 @@ export class OpenVikingSupervisor {
   private unavailable = false;
 
   private health: OpenVikingHealth | null = null;
+  /** Consecutive polls that reached the server but not its `/ready`. */
+  private notReadyPolls = 0;
   private proc: ProcSample | undefined;
   private lastExit: OpenVikingStatus["last_exit"];
   private lastError: string | undefined;
@@ -313,6 +315,7 @@ export class OpenVikingSupervisor {
         at: this.now().toISOString(),
       };
     }
+    this.notReadyPolls = this.health.reachable && !this.health.ready ? this.notReadyPolls + 1 : 0;
     this.proc = this.childPid !== undefined ? this.sampler.sample(this.childPid) : undefined;
     if (this.health.ready && !wasReady) {
       try {
@@ -331,6 +334,7 @@ export class OpenVikingSupervisor {
         running: this.child !== null,
         reachable: this.health?.reachable ?? false,
         ready: this.health?.ready ?? false,
+        not_ready_polls: this.notReadyPolls,
         pinned_version: this.cfg.version,
         restarts: this.restarts,
       };

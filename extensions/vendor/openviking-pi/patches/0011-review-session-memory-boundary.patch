@@ -1,0 +1,382 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+index 62d7d0bc..931856dc 100644
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -53,6 +53,10 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+      same memory areas (2026-10-07).
+  10. `viking_write` takes a structured `lesson` and writes the lesson's
+      header line from it, refusing unknown lens ids (2026-10-07).
++ 11. A review session's recall fails closed to its memory areas when its
++     hint is missing, its search ranks inside those areas, and it may not
++     write lessons, pinned entries or cases; a hand-typed lesson header is
++     refused (2026-10-07).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig, ambient type declarations for uninstalled packages, three unused
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+index cb9b8b6c..bcef72e8 100644
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need ten
++upstream ships it as an `examples/` directory, not a package, and we need eleven
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the ten patches was tried as configuration first and does not
++Every one of the eleven patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Ten numbered behaviour patches, applied in order over the vendored upstream
++Eleven numbered behaviour patches, applied in order over the vendored upstream
+ files, plus one unnumbered scaffolding patch. They live in `patches/` as
+-`git apply`-able diffs — verified by applying all eleven, in order, to a
++`git apply`-able diffs — verified by applying all twelve, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+ byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+@@ -355,7 +355,7 @@ in the chain), `index.ts` (the hint, the banner).
+ PATCH 8 kept the per-prompt RECALL inside the round's areas, but a PR session
+ also holds the explicit tools, and `viking_search` sent whatever `scope` the
+ model chose straight to the server — so a review round could reach the
+-daemon's finding cases (`cases/`, which quote PR authors' replies: untrusted
++daemon's finding cases (`finding-cases/`, which quote PR authors' replies: untrusted
+ text) and the full-text `[feedback]` events, both of which the spec keeps out
+ of a round until S9 decides how they are delivered.
+ 
+@@ -403,6 +403,38 @@ raise X", or which candidate it adopted.
+ Touches: `qcr-lesson.ts` (new), `qcr-write.ts` (the builder), `tools.ts` (the
+ schema and one guideline).
+ 
++### 0011 — the review session's memory boundary, closed (integration review)
++
++PATCHES 8 and 9 drew the boundary — a PR session's recall and tools reach the
++round's areas (`experiences/`) only — and the integration review found three
++ways through it once the case backfill filled `finding-cases/`:
++
++* **The recall failed OPEN.** With no hint file yet — a recheck or ping-pong
++  wake before the PR's next full round, i.e. every live PR right after the
++  deploy, or a hint write that failed — the recall searched the whole tree,
++  cases and full-text `[feedback]` events included, while the tools in the
++  same state already failed closed. `recallScope` (qcr-hint.ts) now asks with
++  the prompt INSIDE the round's areas whenever the hint variable is set; only a
++  session without the variable (the overseer, the companion) is unscoped.
++* **A scoped search ranked across the tree and filtered afterwards.** `find`
++  answered the top K of the WHOLE user root and the tool dropped what lay
++  outside the areas — with ~1,800 cases beside ~180 curated entries, mostly
++  "No results found." `viking_search` and the recall's raw-find fallback now
++  send the areas as the server's `target_uri` LIST (`scopedFindTargets`;
++  `client.find` takes a list), so the server ranks inside them; the fallback's
++  skills source is not asked at all in a scoped session. The post-filter stays
++  as the belt.
++* **A PR session could write what reaches every round.** `viking_write` in a
++  scoped session refuses `experiences/`, `preferences/` (the pinned head
++  included) and `finding-cases/` (`scopedWriteRefusal`): a review session
++  reads untrusted PR text, and a lesson is curated from people's outcomes, not
++  from its conclusions. And in ANY session a hand-typed `#lesson` header (no
++  `lesson` parameter) is refused (`handTypedLessonRefusal`) — the header is the
++  tool's to write; a typed one would adopt learner candidates unchecked.
++
++Touches: `qcr-hint.ts`, `qcr-lesson.ts`, `qcr-write.ts`, `tools.ts`,
++`index.ts`, `client.ts`.
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+@@ -415,7 +447,7 @@ git -C /tmp/ov checkout <new-tag>
+ for p in extensions/vendor/openviking-pi/patches/0*.patch; do
+   git apply --3way "$p" || echo "RESOLVE: $p"
+ done
+-# 3. Re-verify all ten patches, then:
++# 3. Re-verify all eleven patches, then:
+ timeout 900 npm test && npm run build
+ ```
+ 
+diff --git a/extensions/vendor/openviking-pi/client.ts b/extensions/vendor/openviking-pi/client.ts
+index 2e1a938c..e3c4fbb9 100644
+--- a/extensions/vendor/openviking-pi/client.ts
++++ b/extensions/vendor/openviking-pi/client.ts
+@@ -312,10 +312,13 @@ export class OVClient {
+    * failure is now a failure the tool can name (`failureText`). */
+   async find(
+     query: string,
+-    opts?: { targetUri?: string; topK?: number; scoreThreshold?: number },
++    // [QCR PATCH 11] a `target_uri` LIST too (the server takes one): a scoped
++    // session searches inside its areas, not across the tree.
++    opts?: { targetUri?: string | string[]; topK?: number; scoreThreshold?: number },
+   ): Promise<OVResponse<OVSearchResult[]>> {
+     const body: Record<string, unknown> = { query };
+-    if (opts?.targetUri) body.target_uri = opts.targetUri;
++    if (Array.isArray(opts?.targetUri) ? opts.targetUri.length > 0 : opts?.targetUri)
++      body.target_uri = opts!.targetUri;
+     if (opts?.topK) body.limit = opts.topK;
+     if (opts?.scoreThreshold) body.score_threshold = opts.scoreThreshold;
+ 
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+index f628e5b9..f4756aa8 100644
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -56,7 +56,9 @@ import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
+ // [QCR PATCH 7]
+ import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
+ // [QCR PATCH 8]
+-import { readRecallHint, RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
++import { RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
++// [QCR PATCH 11]
++import { recallScope } from "./qcr-hint.js";
+ // [QCR PATCH 9]
+ import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
+ 
+@@ -243,9 +245,12 @@ export default async function (pi: ExtensionAPI) {
+     // that hook, so recall latency does not delay the message appearing.
+     // [QCR PATCH 8] A PR session asks with its PR's query, inside the round's
+     // areas — the daemon's hint, re-read for every prompt (a small local
+-    // file). No hint (the overseer, the companion): the prompt, unscoped.
+-    const hint = readRecallHint(process.env[RECALL_HINT_FILE_ENV]);
+-    recall.queueSearch(hint ? hint.query : event.prompt, hint ? hint.areas : null);
++    // file). No hint variable (the overseer, the companion): the prompt,
++    // unscoped. [QCR PATCH 11] A PR session whose hint is not there yet (a
++    // recheck or ping-pong wake before its next round) asks with the prompt
++    // INSIDE the round's areas — fail closed, as the tools do.
++    const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);
++    recall.queueSearch(plan.query, plan.areas);
+ 
+     // Compose system prompt additions
+     const parts: string[] = [];
+diff --git a/extensions/vendor/openviking-pi/qcr-hint.ts b/extensions/vendor/openviking-pi/qcr-hint.ts
+index 5c3a38ca..8661dc5c 100644
+--- a/extensions/vendor/openviking-pi/qcr-hint.ts
++++ b/extensions/vendor/openviking-pi/qcr-hint.ts
+@@ -22,14 +22,46 @@
+ // [QCR PATCH 9] (S7) The same areas bound the session's memory
+ // TOOLS: in a PR session `viking_search` keeps only hits inside them and
+ // `viking_read` / `viking_browse` refuse a memory URI outside them. Cases
+-// (`cases/`, the daemon's finding cases — human replies quoted as data) and
++// (`finding-cases/`, the daemon's finding cases — human replies quoted as data) and
+ // feedback events are the learner's context, not a round's, until S9.
++//
++// [QCR PATCH 11] (integration review) Three holes in that boundary:
++//   * the RECALL failed OPEN: a PR session whose hint was not written yet (a
++//     recheck or ping-pong wake before its next full round — every live PR
++//     right after the deploy) recalled across the whole tree, cases and
++//     feedback events included. It now fails CLOSED, as the tools always did
++//     (`recallScope`);
++//   * a scoped SEARCH asked the server for a global top-K and filtered after:
++//     with ~1,800 cases beside ~180 curated entries, the top 10 was mostly
++//     cases and the session's search said "No results found." Both the tool
++//     and the recall's raw-find fallback now name the areas as the server's
++//     `target_uri` list (`scopedFindTargets`, `scopeGuard`);
++//   * a PR session could WRITE a lesson or a pinned entry from its own
++//     conclusions while reading untrusted PR text: `viking_write` now refuses
++//     `experiences/`, `preferences/` (the pinned head included) and
++//     `finding-cases/` in a scoped session (`scopedWriteRefusal`).
+ import { readFileSync } from "node:fs";
+ import { renderContextEntry, type FetchLike } from "./qcr-recall.js";
+ 
+ /** Where the daemon publishes this session's hint (PR sessions only). */
+ export const RECALL_HINT_FILE_ENV = "QCR_OV_RECALL_HINT_FILE";
+ 
++/** [QCR PATCH 11] What one recall asks and where: the hint's query and
++ * areas when the daemon published one; for a PR session (the hint variable
++ * set) whose hint cannot be read, the prompt INSIDE the round's areas — never
++ * the whole tree; for any other session (no variable: the overseer, the
++ * companion) the prompt, unscoped, as upstream. Total. */
++export function recallScope(
++  path: string | undefined,
++  prompt: string,
++  read: (p: string) => string = defaultRead,
++): { query: string; areas: readonly string[] | null } {
++  const hint = readRecallHint(path, read);
++  if (hint) return { query: hint.query, areas: hint.areas };
++  if (!path || path.trim() === "") return { query: prompt, areas: null };
++  return { query: prompt, areas: toolScopeAreas(path, read) ?? DEFAULT_ROUND_AREAS };
++}
++
+ /** The daemon caps its query at 600 characters (`ROUND_CONTEXT_DEFAULTS`);
+  * a longer one in the file is cut, not refused. */
+ export const MAX_HINT_QUERY_CHARS = 600;
+@@ -121,6 +153,24 @@ export function scopeGuard(inner: FetchLike, areas: () => readonly string[] | nu
+         sent = init;
+       }
+     }
++    // [QCR PATCH 11] The raw-find fallback names its target: a memories ROOT
++    // becomes the areas inside it (one request, a `target_uri` list — the
++    // server ranks inside them, so cases can never crowd a lesson out of the
++    // top K), and the skills source is not asked at all.
++    if (path === FIND_PATH && typeof init?.body === "string") {
++      try {
++        const body = JSON.parse(init.body) as Record<string, unknown>;
++        const target = typeof body["target_uri"] === "string" ? body["target_uri"] : "";
++        if (target !== "" && memoryAreaOf(target) === null)
++          return { ok: true, status: 200, result: { memories: [], resources: [], skills: [] } };
++        if (target === "" || memoryAreaOf(target) === "") {
++          body["target_uri"] = scopedFindTargets(scope, target === "" ? undefined : target);
++          sent = { ...init, body: JSON.stringify(body) };
++        }
++      } catch {
++        sent = init;
++      }
++    }
+     const res = await inner(path, sent, options);
+     if (!res?.ok || !res.result || typeof res.result !== "object") return res;
+     if (CONTEXT_PATHS.has(path) && Array.isArray(res.result.entries)) {
+@@ -213,6 +263,42 @@ export function browsableInScope(uri: unknown, areas: readonly string[]): boolea
+   return area === null || area === "" || areas.includes(area);
+ }
+ 
++/** [QCR PATCH 11] Where a scoped session's search is sent: the model's own
++ * scope when it lies inside one of the areas, else every area under the
++ * memories root it named (or the user's own, `viking://user/memories`) — a
++ * `target_uri` list, so the server ranks INSIDE the areas rather than across
++ * the whole tree with the rest filtered away afterwards. */
++export function scopedFindTargets(areas: readonly string[], scope?: string): string[] {
++  if (typeof scope === "string" && readableInScope(scope, areas)) return [scope];
++  let root = "viking://user/memories";
++  if (typeof scope === "string" && memoryAreaOf(scope) === "" && !DOT_SEGMENT.test(scope))
++    root = scope.replace(/\/+$/, "");
++  return areas.map((a) => `${root}/${a}`);
++}
++
++/** [QCR PATCH 11] The memory areas a scoped (PR) session may never write:
++ * curated lessons and the owner's words — both reach every round — and the
++ * daemon's own finding cases. A review session reads untrusted PR text; what
++ * it concludes is not a lesson until a person's outcome makes it one. */
++export const SCOPED_WRITE_REFUSED_AREAS: readonly string[] = [
++  "experiences",
++  "preferences",
++  "finding-cases",
++];
++
++/** The refusal for a scoped session's write into a protected area, or null. */
++export function scopedWriteRefusal(uris: readonly string[]): string | null {
++  const hit = uris.find((u) => {
++    const area = memoryAreaOf(u);
++    return area !== null && SCOPED_WRITE_REFUSED_AREAS.includes(area);
++  });
++  if (hit === undefined) return null;
++  return (
++    `Refusing to write ${hit}: a review session does not write ${SCOPED_WRITE_REFUSED_AREAS.map((a) => `${a}/`).join(", ")} — ` +
++    "lessons are curated from people's outcomes at the end of the day, the pinned instructions are the owner's, and cases are the daemon's. Nothing was written."
++  );
++}
++
+ /** The sentence a refused tool call answers with. */
+ export function scopeRefusal(uri: string, areas: readonly string[]): string {
+   return (
+diff --git a/extensions/vendor/openviking-pi/qcr-lesson.ts b/extensions/vendor/openviking-pi/qcr-lesson.ts
+index 0ecb19d6..0c3a3d60 100644
+--- a/extensions/vendor/openviking-pi/qcr-lesson.ts
++++ b/extensions/vendor/openviking-pi/qcr-lesson.ts
+@@ -173,6 +173,33 @@ export function buildLessonHeader(
+   };
+ }
+ 
++/**
++ * [QCR PATCH 11] The `#hash` tags an entry's HEADER carries — the leading run
++ * of `#…` tokens, exactly the daemon's reader (src/memory/eventtags.ts
++ * `parseHashTags`, pinned equal by test). A typed lesson is an entry whose
++ * header carries `#lesson`.
++ */
++export function headerHashTags(text: string): string[] {
++  const out: string[] = [];
++  for (const token of String(text ?? "").split(/\s+/)) {
++    if (token === "") continue;
++    if (!token.startsWith("#")) break;
++    const tag = token.slice(1).toLowerCase();
++    if (tag !== "" && !out.includes(tag)) out.push(tag);
++  }
++  return out;
++}
++
++/** [QCR PATCH 11] The refusal for content that types a lesson header by hand
++ * (no `lesson` parameter), or null. The header is the tool's to write: a
++ * hand-typed `#lesson … evidence=cand:c<id>` line would adopt learner
++ * candidates with no field checked — and a review session reading untrusted
++ * PR text could be talked into writing one (integration review). */
++export function handTypedLessonRefusal(content: unknown): string | null {
++  if (!headerHashTags(String(content ?? "").trim()).includes("lesson")) return null;
++  return "Refusing a hand-typed `#lesson` header: write a lesson with the `lesson` parameter {kind, lens, class, paths, evidence} — the tool writes the header — and start `content` with the lesson's prose.";
++}
++
+ /**
+  * The content of a lesson entry: the rendered header on the first line, the
+  * author's prose after it. Refused when the target is not in `experiences/`
+diff --git a/extensions/vendor/openviking-pi/qcr-write.ts b/extensions/vendor/openviking-pi/qcr-write.ts
+index 76e6f059..d10a0cc7 100644
+--- a/extensions/vendor/openviking-pi/qcr-write.ts
++++ b/extensions/vendor/openviking-pi/qcr-write.ts
+@@ -26,6 +26,8 @@ import { createHash } from "node:crypto";
+ import { routeNamespace, type NamespaceRoute } from "./qcr-namespaces.js";
+ // [QCR PATCH 10] a typed lesson's header is rendered from `lesson`
+ import { withLessonHeader } from "./qcr-lesson.js";
++// [QCR PATCH 11] …and only from `lesson`: never typed by hand
++import { handTypedLessonRefusal } from "./qcr-lesson.js";
+ 
+ /** Memory targets keep a text-extension allowlist server-side; these are the
+  * two we ever author. */
+@@ -199,6 +201,10 @@ export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult
+     if (!lesson.ok) return { ok: false, error: lesson.error };
+     content = lesson.content;
+     if (!tags.tags.includes("lesson") && tags.tags.length < MAX_TAGS) tags.tags.push("lesson");
++  } else {
++    // [QCR PATCH 11]
++    const handTyped = handTypedLessonRefusal(input.content);
++    if (handTyped) return { ok: false, error: handTyped };
+   }
+ 
+   const body = renderMemoryBody(content, tags.tags);
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+index 5eef127e..946e6b09 100644
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -17,6 +17,8 @@ import {
+   readableInScope,
+   scopeRefusal,
+ } from "./qcr-hint.js";
++// [QCR PATCH 11]
++import { scopedFindTargets, scopedWriteRefusal } from "./qcr-hint.js";
+ 
+ /** [QCR PATCH 5] One memory namespace the tools can address: a name the model
+  * uses and the client holding that namespace's USER key. */
+@@ -130,8 +132,11 @@ export function registerTools(
+           details: { error: true, refused: true },
+         };
+       }
++      // [QCR PATCH 11] …and asks the server for the top K INSIDE them (a
++      // `target_uri` list), never a global top K filtered afterwards — the
++      // finding cases outnumber the lessons ten to one.
+       const res = await ns.client.find(params.query, {
+-        targetUri: params.scope,
++        targetUri: areas ? scopedFindTargets(areas, params.scope) : params.scope,
+         topK: params.limit ?? 10,
+       });
+       // [QCR PATCH 6] A failure is said as one — never "No results found".
+@@ -359,6 +364,16 @@ export function registerTools(
+         if (!built.ok) {
+           return { content: [{ type: "text", text: built.error }], details: { written: false } };
+         }
++        // [QCR PATCH 11] A review session (scoped) writes no lesson, no
++        // pinned or owner entry, and no case.
++        const writeAreas = scopeAreas();
++        const writeRefused = writeAreas ? scopedWriteRefusal(built.entries.map((e) => e.uri)) : null;
++        if (writeRefused) {
++          return {
++            content: [{ type: "text", text: scoped(ns, writeRefused) }],
++            details: { written: false, refused: true },
++          };
++        }
+ 
+         const res = await ns.client.batchWrite(built.request);
+         if (!res.ok) {

@@ -727,7 +727,7 @@ export class OpenVikingStore implements MemoryStore {
    * `<root>/<area>/<sub>/<file>` (the §1 `preferences/pinned/`,
    * S5 — it was two levels before the layout was built) plus any file sitting
    * directly in the root — every area but the ones `SWEEP_EXCLUDED_AREAS`
-   * names (`cases/`, the daemon's derived documents: S7, written by
+   * names (`finding-cases/`, the daemon's derived documents: S7, written by
    * `putDocuments`, read through the server's search alone). A bounded depth is the whole convention — a
    * recursive walk against a store this system fully owns would only ever be
    * finding files it did not write.
@@ -756,7 +756,7 @@ export class OpenVikingStore implements MemoryStore {
     const dirs: string[] = [];
     for (const row of top.result) {
       if (row.isDir) {
-        // `cases/` is the daemon's derived documents, not curated memory
+        // `finding-cases/` is the daemon's derived documents, not curated memory
         // (S7, `SWEEP_EXCLUDED_AREAS`): never listed here.
         if (!row.name.startsWith(".") && !SWEEP_EXCLUDED_AREAS.includes(row.name))
           dirs.push(row.name);
@@ -1650,7 +1650,7 @@ export class OpenVikingStore implements MemoryStore {
         if (again.length > 0) await send(root, again, true);
       }
     }
-    // Bookkeeping. An area the sweep never lists (`cases/`) has nothing in
+    // Bookkeeping. An area the sweep never lists (`finding-cases/`) has nothing in
     // this store's caches, and its retirements are not on the sweep's list.
     for (const it of items) {
       if (results.get(it.i)?.state !== "written") continue;

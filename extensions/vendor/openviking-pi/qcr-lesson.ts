@@ -174,6 +174,33 @@ export function buildLessonHeader(
 }
 
 /**
+ * [QCR PATCH 11] The `#hash` tags an entry's HEADER carries — the leading run
+ * of `#…` tokens, exactly the daemon's reader (src/memory/eventtags.ts
+ * `parseHashTags`, pinned equal by test). A typed lesson is an entry whose
+ * header carries `#lesson`.
+ */
+export function headerHashTags(text: string): string[] {
+  const out: string[] = [];
+  for (const token of String(text ?? "").split(/\s+/)) {
+    if (token === "") continue;
+    if (!token.startsWith("#")) break;
+    const tag = token.slice(1).toLowerCase();
+    if (tag !== "" && !out.includes(tag)) out.push(tag);
+  }
+  return out;
+}
+
+/** [QCR PATCH 11] The refusal for content that types a lesson header by hand
+ * (no `lesson` parameter), or null. The header is the tool's to write: a
+ * hand-typed `#lesson … evidence=cand:c<id>` line would adopt learner
+ * candidates with no field checked — and a review session reading untrusted
+ * PR text could be talked into writing one (integration review). */
+export function handTypedLessonRefusal(content: unknown): string | null {
+  if (!headerHashTags(String(content ?? "").trim()).includes("lesson")) return null;
+  return "Refusing a hand-typed `#lesson` header: write a lesson with the `lesson` parameter {kind, lens, class, paths, evidence} — the tool writes the header — and start `content` with the lesson's prose.";
+}
+
+/**
  * The content of a lesson entry: the rendered header on the first line, the
  * author's prose after it. Refused when the target is not in `experiences/`
  * or the prose already opens with a header of its own — the header is the

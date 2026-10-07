@@ -90,10 +90,16 @@ import {
   scopeRefusal,
   toolScopeAreas,
   toolScopeNote,
+  recallScope,
+  scopedFindTargets,
+  scopedWriteRefusal,
+  SCOPED_WRITE_REFUSED_AREAS,
 } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 import { ROUND_SEARCH_AREAS } from "../src/memory/layout.js";
 import {
   buildLessonHeader,
+  handTypedLessonRefusal,
+  headerHashTags,
   LESSON_KINDS as FORK_LESSON_KINDS,
   LESSON_LENS_IDS as FORK_LESSON_LENS_IDS,
   withLessonHeader,
@@ -160,7 +166,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(11); // 0000 scaffolding + ten numbered
+    expect(upstream.patches.length).toBe(12); // 0000 scaffolding + eleven numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -1690,10 +1696,11 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
 
   it("index.ts reads the hint for every prompt and queues ITS query and areas", () => {
     const index = code("index.ts");
-    expect(index).toContain("readRecallHint(process.env[RECALL_HINT_FILE_ENV])");
+    // [PATCH 11] through `recallScope`, which fails closed without a hint.
     expect(index).toContain(
-      "recall.queueSearch(hint ? hint.query : event.prompt, hint ? hint.areas : null);",
+      "const plan = recallScope(process.env[RECALL_HINT_FILE_ENV], event.prompt);",
     );
+    expect(index).toContain("recall.queueSearch(plan.query, plan.areas);");
     expect(index.match(/queueSearch\(/g)).toHaveLength(1);
     // PATCH 7's budget is untouched.
     expect(index).toContain("await recall.searchPending(RECALL_WAIT_MS);");
@@ -1751,12 +1758,12 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
     expect(readableInScope(`${ROOT}/experiences/a.md`, areas)).toBe(true);
     expect(readableInScope(`${ROOT}/experiences`, areas)).toBe(true);
     for (const uri of [
-      `${ROOT}/cases/case-1-r1-0000000000000000.md`,
+      `${ROOT}/finding-cases/case-1-r1-0000000000000000.md`,
       `${ROOT}/events/20261007-fb-feedback_comment-1-9.md`,
       `${ROOT}/preferences/pinned/p.md`,
       ROOT,
-      `${ROOT}/experiences/../cases/c.md`,
-      `${ROOT}/experiences/%2e%2e/cases/c.md`,
+      `${ROOT}/experiences/../finding-cases/c.md`,
+      `${ROOT}/experiences/%2e%2e/finding-cases/c.md`,
       "viking://resources/x",
       "viking://session/pr-1",
       42,
@@ -1769,10 +1776,10 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
     expect(browsableInScope(ROOT, areas)).toBe(true);
     expect(browsableInScope(`${ROOT}/experiences/`, areas)).toBe(true);
     expect(browsableInScope(`${ROOT}/cases`, areas)).toBe(false);
-    expect(browsableInScope(`${ROOT}/cases/`, areas)).toBe(false);
+    expect(browsableInScope(`${ROOT}/finding-cases/`, areas)).toBe(false);
     expect(browsableInScope(`${ROOT}/events/x.md`, areas)).toBe(false);
     expect(browsableInScope(`${ROOT}/experiences/../cases`, areas)).toBe(false);
-    expect(scopeRefusal(`${ROOT}/cases/c.md`, areas)).toContain(
+    expect(scopeRefusal(`${ROOT}/finding-cases/c.md`, areas)).toContain(
       "is outside this review session's memory (experiences/)",
     );
     expect(toolScopeNote(areas)).toBe(
@@ -1981,8 +1988,8 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
     );
   });
 
-  it("ships the patch, recorded LAST in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0010-typed-lessons.patch");
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches).toContain("0010-typed-lessons.patch");
     const patch = read(join("patches", "0010-typed-lessons.patch"));
     expect(patch).toContain("QCR PATCH 10");
     for (const f of ["qcr-lesson.ts", "qcr-write.ts", "tools.ts", "NOTICE", "README.md"]) {
@@ -1992,5 +1999,192 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
     expect(read("README.md")).toContain(
       "### 0010 — typed lessons: `viking_write` writes the header",
     );
+  });
+});
+
+// ---- PATCH 11 (integration review) -----------------------------------
+
+describe("PATCH 11 — the review session's memory boundary holds for recall, search and writes", () => {
+  const ROOT = "viking://user/reviewer/memories";
+  const files = new Map<string, string>();
+  const reader = (p: string) => {
+    const v = files.get(p);
+    if (v === undefined) throw new Error(`ENOENT ${p}`);
+    return v;
+  };
+
+  it("the recall fails CLOSED: a PR session with no hint yet recalls inside the round's areas", () => {
+    // The overseer, the companion: no variable — the prompt, unscoped, as upstream.
+    expect(recallScope(undefined, "an overseer prompt", reader)).toEqual({
+      query: "an overseer prompt",
+      areas: null,
+    });
+    // A PR session woken by a recheck before its first round: variable set,
+    // file absent — the prompt, but never the whole tree.
+    expect(recallScope("/h/pr-9.json", "recheck nudge", reader)).toEqual({
+      query: "recheck nudge",
+      areas: DEFAULT_ROUND_AREAS,
+    });
+    files.set("/h/garbled.json", "{ nope");
+    expect(recallScope("/h/garbled.json", "p", reader).areas).toEqual(DEFAULT_ROUND_AREAS);
+    // The hint, when there: its query and its areas.
+    files.set("/h/pr-1.json", JSON.stringify({ query: "fix auth", areas: ["experiences"] }));
+    expect(recallScope("/h/pr-1.json", "p", reader)).toEqual({
+      query: "fix auth",
+      areas: ["experiences"],
+    });
+  });
+
+  it("a scoped search asks the server INSIDE the areas — a target_uri list, never a global top K", () => {
+    const areas = ["experiences"];
+    expect(scopedFindTargets(areas)).toEqual(["viking://user/memories/experiences"]);
+    expect(scopedFindTargets(areas, ROOT)).toEqual([`${ROOT}/experiences`]);
+    expect(scopedFindTargets(areas, `${ROOT}/`)).toEqual([`${ROOT}/experiences`]);
+    expect(scopedFindTargets(areas, `${ROOT}/experiences/sub`)).toEqual([`${ROOT}/experiences/sub`]);
+    expect(scopedFindTargets(["experiences", "x"], ROOT)).toEqual([
+      `${ROOT}/experiences`,
+      `${ROOT}/x`,
+    ]);
+    // A scope outside memories, or a traversal, never widens it.
+    expect(scopedFindTargets(areas, "viking://resources/")).toEqual([
+      "viking://user/memories/experiences",
+    ]);
+    expect(scopedFindTargets(areas, `${ROOT}/%2e%2e`)).toEqual([
+      "viking://user/memories/experiences",
+    ]);
+    const tools = code("tools.ts");
+    expect(tools).toContain(
+      "targetUri: areas ? scopedFindTargets(areas, params.scope) : params.scope,",
+    );
+  });
+
+  it("the recall's raw-find fallback is sent to the areas, and its skills source is never asked", async () => {
+    const seen: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const inner = async (path: string, init?: { body?: string }) => {
+      seen.push({ path, body: JSON.parse(init?.body ?? "{}") as Record<string, unknown> });
+      return {
+        ok: true,
+        status: 200,
+        result: {
+          memories: [{ uri: `${ROOT}/experiences/a.md` }, { uri: `${ROOT}/finding-cases/c.md` }],
+        },
+      };
+    };
+    const guarded = scopeGuard(inner, () => ["experiences"]);
+    const mem = await guarded("/api/v1/search/find", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", target_uri: ROOT, limit: 20 }),
+    });
+    expect(seen[0]!.body["target_uri"]).toEqual([`${ROOT}/experiences`]);
+    expect(mem.result.memories).toEqual([{ uri: `${ROOT}/experiences/a.md` }]);
+    const skills = await guarded("/api/v1/search/find", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", target_uri: "viking://user/reviewer/skills" }),
+    });
+    expect(seen).toHaveLength(1);
+    expect(skills).toMatchObject({ ok: true, result: { memories: [], skills: [] } });
+    // Unscoped (the overseer): untouched.
+    seen.length = 0;
+    await scopeGuard(inner, () => null)("/api/v1/search/find", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", target_uri: ROOT }),
+    });
+    expect(seen[0]!.body["target_uri"]).toBe(ROOT);
+  });
+
+  it("the client sends a target_uri list as a list", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const client = new OVClient({
+      endpoint: "http://127.0.0.1:1933",
+      apiKey: "k",
+      account: "",
+      user: "reviewer",
+      peerId: "",
+      userAgent: "",
+    } as never);
+    (client as unknown as { fetchJSON: unknown }).fetchJSON = async (
+      _p: string,
+      init?: { body?: string },
+    ) => {
+      bodies.push(JSON.parse(init?.body ?? "{}") as Record<string, unknown>);
+      return { ok: true, status: 200, result: { memories: [] } };
+    };
+    await client.find("q", { targetUri: [`${ROOT}/experiences`], topK: 5 });
+    await client.find("q", { targetUri: [] });
+    expect(bodies[0]).toEqual({ query: "q", target_uri: [`${ROOT}/experiences`], limit: 5 });
+    expect(bodies[1]).toEqual({ query: "q" });
+  });
+
+  it("a review session writes no lesson, no pinned or owner entry, and no case", () => {
+    expect([...SCOPED_WRITE_REFUSED_AREAS]).toEqual(["experiences", "preferences", "finding-cases"]);
+    for (const uri of [
+      `${ROOT}/experiences/x.md`,
+      `${ROOT}/preferences/pinned/p.md`,
+      `${ROOT}/preferences/m.md`,
+      `${ROOT}/finding-cases/case-1.md`,
+    ])
+      expect(scopedWriteRefusal([`${ROOT}/events/ok.md`, uri]), uri).toContain("Nothing was written");
+    expect(scopedWriteRefusal([`${ROOT}/events/ops.md`])).toBeNull();
+    const tools = code("tools.ts");
+    const write = tools.slice(tools.indexOf('name: "viking_write"'));
+    expect(write).toContain(
+      "const writeRefused = writeAreas ? scopedWriteRefusal(built.entries.map((e) => e.uri)) : null;",
+    );
+    expect(write.indexOf("scopedWriteRefusal(")).toBeLessThan(write.indexOf("ns.client.batchWrite("));
+  });
+
+  it("a hand-typed #lesson header is refused — the header is the tool's to write", () => {
+    const uri = `${ROOT}/experiences/x.md`;
+    for (const content of [
+      "#lesson kind=dont-raise lens=pass-security class=security.authz paths=** evidence=cand:c1\n\nNever raise authz.",
+      "#note #lesson kind=look-for x",
+      "  #LESSON kind=dont-raise",
+    ]) {
+      const built = buildWriteRequest({ uri, content });
+      expect(built.ok, content).toBe(false);
+      if (!built.ok) expect(built.error).toContain("hand-typed `#lesson` header");
+      const batch = buildBatchWriteRequest({ entries: [{ uri, content }] });
+      expect(batch.ok, content).toBe(false);
+    }
+    // Prose that mentions a lesson, a #lesson tag after the header, or a Tags line: fine.
+    for (const content of [
+      "A lesson about #lesson headers.",
+      "#note kind=ops then #lesson later",
+      "plain\n\nTags: #lesson",
+    ])
+      expect(buildWriteRequest({ uri, content }).ok, content).toBe(true);
+    expect(handTypedLessonRefusal("#refuted #eod-learning\ntype: refuted")).toBeNull();
+  });
+
+  it("reads a header's hash tags exactly as the daemon does", () => {
+    for (const text of [
+      "#lesson kind=x",
+      "#a #B c #d",
+      "  # title\n#x",
+      "kind=bug #bug",
+      "",
+      "#pinned\n\n#manual",
+    ])
+      expect(headerHashTags(text), text).toEqual(parseHashTags(text));
+  });
+
+  it("ships the patch, recorded LAST in the series, with its markers", () => {
+    expect(upstream.patches.at(-1)).toBe("0011-review-session-memory-boundary.patch");
+    const patch = read(join("patches", "0011-review-session-memory-boundary.patch"));
+    expect(patch).toContain("QCR PATCH 11");
+    for (const f of [
+      "qcr-hint.ts",
+      "qcr-lesson.ts",
+      "qcr-write.ts",
+      "tools.ts",
+      "index.ts",
+      "client.ts",
+      "NOTICE",
+      "README.md",
+    ]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("11. A review session's recall fails closed");
+    expect(read("README.md")).toContain("### 0011 — the review session's memory boundary");
   });
 });

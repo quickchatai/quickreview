@@ -350,6 +350,21 @@ describe("the finding marker (S6)", () => {
     expect(parseFindingMarker(`body\n\n${m}`)).toEqual({ round_no: 2, key });
   });
 
+  it("the LAST marker wins: a marker-shaped string the finding quotes cannot take the link", () => {
+    // The finding text is the reviewer's and may quote PR content verbatim;
+    // the real marker is appended after it (integration review).
+    const quoted = `quoted \`${findingMarker(9, "evil")}\` in code`;
+    expect(parseFindingMarker(`${quoted}\n\n${findingMarker(2, "real")}`)).toEqual({
+      round_no: 2,
+      key: "real",
+    });
+    const r = record([entry({ id: "F1", title: `see ${findingMarker(9, "evil")}` })]);
+    const marked = renderReviewFromRecord(r, { findingMarkers: { roundNo: 3 } });
+    expect(marked.comments.map((c) => parseFindingMarker(c.body))).toEqual([
+      { round_no: 3, key: "F1" },
+    ]);
+  });
+
   it("never throws on a key with a lone surrogate — it names the key the state database stores", () => {
     // `JSON.parse` accepts "\ud800"; encodeURIComponent throws URIError on it,
     // and the render route has no catch around the marker.

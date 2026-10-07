@@ -17,6 +17,8 @@ import {
   readableInScope,
   scopeRefusal,
 } from "./qcr-hint.js";
+// [QCR PATCH 11]
+import { scopedFindTargets, scopedWriteRefusal } from "./qcr-hint.js";
 
 /** [QCR PATCH 5] One memory namespace the tools can address: a name the model
  * uses and the client holding that namespace's USER key. */
@@ -130,8 +132,11 @@ export function registerTools(
           details: { error: true, refused: true },
         };
       }
+      // [QCR PATCH 11] …and asks the server for the top K INSIDE them (a
+      // `target_uri` list), never a global top K filtered afterwards — the
+      // finding cases outnumber the lessons ten to one.
       const res = await ns.client.find(params.query, {
-        targetUri: params.scope,
+        targetUri: areas ? scopedFindTargets(areas, params.scope) : params.scope,
         topK: params.limit ?? 10,
       });
       // [QCR PATCH 6] A failure is said as one — never "No results found".
@@ -358,6 +363,16 @@ export function registerTools(
         const built = buildBatchWriteRequest(params ?? {});
         if (!built.ok) {
           return { content: [{ type: "text", text: built.error }], details: { written: false } };
+        }
+        // [QCR PATCH 11] A review session (scoped) writes no lesson, no
+        // pinned or owner entry, and no case.
+        const writeAreas = scopeAreas();
+        const writeRefused = writeAreas ? scopedWriteRefusal(built.entries.map((e) => e.uri)) : null;
+        if (writeRefused) {
+          return {
+            content: [{ type: "text", text: scoped(ns, writeRefused) }],
+            details: { written: false, refused: true },
+          };
         }
 
         const res = await ns.client.batchWrite(built.request);
