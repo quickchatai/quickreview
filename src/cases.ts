@@ -75,7 +75,13 @@
 //      `backfillMaxAttempts` failures is the PR captured from state.db alone
 //      and marked done as `unread` — re-queued at the next start and daily,
 //      like a given-up case.
-//   4. WRITE — up to `batch` owed cases, oldest owed first, one batch-write.
+//   4. WRITE — up to `batch` owed cases (2), oldest owed first, one
+//      batch-write — and never STARTED while a review round is reading memory
+//      (F2, `rounds`): every case is embedded on the server's one
+//      local-embedder thread (~3.4 s each on the live VM), the thread a
+//      round's seed and lesson finds wait on, so the write waits for the
+//      rounds (at most `yieldWaitMs`) and gives the tick up past that — or
+//      when memory health no longer reads healthy after the wait.
 // Steps 2–4 run ONLY while memory health (S1) reads `healthy`: a write into
 // memory that is down is just another failure, and a backfill feeding a
 // queue nobody can drain is just load. A case is derived data — state.db
@@ -88,6 +94,7 @@ import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags, parseHashTags } from "./memory/eventtags.js";
 import type { CaseWritesStatus } from "./memory/health.js";
 import { CASES_AREA } from "./memory/layout.js";
+import type { RoundActivityGate } from "./memory/roundactivity.js";
 import type { DocumentPut, DocumentPutResult, MemoryStore } from "./memory/store.js";
 import {
   inCaptureWindow,
@@ -133,12 +140,19 @@ export const CASE_DEFAULTS = Object.freeze({
   intervalMs: 120_000,
   /** Cases written per tick — ONE batch-write. Paced by EMBEDDING cost, not
    * by request count: every case is embedded in full on the server's one
-   * local-embedder thread (S4; a 512-token case costs 0.5–0.75 s there), and
-   * a PR session's 500 ms recall and the supervisor's `/ready` probe wait on
-   * that same thread. Five a tick holds the lock for ~3 s in 120 s; twenty
-   * held it 10–15 s, long enough to miss recalls and fail a probe through
-   * the ~6 h first-deploy backfill (integration review). */
-  batch: 5,
+   * local-embedder thread (S4), and a review round's memory seed and lesson
+   * finds, a PR session's 500 ms recall and the supervisor's `/ready` probe
+   * wait on that same thread. The integration review cut twenty to five
+   * (0.5–0.75 s a case on a quiet machine); on the live VM's throttled two
+   * CPUs a case measured ~3.4 s (2026-10-07), so five held the embedder
+   * ~17 s and the first rounds after the S9 deploy got 1–9 of their lesson
+   * finds inside 2 s. Two hold it ~7 s — and no batch STARTS while a round
+   * reads memory (`rounds`, F2). */
+  batch: 2,
+  /** How long a tick's write waits for the rounds reading memory to finish
+   * before it gives the tick up (F2): longer than a round's seed, its
+   * handoff and its shadow selection together (≤ 3 s + a few s + ≤ 20 s). */
+  yieldWaitMs: 30_000,
   backfillDays: 60,
   /** PRs the backfill covers per tick… */
   backfillPrsPerTick: 2,
@@ -732,6 +746,9 @@ export interface CaseTick {
   failed: number;
   /** Memory was not healthy: nothing was backfilled or written. */
   held: boolean;
+  /** A review round was still reading memory when the tick's wait for it
+   * ran out (F2): no batch started; the next tick tries again. */
+  yielded: boolean;
   /** Cases owed after the tick. */
   owed: number;
 }
@@ -748,6 +765,12 @@ export interface CaseWriterDeps {
   botLogin: string;
   /** Backfill and write ONLY while this is true — memory health (S1). */
   healthy: () => boolean;
+  /** Is a review round reading memory? (F2, src/memory/
+   * roundactivity.ts.) No batch STARTS while one is: the write waits for
+   * them, at most `yieldWaitMs`, then gives the tick up. Absent ⇒ never
+   * held. */
+  rounds?: RoundActivityGate;
+  yieldWaitMs?: number;
   /** The backfill's ONE read per PR of its inline comments (the GitHub
    * adapter; read-only, never gated). Absent ⇒ the backfill works from
    * state.db alone. */
@@ -792,6 +815,7 @@ export class CaseWriter {
     requeueFailedMs: number;
     backfillRetryMs: number;
     latePrsPerTick: number;
+    yieldWaitMs: number;
   };
   private cancel: (() => void) | null = null;
   private stopped = false;
@@ -819,6 +843,7 @@ export class CaseWriter {
       requeueFailedMs: Math.max(60_000, deps.requeueFailedMs ?? d.requeueFailedMs),
       backfillRetryMs: Math.max(0, deps.backfillRetryMs ?? d.backfillRetryMs),
       latePrsPerTick: Math.max(1, deps.latePrsPerTick ?? d.latePrsPerTick),
+      yieldWaitMs: Math.max(0, deps.yieldWaitMs ?? d.yieldWaitMs),
     };
     this.store.db.exec(SCHEMA);
   }
@@ -861,6 +886,7 @@ export class CaseWriter {
           blocked: 0,
           failed: 0,
           held: false,
+          yielded: false,
           owed: -1,
         };
       })
@@ -882,6 +908,7 @@ export class CaseWriter {
       blocked: 0,
       failed: 0,
       held: false,
+      yielded: false,
       owed: 0,
     };
     let healthy = false;
@@ -898,7 +925,7 @@ export class CaseWriter {
       await this.write(out);
     }
     out.owed = this.owedCount();
-    if (out.attempted > 0 || out.backfilled.length > 0 || out.late.length > 0)
+    if (out.attempted > 0 || out.backfilled.length > 0 || out.late.length > 0 || out.yielded)
       this.store.logEvent("cases_written", null, {
         late: out.late,
         backfilled: out.backfilled,
@@ -908,6 +935,8 @@ export class CaseWriter {
         conflicts: out.conflicts,
         blocked: out.blocked,
         failed: out.failed,
+        // F2: a review round kept reading memory past the wait.
+        yielded: out.yielded,
         owed: out.owed,
       });
     return out;
@@ -1249,6 +1278,34 @@ export class CaseWriter {
       }
       return;
     }
+    // F2: no batch STARTS while a review round reads memory — every
+    // case is a ~3.4 s embedding on the one-thread embedder the round's seed
+    // and lesson finds wait on. Wait for the rounds first (bounded), THEN
+    // pick the rows and send them with no await in between, so nothing a
+    // round opened during the wait is overtaken.
+    if (!this.hasOwed()) return;
+    const waited = this.roundsBusy();
+    if (waited) await this.waitForRounds();
+    if (this.stopped) return;
+    // Memory health was read at the tick's start; the wait (up to
+    // `yieldWaitMs`) may have outlived it — a batch never starts into memory
+    // that stopped reading healthy meanwhile.
+    if (waited && !this.healthyNow()) {
+      out.held = true;
+      this.log(
+        "cases: memory stopped reading healthy while the write waited for a review round — no case batch this tick",
+      );
+      return;
+    }
+    // The decisive check: synchronous, with nothing awaited between it and
+    // the send below.
+    if (this.roundsBusy()) {
+      out.yielded = true;
+      this.log(
+        `cases: a review round is still reading memory after ${Math.round(this.cfg.yieldWaitMs / 1000)} s — no case batch this tick (the next tries again)`,
+      );
+      return;
+    }
     const rows = this.store.db
       .prepare(
         "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL ORDER BY owed_since, name LIMIT ?",
@@ -1399,7 +1456,48 @@ export class CaseWriter {
     })();
   }
 
+  /** Memory health (S1) right now. Total: a throw reads not healthy. */
+  private healthyNow(): boolean {
+    try {
+      return this.deps.healthy() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Is a review round reading memory right now? (F2.) Total: a
+   * gate that throws holds nothing. */
+  private roundsBusy(): boolean {
+    const gate = this.deps.rounds;
+    if (!gate) return false;
+    try {
+      return gate.busy() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Wait for the rounds reading memory to finish, at most `yieldWaitMs`.
+   * Never rejects; the caller decides on `roundsBusy()` afterwards. */
+  private async waitForRounds(): Promise<void> {
+    try {
+      await this.deps.rounds?.whenIdle(this.cfg.yieldWaitMs);
+    } catch {
+      /* the decisive check is the caller's */
+    }
+  }
+
   // ---- reading back ------------------------------------------------------------------
+
+  private hasOwed(): boolean {
+    return (
+      this.store.db
+        .prepare(
+          "SELECT 1 AS one FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL LIMIT 1",
+        )
+        .get() !== undefined
+    );
+  }
 
   private owedCount(): number {
     return (

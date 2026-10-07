@@ -309,7 +309,24 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
     expect(wire).toMatch(
       /new RoundLessonSelector\(\{\s*ledger: lessonLedger,\s*mode: \(\) => cfg\.memory\.delivery,\s*engine: \(\) => lessonEngine,\s*budgetMs: cfg\.memory\.delivery_budget_ms,/,
     );
+    // F2: the budget follows the mode — the selector is handed the
+    // shadow budget too, and opens its windows on the ONE round-activity
+    // tracker the case writer yields to.
+    expect(wire).toMatch(
+      /budgetMs: cfg\.memory\.delivery_budget_ms,[\s\S]{0,240}?shadowBudgetMs: cfg\.memory\.shadow_budget_ms,\s*activity: roundActivity,/,
+    );
     expect(wire).toMatch(/if \(cfg\.openviking\.enabled && cfg\.memory\.delivery !== "off"\)/);
+  });
+
+  it("shutdown CUTS the shadow selections and waits only for an awaited one's ≤ 2 s budget — never the shadow budget (docker's 10 s stop grace)", () => {
+    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n    \},\n/.exec(wire)?.[0] ?? "";
+    expect(stop).not.toBe("");
+    // stop() first, then the bounded wait — and both before the server goes.
+    expect(stop).toMatch(
+      /selector\.stop\(\);\s*await Promise\.race\(\[\s*selector\.idle\(\),\s*new Promise<void>\(\(r\) => setTimeout\(r, cfg\.memory\.delivery_budget_ms \+ 500\)/,
+    );
+    expect(stop).not.toMatch(/setTimeout\([^;]*shadow_budget_ms/);
+    expect(stop.indexOf("selector.stop()")).toBeLessThan(stop.indexOf("openviking.stop()"));
   });
 
   it("the kill switch is wired to the ledger, and the headline reaches the memory status block", () => {

@@ -413,6 +413,11 @@ export class OpenVikingStore implements MemoryStore {
    * record of that file is never adopted. */
   private forgotten = new Map<string, number>();
   private stats: SweepStats | null = null;
+  /** Files LISTED directly in each area by the last adopted sweep (
+   * F2, `areaSize`) — a count of the listing, so a file that failed to read
+   * still counts; an area whose listing failed keeps its last count (or is
+   * `unknown` without one). Null until a sweep was adopted. */
+  private listedByArea: { counts: Map<string, number>; unknown: Set<string> } | null = null;
 
   private cache: { at: number; run: SweepRun } | null = null;
   private inFlight: { gen: number; run: Promise<SweepRun> } | null = null;
@@ -465,6 +470,26 @@ export class OpenVikingStore implements MemoryStore {
   /** What the last COMPLETED sweep cost, or null before the first. */
   lastSweepStats(): SweepStats | null {
     return this.stats === null ? null : { ...this.stats };
+  }
+
+  /**
+   * How many files the last adopted sweep LISTED directly in `<root>/<area>/`
+   * — retired ones and unread ones included, because the engine indexes them
+   * all (F2: what sizes the lesson find's `limit`). Synchronous, no
+   * I/O, never starts or waits for a sweep (the round prefetch's
+   * `retiredUris()` keeps the sweep fresh). Null before any sweep was
+   * adopted, and for an area whose listing failed with no earlier count;
+   * 0 for an area listed empty or absent. Never an area `SWEEP_EXCLUDED_AREAS`
+   * names (`finding-cases/`): the sweep does not list it, so it is unknown.
+   */
+  areaSize(area: string): number | null {
+    const dir = area.replace(/^\/+|\/+$/g, "");
+    if (this.listedByArea === null || dir === "") return null;
+    if (SWEEP_EXCLUDED_AREAS.includes(dir.split("/")[0]!)) return null;
+    const known = this.listedByArea.counts.get(dir);
+    if (known !== undefined) return known;
+    for (const u of this.listedByArea.unknown) if (dir === u || dir.startsWith(`${u}/`)) return null;
+    return 0;
   }
 
   uriOf(id: string): string {
@@ -698,6 +723,30 @@ export class OpenVikingStore implements MemoryStore {
       this.known = next;
       this.adoptedSeq = seq;
       if (full) this.lastFullAt = startedAt;
+      // Each listed directory counts the files directly in it
+      // (`experiences/x.md` is `experiences`'; `preferences/pinned/x.md` is
+      // `preferences/pinned`'s, never `preferences`'). A directory whose
+      // listing failed keeps its last count, or is unknown without one.
+      const counts = new Map<string, number>();
+      for (const file of files) {
+        const cut = file.id.lastIndexOf("/");
+        if (cut < 0) continue;
+        const dir = file.id.slice(0, cut);
+        counts.set(dir, (counts.get(dir) ?? 0) + 1);
+      }
+      // A failed listing hides its subdirectories too: they keep their last
+      // counts like it, and with none they read unknown (`areaSize` matches
+      // an unknown directory by prefix).
+      const unknown = new Set<string>();
+      const prev = this.listedByArea;
+      for (const dir of listing.failedDirs) {
+        const under = (d: string): boolean => d === dir || d.startsWith(`${dir}/`);
+        for (const d of [...counts.keys()]) if (under(d)) counts.delete(d);
+        if (prev) for (const [d, n] of prev.counts) if (under(d)) counts.set(d, n);
+        if (!counts.has(dir)) unknown.add(dir);
+        if (prev) for (const d of prev.unknown) if (under(d)) unknown.add(d);
+      }
+      this.listedByArea = { counts, unknown };
     }
     const run: SweepRun = { sweep: { entries, unread, retired: retiredEntries }, retired };
     this.stats = { full, listed: files.length, reread, reused };

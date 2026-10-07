@@ -37,6 +37,7 @@
 
 import { promptQuoted } from "../codespan.js";
 import type { RoundLessonDelivery } from "./delivery.js";
+import type { RoundActivityWindow } from "./roundactivity.js";
 
 /**
  * What one read of memory produced: the text the store holds — `""` when it
@@ -183,6 +184,12 @@ export interface RoundMemorySeed {
    * never touches the store and never delays the round. Must not throw; a
    * throw is logged and swallowed. */
   publishQuery?: (pr: number, query: string) => void;
+  /** The round's MEMORY WINDOW (F2, src/memory/roundactivity.ts):
+   * dispatch opens one before the seed and closes it once the round's lesson
+   * selection has taken over (or the round's handoff ended without one), so
+   * the case writer starts no batch in front of the round's reads on the
+   * one-thread embedder. Bookkeeping only — it never delays the round. */
+  activity?: RoundActivityWindow;
 }
 
 /** The slice of a changed file the query builder reads. */

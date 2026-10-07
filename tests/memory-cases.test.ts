@@ -29,6 +29,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  CASE_DEFAULTS,
   CASE_LIMITS,
   CaseWriter,
   PROBE_EXPECT,
@@ -41,7 +42,12 @@ import {
   withdrawalStub,
   withoutMentions,
 } from "../src/cases.js";
-import { parseConfig, MEMORY_DEFAULTS, type Config } from "../src/config.js";
+import {
+  parseConfig,
+  LESSON_SHADOW_PREFETCH_MAX_MS,
+  MEMORY_DEFAULTS,
+  type Config,
+} from "../src/config.js";
 import {
   FEEDBACK_FULL_TEXT_LABEL,
   memoryEntryFor,
@@ -58,6 +64,7 @@ import {
   ROUND_SEARCH_AREAS,
   SWEEP_EXCLUDED_AREAS,
 } from "../src/memory/layout.js";
+import { RoundMemoryActivity, type RoundActivityGate } from "../src/memory/roundactivity.js";
 import type { DocumentPut, DocumentPutResult } from "../src/memory/store.js";
 import { inRoundSearchScope } from "../src/openviking/context.js";
 import { sha256Prefixed } from "../src/openviking/store.js";
@@ -225,6 +232,9 @@ function writer(
     backfillPrsPerTick?: number;
     batch?: number;
     memory?: { putDocuments?(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> };
+    rounds?: RoundActivityGate;
+    yieldWaitMs?: number;
+    log?: (msg: string) => void;
   } = {},
 ) {
   const server = opts.server ?? new OvServer();
@@ -241,6 +251,9 @@ function writer(
     backfillDays: opts.backfillDays ?? 0,
     ...(opts.backfillPrsPerTick ? { backfillPrsPerTick: opts.backfillPrsPerTick } : {}),
     ...(opts.batch ? { batch: opts.batch } : {}),
+    ...(opts.rounds ? { rounds: opts.rounds } : {}),
+    ...(opts.yieldWaitMs !== undefined ? { yieldWaitMs: opts.yieldWaitMs } : {}),
+    ...(opts.log ? { log: opts.log } : {}),
   });
   return { w, server };
 }
@@ -1543,6 +1556,236 @@ describe("a reply or signal recorded after the capture stopped visiting a closed
   });
 });
 
+// ---- the case writer yields to rounds (F2) ------------------------------------
+//
+// Every case is embedded on the server's one local-embedder thread — ~3.4 s a
+// case on the live VM's throttled CPUs (2026-10-07) — the thread a review
+// round's memory seed and lesson finds wait on. So batches are SMALL (2), and
+// no batch STARTS while a round's memory window is open.
+
+describe("the case writer yields to rounds (F2)", () => {
+  /** Five posted findings, each with a decided fate: five cases owed. */
+  async function fiveOwed() {
+    const h = harness();
+    const keys = ["F1", "F2", "F3", "F4", "F5"];
+    const r = h.round(
+      H1,
+      keys.map((key, i) => posted({ key, line: 10 + i * 10 })),
+    );
+    h.capture.observeBotComments(
+      PR,
+      keys.map((key, i) =>
+        h.botComment({ id: 900 + i, round: r, key, line: 10 + i * 10, original_line: 10 + i * 10 }),
+      ),
+    );
+    keys.forEach((_k, i) => h.decide(900 + i, 1, "fixed"));
+    await h.capture.capturePr(PR);
+    return h;
+  }
+
+  /** A store that takes every document, recording each batch and whether a
+   * round's window was open when it was SENT. */
+  function recordingMemory(activity?: RoundMemoryActivity) {
+    const puts: Array<{ names: string[]; busy: boolean }> = [];
+    return {
+      puts,
+      memory: {
+        async putDocuments(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> {
+          puts.push({ names: docs.map((d) => d.name), busy: activity?.busy() ?? false });
+          return docs.map((d) => ({
+            area: d.area,
+            name: d.name,
+            state: "written" as const,
+            hash: sha256Prefixed(d.text),
+            uri: `${CASES}/${d.name}.md`,
+            message: "written",
+          }));
+        },
+      },
+    };
+  }
+
+  const flush = (): Promise<void> => new Promise((r) => setImmediate(r));
+
+  it("the wait for rounds is 30 s — longer than a round's seed and a maximal shadow selection together, or the yield skips the very ticks it should wait out", () => {
+    expect(CASE_DEFAULTS.yieldWaitMs).toBe(30_000);
+    expect(CASE_DEFAULTS.yieldWaitMs).toBeGreaterThan(LESSON_SHADOW_PREFETCH_MAX_MS);
+    expect(CASE_DEFAULTS.yieldWaitMs).toBeGreaterThan(
+      MEMORY_DEFAULTS.context_timeout_ms + LESSON_SHADOW_PREFETCH_MAX_MS,
+    );
+  });
+
+  it("a batch is TWO cases (was five): five owed take three ticks", async () => {
+    expect(CASE_DEFAULTS.batch).toBe(2);
+    const h = await fiveOwed();
+    const { memory, puts } = recordingMemory();
+    const { w } = writer(h, { memory });
+    expect(await w.tick()).toMatchObject({ attempted: 2, written: 2, owed: 3 });
+    expect(await w.tick()).toMatchObject({ attempted: 2, written: 2, owed: 1 });
+    expect(await w.tick()).toMatchObject({ attempted: 1, written: 1, owed: 0 });
+    expect(puts.map((p) => p.names.length)).toEqual([2, 2, 1]);
+  });
+
+  it("no batch STARTS while a round reads memory: the write waits for the round, then sends", async () => {
+    const h = await fiveOwed();
+    const activity = new RoundMemoryActivity();
+    const { memory, puts } = recordingMemory(activity);
+    const { w } = writer(h, { memory, rounds: activity });
+    const endSeed = activity.begin("round #5100");
+    const tick = w.tick();
+    await flush();
+    await flush();
+    // The round's seed is still out: nothing sent.
+    expect(puts).toEqual([]);
+    // Windows nest: the selection opens its own before the seed's closes.
+    const endSelection = activity.begin("lessons #5100");
+    endSeed();
+    await flush();
+    expect(puts).toEqual([]);
+    endSelection();
+    const t = await tick;
+    expect(t).toMatchObject({ attempted: 2, written: 2, yielded: false });
+    expect(puts).toHaveLength(1);
+    // …and it was sent with no round window open.
+    expect(puts[0]!.busy).toBe(false);
+  });
+
+  it("a round still reading past the wait: the tick YIELDS — logged, on its event — and the next tick writes", async () => {
+    const h = await fiveOwed();
+    const activity = new RoundMemoryActivity();
+    const logs: string[] = [];
+    const { memory, puts } = recordingMemory(activity);
+    const { w } = writer(h, {
+      memory,
+      rounds: activity,
+      yieldWaitMs: 20,
+      log: (m) => logs.push(m),
+    });
+    const end = activity.begin("round #5100");
+    const t = await w.tick();
+    expect(t).toMatchObject({ attempted: 0, written: 0, yielded: true, owed: 5 });
+    expect(puts).toEqual([]);
+    expect(logs.filter((m) => /still reading memory/.test(m))).toHaveLength(1);
+    const ev = h.store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'cases_written' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({ yielded: true, attempted: 0, owed: 5 });
+    end();
+    expect(await w.tick()).toMatchObject({ attempted: 2, written: 2, yielded: false });
+    expect(puts).toHaveLength(1);
+  });
+
+  it("a round that opens the instant the last one closed still holds the batch (the check right before the send)", async () => {
+    const h = await fiveOwed();
+    const { memory, puts } = recordingMemory();
+    let busyCalls = 0;
+    const gate: RoundActivityGate = {
+      // busy, (idle signal), busy again: a new round began in between.
+      busy: () => {
+        busyCalls += 1;
+        return true;
+      },
+      whenIdle: async () => true,
+    };
+    const { w } = writer(h, { memory, rounds: gate });
+    expect(await w.tick()).toMatchObject({ attempted: 0, yielded: true });
+    expect(puts).toEqual([]);
+    expect(busyCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("nothing owed: no wait at all; a gate that throws holds nothing", async () => {
+    const quiet = harness();
+    let waited = 0;
+    const counting: RoundActivityGate = {
+      busy: () => true,
+      whenIdle: async () => {
+        waited += 1;
+        return false;
+      },
+    };
+    const { w: idle } = writer(quiet, { rounds: counting, memory: recordingMemory().memory });
+    expect(await idle.tick()).toMatchObject({ attempted: 0, yielded: false });
+    expect(waited).toBe(0);
+
+    const h = await fiveOwed();
+    const { memory, puts } = recordingMemory();
+    const broken: RoundActivityGate = {
+      busy: () => {
+        throw new Error("tracker broke");
+      },
+      whenIdle: () => Promise.reject(new Error("tracker broke")),
+    };
+    const { w } = writer(h, { memory, rounds: broken });
+    expect(await w.tick()).toMatchObject({ attempted: 2, written: 2, yielded: false });
+    expect(puts).toHaveLength(1);
+  });
+
+  it("a writer STOPPED during its wait for rounds sends nothing when the round ends", async () => {
+    const h = await fiveOwed();
+    const activity = new RoundMemoryActivity();
+    const { memory, puts } = recordingMemory(activity);
+    const { w } = writer(h, { memory, rounds: activity });
+    const end = activity.begin("round #5100");
+    const tick = w.tick();
+    await flush();
+    await flush();
+    expect(puts).toEqual([]);
+    w.stop();
+    end();
+    expect(await tick).toMatchObject({ attempted: 0, written: 0, yielded: false });
+    expect(puts).toEqual([]);
+  });
+
+  it("memory that stopped reading healthy during the wait holds the batch — health is read again after it", async () => {
+    const h = await fiveOwed();
+    const activity = new RoundMemoryActivity();
+    const logs: string[] = [];
+    const { memory, puts } = recordingMemory(activity);
+    let healthy = true;
+    let asked = 0;
+    const { w } = writer(h, {
+      memory,
+      rounds: activity,
+      healthy: () => {
+        asked += 1;
+        return healthy;
+      },
+      log: (m) => logs.push(m),
+    });
+    const end = activity.begin("round #5100");
+    const tick = w.tick();
+    await flush();
+    await flush();
+    expect(asked).toBe(1);
+    // The server degrades while the round reads; then the round ends.
+    healthy = false;
+    end();
+    expect(await tick).toMatchObject({ held: true, attempted: 0, written: 0, yielded: false, owed: 5 });
+    expect(puts).toEqual([]);
+    expect(asked).toBe(2);
+    expect(logs.filter((m) => /stopped reading healthy while the write waited/.test(m))).toHaveLength(1);
+    // Healthy again: the next tick writes.
+    healthy = true;
+    expect(await w.tick()).toMatchObject({ held: false, attempted: 2, written: 2 });
+    expect(puts).toHaveLength(1);
+  });
+
+  it("memory health still decides first: unhealthy holds the tick without asking about rounds", async () => {
+    const h = await fiveOwed();
+    let asked = 0;
+    const gate: RoundActivityGate = {
+      busy: () => {
+        asked += 1;
+        return false;
+      },
+      whenIdle: async () => true,
+    };
+    const { w } = writer(h, { rounds: gate, healthy: () => false, memory: recordingMemory().memory });
+    expect(await w.tick()).toMatchObject({ held: true, attempted: 0, yielded: false });
+    expect(asked).toBe(0);
+  });
+});
+
 // ---- wiring --------------------------------------------------------------------------
 
 describe("wire.ts: the case writer is actually connected", () => {
@@ -1558,6 +1801,14 @@ describe("wire.ts: the case writer is actually connected", () => {
 
   it("its knobs come from [memory], with floors", () => {
     expect(wire).toMatch(/intervalMs: Math\.max\(10, cfg\.memory\.cases_interval_s\) \* 1000/);
+    // F2: the writer reads the SAME round-activity tracker the round
+    // seed (the memory seed's `activity`) and the lesson selector open
+    // windows on — one instance, or the yield gates nothing.
+    expect(wire).toMatch(/const roundActivity = new RoundMemoryActivity\(\);/);
+    expect(wire).toMatch(/caseWriter = new CaseWriter\(\{[\s\S]*?rounds: roundActivity,[\s\S]*?\}\);/);
+    expect(wire).toMatch(/memory: \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\},/);
+    expect(wire).toMatch(/new RoundLessonSelector\(\{[\s\S]*?activity: roundActivity,[\s\S]*?\}\);/);
+    expect(wire.match(/new RoundMemoryActivity\(/g)).toHaveLength(1);
     expect(wire).toMatch(/backfillDays: Math\.max\(0, cfg\.memory\.cases_backfill_days\)/);
     expect(MEMORY_DEFAULTS).toMatchObject({ cases_interval_s: 120, cases_backfill_days: 60 });
   });

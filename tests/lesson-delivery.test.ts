@@ -1164,7 +1164,7 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
 // ---- selection for the lenses the session may add ---------------------------------------------
 
 describe("selection: one shared find for every addable lens, filtered per lens", () => {
-  it("plans the addable find LAST and selects per addable lens over the PR's files", () => {
+  it("the addable lenses filter the round's ONE lesson find (F2) and select per lens over the PR's files", () => {
     const rows = [{ row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" }];
     const plan = planFinds({
       title: "T",
@@ -1172,8 +1172,10 @@ describe("selection: one shared find for every addable lens, filtered per lens",
       prFiles: ["backend/api/views.py"],
       addable: ["pass-concurrency", "pass-security"],
     });
+    // S9b planned a third find for them, last; since F2 they share the rows'.
+    expect(plan.addableKey).toBe(plan.lessonsKey);
     expect(plan.finds.at(-1)!.key).toBe(plan.addableKey);
-    expect(plan.finds).toHaveLength(3);
+    expect(plan.finds).toHaveLength(2);
     const outcomes = new Map<string, FindOutcome>(
       plan.finds.map((f) => [f.key, { status: "ok", hits: LESSONS }] as const),
     );

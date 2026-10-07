@@ -25,6 +25,7 @@ import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { LessonLedger } from "./lessonledger.js";
 import { RoundLessonSelector, type RoundLessonHook } from "./lessonselect.js";
 import { lessonDeliveryStatus, markRound } from "./lessonshadow.js";
+import { RoundMemoryActivity } from "./memory/roundactivity.js";
 import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
 import { lessonFindClient, openVikingLessonEngine } from "./openviking/lessonfind.js";
 import { createDaemon, type Daemon } from "./daemon.js";
@@ -651,6 +652,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // through the same store; backfills the last 60 days. Writes only while
   // memory health reads healthy.
   let caseWriter: CaseWriter | null = null;
+  // F2: is a review round reading memory right now? Dispatch opens a
+  // window around each round's seed (through to its lesson selection), the
+  // selector one around each prefetch, and the case writer starts no batch
+  // while any is open — every case is a ~3.4 s embedding on the one-thread
+  // embedder those reads wait on.
+  const roundActivity = new RoundMemoryActivity();
   // the LEARNER — mines the human outcomes into lesson
   // candidates at EOD − `lessons_mine_lead_min`, hands the EOD sweep its
   // outcomes packet (`dayContext`), takes the `eod-curation-receipt`, checks
@@ -766,6 +773,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           { log: (msg) => log(msg) },
         );
       },
+      // F2: the round's memory window — the case writer starts no
+      // batch from the seed until the lesson selection has taken over.
+      activity: roundActivity,
     },
     // the round's lesson selection (shadow ledger), started by
     // dispatch and never awaited; and the matcher, told when a round's
@@ -1150,6 +1160,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           mode: () => cfg.memory.delivery,
           engine: () => lessonEngine,
           budgetMs: cfg.memory.delivery_budget_ms,
+          // F2: the budget follows the mode — `shadow` runs after the
+          // handoff and blocks nothing, so it gets its own, looser one.
+          shadowBudgetMs: cfg.memory.shadow_budget_ms,
+          activity: roundActivity,
           repo: cfg.github.repo,
           log,
         });
@@ -1165,7 +1179,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
                   : " — but `[review] task_files = false`: the planned lenses have no task file, so THEY get no lessons")
               : " — but memory is off ([openviking] enabled = false): nothing to select, nothing delivered"
             : cfg.memory.delivery === "shadow"
-              ? " — selection and the shadow ledger only; no prompt, task file or agent changes"
+              ? ` — selection and the shadow ledger only (after each round's handoff, ≤ ${cfg.memory.shadow_budget_ms} ms); no prompt, task file or agent changes`
               : " — nothing selected, nothing recorded") +
           (lessonLedger.lessonsOff() ? "; the operator's kill switch is OFF" : ""),
       );
@@ -1298,6 +1312,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           repo: cfg.github.repo,
           botLogin: cfg.github.bot_login,
           healthy: () => health.currentState() === "healthy",
+          // F2: no case batch starts while a review round reads
+          // memory (its seed, its lesson selection).
+          rounds: roundActivity,
           read: adapter,
           log,
           intervalMs: Math.max(10, cfg.memory.cases_interval_s) * 1000,
@@ -1682,14 +1699,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       feedbackPump?.stop();
       caseWriter?.stop();
       learner?.stop();
-      // a selection still in its prefetch settles within its
-      // budget (≤ 2 s); let it record before the server and the store go.
+      // S9a/F2: the lesson selections in flight. A SHADOW one is cut
+      // now and records nothing (`stop`): its budget — `shadow_budget_ms`, up
+      // to 20 s — does not fit docker's 10 s stop grace beside the server's
+      // own 5 s, and a record cut short by our stop would read as the
+      // engine's. An AWAITED one (`on`) is not cut: it settles within
+      // `delivery_budget_ms` (≤ 2 s); let it record before the server and the
+      // store go. The wait follows THAT budget, never the shadow one.
       if (lessonSelector) {
         const selector = lessonSelector;
         lessonSelector = null;
+        selector.stop();
         await Promise.race([
           selector.idle(),
-          new Promise<void>((r) => setTimeout(r, 2_500).unref?.()),
+          new Promise<void>((r) => setTimeout(r, cfg.memory.delivery_budget_ms + 500).unref?.()),
         ]);
       }
       eod?.stop();

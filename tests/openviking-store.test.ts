@@ -1871,6 +1871,78 @@ describe("the incremental sweep (S3)", () => {
     expect(reads(server) - before).toBe(0);
   });
 
+  it("areaSize (F2): the last sweep's LISTING per area — retired and unread files counted; unknown before a sweep; a failed listing keeps its count", async () => {
+    const { server } = seeded();
+    server.files.set(`${ROOT_EXP}/20260804T000000-d.md`, "#retired four\n");
+    server.files.set(`${ROOT}/events/20260805T000000-e.md`, "an event\n");
+    server.files.set(`${ROOT}/preferences/pinned/20260806T000000-p.md`, "pinned\n");
+    const realFetch = server.fetch;
+    let failList = false;
+    let failRead = false;
+    const store = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) =>
+          (failList &&
+            url.includes("/api/v1/fs/ls") &&
+            url.includes(encodeURIComponent(`${ROOT_EXP}`))) ||
+          (failRead && url.includes("/api/v1/content/read"))
+            ? json(500, { status: "error", error: { code: "INTERNAL", message: "boom" } })
+            : realFetch(url, init),
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+      fullRefreshMs: 0,
+    });
+    // No sweep yet: unknown — never a guess, never zero.
+    expect(store.areaSize("experiences")).toBeNull();
+    const callsBefore = server.calls.length;
+    store.areaSize("experiences");
+    expect(server.calls.length).toBe(callsBefore); // no I/O, no sweep started
+    await store.read();
+    expect(store.areaSize("experiences")).toBe(4); // the retired one included
+    expect(store.areaSize("experiences/")).toBe(4);
+    expect(store.areaSize("events")).toBe(1);
+    expect(store.areaSize("preferences/pinned")).toBe(1);
+    expect(store.areaSize("preferences")).toBe(0); // its file is pinned/'s
+    expect(store.areaSize("nowhere")).toBe(0);
+    expect(store.areaSize("finding-cases")).toBeNull(); // never listed by the sweep
+    expect(store.areaSize("")).toBeNull();
+    // A file that fails to READ is still listed — still counted.
+    failRead = true;
+    await store.sweep();
+    expect(store.areaSize("experiences")).toBe(4);
+    failRead = false;
+    // A new lesson moves the count at the next sweep.
+    server.files.set(`${ROOT_EXP}/20260807T000000-f.md`, "five\n");
+    await store.read();
+    expect(store.areaSize("experiences")).toBe(5);
+    // The area's listing fails: its last count stands.
+    failList = true;
+    await store.sweep();
+    expect(store.areaSize("experiences")).toBe(5);
+    expect(store.areaSize("events")).toBe(1);
+    // A failed listing with no count before it is unknown.
+    const fresh = new OpenVikingStore({
+      client: new OpenVikingClient({
+        baseUrl: BASE,
+        apiKey: KEY,
+        user: "reviewer",
+        fetchFn: (url, init) =>
+          url.includes("/api/v1/fs/ls") && url.includes(encodeURIComponent(`${ROOT_EXP}`))
+            ? json(500, { status: "error", error: { code: "INTERNAL", message: "boom" } })
+            : realFetch(url, init),
+      }),
+      now: () => NOW,
+      cacheTtlMs: 0,
+    });
+    await fresh.sweep();
+    expect(fresh.areaSize("experiences")).toBeNull();
+    expect(fresh.areaSize("events")).toBe(1);
+  });
+
   it("publishes the retired list at the first sweep, again only when it changes, and at once on a retire it wrote", async () => {
     const server = new FakeOpenViking();
     server.files.set(`${ROOT_EXP}/20260801T000000-a.md`, "#retired old lesson\n");

@@ -3,8 +3,10 @@
 // else.
 //
 // Each find is ONE `POST /api/v1/search/find` with `target_uri` set to the
-// area — `memories/experiences` for a plan row, `memories/finding-cases` for
-// the main session — so the server ranks INSIDE the area instead of across
+// area — `memories/experiences` for the round's one lesson find (F2;
+// its `limit` sized from the store's count of the area, `corpusSize`),
+// `memories/finding-cases` for the main session — so the server ranks INSIDE
+// the area instead of across
 // the tree (vendored patch 0011 sends a session's scoped search the same
 // way). No `session_id` rides the body, so the server runs no query
 // expansion, and the route has no rewrite stage: the selection is a pure
@@ -51,9 +53,19 @@ export function lessonFindClient(opts: LessonFindClientOptions): OpenVikingClien
 
 export function openVikingLessonEngine(
   client: Pick<OpenVikingClient, "find" | "memoriesRoot">,
-  store: Pick<OpenVikingStore, "retiredUris">,
+  store: Pick<OpenVikingStore, "retiredUris"> & Partial<Pick<OpenVikingStore, "areaSize">>,
 ): LessonEngine {
   return {
+    // F2: the lesson find's limit is sized from the store's own count
+    // of the area (its last sweep — no request, no wait); a store that cannot
+    // count says unknown, and the find asks for the ceiling.
+    corpusSize: (area) => {
+      try {
+        return store.areaSize ? store.areaSize(area) : null;
+      } catch {
+        return null;
+      }
+    },
     root: () => client.memoriesRoot(),
     async find(area, query, opts) {
       try {

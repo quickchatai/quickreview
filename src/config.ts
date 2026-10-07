@@ -1236,8 +1236,8 @@ export interface MemoryConfig {
   write_backlog_after_min: number;
   /** Finding cases (S7, src/cases.ts): how often the case writer
    * syncs the cases state.db says are owed and, only while memory health
-   * reads healthy, writes up to 20 of them (one batch-write) and backfills
-   * two more PRs. */
+   * reads healthy, writes up to 2 of them (one batch-write, never started
+   * while a round reads memory — F2) and backfills two more PRs. */
   cases_interval_s: number;
   /** How far back the case backfill reaches: PRs with a finding posted in
    * the last this-many days get their cases written (resumable, a few PRs a
@@ -1296,10 +1296,17 @@ export interface MemoryConfig {
    * The owner switches it to `on` after reading `qcr lessons shadow-report`.
    */
   delivery: MemoryDelivery;
-  /** The round's ONE lesson prefetch may take at most this long (ms) — then
-   * whatever arrived is used and every find still out is a recorded timeout.
-   * Clamped to 1…2000: the contract's hard ceiling is 2 s. */
+  /** The round's ONE lesson prefetch may take at most this long (ms) when the
+   * round WAITS for it — under `on` — then whatever arrived is used and every
+   * find still out is a recorded timeout. Clamped to 1…2000: the contract's
+   * hard ceiling is 2 s. */
   delivery_budget_ms: number;
+  /** The same prefetch's budget (ms) when NOTHING waits for it — under
+   * `shadow`, where it starts after the round's handoff (F2): looser,
+   * so a shadow selection behind a busy embedder still records what it would
+   * have delivered. Clamped to 1…20000 — it holds the selector's two places
+   * in the embedder queue for at most that long. */
+  shadow_budget_ms: number;
 }
 
 /** The values `[memory] delivery` takes (S9). */
@@ -1307,6 +1314,11 @@ export const MEMORY_DELIVERY_MODES = ["off", "shadow", "on"] as const;
 export type MemoryDelivery = (typeof MEMORY_DELIVERY_MODES)[number];
 /** The contract's hard ceiling on the lesson prefetch (S9). */
 export const LESSON_PREFETCH_MAX_MS = 2000;
+/** The shadow prefetch's ceiling and default (F2). The default covers
+ * the live VM's measured worst case — a find's 2.5 s p90 behind a case batch
+ * already on the embedder (two ~3.4 s embeddings, src/cases.ts). */
+export const LESSON_SHADOW_PREFETCH_MAX_MS = 20_000;
+export const LESSON_SHADOW_PREFETCH_DEFAULT_MS = 10_000;
 
 /**
  * The [memory] block, defaults filled and the S9 delivery switch checked: an
@@ -1324,6 +1336,10 @@ export function parseMemory(raw: Record<string, unknown>): MemoryConfig {
   m.delivery_budget_ms = Number.isFinite(budget)
     ? Math.max(1, Math.min(LESSON_PREFETCH_MAX_MS, Math.floor(budget)))
     : LESSON_PREFETCH_MAX_MS;
+  const shadow = Number(m.shadow_budget_ms);
+  m.shadow_budget_ms = Number.isFinite(shadow)
+    ? Math.max(1, Math.min(LESSON_SHADOW_PREFETCH_MAX_MS, Math.floor(shadow)))
+    : LESSON_SHADOW_PREFETCH_DEFAULT_MS;
   return m;
 }
 
@@ -1351,6 +1367,7 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   context_quotas: { experiences: 24 },
   delivery: "shadow",
   delivery_budget_ms: LESSON_PREFETCH_MAX_MS,
+  shadow_budget_ms: LESSON_SHADOW_PREFETCH_DEFAULT_MS,
 };
 
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {

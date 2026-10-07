@@ -1,12 +1,18 @@
 // Lesson SELECTION (S9a): which curated lessons and which past
 // finding cases a round WOULD carry — pure, deterministic, no I/O.
 //
-// The round's prefetch (src/lessonselect.ts) asks OpenViking ONE `/search/find`
-// per plan row inside `memories/experiences/`, and one for the main session
-// inside `memories/finding-cases/`, under a hard budget. What comes back is a
-// ranked list of hits by the ENGINE's score — semantic similarity, which knows
-// nothing of lenses, paths or retirements. This module turns those hits into a
-// selection with rules a person can read:
+// The round's prefetch (src/lessonselect.ts) asks OpenViking TWO
+// `/search/find`s under a hard budget (F2 — S9a asked one per plan
+// row, and on the live VM only 1–9 of a round's 17–24 answered inside 2 s):
+// ONE inside `memories/experiences/` with a round-level query and a `limit`
+// sized to cover the whole lesson corpus (`lessonFindLimit`, from the store's
+// own count, bounded), and ONE for the main session inside
+// `memories/finding-cases/`. Every row, the validator and every lens the
+// session may add then filter that ONE answer for themselves. What comes back
+// is a ranked list of hits by the ENGINE's score — semantic similarity, which
+// knows nothing of lenses, paths or retirements; with the limit covering the
+// corpus the score decides nothing at all. This module turns those hits into
+// a selection with rules a person can read:
 //
 //   FILTER (on the typed header — src/memory/lessons.ts `parseLesson`, the
 //   header only, so quoted prose in a body can never make a lesson eligible):
@@ -65,17 +71,38 @@ export const SELECTION_CAPS = Object.freeze({
 
 export type SelectionCap = { readonly items: number; readonly tokens: number };
 
-/** How many hits one find asks for, per area. Generous: the filters run on
- * our side, after the engine ranked by similarity alone. The ADDABLE find
- * (S9b) is one find shared by every lens the session may add, filtered per
- * lens afterwards, so it asks for more; the repo-fact find (recheck and
- * ping-pong) keeps only one kind, so it does too. */
-export const FIND_LIMITS = Object.freeze({ lessons: 20, cases: 40, addable: 40, facts: 40 });
+/** How many hits the main session's cases find asks for. The finding-case
+ * area is large (a case per answered finding) and the query names the PR's
+ * paths; the filter keeps only cases about those paths. */
+export const FIND_LIMITS = Object.freeze({ cases: 40 });
 
-/** At most this many distinct finds per round (identical queries are asked
- * once). A wide sweep plan past it leaves its last rows unasked — recorded
- * as `find_cap`, never silently. */
-export const MAX_FINDS_PER_ROUND = 24;
+/**
+ * The bounds of a LESSON find's `limit` (F2). One find inside
+ * `experiences/` serves every role of a round (and the recheck's repo facts),
+ * so it asks for the whole lesson corpus: the filters, the ranking and the
+ * caps all run here, and none of them reads the engine's score. `min` is
+ * never less than what one S9a find asked for (20 per row, 40 shared); `max`
+ * bounds the answer's size for a corpus that outgrows it — past it the
+ * round-level query's similarity decides which entries come back, recorded
+ * on the `lesson_selection` event (`corpus` > `limit`).
+ */
+export const LESSON_FIND_LIMIT = Object.freeze({ min: 40, max: 200 });
+
+/**
+ * The lesson find's `limit` for a corpus of `corpus` files in `experiences/`
+ * (the store's last sweep — `LessonEngine.corpusSize`): twice the count plus
+ * eight, within `LESSON_FIND_LIMIT`. The headroom is for what the engine
+ * returns that is not one lesson file each — the area's own directory record,
+ * an engine blurb, a file indexed more than once (S4 measured 24 sources → 27
+ * vectors) — all dropped by the filter, but each takes a place in the top K.
+ * An unknown corpus (no sweep yet) asks for the ceiling: coverage first, and
+ * the limit only sizes the answer — the query is embedded once either way.
+ */
+export function lessonFindLimit(corpus: number | null | undefined): number {
+  if (corpus === null || corpus === undefined || !Number.isFinite(corpus) || corpus < 0)
+    return LESSON_FIND_LIMIT.max;
+  return Math.max(LESSON_FIND_LIMIT.min, Math.min(LESSON_FIND_LIMIT.max, 2 * Math.ceil(corpus) + 8));
+}
 
 /** Characters per token for the caps' estimate — the usual English ratio. */
 export const CHARS_PER_TOKEN = 4;
@@ -486,7 +513,7 @@ export interface SelectionRow {
   focus?: readonly string[];
 }
 
-/** One find the prefetch asks. Identical (area, query) pairs are asked once. */
+/** One find the prefetch asks. */
 export interface PlannedFind {
   key: string;
   area: typeof EXPERIENCES_AREA | typeof CASES_AREA;
@@ -496,27 +523,46 @@ export interface PlannedFind {
 
 export interface FindPlan {
   finds: PlannedFind[];
-  /** Plan row → its find's key; a row past `MAX_FINDS_PER_ROUND` has none. */
+  /** Plan row → the find whose answer its lessons are filtered from. Since
+   * F2 every row maps to the round's ONE lesson find (`lessonsKey`);
+   * `selectRound` still takes any mapping (a row with no key is recorded
+   * `find_cap`, the status S9a's per-row plan gave the rows past its cap and
+   * F2's plan never produces). */
   rowKey: Map<number, string>;
   /** The main session's cases find, when there is one. */
   casesKey: string | null;
-  /** The ONE find every lens the session may ADD shares (S9b), when
-   * the order offers any; null when it offers none or the cap took it. */
+  /** The find every lens the session may ADD filters (S9b) — the
+   * round's lesson find since F2 — when the order offers any; null when it
+   * offers none. */
   addableKey?: string | null;
+  /** The round's ONE lesson find (F2): every discovery row, the
+   * validator and every addable lens filter its answer. Null when the round
+   * has neither a plan row nor a lens to add. */
+  lessonsKey?: string | null;
 }
 
 const QUERY_MAX_CHARS = 600;
 
-/** The query for one row: the PR title and the shape of the row's files (the
- * round context query's own builder), and the lens. */
-export function lessonRowQuery(input: {
+/** A lens id as a query word: `pass-data-safety` → `data-safety`. */
+function lensWord(lens: string): string {
+  return lens.replace(/^pass-/, "");
+}
+
+/**
+ * The query of the round's ONE lesson find (F2): the PR title and the
+ * shape of its changed files (the round context query's own builder — the
+ * changed areas and extensions, a function of the file SET), then the
+ * planned lenses, sorted. With the find's limit covering the corpus the query
+ * only matters once the corpus outgrows `LESSON_FIND_LIMIT.max`.
+ */
+export function roundLessonQuery(input: {
   title: string;
-  lens: string;
   files: readonly string[];
+  lenses: readonly string[];
 }): string {
   const base = roundContextQuery({ title: input.title, files: input.files.map((filename) => ({ filename })) });
-  const lensWord = input.lens.replace(/^pass-/, "");
-  return [base, lensWord].filter((p) => p !== "").join(" — ").slice(0, QUERY_MAX_CHARS);
+  const lenses = [...new Set(input.lenses.map(lensWord).filter((w) => w !== ""))].sort().join(" ");
+  return [base, lenses].filter((p) => p !== "").join(" — ").slice(0, QUERY_MAX_CHARS);
 }
 
 /** The main session's cases query: the title and the changed paths, sorted
@@ -531,60 +577,59 @@ function findKey(area: string, query: string): string {
   return `${area}\u0000${query}`;
 }
 
-/** The query of the ADDABLE find: the PR's title and the shape of its files,
- * no lens word — one find for every lens the session may add, each filtered
- * on its own header afterwards. */
-export function addableQuery(input: { title: string; files: readonly string[] }): string {
-  return lessonRowQuery({ title: input.title, lens: "", files: input.files });
-}
-
-/** The round's finds: one per discovery row and one for the validator row
- * (deduplicated), then the main session's cases, capped — the cases find
- * planned first so the cap never takes it, and the ONE addable find (S9b,
- * when the order offers lenses to add) planned LAST, so a wide plan's cap
- * takes it before any planned row. */
+/**
+ * The round's finds — at most TWO (F2): the main session's cases find
+ * (when the PR changes a file), then ONE lesson find inside `experiences/`
+ * that every discovery row, the validator and every lens the session may add
+ * share, its `limit` sized to cover the lesson corpus (`lessonFindLimit` of
+ * `corpus`, the store's count; the ceiling when unknown). Every per-row
+ * decision — lens, `paths=` globs, polarity, `as_of`, suppressed, retired,
+ * moved, caps, ranking — is `selectRound`'s, on that one answer, exactly as it
+ * was on S9a's per-row answers: over an answer that holds the whole corpus the
+ * two give the same selection (tests/lesson-selection.test.ts proves it).
+ */
 export function planFinds(input: {
   title: string;
   rows: readonly SelectionRow[];
   prFiles: readonly string[];
   /** The lenses the session may add this round (`addable_lenses`). */
   addable?: readonly string[];
+  /** How many lesson files `experiences/` holds (the store's last sweep);
+   * null or absent — unknown. */
+  corpus?: number | null;
 }): FindPlan {
   const finds: PlannedFind[] = [];
-  const rowKey = new Map<number, string>();
-  const seen = new Set<string>();
-  const add = (area: PlannedFind["area"], query: string, limit: number): string | null => {
-    const key = findKey(area, query);
-    if (seen.has(key)) return key;
-    if (finds.length >= MAX_FINDS_PER_ROUND) return null;
-    seen.add(key);
-    finds.push({ key, area, query, limit });
-    return key;
-  };
-  // The cases find is the main session's single ask: planned FIRST so a wide
-  // plan's cap never takes it.
-  const casesKey =
-    input.prFiles.length > 0
-      ? add(CASES_AREA, casesQuery({ title: input.title, files: input.prFiles }), FIND_LIMITS.cases)
-      : null;
-  for (const r of input.rows) {
-    const files = r.focus && r.focus.length > 0 ? r.focus : input.prFiles;
-    const key = add(
-      EXPERIENCES_AREA,
-      lessonRowQuery({ title: input.title, lens: r.lens, files }),
-      FIND_LIMITS.lessons,
-    );
-    if (key !== null) rowKey.set(r.row, key);
+  let casesKey: string | null = null;
+  if (input.prFiles.length > 0) {
+    const query = casesQuery({ title: input.title, files: input.prFiles });
+    casesKey = findKey(CASES_AREA, query);
+    finds.push({ key: casesKey, area: CASES_AREA, query, limit: FIND_LIMITS.cases });
   }
-  const addableKey =
-    (input.addable ?? []).length > 0
-      ? add(
-          EXPERIENCES_AREA,
-          addableQuery({ title: input.title, files: input.prFiles }),
-          FIND_LIMITS.addable,
-        )
-      : null;
-  return { finds, rowKey, casesKey, addableKey };
+  const addable = input.addable ?? [];
+  let lessonsKey: string | null = null;
+  if (input.rows.length > 0 || addable.length > 0) {
+    const query = roundLessonQuery({
+      title: input.title,
+      files: input.prFiles,
+      lenses: input.rows.map((r) => r.lens),
+    });
+    lessonsKey = findKey(EXPERIENCES_AREA, query);
+    finds.push({
+      key: lessonsKey,
+      area: EXPERIENCES_AREA,
+      query,
+      limit: lessonFindLimit(input.corpus),
+    });
+  }
+  const rowKey = new Map<number, string>();
+  if (lessonsKey !== null) for (const r of input.rows) rowKey.set(r.row, lessonsKey);
+  return {
+    finds,
+    rowKey,
+    casesKey,
+    addableKey: addable.length > 0 ? lessonsKey : null,
+    lessonsKey,
+  };
 }
 
 /** A lesson as the ledger records it — every field the shadow matcher and
@@ -687,10 +732,12 @@ export interface SelectRoundInput {
 /**
  * The round's selection, one record per role: every discovery row's lessons,
  * the validator's (the dont-raise lessons any discovery row found eligible,
- * and every lesson naming `pass-validate` its own find returned), every lens
- * the session may add (S9b — one shared find, filtered per lens like a row
- * over the PR's files), and the main session's cases. Pure and deterministic:
- * the same outcomes in any order give the same records.
+ * and every lesson naming `pass-validate` its row's find returned), every
+ * lens the session may add (S9b — filtered per lens like a row over the PR's
+ * files), and the main session's cases. Since F2 the rows, the
+ * validator and the addable lenses all read the round's ONE lesson find; the
+ * function itself takes any plan (each row's answer by its `rowKey`). Pure
+ * and deterministic: the same outcomes in any order give the same records.
  */
 export function selectRound(input: SelectRoundInput): RoleSelection[] {
   const caps = input.caps ?? SELECTION_CAPS;
@@ -922,4 +969,9 @@ export interface LessonEngine {
   ): Promise<{ ok: true; hits: readonly FindHit[] } | { ok: false; reason: string }>;
   /** The store's list of retired URIs (its last completed sweep). */
   retiredUris(): Promise<readonly string[]>;
+  /** How many files `<root>/<area>/` holds by the store's last completed
+   * sweep — what sizes the lesson find's `limit` (F2). Synchronous
+   * and I/O-free (it never waits for a sweep); null when no sweep has
+   * completed. Absent ⇒ unknown. */
+  corpusSize?(area: string): number | null;
 }

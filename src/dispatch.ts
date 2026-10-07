@@ -517,6 +517,35 @@ async function seedRoundMemory(
   return mem;
 }
 
+/**
+ * Open the round's MEMORY WINDOW (F2, `RoundMemorySeed.activity`):
+ * from just before the seed until the round's lesson selection has taken
+ * over, the case writer starts no batch, so no case embedding is queued in
+ * front of the round's own reads on the server's one-thread embedder. Returns
+ * its idempotent `end`; total — a broken tracker is a no-op, never a throw.
+ */
+function openMemoryWindow(
+  deps: DispatchDeps,
+  pr: number,
+  log: (msg: string, extra?: unknown) => void,
+): () => void {
+  const activity = deps.memory?.activity;
+  if (!activity) return () => {};
+  try {
+    const end = activity.begin(`round #${pr}`);
+    return () => {
+      try {
+        end();
+      } catch (err) {
+        log(`dispatch: #${pr} memory window not closed (ignored)`, err);
+      }
+    };
+  } catch (err) {
+    log(`dispatch: #${pr} memory window not opened (ignored)`, err);
+    return () => {};
+  }
+}
+
 /** `[memory] delivery = "on"` with a hook that can deliver (S9b).
  * Total: a throwing hook is "not delivering" — the S9a path. */
 function lessonsDelivering(
@@ -1242,6 +1271,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       continue;
     }
     let provisionalRoundId: number | undefined;
+    // F2: the round's memory window (opened before the seed, below).
+    let endMemoryWindow: () => void = () => {};
     try {
       // Backfilled (imported) rounds are excluded: a historical review must
       // never flip a still-open PR's next live round to "re-review", whose
@@ -1707,6 +1738,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // `shadow`/`off` the selection starts only after the handoff,
       // unawaited (below), exactly as S9a shipped it.
       const delivering = lessonsDelivering(deps, log);
+      // F2: no case batch starts while this round reads memory — the
+      // window opens here, before the seed, and closes once the selection
+      // has taken over: under `on` when the awaited selection is in; under
+      // `shadow` once `start` has opened the selector's own window, after the
+      // handoff (a batch started during the handoff would sit in front of the
+      // selection's finds). The `finally` below is the belt.
+      endMemoryWindow = openMemoryWindow(deps, row.number, log);
       let seeded: RoundMemory;
       let selection: RoundSelectionResult | null = null;
       if (delivering) {
@@ -1721,6 +1759,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           seeding,
           selectRoundLessons(deps, built, files, seedSearchSent),
         ]);
+        endMemoryWindow();
       } else {
         seeded = await seedRoundMemory(deps, built, files);
       }
@@ -1805,6 +1844,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} lesson selection not started (ignored)`, err);
         }
       }
+      // F2: `start` opened the selector's own window synchronously (or there
+      // is no selection) — the round's own window closes now.
+      endMemoryWindow();
 
       setPrGates(store, row.number, gate);
       applyEvent(
@@ -1932,6 +1974,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       } catch (eventError) {
         log(`dispatch: #${row.number} failure event write failed`, eventError);
       }
+    } finally {
+      // F2: a round that failed after its seed never leaves the case
+      // writer held (idempotent: a closed window stays closed).
+      endMemoryWindow();
     }
   }
   return dispatched;

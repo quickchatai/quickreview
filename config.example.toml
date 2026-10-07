@@ -277,9 +277,11 @@ write_backlog_after_min = 120
 # human answered or whose fate is known, in reviewer memory's `finding-cases/` — the
 # learner's context, searched by the EOD curator and the companion, never by a
 # review round. Every cases_interval_s the daemon works out from state.db which
-# cases are new or changed and, only while memory reads healthy, writes up to 5
-# (one batch-write) and backfills two more PRs from the last cases_backfill_days
-# days (resumable; 0 turns the backfill off).
+# cases are new or changed and, only while memory reads healthy, writes up to 2
+# (one batch-write — each case is ~3.4 s on the VM's one-thread embedder — and
+# never started while a review round is reading memory, F2) and
+# backfills two more PRs from the last cases_backfill_days days (resumable; 0
+# turns the backfill off).
 cases_interval_s = 120
 cases_backfill_days = 60
 # The learner (S8, src/learner/): lessons_mine_lead_min before the EOD
@@ -308,25 +310,28 @@ lessons_digest_backfill_to = "2026-10-02"
 # How curated lessons and past finding cases reach a review (S9).
 #   "off"    — nothing runs: no selection, no shadow ledger.
 #   "shadow" — (the shipped value) every round selects the lessons and cases
-#              it WOULD carry, through OpenViking — one prefetch per round,
-#              at most delivery_budget_ms (≤ 2000) and never delaying the
-#              round — and the shadow ledger records them, plus every posted
-#              finding a delivered dont-raise lesson would have touched. No
-#              prompt, task file or agent changes.
+#              it WOULD carry, through OpenViking — one prefetch per round
+#              (two finds: one for the lessons, one for the cases), started
+#              after the round's handoff so it never delays the round, at
+#              most shadow_budget_ms (≤ 20000) — and the shadow ledger records
+#              them, plus every posted finding a delivered dont-raise lesson
+#              would have touched. No prompt, task file or agent changes.
 #   "on"     — delivery: the same selection, awaited beside the round's
-#              memory seed within the same budget, reaches each lens's task
-#              file, the lessons files of the validator and of any lens the
-#              session adds, the main session's "Lessons in force" index and
-#              past-review cases (the bleed rule reworded), the validator's
-#              demotion-only `lesson-shape` addendum, and the repo facts for
-#              the paths a recheck or an author reply touches. A round that
-#              selects nothing renders exactly as under "off".
+#              memory seed within delivery_budget_ms (≤ 2000), reaches each
+#              lens's task file, the lessons files of the validator and of
+#              any lens the session adds, the main session's "Lessons in
+#              force" index and past-review cases (the bleed rule
+#              reworded), the validator's demotion-only `lesson-shape`
+#              addendum, and the repo facts for the paths a recheck or an
+#              author reply touches. A round that selects nothing renders
+#              exactly as under "off".
 # Read `qcr lessons shadow-report` (and the `lessons` clause of `qcr status`)
 # before switching to "on". The operator's kill switch sits beside this one:
 # `qcr lessons off|on` and `qcr lessons suppress|unsuppress <lesson>`, through
 # the root-sealed commands/operator/ channel only, stored in state.db.
 delivery = "shadow"
 delivery_budget_ms = 2000
+shadow_budget_ms = 10000
 # HOW MANY items the round's one context search may draw from each area it
 # searches. `context_tokens` above is the budget; this is the corpus — the two
 # bind independently.

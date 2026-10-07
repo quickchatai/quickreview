@@ -56,6 +56,7 @@ import {
   planFinds,
   type FindHit,
   type LessonEngine,
+  type PlannedFind,
   type RoleSelection,
   type SelectedLesson,
 } from "../src/memory/selection.js";
@@ -278,13 +279,18 @@ describe("prefetchLessons — ONE bounded phase", () => {
   });
 });
 
+/** Six distinct finds, the cases find first — more than a round plans since
+ * F2 (two), but the prefetch takes any list (and the selector's
+ * slots are shared across rounds), so its bounds are pinned on six. */
+const sixFinds: PlannedFind[] = Array.from({ length: 6 }, (_, i) => ({
+  key: `k${i}`,
+  area: i === 0 ? "finding-cases" : "experiences",
+  query: `q${i}`,
+  limit: 40,
+}));
+
 describe("prefetchLessons — never more than PREFETCH_MAX_IN_FLIGHT finds on the embedder", () => {
-  // Six distinct finds: the cases find and five rows.
-  const six = planFinds({
-    title: "T",
-    rows: Array.from({ length: 5 }, (_, i) => ({ row: i, lens: `pass-l${i}`, agent: "a" })),
-    prFiles: ["x.py"],
-  }).finds;
+  const six = sixFinds;
 
   it("holds two places at once; each later find is told what is LEFT of the budget; one still waiting at the deadline is never sent", async () => {
     expect(six).toHaveLength(6);
@@ -394,11 +400,7 @@ describe("a shadow find aborted at the budget never reaches memory health", () =
     "the lesson client has no observer: six aborted finds leave health HEALTHY — through the daemon's shared client they read DEGRADED",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      const finds = planFinds({
-        title: "T",
-        rows: Array.from({ length: 5 }, (_, i) => ({ row: i, lens: `pass-l${i}`, agent: "a" })),
-        prFiles: ["x.py"],
-      }).finds;
+      const finds = sixFinds;
       const base = { baseUrl: "http://127.0.0.1:1933", apiKey: "k".repeat(16), fetchFn: slow };
 
       // Production: the lesson engine's OWN client — even handed the
@@ -494,11 +496,12 @@ describe("RoundLessonSelector", () => {
       s.start(order({ round_id: mode === "on" ? 8 : 7 }), [{ filename: "docs/guide.md" }]);
       await s.idle();
       const row = ledger.roundRow(mode === "on" ? 8 : 7)!;
+      // F2: TWO finds — the cases and the round's one lesson find.
       expect(row).toMatchObject({
         mode,
         state: "selected",
-        finds: 3,
-        answered: 3,
+        finds: 2,
+        answered: 2,
         timeouts: 0,
         retired_list: 1,
       });
@@ -568,7 +571,7 @@ describe("RoundLessonSelector", () => {
     const s = selector(null);
     s.start(order(), [{ filename: "a.py" }]);
     await s.idle();
-    expect(ledger.roundRow(7)).toMatchObject({ state: "unreadable", refused: 3 });
+    expect(ledger.roundRow(7)).toMatchObject({ state: "unreadable", refused: 2 });
     expect(ledger.roundRow(7)!.note).toMatch(/not built yet/);
   });
 
@@ -1808,5 +1811,23 @@ describe("/search/find — the client and the engine adapter", () => {
       reason: expect.stringContaining("UNAVAILABLE"),
     });
     expect(await engine.retiredUris()).toEqual([`${EXP}/z.md`]);
+    // F2: the corpus size is the STORE's count of the area (its last
+    // sweep, no request); a store that cannot count — or throws — is unknown.
+    expect(engine.corpusSize?.("experiences")).toBeNull();
+    const counted = openVikingLessonEngine(client, {
+      retiredUris: async () => [],
+      areaSize: (area: string) => (area === "experiences" ? 34 : null),
+    });
+    const before = seen.length;
+    expect(counted.corpusSize?.("experiences")).toBe(34);
+    expect(counted.corpusSize?.("finding-cases")).toBeNull();
+    expect(seen.length).toBe(before);
+    const throwing = openVikingLessonEngine(client, {
+      retiredUris: async () => [],
+      areaSize: () => {
+        throw new Error("no sweep");
+      },
+    });
+    expect(throwing.corpusSize?.("experiences")).toBeNull();
   });
 });

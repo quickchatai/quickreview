@@ -1,5 +1,8 @@
 // lesson SELECTION (src/memory/selection.ts): filters on the
 // typed header, a deterministic ranking, caps with every cut listed. Pure.
+// F2 — TWO finds a round (the cases, and one lesson find sized to the
+// corpus), and the proof that over an answer holding the whole corpus the
+// selection equals S9a's per-row one (tests/helpers/s9a-per-row-plan.ts).
 import { describe, expect, it } from "vitest";
 import {
   capSelection,
@@ -8,18 +11,32 @@ import {
   filterCaseHits,
   filterLessonHits,
   inArea,
-  lessonRowQuery,
-  MAX_FINDS_PER_ROUND,
+  LESSON_FIND_LIMIT,
+  lessonFindLimit,
   parseCaseHeader,
   planFinds,
   rankCases,
   rankLessons,
+  roundLessonQuery,
   selectRound,
   SELECTION_CAPS,
   type FindHit,
   type FindOutcome,
+  type FindPlan,
+  type RoleSelection,
   type SelectionRow,
 } from "../src/memory/selection.js";
+import { roundContextQuery } from "../src/memory/context.js";
+import { s9aPlanFinds, s9aRowQuery, S9A_MAX_FINDS_PER_ROUND } from "./helpers/s9a-per-row-plan.js";
+import {
+  caseCorpus,
+  CORPUS_PR,
+  CORPUS_PR_FILES,
+  CORPUS_RETIRED,
+  CORPUS_ROOT,
+  CORPUS_SUPPRESSED,
+  lessonCorpus,
+} from "./helpers/lesson-corpus.js";
 
 const ROOT = "viking://user/reviewer/memories";
 const EXP = `${ROOT}/experiences`;
@@ -357,7 +374,7 @@ describe("cases", () => {
   });
 });
 
-describe("planFinds", () => {
+describe("planFinds — TWO finds a round (F2)", () => {
   const rows: SelectionRow[] = [
     { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
     { row: 1, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
@@ -365,24 +382,60 @@ describe("planFinds", () => {
     { row: 3, lens: "pass-validate", agent: "pass-validate--sol-high" },
   ];
 
-  it("asks identical queries once, the cases find first", () => {
+  it("the cases find first, then ONE lesson find every row, the validator and the addable lenses share", () => {
     const plan = planFinds({
       title: "Add a guide",
       rows,
       prFiles: ["docs/guide.md", "backend/x.py"],
+      addable: ["pass-security"],
+      corpus: 34,
     });
-    expect(plan.finds[0]!.area).toBe("finding-cases");
+    expect(plan.finds.map((f) => f.area)).toEqual(["finding-cases", "experiences"]);
     expect(plan.casesKey).toBe(plan.finds[0]!.key);
-    expect(plan.rowKey.get(0)).toBe(plan.rowKey.get(1));
-    expect(plan.finds).toHaveLength(4);
-    expect(plan.finds.find((f) => f.key === plan.rowKey.get(2))!.query).toContain("docs");
-    expect(lessonRowQuery({ title: "T", lens: "pass-sweep", files: ["docs/a.md"] })).toBe(
-      "T — docs .md — sweep",
+    expect(plan.lessonsKey).toBe(plan.finds[1]!.key);
+    expect([...plan.rowKey.values()]).toEqual(Array(4).fill(plan.lessonsKey));
+    expect([...plan.rowKey.keys()]).toEqual([0, 1, 2, 3]);
+    expect(plan.addableKey).toBe(plan.lessonsKey);
+    // The lesson find asks for the whole corpus (34 files → 76 places).
+    expect(plan.finds[1]!.limit).toBe(76);
+    expect(plan.finds[0]!.limit).toBe(40);
+    // The round-level query: the title, the changed areas, the planned lenses.
+    expect(plan.finds[1]!.query).toBe(
+      roundLessonQuery({
+        title: "Add a guide",
+        files: ["docs/guide.md", "backend/x.py"],
+        lenses: rows.map((r) => r.lens),
+      }),
     );
     expect(casesQuery({ title: "T", files: ["b.py", "a.py", "b.py"] })).toBe("T — a.py b.py");
   });
 
-  it("caps the finds per round; the rows past it are recorded find_cap", () => {
+  it("the round-level query is the title, the changed files' shape and the planned lenses, sorted and deduplicated", () => {
+    const q = roundLessonQuery({
+      title: "Tidy   the guide",
+      files: ["docs/guide.md", "backend/api/views.py"],
+      lenses: ["pass-validate", "pass-baseline", "pass-baseline", "pass-data-safety"],
+    });
+    const base = roundContextQuery({
+      title: "Tidy the guide",
+      files: [{ filename: "docs/guide.md" }, { filename: "backend/api/views.py" }],
+    });
+    expect(q).toBe(`${base} — baseline data-safety validate`);
+    // A function of the file SET and the lens SET: order never moves it.
+    expect(
+      roundLessonQuery({
+        title: "Tidy the guide",
+        files: ["backend/api/views.py", "docs/guide.md"],
+        lenses: ["pass-data-safety", "pass-validate", "pass-baseline"],
+      }),
+    ).toBe(q);
+    expect(roundLessonQuery({ title: "T", files: [], lenses: [] })).toBe("T");
+    expect(
+      roundLessonQuery({ title: "x".repeat(900), files: ["a.py"], lenses: ["pass-ui"] }).length,
+    ).toBeLessThanOrEqual(600);
+  });
+
+  it("a wide plan is still TWO finds — no row is left unasked (S9a capped them at 24)", () => {
     const many: SelectionRow[] = Array.from({ length: 40 }, (_, i) => ({
       row: i,
       lens: "pass-sweep",
@@ -390,7 +443,11 @@ describe("planFinds", () => {
       focus: [`dir${i}/f.py`],
     }));
     const plan = planFinds({ title: "Wide", rows: many, prFiles: ["x.py"] });
-    expect(plan.finds).toHaveLength(MAX_FINDS_PER_ROUND);
+    expect(plan.finds).toHaveLength(2);
+    // S9a's plan for the same round: 24 finds and 17 rows unasked.
+    expect(s9aPlanFinds({ title: "Wide", rows: many, prFiles: ["x.py"] }).finds).toHaveLength(
+      S9A_MAX_FINDS_PER_ROUND,
+    );
     const sel = selectRound({
       pr: 1,
       title: "Wide",
@@ -402,7 +459,39 @@ describe("planFinds", () => {
       retired: new Set(),
       suppressed: new Set(),
     });
-    expect(sel.filter((s) => s.status === "find_cap")).toHaveLength(40 - (MAX_FINDS_PER_ROUND - 1));
+    expect(sel.filter((s) => s.status === "find_cap")).toEqual([]);
+    expect(sel.filter((s) => s.role === "row")).toHaveLength(40);
+  });
+
+  it("no changed file: no cases find; no row and no lens to add: no lesson find", () => {
+    const noFiles = planFinds({ title: "T", rows, prFiles: [] });
+    expect(noFiles.casesKey).toBeNull();
+    expect(noFiles.finds.map((f) => f.area)).toEqual(["experiences"]);
+    const nothing = planFinds({ title: "T", rows: [], prFiles: ["a.py"] });
+    expect(nothing.lessonsKey).toBeNull();
+    expect(nothing.addableKey).toBeNull();
+    expect(nothing.finds.map((f) => f.area)).toEqual(["finding-cases"]);
+    // Only lenses to add: the lesson find is planned for them.
+    const addOnly = planFinds({ title: "T", rows: [], prFiles: ["a.py"], addable: ["pass-ui"] });
+    expect(addOnly.addableKey).toBe(addOnly.lessonsKey);
+    expect(addOnly.finds).toHaveLength(2);
+  });
+
+  it("the lesson find's limit covers the corpus, bounded — the ceiling when the corpus is unknown", () => {
+    expect(LESSON_FIND_LIMIT).toEqual({ min: 40, max: 200 });
+    expect(lessonFindLimit(null)).toBe(200);
+    expect(lessonFindLimit(undefined)).toBe(200);
+    expect(lessonFindLimit(Number.NaN)).toBe(200);
+    expect(lessonFindLimit(-1)).toBe(200);
+    expect(lessonFindLimit(0)).toBe(40);
+    expect(lessonFindLimit(10)).toBe(40);
+    expect(lessonFindLimit(34)).toBe(76);
+    expect(lessonFindLimit(96)).toBe(200);
+    expect(lessonFindLimit(5000)).toBe(200);
+    // Never less than either of S9a's per-find limits, and always room for
+    // the whole corpus and its non-file records while under the ceiling.
+    for (let n = 0; n <= 96; n++) expect(lessonFindLimit(n)).toBeGreaterThanOrEqual(Math.max(40, n * 2));
+    expect(planFinds({ title: "T", rows, prFiles: ["a"] }).finds[1]!.limit).toBe(200);
   });
 });
 
@@ -419,6 +508,8 @@ function caseText(
   );
 }
 
+// These give each row an answer of ITS OWN, so they plan with S9a's per-row
+// planner: `selectRound` takes any plan (each row's answer by its `rowKey`).
 describe("selectRound", () => {
   const rows: SelectionRow[] = [
     { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
@@ -458,7 +549,7 @@ describe("selectRound", () => {
   ];
 
   it("selects per row; the validator gets every row's dont-raise lessons plus its own", () => {
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
       title: "T",
@@ -501,7 +592,7 @@ describe("selectRound", () => {
   });
 
   it("a timed-out find delivers nothing for its row; the validator still gets the rows' dont-raise", () => {
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
       title: "T",
@@ -528,7 +619,7 @@ describe("selectRound", () => {
   });
 
   it("is DETERMINISTIC over a fake engine: shuffled hits and jittered scores select the same", () => {
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const many: FindHit[] = Array.from({ length: 12 }, (_, i) =>
       hit(
         `202609${String(10 + i)}T000000-l${i}.md`,
@@ -575,7 +666,7 @@ describe("selectRound", () => {
       ...LENSES.map((lens, i) => ({ row: i, lens, agent: `${lens}--sol-med` })),
       { row: 5, lens: "pass-validate", agent: "pass-validate--sol-high" },
     ];
-    const plan = planFinds({ title: "T", rows: five, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows: five, prFiles });
     const byRow: Record<number, FindOutcome> = {};
     for (let i = 0; i < 5; i++)
       byRow[i] = {
@@ -614,7 +705,7 @@ describe("selectRound", () => {
 
   it("each role's token budget binds — the cases stop at 2,000, the validator at 2,500", () => {
     const big = "x".repeat(4 * 560); // ≈ 585 tokens with a lesson header, ≈ 610 with a case one
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
       title: "T",
@@ -662,7 +753,7 @@ describe("selectRound", () => {
       { row: 0, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["backend/x.py"] },
     ];
     const files = ["backend/x.py", "docs/a.md"];
-    const plan = planFinds({ title: "T", rows: sweep, prFiles: files });
+    const plan = s9aPlanFinds({ title: "T", rows: sweep, prFiles: files });
     const sel = selectRound({
       pr: 42,
       title: "T",
@@ -686,7 +777,7 @@ describe("selectRound", () => {
   });
 
   it("the validator's own find: a lens-less DONT-RAISE lesson is its, a lens-less look-for is not", () => {
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const sel = selectRound({
       pr: 42,
       title: "T",
@@ -728,7 +819,7 @@ describe("selectRound", () => {
       { row: 0, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["backend/api/views.py"] },
       { row: 1, lens: "pass-validate", agent: "pass-validate--sol-high" },
     ];
-    const plan = planFinds({ title: "T", rows: focused, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows: focused, prFiles });
     const docsOnly = hit(
       "20250101T000000-docs-path.md",
       lesson("dont-raise", { lens: "pass-validate", cls: "v.docs", paths: "docs/**" }),
@@ -759,7 +850,7 @@ describe("selectRound", () => {
   });
 
   it("the cases role is DETERMINISTIC too: shuffled hits and jittered scores select the same", () => {
-    const plan = planFinds({ title: "T", rows, prFiles });
+    const plan = s9aPlanFinds({ title: "T", rows, prFiles });
     const cases: FindHit[] = Array.from({ length: 12 }, (_, i) =>
       hit(
         `case-${300 + i}-r1-z.md`,
@@ -805,5 +896,133 @@ describe("selectRound", () => {
     expect(createdOfUri(`${EXP}/x.md`)).toBeNull();
     expect(inArea(`${EXP}/x.md`, ROOT, "experiences")).toBe(true);
     expect(inArea(`${EXP}/x.txt`, ROOT, "experiences")).toBe(false);
+  });
+});
+
+// ---- F2: two finds select what S9a's per-row finds did ---------------------
+
+describe("F2 equivalence — over an engine that returns the whole corpus, TWO finds select exactly what S9a's per-row finds did", () => {
+  const rows: SelectionRow[] = [
+    { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
+    { row: 1, lens: "pass-security", agent: "pass-security--sol-high" },
+    { row: 2, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["docs/guide.md"] },
+    { row: 3, lens: "pass-sweep", agent: "pass-sweep--sol-low", focus: ["backend/api/views.py"] },
+    { row: 4, lens: "pass-ui", agent: "pass-ui--sol-med" },
+    { row: 5, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
+    { row: 6, lens: "pass-validate", agent: "pass-validate--sol-high" },
+  ];
+  const addable = ["pass-concurrency", "pass-data-safety", "pass-ui"];
+  const prFiles = [...CORPUS_PR_FILES];
+  const LESSON_HITS = lessonCorpus();
+  const CASE_HITS = caseCorpus();
+
+  /** The fake engine's answer to every planned find: the WHOLE corpus of its
+   * area, whatever the query or the limit. */
+  function wholeCorpus(plan: FindPlan, order: "as-is" | "reversed" = "as-is"): Map<string, FindOutcome> {
+    const pick = (hits: FindHit[]) => (order === "reversed" ? [...hits].reverse() : hits);
+    return new Map(
+      plan.finds.map(
+        (f) =>
+          [
+            f.key,
+            { status: "ok", hits: pick(f.area === "experiences" ? LESSON_HITS : CASE_HITS) },
+          ] as const,
+      ),
+    );
+  }
+
+  /** A record without its query — the one field that names the find, not
+   * the selection (S9a's per-row query vs F2's round-level one). */
+  const strip = (sel: RoleSelection[]) => sel.map(({ query: _q, ...r }) => r);
+
+  const variants = [
+    { name: "nothing retired, nothing suppressed", retired: [], suppressed: [], asOf: null },
+    {
+      name: "a retired list, a suppressed lesson and an as_of hold-out",
+      retired: CORPUS_RETIRED,
+      suppressed: CORPUS_SUPPRESSED,
+      asOf: "2026-10-05",
+    },
+  ] as const;
+
+  for (const v of variants) {
+    it(`every role's record — lessons, cases, cuts, drops, statuses — and every text are the same (${v.name})`, () => {
+      const s9a = s9aPlanFinds({ title: "Tidy the guide", rows, prFiles, addable });
+      const f2 = planFinds({
+        title: "Tidy the guide",
+        rows,
+        prFiles,
+        addable,
+        corpus: LESSON_HITS.length,
+      });
+      // The shapes really differ: one find per distinct row query against two.
+      expect(s9a.finds.length).toBeGreaterThan(4);
+      expect(f2.finds).toHaveLength(2);
+      const run = (plan: FindPlan, texts: Map<string, string>, order?: "reversed") =>
+        selectRound({
+          pr: CORPUS_PR,
+          title: "Tidy the guide",
+          rows,
+          prFiles,
+          root: CORPUS_ROOT,
+          plan,
+          outcomes: wholeCorpus(plan, order),
+          retired: new Set(v.retired),
+          suppressed: new Set(v.suppressed),
+          asOf: v.asOf,
+          addable,
+          texts,
+        });
+      const oldTexts = new Map<string, string>();
+      const newTexts = new Map<string, string>();
+      const old = run(s9a, oldTexts);
+      const neu = run(f2, newTexts);
+      expect(strip(neu)).toEqual(strip(old));
+      expect(newTexts).toEqual(oldTexts);
+      // …and the order the engine returned the corpus in moves nothing.
+      expect(strip(run(f2, new Map(), "reversed"))).toEqual(strip(old));
+
+      // The fixture exercises what it claims to: every role present, lessons
+      // and cases selected, cuts by items AND tokens, every kind of drop.
+      expect(old.map((r) => `${r.role}:${r.row}`)).toEqual([
+        "row:0",
+        "row:1",
+        "row:2",
+        "row:3",
+        "row:4",
+        "row:5",
+        "validator:6",
+        "addable:0",
+        "addable:1",
+        "addable:2",
+        "cases:-1",
+      ]);
+      expect(old.every((r) => r.status === "ok")).toBe(true);
+      expect(old.filter((r) => r.role !== "cases").every((r) => r.lessons.length > 0)).toBe(true);
+      expect(old.find((r) => r.role === "cases")!.cases.length).toBeGreaterThan(0);
+      const cuts = old.flatMap((r) => r.cuts.map((c) => c.reason));
+      expect(cuts).toContain("items");
+      expect(cuts).toContain("tokens");
+      const drops = new Set(old.flatMap((r) => Object.keys(r.dropped)));
+      for (const d of ["out_of_area", "duplicate", "moved", "retired", "not_lesson", "kind_unknown", "lens", "paths"])
+        expect(drops, d).toContain(d);
+      if (v.suppressed.length > 0) {
+        expect(drops).toContain("suppressed");
+        expect(drops).toContain("as_of");
+      }
+      const caseDrops = Object.keys(old.find((r) => r.role === "cases")!.dropped);
+      expect(caseDrops).toEqual(expect.arrayContaining(["same_pr", "paths", "retired", "not_case"]));
+    });
+  }
+
+  it("the per-row and round-level queries differ — only the selection is claimed equal", () => {
+    const s9a = s9aPlanFinds({ title: "T", rows, prFiles });
+    const f2 = planFinds({ title: "T", rows, prFiles });
+    expect(s9a.finds.map((f) => f.query)).toContain(
+      s9aRowQuery({ title: "T", lens: "pass-security", files: prFiles }),
+    );
+    expect(f2.finds.map((f) => f.query)).not.toContain(
+      s9aRowQuery({ title: "T", lens: "pass-security", files: prFiles }),
+    );
   });
 });
