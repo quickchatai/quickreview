@@ -51,6 +51,15 @@ export interface MetricsWindow {
   /** Every event kind the daemon logged in this window, busiest first, cap 12. */
   events_by_kind: { kind: string; count: number }[];
   /**
+   * The `all` window only (§9.4): how many of the rows counted in
+   * `events_by_kind` were moved out of the live table into the archive
+   * databases — counted from the `archived_event_counts` rollup, so the
+   * all-time tally stays continuous and is labelled "(incl. N archived)".
+   * Absent on d7/d30, which never see an archived row (`events_after_days` is
+   * at least 31), and from an older daemon.
+   */
+  events_archived?: number;
+  /**
    * Cancelled rounds, GROUPED BY CAUSE — the figure that did not
    * exist when measured 55 silent cancellations against 5 loud
    * overdues. `loud` is the subset a human should act on (a round that stopped
@@ -230,6 +239,15 @@ function readEventKinds(store: StateStore): Array<{ ts: string; kind: string }> 
   }>;
 }
 
+/** Event rows the archiver moved out of the live table, per kind (
+ * §9.4) — the rollup its delete transaction keeps. [] on a store without it. */
+function readArchivedEventCounts(store: StateStore): Array<{ kind: string; n: number }> {
+  if (!tableExists(store, "archived_event_counts")) return [];
+  return store.db
+    .prepare("SELECT kind, SUM(n) AS n FROM archived_event_counts GROUP BY kind ORDER BY kind")
+    .all() as Array<{ kind: string; n: number }>;
+}
+
 function tableExists(store: StateStore, name: string): boolean {
   return (
     store.db
@@ -362,6 +380,9 @@ export interface WindowInput {
   resolvedPrs: Map<number, number>; // pr -> rounds until resolution
   /** Every event kind/ts (all kinds, not just the metric ones). */
   allEvents?: Array<{ ts: string; kind: string }>;
+  /** Event rows moved to the archive, per kind (§9.4) — added into
+   * the `all` window only. */
+  archivedEvents?: Array<{ kind: string; n: number }>;
   /** Inclusive lower bound (ISO) or null for the "all" window. */
   since: string | null;
   nowIso: string;
@@ -525,6 +546,16 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     if (!within(e.ts, since)) continue;
     kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + 1);
   }
+  // The archived rows count in the all-time window only: every one is older
+  // than `events_after_days` (≥ 31), so d7 and d30 are exact without them.
+  let eventsArchived: number | undefined;
+  if (since === null && input.archivedEvents) {
+    eventsArchived = 0;
+    for (const a of input.archivedEvents) {
+      kinds.set(a.kind, (kinds.get(a.kind) ?? 0) + a.n);
+      eventsArchived += a.n;
+    }
+  }
   const eventsByKind = [...kinds.entries()]
     .map(([kind, count]) => ({ kind, count }))
     .sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind))
@@ -592,6 +623,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
     size,
     pingpong,
     events_by_kind: eventsByKind,
+    ...(eventsArchived !== undefined ? { events_archived: eventsArchived } : {}),
     cancellations,
   };
 }
@@ -690,7 +722,14 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   // `finished_at` is the expiry sweep's clock rather than a real end.
   const rounds = store.allRounds();
   const events = readEvents(store);
-  const allEvents = readEventKinds(store);
+  // The live tally and the archived rollup in ONE read transaction: the
+  // archiver (another process, for `qcr metrics`) deletes rows and adds them
+  // to the rollup in one commit, and two separate snapshots on either side of
+  // it would count the moved rows twice.
+  const { allEvents, archivedEvents } = store.db.transaction(() => ({
+    allEvents: readEventKinds(store),
+    archivedEvents: readArchivedEventCounts(store),
+  }))();
   const comments = store.db
     .prepare("SELECT pr, round_no, posted_at FROM bot_comments")
     .all() as CommentRow[];
@@ -698,7 +737,17 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const intervals = stateIntervals(events, nowIso);
   const resolvedPrs = resolutionByPr(store, rounds, events);
 
-  const base = { rounds, events, allEvents, comments, threads, intervals, resolvedPrs, nowIso };
+  const base = {
+    rounds,
+    events,
+    allEvents,
+    archivedEvents,
+    comments,
+    threads,
+    intervals,
+    resolvedPrs,
+    nowIso,
+  };
   const iso = (daysAgo: number): string =>
     new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
 
@@ -946,6 +995,12 @@ export function renderMetrics(payload: MetricsPayload): string {
   lines.push(
     `events (7d): ${w.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"}`,
   );
+  const archived = payload.windows.all.events_archived;
+  if (archived)
+    lines.push(
+      `events (all): ${payload.windows.all.events_by_kind.map((e) => `${e.kind} ${e.count}`).join("  ") || "—"} ` +
+        `(incl. ${archived} archived)`,
+    );
   lines.push(cancellationLine(w));
   lines.push("");
   lines.push("day          rounds  PRs  spend   appr  rc");

@@ -1936,8 +1936,9 @@ export interface ArchiveConfig {
    *   `plan` — the SHIPPED value: it computes what it would move (status.json
    *            `archive`, `qcr status`, `qcr archive status --plan`) and
    *            writes nothing;
-   *   `on`   — it moves. This build (S1) moves nothing yet, so `on`
-   *            plans exactly as `plan` does.
+   *   `on`   — it moves: the old reader-less event rows and webhook
+   *            deliveries into `archive/db/` (S2), sealing finished
+   *            months. The per-PR files are still only planned in this build.
    */
   mode: ArchiveMode;
   /** Closed PRs' files and webhook deliveries leave the live tree this many

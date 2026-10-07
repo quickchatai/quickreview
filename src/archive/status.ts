@@ -53,6 +53,28 @@ export interface ArchiveDisk {
   headroom: number;
 }
 
+/** The DB phase (S2, docs/archiving.md §9): what the last run of the
+ * event and delivery mover did, and the archive databases. Null until the
+ * DB phase has run (never in plan mode). */
+export interface ArchiveDbStatus {
+  last_run_at: string;
+  /** `caught_up` | `budget` | `held` | `aborted` | `skipped` | `failed`. */
+  outcome: string;
+  /** Why the run's first refused batch deleted nothing: `archive_busy`,
+   * `live_busy`, `verify_mismatch`, `live_changed`, `wal_sync_failed`. A
+   * refusal confined to one table (`archive_busy`, `verify_mismatch`,
+   * `live_changed`) lets the other table's rows move in the same run. */
+  skipped_reason: string | null;
+  events_moved: number;
+  deliveries_moved: number;
+  /** The adapted batch size the next run starts at. */
+  batch_rows: number;
+  /** The run's synchronous time, in total. */
+  sync_ms: number;
+  months_open: number;
+  months_sealed: number;
+}
+
 /** status.json `archive`. */
 export interface ArchiveStatus {
   mode: ArchiveMode;
@@ -60,7 +82,8 @@ export interface ArchiveStatus {
    *   `unknown` — not measured yet (the archiver has not ticked);
    *   `off`     — `[archive] mode = "off"`: no timer armed;
    *   `plan`    — the last tick computed a plan and moved nothing by design;
-   *   `idle`    — on, nothing to do;
+   *   `idle`    — on: the last tick ran its phases (the DB rows moved or
+   *               caught up — see `db`; the per-PR files are planned only);
    *   `running` — a tick is in progress (`running_since`);
    *   `held`    — the last tick started nothing (`held_reason`);
    *   `failed`  — the last tick failed (`last_error`).
@@ -92,6 +115,9 @@ export interface ArchiveStatus {
   freelist_pages: number | null;
   /** The archiver's longest measured synchronous span. */
   max_sync_span_ms: number | null;
+  /** The DB phase; null before it has run (and always in plan mode). Absent
+   * from an older daemon's block, read as null. */
+  db: ArchiveDbStatus | null;
 }
 
 /** The block before the archiver exists (the daemon is still assembling):
@@ -116,6 +142,7 @@ export function pendingArchiveStatus(mode: ArchiveMode): ArchiveStatus {
     orphans: null,
     freelist_pages: null,
     max_sync_span_ms: null,
+    db: null,
   };
 }
 
@@ -169,6 +196,33 @@ function numbers<K extends string>(
   for (const key of keys) {
     if (!isNum(v[key])) bad(`${k}.${key} is ${shown(v[key])}, not a number`);
     out[key] = v[key] as number;
+  }
+  return out;
+}
+
+const DB_NUMBERS = [
+  "events_moved",
+  "deliveries_moved",
+  "batch_rows",
+  "sync_ms",
+  "months_open",
+  "months_sealed",
+] as const;
+
+/** The `db` sub-block: absent (an older daemon) and null read as null. */
+function readDb(v: unknown): ArchiveDbStatus | null {
+  if (v === undefined || v === null) return null;
+  if (!isObj(v)) return bad(`db is ${shown(v)}, not an object or null`);
+  if (!isStr(v.last_run_at)) bad(`db.last_run_at is ${shown(v.last_run_at)}, not a string`);
+  if (!isStr(v.outcome)) bad(`db.outcome is ${shown(v.outcome)}, not a string`);
+  const out = {
+    last_run_at: v.last_run_at as string,
+    outcome: v.outcome as string,
+    skipped_reason: strOrNull(v, "skipped_reason"),
+  } as ArchiveDbStatus;
+  for (const k of DB_NUMBERS) {
+    if (!isNum(v[k])) bad(`db.${k} is ${shown(v[k])}, not a number`);
+    out[k] = v[k] as number;
   }
   return out;
 }
@@ -235,6 +289,7 @@ export function readArchiveStatus(v: unknown): ArchiveStatusRead {
       orphans,
       freelist_pages: numOrNull(v, "freelist_pages"),
       max_sync_span_ms: numOrNull(v, "max_sync_span_ms"),
+      db: readDb(v.db),
     };
     return { kind: "read", view };
   } catch (err) {
@@ -281,6 +336,19 @@ export function backlogPhrase(s: ArchiveStatus): string {
   return `backlog ${b.prs} PR(s) · ${fmtBytes(b.bytes)} · ${fmtCount(b.event_rows)} event row(s) · ${fmtCount(b.delivery_rows)} delivery row(s)${s.plan_at ? ` (planned ${s.plan_at})` : ""}`;
 }
 
+/** The DB phase in a few words; "" before it has run. */
+export function dbPhrase(s: ArchiveStatus): string {
+  const d = s.db;
+  if (!d) return "";
+  const moved = `db: ${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved last run`;
+  const months = `${d.months_open} open month(s), ${d.months_sealed} sealed`;
+  if (d.outcome === "skipped")
+    return `db SKIPPED (${d.skipped_reason ?? "reason unknown"}) at ${d.last_run_at}, nothing deleted; ${months}`;
+  if (d.outcome === "failed") return `db FAILED at ${d.last_run_at}; ${months}`;
+  const tail = d.outcome === "caught_up" ? "caught up" : d.outcome;
+  return `${moved} (${tail}); ${months}`;
+}
+
 /**
  * The one archive line `qcr status` prints. An absent block (an older
  * daemon), an unmeasured one and one this build cannot read whole each say
@@ -297,6 +365,8 @@ export function archiveStatusLine(v: unknown): string {
   if (s.orphans && s.orphans.count > 0) extras.push(`${s.orphans.count} orphan session dir(s)`);
   if (s.restores && s.restores.failed > 0) extras.push(`${s.restores.failed} RESTORE(S) FAILED`);
   if (s.verify_failures_24h) extras.push(`${s.verify_failures_24h} verify failure(s) in 24h`);
+  const db = dbPhrase(s);
+  if (db) extras.push(db);
   const tail = extras.length > 0 ? `; ${extras.join("; ")}` : "";
   const mode = `mode ${s.mode}`;
   switch (s.state) {

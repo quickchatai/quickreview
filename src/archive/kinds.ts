@@ -5,9 +5,10 @@
 // `verdict_applied`, `head_push`, `anomaly`, …), the register kinds whose
 // newest row is read, and `comment_sweep`.
 //
-// S1 (plan mode) only COUNTS these rows for the backlog; nothing moves. The
-// mover (S2) adds the fence that holds this set against every events read
-// site in src/ — a kind some code reads must never be in it.
+// The plan counts these rows for the backlog; in mode `on` the DB mover
+// (dbmove.ts) moves them into the month's archive database. The fence
+// `tests/fences-archive-events.test.ts` holds this set against every events
+// read site in src/ — a kind some code reads must never be in it.
 export const ARCHIVE_EVENT_KINDS: ReadonlySet<string> = new Set([
   "pingpong_decision_failed",
   "webhook_event",

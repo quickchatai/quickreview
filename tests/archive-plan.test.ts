@@ -178,7 +178,7 @@ function plan(f: Fixture, extra: Partial<Parameters<typeof computePlan>[0]> = {}
 
 /** Every path under `root` with its type, size, mtime and content hash —
  * state.db and its WAL excepted (the census covers the database). */
-function treeHash(root: string): string {
+function treeHash(root: string, skip?: RegExp): string {
   const lines: string[] = [];
   const walk = (dir: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
@@ -187,6 +187,7 @@ function treeHash(root: string): string {
       const p = join(dir, e.name);
       const rel = relative(root, p);
       if (/^state\/state\.db(-wal|-shm)?$/.test(rel)) continue;
+      if (skip?.test(rel)) continue;
       const st = statSync(p);
       if (e.isDirectory()) {
         lines.push(`d ${rel} ${st.mtimeMs}`);
@@ -593,7 +594,7 @@ describe("PLAN MODE WRITES NOTHING (acceptance 6)", () => {
   );
 
   it(
-    "mode `on` plans exactly as `plan` does in this build — and writes nothing either",
+    "mode `on` moves only the old reader-less event rows and deliveries into archive/db — no per-PR file is touched",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const f = fixture();
@@ -607,14 +608,52 @@ describe("PLAN MODE WRITES NOTHING (acceptance 6)", () => {
           liveSessions: async () => [],
           statfs: async () => ({ bavail: 1e9, bsize: 4096 }),
           now: () => new Date(T0),
+          sleep: async () => {},
           schedule: () => () => {},
         });
-        const hash = treeHash(f.root);
-        const rows = census(f.store);
-        expect((await archiver.tick()).state).toBe("plan");
-        expect(archiver.status().mode).toBe("on");
-        expect(treeHash(f.root)).toBe(hash);
-        expect(census(f.store)).toEqual(rows);
+        // archive/db/ made first, so the files landing in it leave archive/'s
+        // own mtime alone.
+        mkdirSync(join(f.root, "archive", "db"));
+        const outsideDb = (): string => treeHash(f.root, /^archive\/db(\/|$)/);
+        const hash = outsideDb();
+        const kinds = (): string[] =>
+          (
+            f.store.db.prepare("SELECT kind FROM events ORDER BY id").all() as Array<{
+              kind: string;
+            }>
+          )
+            .map((r) => r.kind)
+            .filter((k) => k !== "archive_pass");
+        const before = kinds();
+        expect((await archiver.tick()).state).toBe("idle");
+        expect(archiver.status()).toMatchObject({
+          mode: "on",
+          state: "idle",
+          db: { outcome: "caught_up", events_moved: 2, deliveries_moved: 2 },
+        });
+        // The two old reader-less rows left; the fact kind and the young row stayed.
+        const after = kinds();
+        expect(before.length - after.length).toBe(2);
+        expect(after).toContain("verdict_applied");
+        expect(after.filter((k) => k === "webhook_event")).toHaveLength(1);
+        expect(after).not.toContain("pingpong_decision_failed");
+        // Deliveries: both old ones moved, the young (and newest) one stayed.
+        expect(
+          (f.store.db.prepare("SELECT guid FROM deliveries").all() as Array<{ guid: string }>).map(
+            (r) => r.guid,
+          ),
+        ).toEqual(["young-1"]);
+        // Every per-PR file, the legacy copy and the orphan exactly as they were.
+        expect(outsideDb()).toBe(hash);
+        expect(readdirSync(join(f.root, "archive", "db")).sort()).toEqual([
+          "manifest.json",
+          "state-2026-09.sqlite",
+          "state-2026-09.sqlite-shm",
+          "state-2026-09.sqlite-wal",
+          "state-2026-10.sqlite",
+          "state-2026-10.sqlite-shm",
+          "state-2026-10.sqlite-wal",
+        ]);
       } finally {
         f.store.close();
       }

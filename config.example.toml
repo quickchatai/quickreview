@@ -788,8 +788,10 @@ session_pause_budget_min_per_day = 480     # total session-pause minutes per PR 
 # draining, while the event loop is stalled or the CPU starved, and while
 # either mount's free space is low or unknown. "plan" (the shipped value)
 # computes what it WOULD move — status.json `archive`, `qcr status`,
-# `qcr archive status --plan` — and writes nothing. This build plans only:
-# "on" moves nothing yet. All optional — these are the defaults.
+# `qcr archive status --plan` — and writes nothing. "on" moves the old
+# reader-less event rows and webhook deliveries into monthly SQLite files under
+# archive/db/ and seals finished months to .gz; this build does not move the
+# per-PR files yet (it plans them). All optional — these are the defaults.
 [archive]
 mode = "plan"            # off | plan | on — an unknown value refuses to load
 after_days = 14          # closed PRs' files and webhook deliveries (clamped 7..3650)

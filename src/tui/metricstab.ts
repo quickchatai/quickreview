@@ -468,6 +468,10 @@ export function opsLines(
     for (const k of kinds.slice(0, 8))
       lines.push(hbar(k.kind, k.count, max, width, String(k.count), ACCENTS.magenta));
     if (kinds.length > 8) lines.push(dim(`…+${kinds.length - 8} more kinds`));
+    // §9.4: the all-time window counts rows the archiver moved out
+    // of the live table too — say so, so the tally is never read as live.
+    if (win.events_archived)
+      lines.push(dim(`(incl. ${win.events_archived} archived row(s) — moved to archive/db)`));
   }
   return lines;
 }

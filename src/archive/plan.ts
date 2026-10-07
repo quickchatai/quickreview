@@ -28,6 +28,7 @@ import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
 import { prEligibility, type IneligibleReason } from "./eligibility.js";
+import { rowAge } from "./dbmove.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
 
 const DAY_MS = 86_400_000;
@@ -333,6 +334,9 @@ async function countRows(
     cutoff: string;
     kinds: boolean;
     memo: CountMemo | undefined;
+    /** The row holding the table's highest rowid never moves (deliveries). */
+    keepNewest?: boolean;
+    maxSql?: string;
     signal?: AbortSignal;
   },
 ): Promise<{ backlog: RowBacklog; memo: CountMemo }> {
@@ -353,6 +357,13 @@ async function countRows(
     byKind: { ...byKind },
   };
   const stmt = store.db.prepare(opts.sql).raw(true);
+  const newest = opts.keepNewest
+    ? meter.measure(
+        () =>
+          (store.db.prepare(opts.maxSql!).get() as { m: number | null } | undefined)?.m ??
+          Number.POSITIVE_INFINITY,
+      )
+    : Number.POSITIVE_INFINITY;
   let examined = 0;
   let windows = 0;
   for (;;) {
@@ -362,15 +373,19 @@ async function countRows(
       if (batch.length === 0) return true;
       windows += 1;
       examined += batch.length;
+      // The mover's own rule (dbmove.ts): old rows of an archivable kind count
+      // wherever they sit in the window; the count stops after the first window
+      // holding a row younger than the cut-off (or, with `keepNewest`, the
+      // table's highest rowid, which never moves); an undatable row is passed
+      // over — never archived, never read as old, never a stop.
       let allOld = true;
-      for (const [, ts, kind] of batch) {
-        const t = Date.parse(ts);
-        if (!(t < cutoffMs)) {
-          // Younger than the cut-off — or undatable, which is never archived
-          // and never read as old.
+      for (const [id, ts, kind] of batch) {
+        const age = id >= newest ? "young" : rowAge(ts, cutoffMs);
+        if (age === "young") {
           allOld = false;
           continue;
         }
+        if (age === "undatable") continue;
         if (opts.kinds && !(kind !== null && ARCHIVE_EVENT_KINDS.has(kind))) continue;
         rows += 1;
         if (opts.kinds) byKind[kind!] = (byKind[kind!] ?? 0) + 1;
@@ -703,6 +718,8 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     watermark: watermark(store, "deliveries.last_rowid"),
     cutoff: filesCutoff,
     kinds: false,
+    keepNewest: true,
+    maxSql: "SELECT MAX(rowid) AS m FROM deliveries",
     memo: deps.memo?.deliveries,
     signal,
   });

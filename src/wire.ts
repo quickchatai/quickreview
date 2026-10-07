@@ -693,8 +693,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // (never a reconcile step), started beside the case writer and the learner
   // whatever memory does. It starts no work before the first healthy
   // reconcile plus `[archive] start_delay_min`, holds while draining, stalled,
-  // starved or short of disk, and this build moves nothing in any mode: it
-  // plans, and status.json `archive` says what a pass would move.
+  // starved or short of disk. Every tick plans (status.json `archive` says
+  // what a pass would move); in mode `on` it also moves the old reader-less
+  // event rows and webhook deliveries into archive/db/ and seals finished
+  // months (S2). The per-PR files are planned only in this build.
   let archiver: Archiver | null = null;
   // the lesson SHADOW LEDGER — every round's selection through
   // OpenViking (bounded, `[memory] delivery`), the marks a delivered
