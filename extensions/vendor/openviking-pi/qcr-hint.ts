@@ -18,6 +18,12 @@
 // (the overseer, the companion, a session born before its first round) it
 // recalls exactly as before. S3's 500 ms budget is unchanged — the hint
 // changes what is asked, never how long it may take.
+//
+// [QCR PATCH 9] (S7) The same areas bound the session's memory
+// TOOLS: in a PR session `viking_search` keeps only hits inside them and
+// `viking_read` / `viking_browse` refuse a memory URI outside them. Cases
+// (`cases/`, the daemon's finding cases — human replies quoted as data) and
+// feedback events are the learner's context, not a round's, until S9.
 import { readFileSync } from "node:fs";
 import { renderContextEntry, type FetchLike } from "./qcr-recall.js";
 
@@ -141,4 +147,81 @@ export function scopeGuard(inner: FetchLike, areas: () => readonly string[] | nu
     }
     return res;
   };
+}
+
+// ---- [QCR PATCH 9] the memory TOOLS of a PR session --------------------------
+
+/** The areas a PR session's tools are held to when its hint cannot be read
+ * (a session born before its first round): the round's own areas — the
+ * daemon's `ROUND_SEARCH_AREAS` (src/memory/layout.ts), pinned equal by test. */
+export const DEFAULT_ROUND_AREAS: readonly string[] = ["experiences"];
+
+/**
+ * The memory areas this session's TOOLS may reach, or null for no scoping.
+ * The hint variable is set on a PR session only (src/memory/ovsession.ts); a
+ * session without it — the overseer, the companion — is unscoped, as
+ * upstream. Unlike the recall, a PR session whose hint cannot be read FAILS
+ * CLOSED to the round's areas: a recall without a hint merely asks a worse
+ * question, while a tool reaching a case is exactly what is being prevented.
+ * Total: never throws.
+ */
+export function toolScopeAreas(
+  path: string | undefined,
+  read: (p: string) => string = defaultRead,
+): readonly string[] | null {
+  if (!path || path.trim() === "") return null;
+  try {
+    const raw = JSON.parse(read(path.trim())) as { areas?: unknown } | null;
+    const areas = Array.isArray(raw?.areas)
+      ? [...new Set(raw.areas.filter((a): a is string => typeof a === "string" && AREA_RE.test(a)))]
+      : [];
+    if (areas.length > 0) return areas;
+  } catch {
+    // the round's areas, below
+  }
+  return DEFAULT_ROUND_AREAS;
+}
+
+/** The memory area a viking:// URI addresses — `experiences` for
+ * `viking://user/reviewer/memories/experiences/x.md`, "" for the memories
+ * root itself — or null for a URI outside memories. */
+export function memoryAreaOf(uri: string): string | null {
+  const i = uri.indexOf("/memories");
+  if (i < 0) return null;
+  const rest = uri.slice(i + "/memories".length);
+  if (rest !== "" && !rest.startsWith("/")) return null;
+  return rest.replace(/^\/+/, "").split(/[/?#]/)[0] ?? "";
+}
+
+/** A `.`/`..` path segment, or an encoded dot — never resolved, never let by. */
+const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)|%2e/i;
+
+/** May a scoped session READ this URI, or see it as a search hit? Only
+ * inside one of its areas. */
+export function readableInScope(uri: unknown, areas: readonly string[]): boolean {
+  if (typeof uri !== "string" || DOT_SEGMENT.test(uri)) return false;
+  const area = memoryAreaOf(uri);
+  return area !== null && area !== "" && areas.includes(area);
+}
+
+/** May a scoped session LIST (or scope a search to) this URI? Inside one of
+ * its areas, the memories root (which names the areas, nothing in them), or
+ * a URI outside memories altogether. */
+export function browsableInScope(uri: unknown, areas: readonly string[]): boolean {
+  if (typeof uri !== "string" || DOT_SEGMENT.test(uri)) return false;
+  const area = memoryAreaOf(uri);
+  return area === null || area === "" || areas.includes(area);
+}
+
+/** The sentence a refused tool call answers with. */
+export function scopeRefusal(uri: string, areas: readonly string[]): string {
+  return (
+    `${uri} is outside this review session's memory (${areas.map((a) => `${a}/`).join(", ")}). ` +
+    "A review round reads curated lessons only; finding cases and feedback events are not its to read."
+  );
+}
+
+/** One line for the system prompt of a scoped session. */
+export function toolScopeNote(areas: readonly string[]): string {
+  return `In this review session the memory tools reach ${areas.map((a) => `${a}/`).join(", ")} only.`;
 }

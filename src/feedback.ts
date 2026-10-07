@@ -22,6 +22,8 @@
 //      whatever it did not land the backfill pump (`FeedbackMemoryPump`)
 //      writes while memory is healthy — loudly (`memory_write_backlog`) when
 //      it cannot. 36 of 39 signals were dropped on the floor before this.
+//      Since S7 a `[feedback]` comment's entry also carries the
+//      comment's full text, fenced as data (`memoryEntryFor`).
 //      The SQLite `feedback_signals` ledger is still the record;
 //   2. the same-day validator addendum — regenerated on every explicit
 //      [feedback] comment and composed into pass-validate's BUILT body
@@ -40,6 +42,7 @@
 // survives a memory outage and the engine cutover untouched.
 import { opsDay } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
+import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
 import { formatEventTags, parseEventTags } from "./memory/eventtags.js";
 import type { MemoryEntry, MemoryStore, MemoryWriteResult } from "./memory/store.js";
 import type { FeedbackSignalRow, StateStore } from "./state.js";
@@ -220,11 +223,35 @@ function proseFor(e: FeedbackEvent, day: string): string {
   }
 }
 
-/** One tagged event entry per signal — `#tags`, then the `k=v` event tags,
+/** The label the full text of a [feedback] comment follows in its entry
+ * (S7) — what a reader looks for to show it again. It lives in the
+ * leaf `memory/datafence.ts`, so the TUI reads it without this module. */
+export { FEEDBACK_FULL_TEXT_LABEL };
+
+/** The comment's own words, the `[feedback]` tag off. */
+function feedbackFullText(body: string): string {
+  return cleanQuotedText(body.replace(FEEDBACK_PREFIX_RE, "").replace(/^[ \t]+/, ""));
+}
+
+/**
+ * One tagged event entry per signal — `#tags`, then the `k=v` event tags,
  * then the sentence. The shape the EOD curator consolidates and the auto-filer
- * queries. */
+ * queries.
+ *
+ * A `[feedback]` comment's sentence quotes it flattened and capped
+ * (`sanitizeFeedbackText`). Since S7 the entry also carries the
+ * comment's FULL text, fenced as data after the sentence, whenever the
+ * one-line quote is not already all of it (a long or multi-line comment, or
+ * one with quotes or backticks) — the learner reads what the human wrote,
+ * not a 280-character cut. The header is unchanged, and both header parsers
+ * stop before the quote, so nothing in it can mint a tag.
+ */
 export function memoryEntryFor(e: FeedbackEvent, day: string): string {
-  return `${hashTagsFor(e)} ${formatEventTags(eventTagsFor(e, day))} ${proseFor(e, day)}`;
+  const entry = `${hashTagsFor(e)} ${formatEventTags(eventTagsFor(e, day))} ${proseFor(e, day)}`;
+  if (e.kind !== "feedback_comment") return entry;
+  const full = feedbackFullText(e.body);
+  if (full === "" || full === sanitizeFeedbackText(e.body)) return entry;
+  return `${entry}\n\n${FEEDBACK_FULL_TEXT_LABEL}\n${fenceAsData(full)}`;
 }
 
 // ---- the same-day validator addendum ---------------------------------------

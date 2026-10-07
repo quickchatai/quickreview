@@ -661,7 +661,12 @@ searches; `events/` the feedback, bug and ops signals (`kind=feedback|bug|ops`);
 `preferences/` the owner's own words; and `preferences/pinned/` THE PINNED
 AREA — the standing instructions every round carries in full. An entry is
 pinned by being in that directory, not by a `#pinned` tag: writing `#pinned`
-into an entry anywhere else pins nothing.
+into an entry anywhere else pins nothing. `cases/` holds the daemon's finding
+CASES — one per posted finding a human answered or whose fate is known (fixed,
+refuted, upheld, or left open at the PR's close), its claim and the humans' replies quoted as data, people
+named only by role. Search them for the evidence behind a learning
+(`viking_search`); never write, edit or retire one — the daemon rewrites each
+from its own records, and no review round reads them.
 
 Do **not** store anything derivable from current state — PR lists, queue
 contents, spend figures, verdicts. One fact per entry, evidence-linked. If you

@@ -15,7 +15,9 @@
 //   experiences/         curated lessons, written by the EOD curator (and the
 //                        setup/scan notes) — the ONLY area the round's context
 //                        block searches.
-//   cases/               one document per posted finding and its fate (S7).
+//   cases/               one document per posted finding and its fate (S7),
+//                        written by the daemon (src/cases.ts); never listed by
+//                        the whole-tree sweep, never searched by a round.
 //   events/              feedback, bug and ops signals, with `k=v` tags
 //                        (`kind=feedback|bug|ops`, `pr=…`, `day=…`).
 //
@@ -53,6 +55,20 @@ export const MEMORY_AREAS: readonly string[] = [
  * the search is confined to them.
  */
 export const ROUND_SEARCH_AREAS: readonly string[] = [EXPERIENCES_AREA];
+
+/**
+ * Areas the store's whole-tree SWEEP does not list (S7): `cases/`.
+ * A case is a document the daemon derives from state.db and rewrites itself
+ * (src/cases.ts) — one per posted finding a human answered or whose fate is
+ * known, so hundreds of them, growing every day. Listing them would put every
+ * one into each sweep's hourly full re-read (in the daemon and in the TUI) and
+ * into the memory tab's timeline, and none of the sweep's readers wants them:
+ * the pinned head reads its own directory, the [feedback] pump and the
+ * relayout look for curated and event entries, the TUI curates lessons. The
+ * learner's readers — the EOD curator and the companion — reach cases through
+ * the server's search, which this does not touch.
+ */
+export const SWEEP_EXCLUDED_AREAS: readonly string[] = [CASES_AREA];
 
 /** The event tag a pinned entry carries to remember where it came from, so an
  * unpin puts it back. */
@@ -136,7 +152,12 @@ export const MEMORY_LAYOUT_NOTE = [
   "- `preferences/pinned/` — THE PINNED AREA: the owner's standing instructions,",
   "  delivered verbatim in every round. Never write, move, retire or rewrite",
   "  anything under it.",
-  "- `cases/` — finding cases; not yet written.",
+  "- `cases/` — finding CASES, written by the daemon: one per posted finding a",
+  "  human answered or whose fate is known (fixed, refuted, upheld, or left open",
+  "  at the PR's close), with the humans' replies quoted as data. Search them",
+  "  (`viking_search`) for the evidence behind a learning;",
+  "  never write, edit or retire one — the daemon rewrites each from its own",
+  "  records, and no review round reads them.",
   "",
   "An entry's header is its first tokens — `#tags`, then `k=v` tags, then the",
   "prose (e.g. `#bug kind=bug area=operations day=YYYY-MM-DD What broke …`); a tag",

@@ -1234,6 +1234,15 @@ export interface MemoryConfig {
   /** An owed signal older than this wakes `memory_write_backlog` (and again
    * every `rewake_h` while the backlog lasts). */
   write_backlog_after_min: number;
+  /** Finding cases (S7, src/cases.ts): how often the case writer
+   * syncs the cases state.db says are owed and, only while memory health
+   * reads healthy, writes up to 20 of them (one batch-write) and backfills
+   * two more PRs. */
+  cases_interval_s: number;
+  /** How far back the case backfill reaches: PRs with a finding posted in
+   * the last this-many days get their cases written (resumable, a few PRs a
+   * tick, only while memory reads healthy). 0 turns the backfill off. */
+  cases_backfill_days: number;
   /** How many items the round's context search may draw from each area it
    * searches. Since S5 a round searches `experiences/` ONLY
    * (`ROUND_SEARCH_AREAS`, src/memory/layout.ts): any other key here is
@@ -1254,6 +1263,8 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   incident_ticket_after_min: 120,
   backfill_interval_s: 60,
   write_backlog_after_min: 120,
+  cases_interval_s: 120,
+  cases_backfill_days: 60,
   context_quotas: { experiences: 24 },
 };
 

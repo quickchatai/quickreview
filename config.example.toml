@@ -273,6 +273,15 @@ incident_ticket_after_min = 120
 # the daemon's next start and once a day.
 backfill_interval_s = 60
 write_backlog_after_min = 120
+# Finding cases (S7, src/cases.ts): one document per posted finding a
+# human answered or whose fate is known, in reviewer memory's `cases/` — the
+# learner's context, searched by the EOD curator and the companion, never by a
+# review round. Every cases_interval_s the daemon works out from state.db which
+# cases are new or changed and, only while memory reads healthy, writes up to 20
+# (one batch-write) and backfills two more PRs from the last cases_backfill_days
+# days (resumable; 0 turns the backfill off).
+cases_interval_s = 120
+cases_backfill_days = 60
 # HOW MANY items the round's one context search may draw from each area it
 # searches. `context_tokens` above is the budget; this is the corpus — the two
 # bind independently.

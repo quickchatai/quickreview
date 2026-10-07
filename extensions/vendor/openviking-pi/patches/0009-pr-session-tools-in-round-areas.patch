@@ -1,0 +1,375 @@
+diff --git a/extensions/vendor/openviking-pi/NOTICE b/extensions/vendor/openviking-pi/NOTICE
+index 521c5ea..c3ce383 100644
+--- a/extensions/vendor/openviking-pi/NOTICE
++++ b/extensions/vendor/openviking-pi/NOTICE
+@@ -49,6 +49,8 @@ Changed by the quickreviewd maintainers, 2026-08-20:
+   8. A review session's per-prompt recall searches with the query and the
+      memory areas the daemon publishes for its PR, instead of its whole
+      prompt across every scope (2026-10-07).
++  9. A review session's memory search, read and browse tools stay inside the
++     same memory areas (2026-10-07).
+ 
+ Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
+ tsconfig, ambient type declarations for uninstalled packages, three unused
+diff --git a/extensions/vendor/openviking-pi/README.md b/extensions/vendor/openviking-pi/README.md
+index 3ee1af8..06d4b21 100644
+--- a/extensions/vendor/openviking-pi/README.md
++++ b/extensions/vendor/openviking-pi/README.md
+@@ -1,7 +1,7 @@
+ # openviking-pi — vendored, patched fork
+ 
+ The OpenViking pi extension our sessions load. Vendored, not depended on:
+-upstream ships it as an `examples/` directory, not a package, and we need eight
++upstream ships it as an `examples/` directory, not a package, and we need nine
+ behaviour changes that upstream has no reason to make.
+ 
+ | | |
+@@ -20,7 +20,7 @@ fails on drift between the two.
+ 
+ ## Why a fork rather than configuration
+ 
+-Every one of the eight patches was tried as configuration first and does not
++Every one of the nine patches was tried as configuration first and does not
+ exist there. The evidence is a spike against a **running v0.4.15 server plus
+ the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
+ with transcripts. Read it before changing anything here; several of its
+@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
+ 
+ ## The patch series
+ 
+-Eight numbered behaviour patches, applied in order over the vendored upstream
++Nine numbered behaviour patches, applied in order over the vendored upstream
+ files, plus one unnumbered scaffolding patch. They live in `patches/` as
+-`git apply`-able diffs — verified by applying all nine, in order, to a
++`git apply`-able diffs — verified by applying all ten, in order, to a
+ pristine `v0.4.15` extraction and diffing the result against this directory:
+ byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
+ part of the reproduced tree.) Every hunk they add carries a greppable marker:
+@@ -350,6 +350,34 @@ a per-session file (`QCR_OV_RECALL_HINT_FILE`, `src/memory/ovsession.ts`
+ Touches: `qcr-hint.ts` (new), `recall.ts` (`queueSearch`'s scope, the guard
+ in the chain), `index.ts` (the hint, the banner).
+ 
++### 0009 — a PR session's memory tools stay in the round's areas (S7)
++
++PATCH 8 kept the per-prompt RECALL inside the round's areas, but a PR session
++also holds the explicit tools, and `viking_search` sent whatever `scope` the
++model chose straight to the server — so a review round could reach the
++daemon's finding cases (`cases/`, which quote PR authors' replies: untrusted
++text) and the full-text `[feedback]` events, both of which the spec keeps out
++of a round until S9 decides how they are delivered.
++
++* **Scoped where the daemon publishes a hint.** `toolScopeAreas` (qcr-hint.ts)
++  reads the same per-session file as PATCH 8 — set on a PR session only — and
++  answers its areas; a PR session whose hint cannot be read yet FAILS CLOSED
++  to the round's areas (`DEFAULT_ROUND_AREAS`, pinned equal to the daemon's
++  `ROUND_SEARCH_AREAS`). No hint variable (the overseer, the companion):
++  unscoped, as upstream.
++* **What the tools do in scope.** `viking_search` keeps only hits inside the
++  areas and refuses a `scope` that names another area; `viking_read` reads
++  only inside them; `viking_browse` lists them, the memories root (area names
++  only) and anything outside memories, never another area. A `.`/`..` segment
++  or an encoded dot is refused outright. The system prompt says so in one
++  line, so a refusal is never a surprise.
++* **Nothing else changes.** `viking_write` is untouched (a PR session writes
++  where the conversation template tells it to; the server confines the key);
++  `viking_archive_expand` addresses sessions, not memory.
++
++Touches: `qcr-hint.ts` (the scope rules), `tools.ts` (the three read tools),
++`index.ts` (the provider, the prompt line, the banner).
++
+ ## Rebasing onto a newer upstream
+ 
+ ```sh
+@@ -362,16 +390,16 @@ git -C /tmp/ov checkout <new-tag>
+ for p in extensions/vendor/openviking-pi/patches/0*.patch; do
+   git apply --3way "$p" || echo "RESOLVE: $p"
+ done
+-# 3. Re-verify all eight patches, then:
++# 3. Re-verify all nine patches, then:
+ timeout 900 npm test && npm run build
+ ```
+ 
+ Then update `extension_commit` and `version` in `config.toml [openviking]`,
+ the base commit in `NOTICE` and in the table above, and re-run the live
+-verification below. A bump re-verifies **all eight** patches — a patch that no
++verification below. A bump re-verifies **all nine** patches — a patch that no
+ longer applies is a patch whose reason may have changed, not a patch to drop.
+ 
+-`tests/openviking-fork.test.ts` is the guard rail: it asserts the eight patches
++`tests/openviking-fork.test.ts` is the guard rail: it asserts the nine patches
+ are still present (markers, and the *absence* of what each one removed) and
+ that the pinned commit here matches `config.toml`. It cannot tell you whether
+ upstream grew a *new* compaction handler or a *new* write tool — read the
+diff --git a/extensions/vendor/openviking-pi/index.ts b/extensions/vendor/openviking-pi/index.ts
+index f18885c..f628e5b 100644
+--- a/extensions/vendor/openviking-pi/index.ts
++++ b/extensions/vendor/openviking-pi/index.ts
+@@ -11,7 +11,7 @@
+  *
+  * ── QCR FORK ────────────────────────────────────────────────────────────────
+  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
+- * extension. Eight numbered patches; every hunk carries a `[QCR PATCH n]`
++ * extension. Nine numbered patches; every hunk carries a `[QCR PATCH n]`
+  * marker so a rebase is a search, not an audit. See README.md here.
+  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
+  *             the sole owner of compaction) and takeover forced off.
+@@ -32,6 +32,10 @@
+  *             (the round's own query: the PR title plus the areas it touches)
+  *             and only inside the hint's memory areas (`experiences/`), not
+  *             with the whole round order across every scope.
++ *   PATCH 9 — the memory TOOLS of a PR session stay inside the same areas:
++ *             viking_search keeps only in-area hits, viking_read and
++ *             viking_browse refuse a memory URI outside them (finding cases
++ *             and feedback events are not a round's to read, S7).
+  * ────────────────────────────────────────────────────────────────────────────
+  */
+ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+@@ -53,6 +57,8 @@ import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
+ import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
+ // [QCR PATCH 8]
+ import { readRecallHint, RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
++// [QCR PATCH 9]
++import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
+ 
+ export default async function (pi: ExtensionAPI) {
+   // [QCR PATCH 2] Decided once, from argv, before anything else: a
+@@ -108,6 +114,10 @@ export default async function (pi: ExtensionAPI) {
+     }
+   };
+   const takeover = createTakeoverManager({ pi, client, sync, config, log: debugLog });
++  // [QCR PATCH 9] The memory TOOLS of a PR session stay inside the round's
++  // areas — re-read per call, like the recall hint. Unscoped (null) where the
++  // daemon publishes no hint: the overseer, the companion.
++  const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);
+ 
+   // Session state
+   let connected = false;
+@@ -153,7 +163,7 @@ export default async function (pi: ExtensionAPI) {
+       // recall injection, no turn sync, no commit.
+       if (leaf) {
+         if (!toolsRegistered) {
+-          registerTools(pi, client, sync, { leaf: true });
++          registerTools(pi, client, sync, { leaf: true, areas: toolAreas });
+           toolsRegistered = true;
+         }
+         started = true;
+@@ -199,7 +209,7 @@ export default async function (pi: ExtensionAPI) {
+ 
+       // Register tools (also needed for pi -c continuations).
+       if (!toolsRegistered) {
+-        registerTools(pi, client, sync, { leaf: false, namespaces });
++        registerTools(pi, client, sync, { leaf: false, namespaces, areas: toolAreas });
+         toolsRegistered = true;
+       }
+       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
+@@ -247,6 +257,9 @@ export default async function (pi: ExtensionAPI) {
+     // [QCR PATCH 4] viking_remember / viking_forget / viking_add_resource are
+     // gone; viking_write is the one write tool.
+     parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_write, viking_archive_expand.");
++    // [QCR PATCH 9] Said, not only enforced: a refused read must not surprise.
++    const scopedAreas = toolAreas();
++    if (scopedAreas) parts.push(toolScopeNote(scopedAreas));
+     // [QCR PATCH 5] Say it in the system prompt too, not only in the tool
+     // schemas: with two namespaces reachable, "which memory am I touching" is a
+     // question the model must never have to guess at.
+diff --git a/extensions/vendor/openviking-pi/qcr-hint.ts b/extensions/vendor/openviking-pi/qcr-hint.ts
+index 38e0627..5c3a38c 100644
+--- a/extensions/vendor/openviking-pi/qcr-hint.ts
++++ b/extensions/vendor/openviking-pi/qcr-hint.ts
+@@ -18,6 +18,12 @@
+ // (the overseer, the companion, a session born before its first round) it
+ // recalls exactly as before. S3's 500 ms budget is unchanged — the hint
+ // changes what is asked, never how long it may take.
++//
++// [QCR PATCH 9] (S7) The same areas bound the session's memory
++// TOOLS: in a PR session `viking_search` keeps only hits inside them and
++// `viking_read` / `viking_browse` refuse a memory URI outside them. Cases
++// (`cases/`, the daemon's finding cases — human replies quoted as data) and
++// feedback events are the learner's context, not a round's, until S9.
+ import { readFileSync } from "node:fs";
+ import { renderContextEntry, type FetchLike } from "./qcr-recall.js";
+ 
+@@ -142,3 +148,80 @@ export function scopeGuard(inner: FetchLike, areas: () => readonly string[] | nu
+     return res;
+   };
+ }
++
++// ---- [QCR PATCH 9] the memory TOOLS of a PR session --------------------------
++
++/** The areas a PR session's tools are held to when its hint cannot be read
++ * (a session born before its first round): the round's own areas — the
++ * daemon's `ROUND_SEARCH_AREAS` (src/memory/layout.ts), pinned equal by test. */
++export const DEFAULT_ROUND_AREAS: readonly string[] = ["experiences"];
++
++/**
++ * The memory areas this session's TOOLS may reach, or null for no scoping.
++ * The hint variable is set on a PR session only (src/memory/ovsession.ts); a
++ * session without it — the overseer, the companion — is unscoped, as
++ * upstream. Unlike the recall, a PR session whose hint cannot be read FAILS
++ * CLOSED to the round's areas: a recall without a hint merely asks a worse
++ * question, while a tool reaching a case is exactly what is being prevented.
++ * Total: never throws.
++ */
++export function toolScopeAreas(
++  path: string | undefined,
++  read: (p: string) => string = defaultRead,
++): readonly string[] | null {
++  if (!path || path.trim() === "") return null;
++  try {
++    const raw = JSON.parse(read(path.trim())) as { areas?: unknown } | null;
++    const areas = Array.isArray(raw?.areas)
++      ? [...new Set(raw.areas.filter((a): a is string => typeof a === "string" && AREA_RE.test(a)))]
++      : [];
++    if (areas.length > 0) return areas;
++  } catch {
++    // the round's areas, below
++  }
++  return DEFAULT_ROUND_AREAS;
++}
++
++/** The memory area a viking:// URI addresses — `experiences` for
++ * `viking://user/reviewer/memories/experiences/x.md`, "" for the memories
++ * root itself — or null for a URI outside memories. */
++export function memoryAreaOf(uri: string): string | null {
++  const i = uri.indexOf("/memories");
++  if (i < 0) return null;
++  const rest = uri.slice(i + "/memories".length);
++  if (rest !== "" && !rest.startsWith("/")) return null;
++  return rest.replace(/^\/+/, "").split(/[/?#]/)[0] ?? "";
++}
++
++/** A `.`/`..` path segment, or an encoded dot — never resolved, never let by. */
++const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)|%2e/i;
++
++/** May a scoped session READ this URI, or see it as a search hit? Only
++ * inside one of its areas. */
++export function readableInScope(uri: unknown, areas: readonly string[]): boolean {
++  if (typeof uri !== "string" || DOT_SEGMENT.test(uri)) return false;
++  const area = memoryAreaOf(uri);
++  return area !== null && area !== "" && areas.includes(area);
++}
++
++/** May a scoped session LIST (or scope a search to) this URI? Inside one of
++ * its areas, the memories root (which names the areas, nothing in them), or
++ * a URI outside memories altogether. */
++export function browsableInScope(uri: unknown, areas: readonly string[]): boolean {
++  if (typeof uri !== "string" || DOT_SEGMENT.test(uri)) return false;
++  const area = memoryAreaOf(uri);
++  return area === null || area === "" || areas.includes(area);
++}
++
++/** The sentence a refused tool call answers with. */
++export function scopeRefusal(uri: string, areas: readonly string[]): string {
++  return (
++    `${uri} is outside this review session's memory (${areas.map((a) => `${a}/`).join(", ")}). ` +
++    "A review round reads curated lessons only; finding cases and feedback events are not its to read."
++  );
++}
++
++/** One line for the system prompt of a scoped session. */
++export function toolScopeNote(areas: readonly string[]): string {
++  return `In this review session the memory tools reach ${areas.map((a) => `${a}/`).join(", ")} only.`;
++}
+diff --git a/extensions/vendor/openviking-pi/tools.ts b/extensions/vendor/openviking-pi/tools.ts
+index b84a39e..b8c50c9 100644
+--- a/extensions/vendor/openviking-pi/tools.ts
++++ b/extensions/vendor/openviking-pi/tools.ts
+@@ -8,6 +8,13 @@ import { buildBatchWriteRequest, routeWrite } from "./qcr-write.js";
+ import { failureText, isNotFound, isPreconditionConflict } from "./qcr-honest.js";
+ // [QCR PATCH 5]
+ import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
++// [QCR PATCH 9]
++import {
++  browsableInScope,
++  DEFAULT_ROUND_AREAS,
++  readableInScope,
++  scopeRefusal,
++} from "./qcr-hint.js";
+ 
+ /** [QCR PATCH 5] One memory namespace the tools can address: a name the model
+  * uses and the client holding that namespace's USER key. */
+@@ -26,6 +33,10 @@ export interface RegisterToolsOptions {
+    * single-key case, i.e. every review session — is the pre-patch behaviour:
+    * one namespace, no `namespace` parameter in any schema, unprefixed answers. */
+   namespaces?: ToolNamespace[];
++  /** [QCR PATCH 9] The memory areas the tools may reach, asked per call (a
++   * PR session: the round's areas — qcr-hint.ts `toolScopeAreas`); null or
++   * omitted = unscoped, as upstream (the overseer, the companion). */
++  areas?: () => readonly string[] | null;
+ }
+ 
+ export function registerTools(
+@@ -35,6 +46,17 @@ export function registerTools(
+   opts: RegisterToolsOptions = {},
+ ): void {
+   const leaf = opts.leaf === true;
++  // [QCR PATCH 9] Asked per call, so a hint published after the tools were
++  // registered binds the next call. A failing provider holds the tools to the
++  // round's areas rather than letting them loose.
++  const scopeAreas = (): readonly string[] | null => {
++    if (!opts.areas) return null;
++    try {
++      return opts.areas();
++    } catch {
++      return DEFAULT_ROUND_AREAS;
++    }
++  };
+ 
+   // [QCR PATCH 5] A LEAF IS SINGLE-NAMESPACE, STRUCTURALLY. PATCH 2 stops all
+   // ambient work in a leaf and PATCH 4 withholds the write tool there; a second
+@@ -98,6 +120,14 @@ export function registerTools(
+       if (!ns.client.connected) {
+         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
++      // [QCR PATCH 9] A PR session searches inside the round's areas only.
++      const areas = scopeAreas();
++      if (areas && typeof params.scope === "string" && params.scope.trim() !== "" && !browsableInScope(params.scope, areas)) {
++        return {
++          content: [{ type: "text", text: scoped(ns, `Search refused: ${scopeRefusal(params.scope, areas)}`) }],
++          details: { error: true, refused: true },
++        };
++      }
+       const res = await ns.client.find(params.query, {
+         targetUri: params.scope,
+         topK: params.limit ?? 10,
+@@ -111,7 +141,10 @@ export function registerTools(
+             : { error: true, status: res.status },
+         };
+       }
+-      const results = res.result ?? [];
++      // [QCR PATCH 9] …and keeps only the hits inside them.
++      const results = areas
++        ? (res.result ?? []).filter((r) => readableInScope(r.uri, areas))
++        : (res.result ?? []);
+       if (results.length === 0) {
+         return { content: [{ type: "text", text: scoped(ns, "No results found.") }] };
+       }
+@@ -151,6 +184,14 @@ export function registerTools(
+       if (!ns.client.connected) {
+         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
++      // [QCR PATCH 9] A PR session reads inside the round's areas only.
++      const areas = scopeAreas();
++      if (areas && !readableInScope(params.uri, areas)) {
++        return {
++          content: [{ type: "text", text: scoped(ns, `Read refused: ${scopeRefusal(String(params.uri), areas)}`) }],
++          details: { error: true, refused: true },
++        };
++      }
+       // [QCR PATCH 6] One envelope-returning read: "No content" only when the
+       // server said the path is not there (or holds nothing) — a refused key
+       // or a dead server is named as such.
+@@ -198,6 +239,13 @@ export function registerTools(
+         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+       }
+       const uri = params.uri ?? "viking://";
++      // [QCR PATCH 9] …and lists nothing inside another area.
++      const areas = scopeAreas();
++      if (areas && !browsableInScope(uri, areas)) {
++        return {
++          content: [{ type: "text", text: scoped(ns, `Browse refused: ${scopeRefusal(String(uri), areas)}`) }],
++        };
++      }
+       if (params.action === "stat") {
+         // [QCR PATCH 6] "Not found" only when it is not found.
+         const st = await ns.client.statResponse(uri);

@@ -8,6 +8,13 @@ import { buildBatchWriteRequest, routeWrite } from "./qcr-write.js";
 import { failureText, isNotFound, isPreconditionConflict } from "./qcr-honest.js";
 // [QCR PATCH 5]
 import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
+// [QCR PATCH 9]
+import {
+  browsableInScope,
+  DEFAULT_ROUND_AREAS,
+  readableInScope,
+  scopeRefusal,
+} from "./qcr-hint.js";
 
 /** [QCR PATCH 5] One memory namespace the tools can address: a name the model
  * uses and the client holding that namespace's USER key. */
@@ -26,6 +33,10 @@ export interface RegisterToolsOptions {
    * single-key case, i.e. every review session — is the pre-patch behaviour:
    * one namespace, no `namespace` parameter in any schema, unprefixed answers. */
   namespaces?: ToolNamespace[];
+  /** [QCR PATCH 9] The memory areas the tools may reach, asked per call (a
+   * PR session: the round's areas — qcr-hint.ts `toolScopeAreas`); null or
+   * omitted = unscoped, as upstream (the overseer, the companion). */
+  areas?: () => readonly string[] | null;
 }
 
 export function registerTools(
@@ -35,6 +46,17 @@ export function registerTools(
   opts: RegisterToolsOptions = {},
 ): void {
   const leaf = opts.leaf === true;
+  // [QCR PATCH 9] Asked per call, so a hint published after the tools were
+  // registered binds the next call. A failing provider holds the tools to the
+  // round's areas rather than letting them loose.
+  const scopeAreas = (): readonly string[] | null => {
+    if (!opts.areas) return null;
+    try {
+      return opts.areas();
+    } catch {
+      return DEFAULT_ROUND_AREAS;
+    }
+  };
 
   // [QCR PATCH 5] A LEAF IS SINGLE-NAMESPACE, STRUCTURALLY. PATCH 2 stops all
   // ambient work in a leaf and PATCH 4 withholds the write tool there; a second
@@ -98,6 +120,14 @@ export function registerTools(
       if (!ns.client.connected) {
         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
       }
+      // [QCR PATCH 9] A PR session searches inside the round's areas only.
+      const areas = scopeAreas();
+      if (areas && typeof params.scope === "string" && params.scope.trim() !== "" && !browsableInScope(params.scope, areas)) {
+        return {
+          content: [{ type: "text", text: scoped(ns, `Search refused: ${scopeRefusal(params.scope, areas)}`) }],
+          details: { error: true, refused: true },
+        };
+      }
       const res = await ns.client.find(params.query, {
         targetUri: params.scope,
         topK: params.limit ?? 10,
@@ -111,7 +141,10 @@ export function registerTools(
             : { error: true, status: res.status },
         };
       }
-      const results = res.result ?? [];
+      // [QCR PATCH 9] …and keeps only the hits inside them.
+      const results = areas
+        ? (res.result ?? []).filter((r) => readableInScope(r.uri, areas))
+        : (res.result ?? []);
       if (results.length === 0) {
         return { content: [{ type: "text", text: scoped(ns, "No results found.") }] };
       }
@@ -150,6 +183,14 @@ export function registerTools(
       const ns = routed.ns;
       if (!ns.client.connected) {
         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
+      }
+      // [QCR PATCH 9] A PR session reads inside the round's areas only.
+      const areas = scopeAreas();
+      if (areas && !readableInScope(params.uri, areas)) {
+        return {
+          content: [{ type: "text", text: scoped(ns, `Read refused: ${scopeRefusal(String(params.uri), areas)}`) }],
+          details: { error: true, refused: true },
+        };
       }
       // [QCR PATCH 6] One envelope-returning read: "No content" only when the
       // server said the path is not there (or holds nothing) — a refused key
@@ -198,6 +239,13 @@ export function registerTools(
         return { content: [{ type: "text", text: scoped(ns, "OpenViking server is not reachable.") }] };
       }
       const uri = params.uri ?? "viking://";
+      // [QCR PATCH 9] …and lists nothing inside another area.
+      const areas = scopeAreas();
+      if (areas && !browsableInScope(uri, areas)) {
+        return {
+          content: [{ type: "text", text: scoped(ns, `Browse refused: ${scopeRefusal(String(uri), areas)}`) }],
+        };
+      }
       if (params.action === "stat") {
         // [QCR PATCH 6] "Not found" only when it is not found.
         const st = await ns.client.statResponse(uri);

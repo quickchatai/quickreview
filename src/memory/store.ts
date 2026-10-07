@@ -131,6 +131,48 @@ export interface MemoryWriteResult {
   existed?: boolean;
 }
 
+/**
+ * One named DOCUMENT a deterministic writer keeps in memory (S7 —
+ * the daemon's finding cases). Unlike a `note`, a document is the writer's to
+ * REWRITE: it is created when the writer never wrote it (`expect: null`) and
+ * replaced only under the hash of the bytes the writer last wrote there, so
+ * an entry somebody else put at the address, or changed since, is never
+ * overwritten — it comes back as a `conflict` naming what is there.
+ */
+export interface DocumentPut {
+  /** The area it lives in (`cases`). */
+  area: string;
+  /** A plain file stem — the writer's deterministic address. */
+  name: string;
+  /** The bytes to hold (stored trimmed, with one trailing newline). */
+  text: string;
+  /** The store hash of the bytes this writer last wrote at the address, or
+   * null when it never wrote there. */
+  expect: string | null;
+}
+
+/** How one `DocumentPut` ended. */
+export interface DocumentPutResult {
+  area: string;
+  name: string;
+  /**
+   * `written` — the address now holds exactly these bytes (created, replaced,
+   * or already holding them); `conflict` — it holds something the writer did
+   * not expect (see `found`), and nothing was overwritten; `failed` — not
+   * written, for a reason a retry may clear (a refusal, a dead server, an
+   * outcome that could not be confirmed).
+   */
+  state: "written" | "conflict" | "failed";
+  /** `written`: the hash of the bytes now stored — the next `expect`. */
+  hash?: string;
+  /** `conflict`: the exact bytes found at the address, or null when it holds
+   * nothing (a replace whose document is gone). */
+  found?: string | null;
+  /** Where the document lives, as the engine addresses it. */
+  uri?: string;
+  message: string;
+}
+
 export interface MemorySearchOptions {
   /** Restrict to entries carrying this tag (leading `#` optional). */
   tag?: string | null;
@@ -172,6 +214,15 @@ export interface MemoryStore extends MemorySource {
    * result carries) — so a caller that FOUND an entry by reading can record
    * the same address one it WROTE would have. */
   uriOf?(id: string): string;
+  /**
+   * OPTIONAL (S7): create or replace many named documents at once —
+   * ONE write per area (the engine's batch root), every document under its
+   * own precondition (`DocumentPut.expect`). Resolves with one result per
+   * document, in the order given; never throws. A store without it cannot
+   * hold documents, and their writer says so rather than falling back to
+   * another route.
+   */
+  putDocuments?(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]>;
 }
 
 /** Normalize a tag for comparison: leading `#`s dropped, lowercased. */

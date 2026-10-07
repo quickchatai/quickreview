@@ -94,7 +94,7 @@
 // health (which lifts a deploy drain) never waits on it.
 import { parseFindingMarker } from "./findingkey.js";
 import type { ReviewCommentFull } from "./github.js";
-import type { PrCommentRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
+import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
 export type FindingFate =
   "fixed" | "refuted_conceded" | "upheld_after_reply" | "open_at_close" | "unknown";
@@ -136,6 +136,19 @@ export const OUTCOME_RULES_VERSION = 1;
 export const OUTCOME_SWEEP_MAX_PRS = 25;
 /** How long after a close a PR is still captured — the close is evidence. */
 export const OUTCOME_CLOSED_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Does the bounded pass (`OutcomeCapture.sweep`) still visit this PR? Open
+ * PRs, and PRs closed within `OUTCOME_CLOSED_WINDOW_MS`; a PR with no
+ * `pr_state` row never. The ONE spelling of the window: the case writer
+ * (src/cases.ts) catches up the PRs outside it itself.
+ */
+export function inCaptureWindow(
+  p: Pick<PrStateRow, "state" | "updated_at"> | null | undefined,
+  nowMs: number,
+): boolean {
+  if (!p) return false;
+  return p.state !== "closed" || nowMs - (ms(p.updated_at) ?? 0) <= OUTCOME_CLOSED_WINDOW_MS;
+}
 /** A PR whose inputs have not moved is still re-captured this often: a git
  * answer that was unknown (a commit not yet fetched) may since be known. */
 export const OUTCOME_RECAPTURE_MS = 6 * 60 * 60 * 1000;
@@ -1254,10 +1267,7 @@ export class OutcomeCapture {
       );
       const candidates = this.store
         .allPrs()
-        .filter(
-          (p) =>
-            p.state !== "closed" || nowMs - (ms(p.updated_at) ?? 0) <= OUTCOME_CLOSED_WINDOW_MS,
-        )
+        .filter((p) => inCaptureWindow(p, nowMs))
         .sort((a, b) => {
           const ma = marks.get(a.number)?.captured_at ?? "";
           const mb = marks.get(b.number)?.captured_at ?? "";

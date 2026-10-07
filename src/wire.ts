@@ -20,6 +20,7 @@ import {
 } from "./config.js";
 import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
+import { CaseWriter } from "./cases.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -82,6 +83,7 @@ import {
   MemoryHealthMonitor,
   disabledMemoryStatus,
   pendingMemoryStatus,
+  type CaseWritesStatus,
   type MemoryStatus,
 } from "./memory/health.js";
 import { credentialProbe } from "./openviking/probe.js";
@@ -637,6 +639,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // still owes while memory health reads healthy, and wakes
   // `memory_write_backlog` when an owed signal ages past the threshold.
   let feedbackPump: FeedbackMemoryPump | null = null;
+  // the finding-case writer — one document per posted finding a
+  // human answered or whose fate is known, into reviewer memory's `cases/`,
+  // through the same store; backfills the last 60 days. Writes only while
+  // memory health reads healthy.
+  let caseWriter: CaseWriter | null = null;
   // the OpenViking server, supervised as a child of this process.
   // Started FIRST in onStart so it warms up while the agents build — but never
   // awaited: there is deliberately NO boot ordering, and rounds run
@@ -783,6 +790,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         : memoryUnmonitored !== null
           ? disabledMemoryStatus(memoryUnmonitored)
           : pendingMemoryStatus();
+      // the finding-case ledger, when a case writer runs (the
+      // block is a fresh object each call). Unread is UNKNOWN (null), never
+      // "nothing owed".
+      if (caseWriter) {
+        let cases: CaseWritesStatus | null;
+        try {
+          cases = caseWriter.status();
+        } catch (err) {
+          log("memory status: could not read the finding-case ledger", err);
+          cases = null;
+        }
+        base.case_writes = cases;
+      }
       try {
         const b = daemon.store.feedbackMemoryBacklog();
         return {
@@ -1129,6 +1149,28 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           rewakeMs: Math.max(1, cfg.memory.rewake_h) * 3_600_000,
         });
         feedbackPump.start();
+
+        // Finding cases (S7): the learner's context. Rendered from
+        // state.db (round_findings, the outcome capture's tables, the human
+        // replies, the feedback ledger) and written through the SAME store's
+        // `putDocuments` — one batch-write under `cases/` a tick, every case
+        // under its own precondition — only while memory reads healthy. Its
+        // backfill reads a PR's inline comments through the adapter (a read:
+        // never the gate) and runs the outcome capture for PRs nothing
+        // captured. Never in a round's search scope (that is S9).
+        caseWriter = new CaseWriter({
+          store: d.store,
+          outcomes: d.outcomes,
+          memory,
+          repo: cfg.github.repo,
+          botLogin: cfg.github.bot_login,
+          healthy: () => health.currentState() === "healthy",
+          read: adapter,
+          log,
+          intervalMs: Math.max(10, cfg.memory.cases_interval_s) * 1000,
+          backfillDays: Math.max(0, cfg.memory.cases_backfill_days),
+        });
+        caseWriter.start();
       }
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
@@ -1430,6 +1472,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     async onStop(reason = "shutdown") {
       memoryHealth?.stop();
       feedbackPump?.stop();
+      caseWriter?.stop();
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();

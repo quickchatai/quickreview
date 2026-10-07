@@ -194,6 +194,31 @@ export interface MemoryStatus {
    * state.db by the heartbeat; null when that read failed (UNKNOWN, never
    * "nothing owed"); absent on a daemon that predates it. */
   feedback_writes?: FeedbackWritesStatus | null;
+  /** The finding-case ledger (S7, src/cases.ts) — what the daemon
+   * owes `cases/`, has written, and why not. null when the ledger could not
+   * be read (UNKNOWN, never "nothing owed"); absent when no case writer runs
+   * (memory switched off) and on a daemon that predates it. */
+  case_writes?: CaseWritesStatus | null;
+}
+
+/** The finding-case ledger as the status block carries it (S7). A
+ * case is derived data — state.db keeps everything it says — so nothing here
+ * wakes anyone; it is what `qcr status --json` and the companion can read. */
+export interface CaseWritesStatus {
+  /** Cases owed to memory (new, changed, or a withdrawal). */
+  owed: number;
+  written: number;
+  /** Cases taken back (a `#retired` stub at their address). */
+  withdrawn: number;
+  /** Cases whose address holds something this writer did not write —
+   * never overwritten. */
+  blocked: number;
+  /** Cases memory kept refusing; re-queued daily. */
+  failed: number;
+  /** Since when the longest-owed case has been owed; null when none is. */
+  oldest_owed_at: string | null;
+  /** The 60-day backfill: PRs covered, PRs left; null when it is off. */
+  backfill: { days: number; done: number; remaining: number } | null;
 }
 
 /** The [feedback] ledger's memory backlog, as the status block carries it. */

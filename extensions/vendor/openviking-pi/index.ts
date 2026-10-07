@@ -11,7 +11,7 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Eight numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Nine numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
@@ -32,6 +32,10 @@
  *             (the round's own query: the PR title plus the areas it touches)
  *             and only inside the hint's memory areas (`experiences/`), not
  *             with the whole round order across every scope.
+ *   PATCH 9 — the memory TOOLS of a PR session stay inside the same areas:
+ *             viking_search keeps only in-area hits, viking_read and
+ *             viking_browse refuse a memory URI outside them (finding cases
+ *             and feedback events are not a round's to read, S7).
  * ────────────────────────────────────────────────────────────────────────────
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -53,6 +57,8 @@ import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
 import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
 // [QCR PATCH 8]
 import { readRecallHint, RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
+// [QCR PATCH 9]
+import { toolScopeAreas, toolScopeNote } from "./qcr-hint.js";
 
 export default async function (pi: ExtensionAPI) {
   // [QCR PATCH 2] Decided once, from argv, before anything else: a
@@ -108,6 +114,10 @@ export default async function (pi: ExtensionAPI) {
     }
   };
   const takeover = createTakeoverManager({ pi, client, sync, config, log: debugLog });
+  // [QCR PATCH 9] The memory TOOLS of a PR session stay inside the round's
+  // areas — re-read per call, like the recall hint. Unscoped (null) where the
+  // daemon publishes no hint: the overseer, the companion.
+  const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);
 
   // Session state
   let connected = false;
@@ -153,7 +163,7 @@ export default async function (pi: ExtensionAPI) {
       // recall injection, no turn sync, no commit.
       if (leaf) {
         if (!toolsRegistered) {
-          registerTools(pi, client, sync, { leaf: true });
+          registerTools(pi, client, sync, { leaf: true, areas: toolAreas });
           toolsRegistered = true;
         }
         started = true;
@@ -199,7 +209,7 @@ export default async function (pi: ExtensionAPI) {
 
       // Register tools (also needed for pi -c continuations).
       if (!toolsRegistered) {
-        registerTools(pi, client, sync, { leaf: false, namespaces });
+        registerTools(pi, client, sync, { leaf: false, namespaces, areas: toolAreas });
         toolsRegistered = true;
       }
       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
@@ -247,6 +257,9 @@ export default async function (pi: ExtensionAPI) {
     // [QCR PATCH 4] viking_remember / viking_forget / viking_add_resource are
     // gone; viking_write is the one write tool.
     parts.push("OpenViking tools: viking_search, viking_read, viking_browse, viking_write, viking_archive_expand.");
+    // [QCR PATCH 9] Said, not only enforced: a refused read must not surprise.
+    const scopedAreas = toolAreas();
+    if (scopedAreas) parts.push(toolScopeNote(scopedAreas));
     // [QCR PATCH 5] Say it in the system prompt too, not only in the tool
     // schemas: with two namespaces reachable, "which memory am I touching" is a
     // question the model must never have to guess at.

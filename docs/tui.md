@@ -75,6 +75,11 @@ overlay and setup are about the whole repo.
 
 ### memory
 
+The timeline lists every area of the store but `cases/`: the daemon's
+finding cases (S7) are derived from state.db, number in the
+hundreds, and are rewritten by the daemon alone, so the store's sweep never
+lists them. Search them through the companion or OpenViking Studio (`W`).
+
 | key | does |
 | --- | --- |
 | `[` / `]` | jump to the older / newer day |

@@ -194,6 +194,10 @@ export interface Daemon {
   retryThreadDecision(commentId: number): { ok: boolean; reason?: string; file?: string };
   readonly store: StateStore;
   readonly cfg: Config;
+  /** The outcome capture (S6) the reconcile pass drives — handed to
+   * the finding-case writer (S7, wire.ts), which reads its tables and
+   * runs its capture for the PRs its backfill covers. */
+  readonly outcomes: OutcomeCapture;
 }
 
 function readWebhookSecret(cfg: Config): string {
@@ -698,6 +702,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   return {
     store,
     cfg,
+    outcomes,
     reconcile,
     pump,
     retryDueReviewFailures,

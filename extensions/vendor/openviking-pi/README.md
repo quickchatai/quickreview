@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need eight
+upstream ships it as an `examples/` directory, not a package, and we need nine
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the eight patches was tried as configuration first and does not
+Every one of the nine patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Eight numbered behaviour patches, applied in order over the vendored upstream
+Nine numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all nine, in order, to a
+`git apply`-able diffs — verified by applying all ten, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -350,6 +350,34 @@ a per-session file (`QCR_OV_RECALL_HINT_FILE`, `src/memory/ovsession.ts`
 Touches: `qcr-hint.ts` (new), `recall.ts` (`queueSearch`'s scope, the guard
 in the chain), `index.ts` (the hint, the banner).
 
+### 0009 — a PR session's memory tools stay in the round's areas (S7)
+
+PATCH 8 kept the per-prompt RECALL inside the round's areas, but a PR session
+also holds the explicit tools, and `viking_search` sent whatever `scope` the
+model chose straight to the server — so a review round could reach the
+daemon's finding cases (`cases/`, which quote PR authors' replies: untrusted
+text) and the full-text `[feedback]` events, both of which the spec keeps out
+of a round until S9 decides how they are delivered.
+
+* **Scoped where the daemon publishes a hint.** `toolScopeAreas` (qcr-hint.ts)
+  reads the same per-session file as PATCH 8 — set on a PR session only — and
+  answers its areas; a PR session whose hint cannot be read yet FAILS CLOSED
+  to the round's areas (`DEFAULT_ROUND_AREAS`, pinned equal to the daemon's
+  `ROUND_SEARCH_AREAS`). No hint variable (the overseer, the companion):
+  unscoped, as upstream.
+* **What the tools do in scope.** `viking_search` keeps only hits inside the
+  areas and refuses a `scope` that names another area; `viking_read` reads
+  only inside them; `viking_browse` lists them, the memories root (area names
+  only) and anything outside memories, never another area. A `.`/`..` segment
+  or an encoded dot is refused outright. The system prompt says so in one
+  line, so a refusal is never a surprise.
+* **Nothing else changes.** `viking_write` is untouched (a PR session writes
+  where the conversation template tells it to; the server confines the key);
+  `viking_archive_expand` addresses sessions, not memory.
+
+Touches: `qcr-hint.ts` (the scope rules), `tools.ts` (the three read tools),
+`index.ts` (the provider, the prompt line, the banner).
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -362,16 +390,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all eight patches, then:
+# 3. Re-verify all nine patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all eight** patches — a patch that no
+verification below. A bump re-verifies **all nine** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the eight patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the nine patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the

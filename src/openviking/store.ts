@@ -66,6 +66,7 @@ import {
   FROM_TAG,
   PINNED_AREA,
   PREFERENCES_AREA,
+  SWEEP_EXCLUDED_AREAS,
   areaForNewEntry,
   areaOfId,
   isPinnedId,
@@ -78,6 +79,8 @@ import {
 } from "../memory/layout.js";
 import {
   matchesQuery,
+  type DocumentPut,
+  type DocumentPutResult,
   type MemoryEntry,
   type MemoryOp,
   type MemorySearchOptions,
@@ -723,7 +726,9 @@ export class OpenVikingStore implements MemoryStore {
    * The memory tree, three levels deep: `<root>/<area>/<file>`,
    * `<root>/<area>/<sub>/<file>` (the §1 `preferences/pinned/`,
    * S5 — it was two levels before the layout was built) plus any file sitting
-   * directly in the root. A bounded depth is the whole convention — a
+   * directly in the root — every area but the ones `SWEEP_EXCLUDED_AREAS`
+   * names (`cases/`, the daemon's derived documents: S7, written by
+   * `putDocuments`, read through the server's search alone). A bounded depth is the whole convention — a
    * recursive walk against a store this system fully owns would only ever be
    * finding files it did not write.
    *
@@ -751,7 +756,10 @@ export class OpenVikingStore implements MemoryStore {
     const dirs: string[] = [];
     for (const row of top.result) {
       if (row.isDir) {
-        if (!row.name.startsWith(".")) dirs.push(row.name);
+        // `cases/` is the daemon's derived documents, not curated memory
+        // (S7, `SWEEP_EXCLUDED_AREAS`): never listed here.
+        if (!row.name.startsWith(".") && !SWEEP_EXCLUDED_AREAS.includes(row.name))
+          dirs.push(row.name);
       } else if (isTextFile(row.name)) {
         out.push({ id: row.name, size: row.size, modTime: row.modTime });
       }
@@ -1168,7 +1176,9 @@ export class OpenVikingStore implements MemoryStore {
       };
     }
     if (outcome === "unknown") {
-      this.log(`openviking: a move of ${from} to ${to} has an unknown outcome — both left as found`);
+      this.log(
+        `openviking: a move of ${from} to ${to} has an unknown outcome — both left as found`,
+      );
       return {
         ok: false,
         message:
@@ -1417,7 +1427,8 @@ export class OpenVikingStore implements MemoryStore {
         await pool(unsure, this.concurrency, async (it) => {
           const why = out.ok ? `the server did not write ${it.id}` : out.message;
           const outcome = await this.writeOutcome(this.uriOf(it.id), wrote(it), it.expect);
-          if (outcome === "landed") done(it, ` (its answer was lost — ${why}; a re-read confirmed it)`);
+          if (outcome === "landed")
+            done(it, ` (its answer was lost — ${why}; a re-read confirmed it)`);
           else if (outcome === "absent") {
             fail(it, `${why} — nothing written`);
             if (it.to !== undefined) unplace.push(it);
@@ -1495,6 +1506,171 @@ export class OpenVikingStore implements MemoryStore {
     };
   }
 
+  /**
+   * Many named DOCUMENTS, each created or replaced under its own
+   * precondition (S7 — the daemon's finding cases; the seam's
+   * `putDocuments`). ONE batch-write per area directory (chunked at the
+   * server's 256), so writing twenty cases is one write, never twenty.
+   *
+   * A batch is all-or-nothing at its preconditions (the server checks every
+   * one before the first write), so one document somebody else changed would
+   * hold back the rest. When a batch is refused on a precondition, each of
+   * its documents is read back: one already holding its bytes is `written`;
+   * one still holding what its writer expected (absent, for a create) goes
+   * into ONE more batch; anything else is a `conflict` carrying the bytes
+   * found — never overwritten. A batch whose answer proves nothing (a
+   * timeout, a 5xx) is read back too: a document holding its bytes is
+   * `written`, any other `failed`, for the writer's next attempt. Never a
+   * delete; total — every outcome is a result, never a throw.
+   */
+  async putDocuments(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> {
+    interface Item {
+      i: number;
+      area: string;
+      name: string;
+      id: string;
+      uri: string;
+      content: string;
+      expect: string | null;
+    }
+    const results = new Map<number, DocumentPutResult>();
+    const items: Item[] = [];
+    const seen = new Set<string>();
+    docs.forEach((doc, i) => {
+      const id = `${doc.area}/${doc.name}.md`;
+      const content = renderEntryBody(doc.text);
+      const refuse = (message: string): void => {
+        results.set(i, { area: doc.area, name: doc.name, state: "failed", message });
+      };
+      if (!validArea(doc.area) || !validEntryId(id))
+        refuse(`refused: '${id}' is not a memory address this store can spell`);
+      else if (doc.expect !== null && !/^sha256:[0-9a-f]{64}$/.test(doc.expect))
+        refuse("refused: no usable concurrency token for the replace");
+      else if (content === "") refuse("refused: an empty document");
+      else if (seen.has(id)) refuse("refused: one call names this document twice");
+      else {
+        seen.add(id);
+        items.push({
+          i,
+          area: doc.area,
+          name: doc.name,
+          id,
+          uri: this.uriOf(id),
+          content,
+          expect: doc.expect,
+        });
+      }
+    });
+    const settle = (it: Item, r: Omit<DocumentPutResult, "area" | "name">): void => {
+      results.set(it.i, { area: it.area, name: it.name, ...r });
+    };
+    const written = (it: Item, how: string): void =>
+      settle(it, {
+        state: "written",
+        hash: sha256Prefixed(it.content),
+        uri: it.uri,
+        message: `${how} ${it.id}`,
+      });
+    /** One batch; returns the documents a precondition refusal held back
+     * that still hold what their writer expected (retried once). */
+    const send = async (root: string, group: Item[], retried: boolean): Promise<Item[]> => {
+      const out = await this.batchWithArea(
+        root,
+        group.map((it) => ({
+          uri: it.uri,
+          content: it.content,
+          precondition:
+            it.expect === null
+              ? { kind: "create_if_absent" as const }
+              : { kind: "replace_if_hash" as const, base_hash: it.expect },
+        })),
+      );
+      if (out.ok) {
+        for (const it of group) {
+          if (out.landed.has(it.uri)) written(it, "wrote");
+          else
+            settle(it, {
+              state: "failed",
+              message: `memory write failed: the server accepted the batch without writing ${it.id}`,
+            });
+        }
+        return [];
+      }
+      if (out.refused && !out.conflict) {
+        // Busy, auth, a bad request: provably nothing written, and nothing
+        // a read-back would change.
+        for (const it of group) settle(it, { state: "failed", message: out.message });
+        return [];
+      }
+      // A precondition refusal, or an answer that proves nothing: read back.
+      const again: Item[] = [];
+      await pool(group, this.concurrency, async (it) => {
+        const now = await this.client.readContent(it.uri);
+        if (now.ok && now.result === it.content) {
+          written(it, "already holding its bytes:");
+          return;
+        }
+        if (!now.ok && now.code !== "NOT_FOUND") {
+          settle(it, {
+            state: "failed",
+            message: `${out.message} — and ${it.id} could not be read back (${now.message}); the next attempt retries`,
+          });
+          return;
+        }
+        if (!out.conflict) {
+          settle(it, { state: "failed", message: `${out.message} — ${it.id} was not written` });
+          return;
+        }
+        const held = now.ok ? now.result : null;
+        const asExpected =
+          it.expect === null ? held === null : held !== null && sha256Prefixed(held) === it.expect;
+        if (asExpected && !retried) again.push(it);
+        else if (asExpected)
+          settle(it, {
+            state: "failed",
+            message: `refused: ${it.id} changed while it was being written — the next attempt retries`,
+          });
+        else
+          settle(it, {
+            state: "conflict",
+            found: held,
+            ...(held === null ? {} : { hash: sha256Prefixed(held) }),
+            uri: it.uri,
+            message:
+              held === null
+                ? `refused: ${it.id} is not there any more — nothing written`
+                : `refused: ${it.id} holds other bytes than its writer last wrote — never overwritten`,
+          });
+      });
+      return again;
+    };
+    for (const [root, group] of groupBy(items, (it) => parentOf(it.uri))) {
+      for (const chunk of chunks(group, BATCH_MAX_OPERATIONS)) {
+        const again = await send(root, chunk, false);
+        if (again.length > 0) await send(root, again, true);
+      }
+    }
+    // Bookkeeping. An area the sweep never lists (`cases/`) has nothing in
+    // this store's caches, and its retirements are not on the sweep's list.
+    for (const it of items) {
+      if (results.get(it.i)?.state !== "written") continue;
+      if (!SWEEP_EXCLUDED_AREAS.includes(it.area)) {
+        this.forget(it.id);
+        if (parseHashTags(it.content).includes(RETIRED_TAG)) this.noteRetired(it.uri);
+      }
+      await this.mirrorTags(it.uri, it.content);
+    }
+    return docs.map(
+      (doc, i) =>
+        results.get(i) ?? {
+          area: doc.area,
+          name: doc.name,
+          state: "failed",
+          message: "not attempted",
+        },
+    );
+  }
+
   /** One batch-write under `root`, making the directory once if it is
    * missing. `landed` = the URIs the server wrote or already held byte for
    * byte. `refused` = PROVEN that nothing in the batch was written: a
@@ -1508,7 +1684,15 @@ export class OpenVikingStore implements MemoryStore {
       content: string;
       precondition: { kind: "create_if_absent" } | { kind: "replace_if_hash"; base_hash: string };
     }>,
-  ): Promise<{ ok: boolean; refused: boolean; message: string; landed: Set<string> }> {
+  ): Promise<{
+    ok: boolean;
+    refused: boolean;
+    /** The refusal was a precondition's (some target did not hold what its
+     * precondition expected) — nothing in the batch was written. */
+    conflict: boolean;
+    message: string;
+    landed: Set<string>;
+  }> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const res = await this.client.batchWrite({ root_uri: root, operations, wait: false });
       if (res.ok) {
@@ -1518,6 +1702,7 @@ export class OpenVikingStore implements MemoryStore {
         return {
           ok: true,
           refused: false,
+          conflict: false,
           message: `${landed.size}/${operations.length} written under ${root}`,
           landed,
         };
@@ -1531,6 +1716,7 @@ export class OpenVikingStore implements MemoryStore {
       return {
         ok: false,
         refused: provenUnwritten(res),
+        conflict: res.conflict,
         message: res.conflict
           ? `refused under ${root}: an entry changed since the plan read it, or a destination already holds other bytes — nothing in this batch was written; plan again and re-run`
           : `memory write failed under ${root}: ${res.message}`,
@@ -1540,6 +1726,7 @@ export class OpenVikingStore implements MemoryStore {
     return {
       ok: false,
       refused: true,
+      conflict: false,
       message: `memory write failed: could not create ${root}`,
       landed: new Set(),
     };
@@ -1589,7 +1776,11 @@ export class OpenVikingStore implements MemoryStore {
  * at all (status 0: a timeout, a lost connection) and a 5xx prove nothing:
  * the batch may have committed after its answer was lost (S5 — the
  * S2 failure class, "a write that committed but timed out"). */
-export function provenUnwritten(res: { status: number; conflict: boolean; busy: boolean }): boolean {
+export function provenUnwritten(res: {
+  status: number;
+  conflict: boolean;
+  busy: boolean;
+}): boolean {
   return res.conflict || res.busy || (res.status >= 400 && res.status < 500 && res.status !== 408);
 }
 

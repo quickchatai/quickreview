@@ -4,6 +4,7 @@
 // carries over the tab tests; the inbox half carries over the
 // presentation tests.
 import { describe, expect, it, vi } from "vitest";
+import { memoryEntryFor } from "../src/feedback.js";
 import type { MemoryEntry } from "../src/memory/store.js";
 import { decodeKey } from "../src/tui/keys.js";
 import {
@@ -116,6 +117,32 @@ describe("the signal, as a card", () => {
     });
     expect(feedbackInbox([raw, adjudication, actedOn])).toEqual([]);
     expect(feedbackInbox([raw, adjudication, actedOn], true)).toEqual([raw]);
+  });
+
+  it("RAW FEEDBACK is the comment's FULL text when the entry carries it — not the 280-character cut (S7)", async () => {
+    const body = `[feedback] First line of the complaint.\nSECONDLINE says ${"why ".repeat(90)}and ends at TAILWORD.`;
+    const full = memoryEntry(
+      memoryEntryFor(
+        {
+          kind: "feedback_comment",
+          pr: 5372,
+          comment_id: 3000000202,
+          in_reply_to_id: 3000000101,
+          author: "pmercier",
+          body,
+          scope: "review_comment",
+        },
+        "2026-08-25",
+      ),
+    );
+    const card = feedbackPresentation(full, [full])!;
+    expect(card.raw).toContain("First line of the complaint.\nSECONDLINE says");
+    expect(card.raw).toContain("and ends at TAILWORD.");
+    const rig = await loaded({ mem: memoryOf([full]) });
+    const screen = screenOf(rig, 140, 60);
+    expect(screen).toContain("SECONDLINE");
+    expect(screen).toContain("TAILWORD");
+    rig.app.quit();
   });
 
   it("the list line carries the day, the status mark and the generated title", () => {

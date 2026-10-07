@@ -49,6 +49,8 @@ Changed by the quickreviewd maintainers, 2026-08-20:
   8. A review session's per-prompt recall searches with the query and the
      memory areas the daemon publishes for its PR, instead of its whole
      prompt across every scope (2026-10-07).
+  9. A review session's memory search, read and browse tools stay inside the
+     same memory areas (2026-10-07).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

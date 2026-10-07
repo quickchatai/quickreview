@@ -1,4 +1,4 @@
-// The vendored OpenViking pi extension — provenance + the eight
+// The vendored OpenViking pi extension — provenance + the nine
 // patches. Two kinds of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
@@ -78,11 +78,18 @@ import { parseHashTags } from "../src/memory/eventtags.js";
 import { OVClient } from "../extensions/vendor/openviking-pi/client.js";
 import {
   DEFAULT_AREA_QUOTA,
+  DEFAULT_ROUND_AREAS,
   MAX_HINT_QUERY_CHARS,
   RECALL_HINT_FILE_ENV,
+  browsableInScope,
   inAreas,
+  memoryAreaOf,
   readRecallHint,
+  readableInScope,
   scopeGuard,
+  scopeRefusal,
+  toolScopeAreas,
+  toolScopeNote,
 } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 import { ROUND_SEARCH_AREAS } from "../src/memory/layout.js";
 
@@ -140,7 +147,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(9); // 0000 scaffolding + eight numbered
+    expect(upstream.patches.length).toBe(10); // 0000 scaffolding + nine numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -261,8 +268,11 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
     // turn_end (sync + threshold commit), session_shutdown (commit), and the
     // start() path that would open a session.
     expect(src.match(/if \(leaf\)/g)?.length ?? 0).toBeGreaterThanOrEqual(5);
-    expect(src).toContain("registerTools(pi, client, sync, { leaf: true })");
-    expect(src).toContain("registerTools(pi, client, sync, { leaf: false, namespaces })");
+    // (PATCH 9 adds the area scope to both, nothing else.)
+    expect(src).toContain("registerTools(pi, client, sync, { leaf: true, areas: toolAreas })");
+    expect(src).toContain(
+      "registerTools(pi, client, sync, { leaf: false, namespaces, areas: toolAreas })",
+    );
   });
 
   it("registers no write tool in a leaf", () => {
@@ -619,7 +629,7 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
       expect(src).toContain("leaf ? [] : resolveExtraNamespaces(config)");
       expect(src).toContain("new OVClient({ ...config, apiKey: ns.apiKey, user: ns.user })");
       // The leaf path registers tools with no namespaces at all.
-      expect(src).toContain("registerTools(pi, client, sync, { leaf: true })");
+      expect(src).toContain("registerTools(pi, client, sync, { leaf: true, areas: toolAreas })");
     });
 
     it("discards namespaces handed to a leaf, in tools.ts too", () => {
@@ -1677,8 +1687,8 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
     expect(code("recall.ts")).toContain("scopeGuard(");
   });
 
-  it("ships the patch, recorded LAST in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0008-pr-derived-recall.patch");
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches).toContain("0008-pr-derived-recall.patch");
     const patch = read(join("patches", "0008-pr-derived-recall.patch"));
     expect(patch).toContain("QCR PATCH 8");
     for (const f of ["qcr-hint.ts", "recall.ts", "index.ts", "NOTICE", "README.md"]) {
@@ -1686,5 +1696,133 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
     }
     expect(read("NOTICE")).toContain("8. A review session's per-prompt recall searches");
     expect(read("README.md")).toContain("### 0008 — PR-derived recall");
+  });
+});
+
+// ---- PATCH 9 (S7) ----------------------------------------------------
+
+describe("PATCH 9 — a PR session's memory tools stay inside the round's areas", () => {
+  const ROOT = "viking://user/reviewer/memories";
+  const areas = ["experiences"];
+  const files = new Map<string, string>();
+  const reader = (p: string) => {
+    const v = files.get(p);
+    if (v === undefined) throw new Error(`ENOENT ${p}`);
+    return v;
+  };
+
+  it("scopes a PR session (the hint variable is set) and leaves every other session alone", () => {
+    // No hint variable: the overseer, the companion — upstream's tools.
+    expect(toolScopeAreas(undefined, reader)).toBeNull();
+    expect(toolScopeAreas("  ", reader)).toBeNull();
+    // A PR session: the hint's areas.
+    files.set("/h/pr-1.json", JSON.stringify({ query: "q", areas: ["experiences", "x-y"] }));
+    expect(toolScopeAreas("/h/pr-1.json", reader)).toEqual(["experiences", "x-y"]);
+    // A PR session whose hint is not there yet, garbled, or names no usable
+    // area FAILS CLOSED to the round's areas — never to "everything".
+    expect(toolScopeAreas("/h/absent.json", reader)).toEqual(DEFAULT_ROUND_AREAS);
+    files.set("/h/garbled.json", "{ nope");
+    expect(toolScopeAreas("/h/garbled.json", reader)).toEqual(DEFAULT_ROUND_AREAS);
+    files.set("/h/bad.json", JSON.stringify({ query: "q", areas: ["../cases", 7] }));
+    expect(toolScopeAreas("/h/bad.json", reader)).toEqual(DEFAULT_ROUND_AREAS);
+    // The fallback is the daemon's own round scope: one list, two readers.
+    expect([...DEFAULT_ROUND_AREAS]).toEqual([...ROUND_SEARCH_AREAS]);
+  });
+
+  it("reads and search hits stay inside the areas — never a case, an event or a preference", () => {
+    expect(memoryAreaOf(`${ROOT}/experiences/a.md`)).toBe("experiences");
+    expect(memoryAreaOf(ROOT)).toBe("");
+    expect(memoryAreaOf(`${ROOT}/`)).toBe("");
+    expect(memoryAreaOf("viking://resources/x")).toBeNull();
+    expect(memoryAreaOf("viking://user/reviewer/memories-old/x")).toBeNull();
+    expect(readableInScope(`${ROOT}/experiences/a.md`, areas)).toBe(true);
+    expect(readableInScope(`${ROOT}/experiences`, areas)).toBe(true);
+    for (const uri of [
+      `${ROOT}/cases/case-1-r1-0000000000000000.md`,
+      `${ROOT}/events/20261007-fb-feedback_comment-1-9.md`,
+      `${ROOT}/preferences/pinned/p.md`,
+      ROOT,
+      `${ROOT}/experiences/../cases/c.md`,
+      `${ROOT}/experiences/%2e%2e/cases/c.md`,
+      "viking://resources/x",
+      "viking://session/pr-1",
+      42,
+    ])
+      expect(readableInScope(uri, areas)).toBe(false);
+  });
+
+  it("browsing lists the areas' names and the round's own area — never inside another", () => {
+    expect(browsableInScope("viking://", areas)).toBe(true);
+    expect(browsableInScope(ROOT, areas)).toBe(true);
+    expect(browsableInScope(`${ROOT}/experiences/`, areas)).toBe(true);
+    expect(browsableInScope(`${ROOT}/cases`, areas)).toBe(false);
+    expect(browsableInScope(`${ROOT}/cases/`, areas)).toBe(false);
+    expect(browsableInScope(`${ROOT}/events/x.md`, areas)).toBe(false);
+    expect(browsableInScope(`${ROOT}/experiences/../cases`, areas)).toBe(false);
+    expect(scopeRefusal(`${ROOT}/cases/c.md`, areas)).toContain(
+      "is outside this review session's memory (experiences/)",
+    );
+    expect(toolScopeNote(areas)).toBe(
+      "In this review session the memory tools reach experiences/ only.",
+    );
+  });
+
+  it("tools.ts applies the scope in all three read tools, asked per call", () => {
+    const tools = code("tools.ts");
+    expect(tools).toContain("areas?: () => readonly string[] | null;");
+    // search: a foreign scope is refused, and the hits are filtered.
+    expect(tools).toMatch(
+      /if \(areas && typeof params\.scope === "string" && params\.scope\.trim\(\) !== "" && !browsableInScope\(params\.scope, areas\)\)/,
+    );
+    expect(tools).toMatch(/\.filter\(\(r\) => readableInScope\(r\.uri, areas\)\)/);
+    // read and browse refuse before the server is asked.
+    const read = tools.slice(
+      tools.indexOf('name: "viking_read"'),
+      tools.indexOf('name: "viking_browse"'),
+    );
+    expect(read.indexOf("!readableInScope(params.uri, areas)")).toBeGreaterThan(-1);
+    expect(read.indexOf("!readableInScope(params.uri, areas)")).toBeLessThan(
+      read.indexOf("readLevel("),
+    );
+    const browse = tools.slice(tools.indexOf('name: "viking_browse"'));
+    expect(browse.indexOf("!browsableInScope(uri, areas)")).toBeGreaterThan(-1);
+    expect(browse.indexOf("!browsableInScope(uri, areas)")).toBeLessThan(
+      browse.indexOf("statResponse("),
+    );
+    // Each tool asks for the scope itself — three calls, no cached copy.
+    expect(tools.match(/const areas = scopeAreas\(\);/g)).toHaveLength(3);
+  });
+
+  it("index.ts hands both registrations the provider, and says the scope in the prompt", () => {
+    const index = code("index.ts");
+    expect(index).toContain(
+      "const toolAreas = () => toolScopeAreas(process.env[RECALL_HINT_FILE_ENV]);",
+    );
+    expect(index).toContain("registerTools(pi, client, sync, { leaf: true, areas: toolAreas });");
+    expect(index).toContain(
+      "registerTools(pi, client, sync, { leaf: false, namespaces, areas: toolAreas });",
+    );
+    expect(index.match(/registerTools\(/g)).toHaveLength(2);
+    expect(index).toContain("if (scopedAreas) parts.push(toolScopeNote(scopedAreas));");
+  });
+
+  it("the daemon sets the hint variable on PR sessions only", () => {
+    const sessions = readFileSync(join(import.meta.dirname, "..", "src", "sessions.ts"), "utf8");
+    expect(sessions).toMatch(
+      /\.\.\.\(pr === undefined\s*\? \{\}\s*: \{\s*ovSessionId: ovSessionIdForPr\(pr\),\s*recallHintFile: this\.ovRecallHintPath\(session\),\s*\}\)/,
+    );
+  });
+
+  it("ships the patch, recorded LAST in the series, with its markers", () => {
+    expect(upstream.patches.at(-1)).toBe("0009-pr-session-tools-in-round-areas.patch");
+    const patch = read(join("patches", "0009-pr-session-tools-in-round-areas.patch"));
+    expect(patch).toContain("QCR PATCH 9");
+    for (const f of ["qcr-hint.ts", "tools.ts", "index.ts", "NOTICE", "README.md"]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("9. A review session's memory search, read and browse tools");
+    expect(read("README.md")).toContain(
+      "### 0009 — a PR session's memory tools stay in the round's areas",
+    );
   });
 });

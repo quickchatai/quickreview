@@ -23,6 +23,7 @@
 // and `y` runs it. Any other key cancels, the same grammar the quit prompt
 // uses. The register itself (what counts as one, how reverts are read back)
 // lives in `changelog-store.ts`.
+import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
 import { parseEventTags } from "../memory/eventtags.js";
 import type { App } from "./app.js";
 import type {
@@ -103,6 +104,10 @@ export function feedbackInbox(entries: MemoryEntry[], showArchived = false): Mem
 }
 
 function feedbackRaw(text: string): string {
+  // The comment's full text, when the entry carries it (S7) — what
+  // the human wrote, not the sentence's 280-character cut.
+  const full = readFencedData(text, FEEDBACK_FULL_TEXT_LABEL);
+  if (full !== null && full.trim() !== "") return full.trim();
   const quoted = /\):\s*"([\s\S]*)"\s+—\s+/.exec(text);
   if (quoted?.[1]) return quoted[1].trim();
   return text.replace(/^(?:#[^\s]+\s+)*(?:[a-z][a-z0-9_-]*=[^\s]+\s+)*/, "").trim();

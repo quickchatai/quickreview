@@ -38,6 +38,7 @@
     "0005-second-memory-namespace.patch",
     "0006-writes-that-stick-and-honest-errors.patch",
     "0007-bounded-recall-no-commit.patch",
-    "0008-pr-derived-recall.patch"
+    "0008-pr-derived-recall.patch",
+    "0009-pr-session-tools-in-round-areas.patch"
   ]
 }
