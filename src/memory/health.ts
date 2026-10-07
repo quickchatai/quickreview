@@ -211,7 +211,7 @@ export interface MemoryStatus {
   curation?: CurationStatus | null;
   /** The lesson shadow ledger (S9a, src/lessonshadow.ts): the
    * `[memory] delivery` switch, the operator's kill switch, and the last
-   * seven days of would-demote marks joined with what humans did — the
+   * seven days of shadow marks joined with what humans did — the
    * headline the owner reads before switching delivery on. null when the
    * daemon could not read its ledger (UNKNOWN); absent on a daemon that
    * predates it. */

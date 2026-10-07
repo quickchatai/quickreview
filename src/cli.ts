@@ -359,10 +359,14 @@ export async function cmdLessons(rest: string[], json: boolean): Promise<number>
 
 /**
  * `qcr lessons shadow-report [--days N]` (S9a): the lesson shadow
- * ledger joined with what humans did — per lesson and per lens, the findings
- * a delivered dont-raise lesson would have demoted that humans then FIXED
- * (harm), refuted or set aside (help), or not yet; and the look-for lessons
- * whose class later showed a human-raised miss. state.db only.
+ * ledger joined with what humans did — in total, per lesson and per lens, the
+ * findings a delivered dont-raise lesson would have touched that humans then
+ * FIXED (harm), refuted or set aside (help), or not yet, each split by match
+ * tier (R9: `class`, the lesson's class matched too — the would-demote tier,
+ * what the validator's license reaches; `lens`, lens and path alone —
+ * evidence only); and the look-for lessons whose class later showed a
+ * human-raised miss. state.db only (opening it migrates a pre-R9 ledger
+ * once).
  */
 async function cmdShadowReport(days: number, json: boolean): Promise<number> {
   const cfg = loadConfig();

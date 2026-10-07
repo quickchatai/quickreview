@@ -25,7 +25,7 @@
 // lives in `changelog-store.ts`.
 import { FEEDBACK_FULL_TEXT_LABEL, readFencedData } from "../memory/datafence.js";
 import { parseEventTags } from "../memory/eventtags.js";
-import { lessonHeadline } from "../memory/shadowstatus.js";
+import { lessonHeadline, lessonTierLine } from "../memory/shadowstatus.js";
 import type { StatusSnapshot } from "../state.js";
 import type { App } from "./app.js";
 import type {
@@ -596,7 +596,7 @@ export function renderFeedbackTab(
   const lessons = lessonsHeadline(snapshot);
   row([
     { text: sectionTitle(lessons.title) },
-    { text: "qcr lessons shadow-report has it per lesson and per lens", dim: true },
+    { text: "qcr lessons shadow-report has it per lesson, per lens and per tier", dim: true },
   ]);
   for (const l of lessons.lines) row([{ text: truncate(l, rightW - 2) }]);
   row([{ text: "" }]);
@@ -745,7 +745,18 @@ export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
           // the selection and its ledger.
           `LESSONS (${s.delivering ? "on" : s.delivery === "on" ? "on — nothing delivered" : "shadow"}, ${s.window_days}d)`;
   const line = lessonHeadline(s);
-  return { title, lines: [s.lessons_off ? `${WARN}${STRONG}${line}${RESET}` : line] };
+  // the marked findings by match tier — class the would-demote
+  // one, lens evidence only — on a line of its own (the headline already
+  // fills the pane); UNKNOWN from a daemon that predates R9, never an empty
+  // split.
+  const tiers = lessonTierLine(s);
+  return {
+    title,
+    lines: [
+      s.lessons_off ? `${WARN}${STRONG}${line}${RESET}` : line,
+      ...(tiers === null ? [] : [tiers]),
+    ],
+  };
 }
 
 /** Install the feedback surface over the shared learning store and the

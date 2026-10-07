@@ -40,6 +40,7 @@ import {
 import {
   bucketOf,
   lessonDeliveryStatus,
+  lessonLabel,
   markRound,
   matchShadow,
   renderShadowReport,
@@ -1154,7 +1155,9 @@ function selections(): RoleSelection[] {
       agent: "a",
       lessons: [
         sl(L1, "dont-raise", "baseline.scope", ["pass-baseline"], ["docs/**"]),
-        sl(L2, "dont-raise", null, ["pass-baseline"], []),
+        // No class, no paths=, two lenses: neither tier can check it (R9) —
+        // tests/lesson-shadow-tiers.test.ts has the lens-tier cases.
+        sl(L2, "dont-raise", null, ["pass-baseline", "pass-security"], []),
         sl(L3, "look-for", "missed.backend", ["pass-baseline"], []),
       ],
     },
@@ -1193,7 +1196,7 @@ function finding(
 }
 
 describe("matchShadow — lens, class and path, deterministically", () => {
-  it("marks exactly the posted findings every precondition holds for, with why and where", () => {
+  it("marks exactly the posted findings the lens and path preconditions hold for, with the tier, why and where", () => {
     const rows = [
       finding("f1", "pass-baseline", "scope", "docs/a.md"),
       finding("f3", "pass-baseline", "scope", "backend/x.py"),
@@ -1211,28 +1214,45 @@ describe("matchShadow — lens, class and path, deterministically", () => {
       disposition: f.disposition,
     }));
     const marks = matchShadow(selections(), rows);
-    expect(marks.map((m) => `${m.finding_key}→${m.lesson_uri.slice(EXP.length + 1)}`)).toEqual([
-      "f1→20261001T000000-dr-docs.md",
-      "f5→20261001T000000-dr-security.md",
+    // f3 (backend/, outside docs/**), f4 (killed) and f9 (pass-ui) are never
+    // marked; f10's class differs, so it is marked on the LENS tier (R9).
+    expect(
+      marks.map((m) => `${m.finding_key}→${m.lesson_uri.slice(EXP.length + 1)}:${m.match}`),
+    ).toEqual([
+      "f1→20261001T000000-dr-docs.md:class",
+      "f10→20261001T000000-dr-docs.md:lens",
+      "f5→20261001T000000-dr-security.md:class",
     ]);
     expect(marks[0]).toMatchObject({
       finding_class: "baseline.scope",
       lesson_class: "baseline.scope",
+      match: "class",
       via: ["row:0", "validator"],
     });
     expect(marks[0]!.why).toContain("path docs/a.md matches docs/**");
+    expect(marks[0]!.why).toContain("class tier: baseline.scope ~ baseline.scope");
     expect(marks[1]).toMatchObject({
+      finding_class: "baseline.correctness",
+      lesson_class: "baseline.scope",
+      match: "lens",
+    });
+    expect(marks[1]!.why).toContain("lens tier: class baseline.correctness differs from baseline.scope");
+    expect(marks[2]).toMatchObject({
       finding_class: "security.scope-creep",
       lesson_class: "security",
+      match: "class",
       via: ["validator"],
     });
     // The same input in another order gives the same marks.
     expect(matchShadow([...selections()].reverse(), [...rows].reverse())).toEqual(marks);
   });
 
-  it("a legacy dont-raise lesson with no class marks nothing (its class cannot be checked)", () => {
+  it("a legacy dont-raise lesson with no class, no paths and two lenses marks nothing (neither tier can check it)", () => {
     const only = [
-      { ...selections()[0]!, lessons: [sl(L2, "dont-raise", null, ["pass-baseline"], [])] },
+      {
+        ...selections()[0]!,
+        lessons: [sl(L2, "dont-raise", null, ["pass-baseline", "pass-security"], [])],
+      },
     ];
     expect(
       matchShadow(only, [
@@ -1268,6 +1288,7 @@ describe("matchShadow — lens, class and path, deterministically", () => {
       },
     ]);
     expect(marks.map((m) => m.finding_key)).toEqual(["f"]);
+    expect(marks[0]!.match).toBe("class");
     expect(marks[0]!.why).toContain("the lesson names pass-validate");
     expect(marks[0]!.via).toEqual(["validator"]);
   });
@@ -1376,7 +1397,7 @@ describe("the shadow report over a fixture joined with fates", () => {
     ]);
     expect(ledger.marks(100, 1)).toHaveLength(7);
     expect(eventsOf(store, "lesson_shadow_marked")).toEqual([
-      { round_no: 1, marks: 7, findings: 6 },
+      { round_no: 1, marks: 7, findings: 6, by_tier: { class: 7, lens: 0 } },
     ]);
     // Re-marking replaces, never doubles.
     markRound(ledger, store, 100, 1);
@@ -1407,6 +1428,10 @@ describe("the shadow report over a fixture joined with fates", () => {
       unknown: 0,
       exempt_p0: 1, // f6 is P0 — fixed, but R2 never demotes a P0
     });
+    // Every lesson here that marks does so on its class: the lens tier is empty.
+    expect(r.marks_by_tier).toEqual({ class: 7, lens: 0 });
+    expect(r.findings_by_tier.class).toEqual(r.findings);
+    expect(r.findings_by_tier.lens.total).toBe(0);
   });
 
   it("per lesson, per lens, the look-for misses, the unmeasurable — and the window", () => {
@@ -1447,11 +1472,12 @@ describe("the shadow report over a fixture joined with fates", () => {
     ]);
     expect(r.unmeasurable_dont_raise).toEqual([L2]);
     const text = renderShadowReport(r);
-    expect(text).toContain("would-demote: 7 mark(s) on 6 posted finding(s)");
+    expect(text).toContain("marked: 7 mark(s) on 6 posted finding(s)");
     expect(text).toContain("harm 1 · help 3 (refuted 1, set aside 2)");
     expect(text).toContain("experiences/20261001T000000-dr-docs.md");
     expect(text).toContain("misses since 2026-10-05: 2 (on PRs it was selected for: 1)");
-    expect(text).toContain("Dont-raise lessons with no class");
+    expect(text).toContain("Dont-raise lessons neither tier can check");
+    expect(text).toContain(lessonLabel(L2));
     // Outside the window, nothing.
     const later = shadowReport(ledger, {
       days: 1,
@@ -1521,6 +1547,10 @@ describe("the shadow report over a fixture joined with fates", () => {
     expect(r.per_lens.find((l) => l.lens === "pass-baseline")!.marks).toBe(6);
     const s = lessonDeliveryStatus(ledger, "shadow", { now: () => clock });
     expect(s).toMatchObject({ rounds: 2, marks: 7, harm: 1, help: 3, unknown: 1 });
+    expect(s.tiers).toEqual({
+      class: { marks: 7, harm: 1, help: 3, unknown: 1 },
+      lens: { marks: 0, harm: 0, help: 0, unknown: 0 },
+    });
   });
 
   it("missing outcome tables read UNKNOWN, never harm or help", () => {
@@ -1573,7 +1603,9 @@ describe("the shadow report over a fixture joined with fates", () => {
       unknown: 0,
     });
     expect(lessonDeliveryPhrase(s)).toBe(
-      "; lessons shadow 7d: 1 rounds, 6 would-demote (harm 1, help 3, unknown 0)",
+      "; lessons shadow 7d: 1 rounds, 6 marked (harm 1, help 3, unknown 0)" +
+        " — by tier: class 6 would-demote (harm 1, help 3, unknown 0)" +
+        " · lens 0 evidence only (harm 0, help 0, unknown 0)",
     );
     // `on` delivers — unless there is nothing to select from.
     const on = lessonDeliveryStatus(ledger, "on", { now: () => clock });
@@ -1621,6 +1653,10 @@ describe("the [7] feedback tab's LESSONS line", () => {
     harm: 1,
     help: 2,
     unknown: 1,
+    tiers: {
+      class: { marks: 1, harm: 0, help: 1, unknown: 0 },
+      lens: { marks: 3, harm: 1, help: 1, unknown: 1 },
+    },
     as_of: "2026-10-07T10:00:00.000Z",
   };
   const snap = (memory: unknown) =>
@@ -1630,7 +1666,8 @@ describe("the [7] feedback tab's LESSONS line", () => {
 
   it("paints the headline; never a zero for what it cannot read", () => {
     expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: S })))).toBe(
-      "LESSONS (shadow, 7d)\nlessons shadow 7d: 12 rounds, 1 prefetch timeouts, 4 would-demote (harm 1, help 2, unknown 1)",
+      "LESSONS (shadow, 7d)\nlessons shadow 7d: 12 rounds, 1 prefetch timeouts, 4 marked (harm 1, help 2, unknown 1)" +
+        "\nby tier: class 1 would-demote (harm 0, help 1, unknown 0) · lens 3 evidence only (harm 1, help 1, unknown 1)",
     );
     const unknowns = [
       text(lessonsHeadline(undefined)),
@@ -1644,7 +1681,7 @@ describe("the [7] feedback tab's LESSONS line", () => {
     expect(unknowns[3]).toContain("lessons UNKNOWN");
     for (const u of unknowns) {
       expect(u).toContain("LESSONS (—)");
-      expect(u).not.toMatch(/\b0 would-demote|harm 0/);
+      expect(u).not.toMatch(/\b0 (would-demote|marked)|harm 0/);
     }
     expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, lessons_off: true } })))).toContain(
       "LESSONS OFF (operator kill switch)",
@@ -1698,7 +1735,7 @@ describe("the [7] feedback tab's LESSONS line", () => {
     const paint = () => stripAnsi(tab.screen(app, 200, 70).lines.join("\n"));
     expect(paint()).toContain("LESSONS (—)");
     view["snapshot"] = snap({ ...pendingMemoryStatus(), lessons: S });
-    expect(paint()).toContain("4 would-demote (harm 1, help 2, unknown 1)");
+    expect(paint()).toContain("4 marked (harm 1, help 2, unknown 1)");
   });
 });
 

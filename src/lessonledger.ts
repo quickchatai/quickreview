@@ -19,9 +19,17 @@
 //   find timed out. The contract's "round, row, lesson URIs, cases, cuts,
 //   prefetch ms, timeouts" — the round-level facts live on `lesson_rounds`.
 // - `lesson_shadow_marks` — per posted finding, every delivered dont-raise
-//   lesson whose lens, class and path precondition the finding meets, and
-//   why (src/lessonshadow.ts `matchShadow`). Re-recording a round's findings
-//   replaces its marks.
+//   lesson whose lens and path precondition the finding meets, the TIER it
+//   matched on (`match`: `class` — the lesson's class matched the finding's
+//   too, what the validator's `lesson-shape` license needs; `lens` — lens and
+//   path alone, the owner's ruling R9), and why (src/lessonshadow.ts
+//   `matchShadow`). Re-recording a round's findings replaces its marks. A
+//   ledger from before R9 (no `match` column, `lesson_class` NOT NULL) is
+//   migrated ONCE (`migrateMarkTiers`): every existing row kept as `class` —
+//   the only tier that matcher had — and each recorded round's R9 marks
+//   added where it holds none for that (finding, lesson) — its lens-tier
+//   marks — so a report window never reads the lens tier as zero for rounds
+//   it was never measured on.
 // - `lesson_switch` / `lesson_suppressions` — THE OPERATOR'S KILL SWITCH.
 //   `lessons-off` / `lessons-on` and `suppress-lesson <uri>` /
 //   `unsuppress-lesson <uri>` arrive ONLY through the root-sealed
@@ -33,6 +41,7 @@
 // Nothing here writes memory or GitHub, and nothing here is on a round's
 // critical path: the selector records after the round was dispatched.
 import type { MemoryDelivery } from "./config.js";
+import { matchShadow } from "./lessonshadow.js";
 import type {
   RoleSelection,
   SelectedCase,
@@ -40,6 +49,36 @@ import type {
   SelectionCut,
 } from "./memory/selection.js";
 import type { StateStore } from "./state.js";
+
+// The marks table, shared by the schema and the R9 migration that rebuilds a
+// pre-R9 one (SQLite cannot drop a NOT NULL in place).
+const MARKS_TABLE_COLUMNS_SQL = `(
+  pr INTEGER NOT NULL,
+  round_no INTEGER NOT NULL,
+  finding_key TEXT NOT NULL,
+  lesson_uri TEXT NOT NULL,
+  round_id INTEGER,
+  -- the finding's canonical lens ids (JSON); its class (\`<lens>.<kind>\`) —
+  -- the one that matched on the class tier, the one under the lens it shared
+  -- with the lesson on the lens tier
+  lens TEXT NOT NULL,
+  finding_class TEXT NOT NULL,
+  -- the lesson's class; NULL for a lesson with none (it can match only on the
+  -- lens tier)
+  lesson_class TEXT,
+  -- R9: which tier matched — class (lens, class and path) | lens
+  -- (lens and path; the class differs or the lesson names none)
+  match TEXT NOT NULL DEFAULT 'class' CHECK (match IN ('class', 'lens')),
+  severity TEXT,
+  path TEXT,
+  -- where the lesson was selected: ["row:3", "validator"]
+  via TEXT NOT NULL,
+  why TEXT NOT NULL,
+  marked_at TEXT NOT NULL,
+  PRIMARY KEY (pr, round_no, finding_key, lesson_uri)
+)`;
+const MARKS_INDEX_SQL =
+  "CREATE INDEX IF NOT EXISTS lesson_shadow_marks_at ON lesson_shadow_marks (marked_at);";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS lesson_rounds (
@@ -87,25 +126,8 @@ CREATE TABLE IF NOT EXISTS lesson_selections (
   PRIMARY KEY (round_id, role, row)
 );
 CREATE INDEX IF NOT EXISTS lesson_selections_pr ON lesson_selections (pr, round_no);
-CREATE TABLE IF NOT EXISTS lesson_shadow_marks (
-  pr INTEGER NOT NULL,
-  round_no INTEGER NOT NULL,
-  finding_key TEXT NOT NULL,
-  lesson_uri TEXT NOT NULL,
-  round_id INTEGER,
-  -- the finding's canonical lens ids (JSON) and the class it matched as
-  lens TEXT NOT NULL,
-  finding_class TEXT NOT NULL,
-  lesson_class TEXT NOT NULL,
-  severity TEXT,
-  path TEXT,
-  -- where the lesson was selected: ["row:3", "validator"]
-  via TEXT NOT NULL,
-  why TEXT NOT NULL,
-  marked_at TEXT NOT NULL,
-  PRIMARY KEY (pr, round_no, finding_key, lesson_uri)
-);
-CREATE INDEX IF NOT EXISTS lesson_shadow_marks_at ON lesson_shadow_marks (marked_at);
+CREATE TABLE IF NOT EXISTS lesson_shadow_marks ${MARKS_TABLE_COLUMNS_SQL};
+${MARKS_INDEX_SQL}
 CREATE TABLE IF NOT EXISTS lesson_switch (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   lessons_off INTEGER NOT NULL DEFAULT 0,
@@ -159,6 +181,15 @@ export interface StoredSelection {
   recorded_at: string;
 }
 
+/**
+ * Which tier a shadow mark matched on (R9). `class` is the STRONGER:
+ * the lesson's lens, class and path preconditions all held — exactly what
+ * the validator's `lesson-shape` license (R2, the `lesson-validate` addendum)
+ * needs. `lens`: the lens and path preconditions held and the class did not
+ * (or the lesson names none) — lens-level matching, evidence only.
+ */
+export type ShadowMatchTier = "class" | "lens";
+
 export interface ShadowMarkRow {
   pr: number;
   round_no: number;
@@ -167,7 +198,8 @@ export interface ShadowMarkRow {
   round_id: number | null;
   lens: string;
   finding_class: string;
-  lesson_class: string;
+  lesson_class: string | null;
+  match: ShadowMatchTier;
   severity: string | null;
   path: string | null;
   via: string;
@@ -181,7 +213,9 @@ export interface ShadowMark {
   lesson_uri: string;
   lens: string[];
   finding_class: string;
-  lesson_class: string;
+  /** Null for a lesson with no class — it matches on the lens tier only. */
+  lesson_class: string | null;
+  match: ShadowMatchTier;
   severity: string | null;
   path: string | null;
   via: string[];
@@ -219,10 +253,137 @@ export class LessonLedger {
     this.store = store;
     this.now = now;
     this.store.db.exec(SCHEMA);
+    this.migrateMarkTiers();
   }
 
   private ts(): string {
     return this.now().toISOString();
+  }
+
+  /** The marks table has the R9 shape (a `match` column). */
+  private marksHaveTiers(): boolean {
+    return (
+      this.store.db.prepare("PRAGMA table_info(lesson_shadow_marks)").all() as Array<{
+        name: string;
+      }>
+    ).some((c) => c.name === "match");
+  }
+
+  /**
+   * R9, once per database: a marks table from before lens-level
+   * matching has no `match` column and a NOT NULL `lesson_class` (a lens-tier
+   * mark of a lesson with no class has none to store). Rebuild it in place —
+   * every existing row copied as `class`, the only tier the strict matcher
+   * had — and then ADD each recorded round's lens-tier marks beside them
+   * (`backfillLensTier`), so the report and the headline never read the lens
+   * tier of a pre-R9 round as zero. Existing rows are never touched: the
+   * backfill inserts only (finding, lesson) pairs the table does not hold. One
+   * IMMEDIATE transaction, the shape checked again inside it — the daemon and
+   * `qcr lessons shadow-report` both open this database, and the second one
+   * in finds the work done.
+   */
+  private migrateMarkTiers(): void {
+    if (this.marksHaveTiers()) return;
+    const db = this.store.db;
+    let kept = 0;
+    let added: { rounds: number; marks: Record<ShadowMatchTier, number> } = {
+      rounds: 0,
+      marks: { class: 0, lens: 0 },
+    };
+    let migrated = false;
+    db.transaction(() => {
+      if (this.marksHaveTiers()) return;
+      db.exec(`
+        DROP INDEX IF EXISTS lesson_shadow_marks_at;
+        ALTER TABLE lesson_shadow_marks RENAME TO lesson_shadow_marks_before_tiers;
+        CREATE TABLE lesson_shadow_marks ${MARKS_TABLE_COLUMNS_SQL};
+        INSERT INTO lesson_shadow_marks
+          (pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
+           match, severity, path, via, why, marked_at)
+        SELECT pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
+           'class', severity, path, via, why, marked_at
+          FROM lesson_shadow_marks_before_tiers;
+        DROP TABLE lesson_shadow_marks_before_tiers;
+        ${MARKS_INDEX_SQL}
+      `);
+      kept = (db.prepare("SELECT COUNT(*) AS n FROM lesson_shadow_marks").get() as { n: number }).n;
+      added = this.backfillLensTier();
+      migrated = true;
+    }).immediate();
+    if (migrated)
+      this.store.logEvent("lesson_shadow_tiers_migrated", null, {
+        kept_as_class: kept,
+        rounds_backfilled: added.rounds,
+        marks_added: added.marks,
+      });
+  }
+
+  /**
+   * The marks every recorded round has under R9 — INSERTED where the round
+   * holds no mark for that (finding, lesson), never replacing one: in
+   * practice its lens-tier marks, since the strict matcher already wrote its
+   * class-tier ones (a round it never marked gets both). Each round is
+   * matched the way `markRound` matches it (its newest recorded selection,
+   * its findings record; a `lessons_off` round has nothing to match), and a
+   * mark is stamped with the round's own marking time — its earliest
+   * existing mark, else when its findings record landed — so it falls in the
+   * same report window as the round's other marks. A round with a mark to
+   * add has posted findings, so the second is always there: it is read off
+   * the very rows the marks were matched against.
+   */
+  private backfillLensTier(): { rounds: number; marks: Record<ShadowMatchTier, number> } {
+    const db = this.store.db;
+    const pairs = db
+      .prepare("SELECT DISTINCT pr, round_no FROM lesson_rounds ORDER BY pr, round_no")
+      .all() as Array<{ pr: number; round_no: number }>;
+    const ins = db.prepare(
+      `INSERT OR IGNORE INTO lesson_shadow_marks
+         (pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
+          match, severity, path, via, why, marked_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const firstMark = db.prepare(
+      "SELECT MIN(marked_at) AS at FROM lesson_shadow_marks WHERE pr = ? AND round_no = ?",
+    );
+    let rounds = 0;
+    const marks: Record<ShadowMatchTier, number> = { class: 0, lens: 0 };
+    for (const { pr, round_no } of pairs) {
+      const round = this.roundFor(pr, round_no);
+      if (!round || round.state === "lessons_off") continue;
+      const findings = this.store.findingsForRound(pr, round_no);
+      const computed = matchShadow(this.selections(round.round_id), findings);
+      if (computed.length === 0) continue;
+      // A mark comes from a posted finding, so `findings` is not empty here:
+      // when the round's findings record landed is the latest of its rows.
+      const findingsAt = findings.reduce(
+        (at, f) => (f.recorded_at > at ? f.recorded_at : at),
+        findings[0]!.recorded_at,
+      );
+      const at = (firstMark.get(pr, round_no) as { at: string | null }).at ?? findingsAt;
+      let added = 0;
+      for (const m of computed) {
+        const n = ins.run(
+          pr,
+          round_no,
+          m.finding_key,
+          m.lesson_uri,
+          round.round_id,
+          JSON.stringify(m.lens),
+          m.finding_class,
+          m.lesson_class,
+          m.match,
+          m.severity,
+          m.path,
+          JSON.stringify(m.via),
+          m.why,
+          at,
+        ).changes;
+        marks[m.match] += n;
+        added += n;
+      }
+      if (added > 0) rounds += 1;
+    }
+    return { rounds, marks };
   }
 
   // ---- the kill switch ---------------------------------------------------------
@@ -451,8 +612,8 @@ export class LessonLedger {
       const ins = this.store.db.prepare(
         `INSERT OR REPLACE INTO lesson_shadow_marks
            (pr, round_no, finding_key, lesson_uri, round_id, lens, finding_class, lesson_class,
-            severity, path, via, why, marked_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            match, severity, path, via, why, marked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const m of marks)
         ins.run(
@@ -464,6 +625,7 @@ export class LessonLedger {
           JSON.stringify(m.lens),
           m.finding_class,
           m.lesson_class,
+          m.match,
           m.severity,
           m.path,
           JSON.stringify(m.via),

@@ -133,12 +133,17 @@ deploy time or the log could not be read.
 Under the loop, a LESSONS line: the lesson shadow ledger's 7-day headline
 from status.json `memory.lessons` (S9a) — the `[memory] delivery`
 switch, the operator's kill switch, and the posted findings a selected
-dont-raise lesson would have demoted, split into what humans then fixed
-(harm), refuted or set aside (help) and still unknown. It is the evidence to
-read before switching delivery on; `qcr lessons shadow-report` has it per
-lesson and per lens. Honest-unknown: no status yet, a daemon that reports no
-memory or no lesson block, and a ledger the daemon could not read each say
-so — never a zero.
+dont-raise lesson marked, split into what humans then fixed (harm), refuted
+or set aside (help) and still unknown — and, on a second line, the same
+split by match tier (R9): `class` (the lesson's class matched the
+finding's too — the would-demote tier, what the validator's license
+reaches) and `lens` (lens and path alone — evidence only), each finding on
+its strongest. It is the evidence to read before switching
+delivery on; `qcr lessons shadow-report` has it per lesson, per lens and per
+tier. Honest-unknown: no status yet, a daemon that reports no memory or no
+lesson block, and a ledger the daemon could not read each say so — never a
+zero; a daemon that predates R9 reports no tiers, and the second line says
+"by tier: UNKNOWN".
 
 | key | does |
 | --- | --- |

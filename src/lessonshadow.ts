@@ -7,8 +7,10 @@
 // DEMOTED (`lesson-shape`; P0 always survives, a P1 on solid evidence too).
 // That authority is not switched on until the owner has read the evidence
 // this module produces in shadow: for every lesson, the findings it would
-// have demoted that humans then FIXED (harm — a real finding hidden), that
-// humans refuted or set aside (help), and the ones still unknown.
+// have touched that humans then FIXED (harm — a real finding hidden), that
+// humans refuted or set aside (help), and the ones still unknown — on the
+// CLASS tier (below) the ones it would have demoted, on the LENS tier
+// evidence the license does not reach.
 //
 // THE MATCHER is deterministic and runs on what state.db already holds — the
 // round's recorded selection (src/lessonledger.ts) and its findings record
@@ -17,19 +19,29 @@
 // recorded after its round's findings (it never is in practice: the
 // selection runs at dispatch). A posted finding is MARKED by a dont-raise
 // lesson selected for the round (for any discovery row or the validator)
-// when all three preconditions hold:
+// at LENS LEVEL (the owner's ruling R9, 2026-10-07: "Lens level" over "Keep
+// strict") — the lens and path preconditions are enough:
 //   lens  — the finding's canonical lens ids share one with the lesson's
 //           `lens=` (or the lesson names `pass-validate`, which judges every
-//           finding);
-//   class — the finding's class (`<lens>.<kind>`, the learner's own
-//           `findingClass`) equals the lesson's `class=`, or one is a
-//           dot-prefix of the other (`baseline` covers `baseline.authz`) —
-//           the learner's coverage rule;
+//           finding, or names no lens — no precondition);
 //   path  — one of the lesson's `paths=` globs matches the finding's path
-//           (no `paths=`, no precondition).
-// A dont-raise lesson with no class (the legacy prose shapes) cannot be
-// matched: its class precondition cannot be checked, so the report counts it
-// as UNMEASURABLE rather than guessing it onto findings by lens alone.
+//           (no `paths=`, no precondition);
+// and the mark records the TIER it matched on:
+//   class — the class held too: the finding's class (`<lens>.<kind>`, the
+//           learner's own `findingClass`) equals the lesson's `class=`, or
+//           one is a dot-prefix of the other (`baseline` covers
+//           `baseline.authz`) — the learner's coverage rule. The STRONGER
+//           tier, and the only one the validator's `lesson-shape` license
+//           (R2, the `lesson-validate` addendum, `on` only) reaches: R9
+//           widens the evidence, not the authority;
+//   lens  — the class differs, or the lesson names none (the legacy prose
+//           shapes). Only for a lesson that says WHERE it applies: one
+//           naming `paths=`, or, with no `paths=`, exactly one discovery
+//           lens (`lensAttributable`). A lesson with no `paths=` and no lens,
+//           several, or only `pass-validate` would touch every finding of
+//           every lens it covers — too broad to attribute — so it marks on
+//           its class alone, and with no class either it is UNMEASURABLE.
+// A finding two lessons touch on different tiers counts on the class tier.
 //
 // THE REPORT (`qcr lessons shadow-report [--days N]`) joins the marks with
 // S6's `finding_outcomes` (src/outcomes.ts) and its `review_outcomes`:
@@ -44,17 +56,24 @@
 // A finding is counted ONCE however many rounds posted it: marks on the
 // postings of one `carried_to` chain (S6) collapse onto its root, which
 // carries the chain's fate.
-// …per lesson and per lens, plus the look-for lessons whose class later
-// showed a human-raised miss (the learner's `recall` candidates — never the
-// reviewer's own recheck reversals).
+// …in total and per tier (a finding on its strongest tier, so the two add up
+// to the total), per lesson and per lens, plus the look-for lessons whose
+// class later showed a human-raised miss (the learner's `recall` candidates —
+// never the reviewer's own recheck reversals).
 //
 // Nothing here writes memory or GitHub, and nothing here is on a round's path.
 import type { MemoryDelivery } from "./config.js";
 import { globMatcher } from "./glob.js";
 import { findingClass, lensIdsOf } from "./learner/miner.js";
-import type { LessonLedger, ShadowMark, ShadowMarkRow, StoredSelection } from "./lessonledger.js";
+import type {
+  LessonLedger,
+  ShadowMark,
+  ShadowMarkRow,
+  ShadowMatchTier,
+  StoredSelection,
+} from "./lessonledger.js";
 import { VALIDATOR_LENS, type RoleSelection, type SelectedLesson } from "./memory/selection.js";
-import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
+import type { LessonDeliveryStatus, LessonTierCounts } from "./memory/shadowstatus.js";
 import type { RoundFindingRow, StateStore } from "./state.js";
 
 /** The slice of a recorded finding the matcher reads. */
@@ -66,6 +85,24 @@ export type MatchFinding = Pick<
 /** `a` and `b` name the same class, or one refines the other. */
 export function classesRelated(a: string, b: string): boolean {
   return a === b || a.startsWith(`${b}.`) || b.startsWith(`${a}.`);
+}
+
+/**
+ * Whether a dont-raise lesson can mark on the LENS tier (R9): it must
+ * say where it applies — `paths=` globs, or, with none, exactly one discovery
+ * lens. `pass-validate` alone narrows nothing (the validator judges every
+ * lens's finding), and neither does naming no lens or several: such a lesson
+ * with no `paths=` would touch every finding of every lens it covers — too
+ * broad to attribute — so it marks on its class alone.
+ */
+export function lensAttributable(lesson: Pick<SelectedLesson, "lens" | "paths">): boolean {
+  if (lesson.paths.length > 0) return true;
+  return lesson.lens.length === 1 && lesson.lens[0] !== VALIDATOR_LENS;
+}
+
+/** The stronger of two tiers: `class` outranks `lens`. */
+export function strongerTier(a: ShadowMatchTier, b: ShadowMatchTier): ShadowMatchTier {
+  return a === "class" || b === "class" ? "class" : "lens";
 }
 
 function safeMatcher(globs: readonly string[]): (p: string) => boolean {
@@ -97,8 +134,8 @@ function deliveredDontRaise(
 
 /**
  * The marks of one round: every POSTED finding a delivered dont-raise lesson
- * would have touched, and why. Pure and deterministic (sorted by finding,
- * then lesson).
+ * would have touched — on its lens and path (R9) — with the tier it matched
+ * on and why. Pure and deterministic (sorted by finding, then lesson).
  */
 export function matchShadow(
   selections: ReadonlyArray<Pick<RoleSelection | StoredSelection, "role" | "row" | "lessons">>,
@@ -118,16 +155,23 @@ export function matchShadow(
         ? lensIds.map((id) => findingClass([id], f.kind))
         : [findingClass([], f.kind)];
     for (const [uri, { lesson, via }] of lessons) {
-      if (lesson.class === null) continue;
       const lensShared = lesson.lens.filter((l) => lensIds.includes(l));
       const lensOk =
         lesson.lens.length === 0 || lensShared.length > 0 || lesson.lens.includes(VALIDATOR_LENS);
       if (!lensOk) continue;
-      const cls = classes.find((c) => classesRelated(c, lesson.class!));
-      if (cls === undefined) continue;
       const pathOk =
         lesson.paths.length === 0 || (f.path !== null && safeMatcher(lesson.paths)(f.path));
       if (!pathOk) continue;
+      const classMatch =
+        lesson.class === null ? undefined : classes.find((c) => classesRelated(c, lesson.class!));
+      const match: ShadowMatchTier = classMatch !== undefined ? "class" : "lens";
+      if (match === "lens" && !lensAttributable(lesson)) continue;
+      // On the lens tier the finding's class is the one under the first of
+      // ITS lenses the lesson names (the lens the match rests on); a lesson
+      // covering every lens (pass-validate, or none named) takes its first.
+      const sharedId = lensIds.find((id) => lesson.lens.includes(id));
+      const findingCls =
+        classMatch ?? (sharedId !== undefined ? findingClass([sharedId], f.kind) : classes[0]!);
       const lensWhy =
         lesson.lens.length === 0
           ? "the lesson names no lens"
@@ -138,16 +182,24 @@ export function matchShadow(
         lesson.paths.length === 0
           ? "the lesson names no paths"
           : `path ${f.path} matches ${lesson.paths.join(",")}`;
+      const classWhy =
+        match === "class"
+          ? `class tier: ${findingCls} ~ ${lesson.class}`
+          : lesson.class === null
+            ? `lens tier: the lesson names no class (finding ${findingCls})`
+            : `lens tier: class ${findingCls} differs from ${lesson.class}`;
+      const sortedVia = [...via].sort();
       marks.push({
         finding_key: f.finding_key,
         lesson_uri: uri,
         lens: lensIds,
-        finding_class: cls,
+        finding_class: findingCls,
         lesson_class: lesson.class,
+        match,
         severity: f.severity,
         path: f.path,
-        via: [...via].sort(),
-        why: `${lensWhy}; class ${cls} ~ ${lesson.class}; ${pathWhy}; selected for ${[...via].sort().join(", ")}`,
+        via: sortedVia,
+        why: `${lensWhy}; ${pathWhy}; ${classWhy}; selected for ${sortedVia.join(", ")}`,
       });
     }
   }
@@ -177,6 +229,10 @@ export function markRound(
       round_no: roundNo,
       marks: marks.length,
       findings: new Set(marks.map((m) => m.finding_key)).size,
+      by_tier: {
+        class: marks.filter((m) => m.match === "class").length,
+        lens: marks.filter((m) => m.match === "lens").length,
+      },
     });
   return marks;
 }
@@ -233,14 +289,34 @@ export interface ShadowReport {
   /** Distinct marked findings, each counted once in its bucket — a finding
    * posted again in a later round (its `carried_to` chain) is ONE finding. */
   findings: BucketCounts & { total: number };
+  /** The same findings split by tier (R9), each on its STRONGEST:
+   * `class` — some lesson's class matched it too (what the validator's
+   * license needs); `lens` — lens and path alone. The two add up to
+   * `findings`. */
+  findings_by_tier: Record<ShadowMatchTier, BucketCounts & { total: number }>;
   /** Mark rows (a finding a lesson marked in two postings is two rows). */
   marks: number;
+  /** Mark rows per tier; they add up to `marks`. */
+  marks_by_tier: Record<ShadowMatchTier, number>;
   /** Per lesson: `marks` and the buckets count the distinct findings it
-   * marked, a chain once. */
+   * marked, a chain once; `by_tier` splits them, each (lesson, finding) on
+   * its strongest tier. `class` is null for a lesson with none. */
   per_lesson: Array<
-    BucketCounts & { uri: string; class: string; selected_rounds: number; marks: number }
+    BucketCounts & {
+      uri: string;
+      class: string | null;
+      selected_rounds: number;
+      marks: number;
+      by_tier: Record<ShadowMatchTier, BucketCounts & { marks: number }>;
+    }
   >;
-  per_lens: Array<BucketCounts & { lens: string; marks: number }>;
+  per_lens: Array<
+    BucketCounts & {
+      lens: string;
+      marks: number;
+      by_tier: Record<ShadowMatchTier, BucketCounts & { marks: number }>;
+    }
+  >;
   look_for: Array<{
     uri: string;
     class: string | null;
@@ -252,9 +328,14 @@ export interface ShadowReport {
     misses_after: number | null;
     misses_on_selected_prs: number | null;
   }>;
-  /** Dont-raise lessons selected in the window that carry no class — the
-   * matcher cannot check their class precondition. */
+  /** Dont-raise lessons selected in the window that NEITHER tier can check:
+   * no class, and too broad for the lens tier (no `paths=`, and not exactly
+   * one discovery lens) — they mark nothing. */
   unmeasurable_dont_raise: string[];
+  /** Dont-raise lessons selected in the window with a class but too broad
+   * for the lens tier: they mark on their class alone, so the lens tier
+   * never counts them. */
+  class_tier_only_dont_raise: string[];
 }
 
 /** One posted finding's identity in the report: (pr, round, key). */
@@ -345,7 +426,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
   // every mark is counted against its finding CHAIN, named by the chain's
   // root (its first posting — S7's cases do the same): the chain's fate is
   // the root's (it inherits its successors' evidence), its severity the
-  // earliest MARKED posting's (the one a delivered lesson would have demoted
+  // earliest MARKED posting's (the one a delivered lesson would have touched
   // first), and it counts as set aside when any marked posting's review was.
   const carriedFrom = new Map<string, string>();
   if (outcomesAvailable) {
@@ -410,8 +491,34 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     bucketFor.set(id, bucketOf(c.first.severity, fate, c.setAside));
   }
   const keyOf = (m: ShadowMarkRow): string => chainOf(m);
+  // each chain on its STRONGEST tier — a finding some lesson
+  // matched on its class is a class-tier finding however many others touched
+  // it on lens and path alone — so the two tiers add up to the total.
+  const chainTier = new Map<string, ShadowMatchTier>();
+  for (const m of marks) {
+    const id = keyOf(m);
+    const had = chainTier.get(id);
+    chainTier.set(id, had === undefined ? m.match : strongerTier(had, m.match));
+  }
   const findings = { ...zero(), total: bucketFor.size };
-  for (const b of bucketFor.values()) findings[b] += 1;
+  const findingsByTier: ShadowReport["findings_by_tier"] = {
+    class: { ...zero(), total: 0 },
+    lens: { ...zero(), total: 0 },
+  };
+  for (const [id, b] of bucketFor) {
+    findings[b] += 1;
+    const t = findingsByTier[chainTier.get(id)!];
+    t[b] += 1;
+    t.total += 1;
+  }
+  const marksByTier: ShadowReport["marks_by_tier"] = {
+    class: marks.filter((m) => m.match === "class").length,
+    lens: marks.filter((m) => m.match === "lens").length,
+  };
+  const tierZero = (): Record<ShadowMatchTier, BucketCounts & { marks: number }> => ({
+    class: { ...zero(), marks: 0 },
+    lens: { ...zero(), marks: 0 },
+  });
 
   const selections = ledger.selectionsSince(since);
   const selectedRounds = new Map<string, Set<number>>();
@@ -430,35 +537,43 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
       if (first === undefined || s.recorded_at < first) firstSelected.set(l.uri, s.recorded_at);
     }
   }
-  const perLesson = new Map<
-    string,
-    BucketCounts & { uri: string; class: string; selected_rounds: number; marks: number }
-  >();
-  const perLens = new Map<string, BucketCounts & { lens: string; marks: number }>();
+  const perLesson = new Map<string, ShadowReport["per_lesson"][number]>();
+  const perLens = new Map<string, ShadowReport["per_lens"][number]>();
   // Per lesson: one count per (lesson, finding chain) — a lesson that marked
-  // a finding in two of its postings marked ONE finding.
-  const lessonSeen = new Set<string>();
+  // a finding in two of its postings marked ONE finding, on the stronger of
+  // the tiers it marked it on.
+  const lessonPairs = new Map<
+    string,
+    { uri: string; cls: string | null; chain: string; tier: ShadowMatchTier }
+  >();
   for (const m of marks) {
-    const lk = `${m.lesson_uri}\u0000${keyOf(m)}`;
-    if (lessonSeen.has(lk)) continue;
-    lessonSeen.add(lk);
-    const b = bucketFor.get(keyOf(m))!;
-    const pl = perLesson.get(m.lesson_uri) ?? {
+    const chain = keyOf(m);
+    const lk = `${m.lesson_uri}\u0000${chain}`;
+    const had = lessonPairs.get(lk);
+    if (had) had.tier = strongerTier(had.tier, m.match);
+    else lessonPairs.set(lk, { uri: m.lesson_uri, cls: m.lesson_class, chain, tier: m.match });
+  }
+  for (const p of lessonPairs.values()) {
+    const b = bucketFor.get(p.chain)!;
+    const pl = perLesson.get(p.uri) ?? {
       ...zero(),
-      uri: m.lesson_uri,
-      class: m.lesson_class,
-      selected_rounds: selectedRounds.get(m.lesson_uri)?.size ?? 0,
+      uri: p.uri,
+      class: p.cls,
+      selected_rounds: selectedRounds.get(p.uri)?.size ?? 0,
       marks: 0,
+      by_tier: tierZero(),
     };
     pl.marks += 1;
     pl[b] += 1;
-    perLesson.set(m.lesson_uri, pl);
+    pl.by_tier[p.tier].marks += 1;
+    pl.by_tier[p.tier][b] += 1;
+    perLesson.set(p.uri, pl);
   }
   // Per lens: one count per (finding chain, lens) — a finding two lenses
-  // raised counts for each, once whichever lessons (and postings) marked it.
-  const lensSeen = new Set<string>();
+  // raised counts for each, once whichever lessons (and postings) marked it,
+  // on the strongest tier any of them marked it on.
+  const lensPairs = new Map<string, { lens: string; chain: string; tier: ShadowMatchTier }>();
   for (const m of marks) {
-    const b = bucketFor.get(keyOf(m))!;
     let lenses: string[] = [];
     try {
       const v = JSON.parse(m.lens) as unknown;
@@ -467,15 +582,22 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
       lenses = [];
     }
     if (lenses.length === 0) lenses = ["(no lens)"];
+    const chain = keyOf(m);
     for (const lens of lenses) {
-      const k = `${keyOf(m)}\u0000${lens}`;
-      if (lensSeen.has(k)) continue;
-      lensSeen.add(k);
-      const pl = perLens.get(lens) ?? { ...zero(), lens, marks: 0 };
-      pl.marks += 1;
-      pl[b] += 1;
-      perLens.set(lens, pl);
+      const k = `${chain}\u0000${lens}`;
+      const had = lensPairs.get(k);
+      if (had) had.tier = strongerTier(had.tier, m.match);
+      else lensPairs.set(k, { lens, chain, tier: m.match });
     }
+  }
+  for (const p of lensPairs.values()) {
+    const b = bucketFor.get(p.chain)!;
+    const pl = perLens.get(p.lens) ?? { ...zero(), lens: p.lens, marks: 0, by_tier: tierZero() };
+    pl.marks += 1;
+    pl[b] += 1;
+    pl.by_tier[p.tier].marks += 1;
+    pl.by_tier[p.tier][b] += 1;
+    perLens.set(p.lens, pl);
   }
 
   // Look-for lessons: did a human-raised miss of their class follow?
@@ -489,8 +611,10 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     : [];
   const lookFor: ShadowReport["look_for"] = [];
   const unmeasurable: string[] = [];
+  const classTierOnly: string[] = [];
   for (const [uri, l] of [...lessonInfo.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    if (l.kind === "dont-raise" && l.class === null) unmeasurable.push(uri);
+    if (l.kind === "dont-raise" && !lensAttributable(l))
+      (l.class === null ? unmeasurable : classTierOnly).push(uri);
     if (l.kind !== "look-for") continue;
     const first = firstSelected.get(uri)!;
     let after: number | null = null;
@@ -533,7 +657,9 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
       prefetch_ms_max: ms.length ? Math.max(...ms) : null,
     },
     findings,
+    findings_by_tier: findingsByTier,
     marks: marks.length,
+    marks_by_tier: marksByTier,
     per_lesson: [...perLesson.values()].sort(
       (a, b) => b.marks - a.marks || (a.uri < b.uri ? -1 : a.uri > b.uri ? 1 : 0),
     ),
@@ -542,6 +668,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     ),
     look_for: lookFor,
     unmeasurable_dont_raise: unmeasurable,
+    class_tier_only_dont_raise: classTierOnly,
   };
 }
 
@@ -559,12 +686,25 @@ function bucketsLine(b: BucketCounts): string {
   );
 }
 
+/** The three bucket lines of one count — all, then each tier. */
+function tierLines(
+  indent: string,
+  all: BucketCounts,
+  byTier: Record<ShadowMatchTier, BucketCounts>,
+): string[] {
+  return [
+    `${indent}all    ${bucketsLine(all)}`,
+    `${indent}class  ${bucketsLine(byTier.class)}`,
+    `${indent}lens   ${bucketsLine(byTier.lens)}`,
+  ];
+}
+
 /** What `qcr lessons shadow-report` prints. */
 export function renderShadowReport(r: ShadowReport): string {
   const out: string[] = [];
   out.push(
     `Lesson shadow report — the last ${r.days} day(s) (${r.since.slice(0, 16)}Z → ${r.until.slice(0, 16)}Z)`,
-    `delivery: ${r.mode}${r.mode === "on" ? " (lessons reach the review; the marks below are what the validator was LICENSED to demote — its findings record says what it did)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
+    `delivery: ${r.mode}${r.mode === "on" ? " (lessons reach the review; the CLASS-tier marks below are what the validator was LICENSED to demote — its findings record says what it did; the lens tier is outside that license)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
   );
   const rr = r.rounds;
   out.push(
@@ -577,23 +717,33 @@ export function renderShadowReport(r: ShadowReport): string {
     out.push(
       "outcomes: UNAVAILABLE — the outcome capture's tables are missing, so every fate reads unknown",
     );
+  const ft = r.findings_by_tier;
   out.push(
     "",
-    `would-demote: ${r.marks} mark(s) on ${r.findings.total} posted finding(s)`,
-    `  ${bucketsLine(r.findings)}`,
+    // Since R9 the total holds lens-tier findings, which the validator's
+    // license never reaches: only the class tier is "would-demote".
+    `marked: ${r.marks} mark(s) on ${r.findings.total} posted finding(s) — ` +
+      `class tier (would-demote) ${ft.class.total} finding(s) (${r.marks_by_tier.class} mark(s)), ` +
+      `lens tier (evidence only) ${ft.lens.total} finding(s) (${r.marks_by_tier.lens} mark(s))`,
+    ...tierLines("  ", r.findings, ft),
+    "  class = the lesson's lens, class and path all held — what the validator's lesson-shape license needs; lens = lens and path held, the class differs or the lesson names none (lens-level matching, ruling R9) — evidence only. A finding both tiers touched counts on the class tier.",
     "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = humans refuted it, or set its review aside (a whole-review signal); P0 is never demoted.",
   );
   out.push("", "Per lesson:");
   if (r.per_lesson.length === 0) out.push("  (no marks)");
   for (const l of r.per_lesson)
     out.push(
-      `  ${lessonLabel(l.uri)}  class ${l.class}  selected in ${l.selected_rounds} round(s)  marks ${l.marks}`,
-      `    ${bucketsLine(l)}`,
+      `  ${lessonLabel(l.uri)}  class ${l.class ?? "(none)"}  selected in ${l.selected_rounds} round(s)  ` +
+        `marks ${l.marks} (class ${l.by_tier.class.marks}, lens ${l.by_tier.lens.marks})`,
+      ...tierLines("    ", l, l.by_tier),
     );
   out.push("", "Per lens:");
   if (r.per_lens.length === 0) out.push("  (no marks)");
   for (const l of r.per_lens)
-    out.push(`  ${l.lens.padEnd(24)} marks ${l.marks}  ${bucketsLine(l)}`);
+    out.push(
+      `  ${l.lens}  marks ${l.marks} (class ${l.by_tier.class.marks}, lens ${l.by_tier.lens.marks})`,
+      ...tierLines("    ", l, l.by_tier),
+    );
   out.push("", "Look-for lessons selected, and human-raised misses of their class since:");
   if (r.look_for.length === 0) out.push("  (none selected)");
   for (const l of r.look_for)
@@ -603,10 +753,15 @@ export function renderShadowReport(r: ShadowReport): string {
           ? "misses UNKNOWN (no class, or no learner table)"
           : `misses since ${l.first_selected_at.slice(0, 10)}: ${l.misses_after} (on PRs it was selected for: ${l.misses_on_selected_prs})`),
     );
+  if (r.class_tier_only_dont_raise.length > 0)
+    out.push(
+      "",
+      `Dont-raise lessons too broad for the lens tier (no paths=, and not exactly one discovery lens — they mark on their class alone): ${r.class_tier_only_dont_raise.map(lessonLabel).join(", ")}`,
+    );
   if (r.unmeasurable_dont_raise.length > 0)
     out.push(
       "",
-      `Dont-raise lessons with no class (their class precondition cannot be checked, so they mark nothing): ${r.unmeasurable_dont_raise.map(lessonLabel).join(", ")}`,
+      `Dont-raise lessons neither tier can check (no class, no paths=, and not exactly one discovery lens — they mark nothing): ${r.unmeasurable_dont_raise.map(lessonLabel).join(", ")}`,
     );
   return out.join("\n");
 }
@@ -640,6 +795,19 @@ export function lessonDeliveryStatus(
     harm: r.findings.harm,
     help: r.findings.help_refuted + r.findings.help_set_aside,
     unknown: r.findings.unknown,
+    tiers: {
+      class: tierCounts(r.findings_by_tier.class),
+      lens: tierCounts(r.findings_by_tier.lens),
+    },
     as_of: now.toISOString(),
+  };
+}
+
+function tierCounts(b: BucketCounts & { total: number }): LessonTierCounts {
+  return {
+    marks: b.total,
+    harm: b.harm,
+    help: b.help_refuted + b.help_set_aside,
+    unknown: b.unknown,
   };
 }
