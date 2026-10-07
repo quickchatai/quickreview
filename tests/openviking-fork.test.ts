@@ -1,4 +1,4 @@
-// The vendored OpenViking pi extension — provenance + the nine
+// The vendored OpenViking pi extension — provenance + the ten
 // patches. Two kinds of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
@@ -92,6 +92,19 @@ import {
   toolScopeNote,
 } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 import { ROUND_SEARCH_AREAS } from "../src/memory/layout.js";
+import {
+  buildLessonHeader,
+  LESSON_KINDS as FORK_LESSON_KINDS,
+  LESSON_LENS_IDS as FORK_LESSON_LENS_IDS,
+  withLessonHeader,
+} from "../extensions/vendor/openviking-pi/qcr-lesson.js";
+import {
+  LESSON_KINDS,
+  LESSON_LENS_IDS,
+  parseLesson,
+  validateLessonFields,
+} from "../src/memory/lessons.js";
+import { ALL_PASSES } from "../src/passes.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const FORK = join(ROOT, "extensions", "vendor", "openviking-pi");
@@ -147,7 +160,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(10); // 0000 scaffolding + nine numbered
+    expect(upstream.patches.length).toBe(11); // 0000 scaffolding + ten numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -1813,8 +1826,8 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
     );
   });
 
-  it("ships the patch, recorded LAST in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0009-pr-session-tools-in-round-areas.patch");
+  it("ships the patch, recorded in the series, with its markers", () => {
+    expect(upstream.patches).toContain("0009-pr-session-tools-in-round-areas.patch");
     const patch = read(join("patches", "0009-pr-session-tools-in-round-areas.patch"));
     expect(patch).toContain("QCR PATCH 9");
     for (const f of ["qcr-hint.ts", "tools.ts", "index.ts", "NOTICE", "README.md"]) {
@@ -1823,6 +1836,161 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
     expect(read("NOTICE")).toContain("9. A review session's memory search, read and browse tools");
     expect(read("README.md")).toContain(
       "### 0009 — a PR session's memory tools stay in the round's areas",
+    );
+  });
+});
+
+// ---- PATCH 10 (S8) ---------------------------------------------------
+
+describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
+  const LESSON_URI = "viking://user/reviewer/memories/experiences/20261007-lesson.md";
+  const lesson = {
+    kind: "dont-raise",
+    lens: ["pass-baseline", "validate"],
+    class: "baseline.pre-existing-scope",
+    paths: ["backend/**", "**/*.py"],
+    evidence: ["pr:5208", "cand:c42", "comment:3853760547"],
+  };
+
+  it("names the daemon's built passes and lesson kinds — one list, two readers", () => {
+    expect([...FORK_LESSON_LENS_IDS]).toEqual([...ALL_PASSES]);
+    expect([...FORK_LESSON_LENS_IDS]).toEqual([...LESSON_LENS_IDS]);
+    expect([...FORK_LESSON_KINDS]).toEqual([...LESSON_KINDS]);
+  });
+
+  it("renders the header on the first line, and the daemon's reader reads every field back", () => {
+    const built = buildWriteRequest({
+      uri: LESSON_URI,
+      content: "Do not hold a focused PR on X.",
+      lesson,
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    const first = built.body.split("\n")[0];
+    expect(first).toBe(
+      "#lesson kind=dont-raise lens=pass-baseline,pass-validate class=baseline.pre-existing-scope paths=backend/**,**/*.py evidence=pr:5208,cand:c42,comment:3853760547",
+    );
+    expect(built.body).toContain("\n\nDo not hold a focused PR on X.");
+    expect(built.tags).toContain("lesson");
+    const parsed = parseLesson(built.body);
+    expect(parsed).toMatchObject({
+      format: "typed",
+      kind: "dont-raise",
+      lens: ["pass-baseline", "pass-validate"],
+      class: "baseline.pre-existing-scope",
+      paths: ["backend/**", "**/*.py"],
+      evidence: ["pr:5208", "cand:c42", "comment:3853760547"],
+      candidates: [42],
+      fieldsSource: "header",
+    });
+  });
+
+  it("refuses an unknown lens id and every malformed field — nothing is built to send", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...lesson, lens: ["pass-baseline", "pass-nope"] }, "Unknown lens id(s): pass-nope"],
+      [{ ...lesson, lens: [] }, "lesson.lens must name at least one lens id"],
+      [{ ...lesson, kind: "lookfor" }, "lesson.kind must be one of"],
+      [{ ...lesson, class: "Not A Slug" }, "lesson.class must be a slug"],
+      [{ ...lesson, paths: [] }, "lesson.paths must name at least one path glob"],
+      [{ ...lesson, paths: ["src/{a,b}.ts"] }, "may not contain whitespace or a comma"],
+      [{ ...lesson, evidence: [] }, "lesson.evidence must cite at least one ref"],
+      [{ ...lesson, evidence: ["PR 5208"] }, "must be <kind>:<id>"],
+      [{ ...lesson, extra: 1 }, "Unknown lesson field(s): extra"],
+    ];
+    for (const [bad, why] of cases) {
+      const built = buildWriteRequest({ uri: LESSON_URI, content: "x", lesson: bad });
+      expect(built.ok, why).toBe(false);
+      if (!built.ok) expect(built.error).toContain(why);
+    }
+  });
+
+  it("agrees with the daemon's validator, case for case", () => {
+    const inputs: unknown[] = [
+      lesson,
+      { ...lesson, lens: "pass-baseline,pass-ui" },
+      { ...lesson, lens: ["ui"] },
+      { ...lesson, lens: ["pass-nope"] },
+      { ...lesson, kind: "convention" },
+      { ...lesson, kind: "nope" },
+      { ...lesson, class: "x" },
+      { ...lesson, class: "" },
+      { ...lesson, paths: ["**"] },
+      { ...lesson, evidence: ["cand:c1"] },
+      { ...lesson, evidence: ["bad ref"] },
+      null,
+      [],
+      "lesson",
+    ];
+    for (const input of inputs) {
+      const fork = buildLessonHeader(input);
+      const daemon = validateLessonFields(input);
+      expect(fork.ok, JSON.stringify(input)).toBe(daemon.ok);
+      if (!fork.ok && !daemon.ok) expect(fork.error).toBe(daemon.error);
+    }
+  });
+
+  it("writes a lesson only into experiences/, and never over a hand-typed header", () => {
+    for (const uri of [
+      "viking://user/reviewer/memories/events/x.md",
+      "viking://user/reviewer/memories/preferences/pinned/x.md",
+      "viking://user/reviewer/memories/experiences/sub/x.md",
+      "viking://resources/x.md",
+    ]) {
+      const built = buildWriteRequest({ uri, content: "x", lesson });
+      expect(built.ok, uri).toBe(false);
+      if (!built.ok) expect(built.error).toContain("A lesson is written into experiences/");
+    }
+    for (const content of ["#lesson kind=look-for oops", "#refuted kind=x prose", ""]) {
+      const res = withLessonHeader(LESSON_URI, content, lesson);
+      expect(res.ok, content).toBe(false);
+    }
+    // An entry without `lesson` is unchanged by the patch.
+    const plain = buildWriteRequest({ uri: LESSON_URI, content: "plain prose" });
+    expect(plain.ok && plain.body).toBe("plain prose\n");
+  });
+
+  it("rides a batch per entry, beside plain entries, and refuses a top-level lesson beside entries", () => {
+    const batch = buildBatchWriteRequest({
+      entries: [
+        { uri: LESSON_URI, content: "a lesson", lesson },
+        { uri: "viking://user/reviewer/memories/experiences/b.md", content: "plain" },
+      ],
+    });
+    expect(batch.ok).toBe(true);
+    if (!batch.ok) return;
+    expect(batch.entries[0]!.body.startsWith("#lesson kind=dont-raise")).toBe(true);
+    expect(batch.entries[1]!.body).toBe("plain\n");
+    const badEntry = buildBatchWriteRequest({
+      entries: [{ uri: LESSON_URI, content: "a", lesson: { ...lesson, lens: ["nope"] } }],
+    });
+    expect(badEntry.ok).toBe(false);
+    if (!badEntry.ok) expect(badEntry.error).toContain("Entry 1: Unknown lens id(s): nope");
+    const both = buildBatchWriteRequest({ lesson, entries: [{ uri: LESSON_URI, content: "a" }] });
+    expect(both.ok).toBe(false);
+    // The single form carries `lesson` through.
+    const single = buildBatchWriteRequest({ uri: LESSON_URI, content: "one", lesson });
+    expect(single.ok && single.entries[0]!.body.startsWith("#lesson ")).toBe(true);
+  });
+
+  it("tools.ts takes `lesson` at the top level and per entry, and says how to cite a candidate", () => {
+    const tools = code("tools.ts");
+    expect(tools.match(/lesson: Type\.Optional\(lessonParam\)/g)).toHaveLength(2);
+    expect(tools).toContain("kind: StringEnum(LESSON_KINDS)");
+    expect(read("tools.ts")).toContain(
+      "Cite the learner candidate a lesson adopts as `cand:c<id>`",
+    );
+  });
+
+  it("ships the patch, recorded LAST in the series, with its markers", () => {
+    expect(upstream.patches.at(-1)).toBe("0010-typed-lessons.patch");
+    const patch = read(join("patches", "0010-typed-lessons.patch"));
+    expect(patch).toContain("QCR PATCH 10");
+    for (const f of ["qcr-lesson.ts", "qcr-write.ts", "tools.ts", "NOTICE", "README.md"]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("10. `viking_write` takes a structured `lesson`");
+    expect(read("README.md")).toContain(
+      "### 0010 — typed lessons: `viking_write` writes the header",
     );
   });
 });

@@ -137,6 +137,19 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // backed-off retries). The day's curation did not happen; before this it
   // was one "EOD injection failed" log line.
   "eod_inject_failed",
+  // S8 (the learner, src/learner/learner.ts): the curation of a day's
+  // outcomes packet did not reach memory. `eod_curation_missing` — the sweep
+  // was delivered, its packet offered candidates, and no
+  // `eod-curation-receipt` came within `[memory] lessons_receipt_wait_min`;
+  // `eod_lessons_not_persisted` — the curator reported a lesson write refused,
+  // or claimed an adoption no lesson in memory cites. For 30 days (09-03..
+  // 10-02) the curator persisted nothing and only its digests said so. Each
+  // is raised once per day (the refused/missing list wakes again only when it
+  // names something new), and both also ride status.json `memory.curation` —
+  // the board banner, the desktop notification, `qcr status` and one tracker
+  // ticket per incident — until something makes the failure good.
+  "eod_curation_missing",
+  "eod_lessons_not_persisted",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by
@@ -189,6 +202,10 @@ const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
   // it lasts) and once per tick that gave rows up — a give-up minutes after a
   // backlog wake is a different fact and must still reach the overseer.
   "memory_write_backlog",
+  // raised once per DAY by the learner; deferred days fire back
+  // to back after a drain, so two days' wakes can land minutes apart.
+  "eod_curation_missing",
+  "eod_lessons_not_persisted",
 ]);
 
 export function detailKeyedKinds(): string[] {

@@ -282,6 +282,29 @@ write_backlog_after_min = 120
 # days (resumable; 0 turns the backfill off).
 cases_interval_s = 120
 cases_backfill_days = 60
+# The learner (S8, src/learner/): lessons_mine_lead_min before the EOD
+# sweep (and on `qcr lessons mine`) the daemon mines the human outcomes of the
+# last lessons_mine_days — refuted / contested findings, the [feedback]
+# ledger, human comments and REQUEST_CHANGES on PRs the bot approved, recheck
+# flips, and commits that changed a bot-approved PR's lines within
+# lessons_recall_window_days of its merge — into lesson CANDIDATES. The EOD
+# sweep is handed them as state/eod/<day>/outcomes.md (at most
+# lessons_packet_new_max new a day, misses first; every undecided one is
+# carried; undecided after lessons_expiry_ops_days it expires, recorded) and
+# answers with an `eod-curation-receipt`. No receipt within
+# lessons_receipt_wait_min wakes eod_curation_missing; a refused or unfound
+# lesson wakes eod_lessons_not_persisted. The digests' "Learnings" from
+# lessons_digest_backfill_from..to (written while memory refused every write)
+# become candidates once.
+lessons_mine_lead_min = 15
+lessons_mine_days = 45
+lessons_receipt_wait_min = 180
+lessons_expiry_ops_days = 7
+lessons_packet_new_max = 40
+lessons_recall_window_days = 14
+lessons_recurrence_days = 90
+lessons_digest_backfill_from = "2026-08-31"
+lessons_digest_backfill_to = "2026-10-02"
 # HOW MANY items the round's one context search may draw from each area it
 # searches. `context_tokens` above is the budget; this is the corpus — the two
 # bind independently.

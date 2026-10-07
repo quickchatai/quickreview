@@ -1606,8 +1606,9 @@ describe("the EOD curator learns the layout from the daemon-rendered prompt", ()
     const wire = readFileSync(join(ROOT_DIR, "src", "wire.ts"), "utf8");
     expect(wire).toMatch(/memoryLayout: MEMORY_LAYOUT_NOTE/);
     const eod = readFileSync(join(ROOT_DIR, "src", "eod.ts"), "utf8");
+    // the learner's curation section rides beside it.
     expect(eod).toMatch(
-      /renderEodPrompt\(deps\.readPrompt\(\), date, context, deps\.identity, deps\.memoryLayout\)/,
+      /renderEodPrompt\(\s*deps\.readPrompt\(\),\s*date,\s*context\.lines,\s*deps\.identity,\s*deps\.memoryLayout,\s*context\.curation,\s*\)/,
     );
   });
 });

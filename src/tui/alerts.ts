@@ -25,6 +25,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { zoneDateString } from "../eod.js";
+import { curationNeedsAttention } from "../learner/status.js";
 import { memoryStatusLine, type MemoryStatus } from "../memory/health.js";
 
 export type AlertTier = "notice" | "alert";
@@ -519,6 +520,58 @@ export function maybeWriteMemoryAlert(
       pr: null,
       title: auth ? "reviewer memory: a key is refused" : "reviewer memory: down",
       body: `${memoryStatusLine(memory, now())} — rounds run memory-less and nothing is learned until it is fixed (the TUI board shows it; qcr status has the detail).`,
+      ts: now().toISOString(),
+    }),
+  );
+  mem.lastWritten = key;
+  return name;
+}
+
+// ---- the day's curation did not reach memory → the same pipeline (S8)
+
+export interface CurationAlertMemory {
+  /** `<state>@<day>` the last written file covered. */
+  lastWritten: string;
+}
+
+/**
+ * Bridge from status.json `memory.curation` into the alert pipeline: ONE
+ * alert-tier file per (state, day) when the EOD curation is `missing` (no
+ * receipt) or `not_persisted` (a lesson refused or not found) — badge,
+ * notify-send and cooldown from the existing consumer, exactly like the memory
+ * alert. For 30 days the curator persisted nothing and only its own digests
+ * said so. Fresh snapshots only; a day that recovers re-arms it.
+ */
+export function maybeWriteCurationAlert(
+  alertsDir: string,
+  memory: MemoryStatus | undefined,
+  fresh: boolean,
+  mem: CurationAlertMemory,
+  now: () => Date = () => new Date(),
+): string | undefined {
+  if (!fresh || !memory) return undefined;
+  const c = memory.curation;
+  if (!curationNeedsAttention(c) || !c) {
+    mem.lastWritten = "";
+    return undefined;
+  }
+  const key = `${c.state}@${c.day ?? "?"}`;
+  if (mem.lastWritten === key) return undefined;
+  const missing = c.state === "missing";
+  const name = `${now().toISOString().replace(/[:.]/g, "-")}-eod-${missing ? "curation-missing" : "lessons-not-persisted"}.json`;
+  mkdirSync(alertsDir, { recursive: true });
+  writeFileSync(
+    join(alertsDir, name),
+    JSON.stringify({
+      tier: "alert",
+      cause: missing ? "eod-curation-missing" : "eod-lessons-not-persisted",
+      pr: null,
+      title: missing
+        ? `EOD curation missing for ${c.day ?? "?"}`
+        : `EOD lessons not persisted for ${c.day ?? "?"}`,
+      body: missing
+        ? `The EOD sweep for ${c.day ?? "?"} offered ${c.offered} lesson candidate(s) and no curation receipt came back — nothing says the day's outcomes were curated (state/eod/${c.day ?? "?"}/outcomes.md).`
+        : `${c.not_persisted} lesson(s) from the ${c.day ?? "?"} curation are not in reviewer memory (a write refused, or a claimed lesson no header cites); the candidates ride the next packet. qcr status has the detail.`,
       ts: now().toISOString(),
     }),
   );

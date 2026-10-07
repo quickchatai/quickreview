@@ -46,6 +46,8 @@ const CANDIDATE_FIELDS = [
   "incident_id",
   "command_id",
   "head_sha",
+  "day",
+  "decisions",
   "channel",
   "__control_never_valid__",
 ] as const;

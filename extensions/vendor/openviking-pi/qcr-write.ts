@@ -24,6 +24,8 @@
 import { createHash } from "node:crypto";
 // [QCR PATCH 6] a batch is routed by its entries (`routeWrite`)
 import { routeNamespace, type NamespaceRoute } from "./qcr-namespaces.js";
+// [QCR PATCH 10] a typed lesson's header is rendered from `lesson`
+import { withLessonHeader } from "./qcr-lesson.js";
 
 /** Memory targets keep a text-extension allowlist server-side; these are the
  * two we ever author. */
@@ -75,6 +77,9 @@ export interface WriteRequestInput {
   mode?: unknown;
   expect_hash?: unknown;
   wait?: unknown;
+  /** [QCR PATCH 10] A structured lesson ({kind, lens, class, paths,
+   * evidence}): the entry's header is rendered from it (qcr-lesson.ts). */
+  lesson?: unknown;
 }
 
 /** `sha256:<lowercase-hex>` — the shape batch-write's `base_hash` wants. */
@@ -185,7 +190,18 @@ export function buildWriteRequest(input: WriteRequestInput): WriteRequestResult 
   const tags = normalizeTags(input.tags);
   if (!tags.ok) return { ok: false, error: tags.error ?? "Invalid tags." };
 
-  const body = renderMemoryBody(input.content, tags.tags);
+  // [QCR PATCH 10] A typed lesson: the header is the tool's to write, from
+  // the structured parameter, on the entry's first line — and the entry is
+  // tagged `lesson` for retrieval too.
+  let content = input.content;
+  if (input.lesson !== undefined && input.lesson !== null) {
+    const lesson = withLessonHeader(uri, input.content, input.lesson);
+    if (!lesson.ok) return { ok: false, error: lesson.error };
+    content = lesson.content;
+    if (!tags.tags.includes("lesson") && tags.tags.length < MAX_TAGS) tags.tags.push("lesson");
+  }
+
+  const body = renderMemoryBody(content, tags.tags);
   if (!body.trim()) return { ok: false, error: "viking_write needs non-empty `content`." };
 
   let precondition: BatchWriteOperation["precondition"];
@@ -242,6 +258,8 @@ export interface BatchEntryInput {
   tags?: unknown;
   mode?: unknown;
   expect_hash?: unknown;
+  /** [QCR PATCH 10] */
+  lesson?: unknown;
 }
 
 /** One entry (`uri` + `content`, as `WriteRequestInput`) or several
@@ -255,6 +273,8 @@ export interface BatchWriteInput {
   expect_hash?: unknown;
   wait?: unknown;
   entries?: unknown;
+  /** [QCR PATCH 10] the one entry's lesson (with `uri` + `content`). */
+  lesson?: unknown;
 }
 
 export interface BatchEntryBuilt {
@@ -330,7 +350,8 @@ export function routeWrite(
  * the deepest directory they all sit under.
  */
 export function buildBatchWriteRequest(input: BatchWriteInput): BatchRequestResult {
-  const hasSingle = input.uri !== undefined || input.content !== undefined;
+  const hasSingle =
+    input.uri !== undefined || input.content !== undefined || input.lesson !== undefined;
   if (input.entries === undefined) {
     const one = buildWriteRequest({
       uri: input.uri,
@@ -339,6 +360,7 @@ export function buildBatchWriteRequest(input: BatchWriteInput): BatchRequestResu
       mode: input.mode,
       expect_hash: input.expect_hash,
       wait: input.wait,
+      lesson: input.lesson,
     });
     if (!one.ok) return one;
     return {
@@ -374,6 +396,7 @@ export function buildBatchWriteRequest(input: BatchWriteInput): BatchRequestResu
       tags: entry.tags,
       mode: entry.mode,
       expect_hash: entry.expect_hash,
+      lesson: entry.lesson,
     });
     if (!one.ok) return { ok: false, error: `Entry ${i + 1}: ${one.error} Nothing was written.` };
     const op = one.request.operations[0]!;

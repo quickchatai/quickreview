@@ -11,6 +11,7 @@ import {
   wakeKinds,
 } from "../src/anomalies.js";
 import { MEMORY_WAKE } from "../src/memory/health.js";
+import { LEARNER_WAKE } from "../src/learner/learner.js";
 import { StateStore } from "../src/state.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -41,7 +42,9 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   it("is exactly this set", () => {
     expect(wakeKinds()).toEqual(
       [
+        "eod_curation_missing",
         "eod_inject_failed",
+        "eod_lessons_not_persisted",
         "eod_pinned_area_modified",
         "findings_record_unresolved",
         "git_config_modified",
@@ -67,6 +70,13 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
   // memory was dead for five weeks behind a per-round anomaly that
   // was never a wake kind. The health monitor's three kinds ARE wakes; the
   // counted gap row stays quiet; the dead per-round kind is gone.
+  // a curation that did not reach memory wakes — the learner's
+  // two kinds, spelled once in src/learner/learner.ts.
+  it("the learner's two kinds wake", () => {
+    for (const kind of Object.values(LEARNER_WAKE))
+      expect(anomalySeverity(kind), kind).toBe("wake");
+  });
+
   it("the memory health kinds wake; openviking_gap stays quiet", () => {
     for (const kind of Object.values(MEMORY_WAKE)) expect(anomalySeverity(kind), kind).toBe("wake");
     expect(anomalySeverity("openviking_gap")).toBe("quiet");
@@ -172,6 +182,8 @@ describe("logAnomaly → wake funnel", () => {
     // S2 adds the write backlog: its raiser (the backfill pump) fires
     // on the crossing, every 6 h, and once per tick that gave rows up.
     expect(detailKeyedKinds()).toEqual([
+      "eod_curation_missing",
+      "eod_lessons_not_persisted",
       "memory_auth_failed",
       "memory_down",
       "memory_provision_failed",

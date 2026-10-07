@@ -68,6 +68,113 @@ export function hunksTouchLine(
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
+/** One file's zero-context hunks, keyed by the file's OLD path (the side a
+ * blame of the parent reads); a file the diff creates has no old side and is
+ * left out. A `--- ` line is a file header only in a file section's header
+ * (after its `diff --git`, before its first `@@`): inside a hunk it is a
+ * REMOVED line whose text starts `-- ` (an SQL, Lua or Haskell comment), and
+ * reading it as a header would drop the rest of the file's hunks. */
+export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
+  const out = new Map<string, DiffHunk[]>();
+  let current: string | null = null;
+  let inHeader = true;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      inHeader = true;
+      current = null;
+      continue;
+    }
+    if (inHeader && line.startsWith("--- ")) {
+      // A quoted path (git's spelling of one with special characters) is
+      // left out rather than misread.
+      current = /^--- a\/(.*)$/.exec(line)?.[1] ?? null;
+      continue;
+    }
+    if (line.startsWith("@@")) inHeader = false;
+    if (current === null) continue;
+    const h = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(line);
+    if (!h) continue;
+    const list = out.get(current) ?? [];
+    list.push({ old_start: Number(h[1]), old_count: h[2] === undefined ? 1 : Number(h[2]) });
+    out.set(current, list);
+  }
+  return out;
+}
+
+/** The commits `git blame --porcelain` attributes lines to (each line's
+ * header carries the full sha). */
+export function parseBlameShas(porcelain: string): Set<string> {
+  const out = new Set<string>();
+  for (const line of porcelain.split("\n")) {
+    const m = /^([0-9a-f]{40}) \d+ \d+(?: \d+)?$/.exec(line);
+    if (m) out.add(m[1]!);
+  }
+  return out;
+}
+
+/** The commit on the base branch that landed PR `pr`, from `git log
+ * --first-parent --format=%H%x09%cI%x09%P%x09%s` lines: a squash merge's
+ * subject ends `(#<pr>)` (GitHub's own spelling), a merge commit's starts
+ * `Merge pull request #<pr> `. Several candidates: the one committed nearest
+ * `mergedAtMs`. Null when none names the PR (a rebase merge, a manual
+ * cherry-pick) — never a guess. */
+export function findMergeCommit(
+  log: string,
+  pr: number,
+  mergedAtMs: number,
+): { sha: string; parents: string[]; committed_at: string } | null {
+  let best: { sha: string; parents: string[]; committed_at: string; gap: number } | null = null;
+  const squash = new RegExp(`\\(#${pr}\\)\\s*$`);
+  const merge = new RegExp(`^Merge pull request #${pr}(?!\\d)`);
+  for (const line of log.split("\n")) {
+    const [sha = "", at = "", parents = "", ...rest] = line.split("\t");
+    const subject = rest.join("\t");
+    if (!/^[0-9a-f]{40}$/.test(sha)) continue;
+    if (!squash.test(subject) && !merge.test(subject)) continue;
+    const gap = Math.abs((Date.parse(at) || 0) - mergedAtMs);
+    if (!best || gap < best.gap)
+      best = { sha, parents: parents.split(" ").filter(Boolean), committed_at: at, gap };
+  }
+  return best ? { sha: best.sha, parents: best.parents, committed_at: best.committed_at } : null;
+}
+
+/** A later commit on the base branch that changed lines a merged PR had
+ * changed (S8, the learner's recall source). */
+export interface PostMergeTouch {
+  commit: string;
+  subject: string;
+  committed_at: string;
+  path: string;
+  /** The lines it changed, in its PARENT's numbering (what was blamed). */
+  start: number;
+  end: number;
+}
+
+export interface PostMergeScan {
+  /** The commit that landed the PR on the base branch. */
+  merge: string;
+  shape: "squash" | "merge";
+  /** Later commits read (touching the PR's files, inside the window). */
+  checked: number;
+  touches: PostMergeTouch[];
+  /** The scan is PARTIAL: a cap was hit (more files, commits or blames than
+   * were read), or a blame could not be read — what it did not read is
+   * unknown, never "not touched". */
+  truncated: boolean;
+  /** The committer date of the base branch's tip in the clone: commits after
+   * it have not been fetched, so a window ending later is not fully read yet
+   * (the learner keeps such a PR pending — no fetch happens here). */
+  tip_at: string;
+}
+
+/** Bounds of one `postMergeTouches` scan. */
+export const POST_MERGE_LIMITS = Object.freeze({
+  files: 100,
+  laterCommits: 60,
+  blames: 80,
+  prCommits: 300,
+});
+
 /** What one round's worktree preparation established about the tree on disk. */
 export interface WorktreeFacts {
   path: string;
@@ -493,6 +600,185 @@ export class WorktreeManager {
       if (this.betweenMemo.size >= 5000) this.betweenMemo.clear();
       this.betweenMemo.set(key, answer);
       return answer;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The commits that changed, within `windowDays` of PR `pr`'s merge, lines
+   * that PR had changed (S8 — "the bot approved it, and two days
+   * later somebody fixed those very lines" is the recall evidence the learner
+   * mines). Read-only git in the base clone, no fetch: the commit that landed
+   * the PR is found on the base branch's first-parent history by its subject
+   * (`findMergeCommit`); the PR's lines are that commit's diff against its
+   * first parent; a later first-parent commit touches them when `git blame`
+   * of its PARENT attributes a line it changed to the PR's commit(s). Bounded
+   * (`POST_MERGE_LIMITS` — the OLDEST later commits are read; `truncated`
+   * says when a cap cut the scan or a blame could not be read). `tip_at` is
+   * the clone's base tip, so the caller can tell a window the clone has not
+   * been fetched past. Null — unknown — when the branch is not in the clone
+   * or no commit names the PR (a rebase merge): never "nothing touched".
+   */
+  async postMergeTouches(q: {
+    pr: number;
+    baseRef: string;
+    mergedAt: string;
+    windowDays: number;
+  }): Promise<PostMergeScan | null> {
+    const mergedMs = Date.parse(q.mergedAt);
+    if (!Number.isInteger(q.pr) || q.pr <= 0 || !Number.isFinite(mergedMs)) return null;
+    if (
+      !/^[A-Za-z0-9._/-]+$/.test(q.baseRef) ||
+      q.baseRef.startsWith("-") ||
+      q.baseRef.includes("..")
+    )
+      return null;
+    const ref = this.baseRef(q.baseRef);
+    const day = 86_400_000;
+    try {
+      const has = await this.run("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+        cwd: this.basePath,
+      });
+      if (has.code !== 0) return null;
+      const tipAt = (await this.git(["log", "-1", "--format=%cI", ref])).stdout.trim();
+      if (!Number.isFinite(Date.parse(tipAt))) return null;
+      const iso = (ms: number) => new Date(ms).toISOString();
+      const log = await this.git([
+        "log",
+        "--first-parent",
+        "--format=%H%x09%cI%x09%P%x09%s",
+        `--since=${iso(mergedMs - 3 * day)}`,
+        `--until=${iso(mergedMs + 3 * day)}`,
+        ref,
+      ]);
+      const m = findMergeCommit(log.stdout, q.pr, mergedMs);
+      if (!m || m.parents.length === 0) return null;
+      const shape: PostMergeScan["shape"] = m.parents.length >= 2 ? "merge" : "squash";
+      const prCommits = new Set<string>([m.sha]);
+      let truncated = false;
+      if (shape === "merge") {
+        const list = (
+          await this.git([
+            "rev-list",
+            `--max-count=${POST_MERGE_LIMITS.prCommits + 1}`,
+            `${m.parents[0]}..${m.parents[1]}`,
+          ])
+        ).stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => /^[0-9a-f]{40}$/.test(l));
+        if (list.length > POST_MERGE_LIMITS.prCommits) truncated = true;
+        for (const c of list.slice(0, POST_MERGE_LIMITS.prCommits)) prCommits.add(c);
+      }
+      let files = (
+        await this.git([
+          "diff",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-renames",
+          "--name-only",
+          m.parents[0]!,
+          m.sha,
+        ])
+      ).stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (files.length > POST_MERGE_LIMITS.files) {
+        truncated = true;
+        files = files.slice(0, POST_MERGE_LIMITS.files);
+      }
+      const scan: PostMergeScan = {
+        merge: m.sha,
+        shape,
+        checked: 0,
+        touches: [],
+        truncated,
+        tip_at: tipAt,
+      };
+      if (files.length === 0) return scan;
+      // The whole window, uncapped: `--max-count` keeps the NEWEST commits
+      // (git log lists newest first, and `--reverse` applies after the cut),
+      // and the cut must drop the newest instead — the first fix after the
+      // merge is the most telling. The window (≤ `windowDays` of first-parent
+      // commits touching these files) bounds the listing.
+      const oldestFirst = (
+        await this.git([
+          "log",
+          "--first-parent",
+          "--no-renames",
+          "--format=%H%x09%cI%x09%s",
+          `--until=${iso(mergedMs + q.windowDays * day)}`,
+          `${m.sha}..${ref}`,
+          "--",
+          ...files,
+        ])
+      ).stdout
+        .split("\n")
+        .map((l) => l.split("\t"))
+        .filter((p) => /^[0-9a-f]{40}$/.test(p[0] ?? ""))
+        .reverse();
+      if (oldestFirst.length > POST_MERGE_LIMITS.laterCommits) scan.truncated = true;
+      let blames = 0;
+      for (const [commit = "", at = "", ...rest] of oldestFirst.slice(
+        0,
+        POST_MERGE_LIMITS.laterCommits,
+      )) {
+        scan.checked += 1;
+        const diff = await this.git([
+          "diff",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-renames",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          "-U0",
+          `${commit}^1`,
+          commit,
+          "--",
+          ...files,
+        ]);
+        for (const [path, hunks] of parseDiffHunksByFile(diff.stdout)) {
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (const h of hunks) {
+            if (h.old_count === 0) continue; // a pure insertion changes none of the PR's lines
+            if (blames >= POST_MERGE_LIMITS.blames) {
+              scan.truncated = true;
+              break;
+            }
+            blames += 1;
+            const end = h.old_start + h.old_count - 1;
+            const blame = await this.run(
+              "git",
+              ["blame", "--porcelain", "-L", `${h.old_start},${end}`, `${commit}^1`, "--", path],
+              { cwd: this.basePath },
+            );
+            if (blame.code !== 0) {
+              // Unread is unknown, never "not the PR's lines": the scan says
+              // it is partial.
+              scan.truncated = true;
+              continue;
+            }
+            const shas = parseBlameShas(blame.stdout);
+            if ([...shas].some((sha) => prCommits.has(sha))) {
+              lo = Math.min(lo, h.old_start);
+              hi = Math.max(hi, end);
+            }
+          }
+          if (lo !== Infinity)
+            scan.touches.push({
+              commit,
+              subject: rest.join("\t"),
+              committed_at: at,
+              path,
+              start: lo,
+              end: hi,
+            });
+        }
+      }
+      return scan;
     } catch {
       return null;
     }

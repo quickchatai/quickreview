@@ -21,6 +21,7 @@ import {
 import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
+import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { createDaemon, type Daemon } from "./daemon.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -644,6 +645,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // through the same store; backfills the last 60 days. Writes only while
   // memory health reads healthy.
   let caseWriter: CaseWriter | null = null;
+  // the LEARNER — mines the human outcomes into lesson
+  // candidates at EOD − `lessons_mine_lead_min`, hands the EOD sweep its
+  // outcomes packet (`dayContext`), takes the `eod-curation-receipt`, checks
+  // every adoption against memory, and wakes `eod_curation_missing` /
+  // `eod_lessons_not_persisted`. Only where memory is switched on: with it off
+  // there is nowhere a lesson could land.
+  let learner: Learner | null = null;
   // the OpenViking server, supervised as a child of this process.
   // Started FIRST in onStart so it warms up while the agents build — but never
   // awaited: there is deliberately NO boot ordering, and rounds run
@@ -802,6 +810,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           cases = null;
         }
         base.case_writes = cases;
+      }
+      // the day's EOD curation and the lessons' balance. Unread is
+      // UNKNOWN (null), never "all well".
+      if (learner) {
+        try {
+          base.curation = learner.status();
+        } catch (err) {
+          log("memory status: could not read the learner's ledger", err);
+          base.curation = null;
+        }
       }
       try {
         const b = daemon.store.feedbackMemoryBacklog();
@@ -1171,6 +1189,27 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           backfillDays: Math.max(0, cfg.memory.cases_backfill_days),
         });
         caseWriter.start();
+
+        // The learner (S8): state.db and the base clone's git in,
+        // candidates and the EOD packet out; it reads the lessons in force
+        // through the same store (only while memory reads healthy) and never
+        // writes memory — the curator does, with `viking_write`'s typed
+        // `lesson` (vendored patch 0010).
+        learner = new Learner({
+          store: d.store,
+          root,
+          eodTime: cfg.eod.time,
+          timeZone: cfg.eod.timezone,
+          botLogin: cfg.github.bot_login,
+          baseBranch: cfg.github.base_branch,
+          config: learnerKnobsOf(cfg.memory),
+          git: sessions.worktrees,
+          lessons: memory,
+          healthy: () => health.currentState() === "healthy",
+          wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
+          log,
+        });
+        learner.start();
       }
 
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
@@ -1287,6 +1326,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);
         },
+        // the EOD curator's receipt for the day's outcomes packet.
+        curationReceipt(receipt) {
+          if (!learner)
+            return {
+              ok: false,
+              reason: "the learner is not running on this daemon ([openviking] enabled = false)",
+            };
+          return learner.applyReceipt(receipt);
+        },
         drain(on, issuer, forMin) {
           return drainLever(leverDeps, on, issuer, forMin, async () => {
             d.wakeThreadDecisions();
@@ -1376,7 +1424,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // the day's cancellation summary rides the sweep prompt so
         // the digest actually mentions cancellations (grouped, loud first,
         // "none" explicit).
-        dayContext: (date) => eodDigestContext(d.store, date, cfg.eod.timezone),
+        // and the learner's outcomes packet — built here, at the
+        // fire (a mine first when the day's has not run) — whose pointer the
+        // digest carries and whose curation instructions render after the
+        // seed. A learner that throws costs the packet, never the sweep.
+        dayContext: async (date) => {
+          const cancelled = eodDigestContext(d.store, date, cfg.eod.timezone);
+          if (!learner) return cancelled;
+          try {
+            const prep = await learner.prepareEod(date);
+            return { lines: `${cancelled}\n${prep.lines}`, curation: prep.curation };
+          } catch (err) {
+            log(`learner: the outcomes packet for ${date} failed`, err);
+            return cancelled;
+          }
+        },
         // the curator learns the §1 layout here — the
         // seed is frozen and never said where each kind of entry lives.
         ...(cfg.openviking.enabled ? { memoryLayout: MEMORY_LAYOUT_NOTE } : {}),
@@ -1411,7 +1473,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           log(`EOD sweep for ${date} firing — the drain that deferred it has lifted`);
         },
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
-        onFire: (date) => log(`EOD sweep injected for ${date}`),
+        onFire: (date) => {
+          log(`EOD sweep injected for ${date}`);
+          // The receipt for the day's packet is owed from now (S8).
+          learner?.eodFired(date);
+        },
         onError: (err) => log("EOD injection failed (retried with backoff)", err),
         // Three retries failed too: the day's curation did not happen.
         onInjectFailed: (date, err, attempts) => {
@@ -1473,6 +1539,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       memoryHealth?.stop();
       feedbackPump?.stop();
       caseWriter?.stop();
+      learner?.stop();
       eod?.stop();
       heartbeat?.stop();
       commands?.stop();

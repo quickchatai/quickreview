@@ -242,6 +242,14 @@ export function memoryLine(value: unknown): string {
     credentials?: Record<string, { result?: unknown; status?: unknown; code?: unknown } | null>;
     last_error?: { op?: unknown; code?: unknown; message?: unknown } | null;
     serving?: { ok?: unknown; since?: unknown; reason?: unknown } | null;
+    curation?: {
+      state?: unknown;
+      day?: unknown;
+      offered?: unknown;
+      not_persisted?: unknown;
+      unresolved?: unknown;
+      balance?: { look_for?: unknown; dont_raise?: unknown } | null;
+    } | null;
   };
   if (m.enabled === false) return "reviewer memory: not monitored on this daemon";
   // A scalar as text; anything else (a torn or foreign shape) as the fallback.
@@ -267,7 +275,35 @@ export function memoryLine(value: unknown): string {
     m.serving && (m.serving.ok === false || typeof m.serving.since === "string")
       ? `; NOT serving search${typeof m.serving.since === "string" ? ` since ${m.serving.since}` : ""}${typeof m.serving.reason === "string" ? ` — ${m.serving.reason.slice(0, 160)}` : ""}`
       : "";
-  return `reviewer memory: ${state} since ${txt(m.since)}${incident}${serving}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}`;
+  // the day's EOD curation — loud when it did not reach memory,
+  // UNKNOWN when the daemon could not read its ledger; the lessons' balance.
+  const c = m.curation;
+  // Older failures nothing has made good yet ride beside the reported day.
+  const earlierDays =
+    c && Array.isArray(c.unresolved)
+      ? new Set(
+          c.unresolved
+            .map((u: unknown) => (u && typeof u === "object" ? (u as { day?: unknown }).day : null))
+            .filter((d: unknown): d is string => typeof d === "string" && d !== c.day),
+        ).size
+      : 0;
+  const earlier =
+    earlierDays > 0
+      ? ` (+${earlierDays} earlier unresolved day${earlierDays === 1 ? "" : "s"})`
+      : "";
+  const curation =
+    c === null
+      ? "; EOD curation UNKNOWN"
+      : c && typeof c === "object"
+        ? `${
+            c.state === "missing"
+              ? `; EOD CURATION MISSING for ${txt(c.day)} (${txt(c.offered)} candidates, no receipt)${earlier}`
+              : c.state === "not_persisted"
+                ? `; EOD LESSONS NOT PERSISTED for ${txt(c.day)} (${txt(c.not_persisted)})${earlier}`
+                : `; EOD curation ${txt(c.state)}`
+          }${c.balance ? `; lessons look-for:dont-raise ${txt(c.balance.look_for)}:${txt(c.balance.dont_raise)}` : ""}`
+        : "";
+  return `reviewer memory: ${state} since ${txt(m.since)}${incident}${serving}; ${cred("daemon", "daemon key")}; ${cred("sessions", "sessions' key")}${err}${curation}`;
 }
 
 export function boardAnswer(dir: string, now: Date): string {

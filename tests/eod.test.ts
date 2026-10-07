@@ -261,4 +261,87 @@ describe("startEodTimer", () => {
     expect(injected[1]).toBe("sweep 2026-08-14");
     timer.stop();
   });
+
+  // the learner builds the day's outcomes packet in dayContext —
+  // asynchronously — and answers the digest's pointer line beside the
+  // curation instructions, which render as their own section.
+  it("awaits an async dayContext; its curation renders as its own section, the pointer under the digest's lines", async () => {
+    let clock = new Date("2026-08-13T09:00:00Z");
+    const timers: Array<{ cb: () => void; ms: number }> = [];
+    const injected: string[] = [];
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "sweep {{date}}",
+      memoryLayout: "the layout",
+      dayContext: async (d) => {
+        await new Promise((r) => setTimeout(r, 5));
+        return {
+          lines: `cancelled: none\noutcomes packet: state/eod/${d}/outcomes.md — 2 candidates`,
+          curation: "Decide every candidate, then write the receipt.",
+        };
+      },
+      injectOverseer: async (m) => {
+        injected.push(m);
+      },
+      setTimer: (cb, ms) => {
+        timers.push({ cb, ms });
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+    });
+    clock = new Date("2026-08-13T16:00:00Z");
+    timers[0]!.cb();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(injected).toEqual([
+      [
+        "sweep 2026-08-13",
+        "",
+        "## Reviewer memory layout",
+        "",
+        "the layout",
+        "",
+        "## Outcomes to curate",
+        "",
+        "Decide every candidate, then write the receipt.",
+        "",
+        "## Daemon-measured context for 2026-08-13",
+        "",
+        "Carry these lines into today's digest verbatim (under Spend):",
+        "",
+        "cancelled: none",
+        "outcomes packet: state/eod/2026-08-13/outcomes.md — 2 candidates",
+        "",
+      ].join("\n"),
+    ]);
+    timer.stop();
+  });
+
+  it("a dayContext that never answers costs its context, never the sweep", async () => {
+    let clock = new Date("2026-08-13T09:00:00Z");
+    const timers: Array<{ cb: () => void; ms: number }> = [];
+    const injected: string[] = [];
+    const timer = startEodTimer({
+      timeHHMM: "18:00",
+      timeZone: TZ,
+      now: () => clock,
+      readPrompt: () => "sweep {{date}}",
+      dayContext: () => new Promise<string>(() => {}),
+      dayContextTimeoutMs: 20,
+      injectOverseer: async (m) => {
+        injected.push(m);
+      },
+      setTimer: (cb, ms) => {
+        timers.push({ cb, ms });
+        return timers.length - 1;
+      },
+      clearTimer: () => {},
+    });
+    clock = new Date("2026-08-13T16:00:00Z");
+    timers[0]!.cb();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(injected).toEqual(["sweep 2026-08-13"]);
+    timer.stop();
+  });
 });

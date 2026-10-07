@@ -8,6 +8,8 @@ import { buildBatchWriteRequest, routeWrite } from "./qcr-write.js";
 import { failureText, isNotFound, isPreconditionConflict } from "./qcr-honest.js";
 // [QCR PATCH 5]
 import { namespaceNote, ownNamespaceName, routeNamespace } from "./qcr-namespaces.js";
+// [QCR PATCH 10]
+import { LESSON_KINDS } from "./qcr-lesson.js";
 // [QCR PATCH 9]
 import {
   browsableInScope,
@@ -288,6 +290,16 @@ export function registerTools(
   //
   // `viking_write` is therefore the ONLY write tool a session can reach.
   if (!leaf) {
+    // [QCR PATCH 10] A curated lesson's header, as structured fields: the
+    // tool renders `#lesson kind=… lens=… class=… paths=… evidence=…` from
+    // them (qcr-lesson.ts) and refuses an unknown lens id.
+    const lessonParam = Type.Object({
+      kind: StringEnum(LESSON_KINDS),
+      lens: Type.Array(Type.String(), { description: "Built lens ids the lesson is for, e.g. ['pass-baseline','pass-validate']" }),
+      class: Type.String({ description: "Class slug the lesson covers, e.g. 'baseline.pre-existing-scope' — reuse a candidate's class" }),
+      paths: Type.Array(Type.String(), { description: "Path globs it applies to; ['**'] for the whole repo" }),
+      evidence: Type.Array(Type.String(), { description: "Refs: pr:<n>, comment:<id>, case:<name>, commit:<sha>, cand:c<id>" }),
+    }, { description: "A typed lesson (experiences/ only): the tool writes the header line from these fields" });
     pi.registerTool({
       name: "viking_write",
       label: "Viking Write",
@@ -299,6 +311,8 @@ export function registerTools(
         "Several entries at once go in ONE call as `entries` — never as parallel calls into the same directory.",
         "Prefer mode 'create' with a fresh filename. Only 'replace' an entry you just read, passing its hash as expect_hash.",
         "A 409 REFUSED means the file changed (or already exists) — re-read it and decide, never retry blindly. A busy directory is retried for you; if it stays busy, try again in a minute.",
+        // [QCR PATCH 10]
+        "A curated lesson (experiences/) goes with `lesson: {kind, lens, class, paths, evidence}` — the tool writes its header line; `content` is the lesson's prose only. Cite the learner candidate a lesson adopts as `cand:c<id>` in evidence.",
         ...nsGuidelines,
       ],
       parameters: Type.Object({
@@ -307,6 +321,8 @@ export function registerTools(
         tags: Type.Optional(Type.Array(Type.String(), { description: "Convention tags without '#', e.g. ['pinned','review-ops']" })),
         mode: Type.Optional(StringEnum(["create", "replace"] as const)),
         expect_hash: Type.Optional(Type.String({ description: "Required for mode 'replace': sha256 of the CURRENT stored bytes" })),
+        // [QCR PATCH 10] a typed lesson — the header is rendered from this.
+        lesson: Type.Optional(lessonParam),
         // [QCR PATCH 6] several entries, one batch-write under one root.
         entries: Type.Optional(Type.Array(
           Type.Object({
@@ -315,6 +331,8 @@ export function registerTools(
             tags: Type.Optional(Type.Array(Type.String())),
             mode: Type.Optional(StringEnum(["create", "replace"] as const)),
             expect_hash: Type.Optional(Type.String()),
+            // [QCR PATCH 10]
+            lesson: Type.Optional(lessonParam),
           }),
           { description: "Several entries written as ONE batch (instead of uri + content). They must share a directory; the batch lands whole or not at all." },
         )),

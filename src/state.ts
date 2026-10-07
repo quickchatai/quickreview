@@ -1097,6 +1097,9 @@ export interface PrCommentRow {
   created_at: string | null;
   captured_at: string;
   captured_via: string;
+  /** A captured review's own state (S8), lowercased; null for a
+   * comment, and for a review captured before the column existed. */
+  review_state?: string | null;
 }
 
 export interface ReviewedHeadRow {
@@ -1411,6 +1414,12 @@ export class StateStore {
       // recorded before the column (`fillLensIds`).
       "ALTER TABLE round_findings ADD COLUMN title TEXT",
       "ALTER TABLE round_findings ADD COLUMN lens_ids TEXT",
+      // S8 (the learner): the state a captured REVIEW was submitted
+      // with (`approved` | `changes_requested` | `commented`, GitHub's own
+      // word, lowercased). Nullable: inline and top-level comments have none,
+      // and a review captured before the column is unknown — the miner then
+      // never reads it as a request for changes.
+      "ALTER TABLE pr_comments ADD COLUMN review_state TEXT",
     ]) {
       try {
         this.db.exec(ddl);
@@ -5063,13 +5072,18 @@ export class StateStore {
     body?: string | null;
     created_at?: string | null;
     captured_via?: string;
+    review_state?: string | null;
   }): boolean {
+    const reviewState =
+      typeof c.review_state === "string" && c.review_state.trim() !== ""
+        ? c.review_state.trim().toLowerCase()
+        : null;
     const info = this.db
       .prepare(
         `INSERT OR IGNORE INTO pr_comments
            (pr, source, comment_id, in_reply_to_id, thread_id, review_id, author, author_type,
-            tagged, path, line, body, created_at, captured_at, captured_via)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            tagged, path, line, body, created_at, captured_at, captured_via, review_state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         c.pr,
@@ -5087,7 +5101,16 @@ export class StateStore {
         c.created_at ?? null,
         this.ts(),
         c.captured_via ?? "webhook",
+        reviewState,
       );
+    // A review captured before S8 has no state; the sweep that sees
+    // it again fills it in (once — a recorded state is never rewritten).
+    if (info.changes === 0 && reviewState !== null)
+      this.db
+        .prepare(
+          "UPDATE pr_comments SET review_state = ? WHERE source = ? AND comment_id = ? AND review_state IS NULL",
+        )
+        .run(reviewState, c.source, c.comment_id);
     return info.changes > 0;
   }
 

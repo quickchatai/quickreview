@@ -181,6 +181,13 @@ a command that is not on this list is rejected and logged loudly.
   positive integer named by the exhaustion anomaly. The command restores the
   preserved file to the ordinary globally-paced watcher; it never calls
   GitHub itself and cannot bypass thread ownership or mutation guards.
+- `eod-curation-receipt {day, decisions}` — the EOD sweep's answer to the
+  day's outcomes packet, owner-tier only on Slack (the sweep itself writes it
+  into `commands/`). `day` is the packet's ops day; `decisions` is a list of
+  `{candidates, decision, reason, lesson}`: `adopted` (a typed lesson cites
+  each candidate), `declined` (with a `reason`) or `refused` (the write
+  failed — the error as `reason`). The daemon checks every adoption against
+  memory and wakes a person for a refused or missing write.
 
 Unknown fields are rejected outright: a command with one fails validation
 entirely and a rejection result file is written to `commands/results/`.

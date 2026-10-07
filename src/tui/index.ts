@@ -821,7 +821,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // never from memory, which is the thing that is down (the `#bug` filer reads
   // memory, so it could never report this). Independent of the companion:
   // the board banner and this ticket reach a person with the column off.
-  const { maybeFileMemoryIncident, newIncidentFilerMemo } = await import("./memincident.js");
+  const { maybeFileCurationIncident, maybeFileMemoryIncident, newIncidentFilerMemo } =
+    await import("./memincident.js");
   const incidentMemo = newIncidentFilerMemo();
   const incidentTracker =
     full.sink.kind === "wayfinder" && full.sink.root && full.sink.effort && full.sink.parent
@@ -845,6 +846,30 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // the notice every poll.
     if (line !== "" && line !== incidentNotice) {
       incidentNotice = line;
+      a.notice(line);
+    }
+  });
+  // the learner's EOD curation that did not reach memory (no
+  // receipt, or lessons memory does not hold) — the same person path: ONE
+  // ticket per curation incident (its oldest unresolved failure) older than
+  // the same threshold, from status.json `memory.curation`.
+  const curationMemo = newIncidentFilerMemo();
+  let curationNotice = "";
+  chainOnPoll(app, (a) => {
+    const out = maybeFileCurationIncident(incidentTracker, a.view.snapshot?.memory, {
+      fresh: a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+      now: new Date(),
+      afterMs: full.memory.incident_ticket_after_min * 60_000,
+      memo: curationMemo,
+    });
+    const line =
+      out.kind === "filed"
+        ? `EOD curation incident filed as ${out.ticketId} (${out.file})`
+        : out.kind === "no-tracker" || out.kind === "failed"
+          ? out.line
+          : "";
+    if (line !== "" && line !== curationNotice) {
+      curationNotice = line;
       a.notice(line);
     }
   });
@@ -1098,7 +1123,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // Daemon-detected pi auth failures (status.json `pi_auth_expired`) ride
     // the same pipeline: on each poll, bridge a fresh flag into one alert
     // file; the consumer above does badge + notify + inject + cooldown.
-    const { maybeWritePiAuthAlert, maybeWriteMemoryAlert } = await import("./alerts.js");
+    const { maybeWritePiAuthAlert, maybeWriteMemoryAlert, maybeWriteCurationAlert } =
+      await import("./alerts.js");
     const piAuthMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
       try {
@@ -1122,6 +1148,23 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           a.view.snapshot?.memory,
           a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
           memoryAlertMem,
+        );
+      } catch {
+        // alerting is best-effort; never break the poll loop
+      }
+    });
+
+    // the day's EOD curation did not reach memory (no receipt,
+    // or a lesson refused / not found) — one notification per (state, day),
+    // from status.json `memory.curation`, fresh snapshots only.
+    const curationAlertMem = { lastWritten: "" };
+    chainOnPoll(app, (a) => {
+      try {
+        maybeWriteCurationAlert(
+          full.companion.alerts_dir,
+          a.view.snapshot?.memory,
+          a.view.health.kind === "ok" || a.view.health.kind === "pipeline_unhealthy",
+          curationAlertMem,
         );
       } catch {
         // alerting is best-effort; never break the poll loop

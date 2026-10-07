@@ -4,6 +4,7 @@
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
 import type { WhyPayload } from "../cli.js";
+import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
 import { fmtDuration } from "../memory/health.js";
 import { cancelCauseLabel, isLoudCancelCause, type StatusSnapshot } from "../state.js";
 import type { AlertBadge } from "./alerts.js";
@@ -373,6 +374,22 @@ export function memorySegment(
   }
 }
 
+/**
+ * The board's EOD-curation banner (S8), from status.json
+ * `memory.curation` alone: loud when the day's curation did not reach memory
+ * — no receipt (`missing`), or a lesson refused or not found
+ * (`not_persisted`). Both are also overseer wakes; this is the half a PERSON
+ * sees, beside the memory banner. Nothing otherwise: an unread block is the
+ * memory line's to say (`qcr status`), and a quiet day is quiet.
+ */
+export function curationSegment(snapshot: StatusSnapshot | undefined): string | undefined {
+  const c = snapshot?.memory?.curation;
+  if (!curationNeedsAttention(c) || !c) return undefined;
+  return c.state === "missing"
+    ? `${FG.anomaly}⛔ EOD CURATION MISSING ${c.day ?? "?"} · ${c.offered} candidate${c.offered === 1 ? "" : "s"}, no receipt${earlierPhrase(c)}${RESET}`
+    : `${FG.anomaly}⛔ LESSONS NOT PERSISTED ${c.day ?? "?"} · ${c.not_persisted}${earlierPhrase(c)}${RESET}`;
+}
+
 /** Top-bar segments, left to right — shared by the renderer and the hit-test
  * geometry so the alert click zone can never drift from the text. */
 function barSegments(view: BoardView, alerts: boolean): string[] {
@@ -411,11 +428,13 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
       : "";
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
   const mem = memorySegment(s, view.now ?? new Date());
+  const curation = curationSegment(s) ?? "";
   return [
     `${HEADING}quickreview${DRESET}`,
     mode,
     health,
     mem?.loud ? mem.text : "",
+    curation,
     drainSeg,
     breakerSeg,
     rounds,

@@ -10,6 +10,7 @@ import {
   captureFromEvent,
   isBotIdentity,
   isHumanCapture,
+  capturedFromReview,
   capturedFromReviewComment,
 } from "../src/capture.js";
 import { parseConfig, type Config } from "../src/config.js";
@@ -319,6 +320,59 @@ describe("captureFromEvent", () => {
 });
 
 // ---- store identity -------------------------------------------------------
+
+// the learner reads a human REQUEST_CHANGES off the captured
+// review's own state — recorded as a fact, routing untouched.
+describe("a captured review keeps its state (S8)", () => {
+  const deps = { botLogin: BOT, isTrackedPr: () => true };
+  it("the webhook and the sweep record it lowercased; a comment has none", () => {
+    const hook = captureFromEvent(
+      "pull_request_review",
+      "submitted",
+      reviewSubmitted({ state: "changes_requested" }),
+      deps,
+    );
+    expect(hook).toMatchObject({
+      captured: { source: "review", review_state: "changes_requested" },
+    });
+    const swept = capturedFromReview(PR, {
+      id: 1,
+      user: "pmercier",
+      user_type: "User",
+      state: "CHANGES_REQUESTED",
+      body: "no",
+      commit_id: "c",
+      submitted_at: "2026-08-25T09:10:00Z",
+    });
+    expect(swept.review_state).toBe("changes_requested");
+    expect(capturedFromReviewComment(PR, rc({ user: "alice" })).review_state).toBeUndefined();
+  });
+
+  it("is stored; a review captured before the column gets it once, and a recorded state is never rewritten", () => {
+    const store = new StateStore(":memory:");
+    store.recordPrComment({ pr: PR, source: "review", comment_id: 9, body: "old" });
+    expect(store.prComments(PR)[0]!.review_state).toBeNull();
+    expect(
+      store.recordPrComment({
+        pr: PR,
+        source: "review",
+        comment_id: 9,
+        body: "old",
+        review_state: "CHANGES_REQUESTED",
+      }),
+    ).toBe(false);
+    expect(store.prComments(PR)[0]!.review_state).toBe("changes_requested");
+    store.recordPrComment({
+      pr: PR,
+      source: "review",
+      comment_id: 9,
+      body: "old",
+      review_state: "approved",
+    });
+    expect(store.prComments(PR)[0]!.review_state).toBe("changes_requested");
+    store.close();
+  });
+});
 
 describe("pr_comments identity", () => {
   it("dedupes on (source, comment_id), never on body text", () => {

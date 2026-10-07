@@ -192,6 +192,7 @@ export function renderEodPrompt(
   dayContext?: string,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
   memoryLayout?: string,
+  curation?: string,
 ): string {
   let out = render(stripModelDocs(template), { ...identity, date });
   // where each kind of memory entry lives — the frozen seed never
@@ -199,6 +200,11 @@ export function renderEodPrompt(
   // material: its own section, before the lines the digest carries.
   if (memoryLayout?.trim())
     out = `${out.replace(/\n*$/, "\n")}\n## Reviewer memory layout\n\n${memoryLayout.trim()}\n`;
+  // what to do with the day's outcomes packet — the learner's
+  // candidates, the typed-lesson write and the curation receipt. Instructions,
+  // not digest material: its own section, like the layout note.
+  if (curation?.trim())
+    out = `${out.replace(/\n*$/, "\n")}\n## Outcomes to curate\n\n${curation.trim()}\n`;
   if (!dayContext?.trim()) return out;
   return (
     `${out.replace(/\n*$/, "\n")}\n` +
@@ -209,6 +215,39 @@ export function renderEodPrompt(
 }
 
 export type TimerHandle = unknown;
+
+/** What `dayContext` may answer: the digest's lines, and (S8) the
+ * curation section the prompt renders after the seed. */
+export interface EodDayContext {
+  lines: string;
+  curation?: string;
+}
+
+/** Wait for `dayContext`, total: a throw, a rejection or a timeout is "no
+ * context" — the sweep itself must still fire. */
+async function resolveDayContext(
+  fn: EodTimerDeps["dayContext"],
+  date: string,
+  timeoutMs: number,
+): Promise<EodDayContext> {
+  if (!fn) return { lines: "" };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answer = await Promise.race([
+      Promise.resolve().then(() => fn(date)),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+    if (answer === null || answer === undefined) return { lines: "" };
+    return typeof answer === "string" ? { lines: answer } : answer;
+  } catch {
+    return { lines: "" };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** Why a day's sweep was deferred. */
 export type EodHoldReason = "draining" | "sweep_in_flight";
@@ -223,8 +262,14 @@ export interface EodTimerDeps {
   identity?: Readonly<TemplateVars>;
   /** Daemon-measured lines for the fired date, appended to the prompt so the
    * sweep carries them into the digest (the cancellation summary).
-   * A throw here never loses the sweep: the prompt just goes out bare. */
-  dayContext?: (date: string) => string;
+   * A throw here never loses the sweep: the prompt just goes out bare.
+   * it may answer ASYNCHRONOUSLY (the learner builds the day's
+   * outcomes packet here) and with a `curation` section beside the lines —
+   * waited for at most `dayContextTimeoutMs`, after which the sweep goes out
+   * without it. */
+  dayContext?: (date: string) => string | EodDayContext | Promise<string | EodDayContext>;
+  /** How long the sweep waits for `dayContext` (default 90 s). */
+  dayContextTimeoutMs?: number;
   /** The memory layout the curator writes into (S5,
    * `MEMORY_LAYOUT_NOTE`), rendered after the seed in its own section. */
   memoryLayout?: string;
@@ -276,6 +321,9 @@ export const EOD_DEFAULTS = Object.freeze({
   deferPollMs: 60_000,
   /** Three retries of a failed injection: after 1, 5 and 15 minutes. */
   retryBackoffMs: Object.freeze([60_000, 300_000, 900_000]),
+  /** How long a fire waits for its day context (S8: the learner
+   * builds the outcomes packet there, a mine and a memory read included). */
+  dayContextTimeoutMs: 90_000,
 });
 
 export interface EodTimer {
@@ -386,18 +434,25 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
   /** Render and inject one day's sweep, retrying a failed injection.
    * `stopped` — the timer was stopped before the day was settled either way. */
   const fire = async (date: string): Promise<"delivered" | "failed" | "stopped"> => {
-    let context = "";
-    try {
-      context = deps.dayContext?.(date) ?? "";
-    } catch {
-      // context is best-effort; the sweep itself must still fire
-    }
+    // Context is best-effort and bounded; the sweep itself must still fire.
+    const context = await resolveDayContext(
+      deps.dayContext,
+      date,
+      deps.dayContextTimeoutMs ?? EOD_DEFAULTS.dayContextTimeoutMs,
+    );
     let lastErr: unknown = null;
     for (let attempt = 0; attempt <= backoff.length; attempt += 1) {
       if (stopped) return "stopped";
       try {
         await deps.injectOverseer(
-          renderEodPrompt(deps.readPrompt(), date, context, deps.identity, deps.memoryLayout),
+          renderEodPrompt(
+            deps.readPrompt(),
+            date,
+            context.lines,
+            deps.identity,
+            deps.memoryLayout,
+            context.curation,
+          ),
           date,
         );
       } catch (err) {

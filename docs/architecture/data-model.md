@@ -75,7 +75,7 @@ a database property rather than a convention.
 | --- | --- | --- | --- |
 | `deliveries` | webhook delivery dedupe | `guid` (PK), `event`, `action` | `recordDelivery` |
 | `events` | the append-only daemon event log the CLI, TUI and digest read | `id` (PK), `ts`, `kind`, `pr`, `payload` | `logEvent`, `recentEvents`, `eventsOn`, `anomalies` |
-| `pr_comments` | a local copy of every human comment on a tracked PR (identity is GitHub's own `(source, comment_id)`) | `id` (PK), `pr`, `source`, `comment_id`, `author`, `body`, `tagged`, `captured_via` | `recordPrComment`, `prComments`, `hasPrComment` |
+| `pr_comments` | a local copy of every human comment on a tracked PR (identity is GitHub's own `(source, comment_id)`) | `id` (PK), `pr`, `source`, `comment_id`, `author`, `body`, `tagged`, `captured_via`, `review_state` | `recordPrComment`, `prComments`, `hasPrComment` |
 | `feedback_signals` | the tuning-loop ledger: tagged comments plus behavioural signals, deduped per kind | `id` (PK), `kind`, `pr`, `comment_id`, `review_id`, `scope`, `day` | `recordFeedbackSignal`, `feedbackCommentsForDay` |
 | `round_findings` | the durable per-finding reasoning record, parsed out of the session-written findings file | `id` (PK), `pr`, `round_no`, `finding_key`, `lens`, `lens_ids`, `title`, `severity`, `disposition`, `reason` | `recordRoundFindings`, `roundFindings`, `findingsForRound`, `concededFindings` |
 | `backfill_pr_meta` | PR metadata imported by the one-shot history backfill | `pr` (PK), `title`, `author`, `merged`, `imported_at` | `upsertBackfillPrMeta`, `backfillPrMeta`, `allBackfillPrMeta` |
@@ -110,6 +110,33 @@ the record wrote it, null when it wrote none.
 (the record named it), `path_line`, `path_line_title`, `path_line_tag`. The
 fate set is closed: `fixed`, `refuted_conceded`, `upheld_after_reply`,
 `open_at_close`, `unknown`. Nothing here is written to GitHub.
+
+`pr_comments.review_state` (S8) is a captured REVIEW's own state
+(`approved`, `changes_requested`, `commented`), lowercased; null for inline and
+top-level comments, and for a review captured before the column (a later sweep
+that sees the review again fills it in, once). The learner reads it as "a human
+asked for changes"; nothing routes on it.
+
+#### The learner (S8)
+
+`src/learner/learner.ts` creates and owns four more tables on the same file:
+
+| Table | Purpose | Key columns |
+| --- | --- | --- |
+| `lesson_candidates` | one row per human outcome the miner turned into a candidate lesson, deduped by a deterministic `ref`, and what the EOD curation made of it | `id` (PK, the `c<id>` the packet and the receipt name), `ref` (UNIQUE), `source`, `kind`, `polarity`, `class`, `pr`, `round_no`, `finding_key`, `occurred_at`, `offered_day`, `reopened_day`, `offers`, `status`, `decided_day`, `reason`, `lesson_ids`, `receipt_day` |
+| `eod_curations` | one row per EOD day: its packet, the sweep's delivery, the receipt and what did not persist | `day` (PK), `packet_at`, `offered`, `new_today`, `expired`, `fired_at`, `receipt_at`, `missing_woken_at`, `not_persisted`, `not_persisted_since`, `not_persisted_woken` |
+| `learner_marks` | once-only marks: the day's mine (`mined:<day>`) and the digest backfill | `key` (PK), `value`, `at` |
+| `learner_recall_scans` | per merged PR, the post-merge recall scan's progress and outcome | `pr` (PK), `merged_at`, `attempts`, `merge_commit`, `touches`, `done`, `outcome` |
+
+A candidate's `status` is `open` (queued while `offered_day` is null),
+`adopting` (the receipt said adopted; memory not checked yet), `adopted` (a
+typed lesson in `experiences/` cites `cand:c<id>`), `declined`, `expired`
+(undecided `lessons_expiry_ops_days` after its first offer — or after
+`reopened_day`, when a refused write or an unfound adoption put it back in the
+packet), or `withdrawn` (a fate candidate whose S6 outcome changed since it was
+mined). Nothing is ever deleted. A day stays reported as `missing` in
+status.json `memory.curation` until it or a later day is receipted, and as
+`not_persisted` until each candidate on its list is decided.
 
 ### 1.4 Operator controls and filing
 
@@ -276,7 +303,12 @@ say — a reader must default rather than assume:
   `ok`, `absent` (NOT_FOUND answers), `conflict`, `auth_failed` and `failed`.
   `enabled: false` means not monitored — memory switched off in config.toml,
   never a server that cannot run. What a person sees about memory is read from
-  here.
+  here. Its `curation` sub-block (S8, `CurationStatus` in
+  `src/learner/status.ts`) is the learner's: the reported day's state
+  (`no_packet | packet_ready | nothing | awaiting | missing | not_persisted |
+  received`) and counts, every `unresolved` failure, the oldest of them as the
+  `incident` the TUI files one ticket for, and the look-for : don't-raise
+  `balance` of the lessons in force (null until memory was read in full).
 - `draining`, `drained_deliveries`, `draining_since`, `draining_by`,
   `draining_until`, `drain_failed_loud` — the deploy-window drain.
 - `round_stage_supervisor` — `{ healthy, stale_after_s, last_attempt_at, … }`.
@@ -326,7 +358,9 @@ there is no generic escape hatch. The whitelist is closed:
 
 `rerun-round`, `restart-session`, `resolve-terminal-failure`, `pause-pr`,
 `resume-pr`, `flag-owner`, `file-improvement-pr`, `file-issue`, `slack_reply`,
-`drain`, `retry-thread-decision`.
+`drain`, `retry-thread-decision`, `eod-curation-receipt` (S8 — the
+EOD curator's per-candidate adopted / declined / refused answer to the day's
+outcomes packet, `src/learner/receipt.ts`).
 
 Nothing inside a command file says who wrote it. The **issuer is decided by
 directory**: `commands/` and `commands/slack/` are session-issued;

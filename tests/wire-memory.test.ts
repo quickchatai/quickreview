@@ -200,6 +200,12 @@ describe("tui/index.ts: memory failures reach the operator (S1)", () => {
     expect(tui).toContain("full.memory.incident_ticket_after_min * 60_000");
   });
 
+  it("an EOD curation incident (S8) files the same way, with its own memo", () => {
+    expect(tui).toMatch(
+      /maybeFileCurationIncident\(incidentTracker, a\.view\.snapshot\?\.memory, \{[\s\S]{0,200}?afterMs: full\.memory\.incident_ticket_after_min \* 60_000,\s*memo: curationMemo,/,
+    );
+  });
+
   it("the companion's view carries the TUI's own request counts", () => {
     expect(tui).toContain("tuiMemoryRequests: memStore.requestCounts()");
   });

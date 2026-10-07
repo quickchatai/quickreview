@@ -21,6 +21,7 @@
 // tracker must not take down the TUI poll loop.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { CurationStatus } from "../learner/status.js";
 import { credentialPhrase, fmtDuration, type MemoryStatus } from "../memory/health.js";
 import { claimNextId, type TrackerPaths } from "./autofile.js";
 
@@ -33,6 +34,11 @@ export function incidentKey(m: MemoryStatus): string | undefined {
 
 /** Incident keys already filed in the effort's tickets. */
 export function filedIncidentKeys(paths: TrackerPaths): Set<string> {
+  return filedKeys(paths, /^Memory-incident: (.+)$/gm);
+}
+
+/** The values of a dedup line across the effort's tickets. */
+function filedKeys(paths: TrackerPaths, line: RegExp): Set<string> {
   const keys = new Set<string>();
   const dir = join(paths.root, "efforts", paths.effort, "tickets");
   if (!existsSync(dir)) return keys;
@@ -44,7 +50,7 @@ export function filedIncidentKeys(paths: TrackerPaths): Set<string> {
     } catch {
       continue;
     }
-    for (const m of body.matchAll(/^Memory-incident: (.+)$/gm)) keys.add(m[1]!.trim());
+    for (const m of body.matchAll(line)) keys.add(m[1]!.trim());
   }
   return keys;
 }
@@ -213,6 +219,150 @@ export function maybeFileMemoryIncident(
     return {
       kind: "failed",
       line: `memory incident ticket could not be filed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// ---- FT-0546 S8: an EOD curation that did not reach memory → ONE ticket ----
+//
+// The learner's two failures — no curation receipt (`missing`), and lessons
+// the curator adopted or tried to write that memory does not hold
+// (`not_persisted`) — are overseer wakes, and the person half of S1's path
+// carries them too: the board banner, the desktop notification, `qcr status`,
+// the companion's view, and this ticket. The daemon keeps a failure in
+// status.json `memory.curation.unresolved` until something made it good (a
+// later receipt; the candidate decided), and names the OLDEST as the
+// `incident`: one ticket per incident, keyed by its state and day, once it is
+// older than the same `incident_ticket_after_min`. A run of missed days is one
+// incident (its oldest day stays the key until a receipt resolves the run).
+
+export const CURATION_INCIDENT_LINE = "Curation-incident:";
+
+/** The dedup key: the oldest unresolved failure's state and day. */
+export function curationIncidentKey(c: CurationStatus | null | undefined): string | undefined {
+  const i = c?.incident;
+  return i ? `${i.state} ${i.day}` : undefined;
+}
+
+export function curationTicketBody(
+  id: string,
+  c: CurationStatus,
+  paths: TrackerPaths,
+  now: Date,
+): { name: string; content: string } {
+  const i = c.incident!;
+  const missing = i.state === "missing";
+  const name = `FT-${id}-eod-curation-${missing ? "missing" : "lessons-not-persisted"}.md`;
+  const nowIso = now.toISOString();
+  const age = fmtDuration(now.getTime() - Date.parse(i.since));
+  const what = missing
+    ? `the EOD sweep for ${i.day} was delivered, its outcomes packet offered ${i.count} lesson candidate(s), and no \`eod-curation-receipt\` came back — nothing says the day's human outcomes were curated`
+    : `${i.count} lesson(s) from the ${i.day} curation are not in reviewer memory — a write the curator reported refused, or an adoption no typed lesson header cites (\`cand:c<id>\`)`;
+  const unresolved = (c.unresolved ?? [])
+    .map((u) => `${u.day} ${u.state.replace("_", " ")} (${u.count}, since ${u.since})`)
+    .join("; ");
+  const content = `# EOD curation ${missing ? `missing since ${i.day}` : `lessons not persisted (${i.day})`}
+
+Id: FT-${id}
+Effort: ${paths.effort}
+Type: impl
+Status: open
+Role: —
+Category: —
+Labels: review-ops, auto-filed, memory, learner
+Assignee: —
+Blocked-by: —
+Parent: ${paths.parent}
+Spec: —
+Branch: —
+PR: —
+Created: ${nowIso} by qcr-tui
+Updated: ${nowIso}
+Claimed: —
+Closed: —
+
+## Question
+
+The learner's EOD curation did not reach reviewer memory (FT-0546 S8): ${what}.
+Unresolved since ${i.since} — ${age} when this was filed. The overseer was
+woken; this ticket is the person half. Auto-filed by the TUI from the
+daemon's status.json \`memory.curation\` block. Find out why the curation did
+not land, make it good (curate the packet and write the receipt, or get the
+lessons written), then resolve with a note; the board banner clears on its
+own once nothing is unresolved.
+
+${CURATION_INCIDENT_LINE} ${i.state} ${i.day}
+
+## What status.json said
+
+- reported: ${c.day ?? "?"} ${c.state.replace("_", " ")} — ${c.offered} offered, ${c.adopted} adopted, ${c.declined} declined, ${c.verifying} verifying, ${c.not_persisted} not persisted
+- unresolved: ${unresolved || "none listed"}
+- candidates undecided: ${c.open} offered, ${c.queued} queued
+- lessons in force: ${c.balance ? `look-for:dont-raise ${c.balance.look_for}:${c.balance.dont_raise} as of ${c.balance.as_of}` : "UNKNOWN (memory not read)"}
+
+## Where to look
+
+- \`qcr lessons\` and \`qcr status\` (the memory line: a refused write is
+  usually memory refusing — its health is on the same line)
+- the outcomes packet \`state/eod/${i.day}/outcomes.md\` and the overseer session
+  the EOD sweep ran in
+- the daemon's \`eod_curation_missing\` / \`eod_lessons_not_persisted\` anomalies
+`;
+  return { name, content };
+}
+
+/**
+ * File the curation incident when it is due, once — the same tracker, actor,
+ * memo shape and failure handling as `maybeFileMemoryIncident`. Use its own
+ * memo: the two kinds of incident are keyed apart.
+ */
+export function maybeFileCurationIncident(
+  paths: TrackerPaths | undefined,
+  memory: MemoryStatus | undefined,
+  opts: { fresh: boolean; now: Date; afterMs: number; memo: IncidentFilerMemo },
+): IncidentFileOutcome {
+  try {
+    if (!opts.fresh || !memory) return { kind: "none" };
+    const c = memory.curation;
+    const key = curationIncidentKey(c);
+    if (!c || key === undefined) return { kind: "none" };
+    const started = Date.parse(c.incident!.since);
+    if (!Number.isFinite(started) || opts.now.getTime() - started < opts.afterMs)
+      return { kind: "none" };
+    if (opts.memo.filed.has(key)) return { kind: "already", key };
+    if (!paths) {
+      if (opts.memo.noTrackerSaid) return { kind: "none" };
+      opts.memo.noTrackerSaid = true;
+      return {
+        kind: "no-tracker",
+        line: `EOD curation incident (${key}) is past the ticket threshold, but no wayfinder tracker is configured ([sink] kind) — not filed; the board banner stands`,
+      };
+    }
+    if (
+      opts.memo.failedAt !== undefined &&
+      opts.now.getTime() - opts.memo.failedAt < RETRY_AFTER_FAILURE_MS
+    )
+      return { kind: "none" };
+    if (filedKeys(paths, /^Curation-incident: (.+)$/gm).has(key)) {
+      opts.memo.filed.add(key);
+      return { kind: "already", key };
+    }
+    const ticketsDir = join(paths.root, "efforts", paths.effort, "tickets");
+    mkdirSync(ticketsDir, { recursive: true });
+    const id = claimNextId(
+      paths.root,
+      (n) => `efforts/${paths.effort}/tickets/${curationTicketBody(n, c, paths, opts.now).name}`,
+    );
+    const { name, content } = curationTicketBody(id, c, paths, opts.now);
+    writeFileSync(join(ticketsDir, name), content);
+    opts.memo.filed.add(key);
+    delete opts.memo.failedAt;
+    return { kind: "filed", ticketId: `FT-${id}`, file: name };
+  } catch (err) {
+    opts.memo.failedAt = opts.now.getTime();
+    return {
+      kind: "failed",
+      line: `EOD curation incident ticket could not be filed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }

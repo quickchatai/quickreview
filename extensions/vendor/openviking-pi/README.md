@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need nine
+upstream ships it as an `examples/` directory, not a package, and we need ten
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the nine patches was tried as configuration first and does not
+Every one of the ten patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Nine numbered behaviour patches, applied in order over the vendored upstream
+Ten numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all ten, in order, to a
+`git apply`-able diffs — verified by applying all eleven, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -378,6 +378,31 @@ of a round until S9 decides how they are delivered.
 Touches: `qcr-hint.ts` (the scope rules), `tools.ts` (the three read tools),
 `index.ts` (the provider, the prompt line, the banner).
 
+### 0010 — typed lessons: `viking_write` writes the header (S8)
+
+The EOD curator wrote its lessons as prose — 10 of 17 with no machine header,
+the rest spelling type, lens and evidence three ways in the body — so nothing
+could tell which lens a lesson was for, whether it said "look for X" or "do not
+raise X", or which candidate it adopted.
+
+* **A structured `lesson` parameter** (top level for one entry, and per entry
+  of `entries`): `{kind, lens, class, paths, evidence}`. The tool renders
+  `#lesson kind=… lens=… class=… paths=… evidence=…` as the entry's FIRST line
+  (`qcr-lesson.ts`), tags the entry `lesson`, and writes the author's prose
+  after it. The daemon's reader is `src/memory/lessons.ts` `parseLesson`; the
+  fork test pins the two against each other.
+* **Refusals, before anything is sent:** an unknown lens id (the list is
+  `LESSON_LENS_IDS`, pinned equal to the daemon's `ALL_PASSES`; a short
+  `baseline` reads as `pass-baseline`), a kind outside the four, a class that
+  is not a slug, a glob or ref with whitespace or a comma, no evidence, a
+  target outside `memories/experiences/`, and `content` that opens with a
+  header of its own.
+* **Nothing else changes.** An entry without `lesson` is written exactly as
+  before; a batch may mix the two.
+
+Touches: `qcr-lesson.ts` (new), `qcr-write.ts` (the builder), `tools.ts` (the
+schema and one guideline).
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -390,16 +415,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all nine patches, then:
+# 3. Re-verify all ten patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all nine** patches — a patch that no
+verification below. A bump re-verifies **all ten** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the nine patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the ten patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the

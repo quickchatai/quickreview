@@ -60,6 +60,11 @@ export interface CapturedComment {
   body: string;
   /** GitHub's own timestamp when the payload carried one. */
   created_at: string | null;
+  /** A submitted review's state (`approved` | `changes_requested` |
+   * `commented`), lowercased — the learner's "a human asked for changes"
+   * (S8). Null for comments, and when the payload carried none. A
+   * recorded fact, like `tagged`: nothing routes on it. */
+  review_state?: string | null;
 }
 
 export type CaptureOutcome = { captured: CapturedComment } | { skipped: string; pr?: number };
@@ -220,8 +225,15 @@ function captureReviewEvent(
       line: null,
       body,
       created_at: typeof r.submitted_at === "string" ? r.submitted_at : null,
+      review_state: reviewStateOf(r.state),
     },
   };
+}
+
+/** GitHub's review state, lowercased (`CHANGES_REQUESTED` on the REST list,
+ * `changes_requested` on the webhook), or null. */
+export function reviewStateOf(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim().toLowerCase() : null;
 }
 
 // ---- the sweep side ----------------------------------------------------------
@@ -281,6 +293,7 @@ export function capturedFromReview(pr: number, r: ReviewFull): CapturedComment {
     line: null,
     body: r.body,
     created_at: r.submitted_at,
+    review_state: reviewStateOf(r.state),
   };
 }
 

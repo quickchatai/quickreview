@@ -51,6 +51,8 @@ import { operatorCommandWriteScript } from "./tui/unwedge.js";
 import { MutationGate } from "./gate.js";
 import type { GitHubAdapter } from "./github.js";
 import type { OutcomeCapture } from "./outcomes.js";
+import type { Learner, MineReport } from "./learner/learner.js";
+import type { CurationStatus } from "./learner/status.js";
 
 export { drainPayload } from "./tui/deploy-drain.js";
 
@@ -187,6 +189,119 @@ export async function cmdOutcomes(rest: string[], json: boolean): Promise<number
     const summary = outcomes.summary(since);
     console.log(json ? JSON.stringify(summary) : renderOutcomeSummary(summary));
     return 0;
+  } finally {
+    store.close();
+  }
+}
+
+export const LESSONS_USAGE = "usage: qcr lessons [mine] [--json]";
+
+/** `qcr lessons` arguments (S8): `mine` or nothing. An unknown token
+ * is refused, so a mistyped `mine` cannot quietly print yesterday's table. */
+export function parseLessonsArgs(rest: readonly string[]): { mine: boolean } {
+  if (rest.length === 0) return { mine: false };
+  if (rest.length === 1 && rest[0] === "mine") return { mine: true };
+  throw new Error(LESSONS_USAGE);
+}
+
+/** What `qcr lessons` prints: the mine's report (with `mine`), the undecided
+ * candidates per class, and the latest EOD curation. */
+export function renderLessons(opts: {
+  report: MineReport | null;
+  clusters: ReturnType<Learner["clusters"]>;
+  status: CurationStatus;
+}): string {
+  const out: string[] = [];
+  const r = opts.report;
+  if (r) {
+    const by = Object.entries(r.added_by_source)
+      .filter(([, v]) => (v ?? 0) > 0)
+      .map(([k, v]) => `${k} ${v}`)
+      .join(", ");
+    out.push(`mined: ${r.added} new candidate${r.added === 1 ? "" : "s"}${by ? ` (${by})` : ""}`);
+    if (r.recall)
+      out.push(
+        `post-merge recall: ${r.recall.scanned} merged PR(s) read, ${r.recall.unknown} unknown`,
+      );
+    else out.push("post-merge recall: not read (no base clone)");
+    if (r.digest)
+      out.push(
+        `digest backfill: ${r.digest.added} added from ${r.digest.files} digest(s) (${r.digest.absent} absent, ${r.digest.unreadable} unreadable)`,
+      );
+    const f = r.fates;
+    if (f.revised + f.withdrawn + f.reinstated > 0)
+      out.push(
+        `fate candidates re-read: ${f.revised} revised, ${f.withdrawn} withdrawn, ${f.reinstated} reinstated`,
+      );
+    for (const e of r.errors) out.push(`source error: ${oneLine(e)}`);
+    out.push("");
+  }
+  out.push(
+    opts.clusters.length === 0
+      ? "No undecided lesson candidates."
+      : "Undecided lesson candidates by class (offered / waiting for a packet / events in the recurrence window):",
+  );
+  for (const c of opts.clusters)
+    out.push(
+      `  ${c.class.padEnd(32)} ${c.polarity.padEnd(10)} ${String(c.open).padStart(4)} ${String(c.queued).padStart(4)} ${String(c.recurrence).padStart(5)}`,
+    );
+  const s = opts.status;
+  out.push(
+    "",
+    s.day === null
+      ? "EOD curation: no outcomes packet yet."
+      : `EOD curation ${s.day}: ${s.state.replace("_", " ")} — ${s.offered} offered, ${s.adopted} adopted, ${s.declined} declined, ${s.verifying} verifying, ${s.not_persisted} not persisted, ${s.expired_today} expired${
+          (s.unresolved ?? []).length > 0
+            ? `\nunresolved: ${(s.unresolved ?? []).map((u) => `${u.day} ${u.state.replace("_", " ")} (${u.count})`).join("; ")}`
+            : ""
+        }`,
+    s.balance
+      ? `lessons in force: look-for:dont-raise ${s.balance.look_for}:${s.balance.dont_raise}${s.balance.ratio === null ? "" : ` (${s.balance.ratio.toFixed(2)})`} as of ${s.balance.as_of}`
+      : "lessons in force: the daemon reads memory for the balance — see `qcr status`",
+  );
+  return out.join("\n");
+}
+
+/**
+ * `qcr lessons [mine]` (S8): the learner's candidates per class and
+ * the latest EOD curation, from the state database. `mine` first runs the
+ * miner on the operator's word — the same deterministic mine the daemon runs
+ * before every EOD sweep (state.db, and read-only git in the base clone when
+ * there is one). It reads no memory and writes none.
+ */
+export async function cmdLessons(rest: string[], json: boolean): Promise<number> {
+  const { mine } = parseLessonsArgs(rest);
+  const cfg = loadConfig();
+  const { Learner, learnerKnobsOf } = await import("./learner/learner.js");
+  const { WorktreeManager } = await import("./worktrees.js");
+  const { githubCloneDir } = await import("./config.js");
+  const root = sandboxRoot();
+  const worktrees = new WorktreeManager({
+    root,
+    repo: cfg.github.repo,
+    cloneDir: githubCloneDir(cfg.github),
+  });
+  const store = openStore();
+  try {
+    const learner = new Learner({
+      store,
+      root,
+      eodTime: cfg.eod.time,
+      timeZone: cfg.eod.timezone,
+      botLogin: cfg.github.bot_login,
+      baseBranch: cfg.github.base_branch,
+      config: learnerKnobsOf(cfg.memory),
+      ...(existsSync(worktrees.basePath) ? { git: worktrees } : {}),
+    });
+    const report = mine ? await learner.mine() : null;
+    const clusters = learner.clusters();
+    const status = learner.status();
+    console.log(
+      json
+        ? JSON.stringify({ report, clusters, status })
+        : renderLessons({ report, clusters, status }),
+    );
+    return report && report.errors.length > 0 ? 1 : 0;
   } finally {
     store.close();
   }
@@ -1366,6 +1481,10 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdOutcomes(rest, json);
       return;
     }
+    case "lessons": {
+      process.exitCode = await cmdLessons(rest, json);
+      return;
+    }
     case "regression": {
       process.exitCode = await cmdRegression(rest, json);
       return;
@@ -1441,7 +1560,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage

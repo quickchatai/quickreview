@@ -25,6 +25,7 @@ function makeDeps() {
     fileImprovementPr: vi.fn(async () => ({ ok: true, branch: "bot/improve-x" })),
     fileIssue: vi.fn(async () => ({ ok: true, issue: 7 })),
     retryThreadDecision: vi.fn(async () => ({ ok: true, file: "x.json" })),
+    curationReceipt: vi.fn(async () => ({ ok: true })),
   };
 }
 
@@ -63,12 +64,39 @@ describe("validateCommand — whitelist", () => {
       { command: "drain", on: true },
       { command: "drain", on: false },
       { command: "retry-thread-decision", comment_id: 3856996601 },
+      {
+        command: "eod-curation-receipt",
+        day: "2026-10-07",
+        decisions: [{ candidates: ["c1"], decision: "declined", reason: "one-off" }],
+      },
     ];
     for (const v of valid) {
       const res = validateCommand(v);
       expect(res.ok, JSON.stringify(v)).toBe(true);
     }
-    expect(COMMAND_WHITELIST).toHaveLength(11); // + drain, bounded thread replay, terminal-debt resolution
+    // + drain, bounded thread replay, terminal-debt resolution, the EOD curation receipt
+    expect(COMMAND_WHITELIST).toHaveLength(12);
+  });
+
+  // the EOD curator's receipt — strict like every command, with
+  // the schema of src/learner/receipt.ts (pinned there in tests/learner.test.ts).
+  it("eod-curation-receipt: strict at the top level and inside every decision", () => {
+    expect(
+      validateCommand({ command: "eod-curation-receipt", day: "2026-10-07", decisions: [] }),
+    ).toEqual({
+      ok: true,
+      command: { command: "eod-curation-receipt", day: "2026-10-07", decisions: [] },
+    });
+    expect(
+      validateCommand({ command: "eod-curation-receipt", day: "2026-10-07", decisions: [], pr: 1 }),
+    ).toEqual({ ok: false, reason: "unknown field(s): pr" });
+    expect(
+      validateCommand({
+        command: "eod-curation-receipt",
+        day: "2026-10-07",
+        decisions: [{ candidates: ["c2"], decision: "declined" }],
+      }),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("needs a 'reason'") });
   });
 
   it("slack_reply: strict shape, ts format, and no channel field", () => {
@@ -247,6 +275,18 @@ describe("executeCommand", () => {
     });
     await executeCommand({ command: "retry-thread-decision", comment_id: 5001 }, deps);
     expect(deps.retryThreadDecision).toHaveBeenCalledWith(5001);
+    const decisions = [{ candidates: [3], decision: "adopted" as const }];
+    await executeCommand({ command: "eod-curation-receipt", day: "2026-10-07", decisions }, deps);
+    expect(deps.curationReceipt).toHaveBeenCalledWith({ day: "2026-10-07", decisions });
+  });
+
+  it("rejects eod-curation-receipt on a daemon wired without the learner", async () => {
+    const { curationReceipt: _drop, ...deps } = makeDeps();
+    const out = await executeCommand(
+      { command: "eod-curation-receipt", day: "2026-10-07", decisions: [] },
+      deps,
+    );
+    expect(out).toMatchObject({ ok: false, reason: expect.stringContaining("not wired") });
   });
 
   it("rejects slack_reply when Slack is not wired", async () => {
@@ -786,6 +826,15 @@ describe("authorizeCommand (pure)", () => {
     expect(authorizeCommand(command, rec("system"))).toEqual({ ok: true });
     expect(authorizeCommand(command, rec("author", [5408])).ok).toBe(false);
     expect(authorizeCommand(command, rec("anyone")).ok).toBe(false);
+  });
+
+  it("eod-curation-receipt is the daemon's or the owner's — never a Slack author's", () => {
+    const c: Command = { command: "eod-curation-receipt", day: "2026-10-07", decisions: [] };
+    expect(authorizeCommand(c, null)).toEqual({ ok: true });
+    expect(authorizeCommand(c, rec("system"))).toEqual({ ok: true });
+    expect(authorizeCommand(c, rec("owner"))).toEqual({ ok: true });
+    expect(authorizeCommand(c, rec("author", [1])).ok).toBe(false);
+    expect(authorizeCommand(c, rec("anyone")).ok).toBe(false);
   });
 
   it("restart-session on 'overseer' is owner-only and needs no PR", () => {

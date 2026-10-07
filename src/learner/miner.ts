@@ -1,0 +1,1034 @@
+// The learner's MINER (S8): deterministic, daemon-side, no model in
+// the loop — every human outcome the daemon already records becomes a
+// CANDIDATE lesson for the EOD curator to adopt or decline.
+//
+// WHY. Nothing fed learning mechanically: the curator re-mined raw files every
+// evening (and for 30 days persisted nothing), and 96% of the lessons it did
+// write said "don't raise X" — every human-verdict source it read was
+// suppression-shaped, and nothing read the misses. The miner reads both
+// halves, from state.db and the base clone's git, and writes nothing a round
+// or the bench sees.
+//
+// THE SOURCES, each a draft with a deterministic `ref` (the dedup key — a
+// re-mine of the same event is the same row):
+//
+//   human fates (S6, src/outcomes.ts)  one per finding CHAIN whose fate is
+//       `refuted_conceded` (a human argued and the bot conceded — dont-raise)
+//       or `upheld_after_reply` (a human pushed back and the bot held —
+//       either way). The chain's ROOT (its first posting) names the candidate,
+//       so a reposting never mints a second one. S6 re-decides fates and may
+//       join a posting to an earlier chain later, so every mine re-reads the
+//       undecided fate candidates (`reviewFateCandidates`): a changed fate
+//       revises one in place, and one whose fate is no longer a candidate's
+//       or whose root changed is WITHDRAWN (recorded, never deleted).
+//       `fixed` and `open_at_close`
+//       are not candidates on their own: they are the COUNTERWEIGHT each
+//       cluster shows (`fixed_90d`, `ignored_90d`), so a dont-raise lesson is
+//       never written over a class humans usually fix.
+//   the feedback ledger      one per `feedback_signals` row: a
+//       `[feedback]` comment and a deleted bot comment carry the finding they
+//       answered (dont-raise); a set-aside review, a merge over a block and a
+//       withdrawn trigger are WHOLE-REVIEW signals (`review.*` classes),
+//       counted per review and never smeared over a lens.
+//   tagged pr_comments                 a `[feedback]` comment a drain dropped
+//       (the reconcile sweep keeps its text in `pr_comments` with `tagged = 1`
+//       but deliberately never a ledger row) — the same ref as the
+//       ledger's, so one comment is one candidate whichever route saw it.
+//   recall (look-for)                  a human REQUEST_CHANGES review, or a
+//       human root inline comment, on a PR whose standing bot verdict before
+//       it was APPROVE (not the PR's author; a recheck's flip to
+//       REQUEST_CHANGES ends the approval — `verdictAt`); a post-approval
+//       recheck's APPROVE → REQUEST_CHANGES flip; and, for a bot-approved PR
+//       that merged, a later commit within `recall_window_days` that changed
+//       lines the PR had changed (`WorktreeManager.postMergeTouches`,
+//       read-only git). "Lines the bot approved" is read as "the PR's diff
+//       while the bot's approval stood": an inline comment can only sit on
+//       the PR's diff, and a push after the approval is audited by the
+//       recheck, which either upholds it (the approval then covers the new
+//       head) or flips it (and the approval ends).
+//   digest-backfill                    the "Learnings" bullets of the digests
+//       written while memory refused every write (2026-08-31..10-02 by
+//       default) — candidates, never lessons directly.
+//
+// CLASSES. Every candidate has a class slug the packet clusters by and a
+// lesson names to cover it: a finding's `<lens>.<kind>` (`baseline.authz`), a
+// miss's `missed.<top directory>`, a whole-review signal's `review.<signal>`,
+// a digest bullet's `<lens>.<type>`. Deterministic, header-safe
+// (`LESSON_CLASS_RE`).
+//
+// Everything another person wrote rides in `quote`, capped at 400 characters,
+// and is fenced as data when rendered (src/memory/datafence.ts).
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { canonicalLensIds } from "../lensids.js";
+import { cleanQuotedText } from "../memory/datafence.js";
+import { LESSON_CLASS_RE } from "../memory/lessons.js";
+import type { StateStore } from "../state.js";
+import type { PostMergeScan } from "../worktrees.js";
+
+export type CandidateSource = "fate" | "feedback" | "tagged-comment" | "recall" | "digest-backfill";
+
+export type CandidateKind =
+  | "refuted_conceded"
+  | "upheld_after_reply"
+  | "feedback_comment"
+  | "bot_comment_deleted"
+  | "review_set_aside"
+  | "merged_over_block"
+  | "trigger_withdrawn"
+  | "tagged_comment"
+  | "human_root_comment"
+  | "human_request_changes"
+  | "recheck_flip"
+  | "post_merge_change"
+  | "digest_learning";
+
+/** Which way a lesson from this evidence would point. `review` — a
+ * whole-review signal (no lens, no finding); `ops` — about the review
+ * system, not the code. */
+export type Polarity = "look-for" | "dont-raise" | "either" | "review" | "ops";
+
+export interface CandidateDraft {
+  ref: string;
+  source: CandidateSource;
+  kind: CandidateKind;
+  polarity: Polarity;
+  class: string;
+  lens_ids: string[];
+  pr: number | null;
+  round_no: number | null;
+  finding_key: string | null;
+  path: string | null;
+  line: number | null;
+  /** One daemon-written line. */
+  summary: string;
+  /** Words another person wrote (a reply, a comment, a commit subject, a
+   * digest bullet), at most `QUOTE_CHARS`; fenced as data when rendered. */
+  quote: string | null;
+  evidence: string[];
+  /** When the underlying event happened (recurrence counts by this). */
+  occurred_at: string;
+}
+
+/** Characters of quoted text a candidate keeps. */
+export const QUOTE_CHARS = 400;
+
+const DAY_MS = 86_400_000;
+
+// ---- classes ----------------------------------------------------------------
+
+/** One class segment: lowercase alphanumerics and dashes, at most 40. */
+export function slugPart(s: string | null | undefined): string {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+}
+
+function safeClass(c: string, fallback: string): string {
+  return LESSON_CLASS_RE.test(c) ? c : fallback;
+}
+
+/** A finding's class: `<first lens without pass->.<kind>`, `review` when the
+ * finding names no known lens, `general` when it carries no kind. */
+export function findingClass(lensIds: readonly string[], kind: string | null | undefined): string {
+  const lens = slugPart((lensIds[0] ?? "").replace(/^pass-/, "")) || "review";
+  const k = slugPart(kind) || "general";
+  return safeClass(`${lens}.${k}`, "review.general");
+}
+
+/** A miss's class: `missed.<top directory>` (`missed.root` for a file at the
+ * root, `missed.review` with no path). */
+export function missedClass(path: string | null | undefined): string {
+  if (!path) return "missed.review";
+  const top = path.includes("/") ? slugPart(path.split("/")[0]) : "root";
+  return safeClass(`missed.${top || "root"}`, "missed.review");
+}
+
+// ---- small helpers ------------------------------------------------------------
+
+function sha16(s: string): string {
+  return createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex").slice(0, 16);
+}
+
+/** Another person's words, cleaned of control bytes and cut to QUOTE_CHARS. */
+export function quoteOf(text: string | null | undefined): string | null {
+  if (typeof text !== "string") return null;
+  const t = cleanQuotedText(text);
+  if (t === "") return null;
+  return t.length > QUOTE_CHARS ? `${t.slice(0, QUOTE_CHARS - 1)}…` : t;
+}
+
+/** A daemon-written line: one line, control bytes gone, capped. */
+function oneLine(s: string, cap = 300): string {
+  const t = s
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t.length > cap ? `${t.slice(0, cap - 1)}…` : t;
+}
+
+function tableExists(store: StateStore, name: string): boolean {
+  return (
+    store.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !==
+    undefined
+  );
+}
+
+/** A finding's canonical lens ids: S6's `lens_ids` column, else parsed from
+ * the raw `lens` (a row the boot has not filled yet). */
+export function lensIdsOf(
+  raw: string | null | undefined,
+  lensText: string | null | undefined,
+): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? "null") as unknown;
+    if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    /* fall through */
+  }
+  return canonicalLensIds(lensText ?? "");
+}
+
+interface FindingFacts {
+  round_no: number;
+  finding_key: string;
+  lens: string;
+  lens_ids: string | null;
+  kind: string | null;
+  severity: string | null;
+  posted_as: string | null;
+  path: string | null;
+  line: number | null;
+  title: string | null;
+}
+
+function findingRow(
+  store: StateStore,
+  pr: number,
+  roundNo: number,
+  key: string,
+): FindingFacts | undefined {
+  return store.db
+    .prepare(
+      `SELECT round_no, finding_key, lens, lens_ids, kind, severity, posted_as, path, line, title
+         FROM round_findings WHERE pr = ? AND round_no = ? AND finding_key = ?`,
+    )
+    .get(pr, roundNo, key) as FindingFacts | undefined;
+}
+
+/** The finding a bot comment carried (S6's link), when known. */
+function findingOfComment(
+  store: StateStore,
+  pr: number,
+  commentId: number | null,
+): FindingFacts | undefined {
+  if (commentId === null || !tableExists(store, "finding_comments")) return undefined;
+  const link = store.db
+    .prepare(
+      "SELECT round_no, finding_key FROM finding_comments WHERE comment_id = ? AND pr = ? AND finding_key IS NOT NULL",
+    )
+    .get(commentId, pr) as { round_no: number; finding_key: string } | undefined;
+  return link ? findingRow(store, pr, link.round_no, link.finding_key) : undefined;
+}
+
+function where(f: { path: string | null; line: number | null }): string {
+  if (!f.path) return "";
+  return ` at ${f.path}${f.line !== null ? `:${f.line}` : ""}`;
+}
+
+function findingPhrase(f: FindingFacts): string {
+  const lens = lensIdsOf(f.lens_ids, f.lens)[0] ?? (f.lens || "no lens");
+  const tag = [f.severity, f.posted_as].filter(Boolean).join(" ");
+  return `${lens} finding${f.title ? ` "${oneLine(f.title, 120)}"` : ""}${tag ? ` (${tag})` : ""}${where(f)}`;
+}
+
+/** The PR's author, when the record knows it. */
+function prAuthor(store: StateStore, pr: number): string | null {
+  const a = store.getPr(pr)?.author;
+  if (a) return a;
+  if (!tableExists(store, "backfill_pr_meta")) return null;
+  const row = store.db.prepare("SELECT author FROM backfill_pr_meta WHERE pr = ?").get(pr) as
+    { author: string } | undefined;
+  return row?.author || null;
+}
+
+/** The bot's verdict standing at `atIso` on `pr` — the latest
+ * `verdict_applied` at or before it, or a post-approval recheck's flip
+ * (`recheck_request_changes`, which posts REQUEST_CHANGES without a
+ * `verdict_applied` of its own) when that came later — or null when none had
+ * been applied. A human comment after a flip is not "after the bot approved",
+ * and a PR merged after one was not bot-approved at the merge. */
+export function verdictAt(store: StateStore, pr: number, atIso: string): string | null {
+  // The events table stamps `toISOString()`; GitHub's own times carry no
+  // milliseconds. Compare like with like.
+  const t = Date.parse(atIso);
+  if (Number.isFinite(t)) atIso = new Date(t).toISOString();
+  const row = store.db
+    .prepare(
+      `SELECT kind, json_extract(payload, '$.verdict') AS verdict FROM events
+        WHERE kind IN ('verdict_applied', 'recheck_request_changes') AND pr = ? AND ts <= ?
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(pr, atIso) as { kind: string; verdict: string | null } | undefined;
+  if (row?.kind === "recheck_request_changes") return "REQUEST_CHANGES";
+  return row?.verdict ?? null;
+}
+
+// ---- 1. human fates (S6) -------------------------------------------------------
+
+const CANDIDATE_FATES = ["refuted_conceded", "upheld_after_reply"] as const;
+
+interface OutcomeRow {
+  pr: number;
+  round_no: number;
+  finding_key: string;
+  comment_id: number | null;
+  fate: string;
+  basis: string | null;
+  decided_at: string | null;
+  carried_to: string | null;
+  fate_changed_at: string;
+}
+
+/** The chain roots of a PR's outcomes and the fate each chain reads (S6
+ * carries a reposted finding: `carried_to` = `<round>:<key>` on the earlier
+ * row). */
+export function chainRoots(
+  rows: readonly OutcomeRow[],
+): Array<{ root: OutcomeRow; end: OutcomeRow }> {
+  const byKey = new Map(rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+  const pointed = new Set(rows.map((r) => r.carried_to).filter((c): c is string => !!c));
+  const out: Array<{ root: OutcomeRow; end: OutcomeRow }> = [];
+  for (const r of rows) {
+    if (pointed.has(`${r.round_no}:${r.finding_key}`)) continue;
+    let end = r;
+    const seen = new Set<string>();
+    while (end.carried_to && byKey.has(end.carried_to) && !seen.has(end.carried_to)) {
+      seen.add(end.carried_to);
+      end = byKey.get(end.carried_to)!;
+    }
+    out.push({ root: r, end });
+  }
+  return out;
+}
+
+/** The newest human reply in a bot comment's thread, when captured. */
+function latestReply(store: StateStore, pr: number, commentId: number | null): string | null {
+  if (commentId === null) return null;
+  const row = store.db
+    .prepare(
+      `SELECT body FROM pr_comments WHERE pr = ? AND (in_reply_to_id = ? OR thread_id = ?) AND comment_id <> ?
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(pr, commentId, commentId, commentId) as { body: string } | undefined;
+  return row?.body ?? null;
+}
+
+function isCandidateFate(fate: string): boolean {
+  return (CANDIDATE_FATES as readonly string[]).includes(fate);
+}
+
+function outcomeRows(store: StateStore, pr: number): OutcomeRow[] {
+  return store.db
+    .prepare("SELECT * FROM finding_outcomes WHERE pr = ? ORDER BY round_no, finding_key")
+    .all(pr) as OutcomeRow[];
+}
+
+/** The candidate of one finding chain, named by its root, read from its END's
+ * fate (the chain's latest posting is the one humans answered last). */
+function fateDraft(
+  store: StateStore,
+  pr: number,
+  root: OutcomeRow,
+  end: OutcomeRow,
+): CandidateDraft {
+  const at = end.decided_at ?? end.fate_changed_at;
+  const f = findingRow(store, pr, root.round_no, root.finding_key);
+  const lensIds = f ? lensIdsOf(f.lens_ids, f.lens) : [];
+  const refuted = end.fate === "refuted_conceded";
+  const caseName = `case-${Math.trunc(pr)}-r${Math.trunc(root.round_no)}-${createHash("sha256").update(root.finding_key).digest("hex").slice(0, 16)}`;
+  return {
+    ref: `fate:${pr}:${root.round_no}:${sha16(root.finding_key)}`,
+    source: "fate",
+    kind: end.fate as CandidateKind,
+    polarity: refuted ? "dont-raise" : "either",
+    class: findingClass(lensIds, f?.kind),
+    lens_ids: lensIds,
+    pr,
+    round_no: root.round_no,
+    finding_key: root.finding_key,
+    path: f?.path ?? null,
+    line: f?.line ?? null,
+    summary: oneLine(
+      `PR #${pr}: ${f ? findingPhrase(f) : `finding ${root.finding_key}`} — ${
+        refuted ? "a human refuted it and the bot conceded" : "a human pushed back and the bot held"
+      }${end.basis ? ` (${end.basis})` : ""}`,
+    ),
+    quote: quoteOf(latestReply(store, pr, end.comment_id ?? root.comment_id)),
+    evidence: [
+      `pr:${pr}`,
+      `case:${caseName}`,
+      ...(root.comment_id !== null ? [`comment:${root.comment_id}`] : []),
+    ],
+    occurred_at: at,
+  };
+}
+
+export function mineFates(store: StateStore, sinceIso: string): CandidateDraft[] {
+  if (!tableExists(store, "finding_outcomes")) return [];
+  const prs = (
+    store.db
+      .prepare(
+        `SELECT DISTINCT pr FROM finding_outcomes
+          WHERE fate IN ('refuted_conceded', 'upheld_after_reply') AND COALESCE(decided_at, fate_changed_at) >= ?`,
+      )
+      .all(sinceIso) as Array<{ pr: number }>
+  ).map((r) => r.pr);
+  const out: CandidateDraft[] = [];
+  for (const pr of prs) {
+    for (const { root, end } of chainRoots(outcomeRows(store, pr))) {
+      if (!isCandidateFate(end.fate)) continue;
+      const at = end.decided_at ?? end.fate_changed_at;
+      if (at < sinceIso) continue;
+      out.push(fateDraft(store, pr, root, end));
+    }
+  }
+  return out;
+}
+
+/** What a fate candidate minted earlier reads NOW: S6 re-decides a fate on
+ * every capture (the latest decisive evidence wins) and a posting may join an
+ * earlier chain later, so a candidate is never written once and trusted. */
+export type FateReview = { kind: "current"; draft: CandidateDraft } | { kind: "gone"; why: string };
+
+/**
+ * Re-read each fate candidate against S6's outcomes as they stand: `current`
+ * (its chain still has this root and a candidate fate — the draft as it
+ * would be minted today, the horizon not applied) or `gone` (the fate is no
+ * longer a candidate fate, the posting joined an earlier chain, or its row is
+ * gone). Candidates missing a PR, round or key are not judged.
+ */
+export function reviewFateCandidates(
+  store: StateStore,
+  cands: ReadonlyArray<{
+    id: number;
+    pr: number | null;
+    round_no: number | null;
+    finding_key: string | null;
+  }>,
+): Map<number, FateReview> {
+  const out = new Map<number, FateReview>();
+  if (!tableExists(store, "finding_outcomes")) return out;
+  const chainsOf = new Map<number, { rows: OutcomeRow[]; chains: ReturnType<typeof chainRoots> }>();
+  for (const c of cands) {
+    if (c.pr === null || c.round_no === null || c.finding_key === null) continue;
+    let entry = chainsOf.get(c.pr);
+    if (!entry) {
+      const rows = outcomeRows(store, c.pr);
+      entry = { rows, chains: chainRoots(rows) };
+      chainsOf.set(c.pr, entry);
+    }
+    const key = `${c.round_no}:${c.finding_key}`;
+    const chain = entry.chains.find((ch) => `${ch.root.round_no}:${ch.root.finding_key}` === key);
+    if (chain) {
+      out.set(
+        c.id,
+        isCandidateFate(chain.end.fate)
+          ? { kind: "current", draft: fateDraft(store, c.pr, chain.root, chain.end) }
+          : { kind: "gone", why: `its fate is now ${chain.end.fate}` },
+      );
+      continue;
+    }
+    if (!entry.rows.some((r) => `${r.round_no}:${r.finding_key}` === key)) {
+      out.set(c.id, { kind: "gone", why: "its finding has no outcome row any more" });
+      continue;
+    }
+    // Not a root any more: some earlier posting carries to it.
+    const byKey = new Map(entry.rows.map((r) => [`${r.round_no}:${r.finding_key}`, r]));
+    const holder = entry.chains.find((ch) => {
+      let at: OutcomeRow | undefined = ch.root;
+      const seen = new Set<string>();
+      while (at) {
+        const k = `${at.round_no}:${at.finding_key}`;
+        if (k === key) return true;
+        if (seen.has(k) || !at.carried_to) return false;
+        seen.add(k);
+        at = byKey.get(at.carried_to);
+      }
+      return false;
+    });
+    out.set(c.id, {
+      kind: "gone",
+      why: holder
+        ? `it joined the chain first posted in round ${holder.root.round_no}, whose candidate stands for it`
+        : "it is no longer the root of a finding chain",
+    });
+  }
+  return out;
+}
+
+// ---- 2. the feedback ledger, and the [feedback] comments a drain dropped -------
+
+interface SignalRow {
+  id: number;
+  kind: string;
+  pr: number;
+  comment_id: number | null;
+  review_id: number | null;
+  in_reply_to_id: number | null;
+  scope: string;
+  author: string | null;
+  body: string | null;
+  created_at: string;
+}
+
+const FEEDBACK_PREFIX = /^\s*\[feedback\]\s*/i;
+
+/** The ONE ref of a `[feedback]` comment, whichever route recorded it. */
+export function feedbackCommentRef(scope: string, commentId: number): string {
+  return `feedback-comment:${scope || "comment"}:${commentId}`;
+}
+
+function feedbackCommentDraft(
+  store: StateStore,
+  c: {
+    kind: "feedback_comment" | "tagged_comment";
+    pr: number;
+    scope: string;
+    comment_id: number;
+    in_reply_to_id: number | null;
+    body: string | null;
+    at: string;
+  },
+): CandidateDraft {
+  const f = findingOfComment(store, c.pr, c.in_reply_to_id);
+  const lensIds = f ? lensIdsOf(f.lens_ids, f.lens) : [];
+  return {
+    ref: feedbackCommentRef(c.scope, c.comment_id),
+    source: c.kind === "feedback_comment" ? "feedback" : "tagged-comment",
+    kind: c.kind,
+    polarity: "dont-raise",
+    class: f ? findingClass(lensIds, f.kind) : "feedback.general",
+    lens_ids: lensIds,
+    pr: c.pr,
+    round_no: f?.round_no ?? null,
+    finding_key: f?.finding_key ?? null,
+    path: f?.path ?? null,
+    line: f?.line ?? null,
+    summary: oneLine(
+      `PR #${c.pr}: a human [feedback] comment${f ? ` on the ${findingPhrase(f)}` : c.in_reply_to_id !== null ? ` replying to bot comment ${c.in_reply_to_id}` : ""}${
+        c.kind === "tagged_comment"
+          ? " (dropped during a drain; recovered by the comment sweep)"
+          : ""
+      }`,
+    ),
+    quote: quoteOf((c.body ?? "").replace(FEEDBACK_PREFIX, "")),
+    evidence: [
+      `pr:${c.pr}`,
+      `comment:${c.comment_id}`,
+      ...(c.in_reply_to_id !== null ? [`comment:${c.in_reply_to_id}`] : []),
+    ],
+    occurred_at: c.at,
+  };
+}
+
+export function mineFeedback(store: StateStore, sinceIso: string): CandidateDraft[] {
+  const rows = store.db
+    .prepare("SELECT * FROM feedback_signals WHERE created_at >= ? ORDER BY id")
+    .all(sinceIso) as SignalRow[];
+  const out: CandidateDraft[] = [];
+  for (const s of rows) {
+    switch (s.kind) {
+      case "feedback_comment":
+        if (s.comment_id === null) break;
+        out.push(
+          feedbackCommentDraft(store, {
+            kind: "feedback_comment",
+            pr: s.pr,
+            scope: s.scope,
+            comment_id: s.comment_id,
+            in_reply_to_id: s.in_reply_to_id,
+            body: s.body,
+            at: s.created_at,
+          }),
+        );
+        break;
+      case "bot_comment_deleted": {
+        const f = findingOfComment(store, s.pr, s.comment_id);
+        const lensIds = f ? lensIdsOf(f.lens_ids, f.lens) : [];
+        out.push({
+          ref: `feedback:${s.id}`,
+          source: "feedback",
+          kind: "bot_comment_deleted",
+          polarity: "dont-raise",
+          class: f ? findingClass(lensIds, f.kind) : "feedback.deleted",
+          lens_ids: lensIds,
+          pr: s.pr,
+          round_no: f?.round_no ?? null,
+          finding_key: f?.finding_key ?? null,
+          path: f?.path ?? null,
+          line: f?.line ?? null,
+          summary: oneLine(
+            `PR #${s.pr}: a human deleted bot comment ${s.comment_id ?? "?"}${f ? ` (the ${findingPhrase(f)})` : ""}`,
+          ),
+          quote: null,
+          evidence: [`pr:${s.pr}`, ...(s.comment_id !== null ? [`comment:${s.comment_id}`] : [])],
+          occurred_at: s.created_at,
+        });
+        break;
+      }
+      case "review_set_aside":
+      case "merged_over_block":
+      case "trigger_withdrawn": {
+        const what =
+          s.kind === "review_set_aside"
+            ? `bot review ${s.review_id ?? "?"} was dismissed (GitHub's own stale-review dismissal is filtered only heuristically)`
+            : s.kind === "merged_over_block"
+              ? "the PR merged while the bot's REQUEST_CHANGES stood (low-weight: branch protection unknown)"
+              : "the review trigger was withdrawn before the review completed";
+        out.push({
+          ref: `feedback:${s.id}`,
+          source: "feedback",
+          kind: s.kind,
+          polarity: "review",
+          class:
+            s.kind === "review_set_aside"
+              ? "review.set-aside"
+              : s.kind === "merged_over_block"
+                ? "review.merged-over-block"
+                : "review.trigger-withdrawn",
+          lens_ids: [],
+          pr: s.pr,
+          round_no: null,
+          finding_key: null,
+          path: null,
+          line: null,
+          summary: oneLine(`PR #${s.pr}: ${what} — a whole-review signal, never one finding's`),
+          quote: null,
+          evidence: [`pr:${s.pr}`, ...(s.review_id !== null ? [`review:${s.review_id}`] : [])],
+          occurred_at: s.created_at,
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return out;
+}
+
+export function mineTaggedComments(store: StateStore, sinceIso: string): CandidateDraft[] {
+  const rows = store.db
+    .prepare(
+      `SELECT pr, source, comment_id, in_reply_to_id, body, created_at, captured_at FROM pr_comments
+        WHERE tagged = 1 AND captured_at >= ? ORDER BY id`,
+    )
+    .all(sinceIso) as Array<{
+    pr: number;
+    source: string;
+    comment_id: number;
+    in_reply_to_id: number | null;
+    body: string;
+    created_at: string | null;
+    captured_at: string;
+  }>;
+  return rows.map((c) =>
+    feedbackCommentDraft(store, {
+      kind: "tagged_comment",
+      pr: c.pr,
+      scope: c.source,
+      comment_id: c.comment_id,
+      in_reply_to_id: c.in_reply_to_id,
+      body: c.body,
+      at: c.created_at ?? c.captured_at,
+    }),
+  );
+}
+
+// ---- 3. recall: what a human found on lines the bot approved -------------------
+
+export function mineHumanRecall(
+  store: StateStore,
+  sinceIso: string,
+  botLogin: string,
+): CandidateDraft[] {
+  const rows = store.db
+    .prepare(
+      `SELECT pr, source, comment_id, in_reply_to_id, author, author_type, path, line, body,
+              created_at, captured_at, review_state
+         FROM pr_comments
+        WHERE captured_at >= ? AND tagged = 0
+          AND ((source = 'review_comment' AND in_reply_to_id IS NULL)
+               OR (source = 'review' AND review_state = 'changes_requested'))
+        ORDER BY id`,
+    )
+    .all(sinceIso) as Array<{
+    pr: number;
+    source: string;
+    comment_id: number;
+    in_reply_to_id: number | null;
+    author: string;
+    author_type: string;
+    path: string | null;
+    line: number | null;
+    body: string;
+    created_at: string | null;
+    captured_at: string;
+    review_state: string | null;
+  }>;
+  const out: CandidateDraft[] = [];
+  for (const c of rows) {
+    if (c.author_type === "Bot" || c.author === botLogin || /\[bot\]$/i.test(c.author)) continue;
+    const author = prAuthor(store, c.pr);
+    // Unknown author: kept (a reviewer's comment must not be lost to a
+    // missing record); the PR's own author commenting is a note, not a miss.
+    if (author !== null && author === c.author) continue;
+    const at = c.created_at ?? c.captured_at;
+    if (verdictAt(store, c.pr, at) !== "APPROVE") continue;
+    const rc = c.source === "review";
+    out.push({
+      ref: rc ? `human-rc:${c.comment_id}` : `human-root:${c.comment_id}`,
+      source: "recall",
+      kind: rc ? "human_request_changes" : "human_root_comment",
+      polarity: "look-for",
+      class: rc ? "missed.review" : missedClass(c.path),
+      lens_ids: [],
+      pr: c.pr,
+      round_no: null,
+      finding_key: null,
+      path: c.path,
+      line: c.line,
+      summary: oneLine(
+        rc
+          ? `PR #${c.pr}: another human reviewer REQUESTED CHANGES after the bot approved`
+          : `PR #${c.pr}: another human reviewer raised something${where(c)} after the bot approved`,
+      ),
+      quote: quoteOf(c.body),
+      evidence: [`pr:${c.pr}`, `${rc ? "review" : "comment"}:${c.comment_id}`],
+      occurred_at: at,
+    });
+  }
+  return out;
+}
+
+export function mineRecheckFlips(store: StateStore, sinceIso: string): CandidateDraft[] {
+  const rows = store.db
+    .prepare(
+      `SELECT id, ts, pr, payload FROM events WHERE kind = 'recheck_request_changes' AND ts >= ? ORDER BY id`,
+    )
+    .all(sinceIso) as Array<{ id: number; ts: string; pr: number | null; payload: string | null }>;
+  const out: CandidateDraft[] = [];
+  for (const e of rows) {
+    if (e.pr === null) continue;
+    let head = "";
+    let reason: string | null = null;
+    try {
+      const p = JSON.parse(e.payload ?? "{}") as { head_sha?: unknown; reason?: unknown };
+      if (typeof p.head_sha === "string") head = p.head_sha;
+      if (typeof p.reason === "string") reason = p.reason;
+    } catch {
+      /* no detail */
+    }
+    out.push({
+      ref: `recheck-flip:${e.id}`,
+      source: "recall",
+      kind: "recheck_flip",
+      polarity: "look-for",
+      class: "missed.recheck",
+      lens_ids: [],
+      pr: e.pr,
+      round_no: null,
+      finding_key: null,
+      path: null,
+      line: null,
+      summary: oneLine(
+        `PR #${e.pr}: a post-approval recheck flipped APPROVE → REQUEST_CHANGES${head ? ` at ${head.slice(0, 7)}` : ""} — was it in the approved code?`,
+      ),
+      quote: quoteOf(reason),
+      evidence: [`pr:${e.pr}`, ...(/^[0-9a-f]{7,40}$/.test(head) ? [`commit:${head}`] : [])],
+      occurred_at: e.ts,
+    });
+  }
+  return out;
+}
+
+/** The reader post-merge recall needs (`WorktreeManager`). */
+export interface RecallGit {
+  postMergeTouches(q: {
+    pr: number;
+    baseRef: string;
+    mergedAt: string;
+    windowDays: number;
+  }): Promise<PostMergeScan | null>;
+}
+
+/** How many merged PRs one mine scans with git, and how often an unknown
+ * answer is retried before the PR is given up on. */
+export const RECALL_SCAN_LIMITS = Object.freeze({ prsPerMine: 10, attempts: 3 });
+
+/**
+ * Post-merge recall: every PR merged within the horizon whose standing bot
+ * verdict at the merge was APPROVE is scanned (≤ `prsPerMine` a mine, the
+ * oldest first) until its window has passed — commits keep landing for
+ * `windowDays` after a merge. A git answer of "unknown" (no merge commit names
+ * the PR, the branch not fetched) is retried, then given up on, recorded.
+ */
+export async function minePostMerge(
+  store: StateStore,
+  opts: {
+    sinceIso: string;
+    now: Date;
+    windowDays: number;
+    baseBranch: string;
+    git: RecallGit;
+    log?: (msg: string, extra?: unknown) => void;
+  },
+): Promise<{ drafts: CandidateDraft[]; scanned: number; unknown: number }> {
+  const merges = store.db
+    .prepare(
+      `SELECT pr, MIN(ts) AS merged_at FROM events
+        WHERE kind = 'pr_closed' AND json_extract(payload, '$.merged') = 1 AND pr IS NOT NULL AND ts >= ?
+        GROUP BY pr`,
+    )
+    .all(opts.sinceIso) as Array<{ pr: number; merged_at: string }>;
+  const ins = store.db.prepare(
+    "INSERT OR IGNORE INTO learner_recall_scans (pr, merged_at) VALUES (?, ?)",
+  );
+  for (const m of merges) ins.run(m.pr, m.merged_at);
+  const due = store.db
+    .prepare("SELECT * FROM learner_recall_scans WHERE done = 0 ORDER BY merged_at LIMIT ?")
+    .all(RECALL_SCAN_LIMITS.prsPerMine * 3) as Array<{
+    pr: number;
+    merged_at: string;
+    attempts: number;
+  }>;
+  const drafts: CandidateDraft[] = [];
+  let scanned = 0;
+  let unknown = 0;
+  const nowIso = opts.now.toISOString();
+  const finish = store.db.prepare(
+    `UPDATE learner_recall_scans SET attempts = ?, last_scan_at = ?, merge_commit = ?, touches = ?,
+       base_ref = ?, done = ?, outcome = ? WHERE pr = ?`,
+  );
+  for (const row of due) {
+    if (scanned >= RECALL_SCAN_LIMITS.prsPerMine) break;
+    const windowEnd = Date.parse(row.merged_at) + opts.windowDays * DAY_MS;
+    const closed = opts.now.getTime() > windowEnd;
+    if (verdictAt(store, row.pr, row.merged_at) !== "APPROVE") {
+      finish.run(row.attempts, nowIso, null, null, null, 1, "not bot-approved at merge", row.pr);
+      continue;
+    }
+    const baseRef =
+      (
+        store.db
+          .prepare(
+            `SELECT json_extract(payload, '$.base_ref') AS base_ref FROM events
+              WHERE kind = 'round_dispatched' AND pr = ? ORDER BY id DESC LIMIT 1`,
+          )
+          .get(row.pr) as { base_ref: string | null } | undefined
+      )?.base_ref || opts.baseBranch;
+    scanned += 1;
+    let scan: PostMergeScan | null = null;
+    try {
+      scan = await opts.git.postMergeTouches({
+        pr: row.pr,
+        baseRef,
+        mergedAt: row.merged_at,
+        windowDays: opts.windowDays,
+      });
+    } catch (err) {
+      opts.log?.(`learner: post-merge scan of #${row.pr} failed`, err);
+    }
+    if (scan === null) {
+      unknown += 1;
+      const attempts = row.attempts + 1;
+      const giveUp = attempts >= RECALL_SCAN_LIMITS.attempts && closed;
+      finish.run(
+        attempts,
+        nowIso,
+        null,
+        null,
+        baseRef,
+        giveUp ? 1 : 0,
+        giveUp ? "unknown: gave up" : "unknown",
+        row.pr,
+      );
+      continue;
+    }
+    for (const t of scan.touches) {
+      drafts.push({
+        ref: `post-merge:${row.pr}:${t.commit}:${t.path}`,
+        source: "recall",
+        kind: "post_merge_change",
+        polarity: "look-for",
+        class: missedClass(t.path),
+        lens_ids: [],
+        pr: row.pr,
+        round_no: null,
+        finding_key: null,
+        path: t.path,
+        line: t.start,
+        summary: oneLine(
+          `PR #${row.pr} (bot-approved, merged ${row.merged_at.slice(0, 10)}): commit ${t.commit.slice(0, 7)} on ${t.committed_at.slice(0, 10)} changed ${t.path}:${t.start}${t.end !== t.start ? `-${t.end}` : ""}, lines the PR had changed`,
+        ),
+        quote: quoteOf(t.subject),
+        evidence: [`pr:${row.pr}`, `commit:${t.commit}`],
+        occurred_at: t.committed_at || nowIso,
+      });
+    }
+    // Done only once the window has passed AND the clone holds it: the
+    // learner never fetches, and a clone whose base tip predates the window's
+    // end has not seen its last commits — reading that as "nothing more
+    // touched" is the unknown-as-nothing this source must never do.
+    const tipMs = Date.parse(scan.tip_at);
+    const fetchedPast = Number.isFinite(tipMs) && tipMs >= windowEnd;
+    finish.run(
+      row.attempts + 1,
+      nowIso,
+      scan.merge,
+      scan.touches.length,
+      baseRef,
+      closed && fetchedPast ? 1 : 0,
+      `${scan.shape}${scan.truncated ? " (partial)" : ""}${
+        closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
+      }`,
+      row.pr,
+    );
+  }
+  return { drafts, scanned, unknown };
+}
+
+// ---- 4. the digest backfill ----------------------------------------------------
+
+/** The bullets of a digest's `## Learnings` section, in order. A bullet's
+ * indented continuation lines are joined to it; "none"-type bullets dropped. */
+export function parseDigestLearnings(md: string): string[] {
+  const lines = md.split("\n");
+  const out: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    if (/^#{1,3}\s/.test(line)) {
+      inSection = /^#{2,3}\s*Learnings\b/i.test(line);
+      continue;
+    }
+    if (!inSection) continue;
+    const bullet = /^\s{0,3}(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    if (bullet) {
+      out.push(bullet[1]!.trim());
+      continue;
+    }
+    if (/^\s{2,}\S/.test(line) && out.length > 0) out[out.length - 1] += ` ${line.trim()}`;
+  }
+  return out.filter(
+    (b) => b !== "" && !/^\(?(none|nothing|n\/a|no (new )?(learnings|entries|lessons))\b/i.test(b),
+  );
+}
+
+const DIGEST_TYPES: Readonly<Record<string, Polarity>> = {
+  "missed-finding": "look-for",
+  "false-positive": "dont-raise",
+  refuted: "dont-raise",
+  "wontfix-pattern": "dont-raise",
+  wontfix: "dont-raise",
+  "repo-gotcha": "either",
+};
+
+const OPS_RE =
+  /invalid api key|openviking|memory (?:was |is )?(?:down|unreachable|unavailable)|entries persisted|kind=bug|\boperations?\b|\binfra(?:structure)?\b/i;
+
+/** A digest bullet's class and polarity: its `type` word and the first lens
+ * it names; an ops bullet is `digest.operations`. */
+export function digestBulletClass(bullet: string): {
+  class: string;
+  polarity: Polarity;
+  lens_ids: string[];
+} {
+  const lens = canonicalLensIds(
+    [...bullet.matchAll(/\bpass-[a-z-]+/gi)].map((m) => m[0]).join(","),
+  );
+  const type = /\b(missed-finding|false-positive|refuted|wontfix-pattern|wontfix|repo-gotcha)\b/i
+    .exec(bullet)?.[1]
+    ?.toLowerCase();
+  if (!type && OPS_RE.test(bullet))
+    return { class: "digest.operations", polarity: "ops", lens_ids: [] };
+  const lensPart = lens[0] ? slugPart(lens[0].replace(/^pass-/, "")) : "digest";
+  return {
+    class: safeClass(`${lensPart}.${type ?? "unclassified"}`, "digest.unclassified"),
+    polarity: type ? DIGEST_TYPES[type]! : "either",
+    lens_ids: lens,
+  };
+}
+
+/** Every date `from`..`to` inclusive (`YYYY-MM-DD`). */
+export function datesBetween(from: string, to: string): string[] {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return [];
+  const out: string[] = [];
+  for (let t = a; t <= b && out.length < 400; t += DAY_MS)
+    out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
+/**
+ * The lost digest learnings as candidates (`source = digest-backfill`):
+ * every `## Learnings` bullet of `digest/<date>.md` for each date in the
+ * range. `absent` counts the dates with no digest file; `unreadable` the
+ * files that could not be read (the backfill is then not done).
+ */
+export function mineDigestBackfill(opts: { dir: string; from: string; to: string }): {
+  drafts: CandidateDraft[];
+  files: number;
+  absent: number;
+  unreadable: number;
+} {
+  const drafts: CandidateDraft[] = [];
+  let files = 0;
+  let absent = 0;
+  let unreadable = 0;
+  for (const date of datesBetween(opts.from, opts.to)) {
+    const path = join(opts.dir, `${date}.md`);
+    if (!existsSync(path)) {
+      absent += 1;
+      continue;
+    }
+    let md: string;
+    try {
+      md = readFileSync(path, "utf8");
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    files += 1;
+    for (const bullet of parseDigestLearnings(md)) {
+      const norm = bullet.toLowerCase().replace(/\s+/g, " ").trim();
+      const c = digestBulletClass(bullet);
+      drafts.push({
+        ref: `digest:${date}:${sha16(norm)}`,
+        source: "digest-backfill",
+        kind: "digest_learning",
+        polarity: c.polarity,
+        class: c.class,
+        lens_ids: c.lens_ids,
+        pr:
+          Number(/\bPR #(\d{1,7})\b|\/pull\/(\d{1,7})/.exec(bullet)?.slice(1).find(Boolean)) ||
+          null,
+        round_no: null,
+        finding_key: null,
+        path: null,
+        line: null,
+        summary: oneLine(
+          `The ${date} digest listed this learning while memory refused every write, so it never became an entry`,
+        ),
+        quote: quoteOf(bullet),
+        evidence: [`digest:${date}`],
+        occurred_at: `${date}T12:00:00.000Z`,
+      });
+    }
+  }
+  return { drafts, files, absent, unreadable };
+}

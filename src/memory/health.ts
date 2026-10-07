@@ -42,6 +42,8 @@
 // Memory still never blocks or delays a round: nothing here sits on the round
 // path. `recordRoundSeed` is told about a seed after the round was built.
 
+import { curationPhrase, type CurationStatus } from "../learner/status.js";
+
 export type MemoryHealthState = "unknown" | "healthy" | "degraded" | "down" | "auth_failed";
 
 /** The credentials the probe judges, reported separately. */
@@ -199,6 +201,13 @@ export interface MemoryStatus {
    * be read (UNKNOWN, never "nothing owed"); absent when no case writer runs
    * (memory switched off) and on a daemon that predates it. */
   case_writes?: CaseWritesStatus | null;
+  /** The learner (S8, src/learner/): the latest EOD day's curation —
+   * its outcomes packet, the receipt, the adoptions memory holds — and the
+   * look-for : don't-raise balance of the lessons in force. `missing` and
+   * `not_persisted` are WOKEN states the board paints loud. null when the
+   * daemon could not read its ledger (UNKNOWN); absent when no learner runs
+   * and on a daemon that predates it. */
+  curation?: CurationStatus | null;
 }
 
 /** The finding-case ledger as the status block carries it (S7). A
@@ -355,7 +364,7 @@ export function memoryStatusLine(m: MemoryStatus | undefined, now: Date = new Da
   if (!m) return "memory: NOT REPORTED (this daemon predates the memory health block)";
   if (!m.enabled) return `memory: not monitored${m.disabled_reason ? ` — ${m.disabled_reason}` : ""}`;
   const age = fmtDuration(now.getTime() - Date.parse(m.since));
-  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}`;
+  const creds = `daemon key ${credentialPhrase(m.credentials.daemon)}; sessions' ovcli.conf ${credentialPhrase(m.credentials.sessions)}${feedbackWritesPhrase(m.feedback_writes, now)}${curationPhrase(m.curation)}`;
   const serving = servingPhrase(m.serving);
   switch (m.state) {
     case "unknown":

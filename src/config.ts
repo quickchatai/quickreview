@@ -1243,6 +1243,31 @@ export interface MemoryConfig {
    * the last this-many days get their cases written (resumable, a few PRs a
    * tick, only while memory reads healthy). 0 turns the backfill off. */
   cases_backfill_days: number;
+  /** The learner (S8, src/learner/learner.ts). The miner runs this
+   * many minutes before the EOD sweep (and on `qcr lessons mine`). */
+  lessons_mine_lead_min: number;
+  /** How far back a mine reads human outcomes (fates, the feedback ledger,
+   * recall sources). */
+  lessons_mine_days: number;
+  /** No `eod-curation-receipt` this long after the EOD sweep was delivered
+   * wakes `eod_curation_missing`. */
+  lessons_receipt_wait_min: number;
+  /** An offered candidate still undecided this many ops days later EXPIRES —
+   * recorded on the row, in an event and in the packet. */
+  lessons_expiry_ops_days: number;
+  /** At most this many candidates are offered for the FIRST time per EOD
+   * packet (misses first); the rest wait for a later one. Carried candidates
+   * are never capped. */
+  lessons_packet_new_max: number;
+  /** A bot-approved merged PR's later commits are read this long after the
+   * merge (post-merge recall, read-only git on the base clone). */
+  lessons_recall_window_days: number;
+  /** The window a cluster's recurrence and counterweight count over. */
+  lessons_recurrence_days: number;
+  /** The digests whose "Learnings" never reached memory — the one-time
+   * backfill into candidates (inclusive, YYYY-MM-DD). */
+  lessons_digest_backfill_from: string;
+  lessons_digest_backfill_to: string;
   /** How many items the round's context search may draw from each area it
    * searches. Since S5 a round searches `experiences/` ONLY
    * (`ROUND_SEARCH_AREAS`, src/memory/layout.ts): any other key here is
@@ -1265,6 +1290,15 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   write_backlog_after_min: 120,
   cases_interval_s: 120,
   cases_backfill_days: 60,
+  lessons_mine_lead_min: 15,
+  lessons_mine_days: 45,
+  lessons_receipt_wait_min: 180,
+  lessons_expiry_ops_days: 7,
+  lessons_packet_new_max: 40,
+  lessons_recall_window_days: 14,
+  lessons_recurrence_days: 90,
+  lessons_digest_backfill_from: "2026-08-31",
+  lessons_digest_backfill_to: "2026-10-02",
   context_quotas: { experiences: 24 },
 };
 

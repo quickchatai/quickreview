@@ -37,6 +37,7 @@ import type { StateStore } from "./state.js";
 import type { FileOutcome, ImprovementPayload, IssuePayload } from "./improvements.js";
 import { BRANCH_MAX, BRANCH_RE, isBranchName, SLUG_RE } from "./improvements.js";
 import type { LeverIssuer } from "./levers.js";
+import { validateReceipt, type CurationReceipt } from "./learner/receipt.js";
 import type { OriginRecord } from "./slack/origin.js";
 import { SLACK_TS_RE } from "./slack/reply.js";
 
@@ -51,7 +52,8 @@ export type CommandName =
   | "file-issue"
   | "slack_reply"
   | "drain"
-  | "retry-thread-decision";
+  | "retry-thread-decision"
+  | "eod-curation-receipt";
 
 export const COMMAND_WHITELIST: readonly CommandName[] = [
   "rerun-round",
@@ -65,6 +67,7 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
   "slack_reply",
   "drain",
   "retry-thread-decision",
+  "eod-curation-receipt",
 ] as const;
 
 /**
@@ -106,7 +109,11 @@ export type Command =
    * in-flight rounds finish naturally. `for_min` as on `pause-pr`;
    * only meaningful with `on: true`. */
   | { command: "drain"; on: boolean; for_min?: number }
-  | { command: "retry-thread-decision"; comment_id: number };
+  | { command: "retry-thread-decision"; comment_id: number }
+  /** S8: the EOD curator's answer to the day's outcomes packet — per
+   * candidate, adopted / declined (with a reason) / refused (the write
+   * failed). Schema in src/learner/receipt.ts. */
+  | ({ command: "eod-curation-receipt" } & CurationReceipt);
 
 /** Who a command directory's writer is. Decided by WHICH DIRECTORY a
  * file arrived in and whether the operator seal held — never by a field in
@@ -148,6 +155,9 @@ export interface CommandDeps {
     forMin: number | undefined,
   ): Promise<FileOutcome | void> | FileOutcome | void;
   retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
+  /** S8: the learner's receipt handler. Optional like `drain`: a
+   * daemon wired without the learner rejects the command with a reason. */
+  curationReceipt?(receipt: CurationReceipt): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(payload: {
@@ -398,6 +408,11 @@ export function validateCommand(raw: unknown): ValidationResult {
         command: { command: "retry-thread-decision", comment_id: obj["comment_id"] },
       };
     }
+    case "eod-curation-receipt": {
+      const res = validateReceipt(obj);
+      if (!res.ok) return res;
+      return { ok: true, command: { command: "eod-curation-receipt", ...res.receipt } };
+    }
     case "slack_reply": {
       const err = fieldError(obj, ["thread", "text"]);
       if (err) return { ok: false, reason: err };
@@ -473,6 +488,9 @@ const TIER_TABLE: Record<
   // — it stops the whole board, so it is never author-reachable.
   drain: { anyone: false, author: false, owner: true, system: true },
   "retry-thread-decision": { anyone: false, author: false, owner: true, system: true },
+  // the EOD curator's receipt — a daemon (system) turn's, or the
+  // owner's; never a Slack author's or anyone's.
+  "eod-curation-receipt": { anyone: false, author: false, owner: true, system: true },
 };
 
 /** Target PR of a command, when it has one. */
@@ -608,6 +626,16 @@ export async function executeCommand(
       if (!deps.retryThreadDecision)
         return { ok: false, reason: "retry-thread-decision is not wired on this daemon" };
       return normalize(await deps.retryThreadDecision(command.comment_id));
+    }
+    case "eod-curation-receipt": {
+      if (!deps.curationReceipt)
+        return {
+          ok: false,
+          reason: "eod-curation-receipt is not wired on this daemon (no learner)",
+        };
+      return normalize(
+        await deps.curationReceipt({ day: command.day, decisions: command.decisions }),
+      );
     }
   }
 }

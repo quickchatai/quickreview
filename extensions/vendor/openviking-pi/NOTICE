@@ -51,6 +51,8 @@ Changed by the quickreviewd maintainers, 2026-08-20:
      prompt across every scope (2026-10-07).
   9. A review session's memory search, read and browse tools stay inside the
      same memory areas (2026-10-07).
+ 10. `viking_write` takes a structured `lesson` and writes the lesson's
+     header line from it, refusing unknown lens ids (2026-10-07).
 
 Plus vendoring scaffolding: build-conformance fixes for this repo's stricter
 tsconfig, ambient type declarations for uninstalled packages, three unused

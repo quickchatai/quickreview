@@ -8,12 +8,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { boardAnswer, memoryLine } from "../extensions/tui-view.js";
-import type { MemoryStatus } from "../src/memory/health.js";
+import type { CurationStatus } from "../src/learner/status.js";
+import { memoryStatusLine, type MemoryStatus } from "../src/memory/health.js";
 import type { StatusSnapshot } from "../src/state.js";
-import { maybeWriteMemoryAlert, parseAlert, type AlertBadge } from "../src/tui/alerts.js";
+import {
+  maybeWriteCurationAlert,
+  maybeWriteMemoryAlert,
+  parseAlert,
+  type AlertBadge,
+} from "../src/tui/alerts.js";
 import {
   alertSegment,
   alertZone,
+  curationSegment,
   memorySegment,
   renderBoard,
   topBar,
@@ -21,7 +28,9 @@ import {
 } from "../src/tui/board.js";
 import { buildTuiView } from "../src/tui/feed.js";
 import {
+  CURATION_INCIDENT_LINE,
   MEMORY_INCIDENT_LINE,
+  maybeFileCurationIncident,
   maybeFileMemoryIncident,
   newIncidentFilerMemo,
 } from "../src/tui/memincident.js";
@@ -522,5 +531,172 @@ describe("the TUI counts its own OpenViking requests per user/op", () => {
     const counts = store.requestCounts();
     expect(counts["reviewer/ls"]).toMatchObject({ total: 2, ok: 1, auth_failed: 1 });
     expect(counts["companion/ls"]).toMatchObject({ total: 2, ok: 1, auth_failed: 1 });
+  });
+});
+
+// ---- FT-0546 S8: the day's EOD curation reaches a person the same way ---------
+
+describe("the EOD curation (status.json memory.curation) reaches a person", () => {
+  const curation = (over: Partial<CurationStatus> = {}): CurationStatus => ({
+    day: "2026-10-06",
+    state: "missing",
+    offered: 4,
+    adopted: 0,
+    declined: 0,
+    verifying: 0,
+    not_persisted: 0,
+    expired_today: 0,
+    open: 4,
+    queued: 2,
+    receipt_at: null,
+    balance: {
+      look_for: 1,
+      dont_raise: 9,
+      repo_fact: 0,
+      convention: 0,
+      unknown: 0,
+      ratio: 0.11,
+      typed: 3,
+      as_of: SINCE,
+    },
+    ...over,
+  });
+  const healthy = (c: CurationStatus | null | undefined) =>
+    block({
+      state: "healthy",
+      incident: null,
+      last_error: null,
+      ...(c === undefined ? {} : { curation: c }),
+    });
+
+  it("the board paints a missing receipt and unpersisted lessons loud — and nothing for a quiet day", () => {
+    expect(stripAnsi(curationSegment(snap(healthy(curation())))!)).toBe(
+      "⛔ EOD CURATION MISSING 2026-10-06 · 4 candidates, no receipt",
+    );
+    expect(
+      stripAnsi(
+        curationSegment(snap(healthy(curation({ state: "not_persisted", not_persisted: 2 }))))!,
+      ),
+    ).toBe("⛔ LESSONS NOT PERSISTED 2026-10-06 · 2");
+    for (const quiet of ["received", "awaiting", "nothing", "no_packet", "packet_ready"] as const)
+      expect(curationSegment(snap(healthy(curation({ state: quiet }))))).toBeUndefined();
+    expect(curationSegment(snap(healthy(null)))).toBeUndefined();
+    const bar = stripAnsi(topBar(view(healthy(curation())), 220));
+    expect(bar).toContain("EOD CURATION MISSING");
+    expect(bar.indexOf("EOD CURATION MISSING")).toBeLessThan(bar.indexOf("rounds"));
+  });
+
+  it("one desktop notification per (state, day), fresh snapshots only, re-armed by recovery", () => {
+    const dir = tempDir("qcr-curalert-");
+    const mem = { lastWritten: "" };
+    const name = maybeWriteCurationAlert(dir, healthy(curation()), true, mem, () => NOW)!;
+    expect(name).toMatch(/eod-curation-missing\.json$/);
+    const parsed = parseAlert(readFileSync(join(dir, name), "utf8"), name, () => NOW);
+    expect(parsed.ok && parsed.alert.cause).toBe("eod-curation-missing");
+    expect(maybeWriteCurationAlert(dir, healthy(curation()), true, mem, () => NOW)).toBeUndefined();
+    expect(
+      maybeWriteCurationAlert(
+        dir,
+        healthy(curation({ state: "not_persisted", not_persisted: 1 })),
+        true,
+        mem,
+        () => NOW,
+      ),
+    ).toMatch(/eod-lessons-not-persisted\.json$/);
+    expect(
+      maybeWriteCurationAlert(dir, healthy(curation({ state: "received" })), true, mem, () => NOW),
+    ).toBeUndefined();
+    expect(
+      maybeWriteCurationAlert(dir, healthy(curation()), false, mem, () => NOW),
+    ).toBeUndefined();
+    expect(maybeWriteCurationAlert(dir, healthy(curation()), true, mem, () => NOW)).toBeDefined();
+  });
+
+  it("an older unresolved day rides beside the newest — on the board and in qcr status", () => {
+    const c = curation({
+      day: "2026-10-07",
+      unresolved: [
+        { day: "2026-10-07", state: "missing", count: 4, since: SINCE },
+        { day: "2026-10-06", state: "missing", count: 3, since: SINCE },
+      ],
+    });
+    expect(stripAnsi(curationSegment(snap(healthy(c)))!)).toBe(
+      "⛔ EOD CURATION MISSING 2026-10-07 · 4 candidates, no receipt (+1 earlier unresolved day)",
+    );
+    expect(memoryStatusLine(healthy(c), NOW)).toContain(
+      "EOD CURATION MISSING for 2026-10-07 (4 candidates, no receipt) (+1 earlier unresolved day)",
+    );
+    expect(memoryLine(healthy(c))).toContain(
+      "EOD CURATION MISSING for 2026-10-07 (4 candidates, no receipt) (+1 earlier unresolved day)",
+    );
+  });
+
+  it("ONE tracker ticket per curation incident older than 2 h — keyed by its oldest unresolved day", () => {
+    const root = tempDir("qcr-tracker-");
+    mkdirSync(join(root, ".ids"), { recursive: true });
+    writeFileSync(join(root, ".ids", "0545"), "x\n");
+    const dir = join(root, "efforts", "review-sandbox", "tickets");
+    mkdirSync(dir, { recursive: true });
+    const paths = { root, effort: "review-sandbox", parent: "FT-0026" };
+    const incident = { day: "2026-10-05", state: "missing" as const, count: 3, since: SINCE };
+    const c = curation({
+      unresolved: [{ day: "2026-10-06", state: "missing", count: 4, since: SINCE }, incident],
+      incident,
+    });
+    const opts = (now: Date, memo = newIncidentFilerMemo()) => ({
+      fresh: true,
+      now,
+      afterMs: 2 * HOURS,
+      memo,
+    });
+    expect(
+      maybeFileCurationIncident(paths, healthy(c), opts(new Date(Date.parse(SINCE) + HOURS))),
+    ).toEqual({ kind: "none" });
+    const memo = newIncidentFilerMemo();
+    const out = maybeFileCurationIncident(paths, healthy(c), opts(NOW, memo));
+    expect(out).toMatchObject({ kind: "filed", ticketId: "FT-0546" });
+    const files = readdirSync(dir);
+    expect(files).toEqual(["FT-0546-eod-curation-missing.md"]);
+    const body = readFileSync(join(dir, files[0]!), "utf8");
+    expect(body).toContain(`${CURATION_INCIDENT_LINE} missing 2026-10-05`);
+    expect(body).toContain("by qcr-tui");
+    expect(body).toContain("2026-10-06 missing (4");
+    expect(body).toContain("state/eod/2026-10-05/outcomes.md");
+    // The same incident (a restart, another poll) is never filed twice…
+    expect(maybeFileCurationIncident(paths, healthy(c), opts(NOW, memo)).kind).toBe("already");
+    expect(maybeFileCurationIncident(paths, healthy(c), opts(NOW)).kind).toBe("already");
+    // …nor from stale data, nor with nothing unresolved, nor beside the memory ticket.
+    expect(maybeFileCurationIncident(paths, healthy(c), { ...opts(NOW), fresh: false })).toEqual({
+      kind: "none",
+    });
+    expect(
+      maybeFileCurationIncident(
+        paths,
+        healthy(curation({ unresolved: [], incident: null })),
+        opts(NOW),
+      ),
+    ).toEqual({ kind: "none" });
+    expect(readdirSync(dir)).toHaveLength(1);
+    // A new incident (another oldest day) is a new ticket.
+    const next = { day: "2026-10-09", state: "not_persisted" as const, count: 1, since: SINCE };
+    expect(
+      maybeFileCurationIncident(
+        paths,
+        healthy(curation({ state: "not_persisted", unresolved: [next], incident: next })),
+        opts(NOW),
+      ),
+    ).toMatchObject({ kind: "filed", file: "FT-0547-eod-curation-lessons-not-persisted.md" });
+  });
+
+  it("qcr status and the companion's view say it — UNKNOWN when unread, the balance beside it", () => {
+    expect(memoryStatusLine(healthy(curation()), NOW)).toContain(
+      "EOD CURATION MISSING for 2026-10-06 (4 candidates, no receipt); lessons look-for:dont-raise 1:9",
+    );
+    expect(memoryStatusLine(healthy(null), NOW)).toContain("EOD curation UNKNOWN");
+    expect(memoryStatusLine(healthy(undefined), NOW)).not.toContain("EOD");
+    expect(memoryLine(healthy(curation({ state: "not_persisted", not_persisted: 3 })))).toContain(
+      "EOD LESSONS NOT PERSISTED for 2026-10-06 (3); lessons look-for:dont-raise 1:9",
+    );
+    expect(memoryLine(healthy(null))).toContain("EOD curation UNKNOWN");
   });
 });
