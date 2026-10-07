@@ -36,6 +36,7 @@
 // of `ContextAssembler` is injected (see src/dispatch.ts `DispatchDeps.memory`).
 
 import { promptQuoted } from "../codespan.js";
+import type { RoundLessonDelivery } from "./delivery.js";
 
 /**
  * What one read of memory produced: the text the store holds — `""` when it
@@ -65,8 +66,16 @@ export interface ContextAssembler {
    * means nothing is pinned — a fact about a healthy store, not a gap. */
   pinnedHead(): Promise<MemoryRead>;
   /** One deterministic, budgeted context block for this query. `text: ""`
-   * means memory had nothing to say about this PR. */
-  contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead>;
+   * means memory had nothing to say about this PR. `onSent`, when given, is
+   * called once the search request has been ISSUED (S9b: under
+   * `[memory] delivery = "on"` the round's lesson finds wait for it, so they
+   * never queue ahead of the round's own search on the server's one-thread
+   * embedder). Optional to honour: an implementation that never calls it only
+   * makes those finds wait until the seed settles. */
+  contextBlock(
+    query: string,
+    opts: { maxTokens: number; onSent?: () => void },
+  ): Promise<MemoryRead>;
 }
 
 /** One half of the seed that did not ARRIVE, and why. An empty answer is not
@@ -106,6 +115,11 @@ export interface RoundMemory {
   gaps: MemoryGap[];
   /** Wall-clock ms the assembly took (bounded by `timeoutMs`). */
   ms: number;
+  /** The round's DELIVERED lessons and cases (S9b) — set by dispatch
+   * only under `[memory] delivery = "on"`, after a selection that delivered
+   * something. Absent ⇒ the prompt carries today's bleed rule verbatim and no
+   * lesson section (`off`, `shadow`, the bench, a memory-less round). */
+  lessons?: RoundLessonDelivery;
 }
 
 /** The seed for a round with no memory at all — the value every renderer
@@ -145,6 +159,9 @@ export interface RoundMemoryOptions {
   timeoutMs?: number;
   now?: () => number;
   log?: (msg: string, extra?: unknown) => void;
+  /** Handed to `contextBlock` as its `onSent` (S9b). Absent ⇒ the
+   * assembler is asked exactly as before (`{ maxTokens }`). */
+  onContextSent?: () => void;
 }
 
 /** What dispatch is handed to seed a round: the assembler plus its knobs. */
@@ -314,7 +331,17 @@ export async function assembleRoundMemory(
     guarded("head", timeoutMs, () => assembler.pinnedHead(), gaps, log),
     // No `rewrite` is passed — the daemon never asks the store to rewrite its
     // query, so the round prompt stays a pure function of the round order.
-    guarded("context", timeoutMs, () => assembler.contextBlock(query, { maxTokens }), gaps, log),
+    guarded(
+      "context",
+      timeoutMs,
+      () =>
+        assembler.contextBlock(
+          query,
+          opts.onContextSent ? { maxTokens, onSent: opts.onContextSent } : { maxTokens },
+        ),
+      gaps,
+      log,
+    ),
   ]);
 
   const charBudget = maxTokens * ROUND_CONTEXT_DEFAULTS.charsPerToken;

@@ -313,8 +313,14 @@ lessons_digest_backfill_to = "2026-10-02"
 #              round — and the shadow ledger records them, plus every posted
 #              finding a delivered dont-raise lesson would have touched. No
 #              prompt, task file or agent changes.
-#   "on"     — delivery. Not built yet: until it is, "on" runs exactly what
-#              "shadow" runs (the daemon says so at boot).
+#   "on"     — delivery: the same selection, awaited beside the round's
+#              memory seed within the same budget, reaches each lens's task
+#              file, the lessons files of the validator and of any lens the
+#              session adds, the main session's "Lessons in force" index and
+#              past-review cases (the bleed rule reworded), the validator's
+#              demotion-only `lesson-shape` addendum, and the repo facts for
+#              the paths a recheck or an author reply touches. A round that
+#              selects nothing renders exactly as under "off".
 # Read `qcr lessons shadow-report` (and the `lessons` clause of `qcr status`)
 # before switching to "on". The operator's kill switch sits beside this one:
 # `qcr lessons off|on` and `qcr lessons suppress|unsuppress <lesson>`, through

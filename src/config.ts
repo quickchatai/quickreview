@@ -1285,8 +1285,14 @@ export interface MemoryConfig {
    *              delivered and which posted findings a delivered dont-raise
    *              lesson would have touched — and NO prompt, task file or
    *              agent changes;
-   *   `on`     — delivery. Not built yet (S9b): until it is, `on` runs
-   *              exactly what `shadow` runs and says so at boot.
+   *   `on`     — delivery (S9b): the same selection, AWAITED beside the
+   *              round's memory seed within the same budget, and rendered —
+   *              each lens's task file, the lessons files of the validator
+   *              and the lenses a session adds, the main session's "Lessons
+   *              in force" index and past-review cases (the bleed rule
+   *              reworded), the validator's `lesson-shape` addendum, and the
+   *              repo facts for the paths a recheck or an author reply
+   *              touches. A round that selects nothing renders as `off`.
    * The owner switches it to `on` after reading `qcr lessons shadow-report`.
    */
   delivery: MemoryDelivery;

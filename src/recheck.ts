@@ -602,6 +602,20 @@ export interface RecheckDeps {
   /** SessionHooks.inject — the nudge goes to the PR's existing session. */
   inject: (pr: number, message: string) => Promise<void>;
   renderPrompt?: (order: RecheckOrder) => string;
+  /**
+   * The repo-fact lessons for the delta's files (S9b, src/
+   * lessonselect.ts `repoFacts`), rendered as a section APPENDED to the
+   * nudge — "" unless `[memory] delivery = "on"`, so the nudge is otherwise
+   * byte-identical. Bounded by the lesson prefetch's budget; a throw or a
+   * rejection is "" (the nudge goes out without it).
+   */
+  repoFacts?: (q: {
+    pr: number;
+    title: string;
+    paths: readonly string[];
+    head_sha: string;
+    purpose: "recheck";
+  }) => Promise<string>;
   worktreeFor?: (pr: number) => string;
   /** Hand-resolved merge files between two shas (WorktreeManager
    * .resolvedFilesInMerges, wired by the daemon). Absent ⇒ merges classify by
@@ -832,6 +846,29 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     issued_at: now().toISOString(),
   };
   const render = deps.renderPrompt ?? defaultRecheckPrompt;
+  // the repo facts for the files the session must review
+  // (the significant ones; every delta file when none is) — "" unless
+  // lessons are delivered. Bounded and total: never a reason to hold or lose
+  // the nudge.
+  let facts = "";
+  if (deps.repoFacts) {
+    const touched = plan.classification.significant.length
+      ? plan.classification.significant.map((f) => f.filename)
+      : plan.classification.files.map((f) => f.filename);
+    try {
+      facts = await deps.repoFacts({
+        pr: req.pr,
+        title: row.title,
+        paths: touched,
+        head_sha: head,
+        purpose: "recheck",
+      });
+    } catch (err) {
+      log(`recheck: #${req.pr} repo facts unavailable (ignored)`, err);
+      facts = "";
+    }
+    if (typeof facts !== "string") facts = "";
+  }
   // S4: mid-round nudges are held and flushed at round end — the PR's one main
   // pi is never given two instructions at once.
   let delivered: "injected" | "held";
@@ -843,7 +880,10 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // nudge goes out and released only on a synchronous throw — which a
       // bridge-level drop is not — so without a receipt an undelivered nudge
       // left a claim that suppressed the reconcile backstop permanently.
-      stampPrompt(render(order), recheckPromptMarker(req.pr, fingerprint)),
+      stampPrompt(
+        facts ? `${render(order).replace(/\s+$/, "")}${facts}` : render(order),
+        recheckPromptMarker(req.pr, fingerprint),
+      ),
       `recheck:${req.trigger}`,
     );
   } catch (err) {

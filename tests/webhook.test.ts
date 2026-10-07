@@ -384,7 +384,18 @@ describe("interpretEvent — review comments", () => {
       in_reply_to_id: 800001,
       via: "thread_reply",
       author: "alice",
+      // the replied thread's file — the repo facts' path.
+      path: "workers/ingest.py",
     });
+    // A payload without a path carries none (never an empty string).
+    const bare = interpretEvent(
+      "pull_request_review_comment",
+      "created",
+      reviewCommentPayload({ comment: { path: undefined } }),
+      deps((id) => (id === 800001 ? 4242 : undefined)),
+    );
+    expect(bare.kind).toBe("author_reply");
+    expect("path" in bare).toBe(false);
   });
 
   it("ignores another identity's thread and a bot thread registered to another PR", () => {

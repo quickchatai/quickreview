@@ -317,6 +317,60 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
       /lessonSwitch\(change, file\) \{[\s\S]*?lessonLedger\.apply\(change, file\)/,
     );
     expect(wire).toMatch(/base\.lessons = lessonStatusCache\.value;/);
-    expect(wire).toMatch(/lessonDeliveryStatus\(lessonLedger, cfg\.memory\.delivery\)/);
+  });
+});
+
+// delivery — each slice below degrades silently (a hook method
+// not forwarded ⇒ dispatch never delivers; an addendum not composed ⇒ the
+// validator never learns `lesson-shape`), so these are tripwires too.
+describe("wire.ts: lesson delivery (S9b) is actually connected", () => {
+  const daemon = readFileSync(join(process.cwd(), "src", "daemon.ts"), "utf8");
+
+  it("the late-bound hook forwards delivering, select and repoFacts to the selector", () => {
+    expect(wire).toMatch(/delivering: \(\) => lessonSelector\?\.delivering\(\) \?\? false,/);
+    expect(wire).toMatch(
+      /select: \(order, files, opts\) =>\s*lessonSelector\?\.select\(order, files, opts\) \?\? Promise\.resolve\(null\),/,
+    );
+    // A round discarded before its handoff drops its selection record.
+    expect(wire).toMatch(/discard: \(roundId\) => lessonSelector\?\.discard\(roundId\),/);
+    expect(wire).toMatch(
+      /repoFacts: \(q\) => lessonSelector\?\.repoFacts\(q\) \?\? Promise\.resolve\(""\),/,
+    );
+    expect(wire).toMatch(/new RoundLessonSelector\(\{[\s\S]*?repo: cfg\.github\.repo,/);
+  });
+
+  it("the agents build composes the validator's lesson addendum BESIDE the feedback one, from the switch and the kill switch", () => {
+    // The ledger (the kill switch) exists before the first build.
+    expect(wire.indexOf("lessonLedger = new LessonLedger(d.store);")).toBeGreaterThan(-1);
+    expect(wire.indexOf("lessonLedger = new LessonLedger(d.store);")).toBeLessThan(
+      wire.indexOf("const agentsDay = dayScopedRebuild("),
+    );
+    // The composition rule itself (the kill switch read from the ledger) is
+    // pinned behaviourally in tests/lesson-delivery.test.ts
+    // (`lessonAddendaFor`); here, that the build calls it with the ledger.
+    expect(wire).toMatch(
+      /const lessonAdd = lessonAddendaFor\(cfg\.memory\.delivery, lessonLedger\);/,
+    );
+    expect(wire).toMatch(
+      /\.\.\.postingPolicyAddenda\(cfg\.posting\),[\s\S]*?\.\.\.lessonAdd,\s*\.\.\.\(fb \? \[fb\] : \[\]\),/,
+    );
+  });
+
+  it("flipping the kill switch rebuilds the agents (the feedback addendum's rebuild-on-change)", () => {
+    expect(wire).toMatch(
+      /lessonSwitch\(change, file\) \{[\s\S]*?if \(r\.changed && \(change\.action === "off" \|\| change\.action === "on"\)\) \{\s*try \{\s*rebuildAgents\(\);/,
+    );
+  });
+
+  it("the daemon hands the repo facts to the recheck nudge and the ping-pong wake", () => {
+    expect(daemon).toMatch(/repoFacts: \(q: [^)]*\) => repoFactsFor\(q\)/);
+    // The ping-pong path is `serveAuthorReply`, driven behaviourally in
+    // tests/lesson-delivery.test.ts; here, that the daemon hands it the facts.
+    expect(daemon).toMatch(
+      /onAuthorReply: async \(reply\) => \{\s*await serveAuthorReply\(\s*\{[\s\S]*?\.\.\.\(deps\.lessons\?\.repoFacts \? \{ repoFacts: repoFactsFor \} : \{\}\),[\s\S]*?reply,\s*\);/,
+    );
+    expect(wire).toMatch(
+      /lessonDeliveryStatus\(lessonLedger, cfg\.memory\.delivery, \{\s*selecting: lessonSelector !== null,\s*\}\)/,
+    );
   });
 });

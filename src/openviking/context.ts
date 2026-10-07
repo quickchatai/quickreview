@@ -152,7 +152,10 @@ export class OpenVikingContextAssembler implements ContextAssembler {
    * the token budget to be wrong. The one exception is a retired entry that
    * leaked past the exclusion cap (see below).
    */
-  async contextBlock(query: string, opts: { maxTokens: number }): Promise<MemoryRead> {
+  async contextBlock(
+    query: string,
+    opts: { maxTokens: number; onSent?: () => void },
+  ): Promise<MemoryRead> {
     try {
       // A retirement is a header tag on a file that stays in the indexed root,
       // so the search is told to skip it; `read()` filtering it is not enough.
@@ -171,7 +174,18 @@ export class OpenVikingContextAssembler implements ContextAssembler {
         quotas: this.quotas,
         ...(excludeUris.length > 0 ? { excludeUris } : {}),
       };
-      const res = await this.client.searchContext(query, search);
+      // Issue the search, THEN say so (S9b): the client reaches its
+      // `fetch` synchronously, so by the time `onSent` runs the round's own
+      // search is ahead of any lesson find the signal releases.
+      const pending = this.client.searchContext(query, search);
+      if (opts.onSent) {
+        try {
+          opts.onSent();
+        } catch {
+          /* a signal, never a reason to lose the block */
+        }
+      }
+      const res = await pending;
       if (!res.ok) {
         this.lastSearch = null;
         return { status: "unreadable", reason: `search ${res.code}: ${res.message}` };

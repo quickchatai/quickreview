@@ -12,8 +12,9 @@ import type { MemoryDelivery } from "../config.js";
 export interface LessonDeliveryStatus {
   /** `[memory] delivery` as configured. */
   delivery: MemoryDelivery;
-  /** Whether lessons actually reach a prompt. Always false in S9a: `on` runs
-   * the shadow ledger until S9b builds delivery. */
+  /** Whether lessons actually reach a prompt (S9b): `[memory]
+   * delivery = "on"`, the operator's kill switch on, and a selector built
+   * (memory switched on). False under `shadow`. */
   delivering: boolean;
   /** The operator's kill switch (`qcr lessons off`). */
   lessons_off: boolean;
@@ -47,7 +48,7 @@ export function lessonHeadline(s: LessonDeliveryStatus | null): string {
   const mode = s.delivering
     ? "on"
     : s.delivery === "on"
-      ? "on (shadow only — delivery not built)"
+      ? "on (nothing delivered — memory is off)"
       : "shadow";
   const time = s.timeouts > 0 ? `, ${s.timeouts} prefetch timeouts` : "";
   const unread = s.unreadable > 0 ? `, ${s.unreadable} unreadable` : "";

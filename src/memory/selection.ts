@@ -37,9 +37,12 @@
 // this PR's own history in its ledger), posted before `as_of`. Ranked by a
 // shared lens > the replies it drew > recency > URI.
 //
-// Nothing here is delivered anywhere (S9a ships `[memory] delivery` in
-// shadow): the selection is what the shadow ledger records, and what S9b's
-// delivery will render.
+// Under `[memory] delivery = "shadow"` (the shipped value) the selection is
+// only what the shadow ledger records; under `on` it is also what S9b
+// delivers (src/memory/delivery.ts renders it) — the lenses a session may ADD
+// included (one shared find, filtered per lens), and, for the recheck and the
+// ping-pong wake, the repo facts for the paths they touch
+// (`selectRepoFacts`).
 import { globMatcher } from "../glob.js";
 import { canonicalLensIds } from "../lensids.js";
 import { roundContextQuery } from "./context.js";
@@ -63,8 +66,11 @@ export const SELECTION_CAPS = Object.freeze({
 export type SelectionCap = { readonly items: number; readonly tokens: number };
 
 /** How many hits one find asks for, per area. Generous: the filters run on
- * our side, after the engine ranked by similarity alone. */
-export const FIND_LIMITS = Object.freeze({ lessons: 20, cases: 40 });
+ * our side, after the engine ranked by similarity alone. The ADDABLE find
+ * (S9b) is one find shared by every lens the session may add, filtered per
+ * lens afterwards, so it asks for more; the repo-fact find (recheck and
+ * ping-pong) keeps only one kind, so it does too. */
+export const FIND_LIMITS = Object.freeze({ lessons: 20, cases: 40, addable: 40, facts: 40 });
 
 /** At most this many distinct finds per round (identical queries are asked
  * once). A wide sweep plan past it leaves its last rows unasked — recorded
@@ -166,8 +172,9 @@ export interface LessonCandidate {
 export interface LessonFilterContext {
   /** The memories root URI (`viking://user/reviewer/memories`). */
   root: string;
-  /** The lens the lessons are for. */
-  lens: string;
+  /** The lens the lessons are for; null — no lens precondition (the main
+   * session's repo facts, S9b). */
+  lens: string | null;
   /** The files that lens reviews (the row's focus, else the PR's files). */
   files: readonly string[];
   retired: ReadonlySet<string>;
@@ -232,7 +239,7 @@ export function filterLessonHits(
       bump(dropped, "kind_unknown");
       continue;
     }
-    if (lesson.lens.length > 0 && !lesson.lens.includes(ctx.lens)) {
+    if (ctx.lens !== null && lesson.lens.length > 0 && !lesson.lens.includes(ctx.lens)) {
       bump(dropped, "lens");
       continue;
     }
@@ -493,6 +500,9 @@ export interface FindPlan {
   rowKey: Map<number, string>;
   /** The main session's cases find, when there is one. */
   casesKey: string | null;
+  /** The ONE find every lens the session may ADD shares (S9b), when
+   * the order offers any; null when it offers none or the cap took it. */
+  addableKey?: string | null;
 }
 
 const QUERY_MAX_CHARS = 600;
@@ -521,12 +531,24 @@ function findKey(area: string, query: string): string {
   return `${area}\u0000${query}`;
 }
 
+/** The query of the ADDABLE find: the PR's title and the shape of its files,
+ * no lens word — one find for every lens the session may add, each filtered
+ * on its own header afterwards. */
+export function addableQuery(input: { title: string; files: readonly string[] }): string {
+  return lessonRowQuery({ title: input.title, lens: "", files: input.files });
+}
+
 /** The round's finds: one per discovery row and one for the validator row
- * (deduplicated), then the main session's cases, capped. */
+ * (deduplicated), then the main session's cases, capped — the cases find
+ * planned first so the cap never takes it, and the ONE addable find (S9b,
+ * when the order offers lenses to add) planned LAST, so a wide plan's cap
+ * takes it before any planned row. */
 export function planFinds(input: {
   title: string;
   rows: readonly SelectionRow[];
   prFiles: readonly string[];
+  /** The lenses the session may add this round (`addable_lenses`). */
+  addable?: readonly string[];
 }): FindPlan {
   const finds: PlannedFind[] = [];
   const rowKey = new Map<number, string>();
@@ -554,7 +576,15 @@ export function planFinds(input: {
     );
     if (key !== null) rowKey.set(r.row, key);
   }
-  return { finds, rowKey, casesKey };
+  const addableKey =
+    (input.addable ?? []).length > 0
+      ? add(
+          EXPERIENCES_AREA,
+          addableQuery({ title: input.title, files: input.prFiles }),
+          FIND_LIMITS.addable,
+        )
+      : null;
+  return { finds, rowKey, casesKey, addableKey };
 }
 
 /** A lesson as the ledger records it — every field the shadow matcher and
@@ -583,12 +613,16 @@ export interface SelectedCase {
   score: number;
 }
 
-export type SelectionRole = "row" | "validator" | "cases";
+/** `row` — a discovery plan row; `validator` — the validator's lessons;
+ * `addable` — a lens the session may ADD (S9b: its lessons file);
+ * `cases` — the main session's past reviews of these files. */
+export type SelectionRole = "row" | "validator" | "addable" | "cases";
 export type SelectionStatus = "ok" | "timeout" | "unreadable" | "find_cap";
 
 export interface RoleSelection {
   role: SelectionRole;
-  /** The plan row (`row`, `validator`); -1 for the main session's cases. */
+  /** The plan row (`row`, `validator`); the lens's index in
+   * `addable_lenses` (`addable`); -1 for the main session's cases. */
   row: number;
   lens: string;
   agent: string | null;
@@ -641,18 +675,29 @@ export interface SelectRoundInput {
   suppressed: ReadonlySet<string>;
   asOf?: string | null;
   caps?: { row: SelectionCap; cases: SelectionCap; validator: SelectionCap };
+  /** The lenses the session may add (`addable_lenses`, S9b): one
+   * `addable` record each, from the plan's shared addable find. */
+  addable?: readonly string[];
+  /** Filled with every SELECTED lesson's and case's text, by URI — what
+   * delivery (S9b) renders. The records themselves stay text-free: they are
+   * what the ledger stores. */
+  texts?: Map<string, string>;
 }
 
 /**
  * The round's selection, one record per role: every discovery row's lessons,
  * the validator's (the dont-raise lessons any discovery row found eligible,
- * and every lesson naming `pass-validate` its own find returned), and the
- * main session's cases. Pure and deterministic: the same outcomes in any
- * order give the same records.
+ * and every lesson naming `pass-validate` its own find returned), every lens
+ * the session may add (S9b — one shared find, filtered per lens like a row
+ * over the PR's files), and the main session's cases. Pure and deterministic:
+ * the same outcomes in any order give the same records.
  */
 export function selectRound(input: SelectRoundInput): RoleSelection[] {
   const caps = input.caps ?? SELECTION_CAPS;
   const out: RoleSelection[] = [];
+  const keepText = (c: { uri: string; text: string }): void => {
+    input.texts?.set(c.uri, c.text);
+  };
   const query = (key: string | undefined | null): string | null =>
     key ? (input.plan.finds.find((f) => f.key === key)?.query ?? null) : null;
   const base = { retired: input.retired, suppressed: input.suppressed, asOf: input.asOf ?? null, root: input.root };
@@ -696,6 +741,7 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
     for (const c of eligible) if (c.lesson.kind === "dont-raise" && !dontRaise.has(c.uri)) dontRaise.set(c.uri, c);
     const { selected, cuts } = capSelection(rankLessons(eligible, r.lens), caps.row);
     rec.lessons = selected.map(asSelected);
+    selected.forEach(keepText);
     rec.cuts = cuts;
   }
 
@@ -744,8 +790,47 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
     );
     const { selected, cuts } = capSelection(ranked, caps.validator);
     rec.lessons = selected.map(asSelected);
+    selected.forEach(keepText);
     rec.cuts = cuts;
     out.push(rec);
+  }
+
+  // The lenses the session may add (S9b): each filtered over the PR's files
+  // from the one shared find, ranked and capped like a row.
+  const addable = [...new Set(input.addable ?? [])];
+  if (addable.length > 0) {
+    const key = input.plan.addableKey ?? null;
+    const o: FindOutcome | null = key ? (input.outcomes.get(key) ?? { status: "timeout" }) : null;
+    addable.forEach((lens, i) => {
+      const rec: RoleSelection = {
+        role: "addable",
+        row: i,
+        lens,
+        agent: null,
+        query: query(key),
+        status: "ok",
+        lessons: [],
+        cases: [],
+        cuts: [],
+        dropped: {},
+      };
+      out.push(rec);
+      if (!o) {
+        rec.status = "find_cap";
+        return;
+      }
+      if (o.status !== "ok") {
+        rec.status = o.status;
+        if (o.status === "unreadable") rec.reason = o.reason;
+        return;
+      }
+      const { eligible, dropped } = filterLessonHits(o.hits, { ...base, lens, files: input.prFiles });
+      rec.dropped = dropped;
+      const { selected, cuts } = capSelection(rankLessons(eligible, lens), caps.row);
+      rec.lessons = selected.map(asSelected);
+      selected.forEach(keepText);
+      rec.cuts = cuts;
+    });
   }
 
   const casesKey = input.plan.casesKey;
@@ -776,11 +861,46 @@ export function selectRound(input: SelectRoundInput): RoleSelection[] {
       casesRec.dropped = dropped;
       const { selected, cuts } = capSelection(rankCases(eligible), caps.cases);
       casesRec.cases = selected.map(caseSelected);
+      selected.forEach(keepText);
       casesRec.cuts = cuts;
     }
   }
   out.push(casesRec);
   return out;
+}
+
+// ---- repo facts for the recheck and the ping-pong wake (S9b) ----------------
+
+/** The query of a repo-fact find: the PR's title and the touched paths,
+ * sorted (a function of the path SET). */
+export function repoFactsQuery(input: { title: string; paths: readonly string[] }): string {
+  return casesQuery({ title: input.title, files: input.paths });
+}
+
+/**
+ * The REPO-FACT lessons for the paths a recheck's delta or an author's reply
+ * touches (S9b): the same header filters as a row's (never retired,
+ * moved, suppressed, of unknown polarity, or created on/after `as_of`), no
+ * lens precondition (the main session reads them), and then only
+ * `kind=repo-fact` lessons whose `paths=` glob matches a TOUCHED path — a
+ * lesson naming no paths is for no path in particular, so it is not "for the
+ * touched paths" and is left out (`no_paths`). Ranked and capped like a row.
+ * Pure.
+ */
+export function selectRepoFacts(
+  hits: readonly FindHit[],
+  ctx: Omit<LessonFilterContext, "lens">,
+  cap: SelectionCap = SELECTION_CAPS.row,
+): { selected: LessonCandidate[]; cuts: SelectionCut[]; dropped: DropCounts } {
+  const { eligible, dropped } = filterLessonHits(hits, { ...ctx, lens: null });
+  const facts: LessonCandidate[] = [];
+  for (const c of eligible) {
+    if (c.lesson.kind !== "repo-fact") bump(dropped, "kind");
+    else if (!c.pathHit) bump(dropped, "no_paths");
+    else facts.push(c);
+  }
+  const { selected, cuts } = capSelection(rankLessons(facts, ""), cap);
+  return { selected, cuts, dropped };
 }
 
 // ---- the engine port ---------------------------------------------------------

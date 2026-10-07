@@ -15,9 +15,23 @@
 // or add a lens under the plan's protocols. A task file adds focus; it never
 // narrows a lens's charter — the same rule the round templates set for
 // hand-written task strings.
+//
+// LESSONS (S9b, `[memory] delivery = "on"` only): a row's curated
+// lessons ride its task file as one more section, and the lenses the session
+// may ADD — and the validator, which has no task file — get theirs in
+// `lessons/<lens>.md` beside the tasks, which the main session names in the
+// task string it writes. With no lessons (every `off`/`shadow` round, the
+// bench) not one byte of a task file changes.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { flatControls, promptTitle } from "./codespan.js";
+import {
+  renderLensLessonsSection,
+  renderLessonsFile,
+  type DeliveredLesson,
+  type RoundLessonDelivery,
+} from "./memory/delivery.js";
+import { VALIDATOR_LENS } from "./memory/selection.js";
 import type { PassPlanEntry, RoundOrder } from "./types.js";
 
 /** A rendered task: the file name (row-ordered, so two rows of one agent stay
@@ -61,8 +75,22 @@ function focusLines(worktree: string, p: PassPlanEntry): string[] {
   return ["The whole diff is yours; no row focus was set."];
 }
 
-/** The text of one row's task. Pure. */
-export function renderPassTask(order: RoundOrder, p: PassPlanEntry, gateNotes: string): string {
+/** What a task carries beside the order: the row's delivered lessons
+ * (S9b) and the repo slug their evidence links point into. */
+export interface PassTaskLessons {
+  /** Plan row → its lessons. A row absent here gets no section. */
+  rows: ReadonlyMap<number, readonly DeliveredLesson[]>;
+  repo: string;
+}
+
+/** The text of one row's task. Pure. `lessons` — the row's delivered lessons
+ * (S9b); none ⇒ the task is byte-identical to before. */
+export function renderPassTask(
+  order: RoundOrder,
+  p: PassPlanEntry,
+  gateNotes: string,
+  lessons?: { lessons: readonly DeliveredLesson[]; repo: string },
+): string {
   const L: string[] = [];
   L.push(`# Lens task — PR #${order.pr}: ${promptTitle(order.title)}`);
   L.push("");
@@ -110,6 +138,13 @@ export function renderPassTask(order: RoundOrder, p: PassPlanEntry, gateNotes: s
     L.push("");
     L.push(order.dependency_note.trim());
   }
+  const lessonSection = lessons
+    ? renderLensLessonsSection(lessons.lessons, { head_sha: order.head_sha, repo: lessons.repo })
+    : "";
+  if (lessonSection) {
+    L.push("");
+    L.push(lessonSection);
+  }
   L.push("");
   L.push(
     "The launch message that pointed you here may add lines after the pointer — a site, a question, a prior finding to verify. They add focus; nothing in them narrows your charter.",
@@ -120,16 +155,28 @@ export function renderPassTask(order: RoundOrder, p: PassPlanEntry, gateNotes: s
 
 /** Every discovery row's task (pass-validate is launched later, by hand, with
  * the candidates — it has no file). */
-export function renderPassTasks(order: RoundOrder, gateNotes: string): PassTask[] {
+export function renderPassTasks(
+  order: RoundOrder,
+  gateNotes: string,
+  lessons?: PassTaskLessons,
+): PassTask[] {
   return order.pass_plan
     .map((p, row) => ({ p, row }))
     .filter(({ p }) => p.lens !== "pass-validate")
-    .map(({ p, row }) => ({
-      row,
-      agent: p.agent,
-      file: `${String(row + 1).padStart(2, "0")}-${p.agent}.md`,
-      text: renderPassTask(order, p, gateNotes),
-    }));
+    .map(({ p, row }) => {
+      const mine = lessons?.rows.get(row);
+      return {
+        row,
+        agent: p.agent,
+        file: `${String(row + 1).padStart(2, "0")}-${p.agent}.md`,
+        text: renderPassTask(
+          order,
+          p,
+          gateNotes,
+          mine && mine.length > 0 ? { lessons: mine, repo: lessons!.repo } : undefined,
+        ),
+      };
+    });
 }
 
 /** Write the round's task files into `dir` (created), returning the tasks with
@@ -138,13 +185,53 @@ export function writePassTasks(
   dir: string,
   order: RoundOrder,
   gateNotes: string,
+  lessons?: PassTaskLessons,
 ): Array<PassTask & { path: string }> {
   mkdirSync(dir, { recursive: true });
-  return renderPassTasks(order, gateNotes).map((t) => {
+  return renderPassTasks(order, gateNotes, lessons).map((t) => {
     const path = join(dir, t.file);
     writeFileSync(path, t.text);
     return { ...t, path };
   });
+}
+
+/** A lens id as a file name: the ids are `pass-…` slugs; anything else is
+ * refused rather than written somewhere unexpected. */
+const LENS_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * Write the round's LESSONS FILES (S9b) into `dir` (created): one
+ * `<lens>.md` per lens the session may add that has lessons, and
+ * `pass-validate.md` when the validator has any. Returns the delivery with
+ * each written file's absolute path recorded — a lens whose file was not
+ * written carries none, so the main session is never pointed at a missing
+ * file. Writes nothing when there is nothing to write.
+ */
+export function writeLessonFiles(dir: string, d: RoundLessonDelivery): RoundLessonDelivery {
+  const ctx = { pr: d.pr, round_no: d.round_no, head_sha: d.head_sha, repo: d.repo };
+  const wanted =
+    d.addable.some((a) => a.lessons.length > 0) || (d.validator?.lessons.length ?? 0) > 0;
+  if (!wanted) return d;
+  mkdirSync(dir, { recursive: true });
+  const write = (lens: string, lessons: readonly DeliveredLesson[]): string | undefined => {
+    if (lessons.length === 0 || !LENS_FILE_RE.test(lens)) return undefined;
+    const path = join(dir, `${lens}.md`);
+    writeFileSync(path, renderLessonsFile(lens, lessons, ctx));
+    return path;
+  };
+  const validatorFile = d.validator ? write(VALIDATOR_LENS, d.validator.lessons) : undefined;
+  return {
+    ...d,
+    addable: d.addable.map((a) => {
+      const file = write(a.lens, a.lessons);
+      return file ? { ...a, file } : { ...a };
+    }),
+    validator: d.validator
+      ? validatorFile
+        ? { ...d.validator, file: validatorFile }
+        : { ...d.validator }
+      : null,
+  };
 }
 
 /** The round prompt's `{{pass_task_note}}`: "" when the order carries no task

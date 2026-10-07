@@ -162,6 +162,9 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   "overreachable",
   "understated-reach",
   "feedback-shape",
+  // a curated dont-raise lesson's demotion (src/include.ts
+  // LESSON_VALIDATE_ADDENDUM), composed only while lessons are delivered.
+  "lesson-shape",
   // the third shape is a correction, not a kill: the tag is put back
   // inside the closed grammar and the finding survives.
   "tag-outside-grammar",

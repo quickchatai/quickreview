@@ -230,11 +230,18 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     const end = text.indexOf("onClosed:", start);
     expect(start).toBeGreaterThan(-1);
     const block = text.slice(start, end);
-    expect(block).toContain("wakeOrHold(");
+    // The handler hands the reply to `serveAuthorReply` (exported so it can be
+    // driven directly — S9b) and does nothing else with it.
+    expect(block).toContain("serveAuthorReply(");
     expect(block).not.toMatch(/await\s+hooks\.inject\(/);
+    const fnStart = text.indexOf("export async function serveAuthorReply(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fn = text.slice(fnStart, text.indexOf("\n}\n", fnStart));
+    expect(fn).toContain("wakeOrHold(");
+    expect(fn).not.toMatch(/await\s+(?:deps\.|hooks\.)?inject\(/);
     // The reply is claimed before the wake: a failed injection must hold it,
     // never drop it (selfscan 0df49200).
-    expect(block).toContain("holdOnFailure: true");
+    expect(fn).toContain("holdOnFailure: true");
   });
 
   it("no other module wakes a PR session behind wakes.ts's back", () => {

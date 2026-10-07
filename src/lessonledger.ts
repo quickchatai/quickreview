@@ -12,7 +12,8 @@
 //   `timeout`, `unreadable`, `lessons_off`). A round the switch is `off` for
 //   has no row at all: `off` runs nothing.
 // - `lesson_selections` — per round, one row per ROLE: every discovery plan
-//   row, the validator, the main session's cases. The lessons (or cases) it
+//   row, the validator, every lens the session may add (S9b, `addable`, its
+//   row the lens's index in `addable_lenses`), the main session's cases. The lessons (or cases) it
 //   would carry with every field the matcher and the report need, the cuts
 //   (each with why), the drop counts per filter, the query, and whether its
 //   find timed out. The contract's "round, row, lesson URIs, cases, cuts,
@@ -67,9 +68,9 @@ CREATE TABLE IF NOT EXISTS lesson_selections (
   round_id INTEGER NOT NULL,
   pr INTEGER NOT NULL,
   round_no INTEGER NOT NULL,
-  -- row | validator | cases
+  -- row | validator | addable | cases
   role TEXT NOT NULL,
-  -- the pass-plan row; -1 for the main session's cases
+  -- the pass-plan row; the addable lens's index; -1 for the main session's cases
   row INTEGER NOT NULL,
   lens TEXT NOT NULL,
   agent TEXT,
@@ -375,6 +376,33 @@ export class LessonLedger {
     tx();
   }
 
+  /**
+   * Drop one round's record — its `lesson_rounds` row, its selections and
+   * any marks stamped with it — because dispatch DISCARDED the round before
+   * its handoff (S9b: under `on` the selection runs before the
+   * handoff, and a failed handoff deletes the provisional round). Without
+   * this the report and the status headline would count an attempt that
+   * never ran: round totals, timeouts, each lesson's selected rounds. Round
+   * ids are never reused, so the retry records under its own id.
+   */
+  discardRound(roundId: number): { rounds: number; selections: number; marks: number } {
+    let out = { rounds: 0, selections: 0, marks: 0 };
+    const tx = this.store.db.transaction(() => {
+      const selections = this.store.db
+        .prepare("DELETE FROM lesson_selections WHERE round_id = ?")
+        .run(roundId).changes;
+      const marks = this.store.db
+        .prepare("DELETE FROM lesson_shadow_marks WHERE round_id = ?")
+        .run(roundId).changes;
+      const rounds = this.store.db
+        .prepare("DELETE FROM lesson_rounds WHERE round_id = ?")
+        .run(roundId).changes;
+      out = { rounds, selections, marks };
+    });
+    tx();
+    return out;
+  }
+
   roundRow(roundId: number): LessonRoundRow | undefined {
     return this.store.db.prepare("SELECT * FROM lesson_rounds WHERE round_id = ?").get(roundId) as
       LessonRoundRow | undefined;
@@ -393,7 +421,7 @@ export class LessonLedger {
   selections(roundId: number): StoredSelection[] {
     const rows = this.store.db
       .prepare(
-        "SELECT * FROM lesson_selections WHERE round_id = ? ORDER BY CASE role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 ELSE 2 END, row",
+        "SELECT * FROM lesson_selections WHERE round_id = ? ORDER BY CASE role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END, row",
       )
       .all(roundId) as Array<Record<string, unknown>>;
     return rows.map(storedSelection);
@@ -469,7 +497,7 @@ export class LessonLedger {
       .prepare(
         `SELECT s.* FROM lesson_selections s JOIN lesson_rounds r ON r.round_id = s.round_id
          WHERE r.recorded_at >= ?
-         ORDER BY r.recorded_at, s.round_id, CASE s.role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 ELSE 2 END, s.row`,
+         ORDER BY r.recorded_at, s.round_id, CASE s.role WHEN 'row' THEN 0 WHEN 'validator' THEN 1 WHEN 'addable' THEN 2 ELSE 3 END, s.row`,
       )
       .all(since) as Array<Record<string, unknown>>;
     return rows.map(storedSelection);

@@ -14,6 +14,7 @@ import {
   renderPinnedHeadSection,
   type RoundMemory,
 } from "./memory/context.js";
+import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
@@ -601,6 +602,13 @@ export function roundVars(
     ...identity,
     pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
+    // today's bleed paragraph VERBATIM unless the round delivers
+    // lessons or cases (`[memory] delivery = "on"`), then the contract's
+    // rewording — and the "Lessons in force" index and the "Past reviews of
+    // these files" block after it, "" otherwise. Off, shadow, the bench and a
+    // round `on` delivered nothing to all render byte-for-byte as before.
+    bleed_note: renderBleedNote(memory.lessons),
+    lessons_note: renderLessonsNote(memory.lessons),
     n: String(order.pr),
     title: promptTitle(order.title),
     worktree: order.worktree,

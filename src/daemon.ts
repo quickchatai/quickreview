@@ -26,6 +26,7 @@ import { TokenMinter } from "./githubAuth.js";
 import { REVIEW_SET_ASIDE_STALE_WINDOW_MS, type FeedbackEvent } from "./feedback.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
 import { readLedgerCarry } from "./ledgercarry.js";
+import type { RepoFactsQuery } from "./lessonselect.js";
 import { sweepExpiredLevers } from "./levers.js";
 import {
   PingPongLedger,
@@ -85,7 +86,9 @@ export interface DaemonDeps {
    * state, not a failure. */
   memory?: import("./memory/context.js").RoundMemorySeed;
   /** The round's lesson selection (S9a, src/lessonselect.ts) —
-   * started per round by dispatch, never awaited. Absent ⇒ nothing runs. */
+   * started per round by dispatch, never awaited; under `[memory] delivery =
+   * "on"` (S9b) awaited beside the seed, and its `repoFacts` reach the
+   * recheck nudge and the ping-pong wake. Absent ⇒ nothing runs. */
   lessons?: import("./lessonselect.js").RoundLessonHook;
   /** Told when a round's findings record lands (S9a — the lesson
    * shadow ledger's matcher). */
@@ -222,6 +225,104 @@ function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
   return github;
 }
 
+/** A wake with its repo facts appended — the wake itself, byte for byte,
+ * when there are none (S9b). */
+export function withRepoFacts(wake: string, facts: string): string {
+  return facts ? `${wake.replace(/\s+$/, "")}${facts}` : wake;
+}
+
+/** What serving an author's reply in a bot thread needs (ping-pong). */
+export interface AuthorReplyDeps {
+  store: StateStore;
+  pingpong: PingPongLedger;
+  inject: (pr: number, message: string) => Promise<void>;
+  /** The sandbox root: the wake names the PR's worktree under it. */
+  root: string;
+  log: (msg: string, extra?: unknown) => void;
+  /** S9b: the repo-fact lessons for the replied thread's file,
+   * rendered — "" unless `[memory] delivery = "on"`. Must not reject (the
+   * daemon's `repoFactsFor` is total). Absent ⇒ none asked. */
+  repoFacts?: (q: RepoFactsQuery) => Promise<string>;
+}
+
+/**
+ * Serve one author reply in a bot thread: claim it, then wake the PR's
+ * session (held while its round is in flight). The webhook interpretation
+ * guarantees a same-PR bot-owned root; the claim comes before the wake so a
+ * duplicate delivery cannot produce duplicate replies or resolutions.
+ */
+export async function serveAuthorReply(
+  deps: AuthorReplyDeps,
+  reply: Extract<Interpretation, { kind: "author_reply" }>,
+): Promise<void> {
+  const { store, pingpong, log } = deps;
+  if (reply.in_reply_to_id === null) return;
+  // Deploy-window drain: no ping-pong wake while draining — and the
+  // claim is deliberately NOT taken, so a redelivery after the lift
+  // can still service the reply. Belt-and-braces in practice: while
+  // draining the webhook drops the delivery before it reaches here.
+  if (store.drainState().draining) {
+    log(`pingpong: #${reply.pr} reply dropped — draining`);
+    return;
+  }
+  const event: AuthorReplyEvent = {
+    pr: reply.pr,
+    comment_id: reply.comment_id,
+    in_reply_to_id: reply.in_reply_to_id,
+    body: reply.body,
+    author: reply.author,
+  };
+  // the repo facts for the replied thread's file — ""
+  // unless `[memory] delivery = "on"`, so the wake is otherwise
+  // byte-identical. The path rides the interpretation only, never
+  // the event: the wake's own text does not change. Read BEFORE the
+  // claim, so the claim is still followed at once by its wake — a
+  // claimed message has no sweep to recover it (#5362 ④).
+  let facts = "";
+  if (deps.repoFacts && reply.path) {
+    const before = store.getPr(reply.pr);
+    facts = await deps.repoFacts({
+      pr: reply.pr,
+      title: before?.title ?? "",
+      paths: [reply.path],
+      head_sha: before?.head_sha ?? null,
+      purpose: "pingpong",
+    });
+    if (typeof facts !== "string") facts = "";
+    // That read can take the lesson budget (≤ 2 s): a drain the operator
+    // started meanwhile still stops the wake, the claim still not taken.
+    if (store.drainState().draining) {
+      log(`pingpong: #${reply.pr} reply dropped — draining`);
+      return;
+    }
+  }
+  if (!pingpong.claimAuthorMessage(event)) return;
+  const row = store.getPr(reply.pr);
+  // S4: the PR's one main pi never gets a second instruction while its
+  // round is in flight — the wake is held and flushed at round end.
+  const disposition = await wakeOrHold(
+    { store, inject: deps.inject, log },
+    reply.pr,
+    withRepoFacts(
+      buildWakeMessage(
+        event,
+        {
+          head_sha: row?.head_sha,
+          worktree: join(deps.root, "wt", `pr-${reply.pr}`),
+        },
+        pingpong.discipline(reply.in_reply_to_id),
+      ),
+      facts,
+    ),
+    "author_reply",
+    // The message is already claimed: a failed injection must hold
+    // the wake, or no redelivery can ever answer it (selfscan 0df49200).
+    { holdOnFailure: true },
+  );
+  if (disposition === "held")
+    log(`pingpong: #${reply.pr} reply held — round in flight, backlog or failed inject`);
+}
+
 export function createDaemon(deps: DaemonDeps = {}): Daemon {
   const cfg = deps.cfg ?? loadConfig();
   const root = deps.root ?? sandboxRoot();
@@ -349,6 +450,20 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     },
   });
 
+  // the repo-fact lessons a recheck nudge and a ping-pong wake
+  // carry for the paths they touch. Total — the hook is bounded by the lesson
+  // prefetch's budget, and a throw is "" — so neither wake is ever held or
+  // lost for it.
+  const repoFactsFor = async (q: RepoFactsQuery): Promise<string> => {
+    try {
+      const s = await deps.lessons?.repoFacts?.(q);
+      return typeof s === "string" ? s : "";
+    } catch (err) {
+      log(`lessons: #${q.pr} ${q.purpose} repo facts failed (ignored)`, err);
+      return "";
+    }
+  };
+
   // The post-approval delta recheck. Three of its four triggers are
   // wired below; the fourth — an author reply — is owned by ping-pong above and
   // deliberately never reaches this path.
@@ -359,6 +474,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     inject: (pr, message) => hooks.inject(pr, message),
     ...(deps.renderRecheckPrompt ? { renderPrompt: deps.renderRecheckPrompt } : {}),
     ...(deps.resolvedFilesInMerges ? { resolvedFilesInMerges: deps.resolvedFilesInMerges } : {}),
+    // the repo facts for the delta's files — "" unless
+    // `[memory] delivery = "on"`, so the nudge is otherwise byte-identical.
+    ...(deps.lessons?.repoFacts
+      ? { repoFacts: (q: Parameters<NonNullable<RecheckDeps["repoFacts"]>>[0]) => repoFactsFor(q) }
+      : {}),
     log,
   };
   const rechecks = new RecheckWatcher({
@@ -403,47 +523,17 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           await prConversation.accept(comment);
         },
         onAuthorReply: async (reply) => {
-          // Webhook interpretation guarantees a same-PR bot-owned root. Claim
-          // the author message before waking so duplicate deliveries cannot
-          // produce duplicate replies or resolutions.
-          if (reply.in_reply_to_id === null) return;
-          // Deploy-window drain: no ping-pong wake while draining — and the
-          // claim is deliberately NOT taken, so a redelivery after the lift
-          // can still service the reply. Belt-and-braces in practice: while
-          // draining the webhook drops the delivery before it reaches here.
-          if (store.drainState().draining) {
-            log(`pingpong: #${reply.pr} reply dropped — draining`);
-            return;
-          }
-          const event: AuthorReplyEvent = {
-            pr: reply.pr,
-            comment_id: reply.comment_id,
-            in_reply_to_id: reply.in_reply_to_id,
-            body: reply.body,
-            author: reply.author,
-          };
-          if (!pingpong.claimAuthorMessage(event)) return;
-          const row = store.getPr(reply.pr);
-          // S4: the PR's one main pi never gets a second instruction while its
-          // round is in flight — the wake is held and flushed at round end.
-          const disposition = await wakeOrHold(
-            { store, inject: (pr, message) => hooks.inject(pr, message), log },
-            reply.pr,
-            buildWakeMessage(
-              event,
-              {
-                head_sha: row?.head_sha,
-                worktree: join(root, "wt", `pr-${reply.pr}`),
-              },
-              pingpong.discipline(reply.in_reply_to_id),
-            ),
-            "author_reply",
-            // The message is already claimed: a failed injection must hold
-            // the wake, or no redelivery can ever answer it (selfscan 0df49200).
-            { holdOnFailure: true },
+          await serveAuthorReply(
+            {
+              store,
+              pingpong,
+              inject: (pr, message) => hooks.inject(pr, message),
+              root,
+              log,
+              ...(deps.lessons?.repoFacts ? { repoFacts: repoFactsFor } : {}),
+            },
+            reply,
           );
-          if (disposition === "held")
-            log(`pingpong: #${reply.pr} reply held — round in flight, backlog or failed inject`);
         },
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);

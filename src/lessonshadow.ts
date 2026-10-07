@@ -564,7 +564,7 @@ export function renderShadowReport(r: ShadowReport): string {
   const out: string[] = [];
   out.push(
     `Lesson shadow report — the last ${r.days} day(s) (${r.since.slice(0, 16)}Z → ${r.until.slice(0, 16)}Z)`,
-    `delivery: ${r.mode}${r.mode === "on" ? " (shadow only — delivery not built)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
+    `delivery: ${r.mode}${r.mode === "on" ? " (lessons reach the review; the marks below are what the validator was LICENSED to demote — its findings record says what it did)" : ""}; kill switch: ${r.lessons_off ? "LESSONS OFF" : "lessons on"}; ${r.suppressed} suppressed`,
   );
   const rr = r.rounds;
   out.push(
@@ -615,14 +615,21 @@ export function renderShadowReport(r: ShadowReport): string {
 export function lessonDeliveryStatus(
   ledger: LessonLedger,
   mode: MemoryDelivery,
-  opts: { days?: number; now?: () => Date } = {},
+  opts: {
+    days?: number;
+    now?: () => Date;
+    /** A selector is built (memory switched on). Absent ⇒ assumed. */
+    selecting?: boolean;
+  } = {},
 ): LessonDeliveryStatus {
   const days = opts.days ?? 7;
   const now = (opts.now ?? (() => new Date()))();
   const r = shadowReport(ledger, { days, mode, now: () => now });
   return {
     delivery: mode,
-    delivering: false,
+    // lessons reach a prompt only under `on`, with the kill
+    // switch on and something to select from.
+    delivering: mode === "on" && !r.lessons_off && opts.selecting !== false,
     lessons_off: r.lessons_off,
     suppressed: r.suppressed,
     window_days: days,

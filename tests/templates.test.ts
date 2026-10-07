@@ -1137,10 +1137,16 @@ describe("template & script cleanups", () => {
     });
 
     it(`${roundTemplateFile(rt)} declares other PRs' memory notes noise — never cited, never reused`, () => {
-      expect(text).toContain("**Notes from other PRs are noise.**");
-      expect(text).toContain("read-side bleed");
-      expect(text).toContain("never cite them, never reuse them as evidence, precedent, or format");
-      expect(text).toContain("Only this PR's own ledger and history inform this\nround.");
+      // the paragraph is the renderer's `{{bleed_note}}` now —
+      // VERBATIM whenever no lesson is delivered (here: no memory at all).
+      expect(text).toContain("{{bleed_note}}{{lessons_note}}");
+      const rendered = renderRoundPrompt(text, { ...order, round_type: rt });
+      expect(rendered).toContain("**Notes from other PRs are noise.**");
+      expect(rendered).toContain("read-side bleed");
+      expect(rendered).toContain(
+        "never cite them, never reuse them as evidence, precedent, or format",
+      );
+      expect(rendered).toContain("Only this PR's own ledger and history inform this\nround.");
     });
   }
 });

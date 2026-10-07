@@ -740,7 +740,10 @@ export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
       ? "LESSONS (delivery off)"
       : s.lessons_off
         ? "LESSONS (kill switch OFF)"
-        : `LESSONS (${s.delivering ? "on" : "shadow"}, ${s.window_days}d)`;
+        : // S9b: `on` is delivering only with a selector built (memory
+          // on); `on` without one runs nothing — never "shadow", which runs
+          // the selection and its ledger.
+          `LESSONS (${s.delivering ? "on" : s.delivery === "on" ? "on — nothing delivered" : "shadow"}, ${s.window_days}d)`;
   const line = lessonHeadline(s);
   return { title, lines: [s.lessons_off ? `${WARN}${STRONG}${line}${RESET}` : line] };
 }

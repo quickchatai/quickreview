@@ -47,6 +47,7 @@ import {
   PASS_ADDENDA,
   buildAgents,
   configAddenda,
+  lessonAddendaFor,
   identityVars,
   passTierModels,
 } from "./include.js";
@@ -658,14 +659,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // there is nowhere a lesson could land.
   let learner: Learner | null = null;
   // the lesson SHADOW LEDGER — every round's selection through
-  // OpenViking (bounded, never awaited, `[memory] delivery`), the marks a
-  // delivered dont-raise lesson would have left on its posted findings, and
-  // the operator's kill switch. Built in onStart (it needs the state store);
-  // the selector only where memory is on. Nothing here changes a prompt.
+  // OpenViking (bounded, `[memory] delivery`), the marks a delivered
+  // dont-raise lesson would have left on its posted findings, and the
+  // operator's kill switch. Built in onStart (it needs the state store); the
+  // selector only where memory is on. Under `shadow` nothing here changes a
+  // prompt; under `on` (S9b) dispatch awaits `select` beside the seed and
+  // renders the round's lessons, and `repoFacts` reaches the recheck nudge
+  // and the ping-pong wake.
   let lessonLedger: LessonLedger | null = null;
   let lessonSelector: RoundLessonSelector | null = null;
   const lateLessons: RoundLessonHook = {
     start: (order, files) => lessonSelector?.start(order, files),
+    delivering: () => lessonSelector?.delivering() ?? false,
+    select: (order, files, opts) =>
+      lessonSelector?.select(order, files, opts) ?? Promise.resolve(null),
+    repoFacts: (q) => lessonSelector?.repoFacts(q) ?? Promise.resolve(""),
+    // A round discarded before its handoff: its selection record goes (with
+    // no selector nothing was ever recorded).
+    discard: (roundId) => lessonSelector?.discard(roundId),
   };
   /** The status headline, recomputed at most once a minute (the heartbeat
    * runs far more often, and the report reads several tables). */
@@ -848,7 +859,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         if (!lessonStatusCache || nowMs - lessonStatusCache.at >= 60_000) {
           let value: LessonDeliveryStatus | null;
           try {
-            value = lessonDeliveryStatus(lessonLedger, cfg.memory.delivery);
+            value = lessonDeliveryStatus(lessonLedger, cfg.memory.delivery, {
+              selecting: lessonSelector !== null,
+            });
           } catch (err) {
             log("memory status: could not read the lesson ledger", err);
             value = null;
@@ -986,10 +999,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // The day is marked built only once the build LANDS (dayScopedRebuild):
       // a throw on the day-change tick is retried by the next tick instead of
       // leaving yesterday's feedback addendum in force all day.
+      // S9a/S9b: the lesson ledger holds the operator's kill switch,
+      // which decides (with `[memory] delivery`) whether the validator's
+      // lesson addendum is composed — so it exists before the first build.
+      lessonLedger = new LessonLedger(d.store);
       const agentsDay = dayScopedRebuild(
         () => opsDay(cfg.ops.timezone),
         (buildDay) => {
           const fb = feedbackDayAddendum(d.store.feedbackCommentsForDay(buildDay), buildDay);
+          const lessonAdd = lessonAddendaFor(cfg.memory.delivery, lessonLedger);
           const built = buildAgents(join(root, "agents"), join(root, "state", "agents"), {
             root,
             tiers: cfg.models.tiers,
@@ -1013,11 +1031,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               ...lensTuningAddenda(cfg.lenses),
               // The profile's `[posting]` policy, compiled for the validator.
               ...postingPolicyAddenda(cfg.posting),
+              // the validator's lesson authority, BESIDE the
+              // same-day feedback addendum (never in place of it) — only
+              // while `[memory] delivery = "on"` and the kill switch is on.
+              ...lessonAdd,
               ...(fb ? [fb] : []),
             ],
           });
           log(
-            `built ${built.length} pass agents into state/agents${fb ? " (+ same-day feedback addendum)" : ""}`,
+            `built ${built.length} pass agents into state/agents${lessonAdd.length ? " (+ lesson addendum)" : ""}${fb ? " (+ same-day feedback addendum)" : ""}`,
           );
         },
       );
@@ -1104,7 +1126,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // the lesson shadow ledger and the round's selection. The
       // ledger (and so the operator's kill switch) always; the selector only
       // where memory is on — with it off there is nothing to select from.
-      lessonLedger = new LessonLedger(d.store);
+      // (Built before the first agents build — the kill switch decides the
+      // validator's lesson addendum; this keeps that same ledger.)
+      lessonLedger = lessonLedger ?? new LessonLedger(d.store);
       if (cfg.openviking.enabled && cfg.memory.delivery !== "off") {
         // Its OWN client — no health observer, no counted gap — so a find
         // the round's budget aborts never reads as memory failing (the
@@ -1126,13 +1150,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           mode: () => cfg.memory.delivery,
           engine: () => lessonEngine,
           budgetMs: cfg.memory.delivery_budget_ms,
+          repo: cfg.github.repo,
           log,
         });
       }
       log(
         `lessons: [memory] delivery = ${cfg.memory.delivery}` +
           (cfg.memory.delivery === "on"
-            ? " — delivery is not built yet (S9b): runs exactly as shadow, no prompt changes"
+            ? lessonSelector
+              ? " — DELIVERING: each round awaits its selection beside the memory seed (≤ " +
+                `${cfg.memory.delivery_budget_ms} ms); lessons reach the lens task files, the lessons files of the validator and the lenses a session adds, the main session's index and past-review cases, and the recheck/ping-pong repo facts; the validator carries the lesson-shape addendum` +
+                (cfg.review.task_files
+                  ? ""
+                  : " — but `[review] task_files = false`: the planned lenses have no task file, so THEY get no lessons")
+              : " — but memory is off ([openviking] enabled = false): nothing to select, nothing delivered"
             : cfg.memory.delivery === "shadow"
               ? " — selection and the shadow ledger only; no prompt, task file or agent changes"
               : " — nothing selected, nothing recorded") +
@@ -1418,6 +1449,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             return { ok: false, reason: "the lesson ledger is not built on this daemon yet" };
           const r = lessonLedger.apply(change, file);
           lessonStatusCache = null;
+          // the validator's lesson addendum is composed only
+          // while the kill switch is on — so flipping it rebuilds the agents,
+          // the way a [feedback] comment does for its addendum. Suppressing
+          // one lesson needs no rebuild: the selector reads it every round.
+          if (r.changed && (change.action === "off" || change.action === "on")) {
+            try {
+              rebuildAgents();
+            } catch (err) {
+              log("lessons: agents rebuild after the kill switch flipped failed", err);
+            }
+          }
           return {
             ok: true,
             changed: r.changed,

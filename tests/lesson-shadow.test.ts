@@ -1572,8 +1572,21 @@ describe("the shadow report over a fixture joined with fates", () => {
     expect(lessonDeliveryPhrase(s)).toBe(
       "; lessons shadow 7d: 1 rounds, 6 would-demote (harm 1, help 3, unknown 0)",
     );
+    // `on` delivers — unless there is nothing to select from.
+    const on = lessonDeliveryStatus(ledger, "on", { now: () => clock });
+    expect(on.delivering).toBe(true);
+    expect(lessonDeliveryPhrase(on)).toContain("; lessons on 7d: 1 rounds");
+    expect(
+      lessonDeliveryStatus(ledger, "on", { now: () => clock, selecting: false }).delivering,
+    ).toBe(false);
+    // …and not while the operator's kill switch is off.
+    ledger.apply({ action: "off" }, "test");
+    const killed = lessonDeliveryStatus(ledger, "on", { now: () => clock });
+    expect(killed).toMatchObject({ delivering: false, lessons_off: true });
+    ledger.apply({ action: "on" }, "test");
+    expect(lessonDeliveryStatus(ledger, "on", { now: () => clock }).delivering).toBe(true);
     expect(lessonDeliveryPhrase({ ...s, delivery: "on" })).toContain(
-      "on (shadow only — delivery not built)",
+      "on (nothing delivered — memory is off)",
     );
     expect(lessonDeliveryPhrase({ ...s, lessons_off: true, suppressed: 2 })).toBe(
       "; LESSONS OFF (operator kill switch), 2 suppressed",
@@ -1635,6 +1648,23 @@ describe("the [7] feedback tab's LESSONS line", () => {
     );
     expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "off" } })))).toContain(
       "lessons delivery off",
+    );
+  });
+
+  it("under `on` the title says whether anything is delivered — never `shadow`, which runs the ledger", () => {
+    const on = text(
+      lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: true } })),
+    );
+    expect(on.split("\n")[0]).toBe("LESSONS (on, 7d)");
+    // `on` with no selector (memory off): nothing selected, nothing delivered.
+    const idle = text(
+      lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: false } })),
+    );
+    expect(idle.split("\n")[0]).toBe("LESSONS (on — nothing delivered, 7d)");
+    expect(idle).toContain("lessons on (nothing delivered — memory is off)");
+    expect(idle).not.toContain("shadow");
+    expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: S }))).split("\n")[0]).toBe(
+      "LESSONS (shadow, 7d)",
     );
   });
 

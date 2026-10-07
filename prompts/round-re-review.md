@@ -7,7 +7,10 @@
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}} {{nit_policy_note}}
 > `intent_note`, `missing_migration_note`, `dependency_note`, `ledger_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
-> does not render a second copy of the memory seed), and the identity
+> does not render a second copy of the memory seed), the lesson pair
+> `bleed_note` + `lessons_note` (S9b — today's bleed paragraph
+> verbatim unless lessons are delivered, then the reworded rule, the
+> "Lessons in force" index and the past-review cases), and the identity
 > variables `owner_name`/`repo`/`bot_login` (same braceless
 > convention).
 
@@ -37,11 +40,7 @@ those prior checks to the relevant lenses before hunting anything new.
 > nothing else will be asked of you until you finish. Every agent you need
 > comes from the `subagent` tool; you never launch one any other way.
 
-**Notes from other PRs are noise.** Memory lookups are not scoped to this PR:
-when a memory result surfaces notes about another PR, that is read-side bleed —
-never cite them, never reuse them as evidence, precedent, or format, and never
-let them steer this round. Only this PR's own ledger and history inform this
-round.
+{{bleed_note}}{{lessons_note}}
 
 {{context_block}}
 

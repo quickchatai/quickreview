@@ -56,6 +56,10 @@ export type Interpretation =
       author: string;
       via: "thread_reply";
       scope: "review_comment";
+      /** The file the replied thread sits on (the review comment's `path`),
+       * when GitHub sent one — the repo facts' touched path (S9b).
+       * Never part of the wake's own text. */
+      path?: string;
     }
   | {
       kind: "author_pr_comment";
@@ -287,6 +291,7 @@ function interpretReviewComment(
       author: comment.user?.login ?? "",
       via: "thread_reply",
       scope: "review_comment",
+      ...(typeof comment.path === "string" && comment.path !== "" ? { path: comment.path } : {}),
     };
   return { kind: "ignored", reason: "not a reply in this PR's bot thread", pr };
 }

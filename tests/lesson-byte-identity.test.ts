@@ -1,7 +1,12 @@
-// NO DELIVERY YET: under every value of `[memory] delivery` the
-// round prompts, the lens task files, the built agents and the bench are
-// byte-identical to today. The selection runs (and finds lessons) under
-// `shadow` and `on`; nothing it found reaches anything a session reads.
+// S9a/S9b — BYTE-IDENTITY where nothing is delivered. Under `off` and
+// `shadow` the round prompts, the lens task files, the recheck nudge, the
+// ping-pong wake, the built agents and the bench are byte-identical to today:
+// the selection runs (and finds lessons) under `shadow`, and nothing it found
+// reaches anything a session reads. Under `on` (S9b) a round that is
+// delivered NOTHING — the engine finds no eligible lesson, or the operator's
+// kill switch is off — is byte-identical too (the bleed rule verbatim, no
+// section, no file). The bench is byte-identical under every value. What `on`
+// DOES deliver is pinned in tests/lesson-delivery.test.ts.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,13 +22,16 @@ import {
   buildAgents,
   configAddenda,
   identityVars,
+  lessonAddenda,
   PASS_ADDENDA,
   passTierModels,
+  VALIDATE_PASS,
 } from "../src/include.js";
 import { lensModelOverrides, lensTuningAddenda } from "../src/lenstuning.js";
 import { LessonLedger } from "../src/lessonledger.js";
 import { RoundLessonSelector } from "../src/lessonselect.js";
 import type { ContextAssembler } from "../src/memory/context.js";
+import { BLEED_RULE_DELIVERED, BLEED_RULE_VERBATIM } from "../src/memory/delivery.js";
 import type { FindHit, LessonEngine } from "../src/memory/selection.js";
 import { postingPolicyAddenda } from "../src/postingpolicy.js";
 import { StateStore } from "../src/state.js";
@@ -87,6 +95,25 @@ const engine: LessonEngine = {
   retiredUris: async () => [],
 };
 
+/** An engine with nothing eligible: every hit is a retired entry or another
+ * area's — `on` selects, and delivers nothing. */
+const emptyEngine: LessonEngine = {
+  root: () => MEM,
+  async find(area): Promise<{ ok: true; hits: FindHit[] }> {
+    return {
+      ok: true,
+      hits: [
+        {
+          uri: `${MEM}/${area}/20261001T000000-gone.md`,
+          score: 0.9,
+          text: "#lesson #retired kind=dont-raise lens=pass-baseline class=x paths=** evidence=pr:1\nGone.",
+        },
+      ],
+    };
+  },
+  retiredUris: async () => [],
+};
+
 const assembler: ContextAssembler = {
   pinnedHead: async () => ({ status: "read", text: "Standing: never re-approve." }),
   contextBlock: async () => ({ status: "read", text: "PR #5100 settled the limiter key." }),
@@ -126,7 +153,11 @@ interface Rendered {
   selected: number;
 }
 
-async function renderRound(mode: MemoryDelivery, type: RoundType): Promise<Rendered> {
+async function renderRound(
+  mode: MemoryDelivery,
+  type: RoundType,
+  opts: { engine?: LessonEngine; lessonsOff?: boolean } = {},
+): Promise<Rendered> {
   const cfg = cfgFor(mode);
   const store = new StateStore(":memory:");
   try {
@@ -146,10 +177,11 @@ async function renderRound(mode: MemoryDelivery, type: RoundType): Promise<Rende
       migration_gate: 0,
     });
     const ledger = new LessonLedger(store);
+    if (opts.lessonsOff) ledger.apply({ action: "off" }, "test");
     const selector = new RoundLessonSelector({
       ledger,
       mode: () => cfg.memory.delivery,
-      engine: () => engine,
+      engine: () => opts.engine ?? engine,
       budgetMs: cfg.memory.delivery_budget_ms,
     });
     const prompts: string[] = [];
@@ -210,43 +242,58 @@ afterAll(() => {
       rmSync(join(sandboxRoot(), "state", name.name), { recursive: true, force: true });
 });
 
-describe("byte-identity under every value of [memory] delivery", () => {
+describe("byte-identity wherever nothing is delivered", () => {
   for (const type of ["first", "re-review", "staleness"] as RoundType[]) {
     it(
-      `the ${type} round's prompt, order and task files are the same under off, shadow and on`,
+      `the ${type} round's prompt, order and task files: off = shadow = an \`on\` round delivered nothing`,
       { timeout: HEAVY_TIMEOUT_MS },
       async () => {
-        const out: Partial<Record<MemoryDelivery, Rendered>> = {};
-        for (const mode of MODES) out[mode] = await renderRound(mode, type);
-        const off = out.off!;
+        const off = await renderRound("off", type);
+        const shadow = await renderRound("shadow", type);
+        const onEmpty = await renderRound("on", type, { engine: emptyEngine });
+        const onKilled = await renderRound("on", type, { lessonsOff: true });
+        const on = await renderRound("on", type);
         // The selection really ran, and really found lessons and cases, where
         // the switch says it runs — and nothing under `off`.
         expect(off.selected).toBe(0);
-        expect(out.shadow!.selected).toBeGreaterThan(0);
-        expect(out.on!.selected).toBeGreaterThan(0);
+        expect(shadow.selected).toBeGreaterThan(0);
+        expect(on.selected).toBeGreaterThan(0);
+        expect(onEmpty.selected).toBe(0);
+        expect(onKilled.selected).toBe(0);
         expect(off.tasks.length).toBeGreaterThan(0);
-        for (const mode of ["shadow", "on"] as const) {
-          expect(out[mode]!.prompt, `${type} prompt under ${mode}`).toBe(off.prompt);
-          expect(out[mode]!.order, `${type} order under ${mode}`).toBe(off.order);
-          expect(out[mode]!.tasks, `${type} task files under ${mode}`).toEqual(off.tasks);
-        }
-        // No lesson text reached anything a session reads.
-        for (const r of Object.values(out)) {
-          expect(r!.prompt).not.toContain("pre-existing scope");
-          expect(r!.prompt).not.toContain("tenant filters");
-          for (const t of r!.tasks)
+        for (const [name, r] of [
+          ["shadow", shadow],
+          ["on, nothing eligible", onEmpty],
+          ["on, the kill switch off", onKilled],
+        ] as const) {
+          expect(r.prompt, `${type} prompt under ${name}`).toBe(off.prompt);
+          expect(r.order, `${type} order under ${name}`).toBe(off.order);
+          expect(r.tasks, `${type} task files under ${name}`).toEqual(off.tasks);
+          // No lesson text reached anything a session reads.
+          expect(r.prompt).not.toContain("pre-existing scope");
+          expect(r.prompt).not.toContain("tenant filters");
+          for (const t of r.tasks)
             expect(t.text).not.toMatch(/Lessons from this repo|tenant filters/);
         }
+        // Today's bleed paragraph, verbatim.
+        expect(off.prompt).toContain(BLEED_RULE_VERBATIM);
+        // …and `on` with lessons in force is NOT the same round (what it
+        // carries: tests/lesson-delivery.test.ts).
+        expect(on.prompt).not.toBe(off.prompt);
+        expect(on.prompt).not.toContain(BLEED_RULE_VERBATIM);
+        expect(on.prompt).toContain(BLEED_RULE_DELIVERED);
+        expect(on.order).toBe(off.order);
       },
     );
   }
 
   it(
-    "the recheck prompt (the production renderer, through runRecheck) and the ping-pong wake are the same under every value",
+    "the recheck prompt (the production renderer, through runRecheck) and the ping-pong wake are the same under every value when no repo fact applies",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       // S9b gives these two the repo-fact lessons for the touched paths under
-      // `on`; until then — and under `shadow` forever — not one byte moves.
+      // `on`; the engine here has none (a dont-raise and a look-for), so — as
+      // under `off` and `shadow` always — not one byte moves.
       const OLD = "1".repeat(40);
       const HEAD = "2".repeat(40);
       const delta: DeltaFile[] = [
@@ -277,6 +324,15 @@ describe("byte-identity under every value of [memory] delivery", () => {
           store.recordReviewedHead(PR, { head_sha: OLD, verdict: "APPROVE", round_no: 1 });
           const identity = identityVars(cfg);
           const injected: string[] = [];
+          // The production wiring (daemon.ts): the selector's repo facts, an
+          // engine with lessons but no repo fact for these paths.
+          const selector = new RoundLessonSelector({
+            ledger: new LessonLedger(store),
+            mode: () => cfg.memory.delivery,
+            engine: () => engine,
+            budgetMs: cfg.memory.delivery_budget_ms,
+            repo: cfg.github.repo,
+          });
           const outcome = await runRecheck(
             {
               cfg,
@@ -301,6 +357,7 @@ describe("byte-identity under every value of [memory] delivery", () => {
                   o,
                   identity,
                 ),
+              repoFacts: (q) => selector.repoFacts(q),
               worktreeFor: (n) => `wt/pr-${n}`,
               now: () => new Date("2026-10-07T10:00:00Z"),
               log: () => {},
@@ -310,23 +367,32 @@ describe("byte-identity under every value of [memory] delivery", () => {
           expect(outcome, mode).toMatchObject({ action: "recheck", delivered: "injected" });
           expect(injected).toHaveLength(1);
           recheck.push(injected[0]!);
+          // The ping-pong wake, as daemon.ts builds it for an author reply:
+          // the wake, then the repo facts for the replied thread's file.
+          wakes.push(
+            buildWakeMessage(
+              {
+                pr: PR,
+                comment_id: 77,
+                in_reply_to_id: 70,
+                body: "This scope check is intentional — see the guide.",
+                author: "alice",
+              },
+              { head_sha: HEAD, worktree: `wt/pr-${PR}` },
+              { allowed: true, final: false, exchanges: 1 },
+            ) +
+              (await selector.repoFacts({
+                pr: PR,
+                title: "Scope the views API by tenant",
+                paths: ["backend/api/views.py"],
+                head_sha: HEAD,
+                purpose: "pingpong",
+              })),
+          );
+          await selector.idle();
         } finally {
           store.close();
         }
-        // The ping-pong wake, as daemon.ts builds it for an author reply.
-        wakes.push(
-          buildWakeMessage(
-            {
-              pr: PR,
-              comment_id: 77,
-              in_reply_to_id: 70,
-              body: "This scope check is intentional — see the guide.",
-              author: "alice",
-            },
-            { head_sha: HEAD, worktree: `wt/pr-${PR}` },
-            { allowed: true, final: false, exchanges: 1 },
-          ),
-        );
       }
       expect(recheck[0]).toContain("backend/api/views.py");
       for (const i of [1, 2]) {
@@ -339,14 +405,20 @@ describe("byte-identity under every value of [memory] delivery", () => {
   );
 
   it(
-    "the built agents are the same under off, shadow and on",
+    "the built agents are the same under off and shadow (and `on` with the kill switch off); `on` adds the lesson addendum to the validator alone",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
       const tmp = mkdtempSync(join(tmpdir(), "qcr-lesson-agents-"));
       try {
-        const builds = MODES.map((mode) => {
+        const variants: Array<{ mode: MemoryDelivery; lessonsOff: boolean }> = [
+          { mode: "off", lessonsOff: false },
+          { mode: "shadow", lessonsOff: false },
+          { mode: "on", lessonsOff: true },
+          { mode: "on", lessonsOff: false },
+        ];
+        const builds = variants.map(({ mode, lessonsOff }, i) => {
           const cfg = cfgFor(mode);
-          const out = join(tmp, mode);
+          const out = join(tmp, `${mode}-${i}`);
           // The production composition (wire.ts), minus the same-day feedback
           // addendum (no feedback in this fixture).
           buildAgents(join(ROOT, "agents"), out, {
@@ -366,6 +438,7 @@ describe("byte-identity under every value of [memory] delivery", () => {
               ...configAddenda(cfg.review),
               ...lensTuningAddenda(cfg.lenses),
               ...postingPolicyAddenda(cfg.posting),
+              ...lessonAddenda({ delivery: cfg.memory.delivery, lessonsOff }),
             ],
           });
           const files = readdirSync(out).sort();
@@ -374,7 +447,23 @@ describe("byte-identity under every value of [memory] delivery", () => {
         expect(builds[0]!.size).toBeGreaterThan(5);
         expect([...builds[1]!.entries()]).toEqual([...builds[0]!.entries()]);
         expect([...builds[2]!.entries()]).toEqual([...builds[0]!.entries()]);
-        // No lesson addendum exists yet (S9b composes one BESIDE the feedback one).
+        // `on`: every lens body is byte-identical; each validator variant is
+        // today's body with the lesson addendum composed in.
+        const on = builds[3]!;
+        expect([...on.keys()]).toEqual([...builds[0]!.keys()]);
+        let validators = 0;
+        for (const [file, text] of on) {
+          const before = builds[0]!.get(file)!;
+          if (file.startsWith(`${VALIDATE_PASS}`)) {
+            validators += 1;
+            expect(text, file).not.toBe(before);
+            expect(text, file).toContain("Curated lessons — demotion-only authority");
+            expect(before, file).not.toContain("Curated lessons");
+          } else expect(text, file).toBe(before);
+        }
+        expect(validators).toBeGreaterThan(0);
+        // The lesson addendum is never in the static registry: a registry
+        // entry would compose under `shadow` too.
         expect(PASS_ADDENDA.map((a) => a.id).filter((id) => /lesson/i.test(id))).toEqual([]);
       } finally {
         rmSync(tmp, { recursive: true, force: true });

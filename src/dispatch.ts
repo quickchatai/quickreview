@@ -62,11 +62,18 @@ import {
   type DeltaList,
 } from "./recheck.js";
 import { roundPostingKey } from "./posting-receipt.js";
-import type { RoundLessonHook } from "./lessonselect.js";
+import type { RoundLessonHook, RoundSelectionResult } from "./lessonselect.js";
+import {
+  buildRoundDelivery,
+  deliversAnything,
+  deliveryCounts,
+  onlyWritten,
+  type RoundLessonDelivery,
+} from "./memory/delivery.js";
 import { findStyleGuide } from "./styleguide.js";
 import { findCiLinters, lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { LENS_PLANNING } from "./lensplanning.js";
-import { writePassTasks } from "./passtasks.js";
+import { writeLessonFiles, writePassTasks } from "./passtasks.js";
 import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
@@ -144,13 +151,17 @@ export interface DispatchDeps {
    */
   memory?: RoundMemorySeed;
   /**
-   * The round's lesson selection (S9a, src/lessonselect.ts): started
-   * once per round, AFTER the round was handed to its session (seed, prompt
-   * and marker done), and NEVER awaited — under `[memory] delivery =
-   * "shadow"` (and `on`, until S9b builds delivery) nothing the session sees
-   * depends on it, and starting it after the seed keeps its finds out of the
-   * seed's way on the server's one-thread embedder. Absent ⇒ nothing runs.
-   * Must not throw (a throw is logged and swallowed).
+   * The round's lesson selection (S9a, src/lessonselect.ts). Under
+   * `[memory] delivery = "shadow"` it is started once per round, AFTER the
+   * round was handed to its session (seed, prompt and marker done), and
+   * NEVER awaited — nothing the session sees depends on it, and starting it
+   * after the seed keeps its finds out of the seed's way on the server's
+   * one-thread embedder. Under `on` (S9b, `delivering()`) it is AWAITED
+   * beside the seed (`select`), no lesson find sent before the seed's search
+   * is, and the round's task files, lessons files and prompt are rendered
+   * from it; a round discarded before its handoff is `discard`ed from the
+   * ledger. Absent ⇒ nothing runs. Must not throw (a throw is logged and
+   * swallowed).
    */
   lessons?: RoundLessonHook;
   /** SETTLED digest carried from the session ledger (B3/B4). When absent,
@@ -421,6 +432,10 @@ async function seedRoundMemory(
   deps: DispatchDeps,
   order: RoundOrder,
   files: PrFileEntry[],
+  /** Told once the round's context search was issued (S9b — the
+   * lesson finds under `on` wait for it). Absent ⇒ the assembler is asked
+   * exactly as before. */
+  onContextSent?: () => void,
 ): Promise<RoundMemory> {
   const seed = deps.memory;
   if (!seed) return MEMORY_LESS;
@@ -439,6 +454,7 @@ async function seedRoundMemory(
       ...(seed.maxTokens !== undefined ? { maxTokens: seed.maxTokens } : {}),
       timeoutMs,
       log,
+      ...(onContextSent ? { onContextSent } : {}),
     });
   } catch (err) {
     log(`dispatch: #${order.pr} memory seeding threw — round proceeds memory-less`, err);
@@ -499,6 +515,88 @@ async function seedRoundMemory(
     log(`dispatch: #${order.pr} round ${order.round_no} seeded memory-less (${describeGaps(mem)})`);
   }
   return mem;
+}
+
+/** `[memory] delivery = "on"` with a hook that can deliver (S9b).
+ * Total: a throwing hook is "not delivering" — the S9a path. */
+function lessonsDelivering(
+  deps: DispatchDeps,
+  log: (msg: string, extra?: unknown) => void,
+): boolean {
+  const hook = deps.lessons;
+  if (!hook || typeof hook.select !== "function" || typeof hook.delivering !== "function")
+    return false;
+  try {
+    return hook.delivering() === true;
+  } catch (err) {
+    log("dispatch: lesson delivery switch unreadable — delivering nothing (ignored)", err);
+    return false;
+  }
+}
+
+/** The round's selection under `on`, awaited beside the seed. Total: the
+ * hook bounds it by its prefetch budget; a throw or a rejection is `null`
+ * and the round renders as if nothing were selected. */
+async function selectRoundLessons(
+  deps: DispatchDeps,
+  order: RoundOrder,
+  files: PrFileEntry[],
+  after: Promise<void>,
+): Promise<RoundSelectionResult | null> {
+  try {
+    return (await deps.lessons?.select?.(order, files, { after })) ?? null;
+  } catch (err) {
+    (deps.log ?? (() => {}))(
+      `dispatch: #${order.pr} lesson selection failed — no lessons this round (ignored)`,
+      err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Hand the round's delivered lessons to its prompt (S9b): write the
+ * lessons files (the validator's, and each lens the session may add) and
+ * return the seed carrying the delivery — or the seed untouched when nothing
+ * was selected, so the prompt keeps today's bleed rule verbatim. Total: a
+ * lessons file that cannot be written is simply not named in the prompt.
+ */
+function deliverRoundLessons(
+  deps: DispatchDeps,
+  input: {
+    seeded: RoundMemory;
+    delivery: RoundLessonDelivery | null;
+    dir: string;
+  },
+): RoundMemory {
+  const log = deps.log ?? (() => {});
+  let d = input.delivery;
+  if (!d || !deliversAnything(d)) return input.seeded;
+  try {
+    d = writeLessonFiles(input.dir, d);
+  } catch (err) {
+    log(`dispatch: #${d.pr} lessons files unavailable — the round names none`, err);
+  }
+  // A lessons file that was not written delivers nothing: neither the index
+  // nor the bleed rule may claim it did.
+  d = onlyWritten(d);
+  return deliversAnything(d) ? { ...input.seeded, lessons: d } : input.seeded;
+}
+
+/** The `lesson_delivered` record — written once the prompt carrying the
+ * delivery was handed to the session. */
+function logLessonDelivery(store: StateStore, roundId: number, d: RoundLessonDelivery): void {
+  const counts = deliveryCounts(d);
+  store.logEvent("lesson_delivered", d.pr, {
+    round_id: roundId,
+    round_no: d.round_no,
+    lessons: counts.lessons,
+    cases: counts.cases,
+    rows: d.rows.filter((r) => r.lessons.length > 0).length,
+    validator: d.validator?.lessons.length ?? 0,
+    validator_file: d.validator?.file !== undefined,
+    addable_files: d.addable.filter((a) => a.file !== undefined).map((a) => a.lens),
+  });
 }
 
 /** The short-circuit's answer for one system-provenance re-trigger. */
@@ -1577,12 +1675,75 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...(prBody !== undefined ? { prBody } : {}),
         ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
       });
+      store.stampPostingKey(roundId, built.posting_key!);
+      // The order's plan can outgrow the one startRound recorded — the repo's
+      // style guide is read off the prepared tree and adds pass-style — and the
+      // verdict audit reads the round row, so the row takes the order's plan.
+      if (styleGuide.length > 0 || ciLinters.length > 0)
+        store.setRoundPlan(roundId, built.lenses, {
+          validate_tier: built.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
+          pass_plan: built.pass_plan,
+          addable_passes: built.addable_lenses.map((lens) => ({
+            lens,
+            tier: addTierOf(cfg, lens),
+          })),
+        });
+
+      // The ONE memory call this round WAITS for, placed after the
+      // worktree and the order so the context is seeded from the same sha the
+      // passes read. It is bounded and total: the worst case is this round's
+      // prompt arriving memory-less a couple of seconds later.
+      //
+      // under `[memory] delivery = "on"` the round's LESSON
+      // SELECTION is awaited beside it — the prompt, the task files and the
+      // lessons files are rendered from it. Its budget (≤ 2 s) runs from
+      // here, inside the seed's deadline, so the round waits for the slower
+      // of the two, never for their sum — but no lesson find is SENT before
+      // the round's own context search was: the assembler says when it
+      // issued the search, and a seed that never does (no assembler, a
+      // failure before the search, an assembler that does not say) opens
+      // the way when it settles. So the seed's search never queues behind a
+      // lesson find on the server's one-thread embedder. Under
+      // `shadow`/`off` the selection starts only after the handoff,
+      // unawaited (below), exactly as S9a shipped it.
+      const delivering = lessonsDelivering(deps, log);
+      let seeded: RoundMemory;
+      let selection: RoundSelectionResult | null = null;
+      if (delivering) {
+        let searchSent!: () => void;
+        const seedSearchSent = new Promise<void>((resolveSent) => (searchSent = resolveSent));
+        const seeding = seedRoundMemory(deps, built, files, () => searchSent());
+        void seeding.then(
+          () => searchSent(),
+          () => searchSent(),
+        );
+        [seeded, selection] = await Promise.all([
+          seeding,
+          selectRoundLessons(deps, built, files, seedSearchSent),
+        ]);
+      } else {
+        seeded = await seedRoundMemory(deps, built, files);
+      }
+      const delivery: RoundLessonDelivery | null = selection
+        ? buildRoundDelivery({
+            selections: selection.selections,
+            texts: selection.texts,
+            pr: row.number,
+            round_no: roundNo,
+            head_sha: built.head_sha,
+            repo: cfg.github.repo,
+            rowsInTaskFiles: cfg.review.task_files,
+          })
+        : null;
+
       // `[review] task_files` (src/passtasks.ts): each discovery row's
       // complete lens task, written beside the round's pass outputs so the
       // session launches lenses with a pointer instead of generating every
       // task string. Total: a write that fails leaves the order without task
-      // files, and the session writes the strings itself, as before.
+      // files, and the session writes the strings itself, as before. Under
+      // `on` each row's delivered lessons ride its task file (S9b).
       let order = built;
+      let rowsDelivered = false;
       if (cfg.review.task_files) {
         try {
           const dir = resolve(
@@ -1591,36 +1752,33 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             `pr-${row.number}-round-${roundNo}-passes`,
             "tasks",
           );
-          const tasks = writePassTasks(dir, built, renderGateNotes(built, eco));
+          const tasks = writePassTasks(
+            dir,
+            built,
+            renderGateNotes(built, eco),
+            delivery
+              ? {
+                  rows: new Map(delivery.rows.map((r) => [r.row, r.lessons] as const)),
+                  repo: delivery.repo,
+                }
+              : undefined,
+          );
           order = {
             ...built,
             pass_task_files: tasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
           };
+          rowsDelivered = true;
         } catch (err) {
           log(`dispatch: #${row.number} lens task files unavailable`, err);
         }
       }
-
-      // The ONE memory call this round WAITS for, placed after the
-      // worktree and the order so the context is seeded from the same sha the
-      // passes read. It is bounded and total: the worst case is this round's
-      // prompt arriving memory-less a couple of seconds later. (The lesson
-      // selection, S9a, is the only other one, and it starts after
-      // the handoff, unawaited.)
-      store.stampPostingKey(roundId, order.posting_key!);
-      // The order's plan can outgrow the one startRound recorded — the repo's
-      // style guide is read off the prepared tree and adds pass-style — and the
-      // verdict audit reads the round row, so the row takes the order's plan.
-      if (styleGuide.length > 0 || ciLinters.length > 0)
-        store.setRoundPlan(roundId, order.lenses, {
-          validate_tier: order.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
-          pass_plan: order.pass_plan,
-          addable_passes: order.addable_lenses.map((lens) => ({
-            lens,
-            tier: addTierOf(cfg, lens),
-          })),
-        });
-      const memory = await seedRoundMemory(deps, order, files);
+      const memory = deliverRoundLessons(deps, {
+        seeded,
+        // A row's lessons travel only in its task file: none written, none
+        // delivered — the index must not say otherwise.
+        delivery: delivery && !rowsDelivered ? { ...delivery, rows: [] } : delivery,
+        dir: resolve(sandboxRoot(), "state", `pr-${row.number}-round-${roundNo}-passes`, "lessons"),
+      });
 
       // The round is provisional until the worktree/session/prompt handoff
       // completes. Publishing reviewing/running state earlier created orphan
@@ -1632,13 +1790,15 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
+      if (memory.lessons) logLessonDelivery(store, roundId, memory.lessons);
       // the round's lesson selection — the shadow ledger's
       // input. Started only now, with the round handed off, and never
-      // awaited: it changes nothing in this round's prompt, task files or
-      // agents, so nothing is gained by starting it sooner — and starting it
-      // before the seed would queue its finds ahead of the round's own
-      // memory search on the server's one-thread embedder.
-      if (deps.lessons) {
+      // awaited: under `shadow` it changes nothing in this round's prompt,
+      // task files or agents, so nothing is gained by starting it sooner —
+      // and starting it before the seed would queue its finds ahead of the
+      // round's own memory search on the server's one-thread embedder. Under
+      // `on` it already ran, awaited beside the seed (S9b, above).
+      if (deps.lessons && !delivering) {
         try {
           deps.lessons.start(order, files);
         } catch (err) {
@@ -1746,6 +1906,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           }
         } else {
           store.discardRunningRound(provisionalRoundId);
+          // under `on` the round's lesson selection ran — and was
+          // recorded — before the handoff; a discarded round never ran, so
+          // its ledger rows go too (and a selection still in flight records
+          // nothing), or the shadow report would count the attempt.
+          if (deps.lessons?.discard) {
+            try {
+              deps.lessons.discard(provisionalRoundId);
+            } catch (discardError) {
+              log(`dispatch: #${row.number} lesson record of the discarded round not dropped (ignored)`, discardError);
+            }
+          }
         }
       }
       log(
