@@ -22,6 +22,8 @@ import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./command
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
+import { renderNoPacketSection } from "./learner/packet.js";
+import type { CurationReceipt } from "./learner/receipt.js";
 import { LessonLedger } from "./lessonledger.js";
 import { RoundLessonSelector, type RoundLessonHook } from "./lessonselect.js";
 import { lessonDeliveryStatus, markRound } from "./lessonshadow.js";
@@ -63,7 +65,7 @@ import {
 } from "./profiles.js";
 import { applyProfilePosting, postingPolicyAddenda } from "./postingpolicy.js";
 import { prepareDependencySources, renderDependencyNote } from "./depsources.js";
-import { fileImprovementPr, fileIssue, gitRunner } from "./improvements.js";
+import { fileImprovementPr, fileIssue, gitRunner, type FileOutcome } from "./improvements.js";
 import {
   EMBEDDER_GATE_MAX_WAIT_MS,
   LocalEmbedderSupervisor,
@@ -576,6 +578,25 @@ export function daemonOriginWakes(opts: {
  */
 export function piAuthWatchDirs(sessions: Pick<PiSessionManager, "sessionsRoot">): string[] {
   return [sessions.sessionsRoot(), join(homedir(), ".pi", "agent", "sessions")];
+}
+
+/**
+ * Where the `eod-curation-receipt` command lands (S8). With no
+ * learner on this daemon (memory switched off) the receipt is REFUSED, with
+ * the reason — which is what the sweep prompt's "off" no-packet section
+ * (`renderNoPacketSection`, R8) tells the curator: "the daemon would refuse
+ * one". tests/eod-seed-coherence.test.ts holds the two together.
+ */
+export function routeCurationReceipt(
+  learner: Pick<Learner, "applyReceipt"> | null,
+  receipt: CurationReceipt,
+): FileOutcome {
+  if (!learner)
+    return {
+      ok: false,
+      reason: "the learner is not running on this daemon ([openviking] enabled = false)",
+    };
+  return learner.applyReceipt(receipt);
 }
 
 export function createProductionDaemon(parts: ProductionParts = buildParts()): Daemon {
@@ -1486,13 +1507,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           };
         },
         // the EOD curator's receipt for the day's outcomes packet.
+        // `learner` is read at call time, never captured at wiring.
         curationReceipt(receipt) {
-          if (!learner)
-            return {
-              ok: false,
-              reason: "the learner is not running on this daemon ([openviking] enabled = false)",
-            };
-          return learner.applyReceipt(receipt);
+          return routeCurationReceipt(learner, receipt);
         },
         drain(on, issuer, forMin) {
           return drainLever(leverDeps, on, issuer, forMin, async () => {
@@ -1599,8 +1616,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           }
         },
         // the curator learns the §1 layout here — the
-        // seed is frozen and never said where each kind of entry lives.
+        // seed is frozen, and even reseeded (R8) names only some areas.
         ...(cfg.openviking.enabled ? { memoryLayout: MEMORY_LAYOUT_NOTE } : {}),
+        // the reseeded seed starts §1 from "Outcomes to curate"
+        // and closes it with the receipt, so a sweep the packet did not reach
+        // says why in that section instead of dropping it: no learner on this
+        // daemon, or a packet that failed or missed the wait.
+        noCuration: (date) => renderNoPacketSection(date, learner ? "unavailable" : "off"),
         // Deploy-window drain: the sweep does not fire into a board being
         // drained for a deploy — it is DEFERRED (S2; it used to be
         // skipped for the day): the day is persisted in state.db and fires

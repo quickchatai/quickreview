@@ -5,6 +5,9 @@
 // to from the sweep prompt's daemon-measured context (`dayContext`). The seed
 // (`prompts/eod-sweep.md`) is frozen, so the packet and the receipt reach the
 // curator the way the layout note did: rendered by the daemon after the seed.
+// The R8 reseed (2026-10-07) points the seed at that section — "Start from the
+// outcomes packet" — so the sweep prompt always carries one: the curation
+// instructions, or `renderNoPacketSection` saying why there are none.
 //
 // The packet is DATA. Every quoted word (a reply, a comment, a commit subject,
 // a digest bullet, a recheck's reason) is fenced as data
@@ -222,12 +225,53 @@ export function renderPacketMarkdown(p: OutcomesPacket): string {
  * The prompt section that tells the curator what to do with the packet. The
  * seed is frozen (rule 6), so this rides after it, like the layout note.
  * Instructions only — the candidates themselves are in the packet file.
+ *
+ * Since the R8 reseed (2026-10-07) the seed itself sends the curator here
+ * ("Start from the outcomes packet … the section 'Outcomes to curate'") and
+ * says what a lesson's `content` holds — the one-sentence lesson and its
+ * evidence PR links — so this section no longer says it (its old "the rule and
+ * its reason" contradicted the seed). It must say nothing against the seed;
+ * `tests/eod-seed-coherence.test.ts` renders both and checks.
  */
 export function renderCurationSection(p: OutcomesPacket): string {
   const rel = `${packetRelDir(p.day)}/outcomes.md`;
-  const example = {
+  const example = receiptExample(p.day);
+  const lines = [
+    `The daemon mined the human outcomes of the review system into candidate lessons: \`${rel}\` (machine copy: \`outcomes.json\` beside it). ${p.offered} candidate${p.offered === 1 ? " is" : "s are"} offered today — ${p.new} new, ${p.carried} carried.`,
+    "",
+    "For EVERY candidate in the packet, decide one of:",
+    "",
+    "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `viking://user/reviewer/memories/experiences/`. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.",
+    "- **decline** — with a one-line reason (a one-off, noise, an ops note, already covered by a lesson the packet names).",
+    "",
+    "Then write ONE command file into `commands/` — the curation receipt:",
+    "",
+    "```json",
+    JSON.stringify(example),
+    "```",
+    "",
+    "Use `refused` for a candidate whose lesson write failed, with the error. The daemon checks every adoption against memory (a lesson header citing the candidate): a lesson it cannot find, a refused write, or no receipt at all wakes a person. A candidate you leave out stays open and rides the next packet; undecided for " +
+      `${p.expiry_ops_days} ops days it expires, recorded. Write the receipt even when you decided nothing (\`"decisions": []\`).`,
+  ];
+  return lines.join("\n");
+}
+
+/** The receipt the curation section shows as its example — one decision of
+ * each kind, for `day`. Valid under `validateReceipt` (src/learner/receipt.ts)
+ * as written; tests/eod-seed-coherence.test.ts checks. */
+export function receiptExample(day: string): {
+  command: "eod-curation-receipt";
+  day: string;
+  decisions: Array<{
+    candidates: string[];
+    decision: "adopted" | "declined" | "refused";
+    lesson?: string;
+    reason?: string;
+  }>;
+} {
+  return {
     command: "eod-curation-receipt",
-    day: p.day,
+    day,
     decisions: [
       {
         candidates: ["c12", "c13"],
@@ -242,22 +286,43 @@ export function renderCurationSection(p: OutcomesPacket): string {
       { candidates: ["c15"], decision: "refused", reason: "<the viking_write error>" },
     ],
   };
-  const lines = [
-    `The daemon mined the human outcomes of the review system into candidate lessons: \`${rel}\` (machine copy: \`outcomes.json\` beside it). ${p.offered} candidate${p.offered === 1 ? " is" : "s are"} offered today — ${p.new} new, ${p.carried} carried.`,
+}
+
+/** Why a sweep prompt carries no packet: the learner is not running on this
+ * daemon (`[openviking] enabled = false`), or it is but the packet did not
+ * reach the prompt (its build threw, or was not ready inside the day-context
+ * wait). */
+export type NoPacketWhy = "off" | "unavailable";
+
+/**
+ * The `## Outcomes to curate` section when no packet came with the sweep
+ * prompt (R8). The reseeded seed starts §1 from that section and
+ * closes §1 with the receipt, and the daemon refuses a receipt for a day it
+ * wrote no packet for ("no outcomes packet was written") — so the section is
+ * never silently absent: it says which case this is.
+ *
+ * `unavailable` cannot know whether the packet exists: a build that missed
+ * the wait may still have written it (and then the receipt IS owed — the
+ * missing-receipt wake counts from the delivered sweep), so the curator looks
+ * for the file rather than being told there is none.
+ */
+export function renderNoPacketSection(day: string, why: NoPacketWhy): string {
+  if (why === "off")
+    return [
+      "No outcomes packet today: the learner is not running on this daemon (`[openviking] enabled = false`). There are no candidates to decide and no `eod-curation-receipt` to write — the daemon would refuse one.",
+      "",
+      "Run §1 on the day's PRs alone, and say in the digest's Learnings line that there was no packet.",
+    ].join("\n");
+  const rel = `${packetRelDir(day)}/outcomes.md`;
+  return [
+    "Today's outcomes packet did not come with this prompt: the daemon failed to build it, or it was not ready in time.",
     "",
-    "For EVERY candidate in the packet, decide one of:",
-    "",
-    "- **adopt** — write a TYPED lesson with `viking_write` and its `lesson` parameter `{kind, lens, class, paths, evidence}` into `viking://user/reviewer/memories/experiences/`. The tool writes the header line; `content` is the one-sentence rule and its reason. Cite every candidate the lesson adopts as `cand:c<id>` in `evidence` (one lesson may adopt a whole cluster). Reuse the cluster's class. A look-for lesson rests on a miss or a fix a human made, or on the reviewer's OWN re-check reversal (`recheck_flip`, labelled so — its conclusion, not a person's: adopt one only when the code it names shows the miss, and since a `recheck.*` cluster groups reversals by directory alone, a lesson adopts only the reversals that show the SAME miss, never the whole cluster on its count); a dont-raise lesson rests on a human refutation, a deletion or a `[feedback]` comment — never on a whole-review signal alone.",
-    "- **decline** — with a one-line reason (a one-off, noise, an ops note, already covered by a lesson the packet names).",
-    "",
-    "Then write ONE command file into `commands/` — the curation receipt:",
+    `- If \`${rel}\` exists, it is today's packet: decide every candidate in it as §1 says, then write the receipt — one command file into \`commands/\`, shaped like this:`,
     "",
     "```json",
-    JSON.stringify(example),
+    JSON.stringify(receiptExample(day)),
     "```",
     "",
-    "Use `refused` for a candidate whose lesson write failed, with the error. The daemon checks every adoption against memory (a lesson header citing the candidate): a lesson it cannot find, a refused write, or no receipt at all wakes a person. A candidate you leave out stays open and rides the next packet; undecided for " +
-      `${p.expiry_ops_days} ops days it expires, recorded. Write the receipt even when you decided nothing (\`"decisions": []\`).`,
-  ];
-  return lines.join("\n");
+    "- If it does not exist, there are no candidates to decide and no receipt to write — the daemon would refuse one. Run §1 on the day's PRs alone, and say in the digest's Learnings line that the packet was missing.",
+  ].join("\n");
 }

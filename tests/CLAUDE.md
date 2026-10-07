@@ -103,5 +103,16 @@ Fix the code, not the test.
   - A failure names the ratifying citation. The fix is a ratification, not
     a re-pin.
   - A fenced frozen seed must also carry a `ratified-divergence.json` entry.
+  - A marker may record a ratified reseed of its words after the slug —
+    ` (reseeded FT-NNNN, YYYY-MM-DD)`, that spelling only (R8) — and
+    the pin's `reseeded` must match it both ways.
+- **`eod-seed-coherence.test.ts`** renders the real `prompts/eod-sweep.md`
+  with the sections the daemon renders after it (`MEMORY_LAYOUT_NOTE`, the
+  curation or no-packet section, the measured lines) and fails when the two
+  halves contradict each other (R8). The seed is frozen: fix the
+  daemon-rendered side. A new variant of the curation section joins the
+  `describe.each` there, and a claim a section makes about what the daemon
+  does is driven through the real handler (the receipt goes through
+  `executeCommand` to wire's `routeCurationReceipt`), not read off the text.
 - **`single-shepherd.test.ts`** pins the single-shepherd invariant
   (`docs/single-shepherd-invariant.md`) structurally.

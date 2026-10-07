@@ -28,7 +28,8 @@
       "2026-08-20 the owner: reseed — the EOD curator writes learnings into OpenViking (viking_write into the experiences area) instead of pi-memory; pin rule, tag spellings and retention restated in OpenViking terms; ratified with the added permission to promote objective repo facts into viking://resources/",
       "2026-08-24 the owner: reseed — RATIFIED fences around the memory discipline and the improvement caps, and the rubric-proposal carrier retired: the curator flags rubric candidates in the digest and authors nothing (no state/rubric/<slug>/ dirs, no patch)",
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",
-      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped"
+      "2026-10-03 owner ratified in-session: prompt-cleanup reseed — model-facing doc header dropped",
+      "2026-10-07 owner ratified in-session (R8, \"Yes, ratify it\"): context-engine reseed — §1 starts from the daemon's outcomes packet (the 'Outcomes to curate' section, state/eod/{{date}}/outcomes.md) and names the events/ and experiences/ areas; learnings are typed lessons written through viking_write's lesson fields (kind repo-fact|look-for|dont-raise|convention, lens, class, paths, evidence) citing cand:c<id>; objective repo facts become repo-fact/convention lessons in experiences/ (the viking://resources/ promotion is gone); §1 closes with the eod-curation-receipt; the memory-discipline fence (marker annotated 'reseeded, 2026-10-07') names preferences/pinned/, #manual in preferences/ and kind=bug area=operations in an events/ entry's header, and an outage still writes the receipt; the digest's Learnings line counts the decisions"
     ],
     "agents/pass-security.md": [
       "2026-08-29 owner: de-identification reseed — ratified by the owner 2026-08-30 (in-session)",

@@ -146,7 +146,10 @@ A new entry written through the seam lands where its writer says (a `note`'s
 the pinned area, `#manual` → `preferences/`, else the default area,
 `areaForNewEntry`). The curator learns the layout from a section the daemon
 renders after the frozen `eod-sweep.md` seed (`MEMORY_LAYOUT_NOTE`, via
-`renderEodPrompt`'s `memoryLayout`).
+`renderEodPrompt`'s `memoryLayout`). Since the owner's 2026-10-07 reseed
+(R8) the seed names `events/`, `experiences/` and
+`preferences/pinned/` itself; the note only adds where the rest lives, and
+`tests/eod-seed-coherence.test.ts` fails if it says anything against the seed.
 
 ### Round seeding — `src/memory/context.ts`
 
@@ -720,7 +723,18 @@ into the overseer session. Two things ride alongside:
   not happen, which used to be one log line.
 
 The curator authors its learnings into memory through the extension's write
-tool, never into a file.
+tool, never into a file. Under the reseeded prompt (R8, ratified
+2026-10-07) it starts §1 from the day's outcomes packet — the "Outcomes to
+curate" section the daemon renders after the seed (`EOD_SECTIONS`) and
+`state/eod/<day>/outcomes.md` — writes each learning as a typed lesson in
+`experiences/` through `viking_write`'s `lesson` fields, citing `cand:c<id>`
+(an objective repo fact is a `repo-fact` or `convention` lesson there; nothing
+goes to `viking://resources/` any more), and closes §1 with the
+`eod-curation-receipt`. A sweep the packet did not reach still carries that
+section: `renderNoPacketSection` says the learner is off (no packet, no
+receipt) or that the packet failed or missed the wait (curate the file if it
+exists, else there is nothing to decide), so the seed never points at a
+section that is not there.
 
 ### The pinned-area watchdog — `src/eodpinwatch.ts`
 

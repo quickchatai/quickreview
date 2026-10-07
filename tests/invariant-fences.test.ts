@@ -37,6 +37,14 @@ interface PinnedFence {
    * CLAUDE.md's hard rules — the rule number (`RULE-N`).
    */
   ft: string;
+  /**
+   * A ratified RESEED of the fenced words, when the marker records one (
+   * R8): `<!-- RATIFIED memory-discipline (reseeded,
+   * 2026-10-07) — … -->`. The citation stays the rule's own ticket (the rule is
+   * the same decision); the annotation names the reseed that changed its words,
+   * and must match the pin exactly, both ways.
+   */
+  reseeded?: { ft: string; date: string };
   /** sha256 of the fence CONTENTS (the lines between the two markers). */
   sha256: string;
 }
@@ -268,7 +276,14 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "memory-discipline",
       ft: "",
-      sha256: "43a0ca453a88208a086414a4f5a744eff00ad023aed17dfbb6888deb49bf8ff5",
+      // Re-pinned 2026-10-07 (owner ratified in-session, R8): the
+      // eod-sweep reseed — the fence names the pinned area
+      // (preferences/pinned/), #manual in preferences/, and kind=bug
+      // area=operations in an events/ entry's header; an outage still writes
+      // the curation receipt. The rule is unchanged; its marker records the
+      // reseed.
+      reseeded: { ft: "", date: "2026-10-07" },
+      sha256: "d53aafba4f9d2326fe316ce6735b81d38a9600b4aa40594f340af0de151cb420",
     },
     {
       slug: "improvement-caps",
@@ -398,15 +413,24 @@ const CITATION = String.raw`FT-\d{4}|RULE-\d{1,2}`;
  * personal spelling `the owner only` is GRANDFATHERED: existing fences keep
  * their ratified bytes (rewriting a fence marker just to rename it would
  * itself be a fence edit — rule 6 territory), so both spellings parse.
+ *
+ * The reseed half (R8): a fence whose WORDS a ratified reseed changed
+ * may record it after the slug — ` (reseeded FT-NNNN, YYYY-MM-DD)`, exactly
+ * that, a ticket and a date and nothing else. The citation before it stays the
+ * rule's own ticket. Optional, and narrow for the same reason as the citation:
+ * a free-text parenthetical would let a marker carry any claim at all.
  */
+const RESEEDED = String.raw`(?: \(reseeded (FT-\d{4}), (\d{4}-\d{2}-\d{2})\))?`;
 const OPEN = new RegExp(
-  String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+) — do not edit; (?:the owner|owner) only -->$`,
+  String.raw`^<!-- RATIFIED (${CITATION}) ([a-z0-9-]+)${RESEEDED} — do not edit; (?:the owner|owner) only -->$`,
 );
 const CLOSE = /^<!-- \/RATIFIED ([a-z0-9-]+) -->$/;
 
 interface ParsedFence {
   ft: string;
   slug: string;
+  /** The marker's reseed annotation, or null when it carries none. */
+  reseeded: { ft: string; date: string } | null;
   body: string;
 }
 
@@ -414,7 +438,12 @@ interface ParsedFence {
 export function parseFences(text: string, rel: string): ParsedFence[] {
   const lines = text.split("\n");
   const out: ParsedFence[] = [];
-  let open: { ft: string; slug: string; from: number } | null = null;
+  let open: {
+    ft: string;
+    slug: string;
+    reseeded: { ft: string; date: string } | null;
+    from: number;
+  } | null = null;
   lines.forEach((line, i) => {
     const o = OPEN.exec(line);
     const c = CLOSE.exec(line);
@@ -423,7 +452,12 @@ export function parseFences(text: string, rel: string): ParsedFence[] {
         throw new Error(
           `${rel}:${i + 1}: fence '${o[2]}' opens inside unclosed fence '${open.slug}'`,
         );
-      open = { ft: o[1] as string, slug: o[2] as string, from: i };
+      open = {
+        ft: o[1] as string,
+        slug: o[2] as string,
+        reseeded: o[3] ? { ft: o[3], date: o[4] as string } : null,
+        from: i,
+      };
       return;
     }
     if (c) {
@@ -431,7 +465,12 @@ export function parseFences(text: string, rel: string): ParsedFence[] {
       if (c[1] !== open.slug) {
         throw new Error(`${rel}:${i + 1}: fence '${open.slug}' closed by '${c[1]}'`);
       }
-      out.push({ ft: open.ft, slug: open.slug, body: lines.slice(open.from + 1, i).join("\n") });
+      out.push({
+        ft: open.ft,
+        slug: open.slug,
+        reseeded: open.reseeded,
+        body: lines.slice(open.from + 1, i).join("\n"),
+      });
       open = null;
       return;
     }
@@ -486,6 +525,20 @@ describe("ratified invariant fences", () => {
         fence.ft,
         `${rel.split("/").pop()}#${pin.slug}: fence says ${fence.ft}, the pin says ${pin.ft}`,
       ).toBe(pin.ft);
+    }
+  });
+
+  it.each(files)("%s: the fence's reseed annotation is exactly the pin's (R8)", (rel) => {
+    // Both ways: a marker may not claim a reseed the pin never recorded, and a
+    // pinned reseed may not lose its annotation from the marker.
+    const bySlug = new Map(parseFences(read(rel), rel).map((f) => [f.slug, f]));
+    for (const pin of PINNED[rel] as PinnedFence[]) {
+      const fence = bySlug.get(pin.slug);
+      if (!fence) continue;
+      expect(
+        fence.reseeded,
+        `${rel.split("/").pop()}#${pin.slug}: the marker's reseed annotation does not match the pin`,
+      ).toEqual(pin.reseeded ?? null);
     }
   });
 
@@ -547,5 +600,41 @@ describe("ratified invariant fences", () => {
     // But only those two: a free-text role would dilute the marker.
     expect(OPEN.exec("<!-- RATIFIED x — do not edit; the owner only -->")).toBe(null);
     expect(OPEN.exec("<!-- RATIFIED x — do not edit; anyone only -->")).toBe(null);
+  });
+
+  it("the reseed annotation parses in exactly one spelling: a ticket and a date (R8)", () => {
+    const m = OPEN.exec(
+      "<!-- RATIFIED memory-discipline (reseeded 2026-10-07) — do not edit; owner only -->",
+    );
+    expect(m?.slice(1, 5)).toEqual(["", "memory-discipline", "", "2026-10-07"]);
+    // Without one, the groups are empty — every older marker parses as before.
+    expect(
+      OPEN.exec("<!-- RATIFIED improvement-caps — do not edit; owner only -->")?.[3],
+    ).toBeUndefined();
+    // Anything else in the parenthesis is not a marker — and parseFences
+    // throws on it rather than reading the line as prose.
+    for (const bad of [
+      "<!-- RATIFIED x (reseeded by the owner) — do not edit; owner only -->",
+      "<!-- RATIFIED x (reseeded) — do not edit; owner only -->",
+      "<!-- RATIFIED x (reseeded RULE-2, 2026-10-07) — do not edit; owner only -->",
+      "<!-- RATIFIED x (reseeded 7 Oct) — do not edit; owner only -->",
+      "<!-- RATIFIED x (note: softer now) — do not edit; owner only -->",
+      "<!-- RATIFIED x (reseeded 2026-10-07)— do not edit; owner only -->",
+    ]) {
+      expect(OPEN.exec(bad), bad).toBe(null);
+      expect(() => parseFences(`${bad}\nbody\n<!-- /RATIFIED x -->`, "t.md"), bad).toThrow(
+        /malformed RATIFIED marker/,
+      );
+    }
+    const [fence] = parseFences(
+      "<!-- RATIFIED x (reseeded 2026-10-07) — do not edit; owner only -->\nbody\n<!-- /RATIFIED x -->",
+      "t.md",
+    );
+    expect(fence).toEqual({
+      ft: "",
+      slug: "x",
+      reseeded: { ft: "", date: "2026-10-07" },
+      body: "body",
+    });
   });
 });

@@ -2082,8 +2082,13 @@ describe("wire.ts: the learner is actually connected", () => {
   });
 
   it("the receipt command reaches the learner, and its status rides memory.curation — UNKNOWN when unread", () => {
+    // The route itself (no learner → refused) is driven for real in
+    // tests/eod-seed-coherence.test.ts; here, that wire's deps go through it.
     expect(wire).toMatch(
-      /curationReceipt\(receipt\) \{[\s\S]{0,300}?return learner\.applyReceipt\(receipt\);/,
+      /curationReceipt\(receipt\) \{[\s\S]{0,120}?return routeCurationReceipt\(learner, receipt\);/,
+    );
+    expect(wire).toMatch(
+      /export function routeCurationReceipt\([\s\S]{0,400}?return learner\.applyReceipt\(receipt\);/,
     );
     expect(wire).toMatch(
       /if \(learner\) \{\s*try \{\s*base\.curation = learner\.status\(\);\s*\} catch \(err\) \{[\s\S]{0,120}?base\.curation = null;/,

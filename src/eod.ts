@@ -179,6 +179,15 @@ export function nextEodFire(now: Date, timeHHMM: string, timeZone: string): Date
   return candidate;
 }
 
+/** The headings of the sections the daemon renders after the seed. The R8
+ * reseed (2026-10-07) sends the curator to "Outcomes to curate" by
+ * name, so a rename here is a contradiction with a frozen seed —
+ * tests/eod-seed-coherence.test.ts holds the two together. */
+export const EOD_SECTIONS = Object.freeze({
+  layout: "Reviewer memory layout",
+  curation: "Outcomes to curate",
+});
+
 /** Render the eod-sweep template: `{{date}}` plus the identity
  * variables (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`), through the strict
  * renderer — an unknown `{{…}}` throws rather than reaching the session.
@@ -195,16 +204,19 @@ export function renderEodPrompt(
   curation?: string,
 ): string {
   let out = render(stripModelDocs(template), { ...identity, date });
-  // where each kind of memory entry lives — the frozen seed never
-  // said, so the curator learns the §1 layout here. Not digest
-  // material: its own section, before the lines the digest carries.
+  // where each kind of memory entry lives — the §1
+  // layout, which the seed did not spell until the R8 reseed and still does
+  // not in full. Not digest material: its own section, before the lines the
+  // digest carries.
   if (memoryLayout?.trim())
-    out = `${out.replace(/\n*$/, "\n")}\n## Reviewer memory layout\n\n${memoryLayout.trim()}\n`;
+    out = `${out.replace(/\n*$/, "\n")}\n## ${EOD_SECTIONS.layout}\n\n${memoryLayout.trim()}\n`;
   // what to do with the day's outcomes packet — the learner's
   // candidates, the typed-lesson write and the curation receipt. Instructions,
-  // not digest material: its own section, like the layout note.
+  // not digest material: its own section, like the layout note. The R8 reseed
+  // names this section ("Start from the outcomes packet"), so the heading is
+  // a contract with the seed (tests/eod-seed-coherence.test.ts).
   if (curation?.trim())
-    out = `${out.replace(/\n*$/, "\n")}\n## Outcomes to curate\n\n${curation.trim()}\n`;
+    out = `${out.replace(/\n*$/, "\n")}\n## ${EOD_SECTIONS.curation}\n\n${curation.trim()}\n`;
   if (!dayContext?.trim()) return out;
   return (
     `${out.replace(/\n*$/, "\n")}\n` +
@@ -249,6 +261,22 @@ async function resolveDayContext(
   }
 }
 
+/** `context`, with `noCuration`'s section in place of a curation it lacks
+ * (R8). Total: a throwing or empty fallback leaves it as it was. */
+function withCurationFallback(
+  context: EodDayContext,
+  noCuration: EodTimerDeps["noCuration"],
+  date: string,
+): EodDayContext {
+  if (context.curation?.trim() || !noCuration) return context;
+  try {
+    const curation = noCuration(date);
+    return typeof curation === "string" && curation.trim() ? { ...context, curation } : context;
+  } catch {
+    return context;
+  }
+}
+
 /** Why a day's sweep was deferred. */
 export type EodHoldReason = "draining" | "sweep_in_flight";
 
@@ -270,6 +298,13 @@ export interface EodTimerDeps {
   dayContext?: (date: string) => string | EodDayContext | Promise<string | EodDayContext>;
   /** How long the sweep waits for `dayContext` (default 90 s). */
   dayContextTimeoutMs?: number;
+  /** R8: the `## Outcomes to curate` section for a sweep whose
+   * `dayContext` brought no curation — no learner, a packet that failed, or a
+   * context that did not answer in time. The reseeded seed starts §1 from
+   * that section, so with this set it is never silently absent
+   * (`renderNoPacketSection` in wire.ts). A throw costs the section, never
+   * the sweep. */
+  noCuration?: (date: string) => string;
   /** The memory layout the curator writes into (S5,
    * `MEMORY_LAYOUT_NOTE`), rendered after the seed in its own section. */
   memoryLayout?: string;
@@ -435,10 +470,14 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
    * `stopped` — the timer was stopped before the day was settled either way. */
   const fire = async (date: string): Promise<"delivered" | "failed" | "stopped"> => {
     // Context is best-effort and bounded; the sweep itself must still fire.
-    const context = await resolveDayContext(
-      deps.dayContext,
+    const context = withCurationFallback(
+      await resolveDayContext(
+        deps.dayContext,
+        date,
+        deps.dayContextTimeoutMs ?? EOD_DEFAULTS.dayContextTimeoutMs,
+      ),
+      deps.noCuration,
       date,
-      deps.dayContextTimeoutMs ?? EOD_DEFAULTS.dayContextTimeoutMs,
     );
     let lastErr: unknown = null;
     for (let attempt = 0; attempt <= backoff.length; attempt += 1) {

@@ -134,8 +134,11 @@ export function areaForNewEntry(text: string, fallback: string): string {
  * (`prompts/eod-sweep.md`) is a ratified reseed and frozen (rule 6), so the
  * layout reaches the curator the way the day's cancellation line does: the
  * daemon renders it after the seed (`renderEodPrompt`'s `memoryLayout`). It
- * restates nothing the seed rules on — it only says WHERE each kind of entry
- * lives, which the seed never did.
+ * rules on nothing the seed rules on — it says WHERE each kind of entry lives.
+ * Since the R8 reseed (2026-10-07) the seed names the `events/`,
+ * `experiences/` and `preferences/pinned/` areas itself and owns what may be
+ * done with a `#manual` entry; this note must say nothing against it, which
+ * `tests/eod-seed-coherence.test.ts` checks over the real seed.
  */
 export const MEMORY_LAYOUT_NOTE = [
   "Reviewer memory (`viking://user/reviewer/memories/`) is laid out in areas — the",
@@ -148,7 +151,8 @@ export const MEMORY_LAYOUT_NOTE = [
   "  system is an `events/` entry whose header carries `kind=bug area=operations`;",
   "  an ops note that is not a defect carries `kind=ops area=operations`. The",
   "  day's `kind=feedback` entries are here too.",
-  "- `preferences/` — the owner's own words (`#manual`). Not yours to write.",
+  "- `preferences/` — the owner's own words (`#manual`); the memory discipline above",
+  "  rules on them.",
   "- `preferences/pinned/` — THE PINNED AREA: the owner's standing instructions,",
   "  delivered verbatim in every round. Never write, move, retire or rewrite",
   "  anything under it.",
