@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { OpenVikingStatus } from "./openviking/types.js";
+import type { ArchiveStatus } from "./archive/status.js";
 import type { DaemonLoadStatus } from "./eventloop.js";
 import type { MemoryIncident, MemoryStatus } from "./memory/health.js";
 import {
@@ -631,6 +632,10 @@ CREATE TABLE IF NOT EXISTS bot_comments (
   kind TEXT NOT NULL DEFAULT 'review_comment',
   posted_at TEXT NOT NULL
 );
+-- The per-PR count of the bot's comments (qcr why, the outcome capture's
+-- signature) read the whole table; closed-PR history stays live here, so it
+-- must stop costing a scan (§9.7).
+CREATE INDEX IF NOT EXISTS bot_comments_pr ON bot_comments(pr);
 CREATE TABLE IF NOT EXISTS backfill_pr_meta (
   pr INTEGER PRIMARY KEY,
   title TEXT NOT NULL DEFAULT '',
@@ -1010,6 +1015,42 @@ CREATE TABLE IF NOT EXISTS slack_cooldowns (
   fire_count    INTEGER NOT NULL DEFAULT 1,
   fold_count    INTEGER NOT NULL DEFAULT 0,
   bypassed      INTEGER NOT NULL DEFAULT 0
+);
+-- Archiving (docs/archiving.md §8.1): one row per PR the archiver
+-- has started on. The row is committed BEFORE the first byte of a PR leaves,
+-- with the newest original mtime among the transcripts it is about to move
+-- (max_mtime_ms) — that arms the receipt guard (an archived receipt reads
+-- UNKNOWN, never absent). Plan mode writes no row.
+CREATE TABLE IF NOT EXISTS archive_prs (
+  pr               INTEGER PRIMARY KEY,
+  state            TEXT NOT NULL
+                   CHECK (state IN ('archiving', 'archived', 'restoring', 'restored', 'restore_failed')),
+  passes           INTEGER NOT NULL DEFAULT 0,
+  started_at       TEXT,
+  archived_at      TEXT,
+  restored_at      TEXT,
+  transcript_files INTEGER NOT NULL DEFAULT 0,
+  state_files      INTEGER NOT NULL DEFAULT 0,
+  bytes_in         INTEGER NOT NULL DEFAULT 0,
+  bytes_out        INTEGER NOT NULL DEFAULT 0,
+  max_mtime_ms     INTEGER,
+  last_error       TEXT,
+  updated_at       TEXT NOT NULL
+);
+-- The DB mover's watermarks (§9.2): 'events.last_id',
+-- 'deliveries.last_rowid'. Absent = nothing moved yet.
+CREATE TABLE IF NOT EXISTS archive_marks (
+  name  TEXT PRIMARY KEY,
+  value NOT NULL
+);
+-- Event rows moved to the archive DB, per (kind, UTC day), updated in the
+-- same transaction as the live delete (§9.4): what keeps the
+-- all-time window of qcr metrics continuous.
+CREATE TABLE IF NOT EXISTS archived_event_counts (
+  kind TEXT NOT NULL,
+  day  TEXT NOT NULL,
+  n    INTEGER NOT NULL,
+  PRIMARY KEY (kind, day)
 );
 `;
 
@@ -6267,6 +6308,11 @@ export interface StatusSnapshot {
    * that cannot be read). Absent in snapshots from an older daemon — readers
    * say "not reported", never "ok". */
   daemon?: DaemonLoadStatus;
+  /** The closed-PR archiver (src/archive/status.ts): its mode and
+   * state, why it holds, what it would move (`backlog` — null until its first
+   * plan completes, never 0) and what it moved. Absent in snapshots from an
+   * older daemon — readers (`readArchiveStatus`) say "not reported". */
+  archive?: ArchiveStatus;
   /** Deploy-window drain (2026-08-25): present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
@@ -6439,6 +6485,16 @@ function pipelineFrom(
   };
 }
 
+/**
+ * The heartbeat's per-PR round count and latest verdict — every 30 s over the
+ * whole `rounds` table, closed-PR history included, which stays live
+ * (§4). Exported so the index that keeps it a walk of
+ * `rounds_pr_round` rather than a scan per PR is pinned against THIS text
+ * (tests/archive-schema.test.ts).
+ */
+export const ROUND_STATS_SQL =
+  "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr";
+
 export function buildStatusSnapshot(
   store: StateStore,
   dryRun: boolean,
@@ -6452,17 +6508,18 @@ export function buildStatusSnapshot(
   roundStageBounds?: RoundStageBounds,
   memory?: MemoryStatus,
   daemonLoad?: DaemonLoadStatus,
+  archive?: ArchiveStatus,
 ): StatusSnapshot {
   const at = now();
   const today = at.toISOString().slice(0, 10);
   const drain = store.drainState();
   // Expired zombie rounds stay out of the per-PR round COUNTS —
   // but they DO count in every spend aggregate (below).
-  const roundStats = store.db
-    .prepare(
-      "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr",
-    )
-    .all() as Array<{ pr: number; c: number; v: string | null }>;
+  const roundStats = store.db.prepare(ROUND_STATS_SQL).all() as Array<{
+    pr: number;
+    c: number;
+    v: string | null;
+  }>;
   const byPr = new Map(roundStats.map((r) => [r.pr, r]));
   const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
   const failures = store.openReviewFailures();
@@ -6578,6 +6635,7 @@ export function buildStatusSnapshot(
     ...(openviking ? { openviking } : {}),
     ...(memory ? { memory } : {}),
     ...(daemonLoad ? { daemon: daemonLoad } : {}),
+    ...(archive ? { archive } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
     ...(pipeline ? { pipeline } : {}),

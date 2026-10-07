@@ -317,6 +317,13 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
             "`qcr checklist`'s offline ping-pong plumbing probe. Operator-run, one-shot, and scoped to the fixture PR " +
             "999902 — but it does write into the REAL inject/ tree, so it is a writer and is recorded as one.",
         },
+        {
+          file: "src/archive/plan.ts",
+          why:
+            "the closed-PR archiver's plan (§7.1/§7.2) LISTS inject/pr-<n>/ of closed PRs: an undelivered " +
+            "top-level wake holds the PR, and the consumed .done/.terminal files are counted. It never puts a wake " +
+            "there and, in plan mode, writes nothing at all — recorded because it constructs the path.",
+        },
       ];
       for (const w of INJECT_PATH_WRITERS) {
         expect(

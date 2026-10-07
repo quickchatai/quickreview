@@ -51,9 +51,11 @@ describe("renderStatus", () => {
     expect(lines[4]).toBe(
       "daemon event loop: NOT REPORTED (this daemon predates the event-loop block)",
     );
-    expect(lines[6]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
+    // the archiver's line, every time — the same honest-unknown.
+    expect(lines[5]).toBe("archive: NOT REPORTED (this daemon predates the archive block)");
+    expect(lines[7]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
-    const rows = lines.slice(7);
+    const rows = lines.slice(8);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("#1421");
     expect(rows[0]).toContain("reviewing");
@@ -99,9 +101,9 @@ describe("renderStatus", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";
     const out = renderStatus({ ...snapshot, prs: [{ ...snapshot.prs[0]!, title }] });
     const lines = out.split("\n");
-    expect(lines.slice(7)).toHaveLength(1);
+    expect(lines.slice(8)).toHaveLength(1);
     expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-    expect(lines[7]).toContain("Fix [2J [31m widget row 2Kend");
+    expect(lines[8]).toContain("Fix [2J [31m widget row 2Kend");
   });
 
   it("strips control bytes (incl. C1) from a session's pause reason", () => {

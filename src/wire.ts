@@ -21,6 +21,8 @@ import {
 import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./commands.js";
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
+import { Archiver } from "./archive/archiver.js";
+import { pendingArchiveStatus } from "./archive/status.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { renderNoPacketSection } from "./learner/packet.js";
 import type { CurationReceipt } from "./learner/receipt.js";
@@ -31,6 +33,7 @@ import { RoundMemoryActivity } from "./memory/roundactivity.js";
 import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
 import { lessonFindClient, openVikingLessonEngine } from "./openviking/lessonfind.js";
 import { createDaemon, type Daemon } from "./daemon.js";
+import { eventLoopPolicy } from "./eventloop.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
@@ -686,6 +689,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   // `eod_lessons_not_persisted`. Only where memory is switched on: with it off
   // there is nowhere a lesson could land.
   let learner: Learner | null = null;
+  // the closed-PR ARCHIVER — daemon bookkeeping on its own timer
+  // (never a reconcile step), started beside the case writer and the learner
+  // whatever memory does. It starts no work before the first healthy
+  // reconcile plus `[archive] start_delay_min`, holds while draining, stalled,
+  // starved or short of disk, and this build moves nothing in any mode: it
+  // plans, and status.json `archive` says what a pass would move.
+  let archiver: Archiver | null = null;
   // the lesson SHADOW LEDGER — every round's selection through
   // OpenViking (bounded, `[memory] delivery`), the marks a delivered
   // dont-raise lesson would have left on its posted findings, and the
@@ -862,6 +872,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         ...(localEmbedder ? { embedder: localEmbedder.status() } : {}),
       };
     },
+    // the archiver's block — a cached synchronous read. Before
+    // onStart builds it the mode is known and nothing else: `unknown`, a
+    // null backlog, never 0.
+    archiveStatus: () => (archiver ? archiver.status() : pendingArchiveStatus(cfg.archive.mode)),
     // whether memory WORKS, beside whether the server is up —
     // and (S2) what memory still owes the [feedback] ledger.
     memoryStatus: (): MemoryStatus => {
@@ -1365,6 +1379,23 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         learner.start();
       }
 
+      // The archiver. Its eligibility asks tmux which sessions live
+      // (unknown holds, never "none") and the session manager which births are
+      // in flight; its holds read the daemon's own load watch.
+      archiver = new Archiver({
+        store: d.store,
+        cfg: cfg.archive,
+        root,
+        sessionsRoot: sessions.sessionsRoot(),
+        firstHealthyReconcileAt: () => d.firstHealthyReconcileAt(),
+        load: () => d.load.status(),
+        starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
+        liveSessions: () => sessions.tmux.listSessionsKnown(),
+        birthInFlight: (pr) => sessions.birthInFlight(pr),
+        log,
+      });
+      archiver.start();
+
       // Adopt live sessions + sweep stale worktrees (never kills a live session).
       const active = d.store
         .allPrs()
@@ -1721,6 +1752,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       feedbackPump?.stop();
       caseWriter?.stop();
       learner?.stop();
+      archiver?.stop();
       // S9a/F2: the lesson selections in flight. A SHADOW one is cut
       // now and records nothing (`stop`): its budget — `shadow_budget_ms`, up
       // to 20 s — does not fit docker's 10 s stop grace beside the server's

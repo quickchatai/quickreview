@@ -174,6 +174,13 @@ export interface DaemonDeps {
    */
   memoryStatus?: () => import("./memory/health.js").MemoryStatus | undefined;
   /**
+   * The closed-PR archiver's block (src/archive/status.ts) — a
+   * CACHED, synchronous read: wire.ts hands the archiver's `status()`.
+   * Absent ⇒ no `archive` key (readers say "not reported"); a throwing
+   * implementation is swallowed like the other blocks.
+   */
+  archiveStatus?: () => import("./archive/status.js").ArchiveStatus | undefined;
+  /**
    * Seams of the daemon's event-loop watch (L2, src/eventloop.ts):
    * the sampler, the cpu.stat reader, the clock and the evaluation timer.
    * Absent ⇒ the real drift sampler and /sys/fs/cgroup/cpu.stat. The watch
@@ -240,6 +247,10 @@ export interface Daemon {
   /** The daemon's event-loop watch (L2) — its status() is
    * status.json `daemon`. */
   readonly load: DaemonLoadMonitor;
+  /** When the first reconcile pass that completed HEALTHILY (no step error)
+   * ended; null before one has. The archiver starts no work before
+   * it plus its own delay — never on the boot pass. */
+  firstHealthyReconcileAt(): Date | null;
 }
 
 function readWebhookSecret(cfg: Config): string {
@@ -671,6 +682,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   });
 
   let firstReconcileSeen = false;
+  let firstHealthyReconcileAt: Date | null = null;
   // ONE reconcile pass at a time (boot stall). The poll was
   // `every(poll_interval_s, () => void reconcile())` with nothing in between,
   // so a pass that ran past the interval overlapped the next one — three
@@ -750,6 +762,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           `closed=${report.closed.length} captured=${report.captured_comments} ` +
           `corrections=${report.corrections} errors=${report.errors.length}`,
       );
+      if (report.errors.length === 0 && firstHealthyReconcileAt === null)
+        firstHealthyReconcileAt = deps.now ? deps.now() : new Date();
       if (bootFirstPass && report.errors.length === 0 && store.drainState().draining) {
         // The operator's lift: this is the deploy flow's drain completing, so
         // it clears whatever hold stands — a session's included.
@@ -867,6 +881,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     } catch (err) {
       log("event-loop watch read failed (heartbeat continues)", err);
     }
+    let archive: import("./archive/status.js").ArchiveStatus | undefined;
+    try {
+      archive = deps.archiveStatus?.();
+    } catch (err) {
+      log("archive status read failed (heartbeat continues)", err);
+    }
     try {
       writeStatusJson(
         stateDir,
@@ -883,6 +903,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           roundStageBounds,
           memory,
           daemonLoad,
+          archive,
         ),
       );
     } catch (err) {
@@ -901,6 +922,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     cfg,
     outcomes,
     load,
+    firstHealthyReconcileAt: () => firstHealthyReconcileAt,
     reconcile,
     pump,
     retryDueReviewFailures,

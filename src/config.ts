@@ -1733,6 +1733,9 @@ export interface Config {
    * table overrides the keys in `SCAN_PROFILE_KEYS` (`applyProfileScan`,
    * src/profiles.ts) — the profile wins, as for per-lens tuning. */
   scan: ScanConfig;
+  /**: the closed-PR archiver (`src/archive/`). Optional in the file;
+   * the parser fills every key. */
+  archive: ArchiveConfig;
 }
 
 /**
@@ -1915,6 +1918,109 @@ export function parseLevers(raw: Record<string, any>): LeversConfig {
     );
   }
   return cfg;
+}
+
+/** The values `[archive] mode` takes (docs/archiving.md §12). */
+export const ARCHIVE_MODES = ["off", "plan", "on"] as const;
+export type ArchiveMode = (typeof ARCHIVE_MODES)[number];
+
+/**
+ * `[archive]` (docs/archiving.md): closed-PR history out of every
+ * live path into a compressed archive under `<root>/archive/`, nothing of
+ * analysis value deleted. Read by `src/archive/` (the archiver's policy) and
+ * `qcr archive status`.
+ */
+export interface ArchiveConfig {
+  /**
+   *   `off`  — the archiver arms no timer at all;
+   *   `plan` — the SHIPPED value: it computes what it would move (status.json
+   *            `archive`, `qcr status`, `qcr archive status --plan`) and
+   *            writes nothing;
+   *   `on`   — it moves. This build (S1) moves nothing yet, so `on`
+   *            plans exactly as `plan` does.
+   */
+  mode: ArchiveMode;
+  /** Closed PRs' files and webhook deliveries leave the live tree this many
+   * days after the close (clamped 7..3650). */
+  after_days: number;
+  /** The reader-less event kinds leave this many days after their row was
+   * written (clamped 31..3650, so `qcr metrics` d30 stays exact). */
+  events_after_days: number;
+  /** The archiver's own timer (clamped 10..3600 s). */
+  interval_s: number;
+  /** No tick before the daemon's first healthy reconcile plus this (clamped
+   * 0..1440 min). */
+  start_delay_min: number;
+  /** No new file is started after this much of a tick (clamped 1..300 s). */
+  tick_budget_s: number;
+  /** At most this many PRs a tick (clamped 1..100). */
+  max_prs_per_tick: number;
+  /** Input rate cap for compress + verify (clamped 1..200 MB/s). */
+  max_mb_per_s: number;
+  /** Free space kept on both the archive and the state mount (clamped
+   * 0.5..1024 GB). */
+  disk_headroom_gb: number;
+  /** The DB mover's starting batch (clamped 100..2000 rows). */
+  db_batch_rows: number;
+  /** gzip level (clamped 1..9). */
+  gzip_level: number;
+}
+
+export const ARCHIVE_DEFAULTS: Readonly<ArchiveConfig> = Object.freeze({
+  mode: "plan",
+  after_days: 14,
+  events_after_days: 35,
+  interval_s: 60,
+  start_delay_min: 10,
+  tick_budget_s: 20,
+  max_prs_per_tick: 5,
+  max_mb_per_s: 8,
+  disk_headroom_gb: 2,
+  db_batch_rows: 500,
+  gzip_level: 6,
+});
+
+/** Each numeric `[archive]` key's range, and whether it is a whole number. */
+export const ARCHIVE_LIMITS: Readonly<
+  Record<Exclude<keyof ArchiveConfig, "mode">, readonly [min: number, max: number, int: boolean]>
+> = Object.freeze({
+  after_days: [7, 3650, true],
+  events_after_days: [31, 3650, true],
+  interval_s: [10, 3600, true],
+  start_delay_min: [0, 1440, true],
+  tick_budget_s: [1, 300, true],
+  max_prs_per_tick: [1, 100, true],
+  max_mb_per_s: [1, 200, false],
+  disk_headroom_gb: [0.5, 1024, false],
+  db_batch_rows: [100, 2000, true],
+  gzip_level: [1, 9, true],
+});
+
+/**
+ * Parse `[archive]`. An unknown `mode` REFUSES to load (a misspelt `"onn"`
+ * must not quietly mean plan, or off), and so does a key that is not a
+ * number; a number out of its range is CLAMPED into it (`ARCHIVE_LIMITS`).
+ */
+export function parseArchive(raw: Record<string, unknown>): ArchiveConfig {
+  const mode = raw.mode ?? ARCHIVE_DEFAULTS.mode;
+  if (!(ARCHIVE_MODES as readonly unknown[]).includes(mode))
+    throw new Error(
+      `config.toml [archive]: mode must be one of ${ARCHIVE_MODES.map((v) => `"${v}"`).join(", ")} (got ${JSON.stringify(mode)})`,
+    );
+  const out: ArchiveConfig = { ...ARCHIVE_DEFAULTS, mode: mode as ArchiveMode };
+  for (const [key, [min, max, int]] of Object.entries(ARCHIVE_LIMITS) as Array<
+    [Exclude<keyof ArchiveConfig, "mode">, readonly [number, number, boolean]]
+  >) {
+    const v = raw[key];
+    if (v === undefined) continue;
+    const n = typeof v === "bigint" ? Number(v) : v;
+    if (typeof n !== "number" || !Number.isFinite(n))
+      throw new Error(
+        `config.toml [archive]: ${key} must be a number (got ${JSON.stringify(typeof v === "bigint" ? String(v) : v)})`,
+      );
+    out[key] = Math.min(max, Math.max(min, int ? Math.floor(n) : n));
+  }
+  return out;
 }
 
 /** Defaults for [backfill], derived from the already-parsed [github] block. */
@@ -2264,6 +2370,7 @@ export function parseConfig(toml: string): Config {
     slack: parseSlack((raw.slack ?? {}) as Record<string, any>, ops.timezone),
     owner: { ...OWNER_DEFAULTS, ...((raw.owner ?? {}) as Partial<OwnerConfig>) },
     scan: parseScan(raw.scan),
+    archive: parseArchive((raw.archive ?? {}) as Record<string, unknown>),
   };
   validateLensKnobs(cfg);
   const shards = cfg.review.validator_shards;

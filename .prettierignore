@@ -13,7 +13,9 @@ inject/
 verdict/
 commands/
 digest/
-archive/
+# Anchored: an unanchored `archive/` also matched src/archive/, the
+# archiver's source, which must stay formatted like the rest of src/.
+/archive/
 memory/
 wt/
 evidence/

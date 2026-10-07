@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
+import { archiveStatusLine } from "./archive/status.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
@@ -438,6 +439,9 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   // throttling, every time — an absent block (older daemon) and an unmeasured
   // one say so, never "ok".
   lines.push(oneLine(daemonLoadLine(snapshot.daemon)));
+  // the closed-PR archiver, every time — an absent block (older
+  // daemon) says so, and a backlog nobody planned yet is UNKNOWN, never 0.
+  lines.push(oneLine(archiveStatusLine(snapshot.archive)));
   if (snapshot.draining) {
     lines.push(
       `DRAINING${snapshot.draining_since ? ` since ${snapshot.draining_since}` : ""} — ${drainHolderLine(snapshot)} — ` +
@@ -1552,6 +1556,66 @@ export async function cmdOnboard(): Promise<number> {
   });
 }
 
+export const ARCHIVE_USAGE = "usage: qcr archive status [--plan] [--json]";
+
+/** `qcr archive` arguments. An unknown token is refused, so a
+ * mistyped `--plan` cannot quietly print the block alone. */
+export function parseArchiveArgs(rest: readonly string[]): { plan: boolean } {
+  if (rest[0] !== "status") throw new Error(ARCHIVE_USAGE);
+  let plan = false;
+  for (const a of rest.slice(1)) {
+    if (a === "--plan") plan = true;
+    else throw new Error(ARCHIVE_USAGE);
+  }
+  return { plan };
+}
+
+/**
+ * `qcr archive status [--plan] [--json]`: read-only, in this
+ * process. The daemon's status.json `archive` block, the archive ledger
+ * (`archive_prs`) — and with `--plan`, a plan computed HERE, now (tmux asked
+ * in this container; the daemon's in-flight births are not visible from a
+ * CLI, and the daemon re-checks them before anything moves). Moves nothing.
+ */
+async function cmdArchive(rest: readonly string[], json: boolean): Promise<number> {
+  const { plan: wantPlan } = parseArchiveArgs(rest);
+  const cfg = loadConfig();
+  const root = sandboxRoot();
+  const statusPath = join(stateDir(), "status.json");
+  const { archiveLedgerSummary, archiveStatusJson, readArchiveBlockFile, renderArchiveReport } =
+    await import("./archive/report.js");
+  const { block, statusNote, archiveRead } = readArchiveBlockFile(statusPath);
+  const { archivePolicy } = await import("./archive/archiver.js");
+  const store = openStore();
+  try {
+    const ledger = archiveLedgerSummary(store);
+    let plan: import("./archive/plan.js").ArchivePlan | null = null;
+    if (wantPlan) {
+      const { computePlan } = await import("./archive/plan.js");
+      const { Tmux } = await import("./tmux.js");
+      const tmux = new Tmux();
+      plan = await computePlan({
+        store,
+        root,
+        sessionsRoot: join(root, cfg.pi.session_dir),
+        now: () => new Date(),
+        afterDays: cfg.archive.after_days,
+        eventsAfterDays: cfg.archive.events_after_days,
+        liveSessions: () => tmux.listSessionsKnown(),
+      });
+    }
+    const policy = archivePolicy(cfg.archive);
+    if (json)
+      console.log(
+        JSON.stringify(archiveStatusJson({ block, archiveRead, statusNote, ledger, policy, plan })),
+      );
+    else console.log(renderArchiveReport({ block, statusNote, ledger, policy, plan }));
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
 export async function main(argv: string[]): Promise<void> {
   const json = argv.includes("--json");
   argv = argv.filter((a) => a !== "--json");
@@ -1661,6 +1725,10 @@ export async function main(argv: string[]): Promise<void> {
       process.exitCode = await cmdDrain(rest);
       return;
     }
+    case "archive": {
+      process.exitCode = await cmdArchive(rest, json);
+      return;
+    }
     case "install": {
       process.exitCode = cmdInstall(rest);
       return;
@@ -1671,7 +1739,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
+        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive status [--plan]|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

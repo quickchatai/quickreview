@@ -1433,6 +1433,13 @@ export class PiSessionManager implements SessionHooks {
     return written;
   }
 
+  /** Is a session birth for `pr` in flight right now? Synchronous — the
+   * archiver's eligibility (§7.1) re-reads it immediately before
+   * anything of the PR's leaves the live tree. */
+  birthInFlight(pr: number): boolean {
+    return this.prSessionBirths.has(pr);
+  }
+
   /** SessionHooks: is the PR's tmux session alive? Read by the
    * stuck-round detector (verdicts.ts checkDeadlines) — the same tmux
    * has-session signal every other lifecycle decision here uses. */

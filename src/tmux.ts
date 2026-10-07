@@ -75,6 +75,13 @@ export async function runOrThrow(
   return res;
 }
 
+/** `Tmux.listSessionsKnown`'s default bound: a tmux that has not answered by
+ * then is killed and read as "could not ask" (null). */
+export const LIST_SESSIONS_TIMEOUT_MS = 10_000;
+
+/** The two tmux answers that mean "no server running", and nothing else. */
+const NO_SERVER = /no server running|error connecting to .*\(No such file or directory\)/i;
+
 export interface TmuxOptions {
   exec?: ExecFn;
   /** Binary name — overridable for the container wrapper. */
@@ -98,6 +105,36 @@ export class Tmux {
   async listSessions(): Promise<string[]> {
     const res = await this.exec(this.bin, ["list-sessions", "-F", "#{session_name}"]);
     if (res.code !== 0) return []; // "no server running on ..." is not an error here
+    return res.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+  }
+
+  /**
+   * Session names — or null when tmux could not be asked: its binary would
+   * not start, it did not answer inside `timeoutMs` (killed), or it failed for
+   * any reason but having no server. `listSessions` folds every failure into
+   * []; a caller that must never read "could not ask" as "none alive" — the
+   * archiver's eligibility — reads this one.
+   *
+   * Only two answers mean "no server, so no sessions" (the `rollover.ts`
+   * kill reads the same two): `no server running on <sock>` (a stale socket,
+   * ECONNREFUSED) and `error connecting to <sock> (No such file or
+   * directory)` (no socket at all). tmux prints the same `error connecting
+   * to` prefix for EVERY other connect errno — Permission denied, EAGAIN —
+   * and those are "could not ask", never "none alive".
+   */
+  async listSessionsKnown(timeoutMs = LIST_SESSIONS_TIMEOUT_MS): Promise<string[] | null> {
+    let res: ExecResult;
+    try {
+      res = await this.exec(this.bin, ["list-sessions", "-F", "#{session_name}"], { timeoutMs });
+    } catch {
+      return null;
+    }
+    // A negative code is a kill (the timeout) or no exit status at all.
+    if (res.code < 0) return null;
+    if (res.code !== 0) return NO_SERVER.test(res.stderr) ? [] : null;
     return res.stdout
       .split("\n")
       .map((l) => l.trim())

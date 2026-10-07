@@ -781,6 +781,28 @@ session_drain_budget_min_per_day = 90      # total session-drain minutes per day
 session_pause_max_min = 240                # longest single session pause of one PR
 session_pause_budget_min_per_day = 480     # total session-pause minutes per PR per day (>= the cap)
 
+# Archiving (docs/archiving.md): closed-PR history leaves every live
+# path for a compressed archive under <root>/archive/ — nothing of analysis
+# value is deleted, only proven duplicates. The archiver runs on its own timer,
+# never before the first healthy reconcile + start_delay_min, and holds while
+# draining, while the event loop is stalled or the CPU starved, and while
+# either mount's free space is low or unknown. "plan" (the shipped value)
+# computes what it WOULD move — status.json `archive`, `qcr status`,
+# `qcr archive status --plan` — and writes nothing. This build plans only:
+# "on" moves nothing yet. All optional — these are the defaults.
+[archive]
+mode = "plan"            # off | plan | on — an unknown value refuses to load
+after_days = 14          # closed PRs' files and webhook deliveries (clamped 7..3650)
+events_after_days = 35   # the reader-less event kinds (clamped 31..3650; keeps qcr metrics d30 exact)
+interval_s = 60          # the archiver's own timer (clamped 10..3600)
+start_delay_min = 10     # after the first healthy reconcile (clamped 0..1440)
+tick_budget_s = 20       # no new file is started after this (clamped 1..300)
+max_prs_per_tick = 5     # (clamped 1..100)
+max_mb_per_s = 8         # input rate cap for compress + verify (clamped 1..200)
+disk_headroom_gb = 2     # free space kept on both mounts (clamped 0.5..1024)
+db_batch_rows = 500      # the DB mover's starting batch; adapts 100..2000 to stay <= 25 ms
+gzip_level = 6           # (clamped 1..9)
+
 # The companion's whole-repo scan — read only inside the companion,
 # never on the VM. Stage 1 runs `pass-scan` over every unit of the saved unit
 # cut (tests, migrations, lockfiles and prose never). The FIRST scan at these

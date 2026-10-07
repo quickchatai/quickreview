@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExecError, Tmux, runOrThrow } from "../src/tmux.js";
+import { ExecError, LIST_SESSIONS_TIMEOUT_MS, Tmux, runOrThrow } from "../src/tmux.js";
 import type { ExecFn, ExecOpts, ExecResult } from "../src/tmux.js";
 
 interface Call {
@@ -37,6 +37,51 @@ describe("Tmux", () => {
       stderr: "no server running on /tmp/tmux-1000/default",
     }));
     expect(await new Tmux({ exec }).listSessions()).toEqual([]);
+  });
+
+  describe("listSessionsKnown — `could not ask` is null, never `none alive`", () => {
+    const known = (res: Partial<ExecResult>): Promise<string[] | null> =>
+      new Tmux({ exec: fakeExec(() => res).exec }).listSessionsKnown();
+
+    it("a clean answer is the trimmed names, asked with a bounded timeout", async () => {
+      const { exec, calls } = fakeExec(() => ({ stdout: " pr-1 \noverseer\n\n" }));
+      expect(await new Tmux({ exec }).listSessionsKnown()).toEqual(["pr-1", "overseer"]);
+      expect(calls[0]!.args).toEqual(["list-sessions", "-F", "#{session_name}"]);
+      expect(calls[0]!.opts?.timeoutMs).toBe(LIST_SESSIONS_TIMEOUT_MS);
+      await new Tmux({ exec }).listSessionsKnown(250);
+      expect(calls[1]!.opts?.timeoutMs).toBe(250);
+    });
+
+    it("the two `no server` answers are [] — a stale socket and no socket at all", async () => {
+      expect(await known({ code: 1, stderr: "no server running on /x\n" })).toEqual([]);
+      expect(
+        await known({ code: 1, stderr: "error connecting to /x (No such file or directory)\n" }),
+      ).toEqual([]);
+    });
+
+    it("every other connect errno is null — Permission denied, EAGAIN", async () => {
+      expect(
+        await known({ code: 1, stderr: "error connecting to /x (Permission denied)\n" }),
+      ).toBeNull();
+      expect(
+        await known({
+          code: 1,
+          stderr: "error connecting to /x (Resource temporarily unavailable)\n",
+        }),
+      ).toBeNull();
+    });
+
+    it("any other failure is null — an unknown stderr, a kill (the timeout), an exec that throws", async () => {
+      expect(await known({ code: 1, stderr: "lost server\n" })).toBeNull();
+      expect(await known({ code: 1, stderr: "" })).toBeNull();
+      // nodeExec resolves a SIGKILLed child (its timeout) with code -1.
+      expect(await known({ code: -1, stderr: "" })).toBeNull();
+      expect(await known({ code: -1, stderr: "no server running on /x" })).toBeNull();
+      const throwing: ExecFn = async () => {
+        throw Object.assign(new Error("spawn tmux ENOENT"), { code: "ENOENT" });
+      };
+      expect(await new Tmux({ exec: throwing }).listSessionsKnown()).toBeNull();
+    });
   });
 
   it("checks session existence with an exact-match target", async () => {
