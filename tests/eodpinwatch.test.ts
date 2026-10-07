@@ -380,6 +380,30 @@ describe("degradation is 'could not check', never 'changed'", () => {
     await expect(whole()).resolves.toEqual([pinned]);
   });
 
+  it("reads the pinned AREA when the store has one (S5) — the directory every round's head reads", async () => {
+    const pinned = { ...entry("b1", 0, "h1"), pinned: true };
+    let sweeps = 0;
+    let invalidated = 0;
+    const reader = readPinnedFromSweep({
+      invalidate: () => {
+        invalidated += 1;
+      },
+      sweep: async () => {
+        sweeps += 1;
+        return { entries: [], unread: ["a full sweep must not be needed"] };
+      },
+      pinnedSweep: async () => ({ entries: [pinned], unread: [] }),
+    });
+    await expect(reader()).resolves.toEqual([pinned]);
+    expect(sweeps).toBe(0);
+    expect(invalidated).toBe(1);
+    const partial = readPinnedFromSweep({
+      sweep: async () => ({ entries: [], unread: [] }),
+      pinnedSweep: async () => ({ entries: [], unread: ["read pinned/x.md: 500"] }),
+    });
+    await expect(partial()).rejects.toThrow(/not fully readable/);
+  });
+
   it("degrades on a hung read without ever claiming a change", async () => {
     const h = harness(
       [() => new Promise<readonly PinnedEntryView[]>(() => {}), [entry("b1", 0, "h1")]],

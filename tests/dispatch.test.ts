@@ -2200,6 +2200,59 @@ describe("round-memory seeding", () => {
   );
 
   it(
+    "publishes the round's own context query as the PR session's recall hint, before memory is asked (S5)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(88, "2026-08-20T09:00:00Z");
+      adapter.files.set(88, [file("backend/app/views.py"), file("backend/app/urls.py")]);
+      const { hooks, orders } = recordingHooks();
+      const asm = new Assembler();
+      const published: Array<{ pr: number; query: string; asked: number }> = [];
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: {
+          assembler: asm,
+          publishQuery: (pr, query) => published.push({ pr, query, asked: asm.contexts }),
+        },
+      });
+      expect(orders).toHaveLength(1);
+      // The same query the round's context block is asked for — PR-derived
+      // (title + diff shape), published before the store is consulted.
+      expect(published).toEqual([{ pr: 88, query: asm.queries[0]!, asked: 0 }]);
+      expect(published[0]!.query).toContain("backend/app");
+    },
+  );
+
+  it(
+    "a throwing recall-hint publisher costs nothing: the round still seeds and dispatches",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(89, "2026-08-20T09:00:00Z");
+      adapter.files.set(89, [file("a.ts")]);
+      const { hooks, orders } = recordingHooks();
+      const asm = new Assembler();
+      await dispatchOnce({
+        cfg: baseCfg,
+        store,
+        adapter,
+        hooks,
+        memory: {
+          assembler: asm,
+          publishQuery: () => {
+            throw new Error("disk full");
+          },
+        },
+      });
+      expect(orders).toHaveLength(1);
+      expect(asm.contexts).toBe(1);
+      expect(memoryEvents(89)).toHaveLength(1);
+    },
+  );
+
+  it(
     "a throwing health observer costs nothing: the round still dispatches",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {

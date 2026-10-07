@@ -1234,11 +1234,13 @@ export interface MemoryConfig {
   /** An owed signal older than this wakes `memory_write_backlog` (and again
    * every `rewake_h` while the backlog lasts). */
   write_backlog_after_min: number;
-  /** Which OpenViking scopes the round's context search may draw from, and how
-   * many items each may contribute. Keys must be server quota buckets;
-   * `src/openviking/client.ts` drops unknown ones with a gap. An EMPTY map
-   * means "no quotas" — the server's own balance across every scope it has,
-   * which is not what a review round wants (see the comment in config.toml). */
+  /** How many items the round's context search may draw from each area it
+   * searches. Since S5 a round searches `experiences/` ONLY
+   * (`ROUND_SEARCH_AREAS`, src/memory/layout.ts): any other key here is
+   * ignored with one log line (src/openviking/context.ts
+   * `roundSearchQuotas`), and a missing or non-positive `experiences` count
+   * takes the default — the search is never left to the server's own balance
+   * across every scope (see the comment in config.toml). */
   context_quotas: Record<string, number>;
 }
 
@@ -1252,7 +1254,7 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   incident_ticket_after_min: 120,
   backfill_interval_s: 60,
   write_backlog_after_min: 120,
-  context_quotas: { experiences: 24, resources: 8 },
+  context_quotas: { experiences: 24 },
 };
 
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {

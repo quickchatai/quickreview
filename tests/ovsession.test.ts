@@ -16,6 +16,7 @@ import {
   openVikingSessionLifecycle,
   ovSessionIdForPr,
   ovcliConfPathIn,
+  ovRecallHintPathIn,
   ovRetiredPathIn,
   OV_SESSION_SWEEP_MAX,
   planStaleOvSessions,
@@ -25,9 +26,11 @@ import {
   readServerRootKey,
   renderOvcliConf,
   writeOvcliConf,
+  writeRecallHint,
   writeRetiredUris,
 } from "../src/memory/ovsession.js";
 import { readRetiredUris } from "../extensions/vendor/openviking-pi/qcr-recall.js";
+import { readRecallHint } from "../extensions/vendor/openviking-pi/qcr-hint.js";
 
 let dir: string;
 
@@ -491,6 +494,64 @@ describe("the retired-URIs file (S3)", () => {
     expect(readRetiredUrisFile(path)).toBeNull();
     writeFileSync(path, JSON.stringify({ uris: ["/etc/passwd", 7, "viking://user/x.md"] }));
     expect(readRetiredUrisFile(path)).toEqual(["viking://user/x.md"]);
+  });
+});
+
+// ---- S5: the PR session's recall hint ---------------------------------
+
+describe("the recall hint (S5)", () => {
+  it("lives beside ovcli.conf, one file per PR session, and round-trips into what the extension reads", () => {
+    const home = join(dir, "pihome");
+    const path = ovRecallHintPathIn(home, "pr-42");
+    expect(path).toBe(join(home, ".openviking", "recall-hints", "pr-42.json"));
+    const query = "fix(auth): redirect login — backend/appquickreview .py";
+    expect(
+      writeRecallHint(
+        path,
+        { query, areas: ["experiences"] },
+        { now: () => new Date("2026-10-07T12:00:00Z") },
+      ),
+    ).toBe(true);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      query,
+      areas: ["experiences"],
+      written_at: "2026-10-07T12:00:00.000Z",
+    });
+    // The DAEMON's writer and the EXTENSION's reader agree on the shape.
+    expect(readRecallHint(path)).toEqual({ query, areas: ["experiences"] });
+    // Rewritten whole at the next round.
+    writeRecallHint(path, { query: "another round", areas: ["experiences"] });
+    expect(readRecallHint(path)?.query).toBe("another round");
+  });
+
+  it("a disk that refuses costs the hint, never a throw", () => {
+    const blocker = join(dir, "file");
+    writeFileSync(blocker, "x");
+    const logs: string[] = [];
+    expect(
+      writeRecallHint(
+        join(blocker, "sub", "pr-1.json"),
+        { query: "q", areas: ["experiences"] },
+        {
+          log: (m) => logs.push(m),
+        },
+      ),
+    ).toBe(false);
+    expect(logs.join(" ")).toContain("could not publish the recall hint");
+  });
+
+  it("is named on a PR session's environment only", () => {
+    const pr = openVikingSessionEnv({
+      baseUrl: "http://h:1933",
+      peerId: "pr-42",
+      cliConfigPath: "/c",
+      recallHintFile: "/home/review/.openviking/recall-hints/pr-42.json",
+    });
+    expect(pr.QCR_OV_RECALL_HINT_FILE).toBe("/home/review/.openviking/recall-hints/pr-42.json");
+    expect(
+      openVikingSessionEnv({ baseUrl: "http://h:1933", peerId: "overseer", cliConfigPath: "/c" })
+        .QCR_OV_RECALL_HINT_FILE,
+    ).toBeUndefined();
   });
 });
 

@@ -23,6 +23,15 @@ from this recipe.
 > …)` takes instead of `memState`; and the `changes` tab is the CHANGED pane of
 > `[7] feedback`. `docs/tui.md` is the current vocabulary.
 
+> **Added 2026-10-07 (S5).** `memory_pin` — `{"entry": "<TUI id or
+> viking:// URI>", "pin": true|false}` — pins or unpins one memory entry. It is
+> the channel's one ASYNCHRONOUS verb: `TuiDriver.memoryPin` returns a promise
+> (a fresh read through the TUI's `MemoryStore`, then the `pin`/`unpin` op,
+> which MOVES the entry into or out of `preferences/pinned/`),
+> `executeTuiAction` returns it, and `processTuiActions` awaits it, so the
+> result file carries the store's answer and a refusal is a failed result. It
+> is a memory write, not a keystroke: no tab switch, no `prep()`.
+
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
 in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /

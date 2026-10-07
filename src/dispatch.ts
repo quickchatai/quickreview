@@ -415,6 +415,12 @@ async function seedRoundMemory(
   if (!seed) return MEMORY_LESS;
   const log = deps.log ?? (() => {});
   const query = roundContextQuery({ title: order.title, files });
+  // The session's own recall searches for the same thing (S5).
+  try {
+    seed.publishQuery?.(order.pr, query);
+  } catch (err) {
+    log(`dispatch: #${order.pr} recall hint not published (ignored)`, err);
+  }
   const timeoutMs = seed.timeoutMs ?? ROUND_CONTEXT_DEFAULTS.timeoutMs;
   let mem: RoundMemory;
   try {

@@ -273,25 +273,20 @@ incident_ticket_after_min = 120
 # the daemon's next start and once a day.
 backfill_interval_s = 60
 write_backlog_after_min = 120
-# WHICH scopes the round's one context search may draw from, and how many items
-# each may contribute. `context_tokens` above is the budget; this is the
-# corpus — the two bind independently.
+# HOW MANY items the round's one context search may draw from each area it
+# searches. `context_tokens` above is the budget; this is the corpus — the two
+# bind independently.
 #
-# It is not optional tuning. Measured against the live server on 2026-08-21
-# with 14 imported entries: with NO quotas the server balances the block across
-# every scope it holds, so the round got ONE memory entry and spent the rest of
-# its budget on the built-in `skills`/`resources` OVERVIEW blurbs — boilerplate
-# that says what those scopes are for, not what the reviewer learned. Quotaing
-# `experiences` in made all 14 reachable and left `context_tokens` as the only
-# binding constraint, which is the intended behaviour.
-#
-# Both listed buckets are deliberate: `experiences` is where every reviewer
-# memory entry lands (the openviking `default_category`), and `resources` is the
-# EOD curator's sanctioned promotion target for objective repo facts (the
-# ratified `prompts/eod-sweep.md` reseed). Counts are generous on purpose —
-# their job is to name the scopes, and `context_tokens` decides how much
-# actually rides the prompt. Unknown keys are dropped by the client with a gap.
-context_quotas = { experiences = 24, resources = 8 }
+# Since S5 a round searches `experiences/` ONLY — the curated lessons
+# of the §1 layout. Ops notes and feedback events live in `events/`,
+# the owner's unpinned instructions in `preferences/` (the pinned ones ride the
+# round's guaranteed head in full), and none of them belongs in a round's
+# recalled context; nor do the built-in `skills`/`resources` overview blurbs
+# that took most of the block when no quotas were set (measured 2026-08-21).
+# Any other key here is IGNORED with one log line, and `experiences` defaults
+# to 24 when it is missing. The count is generous on purpose — its job is to
+# name the area, and `context_tokens` decides how much rides the prompt.
+context_quotas = { experiences = 24 }
 
 [openviking]
 # OpenViking (github.com/volcengine/OpenViking) — the review system's context

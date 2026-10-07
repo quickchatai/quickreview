@@ -1,4 +1,4 @@
-// The vendored OpenViking pi extension — provenance + the seven
+// The vendored OpenViking pi extension — provenance + the eight
 // patches. Two kinds of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
@@ -16,10 +16,10 @@
 //
 // A failure here means the fork drifted, not that the test is stale. Read
 // extensions/vendor/openviking-pi/README.md before "fixing" anything.
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import { isLeafProcess, LEAF_ARGV_FLAGS } from "../extensions/vendor/openviking-pi/qcr-leaf.js";
 import { loadConfig, withoutRootKey } from "../extensions/vendor/openviking-pi/config.js";
@@ -76,6 +76,15 @@ import {
 } from "../extensions/vendor/openviking-pi/qcr-recall.js";
 import { parseHashTags } from "../src/memory/eventtags.js";
 import { OVClient } from "../extensions/vendor/openviking-pi/client.js";
+import {
+  DEFAULT_AREA_QUOTA,
+  MAX_HINT_QUERY_CHARS,
+  RECALL_HINT_FILE_ENV,
+  inAreas,
+  readRecallHint,
+  scopeGuard,
+} from "../extensions/vendor/openviking-pi/qcr-hint.js";
+import { ROUND_SEARCH_AREAS } from "../src/memory/layout.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const FORK = join(ROOT, "extensions", "vendor", "openviking-pi");
@@ -131,7 +140,7 @@ describe("provenance and licence", () => {
   });
 
   it("ships the patch series it claims to", () => {
-    expect(upstream.patches.length).toBe(8); // 0000 scaffolding + seven numbered
+    expect(upstream.patches.length).toBe(9); // 0000 scaffolding + eight numbered
     for (const name of upstream.patches) {
       const patch = read(join("patches", name));
       expect(patch.length).toBeGreaterThan(0);
@@ -1458,7 +1467,7 @@ describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
   });
 
   it("ships the patch, recorded in the series, with its markers", () => {
-    expect(upstream.patches.at(-1)).toBe("0007-bounded-recall-no-commit.patch");
+    expect(upstream.patches).toContain("0007-bounded-recall-no-commit.patch");
     const patch = read(join("patches", "0007-bounded-recall-no-commit.patch"));
     expect(patch).toContain("QCR PATCH 7");
     for (const f of [
@@ -1473,5 +1482,209 @@ describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
     }
     expect(read("NOTICE")).toContain("7. The context hook waits at most 500 ms for recall");
     expect(read("README.md")).toContain("### 0007 — bounded recall, no commit");
+  });
+});
+
+// ---- PATCH 8 (S5) ----------------------------------------------------
+
+describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas", () => {
+  const ROOT = "viking://user/reviewer/memories";
+  const hintDirs: string[] = [];
+  afterAll(() => {
+    for (const d of hintDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const hintFile = (body: unknown) => {
+    const d = mkdtempSync(join(tmpdir(), "qcr-hint-"));
+    hintDirs.push(d);
+    const p = join(d, "pr-42.json");
+    writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body));
+    return p;
+  };
+  const contextBody = (extra: Record<string, unknown> = {}) => ({
+    method: "POST",
+    body: JSON.stringify({ query: "q", mode: "context", purpose: "coding", ...extra }),
+  });
+  const seenBodies: Array<Record<string, unknown>> = [];
+  const answering =
+    (result: Record<string, unknown>) => async (_path: string, init?: { body?: string }) => {
+      if (init?.body) seenBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return { ok: true, status: 200, result };
+    };
+
+  it("reads the daemon's hint, and fails closed to the old behaviour on anything less", () => {
+    expect(RECALL_HINT_FILE_ENV).toBe("QCR_OV_RECALL_HINT_FILE");
+    expect(
+      readRecallHint(hintFile({ query: "  fix auth  — backend .py ", areas: ["experiences"] })),
+    ).toEqual({
+      query: "fix auth — backend .py",
+      areas: ["experiences"],
+    });
+    // The daemon's areas are the extension's: one constant, two readers.
+    expect(readRecallHint(hintFile({ query: "q", areas: ROUND_SEARCH_AREAS }))?.areas).toEqual([
+      ...ROUND_SEARCH_AREAS,
+    ]);
+    expect(readRecallHint(undefined)).toBeNull();
+    expect(readRecallHint("")).toBeNull();
+    expect(readRecallHint("/nonexistent/qcr-hint.json")).toBeNull();
+    expect(readRecallHint(hintFile("{ not json"))).toBeNull();
+    expect(readRecallHint(hintFile({ query: "", areas: ["experiences"] }))).toBeNull();
+    expect(readRecallHint(hintFile({ query: "q" }))).toBeNull();
+    expect(readRecallHint(hintFile({ query: "q", areas: ["../x", 7, "Events"] }))).toBeNull();
+    const long = readRecallHint(hintFile({ query: "x".repeat(5000), areas: ["experiences"] }));
+    expect(long?.query.length).toBe(MAX_HINT_QUERY_CHARS);
+  });
+
+  it("scopes a context search to the hint's areas and drops what comes back from elsewhere", async () => {
+    seenBodies.length = 0;
+    const guarded = scopeGuard(
+      answering({
+        entries: [
+          {
+            uri: `${ROOT}/experiences/l.md`,
+            category: "experiences",
+            score: 0.7,
+            detail: "full",
+            text: "a lesson",
+          },
+          {
+            uri: `${ROOT}/events/e.md`,
+            category: "events",
+            score: 0.7,
+            detail: "full",
+            text: "an ops note",
+          },
+          {
+            uri: "viking://resources",
+            category: "resources",
+            score: 0.6,
+            detail: "overview",
+            text: "blurb",
+          },
+        ],
+        rendered: "server block",
+        digest: "d",
+      }),
+      () => ["experiences"],
+    );
+    const res = await guarded("/api/v1/search/search", contextBody({ limit: 7 }));
+    expect(seenBodies[0]!["quotas"]).toEqual({ experiences: 7 });
+    expect(res.result.entries.map((e: { uri: string }) => e.uri)).toEqual([
+      `${ROOT}/experiences/l.md`,
+    ]);
+    expect(res.result.rendered).toContain("a lesson");
+    expect(res.result.rendered).not.toContain("ops note");
+    expect(res.result.digest).toBe("");
+    // The /search/recall preset is scoped the same way, default count.
+    seenBodies.length = 0;
+    await guarded("/api/v1/search/recall", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", quotas: { events: 5 } }),
+    });
+    expect(seenBodies[0]!["quotas"]).toEqual({ experiences: DEFAULT_AREA_QUOTA });
+  });
+
+  it("leaves list-mode search alone, filters the raw find, and does nothing without a scope", async () => {
+    seenBodies.length = 0;
+    const list = scopeGuard(answering({ entries: [] }), () => ["experiences"]);
+    await list("/api/v1/search/search", {
+      method: "POST",
+      body: JSON.stringify({ query: "q", mode: "list" }),
+    });
+    expect(seenBodies[0]!["quotas"]).toBeUndefined();
+    const find = scopeGuard(
+      answering({
+        memories: [{ uri: `${ROOT}/experiences/a.md` }, { uri: `${ROOT}/preferences/b.md` }],
+        resources: [{ uri: "viking://resources/x" }],
+        skills: [{ uri: "viking://agent/skills/y" }],
+      }),
+      () => ["experiences"],
+    );
+    const found = await find("/api/v1/search/find", { method: "POST", body: "{}" });
+    expect(found.result.memories).toEqual([{ uri: `${ROOT}/experiences/a.md` }]);
+    expect(found.result.resources).toEqual([]);
+    expect(found.result.skills).toEqual([]);
+    seenBodies.length = 0;
+    const open = scopeGuard(
+      answering({ entries: [{ uri: `${ROOT}/events/e.md`, text: "x" }] }),
+      () => null,
+    );
+    const res = await open("/api/v1/search/search", contextBody());
+    expect(seenBodies[0]!["quotas"]).toBeUndefined();
+    expect(res.result.entries).toHaveLength(1);
+    expect(inAreas(`${ROOT}/experiences/x.md`, ["experiences"])).toBe(true);
+    expect(inAreas("viking://resources", ["experiences"])).toBe(false);
+  });
+
+  it("the recall manager asks with the hint's query, inside its areas, on PATCH 7's budget", async () => {
+    const seen: Array<{ path: string; body: Record<string, unknown> | undefined }> = [];
+    const client = {
+      async fetchJSON(path: string, init?: { body?: string }) {
+        seen.push({
+          path,
+          body: init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : undefined,
+        });
+        return {
+          ok: true,
+          status: 200,
+          result: {
+            entries: [
+              {
+                uri: `${ROOT}/experiences/l.md`,
+                category: "experiences",
+                score: 0.7,
+                detail: "full",
+                text: "lesson for this PR",
+              },
+              {
+                uri: `${ROOT}/events/e.md`,
+                category: "events",
+                score: 0.7,
+                detail: "full",
+                text: "ops noise",
+              },
+            ],
+            rendered: "server rendering",
+            digest: "",
+            stats: {},
+          },
+        };
+      },
+    } as unknown as ConstructorParameters<typeof RecallManager>[0];
+    const recall = new RecallManager(client, loadConfig(FORK), () => "pr-42");
+    recall.queueSearch("fix auth redirect — backend/app .py", ["experiences"]);
+    const block = await recall.searchPending(RECALL_WAIT_MS);
+    expect(seen[0]!.path).toBe("/api/v1/search/search");
+    expect(seen[0]!.body!["query"]).toBe("fix auth redirect — backend/app .py");
+    expect(Object.keys(seen[0]!.body!["quotas"] as object)).toEqual(["experiences"]);
+    expect(block).toContain("lesson for this PR");
+    expect(block).not.toContain("ops noise");
+    // Without a scope, the next recall is upstream's, unscoped.
+    seen.length = 0;
+    recall.queueSearch("an overseer prompt");
+    await recall.searchPending(RECALL_WAIT_MS);
+    expect(seen[0]!.body!["quotas"]).toBeUndefined();
+  });
+
+  it("index.ts reads the hint for every prompt and queues ITS query and areas", () => {
+    const index = code("index.ts");
+    expect(index).toContain("readRecallHint(process.env[RECALL_HINT_FILE_ENV])");
+    expect(index).toContain(
+      "recall.queueSearch(hint ? hint.query : event.prompt, hint ? hint.areas : null);",
+    );
+    expect(index.match(/queueSearch\(/g)).toHaveLength(1);
+    // PATCH 7's budget is untouched.
+    expect(index).toContain("await recall.searchPending(RECALL_WAIT_MS);");
+    expect(code("recall.ts")).toContain("scopeGuard(");
+  });
+
+  it("ships the patch, recorded LAST in the series, with its markers", () => {
+    expect(upstream.patches.at(-1)).toBe("0008-pr-derived-recall.patch");
+    const patch = read(join("patches", "0008-pr-derived-recall.patch"));
+    expect(patch).toContain("QCR PATCH 8");
+    for (const f of ["qcr-hint.ts", "recall.ts", "index.ts", "NOTICE", "README.md"]) {
+      expect(patch).toContain(`b/extensions/vendor/openviking-pi/${f}`);
+    }
+    expect(read("NOTICE")).toContain("8. A review session's per-prompt recall searches");
+    expect(read("README.md")).toContain("### 0008 — PR-derived recall");
   });
 });

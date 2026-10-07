@@ -489,6 +489,7 @@ cheap.
 | `tui [pr]` | the operator board (`src/tui/`) |
 | `companion <up\|down\|status\|rebuild>` | the local companion container lifecycle |
 | `memory reembed [--user <name>…]` | re-embed a memory namespace after an embedder change |
+| `memory relayout [--plan\|--apply] [--user <name>]` | sort a namespace into the §1 layout — print the plan, or carry it out (S5; operator-run, idempotent, never a delete) |
 | `backfill [--dry-run] [--limit <n>]` | import review history into the state store (read-only against GitHub) |
 | `checklist` | the cutover checklist harness (`src/checklist.ts`) |
 | `compare <pr…>` | dry-run review comparison (`src/compare.ts`) |

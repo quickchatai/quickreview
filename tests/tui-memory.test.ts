@@ -312,10 +312,14 @@ describe("TuiMemoryStore — both user trees", () => {
     const bug = start.find((e) => e.text.includes("guard 2"))!;
     expect((await store.apply({ op: "pin", ...refOf(bug) })).ok).toBe(true);
     let entries = await store.read();
-    const pinned = entries.find((e) => e.id === bug.id)!;
+    // Pin MOVES the entry into the pinned area (S5), in its own tree.
+    const name = bug.id.slice(bug.id.lastIndexOf("/") + 1);
+    const pinnedId = `reviewer:preferences/pinned/${name}`;
+    expect(entries.some((e) => e.id === bug.id)).toBe(false);
+    const pinned = entries.find((e) => e.id === pinnedId)!;
     expect(pinned.pinned).toBe(true);
     expect(pinned.tags).toContain("pinned");
-    expect(timelineOrder(entries)[0]!.id).toBe(bug.id); // pinned float to the head
+    expect(timelineOrder(entries)[0]!.id).toBe(pinnedId); // pinned float to the head
 
     const other = entries.find((e) => e.id.startsWith("companion:"))!;
     expect((await store.apply({ op: "retire", ...refOf(other) })).ok).toBe(true);
@@ -323,9 +327,13 @@ describe("TuiMemoryStore — both user trees", () => {
     expect(entries.some((e) => e.id === other.id)).toBe(false);
 
     expect(
-      (await store.apply({ op: "unpin", ...refOf(entries.find((e) => e.id === bug.id)!) })).ok,
+      (await store.apply({ op: "unpin", ...refOf(entries.find((e) => e.id === pinnedId)!) })).ok,
     ).toBe(true);
-    expect((await store.read()).find((e) => e.id === bug.id)!.pinned).toBe(false);
+    // …and unpin moves it back where it came from.
+    entries = await store.read();
+    expect(entries.some((e) => e.id === pinnedId)).toBe(false);
+    expect(entries.find((e) => e.id === bug.id)!.pinned).toBe(false);
+    expect(entries.find((e) => e.id === bug.id)!.text).toBe(bug.text);
   });
 
   it("a verb addressed at no known namespace is refused, not misrouted", async () => {

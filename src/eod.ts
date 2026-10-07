@@ -191,11 +191,17 @@ export function renderEodPrompt(
   date: string,
   dayContext?: string,
   identity: Readonly<TemplateVars> = NEUTRAL_IDENTITY_VARS,
+  memoryLayout?: string,
 ): string {
-  const rendered = render(stripModelDocs(template), { ...identity, date });
-  if (!dayContext?.trim()) return rendered;
+  let out = render(stripModelDocs(template), { ...identity, date });
+  // where each kind of memory entry lives — the frozen seed never
+  // said, so the curator learns the §1 layout here. Not digest
+  // material: its own section, before the lines the digest carries.
+  if (memoryLayout?.trim())
+    out = `${out.replace(/\n*$/, "\n")}\n## Reviewer memory layout\n\n${memoryLayout.trim()}\n`;
+  if (!dayContext?.trim()) return out;
   return (
-    `${rendered.replace(/\n*$/, "\n")}\n` +
+    `${out.replace(/\n*$/, "\n")}\n` +
     `## Daemon-measured context for ${date}\n\n` +
     `Carry these lines into today's digest verbatim (under Spend):\n\n` +
     `${dayContext.trim()}\n`
@@ -219,6 +225,9 @@ export interface EodTimerDeps {
    * sweep carries them into the digest (the cancellation summary).
    * A throw here never loses the sweep: the prompt just goes out bare. */
   dayContext?: (date: string) => string;
+  /** The memory layout the curator writes into (S5,
+   * `MEMORY_LAYOUT_NOTE`), rendered after the seed in its own section. */
+  memoryLayout?: string;
   /** Deploy-window drain (2026-08-25): when this returns true at fire time
    * the sweep is DEFERRED (S2 — it used to be skipped for the day):
    * `onHeld` fires, the day joins the `deferred` set, and it fires once this
@@ -388,7 +397,7 @@ export function startEodTimer(deps: EodTimerDeps): EodTimer {
       if (stopped) return "stopped";
       try {
         await deps.injectOverseer(
-          renderEodPrompt(deps.readPrompt(), date, context, deps.identity),
+          renderEodPrompt(deps.readPrompt(), date, context, deps.identity, deps.memoryLayout),
           date,
         );
       } catch (err) {

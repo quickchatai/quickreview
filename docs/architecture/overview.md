@@ -42,7 +42,7 @@ front of that; the four supported ingress shapes are in
 
 | surface | entry point | what it is |
 |---|---|---|
-| `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `attach`, `drain`, `onboard`, `companion`, `memory reembed` |
+| `qcr` CLI | `scripts/qcr` → `src/cli.ts` | read-only over `state/` — `status`, `today`, `why <pr>`, `spend`, `metrics`, `events`, plus `attach`, `drain`, `onboard`, `companion`, `memory reembed`, `memory relayout` |
 | the TUI | `qcr tui` → `src/tui/` | the operator board, memory management, deploy and metrics tabs; reaches a remote daemon over ssh or a local one over Docker per `config.toml [tui] target`. See [tui.md](tui.md) and [../tui.md](../tui.md) |
 | the companion | `src/tui/companion.ts`, `docker/companion/` | a local pi session beside the TUI, for asking questions about the running system; it reaches the daemon only by injecting into the overseer |
 | Slack concierge | `src/slack/` | optional; a Socket Mode client (`src/slack/socket.ts`) with a router, reply path and policy layer over one public channel |

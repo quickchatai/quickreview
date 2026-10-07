@@ -401,6 +401,63 @@ export function writeRetiredUris(
   }
 }
 
+/** Where the daemon publishes a PR session's RECALL HINT (S5) — one
+ * file per session, beside ovcli.conf. */
+export function ovRecallHintPathIn(piHome: string, session: string): string {
+  return join(piHome, ".openviking", "recall-hints", `${session}.json`);
+}
+
+/** What a PR session's own recall searches for, and where (S5). */
+export interface RecallHint {
+  /** The round's context query (`roundContextQuery`: the PR title plus the
+   * areas and file kinds it touches). */
+  query: string;
+  /** The memory areas the recall may draw from (`ROUND_SEARCH_AREAS`). */
+  areas: readonly string[];
+}
+
+/**
+ * Publish a PR session's recall hint (S5, vendored PATCH 8).
+ *
+ * The vendored extension recalls on every prompt, and it queried with the
+ * WHOLE delivered message — a 55–80k-character round order, cut to its first
+ * 128 tokens by the local embedder (S4), i.e. the template's fixed header,
+ * the same for every PR. The daemon already builds a PR-derived query for the
+ * round's own context block; this file hands the session's recall the same
+ * query and the same areas (`experiences/` only), so neither route brings ops
+ * notes or raw feedback into a round. Rewritten whole and atomically at every
+ * round; not a secret and not a write into memory. Total: a disk that refuses
+ * leaves the session on its last hint (or, with none, the prompt), never a
+ * throw.
+ */
+export function writeRecallHint(
+  path: string,
+  hint: RecallHint,
+  opts: { now?: () => Date; log?: (msg: string) => void } = {},
+): boolean {
+  const body = `${JSON.stringify(
+    {
+      query: hint.query,
+      areas: [...hint.areas],
+      written_at: (opts.now ?? (() => new Date()))().toISOString(),
+    },
+    null,
+    2,
+  )}\n`;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, body, { mode: 0o644 });
+    renameSync(tmp, path);
+    return true;
+  } catch (err) {
+    opts.log?.(
+      `openviking: could not publish the recall hint to ${path} (${(err as Error).message}) — the session's recall keeps its last query`,
+    );
+    return false;
+  }
+}
+
 /**
  * The retired URIs a previous process last published with `writeRetiredUris`
  * — the seed a fresh store starts from (`OpenVikingStoreOptions.initialRetired`),
@@ -488,6 +545,10 @@ export interface OvSessionEnvOptions {
   /** Where the daemon publishes the retired URIs (`ovRetiredPathIn`), read
    * by the extension's recall (S3). */
   retiredFile?: string;
+  /** Where the daemon publishes this PR session's recall hint
+   * (`ovRecallHintPathIn`, S5). PR sessions only: the overseer and
+   * the companion recall on their own prompts. */
+  recallHintFile?: string;
 }
 
 /**
@@ -521,6 +582,9 @@ export function openVikingSessionEnv(opts: OvSessionEnvOptions): NodeJS.ProcessE
   if (opts.ovSessionId && opts.ovSessionId.trim() !== "") env.QCR_OV_SESSION_ID = opts.ovSessionId.trim();
   if (opts.retiredFile && opts.retiredFile.trim() !== "") {
     env.QCR_OV_RETIRED_FILE = opts.retiredFile.trim();
+  }
+  if (opts.recallHintFile && opts.recallHintFile.trim() !== "") {
+    env.QCR_OV_RECALL_HINT_FILE = opts.recallHintFile.trim();
   }
   return env;
 }

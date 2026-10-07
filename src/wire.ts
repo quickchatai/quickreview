@@ -73,9 +73,11 @@ import {
   openVikingSessionLifecycle,
   readOvcliKey,
   readRetiredUrisFile,
+  writeRecallHint,
   writeRetiredUris,
 } from "./memory/ovsession.js";
 import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import { MEMORY_LAYOUT_NOTE, ROUND_SEARCH_AREAS } from "./memory/layout.js";
 import {
   MemoryHealthMonitor,
   disabledMemoryStatus,
@@ -94,7 +96,7 @@ import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
-import { PiSessionManager } from "./sessions.js";
+import { PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
 import { OriginStore } from "./slack/origin.js";
@@ -711,6 +713,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           ms: mem.ms,
           reasons: mem.gaps.map((g) => `${g.part}: ${g.reason}`),
         }),
+      // the PR session's own recall (vendored PATCH 8) searches
+      // with the round's query and the round's areas, not the round order.
+      publishQuery: (pr: number, query: string) => {
+        writeRecallHint(
+          sessions.ovRecallHintPath(prSessionName(pr)),
+          { query, areas: ROUND_SEARCH_AREAS },
+          { log: (msg) => log(msg) },
+        );
+      },
     },
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
@@ -1096,9 +1107,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           memory,
           healthy: () => health.currentState() === "healthy",
           healthState: () => health.currentState(),
+          // Retired entries count as "landed" (S5): a pre-S2 signal
+          // whose entry was retired since — by the operator, or by the
+          // relayout — was written once and must not be written again into
+          // events/. (A relayout MOVE leaves the copy live in events/, so it
+          // is found among the live entries.)
           readEntries: async () => {
             const sweep = await memory.sweep();
-            return { entries: sweep.entries, complete: sweep.unread.length === 0 };
+            return {
+              entries: [...sweep.entries, ...sweep.retired],
+              complete: sweep.unread.length === 0,
+            };
           },
           wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
           log,
@@ -1313,6 +1332,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         // the digest actually mentions cancellations (grouped, loud first,
         // "none" explicit).
         dayContext: (date) => eodDigestContext(d.store, date, cfg.eod.timezone),
+        // the curator learns the §1 layout here — the
+        // seed is frozen and never said where each kind of entry lives.
+        ...(cfg.openviking.enabled ? { memoryLayout: MEMORY_LAYOUT_NOTE } : {}),
         // Deploy-window drain: the sweep does not fire into a board being
         // drained for a deploy — it is DEFERRED (S2; it used to be
         // skipped for the day): the day is persisted in state.db and fires

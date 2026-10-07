@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cancellationsOn,
+  parseRelayoutArgs,
   renderStatus,
   todayCancellationLine,
   todayJson,
@@ -246,5 +247,46 @@ describe("cancellation reporting", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+describe("qcr memory relayout — flags (S5)", () => {
+  const fromConfig = () => "reviewer";
+  const noConfig = (): string => {
+    throw new Error("the config was read");
+  };
+
+  it("plans by default and writes only on an explicit --apply", () => {
+    expect(parseRelayoutArgs([], fromConfig)).toEqual({ apply: false, user: "reviewer" });
+    expect(parseRelayoutArgs(["--plan"], fromConfig)).toEqual({ apply: false, user: "reviewer" });
+    expect(parseRelayoutArgs(["--apply"], fromConfig)).toEqual({ apply: true, user: "reviewer" });
+  });
+
+  it("takes a plain --user name, and reads no config when one is given", () => {
+    expect(parseRelayoutArgs(["--user", "companion"], noConfig)).toEqual({
+      apply: false,
+      user: "companion",
+    });
+    expect(parseRelayoutArgs(["--apply", "--user", "companion"], noConfig)).toEqual({
+      apply: true,
+      user: "companion",
+    });
+  });
+
+  it("refuses --plan with --apply, a bad or missing --user, and any unknown token", () => {
+    for (const rest of [
+      ["--plan", "--apply"],
+      ["--apply", "--plan"],
+      ["--user", "../x"],
+      ["--user"],
+      ["--user", "--apply"],
+      ["--user", "Reviewer"],
+      ["--aply"],
+      ["apply"],
+      ["--user", "a", "--user", "b"],
+    ])
+      expect(() => parseRelayoutArgs(rest, fromConfig), rest.join(" ")).toThrow(
+        /usage: qcr memory .*relayout \[--plan\|--apply\]/,
+      );
   });
 });

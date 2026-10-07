@@ -39,6 +39,7 @@ import {
   openVikingSessionEnv,
   ovSessionIdForPr,
   ovcliConfPathIn,
+  ovRecallHintPathIn,
   ovRetiredPathIn,
   planStaleOvSessions,
   OV_SESSION_SWEEP_BUDGET_MS,
@@ -379,6 +380,13 @@ export class PiSessionManager implements SessionHooks {
     return ovRetiredPathIn(this.piHome);
   }
 
+  /** Where the daemon publishes a PR session's recall hint (S5) — the
+   * round's own context query, which the session's recall searches with
+   * instead of the whole round order. */
+  ovRecallHintPath(session: string): string {
+    return ovRecallHintPathIn(this.piHome, session);
+  }
+
   /**
    * Write the reviewer USER key into the pi HOME, 0600, before a session is
    * born. The key is deliberately NOT an environment variable and NOT on the
@@ -518,7 +526,12 @@ export class PiSessionManager implements SessionHooks {
         cliConfigPath: this.ovcliConfPath(),
         serverConfigPath: this.cfg.openviking?.config_file,
         retiredFile: this.ovRetiredPath(),
-        ...(pr === undefined ? {} : { ovSessionId: ovSessionIdForPr(pr) }),
+        ...(pr === undefined
+          ? {}
+          : {
+              ovSessionId: ovSessionIdForPr(pr),
+              recallHintFile: this.ovRecallHintPath(session),
+            }),
       }),
     );
     return { ...env, ...extra };

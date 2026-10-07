@@ -510,7 +510,8 @@ a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
 example, `4` in code).
 
 **`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`3000`),
-`context_quotas` (table, `{ experiences = 24, resources = 8 }`), and memory
+`context_quotas` (table, `{ experiences = 24 }` — since S5 only the
+`experiences` key is honoured, any other is ignored with a log line), and memory
 health (S1): `probe_interval_s` (`120`), `down_after_min` (`10`),
 `boot_grace_min` (`5`), `rewake_h` (`6`), `incident_ticket_after_min` (`120`).
 The retired `alert_cooldown_min` is ignored if still present.

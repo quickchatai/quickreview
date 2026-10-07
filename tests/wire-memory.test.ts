@@ -29,6 +29,23 @@ describe("wire.ts: the memory phase is actually connected", () => {
     expect(Object.keys(MEMORY_DEFAULTS.context_quotas)).toContain(DEFAULT_CATEGORY);
   });
 
+  it("the round context block searches experiences/ only (S5) — the default quotas name nothing else", () => {
+    expect(MEMORY_DEFAULTS.context_quotas).toEqual({ experiences: 24 });
+  });
+
+  it("every round publishes its query as the PR session's recall hint (S5)", () => {
+    expect(wire).toMatch(
+      /publishQuery: \(pr: number, query: string\) => \{\s*writeRecallHint\(\s*sessions\.ovRecallHintPath\(prSessionName\(pr\)\),\s*\{ query, areas: ROUND_SEARCH_AREAS \}/,
+    );
+  });
+
+  it("the EOD watchdog reads through the store that has the pinned-area read", () => {
+    // `readPinnedFromSweep` prefers `pinnedSweep()` — the directory the round's
+    // head reads (S5) — and the store handed to it has one.
+    expect(wire).toMatch(/memorySweep = memory;/);
+    expect(wire).toMatch(/readPinned: readPinnedFromSweep\(sweepSource\)/);
+  });
+
   it("the round renderer receives the assembled seed", () => {
     // the owner name rides along so the pinned-head framing renders
     // from config.

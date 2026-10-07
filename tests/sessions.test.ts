@@ -494,6 +494,9 @@ describe("birth", () => {
         "PATH",
         "QCR_INJECT_DIR",
         "QCR_LEDGER_FILE",
+        // where the daemon publishes this PR's recall hint (the
+        // round's own query and areas) — a path, not a credential.
+        "QCR_OV_RECALL_HINT_FILE",
         // where the daemon publishes the retired URIs the
         // extension's recall excludes — a path, not a credential.
         "QCR_OV_RETIRED_FILE",
@@ -512,6 +515,11 @@ describe("birth", () => {
       expect(env.QCR_OV_RETIRED_FILE).toBe(
         join(root, "pihome", ".openviking", "retired-uris.json"),
       );
+      expect(env.QCR_OV_RECALL_HINT_FILE).toBe(
+        join(root, "pihome", ".openviking", "recall-hints", "pr-42.json"),
+      );
+      // The overseer owns no PR and recalls on its own prompts: no hint file.
+      expect(manager().buildEnv("overseer").QCR_OV_RECALL_HINT_FILE).toBeUndefined();
       // No credential of any kind reached the environment.
       for (const [k, v] of Object.entries(env)) {
         expect(k, `${k} must not look like an OpenViking key`).not.toMatch(/OPENVIKING.*KEY/);

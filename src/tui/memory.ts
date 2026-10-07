@@ -122,8 +122,9 @@ export function defectEntries(entries: MemoryEntry[]): MemoryEntry[] {
 // ---- namespaced addressing ---------------------------------------------------
 
 /** Separator between the user and the store's own id. `:` cannot occur in an
- * OpenViking entry id (`validEntryId` allows `[A-Za-z0-9._-]` and one `/`), so
- * the split is unambiguous in both directions. */
+ * OpenViking entry id (`validEntryId` allows `[A-Za-z0-9._-]` and up to two
+ * `/` — `preferences/pinned/<file>`), so the split is unambiguous in both
+ * directions. */
 export const NS_SEP = ":";
 
 /** `reviewer` + `experiences/2026….md` → `reviewer:experiences/2026….md`. The

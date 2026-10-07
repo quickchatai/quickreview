@@ -47,6 +47,9 @@ export interface MemoryEntry {
   tags: string[];
   /** `[[link]]` tokens found in the text. */
   links: string[];
+  /** In the guaranteed head: since S5 a matter of PLACEMENT — the
+   * entry sits in the pinned area of the §1 layout
+   * (src/memory/layout.ts) — never of a tag quoted in its text. */
   pinned: boolean;
   /** Content hash as the STORE computes it — the optimistic-concurrency
    * token an addressed op carries back. Callers copy it, never compute it
@@ -97,8 +100,15 @@ export function refOf(e: MemoryEntry): MemoryRef {
  * finds its own entry instead of minting a second one. A replay of the SAME
  * bytes is a plain success; an entry already there with OTHER bytes is kept,
  * untouched, and reported `existed` — never overwritten, never duplicated.
- * Without `name` a note lands under a fresh name in the store's default area,
- * exactly as before.
+ * Without `name` a note lands under a fresh name — in the area it names, else
+ * where its own header-only tags put it (`#pinned` → the pinned area,
+ * `#manual` → the owner's preferences, src/memory/layout.ts
+ * `areaForNewEntry`), else the store's default area.
+ *
+ * `pin` and `unpin` MOVE an entry into and out of the pinned area (
+ * S5): its id changes, and its old address keeps a retired stub. `retire`
+ * and `edit` rewrite it in place. `add` is the owner's own words and lands in
+ * the preferences area.
  */
 export type MemoryOp =
   | ({ op: "retire" } & MemoryRef)

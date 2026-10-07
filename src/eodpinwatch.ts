@@ -239,15 +239,22 @@ export interface PinnedSweepSource {
     entries: ReadonlyArray<PinnedEntryView & { pinned: boolean }>;
     unread: readonly string[];
   }>;
+  /** The pinned area alone (`OpenVikingStore.pinnedSweep`, S5) — the
+   * directory the round's head reads. Preferred when present: the watchdog
+   * then reads exactly what every round reads, and never the whole store. */
+  pinnedSweep?(): Promise<{
+    entries: ReadonlyArray<PinnedEntryView & { pinned: boolean }>;
+    unread: readonly string[];
+  }>;
 }
 
 /**
- * The production `readPinned`. It reads through `sweep()`, never `read()`:
- * `read()` folds a dead server or a skipped file into a smaller list, and the
- * watchdog would take that for a real pinned area — reporting every pin
- * removed when only the after-read failed, or "unchanged" when both did. A
- * sweep that could not read everything REJECTS, which is the watchdog's own
- * "could not check" path.
+ * The production `readPinned`. It reads through `pinnedSweep()` (or
+ * `sweep()`), never `read()`: `read()` folds a dead server or a skipped file
+ * into a smaller list, and the watchdog would take that for a real pinned
+ * area — reporting every pin removed when only the after-read failed, or
+ * "unchanged" when both did. A read that could not see everything REJECTS,
+ * which is the watchdog's own "could not check" path.
  */
 export function readPinnedFromSweep(
   source: PinnedSweepSource,
@@ -255,7 +262,9 @@ export function readPinnedFromSweep(
   return async () => {
     // Every snapshot must be storage as it is NOW, never a cached earlier read.
     source.invalidate?.();
-    const { entries, unread } = await source.sweep();
+    const { entries, unread } = source.pinnedSweep
+      ? await source.pinnedSweep()
+      : await source.sweep();
     if (unread.length > 0) {
       const more = unread.length > 3 ? ` (+${unread.length - 3} more)` : "";
       throw new Error(`memory store not fully readable: ${unread.slice(0, 3).join("; ")}${more}`);

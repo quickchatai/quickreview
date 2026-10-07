@@ -159,6 +159,13 @@ export interface RoundMemorySeed {
    * now told by the monitor, on state transitions, through status.json and
    * the TUI. Must not throw; a throw is logged and swallowed. */
   onSeeded?: (mem: RoundMemory) => void;
+  /** Told the round's context query BEFORE memory is asked (S5): the
+   * daemon publishes it as the PR session's recall hint, so the session's own
+   * per-prompt recall searches for this PR (and only `experiences/`) instead
+   * of embedding the round order's fixed header. A local file write — it
+   * never touches the store and never delays the round. Must not throw; a
+   * throw is logged and swallowed. */
+  publishQuery?: (pr: number, query: string) => void;
 }
 
 /** The slice of a changed file the query builder reads. */

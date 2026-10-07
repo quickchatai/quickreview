@@ -3,6 +3,8 @@ import type { OVConfig } from "./config.js";
 import { buildRecallBlock } from "./shared/recall-core.mjs";
 // [QCR PATCH 7]
 import { budgetedFetch, raceBudget, RECALL_WAIT_MS, retiredGuard } from "./qcr-recall.js";
+// [QCR PATCH 8]
+import { scopeGuard } from "./qcr-hint.js";
 
 export interface RecallCache {
   block: string | null;
@@ -22,6 +24,9 @@ export class RecallManager {
   private config: OVConfig;
   private cache: RecallCache = { block: null, promptText: "" };
   private pendingPrompt = "";
+  // [QCR PATCH 8] The memory areas the pending recall may draw from; null =
+  // unscoped (upstream's behaviour).
+  private pendingScope: readonly string[] | null = null;
   // Read lazily: the session manager that owns this id is constructed after the
   // recall manager, and the id only exists once a session has been opened.
   private sessionId: () => string | null;
@@ -42,8 +47,11 @@ export class RecallManager {
     this.now = opts.now ?? Date.now;
   }
 
-  queueSearch(userQuery: string): void {
+  /** [QCR PATCH 8] `scope` keeps the recall inside those memory areas (a PR
+   * session's hint: `experiences` alone); omitted = unscoped. */
+  queueSearch(userQuery: string, scope: readonly string[] | null = null): void {
     this.pendingPrompt = userQuery;
+    this.pendingScope = scope && scope.length > 0 ? [...scope] : null;
   }
 
   /**
@@ -60,6 +68,9 @@ export class RecallManager {
 
     const userQuery = this.pendingPrompt;
     this.pendingPrompt = "";
+    // [QCR PATCH 8]
+    const scope = this.pendingScope;
+    this.pendingScope = null;
     if (userQuery.trim().length < this.config.minQueryLength) {
       this.cache = { block: null, promptText: userQuery };
       return null;
@@ -67,16 +78,20 @@ export class RecallManager {
 
     const budget = Math.max(0, Math.min(Number(budgetMs) || 0, RECALL_WAIT_MS));
     const deadline = this.now() + budget;
-    const fetch = retiredGuard(
-      budgetedFetch(
-        // 10s was this extension's own budget for a bare retrieval; the
-        // deadline above now caps every request at the time left on it.
-        (path: string, init?: any, options?: any) =>
-          this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
-        deadline,
-        this.now,
+    // [QCR PATCH 8] …and kept inside the hint's areas (`scopeGuard`).
+    const fetch = scopeGuard(
+      retiredGuard(
+        budgetedFetch(
+          // 10s was this extension's own budget for a bare retrieval; the
+          // deadline above now caps every request at the time left on it.
+          (path: string, init?: any, options?: any) =>
+            this.client.fetchJSON(path, init, options?.timeoutMs ?? 10000),
+          deadline,
+          this.now,
+        ),
+        this.retiredUris,
       ),
-      this.retiredUris,
+      () => scope,
     );
     const { value: block } = await raceBudget(
       buildRecallBlock(fetch, this.config as any, userQuery, {
@@ -129,5 +144,6 @@ export class RecallManager {
   invalidate(): void {
     this.cache = { block: null, promptText: "" };
     this.pendingPrompt = "";
+    this.pendingScope = null;
   }
 }

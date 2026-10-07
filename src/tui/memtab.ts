@@ -8,6 +8,12 @@
 // the Studio link. Proposals, tickets and the feedback inbox that used to
 // share this tab have their own surfaces now (`[4] tickets`, `[7] feedback`).
 //
+// Pinned means PLACED (S5): an entry is pinned when it sits in
+// `preferences/pinned/`, the directory every round's guaranteed head reads,
+// and `p` MOVES the selected entry there and back (the entry's id changes; its
+// old address keeps a retired stub). The id in the reading pane says which
+// area an entry is in; `n` writes the owner's own words into `preferences/`.
+//
 // Every memory mutation goes through the ONE MemoryStore seam
 // (src/memory/store.ts — addressing and optimistic concurrency are its
 // contract, and the engine behind it is none of this tab's business). A round
@@ -37,7 +43,14 @@ import { applyMemoryFilter, memoryFilterLabel } from "./filters.js";
 import type { BoardKey } from "./keys.js";
 import type { LearningStore } from "./learning.js";
 import type { ForwardStatus } from "./memforward.js";
-import { defectEntries, refOf, timelineOrder, type MemoryEntry } from "./memory.js";
+import {
+  defectEntries,
+  refOf,
+  splitNsId,
+  timelineOrder,
+  type MemoryEntry,
+  type MemoryHealth,
+} from "./memory.js";
 import { hitTest, type Zone } from "./mouse.js";
 import { Frame, rule, sanitizeText, truncate, wrap } from "./paint.js";
 import {
@@ -64,6 +77,44 @@ export interface MemoryTabState {
 
 export function entryKey(e: MemoryEntry): string {
   return `${e.ts}|${e.id}#${e.block}`;
+}
+
+/**
+ * The entry a companion action names (S5 `memory_pin`): the TUI's own
+ * id (`reviewer:preferences/pinned/x.md`) or the entry's OpenViking URI
+ * (`viking://user/reviewer/memories/preferences/pinned/x.md`). Undefined when
+ * the TUI's last read holds no such entry.
+ */
+export function findMemoryEntry(
+  entries: readonly MemoryEntry[],
+  ref: string,
+): MemoryEntry | undefined {
+  const id = memoryRefId(ref);
+  return entries.find((e) => e.id === id);
+}
+
+/** A companion ref as the TUI's own namespaced id (`reviewer:<area>/<file>`). */
+function memoryRefId(ref: string): string {
+  const m = /^viking:\/\/user\/([a-z][a-z0-9_-]*)\/memories\/(.+)$/.exec(ref.trim());
+  return m ? `${m[1]}:${m[2]}` : ref.trim();
+}
+
+/**
+ * Why a ref that the last read did NOT find may still exist (S5,
+ * honest-unknown): the namespace it names — or, when it names none, any
+ * namespace — was down, or had entries it listed but could not read. Null
+ * when every relevant namespace was read whole, so "no such entry" is a FACT;
+ * null too for a store that reports no health at all (a test fake).
+ */
+export function memoryRefUnread(health: MemoryHealth | undefined, ref: string): string | null {
+  if (!health) return null;
+  const user = splitNsId(memoryRefId(ref)).user;
+  const relevant =
+    user === "" ? health.namespaces : health.namespaces.filter((h) => h.user === user);
+  const gaps = relevant
+    .filter((h) => !h.ok || h.unreadable > 0)
+    .map((h) => `${h.user}: ${h.reason ?? (h.ok ? "entries unreadable" : "unreachable")}`);
+  return gaps.length === 0 ? null : gaps.join(" · ");
 }
 
 /** THE timeline ordering — render and every verb share it, so x/p/e can
@@ -474,9 +525,13 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
               return true;
             }
             case "n":
-              theApp.promptInput("new memory entry (#manual)", "", (text) => {
-                store.verb(store.memory.apply({ op: "add", text }));
-              });
+              theApp.promptInput(
+                "new memory entry (#manual, lands in preferences/ — p pins it into every round)",
+                "",
+                (text) => {
+                  store.verb(store.memory.apply({ op: "add", text }));
+                },
+              );
               return true;
             case "x": {
               if (!selected) return false;

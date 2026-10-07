@@ -79,9 +79,9 @@ overlay and setup are about the whole repo.
 | --- | --- |
 | `[` / `]` | jump to the older / newer day |
 | `e` | edit the selected entry |
-| `p` | pin or unpin it (pinned entries float to the top and ride the injection head) |
+| `p` | pin or unpin it: the entry MOVES into `preferences/pinned/` — the directory every round's head reads — and back out (pinned entries float to the top; S5) |
 | `x` | retire it — twice, the first press arms |
-| `n` | a new `#manual` entry |
+| `n` | a new `#manual` entry — the owner's own words, in `preferences/` (pin it to reach every round) |
 | `W` | open OpenViking Studio through the memory forward |
 | `F` | clear the tag filter |
 
@@ -198,4 +198,6 @@ container's state is known; the board offers no `u` until a PR is selected).
 `prompts/companion.md` documents the action channel: `switch_tab` takes the
 eight names above, `digest_day` pages the digest tab to a day, `memory_view`
 filters the memory timeline by tag and jumps to a day, `memory_filter` sets or
-clears the tag filter. The vocabulary there is this vocabulary.
+clears the tag filter, and `memory_pin` (S5) pins or unpins one entry
+through the TUI's memory store — the same move as `p`, answered in the result
+file (a refusal is a failed result). The vocabulary there is this vocabulary.

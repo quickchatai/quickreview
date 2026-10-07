@@ -583,10 +583,12 @@ export interface FeedbackMemoryPumpDeps extends FeedbackWriteDeps {
   healthState?: () => string;
   /** Raise a WAKE-class anomaly (wire.ts: `store.logAnomaly`). Never throws. */
   wake: (kind: string, detail: string, message: string) => void;
-  /** Every entry the store holds, and whether the read was complete —
-   * consulted only for pre-S2 rows (`legacyFeedbackEntry`). A partial read
-   * defers those rows rather than risking a duplicate. Defaults to
-   * `memory.read()`, taken as complete. */
+  /** Every entry the store holds — RETIRED ones included (S5: a
+   * signal whose entry was retired since was written once, and is not owed
+   * again) — and whether the read was complete; consulted only for pre-S2
+   * rows (`legacyFeedbackEntry`). A partial read defers those rows rather than
+   * risking a duplicate. Defaults to `memory.read()` (live entries only),
+   * taken as complete. */
   readEntries?: () => Promise<{ entries: MemoryEntry[]; complete: boolean }>;
   now?: () => Date;
   /** Self-rescheduling timer seam; returns its canceller. */

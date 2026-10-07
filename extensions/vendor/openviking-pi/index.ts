@@ -11,7 +11,7 @@
  *
  * ── QCR FORK ────────────────────────────────────────────────────────────────
  * Vendored from volcengine/OpenViking @ v0.4.15, examples/pi-coding-agent-
- * extension. Seven numbered patches; every hunk carries a `[QCR PATCH n]`
+ * extension. Eight numbered patches; every hunk carries a `[QCR PATCH n]`
  * marker so a rebase is a search, not an audit. See README.md here.
  *   PATCH 1 — no session_before_compact handler (extensions/ledger-pin.ts is
  *             the sole owner of compaction) and takeover forced off.
@@ -28,6 +28,10 @@
  *             500 ms for recall (every request of it on one deadline, no
  *             fallback past it), query expansion is off in code, retired
  *             entries are never recalled, and nothing commits a session.
+ *   PATCH 8 — PR-derived recall: a PR session recalls with the daemon's hint
+ *             (the round's own query: the PR title plus the areas it touches)
+ *             and only inside the hint's memory areas (`experiences/`), not
+ *             with the whole round order across every scope.
  * ────────────────────────────────────────────────────────────────────────────
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -47,6 +51,8 @@ import { isLeafProcess } from "./qcr-leaf.js";
 import { ownNamespaceName, resolveExtraNamespaces } from "./qcr-namespaces.js";
 // [QCR PATCH 7]
 import { readRetiredUris, RECALL_WAIT_MS, RETIRED_FILE_ENV } from "./qcr-recall.js";
+// [QCR PATCH 8]
+import { readRecallHint, RECALL_HINT_FILE_ENV } from "./qcr-hint.js";
 
 export default async function (pi: ExtensionAPI) {
   // [QCR PATCH 2] Decided once, from argv, before anything else: a
@@ -225,7 +231,11 @@ export default async function (pi: ExtensionAPI) {
 
     // Queue recall for the context hook. Pi renders the user message before
     // that hook, so recall latency does not delay the message appearing.
-    recall.queueSearch(event.prompt);
+    // [QCR PATCH 8] A PR session asks with its PR's query, inside the round's
+    // areas — the daemon's hint, re-read for every prompt (a small local
+    // file). No hint (the overseer, the companion): the prompt, unscoped.
+    const hint = readRecallHint(process.env[RECALL_HINT_FILE_ENV]);
+    recall.queueSearch(hint ? hint.query : event.prompt, hint ? hint.areas : null);
 
     // Compose system prompt additions
     const parts: string[] = [];

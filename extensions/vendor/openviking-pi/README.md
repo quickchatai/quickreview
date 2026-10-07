@@ -1,7 +1,7 @@
 # openviking-pi — vendored, patched fork
 
 The OpenViking pi extension our sessions load. Vendored, not depended on:
-upstream ships it as an `examples/` directory, not a package, and we need seven
+upstream ships it as an `examples/` directory, not a package, and we need eight
 behaviour changes that upstream has no reason to make.
 
 | | |
@@ -20,7 +20,7 @@ fails on drift between the two.
 
 ## Why a fork rather than configuration
 
-Every one of the seven patches was tried as configuration first and does not
+Every one of the eight patches was tried as configuration first and does not
 exist there. The evidence is a spike against a **running v0.4.15 server plus
 the pinned pi 0.84.1** — `assets/findings.md` in the issue tracker,
 with transcripts. Read it before changing anything here; several of its
@@ -28,9 +28,9 @@ findings contradict the OpenViking docs, which lead the tag.
 
 ## The patch series
 
-Seven numbered behaviour patches, applied in order over the vendored upstream
+Eight numbered behaviour patches, applied in order over the vendored upstream
 files, plus one unnumbered scaffolding patch. They live in `patches/` as
-`git apply`-able diffs — verified by applying all eight, in order, to a
+`git apply`-able diffs — verified by applying all nine, in order, to a
 pristine `v0.4.15` extraction and diffing the result against this directory:
 byte-identical. (`patches/` and `upstream.json` are meta and are not themselves
 part of the reproduced tree.) Every hunk they add carries a greppable marker:
@@ -320,6 +320,36 @@ search), `sync.ts` (no commit, the replay refusal), `index.ts` (the hook's
 budget, the retired list, no shutdown commit, the command, the banner),
 `config.ts` (expansion forced off), `config.json`.
 
+### 0008 — PR-derived recall (S5)
+
+The per-prompt recall queried with the WHOLE delivered message. In a PR
+session that is a 55–80k-character round order, and the local embedder (S4)
+embeds a query's first 128 tokens — the round template's fixed header, the
+same for every PR — so every PR recalled the same ops notes and feedback
+events, from every scope. The daemon already builds a PR-derived query for the
+round's own context block (`roundContextQuery`: the PR title plus the areas
+and file kinds the PR touches) and now publishes it, with the memory areas a
+round may search (`experiences/` alone, the §1 layout built in S5), to
+a per-session file (`QCR_OV_RECALL_HINT_FILE`, `src/memory/ovsession.ts`
+`writeRecallHint`, rewritten at every round's dispatch).
+
+* **A PR session recalls for its PR.** `before_agent_start` reads the hint
+  (`qcr-hint.ts` `readRecallHint` — total, and fail-closed to the old
+  behaviour: no file, a garbled one, an empty query or no usable area = no
+  hint) and queues the hint's query instead of the prompt.
+* **…and only where a round may look.** `scopeGuard` sends a context search
+  or the `/search/recall` preset quotas naming the hint's areas alone, drops
+  any recalled entry from outside them (re-rendering the block in the
+  server's envelope), and keeps only in-area memories from the raw-find
+  fallback.
+* **Nothing else changes.** No hint (the overseer, the companion, a session
+  born before its first round): the prompt, unscoped, as upstream. PATCH 7's
+  500 ms budget, retired-entry exclusion and no-commit rules wrap the same
+  chain.
+
+Touches: `qcr-hint.ts` (new), `recall.ts` (`queueSearch`'s scope, the guard
+in the chain), `index.ts` (the hint, the banner).
+
 ## Rebasing onto a newer upstream
 
 ```sh
@@ -332,16 +362,16 @@ git -C /tmp/ov checkout <new-tag>
 for p in extensions/vendor/openviking-pi/patches/0*.patch; do
   git apply --3way "$p" || echo "RESOLVE: $p"
 done
-# 3. Re-verify all seven patches, then:
+# 3. Re-verify all eight patches, then:
 timeout 900 npm test && npm run build
 ```
 
 Then update `extension_commit` and `version` in `config.toml [openviking]`,
 the base commit in `NOTICE` and in the table above, and re-run the live
-verification below. A bump re-verifies **all seven** patches — a patch that no
+verification below. A bump re-verifies **all eight** patches — a patch that no
 longer applies is a patch whose reason may have changed, not a patch to drop.
 
-`tests/openviking-fork.test.ts` is the guard rail: it asserts the seven patches
+`tests/openviking-fork.test.ts` is the guard rail: it asserts the eight patches
 are still present (markers, and the *absence* of what each one removed) and
 that the pinned commit here matches `config.toml`. It cannot tell you whether
 upstream grew a *new* compaction handler or a *new* write tool — read the

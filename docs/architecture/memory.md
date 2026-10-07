@@ -24,13 +24,15 @@ migration have their own page: [../memory-embeddings.md](../memory-embeddings.md
 | The vocabulary every caller speaks (entries, ops, refusals) | `src/memory/store.ts` |
 | Round seeding — pinned head + one budgeted block | `src/memory/context.ts` |
 | The `#tag` / `k=v` entry header, one parser only | `src/memory/eventtags.ts` |
+| The §1 layout: areas, the pinned area, the curator's layout note | `src/memory/layout.ts` |
+| The one-off relayout of a flat store (`qcr memory relayout`) | `src/memory/relayout.ts` (the plan), `src/openviking/relayout.ts` (the run) |
 | A PR session's identity, credential file and raw-notes tier | `src/memory/ovsession.ts` |
 | The one-time import from the retired file engine | `src/memory/import.ts`, `src/memory/legacy-file.ts`, `scripts/import-pi-memory.mjs` |
 | The engine process: spawn, restart ladder, heartbeat block | `src/openviking/supervisor.ts`, `proc.ts`, `types.ts` |
 | The health gate (`/health`, `/ready`) — unauthenticated: is the server up | `src/openviking/health.ts` |
 | Memory HEALTH — does memory work with the credentials in use, and who is told | `src/memory/health.ts`, `src/openviking/probe.ts`, `src/openviking/provisionreport.ts`, `src/tui/memincident.ts` |
 | HTTP: the single write route, determinism pins, auth | `src/openviking/client.ts` |
-| `MemoryStore` over the engine (entries as files, pin/retire) | `src/openviking/store.ts` |
+| `MemoryStore` over the engine (entries as files, pin/unpin as moves, retire, the pinned-area read) | `src/openviking/store.ts` |
 | `ContextAssembler` over the engine (head + block) | `src/openviking/context.ts` |
 | Embedder knob, re-embed migration | `src/openviking/reembed.ts`, `scripts/openviking-reembed.mjs` |
 | The daily curation sweep and its clock | `src/eod.ts` |
@@ -123,6 +125,29 @@ There is one parser and one writer for this vocabulary because the store, the
 curator, the `[feedback]` sink and the TUI auto-filer all read it; a second
 parser would be free to disagree about exactly the case above.
 
+### The layout — `src/memory/layout.ts` (S5)
+
+The §1 areas (ratified 2026-08-20, built in S5), under
+`viking://user/<user>/memories/`:
+
+| Area | Holds | Written by |
+|---|---|---|
+| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (TUI `p`, the companion's `memory_pin` action) |
+| `preferences/` | unpinned standing instructions — the owner's own words (`#manual`) | the TUI's `n`, an unpin |
+| `experiences/` | curated lessons, conventions, setup/scan notes — the ONLY area a round's context block searches | the EOD curator, setup, scans |
+| `cases/` | finding cases (S7) | — |
+| `events/` | feedback, bug and ops signals with `k=v` tags (`kind=feedback|bug|ops`) | the `[feedback]` sink, the curator (`kind=bug`) |
+
+**Pinned is placement.** An entry is pinned because it sits in
+`preferences/pinned/` — never because of a tag: an address is chosen by the
+writer of the file, so no text quoted inside an entry can put it in the head.
+A new entry written through the seam lands where its writer says (a `note`'s
+`category`) or, naming none, where its own header-only tags say (`#pinned` →
+the pinned area, `#manual` → `preferences/`, else the default area,
+`areaForNewEntry`). The curator learns the layout from a section the daemon
+renders after the frozen `eod-sweep.md` seed (`MEMORY_LAYOUT_NOTE`, via
+`renderEodPrompt`'s `memoryLayout`).
+
 ### Round seeding — `src/memory/context.ts`
 
 `ContextAssembler` is the round path's whole relationship with memory:
@@ -157,7 +182,13 @@ its diff shape (top directory areas at two segments deep, top file
 extensions), counted and sorted so the result is a function of the file *set*,
 never of the order the files API returned them. Pure — the same PR at the same
 head always produces the same query, which is what keeps the round prompt
-reproducible from the round order.
+reproducible from the round order. Since S5 the same query is the PR
+session's RECALL HINT: dispatch hands it to `RoundMemorySeed.publishQuery`
+before memory is asked, and the daemon writes it, with the round-search areas,
+to the session's `QCR_OV_RECALL_HINT_FILE` (`writeRecallHint`), so the
+vendored extension's per-prompt recall (patch 8) searches for this PR inside
+`experiences/` instead of embedding the round order's fixed header across
+every scope.
 
 `pinnedHeadState(mem)` names the three states so no caller reconstructs them:
 `populated`, `empty` (answered, nothing pinned — not a gap), `unread`.
@@ -449,18 +480,72 @@ stored bytes. Handing those back would mint hashes that conflict on first use.
 The semantic surface is `searchContext`, consumed by the round's context block,
 where nothing is addressed.
 
-Pin and retire are **a tag plus placement**, not a separate mechanism:
-`#pinned`, `#manual`, `#retired` are prepended to the entry text, the same
-spelling the import and the feedback writer use, so an entry means the same
-thing whichever surface holds it. Event tags are additionally mirrored onto the
-engine's native retrieval tag list, best-effort — the tags are already inside
-the committed bytes and every reader re-parses them from there, so a failure
-narrows retrieval and never loses the memory.
+Pin is **a tag plus placement** (S5 built the placement half):
+`pin` MOVES an entry into `preferences/pinned/` with `#pinned` prepended and a
+`from=<area>` event tag recording where it came from; `unpin` moves it back
+there (or into `preferences/` when nothing was recorded), both tags removed. A
+move is two batch-writes, each under its own area directory (the server
+refuses a batch root that is not inside a memory area, so none covers two):
+the new copy FIRST (`create_if_absent`, or `replace_if_hash` over a `#moved`
+stub when the entry is moving back), then the old file replaced, under the
+hash the caller read, by a `#retired #moved moved-to=<new id>` stub. A write
+whose answer proves nothing (a timeout, a lost connection, a 5xx) may have
+committed anyway, so it is READ BACK before anything is undone: a stub that is
+there is a finished move. Only a stub that provably did not land (a refusal —
+any 4xx — or a source still holding the bytes the caller hashed) undoes the
+move, and the undo turns the new copy into a `#moved` pointer back at the
+source: one live copy, and an address a retry may write over (a retired COPY
+there would block every later move into it). An outcome that cannot be read
+either way is left exactly as found and reported — two live copies are
+recoverable by hand, retiring the only live one is not. Nothing is deleted. Retire stays a tag in place (`#retired`
+prepended), so retired entries and stubs drop out of `read()` and join the
+published retired list; `sweep().retired` hands them to the callers that must
+know an entry once existed (the `[feedback]` backfill, the relayout). Event
+tags are additionally mirrored onto the engine's native retrieval tag list,
+best-effort — the tags are already inside the committed bytes and every reader
+re-parses them from there, so a failure narrows retrieval and never loses the
+memory.
 
-Entry ids are validated (`validEntryId`) before being turned into a URI: one or
-two safe path segments ending in `.md`/`.txt`, no `..`. An id ultimately comes
-back from a caller that got it from us, and path traversal in an interpolated
-URI is exactly the mistake worth making structurally impossible.
+The tree is listed THREE levels deep (`<area>/<file>` and
+`preferences/pinned/<file>`), and entry ids are validated (`validEntryId`)
+before being turned into a URI: one to three safe path segments ending in
+`.md`/`.txt`, no `..`, no `.` segment. An id ultimately comes back from a
+caller that got it from us, and path traversal in an interpolated URI is
+exactly the mistake worth making structurally impossible.
+
+`pinnedSweep()` reads the pinned area alone — one listing of
+`preferences/pinned/` and a read of every file in it, never the incremental
+cache — for the round's head and the EOD watchdog. `relocate(items)` is the
+relayout's batched executor: every new copy, one batch-write per destination
+directory, then every source (stub or in-place rewrite), one per source
+directory, chunked at the server's 256 operations. A refused source batch
+turns its moves' new copies back into pointers at their sources; a batch
+whose answer proves nothing has each item read back, by the same rule as a
+move.
+
+### The relayout — `qcr memory relayout` (S5)
+
+Run by the operator from the PC that holds the keys (over the memory forward,
+like `qcr memory reembed`), never by the daemon. `--plan` (the default) does
+one complete read and prints where every entry goes, or that it is retired or
+stays; `--apply` carries the plan out through `relocate` and reads the store
+again to show what is left. A read that is not complete is refused — nothing
+is planned or written. The plan (`src/memory/relayout.ts`) is a pure function
+of the read, so a second `--apply` plans nothing. Its rules, first match wins:
+the pinned area is never touched; retired entries are skipped; the one-off
+curation retires confinement probes, `needs-attention` feedback reviews a
+later adjudication of the same episode answered, and the adjudications the
+curation table names (contradicts them); a header `#pinned` moves into
+the pinned area and `#manual` into `preferences/`; the feedback family moves
+to `events/`; the ops family (`#bug`, `#operations`, `#openviking`,
+`#review-ops`, `kind=bug|ops`, `area=operations` — read from the header and
+from tag LINES, where half the ops notes carry them) moves to `events/` with
+`kind=bug|ops area=operations` added to its header; everything else stays. A
+destination already holding other bytes blocks that one move, and a run whose
+plan still holds a BLOCKED move fails (exit 1) and says the store is not laid
+out — `--plan` and `--apply` alike. An ops note that
+becomes `kind=bug` with no `filed=` ticket is flagged in the plan: the TUI's
+auto-filer will file it.
 
 #### Materializing a namespace
 
@@ -477,15 +562,22 @@ refused with an error naming neither the namespace nor the missing directory.
 
 The two halves are asymmetric on purpose:
 
-- **`pinnedHead()` is exact and guaranteed.** It reads the stored bytes through
-  `store.sweep()` — never a search, whose budget and tier degradation could
-  silently truncate a standing instruction. It is strict about `unread`: if the
-  sweep skipped even one entry it returns `unreadable`, because a partial sweep
-  cannot vouch that no standing instruction was in the part it missed.
+- **`pinnedHead()` is exact and guaranteed.** It reads the stored bytes of the
+  pinned DIRECTORY through `store.pinnedSweep()` (S5; it read every
+  file of the store before) — never a search, whose budget and tier
+  degradation could silently truncate a standing instruction. It is strict
+  about `unread`: if a pinned file could not be read it returns `unreadable`,
+  because the head cannot vouch that no standing instruction was in it; an
+  unreadable lesson elsewhere is not the head's gap.
 - **`contextBlock()` is budgeted and approximate.** One deterministic
-  `mode: "context"` search, rendered server-side, pasted verbatim. The rendered
+  `mode: "context"` search over `experiences/` ONLY (S5:
+  `roundSearchQuotas` keeps the configured quotas for the round-search areas
+  and drops every other key, and an entry from anywhere else that comes back
+  anyway is dropped), rendered server-side, pasted verbatim. The rendered
   block is used rather than re-rendering entries locally, so there is only one
-  place the token budget can be wrong. Its own deadline
+  place the token budget can be wrong (the exception: a retired or
+  out-of-scope entry that leaked through is dropped and the block rebuilt from
+  what is left). Its own deadline
   (`[openviking] search_timeout_ms`, default 2500 ms) is shorter than the
   round's memory deadline: a request that outlives the round's seed is pure
   cost.
@@ -576,6 +668,16 @@ Two of those patches matter here:
   commits a session — not at 20k pending tokens, not at shutdown, not on
   `/viking commit`, not from a commit an older build queued on disk. Per-turn
   sync into the PR's raw tier stays.
+- Patch 8 (S5) makes a PR session's recall ask about ITS PR. Upstream
+  queried with the whole delivered prompt — a 55–80k-character round order, of
+  which the local embedder reads the first 128 tokens, i.e. the template's
+  fixed header, the same for every PR. The extension now reads the daemon's
+  per-session hint (`QCR_OV_RECALL_HINT_FILE`: the round's `roundContextQuery`
+  and the round-search areas) on every prompt and queues that query, and
+  `scopeGuard` keeps the recall inside those areas (quotas naming them alone,
+  out-of-area entries dropped, the raw-find fallback filtered). No hint (the
+  overseer, the companion): the prompt, unscoped, as before. Patch 7's budget
+  wraps the same chain.
 
 ## Writers into memory
 
@@ -896,8 +998,9 @@ store mutation and can be refused. The second is the rubric-proposal surface
    add a `content/write` wrapper — its absence is the safeguard.
 5. **No LLM in the daemon's hot path.** `rewrite` and `query_expansion` stay
    pinned off inside the client, not exposed as caller options.
-6. **Header-only tag parsing.** Quoted untrusted text must never be able to
-   mint itself a tag, least of all `#pinned`.
+6. **Header-only tag parsing, and pinned is placement.** Quoted untrusted
+   text must never be able to mint itself a tag, and no text at all can put
+   an entry in the head: only an entry IN `preferences/pinned/` is pinned.
 7. **No admin or root key reaches any client.** User keys only, confined
    server-side, both directions.
 8. **Curation never touches pinned entries**, and the watchdog exists so that
@@ -907,6 +1010,9 @@ store mutation and can be refused. The second is the rubric-proposal surface
    backfill writes it — and every derived surface re-derives from the ledger.
 10. **A busy 409 is not a refusal.** Only `details.conflict_type =
     "path_busy"` is retried; a precondition 409 never is.
+11. **The round reads `experiences/` and the pinned area, nothing else.** The
+    context block's quotas name `experiences` alone and an out-of-scope entry
+    is dropped; a PR session's own recall is scoped the same way (patch 8).
 
 ## Tests
 

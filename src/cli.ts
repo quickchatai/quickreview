@@ -943,7 +943,8 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
  */
 export async function cmdMemory(rest: string[]): Promise<number> {
   const sub = rest[0];
-  if (sub !== "reembed") throw new Error("usage: qcr memory reembed [--user <name>[,<name>…]]");
+  if (sub === "relayout") return cmdMemoryRelayout(rest.slice(1));
+  if (sub !== "reembed") throw new Error(MEMORY_USAGE);
   const cfg = loadConfig();
   const own = cfg.openviking.user;
   const userIdx = rest.indexOf("--user");
@@ -1001,6 +1002,84 @@ export async function cmdMemory(rest: string[]): Promise<number> {
     );
   }
   return ok ? 0 : 1;
+}
+
+const MEMORY_USAGE =
+  "usage: qcr memory reembed [--user <name>[,<name>…]] | qcr memory relayout [--plan|--apply] [--user <name>]";
+
+/**
+ * The flags of `qcr memory relayout`, or the usage error. `--plan` is the
+ * default and writes nothing; only an explicit `--apply` writes, and the two
+ * together are refused. `--user` must name a plain namespace; without it the
+ * default (the daemon's `[openviking] user`) is asked for, lazily, so a bad
+ * flag is reported before any config is read. An unknown token is refused
+ * rather than ignored — a mistyped `--apply` must not quietly plan instead.
+ */
+export function parseRelayoutArgs(
+  rest: readonly string[],
+  defaultUser: () => string,
+): { apply: boolean; user: string } {
+  let apply = false;
+  let plan = false;
+  let user: string | null = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === "--apply") apply = true;
+    else if (arg === "--plan") plan = true;
+    else if (arg === "--user" && user === null) {
+      user = String(rest[i + 1] ?? "").trim();
+      i += 1;
+    } else throw new Error(MEMORY_USAGE);
+  }
+  if (apply && plan) throw new Error(MEMORY_USAGE);
+  const name = user ?? defaultUser();
+  if (!/^[a-z][a-z0-9_-]*$/.test(name)) throw new Error(MEMORY_USAGE);
+  return { apply, user: name };
+}
+
+/**
+ * `qcr memory relayout [--plan|--apply] [--user <name>]` (S5) — sort
+ * one memory namespace (default: the daemon's, `[openviking] user`) into the
+ * §1 layout. `--plan` (the default) prints where every entry goes;
+ * `--apply` carries the plan out and reads the store again to show what is
+ * left — idempotent, so a second `--apply` plans nothing. Run from the PC
+ * that holds the keys, over the memory forward, like `reembed`; the daemon
+ * never runs it. Nothing is deleted: a move leaves a retired stub, a
+ * retirement is a tag.
+ */
+export async function cmdMemoryRelayout(rest: string[]): Promise<number> {
+  const { apply, user } = parseRelayoutArgs(rest, () => loadConfig().openviking.user);
+  const [
+    { USER_KEY_ENV, keysFileReader, tuiMemoryBaseUrl },
+    { keysFilePath },
+    { OpenVikingClient },
+    { OpenVikingStore },
+    { runRelayout },
+  ] = await Promise.all([
+    import("./tui/memory.js"),
+    import("./tui/companion.js"),
+    import("./openviking/client.js"),
+    import("./openviking/store.js"),
+    import("./openviking/relayout.js"),
+  ]);
+  const keysFile = keysFilePath(process.env);
+  const readKey = keysFileReader(keysFile);
+  const names = (USER_KEY_ENV as Record<string, readonly string[]>)[user] ?? [
+    `OPENVIKING_${user.toUpperCase()}_KEY`,
+  ];
+  const key = names.map((n) => readKey(n)).find((v) => v) ?? null;
+  if (!key) {
+    console.log(`no key for the ${user} namespace in ${keysFile} (${names.join(" or ")})`);
+    return 1;
+  }
+  const base = tuiMemoryBaseUrl(process.env);
+  const client = new OpenVikingClient({ baseUrl: base, apiKey: key, user, timeoutMs: 30_000 });
+  // Every read is a fresh, full one: the plan must describe the store as it
+  // is now, not a cached sweep.
+  const store = new OpenVikingStore({ client, cacheTtlMs: 0, fullRefreshMs: 0 });
+  console.log(`${apply ? "applying" : "planning"} the relayout of ${user} memory through ${base}`);
+  const out = await runRelayout(store, { apply, log: (line) => console.log(line) });
+  return out.ok ? 0 : 1;
 }
 
 const SETUP_USAGE = "usage: qcr setup [validate [<profile>] | commit]";
@@ -1225,7 +1304,7 @@ export async function main(argv: string[]): Promise<void> {
     default:
       console.log(
         "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|install <where|migrate>|" +
-          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|checklist|compare <pr...>|" +
+          "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );
       loadConfig(); // surface config errors early even on bad usage
