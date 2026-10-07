@@ -262,6 +262,34 @@ const caseUri = (name: string) => `${CASES}/${name}.md`;
 
 // ---- which findings get a case -----------------------------------------------
 
+describe("the tick's sync is paced (boot stall)", () => {
+  it("syncs one PR per event-loop turn — fifty PRs are never one synchronous span", async () => {
+    const h = harness();
+    const prs = Array.from({ length: 12 }, (_, i) => PR + 1 + i);
+    for (const n of prs) {
+      h.addPr(n);
+      await h.capture.capturePr(n);
+    }
+    await h.capture.capturePr(PR);
+    // Unhealthy memory: the tick syncs (state.db only) and writes nothing.
+    const { w, server } = writer(h, { healthy: () => false });
+    let turns = 0;
+    let on = true;
+    const tick = (): void => {
+      turns++;
+      if (on) setImmediate(tick);
+    };
+    setImmediate(tick);
+    const out = await w.tick();
+    on = false;
+    expect(out).toMatchObject({ synced: prs.length + 1, held: true, attempted: 0 });
+    expect(turns).toBeGreaterThanOrEqual(prs.length + 1);
+    expect(server.batches()).toHaveLength(0);
+    // The same rows the synchronous form would have synced: nothing left.
+    expect(w.syncCaptured()).toBe(0);
+  });
+});
+
 describe("which posted findings get a case", () => {
   it("a finding a human answered, or whose fate is decided — never one with neither", async () => {
     const { h, round } = await scenario();

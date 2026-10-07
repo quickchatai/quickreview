@@ -1194,6 +1194,34 @@ describe("whole-review signals are recorded per review, never smeared over findi
 // ---------------------------------------------------------------------------
 
 describe("the bounded pass", () => {
+  it("yields a real event-loop turn per PR it considers (boot stall)", async () => {
+    // With no git (or every git answer memoised) a capture never awaits real
+    // I/O, so 25 of them back to back were one ~130 ms block of the loop.
+    const h = harness();
+    for (let i = 1; i <= 15; i++)
+      h.store.upsertPr({
+        number: PR + i,
+        state: "tracked",
+        head_sha: H1,
+        title: `PR ${PR + i}`,
+        author: "alice",
+        trigger_ts: null,
+        stale_recheck: 0,
+        migration_gate: 0,
+      });
+    let turns = 0;
+    let on = true;
+    const tick = (): void => {
+      turns++;
+      if (on) setImmediate(tick);
+    };
+    setImmediate(tick);
+    const r = await h.capture.sweep();
+    on = false;
+    expect(r).toMatchObject({ considered: 16, captured: 16, errors: [] });
+    expect(turns).toBeGreaterThanOrEqual(16);
+  });
+
   it("captures, then skips a PR whose inputs have not moved, and recaptures when one does", async () => {
     const h = harness();
     h.round(H1, [posted({ key: "F1" })]);

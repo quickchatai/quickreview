@@ -57,6 +57,7 @@ import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
 import type { SessionCommandKind, SessionCommandRow, StateStore } from "./state.js";
 import { roundPromptMarker, stampRoundPrompt } from "./types.js";
+import { ReceiptIndex, type ReceiptIndexStats } from "./receiptscan.js";
 import type {
   OvSessionSweepReport,
   RoundOrder,
@@ -261,6 +262,8 @@ export class PiSessionManager implements SessionHooks {
    * id waits an hour before the sweep tries it again, so a delete the server
    * keeps refusing costs one log line an hour, not ten every pass. */
   private readonly ovSweepFailedAt = new Map<string, number>();
+  /** The receipt scan's index: each session file's receipt tokens, read once. */
+  private readonly receipts = new ReceiptIndex();
 
   constructor(opts: PiSessionManagerOptions) {
     this.cfg = opts.cfg;
@@ -1045,81 +1048,38 @@ export class PiSessionManager implements SessionHooks {
    * (unlike a round) no deadline underneath it to catch a silent loss. */
   async wakeReceiptPresent(pr: number, marker: string, sinceMs: number): Promise<boolean | null> {
     const root = this.sessionDir(prSessionName(pr));
-    if (!existsSync(root)) return null;
-    const startedAtMs = sinceMs;
-    // A file is in scope if it could contain a write made after the round
-    // started. The slack absorbs coarse mtimes and small clock differences;
-    // being generous here costs a few extra reads, being tight would report a
-    // delivered round as lost.
-    const floor = startedAtMs - 60_000;
-    let sawCandidate = false;
-    // An I/O failure anywhere in the scan makes the whole answer UNKNOWN
-    // (#5362 rule ①: present = delivered, absent = never arrived, unreadable =
-    // unknown — and unknown is NEVER read as loss). Before the catch
-    // below returned `false`, i.e. "provably never arrived", which is the one
-    // reading the rule forbids: after redelivery is spent that answer kills a
-    // live conversation. A failed read also no longer aborts the scan — the
-    // marker may still be in the next file.
-    let unreadable = false;
-    const walk = (dir: string): boolean => {
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        unreadable = true;
-        return false;
-      }
-      for (const e of entries) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) {
-          if (walk(full)) return true;
-          continue;
-        }
-        if (!e.name.endsWith(".jsonl")) continue;
-        try {
-          if (statSync(full).mtimeMs < floor) continue;
-        } catch {
-          // Cannot even tell whether this file is in scope.
-          unreadable = true;
-          continue;
-        }
-        let text: string;
-        try {
-          text = readFileSync(full, "utf8");
-        } catch {
-          // An unreadable file is not evidence of absence.
-          unreadable = true;
-          continue;
-        }
-        // The marker is deliberately plain ASCII, so it survives JSON string
-        // encoding byte-for-byte and a substring search over the raw file is
-        // exact — no per-line parsing, no partial-write hazard.
-        if (text.includes(marker)) return true;
-        sawCandidate = true;
-      }
-      return false;
-    };
-    if (walk(root)) return true;
+    // The scan itself lives in `receiptscan.ts` (boot stall): the same
+    // scope and the same three answers, read through an index that touches
+    // each byte of a session file once, asynchronously and in chunks. The old
+    // in-place `readFileSync(…, "utf8").includes(marker)` re-read every
+    // in-scope transcript per query as one synchronous span — 132.7 s of a
+    // blocked loop at the 2026-10-07 boot.
+    const { answer, unreadable } = await this.receipts.present(root, marker, sinceMs);
     // A file we could not read might have held the marker, so absence is not
-    // established: report UNKNOWN rather than loss.
-    if (unreadable) {
-      // …but say so. The flag is scan-GLOBAL, so ONE permanently unreadable
-      // stale `.jsonl` makes every receipt query for this PR answer `null`
-      // forever — which silently disables both the redelivery-vs-loss decision
-      // here and reconcile's claim-release sweep. Unknown is the correct
-      // answer and a durable row is how it stops being a silent one.
+    // established: the answer is UNKNOWN rather than loss (#5362 rule ①;
+    // before the scan returned `false` here). …but say so. The flag is
+    // scan-GLOBAL, so ONE permanently unreadable stale `.jsonl` makes every
+    // receipt query for this PR answer `null` forever — which silently disables
+    // both the redelivery-vs-loss decision and reconcile's claim-release sweep.
+    // Unknown is the correct answer and a durable row is how it stops being a
+    // silent one.
+    if (answer === null && unreadable)
       this.commandStore?.logEvent("receipt_scan_unreadable", pr, {
         marker,
         since_ms: sinceMs,
         root,
       });
-      return null;
-    }
-    // Nothing to read at all (a session that has not written since the round
-    // started) is genuinely ambiguous on a slow first tool call — but the
-    // caller only asks after the stall grace, by which point a session that
-    // received its prompt has certainly written. Report the absence.
-    return sawCandidate ? false : null;
+    // Nothing to read at all (a session that has not written since the wake)
+    // is genuinely ambiguous on a slow first tool call — but every caller asks
+    // only after the stall grace, by which point a session that received its
+    // prompt has certainly written. So in-scope files without the marker are
+    // reported as the absence they are.
+    return answer;
+  }
+
+  /** What the receipt index has read so far (status/diagnostics). */
+  receiptIndexStats(): ReceiptIndexStats {
+    return this.receipts.stats();
   }
 
   /** SessionHooks: re-deliver a round prompt whose receipt never appeared

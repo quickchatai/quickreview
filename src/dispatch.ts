@@ -1387,7 +1387,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               // This head's push question is answered (trivially). Claim the
               // same fingerprint the reconcile push-backstop checks so it is
               // not re-asked every sweep; INSERT OR IGNORE means a claim a
-              // real recheck already holds is left untouched.
+              // real recheck already holds is left untouched. No
+              // wake is sent, so no receipt can exist: never the undelivered
+              // sweep's to release.
               store.claimRecheck(
                 row.number,
                 recheckFingerprint({ trigger: "push" }, row.head_sha),
@@ -1395,6 +1397,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                   head_sha: row.head_sha,
                   trigger: "push",
                   reason: `dispatch-short-circuit:${sc.reason}`,
+                  nudge: false,
                 },
               );
             }

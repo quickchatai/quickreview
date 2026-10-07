@@ -22,6 +22,8 @@ import type { OutcomeCapture, OutcomeSweepReport } from "./outcomes.js";
 import { applyEvent, isBotAuthor } from "./statemachine.js";
 import type { StateStore } from "./state.js";
 import type { OvSessionSweepReport, SessionHooks } from "./types.js";
+import { performance } from "node:perf_hooks";
+import { yieldToLoop } from "./yieldloop.js";
 
 export interface ReconcileSearchItem {
   number: number;
@@ -104,7 +106,21 @@ export interface ReconcileDeps {
    * as its own bounded step after it. Absent ⇒ no outcome capture. Its
    * failures are its own and never reach `errors`. */
   outcomes?: Pick<OutcomeCapture, "observeBotComments" | "sweep">;
+  /** The undelivered-recheck sweep (#5362 W2). `false` skips it for this pass
+   * — the daemon's boot pass, whose health lifts a deploy drain and which
+   * must not wait on reading session transcripts (boot stall). */
+  receiptSweep?: boolean;
+  /** How long the sweep may keep STARTING claims in one pass; the rest are
+   * carried to the next. Default RECEIPT_SWEEP_BUDGET_MS. */
+  receiptSweepBudgetMs?: number;
 }
+
+/**
+ * Wall-clock budget of the undelivered-recheck sweep per pass. Every read in
+ * it is asynchronous and chunked, so this bounds how long the PASS takes (the
+ * steps after it wait), not how long the loop blocks — that is a chunk.
+ */
+export const RECEIPT_SWEEP_BUDGET_MS = 20_000;
 
 export interface ReconcileReport {
   ran_at: string;
@@ -126,6 +142,10 @@ export interface ReconcileReport {
    * failed. Like `ov_sessions`, deliberately NOT part of `errors`: it is
    * bookkeeping, and the boot's first healthy pass must not wait on it. */
   outcomes?: OutcomeSweepReport;
+  /** The undelivered-recheck sweep's pass (#5362 W2, bounded): claims
+   * asked, found delivered (recorded, never asked again), released as lost,
+   * and carried to the next pass by the budget. Absent when it did not run. */
+  receipt_sweep?: { asked: number; delivered: number; released: number; carried: number };
 }
 
 function correction(
@@ -207,6 +227,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
 
   const step = async (name: string, fn: () => Promise<void>): Promise<void> => {
     try {
+      // Every step starts on a fresh event-loop turn, so a pass is never one
+      // synchronous span even when its reads answer without real I/O (a
+      // cache, a stub) — the longest span is one step's own work.
+      await yieldToLoop();
       await fn();
     } catch (err) {
       report.errors.push(`${name}: ${String(err)}`);
@@ -454,26 +478,70 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   // The receipt makes it recoverable. A claim past the grace window whose
   // marker never reached the session is released, and the backstop re-asks on
   // the next pass. Every ambiguity is a no-op: only a provable absence counts.
+  //
+  // Bounded since the 2026-10-07 boot stall, when this step held the
+  // event loop for 132.7 s: it asks only about claims that can still be lost
+  // nudges (`recheckClaimsAwaitingReceipt` — a real nudge, receipt not yet
+  // found, PR not closed), records a found receipt so it is never asked
+  // again, yields a real event-loop turn between claims, stops starting new
+  // claims past its time budget (the rest are asked next pass, least
+  // recently asked first), and is skipped on the boot's first pass, whose
+  // health is what lifts a deploy drain.
   await step("undelivered-rechecks", async () => {
     const receipt = deps.hooks.wakeReceiptPresent;
     if (!receipt) return;
+    if (deps.receiptSweep === false) {
+      (deps.log ?? (() => {}))(
+        "reconcile: undelivered-recheck sweep deferred to the next pass (boot)",
+      );
+      return;
+    }
     const graceMs = (cfg.daemon.round_stall_grace_min ?? DEFAULT_ROUND_STALL_GRACE_MIN) * 60_000;
     const cutoff = new Date(now().getTime() - graceMs).toISOString();
-    for (const claim of store.recheckClaimsBefore(cutoff)) {
+    const budgetMs = deps.receiptSweepBudgetMs ?? RECEIPT_SWEEP_BUDGET_MS;
+    const claims = store.recheckClaimsAwaitingReceipt(cutoff);
+    const sweep = { asked: 0, delivered: 0, released: 0, carried: 0 };
+    const started = performance.now();
+    for (const [i, claim] of claims.entries()) {
+      // Always at least one claim, so a tiny budget still makes progress.
+      if (i > 0 && performance.now() - started > budgetMs) {
+        sweep.carried = claims.length - i;
+        break;
+      }
+      // A real macrotask turn per claim: whatever the receipt hook does, the
+      // sweep is never one synchronous span.
+      await yieldToLoop();
       // A held or still-pending nudge is not a lost one.
-      if (store.hasRunningRound(claim.pr)) continue;
-      if (store.heldWakes(claim.pr).length > 0) continue;
-      if (deps.hooks.injectPending && (await deps.hooks.injectPending(claim.pr))) continue;
+      if (
+        store.hasRunningRound(claim.pr) ||
+        store.hasHeldWakes(claim.pr) ||
+        (deps.hooks.injectPending && (await deps.hooks.injectPending(claim.pr)))
+      ) {
+        store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+        continue;
+      }
       const claimedMs = Date.parse(claim.created_at);
       if (!Number.isFinite(claimedMs)) continue;
+      sweep.asked++;
       const landed = await receipt.call(
         deps.hooks,
         claim.pr,
         recheckPromptMarker(claim.pr, claim.fingerprint),
         claimedMs,
       );
-      if (landed !== false) continue; // delivered, or no evidence — never guess
+      if (landed === true) {
+        // Delivered is a fact: recorded once, never re-read.
+        store.markRecheckReceipt(claim.pr, claim.fingerprint);
+        sweep.delivered++;
+        continue;
+      }
+      if (landed !== false) {
+        // No evidence either way — never guess; ask again on a later pass.
+        store.markRecheckReceiptChecked(claim.pr, claim.fingerprint);
+        continue;
+      }
       store.releaseRecheck(claim.pr, claim.fingerprint);
+      sweep.released++;
       correction(
         deps,
         claim.pr,
@@ -487,6 +555,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         report,
       );
     }
+    report.receipt_sweep = sweep;
+    if (sweep.carried > 0)
+      (deps.log ?? (() => {}))(
+        `reconcile: undelivered-recheck sweep hit its ${budgetMs} ms budget — ${sweep.carried} claim(s) carried to the next pass`,
+      );
   });
 
   await step("stale-trigger-residue", async () => {

@@ -53,10 +53,11 @@ import {
 } from "./recheck.js";
 import type { DispatchAnnouncer, VerdictAnnouncer } from "./slack/announce.js";
 import { applyEvent } from "./statemachine.js";
-import { buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
+import { buildPipelineStatus, buildStatusSnapshot, StateStore, writeStatusJson } from "./state.js";
 import { PiAuthWatch } from "./authwatch.js";
 import { SessionCommandSupervisor } from "./session-command-supervisor.js";
 import { parseRoundProgress } from "./round-progress.js";
+import { yieldToLoop } from "./yieldloop.js";
 import { stubSessionHooks } from "./stubs.js";
 import type { SessionHooks } from "./types.js";
 import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
@@ -666,7 +667,31 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   });
 
   let firstReconcileSeen = false;
+  // ONE reconcile pass at a time (boot stall). The poll was
+  // `every(poll_interval_s, () => void reconcile())` with nothing in between,
+  // so a pass that ran past the interval overlapped the next one — three
+  // passes ended within 21 s at 13:55 on 2026-10-07 — and every overlap paid
+  // every step again. A tick that finds a pass running is skipped; an
+  // explicit call waits for it and then runs its own pass.
+  let reconcileRunning: Promise<void> | null = null;
   const reconcile = async (): Promise<void> => {
+    while (reconcileRunning) await reconcileRunning;
+    const pass = reconcilePass();
+    reconcileRunning = pass;
+    try {
+      await pass;
+    } finally {
+      if (reconcileRunning === pass) reconcileRunning = null;
+    }
+  };
+  const reconcileTick = (): void => {
+    if (reconcileRunning) {
+      log("reconcile: the previous pass is still running — this tick skipped");
+      return;
+    }
+    void reconcile();
+  };
+  const reconcilePass = async (): Promise<void> => {
     const bootFirstPass = !firstReconcileSeen;
     firstReconcileSeen = true;
     await guard("reconcile", async () => {
@@ -691,6 +716,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           );
         },
         outcomes,
+        // The boot's first pass lifts a deploy drain; the undelivered-recheck
+        // sweep reads session transcripts and is not needed for that, so it
+        // starts on the next pass (boot stall).
+        receiptSweep: !bootFirstPass,
       });
       log(
         `reconcile: open=${report.open_prs} triggered=${report.triggered.length} ` +
@@ -868,19 +897,10 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           store,
           secret,
           onInterpretation,
-          pipelineHealth: () =>
-            buildStatusSnapshot(
-              store,
-              cfg.dry_run,
-              undefined,
-              undefined,
-              cfg.daemon.max_concurrent_rounds,
-              undefined,
-              undefined,
-              undefined,
-              roundStages.health(),
-              roundStageBounds,
-            ).pipeline,
+          // Only the pipeline block — never the whole snapshot (every PR,
+          // every round) on each probe: `/health` is what a stalled loop is
+          // measured by, so it must cost almost nothing itself.
+          pipelineHealth: () => buildPipelineStatus(store, new Date(), roundStages.health()),
           log,
         });
         // Loopback by default; in the container the daemon must bind 0.0.0.0
@@ -918,6 +938,11 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       // The caller (wire.ts main) stops and exits non-zero; the container
       // restart is the retry.
       if (deps.onStart) {
+        // A real event-loop turn between the first status write and the
+        // assembly: each is tens of ms of synchronous work, and back to back
+        // (with any of onStart's calls answering without real I/O) they were
+        // one span of the boot (boot stall).
+        await yieldToLoop();
         try {
           await deps.onStart(this);
         } catch (err) {
@@ -932,7 +957,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       }
       await reconcile();
 
-      every(cfg.daemon.poll_interval_s, () => void reconcile());
+      every(cfg.daemon.poll_interval_s, reconcileTick);
       every(DISPATCH_TICK_S, () => void pump());
       every(
         VERDICT_SWEEP_S,

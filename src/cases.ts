@@ -105,6 +105,7 @@ import {
   type ReviewOutcomeRow,
 } from "./outcomes.js";
 import type { PrCommentRow, RoundFindingRow, StateStore } from "./state.js";
+import { yieldToLoop } from "./yieldloop.js";
 
 /** The `#tag` and the `kind=` category every case carries. */
 export const CASE_TAG = "case";
@@ -898,7 +899,7 @@ export class CaseWriter {
 
   private async runTick(): Promise<CaseTick> {
     const out: CaseTick = {
-      synced: this.syncCaptured(),
+      synced: await this.syncCapturedPaced(),
       late: [],
       backfilled: [],
       attempted: 0,
@@ -947,7 +948,25 @@ export class CaseWriter {
   /** Every PR whose outcomes were re-captured since its last sync, oldest
    * capture first, at most `syncPrsPerTick`. Returns how many were synced. */
   syncCaptured(): number {
-    const rows = this.store.db
+    let n = 0;
+    for (const r of this.capturedToSync()) if (this.syncOne(r)) n++;
+    return n;
+  }
+
+  /** `syncCaptured` as the tick runs it: one PR per event-loop turn. Fifty
+   * PRs rendered and diffed back to back were one ~60 ms span on a desktop
+   * core, more on the VM's (boot stall). Same rows, same order. */
+  async syncCapturedPaced(): Promise<number> {
+    let n = 0;
+    for (const r of this.capturedToSync()) {
+      await yieldToLoop();
+      if (this.syncOne(r)) n++;
+    }
+    return n;
+  }
+
+  private capturedToSync(): Array<{ pr: number; captured_at: string }> {
+    return this.store.db
       .prepare(
         `SELECT m.pr AS pr, m.captured_at AS captured_at FROM outcome_capture_marks m
            LEFT JOIN case_sync_marks c ON c.pr = m.pr
@@ -955,16 +974,16 @@ export class CaseWriter {
           ORDER BY m.captured_at, m.pr LIMIT ?`,
       )
       .all(this.cfg.syncPrsPerTick) as Array<{ pr: number; captured_at: string }>;
-    let n = 0;
-    for (const r of rows) {
-      try {
-        this.syncPr(r.pr, r.captured_at);
-        n++;
-      } catch (err) {
-        this.log(`cases: sync of #${r.pr} failed`, err);
-      }
+  }
+
+  private syncOne(r: { pr: number; captured_at: string }): boolean {
+    try {
+      this.syncPr(r.pr, r.captured_at);
+      return true;
+    } catch (err) {
+      this.log(`cases: sync of #${r.pr} failed`, err);
+      return false;
     }
-    return n;
   }
 
   /**

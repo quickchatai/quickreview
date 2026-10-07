@@ -100,6 +100,7 @@
 // health (which lifts a deploy drain) never waits on it.
 import { parseFindingMarker } from "./findingkey.js";
 import type { ReviewCommentFull } from "./github.js";
+import { yieldToLoop } from "./yieldloop.js";
 import type { PrCommentRow, PrStateRow, RoundFindingRow, RoundRow, StateStore } from "./state.js";
 
 export type FindingFate =
@@ -1397,6 +1398,10 @@ export class OutcomeCapture {
       for (const p of candidates) {
         if (report.captured >= max) break;
         if (report.captured > 0 && performance.now() - started > budget) break;
+        // A real event-loop turn per PR: a capture whose git answers are all
+        // memoized (or with no git at all) never awaits real I/O, and 25 of
+        // them in a row were one ~130 ms block (boot stall).
+        await yieldToLoop();
         report.considered++;
         try {
           const mark = marks.get(p.number);

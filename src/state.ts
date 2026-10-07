@@ -619,6 +619,12 @@ CREATE TABLE IF NOT EXISTS rounds (
   finished_at TEXT,
   status TEXT NOT NULL DEFAULT 'running'
 );
+-- Every per-PR read of rounds (hasRunningRound, roundsFor, the status
+-- snapshot's latest-verdict subquery, the due-command check) was a full scan
+-- of the table: 0.14 ms a call, 2,548 calls a reconcile pass, and 70-140 ms
+-- for each heartbeat and each command-supervisor scan on the live 2,434 rows
+-- (boot stall, 2026-10-07).
+CREATE INDEX IF NOT EXISTS rounds_pr_round ON rounds(pr, round_no);
 CREATE TABLE IF NOT EXISTS bot_comments (
   comment_id INTEGER PRIMARY KEY,
   pr INTEGER NOT NULL,
@@ -1276,6 +1282,22 @@ export interface RoundStartMeta {
   addable_passes?: Array<{ lens: string; tier: string }>;
 }
 
+/** One recheck claim, as `rechecksFor` reads it. */
+export interface RecheckClaimRow {
+  pr: number;
+  fingerprint: string;
+  head_sha: string;
+  trigger: string;
+  reason: string | null;
+  created_at: string;
+  /** 0 = answered without a wake (no receipt token can exist). */
+  nudged: number;
+  /** When the undelivered sweep found the wake's receipt token. */
+  receipt_at: string | null;
+  /** When the sweep last asked about it without deciding. */
+  receipt_checked_at: string | null;
+}
+
 export class StateStore {
   readonly db: Database.Database;
 
@@ -1428,8 +1450,58 @@ export class StateStore {
         /* column already present */
       }
     }
+    this.migrateRecheckReceipts();
     this.migrateSessionCommandCancelledStatus();
     this.runDataMigrations();
+  }
+
+  /**
+   * boot stall (2026-10-07): the undelivered-recheck sweep re-proved
+   * every claim's receipt on every pass, forever — 2,548 claims, 1,217 already
+   * delivered, ~23 GB of transcripts decoded per pass. Three columns make the
+   * sweep incremental:
+   *   - `nudged` — 0 for a claim no wake was ever sent for (a trivial-delta
+   *     no-op, `noop:*`, or a dispatch short-circuit). Such a claim carries no
+   *     receipt token by construction, so the sweep must never read it: it
+   *     released them as "undelivered" the moment the session wrote anything,
+   *     and the push backstop then re-asked a question already answered
+   *     (#5841: 20 such releases in one pass on 2026-10-07 15:33).
+   *   - `receipt_at` — when the sweep found the claim's token: a delivered
+   *     nudge is a fact, recorded once and never re-read.
+   *   - `receipt_checked_at` — when the sweep last asked about a claim still
+   *     undecided; the sweep visits the least recently asked first, so a
+   *     per-pass budget never starves the same tail.
+   * Additive and idempotent; the backfill runs only in the boot that adds
+   * `nudged`, from the reason the claim was written with.
+   */
+  private migrateRecheckReceipts(): void {
+    let added = false;
+    try {
+      this.db.exec("ALTER TABLE rechecks ADD COLUMN nudged INTEGER NOT NULL DEFAULT 1");
+      added = true;
+    } catch {
+      /* column already present */
+    }
+    for (const ddl of [
+      "ALTER TABLE rechecks ADD COLUMN receipt_at TEXT",
+      "ALTER TABLE rechecks ADD COLUMN receipt_checked_at TEXT",
+    ]) {
+      try {
+        this.db.exec(ddl);
+      } catch {
+        /* column already present */
+      }
+    }
+    if (added) {
+      const info = this.db
+        .prepare(
+          `UPDATE rechecks SET nudged = 0
+            WHERE reason LIKE 'noop:%' OR reason LIKE 'dispatch-short-circuit:%'`,
+        )
+        .run();
+      if (info.changes > 0)
+        this.logEvent("recheck_claims_unnudged_backfilled", null, { count: info.changes });
+    }
   }
 
   /** Existing databases carry a CHECK constraint that predates operator
@@ -4779,14 +4851,30 @@ export class StateStore {
   claimRecheck(
     pr: number,
     fingerprint: string,
-    mark: { head_sha: string; trigger: string; reason?: string },
+    mark: {
+      head_sha: string;
+      trigger: string;
+      reason?: string;
+      /** False for a claim that answers the question WITHOUT a wake (a
+       * trivial-delta no-op, a dispatch short-circuit): it carries no receipt
+       * token, so the undelivered sweep never reads it. Default true. */
+      nudge?: boolean;
+    },
   ): boolean {
     const info = this.db
       .prepare(
-        `INSERT OR IGNORE INTO rechecks (pr, fingerprint, head_sha, trigger, reason, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO rechecks (pr, fingerprint, head_sha, trigger, reason, created_at, nudged)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(pr, fingerprint, mark.head_sha, mark.trigger, mark.reason ?? null, this.ts());
+      .run(
+        pr,
+        fingerprint,
+        mark.head_sha,
+        mark.trigger,
+        mark.reason ?? null,
+        this.ts(),
+        mark.nudge === false ? 0 : 1,
+      );
     return info.changes === 1;
   }
 
@@ -4807,11 +4895,18 @@ export class StateStore {
     this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
   }
 
-  /** Recheck claims older than `olderThanIso`, across every PR (#5362 W2). The
-   * undelivered-nudge sweep reads this: a claim whose nudge never landed
-   * suppresses the reconcile push-backstop forever, and unlike a round there
-   * is no deadline underneath a recheck to catch that. */
-  recheckClaimsBefore(olderThanIso: string): Array<{
+  /** The recheck claims the undelivered-nudge sweep must still ask about
+   * (#5362 W2): a claim whose nudge never landed suppresses the reconcile
+   * push-backstop forever, and unlike a round there is no deadline underneath
+   * a recheck to catch that.
+   *
+   * Only claims that can still be that (boot stall): older than
+   * `olderThanIso` (the grace), a real nudge (`nudged` — a no-op claim never
+   * carried a token), whose receipt has not already been found (`receipt_at`
+   * — a delivered nudge stays delivered), on a PR that is not closed (the
+   * backstop never reads a closed PR; once reconcile reopens one, its claims
+   * are swept again). Least recently asked first, then oldest. */
+  recheckClaimsAwaitingReceipt(olderThanIso: string): Array<{
     pr: number;
     fingerprint: string;
     head_sha: string;
@@ -4820,7 +4915,11 @@ export class StateStore {
   }> {
     return this.db
       .prepare(
-        "SELECT pr, fingerprint, head_sha, trigger, created_at FROM rechecks WHERE created_at < ? ORDER BY created_at",
+        `SELECT r.pr, r.fingerprint, r.head_sha, r.trigger, r.created_at
+           FROM rechecks r LEFT JOIN pr_state p ON p.number = r.pr
+          WHERE r.created_at < ? AND r.nudged = 1 AND r.receipt_at IS NULL
+            AND (p.state IS NULL OR p.state != 'closed')
+          ORDER BY r.receipt_checked_at IS NOT NULL, r.receipt_checked_at, r.created_at, r.pr, r.fingerprint`,
       )
       .all(olderThanIso) as Array<{
       pr: number;
@@ -4831,25 +4930,26 @@ export class StateStore {
     }>;
   }
 
+  /** The sweep found this claim's receipt token: delivered, never asked again. */
+  markRecheckReceipt(pr: number, fingerprint: string): void {
+    this.db
+      .prepare("UPDATE rechecks SET receipt_at = ? WHERE pr = ? AND fingerprint = ?")
+      .run(this.ts(), pr, fingerprint);
+  }
+
+  /** The sweep asked about this claim and could not decide (no evidence
+   * either way, or a nudge still held): it goes to the back of the queue. */
+  markRecheckReceiptChecked(pr: number, fingerprint: string): void {
+    this.db
+      .prepare("UPDATE rechecks SET receipt_checked_at = ? WHERE pr = ? AND fingerprint = ?")
+      .run(this.ts(), pr, fingerprint);
+  }
+
   /** Every recheck nudge sent for a PR, oldest first (TUI/audit). */
-  rechecksFor(pr: number): Array<{
-    pr: number;
-    fingerprint: string;
-    head_sha: string;
-    trigger: string;
-    reason: string | null;
-    created_at: string;
-  }> {
+  rechecksFor(pr: number): RecheckClaimRow[] {
     return this.db
       .prepare("SELECT * FROM rechecks WHERE pr = ? ORDER BY created_at")
-      .all(pr) as Array<{
-      pr: number;
-      fingerprint: string;
-      head_sha: string;
-      trigger: string;
-      reason: string | null;
-      created_at: string;
-    }>;
+      .all(pr) as RecheckClaimRow[];
   }
 
   // ---- webhook delivery dedupe ------------------------------------------
@@ -6244,34 +6344,27 @@ export function writeStatusJson(stateDir: string, snapshot: StatusSnapshot): voi
   renameSync(tmp, target);
 }
 
-export function buildStatusSnapshot(
+/**
+ * The status snapshot's `pipeline` block alone — what `GET /health` serves.
+ * `/health` used to build the WHOLE snapshot (every PR, every round, two
+ * correlated scans) on each probe just to read this block back out, so the
+ * probe that measures a stalled loop paid ~100 ms of the loop itself
+ * (boot stall). Absent exactly when the snapshot would omit it.
+ */
+export function buildPipelineStatus(
   store: StateStore,
-  dryRun: boolean,
-  digestHeadline?: string,
-  now: () => Date = () => new Date(),
-  maxConcurrentRounds?: number,
-  piAuth?: { last_at: string; hits: number },
-  openviking?: OpenVikingStatus,
-  threadDecisions?: StatusSnapshot["thread_decisions"],
+  at: Date,
   roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
-  roundStageBounds?: RoundStageBounds,
-  memory?: MemoryStatus,
-  daemonLoad?: DaemonLoadStatus,
-): StatusSnapshot {
-  const at = now();
-  const today = at.toISOString().slice(0, 10);
-  const drain = store.drainState();
-  // Expired zombie rounds stay out of the per-PR round COUNTS —
-  // but they DO count in every spend aggregate (below).
-  const roundStats = store.db
-    .prepare(
-      "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr",
-    )
-    .all() as Array<{ pr: number; c: number; v: string | null }>;
-  const byPr = new Map(roundStats.map((r) => [r.pr, r]));
-  const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
-  const failures = store.openReviewFailures();
-  const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
+): StatusSnapshot["pipeline"] {
+  return pipelineFrom(store, at, store.openReviewFailures(), roundStageSupervisor);
+}
+
+function pipelineFrom(
+  store: StateStore,
+  at: Date,
+  failures: ReturnType<StateStore["openReviewFailures"]>,
+  roundStageSupervisor: StatusSnapshot["round_stage_supervisor"] | undefined,
+): StatusSnapshot["pipeline"] {
   const pipelineCauses: NonNullable<StatusSnapshot["pipeline"]>["causes"] = failures.map(
     (failure) => ({
       key: failure.incident_id,
@@ -6324,6 +6417,57 @@ export function buildStatusSnapshot(
       recovered_at: failure.recovered_at!,
       recovery: failure.recovery,
     }));
+  if (!roundStageSupervisor && pipelineCauses.length === 0) return undefined;
+  return {
+    healthy: pipelineCauses.length === 0,
+    failed_loud: failures.length,
+    causes: pipelineCauses,
+    recoveries,
+    ...(oldest
+      ? {
+          oldest_expired: {
+            key: oldest.key,
+            pr: oldest.pr,
+            since: oldest.since,
+            stage: oldest.stage,
+            detail: oldest.detail,
+            next_action: oldest.next_action,
+            age_s: oldest.age_s,
+          },
+        }
+      : {}),
+  };
+}
+
+export function buildStatusSnapshot(
+  store: StateStore,
+  dryRun: boolean,
+  digestHeadline?: string,
+  now: () => Date = () => new Date(),
+  maxConcurrentRounds?: number,
+  piAuth?: { last_at: string; hits: number },
+  openviking?: OpenVikingStatus,
+  threadDecisions?: StatusSnapshot["thread_decisions"],
+  roundStageSupervisor?: StatusSnapshot["round_stage_supervisor"],
+  roundStageBounds?: RoundStageBounds,
+  memory?: MemoryStatus,
+  daemonLoad?: DaemonLoadStatus,
+): StatusSnapshot {
+  const at = now();
+  const today = at.toISOString().slice(0, 10);
+  const drain = store.drainState();
+  // Expired zombie rounds stay out of the per-PR round COUNTS —
+  // but they DO count in every spend aggregate (below).
+  const roundStats = store.db
+    .prepare(
+      "SELECT pr, COUNT(*) AS c, (SELECT verdict FROM rounds r2 WHERE r2.pr = rounds.pr AND verdict IS NOT NULL ORDER BY round_no DESC LIMIT 1) AS v FROM rounds WHERE status != 'expired' GROUP BY pr",
+    )
+    .all() as Array<{ pr: number; c: number; v: string | null }>;
+  const byPr = new Map(roundStats.map((r) => [r.pr, r]));
+  const runningByPr = new Map(store.runningRounds().map((r) => [r.pr, r]));
+  const failures = store.openReviewFailures();
+  const failureByPr = new Map(failures.map((failure) => [failure.pr, failure]));
+  const pipeline = pipelineFrom(store, at, failures, roundStageSupervisor);
   return {
     written_at: at.toISOString(),
     dry_run: dryRun,
@@ -6436,29 +6580,7 @@ export function buildStatusSnapshot(
     ...(daemonLoad ? { daemon: daemonLoad } : {}),
     ...(threadDecisions ? { thread_decisions: threadDecisions } : {}),
     ...(roundStageSupervisor ? { round_stage_supervisor: roundStageSupervisor } : {}),
-    ...(roundStageSupervisor || pipelineCauses.length > 0
-      ? {
-          pipeline: {
-            healthy: pipelineCauses.length === 0,
-            failed_loud: failures.length,
-            causes: pipelineCauses,
-            recoveries,
-            ...(oldest
-              ? {
-                  oldest_expired: {
-                    key: oldest.key,
-                    pr: oldest.pr,
-                    since: oldest.since,
-                    stage: oldest.stage,
-                    detail: oldest.detail,
-                    next_action: oldest.next_action,
-                    age_s: oldest.age_s,
-                  },
-                }
-              : {}),
-          },
-        }
-      : {}),
+    ...(pipeline ? { pipeline } : {}),
     ...(drain.draining
       ? {
           draining: true,

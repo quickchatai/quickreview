@@ -509,6 +509,10 @@ describe("runRecheck", () => {
     // the reconcile backstop never re-classifies the same question per sweep.
     expect(h.store.rechecksFor(PR)).toHaveLength(1);
     expect(h.store.rechecksFor(PR)[0]?.reason).toBe("noop:trivial-delta");
+    // No wake went out, so no receipt token can ever exist for it: the claim
+    // is written un-nudged and the undelivered sweep never reads its absence
+    // as a lost nudge (#5841, boot stall).
+    expect(h.store.rechecksFor(PR)[0]?.nudged).toBe(0);
     // The standing verdict is untouched — uphold is the default, not an action.
     expect(h.store.reviewedHead(PR)?.verdict).toBe("APPROVE");
     expect(h.store.getPr(PR)?.state).toBe("tracked");
@@ -530,6 +534,8 @@ describe("runRecheck", () => {
     expect(out.order?.evidence).toMatch(/truncated/);
     expect(h.injected).toHaveLength(1);
     expect(h.store.rechecksFor(PR)[0]?.reason ?? "").not.toMatch(/^noop:/);
+    // A real nudge: its receipt is the sweep's to look for.
+    expect(h.store.rechecksFor(PR)[0]?.nudged).toBe(1);
   });
 
   // Selfscan a78c7cba: an incomplete PR file list is not an ownership answer —

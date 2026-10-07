@@ -311,9 +311,12 @@ export class PrConversation {
       this.readDecisions();
       // Recovery is separate from capture. Only verified-author untagged
       // comments after a blocking review and within 24h may become new work.
+      // Closed rows first: `blockedPrAuthor` answers undefined for them anyway,
+      // and re-reading all ~750 PRs every 10 s was ~20 ms of the loop
+      // (boot stall).
       const eligible = this.deps.store
         .allPrs()
-        .filter((p) => blockedPrAuthor(this.deps.store, p.number))
+        .filter((p) => p.state !== "closed" && blockedPrAuthor(this.deps.store, p.number))
         .map((p) => p.number);
       const batch = [
         ...eligible.slice(this.recoveryCursor),

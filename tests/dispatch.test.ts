@@ -1747,6 +1747,12 @@ describe("system re-trigger short-circuit", () => {
 
       expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
       expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
+      // The push question is answered without a wake: claimed un-nudged, so
+      // the undelivered sweep never releases it (boot stall).
+      expect(store.rechecksFor(50)).toMatchObject([
+        { fingerprint: recheckFingerprint({ trigger: "push" }, NEW), nudged: 0 },
+      ]);
+      expect(store.rechecksFor(50)[0]?.reason).toMatch(/^dispatch-short-circuit:/);
       expect(
         store.db
           .prepare(

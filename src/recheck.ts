@@ -803,11 +803,14 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       carryWithheldMark(store, req.pr, head, `recheck-noop:${plan.reason}`, log);
       // A trivial/empty answer is terminal for this head: claim it, so the
       // reconcile backstop (below in reconcile.ts) never re-classifies the
-      // same question every sweep.
+      // same question every sweep. No wake goes out, so no receipt token can
+      // ever exist for it: `nudge: false` keeps the undelivered sweep from
+      // reading its absence as a lost nudge and releasing it (#5841).
       store.claimRecheck(req.pr, recheckFingerprint(req, head), {
         head_sha: head,
         trigger: req.trigger,
         reason: `noop:${plan.reason}`,
+        nudge: false,
       });
     }
     return done(plan);

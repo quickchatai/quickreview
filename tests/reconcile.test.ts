@@ -1080,3 +1080,180 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
     expect(store.hasRecheck(605, fp)).toBe(true);
   });
 });
+
+describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)", () => {
+  // The sweep held the event loop for 132.7 s at the 15:35 boot: it asked
+  // about all 2,548 claims ever written — 1,217 already delivered and
+  // re-proven every pass, 2,078 on closed PRs, 1,133 no-op claims that never
+  // carried a token — every 5 minutes, forever.
+  const NOW = () => new Date("2026-08-14T12:00:00Z");
+  const STALE = "2026-08-14T09:00:00.000Z";
+
+  function claimAt(
+    pr: number,
+    fp: string,
+    opts: { reason?: string; nudge?: boolean; at?: string } = {},
+  ): void {
+    store.claimRecheck(pr, fp, {
+      head_sha: `sha${pr}`,
+      trigger: "push",
+      reason: opts.reason ?? "2 changed file(s) this review",
+      ...(opts.nudge === undefined ? {} : { nudge: opts.nudge }),
+    });
+    store.db
+      .prepare("UPDATE rechecks SET created_at = ? WHERE pr = ? AND fingerprint = ?")
+      .run(opts.at ?? STALE, pr, fp);
+  }
+
+  function askingHooks(answer: (pr: number, marker: string) => boolean | null): SessionHooks & {
+    asked: string[];
+  } {
+    const h = recordingHooks().hooks as SessionHooks & { asked: string[] };
+    h.asked = [];
+    h.wakeReceiptPresent = async (pr, marker) => {
+      h.asked.push(`${pr}:${marker}`);
+      return answer(pr, marker);
+    };
+    h.injectPending = async () => false;
+    return h;
+  }
+
+  const released = () =>
+    corrections(store).filter((c) => c.what === "recheck-claim-released-undelivered");
+
+  it("records a found receipt once and never asks about that claim again", async () => {
+    gh.open = [ref(700)];
+    seed(700, "tracked");
+    claimAt(700, "push:a");
+    const hooks = askingHooks(() => true);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    expect(hooks.asked).toEqual([`700:${recheckPromptMarker(700, "push:a")}`]);
+    expect(store.rechecksFor(700)[0]?.receipt_at).not.toBeNull();
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    expect(hooks.asked).toHaveLength(1); // delivered is a fact, not re-proven
+    expect(store.hasRecheck(700, "push:a")).toBe(true);
+  });
+
+  it("#5841: a no-op claim carries no token, so it is never released and the backstop is never re-armed", async () => {
+    // Live 2026-10-07 15:33: twenty no-op claims of #5841 released in one
+    // pass the moment its session wrote anything (the absent token read as a
+    // lost nudge), and the next pass's backstop re-asked push:b224bda — a
+    // question the trivial-delta classifier had already answered.
+    seed(701, "tracked", { head: "cur-sha" });
+    store.recordReviewedHead(701, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
+    gh.open = [ref(701, { head_sha: "cur-sha" })];
+    claimAt(701, "push:cur-sha::", { reason: "noop:trivial-delta", nudge: false });
+    // The session HAS written since, without any token: the old sweep's
+    // "provable absence".
+    const hooks = askingHooks(() => false);
+    const pushes: number[] = [];
+    const onHeadPush = async (pr: number): Promise<void> => {
+      pushes.push(pr);
+    };
+
+    for (let pass = 0; pass < 3; pass++)
+      await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW, onHeadPush });
+
+    expect(hooks.asked).toEqual([]);
+    expect(released()).toHaveLength(0);
+    expect(store.hasRecheck(701, "push:cur-sha::")).toBe(true);
+    expect(pushes).toEqual([]); // the answered question is never re-asked
+  });
+
+  it("a claim on a closed PR is not asked; reopened, it is asked again", async () => {
+    seed(702, "closed");
+    claimAt(702, "push:a");
+    const hooks = askingHooks(() => false);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    expect(hooks.asked).toEqual([]);
+    expect(store.hasRecheck(702, "push:a")).toBe(true);
+
+    // GitHub says open again: the open-PR step reopens it, and the sweep later
+    // in the same pass asks about its claims again.
+    gh.open = [ref(702)];
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    expect(store.getPr(702)?.state).not.toBe("closed");
+    expect(hooks.asked).toEqual([`702:${recheckPromptMarker(702, "push:a")}`]);
+    expect(store.hasRecheck(702, "push:a")).toBe(false);
+    expect(released()).toHaveLength(1);
+  });
+
+  it("the boot pass defers the sweep; the next pass runs it", async () => {
+    gh.open = [ref(703)];
+    seed(703, "tracked");
+    claimAt(703, "push:a");
+    const hooks = askingHooks(() => false);
+    const logs: string[] = [];
+
+    await reconcileOnce({
+      cfg,
+      store,
+      adapter: gh,
+      hooks,
+      now: NOW,
+      receiptSweep: false,
+      log: (m) => logs.push(m),
+    });
+    expect(hooks.asked).toEqual([]);
+    expect(store.hasRecheck(703, "push:a")).toBe(true);
+    expect(logs.some((l) => l.includes("undelivered-recheck sweep deferred"))).toBe(true);
+
+    await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    expect(store.hasRecheck(703, "push:a")).toBe(false);
+  });
+
+  it("past its budget the sweep carries the rest, least recently asked first — nothing starves", async () => {
+    gh.open = [ref(704), ref(705), ref(706)];
+    for (const n of [704, 705, 706]) {
+      seed(n, "tracked");
+      claimAt(n, "push:a", { at: `2026-08-14T09:00:0${n - 704}.000Z` });
+    }
+    // No evidence either way: nothing settles, so only the rotation can make
+    // progress past the first claim.
+    const hooks = askingHooks(() => null);
+    const passes: number[][] = [];
+    for (let pass = 0; pass < 4; pass++) {
+      const before = hooks.asked.length;
+      const report = await reconcileOnce({
+        cfg,
+        store,
+        adapter: gh,
+        hooks,
+        now: NOW,
+        receiptSweepBudgetMs: 0, // one claim a pass
+      });
+      passes.push(hooks.asked.slice(before).map((a) => Number(a.split(":")[0])));
+      expect(report.receipt_sweep).toMatchObject({ asked: 1, carried: 2 });
+    }
+    expect(passes).toEqual([[704], [705], [706], [704]]);
+    expect(released()).toHaveLength(0);
+  });
+
+  it("yields a real event-loop turn per claim — the sweep is never one synchronous span", async () => {
+    const n = 300;
+    for (let i = 0; i < n; i++) {
+      seed(800 + i, "tracked");
+      claimAt(800 + i, "push:a");
+    }
+    gh.open = Array.from({ length: n }, (_, i) => ref(800 + i));
+    // The receipt answers WITHOUT real I/O — exactly the old hook's shape (an
+    // async function whose body is synchronous), which kept the old loop on
+    // the microtask queue for 2,548 claims.
+    const hooks = askingHooks(() => true);
+    let turns = 0;
+    let ticking = true;
+    const tick = (): void => {
+      turns++;
+      if (ticking) setImmediate(tick);
+    };
+    setImmediate(tick);
+    const report = await reconcileOnce({ cfg, store, adapter: gh, hooks, now: NOW });
+    ticking = false;
+    expect(report.receipt_sweep).toMatchObject({ asked: n, delivered: n, released: 0 });
+    expect(turns).toBeGreaterThanOrEqual(n);
+  });
+});
