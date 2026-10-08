@@ -1228,33 +1228,76 @@ export async function decideFollowUp(
     return full("delta-threw", { error: err instanceof Error ? err.message : String(err) });
   }
   if (!delta.ok) return full(delta.reason, delta.detail ? { detail: delta.detail } : undefined);
+  return planFollowUp(cfg, deps.heuristics, {
+    delta,
+    fromSha: args.markHead,
+    files: args.files,
+    fullPlan: args.fullPlan,
+    ecosystem: args.ecosystem,
+    styleGuide: args.styleGuide,
+    ciLinters: args.ciLinters,
+    sweepOwed: () => args.standing !== "APPROVE" && !store.fullLookSinceFirst(args.pr),
+  });
+}
+
+/**
+ * The PURE half of `decideFollowUp`: given a computed delta, plan
+ * the follow-up round — or answer `{full: reason}`. The daemon reaches it
+ * through `decideFollowUp`; the bench's follow-up replay (src/bench/
+ * followup.ts) calls it directly with a delta computed by the same
+ * `WorktreeManager.prOwnedDelta` over its replay tree, so the two never
+ * disagree about what a follow-up round plans.
+ *
+ * `sweepOwed` is consulted only when the `[review] follow_up_sweep` knob is on
+ * and the plan stands: the daemon's answer reads the standing verdict and the
+ * store; the bench's is the recorded case's.
+ */
+export function planFollowUp(
+  cfg: Config,
+  heuristics: HeuristicsExtension | undefined,
+  args: {
+    delta: Extract<PrOwnedDelta, { ok: true }>;
+    fromSha: string;
+    files: PrFileEntry[];
+    fullPlan: PassPlan;
+    ecosystem: Ecosystem;
+    styleGuide: readonly string[];
+    ciLinters: readonly CiLinter[];
+    sweepOwed: () => boolean;
+  },
+):
+  | { kind: "delta"; decision: FollowUpDecision }
+  | { kind: "full"; reason: FollowUpFullReason; detail?: Record<string, unknown> } {
+  const { delta } = args;
   const prLines = args.files.reduce((n, f) => n + (f.additions ?? 0) + (f.deletions ?? 0), 0);
   const ratio = cfg.review.follow_up_max_delta_ratio ?? 0.6;
   if (delta.lines > ratio * prLines)
-    return full("delta-too-large", { delta_lines: delta.lines, pr_lines: prLines, ratio });
+    return {
+      kind: "full",
+      reason: "delta-too-large",
+      detail: { delta_lines: delta.lines, pr_lines: prLines, ratio },
+    };
   const deltaFiles = deltaAsPrFiles(delta.files) as PrFileEntry[];
   const plan = buildPassPlan(
     cfg,
     deltaFiles,
     undefined,
     args.ecosystem,
-    deps.heuristics,
+    heuristics,
     args.styleGuide,
     args.ciLinters,
     { tierFiles: args.files },
   );
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
-  if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS)) return full("baseline-unplanned");
-  const sweepOwed =
-    (cfg.review.follow_up_sweep ?? true) &&
-    args.standing !== "APPROVE" &&
-    !store.fullLookSinceFirst(args.pr);
+  if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS))
+    return { kind: "full", reason: "baseline-unplanned" };
+  const sweepOwed = (cfg.review.follow_up_sweep ?? true) && args.sweepOwed();
   return {
     kind: "delta",
     decision: {
       delta,
-      fromSha: args.markHead,
+      fromSha: args.fromSha,
       deltaFiles,
       plan,
       ...(sweepOwed ? { sweepPlan: args.fullPlan.pass_plan } : {}),
@@ -1287,7 +1330,7 @@ export function renderDeltaPatch(files: readonly PrOwnedDeltaFile[]): string {
 }
 
 /** The order's view of a delta (types.ts `RoundDelta`). */
-function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta {
+export function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta {
   return {
     from_sha: d.fromSha,
     tree: d.delta.tree,
@@ -1301,6 +1344,27 @@ function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta {
       ...(f.conflict ? { conflict: true } : {}),
     })),
     patch_file: patchFile,
+  };
+}
+
+/** The order the pre-approval sweep's task files render from: the
+ * follow-up order minus its follow-up fields, planned with the whole PR's
+ * full plan — exactly the order a full round would hand its lenses. Pure;
+ * the daemon and the bench's follow-up replay render the sweep's tasks from
+ * it alike. */
+export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): RoundOrder {
+  const {
+    scope: _s,
+    delta: _d,
+    prior_findings_note: _p,
+    sweep_plan: _sp,
+    sweep_task_files: _st,
+    ...whole
+  } = order;
+  return {
+    ...whole,
+    pass_plan: sweepPlan,
+    lenses: [...new Set(sweepPlan.map((p) => p.lens))],
   };
 }
 
@@ -2239,18 +2303,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               `pr-${row.number}-round-${roundNo}-passes`,
               "tasks-sweep",
             );
-            const {
-              scope: _s,
-              delta: _d,
-              prior_findings_note: _p,
-              sweep_plan: _sp,
-              ...whole
-            } = built;
-            const sweepOrder: RoundOrder = {
-              ...whole,
-              pass_plan: built.sweep_plan,
-              lenses: [...new Set(built.sweep_plan.map((p) => p.lens))],
-            };
+            const sweepOrder = sweepOrderOf(built, built.sweep_plan);
             const sweepTasks = writePassTasks(
               sweepDir,
               sweepOrder,

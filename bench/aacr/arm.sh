@@ -220,9 +220,16 @@ for g in "${groups[@]}"; do
     *) jobs+=("$g|") ;;
   esac
 done
+# A set lives in sets/, or (a private replay set) in
+# QCR_BENCH_PRIVATE_SETS, which bench.sh mounts read-only for the containers.
+set_json() {
+  if [[ -f "$HERE/sets/$1.json" ]]; then echo "$HERE/sets/$1.json"
+  elif [[ -n "${QCR_BENCH_PRIVATE_SETS:-}" && -f "$QCR_BENCH_PRIVATE_SETS/$1.json" ]]; then echo "$QCR_BENCH_PRIVATE_SETS/$1.json"
+  else return 1; fi
+}
 for j in "${jobs[@]}"; do
   set_name="${j%%|*}"
-  [[ -f "$HERE/sets/$set_name.json" ]] || { echo "no case set $set_name" >&2; exit 2; }
+  set_json "$set_name" >/dev/null || { echo "no case set $set_name" >&2; exit 2; }
 done
 
 # Every (repeat, job) is one run: JRUN/JSET/JIDS indexed alike.
@@ -431,17 +438,18 @@ done
 while read -r i id; do
   [[ -n "$id" ]] || continue
   QUEUE+=("$i $id 1"); LEFT[$i]=$(( LEFT[$i] + 1 ))
-done < <(for ((i = 0; i < NJ; i++)); do [[ -n "${CASES_OF[$i]}" ]] && echo "$i ${JSET[$i]} ${CASES_OF[$i]}"; done \
+done < <(for ((i = 0; i < NJ; i++)); do [[ -n "${CASES_OF[$i]}" ]] && echo "$i $(set_json "${JSET[$i]}") ${CASES_OF[$i]}"; done \
   | python3 -c '
 import json, os, sys
 rows = []
 for n, line in enumerate(sys.stdin):
-    i, s, ids = line.split()
-    size = {c["instance_id"]: c.get("change_line_count") or 0 for c in json.load(open(os.path.join(sys.argv[1], s + ".json")))["cases"]}
+    i, rest = line.split(None, 1)
+    s, ids = rest.rstrip("\n").rsplit(None, 1)
+    size = {c["instance_id"]: c.get("change_line_count") or 0 for c in json.load(open(s))["cases"]}
     rows += [(-size.get(c, 0), n, k, i, c) for k, c in enumerate(ids.split(","))]
 for r in sorted(rows):
     print(r[3], r[4])
-' "$HERE/sets")
+')
 TOTAL=$(( ${#QUEUE[@]} ))
 if [[ "$ADAPT" == 1 ]]; then
   mkdir -p "$SLOTS"

@@ -355,6 +355,23 @@ export function priorSidecarRel(pr: number, roundNo: number): string {
   return `state/pr-${pr}-round-${roundNo}-prior.json`;
 }
 
+/** The sidecar's content: every listed finding with its reason and
+ * evidence, and what was dropped and why. */
+export function priorSidecarText(list: PriorFindingsList, headSha: string): string {
+  return `${JSON.stringify(
+    {
+      pr: list.pr,
+      round_no: list.round_no,
+      head_sha: headSha,
+      incomplete: list.incomplete,
+      findings: list.findings,
+      dropped: list.dropped,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 export function priorSidecarPath(stateDir: string, pr: number, roundNo: number): string {
   return join(stateDir, `pr-${pr}-round-${roundNo}-prior.json`);
 }
@@ -384,11 +401,14 @@ function entryLine(f: PriorFinding): string {
  */
 export function renderPriorFindingsNote(
   list: PriorFindingsList,
-  opts: { maxEntries?: number; maxChars?: number } = {},
+  /** `sidecar`: where the note says the full list lives — default the
+   * daemon's `state/pr-<n>-round-<k>-prior.json`; the bench's follow-up
+   * replay names its case dir's copy. */
+  opts: { maxEntries?: number; maxChars?: number; sidecar?: string } = {},
 ): string {
   const maxEntries = opts.maxEntries ?? PRIOR_NOTE_MAX_ENTRIES;
   const maxChars = opts.maxChars ?? PRIOR_NOTE_MAX_CHARS;
-  const sidecar = priorSidecarRel(list.pr, list.round_no);
+  const sidecar = opts.sidecar ?? priorSidecarRel(list.pr, list.round_no);
   const out: string[] = [];
   const blocking = list.findings.filter((f) => f.blocking).length;
   const incompleteLines = list.incomplete.map(
@@ -562,21 +582,7 @@ export function preparePriorFindings(
     const list = collectPriorFindings(deps, pr, roundNo);
     mkdirSync(dirname(sidecarPath), { recursive: true });
     const tmp = `${sidecarPath}.tmp`;
-    writeFileSync(
-      tmp,
-      `${JSON.stringify(
-        {
-          pr,
-          round_no: roundNo,
-          head_sha: headSha,
-          incomplete: list.incomplete,
-          findings: list.findings,
-          dropped: list.dropped,
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    writeFileSync(tmp, priorSidecarText(list, headSha));
     renameSync(tmp, sidecarPath);
     deps.store.recordPriorListing(
       pr,

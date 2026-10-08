@@ -48,6 +48,10 @@ set -euo pipefail
 ROOT=/opt/quickreview/sandbox
 CLI=(node "$ROOT/dist/src/bench/cli.js")
 SETS=/opt/quickreview/bench/sets
+# private replay sets (recorded rounds of a private repo) are never
+# baked into the image: bench.sh mounts QCR_BENCH_PRIVATE_SETS here, read-only,
+# when it is set. A name in the image's sets wins.
+PRIVATE_SETS=/opt/quickreview/bench/private-sets
 mkdir -p "$HOME"
 # Seed the project .pi/ (a tmpfs under the read-only root) from the baked copy.
 if [[ -w "$ROOT/.pi" && ! -e "$ROOT/.pi/settings.json" ]]; then
@@ -57,7 +61,8 @@ fi
 
 set_file() {
   local f="$SETS/$1.json"
-  [[ -f "$f" ]] || { echo "unknown set '$1' (have: $(ls "$SETS" | sed 's/\.json$//' | tr '\n' ' '))" >&2; exit 2; }
+  [[ -f "$f" ]] || f="$PRIVATE_SETS/$1.json"
+  [[ -f "$f" ]] || { echo "unknown set '$1' (have: $({ ls "$SETS"; ls "$PRIVATE_SETS" 2>/dev/null; } | grep '\.json$' | sed 's/\.json$//' | tr '\n' ' '))" >&2; exit 2; }
   echo "$f"
 }
 

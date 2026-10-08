@@ -27,14 +27,19 @@ const commitId = (text: string): string =>
     .digest("hex");
 
 describe("dataset pin registry", () => {
-  it("keeps AACR-Bench v1.0 and adds exactly the three external pins and the self-review pin", () => {
+  it("keeps AACR-Bench v1.0 and adds exactly the external pins, the self-review pin and the unpinned private pin", () => {
     expect(DATASET_PINS.map((p) => p.id)).toEqual([
       "aacr-v1",
       "martian-offline-e616e84",
       "swe-prbench-b87f579",
       "self-review-local",
+      "private-unpinned",
       "qodo-pr-review-bench-a73957c",
     ]);
+    // the private replay pin is EXPLICITLY unpinned and scores nothing.
+    const priv = DATASET_PINS.find((p) => p.id === "private-unpinned")!;
+    expect(priv.sha256).toBe("unpinned-private");
+    expect(priv.denomination).toMatch(/never scored/);
     // The self-review pin denominates nothing: no references, never scored.
     expect(DATASET_PINS.find((p) => p.id === "self-review-local")!.denomination).toMatch(
       /never scored/,

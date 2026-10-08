@@ -225,6 +225,20 @@ HARDEN=(
   --mount type=volume,dst=/opt/quickreview/sandbox/wt
 )
 
+# PRIVATE replay sets (recorded rounds of a private repo; the
+# follow-up replay, src/bench/followup.ts) live OUTSIDE bench/aacr/sets — that
+# dir is baked into the image and shipped in both snapshots. QCR_BENCH_PRIVATE_SETS
+# names a host dir of <set>.json files, bind-mounted READ-ONLY where
+# in-container.sh's set_file looks second. Unset (the default): nothing is
+# mounted and every argv is unchanged. A private set carries a round's INPUTS
+# only — the review container can read it, so no outcome label belongs in it.
+PRIV=()
+if [[ -n "${QCR_BENCH_PRIVATE_SETS:-}" ]]; then
+  [[ -d "$QCR_BENCH_PRIVATE_SETS" && ! -L "$QCR_BENCH_PRIVATE_SETS" ]] \
+    || die "QCR_BENCH_PRIVATE_SETS=$QCR_BENCH_PRIVATE_SETS is not a directory (or is a symlink)"
+  PRIV=(--mount "type=bind,src=$(cd "$QCR_BENCH_PRIVATE_SETS" && pwd -P),dst=/opt/quickreview/bench/private-sets,readonly")
+fi
+
 need_image() { docker image inspect "$IMAGE" >/dev/null 2>&1 || die "no image $IMAGE — run: $0 build"; }
 
 run_dir() {
@@ -446,8 +460,20 @@ case "$cmd" in
       [[ -n "${QCR_BENCH_MIRRORS:-}" ]] || die "QCR_BENCH_PREFETCH_MIRROR needs QCR_BENCH_MIRRORS (the repo → path map)"
       mir=(--mount "type=bind,src=$QCR_BENCH_PREFETCH_MIRROR,dst=/mirrors,readonly" -e "QCR_BENCH_MIRRORS=$QCR_BENCH_MIRRORS")
     fi
+    # QCR_BENCH_MIRROR_ONLY=1 — the mirror is the only source (no
+    # network fallback, no API call); QCR_BENCH_PREFETCH_OFFLINE=1 also runs
+    # the container with no network at all (and implies mirror-only). Both
+    # default off.
+    off=()
+    if [[ "${QCR_BENCH_PREFETCH_OFFLINE:-}" == 1 ]]; then
+      [[ ${#mir[@]} -gt 0 ]] || die "QCR_BENCH_PREFETCH_OFFLINE=1 needs the mirror (QCR_BENCH_PREFETCH_MIRROR + QCR_BENCH_MIRRORS)"
+      off=(--network none -e QCR_BENCH_MIRROR_ONLY=1)
+    elif [[ "${QCR_BENCH_MIRROR_ONLY:-}" == 1 ]]; then
+      [[ ${#mir[@]} -gt 0 ]] || die "QCR_BENCH_MIRROR_ONLY=1 needs the mirror (QCR_BENCH_PREFETCH_MIRROR + QCR_BENCH_MIRRORS)"
+      off=(-e QCR_BENCH_MIRROR_ONLY=1)
+    fi
     # Network: github.com only in practice (anonymous https + the public API).
-    docker run "${HARDEN[@]}" ${mir[@]+"${mir[@]}"} \
+    docker run "${HARDEN[@]}" ${off[@]+"${off[@]}"} ${mir[@]+"${mir[@]}"} ${PRIV[@]+"${PRIV[@]}"} \
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos" \
       "$IMAGE" prefetch "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
     ;;
@@ -459,6 +485,7 @@ case "$cmd" in
       # Bookkeeping only (run.json, the outcome tally): no model, no repos.
       [[ "$ARM" == qcr ]] || die "--phase belongs to the QuickReview arm"
       args=("${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out"
+        ${PRIV[@]+"${PRIV[@]}"}
         "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
       record "${args[@]}"
       exec docker run "${args[@]}"
@@ -555,6 +582,7 @@ case "$cmd" in
     args=("${HARDEN[@]}" "${AUTH[@]}" ${oe[@]+"${oe[@]}"}
       --mount "type=volume,src=$REPOS_VOLUME,dst=/repos,readonly"
       --mount "type=bind,src=$d,dst=/bench-out"
+      ${PRIV[@]+"${PRIV[@]}"}
       "$IMAGE" "$REVIEW_ENTRY" "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
     record "${args[@]}"
     docker run "${args[@]}"

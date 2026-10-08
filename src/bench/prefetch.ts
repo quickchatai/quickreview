@@ -55,7 +55,18 @@ export interface PrefetchOptions {
   /** Local read-only bare repos to fetch from first, keyed by fetch repo;
    * default from env QCR_BENCH_MIRRORS (`mirrorsFromEnv`). */
   mirrors?: ReadonlyMap<string, string>;
+  /**: the mirror is the ONLY source — no network fallback for a
+   * commit, no API call, no `ls-remote` (a private replay's repo must never
+   * be asked for over the network). Default from env QCR_BENCH_MIRROR_ONLY=1. */
+  mirrorOnly?: boolean;
 }
+
+/** QCR_BENCH_MIRROR_ONLY=1. */
+export function mirrorOnlyFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env["QCR_BENCH_MIRROR_ONLY"] === "1";
+}
+
+const mirrorOnlyOf = (o: PrefetchOptions): boolean => o.mirrorOnly ?? mirrorOnlyFromEnv();
 
 const GIT_ENV = {
   ...process.env,
@@ -132,8 +143,16 @@ async function fetchShas(
       { env: GIT_ENV, timeoutMs: 20 * 60_000 },
     );
     if (r.code === 0) return "mirror";
+    if (mirrorOnlyOf(o))
+      throw new Error(
+        `prefetch: ${repo} — mirror fetch failed and the run is mirror-only (QCR_BENCH_MIRROR_ONLY=1): ${r.stderr.trim().slice(0, 300)}`,
+      );
     o.log?.(
       `prefetch: ${repo} — mirror fetch failed (${r.stderr.trim().slice(0, 160)}); trying the network`,
+    );
+  } else if (mirrorOnlyOf(o)) {
+    throw new Error(
+      `prefetch: ${repo} — no mirror for it, and the run is mirror-only (QCR_BENCH_MIRROR_ONLY=1)`,
     );
   }
   await git(dir, ["fetch", ...args, networkRemote(o, repo), ...shas]);
@@ -154,7 +173,13 @@ async function fetchShas(
  * candidate is complete and it is the real merge-base.
  */
 export async function mergeBase(dir: string, c: BenchCase): Promise<string | null> {
-  const r = await run("git", ["-C", dir, "merge-base", c.base_commit, c.head_commit], {
+  return verifiedMergeBase(dir, c.base_commit, c.head_commit);
+}
+
+/** The verified merge-base of any two commits (see `mergeBase`): null while
+ * the shallow cut may hide the true one. */
+export async function verifiedMergeBase(dir: string, a: string, b: string): Promise<string | null> {
+  const r = await run("git", ["-C", dir, "merge-base", a, b], {
     env: GIT_ENV,
   });
   const sha = r.stdout.trim();
@@ -163,12 +188,33 @@ export async function mergeBase(dir: string, c: BenchCase): Promise<string | nul
   if (!existsSync(shallowFile)) return sha;
   const shallow = new Set(readFileSync(shallowFile, "utf8").split("\n").filter(Boolean));
   if (shallow.size === 0) return sha;
-  const above = await run("git", ["-C", dir, "rev-list", c.base_commit, c.head_commit, `^${sha}`], {
+  const above = await run("git", ["-C", dir, "rev-list", a, b, `^${sha}`], {
     env: GIT_ENV,
     timeoutMs: 120_000,
   });
   if (above.code !== 0) return null;
   return above.stdout.split("\n").some((l) => shallow.has(l.trim())) ? null : sha;
+}
+
+/**
+ * Every merge-base a case's review needs, verified. An ordinary
+ * case: base…head. A follow-up case also replays its previous head onto the
+ * round's merge-base (WorktreeManager.prOwnedDelta): base…prev_head (the
+ * base it was reviewed on) and prev_head…merge-base (what `git merge-tree`
+ * merges from) must resolve inside the store too. Null while any may lie past
+ * the shallow cut.
+ */
+export async function caseMergeBases(
+  dir: string,
+  c: BenchCase,
+): Promise<{ mb: string; prevMb?: string } | null> {
+  const mb = await mergeBase(dir, c);
+  if (!mb || !c.followup) return mb ? { mb } : null;
+  const prev = c.followup.prev_head;
+  const prevMb = await verifiedMergeBase(dir, c.base_commit, prev);
+  if (!prevMb) return null;
+  if (!(await verifiedMergeBase(dir, prev, mb))) return null;
+  return { mb, prevMb };
 }
 
 interface PrApi {
@@ -330,12 +376,24 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       // The exact base, not merely one with the same merge-base: prepareTree
       // installs meta.base_commit as origin/<base_ref>.
       meta.base_commit === c.base_commit &&
-      (await mergeBase(dir, c)) === meta.merge_base
+      // A follow-up case's store must hold the SAME previous head.
+      (meta.prev_head ?? null) === (c.followup?.prev_head ?? null) &&
+      (await caseMergeBases(dir, c).then(
+        (m) =>
+          m !== null &&
+          m.mb === meta.merge_base &&
+          (m.prevMb ?? null) === (meta.prev_merge_base ?? null),
+      ))
     ) {
       // A store fetched while the API was unavailable keeps working, but its
       // PR title/body are worth one more try — a degraded case plans no
       // pass-intent and reads no description, unlike production.
-      if (meta.title === null && meta.body === null && setText(c) === undefined) {
+      if (
+        meta.title === null &&
+        meta.body === null &&
+        setText(c) === undefined &&
+        !mirrorOnlyOf(o)
+      ) {
         const api = await prFromApi(c, o);
         if (api && api !== "rate-limited") {
           const healed: PrefetchMeta = {
@@ -364,8 +422,15 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
   const tmp = `${dir}.partial`;
   rmSync(tmp, { recursive: true, force: true });
   let mb: string;
+  let prevMb: string | undefined;
   let depth: number;
   let via: string;
+  // Mirror-only: nothing may ask the network for the PR text or
+  // the default branch, so the set must carry the base branch.
+  if (mirrorOnlyOf(o) && c.base_ref === undefined)
+    throw new Error(
+      `${c.instance_id}: a mirror-only prefetch needs the set to carry base_ref (and title/body) — nothing may be asked of the network`,
+    );
   try {
     if (c.leakproof) {
       log(`prefetch: ${c.instance_id} — leak-proof: merge-base and head trees only`);
@@ -376,31 +441,28 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       depth = o.depth ?? 50;
       const step = o.deepenStep ?? 200;
       const max = o.maxDepth ?? 5_000;
-      log(`prefetch: ${c.instance_id} — fetching base+head from ${repo} (depth ${depth})`);
-      via = await fetchShas(
-        tmp,
-        o,
-        repo,
-        ["--quiet", "--no-tags", `--depth=${depth}`],
-        [c.base_commit, c.head_commit],
+      // A follow-up case fetches the previous head explicitly: after a
+      // force-push it is no ancestor of the head.
+      const shas = c.followup
+        ? [c.base_commit, c.followup.prev_head, c.head_commit]
+        : [c.base_commit, c.head_commit];
+      log(
+        `prefetch: ${c.instance_id} — fetching ${c.followup ? "base+prev-head+head" : "base+head"} from ${repo} (depth ${depth})`,
       );
-      let found = await mergeBase(tmp, c);
+      via = await fetchShas(tmp, o, repo, ["--quiet", "--no-tags", `--depth=${depth}`], shas);
+      let found = await caseMergeBases(tmp, c);
       while (!found) {
         if (depth >= max) throw new Error(`${c.instance_id}: no merge-base within depth ${max}`);
         depth += step;
         log(`prefetch: ${c.instance_id} — deepening to ${depth}`);
-        await fetchShas(
-          tmp,
-          o,
-          repo,
-          ["--quiet", "--no-tags", `--deepen=${step}`],
-          [c.base_commit, c.head_commit],
-        );
-        found = await mergeBase(tmp, c);
+        await fetchShas(tmp, o, repo, ["--quiet", "--no-tags", `--deepen=${step}`], shas);
+        found = await caseMergeBases(tmp, c);
       }
-      mb = found;
+      mb = found.mb;
+      prevMb = found.prevMb;
       await git(tmp, ["update-ref", "refs/bench/base", c.base_commit]);
       await git(tmp, ["update-ref", "refs/bench/head", c.head_commit]);
+      if (c.followup) await git(tmp, ["update-ref", "refs/bench/prev-head", c.followup.prev_head]);
     }
     if (c.expect_merge_base && c.expect_merge_base !== mb)
       throw new Error(
@@ -414,7 +476,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
   const n = (re: RegExp): number => Number(re.exec(shortstat)?.[1] ?? 0);
 
   const carried = setText(c);
-  const api = carried ?? (await prFromApi(c, o));
+  const api = carried ?? (mirrorOnlyOf(o) ? null : await prFromApi(c, o));
   const fromApi = api && api !== "rate-limited" ? api : null;
   if (api === "rate-limited")
     log(`prefetch: ${c.instance_id} — API rate-limited, title/body unavailable`);
@@ -438,6 +500,7 @@ export async function prefetchCase(c: BenchCase, o: PrefetchOptions): Promise<Pr
       deletions: n(/(\d+) deletions?/),
     },
     fetched_at: (o.now ?? (() => new Date()))().toISOString(),
+    ...(c.followup && prevMb ? { prev_head: c.followup.prev_head, prev_merge_base: prevMb } : {}),
   };
   writeFileSync(join(tmp, "bench-meta.json"), JSON.stringify(meta, null, 2) + "\n");
   rmSync(dir, { recursive: true, force: true });

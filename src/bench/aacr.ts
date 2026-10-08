@@ -72,6 +72,48 @@ export interface BenchCase {
    * (a mirror of a repository with no public remote, e.g. a self-review of
    * this repo's own commits) has no remote to ask. */
   base_ref?: string;
+  /**: a FOLLOW-UP replay case — round `round_no` of a recorded PR,
+   * reviewed at `head_commit` after an earlier round reviewed `prev_head`.
+   * The order is production's follow-up round (src/bench/followup.ts),
+   * rendered from the same delta, plan and prior-findings pieces dispatch
+   * uses. Absent ⇒ an ordinary round-1 case, byte-identical to before. */
+  followup?: BenchFollowUp;
+}
+
+/** One finding an earlier round of the recorded PR POSTED and left open —
+ * the replay's prior-findings list (src/priorfindings.ts's vocabulary). */
+export interface BenchPriorFinding {
+  /** `<round_no>:<finding_key>`, as the daemon issues it. */
+  ref: string;
+  round_no: number;
+  finding_key: string;
+  path: string | null;
+  line: number | null;
+  severity: string | null;
+  posted_as: string;
+  lens_ids: string[];
+  title: string | null;
+  reason: string | null;
+  evidence: string | null;
+}
+
+/** BenchCase.followup — the recorded round's INPUTS only. What the live
+ * round actually concluded (its verdict, its findings) is a label, and a
+ * label never rides a set the review container can read. */
+export interface BenchFollowUp {
+  /** The head the previous round reviewed (the delta's from side). */
+  prev_head: string;
+  /** The recorded round's number (≥ 2). */
+  round_no: number;
+  /** Its review age (prior verdicted rounds + 1, ≥ 2): arms the nit cap. */
+  review_no: number;
+  /** Whether the pre-approval sweep was owed at that round (the standing
+   * verdict was not APPROVE and no full look had run since round 1). */
+  sweep_owed: boolean;
+  prior_findings: BenchPriorFinding[];
+  /** The PR session's ledger as it stood when the round was dispatched —
+   * carried as production's `ledger_carry` and pinned as the case's ledger. */
+  ledger?: string;
 }
 
 /** Where a leak-proof case's two trees come from (the real, upstream commits). */
@@ -114,6 +156,9 @@ export interface DatasetPin {
   sha256: string;
 }
 
+/** The explicitly unpinned pin of a private replay set. */
+export const PRIVATE_PIN_ID = "private-unpinned";
+
 export const DATASET_PINS: readonly DatasetPin[] = [
   {
     id: "aacr-v1",
@@ -147,6 +192,17 @@ export const DATASET_PINS: readonly DatasetPin[] = [
     denomination: "no references — a self-review of this repository's own commits, never scored",
     commit: "0000000000000000000000000000000000000000",
     sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  },
+  {
+    // a PRIVATE replay set (recorded rounds of the deployed repo,
+    // read from a local mirror; QCR_BENCH_PRIVATE_SETS, never bench/aacr/sets).
+    // There is no published dataset to pin, so the pin is EXPLICITLY unpinned
+    // — the literal sha256 below can never be a file's digest — and a set
+    // under it may carry no references: nothing is ever scored against it.
+    id: PRIVATE_PIN_ID,
+    denomination: "private replay set — unpinned, no references, never scored",
+    commit: "0000000000000000000000000000000000000000",
+    sha256: "unpinned-private",
   },
   {
     // huggingface.co/datasets/Qodo/PR-Review-Bench @ a73957c: sha256 of
@@ -223,10 +279,20 @@ function caseOf(raw: unknown, where: string): BenchCase {
   // A case fetched from a fork carries its PR number in the id: two of
   // Martian's benchmark PRs (sentry-greptile #1 and #2) share one head commit
   // and differ only in their base, so repo@head alone would collide.
+  // A follow-up case carries its PR and round: its store holds a third
+  // commit (the previous head), so it must never share a store — keyed by
+  // id — with an ordinary case of the same head.
+  const fu = r["followup"] as Record<string, unknown> | undefined;
+  const fuRound =
+    typeof fu === "object" && fu !== null && typeof fu["round_no"] === "number"
+      ? fu["round_no"]
+      : null;
   const wantId =
-    r["fetch_repo"] !== undefined
-      ? `${c.repo.replace("/", "__")}-${c.pr}@${c.head_commit.slice(0, 7)}`
-      : `${c.repo.replace("/", "__")}@${c.head_commit.slice(0, 7)}`;
+    r["followup"] !== undefined
+      ? `${c.repo.replace("/", "__")}-${c.pr}-r${String(fuRound)}@${c.head_commit.slice(0, 7)}`
+      : r["fetch_repo"] !== undefined
+        ? `${c.repo.replace("/", "__")}-${c.pr}@${c.head_commit.slice(0, 7)}`
+        : `${c.repo.replace("/", "__")}@${c.head_commit.slice(0, 7)}`;
   if (c.instance_id !== wantId)
     throw new Error(`${where}: instance_id ${c.instance_id} does not match ${wantId} (repo@head)`);
   // The external-benchmark fields, each validated as a shape for the same
@@ -275,7 +341,107 @@ function caseOf(raw: unknown, where: string): BenchCase {
       head_tree: String(lp["head_tree"]),
     };
   }
+  if (r["followup"] !== undefined) {
+    if (c.leakproof !== undefined)
+      throw new Error(`${where}: a follow-up case replays real commits, never leak-proof ones`);
+    c.followup = followUpOf(r["followup"], `${where}.followup`, c);
+  }
   return c;
+}
+
+const FINDING_KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const LENS_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** Validate BenchCase.followup as shapes: the previous head reaches a git
+ * argv, the refs and keys reach the prompt and the sidecar. */
+function followUpOf(raw: unknown, where: string, c: BenchCase): BenchFollowUp {
+  if (typeof raw !== "object" || raw === null) throw new Error(`${where}: not an object`);
+  const r = raw as Record<string, unknown>;
+  const intAtLeast = (k: string, min: number): number => {
+    const v = r[k];
+    if (typeof v !== "number" || !Number.isInteger(v) || v < min)
+      throw new Error(`${where}: ${k} must be an integer >= ${min}`);
+    return v;
+  };
+  const prev = r["prev_head"];
+  if (typeof prev !== "string" || !SHA_RE.test(prev))
+    throw new Error(`${where}: prev_head must be a 40-hex sha`);
+  if (prev === c.head_commit) throw new Error(`${where}: prev_head is the head itself`);
+  if (typeof r["sweep_owed"] !== "boolean")
+    throw new Error(`${where}: sweep_owed must be a boolean`);
+  const roundNo = intAtLeast("round_no", 2);
+  const reviewNo = intAtLeast("review_no", 2);
+  if (reviewNo > roundNo) throw new Error(`${where}: review_no exceeds round_no`);
+  if (!Array.isArray(r["prior_findings"]))
+    throw new Error(`${where}: prior_findings must be a list`);
+  const optStr = (v: unknown, k: string, at: string): string | null => {
+    if (v === undefined || v === null) return null;
+    if (typeof v !== "string") throw new Error(`${at}: ${k} must be a string or null`);
+    return v;
+  };
+  const seen = new Set<string>();
+  const prior = r["prior_findings"].map((x, i): BenchPriorFinding => {
+    const at = `${where}.prior_findings[${i}]`;
+    if (typeof x !== "object" || x === null) throw new Error(`${at}: not an object`);
+    const f = x as Record<string, unknown>;
+    const rn = f["round_no"];
+    if (typeof rn !== "number" || !Number.isInteger(rn) || rn < 1 || rn >= roundNo)
+      throw new Error(`${at}: round_no must be an earlier round`);
+    const key = f["finding_key"];
+    if (typeof key !== "string" || !FINDING_KEY_RE.test(key))
+      throw new Error(`${at}: bad finding_key`);
+    const ref = f["ref"] ?? `${rn}:${key}`;
+    if (ref !== `${rn}:${key}`) throw new Error(`${at}: ref must be <round_no>:<finding_key>`);
+    if (seen.has(ref)) throw new Error(`${at}: duplicate ref ${ref}`);
+    seen.add(ref);
+    const path = optStr(f["path"], "path", at);
+    if (
+      path !== null &&
+      (path.startsWith("/") || path.split("/").includes("..") || /[\0\n]/.test(path))
+    )
+      throw new Error(`${at}: bad path`);
+    const line = f["line"];
+    if (
+      line !== undefined &&
+      line !== null &&
+      (typeof line !== "number" || !Number.isInteger(line) || line < 1)
+    )
+      throw new Error(`${at}: line must be a positive integer or null`);
+    const postedAs = f["posted_as"];
+    if (typeof postedAs !== "string" || !postedAs.trim())
+      throw new Error(`${at}: posted_as is required`);
+    const lensIds = f["lens_ids"] ?? [];
+    if (
+      !Array.isArray(lensIds) ||
+      lensIds.some((l) => typeof l !== "string" || !LENS_ID_RE.test(l))
+    )
+      throw new Error(`${at}: lens_ids must be lens ids`);
+    return {
+      ref,
+      round_no: rn,
+      finding_key: key,
+      path,
+      line: typeof line === "number" ? line : null,
+      severity: optStr(f["severity"], "severity", at),
+      posted_as: postedAs.trim(),
+      lens_ids: lensIds as string[],
+      title: optStr(f["title"], "title", at),
+      reason: optStr(f["reason"], "reason", at),
+      evidence: optStr(f["evidence"], "evidence", at),
+    };
+  });
+  const out: BenchFollowUp = {
+    prev_head: prev,
+    round_no: roundNo,
+    review_no: reviewNo,
+    sweep_owed: r["sweep_owed"],
+    prior_findings: prior,
+  };
+  if (r["ledger"] !== undefined) {
+    if (typeof r["ledger"] !== "string") throw new Error(`${where}: ledger must be a string`);
+    out.ledger = r["ledger"];
+  }
+  return out;
 }
 
 /** Parse and validate a set file. A duplicate id is refused: two results with
@@ -299,6 +465,11 @@ export function parseCaseSet(raw: unknown): CaseSet {
   for (const c of [...cases, ...backups]) {
     if (seen.has(c.instance_id)) throw new Error(`case set: duplicate ${c.instance_id}`);
     seen.add(c.instance_id);
+    // The unpinned private denomination scores nothing.
+    if (pin.id === PRIVATE_PIN_ID && c.references !== 0)
+      throw new Error(
+        `case set: ${c.instance_id} carries references under the unpinned private pin — a private replay set is never scored`,
+      );
   }
   return {
     name: typeof r["name"] === "string" ? r["name"] : "unnamed",
@@ -357,6 +528,10 @@ export interface PrefetchMeta {
   depth: number;
   diff: { files: number; additions: number; deletions: number };
   fetched_at: string;
+  /**, a follow-up case: the previous round's head (installed as
+   * `refs/bench/prev-head`) and its verified merge-base with the base. */
+  prev_head?: string;
+  prev_merge_base?: string;
 }
 
 export function parsePrefetchMeta(raw: unknown): PrefetchMeta | null {
@@ -371,6 +546,9 @@ export function parsePrefetchMeta(raw: unknown): PrefetchMeta | null {
     SHA_RE.test(s("merge_base") ?? "") &&
     s("base_ref");
   if (!ok) return null;
+  for (const k of ["prev_head", "prev_merge_base"] as const)
+    if (r[k] !== undefined && !SHA_RE.test(s(k) ?? "")) return null;
+  if ((r["prev_head"] === undefined) !== (r["prev_merge_base"] === undefined)) return null;
   return raw as PrefetchMeta;
 }
 
@@ -486,6 +664,15 @@ export interface AppendixArgs {
    * (with the posting fields) and outcome.json; the bench renders
    * comments.json and review.md from them (src/reviewrender.ts). */
   renderOutputs?: boolean;
+  /**: the round number the outcome names (default 1 — every
+   * round-1 case's appendix is byte-identical to before). */
+  roundNo?: number;
+  /**: a PRIVATE replay (a recorded round of a private repo, read
+   * from a local mirror): the opening sentence says so neutrally instead of
+   * "a public open-source pull request". Default public. */
+  privateReplay?: boolean;
+  /**: a follow-up replay — the head the previous round reviewed. */
+  prevHead?: string;
 }
 
 /** Output files the session writes, relative to its case dir. */
@@ -507,15 +694,24 @@ export const CASE_FILES = {
  */
 export function benchAppendix(a: AppendixArgs): string {
   const f = (name: string): string => `${a.caseDir}/${name}`;
+  const roundNo = a.roundNo ?? 1;
   const L: string[] = [];
   L.push("---");
   L.push("");
   L.push("## BENCHMARK MODE — this override is authoritative over everything above");
   L.push("");
   L.push(
-    `This round is an **offline benchmark replay** of a public open-source pull request: PR #${a.pr} in \`${a.repo}\`, at \`${a.headSha}\`. It is not a live review. Nobody is waiting for it, and nothing you produce here is ever posted anywhere.`,
+    a.privateReplay
+      ? `This round is an **offline benchmark replay** of a recorded pull-request round: PR #${a.pr} in \`${a.repo}\`, at \`${a.headSha}\`. It is not a live review. Nobody is waiting for it, and nothing you produce here is ever posted anywhere.`
+      : `This round is an **offline benchmark replay** of a public open-source pull request: PR #${a.pr} in \`${a.repo}\`, at \`${a.headSha}\`. It is not a live review. Nobody is waiting for it, and nothing you produce here is ever posted anywhere.`,
   );
   L.push("");
+  if (a.prevHead !== undefined) {
+    L.push(
+      `This is round ${roundNo} of the PR: an earlier round reviewed \`${a.prevHead}\`, and the round order above carries what it left open and what changed since. There is no earlier conversation to continue — the order and the ledger it carries are your whole memory of that round. Step 4b (the pre-approval sweep) stays exactly as written above, and \`${CASE_FILES.outcome}\` carries step 7's \`"sweep"\` field and each pass's \`"phase"\`; the findings record carries its top-level \`"prior"\` array.`,
+    );
+    L.push("");
+  }
   L.push("**What stays exactly as written above:**");
   L.push("");
   L.push(
@@ -553,7 +749,7 @@ export function benchAppendix(a: AppendixArgs): string {
     L.push(RENDER_RECORD_FIELDS);
     L.push("");
     L.push(
-      `2. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
+      `2. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": ${roundNo}, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
     );
   } else {
     L.push(
@@ -564,7 +760,7 @@ export function benchAppendix(a: AppendixArgs): string {
       `3. \`${f(CASE_FILES.findings)}\` — the findings record, in the shape step 7 specifies (every candidate finding and its disposition).`,
     );
     L.push(
-      `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": 1, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
+      `4. \`${f(CASE_FILES.outcome)}\` — LAST, because it is the signal that you are done: the step-7 verdict shape without \`approval_withheld\` — \`{"pr": ${a.pr}, "round_no": ${roundNo}, "verdict": "APPROVE" | "REQUEST_CHANGES", "head_sha": "${a.headSha}", "summary": "...", "passes": [...], "finished_at": "<ISO-8601 UTC>"}\`.`,
     );
   }
   L.push("");
@@ -981,6 +1177,176 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
     }
   }
   return u;
+}
+
+// ---- per-stage cost and time ----------------------------------------
+
+/** One `subagent` tool call of the main session: a lens fan-out, a validator,
+ * a re-run. */
+export interface StageCall {
+  /** Launch order, from 0. */
+  call: number;
+  tool_call_id: string | null;
+  /** The agents it launched (one, or a parallel `tasks` list). */
+  agents: string[];
+  /** `validate` when every agent is pass-validate. */
+  kind: "lens" | "validate";
+  /**
+   * A GUESS from launch order: `delta` up to and including the first
+   * validator call, `sweep` for every call launched after that validator
+   * returned. On a follow-up round that is the change review vs the
+   * pre-approval sweep (its lenses and its own validator); on a round-1 case
+   * a `sweep` call is a re-run after the validator.
+   */
+  phase: "delta" | "sweep";
+  /** The main session's last message before the call — so the window
+   * includes the session writing the tasks (tool-call arguments are output
+   * tokens). Null when no message preceded it. */
+  start_ms: number | null;
+  /** The last child message; else the session's first message after the
+   * call returned. Null when neither exists (a truncated stream). */
+  end_ms: number | null;
+  usage: Usage;
+  /** pi's own price of the children ($), summed. */
+  cost: number;
+  children: number;
+}
+
+export interface StageTotals {
+  calls: number;
+  agents: number;
+  usage: Usage;
+  cost: number;
+  /** First start to last end over the phase's calls; null when unknown. */
+  start_ms: number | null;
+  end_ms: number | null;
+  wall_ms: number | null;
+}
+
+export interface Stages {
+  calls: StageCall[];
+  phases: { delta: StageTotals; sweep: StageTotals };
+}
+
+function costOf(c: unknown): number {
+  if (typeof c === "number" && Number.isFinite(c)) return c;
+  if (typeof c === "object" && c !== null) {
+    const t = (c as { total?: unknown }).total;
+    return typeof t === "number" && Number.isFinite(t) ? t : 0;
+  }
+  return 0;
+}
+
+/**
+ * Split one review's pi `--mode json` stream into its subagent calls, each
+ * with its agents, its phase (by launch order relative to the first
+ * pass-validate call — see `StageCall.phase`), its wall window and its usage
+ * and cost, plus a total per phase. Pure; a line that is not JSON is skipped.
+ * `tool_execution_*` events carry no timestamp, so times come from message
+ * stamps: the parent's, and each child's own messages in the tool result.
+ */
+export function stagesFromEvents(lines: Iterable<string>): Stages {
+  const calls: StageCall[] = [];
+  const open = new Map<string, StageCall>();
+  const awaitingEnd: StageCall[] = [];
+  let lastTs: number | null = null;
+  let firstValidateDone = false;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const m = e["message"] as Record<string, unknown> | undefined;
+    const ts = typeof m?.["timestamp"] === "number" ? m["timestamp"] : null;
+    if (ts !== null) {
+      for (const c of awaitingEnd.splice(0)) c.end_ms = ts;
+      lastTs = ts;
+    }
+    if (e["toolName"] !== "subagent") continue;
+    const id = typeof e["toolCallId"] === "string" ? e["toolCallId"] : null;
+    if (e["type"] === "tool_execution_start") {
+      const args = (e["args"] ?? {}) as Record<string, unknown>;
+      const agents =
+        typeof args["agent"] === "string"
+          ? [args["agent"]]
+          : Array.isArray(args["tasks"])
+            ? (args["tasks"] as unknown[])
+                .map((t) => (t as Record<string, unknown> | null)?.["agent"])
+                .filter((a): a is string => typeof a === "string")
+            : [];
+      const call: StageCall = {
+        call: calls.length,
+        tool_call_id: id,
+        agents,
+        kind:
+          agents.length > 0 && agents.every((a) => a.startsWith("pass-validate"))
+            ? "validate"
+            : "lens",
+        phase: firstValidateDone ? "sweep" : "delta",
+        start_ms: lastTs,
+        end_ms: null,
+        usage: { input: 0, output: 0, cacheRead: 0 },
+        cost: 0,
+        children: 0,
+      };
+      calls.push(call);
+      if (id !== null) open.set(id, call);
+    } else if (e["type"] === "tool_execution_end") {
+      const call = id !== null ? open.get(id) : undefined;
+      if (!call) continue;
+      open.delete(id!);
+      const res = e["result"] as Record<string, unknown> | undefined;
+      const details = res?.["details"] as Record<string, unknown> | undefined;
+      const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+      let last: number | null = null;
+      for (const r0 of results) {
+        const r = (r0 ?? {}) as Record<string, unknown>;
+        const u = r["usage"] as Record<string, unknown> | undefined;
+        if (u) {
+          const n = (k: string): number => (typeof u[k] === "number" ? u[k] : 0);
+          call.usage.input += n("input");
+          call.usage.output += n("output");
+          call.usage.cacheRead += n("cacheRead");
+          call.cost += costOf(u["cost"]);
+          call.children++;
+        }
+        for (const msg of Array.isArray(r["messages"]) ? (r["messages"] as unknown[]) : []) {
+          const t = (msg as Record<string, unknown> | null)?.["timestamp"];
+          if (typeof t === "number" && (last === null || t > last)) last = t;
+        }
+      }
+      if (last !== null) call.end_ms = last;
+      else awaitingEnd.push(call);
+      if (call.kind === "validate") firstValidateDone = true;
+    }
+  }
+  const total = (phase: "delta" | "sweep"): StageTotals => {
+    const mine = calls.filter((c) => c.phase === phase);
+    const starts = mine.map((c) => c.start_ms).filter((x): x is number => x !== null);
+    const ends = mine.map((c) => c.end_ms).filter((x): x is number => x !== null);
+    const start = starts.length ? Math.min(...starts) : null;
+    const end = ends.length ? Math.max(...ends) : null;
+    return {
+      calls: mine.length,
+      agents: mine.reduce((n, c) => n + c.agents.length, 0),
+      usage: mine.reduce(
+        (u, c) => ({
+          input: u.input + c.usage.input,
+          output: u.output + c.usage.output,
+          cacheRead: u.cacheRead + c.usage.cacheRead,
+        }),
+        { input: 0, output: 0, cacheRead: 0 },
+      ),
+      cost: mine.reduce((n, c) => n + c.cost, 0),
+      start_ms: start,
+      end_ms: end,
+      wall_ms: start !== null && end !== null && end >= start ? end - start : null,
+    };
+  };
+  return { calls, phases: { delta: total("delta"), sweep: total("sweep") } };
 }
 
 /** Model-call failures one review saw, by kind. `rate_limited` and

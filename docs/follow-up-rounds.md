@@ -65,4 +65,9 @@ An APPROVE with the sweep owed but not run is the quiet `followup_sweep_skipped`
 
 ## Validation
 
-The bench gets a follow-up replay case kind (`src/bench/followup.ts`). It replays real reviewed-repo round pairs from a local mirror of the VM's base clone, and the live full re-review of the same pair is the baseline. See.
+The bench gets a follow-up replay case kind (`src/bench/followup.ts`). It replays real round pairs of the reviewed repo from a local mirror of the VM's base clone, and the live full re-review of the same pair is the baseline. See.
+- A case carries `followup`: the previous head, the round and review numbers, whether the sweep was owed, the open prior findings and the ledger. Its id names the round (`<owner>__<name>-<pr>-r<k>@<head7>`).
+- Prefetch stores base, previous head and head, deepened until every merge-base the replay needs is verified; `QCR_BENCH_MIRROR_ONLY=1` (or `QCR_BENCH_PREFETCH_OFFLINE=1`, no network at all) never asks the network for anything.
+- The delta is production's `prOwnedDelta` over the replay tree, and the order is built by dispatch's own `planFollowUp`, `renderDeltaPatch`, `roundDeltaOf` and `sweepOrderOf`, with the prior findings through `computePriorFindings`. Every doubt runs the full re-review, and the case summary says why. `[review] follow_up = "full"` is the baseline arm on the same cases.
+- Private sets live outside the image: `QCR_BENCH_PRIVATE_SETS` is mounted read-only for the containers, under the explicitly unpinned `private-unpinned` pin, which scores nothing. A set carries a round's inputs only, never its outcome.
+- Every case writes `stages.json` (each subagent call, its phase guessed from launch order around the first validator, its window, usage and cost), with the per-phase totals in `case-summary.json`.

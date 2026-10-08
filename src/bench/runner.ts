@@ -39,7 +39,7 @@ import {
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   applyReviewEffort,
   loadConfig,
@@ -49,7 +49,16 @@ import {
   type Config,
   type ReviewPreset,
 } from "../config.js";
-import { buildRoundOrder } from "../dispatch.js";
+import {
+  buildPassPlan,
+  buildRoundOrder,
+  renderDeltaPatch,
+  roundDeltaOf,
+  sweepOrderOf,
+} from "../dispatch.js";
+import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
+import type { PrOwnedDelta } from "../worktrees.js";
+import { benchDelta, benchPriorFindings, decideBenchFollowUp } from "./followup.js";
 import { locateConfig } from "../install.js";
 import { findStyleGuide } from "../styleguide.js";
 import { findCiLinters } from "../lintconfig.js";
@@ -93,6 +102,7 @@ import {
   renderGateNotes,
   renderRoundPrompt,
   roundTemplateFile,
+  templateFileForOrder,
 } from "../templates.js";
 import {
   benchAppendix,
@@ -110,6 +120,8 @@ import {
   safeId,
   toOcrResult,
   usageFromEvents,
+  stagesFromEvents,
+  type Stages,
   VARIANTS,
   type BenchCase,
   type BenchComment,
@@ -181,6 +193,13 @@ export interface CaseSummary {
   /** What the profile's `[posting]` policy did to the session's output
    * (src/bench/benchposting.ts). Absent at today's posting. */
   posting?: BenchPostingReport;
+  /**: a follow-up replay case — what it ran as (delta or full, and
+   * why). Absent on every other case. */
+  follow_up?: CaseFollowUp;
+  /**: per-phase subagent totals (aacr.ts stagesFromEvents; the
+   * per-call rows are in the case's stages.json). Absent on summaries
+   * written before it. */
+  stages?: Stages["phases"];
 }
 
 /** Whether a finished case should be re-run: anything but `ok`, except a case
@@ -235,6 +254,11 @@ export interface RunFingerprint {
     validate_demote?: boolean;
     skip_lenses?: string[];
     validate_consequence_rule?: boolean;
+    /**: the follow-up knobs, recorded only when they differ from
+     * the shipped default, so every earlier run keeps its fingerprint. */
+    follow_up?: string;
+    follow_up_max_delta_ratio?: number;
+    follow_up_sweep?: boolean;
   };
   /**: the profile's resolved per-lens tuning. Absent when untuned, so
    * an untuned run's fingerprint is what it was before per-lens tuning. A
@@ -305,6 +329,13 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       validate_demote: cfg.review.validate_demote,
       skip_lenses: [...(cfg.review.skip_lenses ?? [])],
       validate_consequence_rule: cfg.review.validate_consequence_rule ?? false,
+      ...((cfg.review.follow_up ?? "delta") !== "delta" ? { follow_up: cfg.review.follow_up } : {}),
+      ...((cfg.review.follow_up_max_delta_ratio ?? 0.6) !== 0.6
+        ? { follow_up_max_delta_ratio: cfg.review.follow_up_max_delta_ratio }
+        : {}),
+      ...((cfg.review.follow_up_sweep ?? true) !== true
+        ? { follow_up_sweep: cfg.review.follow_up_sweep }
+        : {}),
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
@@ -522,6 +553,9 @@ export async function prepareTree(store: string, tree: string, meta: PrefetchMet
   const shallow = join(store, "shallow");
   if (existsSync(shallow)) writeFileSync(join(tree, ".git", "shallow"), readFileSync(shallow));
   await git(tree, ["update-ref", `refs/remotes/origin/${meta.base_ref}`, meta.base_commit]);
+  //, a follow-up case: the head the previous round reviewed — the
+  // delta's from side. It is the PR's past, never its future.
+  if (meta.prev_head) await git(tree, ["update-ref", "refs/bench/prev-head", meta.prev_head]);
   await git(tree, [
     "-c",
     "advice.detachedHead=false",
@@ -564,15 +598,11 @@ export function renderCasePrompts(args: {
   issuedAt: string;
   /** The rendered third-party-sources block, "" when none (depsources.ts). */
   dependencyNote?: string;
-}): {
-  system: string;
-  order: string;
-  plannedLenses: string[];
-  passPlan: PassPlanEntry[];
-  /** `[review] task_files`: the lens task files the order points at, for the
-   * caller to write before the session starts. */
-  taskFiles: Array<{ path: string; text: string }>;
-} {
+  /**, a follow-up case: the PR-owned delta `benchDelta` computed over
+   * the tree (undefined = none could be — the round runs in full). */
+  followUpDelta?: PrOwnedDelta;
+}): CasePrompts {
+  if (args.c.followup) return renderFollowUpPrompts(args);
   const { root, cfg, c, meta, tree } = args;
   const identity = { ...identityVars(cfg), repo: c.repo };
   const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
@@ -673,6 +703,232 @@ export function renderCasePrompts(args: {
     plannedLenses: order.pass_plan.map((p) => p.agent),
     passPlan: order.pass_plan,
     taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
+  };
+}
+
+export interface CasePrompts {
+  system: string;
+  order: string;
+  plannedLenses: string[];
+  passPlan: PassPlanEntry[];
+  /** `[review] task_files`: the lens task files the order points at, for the
+   * caller to write before the session starts. */
+  taskFiles: Array<{ path: string; text: string }>;
+  /**, a follow-up case only: every other file the order names (the
+   * delta patch, the prior-findings sidecar, the sweep's task files, the
+   * pinned ledger), for the caller to write; what the round runs as; and the
+   * pre-approval sweep's plan when one is owed. */
+  extraFiles?: Array<{ path: string; text: string }>;
+  followUp?: CaseFollowUp;
+  sweepPlan?: PassPlanEntry[];
+}
+
+/** What a follow-up case ran as (CaseSummary.follow_up). */
+export interface CaseFollowUp {
+  round_no: number;
+  review_no: number;
+  /** `delta`: the follow-up round; `full`: today's full re-review. */
+  scope: "delta" | "full";
+  /** Why the round runs in full (dispatch's `followup_full_round` reasons). */
+  reason?: string;
+  detail?: Record<string, unknown>;
+  delta_lines?: number;
+  delta_files?: number;
+  conflicted?: string[];
+  sweep_owed?: boolean;
+  prior_findings: number;
+}
+
+/**
+ * The order of a FOLLOW-UP replay case: production's round k, built
+ * from the same pieces dispatch uses — the full plan, `decideBenchFollowUp`
+ * (dispatch's `planFollowUp`), the delta patch and order delta, the prior
+ * findings note, the sweep's task files — rendered from the template
+ * `templateFileForOrder` picks. Any doubt runs today's full re-review.
+ */
+function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): CasePrompts {
+  const { root, cfg, c, meta, tree } = args;
+  const fu = c.followup!;
+  const identity = { ...identityVars(cfg), repo: c.repo };
+  const title = meta.title ?? `AACR-Bench ${c.repo}#${c.pr}`;
+  const body = boundBody(meta.body);
+  const vocab = directiveVocabulary(cfg.review.directives);
+  const directiveFiles = args.files
+    .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
+    .map((f) => f.filename);
+  const row = {
+    number: c.pr,
+    state: "reviewing",
+    head_sha: c.head_commit,
+    title,
+    author: "",
+  } as unknown as PrStateRow;
+  const heuristics = loadProfileHeuristics(root, cfg.review.profile);
+  const styleGuide = lensEnabled(cfg.lenses, "pass-style", cfg.review.style_lens)
+    ? findStyleGuide(tree)
+    : [];
+  const ciLinters = lensEnabled(cfg.lenses, "pass-lint-conformance", cfg.review.lint_conformance)
+    ? findCiLinters(tree)
+    : [];
+  // The whole PR's plan, exactly as dispatch builds it before deciding.
+  const fullPlan = buildPassPlan(
+    cfg,
+    args.files,
+    { title, body: body ?? undefined },
+    args.ecosystem,
+    heuristics,
+    styleGuide,
+    ciLinters,
+  );
+  const decided = decideBenchFollowUp(cfg, heuristics, c, {
+    delta: args.followUpDelta,
+    files: args.files,
+    fullPlan,
+    ecosystem: args.ecosystem,
+    styleGuide,
+    ciLinters,
+  });
+  const extraFiles: Array<{ path: string; text: string }> = [];
+  // The ledger the PR session held when the round was dispatched: carried as
+  // production's `ledger_carry` (and its SETTLED digest), and pinned as the
+  // case's ledger file (QCR_LEDGER_FILE) by the caller.
+  const ledgerPath = join(args.caseDir, "ledger.md");
+  const ledgerCarry =
+    fu.ledger !== undefined ? parseLedgerCarry(fu.ledger, c.pr, ledgerPath) : undefined;
+  const settledDigest =
+    ledgerCarry && fu.ledger !== undefined ? settledFromLedger(fu.ledger.trim()) : "";
+  if (fu.ledger !== undefined) extraFiles.push({ path: ledgerPath, text: fu.ledger });
+  let followUpArg: Parameters<typeof buildRoundOrder>[0]["followUp"];
+  let report: CaseFollowUp;
+  if (decided.kind === "delta") {
+    const d = decided.decision;
+    const patchPath = join(args.caseDir, "delta.patch");
+    extraFiles.push({ path: patchPath, text: renderDeltaPatch(d.delta.files) });
+    const prior = benchPriorFindings(c, join(args.caseDir, "prior.json"));
+    extraFiles.push({ path: join(args.caseDir, "prior.json"), text: prior.sidecar });
+    followUpArg = {
+      delta: roundDeltaOf(d, patchPath),
+      deltaFiles: d.deltaFiles,
+      priorFindingsNote: prior.note,
+      ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
+    };
+    report = {
+      round_no: fu.round_no,
+      review_no: fu.review_no,
+      scope: "delta",
+      delta_lines: d.delta.lines,
+      delta_files: d.delta.files.length,
+      ...(d.delta.conflicted.length ? { conflicted: d.delta.conflicted } : {}),
+      sweep_owed: d.sweepPlan !== undefined,
+      prior_findings: prior.list.findings.length,
+    };
+  } else {
+    report = {
+      round_no: fu.round_no,
+      review_no: fu.review_no,
+      scope: "full",
+      reason: decided.reason,
+      ...(decided.detail ? { detail: decided.detail } : {}),
+      prior_findings: fu.prior_findings.length,
+    };
+  }
+  const built = buildRoundOrder({
+    cfg,
+    row,
+    files: args.files,
+    roundId: 1,
+    roundNo: fu.round_no,
+    reviewNo: fu.review_no,
+    roundType: "re-review",
+    worktree: tree,
+    settledDigest,
+    ...(ledgerCarry ? { ledgerCarry } : {}),
+    issuedAt: args.issuedAt,
+    tree: {
+      head_sha: c.head_commit,
+      base_ref: meta.base_ref,
+      base_sha: meta.base_commit,
+      merge_base: meta.merge_base,
+    },
+    ...(body !== null ? { prBody: body } : {}),
+    ...(directiveFiles.length
+      ? { firstPartyDirectives: { files: directiveFiles, mention: "maintainer" } }
+      : {}),
+    ecosystem: args.ecosystem,
+    heuristics,
+    ...(args.dependencyNote ? { dependencyNote: args.dependencyNote } : {}),
+    ...(styleGuide.length ? { styleGuide } : {}),
+    ...(ciLinters.length ? { ciLinters } : {}),
+    plan: decided.kind === "delta" ? decided.decision.plan : fullPlan,
+    ...(followUpArg ? { followUp: followUpArg } : {}),
+  });
+  const taskFiles = cfg.review.task_files
+    ? renderPassTasks(built, renderGateNotes(built, args.ecosystem)).map((t) => ({
+        ...t,
+        path: join(args.caseDir, "tasks", t.file),
+      }))
+    : [];
+  // The sweep's own task files, from the same order dispatch renders them
+  // from (`sweepOrderOf`), in their own directory.
+  const sweepTasks =
+    cfg.review.task_files && built.sweep_plan && built.sweep_plan.length > 0
+      ? (() => {
+          const sweepOrder = sweepOrderOf(built, built.sweep_plan);
+          return renderPassTasks(sweepOrder, renderGateNotes(sweepOrder, args.ecosystem)).map(
+            (t) => ({ ...t, path: join(args.caseDir, "tasks-sweep", t.file) }),
+          );
+        })()
+      : [];
+  const { render_outputs: _renderedByBench, ...unrendered } = built;
+  const order = {
+    ...unrendered,
+    ...(taskFiles.length
+      ? { pass_task_files: taskFiles.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
+      : {}),
+    ...(sweepTasks.length
+      ? { sweep_task_files: sweepTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
+      : {}),
+  };
+  const template = readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8");
+  const rendered = renderRoundPrompt(
+    template,
+    order,
+    MEMORY_LESS,
+    cfg.owner.name,
+    args.ecosystem,
+    identity,
+  );
+  const orderText =
+    rendered +
+    "\n\n" +
+    benchAppendix({
+      repo: c.repo,
+      pr: c.pr,
+      headSha: c.head_commit,
+      mergeBase: meta.merge_base,
+      caseDir: args.caseDir,
+      title: meta.title,
+      body,
+      ...(cfg.review.render_outputs ? { renderOutputs: true } : {}),
+      roundNo: fu.round_no,
+      privateReplay: true,
+      prevHead: fu.prev_head,
+    });
+  const system = renderConversationSystemPrompt(
+    readFileSync(join(root, "prompts", "conversation-system.md"), "utf8"),
+    { pr: c.pr, title, worktree: tree },
+    identity,
+  );
+  for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
+  return {
+    system,
+    order: orderText,
+    plannedLenses: order.pass_plan.map((p) => p.agent),
+    passPlan: order.pass_plan,
+    taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
+    extraFiles,
+    followUp: report,
+    ...(built.sweep_plan && built.sweep_plan.length > 0 ? { sweepPlan: built.sweep_plan } : {}),
   };
 }
 
@@ -915,6 +1171,20 @@ export async function reviewCase(
       writeFileSync(join(caseDir, "deps.json"), JSON.stringify(manifest, null, 2));
       dependencyNote = renderDependencyNote(manifest);
     }
+    //, a follow-up case: the PR-owned delta, by production's own
+    // `prOwnedDelta` over this tree. Total: a throw is a full round.
+    let followUpDelta: PrOwnedDelta | undefined;
+    if (c.followup) {
+      try {
+        followUpDelta = await benchDelta(tree, c, meta);
+      } catch (err) {
+        followUpDelta = {
+          ok: false,
+          reason: "diff-failed",
+          detail: String(err instanceof Error ? err.message : err).slice(0, 200),
+        };
+      }
+    }
     const prompts = renderCasePrompts({
       root: o.root,
       cfg: ctx.cfg,
@@ -926,9 +1196,28 @@ export async function reviewCase(
       files,
       issuedAt: new Date().toISOString(),
       dependencyNote,
+      ...(followUpDelta ? { followUpDelta } : {}),
     });
     summary.planned_lenses = prompts.plannedLenses;
     writeFileSync(join(caseDir, "pass-plan.json"), JSON.stringify(prompts.passPlan, null, 2));
+    if (c.followup) {
+      // An earlier attempt's ledger, patch or sweep tasks never leak into this one.
+      for (const f of ["ledger.md", "delta.patch", "prior.json", "sweep-plan.json"])
+        rmSync(join(caseDir, f), { force: true });
+      rmSync(join(caseDir, "tasks-sweep"), { recursive: true, force: true });
+      for (const f of prompts.extraFiles ?? []) {
+        mkdirSync(dirname(f.path), { recursive: true });
+        writeFileSync(f.path, f.text);
+      }
+      if (prompts.sweepPlan)
+        writeFileSync(join(caseDir, "sweep-plan.json"), JSON.stringify(prompts.sweepPlan, null, 2));
+      if (prompts.followUp) {
+        summary.follow_up = prompts.followUp;
+        log(
+          `review: ${c.instance_id} — follow-up round ${prompts.followUp.round_no}: ${prompts.followUp.scope}${prompts.followUp.reason ? ` (${prompts.followUp.reason})` : ""}${prompts.followUp.sweep_owed ? ", sweep owed" : ""}`,
+        );
+      }
+    }
     if (prompts.taskFiles.length) {
       mkdirSync(join(caseDir, "tasks"), { recursive: true });
       for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);
@@ -1065,6 +1354,11 @@ export async function reviewCase(
       const lines = readFileSync(events, "utf8").split("\n");
       summary.usage = usageFromEvents(lines);
       summary.model_errors = modelErrorsFromEvents(lines);
+      // per-stage cost and time (stages.json; the per-phase totals
+      // ride the summary).
+      const stages = stagesFromEvents(lines);
+      writeFileSync(join(caseDir, "stages.json"), JSON.stringify(stages, null, 2) + "\n");
+      summary.stages = stages.phases;
       // pi's own stderr reports what never reached a message (a refused
       // connection, a 429 before the first token).
       for (const w of summary.warnings) {
