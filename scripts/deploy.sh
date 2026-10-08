@@ -721,6 +721,15 @@ if [[ "$MODE" != "verify" ]]; then
   # dist was still the pre-fix build (builds had run in worktrees, never in
   # this checkout), and the daemon kept spawning sessions with the old argv.
   note "building dist against $HEAD_SHA"
+  # A COLD build, every time (integration review). tsc's incremental
+  # build info (tsconfig.json `tsBuildInfoFile`) lives under node_modules/,
+  # and every worktree reaches this checkout's node_modules through a symlink,
+  # so a build in a worktree rewrites THIS checkout's build info. Once that
+  # worktree's sources are merged here, tsc reads them as already emitted and
+  # writes nothing — and verify-dist below checks that dist/ is complete, not
+  # that it is fresh, so the rsync would ship the OLD compiled daemon. The
+  # same failure as 2026-08-18, through the cache instead of the tree.
+  rm -f "$SANDBOX_DIR/node_modules/.cache/qcr-tsbuildinfo"
   (cd "$SANDBOX_DIR" && npm run build) || die "npm run build failed — refusing to ship a tree whose dist cannot be rebuilt"
   # `npm run build` already chains this; run it again HERE, at the point where
   # the tree becomes something the VM will run. `incremental` emits from the

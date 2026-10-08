@@ -238,6 +238,14 @@ export interface RoundRow {
   preflight_posting_state: "unknown" | "none" | "ambiguous" | "executed" | "dryrun" | "refused";
   /** First exact planned discovery execution observed by the daemon. */
   fanout_started_at: string | null;
+  /** integration review: the end of this round's usage window while
+   * its round-end measurement (usage, the exec-policy audit, the integrity
+   * re-check) is OWED — stamped synchronously when the round end fixes the
+   * window, cleared when the measurement has finished, whatever it found.
+   * A non-null value at boot is a measurement a restart cut short; the
+   * verdict watcher resumes it. Null = nothing owed (and every round before
+   * the column). */
+  usage_owed_to: string | null;
 }
 
 /**
@@ -1477,6 +1485,9 @@ export class StateStore {
       // build that brackets the preflight posting call can enter auto-retry.
       "ALTER TABLE rounds ADD COLUMN preflight_posting_state TEXT NOT NULL DEFAULT 'unknown'",
       "ALTER TABLE rounds ADD COLUMN fanout_started_at TEXT",
+      // integration review: an owed round-end measurement survives a
+      // restart (the window's end, NULL once measured). Nullable, additive.
+      "ALTER TABLE rounds ADD COLUMN usage_owed_to TEXT",
       // held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -2122,21 +2133,51 @@ export class StateStore {
   /** `estUsd` is a caller-supplied initial estimate; it lands in `est_usd` (the
    * ONE spend field) only when no measured figure exists yet —
    * recordRoundUsage's measurement always supersedes it. The retired
-   * `spend_usd` column is never written. */
+   * `spend_usd` column is never written.
+   *
+   * `expectedStatus` makes it a claim (integration review): the row is
+   * finished only while its status is still the one the caller read before
+   * it awaited anything, and the return says whether it was. Without it the
+   * write is unconditional, as it always was. */
   finishRound(
     id: number,
     verdict: string,
     estUsd: number | null,
     summary: string | null = null,
-  ): void {
+    expectedStatus?: string,
+  ): boolean {
     const row = this.db.prepare("SELECT started_at FROM rounds WHERE id = ?").get(id) as
       { started_at: string } | undefined;
     const duration = row ? (this.now().getTime() - Date.parse(row.started_at)) / 1000 : null;
-    this.db
-      .prepare(
-        "UPDATE rounds SET verdict = ?, est_usd = COALESCE(est_usd, ?), duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?",
-      )
-      .run(verdict, estUsd, duration, this.ts(), summary, id);
+    const set =
+      "UPDATE rounds SET verdict = ?, est_usd = COALESCE(est_usd, ?), duration_s = ?, finished_at = ?, summary = ?, status = 'done' WHERE id = ?";
+    const result =
+      expectedStatus === undefined
+        ? this.db.prepare(set).run(verdict, estUsd, duration, this.ts(), summary, id)
+        : this.db
+            .prepare(`${set} AND status = ?`)
+            .run(verdict, estUsd, duration, this.ts(), summary, id, expectedStatus);
+    return result.changes > 0;
+  }
+
+  /** A round end fixed its usage window and owes the measurement (
+   * integration review). Synchronous, so it lands in the same turn as the
+   * round end's terminal write. */
+  oweRoundMeasurement(id: number, measuredTo: string): void {
+    this.db.prepare("UPDATE rounds SET usage_owed_to = ? WHERE id = ?").run(measuredTo, id);
+  }
+
+  /** The owed measurement has finished — usage recorded, or recorded
+   * unknown — and is owed no more. */
+  settleRoundMeasurement(id: number): void {
+    this.db.prepare("UPDATE rounds SET usage_owed_to = NULL WHERE id = ?").run(id);
+  }
+
+  /** Every round whose round-end measurement is still owed, oldest first. */
+  owedRoundMeasurements(): RoundRow[] {
+    return this.db
+      .prepare("SELECT * FROM rounds WHERE usage_owed_to IS NOT NULL ORDER BY id")
+      .all() as RoundRow[];
   }
 
   /** Measured usage for a round (pi session JSONLs). Overwrites —

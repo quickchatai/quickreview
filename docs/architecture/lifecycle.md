@@ -315,10 +315,25 @@ is read the same way.
 `apply()` then, in order: checks the posting receipt, moves the labels, finishes
 the round row, records executed-pass telemetry, applies the `verdict` event,
 stamps the reviewed-head mark, records or clears the withheld-approval mark,
-announces, settles or promotes a successor head, measures usage, delivers any
-escalations (§9), compacts the session, and — after a settle delay, so a nudge
-is not typed into a compacting pane — checks ledger freshness and the findings
-record. Finally it flushes held wakes (§8).
+announces, settles or promotes a successor head, fixes the usage window, delivers
+any escalations (§9), requests the session's compaction, schedules — after a
+settle delay — the ledger-freshness and findings-record checks, flushes held
+wakes (§8), and LAST measures usage over the fixed window.
+
+Finishing the round row is a CLAIM: it lands only while the round still has the
+status `apply` read before it awaited anything (the posting proof, the label
+calls). An operator's `u` or another terminal path that landed meanwhile stands,
+and the apply stops there (`verdict_apply_claim_lost`). The measurement is OWED
+from the moment its window is fixed (`rounds.usage_owed_to`), in the same turn
+as `verdict_settled`, until it has finished: a restart while it runs — a
+deploy's drain sees no running round by then — is resumed at the next start
+over the stored window (`round_usage_resumed`; the integrity re-check is
+recorded `interrupted`, never re-run against a surface the deploy rewrote), and
+a window older than 12 h is recorded UNKNOWN rather than re-read. Every
+round-end path owes its measurement the same way. The verdict sweep's paths and
+the anomaly path await it; the round-stage supervisor's and the deadline tick's
+settlements hand it to the background, so one PR's accounting never holds the
+supervisor's serialized scan.
 
 Three endings are not ordinary verdicts:
 
@@ -524,13 +539,21 @@ longer an infrastructure failure: `recoverInfrastructureFailure` answers
 that lands is applied as usual. The tail gets `[daemon]
 round_posted_tail_grace_min` (15) from the posting; past it the round settles
 from the receipt, as above — or, when the receipt does not prove the decision,
-fails loud as `posted_without_verdict`; never a requeue. A parent that has
-already settled gets no grace (it will write nothing more) and settles at once.
+fails loud as `posted_without_verdict`; never a requeue. The round deadline
+gives the same grace (a review posted just before it is not settled under a
+session still writing its tail). A parent that has already settled gets no
+grace (it will write nothing more) and settles at once.
 A POST still inside its ambiguous window (a `prepared` receipt within
-`posting_receipt_grace_s`) is waited out rather than killed mid-post. A verdict
+`posting_receipt_grace_s`) is waited out rather than killed mid-post — and so
+is one past it whose marker reconcile could not read GitHub
+(`round_stage_posting_ambiguous`): the POST may have landed, so the limit waits
+for a read that can decide, bounded by the round deadline, where the same
+evidence fails loud. Evidence of a posting that contradicts the round
+(conflicting linkage, several matching reviews) fails loud. A verdict
 file already on disk defers any limit to the sweep, receipt or none (the
 session has finished; the sweep consumes the file within its partial-write
-window). With no receipt and no file, the old path runs: cancel, kill, capped
+window). With no receipt, or a `prepared` one whose marker GitHub was read for
+and does not hold, and no file, the old path runs: cancel, kill, capped
 self-requeue.
 
 ## 9. Escalation (optional, off by default)

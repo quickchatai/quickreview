@@ -42,7 +42,7 @@ Timestamps are ISO-8601 strings in `TEXT` columns throughout. Booleans are
 | Table | Purpose | Key columns | Principal `StateStore` methods |
 | --- | --- | --- | --- |
 | `pr_state` | one row per PR the system tracks; the lifecycle position | `number` (PK), `state`, `head_sha`, `trigger_ts`, `stale_recheck`, `migration_gate`, `paused` | `getPr`, `allPrs`, `upsertPr`, `setPrState`, `pausePr`, `resumePr` |
-| `rounds` | the review history: one row per round ever started | `id` (PK), `pr`, `round_no`, `round_type`, `lenses`, `verdict`, `spend_usd`, `started_at`, `deadline_at`, `status` | `startRound`, `finishRound`, `roundsFor`, `runningRounds`, `markRoundOverdue`, `markRoundCancelled`, `expireOverdueRounds`, `recordRoundUsage` |
+| `rounds` | the review history: one row per round ever started | `id` (PK), `pr`, `round_no`, `round_type`, `lenses`, `verdict`, `spend_usd`, `started_at`, `deadline_at`, `status`, `usage_owed_to` (the usage window's end while the round-end measurement is owed) | `startRound`, `finishRound`, `roundsFor`, `runningRounds`, `markRoundOverdue`, `markRoundCancelled`, `expireOverdueRounds`, `recordRoundUsage`, `oweRoundMeasurement`, `settleRoundMeasurement`, `owedRoundMeasurements` |
 | `bot_comments` | the registry of comments this system posted | `comment_id` (PK), `pr`, `kind`, `posted_at` | `registerBotComment`, `botCommentPr` |
 | `reviewed_heads` | one row per PR: the head last actually reviewed, and what was decided there | `pr` (PK), `head_sha`, `verdict`, `posted_event`, `round_no`, `last_author_reply_at` | `recordReviewedHead`, `reviewedHead`, `noteAuthorReply` |
 | `approval_withheld` | one row per PR whose approval was withheld for red or missing CI | `pr` (PK), `head_sha`, `ci_state`, `reason` | `recordApprovalWithheld`, `approvalWithheld`, `clearApprovalWithheld` |
@@ -560,7 +560,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `round_first_pass_max_min` | number | `5` |
 | `round_passes_max_min` | number | `35` |
 | `round_finalize_grace_min` | number | `5` |
-| `round_posted_tail_grace_min` | number | `15` (H1a: after a CONFIRMED posting, how long a stage limit waits for the session's tail before settling the round from the receipt) |
+| `round_posted_tail_grace_min` | number | `15` (H1a: after a CONFIRMED posting, how long a stage limit — and, since the integration review, the round deadline — waits for the session's tail before settling the round from the receipt) |
 | `posting_receipt_grace_s` | number | `120` |
 | `session_command_unknown_grace_s` | number | `60` |
 | `session_command_unknown_max_checks` | number | `1` |

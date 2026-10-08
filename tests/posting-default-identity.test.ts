@@ -220,10 +220,15 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // tells the session never to write the verdict file in place — stage it at
 // `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
 // rename), and the guard-5 head_moved outcome the same way. Every map moves.
+// Re-pinned 2026-10-08 (integration review): the ledger step no longer
+// says the verdict file makes the daemon compact the conversation at once —
+// since H1b the daemon closes the round and the compaction runs once the run
+// settles — and the findings-record step says nothing written after the
+// verdict is part of the round. Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "fc2e700e2ca41c37871fbff3bc88ac6ba3dd1dff1a7efe337e9f1ac0669024a8",
-  "re-review": "717ee68ade48f3b44511882fa9f2a6dd0f5be5567933129938484f95df8c49ba",
-  staleness: "f756f39c39f2b44ab2b4c4674edaf6db37d449de15b9597d16ae5e4761f61ea7",
+  first: "7b41e234d14cc37d59fe8e3845e94b47189bc36774dbc558fbb5b284f5486126",
+  "re-review": "1573b7223b4f6edf2e423d9bb492b0a64da68e07157e01c2c22c8a305d0070f5",
+  staleness: "3dab00d11477ca90fe5fabe6cb13549b76f73261b89b878e55da6d559152dc29",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -254,10 +259,15 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // tells the session never to write the verdict file in place — stage it at
 // `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
 // rename), and the guard-5 head_moved outcome the same way. Every map moves.
+// Re-pinned 2026-10-08 (integration review): the ledger step no longer
+// says the verdict file makes the daemon compact the conversation at once —
+// since H1b the daemon closes the round and the compaction runs once the run
+// settles — and the findings-record step says nothing written after the
+// verdict is part of the round. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "d76dc388ca840cf50e8c45729c906d3676d4758e1e0dd28a5fd749e626b40a59",
-  "re-review": "4b4b0269263b3e3630a20cf2437660961a7e121cf0c856f7ec25dc2140c12da8",
-  staleness: "2646f315557f978edede417794742a562c6ccb69e64b348240f6809ea8f30c82",
+  first: "4d33dca1cde7395f0d235a61b7403802b5e28db5bc28e6ec7cf647039bddf0f5",
+  "re-review": "39c822bde737cadc35d32fc375610db26f66e2db1cfc21db5071f84722bd2868",
+  staleness: "44333e658bbdcbcd1611814385d97085ed5deda9fe32bf01edf7d0e20d7df12e",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -273,10 +283,15 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // tells the session never to write the verdict file in place — stage it at
 // `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
 // rename), and the guard-5 head_moved outcome the same way. Every map moves.
+// Re-pinned 2026-10-08 (integration review): the ledger step no longer
+// says the verdict file makes the daemon compact the conversation at once —
+// since H1b the daemon closes the round and the compaction runs once the run
+// settles — and the findings-record step says nothing written after the
+// verdict is part of the round. Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "14c54a8a3be79335166b9fba7f14e6f9a79306168b3cb9b627ee039ed3169d86",
-  "re-review": "46187a8c39ae9c406b8b04d43528dc26bb193be5da083fb7e633ed24a9a65fe1",
-  staleness: "025ba7d6b496d3af86c4c904e67091d11a34f56b89a083da4d4c1e27b0a524ba",
+  first: "cc8181aca16e223265dd4df88ec9eb248e1c402d4bb4413e0a06b09e2cd7a898",
+  "re-review": "2817f9957f02e3051334c1fd9e677747f328f9f5ce06bd5c43bbfa7b90835d7f",
+  staleness: "fda88e24de228988399b74644da81fe9bce4103a4682311cdabb1ecefb487c5b",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -295,10 +310,15 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // tells the session never to write the verdict file in place — stage it at
 // `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
 // rename), and the guard-5 head_moved outcome the same way. Every map moves.
+// Re-pinned 2026-10-08 (integration review): the ledger step no longer
+// says the verdict file makes the daemon compact the conversation at once —
+// since H1b the daemon closes the round and the compaction runs once the run
+// settles — and the findings-record step says nothing written after the
+// verdict is part of the round. Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "945fbe1ff33eee78b06ced3a38cf5e2decf406204bd333cc7285eb5a4fd871a0",
-  "re-review": "7d99a26d5da6d8eb572645089454eec8f4c9c538755a12f1970d30744711b6fa",
-  staleness: "95f96808783f5f495a6eefea2978cfb19f4cc83000f4d45dc10fe450ae2b7013",
+  first: "0f75e667eb49c5c6098be6857cbb7636159533938018765665195f5eb7248531",
+  "re-review": "af988ad739739649ac0471ff16c9c2d3a0884755266a7151ea9ad62d26a2806d",
+  staleness: "076b4cdbf541954d2b66b82e4e375f771ba0ad5b3082d7d5caef3d8371ff6859",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

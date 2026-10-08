@@ -447,6 +447,23 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     }
   });
 
+  // integration review. verify-dist proves dist/ is COMPLETE, never
+  // that it is FRESH. The build info sits under node_modules/, which every
+  // worktree reaches through a symlink, so a worktree's build rewrites this
+  // checkout's: merged here, its sources read as already emitted and an
+  // incremental build writes nothing over the OLD compiled daemon.
+  // MUTATION: drop the `rm -f` line from deploy.sh, or move it below the
+  // build — this fails.
+  it("deploy.sh builds cold: it removes the shared build info before it rebuilds dist/", () => {
+    const deploy = readFileSync(join(process.cwd(), "scripts", "deploy.sh"), "utf8");
+    const info = String(tsconfig.compilerOptions.tsBuildInfoFile);
+    const removal = deploy.indexOf(`rm -f "$SANDBOX_DIR/${info}"`);
+    const build = deploy.indexOf("npm run build)");
+    expect(removal, `deploy.sh never removes ${info}`).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(-1);
+    expect(removal).toBeLessThan(build);
+  });
+
   it("that check reports a missing artefact rather than trusting tsc's exit code", async () => {
     const { missingArtifacts } = (await import("../scripts/verify-dist.mjs")) as unknown as {
       missingArtifacts(root: string): Array<{ source: string; emitted: string }>;

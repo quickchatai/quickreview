@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -22,7 +23,13 @@ import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
-import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import {
+  OWED_MEASUREMENT_RESUME_MAX_MS,
+  STAGED_FILE_MAX_AGE_MS,
+  validateVerdict,
+  VerdictWatcher,
+  type VerdictAdapter,
+} from "../src/verdicts.js";
 import { retryWithheldApproval } from "../src/cigate.js";
 import { TranscriptIndex } from "../src/transcriptindex.js";
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
@@ -1765,11 +1772,12 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
     const real = store.finishRound.bind(store);
     let crash = true;
     store.finishRound = ((...args: Parameters<StateStore["finishRound"]>) => {
-      real(...args);
+      const claimed = real(...args);
       if (crash) {
         crash = false;
         throw new Error("daemon killed mid-apply");
       }
+      return claimed;
     }) as StateStore["finishRound"];
   }
 
@@ -3247,5 +3255,492 @@ describe("guarded no-op settlement", () => {
       cancel_cause: "infrastructure_failure",
     });
     expect(store.openReviewFailure(512)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// integration review: a round end's measurement is OWED durably and a
+// restart resumes it; the round-stage supervisor and the deadline tick never
+// wait on it; the deadline honours the posted-tail grace; a POST whose outcome
+// is unknown is never requeued; apply's finishRound is a claim; and staging
+// files that were never committed do not pile up.
+// ---------------------------------------------------------------------------
+describe("integration review", () => {
+  const usageLine = (input: number, output: number): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: new Date().toISOString(),
+      message: { role: "assistant", usage: { input, output } },
+    });
+  const modelChange = (): string =>
+    JSON.stringify({ type: "model_change", provider: "openai-codex", modelId: "gpt-5.6-sol" });
+  const count = (kind: string, pr: number): number =>
+    (
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = ? AND pr = ?")
+        .get(kind, pr) as {
+        c: number;
+      }
+    ).c;
+  const payloads = (kind: string, pr: number): Array<Record<string, unknown>> =>
+    (
+      store.db
+        .prepare("SELECT payload FROM events WHERE kind = ? AND pr = ? ORDER BY id")
+        .all(kind, pr) as Array<{ payload: string }>
+    ).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
+  const owedTo = (roundId: number): string | null =>
+    (
+      store.db.prepare("SELECT usage_owed_to FROM rounds WHERE id = ?").get(roundId) as {
+        usage_owed_to: string | null;
+      }
+    ).usage_owed_to;
+  /** The same in-memory transcript `gatedTranscripts` serves, with no gate. */
+  const memoryUsage = (
+    pr: number,
+    lines: string[],
+  ): NonNullable<ConstructorParameters<typeof VerdictWatcher>[0]["usage"]> => ({
+    globalStoreDir: null,
+    sessionDirFor: (n) => `/sessions/pr-${n}`,
+    transcripts: new TranscriptIndex({
+      fs: new MemoryTranscriptFs(
+        { [`/sessions/pr-${pr}/session.jsonl`]: lines.join("\n") },
+        {},
+        Date.now(),
+      ),
+    }),
+  });
+  /** `p`'s answer, or "still waiting" if it has none within `ms` — so a
+   * mutation that makes a call wait on a gated read fails instead of hanging. */
+  const within = <T>(p: Promise<T>, ms = 2_000): Promise<T | "still waiting"> =>
+    Promise.race([
+      p,
+      new Promise<"still waiting">((r) => setTimeout(() => r("still waiting"), ms)),
+    ]);
+  const killingHooks = (killed: number[]): SessionHooks => {
+    const { hooks } = recordingHooks();
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+    return hooks;
+  };
+
+  describe("a round end's measurement is owed, and the next start resumes it", () => {
+    // MUTATION: drop `resumeOwedMeasurements()` from the sweep, or the
+    // `oweRoundMeasurement` write — the round keeps NULL tokens and no event.
+    // MUTATION: re-run the integrity check on a resume — `rehashed` is 1.
+    it("a restart while a verdict's transcripts are read leaves the round owed; the next start measures it", async () => {
+      const roundId = reviewingRound(600);
+      store.recordRoundGitConfig(roundId, { digest: "sha256:before", files: {} });
+      const lines = [modelChange(), usageLine(40, 4)];
+      const gated = gatedTranscripts(600, lines);
+      // The daemon about to die: its round end is inside the transcript reads.
+      void watcher({ usage: gated.usage }).handleFile(
+        write(600, 1, verdictFile({ pr: 600, verdict: "APPROVE" })),
+      );
+      await gated.reached;
+      expect(store.roundsFor(600)[0]).toMatchObject({
+        status: "done",
+        verdict: "APPROVE",
+        tokens_in: null,
+      });
+      expect(count("verdict_settled", 600)).toBe(1);
+      expect(owedTo(roundId)).not.toBeNull();
+      expect(store.runningRounds()).toEqual([]); // what a deploy's drain sees
+
+      // The restarted daemon.
+      let rehashed = 0;
+      const restarted = watcher({
+        usage: memoryUsage(600, lines),
+        integrityFingerprint: async () => {
+          rehashed++;
+          return { digest: "sha256:after", files: {} };
+        },
+      });
+      await restarted.sweep();
+      await restarted.idle();
+
+      expect(tokensIn(roundId)).toBe(40);
+      expect(owedTo(roundId)).toBeNull();
+      expect(payloads("round_usage_resumed", 600)).toEqual([
+        expect.objectContaining({ round_id: roundId }),
+      ]);
+      // A deploy rewrote the policy surface: the round is recorded unchecked,
+      // never re-hashed against it.
+      expect(rehashed).toBe(0);
+      expect(payloads("round_integrity_unchecked", 600)).toEqual([
+        expect.objectContaining({ round_id: roundId, stage: "round_end", reason: "interrupted" }),
+      ]);
+      expect(count("round_usage_unknown", 600)).toBe(0);
+      // Once per start, and the leftover verdict file replays inertly.
+      await restarted.sweep();
+      await restarted.idle();
+      expect(count("round_usage_resumed", 600)).toBe(1);
+      expect(count("verdict_applied", 600)).toBe(1);
+    });
+
+    // MUTATION: re-read an owed window whatever its age — `measured` is 1.
+    it("a window too old to re-read is recorded UNKNOWN, never re-read into a partial sum", async () => {
+      const lost = reviewingRound(601);
+      store.finishRound(lost, "APPROVE", null, null);
+      const measuredBefore = reviewingRound(602);
+      store.finishRound(measuredBefore, "APPROVE", null, null);
+      store.recordRoundUsage(measuredBefore, { tokens_in: 7, tokens_out: 1, est_usd: null });
+      const old = new Date(Date.now() - OWED_MEASUREMENT_RESUME_MAX_MS - 60_000).toISOString();
+      store.oweRoundMeasurement(lost, old);
+      store.oweRoundMeasurement(measuredBefore, old);
+      let measured = 0;
+      const w = watcher({
+        usage: {
+          globalStoreDir: null,
+          transcripts: {
+            measure: () => {
+              measured++;
+              return Promise.resolve({ usage: null, unreadable: [], violations: [] });
+            },
+          } as unknown as TranscriptIndex,
+        },
+      });
+      await w.sweep();
+      await w.idle();
+
+      expect(measured).toBe(0);
+      expect(payloads("round_usage_unknown", 601)).toEqual([
+        expect.objectContaining({ round_id: lost, reason: "interrupted", audit: "incomplete" }),
+      ]);
+      // Usage recorded before the restart stays; only the audit is incomplete.
+      expect(count("round_usage_unknown", 602)).toBe(0);
+      expect(tokensIn(measuredBefore)).toBe(7);
+      expect(owedTo(lost)).toBeNull();
+      expect(owedTo(measuredBefore)).toBeNull();
+    });
+  });
+
+  describe("the round-stage supervisor and the deadline tick never wait on a measurement", () => {
+    // MUTATION: make `measureModeFor` always "inline" — the stage limit's
+    // answer waits for the gated reads and `within` reports "still waiting".
+    it("a stage limit's receipt settlement answers at once; the boot resume never measures it twice", async () => {
+      const roundId = reviewingRound(603);
+      const { key } = stampPosting(603, 1);
+      const posted = new Date(Date.now() - 20 * 60_000).toISOString(); // past the 15-min grace
+      writePostingReceipt(603, 1, key, "REQUEST_CHANGES", {
+        prepared_at: posted,
+        confirmed_at: posted,
+      });
+      const gated = gatedTranscripts(603, [modelChange(), usageLine(25, 2)]);
+      const w = watcher({ usage: gated.usage });
+
+      expect(await within(w.recoverInfrastructureFailure(603, 1, "parent_finalize", "limit"))).toBe(
+        "settled",
+      );
+      await gated.reached; // the reads run in the background…
+      expect(store.roundsFor(603)[0]).toMatchObject({ status: "done", tokens_in: null });
+      expect(owedTo(roundId)).not.toBeNull(); // …owed while they do
+      await w.sweep(); // this process's own measurement is never resumed
+      expect(count("round_usage_resumed", 603)).toBe(0);
+
+      gated.release();
+      await w.idle();
+      expect(tokensIn(roundId)).toBe(25);
+      expect(owedTo(roundId)).toBeNull();
+    });
+
+    // MUTATION: make `measureModeForRequeue` always "inline" — the requeue's
+    // answer waits for the gated reads.
+    it("a stage limit's kill-and-requeue answers at once too", async () => {
+      const roundId = reviewingRound(606);
+      stampPosting(606, 1); // no receipt: nothing was posted
+      const gated = gatedTranscripts(606, [modelChange(), usageLine(9, 1)]);
+      const killed: number[] = [];
+      const w = watcher({ usage: gated.usage }, killingHooks(killed));
+
+      expect(await within(w.recoverInfrastructureFailure(606, 1, "parent_finalize", "limit"))).toBe(
+        "requeued",
+      );
+      expect(killed).toEqual([606]);
+      expect(store.roundsFor(606)[0]).toMatchObject({ status: "cancelled", tokens_in: null });
+      expect(owedTo(roundId)).not.toBeNull();
+
+      gated.release();
+      await w.idle();
+      expect(tokensIn(roundId)).toBe(9);
+      expect(owedTo(roundId)).toBeNull();
+    });
+
+    // MUTATION: drop the `deadlinesInFlight` guard — the second tick reaches
+    // the same round and reads GitHub a second time.
+    it("a deadline tick still running makes the next one a no-op", async () => {
+      reviewingRound(604);
+      stampPosting(604, 1); // no receipt: the marker reconcile reads GitHub
+      let reads = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      adapter.listReviewsFull = async () => {
+        reads++;
+        await gate;
+        return [];
+      };
+      const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+      const w = watcher({ cfg: { ...cfg, dry_run: false }, now: () => later });
+
+      const first = w.checkDeadlines();
+      for (let i = 0; i < 200 && reads === 0; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(reads).toBe(1);
+      expect(await w.checkDeadlines()).toEqual([]);
+      expect(reads).toBe(1);
+
+      release();
+      await first;
+      await w.idle();
+      // Nothing posted and the grace long gone: the loud path, once.
+      expect(store.openReviewFailure(604)).toMatchObject({ stage: "posting_receipt" });
+    });
+  });
+
+  describe("the deadline honours the posted-tail grace", () => {
+    // MUTATION: drop the `inPostedTailGrace` check in checkDeadlines — the
+    // round settles two minutes after its review was posted, and the
+    // supervisor's terminal-round path would then kill the session mid-tail.
+    it("a review posted two minutes before the deadline gives the session its tail; past it, the receipt settles the round", async () => {
+      const roundId = reviewingRound(605);
+      const startedMs = Date.parse(store.roundsFor(605)[0]!.started_at);
+      const deadlineMs = startedMs + cfg.daemon.round_deadline_min * 60_000;
+      const postedAt = new Date(deadlineMs - 2 * 60_000).toISOString();
+      const { key } = stampPosting(605, 1);
+      writePostingReceipt(605, 1, key, "REQUEST_CHANGES", {
+        prepared_at: postedAt,
+        confirmed_at: postedAt,
+      });
+      const killed: number[] = [];
+      let clock = new Date(deadlineMs + 20_000);
+      const w = watcher({ now: () => clock }, killingHooks(killed));
+
+      expect(await w.checkDeadlines()).toEqual([]);
+      await w.checkDeadlines();
+      expect(store.roundsFor(605)[0]).toMatchObject({ id: roundId, status: "running" });
+      expect(count("verdict_settled_from_receipt", 605)).toBe(0);
+      expect(payloads("round_stage_posted_wait", 605)).toEqual([
+        expect.objectContaining({ stage: "round_deadline", posted_at: postedAt }),
+      ]);
+
+      clock = new Date(Date.parse(postedAt) + 15 * 60_000 + 1_000);
+      await w.checkDeadlines();
+      await w.idle();
+      expect(store.roundsFor(605)[0]).toMatchObject({
+        status: "done",
+        verdict: "REQUEST_CHANGES",
+        gh_review_id: 991,
+      });
+      expect(count("verdict_settled_from_receipt", 605)).toBe(1);
+      expect(count("round_self_requeued", 605)).toBe(0);
+      expect(killed).toEqual([]);
+    });
+  });
+
+  describe("a POST whose outcome is unknown is never requeued at a stage limit", () => {
+    const live = { ...cfg, dry_run: false };
+    const at = () => new Date("2026-08-13T12:30:00Z"); // past the 120 s receipt grace
+    const prepared = (pr: number, key: string): void =>
+      writePostingReceipt(pr, 1, key, "REQUEST_CHANGES", {
+        status: "prepared",
+        prepared_at: "2026-08-13T12:00:00Z",
+        confirmed_at: undefined,
+        gh_review_id: undefined,
+        gh_commit_id: undefined,
+        gh_state: undefined,
+      });
+    const review = (id: number, key: string) => ({
+      id,
+      user: cfg.github.bot_login,
+      user_type: "Bot",
+      state: "CHANGES_REQUESTED",
+      body: `review body\n\n${postingMarker(key)}`,
+      commit_id: "abc123",
+      submitted_at: "2026-08-13T12:29:00Z",
+    });
+
+    // MUTATION: drop the `ambiguous` branch in receiptAwareStage — the limit
+    // kills the session and requeues a round that may already have posted.
+    it("a prepared receipt past its grace with GitHub unreadable waits for a read that can decide", async () => {
+      reviewingRound(610);
+      const { key } = stampPosting(610, 1);
+      prepared(610, key);
+      adapter.listReviewsFull = async () => {
+        throw new Error("GitHub 502");
+      };
+      const killed: number[] = [];
+      const w = watcher({ cfg: live, now: at }, killingHooks(killed));
+
+      expect(await w.recoverInfrastructureFailure(610, 1, "parent_finalize", "x")).toBe(
+        "retryable",
+      );
+      expect(await w.recoverInfrastructureFailure(610, 1, "parent_finalize", "x")).toBe(
+        "retryable",
+      );
+      expect(killed).toEqual([]);
+      expect(store.roundsFor(610)[0]?.status).toBe("running");
+      expect(count("round_stage_posting_ambiguous", 610)).toBe(1); // once, not per scan
+      expect(count("round_self_requeued", 610)).toBe(0);
+
+      // The read comes back with the marker: the POST had landed. Linked, and
+      // its tail waited for — never a second posting.
+      adapter.listReviewsFull = async () => [review(4242, key)];
+      expect(await w.recoverInfrastructureFailure(610, 1, "parent_finalize", "x")).toBe(
+        "posted_wait",
+      );
+      expect(store.roundsFor(610)[0]).toMatchObject({ status: "running", gh_review_id: 4242 });
+      expect(killed).toEqual([]);
+    });
+
+    it("an adapter that cannot read reviews leaves the POST unknown too", async () => {
+      reviewingRound(611);
+      const { key } = stampPosting(611, 1);
+      prepared(611, key);
+      const killed: number[] = [];
+      expect(
+        await watcher({ cfg: live, now: at }, killingHooks(killed)).recoverInfrastructureFailure(
+          611,
+          1,
+          "parent_finalize",
+          "x",
+        ),
+      ).toBe("retryable");
+      expect(killed).toEqual([]);
+    });
+
+    it("once GitHub is read and holds no marker, the old path requeues", async () => {
+      reviewingRound(612);
+      const { key } = stampPosting(612, 1);
+      prepared(612, key);
+      adapter.listReviewsFull = async () => [];
+      const killed: number[] = [];
+      const w = watcher({ cfg: live, now: at }, killingHooks(killed));
+
+      expect(await w.recoverInfrastructureFailure(612, 1, "parent_finalize", "x")).toBe("requeued");
+      await w.idle();
+      expect(killed).toEqual([612]);
+      expect(store.roundsFor(612)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "infrastructure_failure",
+      });
+    });
+
+    // MUTATION: drop the `contradicted` branch — the limit requeues a round
+    // GitHub already shows two reviews for.
+    it("evidence of a posting that contradicts the round fails loud — never a requeue", async () => {
+      reviewingRound(613);
+      const { key } = stampPosting(613, 1);
+      prepared(613, key);
+      adapter.listReviewsFull = async () => [review(1, key), review(2, key)];
+      const killed: number[] = [];
+      const w = watcher({ cfg: live, now: at }, killingHooks(killed));
+
+      expect(await w.recoverInfrastructureFailure(613, 1, "parent_finalize", "x")).toBe(
+        "failed_loud",
+      );
+      await w.idle();
+      expect(killed).toEqual([]);
+      expect(count("round_self_requeued", 613)).toBe(0);
+      expect(store.openReviewFailure(613)).toMatchObject({ stage: "posting_receipt" });
+    });
+  });
+
+  describe("apply's finishRound is a claim", () => {
+    const cancelOnLabel = (): void => {
+      adapter.removeLabel = async (n, label) => {
+        adapter.calls.push(`removeLabel:${n}:${label}`);
+        // The operator's `u` lands while the label call is in flight.
+        store.cancelRunningRounds(n, "rerun-round");
+        return { executed: false, dryRunFile: "d" };
+      };
+    };
+
+    it("finishRound with an expected status is a compare-and-set", () => {
+      const id = reviewingRound(620);
+      store.markRoundCancelled(id, "x", "operator");
+      expect(store.finishRound(id, "APPROVE", null, null, "running")).toBe(false);
+      expect(store.roundsFor(620)[0]).toMatchObject({ status: "cancelled", verdict: null });
+      expect(store.finishRound(id, "APPROVE", null, null, "cancelled")).toBe(true);
+      expect(store.finishRound(id, "APPROVE", null, null)).toBe(true); // unconditional, as before
+    });
+
+    // MUTATION: drop `claimedStatus` from apply's finishRound — the verdict
+    // lands over the operator's cancel and the PR transitions under it.
+    it("an operator's u that lands during a verdict's label calls is never applied over", async () => {
+      const roundId = reviewingRound(621);
+      cancelOnLabel();
+
+      expect(
+        await watcher().handleFile(write(621, 1, verdictFile({ pr: 621, verdict: "APPROVE" }))),
+      ).toBe(true);
+
+      expect(store.roundsFor(621)[0]).toMatchObject({
+        status: "cancelled",
+        cancel_cause: "operator",
+        verdict: null,
+      });
+      expect(payloads("verdict_apply_claim_lost", 621)).toEqual([
+        expect.objectContaining({
+          round_id: roundId,
+          claimed_status: "running",
+          round_status: "cancelled",
+          verdict: "APPROVE",
+        }),
+      ]);
+      expect(count("verdict_applied", 621)).toBe(0);
+      expect(count("verdict_settled", 621)).toBe(0);
+      expect(store.reviewedHead(621)).toBeUndefined();
+      expect(store.getPr(621)?.state).toBe("reviewing");
+      expect(owedTo(roundId)).toBeNull();
+    });
+
+    it("…and the same for a receipt settlement from the deadline tick, which a later sweep never resumes", async () => {
+      reviewingRound(622);
+      const { key } = stampPosting(622, 1);
+      writePostingReceipt(622, 1, key, "APPROVE"); // posted long before: no grace left
+      cancelOnLabel();
+      const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+      const w = watcher({ now: () => later });
+
+      await w.checkDeadlines();
+      await w.idle();
+      await w.sweep();
+      await w.idle();
+
+      expect(store.roundsFor(622)[0]).toMatchObject({ status: "cancelled", verdict: null });
+      expect(payloads("verdict_apply_claim_lost", 622)).toEqual([
+        expect.objectContaining({ source: "posting_receipt", via: "deadline" }),
+      ]);
+      expect(count("verdict_applied", 622)).toBe(0);
+      expect(count("verdict_settled_from_receipt_resumed", 622)).toBe(0);
+      expect(store.reviewedHead(622)).toBeUndefined();
+    });
+  });
+
+  // MUTATION: drop `pruneStaleStaging` from the sweep — the old staging files stay.
+  it("staging files never committed are removed once a day old — only the two staging shapes, never a directory", async () => {
+    const old = (Date.now() - STAGED_FILE_MAX_AGE_MS - 60_000) / 1000;
+    const make = (name: string, aged: boolean): void => {
+      writeFileSync(join(dir, name), "{}");
+      if (aged) utimesSync(join(dir, name), old, old);
+    };
+    make("pr-630-round-1.json.tmp", true);
+    make("pr-630-recheck-abcdef1.json.tmp", true);
+    make("pr-630-round-2.json.tmp", false); // a session publishing it right now
+    make("notes.tmp", true);
+    make("pr-630-round-1.json.bak", true);
+    mkdirSync(join(dir, "pr-630-round-3.json.tmp"));
+    utimesSync(join(dir, "pr-630-round-3.json.tmp"), old, old);
+
+    await watcher().sweep();
+
+    expect(readdirSync(dir).sort()).toEqual([
+      "notes.tmp",
+      "pr-630-round-1.json.bak",
+      "pr-630-round-2.json.tmp",
+      "pr-630-round-3.json.tmp",
+    ]);
+    expect(count("verdict_staging_pruned", 630)).toBe(2);
   });
 });

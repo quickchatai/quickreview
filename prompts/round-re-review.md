@@ -712,8 +712,10 @@ comes after the verdict write.** Rewrite the pinned ledger to the state at
 `open`, `conceded`, or `settled` — never silently dropped — and new findings
 enter with their status. The round is not finished until the ledger is
 written, and it must be written BEFORE the verdict file: the verdict file is
-the daemon's round-over signal — the moment it appears the daemon compacts
-this conversation, whatever is still unwritten is lost, and only the ledger survives compaction word for word: the compaction pins
+the daemon's round-over signal — the moment it appears the daemon closes the
+round, and as soon as your run settles it compacts this conversation: whatever
+is still unwritten then is lost, and only the ledger survives compaction word
+for word: the compaction pins
 your last ledger block verbatim into its summary, and the next round's order
 hands it back to you from disk. Everything else survives only as a
 paraphrase, if at all. A round that writes the verdict first gets its ledger
@@ -741,7 +743,7 @@ write the paragraph above means: nothing comes after it.
 **Write it between the ledger and the verdict file**, in that window: the
 ledger first (it is what survives compaction), then this record, then the
 verdict file, which is the daemon's round-over signal and after which nothing
-you write survives.
+you write is part of the round.
 
 The file is `state/findings/pr-{{n}}-round-{{round_no}}.json` and it carries
 **one entry per candidate finding this round produced**, whatever became of it.
