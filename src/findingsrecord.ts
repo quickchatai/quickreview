@@ -236,6 +236,133 @@ export interface FindingsRecordFile {
    * this is the session's, and the two disagreeing is itself a signal. */
   comments_posted: number | null;
   findings: FindingsRecordEntry[];
+  /**: the statuses this round reported for PRIOR findings (the
+   * daemon-rendered list's refs). Empty when the record carries none. */
+  prior: PriorStatusEntry[];
+}
+
+/** The status a follow-up round reports for one prior finding.
+ * Closed set; `unverifiable` is honest-unknown and counts as unresolved. */
+export type PriorStatus = "fixed" | "open" | "conceded" | "settled" | "obsolete" | "unverifiable";
+
+export const PRIOR_STATUSES: readonly PriorStatus[] = [
+  "fixed",
+  "open",
+  "conceded",
+  "settled",
+  "obsolete",
+  "unverifiable",
+];
+
+/** The statuses that take a prior finding off the next round's list. */
+export const PRIOR_RESOLVED_STATUSES: readonly PriorStatus[] = [
+  "fixed",
+  "conceded",
+  "settled",
+  "obsolete",
+];
+
+const PRIOR_STATUS_ALIASES: Readonly<Record<string, PriorStatus>> = {
+  "still-open": "open",
+  still_open: "open",
+  unresolved: "open",
+  "refuted-and-conceded": "conceded",
+  removed: "obsolete",
+  gone: "obsolete",
+  unknown: "unverifiable",
+};
+
+/** One entry of the record's top-level `prior` array, parsed. */
+export interface PriorStatusEntry {
+  /** The daemon-issued ref, `<round_no>:<finding_key>`, as given. */
+  ref: string;
+  round_no: number;
+  finding_key: string;
+  status: PriorStatus;
+  evidence: string | null;
+}
+
+/** Fold a session-written prior status onto the closed set; `fixed@<sha>`
+ * is `fixed` (the sha is returned so it can ride the evidence). Null = not
+ * a status this parser knows. */
+export function normalizePriorStatus(
+  raw: unknown,
+): { status: PriorStatus; sha: string | null } | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase().replace(/\s+/g, "-");
+  const at = /^fixed@([0-9a-f]{4,40})$/.exec(v);
+  if (at) return { status: "fixed", sha: at[1]! };
+  if ((PRIOR_STATUSES as readonly string[]).includes(v))
+    return { status: v as PriorStatus, sha: null };
+  const alias = PRIOR_STATUS_ALIASES[v];
+  return alias ? { status: alias, sha: null } : null;
+}
+
+/** Split a ref `<round_no>:<finding_key>` on its FIRST colon (a key may hold
+ * colons — `recheck:<sha12>:<id>`). Null when it is not one. */
+export function parsePriorRef(raw: unknown): { round_no: number; finding_key: string } | null {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim().replace(/^r(?=\d)/i, "");
+  const i = t.indexOf(":");
+  if (i <= 0) return null;
+  const head = t.slice(0, i);
+  const key = t.slice(i + 1).trim();
+  if (!/^\d+$/.test(head) || !key) return null;
+  return { round_no: Number(head), finding_key: key };
+}
+
+/**
+ * Parse the record's optional top-level `prior` array. Tolerant like the rest
+ * of the record: an entry it cannot use is COUNTED in a note, never a reason
+ * to reject the record. A ref naming this round or a later one is unusable
+ * (a prior finding is from an earlier round). A ref reported twice keeps the
+ * last report.
+ */
+function parsePriorArray(
+  v: Record<string, unknown>,
+  roundNo: number,
+): { prior: PriorStatusEntry[]; notes: string[] } {
+  const raw = v.prior ?? v.prior_findings;
+  if (raw === undefined || raw === null) return { prior: [], notes: [] };
+  if (!Array.isArray(raw)) return { prior: [], notes: ["`prior` is not an array (ignored)"] };
+  const byRef = new Map<string, PriorStatusEntry>();
+  let unusable = 0;
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      unusable++;
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    const ref = parsePriorRef(e.ref ?? e.id);
+    const st = normalizePriorStatus(e.status);
+    if (!ref || !st || ref.round_no >= roundNo) {
+      unusable++;
+      continue;
+    }
+    const written = prose(e.evidence);
+    const evidence =
+      st.sha !== null && (written === null || !written.includes(st.sha))
+        ? `fixed@${st.sha}${written ? ` — ${written}` : ""}`.slice(0, PROSE_CAP)
+        : written;
+    const canonical = `${ref.round_no}:${ref.finding_key}`;
+    byRef.delete(canonical);
+    byRef.set(canonical, {
+      ref: canonical,
+      round_no: ref.round_no,
+      finding_key: ref.finding_key,
+      status: st.status,
+      evidence,
+    });
+  }
+  return {
+    prior: [...byRef.values()],
+    notes:
+      unusable > 0
+        ? [
+            `${unusable} prior-finding status entr${unusable === 1 ? "y" : "ies"} unusable (ignored)`,
+          ]
+        : [],
+  };
 }
 
 export type FindingsRecordStatus =
@@ -444,6 +571,8 @@ export function parseFindingsRecord(
   if (conformance.doubted_posted.length > 0)
     notes.push(`${conformance.doubted_posted.length} doubted finding(s) marked as posted`);
 
+  const priorParsed = parsePriorArray(v, roundNo);
+  notes.push(...priorParsed.notes);
   const comments = num(v.comments_posted) ?? num(v.posted_comments);
   return {
     status: "ok",
@@ -454,6 +583,7 @@ export function parseFindingsRecord(
       head_sha: str(v.head_sha),
       comments_posted: comments === null ? null : Math.trunc(comments),
       findings,
+      prior: priorParsed.prior,
     },
     ...(notes.length > 0 ? { note: notes.join("; ") } : {}),
   };
@@ -573,11 +703,24 @@ export async function enforceFindingsRecord(
     );
     if (parsed.record.comments_posted !== null && roundId !== null)
       store.recordRoundComments(roundId, parsed.record.comments_posted);
+    // the statuses this round reported for prior findings. Stored
+    // beside the listing the daemon made at order build; the next round's
+    // list drops what a later report resolved.
+    const priorReported =
+      parsed.record.prior.length > 0
+        ? store.recordPriorReports(
+            pr,
+            roundNo,
+            parsed.record.head_sha ?? headSha,
+            parsed.record.prior,
+          )
+        : 0;
     store.logEvent("findings_recorded", pr, {
       round_id: roundId,
       round_no: roundNo,
       entries: stored,
       comments_posted: parsed.record.comments_posted,
+      ...(priorReported > 0 ? { prior_reported: priorReported } : {}),
       ...(parsed.note ? { note: parsed.note } : {}),
     });
     try {

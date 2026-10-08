@@ -387,6 +387,23 @@ export interface RoundFindingRow {
   lens_ids: string | null;
 }
 
+/** One prior finding a follow-up round was handed, or reported on
+ * (`prior_finding_checks`). */
+export interface PriorFindingCheckRow {
+  pr: number;
+  checked_round: number;
+  head_sha: string;
+  round_no: number;
+  finding_key: string;
+  blocking: number;
+  /** fixed | open | conceded | settled | obsolete | unverifiable; null =
+   * listed and not (yet) reported. */
+  status: string | null;
+  evidence: string | null;
+  listed_at: string | null;
+  reported_at: string | null;
+}
+
 /**
  * What the store needs to write one recorded finding. Structural on purpose —
  * `FindingsRecordEntry` (src/findingsrecord.ts) satisfies it without state.ts
@@ -775,6 +792,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS round_findings_identity
   ON round_findings (pr, round_no, finding_key);
 CREATE INDEX IF NOT EXISTS round_findings_pr ON round_findings (pr, round_no);
 CREATE INDEX IF NOT EXISTS round_findings_lens ON round_findings (lens, disposition);
+-- Follow-up rounds: the prior findings a round was handed to verify
+-- (listed by the daemon at order build) and the status the session reported
+-- for each in its findings record's top-level "prior" array. One row per
+-- (checking round, checked finding). status NULL = listed, not reported.
+-- listed_at NULL = reported without having been listed (a ref the session
+-- took from its own ledger) — kept, never dropped.
+CREATE TABLE IF NOT EXISTS prior_finding_checks (
+  pr INTEGER NOT NULL,
+  checked_round INTEGER NOT NULL,
+  head_sha TEXT NOT NULL DEFAULT '',
+  round_no INTEGER NOT NULL,
+  finding_key TEXT NOT NULL,
+  blocking INTEGER NOT NULL DEFAULT 0,
+  status TEXT,
+  evidence TEXT,
+  listed_at TEXT,
+  reported_at TEXT,
+  PRIMARY KEY (pr, checked_round, round_no, finding_key)
+);
 CREATE INDEX IF NOT EXISTS events_kind_pr ON events(kind, pr, id);
 -- Durable daemon→Pi command slot. Commands are historical rows, but
 -- the partial UNIQUE index permits exactly one pending/running owner per PR
@@ -2353,6 +2389,71 @@ export class StateStore {
         "SELECT * FROM round_findings WHERE pr = ? AND disposition = 'conceded' ORDER BY round_no, id",
       )
       .all(pr) as RoundFindingRow[];
+  }
+
+  // ---- prior-finding checks -------------------------------------
+
+  /** Record the prior findings a follow-up round was HANDED: one row per
+   * listed finding. Idempotent — a re-listing refreshes the head, blocking
+   * flag and listing time and keeps any status already reported. */
+  recordPriorListing(
+    pr: number,
+    checkedRound: number,
+    headSha: string,
+    items: ReadonlyArray<{ round_no: number; finding_key: string; blocking: boolean }>,
+  ): void {
+    const at = this.ts();
+    const stmt = this.db.prepare(
+      `INSERT INTO prior_finding_checks
+         (pr, checked_round, head_sha, round_no, finding_key, blocking, listed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(pr, checked_round, round_no, finding_key) DO UPDATE SET
+         head_sha = excluded.head_sha, blocking = excluded.blocking, listed_at = excluded.listed_at`,
+    );
+    this.db.transaction(() => {
+      for (const i of items)
+        stmt.run(pr, checkedRound, headSha, i.round_no, i.finding_key, i.blocking ? 1 : 0, at);
+    })();
+  }
+
+  /** Store the statuses a round's findings record REPORTED for prior
+   * findings. A listed row gets its status; a reported ref that was never
+   * listed is inserted (listed_at NULL, blocking 0) rather than dropped.
+   * Idempotent: a re-recorded record overwrites its own reports. Returns
+   * how many reports were stored. */
+  recordPriorReports(
+    pr: number,
+    checkedRound: number,
+    headSha: string,
+    reports: ReadonlyArray<{
+      round_no: number;
+      finding_key: string;
+      status: string;
+      evidence: string | null;
+    }>,
+  ): number {
+    const at = this.ts();
+    const stmt = this.db.prepare(
+      `INSERT INTO prior_finding_checks
+         (pr, checked_round, head_sha, round_no, finding_key, blocking, status, evidence, reported_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+       ON CONFLICT(pr, checked_round, round_no, finding_key) DO UPDATE SET
+         status = excluded.status, evidence = excluded.evidence, reported_at = excluded.reported_at`,
+    );
+    this.db.transaction(() => {
+      for (const r of reports)
+        stmt.run(pr, checkedRound, headSha, r.round_no, r.finding_key, r.status, r.evidence, at);
+    })();
+    return reports.length;
+  }
+
+  /** Every prior-finding check row for a PR, oldest checking round first. */
+  priorFindingChecks(pr: number): PriorFindingCheckRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM prior_finding_checks WHERE pr = ? ORDER BY checked_round, round_no, finding_key",
+      )
+      .all(pr) as PriorFindingCheckRow[];
   }
 
   /**

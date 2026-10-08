@@ -18,7 +18,9 @@ import {
   isConformant,
   isKnownVocabularyWord,
   normalizeDisposition,
+  normalizePriorStatus,
   parseFindingsRecord,
+  parsePriorRef,
   readFindingsRecord,
   type FindingsCheckDeps,
 } from "../src/findingsrecord.js";
@@ -868,5 +870,131 @@ describe("conformance audit", () => {
       }),
     ).toBe("recorded");
     expect(anomalyKinds()).toEqual([]);
+  });
+});
+
+// ----: the top-level `prior` array -----------------------------------
+
+describe("the prior-finding statuses", () => {
+  it("an absent `prior` is an empty list, not a note", () => {
+    const parsed = parseFindingsRecord(RECORD, 7, 2);
+    expect(parsed.record?.prior).toEqual([]);
+    expect(parsed.note).toBeUndefined();
+  });
+
+  it("parses refs and statuses, folding aliases; fixed@<sha> keeps the sha as evidence", () => {
+    const parsed = parseFindingsRecord(
+      {
+        ...RECORD,
+        round_no: 4,
+        prior: [
+          { ref: "3:f2", status: "fixed", evidence: "orders.py:212 now checks tenant" },
+          { ref: "3:f4", status: "still-open", evidence: "still unchecked at :215" },
+          { ref: "2:recheck:ab12cd34ef56:r1", status: "conceded", evidence: "accepted" },
+          { ref: "1:f1", status: "fixed@abc1234" },
+          { ref: "r2:f9", status: "Obsolete" },
+        ],
+      },
+      7,
+      4,
+    );
+    expect(parsed.status).toBe("ok");
+    expect(parsed.record?.prior).toEqual([
+      {
+        ref: "3:f2",
+        round_no: 3,
+        finding_key: "f2",
+        status: "fixed",
+        evidence: "orders.py:212 now checks tenant",
+      },
+      {
+        ref: "3:f4",
+        round_no: 3,
+        finding_key: "f4",
+        status: "open",
+        evidence: "still unchecked at :215",
+      },
+      {
+        ref: "2:recheck:ab12cd34ef56:r1",
+        round_no: 2,
+        finding_key: "recheck:ab12cd34ef56:r1",
+        status: "conceded",
+        evidence: "accepted",
+      },
+      { ref: "1:f1", round_no: 1, finding_key: "f1", status: "fixed", evidence: "fixed@abc1234" },
+      { ref: "2:f9", round_no: 2, finding_key: "f9", status: "obsolete", evidence: null },
+    ]);
+    expect(parsed.note).toBeUndefined();
+  });
+
+  it("unusable entries are noted, never a rejection; a ref reported twice keeps the last", () => {
+    const parsed = parseFindingsRecord(
+      {
+        ...RECORD,
+        round_no: 4,
+        prior: [
+          "3:f1",
+          { ref: "f1", status: "fixed" }, // no round
+          { ref: "3:f1", status: "maybe" }, // unknown status
+          { ref: "4:f1", status: "fixed" }, // not an earlier round
+          { ref: "3:f2", status: "open" },
+          { ref: "3:f2", status: "fixed", evidence: "later word" },
+        ],
+      },
+      7,
+      4,
+    );
+    expect(parsed.status).toBe("ok");
+    expect(parsed.record?.findings).toHaveLength(2);
+    expect(parsed.record?.prior).toEqual([
+      { ref: "3:f2", round_no: 3, finding_key: "f2", status: "fixed", evidence: "later word" },
+    ]);
+    expect(parsed.note).toContain("4 prior-finding status entries unusable");
+    const notArray = parseFindingsRecord({ ...RECORD, prior: { a: 1 } }, 7, 2);
+    expect(notArray.status).toBe("ok");
+    expect(notArray.note).toContain("`prior` is not an array");
+  });
+
+  it("normalizePriorStatus and parsePriorRef", () => {
+    expect(normalizePriorStatus("still_open")).toEqual({ status: "open", sha: null });
+    expect(normalizePriorStatus("FIXED@DEADBEEF")).toEqual({ status: "fixed", sha: "deadbeef" });
+    expect(normalizePriorStatus("resolved-ish")).toBeNull();
+    expect(normalizePriorStatus(3)).toBeNull();
+    expect(parsePriorRef("12:recheck:aa:b")).toEqual({ round_no: 12, finding_key: "recheck:aa:b" });
+    expect(parsePriorRef(":f1")).toBeNull();
+    expect(parsePriorRef("x:f1")).toBeNull();
+    expect(parsePriorRef("3:")).toBeNull();
+  });
+
+  it("enforceFindingsRecord stores the reports against the record's round", async () => {
+    store.recordPriorListing(7, 2, HEAD, [
+      { round_no: 1, finding_key: "f1", blocking: true },
+      { round_no: 1, finding_key: "f2", blocking: false },
+    ]);
+    writeRecord("pr-7-round-2.json", {
+      ...RECORD,
+      prior: [
+        { ref: "1:f1", status: "fixed", evidence: "checked" },
+        { ref: "1:f7", status: "open", evidence: "from the ledger" },
+      ],
+    });
+    expect(
+      await enforceFindingsRecord(deps([]), {
+        pr: 7,
+        roundNo: 2,
+        roundId: null,
+        headSha: HEAD,
+        planned: [],
+      }),
+    ).toBe("recorded");
+    const checks = store.priorFindingChecks(7);
+    expect(checks.map((c) => [c.finding_key, c.blocking, c.status, c.listed_at !== null])).toEqual([
+      ["f1", 1, "fixed", true],
+      ["f2", 0, null, true],
+      // Reported without having been listed: kept, never dropped.
+      ["f7", 0, "open", false],
+    ]);
+    const ev = store.prEvents(7, ["findings_recorded"]).at(-1)!;
+    expect(ev.payload.prior_reported).toBe(2);
   });
 });
