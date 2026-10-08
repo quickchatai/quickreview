@@ -18,6 +18,9 @@ import {
   parseDiffHunks,
   parseDiffHunksByFile,
   POST_MERGE_LIMITS,
+  parseNewSideRanges,
+  reviewedHeadRef,
+  unquoteGitPath,
 } from "../src/worktrees.js";
 import { nodeExec, type ExecFn } from "../src/tmux.js";
 
@@ -884,5 +887,417 @@ describe("postMergeTouches (the learner's recall source)", () => {
       committed_at: "2026-09-10T12:00:00Z",
     });
     expect(findMergeCommit(log, 8, Date.parse("2026-09-10T12:00:00Z"))).toBeNull();
+  });
+});
+
+// ----: the PR-owned inter-round delta --------------------------------
+
+describe("parseNewSideRanges", () => {
+  it("reads -U0 hunks: changes, insertions and zero-width deletion points", () => {
+    const hunks = [
+      "@@ -10 +10 @@",
+      "-old",
+      "+new",
+      "@@ -20,3 +19,0 @@",
+      "-a",
+      "-b",
+      "-c",
+      "@@ -30,0 +27,2 @@",
+      "+x",
+      "+y",
+      "",
+    ].join("\n");
+    expect(parseNewSideRanges(hunks)).toEqual({
+      ranges: [
+        [10, 1],
+        [19, 0],
+        [27, 2],
+      ],
+      additions: 3,
+      deletions: 4,
+      ok: true,
+    });
+  });
+
+  it("reads -U3 hunks with context, and a removed `-- comment` line is a body line", () => {
+    const hunks = [
+      "@@ -1,7 +1,6 @@",
+      " a",
+      " b",
+      "--- drop table",
+      " c",
+      "-d",
+      "+D",
+      " e",
+      " f",
+      "\\ No newline at end of file",
+      "",
+    ].join("\n");
+    expect(parseNewSideRanges(hunks)).toEqual({
+      ranges: [
+        [2, 0],
+        [4, 1],
+      ],
+      additions: 1,
+      deletions: 2,
+      ok: true,
+    });
+  });
+
+  it("a deletion at the top of the file is a point after line 0", () => {
+    expect(parseNewSideRanges("@@ -1,2 +0,0 @@\n-a\n-b\n").ranges).toEqual([[0, 0]]);
+  });
+
+  it("a hunk cut short, or text with no hunk, is not ok", () => {
+    expect(parseNewSideRanges("@@ -1,3 +1,3 @@\n a\n").ok).toBe(false);
+    expect(parseNewSideRanges("Binary files differ\n").ok).toBe(false);
+    expect(parseNewSideRanges("").ok).toBe(true);
+  });
+});
+
+describe("unquoteGitPath", () => {
+  it("undoes git's C quoting, octal runs decoded as UTF-8", () => {
+    expect(unquoteGitPath("plain.txt")).toBe("plain.txt");
+    expect(unquoteGitPath('"a\\tb\\"c\\\\d"')).toBe('a\tb"c\\d');
+    expect(unquoteGitPath('"caf\\303\\251.txt"')).toBe("café.txt");
+    expect(unquoteGitPath('"broken')).toBeNull();
+  });
+});
+
+describe("prOwnedDelta", () => {
+  const lines = (n: number, edit: Record<number, string> = {}) =>
+    Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join("\n") + "\n";
+  const write = (f: string, body: string | Buffer) => {
+    mkdirSync(dirname(join(origin, f)), { recursive: true });
+    writeFileSync(join(origin, f), body);
+  };
+  const commitAll = (msg: string) => {
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", msg);
+    return git(origin, "rev-parse", "HEAD").trim();
+  };
+
+  /** A round at the PR's current head, as dispatch prepares it. */
+  async function round(m: WorktreeManager, head: string) {
+    publishPullHead(7, head);
+    return m.ensureWorktree(7, { baseRef: "master" });
+  }
+
+  async function deltaFor(m: WorktreeManager, h0: string, h1: string, extra = {}) {
+    const facts = await round(m, h1);
+    expect(facts.head_sha).toBe(h1);
+    return m.prOwnedDelta({
+      pr: 7,
+      from: h0,
+      to: facts.head_sha,
+      mergeBase: facts.merge_base,
+      baseSha: facts.base_sha,
+      ...extra,
+    });
+  }
+
+  beforeEach(() => {
+    write("a.txt", lines(20));
+    write("other.txt", lines(5));
+    commitAll("base content");
+  });
+
+  it("a master merge cancels out: only the author's new edit is the delta", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 3: "pr edit" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    git(origin, "checkout", "-q", "master");
+    write("a.txt", lines(20, { 18: "master edit" }));
+    write("other.txt", lines(5, { 2: "master other" }));
+    commitAll("master moves");
+    git(origin, "checkout", "-q", "feature");
+    git(origin, "merge", "-q", "--no-edit", "master");
+    write("a.txt", lines(20, { 3: "pr edit", 10: "fix", 18: "master edit" }));
+    const h1 = commitAll("fix");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.conflicted).toEqual([]);
+    expect(d.files.map((f) => [f.path, f.status, f.ranges, f.whole_file])).toEqual([
+      ["a.txt", "modified", [[10, 1]], false],
+    ]);
+    expect(d.lines).toBe(2);
+    expect(d.files[0]!.patch).toMatch(/^@@ -7,7 \+7,7 @@/);
+    expect(d.files[0]!.patch).toContain("+fix\n");
+  });
+
+  it("a rebase onto newer master: only the author's new edit is the delta", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 3: "pr edit" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    git(origin, "checkout", "-q", "master");
+    write("a.txt", lines(20, { 18: "master edit" }));
+    commitAll("master moves");
+    git(origin, "checkout", "-q", "-B", "feature2", "master");
+    write("a.txt", lines(20, { 3: "pr edit", 11: "new", 18: "master edit" }));
+    const h1 = commitAll("rebased pr + edit");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok && d.files.map((f) => [f.path, f.ranges])).toEqual([["a.txt", [[11, 1]]]]);
+  });
+
+  it("a rebase whose conflict resolution drops master's change: whole file, tagged conflict", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 5: "pr five" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    git(origin, "checkout", "-q", "master");
+    write("a.txt", lines(20, { 5: "master five" }));
+    commitAll("master moves");
+    git(origin, "checkout", "-q", "-B", "feature2", "master");
+    write("a.txt", lines(20, { 5: "pr five" })); // resolution keeps the PR's line
+    const h1 = commitAll("rebased, conflict resolved");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.conflicted).toEqual(["a.txt"]);
+    expect(d.files).toHaveLength(1);
+    const f = d.files[0]!;
+    expect(f).toMatchObject({ path: "a.txt", conflict: true, whole_file: true, ranges: [[5, 1]] });
+    // The PR's own hunks — never the marker blob.
+    expect(f.patch).not.toContain("<<<<<<<");
+    expect(f.patch).toContain("-master five\n+pr five\n");
+  });
+
+  it("a revert to base shows as PR-owned change, and a reverted new file as removed", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 4: "pr four" }));
+    write("new.txt", "brand new\n");
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    write("a.txt", lines(20));
+    git(origin, "rm", "-q", "new.txt");
+    const h1 = commitAll("revert");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok && d.files.map((f) => [f.path, f.status, f.ranges, f.whole_file])).toEqual([
+      ["a.txt", "modified", [[4, 1]], false],
+      ["new.txt", "removed", [[0, 0]], true],
+    ]);
+  });
+
+  it("a pure rename has no lines; a rename with edits carries its ranges at the new path", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("big1.txt", lines(40));
+    write("big2.txt", lines(40, { 1: "two" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    mkdirSync(join(origin, "moved"));
+    git(origin, "mv", "big1.txt", "moved/big1.txt");
+    git(origin, "mv", "big2.txt", "moved/big2.txt");
+    write("moved/big2.txt", lines(40, { 1: "two", 30: "edited" }));
+    const h1 = commitAll("move");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok).toBe(true);
+    if (!d.ok) return;
+    expect(d.files.map((f) => [f.path, f.old_path, f.status, f.ranges, f.whole_file])).toEqual([
+      ["moved/big1.txt", "big1.txt", "renamed", [], false],
+      ["moved/big2.txt", "big2.txt", "renamed", [[30, 1]], false],
+    ]);
+  });
+
+  it("a pure deletion is a zero-width point after the line before it", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    const kept = lines(20, { 1: "pr" })
+      .split("\n")
+      .filter((_, i) => i < 3 || i > 5)
+      .join("\n");
+    write("a.txt", kept);
+    const h1 = commitAll("delete 4-6");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok && d.files.map((f) => [f.path, f.ranges, f.additions, f.deletions])).toEqual([
+      ["a.txt", [[3, 0]], 0, 3],
+    ]);
+  });
+
+  it("a quoted path (space, quote, non-ASCII) keeps its real name and its ranges", async () => {
+    const name = 'dir/we ird "q" é.txt';
+    git(origin, "checkout", "-q", "-b", "feature");
+    write(name, lines(10));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    write(name, lines(10, { 7: "seven" }));
+    const h1 = commitAll("edit");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok && d.files.map((f) => [f.path, f.ranges, f.whole_file])).toEqual([
+      [name, [[7, 1]], false],
+    ]);
+  });
+
+  it("a binary file is scoped whole, never dropped", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("img.bin", Buffer.from([0, 1, 2, 3, 0, 255]));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    await round(m, h0);
+    write("img.bin", Buffer.from([0, 9, 9, 9, 0, 255]));
+    const h1 = commitAll("edit");
+    const d = await deltaFor(m, h0, h1);
+    expect(d.ok && d.files).toEqual([
+      {
+        path: "img.bin",
+        status: "modified",
+        additions: 0,
+        deletions: 0,
+        ranges: [],
+        whole_file: true,
+        patch: "",
+        binary: true,
+      },
+    ]);
+  });
+
+  it("an unchanged head is an empty delta, not a fallback", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    const d = await deltaFor(m, h0, h0);
+    expect(d).toMatchObject({ ok: true, files: [], lines: 0, conflicted: [] });
+  });
+
+  it("an old head GitHub no longer has is old-head-missing", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h1 = commitAll("pr");
+    const m = mgr();
+    const d = await deltaFor(m, "1234567890".repeat(4), h1);
+    expect(d).toEqual({ ok: false, reason: "old-head-missing" });
+  });
+
+  it("an old head the clone never fetched (force-pushed away) is fetched on miss", async () => {
+    const m = mgr();
+    await m.ensureBaseClone(); // the clone predates h0
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr, reviewed then force-pushed away");
+    git(origin, "checkout", "-q", "-B", "feature2", "master");
+    write("a.txt", lines(20, { 1: "pr", 2: "more" }));
+    const h1 = commitAll("rewritten pr");
+    const facts = await round(m, h1);
+    expect(await m.hasCommit(h0)).toBe(false);
+    const d = await m.prOwnedDelta({
+      pr: 7,
+      from: h0,
+      to: facts.head_sha,
+      mergeBase: facts.merge_base,
+    });
+    expect(d.ok && d.files.map((f) => f.ranges)).toEqual([[[2, 1]]]);
+  });
+
+  it("a rebase onto an OLDER base is base-rewound", async () => {
+    const old = git(origin, "rev-parse", "master").trim();
+    write("other.txt", lines(5, { 1: "master newer" }));
+    commitAll("master moves");
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr on newer master");
+    const m = mgr();
+    await round(m, h0);
+    git(origin, "checkout", "-q", "-B", "feature2", old);
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h1 = commitAll("pr rebased onto older master");
+    const d = await deltaFor(m, h0, h1);
+    expect(d).toEqual({ ok: false, reason: "base-rewound" });
+  });
+
+  it("a force-pushed base is base-rewound when the reviewed round's merge base is known", async () => {
+    const old = git(origin, "rev-parse", "master").trim();
+    write("other.txt", lines(5, { 1: "master doomed" }));
+    const doomed = commitAll("master commit later force-pushed away");
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr");
+    const m = mgr();
+    const f0 = await round(m, h0);
+    expect(f0.merge_base).toBe(doomed);
+    git(origin, "checkout", "-q", "master");
+    git(origin, "reset", "-q", "--hard", old);
+    git(origin, "checkout", "-q", "-B", "feature2", old);
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h1 = commitAll("pr rebased onto the rewritten master");
+    const d = await deltaFor(m, h0, h1, { fromMergeBase: f0.merge_base });
+    expect(d).toEqual({
+      ok: false,
+      reason: "base-rewound",
+      detail: "recorded base not under the new base",
+    });
+  });
+
+  it("refuses unusable inputs with the reason the caller logs", async () => {
+    const m = mgr();
+    await m.ensureBaseClone();
+    const sha = git(origin, "rev-parse", "HEAD").trim();
+    expect(await m.prOwnedDelta({ pr: 7, from: "", to: sha, mergeBase: sha })).toEqual({
+      ok: false,
+      reason: "no-reviewed-head",
+    });
+    expect(await m.prOwnedDelta({ pr: 7, from: sha, to: sha, mergeBase: "" })).toEqual({
+      ok: false,
+      reason: "no-merge-base",
+    });
+  });
+
+  it("merge-tree failing is merge-tree-failed, never a partial delta", async () => {
+    git(origin, "checkout", "-q", "-b", "feature");
+    write("a.txt", lines(20, { 1: "pr" }));
+    const h0 = commitAll("pr");
+    const m0 = mgr();
+    await round(m0, h0);
+    git(origin, "checkout", "-q", "master");
+    write("other.txt", lines(5, { 3: "m" }));
+    commitAll("master moves");
+    git(origin, "checkout", "-q", "feature");
+    git(origin, "merge", "-q", "--no-edit", "master");
+    const head = git(origin, "rev-parse", "HEAD").trim();
+    const facts = await round(m0, head);
+    const run: ExecFn = async (cmd, args, opts) =>
+      args[0] === "merge-tree"
+        ? { code: 128, stdout: "", stderr: "old git" }
+        : nodeExec(cmd, args, opts);
+    const m = new WorktreeManager({ root, repo: "exampleorg/example-app", cloneUrl: origin, run });
+    const d = await m.prOwnedDelta({
+      pr: 7,
+      from: h0,
+      to: facts.head_sha,
+      mergeBase: facts.merge_base,
+      baseSha: facts.base_sha,
+    });
+    expect(d).toEqual({ ok: false, reason: "merge-tree-failed", detail: "exit 128" });
+  });
+});
+
+describe("reviewed-head pins", () => {
+  it("pins a head under refs/qcr/reviewed and remove() drops only that PR's pins", async () => {
+    const a = commit("a.txt", "x\n");
+    publishPullHead(7, a);
+    publishPullHead(70, a);
+    const m = mgr();
+    await m.ensureWorktree(7);
+    await m.ensureWorktree(70);
+    expect(await m.pinReviewedHead(7, a)).toBe(true);
+    expect(await m.pinReviewedHead(7, a)).toBe(true); // idempotent
+    expect(await m.pinReviewedHead(70, a)).toBe(true);
+    expect(await m.pinReviewedHead(7, "nope")).toBe(false);
+    expect(await m.reviewedHeadRefs(7)).toEqual([reviewedHeadRef(7, a)]);
+    expect(reviewedHeadRef(7, a)).toBe(`refs/qcr/reviewed/pr-7-${a.slice(0, 12)}`);
+    await m.remove(7);
+    expect(await m.reviewedHeadRefs(7)).toEqual([]);
+    expect(await m.reviewedHeadRefs(70)).toEqual([reviewedHeadRef(70, a)]);
   });
 });

@@ -101,6 +101,433 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
   return out;
 }
 
+// ---- the PR-owned inter-round delta ------------------------------
+
+/** One changed run on the NEW side of a diff: `[start, count]`. `count > 0`
+ * is lines `start … start+count-1` at the new head; `count === 0` is a
+ * DELETION POINT after line `start` (0 = before the first line) — kept, zero
+ * width, so a finding next to removed code still counts as touched. */
+export type NewSideRange = [start: number, count: number];
+
+/** What `parseNewSideRanges` read from one file's hunk text. */
+export interface NewSideParse {
+  ranges: NewSideRange[];
+  additions: number;
+  deletions: number;
+  /** False when a hunk header promised lines the text did not deliver (or
+   * the text held no hunk at all while it had content) — the caller then
+   * scopes the whole file rather than trusting a partial read. */
+  ok: boolean;
+}
+
+/**
+ * The new-side changed ranges of one file's unified hunks (any context
+ * size — `-U0` and `-U3` read the same). Pure. Each hunk is bounded by the
+ * counts its `@@ -a,b +c,d @@` header promises, so a removed line whose text
+ * starts `-- ` (an SQL comment) or `++` is read as the body line it is, never
+ * as a file header. A contiguous run of `-`/`+` lines is one change: its
+ * added lines are its range; a run with no added line is a deletion point
+ * after the last new-side line before it.
+ */
+export function parseNewSideRanges(hunks: string): NewSideParse {
+  const ranges: NewSideRange[] = [];
+  let additions = 0;
+  let deletions = 0;
+  let ok = true;
+  let sawHunk = false;
+  let oldLeft = 0;
+  let newLeft = 0;
+  let newLine = 0;
+  let runStart = -1;
+  let runPlus = 0;
+  let runMinus = false;
+  const flush = () => {
+    if (runPlus > 0) ranges.push([runStart, runPlus]);
+    else if (runMinus) ranges.push([newLine - 1, 0]);
+    runStart = -1;
+    runPlus = 0;
+    runMinus = false;
+  };
+  for (const line of hunks.split("\n")) {
+    const inHunk = oldLeft > 0 || newLeft > 0;
+    if (!inHunk) {
+      flush();
+      const h = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!h) continue;
+      sawHunk = true;
+      oldLeft = h[1] === undefined ? 1 : Number(h[1]);
+      const c = Number(h[2]);
+      newLeft = h[3] === undefined ? 1 : Number(h[3]);
+      // An empty new side names the line BEFORE the hunk.
+      newLine = newLeft === 0 ? c + 1 : c;
+      continue;
+    }
+    const ch = line[0];
+    if (ch === "\\") continue; // "\ No newline at end of file"
+    if (ch === "+") {
+      if (newLeft === 0) {
+        ok = false;
+        oldLeft = newLeft = 0;
+        continue;
+      }
+      if (runPlus === 0) runStart = newLine;
+      runPlus += 1;
+      additions += 1;
+      newLine += 1;
+      newLeft -= 1;
+    } else if (ch === "-") {
+      if (oldLeft === 0) {
+        ok = false;
+        oldLeft = newLeft = 0;
+        continue;
+      }
+      runMinus = true;
+      deletions += 1;
+      oldLeft -= 1;
+    } else if (ch === " " || line === "") {
+      // `diff.suppressBlankEmpty` writes an empty context line as "".
+      flush();
+      newLine += 1;
+      oldLeft = Math.max(0, oldLeft - 1);
+      newLeft = Math.max(0, newLeft - 1);
+    } else {
+      ok = false;
+      flush();
+      oldLeft = newLeft = 0;
+    }
+  }
+  if (oldLeft > 0 || newLeft > 0) ok = false; // a hunk cut short
+  flush();
+  if (!sawHunk && hunks.trim() !== "") ok = false;
+  return { ranges, additions, deletions, ok };
+}
+
+/** Git's C-style quoting of a path (`"a\tb\303\251"`), undone: the escapes
+ * name BYTES, so octal runs are decoded as UTF-8 together. An unquoted
+ * string comes back as is; a malformed one is null. */
+export function unquoteGitPath(s: string): string | null {
+  if (!s.startsWith('"')) return s;
+  if (s.length < 2 || !s.endsWith('"')) return null;
+  const body = s.slice(1, -1);
+  const bytes: number[] = [];
+  const simple: Record<string, number> = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    "\\": 92,
+  };
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (c !== "\\") {
+      for (const b of Buffer.from(c, "utf8")) bytes.push(b);
+      continue;
+    }
+    const n = body[i + 1];
+    if (n === undefined) return null;
+    if (/[0-7]/.test(n)) {
+      const oct = /^[0-7]{3}/.exec(body.slice(i + 1));
+      if (!oct) return null;
+      bytes.push(parseInt(oct[0], 8));
+      i += 3;
+      continue;
+    }
+    const v = simple[n];
+    if (v === undefined) return null;
+    bytes.push(v);
+    i += 1;
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/** One `diff --git` section of a patch, read for the delta. */
+export interface PatchSection {
+  /** The path at the new side; the old path for a deletion. Null when the
+   * section names no path this reader can trust. */
+  path: string | null;
+  old_path: string | null;
+  deleted: boolean;
+  added: boolean;
+  binary: boolean;
+  /** A submodule pointer (mode 160000): no lines to scope. */
+  gitlink: boolean;
+  /** The hunk text from the first `@@` on — GitHub's `patch` shape. */
+  hunks: string;
+}
+
+/** A `---`/`+++`/`rename to` path: the trailing tab git appends to a path
+ * with a space dropped, the quoting undone, the `a/`/`b/` prefix removed. */
+function sectionPath(raw: string, prefix: "a/" | "b/" | ""): string | null {
+  const p = unquoteGitPath(raw.replace(/\t$/, ""));
+  if (p === null) return null;
+  if (prefix === "") return p;
+  return p.startsWith(prefix) ? p.slice(prefix.length) : null;
+}
+
+/** The two paths of a `diff --git` header line's tail. */
+function headerPaths(tail: string): { a: string | null; b: string | null } {
+  if (tail.startsWith('"')) {
+    const m = /^("(?:[^"\\]|\\.)*") (.*)$/.exec(tail);
+    if (!m) return { a: null, b: null };
+    return { a: sectionPath(m[1]!, "a/"), b: sectionPath(m[2]!, "b/") };
+  }
+  if (tail.endsWith('"')) {
+    const m = /^(.*?) ("(?:[^"\\]|\\.)*")$/.exec(tail);
+    if (!m) return { a: null, b: null };
+    return { a: sectionPath(m[1]!, "a/"), b: sectionPath(m[2]!, "b/") };
+  }
+  // Unquoted: unambiguous only when both sides spell the same path.
+  const n = (tail.length - 5) / 2;
+  if (Number.isInteger(n) && n > 0 && tail.startsWith("a/") && tail.slice(2 + n, 5 + n) === " b/") {
+    const a = tail.slice(2, 2 + n);
+    if (a === tail.slice(5 + n)) return { a, b: a };
+  }
+  return { a: null, b: null };
+}
+
+/** Split `git diff` patch output (explicit `a/`/`b/` prefixes) into its
+ * file sections. Pure. Inside a section only the lines before its first
+ * `@@` are headers — a removed `-- comment` line is never read as one. */
+export function parsePatchSections(diff: string): PatchSection[] {
+  const out: PatchSection[] = [];
+  const lines = diff.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const head = lines[i]!;
+    if (!head.startsWith("diff --git ")) {
+      i += 1;
+      continue;
+    }
+    const hp = headerPaths(head.slice("diff --git ".length));
+    let minus: string | null | undefined;
+    let plus: string | null | undefined;
+    let renameFrom: string | null = null;
+    let renameTo: string | null = null;
+    let deleted = false;
+    let added = false;
+    let binary = false;
+    let gitlink = false;
+    i += 1;
+    while (
+      i < lines.length &&
+      !lines[i]!.startsWith("@@") &&
+      !lines[i]!.startsWith("diff --git ")
+    ) {
+      const l = lines[i]!;
+      if (l.startsWith("--- "))
+        minus = l === "--- /dev/null" ? null : sectionPath(l.slice(4), "a/");
+      else if (l.startsWith("+++ "))
+        plus = l === "+++ /dev/null" ? null : sectionPath(l.slice(4), "b/");
+      else if (l.startsWith("rename from ") || l.startsWith("copy from "))
+        renameFrom = sectionPath(l.slice(l.indexOf(" from ") + 6), "");
+      else if (l.startsWith("rename to ") || l.startsWith("copy to "))
+        renameTo = sectionPath(l.slice(l.indexOf(" to ") + 4), "");
+      else if (l.startsWith("deleted file mode")) deleted = true;
+      else if (l.startsWith("new file mode")) added = true;
+      else if (l.startsWith("Binary files ") || l === "GIT binary patch") binary = true;
+      if (/ 160000$|^index [0-9a-f]+\.\.[0-9a-f]+ 160000$/.test(l)) gitlink = true;
+      i += 1;
+    }
+    const body: string[] = [];
+    while (i < lines.length && !lines[i]!.startsWith("diff --git ")) {
+      body.push(lines[i]!);
+      i += 1;
+    }
+    while (body.length && body[body.length - 1] === "") body.pop();
+    const hunks = body.length ? body.join("\n") + "\n" : "";
+    if (/^[-+]Subproject commit /m.test(hunks)) gitlink = true;
+    const newPath = plus ?? renameTo ?? (plus === null ? null : hp.b);
+    const oldPath = minus ?? renameFrom ?? (minus === null ? null : hp.a);
+    out.push({
+      path: deleted || plus === null ? (oldPath ?? hp.a) : (newPath ?? null),
+      old_path: oldPath ?? null,
+      deleted: deleted || plus === null,
+      added: added || minus === null,
+      binary,
+      gitlink,
+      hunks,
+    });
+  }
+  return out;
+}
+
+/** One `--name-status -z` entry. */
+export interface NameStatusEntry {
+  /** The status letter (`A`, `M`, `D`, `R`, `C`, `T`, …). */
+  status: string;
+  /** Similarity for a rename/copy (`R087` → 87). */
+  score?: number;
+  path: string;
+  old_path?: string;
+}
+
+/** `git diff --name-status -z` output, read. Pure; null when it does not
+ * parse (a path a rename/copy entry promised is missing, an unknown shape). */
+export function parseNameStatusZ(out: string): NameStatusEntry[] | null {
+  const tok = out.split("\0");
+  if (tok[tok.length - 1] === "") tok.pop();
+  const entries: NameStatusEntry[] = [];
+  let i = 0;
+  while (i < tok.length) {
+    const st = tok[i]!;
+    const m = /^([A-Z])(\d*)$/.exec(st);
+    if (!m) return null;
+    const letter = m[1]!;
+    if (letter === "R" || letter === "C") {
+      const from = tok[i + 1];
+      const to = tok[i + 2];
+      if (from === undefined || to === undefined) return null;
+      entries.push({ status: letter, score: Number(m[2] || 0), path: to, old_path: from });
+      i += 3;
+    } else {
+      const p = tok[i + 1];
+      if (p === undefined) return null;
+      entries.push({ status: letter, path: p });
+      i += 2;
+    }
+  }
+  return entries;
+}
+
+/** The GitHub `status` spelling of a name-status letter, so a delta file
+ * reads like a `PrFileEntry`. */
+export function githubStatusOf(letter: string): string {
+  switch (letter) {
+    case "A":
+      return "added";
+    case "D":
+      return "removed";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    case "M":
+      return "modified";
+    default:
+      return "changed"; // T (type change), U, X, B
+  }
+}
+
+/** One file of the PR-owned inter-round delta. */
+export interface PrOwnedDeltaFile {
+  /** The path at the new head (the old path for a deleted file). */
+  path: string;
+  /** The path at the replayed old head, when a rename/copy moved it. */
+  old_path?: string;
+  /** GitHub's spelling: added | modified | removed | renamed | copied | changed. */
+  status: string;
+  additions: number;
+  deletions: number;
+  /** Changed lines at the NEW head (see `NewSideRange`). */
+  ranges: NewSideRange[];
+  /** The whole file is in scope: deleted, binary, a submodule, a hunk text
+   * this reader could not read, or a conflict resolution. `ranges` is then
+   * a hint at most, never the bound. */
+  whole_file: boolean;
+  /** The file's `-U3` hunk text (GitHub's `patch` shape), "" when none. */
+  patch: string;
+  /** Replaying the reviewed head onto the new base conflicted here: the
+   * author resolved it, so the file is audited against BOTH parents
+   * (2026-08-19 ruling). Its ranges and patch are the PR's own
+   * `merge_base..head` hunks — the replayed side holds conflict markers and
+   * is never diffed as content. */
+  conflict?: true;
+  binary?: true;
+}
+
+/** Why the delta could not be computed — the round then runs in full
+ * (every unknown is a full round, never a quieter one). */
+export type PrOwnedDeltaUnavailable =
+  | "no-reviewed-head"
+  | "no-merge-base"
+  | "old-head-missing"
+  | "base-rewound"
+  | "merge-tree-failed"
+  | "diff-failed";
+
+export type PrOwnedDelta =
+  | {
+      ok: true;
+      /** The synthetic tree: the reviewed head replayed onto `mergeBase`. */
+      tree: string;
+      files: PrOwnedDeltaFile[];
+      /** additions + deletions over every file. */
+      lines: number;
+      /** Paths whose replay conflicted (each also a `conflict` file). */
+      conflicted: string[];
+    }
+  | { ok: false; reason: PrOwnedDeltaUnavailable; detail?: string };
+
+/** The ref that pins a reviewed head against gc. Its own
+ * namespace: `refs/qcr/pr-<n>` is a ref already, so `refs/qcr/pr-<n>/…`
+ * could not be created. */
+export function reviewedHeadRef(pr: number, sha: string): string {
+  return `refs/qcr/reviewed/pr-${pr}-${sha.slice(0, 12).toLowerCase()}`;
+}
+
+/** Join name-status entries with their patch sections into delta files.
+ * Pure. An entry no section matches is scoped whole — never dropped. */
+export function joinDeltaFiles(
+  entries: readonly NameStatusEntry[],
+  sections: readonly PatchSection[],
+): PrOwnedDeltaFile[] {
+  const byPath = new Map<string, PatchSection[]>();
+  for (const s of sections) {
+    if (s.path === null) continue;
+    const list = byPath.get(s.path) ?? [];
+    list.push(s);
+    byPath.set(s.path, list);
+  }
+  return entries.map((e) => {
+    const secs = byPath.get(e.path) ?? [];
+    const hunks = secs.map((s) => s.hunks).join("");
+    const parse = parseNewSideRanges(hunks);
+    const binary = secs.some((s) => s.binary);
+    const gitlink = secs.some((s) => s.gitlink);
+    const deleted = e.status === "D";
+    // A rename/copy with no content change has a section and no hunks: no
+    // lines, but the section is what proves it was read.
+    const unread = secs.length === 0 || !parse.ok;
+    const typeChange = e.status === "T" || secs.length > 1;
+    const file: PrOwnedDeltaFile = {
+      path: e.path,
+      status: githubStatusOf(e.status),
+      additions: parse.additions,
+      deletions: parse.deletions,
+      ranges: parse.ranges,
+      whole_file: deleted || binary || gitlink || unread || typeChange,
+      patch: binary ? "" : hunks,
+    };
+    if (e.old_path !== undefined) file.old_path = e.old_path;
+    if (binary) file.binary = true;
+    return file;
+  });
+}
+
+/** Delta files as the `PrFileEntry` shape the plan heuristics and
+ * `classifyDelta` read. */
+export function deltaAsPrFiles(files: readonly PrOwnedDeltaFile[]): Array<{
+  filename: string;
+  additions: number;
+  deletions: number;
+  status: string;
+  patch?: string;
+  previous_filename?: string;
+}> {
+  return files.map((f) => ({
+    filename: f.path,
+    additions: f.additions,
+    deletions: f.deletions,
+    status: f.status,
+    ...(f.patch !== "" ? { patch: f.patch } : {}),
+    ...(f.old_path !== undefined ? { previous_filename: f.old_path } : {}),
+  }));
+}
+
 /** The commits `git blame --porcelain` attributes lines to (each line's
  * header carries the full sha). */
 export function parseBlameShas(porcelain: string): Set<string> {
@@ -834,6 +1261,203 @@ export class WorktreeManager {
     return res.stdout.trim();
   }
 
+  /**
+   * The PR-OWNED change between two reviewed heads (follow-up
+   * rounds; `docs/follow-up-rounds.md`): the reviewed head `from` is replayed
+   * onto the content the new head `to` actually builds on (`mergeBase`, the
+   * round's own `merge_base`) with `git merge-tree`, and that synthetic tree
+   * is diffed against `to`. Base content cancels out — a clean master merge
+   * (with or without a merge commit) and a rebase leave only what the author
+   * changed — while a master change the author DROPPED shows as a hunk, and
+   * a replay that conflicts names its paths, scoped whole and tagged for the
+   * both-parents audit. Ranges are at `to`'s line numbers, keyed by the new
+   * path.
+   *
+   * Read-only towards every ref but the PR's own fetch ref; merge-tree writes
+   * tree and blob objects into the clone's store, as `resolvedFilesInMerges`
+   * does. Every step is an async child process. Total: any unknown is
+   * `{ok:false, reason}` and the caller runs the full round — this reader
+   * never returns a partial delta.
+   *
+   * `baseSha` (the base branch tip the round fetched) makes the base check
+   * real: the base content the reviewed head held must still be under
+   * `mergeBase`, else the author rebased onto an OLDER base (or un-merged
+   * master) and the replay would read base drift as the PR's — `base-rewound`.
+   * `fromMergeBase` (the merge base the reviewed round recorded), when known,
+   * catches a force-pushed base the same way.
+   */
+  async prOwnedDelta(q: {
+    pr: number;
+    from: string;
+    to: string;
+    mergeBase: string;
+    baseSha?: string;
+    fromMergeBase?: string;
+  }): Promise<PrOwnedDelta> {
+    const fail = (reason: PrOwnedDeltaUnavailable, detail?: string): PrOwnedDelta =>
+      detail === undefined ? { ok: false, reason } : { ok: false, reason, detail };
+    if (!SHA_RE.test(q.from ?? "")) return fail("no-reviewed-head");
+    if (!SHA_RE.test(q.mergeBase ?? "")) return fail("no-merge-base");
+    if (!SHA_RE.test(q.to ?? "")) return fail("diff-failed", "head is not a sha");
+    try {
+      for (const sha of [q.to, q.mergeBase])
+        if (!(await this.hasCommit(sha))) return fail("diff-failed", `${sha} not in the clone`);
+      if (!(await this.hasCommit(q.from))) {
+        // Fetch on miss, as resolvedFilesInMerges: by sha (GitHub serves a
+        // reachable want-sha), then the PR ref.
+        await this.run("git", ["fetch", "--force", "origin", q.from], { cwd: this.basePath });
+        if (!(await this.hasCommit(q.from)) && Number.isInteger(q.pr) && q.pr > 0)
+          await this.run(
+            "git",
+            ["fetch", "--force", "origin", `+refs/pull/${q.pr}/head:${this.prRef(q.pr)}`],
+            { cwd: this.basePath },
+          );
+        if (!(await this.hasCommit(q.from))) return fail("old-head-missing");
+      }
+
+      // 1. The base may only have moved FORWARD between the two reviews.
+      const anchor =
+        q.baseSha && SHA_RE.test(q.baseSha) && (await this.hasCommit(q.baseSha))
+          ? q.baseSha
+          : q.mergeBase;
+      const b0 = await this.run("git", ["merge-base", q.from, anchor], { cwd: this.basePath });
+      if (b0.code === 1) return fail("base-rewound", "no common history");
+      if (b0.code !== 0) return fail("diff-failed", "merge-base");
+      const b0sha = b0.stdout.trim();
+      const forward = await this.isAncestor(b0sha, q.mergeBase);
+      if (forward === null) return fail("diff-failed", "is-ancestor");
+      if (!forward) return fail("base-rewound");
+      if (q.fromMergeBase) {
+        if (!SHA_RE.test(q.fromMergeBase)) return fail("base-rewound", "recorded base unusable");
+        const kept = await this.isAncestor(q.fromMergeBase, q.mergeBase);
+        if (kept !== true) return fail("base-rewound", "recorded base not under the new base");
+      }
+
+      // 2. The reviewed PR replayed onto the base content `to` has.
+      let tree: string;
+      const conflicted: string[] = [];
+      const onBase = await this.isAncestor(q.mergeBase, q.from);
+      if (onBase === null) return fail("diff-failed", "is-ancestor");
+      if (onBase) {
+        tree = (await this.git(["rev-parse", `${q.from}^{tree}`])).stdout.trim();
+      } else {
+        const mt = await this.run(
+          "git",
+          ["merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", q.from, q.mergeBase],
+          { cwd: this.basePath },
+        );
+        if (mt.code !== 0 && mt.code !== 1) return fail("merge-tree-failed", `exit ${mt.code}`);
+        const tok = mt.stdout.split("\0");
+        tree = (tok[0] ?? "").trim();
+        if (mt.code === 1)
+          for (const p of tok.slice(1)) if (p !== "" && !conflicted.includes(p)) conflicted.push(p);
+        if (mt.code === 1 && conflicted.length === 0)
+          return fail("merge-tree-failed", "conflict without a path");
+      }
+      if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(tree)) return fail("merge-tree-failed", "no tree");
+
+      // 3. The delta, at new-head line numbers.
+      const conflictSet = new Set(conflicted);
+      const read = async (from: string, paths?: string[]) => {
+        const diff = [
+          "--literal-pathspecs",
+          "-c",
+          "core.quotePath=false",
+          "-c",
+          "diff.noprefix=false",
+          "diff",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-relative",
+          "--submodule=short",
+          "-M",
+        ];
+        const spec = paths ? ["--", ...paths] : [];
+        const ns = await this.git([...diff, "-z", "--name-status", from, q.to, ...spec]);
+        const patch = await this.git([
+          ...diff,
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          "-U3",
+          from,
+          q.to,
+          ...spec,
+        ]);
+        const entries = parseNameStatusZ(ns.stdout);
+        if (entries === null) return null;
+        return joinDeltaFiles(entries, parsePatchSections(patch.stdout));
+      };
+      const delta = await read(tree);
+      if (delta === null) return fail("diff-failed", "name-status");
+      const files = delta.filter((f) => !conflictSet.has(f.path));
+      // A rename out of a conflicted path was compared against marker blobs.
+      for (const f of files) if (f.old_path && conflictSet.has(f.old_path)) f.whole_file = true;
+      if (conflicted.length) {
+        // Never diff marker blobs as content: a conflicted file's scope is
+        // the PR's own hunks for it, whole-file, for the both-parents audit.
+        const own = await read(q.mergeBase, conflicted);
+        if (own === null) return fail("diff-failed", "name-status (conflicts)");
+        for (const p of conflicted) {
+          const f: PrOwnedDeltaFile = own.find((o) => o.path === p) ?? {
+            path: p,
+            status: (await this.pathAt(q.to, p)) ? "modified" : "removed",
+            additions: 0,
+            deletions: 0,
+            ranges: [],
+            whole_file: true,
+            patch: "",
+          };
+          f.whole_file = true;
+          f.conflict = true;
+          files.push(f);
+        }
+      }
+      files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+      const lines = files.reduce((n, f) => n + f.additions + f.deletions, 0);
+      return { ok: true, tree, files, lines, conflicted };
+    } catch (err) {
+      return fail("diff-failed", err instanceof Error ? err.message.slice(0, 200) : String(err));
+    }
+  }
+
+  /**
+   * Pin a reviewed head against gc: a follow-up round replays it,
+   * and a force-push leaves it reachable from nothing but a worktree reflog.
+   * `refs/qcr/reviewed/pr-<n>-<sha12>`; idempotent; removed with the PR's
+   * worktree. Best-effort by contract — false when it could not be written
+   * (the next follow-up round then re-fetches, or runs in full).
+   */
+  async pinReviewedHead(pr: number, sha: string): Promise<boolean> {
+    if (!Number.isInteger(pr) || pr <= 0 || !/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(sha))
+      return false;
+    try {
+      const res = await this.run("git", ["update-ref", reviewedHeadRef(pr, sha), sha], {
+        cwd: this.basePath,
+      });
+      return res.code === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The PR's pinned reviewed-head refs. */
+  async reviewedHeadRefs(pr: number): Promise<string[]> {
+    const prefix = `refs/qcr/reviewed/pr-${pr}-`;
+    const res = await this.run(
+      "git",
+      ["for-each-ref", "--format=%(refname)", "refs/qcr/reviewed/"],
+      {
+        cwd: this.basePath,
+      },
+    );
+    if (res.code !== 0) return [];
+    return res.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith(prefix));
+  }
+
   /** Drop a worktree at PR close: remove --force, then prune. */
   async remove(pr: number): Promise<void> {
     const path = this.worktreePath(pr);
@@ -845,6 +1469,13 @@ export class WorktreeManager {
     if (existsSync(join(this.basePath, ".git"))) {
       await this.run("git", ["worktree", "prune"], { cwd: this.basePath });
       await this.run("git", ["update-ref", "-d", this.prRef(pr)], { cwd: this.basePath });
+      // the PR's pinned reviewed heads go with it.
+      const pinned = await this.reviewedHeadRefs(pr);
+      if (pinned.length)
+        await this.run("git", ["update-ref", "--stdin"], {
+          cwd: this.basePath,
+          input: pinned.map((r) => `delete ${r}\n`).join(""),
+        });
     }
   }
 
