@@ -81,13 +81,33 @@
 //      local-embedder thread (~3.4 s each on the live VM), the thread a
 //      round's seed and lesson finds wait on, so the write waits for the
 //      rounds (at most `yieldWaitMs`) and gives the tick up past that — or
-//      when memory health no longer reads healthy after the wait.
+//      when memory health no longer reads healthy after the wait. A batch it
+//      sends is reported to the same tracker (`embeddingSent`) with its
+//      EMBEDDING TAIL — `embedTailMsPerCase` a case, counted from the write's
+//      return, since the server embeds a written batch after it answers — so
+//      a round seed that starts inside it waits for it, within its own
+//      budget (H3).
 // Steps 2–4 run ONLY while memory health (S1) reads `healthy`: a write into
 // memory that is down is just another failure, and a backfill feeding a
 // queue nobody can drain is just load. A case is derived data — state.db
 // keeps everything it says — so a case memory refuses is retried (and given
 // up on after `maxAttempts`, then re-queued at the next start and daily),
 // never a wake.
+//
+// HISTORY WAITS FOR QUIET (H3). While any review round is running or
+// queued to dispatch (`reviews`), steps 2 and 3 do not run and step 4 writes
+// LIVE cases only: each owed case remembers which step made it owed
+// (`origin`), and live is `sync` — step 1, the outcome capture having
+// re-captured its PR because something moved. Everything else — what the
+// backfill or the late activity owes, and a case owed before the column
+// existed (origin unknown) — waits until no round is in flight. On
+// 2026-10-08 the batches that put three round seeds behind their embeddings
+// were all backfill (one of them for a PR still open, which is why "live"
+// is the step, not the PR's state); a window that opens at the seed could
+// not stop a batch sent a few seconds before it. Nothing is lost: the cases
+// stay owed, and the steps resume the first tick no round is in flight. An
+// answer `reviews` cannot give is UNKNOWN and holds the history the same way
+// — never read as "none in flight".
 import { createHash } from "node:crypto";
 import type { ReviewCommentFull } from "./github.js";
 import { cleanQuotedText, fenceAsData } from "./memory/datafence.js";
@@ -175,6 +195,10 @@ export const CASE_DEFAULTS = Object.freeze({
   backfillRetryMs: 30 * 60_000,
   /** PRs outside the capture window caught up per tick (step 2). */
   latePrsPerTick: 5,
+  /** The EMBEDDING TAIL a written case is estimated to cost after the write
+   * returns (H3): ~3.4 s a case on the live VM, 8–29 s a call under
+   * CPU throttling. `[memory] case_embed_tail_ms`; 0 turns the tail off. */
+  embedTailMsPerCase: 4000,
 });
 
 /** Caps that keep one case readable (and one embedding meaningful). */
@@ -215,7 +239,10 @@ CREATE TABLE IF NOT EXISTS finding_cases (
   uri TEXT,
   owed_since TEXT,
   written_at TEXT,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  -- H3: the step that last made it owed ('sync' | 'late' |
+  -- 'backfill'); NULL = owed before the column existed (read as history)
+  origin TEXT
 );
 CREATE INDEX IF NOT EXISTS finding_cases_owed ON finding_cases (state, owed_since);
 CREATE INDEX IF NOT EXISTS finding_cases_pr ON finding_cases (pr);
@@ -262,7 +289,15 @@ export interface FindingCaseRow {
   owed_since: string | null;
   written_at: string | null;
   updated_at: string;
+  /** The step that last made it owed (H3); null = before the column. */
+  origin: CaseOrigin | null;
 }
+
+/** Which step of the tick made a case owed (H3): `sync` (step 1 —
+ * the outcome capture re-captured its PR) is LIVE; `late` (step 2) and
+ * `backfill` (step 3) are HISTORY, written only while no review round is in
+ * flight. */
+export type CaseOrigin = "sync" | "late" | "backfill";
 
 // ---- names, digests, header values --------------------------------------------
 
@@ -300,7 +335,10 @@ export function tagValue(v: string): string {
   return v
     .trim()
     .replace(/%/g, "%25")
-    .replace(/[\s\u0000-\u001f\u007f-\u009f]/g, (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`);
+    .replace(
+      /[\s\u0000-\u001f\u007f-\u009f]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`,
+    );
 }
 
 /** An enumerated word as a header value: `check this` → `check-this`. */
@@ -750,8 +788,19 @@ export interface CaseTick {
   /** A review round was still reading memory when the tick's wait for it
    * ran out (F2): no batch started; the next tick tries again. */
   yielded: boolean;
+  /** A review round was running or queued to dispatch, or that could not be
+   * read (H3): the late activity and backfill steps did not run, and
+   * only LIVE cases (owed by the sync step) could be written. */
+  reviewsActive: boolean;
   /** Cases owed after the tick. */
   owed: number;
+}
+
+/** Review rounds in flight (H3) — `reviewsInFlight` in
+ * src/dispatch.ts: running, and queued for the pump to dispatch. */
+export interface CaseReviewActivity {
+  running: number;
+  queued: number;
 }
 
 export interface CaseWriterDeps {
@@ -772,6 +821,17 @@ export interface CaseWriterDeps {
    * held. */
   rounds?: RoundActivityGate;
   yieldWaitMs?: number;
+  /** Review rounds running or queued to dispatch (H3). While any is,
+   * the late-activity and backfill steps wait, and the write takes LIVE
+   * cases only. Absent ⇒ never held. Must not throw; an answer it cannot
+   * give — a throw, or counts that are not numbers — is UNKNOWN, logged, and
+   * holds the history as a round in flight would: held history costs nothing
+   * (the cases stay owed), while history sent during a round is the very
+   * contention this exists to remove. */
+  reviews?: () => CaseReviewActivity;
+  /** The embedding tail per case written (ms), reported to `rounds` with
+   * every batch sent. */
+  embedTailMsPerCase?: number;
   /** The backfill's ONE read per PR of its inline comments (the GitHub
    * adapter; read-only, never gated). Absent ⇒ the backfill works from
    * state.db alone. */
@@ -791,6 +851,10 @@ export interface CaseWriterDeps {
   requeueFailedMs?: number;
   backfillRetryMs?: number;
   latePrsPerTick?: number;
+}
+
+function finiteAtLeast0(v: number | undefined, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : fallback;
 }
 
 const defaultSchedule = (fn: () => void, ms: number): (() => void) => {
@@ -817,8 +881,12 @@ export class CaseWriter {
     backfillRetryMs: number;
     latePrsPerTick: number;
     yieldWaitMs: number;
+    embedTailMsPerCase: number;
   };
   private cancel: (() => void) | null = null;
+  /** The last answer to "review rounds in flight?" — one log line on each
+   * change, not one a tick. */
+  private reviewsWere: "none" | "active" | "unknown" = "none";
   private stopped = false;
   private running: Promise<CaseTick> | null = null;
   private lastRequeueAt: number | null = null;
@@ -845,8 +913,16 @@ export class CaseWriter {
       backfillRetryMs: Math.max(0, deps.backfillRetryMs ?? d.backfillRetryMs),
       latePrsPerTick: Math.max(1, deps.latePrsPerTick ?? d.latePrsPerTick),
       yieldWaitMs: Math.max(0, deps.yieldWaitMs ?? d.yieldWaitMs),
+      embedTailMsPerCase: finiteAtLeast0(deps.embedTailMsPerCase, d.embedTailMsPerCase),
     };
     this.store.db.exec(SCHEMA);
+    // H3: a ledger from before the origin column gains it; its owed
+    // rows read as history (NULL) until a step owes them again.
+    const cols = this.store.db.prepare("PRAGMA table_info(finding_cases)").all() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === "origin"))
+      this.store.db.exec("ALTER TABLE finding_cases ADD COLUMN origin TEXT");
   }
 
   private ts(): string {
@@ -888,6 +964,7 @@ export class CaseWriter {
           failed: 0,
           held: false,
           yielded: false,
+          reviewsActive: false,
           owed: -1,
         };
       })
@@ -910,6 +987,7 @@ export class CaseWriter {
       failed: 0,
       held: false,
       yielded: false,
+      reviewsActive: false,
       owed: 0,
     };
     let healthy = false;
@@ -921,8 +999,11 @@ export class CaseWriter {
     if (!healthy) out.held = true;
     else {
       this.requeueGivenUp();
-      await this.catchUpLate(out);
-      await this.backfill(out);
+      // H3: history waits while a review round is in flight.
+      if (!this.reviewsActive(out)) {
+        await this.catchUpLate(out);
+        await this.backfill(out);
+      }
       await this.write(out);
     }
     out.owed = this.owedCount();
@@ -938,9 +1019,60 @@ export class CaseWriter {
         failed: out.failed,
         // F2: a review round kept reading memory past the wait.
         yielded: out.yielded,
+        // H3: only live cases could be written this tick.
+        reviews_active: out.reviewsActive,
         owed: out.owed,
       });
     return out;
+  }
+
+  /**
+   * Is a review round running or queued to dispatch (H3)? Asked at
+   * the tick's start, before every late or backfill PR and right before the
+   * write picks its rows (with nothing awaited between that and the send).
+   * An answer the predicate cannot give is UNKNOWN and holds the history
+   * like a yes (honest unknown: never read as "none in flight"). Sets
+   * `out.reviewsActive` when it holds, and logs once per change.
+   */
+  private reviewsActive(out: CaseTick): boolean {
+    const reviews = this.deps.reviews;
+    if (!reviews) return false;
+    let r: CaseReviewActivity | null = null;
+    let error: unknown;
+    try {
+      const got = reviews();
+      r =
+        got &&
+        Number.isFinite(got.running) &&
+        Number.isFinite(got.queued) &&
+        got.running >= 0 &&
+        got.queued >= 0
+          ? got
+          : null;
+      if (r === null) error = new Error(`not a count of rounds: ${JSON.stringify(got)}`);
+    } catch (err) {
+      error = err;
+      r = null;
+    }
+    const now: "none" | "active" | "unknown" =
+      r === null ? "unknown" : r.running > 0 || r.queued > 0 ? "active" : "none";
+    const holds = now !== "none";
+    if (holds) out.reviewsActive = true;
+    if (now !== this.reviewsWere) {
+      this.reviewsWere = now;
+      if (now === "unknown")
+        this.log(
+          "cases: could not read the review rounds in flight — UNKNOWN, held as in flight: the backfill, late activity and history cases wait; live cases are still written",
+          error,
+        );
+      else
+        this.log(
+          now === "active"
+            ? `cases: review rounds in flight (${r!.running} running, ${r!.queued} queued) — the backfill, late activity and history cases wait; live cases are still written`
+            : "cases: no review round in flight — the backfill, late activity and history cases resume",
+        );
+    }
+    return holds;
   }
 
   // ---- sync: state.db → the ledger --------------------------------------------------
@@ -992,7 +1124,7 @@ export class CaseWriter {
    * and that memory holds is owed its WITHDRAWAL; one never written is simply
    * forgotten. No memory I/O. Returns the number of cases now owed for it.
    */
-  syncPr(pr: number, capturedAt?: string): number {
+  syncPr(pr: number, capturedAt?: string, origin: CaseOrigin = "sync"): number {
     const { cases, caseOf } = prCases(this.store, this.deps.outcomes, {
       pr,
       repo: this.deps.repo,
@@ -1009,16 +1141,16 @@ export class CaseWriter {
     const insert = this.store.db.prepare(
       `INSERT INTO finding_cases
          (name, pr, round_no, finding_key, state, withdraw, content, digest, stored_hash, fate,
-          attempts, owed_since, updated_at)
+          attempts, owed_since, updated_at, origin)
        VALUES (@name, @pr, @round_no, @finding_key, 'pending', @withdraw, @content, @digest, NULL,
-          @fate, 0, @at, @at)`,
+          @fate, 0, @at, @at, @origin)`,
     );
     const owe = this.store.db.prepare(
       `UPDATE finding_cases SET state = 'pending', withdraw = @withdraw, content = @content,
          digest = @digest, fate = @fate,
          attempts = CASE WHEN state = 'pending' THEN attempts ELSE 0 END,
          owed_since = CASE WHEN state = 'pending' THEN owed_since ELSE @at END,
-         updated_at = @at
+         updated_at = @at, origin = @origin
        WHERE name = @name`,
     );
     const drop = this.store.db.prepare("DELETE FROM finding_cases WHERE name = ?");
@@ -1041,6 +1173,7 @@ export class CaseWriter {
           digest,
           fate: c.fate,
           at,
+          origin,
         };
         if (!row) {
           insert.run(params);
@@ -1081,6 +1214,7 @@ export class CaseWriter {
           digest: caseDigest(text),
           fate: row.fate,
           at,
+          origin,
         });
         owed++;
       }
@@ -1144,6 +1278,8 @@ export class CaseWriter {
     for (const { pr } of moved) {
       if (this.stopped || out.late.length >= this.cfg.latePrsPerTick) return;
       if (inCaptureWindow(this.store.getPr(pr), nowMs)) continue;
+      // A round queued while the last PR was captured: stop starting PRs.
+      if (this.reviewsActive(out)) return;
       try {
         await this.deps.outcomes.capturePr(pr);
       } catch (err) {
@@ -1153,7 +1289,7 @@ export class CaseWriter {
         const mark = this.store.db
           .prepare("SELECT captured_at FROM outcome_capture_marks WHERE pr = ?")
           .get(pr) as { captured_at: string } | undefined;
-        this.syncPr(pr, mark?.captured_at);
+        this.syncPr(pr, mark?.captured_at, "late");
         out.late.push(pr);
       } catch (err) {
         this.log(`cases: late sync of #${pr} failed`, err);
@@ -1196,6 +1332,8 @@ export class CaseWriter {
       )?.attempts ?? 0;
     for (const pr of this.backfillQueue(this.cfg.backfillPrsPerTick)) {
       if (this.stopped) return;
+      // A round queued while the last PR was read: stop starting PRs.
+      if (this.reviewsActive(out)) return;
       // ONE read of the PR's inline comments for the link facts — unless the
       // reconcile sweep already read the bot's comments on it.
       const seen = this.store.db
@@ -1238,7 +1376,7 @@ export class CaseWriter {
         const mark0 = this.store.db
           .prepare("SELECT captured_at FROM outcome_capture_marks WHERE pr = ?")
           .get(pr) as { captured_at: string } | undefined;
-        const owed = this.syncPr(pr, mark0?.captured_at);
+        const owed = this.syncPr(pr, mark0?.captured_at, "backfill");
         mark.run({
           pr,
           done: 1,
@@ -1303,6 +1441,9 @@ export class CaseWriter {
     // pick the rows and send them with no await in between, so nothing a
     // round opened during the wait is overtaken.
     if (!this.hasOwed()) return;
+    // H3: nothing but history owed while a round is in flight —
+    // nothing to send, so nothing to wait for.
+    if (this.reviewsActive(out) && this.liveOwedRows().length === 0) return;
     const waited = this.roundsBusy();
     if (waited) await this.waitForRounds();
     if (this.stopped) return;
@@ -1325,11 +1466,10 @@ export class CaseWriter {
       );
       return;
     }
-    const rows = this.store.db
-      .prepare(
-        "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL ORDER BY owed_since, name LIMIT ?",
-      )
-      .all(this.cfg.batch) as FindingCaseRow[];
+    // H3: with a review round in flight, LIVE cases only — asked
+    // here, synchronously before the send, so a round queued during the
+    // backfill's reads still holds the history back.
+    const rows = this.reviewsActive(out) ? this.liveOwedRows() : this.owedRows();
     if (rows.length === 0) return;
     out.attempted += rows.length;
     const docs: DocumentPut[] = rows.map((r) => ({
@@ -1342,6 +1482,9 @@ export class CaseWriter {
     }));
     let results: DocumentPutResult[];
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // H3: tell the tracker a batch is out; when it settles, how long
+    // the server is estimated to go on embedding it.
+    const settleTail = this.embeddingSent();
     try {
       const deadline = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
@@ -1361,6 +1504,9 @@ export class CaseWriter {
       }));
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      // Every case sent counts, written or not: one whose answer was lost
+      // may have landed and be embedding all the same.
+      settleTail(rows.length * this.cfg.embedTailMsPerCase);
     }
     const at = this.ts();
     const done = this.store.db.prepare(
@@ -1516,6 +1662,46 @@ export class CaseWriter {
         )
         .get() !== undefined
     );
+  }
+
+  /** The next batch: the oldest owed cases. */
+  private owedRows(): FindingCaseRow[] {
+    return this.store.db
+      .prepare(
+        "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL ORDER BY owed_since, name LIMIT ?",
+      )
+      .all(this.cfg.batch) as FindingCaseRow[];
+  }
+
+  /** The next batch while a review round is in flight (H3): the
+   * oldest owed LIVE cases — owed by step 1 (`origin = 'sync'`). */
+  private liveOwedRows(): FindingCaseRow[] {
+    return this.store.db
+      .prepare(
+        "SELECT * FROM finding_cases WHERE state = 'pending' AND content IS NOT NULL AND origin = 'sync' ORDER BY owed_since, name LIMIT ?",
+      )
+      .all(this.cfg.batch) as FindingCaseRow[];
+  }
+
+  /** Tell the round-activity tracker a batch is out (H3); the
+   * returned function settles it with its tail. Total: a tracker without the
+   * method, or one that throws, holds nothing. */
+  private embeddingSent(): (tailMs: number) => void {
+    let settle: ((tailMs: number) => void) | undefined;
+    try {
+      settle = this.deps.rounds?.embeddingSent?.();
+    } catch (err) {
+      this.log("cases: the round-activity tracker refused the batch (ignored)", err);
+      settle = undefined;
+    }
+    if (typeof settle !== "function") return () => {};
+    return (tailMs: number): void => {
+      try {
+        settle(tailMs);
+      } catch (err) {
+        this.log("cases: the round-activity tracker refused the batch's tail (ignored)", err);
+      }
+    };
   }
 
   private owedCount(): number {

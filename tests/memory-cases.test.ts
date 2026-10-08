@@ -27,7 +27,7 @@
 //     round and never listed by the store's whole-tree sweep.
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CASE_DEFAULTS,
   CASE_LIMITS,
@@ -234,6 +234,8 @@ function writer(
     memory?: { putDocuments?(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> };
     rounds?: RoundActivityGate;
     yieldWaitMs?: number;
+    reviews?: () => { running: number; queued: number };
+    embedTailMsPerCase?: number;
     log?: (msg: string) => void;
   } = {},
 ) {
@@ -253,6 +255,10 @@ function writer(
     ...(opts.batch ? { batch: opts.batch } : {}),
     ...(opts.rounds ? { rounds: opts.rounds } : {}),
     ...(opts.yieldWaitMs !== undefined ? { yieldWaitMs: opts.yieldWaitMs } : {}),
+    ...(opts.reviews ? { reviews: opts.reviews } : {}),
+    ...(opts.embedTailMsPerCase !== undefined
+      ? { embedTailMsPerCase: opts.embedTailMsPerCase }
+      : {}),
     ...(opts.log ? { log: opts.log } : {}),
   });
   return { w, server };
@@ -1788,10 +1794,18 @@ describe("the case writer yields to rounds (F2)", () => {
     // The server degrades while the round reads; then the round ends.
     healthy = false;
     end();
-    expect(await tick).toMatchObject({ held: true, attempted: 0, written: 0, yielded: false, owed: 5 });
+    expect(await tick).toMatchObject({
+      held: true,
+      attempted: 0,
+      written: 0,
+      yielded: false,
+      owed: 5,
+    });
     expect(puts).toEqual([]);
     expect(asked).toBe(2);
-    expect(logs.filter((m) => /stopped reading healthy while the write waited/.test(m))).toHaveLength(1);
+    expect(
+      logs.filter((m) => /stopped reading healthy while the write waited/.test(m)),
+    ).toHaveLength(1);
     // Healthy again: the next tick writes.
     healthy = true;
     expect(await w.tick()).toMatchObject({ held: false, attempted: 2, written: 2 });
@@ -1808,9 +1822,394 @@ describe("the case writer yields to rounds (F2)", () => {
       },
       whenIdle: async () => true,
     };
-    const { w } = writer(h, { rounds: gate, healthy: () => false, memory: recordingMemory().memory });
+    const { w } = writer(h, {
+      rounds: gate,
+      healthy: () => false,
+      memory: recordingMemory().memory,
+    });
     expect(await w.tick()).toMatchObject({ held: true, attempted: 0, yielded: false });
     expect(asked).toBe(0);
+  });
+});
+
+// ---- history waits while review rounds are in flight (H3) -------------------
+//
+// 2026-10-08: the case batches that put three round seeds behind their
+// embeddings were BACKFILL cases, sent 1–3 s before the seed (08:33:38.6,
+// 09:08:14.9) — F2's window opens at the seed and could not stop a batch sent
+// just before it. While a review round runs or is queued, the backfill, the
+// late activity and every HISTORY case (a PR the capture no longer visits)
+// wait; live cases still go; and every batch sent reports its embedding tail
+// to the tracker a round seed waits on (tests/memory-embed-tail.test.ts).
+
+describe("history waits while review rounds are in flight (H3)", () => {
+  /** Two closed PRs the backfill has not covered (4002, 4003); an OPEN PR
+   * whose one owed case the BACKFILL found (4005 — the shape of the
+   * 2026-10-08 09:08 batch's #5596: history although the PR is open); and a
+   * LIVE PR whose one owed case the capture pass's sync found (5100). */
+  async function mixed() {
+    const h = harness({ pr: 1 });
+    h.store.db.prepare("DELETE FROM pr_state").run();
+    const aged = (n: number, at: string) => {
+      h.setNow(at);
+      h.addPr(n, "alice", "closed");
+      h.round(H1, [posted({ key: `K${n}` })], n);
+      h.reply({
+        id: n * 10 + 1,
+        root: n * 10,
+        author: "bob",
+        body: `reply on ${n}`,
+        at: h.tick(1),
+        n,
+      });
+    };
+    aged(4002, "2026-09-01T10:00:00.000Z");
+    aged(4003, "2026-09-30T10:00:00.000Z");
+    const owedOn = async (n: number, at: string, key: string) => {
+      h.setNow(at);
+      h.addPr(n, "alice", "tracked");
+      const r = h.round(H1, [posted({ key })], n);
+      h.capture.observeBotComments(n, [h.botComment({ id: n * 10, round: r, key })]);
+      h.reply({ id: n * 10 + 1, root: n * 10, author: "bob", body: `on ${n}`, at: h.tick(1), n });
+      await h.capture.capturePr(n);
+      return caseName(n, r, key);
+    };
+    const history = await owedOn(4005, "2026-10-06T10:00:00.000Z", "H1");
+    const live = await owedOn(5100, "2026-10-07T09:00:00.000Z", "L1");
+    h.setNow("2026-10-07T10:00:00.000Z");
+    // 4005's case is owed by a past BACKFILL tick (and its sync is done, so
+    // step 1 leaves it alone); 5100's is the sync step's to find.
+    const prior = new CaseWriter({
+      store: h.store,
+      outcomes: h.capture,
+      memory: {},
+      repo: REPO,
+      botLogin: BOT,
+      healthy: () => false,
+      now: h.clock,
+    });
+    const mark = h.store.db
+      .prepare("SELECT captured_at FROM outcome_capture_marks WHERE pr = 4005")
+      .get() as { captured_at: string };
+    expect(prior.syncPr(4005, mark.captured_at, "backfill")).toBe(1);
+    for (const n of [4005, 5100])
+      h.store.db
+        .prepare(
+          "INSERT INTO case_backfill (pr, done, attempts, unread, outcome, at) VALUES (?, 1, 1, 0, 'captured', ?)",
+        )
+        .run(n, h.at());
+    // Both PRs are open: "live" is which step owes the case, not the PR.
+    expect(inCaptureWindow(h.store.getPr(4005), h.clock().getTime())).toBe(true);
+    expect(inCaptureWindow(h.store.getPr(5100), h.clock().getTime())).toBe(true);
+    const reads: number[] = [];
+    const read = {
+      async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
+        reads.push(n);
+        return [h.botComment({ id: n * 10, round: 1, key: `K${n}` })];
+      },
+    };
+    return { h, read, reads, history, live };
+  }
+
+  const written = (server: OvServer, name: string) => server.files.has(caseUri(name));
+
+  it("a round in flight: no backfill, no late activity, no history case — the live case still goes; with none in flight it all resumes", async () => {
+    const { h, read, reads, history, live } = await mixed();
+    let inFlight = { running: 1, queued: 0 };
+    const { w, server } = writer(h, { read, backfillDays: 60, reviews: () => inFlight });
+    const t1 = await w.tick();
+    expect(t1).toMatchObject({
+      reviewsActive: true,
+      backfilled: [],
+      late: [],
+      attempted: 1,
+      written: 1,
+    });
+    const batchesAfterLive = server.batches().length;
+    expect(reads).toEqual([]);
+    expect(h.capture.outcomesFor(4003)).toEqual([]);
+    expect(written(server, live)).toBe(true);
+    expect(written(server, history)).toBe(false);
+    const ev = h.store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'cases_written' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string };
+    expect(JSON.parse(ev.payload)).toMatchObject({ reviews_active: true, written: 1 });
+    // Still in flight — queued this time: still nothing of the history.
+    inFlight = { running: 0, queued: 1 };
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 0, backfilled: [] });
+    expect(server.batches()).toHaveLength(batchesAfterLive);
+    // Nothing in flight: the backfill runs and the history is written —
+    // the case owed longest first.
+    inFlight = { running: 0, queued: 0 };
+    h.tick(2);
+    const t3 = await w.tick();
+    expect(t3).toMatchObject({ reviewsActive: false, backfilled: [4003, 4002], written: 2 });
+    expect(reads).toEqual([4003, 4002]);
+    expect(written(server, history)).toBe(true);
+    // …and the rest of the history on the next.
+    expect(await w.tick()).toMatchObject({ written: 1, owed: 0 });
+    expect(written(server, caseName(4003, 1, "K4003"))).toBe(true);
+    expect(written(server, caseName(4002, 1, "K4002"))).toBe(true);
+  });
+
+  it("live is the STEP that owes the case: an unchanged re-capture leaves a backfill case history; a real change re-rendered by the sync step makes it live", async () => {
+    const { h, history, live } = await mixed();
+    const inFlight = { running: 1, queued: 0 };
+    const { w, server } = writer(h, { reviews: () => inFlight });
+    // The open PR is re-captured with nothing new: still history.
+    h.tick(7 * 60);
+    await h.capture.capturePr(4005);
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 1 });
+    expect(written(server, live)).toBe(true);
+    expect(written(server, history)).toBe(false);
+    // A new reply on it: the capture moves, the sync step re-renders it — live.
+    h.reply({ id: 40052, root: 40050, author: "alice", body: "fixed now", at: h.tick(1), n: 4005 });
+    await h.capture.capturePr(4005);
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 1, written: 1 });
+    expect(server.files.get(caseUri(history))).toContain("fixed now");
+  });
+
+  it("a ledger from before the origin column gains it; its owed rows (origin unknown) wait for quiet like history", async () => {
+    const { h } = await scenario();
+    const { w: w0 } = writer(h, { healthy: () => false });
+    expect(await w0.tick()).toMatchObject({ held: true, owed: 2 });
+    h.store.db.exec("ALTER TABLE finding_cases DROP COLUMN origin");
+    let inFlight = { running: 1, queued: 0 };
+    const { w, server } = writer(h, { reviews: () => inFlight });
+    expect(
+      (
+        h.store.db.prepare("SELECT origin FROM finding_cases").all() as Array<{ origin: unknown }>
+      ).map((r) => r.origin),
+    ).toEqual([null, null]);
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 0, owed: 2 });
+    expect(server.batches()).toHaveLength(0);
+    inFlight = { running: 0, queued: 0 };
+    expect(await w.tick()).toMatchObject({ reviewsActive: false, written: 2, owed: 0 });
+  });
+
+  it("a late reply on a long-closed PR waits too", async () => {
+    const h = harness({ state: "closed" });
+    const r = h.round(H1, [posted({ key: "F1" })]);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r, key: "F1" })]);
+    await h.capture.capturePr(PR);
+    let inFlight = { running: 0, queued: 0 };
+    // A round's memory window that a test can hold open.
+    let windowOpen = false;
+    const gate: RoundActivityGate = {
+      busy: () => windowOpen,
+      whenIdle: async () => !windowOpen,
+    };
+    const { w, server } = writer(h, { reviews: () => inFlight, rounds: gate, yieldWaitMs: 0 });
+    expect(await w.tick()).toMatchObject({ written: 1 });
+    h.tick(3 * 24 * 60);
+    h.reply({ id: 9001, root: 900, author: "bob", body: "Never reachable.", at: h.at() });
+    inFlight = { running: 2, queued: 0 };
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, late: [], attempted: 0 });
+    expect(server.files.get(caseUri(caseName(PR, r, "F1")))).not.toContain("Never reachable.");
+    // Quiet: the late step re-renders the case — but a seed's window makes
+    // the write yield, so the late rewrite is still owed…
+    inFlight = { running: 0, queued: 0 };
+    windowOpen = true;
+    expect(await w.tick()).toMatchObject({ late: [PR], yielded: true, attempted: 0 });
+    // …and while a round is in flight it is history: it waits.
+    windowOpen = false;
+    inFlight = { running: 1, queued: 0 };
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 0, owed: 1 });
+    inFlight = { running: 0, queued: 0 };
+    expect(await w.tick()).toMatchObject({ late: [], written: 1 });
+    expect(server.files.get(caseUri(caseName(PR, r, "F1")))).toContain("Never reachable.");
+  });
+
+  it("only history owed while a round is in flight: no wait for the round's window at all — nothing to send", async () => {
+    const { h, read } = await mixed();
+    // Write the live case first (a round in flight: it alone goes).
+    let inFlight = { running: 1, queued: 0 };
+    const { w: first } = writer(h, { backfillDays: 0, reviews: () => inFlight });
+    const r0 = await first.tick();
+    expect(r0).toMatchObject({ attempted: 1, written: 1 });
+    let waits = 0;
+    const gate: RoundActivityGate = {
+      busy: () => true,
+      whenIdle: async () => {
+        waits += 1;
+        return false;
+      },
+    };
+    inFlight = { running: 1, queued: 0 };
+    const { w } = writer(h, { read, backfillDays: 60, rounds: gate, reviews: () => inFlight });
+    // The history case (and only it) is owed.
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, attempted: 0, yielded: false });
+    expect(waits).toBe(0);
+  });
+
+  it("a round queued during the backfill's read stops the backfill, and the batch after it takes live cases only", async () => {
+    const { h, reads, history, live } = await mixed();
+    let inFlight = { running: 0, queued: 0 };
+    const read = {
+      async listReviewCommentsFull(n: number): Promise<ReviewCommentFull[]> {
+        reads.push(n);
+        inFlight = { running: 0, queued: 1 }; // a webhook queued a PR meanwhile
+        return [h.botComment({ id: n * 10, round: 1, key: `K${n}` })];
+      },
+    };
+    const { w, server } = writer(h, { read, backfillDays: 60, reviews: () => inFlight });
+    const t = await w.tick();
+    expect(t).toMatchObject({ reviewsActive: true, backfilled: [4003], attempted: 1, written: 1 });
+    expect(reads).toEqual([4003]);
+    expect(written(server, live)).toBe(true);
+    expect(written(server, history)).toBe(false);
+    expect(written(server, caseName(4003, 1, "K4003"))).toBe(false);
+  });
+
+  it("says so once per change, not once a tick; a predicate it cannot read is UNKNOWN and holds the history like a round in flight, logged once", async () => {
+    const { h, read, reads, history, live } = await mixed();
+    const logs: string[] = [];
+    let inFlight: { running: number; queued: number } | "broken" | "nonsense" = {
+      running: 1,
+      queued: 2,
+    };
+    const { w, server } = writer(h, {
+      read,
+      backfillDays: 60,
+      reviews: () => {
+        if (inFlight === "broken") throw new Error("state.db busy");
+        if (inFlight === "nonsense") return { running: Number.NaN, queued: 0 };
+        return inFlight;
+      },
+      log: (m) => logs.push(m),
+    });
+    await w.tick();
+    await w.tick();
+    const inFlightLines = () => logs.filter((m) => /review rounds in flight \(/.test(m));
+    expect(inFlightLines()).toEqual([
+      "cases: review rounds in flight (1 running, 2 queued) — the backfill, late activity and history cases wait; live cases are still written",
+    ]);
+    expect(written(server, live)).toBe(true);
+    // The predicate breaks: unknown is NEVER "none in flight" — the backfill,
+    // the late activity and the history stay held, live cases still go.
+    inFlight = "broken";
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, backfilled: [], attempted: 0 });
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, backfilled: [], attempted: 0 });
+    // …and so do counts that are not counts.
+    inFlight = "nonsense";
+    expect(await w.tick()).toMatchObject({ reviewsActive: true, backfilled: [], attempted: 0 });
+    expect(reads).toEqual([]);
+    expect(written(server, history)).toBe(false);
+    const unknownLines = () =>
+      logs.filter((m) => /could not read the review rounds in flight — UNKNOWN/.test(m));
+    expect(unknownLines()).toHaveLength(1);
+    expect(logs.filter((m) => /no review round in flight/.test(m))).toHaveLength(0);
+    // Readable and none in flight: it all resumes, said once.
+    inFlight = { running: 0, queued: 0 };
+    const t = await w.tick();
+    expect(t).toMatchObject({ reviewsActive: false, backfilled: [4003, 4002] });
+    expect(logs.filter((m) => /no review round in flight — .* resume/.test(m))).toHaveLength(1);
+    // A writer with no predicate at all is never held.
+    const { h: h2 } = await mixed();
+    const { w: w2 } = writer(h2, { backfillDays: 0 });
+    expect(await w2.tick()).toMatchObject({ reviewsActive: false, attempted: 2 });
+  });
+
+  it("a round queued during one late PR's capture stops the late step before the next late PR", async () => {
+    const OTHER = 5200;
+    const h = harness({ state: "closed" });
+    h.addPr(OTHER, "alice", "closed");
+    const r1 = h.round(H1, [posted({ key: "F1" })]);
+    const r2 = h.round(H1, [posted({ key: "G1" })], OTHER);
+    h.capture.observeBotComments(PR, [h.botComment({ id: 900, round: r1, key: "F1" })]);
+    h.capture.observeBotComments(OTHER, [h.botComment({ id: 950, round: r2, key: "G1" })]);
+    await h.capture.capturePr(PR);
+    await h.capture.capturePr(OTHER);
+    let inFlight = { running: 0, queued: 0 };
+    const { w } = writer(h, { reviews: () => inFlight });
+    expect(await w.tick()).toMatchObject({ written: 2, late: [] });
+    // Three days after the close, a late reply on each.
+    h.tick(3 * 24 * 60);
+    expect(inCaptureWindow(h.store.getPr(PR), h.clock().getTime())).toBe(false);
+    expect(inCaptureWindow(h.store.getPr(OTHER), h.clock().getTime())).toBe(false);
+    h.reply({ id: 9001, root: 900, author: "bob", body: "Never reachable.", at: h.at() });
+    h.reply({ id: 9501, root: 950, author: "bob", body: "Fixed.", at: h.tick(1), n: OTHER });
+    const captured: number[] = [];
+    const capturePr = h.capture.capturePr.bind(h.capture);
+    vi.spyOn(h.capture, "capturePr").mockImplementation(async (n: number) => {
+      captured.push(n);
+      const result = await capturePr(n);
+      inFlight = { running: 0, queued: 1 }; // a webhook queued a PR meanwhile
+      return result;
+    });
+    const t = await w.tick();
+    // The newest late PR first; the round queued during its capture stops
+    // the step before the next one is even captured.
+    expect(t).toMatchObject({ reviewsActive: true, late: [OTHER] });
+    expect(captured).toEqual([OTHER]);
+    // Quiet again: the other late PR is caught up.
+    inFlight = { running: 0, queued: 0 };
+    vi.restoreAllMocks();
+    expect(await w.tick()).toMatchObject({ reviewsActive: false, late: [PR] });
+  });
+
+  it("every batch sent reports its embedding tail — cases × the per-case tail, counted from the write's answer; a failed write too", async () => {
+    const { h } = await scenario();
+    const calls: Array<{ tail: number | null }> = [];
+    const order: string[] = [];
+    const gate: RoundActivityGate = {
+      busy: () => false,
+      whenIdle: async () => true,
+      embeddingSent: () => {
+        order.push("sent");
+        const c: { tail: number | null } = { tail: null };
+        calls.push(c);
+        return (t: number) => {
+          order.push("settled");
+          c.tail = t;
+        };
+      },
+    };
+    let fail = false;
+    const memory = {
+      async putDocuments(docs: readonly DocumentPut[]): Promise<DocumentPutResult[]> {
+        order.push(`put:${docs.length}`);
+        if (fail) throw new Error("socket hang up");
+        return docs.map((d) => ({
+          area: d.area,
+          name: d.name,
+          state: "written" as const,
+          hash: sha256Prefixed(d.text),
+          uri: caseUri(d.name),
+          message: "written",
+        }));
+      },
+    };
+    const { w } = writer(h, { memory, rounds: gate, embedTailMsPerCase: 1500 });
+    fail = true;
+    expect(await w.tick()).toMatchObject({ attempted: 2, failed: 2 });
+    fail = false;
+    expect(await w.tick()).toMatchObject({ attempted: 2, written: 2 });
+    expect(order).toEqual(["sent", "put:2", "settled", "sent", "put:2", "settled"]);
+    expect(calls.map((c) => c.tail)).toEqual([3000, 3000]);
+    // The shipped tail is the config's.
+    expect(CASE_DEFAULTS.embedTailMsPerCase).toBe(MEMORY_DEFAULTS.case_embed_tail_ms);
+  });
+
+  it("over the real tracker: right after the batch the embedder reads busy for the tail; a tracker that throws holds nothing", async () => {
+    const { h } = await scenario();
+    const activity = new RoundMemoryActivity();
+    const { w } = writer(h, { rounds: activity, embedTailMsPerCase: 4000 });
+    expect(await w.tick()).toMatchObject({ written: 2 });
+    const busy = activity.embedderBusyForMs();
+    expect(busy).toBeGreaterThan(7000);
+    expect(busy).toBeLessThanOrEqual(8000);
+
+    const { h: h2 } = await scenario();
+    const broken: RoundActivityGate = {
+      busy: () => false,
+      whenIdle: async () => true,
+      embeddingSent: () => {
+        throw new Error("tracker broke");
+      },
+    };
+    const { w: w2 } = writer(h2, { rounds: broken });
+    expect(await w2.tick()).toMatchObject({ written: 2 });
   });
 });
 
@@ -1833,9 +2232,15 @@ describe("wire.ts: the case writer is actually connected", () => {
     // seed (the memory seed's `activity`) and the lesson selector open
     // windows on — one instance, or the yield gates nothing.
     expect(wire).toMatch(/const roundActivity = new RoundMemoryActivity\(\);/);
-    expect(wire).toMatch(/caseWriter = new CaseWriter\(\{[\s\S]*?rounds: roundActivity,[\s\S]*?\}\);/);
-    expect(wire).toMatch(/memory: \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\},/);
-    expect(wire).toMatch(/new RoundLessonSelector\(\{[\s\S]*?activity: roundActivity,[\s\S]*?\}\);/);
+    expect(wire).toMatch(
+      /caseWriter = new CaseWriter\(\{[\s\S]*?rounds: roundActivity,[\s\S]*?\}\);/,
+    );
+    expect(wire).toMatch(
+      /memory: \{\s*assembler: lateAssembler,[\s\S]*?activity: roundActivity,\s*\},/,
+    );
+    expect(wire).toMatch(
+      /new RoundLessonSelector\(\{[\s\S]*?activity: roundActivity,[\s\S]*?\}\);/,
+    );
     expect(wire.match(/new RoundMemoryActivity\(/g)).toHaveLength(1);
     expect(wire).toMatch(/backfillDays: Math\.max\(0, cfg\.memory\.cases_backfill_days\)/);
     expect(MEMORY_DEFAULTS).toMatchObject({ cases_interval_s: 120, cases_backfill_days: 60 });

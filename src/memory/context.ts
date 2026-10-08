@@ -22,7 +22,9 @@
 //     reject; this module additionally caps them with a deadline and swallows
 //     a throw, so the worst case is a memory-less prompt `timeoutMs` later.
 //     Every gap is reported back (`gaps`, `degraded`) for the caller to log
-//     and alert on; none of them is ever a reason to hold a round.
+//     and alert on; none of them is ever a reason to hold a round. The one
+//     wait inside a seed — for the case writer's embedding tail before the
+//     search is sent (H3, `quiet`) — is inside that same deadline.
 //   * EMPTY IS NOT DEGRADED. A store that answers with nothing —
 //     no pinned entries yet, nothing recalled for this PR — has ANSWERED, and
 //     that is a different thing from a store that could not be read. Every
@@ -72,10 +74,15 @@ export interface ContextAssembler {
    * `[memory] delivery = "on"` the round's lesson finds wait for it, so they
    * never queue ahead of the round's own search on the server's one-thread
    * embedder). Optional to honour: an implementation that never calls it only
-   * makes those finds wait until the seed settles. */
+   * makes those finds wait until the seed settles. `timeoutMs`, when given,
+   * is what is LEFT of the round's seed budget when the search is asked for
+   * (H3: a seed that waited for the case writer's embedding tail
+   * sends its search late) — an implementation must not let its request
+   * outlive it, since a search the round has given up on is pure cost on the
+   * one-thread embedder. */
   contextBlock(
     query: string,
-    opts: { maxTokens: number; onSent?: () => void },
+    opts: { maxTokens: number; onSent?: () => void; timeoutMs?: number },
   ): Promise<MemoryRead>;
 }
 
@@ -116,6 +123,10 @@ export interface RoundMemory {
   gaps: MemoryGap[];
   /** Wall-clock ms the assembly took (bounded by `timeoutMs`). */
   ms: number;
+  /** Ms the context search waited, inside the budget, for the case writer's
+   * embedding tail before it was sent (H3). Absent ⇒ no wait was
+   * asked for (no tracker wired). */
+  quiet_wait_ms?: number;
   /** The round's DELIVERED lessons and cases (S9b) — set by dispatch
    * only under `[memory] delivery = "on"`, after a selection that delivered
    * something. Absent ⇒ the prompt carries today's bleed rule verbatim and no
@@ -143,8 +154,17 @@ export const ROUND_CONTEXT_DEFAULTS = {
   maxTokens: 2000,
   /** Deadline for the whole seed (head + block run concurrently). The round
    * proceeds memory-less the instant it expires — this is the ceiling on how
-   * long memory may ever delay a review. */
-  timeoutMs: 3000,
+   * long memory may ever delay a review. 9000 since H3 (was 3000):
+   * one document embedding on the live VM takes 3 s or more, and a seed's
+   * query queued behind one could not finish inside 3 s. Mirrors
+   * `MEMORY_DEFAULTS.context_timeout_ms`. */
+  timeoutMs: 9000,
+  /** The part of the budget a seed keeps for its SEARCH when it waits for the
+   * case writer's embedding tail (H3): the wait is at most
+   * `timeoutMs - searchReserveMs`. An uncontested context search took
+   * 0.3–2.3 s on the live VM (2026-10-07/08). With a budget at or under the
+   * reserve a seed never waits. */
+  searchReserveMs: 3000,
   /** Defensive char-per-token factor for clamping an oversized block: the
    * budget is the store's job, this only stops a mis-behaving implementation
    * from blowing up a prompt. */
@@ -163,6 +183,18 @@ export interface RoundMemoryOptions {
   /** Handed to `contextBlock` as its `onSent` (S9b). Absent ⇒ the
    * assembler is asked exactly as before (`{ maxTokens }`). */
   onContextSent?: () => void;
+  /** Wait, before the context search is SENT, until the case writer's
+   * batches are estimated to be done embedding (H3,
+   * `RoundActivityWindow.whenEmbedderQuiet`); resolves with the ms waited.
+   * The wait is INSIDE the seed's budget — at most `timeoutMs -
+   * searchReserveMs` — so the seed never takes longer than `timeoutMs`, and
+   * the search is then told the time left (`contextBlock`'s `timeoutMs`).
+   * The pinned head is read at once: it is a listing, not an embedding.
+   * Absent ⇒ no wait, and the assembler is asked exactly as before. Total: a
+   * wait that throws or rejects counts as no wait. */
+  quiet?: (maxWaitMs: number) => Promise<number>;
+  /** Overrides `ROUND_CONTEXT_DEFAULTS.searchReserveMs`. */
+  searchReserveMs?: number;
 }
 
 /** What dispatch is handed to seed a round: the assembler plus its knobs. */
@@ -188,8 +220,13 @@ export interface RoundMemorySeed {
    * dispatch opens one before the seed and closes it once the round's lesson
    * selection has taken over (or the round's handoff ended without one), so
    * the case writer starts no batch in front of the round's reads on the
-   * one-thread embedder. Bookkeeping only — it never delays the round. */
+   * one-thread embedder. Bookkeeping only — it never delays the round.
+   * Since H3 it also carries the case writer's EMBEDDING TAIL
+   * (`whenEmbedderQuiet`): the seed's search waits it out, inside `timeoutMs`
+   * and leaving `searchReserveMs` of it for the search. */
   activity?: RoundActivityWindow;
+  /** Overrides `ROUND_CONTEXT_DEFAULTS.searchReserveMs` (tests). */
+  searchReserveMs?: number;
 }
 
 /** The slice of a changed file the query builder reads. */
@@ -332,24 +369,43 @@ export async function assembleRoundMemory(
 
   const started = now();
   const gaps: MemoryGap[] = [];
+  // H3: the context search may first wait for the case writer's
+  // embedding tail — inside the budget, leaving the search its reserve.
+  const quiet = opts.quiet;
+  const reserve = Math.max(0, opts.searchReserveMs ?? ROUND_CONTEXT_DEFAULTS.searchReserveMs);
+  const maxQuietWait = Math.max(0, timeoutMs - reserve);
+  let quietWaitMs: number | undefined;
+  let quietFrom: number | undefined;
+  const askContext = (): Promise<MemoryRead> => {
+    const base: { maxTokens: number; onSent?: () => void } = opts.onContextSent
+      ? { maxTokens, onSent: opts.onContextSent }
+      : { maxTokens };
+    if (!quiet) return assembler.contextBlock(query, base);
+    quietFrom = now();
+    return waitQuiet(quiet, maxQuietWait).then((waited): Promise<MemoryRead> | MemoryRead => {
+      quietWaitMs = waited;
+      const left = timeoutMs - Math.max(0, now() - started);
+      // The deadline already passed (a zero reserve): the round has gone on
+      // memory-less, and a search sent now would be pure cost.
+      if (left <= 0) return { status: "unreadable", reason: "the seed's budget ran out first" };
+      return assembler.contextBlock(query, { ...base, timeoutMs: left });
+    });
+  };
   // Exactly one call to each method, both in flight at once: the seed costs
   // one round trip of latency, not two.
   const [head, rawBlock] = await Promise.all([
     guarded("head", timeoutMs, () => assembler.pinnedHead(), gaps, log),
     // No `rewrite` is passed — the daemon never asks the store to rewrite its
     // query, so the round prompt stays a pure function of the round order.
-    guarded(
-      "context",
-      timeoutMs,
-      () =>
-        assembler.contextBlock(
-          query,
-          opts.onContextSent ? { maxTokens, onSent: opts.onContextSent } : { maxTokens },
-        ),
-      gaps,
-      log,
-    ),
+    guarded("context", timeoutMs, askContext, gaps, log),
   ]);
+  // A wait the deadline overtook is still a wait: what it lasted, not 0.
+  if (quietWaitMs === undefined && quietFrom !== undefined)
+    quietWaitMs = Math.max(0, now() - quietFrom);
+  if (quietWaitMs !== undefined && quietWaitMs > 0)
+    log(
+      `memory: the context search waited ${quietWaitMs}ms for the case writer's embedding tail (the seed's budget is ${timeoutMs}ms)`,
+    );
 
   const charBudget = maxTokens * ROUND_CONTEXT_DEFAULTS.charsPerToken;
   const clamped = rawBlock.length > charBudget;
@@ -369,7 +425,26 @@ export async function assembleRoundMemory(
     clamped,
     gaps,
     ms: Math.max(0, now() - started),
+    ...(quiet ? { quiet_wait_ms: quietWaitMs ?? 0 } : {}),
   };
+}
+
+/** The bounded wait for the embedder, made total: a wait that throws,
+ * rejects or answers nonsense counts as no wait. Never longer than `maxMs`
+ * by its own word — the seed's deadline (`guarded`) is the belt. */
+async function waitQuiet(
+  quiet: (maxWaitMs: number) => Promise<number>,
+  maxMs: number,
+): Promise<number> {
+  if (maxMs <= 0) return 0;
+  try {
+    const waited = await quiet(maxMs);
+    return typeof waited === "number" && Number.isFinite(waited)
+      ? Math.max(0, Math.min(maxMs, Math.round(waited)))
+      : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**

@@ -598,8 +598,10 @@ a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
 (`"state/pi-sessions"`), `subagent_max_concurrency` (number; `6` in the
 example, `4` in code).
 
-**`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`3000`),
-`context_quotas` (table, `{ experiences = 24 }` — since S5 only the
+**`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`9000`
+since H3, was `3000`; clamped 100…15000), `case_embed_tail_ms`
+(`4000` a case, clamped 0…30000 — the finding-case batch's embedding tail a
+round seed waits out inside its budget, H3), `context_quotas` (table, `{ experiences = 24 }` — since S5 only the
 `experiences` key is honoured, any other is ignored with a log line), and memory
 health (S1): `probe_interval_s` (`120`), `down_after_min` (`10`),
 `boot_grace_min` (`5`), `rewake_h` (`6`), `incident_ticket_after_min` (`120`).
@@ -609,12 +611,14 @@ The retired `alert_cooldown_min` is ignored if still present.
 `version`, `llama_cpp_python_version` and `extension_commit`; identity
 `user` (`"reviewer"`), `account`, `reviewer_key_file`, `auth_mode`
 (`"api_key"`), `root_key_file`, `provision_users`; client behaviour
-`request_timeout_ms` (`10000`), `search_timeout_ms` (`2500`),
+`request_timeout_ms` (`10000`), `search_timeout_ms` (`8000` since H3,
+was `2500`; clamped 100…15000),
 `default_category` (`"experiences"`), `read_cache_ttl_ms` (`15000`);
 process `host` (`"127.0.0.1"` — loopback only, the port is never published),
 `port` (`1933`), `bin`, `home`, `config_file`, `workspace`, `workers` (`1`),
 `queue_concurrency` (`2`); supervision `health_interval_s` (`30`),
-`health_timeout_ms` (`2000`), `restart_backoff_ms` (array,
+`health_timeout_ms` (`6000` since H3, was `2000`; clamped 100…20000 —
+`/ready` runs an embedding), `restart_backoff_ms` (array,
 `[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`);
 embeddings `embedding_provider` (`"local"`), `embedding_model`
 (`"bge-small-en-v1.5-f16"` under local), `embedding_dimension` (`384` under

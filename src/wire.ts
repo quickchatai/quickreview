@@ -33,6 +33,7 @@ import { RoundMemoryActivity } from "./memory/roundactivity.js";
 import type { LessonDeliveryStatus } from "./memory/shadowstatus.js";
 import { lessonFindClient, openVikingLessonEngine } from "./openviking/lessonfind.js";
 import { createDaemon, type Daemon } from "./daemon.js";
+import { reviewsInFlight } from "./dispatch.js";
 import { eventLoopPolicy } from "./eventloop.js";
 import { digestWritten, eodDigestContext, latestDigestHeadline } from "./digest.js";
 import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
@@ -1366,8 +1367,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           botLogin: cfg.github.bot_login,
           healthy: () => health.currentState() === "healthy",
           // F2: no case batch starts while a review round reads
-          // memory (its seed, its lesson selection).
+          // memory (its seed, its lesson selection) — and H3: every
+          // batch sent reports its embedding tail there, which a seed that
+          // starts inside it waits out (within its own budget).
           rounds: roundActivity,
+          embedTailMsPerCase: cfg.memory.case_embed_tail_ms,
+          // H3: while a review round runs or is queued to dispatch,
+          // the backfill, the late activity and history cases wait.
+          reviews: () => reviewsInFlight(d.store),
           read: adapter,
           log,
           intervalMs: Math.max(10, cfg.memory.cases_interval_s) * 1000,

@@ -72,14 +72,19 @@ export interface OpenVikingContextOptions {
    * Only the round-search areas are honoured (`roundSearchQuotas`): a key for
    * any other bucket is dropped, with one log line. */
   quotas?: Record<string, number>;
-  /** Deadline for the ONE context search. Shorter than the client's default:
-   * the round's own memory deadline is ~3s and a request that outlives it is
-   * pure cost. */
+  /** Deadline for the ONE context search. Shorter than the client's default
+   * and than the round's own memory deadline (`[memory] context_timeout_ms`):
+   * a request that outlives the round's seed is pure cost. A seed that sent
+   * its search late (H3) passes the time it has left, and the search
+   * takes the shorter of the two. */
   searchTimeoutMs?: number;
   log?: (msg: string, extra?: unknown) => void;
 }
 
-const DEFAULT_SEARCH_TIMEOUT_MS = 2_500;
+/** 8000 since H3 (was 2500): one document embedding on the live VM
+ * takes 3 s or more, so a query queued behind one never answered inside
+ * 2.5 s. Mirrors `OPENVIKING_DEFAULTS.search_timeout_ms`. */
+export const DEFAULT_SEARCH_TIMEOUT_MS = 8_000;
 
 export class OpenVikingContextAssembler implements ContextAssembler {
   private readonly client: OpenVikingClient;
@@ -154,7 +159,7 @@ export class OpenVikingContextAssembler implements ContextAssembler {
    */
   async contextBlock(
     query: string,
-    opts: { maxTokens: number; onSent?: () => void },
+    opts: { maxTokens: number; onSent?: () => void; timeoutMs?: number },
   ): Promise<MemoryRead> {
     try {
       // A retirement is a header tag on a file that stays in the indexed root,
@@ -168,7 +173,11 @@ export class OpenVikingContextAssembler implements ContextAssembler {
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
         purpose: "coding",
-        timeoutMs: this.searchTimeoutMs,
+        // The seed's time left, when it says (H3): never past it.
+        timeoutMs:
+          typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
+            ? Math.max(1, Math.min(this.searchTimeoutMs, Math.floor(opts.timeoutMs)))
+            : this.searchTimeoutMs,
         // `experiences/` alone (S5) — never the server's own balance
         // across every scope, never an area config.toml adds.
         quotas: this.quotas,

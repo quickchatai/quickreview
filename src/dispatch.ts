@@ -287,6 +287,34 @@ export function queuedInOrder(store: StateStore): PrStateRow[] {
     });
 }
 
+/** Review rounds in flight, for the case writer (H3): rounds running
+ * (a provisional one included — its seed is about to read memory) and PRs
+ * QUEUED that the pump would dispatch — not paused, not held FAILED_LOUD
+ * (those wait for the operator or their retry time, not for a pump tick),
+ * not blocked by a FAILED session command (it waits for the supervisor's
+ * recovery — which puts it back to pending, counted again, or opens the
+ * FAILED_LOUD hold — or for the operator's restart-session, never for a pump
+ * tick), and none while a drain holds the pump. A row skipped for a PENDING
+ * or RUNNING session command or for held wakes still counts: it dispatches
+ * once those drain on their own. */
+export interface ReviewsInFlight {
+  running: number;
+  queued: number;
+}
+
+export function reviewsInFlight(store: StateStore): ReviewsInFlight {
+  const running = store.runningRounds().length;
+  if (store.drainState().draining) return { running, queued: 0 };
+  const queued = queuedInOrder(store).filter(
+    (row) =>
+      !store.openReviewFailure(row.number) &&
+      // The pump skips a row while ANY blocking command stands (dispatchUnlocked's
+      // `blockingSessionCommand`); a failed one among them does not drain itself.
+      !store.blockingSessionCommandsForPr(row.number).some((c) => c.status === "failed"),
+  ).length;
+  return { running, queued };
+}
+
 export function capacity(store: StateStore, cfg: Config): number {
   return Math.max(0, cfg.daemon.max_concurrent_rounds - store.runningRounds().length);
 }
@@ -463,6 +491,14 @@ async function seedRoundMemory(
     log(`dispatch: #${order.pr} recall hint not published (ignored)`, err);
   }
   const timeoutMs = seed.timeoutMs ?? ROUND_CONTEXT_DEFAULTS.timeoutMs;
+  // H3: the seed's search waits — inside its own budget, never past
+  // it — until the case writer's last batch is estimated done embedding, so
+  // it is not queued behind those embeddings on the one-thread embedder.
+  const activity = seed.activity;
+  const quiet =
+    activity && typeof activity.whenEmbedderQuiet === "function"
+      ? (maxWaitMs: number) => activity.whenEmbedderQuiet!(maxWaitMs)
+      : undefined;
   let mem: RoundMemory;
   try {
     mem = await assembleRoundMemory(seed.assembler, query, {
@@ -470,6 +506,8 @@ async function seedRoundMemory(
       timeoutMs,
       log,
       ...(onContextSent ? { onContextSent } : {}),
+      ...(quiet ? { quiet } : {}),
+      ...(seed.searchReserveMs !== undefined ? { searchReserveMs: seed.searchReserveMs } : {}),
     });
   } catch (err) {
     log(`dispatch: #${order.pr} memory seeding threw — round proceeds memory-less`, err);
@@ -499,6 +537,9 @@ async function seedRoundMemory(
     degraded: mem.degraded,
     gaps: mem.gaps,
     ms: mem.ms,
+    // H3: how long the search waited for the case writer's
+    // embedding tail, inside `ms` (absent when no tracker is wired).
+    ...(mem.quiet_wait_ms !== undefined ? { quiet_wait_ms: mem.quiet_wait_ms } : {}),
   });
   if (previousHead && previousHead.head_chars > 0) {
     // EMPTY IS NOT DEGRADED made a genuinely empty pinned area a

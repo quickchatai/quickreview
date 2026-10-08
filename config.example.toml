@@ -280,7 +280,21 @@ subagent_max_concurrency = 12
 # long the daemon waits for it. Memory NEVER blocks or delays a round: past
 # the deadline the round dispatches memory-less and logs the gap.
 context_tokens = 2000
-context_timeout_ms = 3000
+# The seed's whole budget, in ms (clamped 100…15000). 9000 since H3
+# (was 3000): one document embedding on a 2-CPU VM takes 3 s or more, and a
+# seed's query queued behind one never answered inside 3 s. It costs at most
+# a few seconds on a ~14-minute round. Keep it above the search's own
+# search_timeout_ms (the openviking block, below).
+context_timeout_ms = 9000
+# The embedding tail of one written finding case, in ms (H3; clamped
+# 0…30000, 0 = off): the server goes on embedding a case batch after its
+# write returns, so a round seed that starts within (cases × this) of the
+# write waits that out before it sends its search — inside context_timeout_ms,
+# never past it, keeping 3 s of the budget for the search itself. While any
+# review round runs or is queued, the case writer also holds its backfill,
+# its late activity and every case those two owe (only cases the capture
+# pass's sync owes are written meanwhile).
+case_embed_tail_ms = 4000
 # Memory health (S1, src/memory/health.ts) — how an outage reaches a
 # person. Every probe_interval_s the daemon lists the reviewer memories root
 # AUTHENTICATED, once with its own key and once with the sessions' ovcli.conf.
@@ -429,7 +443,11 @@ root_key_file = "openviking_root_key"
 # openviking_provision_users (comma-joined).
 provision_users = ["reviewer", "companion"]
 request_timeout_ms = 10000
-search_timeout_ms = 2500
+# The round seed's one context search, in ms (clamped 100…15000). 8000 since
+# H3 (was 2500, under one document embedding); below
+# [memory] context_timeout_ms, and a seed that sent its search late passes
+# the time it has left, which wins when shorter.
+search_timeout_ms = 8000
 default_category = "experiences"
 read_cache_ttl_ms = 15000
 # NOT an openviking dependency — an undeclared optional extra. Without it the
@@ -455,7 +473,11 @@ queue_concurrency = 2             # ov.conf queue_workers.* (defaults 4/4/8) and
 # unauthenticated and carries the version the drift check reads. The heartbeat
 # reports the CACHED sample, so writing status.json never waits on the network.
 health_interval_s = 30
-health_timeout_ms = 2000
+# The /health + /ready probe and the local embedder's /health, in ms (clamped
+# 100…20000). /ready runs an embedding and queues behind a case batch's
+# embeddings: 6000 since H3 (was 2000, which flapped /ready ~4 times
+# an hour under load). Memory health's "serving" half reads this probe.
+health_timeout_ms = 6000
 # The supervisor never gives up: a memory engine that stays down is worse than
 # a slow retry, and every call site already degrades memory-less.
 restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]

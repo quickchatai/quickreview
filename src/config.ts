@@ -1065,7 +1065,10 @@ export interface OpenVikingConfig {
   provision_users: string[];
   request_timeout_ms: number;
   /** Tighter than `request_timeout_ms`: a search sits on the round-build
-   * path, where the deadline in [memory] is the real guard. */
+   * path, where the deadline in [memory] is the real guard. 8000 since
+   * H3 (was 2500 — shorter than one document embedding on the live
+   * VM). Clamped to `SEARCH_TIMEOUT_BOUNDS_MS`; a seed that sent its search
+   * late passes its time left, and the search takes the shorter. */
   search_timeout_ms: number;
   /** Where an entry lands when the writer names no category. */
   default_category: string;
@@ -1090,6 +1093,12 @@ export interface OpenVikingConfig {
   /** Health-poll cadence; the heartbeat reports the CACHED sample, so
    * status.json writing never waits on the network. */
   health_interval_s: number;
+  /** The supervisor's `/health` + `/ready` probe and the local embedder's
+   * `/health` probe. `/ready` runs an embedding, so it queues behind a case
+   * batch's embeddings: 6000 since H3 (was 2000; ~28 `/ready` flaps
+   * on 2026-10-08, one of which tipped memory health degraded). It is the
+   * timeout behind memory health's "serving" half (`memoryServing`). Clamped
+   * to `HEALTH_TIMEOUT_BOUNDS_MS`. */
   health_timeout_ms: number;
   /** Restart backoff ladder; the last entry is the ceiling. The supervisor
    * never gives up — a memory engine that stays down is worse than a slow
@@ -1215,8 +1224,16 @@ export interface MemoryConfig {
   /** Token budget for the assembled context block. */
   context_tokens: number;
   /** Deadline for the head + block assembly, after which the round proceeds
-   * memory-less. */
+   * memory-less. 9000 since H3 (was 3000 — shorter than one document
+   * embedding on the live VM); the seed's wait for the case writer's
+   * embedding tail is inside it. Clamped to `CONTEXT_TIMEOUT_BOUNDS_MS`. */
   context_timeout_ms: number;
+  /** The embedding tail of one written finding case (ms, H3): after
+   * a case batch's write returns the server goes on embedding it for about
+   * this long a case, and a round seed starting inside that waits for it —
+   * within its own `context_timeout_ms`. Clamped to 0…30000; 0 turns the
+   * tail off. */
+  case_embed_tail_ms: number;
   /** Memory health (S1, `src/memory/health.ts`): how often the
    * daemon's AUTHENTICATED probe lists the reviewer memories root with each
    * credential in use (its key file and the sessions' ovcli.conf). Replaces
@@ -1315,6 +1332,22 @@ export interface MemoryConfig {
   shadow_budget_ms: number;
 }
 
+/** H3: the three memory timeouts are BOUNDED — memory must never
+ * hold a round past a budget an operator can read off the config, and a
+ * mistyped 0 must not turn every seed memory-less. Inclusive ms. */
+export const CONTEXT_TIMEOUT_BOUNDS_MS = { min: 100, max: 15_000 } as const;
+export const SEARCH_TIMEOUT_BOUNDS_MS = { min: 100, max: 15_000 } as const;
+export const HEALTH_TIMEOUT_BOUNDS_MS = { min: 100, max: 20_000 } as const;
+export const CASE_EMBED_TAIL_MAX_MS = 30_000;
+
+/** `v` as an integer inside `bounds`, or `fallback` when it is not a finite
+ * number at all. */
+function clampMs(v: unknown, bounds: { min: number; max: number }, fallback: number): number {
+  const n = typeof v === "number" ? v : Number.NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(bounds.min, Math.min(bounds.max, Math.floor(n)));
+}
+
 /** The values `[memory] delivery` takes (S9). */
 export const MEMORY_DELIVERY_MODES = ["off", "shadow", "on"] as const;
 export type MemoryDelivery = (typeof MEMORY_DELIVERY_MODES)[number];
@@ -1346,12 +1379,23 @@ export function parseMemory(raw: Record<string, unknown>): MemoryConfig {
   m.shadow_budget_ms = Number.isFinite(shadow)
     ? Math.max(1, Math.min(LESSON_SHADOW_PREFETCH_MAX_MS, Math.floor(shadow)))
     : LESSON_SHADOW_PREFETCH_DEFAULT_MS;
+  m.context_timeout_ms = clampMs(
+    m.context_timeout_ms,
+    CONTEXT_TIMEOUT_BOUNDS_MS,
+    MEMORY_DEFAULTS.context_timeout_ms,
+  );
+  m.case_embed_tail_ms = clampMs(
+    m.case_embed_tail_ms,
+    { min: 0, max: CASE_EMBED_TAIL_MAX_MS },
+    MEMORY_DEFAULTS.case_embed_tail_ms,
+  );
   return m;
 }
 
 export const MEMORY_DEFAULTS: MemoryConfig = {
   context_tokens: 2000,
-  context_timeout_ms: 3000,
+  context_timeout_ms: 9000,
+  case_embed_tail_ms: 4000,
   probe_interval_s: 120,
   down_after_min: 10,
   boot_grace_min: 5,
@@ -1388,7 +1432,7 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   root_key_file: "openviking_root_key",
   provision_users: ["reviewer", "companion"],
   request_timeout_ms: 10000,
-  search_timeout_ms: 2500,
+  search_timeout_ms: 8000,
   default_category: "experiences",
   read_cache_ttl_ms: 15000,
   host: "127.0.0.1",
@@ -1400,7 +1444,7 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   workers: 1,
   queue_concurrency: 2,
   health_interval_s: 30,
-  health_timeout_ms: 2000,
+  health_timeout_ms: 6000,
   restart_backoff_ms: [1000, 2000, 5000, 15000, 30000, 60000],
   restart_reset_after_s: 120,
   embedding_provider: "local",
@@ -1425,6 +1469,17 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
+  // H3: bounded, never a tight loop or an unbounded wait.
+  merged.search_timeout_ms = clampMs(
+    merged.search_timeout_ms,
+    SEARCH_TIMEOUT_BOUNDS_MS,
+    OPENVIKING_DEFAULTS.search_timeout_ms,
+  );
+  merged.health_timeout_ms = clampMs(
+    merged.health_timeout_ms,
+    HEALTH_TIMEOUT_BOUNDS_MS,
+    OPENVIKING_DEFAULTS.health_timeout_ms,
+  );
   // The defaults are the LOCAL embedder: a hosted opt-in that omits the model
   // runs HOSTED_EMBEDDING, never the local model (which no hosted API serves).
   // A named hosted model with no dimension has no default to fall back on.

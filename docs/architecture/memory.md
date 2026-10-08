@@ -157,7 +157,7 @@ renders after the frozen `eod-sweep.md` seed (`MEMORY_LAYOUT_NOTE`, via
 
 ```ts
 pinnedHead(): Promise<MemoryRead>
-contextBlock(query, { maxTokens }): Promise<MemoryRead>
+contextBlock(query, { maxTokens, onSent?, timeoutMs? }): Promise<MemoryRead>
 ```
 
 `MemoryRead` is `{ status: "read", text }` or `{ status: "unreadable", reason }`.
@@ -176,9 +176,30 @@ operator hourly about a healthy system.
 3. clamps an over-budget block at `maxTokens × charsPerToken` and says so;
 4. returns a `RoundMemory` whose `degraded` is exactly `gaps.length > 0`.
 
-Defaults (`ROUND_CONTEXT_DEFAULTS`): 2000 tokens, a 3000 ms deadline for the
-whole seed, 6 chars/token for the defensive clamp, 600 chars of query. The configured knobs are `[memory] context_tokens`, `context_timeout_ms`,
-`context_quotas` (and the memory-health knobs, below).
+Defaults (`ROUND_CONTEXT_DEFAULTS`): 2000 tokens, a 9000 ms deadline for the
+whole seed (3000 until H3 — shorter than one document embedding on the
+live VM), 3000 ms of it reserved for the search, 6 chars/token for the
+defensive clamp, 600 chars of query. The configured knobs are `[memory]
+context_tokens`, `context_timeout_ms` (clamped 100…15000), `context_quotas`
+(and the memory-health knobs, below).
+
+**The embedding tail (H3).** OpenViking embeds a written document
+AFTER `content/batch-write` returns, on the one-thread local embedder, so a
+finding-case batch sent a few seconds before a seed still holds the embedder
+when the seed's query arrives (about 4 s a case on the live VM, 8–29 s a call
+under CPU throttling). The case writer reports every batch it sends to the
+round-activity tracker (`embeddingSent` → a `settled(tailMs)` at the write's
+answer, `[memory] case_embed_tail_ms` a case); with a `quiet` option
+(`RoundActivityWindow.whenEmbedderQuiet`, wired by dispatch from
+`RoundMemorySeed.activity`) the CONTEXT SEARCH waits for that tail before it is
+sent — at most `timeoutMs − searchReserveMs`, so the seed's deadline is never
+moved — and is then told the time it has left (`contextBlock`'s `timeoutMs`),
+which the OpenViking assembler applies to its request when shorter than its
+own `search_timeout_ms`. The pinned head is read at once (a listing, no
+embedding). A budget at or under the reserve never waits. The tail is kept on
+a monotonic clock (`performance.now`), so a wall-clock step can never stretch
+it. `quiet_wait_ms` rides the `RoundMemory` and the `round_memory_seeded`
+event.
 
 `roundContextQuery({ title, files })` builds the one query: the PR title plus
 its diff shape (top directory areas at two segments deep, top file
@@ -585,9 +606,11 @@ The two halves are asymmetric on purpose:
   place the token budget can be wrong (the exception: a retired or
   out-of-scope entry that leaked through is dropped and the block rebuilt from
   what is left). Its own deadline
-  (`[openviking] search_timeout_ms`, default 2500 ms) is shorter than the
-  round's memory deadline: a request that outlives the round's seed is pure
-  cost.
+  (`[openviking] search_timeout_ms`, default 8000 ms since H3, was
+  2500; clamped 100…15000) is shorter than the round's memory deadline, and a
+  seed that sent its search late (it waited for the case writer's embedding
+  tail) passes the time it has left, which wins when shorter: a request that
+  outlives the round's seed is pure cost.
 
 ## How a round is seeded
 
@@ -1005,8 +1028,10 @@ store mutation and can be refused. The second is the rubric-proposal surface
 
 1. **Memory never blocks or delays a round.** Every call on the round path is
    bounded by a deadline and swallows every throw. The worst case is a
-   memory-less prompt, on time. Inside the session the same holds per turn:
-   the extension's recall waits at most 500 ms (patch 7).
+   memory-less prompt, on time. The one wait inside a seed — for the case
+   writer's embedding tail (H3) — is inside that deadline. Inside the
+   session the same holds per turn: the extension's recall waits at most
+   500 ms (patch 7).
 2. **Empty is not degraded.** A store that answered with nothing has answered.
    Only a read that did not happen is a gap, and only a gap alerts.
 3. **The pinned head is exact.** It is read from stored bytes, never from a
