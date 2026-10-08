@@ -214,6 +214,12 @@ function deliveryPayload(pr: number, wakes: PendingWakeRow[]): string {
  * overtake it. A crash after inject but before ack may duplicate delivery;
  * without a wake receipt, at-least-once is the honest side of the
  * loss-vs-duplicate tradeoff.
+ *
+ * Never into a running round (H2): a flush that finds the PR's next
+ * round already in flight — dispatched while the previous round's end was
+ * still awaiting something — delivers nothing; the wakes stay held for THAT
+ * round's end. An acked round command does not block the session slot, so the
+ * slot check alone cannot see such a round.
  */
 export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number> {
   const { store } = deps;
@@ -222,6 +228,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
   let attempted = 0;
   const leaseMs = 5 * 60_000;
   while (true) {
+    if (store.hasRunningRound(pr)) break;
     if (store.blockingSessionCommand(`pr-${pr}`)) break;
     const queued = store.heldWakes(pr);
     const batchSize = leadingDeliveryCount(queued);

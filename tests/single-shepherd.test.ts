@@ -686,6 +686,26 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(await flushHeldWakes(deps(), 7)).toBe(0);
   });
 
+  // H2: a round end that awaited long enough for the PR's NEXT round
+  // to be dispatched must not flush its held wakes into that round. An acked
+  // round command holds no session slot, so the slot check cannot see it.
+  // MUTATION: drop the `hasRunningRound` check in flushHeldWakes — red.
+  it("never flushes into a round already running — the wakes wait for its end", async () => {
+    const first = store.startRound(7, "first", ["pass-baseline"], 75);
+    await wakeOrHold(deps(), 7, "held during round 1", "author_reply");
+    store.finishRound(first, "APPROVE", null, null);
+    const next = store.startRound(7, "re_review", ["pass-baseline"], 75);
+    expect(store.blockingSessionCommand("pr-7")).toBeFalsy();
+
+    expect(await flushHeldWakes(deps(), 7)).toBe(0);
+    expect(injected).toHaveLength(0);
+    expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["held during round 1"]);
+
+    store.finishRound(next, "APPROVE", null, null);
+    expect(await flushHeldWakes(deps(), 7)).toBe(1);
+    expect(injected).toHaveLength(1);
+  });
+
   it("coalesces five author replies into one durable run without losing any response obligation", async () => {
     const id = store.startRound(7, "first", ["pass-baseline"], 75);
     for (let comment = 101; comment <= 105; comment++) {
@@ -822,9 +842,10 @@ describe("wakeOrHold / flushHeldWakes", () => {
   });
 
   it("releases a failed oldest batch atomically and retries it before later messages", async () => {
-    store.startRound(7, "first", ["pass-baseline"], 75);
+    const id = store.startRound(7, "first", ["pass-baseline"], 75);
     await wakeOrHold(deps(), 7, "a", "author_reply");
     await wakeOrHold(deps(), 7, "b", "author_reply");
+    store.finishRound(id, "APPROVE", null, null); // a flush runs at round end
     const failed = await flushHeldWakes(
       {
         store,

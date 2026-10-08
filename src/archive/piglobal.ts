@@ -3,8 +3,9 @@
 // transcripts written before, when pass children ran without
 // `--session-dir`, and any interactive pi run in the container. Since
 // the children keep no session file, so nothing should add files here; what
-// is there is history. `measureUsage` walks this tree synchronously at every
-// round end and authwatch stats it every minute, so it leaves the live tree.
+// is there is history. `measureUsage` walks this tree at every round end
+// (async since H2, but a stat per file all the same) and authwatch
+// stats it every minute, so it leaves the live tree.
 //
 //   - A `*.jsonl` leaves once its mtime is more than `PI_GLOBAL_MIN_AGE_MS`
 //     (a day) old: no round window is that long, and measureUsage reads only

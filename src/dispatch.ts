@@ -15,7 +15,13 @@
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, sandboxRoot } from "./config.js";
-import { fingerprintRoundIntegrity } from "./execboundary.js";
+import {
+  fingerprintRoundIntegrity,
+  INTEGRITY_BUDGET_MS,
+  type IntegrityFingerprint,
+  type RoundIntegrityOpts,
+} from "./execboundary.js";
+import { withinBudget } from "./budget.js";
 import type { GateResult } from "./gate.js";
 import type { PrFileEntry } from "./github.js";
 import { coverageEligible } from "./coverage.js";
@@ -213,6 +219,15 @@ export interface DispatchDeps {
     to: string,
     pr?: number,
   ) => Promise<{ files: string[]; degraded: boolean }>;
+  /** The round's integrity baseline, taken before the
+   * session hears about the round. Default: `fingerprintRoundIntegrity` —
+   * real, async reads of the clone, worktree, pi home and sandbox policy
+   * surface (H2). Injected only by a test whose fake clock cannot wait
+   * on real file reads. */
+  integrityFingerprint?: (opts: RoundIntegrityOpts) => Promise<IntegrityFingerprint>;
+  /** How long the baseline may take before the round goes unchecked
+   * (H2). Default INTEGRITY_BUDGET_MS. */
+  integrityBudgetMs?: number;
   /**
    * Unpack the third-party sources this PR touches and return the rendered
    * note for the order (src/depsources.ts; `[review] dependency_sources`).
@@ -1537,17 +1552,36 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // nothing it does is inside the baseline). `verdicts.measureUsage`
       // re-checks it when the round ends. Best-effort in both directions: a
       // fingerprint that cannot be taken leaves the round unchecked, which is
-      // the legacy behaviour — it never fails a round.
+      // the legacy behaviour — it never fails a round. Async since
+      // H2: it hashes the whole policy surface (dist/, scripts/, …),
+      // a loop turn after every file — and BOUNDED, because this await sits
+      // inside the one serialized dispatch pump: a read that never returns
+      // leaves this round unchecked (no baseline), never every later PR
+      // undispatched.
       try {
-        store.recordRoundGitConfig(
-          roundId,
-          fingerprintRoundIntegrity({
+        const budgetMs = Math.max(0, deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
+        const baseline = await withinBudget(
+          (deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
             clonePath: githubCloneDir(cfg.github),
             worktreePath: resolve(sandboxRoot(), worktreeFor(row.number)),
             piHome: join(sandboxRoot(), "pihome"),
             sandboxRoot: sandboxRoot(),
           }),
+          budgetMs,
         );
+        if (baseline.kind === "done") {
+          store.recordRoundGitConfig(roundId, baseline.value);
+        } else {
+          store.logEvent("round_integrity_unchecked", row.number, {
+            round_id: roundId,
+            stage: "baseline",
+            reason: "budget",
+            budget_ms: budgetMs,
+          });
+          log(
+            `dispatch: #${row.number} integrity baseline not taken within ${budgetMs} ms — the round goes unchecked`,
+          );
+        }
       } catch (err) {
         log(`dispatch: #${row.number} git-config fingerprint unavailable`, err);
       }
@@ -1959,7 +1993,10 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             try {
               deps.lessons.discard(provisionalRoundId);
             } catch (discardError) {
-              log(`dispatch: #${row.number} lesson record of the discarded round not dropped (ignored)`, discardError);
+              log(
+                `dispatch: #${row.number} lesson record of the discarded round not dropped (ignored)`,
+                discardError,
+              );
             }
           }
         }

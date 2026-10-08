@@ -91,6 +91,10 @@ released, its loss recorded as the quiet `recheck_wake_dropped`, since no sweep
 re-raises it), each with an event-log line, never silently. Author replies
 are never evicted and not counted (H1b): each is a claimed obligation
 nothing else will raise again, and a burst is one coalesced run of at most ten.
+A flush that finds the PR's NEXT round already running delivers nothing
+(H2): a round end that awaited long enough for it to be dispatched
+leaves the wakes held for that round's end. An acked round command holds no
+session slot, so the slot check alone could not see such a round.
 
 Verified end to end: `tests/verdicts.test.ts` proves the watcher actually
 flushes on both round-end paths (verdict applied, round abandoned as overdue)

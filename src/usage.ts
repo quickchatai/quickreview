@@ -12,9 +12,12 @@
 // marker we control, so they are matched by file mtime falling inside the
 // round window — strictly best-effort, surfaced via `passes_included`.
 //
-// Everything here is pure logic over injectable fs reads: malformed lines,
-// missing dirs and unreadable files are skipped, never thrown.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+// This file owns WHAT a transcript line contributes — its usage and its
+// exec-policy audit items (`parseTranscriptLine`) — and how contributions add
+// up (`addLineUsage`). READING the transcripts is `transcriptindex.ts` (
+// H2): async, chunked, each line parsed once for both consumers, each byte read
+// once per daemon lifetime. Everything here is pure: malformed lines are
+// skipped, never thrown.
 // The guard's TOKENISER — not its policy. The rules below stay an
 // independent implementation on purpose (see execViolationKind).
 import {
@@ -22,26 +25,6 @@ import {
   redirectTargets,
   splitShellSegments,
 } from "../extensions/bash-guard.js";
-import { join } from "node:path";
-
-export interface UsageFs {
-  /** Directory entries (names, not paths). Missing dir → throw or [] — both fine. */
-  readDir?: (dir: string) => string[];
-  readFile?: (path: string) => string;
-  /** mtime in epoch ms — the global-store window match. */
-  statMtimeMs?: (path: string) => number;
-  /** Directory probe for global-store recursion. */
-  isDir?: (path: string) => boolean;
-}
-
-export interface MeasureRoundUsageOpts extends UsageFs {
-  sessionDir: string;
-  /** pi HOME global session store (pass transcripts). Optional, best-effort. */
-  globalStoreDir?: string;
-  /** ISO round window, inclusive on both ends. */
-  startedAt: string;
-  finishedAt: string;
-}
 
 export interface ModelUsage {
   in: number;
@@ -62,25 +45,15 @@ export interface RoundUsage {
   passes_included: boolean;
 }
 
-const defaultFs: Required<UsageFs> = {
-  readDir: (dir) => readdirSync(dir),
-  readFile: (path) => readFileSync(path, "utf8"),
-  statMtimeMs: (path) => statSync(path).mtimeMs,
-  isDir: (path) => {
-    try {
-      return statSync(path).isDirectory();
-    } catch {
-      return false;
-    }
-  },
-};
-
-function fsOf(opts: UsageFs): Required<UsageFs> {
+/** The zero a round's usage starts from. */
+export function emptyRoundUsage(): RoundUsage {
   return {
-    readDir: opts.readDir ?? defaultFs.readDir,
-    readFile: opts.readFile ?? defaultFs.readFile,
-    statMtimeMs: opts.statMtimeMs ?? defaultFs.statMtimeMs,
-    isDir: opts.isDir ?? defaultFs.isDir,
+    tokens_in: 0,
+    tokens_out: 0,
+    tokens_cache_read: 0,
+    cost_usd: null,
+    models: {},
+    passes_included: false,
   };
 }
 
@@ -104,7 +77,8 @@ interface JsonlRecord {
   [k: string]: unknown;
 }
 
-function parseTs(v: unknown): number | null {
+/** An ISO string or epoch ms; anything else is no timestamp. */
+export function parseTs(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v !== "string") return null;
   const ms = Date.parse(v);
@@ -115,24 +89,62 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** Accumulate one file's records. `windowMs` = null means "whole file counts"
- * (global-store files already matched by mtime). */
-function sumFile(
-  text: string,
-  windowMs: { start: number; end: number } | null,
-  acc: RoundUsage,
-): void {
-  let model = "unknown";
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let rec: JsonlRecord;
-    try {
-      rec = JSON.parse(trimmed) as JsonlRecord;
-    } catch {
-      continue; // malformed line — skipped, never thrown
-    }
-    if (typeof rec !== "object" || rec === null) continue;
+/** The model attribution a file starts with, before any model_change. */
+export const UNKNOWN_MODEL = "unknown";
+
+/** One assistant message's usage, attributed to the model in effect. */
+export interface LineUsage {
+  model: string;
+  tin: number;
+  /** output + reasoning — reasoning is output we paid for. */
+  tout: number;
+  cache: number;
+  /** pi's own `usage.cost.total`, when the record carries a finite one. */
+  cost: number | null;
+}
+
+/** What one transcript line contributes to the round's two measures. A line
+ * that contributes to neither is not represented at all. */
+export interface LineContribution {
+  /** The record's top-level timestamp — the round-window filter for a
+   * session-dir line. Null when it has none (such a line never counts in a
+   * window, and counts in a whole-file read). */
+  ts: number | null;
+  usage?: LineUsage;
+  /** Its exec-policy audit items, in the order the audit meets them. */
+  audit?: ExecViolation[];
+}
+
+/**
+ * Parse one transcript line — ONCE, for both consumers (H2). `model` is
+ * the attribution in effect before the line; the result carries the one in
+ * effect after it (a `modelId` record re-keys attribution for everything after
+ * it, including an assistant message on the same line).
+ *
+ * The rules are the pre-H2 ones exactly: `sumFile` for usage (a non-object
+ * record contributes nothing; only an assistant message with a usage object
+ * counts; a finite `usage.cost.total` is the primary cost) and
+ * `collectWindowLines` + `auditExecViolationDetails` for the audit (any value
+ * JSON.parse returns is walked; the window reads its top-level `timestamp`).
+ */
+export function parseTranscriptLine(
+  line: string,
+  model: string,
+): { model: string; contribution: LineContribution | null } {
+  const trimmed = line.trim();
+  if (!trimmed) return { model, contribution: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { model, contribution: null }; // malformed line — skipped, never thrown
+  }
+  // `null.timestamp` threw in the old window read (a skipped line); any other
+  // value without one reads as no timestamp.
+  const ts = value === null ? null : parseTs((value as { timestamp?: unknown }).timestamp);
+  let usage: LineUsage | undefined;
+  if (typeof value === "object" && value !== null) {
+    const rec = value as JsonlRecord;
     // model_change records re-key attribution for everything after them.
     if (typeof rec.modelId === "string" && rec.modelId.length > 0) {
       model =
@@ -140,152 +152,48 @@ function sumFile(
           ? `${rec.provider}/${rec.modelId}`
           : rec.modelId;
     }
-    if (rec.type !== "message") continue;
-    const msg = rec.message;
-    if (typeof msg !== "object" || msg === null) continue;
-    if (msg.role !== "assistant") continue;
-    const usage = msg.usage;
-    if (typeof usage !== "object" || usage === null) continue;
-    if (windowMs) {
-      const ts = parseTs(rec.timestamp);
-      if (ts === null) continue; // no timestamp → cannot place in the window
-      if (ts < windowMs.start || ts > windowMs.end) continue; // inclusive bounds
-    }
-    const tin = num(usage.input);
-    const tout = num(usage.output) + num(usage.reasoning); // reasoning is output we paid for
-    const cache = num(usage.cacheRead);
-    const costTotal = usage.cost && typeof usage.cost === "object" ? usage.cost.total : undefined;
-    if (typeof costTotal === "number" && Number.isFinite(costTotal)) {
-      acc.cost_usd = (acc.cost_usd ?? 0) + costTotal; // pi's own accounting — primary
-    }
-    if (tin === 0 && tout === 0 && cache === 0) continue;
-    acc.tokens_in += tin;
-    acc.tokens_out += tout;
-    acc.tokens_cache_read += cache;
-    const m = (acc.models[model] ??= { in: 0, out: 0 });
-    m.in += tin;
-    m.out += tout;
+    usage = assistantUsage(rec, model);
   }
-}
-
-/** Recursively collect *.jsonl paths under `dir` (bounded depth, best-effort). */
-function jsonlFilesUnder(dir: string, fs: Required<UsageFs>, depth = 6): string[] {
-  if (depth < 0) return [];
-  let names: string[];
-  try {
-    names = fs.readDir(dir);
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  for (const name of names) {
-    const path = join(dir, name);
-    if (name.endsWith(".jsonl")) out.push(path);
-    else if (fs.isDir(path)) out.push(...jsonlFilesUnder(path, fs, depth - 1));
-  }
-  return out;
-}
-
-/** Token usage for one round: session-dir records inside [startedAt,
- * finishedAt] plus (best-effort) global-store files whose mtime falls inside
- * the window. Never throws. */
-export function measureRoundUsage(opts: MeasureRoundUsageOpts): RoundUsage {
-  const fs = fsOf(opts);
-  const acc: RoundUsage = {
-    tokens_in: 0,
-    tokens_out: 0,
-    tokens_cache_read: 0,
-    cost_usd: null,
-    models: {},
-    passes_included: false,
+  const audit = auditItemsOf(value);
+  if (usage === undefined && audit.length === 0) return { model, contribution: null };
+  return {
+    model,
+    contribution: {
+      ts,
+      ...(usage !== undefined ? { usage } : {}),
+      ...(audit.length > 0 ? { audit } : {}),
+    },
   };
-  const start = parseTs(opts.startedAt);
-  const end = parseTs(opts.finishedAt);
-  if (start === null || end === null) return acc;
-  const window = { start, end };
-
-  // 1. The session's own dir: line-level timestamp filter.
-  let names: string[] = [];
-  try {
-    names = fs.readDir(opts.sessionDir);
-  } catch {
-    names = [];
-  }
-  for (const name of names.filter((n) => n.endsWith(".jsonl")).sort()) {
-    try {
-      sumFile(fs.readFile(join(opts.sessionDir, name)), window, acc);
-    } catch {
-      /* unreadable file — best-effort */
-    }
-  }
-
-  // 2. Global store (pass subagents): whole files matched by mtime.
-  if (opts.globalStoreDir) {
-    for (const path of jsonlFilesUnder(opts.globalStoreDir, fs)) {
-      try {
-        const mtime = fs.statMtimeMs(path);
-        if (mtime < start || mtime > end) continue;
-        sumFile(fs.readFile(path), null, acc);
-        acc.passes_included = true;
-      } catch {
-        /* best-effort */
-      }
-    }
-  }
-  return acc;
 }
 
-/** Raw JSONL lines for the round window — the exec-policy audit surface.
- * Session-dir lines are timestamp-filtered; global-store files matched by
- * mtime contribute all their lines. Never throws. */
-export function collectWindowLines(opts: MeasureRoundUsageOpts): string[] {
-  const fs = fsOf(opts);
-  const start = parseTs(opts.startedAt);
-  const end = parseTs(opts.finishedAt);
-  if (start === null || end === null) return [];
-  const out: string[] = [];
+function assistantUsage(rec: JsonlRecord, model: string): LineUsage | undefined {
+  if (rec.type !== "message") return undefined;
+  const msg = rec.message;
+  if (typeof msg !== "object" || msg === null) return undefined;
+  if (msg.role !== "assistant") return undefined;
+  const usage = msg.usage;
+  if (typeof usage !== "object" || usage === null) return undefined;
+  const costTotal = usage.cost && typeof usage.cost === "object" ? usage.cost.total : undefined;
+  return {
+    model,
+    tin: num(usage.input),
+    tout: num(usage.output) + num(usage.reasoning), // reasoning is output we paid for
+    cache: num(usage.cacheRead),
+    cost: typeof costTotal === "number" && Number.isFinite(costTotal) ? costTotal : null,
+  };
+}
 
-  let names: string[] = [];
-  try {
-    names = fs.readDir(opts.sessionDir);
-  } catch {
-    names = [];
-  }
-  for (const name of names.filter((n) => n.endsWith(".jsonl")).sort()) {
-    let text: string;
-    try {
-      text = fs.readFile(join(opts.sessionDir, name));
-    } catch {
-      continue;
-    }
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const ts = parseTs((JSON.parse(trimmed) as JsonlRecord).timestamp);
-        if (ts === null || ts < start || ts > end) continue;
-      } catch {
-        continue;
-      }
-      out.push(trimmed);
-    }
-  }
-
-  if (opts.globalStoreDir) {
-    for (const path of jsonlFilesUnder(opts.globalStoreDir, fs)) {
-      try {
-        const mtime = fs.statMtimeMs(path);
-        if (mtime < start || mtime > end) continue;
-        for (const line of fs.readFile(path).split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed) out.push(trimmed);
-        }
-      } catch {
-        /* best-effort */
-      }
-    }
-  }
-  return out;
+/** Add one in-window assistant message to the round's usage — in file order,
+ * so the floating-point sums are the pre-H2 sums bit for bit. */
+export function addLineUsage(acc: RoundUsage, u: LineUsage): void {
+  if (u.cost !== null) acc.cost_usd = (acc.cost_usd ?? 0) + u.cost; // pi's own accounting — primary
+  if (u.tin === 0 && u.tout === 0 && u.cache === 0) return;
+  acc.tokens_in += u.tin;
+  acc.tokens_out += u.tout;
+  acc.tokens_cache_read += u.cache;
+  const m = (acc.models[u.model] ??= { in: 0, out: 0 });
+  m.in += u.tin;
+  m.out += u.tout;
 }
 
 // ---- pricing ---------------------------------------------------------------
@@ -864,6 +772,26 @@ export interface ExecViolation {
   kind: ExecViolationKind;
 }
 
+/** One parsed record's audit items — its bash commands, then its write-tool
+ * targets, each that trips a rule — in the order the audit meets them. A
+ * write target's key is `write <path>`. */
+export function auditItemsOf(rec: unknown): ExecViolation[] {
+  const out: ExecViolation[] = [];
+  const commands: string[] = [];
+  bashCommandsIn(rec, commands);
+  for (const command of commands) {
+    const kind = execViolationKind(command);
+    if (kind) out.push({ command, kind });
+  }
+  const targets: string[] = [];
+  writeTargetsIn(rec, targets);
+  for (const target of targets) {
+    const kind = surfacePathKind(target);
+    if (kind !== null) out.push({ command: `write ${target}`, kind });
+  }
+  return out;
+}
+
 /** Every policy-forbidden action visible in the given JSONL lines, classified.
  * Deduplicated by command, order-preserving; malformed lines skipped. */
 export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
@@ -875,20 +803,8 @@ export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
     } catch {
       continue;
     }
-    const commands: string[] = [];
-    bashCommandsIn(rec, commands);
-    for (const cmd of commands) {
-      const kind = execViolationKind(cmd);
-      if (kind && !seen.has(cmd)) seen.set(cmd, kind);
-    }
-    const targets: string[] = [];
-    writeTargetsIn(rec, targets);
-    for (const target of targets) {
-      const kind = surfacePathKind(target);
-      if (kind === null) continue;
-      const key = `write ${target}`;
-      if (!seen.has(key)) seen.set(key, kind);
-    }
+    for (const item of auditItemsOf(rec))
+      if (!seen.has(item.command)) seen.set(item.command, item.kind);
   }
   return [...seen].map(([command, kind]) => ({ command, kind }));
 }

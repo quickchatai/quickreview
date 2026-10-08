@@ -50,10 +50,11 @@
 //     be traded away the first time it misfired.
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-guard.js";
 import { configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "./install.js";
+import { yieldToLoop } from "./yieldloop.js";
 
 // ---- git-config integrity (round 2) --------------------------------
 //
@@ -124,9 +125,11 @@ export interface IntegrityFingerprint {
   files: Record<string, string>;
 }
 
+/** The fingerprint's filesystem seam. Production reads are async (
+ * H2); a test double may answer synchronously — every call is awaited. */
 export interface FingerprintFs {
-  readFile: (path: string) => Buffer | string;
-  readDir: (path: string) => string[];
+  readFile: (path: string) => Buffer | string | Promise<Buffer | string>;
+  readDir: (path: string) => string[] | Promise<string[]>;
   sha256: (data: string) => string;
 }
 
@@ -222,11 +225,19 @@ const MAX_HASH_DEPTH = 16;
 
 /** One watched path's value: a file's content hash, a directory's RECURSIVE
  * content hash (so a rewritten `scripts/guards.sh` changes `scripts`, not only
- * a planted file — a listing hash would miss the rewrite), or "absent". */
-function hashPath(path: string, fs: FingerprintFs, depth: number): string {
+ * a planted file — a listing hash would miss the rewrite), or "absent".
+ *
+ * Async, with a real event-loop turn after every file hashed (H2): the
+ * policy surface is the whole of dist/, scripts/, extensions/ and the seeds —
+ * hundreds of files, ~14 MB — and hashing it synchronously at every round end
+ * held the daemon's loop. The value is the synchronous one, byte for byte:
+ * the same reads, the same sorted names, the same strings hashed. */
+async function hashPath(path: string, fs: FingerprintFs, depth: number): Promise<string> {
   try {
-    const raw = fs.readFile(path);
-    return `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
+    const raw = await fs.readFile(path);
+    const hashed = `sha256:${fs.sha256(typeof raw === "string" ? raw : raw.toString("utf8"))}`;
+    await yieldToLoop();
+    return hashed;
   } catch (fileErr) {
     // A permissions (or any other) failure is NOT absence: folding it into
     // "absent" would let a chmod-then-restore read as no change at all.
@@ -234,9 +245,11 @@ function hashPath(path: string, fs: FingerprintFs, depth: number): string {
     if (!isMissing(fileCode) && fileCode !== "EISDIR") return `unreadable:${fileCode}`;
     // Not a readable file — a directory, or nothing.
     try {
-      const names = fs.readDir(path).sort();
+      const names = [...(await fs.readDir(path))].sort();
       if (depth <= 0) return `dir:${fs.sha256(names.join("\n"))}`;
-      return `dir:${fs.sha256(names.map((n) => `${n}=${hashPath(`${path}/${n}`, fs, depth - 1)}`).join("\n"))}`;
+      const entries: string[] = [];
+      for (const n of names) entries.push(`${n}=${await hashPath(`${path}/${n}`, fs, depth - 1)}`);
+      return `dir:${fs.sha256(entries.join("\n"))}`;
     } catch (dirErr) {
       const dirCode = errnoCode(dirErr);
       return isMissing(dirCode) ? "absent" : `unreadable:${dirCode}`;
@@ -258,12 +271,12 @@ function isMissing(code: string | undefined): boolean {
 /** Hash every watched path. Total: a missing or unreadable path is a RECORDED
  * value, never a throw — a fingerprint that fails to compute would silently
  * disable the check, which is the failure mode this whole ticket is about. */
-export function integrityFingerprint(
+export async function integrityFingerprint(
   paths: readonly string[],
   fs: FingerprintFs,
-): IntegrityFingerprint {
+): Promise<IntegrityFingerprint> {
   const files: Record<string, string> = {};
-  for (const path of [...paths].sort()) files[path] = hashPath(path, fs, MAX_HASH_DEPTH);
+  for (const path of [...paths].sort()) files[path] = await hashPath(path, fs, MAX_HASH_DEPTH);
   return {
     digest: fs.sha256(
       Object.entries(files)
@@ -277,8 +290,8 @@ export function integrityFingerprint(
 /** The production fs seam. Injected everywhere so the logic is testable with no
  * disk at all; this is the one place that touches node. */
 export const defaultFingerprintFs: FingerprintFs = {
-  readFile: (path) => readFileSync(path),
-  readDir: (path) => readdirSync(path),
+  readFile: (path) => readFile(path),
+  readDir: (path) => readdir(path),
   sha256: (data) => createHash("sha256").update(data).digest("hex"),
 };
 
@@ -296,6 +309,17 @@ export interface RoundIntegrityOpts {
 }
 
 /**
+ * How long a dispatch waits for a round's integrity baseline, and a round end
+ * for its re-hash (H2). The hash is async and yields after every file,
+ * so the loop is free throughout; this bounds a read that never returns. Past
+ * it the round goes UNCHECKED — no baseline at the start, no verdict on the
+ * re-hash at the end, a `round_integrity_unchecked` event either way — which
+ * is the legacy reading of a fingerprint that cannot be taken. Never a
+ * held dispatch pump, never a round end that does not finish.
+ */
+export const INTEGRITY_BUDGET_MS = 60_000;
+
+/**
  * The whole round-side call in one place, so `dispatch.ts` (start) and
  * `verdicts.ts` (end) cannot compute it over DIFFERENT path sets — which would
  * turn every round into a false alarm and get the check switched off.
@@ -303,7 +327,7 @@ export interface RoundIntegrityOpts {
 export function fingerprintRoundIntegrity(
   opts: RoundIntegrityOpts,
   fs: FingerprintFs = defaultFingerprintFs,
-): IntegrityFingerprint {
+): Promise<IntegrityFingerprint> {
   const paths = gitConfigWatchPaths(opts);
   if (opts.sandboxRoot !== undefined && opts.sandboxRoot.length > 0)
     paths.push(...roundPolicyWatchPaths(opts.sandboxRoot, opts.installEnv ?? process.env));

@@ -233,7 +233,8 @@ describe("verdict hooks", () => {
       verdictDir: dir,
       announce,
       now,
-      usage: { globalStoreDir: null, fs: { readDir: () => [], readFile: () => "" } },
+      // No transcripts: a session dir that does not exist (zero usage).
+      usage: { globalStoreDir: null, sessionDirFor: (pr) => join(dir, "no-sessions", `pr-${pr}`) },
       partialWrite: { windowMs: 0 },
     });
   }

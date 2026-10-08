@@ -32,19 +32,16 @@ import {
 import {
   fingerprintRoundIntegrity,
   gitConfigChangeMessage,
+  INTEGRITY_BUDGET_MS,
   integrityChanges,
   policySurfaceChangeMessage,
   splitIntegrityChanges,
   type IntegrityFingerprint,
+  type RoundIntegrityOpts,
 } from "./execboundary.js";
-import {
-  auditExecViolationDetails,
-  collectWindowLines,
-  estimateUsd,
-  measureRoundUsage,
-  type ModelPricing,
-  type UsageFs,
-} from "./usage.js";
+import { estimateUsd, type ModelPricing } from "./usage.js";
+import { TranscriptIndex } from "./transcriptindex.js";
+import { withinBudget } from "./budget.js";
 import type { GateResult } from "./gate.js";
 import { applyEvent, restoreStandingLifecycle } from "./statemachine.js";
 import type { VerdictAnnouncer } from "./slack/announce.js";
@@ -98,6 +95,18 @@ type SelfRequeueMode =
   | "head_moved"
   | "infrastructure_active"
   | "infrastructure_settled";
+
+/**
+ * How long a round end waits for its transcripts (H2). The reads are
+ * async and chunked, so the event loop is free throughout; this bound is for a
+ * read that never returns at all. Past it the usage is recorded UNKNOWN, the
+ * audit incomplete, and the round end goes on — a verdict is never held
+ * behind its own accounting.
+ */
+export const USAGE_BUDGET_MS = 120_000;
+
+/** How many unreadable paths the `round_usage_unknown` event names. */
+const UNREADABLE_LISTED = 10;
 
 const SELF_REQUEUE_CAUSE: Record<SelfRequeueMode, CancelCause> = {
   dead: "deadline_overrun",
@@ -176,8 +185,20 @@ export interface VerdictDeps {
     globalStoreDir?: string | null;
     /** Per-model pricing; defaults to config `[models.pricing]`. */
     pricing?: Record<string, ModelPricing>;
-    fs?: UsageFs;
+    /** The transcript reader (H2). Default: one per watcher, so its
+     * per-file offsets and parsed lines live as long as the daemon. */
+    transcripts?: TranscriptIndex;
+    /** How long a round end waits for its transcripts before it records the
+     * usage as unknown and moves on (H2). Default USAGE_BUDGET_MS. */
+    budgetMs?: number;
   };
+  /** The round-end integrity re-hash. Default
+   * `fingerprintRoundIntegrity` over the real disk — the same call dispatch's
+   * baseline makes. Injected by a test that needs a read that never returns. */
+  integrityFingerprint?: (opts: RoundIntegrityOpts) => Promise<IntegrityFingerprint>;
+  /** How long the re-hash may take before the round is left unchecked
+   * (H2). Default INTEGRITY_BUDGET_MS. */
+  integrityBudgetMs?: number;
   /** Where a PR's mirrored ledger snapshot lives. Defaults to
    * `<root>/state/ledgers/pr-<n>.md` — sessions.ts ledgerPath's shape. */
   ledgerPathFor?: (pr: number) => string;
@@ -441,9 +462,13 @@ export class VerdictWatcher {
   /** Rounds whose posted-tail wait has been logged (H1a) — once per
    * round per process, not once per supervisor scan. */
   private readonly postedWaitLogged = new Set<number>();
+  /** Round transcripts, read off the event loop and kept by offset (
+   * H2). */
+  private readonly transcripts: TranscriptIndex;
 
   constructor(private readonly deps: VerdictDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
+    this.transcripts = deps.usage?.transcripts ?? new TranscriptIndex();
   }
 
   private now(): Date {
@@ -1164,8 +1189,13 @@ export class VerdictWatcher {
     );
     // ---- claimed; everything below may await ---------------------------------
     // The round ran a full review and burned its tokens: measured
-    // like every other terminal path, never hidden behind a benign cause.
-    this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
+    // like every other terminal path, never hidden behind a benign cause. Its
+    // window closes HERE; the reads (async since H2 — seconds, at most
+    // the usage budget) run LAST, after the restored lifecycle and the
+    // held-wake flush, so they never widen the window before either: a restart
+    // cannot strand the PR in `reviewing`, and no round dispatched while they
+    // run can receive this round's held wakes.
+    const measuredTo = this.now().toISOString();
     await this.safe(
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
@@ -1225,6 +1255,7 @@ export class VerdictWatcher {
       `compact pr-${round.pr}`,
     );
     if (!successorPromoted) await this.flushWakes(round.pr);
+    await this.measureUsage(round.pr, round.id, round.started_at, measuredTo);
     return "settled";
   }
 
@@ -1243,7 +1274,10 @@ export class VerdictWatcher {
     // receipt is what failed, not the work. It stays in `SUM(est_usd) FROM
     // rounds` like every other row, so it must be measured here too. Its
     // window closes now and no successor is running, so nothing double-counts.
-    this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
+    // H2: the reads (async) run LAST, after the FAILED_LOUD incident
+    // and its anomaly — a restart while they run must not leave a cancelled
+    // round with no loud failure behind it.
+    const measuredTo = this.now().toISOString();
     await this.safe(
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${round.pr}`,
@@ -1276,6 +1310,7 @@ export class VerdictWatcher {
         incident_id: failure.incident_id,
       }),
     );
+    await this.measureUsage(round.pr, round.id, round.started_at, measuredTo);
   }
 
   /** The handoff: posting receipt, labels, round record, transition.
@@ -1540,7 +1575,12 @@ export class VerdictWatcher {
     // file is inert (the done-round guard above reads this).
     if (round)
       store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
-    if (round) this.measureUsage(v.pr, round.id, round.started_at, this.now().toISOString());
+    // The round's usage window closes HERE, as it always has. Its reads (async
+    // since H2 — seconds, at most the usage budget) run at the very
+    // END of the apply, after the compaction request and the held-wake flush:
+    // a round dispatched while they run must never receive this round's held
+    // wakes (rule 9), and nothing in between reads the tokens.
+    const measuredTo = this.now().toISOString();
     // Escalation — OFF unless the operator switched it on, and it
     // runs HERE, after the verdict has been applied, the label moved and the
     // PR transitioned. That ordering is the invariant, not a convenience: an
@@ -1585,6 +1625,7 @@ export class VerdictWatcher {
     // held conversational wakes stay behind it and flush at the successor's
     // terminal path. Without a successor, ordinary FIFO wake delivery resumes.
     if (!successorPromoted) await this.flushWakes(v.pr);
+    if (round) await this.measureUsage(v.pr, round.id, round.started_at, measuredTo);
     this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
     return "applied";
   }
@@ -2020,20 +2061,42 @@ export class VerdictWatcher {
    * Never throws and never fails a round: an unavailable fingerprint at either
    * end leaves the round unchecked, which is the legacy behaviour, and a
    * NULL baseline is never read as "changed" (the same rule the receipt scan
-   * had to learn: unknown is not evidence of loss).
+   * had to learn: unknown is not evidence of loss). The re-hash is async with a
+   * loop turn after every file (H2) — it walks dist/, scripts/ and the
+   * rest of the policy surface — and bounded by `integrityBudgetMs`: a read
+   * that never returns leaves the round unchecked (`round_integrity_unchecked`),
+   * never a round end that does not finish.
    */
-  private checkRoundIntegrity(pr: number, roundId: number): void {
+  private async checkRoundIntegrity(pr: number, roundId: number): Promise<void> {
     const { cfg, store } = this.deps;
     try {
       const before = store.roundGitConfig(roundId) as IntegrityFingerprint | undefined;
       if (!before || typeof before.digest !== "string") return; // no baseline — never judged
       const root = this.deps.root ?? sandboxRoot();
-      const after = fingerprintRoundIntegrity({
-        clonePath: githubCloneDir(cfg.github),
-        worktreePath: resolve(root, `wt/pr-${pr}`),
-        piHome: join(root, "pihome"),
-        sandboxRoot: root,
-      });
+      const budgetMs = Math.max(0, this.deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
+      const rehash = await withinBudget(
+        (this.deps.integrityFingerprint ?? fingerprintRoundIntegrity)({
+          clonePath: githubCloneDir(cfg.github),
+          worktreePath: resolve(root, `wt/pr-${pr}`),
+          piHome: join(root, "pihome"),
+          sandboxRoot: root,
+        }),
+        budgetMs,
+      );
+      if (rehash.kind === "budget") {
+        // Unchecked, never "unchanged": the baseline stays, nothing is judged.
+        store.logEvent("round_integrity_unchecked", pr, {
+          round_id: roundId,
+          stage: "round_end",
+          reason: "budget",
+          budget_ms: budgetMs,
+        });
+        this.log(
+          `verdicts: #${pr} round integrity UNCHECKED — the re-hash did not finish within ${budgetMs} ms`,
+        );
+        return;
+      }
+      const after = rehash.value;
       const { git, policy } = splitIntegrityChanges(integrityChanges(before, after), root);
       if (git.length > 0) {
         store.logEvent("git_config_modified", pr, { round_id: roundId, changes: git });
@@ -2054,41 +2117,82 @@ export class VerdictWatcher {
 
   /** Measure real token usage for the round window from the pi session JSONLs,
    * estimate USD from config pricing, and store both. Also the post-hoc
-   * exec-policy audit. Best-effort: no failure here disturbs the verdict. */
-  private measureUsage(pr: number, roundId: number, startedAt: string, finishedAt: string): void {
+   * exec-policy audit. Best-effort: no failure here disturbs the verdict.
+   *
+   * H2: the transcripts are read ONCE, async and chunked, through the
+   * watcher's `TranscriptIndex` (each file resumed from where the last round
+   * end left it; a session file older than the round not read at all), and
+   * the integrity re-hash is async too — the 16.8 s loop stall of 2026-10-08
+   * 08:51Z was these three reads done synchronously. An in-scope transcript
+   * that cannot be read, or a read past `budgetMs`, leaves the usage UNKNOWN
+   * (nothing recorded — the columns stay NULL, never a partial sum) with a
+   * `round_usage_unknown` event, and the audit reports what it did read. */
+  private async measureUsage(
+    pr: number,
+    roundId: number,
+    startedAt: string,
+    finishedAt: string,
+  ): Promise<void> {
     const { cfg, store } = this.deps;
     try {
-      const opts = {
-        sessionDir: this.sessionDirFor(pr),
-        globalStoreDir: this.globalStoreDir(),
-        startedAt,
-        finishedAt,
-        ...(this.deps.usage?.fs ?? {}),
-      };
-      const usage = measureRoundUsage(opts);
-      // pi's own per-record usage.cost.total is the primary source (verified
-      // live on the VM); the config price table is only the fallback for
-      // windows whose records carried no cost object.
-      const pricing: Record<string, ModelPricing> =
-        this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
-      const est = usage.cost_usd ?? estimateUsd(usage.models, pricing);
-      store.recordRoundUsage(roundId, {
-        tokens_in: usage.tokens_in,
-        tokens_out: usage.tokens_out,
-        tokens_cache_read: usage.tokens_cache_read,
-        est_usd: est,
-      });
-      this.log(
-        `verdicts: #${pr} round usage ${usage.tokens_in}in/${usage.tokens_out}out/${usage.tokens_cache_read}cache` +
-          ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}`,
+      const bounded = await withinBudget(
+        this.transcripts.measure({
+          sessionDir: this.sessionDirFor(pr),
+          globalStoreDir: this.globalStoreDir(),
+          startedAt,
+          finishedAt,
+        }),
+        this.usageBudgetMs(),
       );
+      const measured = bounded.kind === "done" ? bounded.value : "budget";
+      const usage = measured === "budget" ? null : measured.usage;
+      if (usage !== null) {
+        // pi's own per-record usage.cost.total is the primary source (verified
+        // live on the VM); the config price table is only the fallback for
+        // windows whose records carried no cost object.
+        const pricing: Record<string, ModelPricing> =
+          this.deps.usage?.pricing ?? cfg.models.pricing ?? {};
+        const est = usage.cost_usd ?? estimateUsd(usage.models, pricing);
+        store.recordRoundUsage(roundId, {
+          tokens_in: usage.tokens_in,
+          tokens_out: usage.tokens_out,
+          tokens_cache_read: usage.tokens_cache_read,
+          est_usd: est,
+        });
+        this.log(
+          `verdicts: #${pr} round usage ${usage.tokens_in}in/${usage.tokens_out}out/${usage.tokens_cache_read}cache` +
+            ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}`,
+        );
+      } else if (measured === "budget") {
+        store.logEvent("round_usage_unknown", pr, {
+          round_id: roundId,
+          reason: "budget",
+          budget_ms: this.usageBudgetMs(),
+          audit: "incomplete",
+        });
+        this.log(
+          `verdicts: #${pr} round usage UNKNOWN — the transcripts were not read within ${this.usageBudgetMs()} ms; nothing recorded, the exec-policy audit did not run`,
+        );
+      } else {
+        store.logEvent("round_usage_unknown", pr, {
+          round_id: roundId,
+          reason: "unreadable",
+          unreadable: measured.unreadable.slice(0, UNREADABLE_LISTED),
+          unreadable_count: measured.unreadable.length,
+          audit: "incomplete",
+        });
+        this.log(
+          `verdicts: #${pr} round usage UNKNOWN — ${measured.unreadable.length} transcript path(s) unreadable; nothing recorded, the exec-policy audit covers only what was read`,
+          measured.unreadable.slice(0, UNREADABLE_LISTED),
+        );
+      }
 
       // classified, so the durable event says WHICH policy was
       // crossed. Until then the audit matched interpreters only, and none of
       // the four chains proved would have produced a single line here.
-      this.checkRoundIntegrity(pr, roundId);
+      await this.checkRoundIntegrity(pr, roundId);
 
-      const violations = auditExecViolationDetails(collectWindowLines(opts));
+      const violations = measured === "budget" ? [] : measured.violations;
       if (violations.length > 0) {
         const commands = violations.map((v) => v.command);
         store.logEvent("exec_policy_violation", pr, { commands, violations });
@@ -2103,6 +2207,13 @@ export class VerdictWatcher {
     }
   }
 
+  /** How long a round end waits for its transcripts. A measure cut by it
+   * goes on in the background (its reads fill the index for the next round
+   * end); its late answer is dropped. */
+  private usageBudgetMs(): number {
+    return Math.max(0, this.deps.usage?.budgetMs ?? USAGE_BUDGET_MS);
+  }
+
   /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
    * the PR returned to its standing-verdict state (the owner, 2026-08-19: no
    * park — the AI keeps driving). Never an approve path: "tracked" here means
@@ -2115,17 +2226,23 @@ export class VerdictWatcher {
   ): Promise<void> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(pr, roundNo ?? undefined);
+    let measure: { roundId: number; startedAt: string; to: string } | null = null;
     if (round && round.status === "running") {
       store.markRoundOverdue(round.id);
-      // measure the round's tokens HERE, not only on the verdict path.
-      // `measureUsage` had exactly one call site, so an overdue or malformed
-      // round carried NULL cost forever and contributed exactly zero to every
-      // aggregate that faithfully includes it — `markRoundOverdue` deliberately
-      // keeps the row in spend ("hiding tokens this round really burned") and
-      // the stranded-round operator message says "Its spend still counts."
-      // Neither was true until this call existed. The window ends now, which is
-      // the `finished_at` markRoundOverdue just stamped.
-      this.measureUsage(pr, round.id, round.started_at, this.now().toISOString());
+      // measure the round's tokens on this path too, not only on the
+      // verdict path. `measureUsage` had exactly one call site, so an overdue
+      // or malformed round carried NULL cost forever and contributed exactly
+      // zero to every aggregate that faithfully includes it — `markRoundOverdue`
+      // deliberately keeps the row in spend ("hiding tokens this round really
+      // burned") and the stranded-round operator message says "Its spend still
+      // counts." Neither was true until this call existed. The window ends now,
+      // which is the `finished_at` markRoundOverdue just stamped. H2:
+      // the reads are async now (seconds, at most the usage budget), so they
+      // run below, AFTER the transition and the FAILED_LOUD incident — a
+      // restart while they run must never leave an overdue round under a PR
+      // still `reviewing` with nothing owed — and BEFORE the anomaly, whose
+      // overseer inject still carries the violations they find.
+      measure = { roundId: round.id, startedAt: round.started_at, to: this.now().toISOString() };
     }
 
     // The in-progress label must not stick, but the "Automatic Review" label is
@@ -2161,6 +2278,7 @@ export class VerdictWatcher {
       round_no: roundNo,
       message,
     });
+    if (measure) await this.measureUsage(pr, measure.roundId, measure.startedAt, measure.to);
     // Piggyback pending exec-policy findings on a wake that happens anyway;
     // violations by themselves never trigger an inject (no spam).
     const pendingViolations = this.execViolations.get(pr);
@@ -2418,7 +2536,10 @@ export class VerdictWatcher {
           ? "exhausted"
           : "requeued";
       }
-      this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
+      // The round's window closes NOW; it is measured below, after the
+      // incident's durable rows, so no await sits between the terminal CAS and
+      // them (H2 — the measurement reads its transcripts async).
+      const measuredTo = this.now().toISOString();
       this.deps.store.logEvent("self_requeue_cap_exhausted", pr, {
         round_id: round.id,
         round_no: roundNo,
@@ -2444,6 +2565,7 @@ export class VerdictWatcher {
             : "press u to recover"
         }`,
       );
+      await this.measureUsage(round.pr, round.id, round.started_at, measuredTo);
       await this.announceSafe((a) =>
         a.anomaly({
           pr,
@@ -2753,8 +2875,12 @@ export class VerdictWatcher {
     // a cancelled round burned real tokens and stays in every spend
     // aggregate (`SUM(est_usd) FROM rounds` has no status filter), so it must be
     // measured before its successor starts. The window ends here and the
-    // successor's begins later, so the two never overlap.
-    this.measureUsage(round.pr, round.id, round.started_at, this.now().toISOString());
+    // successor's begins later, so the two never overlap. H2: the
+    // window's end is fixed HERE; the reads (async now) run after this
+    // requeue's durable rows below, so a successor dispatched while they run
+    // never sees the cancel without its `round_self_requeued` row — and the
+    // fixed end keeps its lines out of this round's window.
+    const measuredTo = this.now().toISOString();
     if (isLoudCancelCause(cause)) {
       // the durable twin of the inject below. A round that stopped
       // dead inside its deadline window is the residual real defect
@@ -2780,6 +2906,7 @@ export class VerdictWatcher {
       mode,
       reason,
     });
+    await this.measureUsage(round.pr, round.id, round.started_at, measuredTo);
     if (!publication.queued) {
       store.logEvent("round_self_requeue_terminal", round.pr, {
         round_id: round.id,

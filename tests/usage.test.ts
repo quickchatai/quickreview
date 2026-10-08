@@ -1,11 +1,12 @@
+// Round usage and the exec-policy audit, measured through
+// the transcript index since H2 — these are the pre-H2
+// `measureRoundUsage` / `collectWindowLines` cases, unchanged in what they
+// expect. The index's own contract (equivalence with the old reads, the loop
+// turns, the offsets, unknown) is tests/transcriptindex.test.ts.
 import { describe, expect, it } from "vitest";
-import {
-  auditExecViolations,
-  collectWindowLines,
-  estimateUsd,
-  measureRoundUsage,
-  type UsageFs,
-} from "../src/usage.js";
+import { TranscriptIndex, type TranscriptMeasureOpts } from "../src/transcriptindex.js";
+import { auditExecViolations, estimateUsd, type RoundUsage } from "../src/usage.js";
+import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 
 const T = (iso: string): string => new Date(iso).toISOString();
 const START = "2026-08-14T10:00:00.000Z";
@@ -26,31 +27,27 @@ const userMsg = (ts: string): string =>
 const modelChange = (provider: string, modelId: string): string =>
   JSON.stringify({ type: "model_change", provider, modelId, timestamp: START });
 
-/** In-memory fs over a flat path→content map (dirs implied by prefixes). */
+/** In-memory fs over a flat path→content map (dirs implied by prefixes).
+ * A file with no mtime given was written at the window's end — in scope. */
 function fakeFs(
   files: Record<string, string>,
   mtimes: Record<string, number> = {},
-): Required<UsageFs> {
-  const under = (dir: string): string[] =>
-    Object.keys(files).filter((p) => p.startsWith(`${dir}/`));
-  return {
-    readDir: (dir) => {
-      const entries = under(dir).map((p) => p.slice(dir.length + 1).split("/")[0]!);
-      if (entries.length === 0) throw new Error(`ENOENT: ${dir}`);
-      return [...new Set(entries)];
-    },
-    readFile: (path) => {
-      const content = files[path];
-      if (content === undefined) throw new Error(`ENOENT: ${path}`);
-      return content;
-    },
-    statMtimeMs: (path) => mtimes[path] ?? 0,
-    isDir: (path) => under(path).length > 0,
-  };
+): MemoryTranscriptFs {
+  return new MemoryTranscriptFs(files, mtimes, Date.parse(END));
 }
 
-describe("measureRoundUsage", () => {
-  it("sums assistant usage inside the window, inclusive of both boundary timestamps", () => {
+/** The round's usage through a fresh index; a known answer is expected. */
+async function measureRoundUsage(
+  opts: TranscriptMeasureOpts & { fs: MemoryTranscriptFs },
+): Promise<RoundUsage> {
+  const { fs, ...window } = opts;
+  const measured = await new TranscriptIndex({ fs }).measure(window);
+  expect(measured.unreadable).toEqual([]);
+  return measured.usage!;
+}
+
+describe("measureRoundUsage — through the transcript index", () => {
+  it("sums assistant usage inside the window, inclusive of both boundary timestamps", async () => {
     const fs = fakeFs({
       "/s/pr-7/a.jsonl": [
         msg(T("2026-08-14T09:59:59.999Z"), 1000, 100), // just before — excluded
@@ -60,18 +57,18 @@ describe("measureRoundUsage", () => {
         msg(T("2026-08-14T10:30:00.001Z"), 5000, 500), // just after — excluded
       ].join("\n"),
     });
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s/pr-7",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage.tokens_in).toBe(60);
     expect(usage.tokens_out).toBe(6);
     expect(usage.passes_included).toBe(false);
   });
 
-  it("attributes usage to models via model_change records and skips malformed lines and non-assistant roles", () => {
+  it("attributes usage to models via model_change records and skips malformed lines and non-assistant roles", async () => {
     const fs = fakeFs({
       "/s/pr-7/a.jsonl": [
         msg(START, 10, 1), // before any model_change → "unknown"
@@ -82,11 +79,11 @@ describe("measureRoundUsage", () => {
         msg(END, 40, 4),
       ].join("\n"),
     });
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s/pr-7",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage.tokens_in).toBe(50);
     expect(usage.tokens_out).toBe(5);
@@ -96,13 +93,13 @@ describe("measureRoundUsage", () => {
     });
   });
 
-  it("returns zeros for a missing session dir and never throws", () => {
+  it("returns zeros for a missing session dir and never throws", async () => {
     const fs = fakeFs({});
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/nope",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage).toEqual({
       tokens_in: 0,
@@ -114,7 +111,7 @@ describe("measureRoundUsage", () => {
     });
   });
 
-  it("includes global-store files by mtime window (whole file) and flags passes_included", () => {
+  it("includes global-store files by mtime window (whole file) and flags passes_included", async () => {
     const startMs = Date.parse(START);
     const fs = fakeFs(
       {
@@ -130,12 +127,12 @@ describe("measureRoundUsage", () => {
         "/g/old/pass0.jsonl": startMs - 60_000, // before window — excluded
       },
     );
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s/pr-7",
       globalStoreDir: "/g",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     // Global-store files count in full even when their line timestamps do not parse.
     expect(usage.tokens_in).toBe(110);
@@ -144,7 +141,7 @@ describe("measureRoundUsage", () => {
     expect(usage.models["openai-codex/gpt-mini"]).toEqual({ in: 100, out: 10 });
   });
 
-  it("sums pi's real cost fields: cacheRead, reasoning-inclusive output and usage.cost.total", () => {
+  it("sums pi's real cost fields: cacheRead, reasoning-inclusive output and usage.cost.total", async () => {
     const rich = (ts: string): string =>
       JSON.stringify({
         type: "message",
@@ -165,11 +162,11 @@ describe("measureRoundUsage", () => {
     const fs = fakeFs({
       "/s/pr-7/a.jsonl": [rich(START), rich(END), msg(END, 10, 1)].join("\n"), // last line: no cost object
     });
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s/pr-7",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage.tokens_in).toBe(210);
     expect(usage.tokens_out).toBe(101); // (20+30)*2 + 1 — reasoning counts as output
@@ -177,24 +174,24 @@ describe("measureRoundUsage", () => {
     expect(usage.cost_usd).toBeCloseTo(0.066, 9); // only records that carry cost
   });
 
-  it("leaves cost_usd null when no record carries a cost object", () => {
+  it("leaves cost_usd null when no record carries a cost object", async () => {
     const fs = fakeFs({ "/s/pr-7/a.jsonl": msg(START, 10, 1) });
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s/pr-7",
       startedAt: START,
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage.cost_usd).toBeNull();
   });
 
-  it("returns zeros on an unparseable window", () => {
+  it("returns zeros on an unparseable window", async () => {
     const fs = fakeFs({ "/s/a.jsonl": msg(START, 10, 1) });
-    const usage = measureRoundUsage({
+    const usage = await measureRoundUsage({
       sessionDir: "/s",
       startedAt: "garbage",
       finishedAt: END,
-      ...fs,
+      fs,
     });
     expect(usage.tokens_in).toBe(0);
   });
@@ -255,7 +252,7 @@ describe("auditExecViolations", () => {
     expect(auditExecViolations(lines)).toEqual(["npm test"]);
   });
 
-  it("audits over collectWindowLines output (window-filtered)", () => {
+  it("audits the round window's lines (window-filtered)", async () => {
     const fs = fakeFs({
       "/s/pr-7/a.jsonl": [
         toolCall("node evil.js"),
@@ -269,12 +266,12 @@ describe("auditExecViolations", () => {
         }),
       ].join("\n"),
     });
-    const lines = collectWindowLines({
+    const { violations } = await new TranscriptIndex({ fs }).measure({
       sessionDir: "/s/pr-7",
       startedAt: START,
       finishedAt: END,
-      ...fs,
     });
-    expect(auditExecViolations(lines)).toEqual(["node evil.js"]); // "make all" ran before the window
+    // "make all" ran before the window.
+    expect(violations).toEqual([{ command: "node evil.js", kind: "interpreter" }]);
   });
 });

@@ -156,6 +156,13 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    `policy_surface_modified` **wake**. Directories are hashed recursively by
    CONTENT (a rewritten `scripts/guards.sh` keeps the listing identical). It
    enumerates no write primitive, so variable indirection is irrelevant to it.
+   Both hashes are async, with an event-loop turn after every file (
+   H2); the value is the synchronous one, byte for byte, so a baseline taken
+   before a deploy still compares with a re-check after it. Each is bounded by
+   `INTEGRITY_BUDGET_MS` (60 s): a read that never returns leaves the round
+   UNCHECKED — no baseline, or no verdict on the re-hash — with a
+   `round_integrity_unchecked` event, never a held dispatch pump or a round end
+   that does not finish.
 5. **Outcome detection** — `auditUngatedReviews`, same file, run by the
    reconcile comment sweep. Asks the only question whose answer does not depend
    on knowing the mechanism.

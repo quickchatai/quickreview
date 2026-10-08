@@ -14,6 +14,7 @@ import {
 } from "../src/dispatch.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
+import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { recheckFingerprint } from "../src/recheck.js";
 import { StateStore } from "../src/state.js";
 import { applyEvent } from "../src/statemachine.js";
@@ -347,6 +348,46 @@ describe("recording at round start", () => {
       expect(watched.some((p) => p.endsWith("/dist"))).toBe(true);
     },
   );
+
+  // H2 (review): the baseline went async, and it is awaited inside the
+  // ONE serialized dispatch pump. A read that never returns must cost a
+  // bounded wait and an UNCHECKED round (no baseline — never judged), not
+  // every later PR undispatched.
+  // MUTATION: await the fingerprint without `withinBudget` in dispatch.ts —
+  // this test never finishes.
+  it("a baseline read that never returns leaves the round unchecked, and the pump moves on", async () => {
+    queue(31, "2026-08-13T09:00:00Z");
+    adapter.files.set(31, [file("a.ts", 1, 1)]);
+    const { hooks, orders } = recordingHooks();
+
+    await dispatchOnce({
+      cfg: baseCfg,
+      store,
+      adapter,
+      hooks,
+      // The real fingerprint over a filesystem whose reads hang.
+      integrityFingerprint: (opts) =>
+        fingerprintRoundIntegrity(opts, {
+          readFile: () => new Promise<Buffer>(() => undefined),
+          readDir: () => [],
+          sha256: (data) => data,
+        }),
+      integrityBudgetMs: 20,
+    });
+
+    const round = store.roundsFor(31)[0]!;
+    expect(orders.map((o) => o.order.pr)).toEqual([31]); // handed to the session
+    expect(store.roundGitConfig(round.id)).toBeUndefined(); // unchecked, never "changed"
+    const ev = store
+      .recentEvents(50)
+      .find((e) => e.kind === "round_integrity_unchecked" && e.pr === 31);
+    expect(JSON.parse(ev!.payload!)).toEqual({
+      round_id: round.id,
+      stage: "baseline",
+      reason: "budget",
+      budget_ms: 20,
+    });
+  });
 
   // the audit trail — which tier held the veto in this round.
   it(

@@ -765,6 +765,9 @@ describe("on: the selection is awaited beside the seed, within the budget (fake 
         ),
       memory: { assembler: slowAssembler, timeoutMs: 3000 },
       lessons: selector,
+      // The integrity baseline reads real files (async since H2),
+      // which a fake clock cannot wait on; this harness times the lessons.
+      integrityFingerprint: async () => ({ digest: "fake-clock", files: {} }),
     }).then((orders) => {
       settled = Date.now() - t0;
       return { prompt: prompts[0]!, store, ledger, roundId: orders[0]!.round_id };
@@ -1429,7 +1432,9 @@ describe("a round discarded before its handoff leaves no lesson record", () => {
       const gate = new Promise<void>((r) => (answer = r));
       const engine = new FakeEngine(async (area) => {
         await gate;
-        return area === "experiences" ? { ok: true, hits: LESSONS } : { ok: true, hits: [CASE_HIT] };
+        return area === "experiences"
+          ? { ok: true, hits: LESSONS }
+          : { ok: true, hits: [CASE_HIT] };
       });
       const logs: string[] = [];
       const selector = new RoundLessonSelector({
@@ -1453,11 +1458,13 @@ describe("a round discarded before its handoff leaves no lesson record", () => {
       await selector.idle();
       expect(ledger.roundRow(77)).toBeUndefined();
       expect(ledger.selections(77)).toEqual([]);
-      expect(logs.some((m) => /discarded before its handoff — its selection is not recorded/.test(m))).toBe(
-        true,
-      );
+      expect(
+        logs.some((m) => /discarded before its handoff — its selection is not recorded/.test(m)),
+      ).toBe(true);
       // Another round's selection is untouched.
-      selector.start({ ...order, round_id: 78 } as RoundOrder, [{ filename: "backend/api/views.py" }]);
+      selector.start({ ...order, round_id: 78 } as RoundOrder, [
+        { filename: "backend/api/views.py" },
+      ]);
       await selector.idle();
       expect(ledger.roundRow(78)).toBeDefined();
     } finally {

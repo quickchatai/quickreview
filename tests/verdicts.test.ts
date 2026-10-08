@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -23,6 +24,8 @@ import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
 import { retryWithheldApproval } from "../src/cigate.js";
+import { TranscriptIndex } from "../src/transcriptindex.js";
+import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -230,6 +233,50 @@ function watcher(
     ...over,
   });
 }
+
+/**
+ * A PR's round-end transcript reads, held at a gate (H2 review):
+ * `reached` resolves once the round end is waiting inside them, `release`
+ * lets them finish. The transcript is one in-memory session file of `lines`.
+ */
+function gatedTranscripts(
+  pr: number,
+  lines: string[],
+): {
+  reached: Promise<void>;
+  release: () => void;
+  usage: NonNullable<ConstructorParameters<typeof VerdictWatcher>[0]["usage"]>;
+} {
+  let release!: () => void;
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  let signal!: () => void;
+  const reached = new Promise<void>((resolveReached) => {
+    signal = resolveReached;
+  });
+  const fs = new MemoryTranscriptFs(
+    { [`/sessions/pr-${pr}/session.jsonl`]: lines.join("\n") },
+    {},
+    Date.now(),
+  );
+  fs.beforeStat = async () => {
+    signal();
+    await gate;
+  };
+  return {
+    reached,
+    release,
+    usage: {
+      globalStoreDir: null,
+      sessionDirFor: (n) => `/sessions/pr-${n}`,
+      transcripts: new TranscriptIndex({ fs }),
+    },
+  };
+}
+
+const tokensIn = (roundId: number): unknown =>
+  (store.db.prepare("SELECT tokens_in FROM rounds WHERE id = ?").get(roundId) as any).tokens_in;
 
 describe("validateVerdict", () => {
   it(
@@ -651,7 +698,7 @@ describe("measured round usage", () => {
     // The baseline the daemon itself would compute over this very tree.
     store.recordRoundGitConfig(
       roundId,
-      fingerprintRoundIntegrity({
+      await fingerprintRoundIntegrity({
         clonePath: githubCloneDir(cfg.github),
         worktreePath: resolve(dir, "wt/pr-110"),
         piHome: join(dir, "pihome"),
@@ -714,7 +761,7 @@ describe("measured round usage", () => {
       writeSessionJsonl(113, [modelLine(), jsonlLine(10, 1)]);
       store.recordRoundGitConfig(
         roundId,
-        fingerprintRoundIntegrity({
+        await fingerprintRoundIntegrity({
           clonePath: githubCloneDir(cfg.github),
           worktreePath: resolve(dir, "wt/pr-113"),
           piHome: join(dir, "pihome"),
@@ -779,6 +826,263 @@ describe("measured round usage", () => {
     expect(round.status).toBe("done");
     expect(round.tokens_in).toBe(0);
     expect(round.tokens_out).toBe(0);
+  });
+
+  // H2 — the transcripts are read off the event loop, and what cannot
+  // be read is UNKNOWN: never a partial sum posing as a measurement, and never
+  // a reason to hold the verdict.
+  describe("unknown, never a partial sum — and the verdict still applies (H2)", () => {
+    const usageUnknown = (pr: number): Record<string, unknown> | undefined => {
+      const row = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'round_usage_unknown' AND pr = ?")
+        .get(pr) as { payload: string } | undefined;
+      return row ? (JSON.parse(row.payload) as Record<string, unknown>) : undefined;
+    };
+
+    // MUTATION: in src/transcriptindex.ts return the partial sum when a file
+    // was unreadable — the token expectations go red.
+    it("an unreadable transcript: tokens NULL, the audit of what was read, the verdict applied", async () => {
+      const roundId = reviewingRound(120);
+      const fs = new MemoryTranscriptFs(
+        {
+          "/sessions/pr-120/session.jsonl": [
+            modelLine(),
+            jsonlLine(10, 1),
+            bashLine("python manage.py test"),
+          ].join("\n"),
+          "/sessions/pr-120/zz-broken.jsonl": jsonlLine(5, 5),
+        },
+        {},
+        Date.now(),
+      );
+      fs.failOpen("/sessions/pr-120/zz-broken.jsonl", "EACCES"); // there, and unreadable
+      await watcher({
+        usage: {
+          globalStoreDir: null,
+          sessionDirFor: (pr) => `/sessions/pr-${pr}`,
+          transcripts: new TranscriptIndex({ fs }),
+        },
+      }).handleFile(write(120, 1, verdictFile({ pr: 120, verdict: "APPROVE" })));
+
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.status).toBe("done");
+      expect(round.verdict).toBe("APPROVE");
+      expect(round.tokens_in).toBeNull();
+      expect(round.tokens_out).toBeNull();
+      expect(round.est_usd).toBeNull();
+      expect(usageUnknown(120)).toMatchObject({
+        round_id: roundId,
+        reason: "unreadable",
+        unreadable_count: 1,
+        audit: "incomplete",
+      });
+      expect(JSON.stringify(usageUnknown(120)!.unreadable)).toContain("zz-broken.jsonl");
+      // What WAS read is still audited.
+      const ev = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'exec_policy_violation' AND pr = 120")
+        .get() as { payload: string } | undefined;
+      expect(JSON.parse(ev!.payload).commands).toEqual(["python manage.py test"]);
+    });
+
+    it("a transcript read that never answers is cut at the budget — the verdict applies", async () => {
+      const roundId = reviewingRound(121);
+      const fs = new MemoryTranscriptFs(
+        { "/sessions/pr-121/a.jsonl": jsonlLine(10, 1) },
+        {},
+        Date.now(),
+      );
+      fs.hangingStats.add("/sessions/pr-121/a.jsonl"); // a hung filesystem
+      const w = watcher({
+        usage: {
+          globalStoreDir: null,
+          sessionDirFor: (pr) => `/sessions/pr-${pr}`,
+          transcripts: new TranscriptIndex({ fs }),
+          budgetMs: 30,
+        },
+      });
+      await w.handleFile(write(121, 1, verdictFile({ pr: 121, verdict: "APPROVE" })));
+      const round = store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(roundId) as any;
+      expect(round.status).toBe("done");
+      expect(round.tokens_in).toBeNull();
+      expect(usageUnknown(121)).toMatchObject({ reason: "budget", budget_ms: 30 });
+      expect(store.getPr(121)?.state).not.toBe("reviewing");
+    });
+
+    it("round after round, the PR's transcript is read on from where the last round end stopped", async () => {
+      const transcripts = new TranscriptIndex();
+      const w = watcher({ usage: { globalStoreDir: null, transcripts } });
+      const minutesAgo = (m: number): string => new Date(Date.now() - m * 60_000).toISOString();
+      const usageLine = (ts: string, input: number): string =>
+        JSON.stringify({
+          type: "message",
+          timestamp: ts,
+          message: { role: "assistant", usage: { input, output: 1 } },
+        });
+      const r1 = reviewingRound(122);
+      store.db.prepare("UPDATE rounds SET started_at = ? WHERE id = ?").run(minutesAgo(10), r1);
+      writeSessionJsonl(122, [modelLine(), usageLine(minutesAgo(9), 100), ""]);
+      await w.handleFile(write(122, 1, verdictFile({ pr: 122 })));
+      expect(
+        (store.db.prepare("SELECT tokens_in FROM rounds WHERE id = ?").get(r1) as any).tokens_in,
+      ).toBe(100);
+      expect(transcripts.stats()).toMatchObject({ full_scans: 1, incremental_scans: 0 });
+
+      store.setPrState(122, "reviewing");
+      const r2 = store.startRound(
+        122,
+        "re_review",
+        ["pass-baseline"],
+        cfg.daemon.round_deadline_min,
+      );
+      store.db.prepare("UPDATE rounds SET started_at = ? WHERE id = ?").run(minutesAgo(5), r2);
+      appendFileSync(
+        join(dir, cfg.pi.session_dir, "pr-122", "session.jsonl"),
+        `${usageLine(minutesAgo(4), 7)}\n`,
+      );
+      await w.handleFile(write(122, 2, verdictFile({ pr: 122, round_no: 2 })));
+      expect(
+        (store.db.prepare("SELECT tokens_in FROM rounds WHERE id = ?").get(r2) as any).tokens_in,
+      ).toBe(7);
+      // Round 2 read only what round 1's end had not.
+      expect(transcripts.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1 });
+    });
+
+    // The review of H2: the reads take seconds now (up to the budget), so
+    // WHERE a round end awaits them matters. Each path measures a window that
+    // closed at its old point, and reads it only after its lifecycle rows (and,
+    // on a settling path, its held-wake flush) have landed.
+
+    // MUTATION: in apply(), await the measurement before `flushWakes` (and
+    // drop the `hasRunningRound` belt in wakes.ts) — the held wake reaches
+    // round 2 while it runs; with the belt alone it is never delivered here.
+    it("a verdict's reads run after its held-wake flush — a round dispatched meanwhile never receives them (rule 9)", async () => {
+      const r1 = reviewingRound(124);
+      mkdirSync(join(dir, "state", "ledgers"), { recursive: true });
+      writeFileSync(join(dir, "state", "ledgers", "pr-124.md"), "LEDGER PR #124 @ abc123\n");
+      store.holdWake(124, "author says: fixed in abc123", "author_reply");
+      const gated = gatedTranscripts(124, [modelLine(), jsonlLine(10, 1)]);
+      const delivered: Array<{ message: string; roundRunning: boolean }> = [];
+      const { hooks } = recordingHooks();
+      hooks.inject = async (pr, message) => {
+        delivered.push({ message, roundRunning: store.hasRunningRound(pr) });
+      };
+
+      const handled = watcher({ usage: gated.usage }, hooks).handleFile(
+        write(124, 1, verdictFile({ pr: 124, verdict: "APPROVE" })),
+      );
+      await gated.reached; // the round end is inside its transcript reads
+      // Round 2 is dispatched meanwhile and its order acked: no session
+      // command blocks the slot.
+      store.setPrState(124, "reviewing");
+      const r2 = store.startRound(
+        124,
+        "re_review",
+        ["pass-baseline"],
+        cfg.daemon.round_deadline_min,
+      );
+      expect(store.blockingSessionCommand("pr-124")).toBeFalsy();
+      gated.release();
+      expect(await handled).toBe(true);
+
+      expect(delivered.map((d) => d.roundRunning)).toEqual([false]);
+      expect(delivered[0]!.message).toContain("author says: fixed in abc123");
+      expect(store.heldWakes(124)).toHaveLength(0);
+      // The window still closed at the verdict: round 1 measured, round 2 untouched.
+      expect(tokensIn(r1)).toBe(10);
+      expect(store.roundsFor(124).find((r) => r.id === r2)?.status).toBe("running");
+    });
+
+    // MUTATION: in handleAnomaly, await the measurement right after
+    // markRoundOverdue — the expectations taken while the reads wait go red.
+    it("an anomaly round's reads wait behind its transition and FAILED_LOUD incident; its inject still carries their violations", async () => {
+      const roundId = reviewingRound(125);
+      const gated = gatedTranscripts(125, [
+        modelLine(),
+        jsonlLine(10, 1),
+        bashLine("python manage.py test"),
+      ]);
+      const rec = recordingHooks();
+      const handled = watcher({ usage: gated.usage }, rec.hooks).handleFile(
+        write(125, 1, "{broken"),
+      );
+      await gated.reached;
+      // A restart HERE strands nothing: the PR has left `reviewing` and the
+      // work is owed as a FAILED_LOUD incident the operator's u clears.
+      expect(
+        (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status,
+      ).toBe("overdue");
+      expect(store.getPr(125)?.state).not.toBe("reviewing");
+      expect(store.openReviewFailure(125)?.work_owed).toBe(1);
+      gated.release();
+      expect(await handled).toBe(true);
+
+      // The same round's violations ride its own anomaly, as before H2.
+      expect(rec.overseer).toHaveLength(1);
+      expect(rec.overseer[0]).toContain("python manage.py test");
+      expect(tokensIn(roundId)).toBe(10);
+    });
+
+    // MUTATION: in failPostingProof, await the measurement right after the
+    // cancel — the expectations taken while the reads wait go red.
+    it("a posting-receipt failure's reads wait behind its FAILED_LOUD incident", async () => {
+      const roundId = reviewingRound(126);
+      stampPosting(126, 1);
+      const gated = gatedTranscripts(126, [modelLine(), jsonlLine(10, 1)]);
+      const handled = watcher({ postingReceiptGraceS: 0, usage: gated.usage }).handleFile(
+        write(126, 1, verdictFile({ pr: 126 })),
+      );
+      await gated.reached;
+      expect(store.openReviewFailure(126)).toMatchObject({
+        stage: "posting_receipt",
+        work_owed: 1,
+      });
+      expect(store.anomalies().map((a) => a.kind)).toContain("review_failed_loud");
+      gated.release();
+      expect(await handled).toBe(true);
+      expect(tokensIn(roundId)).toBe(10);
+    });
+
+    // A read that never returns, at the other end of the measurement: the
+    // integrity re-hash walks the whole policy surface.
+    // MUTATION: await the re-hash without `withinBudget` in
+    // checkRoundIntegrity — this test never finishes.
+    it("an integrity re-hash that never returns leaves the round UNCHECKED — the verdict applies", async () => {
+      const roundId = reviewingRound(127);
+      writeSessionJsonl(127, [modelLine(), jsonlLine(10, 1)]);
+      store.recordRoundGitConfig(roundId, { digest: "sha256:before", files: {} });
+      const hung = {
+        readFile: () => new Promise<Buffer>(() => undefined),
+        readDir: () => [],
+        sha256: (data: string) => data,
+      };
+      const w = watcher({
+        integrityFingerprint: (opts) => fingerprintRoundIntegrity(opts, hung),
+        integrityBudgetMs: 20,
+      });
+      expect(await w.handleFile(write(127, 1, verdictFile({ pr: 127, verdict: "APPROVE" })))).toBe(
+        true,
+      );
+
+      expect(store.getPr(127)?.state).toBe("tracked");
+      expect(tokensIn(roundId)).toBe(10);
+      const unchecked = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'round_integrity_unchecked' AND pr = 127")
+        .get() as { payload: string } | undefined;
+      expect(JSON.parse(unchecked!.payload)).toEqual({
+        round_id: roundId,
+        stage: "round_end",
+        reason: "budget",
+        budget_ms: 20,
+      });
+      // Unchecked is never "changed".
+      expect(
+        store.db
+          .prepare(
+            "SELECT COUNT(*) c FROM events WHERE kind IN ('git_config_modified', 'policy_surface_modified')",
+          )
+          .get(),
+      ).toMatchObject({ c: 0 });
+    });
   });
 
   /**
@@ -2863,6 +3167,36 @@ describe("guarded no-op settlement", () => {
       expect.objectContaining({ gh_review_id: 778, posting_key: key }),
     ]);
     expect(events("posting_guarded_noop", 509)).toEqual([]);
+  });
+
+  // H2 review. MUTATION: in settleGuardedNoop, await the measurement
+  // right after the claim — the restored state is not there while the reads
+  // wait, and the held wake is never delivered before them.
+  it("a guarded no-op's reads run after the restored lifecycle and its held-wake flush", async () => {
+    const { roundId } = skippedRound(520);
+    store.holdWake(520, "author says: ping", "author_reply");
+    const gated = gatedTranscripts(520, [
+      JSON.stringify({
+        type: "message",
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", usage: { input: 10, output: 1 } },
+      }),
+    ]);
+    const delivered: boolean[] = [];
+    const { hooks } = recordingHooks();
+    hooks.inject = async (pr) => {
+      delivered.push(store.hasRunningRound(pr));
+    };
+    const handled = watcher({ usage: gated.usage }, hooks).handleFile(
+      write(520, 1, verdictFile({ pr: 520 })),
+    );
+    await gated.reached;
+    expect(store.getPr(520)?.state).toBe("awaiting_author");
+    expect(events("posting_guarded_noop", 520)).toHaveLength(1);
+    expect(delivered).toEqual([false]);
+    gated.release();
+    expect(await handled).toBe(true);
+    expect(tokensIn(roundId)).toBe(10);
   });
 
   it("a fresh-head successor owed by the skipped round is promoted, never cleared", async () => {

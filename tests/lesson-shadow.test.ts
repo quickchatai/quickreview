@@ -299,10 +299,7 @@ describe("prefetchLessons — never more than PREFETCH_MAX_IN_FLIGHT finds on th
     let now = 0;
     const answer: Array<() => void> = [];
     const engine = new FakeEngine(
-      () =>
-        new Promise((r) =>
-          answer.push(() => r({ ok: true, hits: [] })),
-        ),
+      () => new Promise((r) => answer.push(() => r({ ok: true, hits: [] }))),
     );
     const t = manualTimer();
     const p = prefetchLessons(engine, six, { budgetMs: 2000, timer: t.timer, clock: () => now });
@@ -677,6 +674,9 @@ describe("the budget and its timeout never delay a round (fake clock)", () => {
         adapter: new MiniAdapter(),
         hooks,
         lessons: selector,
+        // The integrity baseline reads real files (async since H2),
+        // which a fake clock with no timer advanced cannot wait on.
+        integrityFingerprint: async () => ({ digest: "fake-clock", files: {} }),
       });
       expect(orders).toHaveLength(1);
       expect(prompts).toHaveLength(1);
@@ -925,7 +925,10 @@ describe("lessons-off / lessons-on / suppress-lesson / unsuppress-lesson — ope
       expect(new LessonLedger(store).lessonsOff()).toBe(true);
 
       // The other half: unsuppress and lessons-on undo them, in state.db.
-      writeFileSync(join(op, "k3.json"), JSON.stringify({ command: "unsuppress-lesson", uri: URI }));
+      writeFileSync(
+        join(op, "k3.json"),
+        JSON.stringify({ command: "unsuppress-lesson", uri: URI }),
+      );
       writeFileSync(join(op, "k4.json"), JSON.stringify({ command: "lessons-on" }));
       const w2 = new CommandWatcher({
         dir: op,
@@ -948,13 +951,18 @@ describe("lessons-off / lessons-on / suppress-lesson / unsuppress-lesson — ope
       });
       expect(ledger.switchState()).toMatchObject({ lessons_off: false, suppressed: [] });
       // Unsuppressing what is not suppressed changes nothing, and says so.
-      writeFileSync(join(op, "k5.json"), JSON.stringify({ command: "unsuppress-lesson", uri: URI }));
+      writeFileSync(
+        join(op, "k5.json"),
+        JSON.stringify({ command: "unsuppress-lesson", uri: URI }),
+      );
       await w2.sweep();
       w2.stop();
       expect(result(join(root, "commands"), "k5")).toMatchObject({ ok: true, changed: false });
       // Every operator command is in the audit trail, with whether it changed anything.
       expect(
-        eventsOf(store, "lesson_switch_changed").map((e) => `${String(e["action"])}:${String(e["changed"])}`),
+        eventsOf(store, "lesson_switch_changed").map(
+          (e) => `${String(e["action"])}:${String(e["changed"])}`,
+        ),
       ).toEqual(["off:true", "suppress:true", "unsuppress:true", "on:true", "unsuppress:false"]);
     });
 
@@ -1056,7 +1064,15 @@ describe("lessons-off / lessons-on / suppress-lesson / unsuppress-lesson — ope
       const out = await sender(ssh).send({ command: "suppress-lesson", uri: URI });
       expect(out).toEqual({ ok: true, changed: true, suppressed: 1, issuer: "operator" });
       const write = calls[0]!;
-      expect(write.argv.slice(0, 7)).toEqual(["sudo", "docker", "exec", "-i", "-u", "0", "quickreview-sandbox"]);
+      expect(write.argv.slice(0, 7)).toEqual([
+        "sudo",
+        "docker",
+        "exec",
+        "-i",
+        "-u",
+        "0",
+        "quickreview-sandbox",
+      ]);
       expect(write.argv.join(" ")).toContain("commands/operator");
       // Nothing about the request rides the command line.
       expect(write.argv.join(" ")).not.toContain(URI);
@@ -1099,9 +1115,14 @@ describe("lessons-off / lessons-on / suppress-lesson / unsuppress-lesson — ope
       // The deadline: the daemon never answers.
       let t = Date.parse("2026-10-07T10:00:00Z");
       const silent = runner([]);
-      const s = new LessonSwitchSender(tui, silent.ssh, () => new Date(t), async (ms) => {
-        t += ms;
-      });
+      const s = new LessonSwitchSender(
+        tui,
+        silent.ssh,
+        () => new Date(t),
+        async (ms) => {
+          t += ms;
+        },
+      );
       expect(await s.send({ command: "lessons-on" })).toMatchObject({
         ok: false,
         reason: expect.stringContaining("no result before timeout"),
@@ -1236,7 +1257,9 @@ describe("matchShadow — lens, class and path, deterministically", () => {
       lesson_class: "baseline.scope",
       match: "lens",
     });
-    expect(marks[1]!.why).toContain("lens tier: class baseline.correctness differs from baseline.scope");
+    expect(marks[1]!.why).toContain(
+      "lens tier: class baseline.correctness differs from baseline.scope",
+    );
     expect(marks[2]).toMatchObject({
       finding_class: "security.scope-creep",
       lesson_class: "security",
@@ -1527,7 +1550,12 @@ describe("the shadow report over a fixture joined with fates", () => {
       .run();
     markRound(ledger, store, 100, 1);
     markRound(ledger, store, 100, 2);
-    expect(ledger.marks(100, 2).map((m) => m.finding_key).sort()).toEqual(["f1b", "g1"]);
+    expect(
+      ledger
+        .marks(100, 2)
+        .map((m) => m.finding_key)
+        .sort(),
+    ).toEqual(["f1b", "g1"]);
 
     clock = new Date("2026-10-07T10:00:00Z");
     const r = shadowReport(ledger, { days: 7, mode: "shadow", now: () => clock });
@@ -1660,7 +1688,12 @@ describe("the [7] feedback tab's LESSONS line", () => {
     as_of: "2026-10-07T10:00:00.000Z",
   };
   const snap = (memory: unknown) =>
-    ({ written_at: "x", dry_run: false, prs: [], ...(memory === undefined ? {} : { memory }) }) as never;
+    ({
+      written_at: "x",
+      dry_run: false,
+      prs: [],
+      ...(memory === undefined ? {} : { memory }),
+    }) as never;
   const text = (h: { title: string; lines: string[] }) =>
     stripAnsi([h.title, ...h.lines].join("\n"));
 
@@ -1683,29 +1716,35 @@ describe("the [7] feedback tab's LESSONS line", () => {
       expect(u).toContain("LESSONS (—)");
       expect(u).not.toMatch(/\b0 (would-demote|marked)|harm 0/);
     }
-    expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, lessons_off: true } })))).toContain(
-      "LESSONS OFF (operator kill switch)",
-    );
-    expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "off" } })))).toContain(
-      "lessons delivery off",
-    );
+    expect(
+      text(
+        lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, lessons_off: true } })),
+      ),
+    ).toContain("LESSONS OFF (operator kill switch)");
+    expect(
+      text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "off" } }))),
+    ).toContain("lessons delivery off");
   });
 
   it("under `on` the title says whether anything is delivered — never `shadow`, which runs the ledger", () => {
     const on = text(
-      lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: true } })),
+      lessonsHeadline(
+        snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: true } }),
+      ),
     );
     expect(on.split("\n")[0]).toBe("LESSONS (on, 7d)");
     // `on` with no selector (memory off): nothing selected, nothing delivered.
     const idle = text(
-      lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: false } })),
+      lessonsHeadline(
+        snap({ ...pendingMemoryStatus(), lessons: { ...S, delivery: "on", delivering: false } }),
+      ),
     );
     expect(idle.split("\n")[0]).toBe("LESSONS (on — nothing delivered, 7d)");
     expect(idle).toContain("lessons on (nothing delivered — memory is off)");
     expect(idle).not.toContain("shadow");
-    expect(text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: S }))).split("\n")[0]).toBe(
-      "LESSONS (shadow, 7d)",
-    );
+    expect(
+      text(lessonsHeadline(snap({ ...pendingMemoryStatus(), lessons: S }))).split("\n")[0],
+    ).toBe("LESSONS (shadow, 7d)");
   });
 
   it("the installed tab paints it from the app's snapshot", async () => {
