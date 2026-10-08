@@ -1,6 +1,6 @@
 ---
 name: replay
-description: Re-run a past episode offline against the committed regression case set — real human findings on closed PRs — to see how a proposed change to the reviewer would have behaved. Use when asked whether a tweak would still catch what humans caught, to calibrate against the pre-bot corpus, or to try a change before it lands. Strictly offline: it never labels a PR, never wakes a session, and never posts anything.
+description: "Re-run a past episode offline against the committed regression case set — real human findings on closed PRs — to see how a proposed change to the reviewer would have behaved. Use when asked whether a tweak would still catch what humans caught, to calibrate against the pre-bot corpus, or to try a change before it lands. Strictly offline: it never labels a PR, never wakes a session, and never posts anything."
 ---
 
 # Replaying a past episode

@@ -2,8 +2,13 @@
 // What matters is external: what is ASKED of GitHub (read-only permissions,
 // one repository), what is REFUSED (a grant wider than read), and what lands
 // in the env file the companion mounts (the token, never the App key).
-import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+//
+// H4: the file is `source`d in the container, so one test sources it
+// with the real `sh`. That makes this a process suite
+// (tests/helpers/suite-timeouts.ts PROCESS_SUITES).
+import { execFileSync } from "node:child_process";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -17,14 +22,35 @@ import {
   TOKEN_VAR,
   mintReadOnlyToken,
   readOnlyGrantProblem,
+  renderTokenEnv,
   tokenOutcomeLine,
+  writeTokenEnv,
 } from "../src/tui/ghread.js";
 import { companionGithubDir, configHome, stateHome } from "../src/install.js";
+import { tokenFileGitHubReader } from "../src/setup/adapters.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const PEM = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const NOW = Date.parse("2026-09-29T10:00:00Z");
 const EXPIRES = "2026-09-29T11:00:00Z";
+
+/**
+ * A SYNTHETIC token in GitHub's installation-token format as of 2026-10:
+ * `ghs_`, then three base64url segments joined by dots, 383 characters. The
+ * shape was measured on a real token that scripts/mint-token.sh cached on
+ * 2026-10-07: segments of 48 (with the prefix), 247 and 86 characters, with
+ * `-`, `.` and `_` beside the alphanumerics. No real token is in this file.
+ */
+function realFormatToken(): string {
+  const b64url = (n: number, seed: string): string => {
+    let s = "";
+    while (s.length < n)
+      s += createHash("sha256").update(`${seed}:${s.length}`).digest("base64url");
+    return s.slice(0, n);
+  };
+  return `ghs_${b64url(44, "installation")}.${b64url(247, "claims")}.${b64url(86, "signature")}`;
+}
+const REAL_FORMAT_TOKEN = realFormatToken();
 
 interface Call {
   url: string;
@@ -36,6 +62,7 @@ interface Call {
 /** A GitHub that answers the installation lookup and the token mint. */
 function fakeGithub(
   grant: Record<string, unknown> = { ...COMPANION_GITHUB_PERMISSIONS, metadata: "read" },
+  token = "ghs_readonly123",
 ) {
   const calls: Call[] = [];
   const fetchFn = (async (url: string, init?: RequestInit) => {
@@ -51,7 +78,7 @@ function fakeGithub(
     if (url.endsWith("/app/installations/42/access_tokens"))
       return new Response(
         JSON.stringify({
-          token: "ghs_readonly123",
+          token,
           expires_at: EXPIRES,
           permissions: grant,
           repositories: [{ name: "widgets" }],
@@ -241,6 +268,144 @@ describe("CompanionGithubToken — the env file the companion mounts", () => {
     expect(() => readFileSync(join(tmp, "out-4", TOKEN_FILE))).toThrow();
   });
 });
+
+// H4. From 2026-10-02 to 2026-10-08 the companion never received
+// its token. renderTokenEnv accepted only [A-Za-z0-9_], but GitHub's
+// installation tokens now also contain `.` and `-`. Each 5-minute refresh
+// minted a real token and threw it away.
+describe("GitHub's current token format — the env file carries it, and only safe characters", () => {
+  it("the sample has the real token's shape", () => {
+    expect(REAL_FORMAT_TOKEN).toHaveLength(383);
+    expect(REAL_FORMAT_TOKEN.startsWith("ghs_")).toBe(true);
+    expect(REAL_FORMAT_TOKEN.split(".").map((s) => s.length)).toEqual([48, 247, 86]);
+    // The two characters the old plain-word check refused.
+    expect(REAL_FORMAT_TOKEN).toContain("-");
+    expect(REAL_FORMAT_TOKEN).toContain(".");
+  });
+
+  it("a real-format token is minted and written to the env file whole", async () => {
+    const dir = join(tmp, "out-real");
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: secrets(),
+      fetchFn: fakeGithub(undefined, REAL_FORMAT_TOKEN).fetchFn,
+      now: () => NOW,
+    });
+    expect(await t.refresh()).toEqual({ kind: "minted", expiresAt: EXPIRES });
+    const text = readFileSync(join(dir, TOKEN_FILE), "utf8");
+    expect(text).toContain(`\n${TOKEN_VAR}=${REAL_FORMAT_TOKEN}\n`);
+    for (const line of text.split("\n").filter((l) => l !== "" && !l.startsWith("#")))
+      expect(line).toMatch(/^[A-Z_]+=[^\s'"$`\\#]+$/);
+    // Fresh now: the next check mints nothing. Before H4, every check minted.
+    expect((await t.refresh()).kind).toBe("fresh");
+  });
+
+  it("sourced by a real shell, the file yields exactly the token, the expiry and the repo", () => {
+    const dir = join(tmp, "out-sourced");
+    const file = writeTokenEnv(dir, renderTokenEnv(tokenOf(REAL_FORMAT_TOKEN), "acme/widgets"));
+    // The way prompts/companion.md tells the companion to read it.
+    const out = execFileSync(
+      "sh",
+      [
+        "-c",
+        '. "$1" && printf "%s\\n%s\\n%s" "$QCR_GITHUB_READ_TOKEN" "$QCR_GITHUB_READ_EXPIRES_AT" "$QCR_GITHUB_REPO"',
+        "sh",
+        file,
+      ],
+      { encoding: "utf8", cwd: dir },
+    );
+    expect(out).toBe(`${REAL_FORMAT_TOKEN}\n${EXPIRES}\nacme/widgets`);
+  });
+
+  it("the container's reader sends the whole token as the bearer", async () => {
+    const file = writeTokenEnv(
+      join(tmp, "out-reader"),
+      renderTokenEnv(tokenOf(REAL_FORMAT_TOKEN), "acme/widgets"),
+    );
+    const auths: string[] = [];
+    const gh = tokenFileGitHubReader({
+      envFile: file,
+      fetch: (async (_url: string, init?: RequestInit) => {
+        auths.push((init?.headers as Record<string, string>).Authorization!);
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+      clock: () => new Date(NOW),
+    });
+    expect((await gh.get("/repos/acme/widgets")).ok).toBe(true);
+    expect(auths).toEqual([`Bearer ${REAL_FORMAT_TOKEN}`]);
+  });
+
+  it("still refuses a token with whitespace, quotes, $, a backtick, a backslash, # or a newline", async () => {
+    const bad = [
+      "ghs_a b",
+      "ghs_a\tb",
+      "ghs_a'b",
+      'ghs_a"b',
+      "ghs_a$b",
+      "ghs_$(id)",
+      "ghs_a`id`",
+      "ghs_a\\b",
+      "ghs_a#b",
+      "ghs_a*",
+      "ghs_a\nGH_TOKEN=x",
+      "ghs_a\r",
+      "ghs_a;id",
+      "",
+      `${REAL_FORMAT_TOKEN} `,
+    ];
+    for (const token of bad) {
+      expect(() => renderTokenEnv(tokenOf(token), "acme/widgets"), JSON.stringify(token)).toThrow(
+        /a character an env file cannot carry safely/,
+      );
+    }
+    // Through the refresh too: a failed outcome that never echoes the token,
+    // and no file the companion could pick up.
+    const dir = join(tmp, "out-bad-token");
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: secrets(),
+      fetchFn: fakeGithub(undefined, "ghs_secret$(id)").fetchFn,
+      now: () => NOW,
+    });
+    const o = await t.refresh();
+    expect(o.kind).toBe("failed");
+    expect(tokenOutcomeLine(o)).not.toContain("ghs_secret");
+    expect(existsSync(join(dir, TOKEN_FILE))).toBe(false);
+  });
+
+  it("widening the charset widened nothing else: a wider grant is still refused", async () => {
+    for (const grant of [
+      { contents: "write", issues: "read", pull_requests: "read", metadata: "read" },
+      { ...COMPANION_GITHUB_PERMISSIONS, actions: "read" },
+    ]) {
+      await expect(
+        mintReadOnlyToken({
+          appId: "1",
+          pem: PEM,
+          repo: "acme/widgets",
+          fetchFn: fakeGithub(grant, REAL_FORMAT_TOKEN).fetchFn,
+          now: () => NOW,
+        }),
+      ).rejects.toThrow(/refused the minted token/);
+    }
+    const dir = join(tmp, "out-real-wide");
+    const t = new CompanionGithubToken({
+      dir,
+      repo: "acme/widgets",
+      secretsDir: secrets(),
+      fetchFn: fakeGithub({ contents: "write" }, REAL_FORMAT_TOKEN).fetchFn,
+      now: () => NOW,
+    });
+    expect((await t.refresh()).kind).toBe("failed");
+    expect(existsSync(join(dir, TOKEN_FILE))).toBe(false);
+  });
+});
+
+function tokenOf(token: string) {
+  return { token, expires_at: EXPIRES, permissions: { contents: "read" } };
+}
 
 describe("where the token dir lives", () => {
   it("sits outside both install homes and the operator's config tree", () => {

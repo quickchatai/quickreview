@@ -31,6 +31,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseSkillFrontmatter } from "./helpers/skill-frontmatter.js";
 
 const SKILLS_DIR = join(process.cwd(), "skills/companion");
 
@@ -44,16 +45,29 @@ interface Skill {
   body: string;
 }
 
+/** The values pi reads, through a real YAML parser (H4). This was a
+ * regex over the raw line, and it passed a `replay` description that pi could
+ * not parse and so never loaded. */
 function parseSkill(dir: string): Skill {
   const raw = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf8");
-  const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
-  if (!m) throw new Error(`${dir}/SKILL.md has no frontmatter block`);
-  const front = m[1]!;
-  const name = /^name:[ \t]*(.+)$/m.exec(front)?.[1]?.trim();
-  const description = /^description:[ \t]*(.+)$/m.exec(front)?.[1]?.trim();
+  let fm: ReturnType<typeof parseSkillFrontmatter>;
+  try {
+    fm = parseSkillFrontmatter(raw);
+  } catch (err) {
+    throw new Error(`${dir}/SKILL.md: ${err instanceof Error ? err.message : String(err)}`, {
+      cause: err,
+    });
+  }
+  // Only a value pi reads as a string counts: a plain `null` or `123` is not.
+  const str = (key: string) => {
+    const v = fm.fields.get(key);
+    return v?.resolvesTo === "string" ? v.value.trim() : undefined;
+  };
+  const name = str("name");
+  const description = str("description");
   if (!name || !description)
     throw new Error(`${dir}/SKILL.md frontmatter needs both name: and description:`);
-  return { name, description, body: m[2]! };
+  return { name, description, body: fm.body };
 }
 
 const skills = new Map<string, Skill>(

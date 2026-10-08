@@ -142,10 +142,31 @@ export async function mintReadOnlyToken(opts: {
   };
 }
 
-/** The env file's text. Values are checked to be plain words, so the file is
- * both a docker env file and safe to `source`. */
+/**
+ * What a token may be made of to go into the env file. It is GitHub's token
+ * alphabet: an installation token is `ghs_` followed by base64url segments
+ * joined by `.` (383 characters as of 2026-10). Nothing else is allowed, so no
+ * whitespace, quote, `$`, backtick, backslash, `#`, glob character or newline
+ * can reach the file.
+ *
+ * `.` and `-` are safe both ways the file is read. When it is `source`d, the
+ * value of a `NAME=value` assignment is neither split nor globbed. Docker's
+ * env-file format takes the rest of the line literally.
+ *
+ * The check used to be `[A-Za-z0-9_]`, older than this token format. From
+ * 2026-10-02 it refused every real token, so the companion never got one
+ * (H4).
+ */
+const TOKEN_VALUE_RE = /^[A-Za-z0-9_.-]+$/;
+
+/** The env file's text. Every value is checked against a character set that
+ * is inert in both a docker env file and a `source`d shell file. A token
+ * outside that set is refused, and the refusal never echoes it. */
 export function renderTokenEnv(tok: ReadToken, repo: string): string {
-  if (!/^[A-Za-z0-9_]+$/.test(tok.token)) throw new Error("the minted token is not a plain word");
+  if (!TOKEN_VALUE_RE.test(tok.token))
+    throw new Error(
+      "the minted token has a character an env file cannot carry safely (only A-Z a-z 0-9 _ . - are allowed)",
+    );
   if (!/^[0-9TZ:.+-]+$/.test(tok.expires_at))
     throw new Error("the token expiry is not a timestamp");
   if (!REPO_RE.test(repo))
