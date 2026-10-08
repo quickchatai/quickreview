@@ -32,7 +32,6 @@ import {
   readFindingsRecord,
   type FindingsRecordEntry,
   type PriorStatus,
-  type PriorStatusEntry,
 } from "./findingsrecord.js";
 import { canonicalLensIds } from "./lensids.js";
 import { fenceAsData } from "./memory/datafence.js";
@@ -284,7 +283,7 @@ export function computePriorFindings(input: ComputePriorInput): PriorFindingsLis
     if (
       report !== undefined &&
       report.round > lastPosted &&
-      (!rowResolves || report.round >= res!.round)
+      (!rowResolves || report.round >= res.round)
     ) {
       if (RESOLVED.has(report.status)) {
         dropped.push({
@@ -297,7 +296,7 @@ export function computePriorFindings(input: ComputePriorInput): PriorFindingsLis
         continue;
       }
     } else if (rowResolves) {
-      dropped.push({ ref, why: res!.why, by_round: res!.round });
+      dropped.push({ ref, why: res.why, by_round: res.round });
       continue;
     }
     const openReport = report !== undefined && report.round > lastPosted ? report : null;
@@ -574,7 +573,7 @@ export function collectPriorFindings(
       ),
     );
     // Its reports are not ingested either — they count all the same.
-    for (const p of parsed.record.prior as PriorStatusEntry[])
+    for (const p of parsed.record.prior)
       checks.push({
         checked_round: round.round_no,
         round_no: p.round_no,
