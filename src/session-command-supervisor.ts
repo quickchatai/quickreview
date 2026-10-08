@@ -17,6 +17,7 @@ import {
   DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
   DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
   DEFAULT_SESSION_COMPACTION_MAX_S,
+  DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   type Config,
 } from "./config.js";
 import { sessionCommandMarker } from "./session-command.js";
@@ -286,10 +287,7 @@ export class SessionCommandSupervisor {
       // which would let a long daemon outage reset the hard cap.
       const origin = progress?.run_started_at ?? command.next_check_at;
       const hardAt = new Date(
-        Date.parse(origin) +
-          (this.deps.cfg.daemon.session_command_running_max_min ??
-            DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) *
-            60_000,
+        Date.parse(origin) + this.runningMaxMin(command) * 60_000,
       ).toISOString();
       if (this.deps.store.observeSessionCommandStarted(command.id, origin, hardAt)) {
         this.deps.store.logEvent("session_command_start_reconciled", command.pr, {
@@ -586,14 +584,15 @@ export class SessionCommandSupervisor {
     const firstPassAt =
       started +
       (this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN) * minute;
-    const passesAt =
-      started +
-      (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) * minute;
-    const hardAt =
-      started +
-      (this.deps.cfg.daemon.session_command_running_max_min ??
-        DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN) *
-        minute;
+    // a follow-up round whose pre-approval sweep is OWED may run a
+    // whole round-1 plan after its delta stage — its passes limit and its
+    // hard cap both get `[daemon] follow_up_sweep_extra_min` more.
+    const sweepOwed = round.sweep_owed === 1;
+    const sweepExtraMin = sweepOwed ? this.sweepExtraMin() : 0;
+    const passesMaxMin =
+      (this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN) + sweepExtraMin;
+    const passesAt = started + passesMaxMin * minute;
+    const hardAt = started + this.runningMaxMin(command, round) * minute;
     const planned = round.lenses
       .split(",")
       .map((name) => name.trim())
@@ -623,19 +622,32 @@ export class SessionCommandSupervisor {
     if (!plannedFanout) return false;
 
     const terminal = (status: string): boolean => status === "completed" || status === "failed";
+    // A sweep-owed round's planned (delta-stage) lens is judged by its FIRST
+    // execution only: a later run of the same lens is the sweep's, started
+    // after the delta stage, and counts as ADDED — never as this lens missing.
+    const deltaStage = sweepOwed ? firstExecutionPerLens(progress.agents) : null;
     const missing = planned.filter((name) => {
+      if (deltaStage) {
+        const first = deltaStage.get(name);
+        return first === undefined || !terminal(first.status);
+      }
       const executions = progress.agents.filter((agent) => lensForAgent(agent.agent) === name);
       return executions.length === 0 || executions.some((agent) => !terminal(agent.status));
     });
     const addedRunning = progress.agents
-      .filter((agent) => !planned.includes(lensForAgent(agent.agent)) && !terminal(agent.status))
+      .filter(
+        (agent) =>
+          (!planned.includes(lensForAgent(agent.agent)) ||
+            (deltaStage !== null && deltaStage.get(lensForAgent(agent.agent)) !== agent)) &&
+          !terminal(agent.status),
+      )
       .map((agent) => agent.agent);
     if ((missing.length > 0 || addedRunning.length > 0) && now >= passesAt) {
       const outstanding = [...missing, ...addedRunning].join(", ");
       await this.failRound(
         command,
         "passes_incomplete",
-        `command ${command.id} did not terminalize every planned/observed pass within ${this.deps.cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN} minutes; outstanding: ${outstanding}`,
+        `command ${command.id} did not terminalize every planned/observed pass within ${passesMaxMin} minutes; outstanding: ${outstanding}`,
       );
       return true;
     }
@@ -701,10 +713,27 @@ export class SessionCommandSupervisor {
     if (command.round_no !== null) await this.failRound(command, "settled_without_verdict", reason);
   }
 
-  private async runningHardBound(command: SessionCommandRow): Promise<void> {
-    const maxMin =
+  /** `[daemon] follow_up_sweep_extra_min`. */
+  private sweepExtraMin(): number {
+    return this.deps.cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN;
+  }
+
+  /** The command's fixed running cap in minutes: the configured bound, plus
+   * the sweep allowance when it carries a round whose pre-approval sweep is
+   * owed. Derived from the round ROW, never from progress. */
+  private runningMaxMin(command: SessionCommandRow, round?: RoundRow): number {
+    const base =
       this.deps.cfg.daemon.session_command_running_max_min ??
       DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN;
+    if (command.kind !== "round" || command.round_no === null) return base;
+    const row =
+      round ??
+      this.deps.store.roundsFor(command.pr).find((item) => item.round_no === command.round_no);
+    return row?.sweep_owed === 1 ? base + this.sweepExtraMin() : base;
+  }
+
+  private async runningHardBound(command: SessionCommandRow): Promise<void> {
+    const maxMin = this.runningMaxMin(command);
     const hardAt = new Date(Date.parse(command.started_at!) + maxMin * 60_000).toISOString();
     if (this.now().getTime() < Date.parse(hardAt)) {
       // Upgrade/restart reconciliation: an older bridge may have written a
@@ -948,4 +977,25 @@ export function roundStageSupervisorHealth(
     last_error_at: lease?.last_error_at ?? null,
     last_error: lease?.last_error ?? null,
   };
+}
+
+/** Each lens's FIRST execution, by start (list order breaks ties and stands in
+ * for an execution with no start milestone) — a follow-up round's delta stage
+ *. */
+function firstExecutionPerLens(
+  agents: RoundProgressSnapshot["agents"],
+): Map<string, RoundProgressSnapshot["agents"][number]> {
+  const first = new Map<string, RoundProgressSnapshot["agents"][number]>();
+  for (const agent of agents) {
+    const lens = lensForAgent(agent.agent);
+    const held = first.get(lens);
+    if (
+      held === undefined ||
+      (agent.started_at !== undefined &&
+        held.started_at !== undefined &&
+        agent.started_at < held.started_at)
+    )
+      first.set(lens, agent);
+  }
+  return first;
 }

@@ -15,6 +15,7 @@ import {
   DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
   DEFAULT_ROUND_PASSES_MAX_MIN,
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+  DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   loadConfig,
   sandboxRoot,
   type Config,
@@ -386,6 +387,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     passes_max_min: cfg.daemon.round_passes_max_min ?? DEFAULT_ROUND_PASSES_MAX_MIN,
     running_max_min:
       cfg.daemon.session_command_running_max_min ?? DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
+    follow_up_sweep_extra_min:
+      cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   };
 
   // Overseer wake policy: every logAnomaly flows through the ONE

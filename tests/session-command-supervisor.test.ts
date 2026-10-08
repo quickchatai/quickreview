@@ -1385,3 +1385,180 @@ function events(kind: string): Array<{ pr: number | null; payload: any }> {
     }>
   ).map((row) => ({ pr: row.pr, payload: JSON.parse(row.payload) }));
 }
+
+// (docs/follow-up-rounds.md): a follow-up round whose pre-approval
+// sweep is OWED runs a whole round-1 plan after its delta stage. Its passes
+// limit and its hard cap get `[daemon] follow_up_sweep_extra_min` more, and a
+// sweep lens started after the delta stage is an ADDED pass, never a missing
+// planned one.
+describe("a follow-up round with the pre-approval sweep owed", () => {
+  const owe = (roundId: number) =>
+    store.setRoundMeta(roundId, { scope: "delta", sweep_owed: true });
+
+  function progressFor(
+    id: string,
+    pr: number,
+    agents: Array<{
+      agent: string;
+      status: "running" | "completed";
+      started: string;
+      finished?: string;
+    }>,
+  ) {
+    return () => ({
+      version: 2 as const,
+      pr,
+      session: `pr-${pr}`,
+      run_started_at: "2026-08-27T20:00:00.000Z",
+      updated_at: clock.toISOString(),
+      parent_status: "active" as const,
+      command_id: id,
+      command_sha256: "a".repeat(64),
+      command_accepted_at: "2026-08-27T20:00:01.000Z",
+      first_lens_started_at: "2026-08-27T20:01:00.000Z",
+      last_activity_at: clock.toISOString(),
+      last_activity: "sweep running",
+      agents: agents.map((a, i) => ({
+        execution_id: `lens-${i}:${a.agent}`,
+        agent: a.agent,
+        status: a.status,
+        duration_ms: 1,
+        tool_count: 1,
+        started_at: a.started,
+        ...(a.finished ? { finished_at: a.finished } : {}),
+      })),
+    });
+  }
+
+  it("the hard cap is the configured bound plus the sweep allowance", async () => {
+    const { id, roundId, pr, round } = seedRoundCommand({ status: "running", started: true });
+    owe(roundId);
+    // Started 60 minutes ago: past 45, inside 45 + 20.
+    store.db
+      .prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
+      .run("2026-08-27T19:05:00.000Z", "2026-08-27T19:50:00.000Z", id);
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    await supervisor(hooks({ sessionAlive: async () => true }), onRoundFailure).supervisor.scan();
+    expect(onRoundFailure).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "running",
+      next_check_at: "2026-08-27T20:10:00.000Z",
+    });
+
+    // Past 45 + 20: the fixed bound still binds.
+    clock = new Date("2026-08-27T20:10:00.000Z");
+    await supervisor(hooks({ sessionAlive: async () => true }), onRoundFailure).supervisor.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "running_hard_bound",
+      expect.stringContaining("65-minute"),
+    );
+  });
+
+  it("a round with no sweep owed keeps the configured hard cap", async () => {
+    const { id, roundId, pr, round } = seedRoundCommand({ status: "running", started: true });
+    store.setRoundMeta(roundId, { scope: "delta", sweep_owed: false });
+    store.db
+      .prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
+      .run("2026-08-27T19:05:00.000Z", "2026-08-27T19:50:00.000Z", id);
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    await supervisor(hooks({ sessionAlive: async () => true }), onRoundFailure).supervisor.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "running_hard_bound",
+      expect.stringContaining("45-minute"),
+    );
+  });
+
+  it("the passes limit gets the sweep allowance, then binds", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, roundId, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T21:05:00.000Z",
+      lenses: ["pass-baseline", "pass-validate"],
+    });
+    owe(roundId);
+    const progress = progressFor(id, pr, [
+      {
+        agent: "pass-baseline--sol-med",
+        status: "completed",
+        started: "2026-08-27T20:01:00.000Z",
+        finished: "2026-08-27T20:10:00.000Z",
+      },
+      {
+        agent: "pass-validate--sol-high",
+        status: "completed",
+        started: "2026-08-27T20:11:00.000Z",
+        finished: "2026-08-27T20:15:00.000Z",
+      },
+      // The sweep: pass-security, then a second pass-baseline, still running.
+      { agent: "pass-security--sol-high", status: "running", started: "2026-08-27T20:16:00.000Z" },
+      { agent: "pass-baseline--sol-med", status: "running", started: "2026-08-27T20:16:00.000Z" },
+    ]);
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+
+    // 35 minutes in: the plain passes limit, not the sweep-owed one.
+    clock = new Date("2026-08-27T20:35:00.000Z");
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
+    expect(onRoundFailure).not.toHaveBeenCalled();
+
+    // 55 minutes in: 35 + 20 — the sweep's passes are outstanding as ADDED
+    // agents; the delta stage's planned lenses are complete, never missing.
+    clock = new Date("2026-08-27T20:55:00.000Z");
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "passes_incomplete",
+      expect.stringContaining(
+        "within 55 minutes; outstanding: pass-security--sol-high, pass-baseline--sol-med",
+      ),
+    );
+  });
+
+  it("without the sweep owed, a re-run of a planned lens still counts against that lens (unchanged)", async () => {
+    clock = new Date("2026-08-27T20:00:00.000Z");
+    const { id, pr, round } = seedRoundCommand({
+      status: "running",
+      started: true,
+      nextCheckAt: "2026-08-27T20:45:00.000Z",
+      lenses: ["pass-baseline"],
+    });
+    const progress = progressFor(id, pr, [
+      {
+        agent: "pass-baseline--sol-med",
+        status: "completed",
+        started: "2026-08-27T20:01:00.000Z",
+        finished: "2026-08-27T20:10:00.000Z",
+      },
+      { agent: "pass-baseline--sol-med", status: "running", started: "2026-08-27T20:16:00.000Z" },
+    ]);
+    const onRoundFailure = vi.fn(async () => "requeued" as const);
+    clock = new Date("2026-08-27T20:35:00.000Z");
+    await supervisor(
+      hooks({ killSession: async () => {} }),
+      onRoundFailure,
+      baseCfg,
+      progress,
+    ).supervisor.scan();
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      pr,
+      round.round_no,
+      "passes_incomplete",
+      expect.stringContaining("within 35 minutes; outstanding: pass-baseline"),
+    );
+  });
+});

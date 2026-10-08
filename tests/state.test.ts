@@ -806,6 +806,50 @@ describe("durable FAILED_LOUD review obligations", () => {
     });
   });
 
+  it("a sweep-owed round's projected passes and hard deadlines carry the sweep allowance", () => {
+    store.upsertPr(prRow(5468, { state: "reviewing", head_sha: "head" }));
+    const roundId = store.startRound(5468, "re-review", ["pass-baseline"], 75, {
+      scope: "delta",
+      sweep_owed: true,
+    });
+    expect(roundId).toBeGreaterThan(0);
+    store.createSessionCommand({
+      id: "cmd-sweep",
+      pr: 5468,
+      session: "pr-5468",
+      kind: "round",
+      round_no: 1,
+      payload_sha256: "e".repeat(64),
+      payload_path: "/payload/sweep.md",
+      inject_path: "/inject/sweep.md",
+      next_check_at: T0.toISOString(),
+    });
+    store.claimSessionCommand("cmd-sweep", "bridge", T0.toISOString());
+    store.markSessionCommandStarted("cmd-sweep", "bridge", "2026-08-13T09:45:00.000Z");
+    const snapshot = buildStatusSnapshot(
+      store,
+      false,
+      undefined,
+      now,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        first_pass_max_min: 5,
+        passes_max_min: 35,
+        running_max_min: 45,
+        follow_up_sweep_extra_min: 20,
+      },
+    );
+    expect(snapshot.prs.find((pr) => pr.number === 5468)?.current_round?.stage_deadlines).toEqual({
+      first_pass_start: "2026-08-13T09:05:00.000Z",
+      passes_complete: "2026-08-13T09:55:00.000Z",
+      running_hard_bound: "2026-08-13T10:05:00.000Z",
+    });
+  });
+
   it("turns an exact pre-fanout exhaustion into durable rate-limited automatic retry debt", () => {
     store.upsertPr(prRow(5467, { state: "reviewing", head_sha: "stall-head" }));
     const roundId = store.startRound(5467, "re-review", ["pass-baseline", "pass-validate"], 75);

@@ -363,6 +363,146 @@ export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecis
   return null;
 }
 
+/** What became of a follow-up round's pre-approval sweep (,
+ * `rounds.sweep_status`). */
+export type SweepStatus = "ran" | "not_owed" | "not_reached" | "unknown";
+
+/**
+ * The sweep status a follow-up round's verdict earns. `ran` only
+ * when the session CLAIMED it and its executed telemetry carries sweep-phase
+ * passes; every contradiction or gap is `unknown` with a note — never `ran`,
+ * because a run sweep is a full look and an unknown one must stay owed. Pure.
+ *
+ * `sweepPasses`: the count of executed `phase: "sweep"` entries, null when the
+ * verdict carried no usable pass telemetry.
+ */
+export function sweepStatusOf(args: {
+  owed: boolean;
+  claim: "ran" | "not_owed" | "not_reached" | null;
+  sweepPasses: number | null;
+  receiptSettled: boolean;
+}): { status: SweepStatus; note?: string } {
+  const { owed, claim, sweepPasses, receiptSettled } = args;
+  const executed = sweepPasses !== null && sweepPasses > 0;
+  if (!owed) {
+    return claim === "ran" || executed
+      ? {
+          status: "not_owed",
+          note: `the order carried no sweep, yet ${claim === "ran" ? "the session claimed one ran" : `${sweepPasses} sweep-phase passes executed`}`,
+        }
+      : { status: "not_owed" };
+  }
+  if (receiptSettled)
+    return { status: "unknown", note: "settled from the posting receipt — no sweep telemetry" };
+  if (claim === "ran") {
+    if (executed) return { status: "ran" };
+    return {
+      status: "unknown",
+      note:
+        sweepPasses === null
+          ? "claimed ran, but the executed passes are unknown"
+          : "claimed ran, but no sweep-phase pass executed",
+    };
+  }
+  if (executed)
+    return {
+      status: "unknown",
+      note: `${sweepPasses} sweep-phase passes executed, but the claim is ${claim ?? "absent"}`,
+    };
+  if (claim === "not_reached") return { status: "not_reached" };
+  if (claim === "not_owed")
+    return { status: "not_reached", note: "claimed not_owed, but the order carried a sweep" };
+  return { status: "unknown", note: "no sweep claim in the verdict" };
+}
+
+/** The planned lens set the round-end findings check stamps against
+ *: the round's plan, plus the sweep's lenses when the sweep RAN —
+ * their findings are planned work, never `unplanned`. */
+export function tailPlannedLenses(
+  round: Pick<RoundRow, "lenses" | "sweep_plan">,
+  sweepStatus: SweepStatus | null,
+): string {
+  const base = round.lenses ?? "";
+  if (sweepStatus !== "ran" || !round.sweep_plan) return base;
+  try {
+    const plan = JSON.parse(round.sweep_plan) as unknown;
+    if (!Array.isArray(plan)) return base;
+    const lenses = new Set(base.split(",").filter(Boolean));
+    for (const row of plan) {
+      const lens = (row as { lens?: unknown } | null)?.lens;
+      if (typeof lens === "string" && lens) lenses.add(lens);
+    }
+    return [...lenses].join(",");
+  } catch {
+    return base;
+  }
+}
+
+/** One stage's executed passes held against its plan (split per
+ * follow-up stage). Pure. */
+interface PlanComparison {
+  planned: string[];
+  executed: string[];
+  missing: string[];
+  unknownAdditions: string[];
+  missingReason: string[];
+  wrongTier: string[];
+  allowedAdditions: Array<{ name: string; tier: string | null; reason: string }>;
+}
+
+type PlanRow = { lens: string; tier: string; raisable_to?: string[] };
+
+function comparePlan(
+  passes: VerdictPassEntry[],
+  plan: PlanRow[] | null,
+  addable: Array<{ lens: string; tier: string }> | null,
+  legacyPlanned: string[],
+  checkMissing: boolean,
+): PlanComparison {
+  const executed = passes.map((p) => p.name);
+  const out: PlanComparison = {
+    planned: legacyPlanned,
+    executed,
+    missing: [],
+    unknownAdditions: [],
+    missingReason: [],
+    wrongTier: [],
+    allowedAdditions: [],
+  };
+  if (plan && addable) {
+    out.planned = plan.map((p) => p.lens);
+    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
+    const byAddable = new Map(addable.map((p) => [p.lens, p]));
+    const byPlan = new Map(plan.map((p) => [p.lens, p]));
+    for (const pass of passes) {
+      const plannedPass = byPlan.get(pass.name);
+      if (plannedPass) {
+        const tiers = [
+          plannedPass.tier,
+          ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
+        ];
+        if (!pass.tier || !tiers.includes(pass.tier)) out.wrongTier.push(pass.name);
+        continue;
+      }
+      const policy = byAddable.get(pass.name);
+      if (!policy) {
+        out.unknownAdditions.push(pass.name);
+        continue;
+      }
+      if (!pass.tier || pass.tier !== policy.tier) out.wrongTier.push(pass.name);
+      if (!pass.reason) out.missingReason.push(pass.name);
+      if (pass.tier === policy.tier && pass.reason) {
+        out.allowedAdditions.push({ name: pass.name, tier: pass.tier, reason: pass.reason });
+      }
+    }
+  } else {
+    // In-flight/pre-migration rows retain's name-only behavior.
+    if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
+    out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
+  }
+  return out;
+}
+
 export const VERDICT_FILE_RE = /^pr-(\d+)-round-(\d+)\.json$/;
 
 export interface ParsedVerdict {
@@ -391,6 +531,7 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
   };
   const passes: VerdictPassEntry[] = [];
   let dropped = 0;
+  let badPhase = 0;
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) {
       dropped++;
@@ -418,13 +559,44 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
       merged: count(e.merged),
       folded: count(e.folded),
     });
+    // which stage of a follow-up round launched the pass. Additive
+    // and tolerant — absent stays absent (a delta-stage pass, or a round that
+    // is not a follow-up), an unusable spelling is dropped with a note; the
+    // entry itself always survives.
+    if (e.phase !== undefined && e.phase !== null) {
+      const phase = normalizePassPhase(e.phase);
+      if (phase) passes[passes.length - 1]!.phase = phase;
+      else badPhase++;
+    }
   }
-  return {
-    passes,
-    ...(dropped > 0
-      ? { note: `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` }
-      : {}),
-  };
+  const notes = [
+    dropped > 0 ? `${dropped} malformed entr${dropped === 1 ? "y" : "ies"} dropped` : "",
+    badPhase > 0 ? `${badPhase} unusable phase${badPhase === 1 ? "" : "s"} ignored` : "",
+  ].filter(Boolean);
+  return { passes, ...(notes.length > 0 ? { note: notes.join("; ") } : {}) };
+}
+
+/** A pass entry's `phase`: `delta` | `sweep`, case and separators
+ * forgiven; anything else is unusable (null). */
+function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
+  if (typeof raw !== "string") return null;
+  const word = raw.trim().toLowerCase();
+  if (word === "delta") return "delta";
+  if (word === "sweep" || word === "pre-approval-sweep" || word === "pre_approval_sweep")
+    return "sweep";
+  return null;
+}
+
+/** The verdict's top-level `sweep`: `ran` | `not_owed` |
+ * `not_reached`, case forgiven and `-`/space read as `_`; anything else is
+ * unusable (null). */
+export function normalizeSweepClaim(raw: unknown): "ran" | "not_owed" | "not_reached" | null {
+  if (typeof raw !== "string") return null;
+  const word = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return word === "ran" || word === "not_owed" || word === "not_reached" ? word : null;
 }
 
 /** Shape validation for VerdictFile. Anything off → the anomaly path. */
@@ -498,7 +670,19 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const esc = normalizeSessionEscalations(v.escalations);
   if (esc.entries.length > 0) v.escalations = esc.entries;
   else delete v.escalations;
-  const notes = [norm.note, esc.note].filter(Boolean).join("; ");
+  // a follow-up round's pre-approval sweep claim — the same tolerant
+  // discipline: an unusable claim is dropped with a note (the daemon then
+  // records the sweep UNKNOWN), never a rejected verdict.
+  let sweepNote: string | undefined;
+  if (v.sweep !== undefined) {
+    const claim = normalizeSweepClaim(v.sweep);
+    if (claim) v.sweep = claim;
+    else {
+      sweepNote = `sweep claim unusable (${JSON.stringify(v.sweep).slice(0, 40)}) ignored`;
+      delete v.sweep;
+    }
+  }
+  const notes = [norm.note, esc.note, sweepNote].filter(Boolean).join("; ");
   return {
     ok: true,
     verdict: raw as unknown as VerdictFile,
@@ -1681,7 +1865,11 @@ export class VerdictWatcher {
     // Executed-pass telemetry: persist what actually ran beside the
     // plan, and flag plan≠executed. Best-effort side channel — nothing in it
     // may disturb the verdict.
-    if (round) await this.recordPassTelemetry(v, round);
+    // a follow-up round's pre-approval sweep — what became of it,
+    // read from the claim AND the executed telemetry — before the pass
+    // telemetry, which compares the sweep's passes only when it ran.
+    const sweepStatus = round ? this.recordSweepTelemetry(v, round, proven !== undefined) : null;
+    if (round) await this.recordPassTelemetry(v, round, sweepStatus);
     applyEvent(
       store,
       v.pr,
@@ -1827,7 +2015,7 @@ export class VerdictWatcher {
       v.round_no,
       round?.id ?? null,
       v.head_sha,
-      round?.lenses ?? "",
+      round ? tailPlannedLenses(round, sweepStatus) : "",
     );
     // The round is over. Fresh-head review work wins the session command slot;
     // held conversational wakes stay behind it and flush at the successor's
@@ -2100,6 +2288,62 @@ export class VerdictWatcher {
     );
   }
 
+  // ---- follow-up sweep telemetry ------------------------------
+
+  /**
+   * Record what became of a follow-up round's pre-approval sweep
+   * (`rounds.sweep_status`) and return it; null on a round that is not a
+   * follow-up (nothing written). `ran` needs BOTH the session's claim and
+   * sweep-phase passes in its executed telemetry — a claim with no telemetry
+   * behind it is `unknown`, as is a verdict settled from the posting receipt
+   * (no telemetry at all): an unknown sweep never counts as a full look, so
+   * the next round owes it again. An idempotent overwrite after the
+   * `finishRound` claim, like the pass telemetry, so a resumed apply redoes
+   * it. An APPROVE with the sweep owed and not run is the quiet
+   * `followup_sweep_skipped` anomaly — the review is already on GitHub, so
+   * this is telemetry, never a veto. Wrapped: nothing here may disturb the
+   * verdict.
+   */
+  private recordSweepTelemetry(
+    v: VerdictFile,
+    round: RoundRow,
+    receiptSettled: boolean,
+  ): SweepStatus | null {
+    const { store } = this.deps;
+    try {
+      if (round.scope !== "delta" || round.sweep_owed === null) return null;
+      const owed = round.sweep_owed === 1;
+      const claim = v.sweep ?? null;
+      const sweepPasses = v.passes ? v.passes.filter((p) => p.phase === "sweep").length : null;
+      const { status, note } = sweepStatusOf({ owed, claim, sweepPasses, receiptSettled });
+      store.setRoundMeta(round.id, { sweep_status: status });
+      store.logEvent("followup_sweep_recorded", v.pr, {
+        round_id: round.id,
+        round_no: v.round_no,
+        owed,
+        claimed: claim,
+        sweep_passes: sweepPasses,
+        status,
+        ...(note ? { note } : {}),
+      });
+      if (note) this.log(`verdicts: #${v.pr} round ${v.round_no} sweep ${status}: ${note}`);
+      if (v.verdict === "APPROVE" && owed && status !== "ran") {
+        store.logAnomaly(
+          "followup_sweep_skipped",
+          v.pr,
+          v.round_no,
+          `APPROVE with the pre-approval sweep owed and ${status}` +
+            `${claim ? ` (claimed ${claim})` : " (no claim)"}` +
+            `${sweepPasses === null ? "; executed passes unknown" : `; ${sweepPasses} sweep-phase passes`}`,
+        );
+      }
+      return status;
+    } catch (err) {
+      this.log(`verdicts: sweep telemetry failed for #${v.pr}`, err);
+      return null;
+    }
+  }
+
   // ---- executed-pass telemetry --------------------------------
 
   /**
@@ -2108,7 +2352,11 @@ export class VerdictWatcher {
    * logged anomaly + overseer inject. NEVER blocks the verdict — everything
    * here is wrapped, and the verdict was already applied by the caller.
    */
-  private async recordPassTelemetry(v: VerdictFile, round: RoundRow): Promise<void> {
+  private async recordPassTelemetry(
+    v: VerdictFile,
+    round: RoundRow,
+    sweepStatus: SweepStatus | null = null,
+  ): Promise<void> {
     const { store } = this.deps;
     try {
       if (!v.passes) {
@@ -2126,50 +2374,41 @@ export class VerdictWatcher {
       store.recordExecutedPasses(round.id, v.passes);
       const executed = v.passes.map((p) => p.name);
       const legacyPlanned = round.lenses ? round.lenses.split(",").filter(Boolean) : [];
-      let planned = legacyPlanned;
-      let missing: string[];
-      let unknownAdditions: string[] = [];
-      const missingReason: string[] = [];
-      const wrongTier: string[] = [];
-      const allowedAdditions: Array<{ name: string; tier: string | null; reason: string }> = [];
-
-      if (round.pass_plan && round.addable_passes) {
-        const plan = JSON.parse(round.pass_plan) as Array<{
-          lens: string;
-          tier: string;
-          raisable_to?: string[];
-        }>;
-        const addable = JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>;
-        planned = plan.map((p) => p.lens);
-        missing = planned.filter((lens) => !executed.includes(lens));
-        const byAddable = new Map(addable.map((p) => [p.lens, p]));
-        const byPlan = new Map(plan.map((p) => [p.lens, p]));
-        for (const pass of v.passes) {
-          const plannedPass = byPlan.get(pass.name);
-          if (plannedPass) {
-            const tiers = [
-              plannedPass.tier,
-              ...(plannedPass.raisable_to ?? []).map((agent) => agent.split("--").at(-1)!),
-            ];
-            if (!pass.tier || !tiers.includes(pass.tier)) wrongTier.push(pass.name);
-            continue;
-          }
-          const policy = byAddable.get(pass.name);
-          if (!policy) {
-            unknownAdditions.push(pass.name);
-            continue;
-          }
-          if (!pass.tier || pass.tier !== policy.tier) wrongTier.push(pass.name);
-          if (!pass.reason) missingReason.push(pass.name);
-          if (pass.tier === policy.tier && pass.reason) {
-            allowedAdditions.push({ name: pass.name, tier: pass.tier, reason: pass.reason });
-          }
-        }
-      } else {
-        // In-flight/pre-migration rows retain's name-only behavior.
-        missing = planned.filter((lens) => !executed.includes(lens));
-        unknownAdditions = [...new Set(executed.filter((lens) => !planned.includes(lens)))];
+      const plan = round.pass_plan ? (JSON.parse(round.pass_plan) as PlanRow[]) : null;
+      const addable = round.addable_passes
+        ? (JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>)
+        : null;
+      // a follow-up round runs two stages. The delta stage's passes
+      // (phase "delta", or none) answer to `pass_plan`; the sweep's (phase
+      // "sweep") to `sweep_plan` — and a sweep lens is MISSING only when the
+      // sweep ran, so a round that decided before the sweep raises nothing.
+      // Every other round compares every pass against its plan, as before.
+      const followUp = round.scope === "delta";
+      const deltaPasses = followUp ? v.passes.filter((p) => p.phase !== "sweep") : v.passes;
+      const sweepPasses = followUp ? v.passes.filter((p) => p.phase === "sweep") : [];
+      const main = comparePlan(deltaPasses, plan, addable, legacyPlanned, true);
+      let sweep: PlanComparison | null = null;
+      if (sweepPasses.length > 0 || sweepStatus === "ran") {
+        const sweepPlan = round.sweep_plan ? (JSON.parse(round.sweep_plan) as PlanRow[]) : [];
+        // What the sweep may add: the round's addable set and the delta's own
+        // plan rows, minus what the sweep already plans.
+        const inSweep = new Set(sweepPlan.map((p) => p.lens));
+        const sweepAddable = [
+          ...(addable ?? []),
+          ...(plan ?? []).map((p) => ({ lens: p.lens, tier: p.tier })),
+        ].filter((p) => !inSweep.has(p.lens));
+        sweep = comparePlan(sweepPasses, sweepPlan, sweepAddable, [], sweepStatus === "ran");
       }
+      const tag = (names: string[]): string[] => names.map((n) => `sweep:${n}`);
+      const planned = main.planned;
+      const missing = [...main.missing, ...tag(sweep?.missing ?? [])];
+      const unknownAdditions = [...main.unknownAdditions, ...tag(sweep?.unknownAdditions ?? [])];
+      const missingReason = [...main.missingReason, ...tag(sweep?.missingReason ?? [])];
+      const wrongTier = [...main.wrongTier, ...tag(sweep?.wrongTier ?? [])];
+      const allowedAdditions = [
+        ...main.allowedAdditions,
+        ...(sweep?.allowedAdditions ?? []).map((a) => ({ ...a, name: `sweep:${a.name}` })),
+      ];
 
       if (allowedAdditions.length > 0) {
         store.logEvent("pass_plan_conformant_addition", v.pr, {
@@ -2192,6 +2431,7 @@ export class VerdictWatcher {
         missing_reason: missingReason,
         wrong_tier: wrongTier,
         allowed_additions: allowedAdditions,
+        ...(sweep ? { sweep_planned: sweep.planned, sweep_status: sweepStatus } : {}),
       });
       this.log(`verdicts: #${v.pr} round ${v.round_no} pass plan mismatch`, {
         planned,
@@ -2213,6 +2453,11 @@ export class VerdictWatcher {
         [
           `PASS-PLAN MISMATCH — PR #${v.pr} round ${v.round_no}`,
           `Planned: ${planned.join(", ") || "(none)"}`,
+          ...(sweep
+            ? [
+                `Pre-approval sweep (${sweepStatus ?? "unknown"}): ${sweep.planned.join(", ") || "(none planned)"}`,
+              ]
+            : []),
           `Executed: ${executed.join(", ") || "(none — solo/degraded round)"}`,
           ...(missing.length ? [`Missing planned passes: ${missing.join(", ")}`] : []),
           ...(unknownAdditions.length

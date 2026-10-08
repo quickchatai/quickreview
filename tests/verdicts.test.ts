@@ -21,11 +21,13 @@ import { StateStore, type ReviewedHeadRow } from "../src/state.js";
 import { fingerprintRoundIntegrity } from "../src/execboundary.js";
 import { githubCloneDir } from "../src/config.js";
 import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
-import type { SessionHooks, VerdictFile } from "../src/types.js";
+import type { PassPlanEntry, SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import {
   OWED_MEASUREMENT_RESUME_MAX_MS,
   STAGED_FILE_MAX_AGE_MS,
+  sweepStatusOf,
+  tailPlannedLenses,
   validateVerdict,
   VerdictWatcher,
   type VerdictAdapter,
@@ -3742,5 +3744,340 @@ describe("integration review", () => {
       "pr-630-round-3.json.tmp",
     ]);
     expect(count("verdict_staging_pruned", 630)).toBe(2);
+  });
+});
+
+// (docs/follow-up-rounds.md): a follow-up round's verdict carries the
+// pre-approval sweep's claim and per-pass phases. Both are parsed tolerantly,
+// the pass plan is compared per stage, and `rounds.sweep_status` records what
+// became of the sweep — `ran` only on a claim WITH sweep-phase telemetry.
+describe("follow-up rounds: sweep telemetry", () => {
+  const DELTA_PLAN: PassPlanEntry[] = [
+    { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+  ];
+  const SWEEP_PLAN: PassPlanEntry[] = [
+    { lens: "pass-baseline", agent: "pass-baseline--sol-med", tier: "sol-med", raisable_to: [] },
+    { lens: "pass-security", agent: "pass-security--sol-high", tier: "sol-high", raisable_to: [] },
+    { lens: "pass-validate", agent: "pass-validate--sol-high", tier: "sol-high", raisable_to: [] },
+  ];
+  const DELTA_PASSES = [
+    { name: "pass-baseline", tier: "sol-med", phase: "delta", findings: 1 },
+    { name: "pass-validate", tier: "sol-high", phase: "delta", findings: 0 },
+  ];
+  const SWEEP_PASSES = [
+    { name: "pass-baseline", tier: "sol-med", phase: "sweep", findings: 0 },
+    { name: "pass-security", tier: "sol-high", phase: "sweep", findings: 0 },
+    { name: "pass-validate", tier: "sol-high", phase: "sweep", findings: 0 },
+  ];
+
+  function followUpRound(pr: number, opts: { sweepOwed: boolean }): number {
+    store.upsertPr({
+      number: pr,
+      state: "reviewing",
+      head_sha: "abc123",
+      title: `PR ${pr}`,
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    return store.startRound(
+      pr,
+      "re-review",
+      ["pass-baseline", "pass-validate"],
+      cfg.daemon.round_deadline_min,
+      {
+        pass_plan: DELTA_PLAN,
+        addable_passes: [
+          { lens: "pass-concurrency", tier: "sol-med" },
+          { lens: "pass-security", tier: "sol-high" },
+        ],
+        head_sha: "abc123",
+        scope: "delta",
+        delta_base_sha: "old000",
+        delta_lines: 12,
+        delta_files: 1,
+        sweep_owed: opts.sweepOwed,
+        ...(opts.sweepOwed ? { sweep_plan: SWEEP_PLAN } : { sweep_status: "not_owed" as const }),
+      },
+    );
+  }
+  const row = (id: number) =>
+    store.db.prepare("SELECT * FROM rounds WHERE id = ?").get(id) as {
+      sweep_status: string | null;
+      status: string;
+      verdict: string | null;
+    };
+  const count = (kind: string) =>
+    (
+      store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = ?").get(kind) as {
+        c: number;
+      }
+    ).c;
+  const anomalyKinds = () => store.anomalies().map((a) => a.kind);
+  const mismatch = () =>
+    JSON.parse(
+      (
+        store.db.prepare("SELECT payload FROM events WHERE kind = 'pass_plan_mismatch'").get() as {
+          payload: string;
+        }
+      ).payload,
+    );
+
+  it("parses phase and the sweep claim tolerantly: forgiven spellings kept, junk dropped with a note, never a rejection", () => {
+    const parsed = validateVerdict(
+      verdictFile({
+        sweep: " Not-Reached ",
+        passes: [
+          { name: "pass-baseline", tier: "sol-med", phase: "Sweep" },
+          { name: "pass-validate", tier: "sol-med", phase: "later" },
+          { name: "pass-security", tier: "sol-med" },
+        ] as never,
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.verdict?.sweep).toBe("not_reached");
+    expect(parsed.verdict?.passes?.map((p) => [p.name, p.phase])).toEqual([
+      ["pass-baseline", "sweep"],
+      ["pass-validate", undefined],
+      ["pass-security", undefined],
+    ]);
+    // Absent phase stays absent — the legacy shape is unchanged.
+    expect("phase" in parsed.verdict!.passes![2]!).toBe(false);
+    expect(parsed.passes_note).toContain("1 unusable phase ignored");
+
+    const junk = validateVerdict(verdictFile({ sweep: { ran: true } }));
+    expect(junk.ok).toBe(true);
+    expect(junk.verdict?.sweep).toBeUndefined();
+    expect(junk.passes_note).toContain("sweep claim unusable");
+    // Absent is clean: no note.
+    expect(validateVerdict(verdictFile()).passes_note).toContain("absent");
+    expect(validateVerdict(verdictFile({ passes: [] })).passes_note).toBeUndefined();
+  });
+
+  it("sweepStatusOf: ran only on a claim WITH sweep-phase telemetry; every gap or contradiction is unknown", () => {
+    const of = (
+      owed: boolean,
+      claim: "ran" | "not_owed" | "not_reached" | null,
+      sweepPasses: number | null,
+      receiptSettled = false,
+    ) => sweepStatusOf({ owed, claim, sweepPasses, receiptSettled }).status;
+    expect(of(true, "ran", 3)).toBe("ran");
+    expect(of(true, "ran", 0)).toBe("unknown");
+    expect(of(true, "ran", null)).toBe("unknown");
+    expect(of(true, "ran", 3, true)).toBe("unknown");
+    expect(of(true, "not_reached", 0)).toBe("not_reached");
+    expect(of(true, "not_reached", 2)).toBe("unknown");
+    expect(of(true, "not_owed", 0)).toBe("not_reached");
+    expect(of(true, null, 0)).toBe("unknown");
+    expect(of(true, null, 3)).toBe("unknown");
+    expect(of(false, "ran", 3)).toBe("not_owed");
+    expect(of(false, "not_owed", 0)).toBe("not_owed");
+    expect(
+      sweepStatusOf({ owed: true, claim: "ran", sweepPasses: 0, receiptSettled: false }).note,
+    ).toContain("no sweep-phase pass");
+  });
+
+  it("a delta round that decided REQUEST_CHANGES before the sweep raises no pass_plan_mismatch and no skip", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const id = followUpRound(700, { sweepOwed: true });
+    await watcher({}, hooks).handleFile(
+      write(700, 1, verdictFile({ pr: 700, sweep: "not_reached", passes: DELTA_PASSES })),
+    );
+    expect(row(id)).toMatchObject({ status: "done", sweep_status: "not_reached" });
+    expect(count("pass_plan_mismatch")).toBe(0);
+    expect(anomalyKinds()).not.toContain("followup_sweep_skipped");
+    expect(overseer).toEqual([]);
+    expect(store.fullLookSinceFirst(700)).toBe(false);
+  });
+
+  it("an APPROVE whose sweep ran: status ran, both stages conform, and the full look is counted", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const id = followUpRound(701, { sweepOwed: true });
+    await watcher({}, hooks).handleFile(
+      write(
+        701,
+        1,
+        verdictFile({
+          pr: 701,
+          verdict: "APPROVE",
+          sweep: "ran",
+          passes: [...DELTA_PASSES, ...SWEEP_PASSES],
+        }),
+      ),
+    );
+    expect(row(id)).toMatchObject({ verdict: "APPROVE", sweep_status: "ran" });
+    expect(count("pass_plan_mismatch")).toBe(0);
+    expect(anomalyKinds()).not.toContain("followup_sweep_skipped");
+    expect(overseer).toEqual([]);
+    expect(store.fullLookSinceFirst(701)).toBe(true);
+    // Both stages' passes are kept, phases included.
+    expect(store.executedPasses(id)?.filter((p) => p.phase === "sweep")).toHaveLength(3);
+  });
+
+  it("a sweep that ran short of its plan is a mismatch on the sweep's lenses alone", async () => {
+    const id = followUpRound(702, { sweepOwed: true });
+    await watcher().handleFile(
+      write(
+        702,
+        1,
+        verdictFile({
+          pr: 702,
+          verdict: "APPROVE",
+          sweep: "ran",
+          passes: [...DELTA_PASSES, SWEEP_PASSES[0], SWEEP_PASSES[2]],
+        }),
+      ),
+    );
+    expect(row(id).sweep_status).toBe("ran");
+    expect(mismatch()).toMatchObject({
+      planned: ["pass-baseline", "pass-validate"],
+      missing: ["sweep:pass-security"],
+      wrong_tier: [],
+      sweep_planned: ["pass-baseline", "pass-security", "pass-validate"],
+      sweep_status: "ran",
+    });
+  });
+
+  it("an APPROVE that claims the sweep with no sweep-phase telemetry: unknown, not a full look, the quiet followup_sweep_skipped", async () => {
+    const { hooks, overseer } = recordingHooks();
+    const id = followUpRound(703, { sweepOwed: true });
+    await watcher({}, hooks).handleFile(
+      write(
+        703,
+        1,
+        verdictFile({ pr: 703, verdict: "APPROVE", sweep: "ran", passes: DELTA_PASSES }),
+      ),
+    );
+    expect(row(id)).toMatchObject({ verdict: "APPROVE", sweep_status: "unknown" });
+    expect(store.getPr(703)!.state).toBe("tracked"); // telemetry, never a veto
+    expect(anomalyKinds()).toContain("followup_sweep_skipped");
+    // Quiet: no overseer wake for it.
+    expect(overseer.some((m) => m.includes("followup_sweep_skipped"))).toBe(false);
+    expect(overseer).toEqual([]);
+    expect(store.fullLookSinceFirst(703)).toBe(false);
+  });
+
+  it("an APPROVE with the sweep owed and reported not reached is a skip too", async () => {
+    followUpRound(704, { sweepOwed: true });
+    await watcher().handleFile(
+      write(
+        704,
+        1,
+        verdictFile({ pr: 704, verdict: "APPROVE", sweep: "not_reached", passes: DELTA_PASSES }),
+      ),
+    );
+    expect(anomalyKinds()).toContain("followup_sweep_skipped");
+  });
+
+  it("a withheld approval (APPROVE + approval_withheld) owes the sweep the same way", async () => {
+    followUpRound(709, { sweepOwed: true });
+    await watcher().handleFile(
+      write(
+        709,
+        1,
+        verdictFile({
+          pr: 709,
+          verdict: "APPROVE",
+          approval_withheld: true,
+          sweep: "not_reached",
+          passes: DELTA_PASSES,
+        }),
+      ),
+    );
+    expect(anomalyKinds()).toContain("followup_sweep_skipped");
+  });
+
+  it("a round with no sweep owed records not_owed and never raises the skip", async () => {
+    const id = followUpRound(705, { sweepOwed: false });
+    await watcher().handleFile(
+      write(
+        705,
+        1,
+        verdictFile({ pr: 705, verdict: "APPROVE", sweep: "not_owed", passes: DELTA_PASSES }),
+      ),
+    );
+    expect(row(id).sweep_status).toBe("not_owed");
+    expect(count("pass_plan_mismatch")).toBe(0);
+    expect(anomalyKinds()).not.toContain("followup_sweep_skipped");
+  });
+
+  it("a verdict settled from the posting receipt records the sweep UNKNOWN — never a full look", async () => {
+    const id = followUpRound(706, { sweepOwed: true });
+    const { key } = stampPosting(706, 1);
+    writePostingReceipt(706, 1, key, "APPROVE");
+    await watcher().handleFile(write(706, 1, `{"pr": 706, "round_no": 1, "verdi`));
+    expect(row(id)).toMatchObject({ status: "done", verdict: "APPROVE", sweep_status: "unknown" });
+    expect(anomalyKinds()).toContain("followup_sweep_skipped");
+    expect(store.fullLookSinceFirst(706)).toBe(false);
+  });
+
+  it("a round that is not a follow-up is untouched: no sweep status, phases ignored by the plan check", async () => {
+    const id = policyRound(707);
+    await watcher().handleFile(
+      write(
+        707,
+        1,
+        verdictFile({
+          pr: 707,
+          verdict: "APPROVE",
+          sweep: "ran",
+          passes: [
+            { name: "pass-baseline", tier: "sol-med", phase: "sweep", findings: 0 },
+            { name: "pass-validate", tier: "sol-high", findings: 0 },
+          ],
+        }),
+      ),
+    );
+    expect(row(id).sweep_status).toBeNull();
+    expect(count("followup_sweep_recorded")).toBe(0);
+    expect(count("pass_plan_mismatch")).toBe(0);
+    expect(anomalyKinds()).not.toContain("followup_sweep_skipped");
+  });
+
+  it("tailPlannedLenses: the sweep's lenses join the plan only when the sweep ran", () => {
+    const round = { lenses: "pass-baseline,pass-validate", sweep_plan: JSON.stringify(SWEEP_PLAN) };
+    expect(tailPlannedLenses(round, "ran")).toBe("pass-baseline,pass-validate,pass-security");
+    expect(tailPlannedLenses(round, "unknown")).toBe("pass-baseline,pass-validate");
+    expect(tailPlannedLenses(round, null)).toBe("pass-baseline,pass-validate");
+    expect(tailPlannedLenses({ ...round, sweep_plan: "{not json" }, "ran")).toBe(
+      "pass-baseline,pass-validate",
+    );
+  });
+
+  it("findings from a sweep that ran are planned work, never stamped unplanned", async () => {
+    const findingsDir = join(dir, "state", "findings");
+    mkdirSync(findingsDir, { recursive: true });
+    writeFileSync(
+      join(findingsDir, "pr-708-round-1.json"),
+      JSON.stringify({
+        pr: 708,
+        round_no: 1,
+        findings: [
+          { id: "a", lens: "pass-baseline", disposition: "posted" },
+          { id: "b", lens: "pass-security", disposition: "posted" },
+          { id: "c", lens: "pass-concurrency", disposition: "posted" },
+        ],
+      }),
+    );
+    followUpRound(708, { sweepOwed: true });
+    await watcher({ ledgerCheckDelayMs: 0, findingsDir }).handleFile(
+      write(
+        708,
+        1,
+        verdictFile({
+          pr: 708,
+          verdict: "APPROVE",
+          sweep: "ran",
+          passes: [...DELTA_PASSES, ...SWEEP_PASSES],
+        }),
+      ),
+    );
+    expect(store.findingsForRound(708, 1).map((r) => [r.lens, r.unplanned])).toEqual([
+      ["pass-baseline", 0],
+      ["pass-security", 0],
+      ["pass-concurrency", 1],
+    ]);
   });
 });

@@ -6597,6 +6597,9 @@ export interface RoundStageBounds {
   first_pass_max_min: number;
   passes_max_min: number;
   running_max_min: number;
+  /**: added to the passes limit and the hard cap of a round whose
+   * pre-approval sweep is owed — the supervisor's own reading. */
+  follow_up_sweep_extra_min?: number;
 }
 
 export interface StatusSnapshot {
@@ -6942,6 +6945,8 @@ export function buildStatusSnapshot(
                 if (!command?.started_at || !roundStageBounds) return identity;
                 const started = Date.parse(command.started_at);
                 if (!Number.isFinite(started)) return identity;
+                const sweepExtra =
+                  round.sweep_owed === 1 ? (roundStageBounds.follow_up_sweep_extra_min ?? 0) : 0;
                 return {
                   ...identity,
                   stage_deadlines: {
@@ -6949,10 +6954,10 @@ export function buildStatusSnapshot(
                       started + roundStageBounds.first_pass_max_min * 60_000,
                     ).toISOString(),
                     passes_complete: new Date(
-                      started + roundStageBounds.passes_max_min * 60_000,
+                      started + (roundStageBounds.passes_max_min + sweepExtra) * 60_000,
                     ).toISOString(),
                     running_hard_bound: new Date(
-                      started + roundStageBounds.running_max_min * 60_000,
+                      started + (roundStageBounds.running_max_min + sweepExtra) * 60_000,
                     ).toISOString(),
                   },
                 };
