@@ -12,7 +12,13 @@ import {
 import { join } from "node:path";
 import { loadConfig, sandboxRoot, type Config, type TuiConfig } from "./config.js";
 import { daemonLoadLine } from "./eventloop.js";
-import { archiveStatusLine } from "./archive/status.js";
+import {
+  ManifestUnreadable,
+  parseManifestText,
+  summarizeManifest,
+  type ManifestSummary,
+} from "./archive/manifest.js";
+import { archiveStatusLine, fmtBytes } from "./archive/status.js";
 import { memoryStatusLine } from "./memory/health.js";
 import {
   cancelCauseLabel,
@@ -596,11 +602,51 @@ export interface WhyPayload {
   withheld?: DoubtedFinding[];
   ledger?: string;
   archive?: string[];
+  /** S4: the PR's archive manifest in brief — what the archiver
+   * holds for it and what left the live tree. Absent when there is no
+   * manifest (nothing archived, or an older daemon); `unreadable` with why
+   * when there is one that cannot be read — never read as "nothing". */
+  archive_manifest?: WhyArchiveManifest;
   /** GitHub conversation surface — present only when the enrichment fetch
    * succeeded (needs the app credential; degrades silently without it). */
   description?: string;
   labels?: string[];
   comments?: Array<{ author: string; body: string; created_at: string }>;
+}
+
+/** `why --json`'s archive manifest summary (S4). */
+export type WhyArchiveManifest =
+  ({ state: "read" } & ManifestSummary) | { state: "unreadable"; error: string };
+
+/** The PR's archive manifest in brief, read in this process (synchronous:
+ * `qcr why` is a CLI, never the daemon). Undefined when there is none. */
+export function archiveManifestSummary(archiveDir: string): WhyArchiveManifest | undefined {
+  const path = join(archiveDir, "manifest.json");
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return { state: "unreadable", error: (err as Error).message };
+  }
+  try {
+    return { state: "read", ...summarizeManifest(parseManifestText(text, path)) };
+  } catch (err) {
+    if (err instanceof ManifestUnreadable) return { state: "unreadable", error: err.message };
+    throw err;
+  }
+}
+
+/** `qcr why`'s archive manifest line. */
+export function archiveManifestLine(m: WhyArchiveManifest): string {
+  if (m.state === "unreadable") return `archive manifest: UNREADABLE (${oneLine(m.error)})`;
+  return (
+    `archive manifest: ${m.passes} pass(es), last ${m.last_pass_at ?? "unknown"}; ` +
+    `${m.transcripts} transcript(s), ${m.files} large file(s), ${m.bundles} bundle(s) of ${m.records} record(s) — ` +
+    `${fmtBytes(m.bytes)} → ${fmtBytes(m.gz_bytes)}; ${m.sources_removed} live source(s) removed` +
+    (m.duplicates_removed > 0 ? `, ${m.duplicates_removed} legacy duplicate(s) removed` : "") +
+    (m.restores > 0 ? `; ${m.restores} restore(s)` : "")
+  );
 }
 
 /** One doubted finding as `why --json` carries it. */
@@ -719,6 +765,8 @@ export function whyJson(store: StateStore, n: number, archiveDir: string): WhyPa
     payload.archive = readdirSync(archiveDir);
     const ledger = join(archiveDir, "ledger.md");
     if (existsSync(ledger)) payload.ledger = readFileSync(ledger, "utf8");
+    const manifest = archiveManifestSummary(archiveDir);
+    if (manifest) payload.archive_manifest = manifest;
   }
   return payload;
 }
@@ -804,6 +852,8 @@ function cmdWhy(n: number): void {
     if (existsSync(archiveDir)) {
       console.log(`archive: ${archiveDir}`);
       for (const f of readdirSync(archiveDir)) console.log(`  ${f}`);
+      const manifest = archiveManifestSummary(archiveDir);
+      if (manifest) console.log(archiveManifestLine(manifest));
       const ledger = join(archiveDir, "ledger.md");
       if (existsSync(ledger)) {
         console.log("--- archived ledger ---");
@@ -1556,44 +1606,123 @@ export async function cmdOnboard(): Promise<number> {
   });
 }
 
-export const ARCHIVE_USAGE = "usage: qcr archive status [--plan] [--json]";
+export const ARCHIVE_USAGE =
+  "usage: qcr archive status [--plan] [--json] | qcr archive run | qcr archive restore <pr> | " +
+  "qcr archive extract <pr> --to <dir>";
 
 /** `qcr archive` arguments. An unknown token is refused, so a
  * mistyped `--plan` cannot quietly print the block alone. */
-export function parseArchiveArgs(rest: readonly string[]): { plan: boolean } {
-  if (rest[0] !== "status") throw new Error(ARCHIVE_USAGE);
-  let plan = false;
-  for (const a of rest.slice(1)) {
-    if (a === "--plan") plan = true;
-    else throw new Error(ARCHIVE_USAGE);
+export type ArchiveArgs =
+  | { verb: "status"; plan: boolean }
+  | { verb: "run" }
+  | { verb: "restore"; pr: number }
+  | { verb: "extract"; pr: number; to: string };
+
+export function parseArchiveArgs(rest: readonly string[]): ArchiveArgs {
+  const prOf = (v: string | undefined): number => {
+    const n = Number(v);
+    if (v === undefined || !/^[1-9]\d*$/.test(v) || !Number.isSafeInteger(n))
+      throw new Error(ARCHIVE_USAGE);
+    return n;
+  };
+  switch (rest[0]) {
+    case "status": {
+      let plan = false;
+      for (const a of rest.slice(1)) {
+        if (a === "--plan") plan = true;
+        else throw new Error(ARCHIVE_USAGE);
+      }
+      return { verb: "status", plan };
+    }
+    case "run":
+      if (rest.length !== 1) throw new Error(ARCHIVE_USAGE);
+      return { verb: "run" };
+    case "restore":
+      if (rest.length !== 2) throw new Error(ARCHIVE_USAGE);
+      return { verb: "restore", pr: prOf(rest[1]) };
+    case "extract": {
+      const pr = prOf(rest[1]);
+      if (rest.length !== 4 || rest[2] !== "--to" || !rest[3] || rest[3].startsWith("-"))
+        throw new Error(ARCHIVE_USAGE);
+      return { verb: "extract", pr, to: rest[3] };
+    }
+    default:
+      throw new Error(ARCHIVE_USAGE);
   }
-  return { plan };
 }
 
 /**
- * `qcr archive status [--plan] [--json]`: read-only, in this
- * process. The daemon's status.json `archive` block, the archive ledger
- * (`archive_prs`) — and with `--plan`, a plan computed HERE, now (tmux asked
- * in this container; the daemon's in-flight births are not visible from a
- * CLI, and the daemon re-checks them before anything moves). Moves nothing.
+ * `qcr archive …`:
+ *   - `status [--plan] [--json]` — read-only, in this process. The daemon's
+ *     status.json `archive` block, the archive ledger (`archive_prs`) — and
+ *     with `--plan`, a plan computed HERE, now (tmux asked in this container;
+ *     the daemon's in-flight births are not visible from a CLI, and the daemon
+ *     re-checks them before anything moves). Moves nothing.
+ *   - `run`, `restore <pr>` (S4) — the operator's two verbs: ONE command file
+ *     written as root into the sealed `commands/operator/` (the kill switch's
+ *     channel), confirmed by the daemon's own result file. The daemon runs
+ *     them under the archiver's strict mutex.
+ *   - `extract <pr> --to <dir>` (S4) — read-only over the archive: the PR's
+ *     archive decompressed into a scratch dir, every byte sha-verified, never
+ *     into a live tree. Runs where the archive is (the container).
  */
 async function cmdArchive(rest: readonly string[], json: boolean): Promise<number> {
-  const { plan: wantPlan } = parseArchiveArgs(rest);
+  const args = parseArchiveArgs(rest);
   const cfg = loadConfig();
+  if (args.verb === "run" || args.verb === "restore") {
+    const { runnerFor } = await import("./tui/remote.js");
+    const { ArchiveOpSender, renderArchiveOp } = await import("./tui/archiveops.js");
+    const cmd: import("./tui/archiveops.js").ArchiveOpCommand =
+      args.verb === "run"
+        ? { command: "archive-run" }
+        : { command: "archive-restore", pr: args.pr };
+    if (!json)
+      console.log(
+        `${cmd.command}${"pr" in cmd ? ` ${cmd.pr}` : ""} → ${cfg.tui.ssh_host}:${cfg.tui.remote_sandbox_root}/commands/operator/`,
+      );
+    const res = await new ArchiveOpSender(cfg.tui, runnerFor(cfg.tui)).send(cmd);
+    if (json) console.log(JSON.stringify(res));
+    else for (const line of renderArchiveOp(cmd, res)) console.log(line);
+    return res.ok ? 0 : 1;
+  }
   const root = sandboxRoot();
+  const { archivePolicy } = await import("./archive/archiver.js");
+  const policy = archivePolicy(cfg.archive);
+  if (args.verb === "extract") {
+    const { extractPr } = await import("./archive/extract.js");
+    const res = await extractPr({
+      root,
+      sessionsRoot: join(root, cfg.pi.session_dir),
+      pr: args.pr,
+      to: args.to,
+      bytesPerS: policy.maxBytesPerS,
+    });
+    if (json) console.log(JSON.stringify(res));
+    else if (!res.ok) console.log(`✖ refused: ${res.reason}`);
+    else {
+      const written = res.files.filter((f) => f.outcome === "written").length;
+      console.log(
+        `✓ pr-${args.pr} extracted to ${res.dir}: ${res.files.length} file(s) verified by sha256 ` +
+          `(${written} written, ${res.files.length - written} already there)` +
+          (res.copied.length > 0 ? `; copied as they are: ${res.copied.join(", ")}` : ""),
+      );
+      for (const e of res.errors) console.log(`✖ ${e.path}: ${e.error}`);
+    }
+    return res.ok && res.errors.length === 0 ? 0 : 1;
+  }
   const statusPath = join(stateDir(), "status.json");
   const { archiveLedgerSummary, archiveStatusJson, readArchiveBlockFile, renderArchiveReport } =
     await import("./archive/report.js");
   const { block, statusNote, archiveRead } = readArchiveBlockFile(statusPath);
-  const { archivePolicy } = await import("./archive/archiver.js");
   const store = openStore();
   try {
     const ledger = archiveLedgerSummary(store);
     let plan: import("./archive/plan.js").ArchivePlan | null = null;
-    if (wantPlan) {
+    if (args.plan) {
       const { computePlan } = await import("./archive/plan.js");
       const { Tmux } = await import("./tmux.js");
       const tmux = new Tmux();
+      const { piGlobalSessionsDir } = await import("./archive/piglobal.js");
       plan = await computePlan({
         store,
         root,
@@ -1602,9 +1731,10 @@ async function cmdArchive(rest: readonly string[], json: boolean): Promise<numbe
         afterDays: cfg.archive.after_days,
         eventsAfterDays: cfg.archive.events_after_days,
         liveSessions: () => tmux.listSessionsKnown(),
+        // This process's home: run in the container, the pihome volume.
+        piGlobalDir: piGlobalSessionsDir(),
       });
     }
-    const policy = archivePolicy(cfg.archive);
     if (json)
       console.log(
         JSON.stringify(archiveStatusJson({ block, archiveRead, statusNote, ledger, policy, plan })),
@@ -1739,7 +1869,7 @@ export async function main(argv: string[]): Promise<void> {
     }
     default:
       console.log(
-        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive status [--plan]|install <where|migrate>|" +
+        "usage: qcr <onboard|setup [validate [<profile>]|commit]|status|spend|today|why <n>|metrics [--pr <n>]|events|attach <n>|tui [pr|overseer]|drain <on|off>|archive <status [--plan]|run|restore <pr>|extract <pr> --to <dir>>|install <where|migrate>|" +
           "companion <up|down|status|rebuild>|memory reembed [--user <name>]|memory relayout [--plan|--apply]|backfill [--dry-run] [--limit <n>]|history <digest|pull>|outcomes [--days <n>] [--capture [--read-github]]|lessons [mine|shadow-report [--days <n>]|off|on|suppress <id>|unsuppress <id>]|checklist|compare <pr...>|" +
           "regression [--set <path>] [--clone <path>] [--change <name>] [--limit <n>] [--out <path>]>",
       );

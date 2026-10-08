@@ -72,7 +72,10 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
 ] as const;
 
 /**
- * The OPERATOR'S commands (S9a): the lesson kill switch. They are not
+ * The OPERATOR'S commands: the lesson kill switch (S9a) and the
+ * archiver's two verbs (S4 — `archive-run`, one immediate bounded
+ * archiver tick, and `archive-restore`, one PR's archive back to its live
+ * paths, both run under the archiver's strict mutex). They are not
  * in `COMMAND_WHITELIST` — the vocabulary a session (the overseer, the EOD
  * curator, a Slack turn) may write — and they validate ONLY for a file the
  * watcher found in the root-sealed `commands/operator/` directory (,
@@ -84,13 +87,20 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
  * write.
  */
 export type OperatorCommandName =
-  "lessons-off" | "lessons-on" | "suppress-lesson" | "unsuppress-lesson";
+  | "lessons-off"
+  | "lessons-on"
+  | "suppress-lesson"
+  | "unsuppress-lesson"
+  | "archive-run"
+  | "archive-restore";
 
 export const OPERATOR_COMMANDS: readonly OperatorCommandName[] = [
   "lessons-off",
   "lessons-on",
   "suppress-lesson",
   "unsuppress-lesson",
+  "archive-run",
+  "archive-restore",
 ] as const;
 
 /** A lesson the operator names: the full memory URI of one entry
@@ -152,7 +162,11 @@ export type Command =
   | { command: "lessons-off" }
   | { command: "lessons-on" }
   | { command: "suppress-lesson"; uri: string }
-  | { command: "unsuppress-lesson"; uri: string };
+  | { command: "unsuppress-lesson"; uri: string }
+  /** S4 — the OPERATOR's archive verbs (`OPERATOR_COMMANDS`): never
+   * valid in a session's file. */
+  | { command: "archive-run" }
+  | { command: "archive-restore"; pr: number };
 
 /** Who a command directory's writer is. Decided by WHICH DIRECTORY a
  * file arrived in and whether the operator seal held — never by a field in
@@ -203,6 +217,11 @@ export interface CommandDeps {
     change: LessonSwitchChange,
     file: string,
   ): Promise<FileOutcome | void> | FileOutcome | void;
+  /** S4: the operator's archive verbs — one immediate bounded tick
+   * of the archiver, and the restore of one PR's archive to its live paths.
+   * Reached only for an OPERATOR-issued command; optional like `drain`. */
+  archiveRun?(file: string): Promise<FileOutcome | void> | FileOutcome | void;
+  archiveRestore?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
    * rejected with a reason instead of silently succeeding. */
   slackReply?(payload: {
@@ -271,7 +290,7 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
         ok: false,
         reason:
           `command '${name}' is the OPERATOR's alone: it is accepted only from the root-sealed commands/operator/ ` +
-          "channel (`qcr lessons off|on|suppress|unsuppress`), never from a session's command file",
+          "channel (`qcr lessons off|on|suppress|unsuppress`, `qcr archive run|restore`), never from a session's command file",
       };
     return validateOperatorCommand(name, obj);
   }
@@ -521,6 +540,17 @@ function validateOperatorCommand(
         };
       return { ok: true, command: { command: name, uri } };
     }
+    case "archive-run": {
+      const err = fieldError(obj, []);
+      if (err) return { ok: false, reason: err };
+      return { ok: true, command: { command: "archive-run" } };
+    }
+    case "archive-restore": {
+      const err = fieldError(obj, ["pr"]);
+      if (err) return { ok: false, reason: err };
+      if (!isPrNumber(obj["pr"])) return { ok: false, reason: "'pr' must be a positive integer" };
+      return { ok: true, command: { command: "archive-restore", pr: obj["pr"] } };
+    }
   }
 }
 
@@ -754,6 +784,23 @@ export async function executeCommand(
               ? { action: "suppress", uri: command.uri }
               : { action: "unsuppress", uri: command.uri };
       return normalize(await deps.lessonSwitch(change, ctx.file));
+    }
+    case "archive-run":
+    case "archive-restore": {
+      // The belt behind validation's brace, as for the kill switch.
+      if (ctx.issuer !== "operator")
+        return {
+          ok: false,
+          reason: `'${command.command}' is the operator's alone — refused for issuer '${ctx.issuer}'`,
+        };
+      if (command.command === "archive-run") {
+        if (!deps.archiveRun)
+          return { ok: false, reason: "archive-run is not wired on this daemon" };
+        return normalize(await deps.archiveRun(ctx.file));
+      }
+      if (!deps.archiveRestore)
+        return { ok: false, reason: "archive-restore is not wired on this daemon" };
+      return normalize(await deps.archiveRestore(command.pr, ctx.file));
     }
   }
 }

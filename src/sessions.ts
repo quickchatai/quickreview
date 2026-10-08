@@ -1470,16 +1470,23 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** Copy JSONL + ledger (+ verdicts) into an archive dir. Returns what landed. */
+  /**
+   * Write a session's RECORD into an archive dir: its ledger (+ any verdict
+   * still at the top of verdict/) and `meta.json`, whose `session_file` names
+   * the live transcript that was newest at this moment. Returns what landed.
+   *
+   * The transcript itself is NOT copied (S4): the closed-PR archiver
+   * keeps every JSONL of the session — verified, compressed, all of them, not
+   * just the newest — in `archive/<session>/transcripts/` once it is safe to
+   * move (`src/archive/`), so a copy here was a duplicate, and its synchronous
+   * `copyFileSync` of a multi-MB file sat on the close path. `qcr why`, the
+   * TUI LEDGER and the overseer seed read `ledger.md` and `meta.json`, which
+   * stay plain.
+   */
   archiveSession(session: string, dest: string): string[] {
     mkdirSync(dest, { recursive: true });
     const written: string[] = [];
     const jsonl = this.newestSessionFile(session);
-    if (jsonl) {
-      const target = join(dest, "session.jsonl");
-      copyFileSync(jsonl, target);
-      written.push(target);
-    }
     const ledger = this.ledgerPath(session);
     if (existsSync(ledger)) {
       const target = join(dest, "ledger.md");
@@ -1719,10 +1726,21 @@ export class PiSessionManager implements SessionHooks {
 
   // ---- overseer rotation -------------------------------------------------
 
-  /** Weekly rotation on the daemon timer: archive the run, then respawn. */
+  /**
+   * Weekly rotation on the daemon timer (and the operator's `restart-session
+   * overseer`): record the run, then respawn. Each rotation gets its OWN
+   * record dir — `archive/overseer/<YYYY-MM-DD>`, then `<date>-2`, `-3`, … for
+   * another the same day — so two rotations on one date never overwrite each
+   * other (S4). Only the ledger and `meta.json` are written there;
+   * the transcript stays live until the archiver moves it, named by its own
+   * file name, into `archive/overseer/transcripts/`. Returns the dir's name.
+   */
   async rotateOverseer(): Promise<string> {
-    const stamp = this.now().toISOString().slice(0, 10);
-    this.archiveSession(OVERSEER_SESSION, join(this.archiveDir(OVERSEER_SESSION), stamp));
+    const day = this.now().toISOString().slice(0, 10);
+    const base = this.archiveDir(OVERSEER_SESSION);
+    let stamp = day;
+    for (let k = 2; existsSync(join(base, stamp)); k++) stamp = `${day}-${k}`;
+    this.archiveSession(OVERSEER_SESSION, join(base, stamp));
     await this.tmux.killSession(OVERSEER_SESSION);
     await this.ensureOverseerSession();
     return stamp;

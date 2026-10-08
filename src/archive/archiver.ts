@@ -37,7 +37,22 @@
 //   6. the FILE PHASE (S3): the plan's eligible PRs, oldest close first, each
 //      through `prarchive.ts` — at most `max_prs_per_tick`, no new file after
 //      `tick_budget_s`, the disk checked before every file (§7.7);
-//   7. SEALING finished months (src/archive/seal.ts).
+//   7. the STORES that belong to no PR (S4): the overseer's non-current
+//      transcripts (`overseer.ts`) and pi's global session store
+//      (`piglobal.ts`), under the same budget, holds and disk checks;
+//   8. SEALING finished months (src/archive/seal.ts).
+//
+// The operator's two verbs (S4, `archive-run` and `archive-restore`, valid
+// only from the root-sealed `commands/operator/`) reach `operatorRun` — one
+// immediate tick, a fresh plan, every hold still binding — and
+// `operatorRestore` — one PR's archive back to its live paths, the mutex
+// taken WITH PRIORITY so a running pass yields at its next file boundary.
+// Each answers within OPERATOR_WAIT_MS (the operator channel is served one
+// command at a time); a tick or restore still running then says so and goes
+// on. Before the daemon's first healthy reconcile each answers at once — the
+// run with its hold, the restore going on in the background — because the
+// operator watcher's startup sweep (awaited by the daemon's start) serves a
+// file left while the daemon was down, and a verb must never hold the boot.
 //
 // A refusal that needs a person (a copy or a row read back different, a
 // manifest that cannot be read, a month whose counts or gzip do not verify)
@@ -51,6 +66,7 @@ import { statfs as fsStatfs } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { ArchiveConfig } from "../config.js";
+import type { FileOutcome } from "../improvements.js";
 import type { DaemonLoadStatus } from "../eventloop.js";
 import { DEFAULT_EVENT_LOOP_STARVED_THROTTLE_RATIO } from "../eventloop.js";
 import type { StateStore } from "../state.js";
@@ -66,6 +82,8 @@ import {
   type ArchivePlan,
   type PlanMemo,
 } from "./plan.js";
+import { OVERSEER_STORE, archiveOverseer } from "./overseer.js";
+import { archivePiGlobal } from "./piglobal.js";
 import { archivePr, type PrPassResult } from "./prarchive.js";
 import { SpanMeter, injectDirOf, listLiveTree, topLevelInjectFiles } from "./prfiles.js";
 import {
@@ -75,9 +93,10 @@ import {
   restoreTargets,
   type RestoreResult,
 } from "./restore.js";
-import { archiveRow, inFlightRows, reopenedRows } from "./rows.js";
+import { archiveRow, bumpMark, inFlightRows, reopenedRows } from "./rows.js";
 import { SEAL_PROBLEMS, recoverSeals, sealDue, type SealResult } from "./seal.js";
 import {
+  OPERATOR_WAIT_MS,
   pendingArchiveStatus,
   type ArchiveDbStatus,
   type ArchiveDisk,
@@ -85,8 +104,12 @@ import {
   type ArchiveHoldReason,
   type ArchiveState,
   type ArchiveStatus,
+  type ArchiveStoreStatus,
   type ArchiveTotals,
 } from "./status.js";
+import { emptyStoreResult, type StorePassResult } from "./storepass.js";
+
+export { OPERATOR_WAIT_MS };
 
 const MIN_MS = 60_000;
 const GB = 1024 ** 3;
@@ -260,8 +283,17 @@ export interface ArchiverDeps {
    * file phase then moves nothing (`births_unknown`), never a guess. */
   birthInFlight?: (pr: number) => boolean;
   statfs?: (path: string) => Promise<StatfsLike>;
+  /** When the overseer session was born (its birth record); null = unknown —
+   * the overseer store then moves nothing. Absent = no overseer pass (S4). */
+  overseerBornAt?: () => Date | null;
+  /** pi's global session store (`~/.pi/agent/sessions`). Absent = no
+   * pi-global pass (S4). */
+  piGlobalDir?: string;
   /** How long `beforeBirth` waits for a restore (default RESTORE_WAIT_MS). */
   restoreWaitMs?: number;
+  /** How long an operator verb waits before answering (default
+   * OPERATOR_WAIT_MS). */
+  operatorWaitMs?: number;
   /** Crash-injection seam (tests): every file-protocol step. */
   step?: StepFn;
   /** Seam: the plan computation (default: src/archive/plan.ts). */
@@ -340,7 +372,10 @@ export class Archiver {
   private readonly fileHeld = new Map<number, string>();
   /** Restores started by a birth, by PR: shared by every caller, each waiting
    * until the flight's own deadline. */
-  private readonly restoring = new Map<number, { promise: Promise<unknown>; deadline: number }>();
+  private readonly restoring = new Map<
+    number,
+    { promise: Promise<RestoreResult | null>; deadline: number }
+  >();
   /** When each PR's last restore attempt ran (ms) — a failed one is retried
    * only after RESTORE_RETRY_MS. */
   private readonly restoreAttempted = new Map<number, number>();
@@ -349,6 +384,13 @@ export class Archiver {
    * largest file that did not fit in it). */
   private diskIncident: { since: number; raisedAt: number; need: number } | null = null;
   private birthsUnknownLogged = false;
+  /** The stores' last passes (S4). */
+  private readonly stores: {
+    overseer: ArchiveStoreStatus | null;
+    pi_global: ArchiveStoreStatus | null;
+  } = { overseer: null, pi_global: null };
+  /** The next tick recomputes the plan whatever its age (an operator's run). */
+  private forcePlan = false;
   private dbCache: {
     at: number;
     totals: ArchiveTotals | null;
@@ -484,7 +526,13 @@ export class Archiver {
       }
       // The plan — recomputed at most every PLAN_REFRESH_MS.
       let planned = false;
-      if (!this.plan || at.getTime() - Date.parse(this.plan.computed_at) >= PLAN_REFRESH_MS) {
+      const force = this.forcePlan;
+      this.forcePlan = false;
+      if (
+        force ||
+        !this.plan ||
+        at.getTime() - Date.parse(this.plan.computed_at) >= PLAN_REFRESH_MS
+      ) {
         this.state = "running";
         this.runningSince ??= at.toISOString();
         const plan = await this.computePlan();
@@ -510,6 +558,12 @@ export class Archiver {
         if (files.failure) failure = files.failure;
         else if (files.hold) return this.hold(files.hold);
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
+        // The stores that belong to no PR (S4): after the PRs (§10).
+        if (failure === null) {
+          const hold = await this.storesPhase(at);
+          if (hold) return this.hold(hold);
+          if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
+        }
       }
       // Sealing comes last (§10), and only after a DB phase that did not fail.
       // It starts nothing under a hold (re-read now, the disk included) or once
@@ -542,6 +596,168 @@ export class Archiver {
     this.state = "idle";
     this.lastSuccessAt = at.toISOString();
     return { state: "idle", held_reason: null, planned };
+  }
+
+  // ---- the operator's verbs (S4, §11) -------------------------------------
+
+  /** Is the strict mutex held right now (a tick, or a restore)? */
+  busy(): boolean {
+    return this.mutex.held();
+  }
+
+  /**
+   * `archive-run` — one immediate tick, under the strict mutex, with a fresh
+   * plan. Every hold still binds (the start delay, a drain, a stalled loop, a
+   * starved CPU, the disk): the answer names the one that held it. A tick
+   * already running is let finish first, so the tick this answers for began
+   * after the request. Answers within OPERATOR_WAIT_MS; a tick still running
+   * then says so (`done: false`) and goes on. Mode `off` refuses. Before the
+   * daemon's first healthy reconcile it answers that hold at once.
+   */
+  async operatorRun(): Promise<FileOutcome> {
+    if (this.stopped) return { ok: false, reason: "the archiver is stopping" };
+    if (this.policy.mode === "off")
+      return {
+        ok: false,
+        reason: '[archive] mode = "off" — nothing runs; set it to "plan" or "on" first',
+      };
+    // Before the daemon's first healthy reconcile no tick may do anything, so
+    // the answer is that hold, given at once — never after queueing behind
+    // the mutex (a boot restore may hold it). The operator watcher's startup
+    // sweep, which the daemon's start awaits, serves a file left while the
+    // daemon was down: an operator verb must never hold the boot.
+    if (this.deps.firstHealthyReconcileAt() === null) {
+      const s = this.status();
+      return {
+        ok: true,
+        done: true,
+        mode: this.policy.mode,
+        state: "held",
+        held_reason: "awaiting_reconcile",
+        planned: false,
+        note: "no tick runs before the daemon's first healthy reconcile",
+        backlog: s.backlog,
+        db: s.db,
+        files: s.files,
+        stores: s.stores,
+      };
+    }
+    const run = (this.running ?? Promise.resolve()).then(() => {
+      this.forcePlan = true;
+      return this.tick();
+    });
+    const waited = await raceTimeout(run, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
+    if (!waited.done)
+      return {
+        ok: true,
+        done: false,
+        state: "running",
+        note: `the tick is still running after ${Math.round((this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS) / 1000)} s and goes on — see \`qcr archive status\``,
+      };
+    const t = waited.value;
+    const s = this.status();
+    return {
+      ok: t.state !== "failed",
+      ...(t.state === "failed" ? { reason: this.lastError ?? "the tick failed" } : {}),
+      done: true,
+      mode: this.policy.mode,
+      state: t.state,
+      held_reason: t.held_reason,
+      ...(t.state === "held" && s.held_until ? { held_until: s.held_until } : {}),
+      planned: t.planned,
+      backlog: s.backlog,
+      db: s.db,
+      files: s.files,
+      stores: s.stores,
+    };
+  }
+
+  /**
+   * `archive-restore <pr>` — one PR's archive back to its live paths (the
+   * repair verb, §11): its transcripts and session-command payloads, verified,
+   * at their original mtimes, never over a live file. In any mode, on a
+   * closed PR too (it becomes eligible again `after_days` after the restore),
+   * and a failed restore is retried at once (the 6 h retry spacing binds
+   * births and ticks, not the operator). The mutex is taken WITH PRIORITY: a
+   * running pass yields at its next file boundary. A restore a birth already
+   * started is joined, never run twice. Answers within OPERATOR_WAIT_MS; one
+   * still running then says so (`done: false`) and goes on. Before the
+   * daemon's first healthy reconcile it answers at once (`done: false`) and
+   * the restore goes on in the background.
+   */
+  async operatorRestore(pr: number): Promise<FileOutcome> {
+    if (this.stopped) return { ok: false, reason: "the archiver is stopping" };
+    let row: ReturnType<typeof archiveRow>;
+    try {
+      row = archiveRow(this.deps.store, pr);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `pr-${pr}'s archive row could not be read: ${(err as Error).message}`,
+      };
+    }
+    if (!row)
+      return {
+        ok: true,
+        done: true,
+        outcome: "none",
+        note: `pr-${pr} has no archive row — nothing of it was archived`,
+      };
+    if (row.state === "restored" && !this.restoring.has(pr))
+      return {
+        ok: true,
+        done: true,
+        outcome: "none",
+        note: `pr-${pr} is restored already (at ${row.restored_at ?? "an unrecorded time"})`,
+      };
+    const flight = this.restoring.get(pr) ?? this.startRestore(pr, "operator");
+    // Served before the daemon's first healthy reconcile — a file the
+    // operator left while the daemon was down, met by the operator watcher's
+    // startup sweep, which the daemon's start awaits: the restore goes on in
+    // the background and the answer comes at once, so it never holds the
+    // boot (or the first reconcile) behind it. Its outcome is the row's, the
+    // events' and `qcr archive status`'s.
+    if (this.deps.firstHealthyReconcileAt() === null)
+      return {
+        ok: true,
+        done: false,
+        outcome: "restoring",
+        note: "served while the daemon starts (before its first healthy reconcile): the restore goes on in the background — see `qcr archive status`",
+      };
+    const waited = await raceTimeout(flight.promise, this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS);
+    if (!waited.done)
+      return {
+        ok: true,
+        done: false,
+        outcome: "restoring",
+        note: `the restore is still running after ${Math.round((this.deps.operatorWaitMs ?? OPERATOR_WAIT_MS) / 1000)} s and goes on — see \`qcr archive status\``,
+      };
+    const r = waited.value;
+    if (r === null) {
+      // Joined nothing that ran (stopping, or restored meanwhile): the row
+      // says what is so.
+      const now = archiveRow(this.deps.store, pr);
+      return now?.state === "restored"
+        ? { ok: true, done: true, outcome: "restored", note: "restored (by another caller)" }
+        : { ok: false, reason: `the restore did not run (row ${now?.state ?? "gone"})` };
+    }
+    if (r.outcome === "failed")
+      return {
+        ok: false,
+        reason: r.error ?? "the restore failed",
+        done: true,
+        outcome: "failed",
+        restored: r.restored,
+        present: r.present,
+      };
+    return {
+      ok: true,
+      done: true,
+      outcome: r.outcome,
+      restored: r.restored,
+      present: r.present,
+      live_differs: r.liveDiffers,
+    };
   }
 
   // ---- restores (§8.2–§8.4) ------------------------------------------------
@@ -613,15 +829,19 @@ export class Archiver {
     return free >= bytes + this.policy.diskHeadroomBytes ? null : "disk_low";
   }
 
-  /** A restore outside a tick: the mutex taken WITH PRIORITY. */
-  private startRestore(pr: number): { promise: Promise<unknown>; deadline: number } {
-    const promise = (async () => {
+  /** A restore outside a tick: the mutex taken WITH PRIORITY (a running pass
+   * yields to it at its next file boundary). */
+  private startRestore(
+    pr: number,
+    trigger: "reopen" | "operator" = "reopen",
+  ): { promise: Promise<RestoreResult | null>; deadline: number } {
+    const promise = (async (): Promise<RestoreResult | null> => {
       const release = await this.mutex.acquire(true);
       try {
         if (this.stopped) return null;
         const row = archiveRow(this.deps.store, pr);
         if (!row || row.state === "restored") return null;
-        return await this.restoreOne(pr, "reopen");
+        return await this.restoreOne(pr, trigger);
       } catch (err) {
         if (!this.abort.signal.aborted) this.log(`archive: pr-${pr} restore threw`, err);
         return null;
@@ -672,8 +892,11 @@ export class Archiver {
         "archive_restore_failed",
         pr,
         `restore:${pr}`,
-        `PR #${pr} was reopened but its archived files could not be restored: ${r.error ?? "unknown"}. ` +
-          "Its session is born anyway; receipts of its pre-close wakes read UNKNOWN (never absent) until a restore succeeds.",
+        trigger === "operator"
+          ? `The operator's restore of PR #${pr}'s archive failed: ${r.error ?? "unknown"}. ` +
+              "Nothing archived was lost; receipts of its archived wakes read UNKNOWN (never absent) until a restore succeeds."
+          : `PR #${pr} was reopened but its archived files could not be restored: ${r.error ?? "unknown"}. ` +
+              "Its session is born anyway; receipts of its pre-close wakes read UNKNOWN (never absent) until a restore succeeds.",
       );
     return r;
   }
@@ -839,18 +1062,8 @@ export class Archiver {
       this.files = blank("none", null);
       return { failure: null, hold: null };
     }
-    let load: DaemonLoadStatus | undefined;
-    try {
-      load = this.deps.load?.();
-    } catch {
-      load = undefined;
-    }
     // An UNKNOWN load reading runs at the minimum: one PR, half the rate.
-    const unknown = !load || load.event_loop?.state !== "ok" || load.cpu?.state !== "measured";
-    const maxPrs = unknown ? 1 : this.policy.maxPrsPerTick;
-    const bytesPerS = unknown
-      ? Math.max(1, Math.floor(this.policy.maxBytesPerS / 2))
-      : this.policy.maxBytesPerS;
+    const { maxPrs, bytesPerS } = this.fileRate();
     const meter = new SpanMeter();
     let listing: Awaited<ReturnType<typeof listLiveTree>>;
     try {
@@ -1001,6 +1214,132 @@ export class Archiver {
         ` (${run.outcome}${run.held_reason ? `: ${run.held_reason}` : ""})`,
     );
     return { failure: null, hold };
+  }
+
+  /** The rate the file work runs at: an UNKNOWN load reading runs at the
+   * minimum — one PR, half the MB/s (§10). */
+  private fileRate(): { maxPrs: number; bytesPerS: number } {
+    let load: DaemonLoadStatus | undefined;
+    try {
+      load = this.deps.load?.();
+    } catch {
+      load = undefined;
+    }
+    const unknown = !load || load.event_loop?.state !== "ok" || load.cpu?.state !== "measured";
+    return unknown
+      ? { maxPrs: 1, bytesPerS: Math.max(1, Math.floor(this.policy.maxBytesPerS / 2)) }
+      : { maxPrs: this.policy.maxPrsPerTick, bytesPerS: this.policy.maxBytesPerS };
+  }
+
+  /**
+   * The stores that belong to no PR (S4, §5): the overseer's non-current
+   * transcripts, then pi's global store — each only when wired, under the
+   * tick's budget, holds and disk checks. Returns the hold that stopped it,
+   * or null. One store's I/O failure is that store's (`failed`, retried next
+   * tick); it never fails the tick.
+   */
+  private async storesPhase(at: Date): Promise<ArchiveHoldReason | null> {
+    const passes: Array<{
+      key: "overseer" | "pi_global";
+      run: (common: StoreCommon) => Promise<StorePassResult>;
+    }> = [];
+    const bornAt = this.deps.overseerBornAt;
+    if (bornAt)
+      passes.push({
+        key: "overseer",
+        run: (common) =>
+          archiveOverseer({
+            ...common,
+            root: this.deps.root,
+            sessionsRoot: this.deps.sessionsRoot,
+            bornAt,
+          }),
+      });
+    const piGlobalDir = this.deps.piGlobalDir;
+    if (piGlobalDir)
+      passes.push({
+        key: "pi_global",
+        run: (common) =>
+          archivePiGlobal({ ...common, root: this.deps.root, storeDir: piGlobalDir }),
+      });
+    const meter = new SpanMeter();
+    const fold = (): void => {
+      if (meter.max > 0)
+        this.maxSyncSpanMs = Math.max(this.maxSyncSpanMs ?? 0, Math.round(meter.max * 10) / 10);
+    };
+    for (const p of passes) {
+      const stop = this.fileStop(at);
+      if (stop) {
+        fold();
+        return isHoldReason(stop) ? stop : null;
+      }
+      const startedAt = this.now().toISOString();
+      const common: StoreCommon = {
+        now: this.now,
+        level: this.policy.gzipLevel,
+        bytesPerS: this.fileRate().bytesPerS,
+        signal: this.abort.signal,
+        diskFor: (bytes) => this.diskFor(bytes),
+        stopReason: () => this.fileStop(at),
+        verifyFailed: (key, detail) => this.raiseQuiet(key, detail),
+        log: this.log,
+        // Every synchronous span over the store's manifest (its shards'
+        // parses, the index, each write's copy, check and stringify).
+        meter,
+        ...(this.deps.step ? { step: this.deps.step } : {}),
+      };
+      let r: StorePassResult;
+      try {
+        r = await p.run(common);
+      } catch (err) {
+        if (this.abort.signal.aborted) throw err;
+        this.log(`archive: the ${p.key} store's pass failed`, err);
+        r = emptyStoreResult("failed", (err as Error).message);
+      }
+      if (r.duplicatesRemoved > 0)
+        bumpMark(this.deps.store, "duplicates.removed", r.duplicatesRemoved);
+      this.stores[p.key] = {
+        last_run_at: startedAt,
+        outcome: r.outcome,
+        reason: r.reason,
+        archived: r.archived,
+        bytes_in: r.bytesIn,
+        bytes_out: r.bytesOut,
+        removed: r.removed,
+        duplicates_removed: r.duplicatesRemoved,
+        verify_failures: r.verifyFailures,
+        kept_live: r.keptLive,
+      };
+      if (r.archived + r.removed + r.duplicatesRemoved > 0) {
+        this.dbCache = null;
+        this.deps.store.logEvent("archive_pass", null, {
+          phase: p.key === "overseer" ? OVERSEER_STORE : "pi-global",
+          outcome: r.outcome,
+          archived: r.archived,
+          bytes_in: r.bytesIn,
+          bytes_out: r.bytesOut,
+          removed: r.removed,
+          duplicates_removed: r.duplicatesRemoved,
+          verify_failures: r.verifyFailures,
+        });
+      }
+      if (r.outcome !== "none") this.log(`archive: ${storePhraseOf(p.key, this.stores[p.key])}`);
+      // A hold ends the tick — except one file too large for the archive
+      // mount while both mounts keep their headroom: that store waits (its
+      // status says disk_low, the wake was raised once for the incident) and
+      // the next store goes on, as one large PR file never stops the others.
+      if (
+        r.reason &&
+        isHoldReason(r.reason) &&
+        !(r.reason === "disk_low" && this.headroomHolds())
+      ) {
+        fold();
+        return r.reason;
+      }
+      await yieldToLoop();
+    }
+    fold();
+    return null;
   }
 
   /** The archive databases, opened on first use (mode `on` only). */
@@ -1216,6 +1555,8 @@ export class Archiver {
       eventsAfterDays: this.policy.eventsAfterDays,
       liveSessions: this.deps.liveSessions ?? (async () => null),
       ...(this.deps.birthInFlight ? { birthInFlight: this.deps.birthInFlight } : {}),
+      ...(this.deps.overseerBornAt ? { overseerBornAt: this.deps.overseerBornAt } : {}),
+      ...(this.deps.piGlobalDir ? { piGlobalDir: this.deps.piGlobalDir } : {}),
       memo: this.memo,
       signal,
     });
@@ -1418,6 +1759,10 @@ export class Archiver {
       max_sync_span_ms: this.maxSyncSpanMs,
       db: this.db ? { ...this.db } : null,
       files: this.files ? { ...this.files } : null,
+      stores: {
+        overseer: this.stores.overseer ? { ...this.stores.overseer } : null,
+        pi_global: this.stores.pi_global ? { ...this.stores.pi_global } : null,
+      },
     };
   }
 
@@ -1428,6 +1773,20 @@ export class Archiver {
     const list = [...all].sort((a, b) => a[0] - b[0]);
     return { count: list.length, first: list.slice(0, 20).map(([pr, reason]) => ({ pr, reason })) };
   }
+}
+
+/** What every store pass is handed by the archiver. */
+type StoreCommon = Omit<import("./storepass.js").StorePassDeps, "dir" | "subject" | "liveOf">;
+
+/** A store's last pass, for the log. */
+function storePhraseOf(key: "overseer" | "pi_global", st: ArchiveStoreStatus | null): string {
+  if (!st) return `${key}: not run`;
+  return (
+    `${key === "overseer" ? "overseer store" : "pi-global store"} — ${st.archived} archived, ${st.removed} removed` +
+    (st.duplicates_removed ? `, ${st.duplicates_removed} legacy duplicate(s) removed` : "") +
+    (st.verify_failures ? `, ${st.verify_failures} VERIFY FAILURE(S)` : "") +
+    `, ${st.kept_live} kept live (${st.outcome}${st.reason ? `: ${st.reason}` : ""})`
+  );
 }
 
 const HOLD_REASONS: ReadonlySet<string> = new Set([
@@ -1454,4 +1813,23 @@ async function waitAtMost(p: Promise<unknown>, ms: number): Promise<void> {
     }),
   ]);
   if (timer) clearTimeout(timer);
+}
+
+/** Wait for `p`, but never longer than `ms`: its value, or `done: false`. */
+async function raceTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+): Promise<{ done: true; value: T } | { done: false }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.then((value) => ({ done: true as const, value })),
+      new Promise<{ done: false }>((resolveWait) => {
+        timer = setTimeout(() => resolveWait({ done: false }), Math.max(0, ms));
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

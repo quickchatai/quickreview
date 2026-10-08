@@ -219,11 +219,17 @@ export async function readManifestIfPresent(dir: string): Promise<Manifest | nul
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new ManifestUnreadable(`${manifestPath(dir)}: ${(err as Error).message}`);
   }
+  return parseManifestText(text, manifestPath(dir));
+}
+
+/** A manifest's text parsed and checked (`where` names it in an error);
+ * ManifestUnreadable when it is not this format — never read as empty. */
+export function parseManifestText(text: string, where: string): Manifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new ManifestUnreadable(`${manifestPath(dir)}: ${(err as Error).message}`);
+    throw new ManifestUnreadable(`${where}: ${(err as Error).message}`);
   }
   if (
     !isObj(parsed) ||
@@ -232,8 +238,85 @@ export async function readManifestIfPresent(dir: string): Promise<Manifest | nul
     !Array.isArray(parsed.entries) ||
     !parsed.entries.every((e) => isObj(e) && typeof e.kind === "string")
   )
-    throw new ManifestUnreadable(`${manifestPath(dir)}: not a format-${MANIFEST_FORMAT} manifest`);
+    throw new ManifestUnreadable(`${where}: not a format-${MANIFEST_FORMAT} manifest`);
   return parsed as unknown as Manifest;
+}
+
+/** A manifest in brief (`qcr why`, S4): what it holds and what left
+ * the live tree. Pure. */
+export interface ManifestSummary {
+  passes: number;
+  /** Transcript gzips (legacy session-at-close copies included). */
+  transcripts: number;
+  /** State files too large for a bundle, each its own gzip. */
+  files: number;
+  bundles: number;
+  /** Records across the bundles. */
+  records: number;
+  /** Original bytes of the archived files, and their compressed size. */
+  bytes: number;
+  gz_bytes: number;
+  /** Live sources the manifest says were removed after their copy verified. */
+  sources_removed: number;
+  duplicates_removed: number;
+  restores: number;
+  /** When the newest pass started (null when none says). */
+  last_pass_at: string | null;
+}
+
+export function summarizeManifest(m: Manifest): ManifestSummary {
+  const out: ManifestSummary = {
+    passes: m.passes.length,
+    transcripts: 0,
+    files: 0,
+    bundles: 0,
+    records: 0,
+    bytes: 0,
+    gz_bytes: 0,
+    sources_removed: 0,
+    duplicates_removed: 0,
+    restores: 0,
+    last_pass_at: null,
+  };
+  for (const p of m.passes)
+    if (p.started_at && (out.last_pass_at === null || p.started_at > out.last_pass_at))
+      out.last_pass_at = p.started_at;
+  for (const e of m.entries) {
+    switch (e.kind) {
+      case "transcript":
+      case "file":
+        if (e.reused) break;
+        if (e.kind === "transcript") out.transcripts += 1;
+        else out.files += 1;
+        out.bytes += e.bytes;
+        out.gz_bytes += e.gz_bytes;
+        if (e.source_removed_at !== undefined) out.sources_removed += 1;
+        break;
+      case "bundle": {
+        out.bundles += 1;
+        out.records += e.records;
+        out.bytes += e.bytes;
+        out.gz_bytes += e.gz_bytes;
+        if (e.sources_removed_at !== undefined) {
+          const kept = new Set(e.kept ?? []);
+          out.sources_removed += e.files.filter((f) => !f.snapshot && !kept.has(f.path)).length;
+        }
+        break;
+      }
+      case "sources_removed":
+        out.sources_removed += e.paths.length;
+        break;
+      case "duplicate_removed":
+        out.duplicates_removed += 1;
+        break;
+      case "restore":
+        out.restores += 1;
+        break;
+      case "reused":
+        break;
+    }
+  }
+  return out;
 }
 
 /** A deep copy, so a caller's working copy never aliases the one on disk. */
@@ -299,7 +382,20 @@ export interface SettledRecord {
  * entries and restores, in manifest order. */
 export function settledIndex(m: Manifest): Map<string, SettledRecord> {
   const out = new Map<string, SettledRecord>();
-  m.entries.forEach((e, i) => {
+  indexEntries(out, m.entries);
+  return out;
+}
+
+/** Apply `entries` to an index, in order — what `settledIndex` does for one
+ * manifest, for a store whose entries span several shards (`base` is the
+ * index of the first, counted across the shards before it). */
+export function indexEntries(
+  out: Map<string, SettledRecord>,
+  entries: readonly ManifestEntry[],
+  base = 0,
+): void {
+  entries.forEach((e, at) => {
+    const i = base + at;
     if (e.kind === "transcript" || e.kind === "file" || e.kind === "reused") {
       out.set(e.source, {
         source: e.source,
@@ -358,7 +454,6 @@ export function settledIndex(m: Manifest): Map<string, SettledRecord> {
       }
     }
   });
-  return out;
 }
 
 /** Every archive file name the manifest references (relative to the dir). */
@@ -368,3 +463,6 @@ export function referencedArchives(m: Manifest): Set<string> {
     if (e.kind === "transcript" || e.kind === "file" || e.kind === "bundle") out.add(e.archive);
   return out;
 }
+
+/** The text a manifest is written as (what `writeManifest` writes). */
+export const manifestText = (m: Manifest): string => `${JSON.stringify(m, null, 1)}\n`;

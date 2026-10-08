@@ -12,6 +12,7 @@ import {
   fmtBytes,
   fmtCount,
   readArchiveStatus,
+  storePhrase,
   type ArchiveStatusRead,
 } from "./status.js";
 
@@ -110,7 +111,29 @@ function planLines(plan: ArchivePlan): string[] {
   out.push(
     `  archive/ and state/ on one device: ${plan.same_device === null ? "UNKNOWN" : plan.same_device ? "yes" : "no"}`,
   );
+  if (plan.stores) {
+    out.push(
+      `  overseer store: ${storeTallyPhrase(plan.stores.overseer, "the overseer's birth is not visible from a CLI process")}`,
+    );
+    out.push(
+      `  pi-global store: ${plan.stores.pi_global ? storeTallyPhrase(plan.stores.pi_global, "unknown") : "not measured"}`,
+    );
+  }
   return out;
+}
+
+/** A store's tally as the plan reports it; never a guessed 0. */
+function storeTallyPhrase(t: import("./storepass.js").StoreTally, movableUnknown: string): string {
+  if (t.state === "unreadable") return `UNREADABLE (${t.error})`;
+  const movable =
+    t.movable_files === null || t.movable_bytes === null
+      ? `movable UNKNOWN (${movableUnknown})`
+      : `${t.movable_files} movable, ${fmtBytes(t.movable_bytes)}`;
+  const legacy =
+    t.legacy_copies > 0
+      ? `; legacy rotation copies to check: ${t.legacy_copies}, ${fmtBytes(t.legacy_bytes)}`
+      : "";
+  return `${t.files} file(s), ${fmtBytes(t.bytes)} live — ${movable}${legacy}`;
 }
 
 /** The whole report, as `qcr archive status` prints it. */
@@ -140,6 +163,13 @@ export function renderArchiveReport(input: {
     if (s.max_sync_span_ms !== null)
       lines.push(`longest synchronous span: ${s.max_sync_span_ms} ms`);
     if (s.freelist_pages !== null) lines.push(`state.db free pages: ${s.freelist_pages}`);
+    // The stores that belong to no PR (S4): each one's last pass, or that it
+    // has not run (plan mode, not wired, or an older daemon).
+    for (const [label, st] of [
+      ["overseer store", s.stores?.overseer ?? null],
+      ["pi-global store", s.stores?.pi_global ?? null],
+    ] as const)
+      lines.push(storePhrase(label, st) || `${label}: no pass yet`);
   }
   lines.push(policyLine(input.policy));
   const states = Object.entries(input.ledger.by_state);

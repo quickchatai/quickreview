@@ -496,11 +496,13 @@ describe("the daemon publishes the block and records its first healthy reconcile
 
 describe("qcr archive status", () => {
   it("takes `status` and `--plan` only — an unknown token is refused", () => {
-    expect(parseArchiveArgs(["status"])).toEqual({ plan: false });
-    expect(parseArchiveArgs(["status", "--plan"])).toEqual({ plan: true });
+    expect(parseArchiveArgs(["status"])).toEqual({ verb: "status", plan: false });
+    expect(parseArchiveArgs(["status", "--plan"])).toEqual({ verb: "status", plan: true });
     expect(() => parseArchiveArgs([])).toThrow(ARCHIVE_USAGE);
-    expect(() => parseArchiveArgs(["run"])).toThrow(ARCHIVE_USAGE);
     expect(() => parseArchiveArgs(["status", "--pln"])).toThrow(ARCHIVE_USAGE);
+    // S4's verbs are parsed in tests/archive-operator.test.ts; a stray token
+    // after one is refused all the same.
+    expect(() => parseArchiveArgs(["run", "now"])).toThrow(ARCHIVE_USAGE);
   });
 
   it("renders the block, the policy, the ledger — and the plan detail", () => {

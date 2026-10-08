@@ -173,6 +173,60 @@ describe("PiAuthWatch", () => {
   });
 });
 
+// S4 (acceptance 6): the archiver unlinks closed PRs' transcripts and
+// removes their dirs; the per-file offset map must follow the live tree, not
+// keep every file that ever existed.
+describe("the seen map follows the live tree (S4)", () => {
+  it("shrinks once source files are unlinked — a whole session dir, or one file", () => {
+    let t = Date.parse("2026-10-21T12:00:00Z");
+    const watch = new PiAuthWatch(dir, () => new Date(t));
+    const files = [
+      jsonl("pr-1/a.jsonl", '{"ok":true}\n', new Date(t)),
+      jsonl("pr-1/b.jsonl", '{"ok":true}\n', new Date(t)),
+      jsonl("pr-2/c.jsonl", '{"ok":true}\n', new Date(t)),
+      jsonl("pr-3/d.jsonl", '{"ok":true}\n', new Date(t)),
+    ];
+    t += 60_000;
+    watch.scan();
+    expect(watch.trackedFiles()).toBe(4);
+    // The archiver: pr-1 archived whole (files unlinked, dir rmdir'd), one of
+    // pr-2's files gone.
+    rmSync(join(dir, "pr-1"), { recursive: true });
+    rmSync(files[2]!);
+    t += 60_000;
+    watch.scan();
+    expect(watch.trackedFiles()).toBe(1);
+    // An OLD file the scan no longer reads (mtime before the window) is
+    // live, so its offset is kept — pruning is about absence, not age.
+    t += 3_600_000;
+    watch.scan();
+    expect(watch.trackedFiles()).toBe(1);
+  });
+
+  it("a directory that cannot be listed keeps its entries — unknown is never gone", () => {
+    const seen = new Map<string, number>();
+    const t = Date.parse("2026-10-21T12:00:00Z");
+    jsonl("pr-1/a.jsonl", '{"ok":true}\n', new Date(t));
+    scanPiAuthErrors(dir, 0, seen);
+    expect([...seen.keys()]).toEqual([join(dir, "pr-1", "a.jsonl")]);
+    // Another root's entries are never this root's to prune.
+    seen.set("/elsewhere/x.jsonl", 10);
+    // The root itself unreadable (here: a file where the dir was).
+    rmSync(dir, { recursive: true });
+    mkdirSync(join(dir, ".."), { recursive: true });
+    writeFileSync(dir, "not a dir");
+    scanPiAuthErrors(dir, 0, seen);
+    expect(seen.has(join(dir, "pr-1", "a.jsonl"))).toBe(true);
+    expect(seen.has("/elsewhere/x.jsonl")).toBe(true);
+    rmSync(dir);
+    // The root gone entirely: its files are gone too.
+    scanPiAuthErrors(dir, 0, seen);
+    expect(seen.has(join(dir, "pr-1", "a.jsonl"))).toBe(false);
+    expect(seen.has("/elsewhere/x.jsonl")).toBe(true);
+    mkdirSync(dir);
+  });
+});
+
 describe("surfaces", () => {
   it("pi_auth_expired is a WAKE-grade anomaly", () => {
     expect(anomalySeverity("pi_auth_expired")).toBe("wake");

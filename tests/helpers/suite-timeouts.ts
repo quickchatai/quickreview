@@ -39,6 +39,7 @@ export const TYPECHECK_TIMEOUT_MS = 600_000;
  *   tui-openurl — a launcher that does not exist.
  */
 export const PROCESS_SUITES: readonly string[] = [
+  "tests/archive-evidence-shell.test.ts",
   "tests/bench-apikey.test.ts",
   "tests/bench-arm-compare.test.ts",
   "tests/bench-case-identity.test.ts",

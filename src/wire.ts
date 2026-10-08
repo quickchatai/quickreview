@@ -5,7 +5,6 @@
 // stub-wired, test-friendly core.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import {
   fsSecretReader,
   ingressHostnameFile,
@@ -22,6 +21,7 @@ import { CommandWatcher, processOperatorSeal, type CommandDeps } from "./command
 import { drainLever, pauseLever, resumeLever, type LeverDeps } from "./levers.js";
 import { CaseWriter } from "./cases.js";
 import { Archiver } from "./archive/archiver.js";
+import { piGlobalSessionsDir } from "./archive/piglobal.js";
 import { pendingArchiveStatus } from "./archive/status.js";
 import { Learner, learnerKnobsOf } from "./learner/learner.js";
 import { renderNoPacketSection } from "./learner/packet.js";
@@ -111,7 +111,7 @@ import { resolveTerminalFailure } from "./terminal-failure.js";
 import type { MemoryStore } from "./memory/store.js";
 import { readPinnedFromSweep, startEodPinWatch, type PinnedSweepSource } from "./eodpinwatch.js";
 import { reconcileOrphanedRounds } from "./reconcile.js";
-import { PiSessionManager, prSessionName } from "./sessions.js";
+import { OVERSEER_SESSION, PiSessionManager, prSessionName } from "./sessions.js";
 import { SlackApiClient } from "./slack/api.js";
 import { makeAnnouncer, type SlackAnnouncer } from "./slack/announce.js";
 import { OriginStore } from "./slack/origin.js";
@@ -580,7 +580,10 @@ export function daemonOriginWakes(opts: {
  * without an explicit dir.
  */
 export function piAuthWatchDirs(sessions: Pick<PiSessionManager, "sessionsRoot">): string[] {
-  return [sessions.sessionsRoot(), join(homedir(), ".pi", "agent", "sessions")];
+  // pi's default global store under the container user's home (the pihome
+  // volume) — the same dir the archiver's pi-global store moves day-old
+  // files out of (S4): one definition, `piGlobalSessionsDir`.
+  return [sessions.sessionsRoot(), piGlobalSessionsDir()];
 }
 
 /**
@@ -1395,6 +1398,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
         liveSessions: () => sessions.tmux.listSessionsKnown(),
         birthInFlight: (pr) => sessions.birthInFlight(pr),
+        // S4: the stores that belong to no PR. The overseer's birth record
+        // says which of its files is current (unreadable = unknown = nothing
+        // moves); pi's global store lies under the container user's home.
+        overseerBornAt: () => sessions.bornAt(OVERSEER_SESSION) ?? null,
+        piGlobalDir: piGlobalSessionsDir(),
         log,
       });
       archiver.start();
@@ -1543,6 +1551,21 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             suppressed: r.suppressed.length,
             ...("uri" in change ? { uri: change.uri } : {}),
           };
+        },
+        // the operator's archive verbs — reached only for a
+        // command the sealed commands/operator/ channel delivered (commands.ts
+        // refuses every other issuer, twice). Each runs under the archiver's
+        // strict mutex and answers within OPERATOR_WAIT_MS; `archiver` is read
+        // at call time, never captured at wiring.
+        archiveRun() {
+          if (!archiver)
+            return { ok: false, reason: "the archiver is not built on this daemon yet" };
+          return archiver.operatorRun();
+        },
+        archiveRestore(pr) {
+          if (!archiver)
+            return { ok: false, reason: "the archiver is not built on this daemon yet" };
+          return archiver.operatorRestore(pr);
         },
         // the EOD curator's receipt for the day's outcomes packet.
         // `learner` is read at call time, never captured at wiring.

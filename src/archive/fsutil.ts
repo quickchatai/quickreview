@@ -58,10 +58,16 @@ export async function unlinkIfPresent(path: string): Promise<boolean> {
  * torn one (and at worst a stray `.partial` that recovery deletes).
  */
 export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await writeTextAtomic(path, `${JSON.stringify(value, null, 1)}\n`);
+}
+
+/** The same for text already serialised (a caller that measures its own
+ * synchronous stringify). */
+export async function writeTextAtomic(path: string, text: string): Promise<void> {
   const tmp = `${path}${PARTIAL_SUFFIX}`;
   const fh = await open(tmp, "w");
   try {
-    await fh.writeFile(`${JSON.stringify(value, null, 1)}\n`, "utf8");
+    await fh.writeFile(text, "utf8");
     await fh.sync();
   } finally {
     await fh.close();

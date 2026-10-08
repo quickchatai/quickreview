@@ -27,6 +27,14 @@
 // entirely while the board's last status shows the daemon draining or its
 // heartbeat stale, so the sweep can never be the thing that saturates the
 // container.
+//
+// The closed-PR archiver (S4, docs/archiving.md §4, §14): a round
+// copied after its PR's files were archived (14 days closed — a TUI that was
+// off that long) finds them in `archive/pr-<n>/` instead. The transcript is
+// read from its archived gzip (`zcat | head -c`, after `zcat -t` proves the
+// gzip whole, so a corrupt one fails the copy rather than landing short); a
+// role whose file now sits only inside a bundle is recorded as `archived`
+// with its pointer — the bundle and the path in it — never as `missing`.
 import {
   existsSync,
   mkdirSync,
@@ -38,6 +46,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import type { TuiConfig } from "../config.js";
 import type { StatusSnapshot } from "../state.js";
+import { settledIndex, type Manifest, type SettledRecord } from "../archive/manifest.js";
 import { whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
@@ -108,8 +117,18 @@ export interface RoundManifest {
      * PR's file AS OF COPY TIME (honest only because the round finished under
      * this copier's watch). */
     scope: "round" | "pr-current";
+    /** Where the bytes were read: the live file, or the archived
+     * gzip `remote_path` names, decompressed. Absent from an older copier's
+     * manifest, which only ever read live files. */
+    from?: "live" | "archive";
   }>;
-  /** Listed on the VM but absent at copy time. */
+  /** Not in the live tree, and found in the PR's archive: where
+   * the bytes are — `pointer` the archive file (a bundle, or a gzip) relative
+   * to the sandbox root, `path` the live path it was archived from (the
+   * record's name inside a bundle). Never counted `missing`. Absent from an
+   * older copier's manifest. */
+  archived?: Array<{ role: EvidenceRole; pointer: string; path: string }>;
+  /** Absent at copy time: not live, and not in the PR's archive either. */
   missing: EvidenceRole[];
   /** PR-current roles deliberately NOT copied: the round finished before this
    * copier first saw the PR, so the current ledger/prompt/transcript would be
@@ -140,6 +159,12 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
  * moved to `verdict/processed/<ts>-…` by the watcher. Guessing either one
  * client-side would produce a copier that works until the daemon moves a file.
  *
+ * The archive fallback: with no live transcript, the newest archived
+ * one — `archive/pr-<n>/transcripts/*.gz`, whose mtime the archiver keeps at
+ * the original's; never a `session-at-close-*` legacy copy. And when the PR
+ * has an archive manifest it is listed (`archive-manifest <path>`), so a role
+ * found nowhere live can be looked up in it instead of read as missing.
+ *
  * Ends `exit 0`: a trailing `[ -f … ] && echo` that finds nothing would
  * otherwise exit non-zero and make an entirely successful listing look failed.
  */
@@ -153,15 +178,38 @@ export function manifestArgv(
   const script = [
     `r="${root}"`,
     `t=$(ls -1t "$r/${sessionDir}/pr-${pr}"/*.jsonl 2>/dev/null | head -1)`,
+    `[ -z "$t" ] && t=$(ls -1t "$r/archive/pr-${pr}/transcripts"/*.gz 2>/dev/null | grep -v '/session-at-close-' | head -1)`,
     `[ -n "$t" ] && echo "transcript $t"`,
     `[ -f "$r/state/ledgers/pr-${pr}.md" ] && echo "ledger $r/state/ledgers/pr-${pr}.md"`,
     `[ -f "$r/state/session-prompts/pr-${pr}.md" ] && echo "prompt $r/state/session-prompts/pr-${pr}.md"`,
     `v=$(ls -1t "$r/verdict/pr-${pr}-round-${round}.json" "$r"/verdict/processed/*pr-${pr}-round-${round}.json 2>/dev/null | head -1)`,
     `[ -n "$v" ] && echo "verdict $v"`,
+    `[ -f "$r/archive/pr-${pr}/manifest.json" ] && echo "${ARCHIVE_MANIFEST_LINE} $r/archive/pr-${pr}/manifest.json"`,
     `exit 0`,
   ].join("\n");
   return dockerSh(cfg, script);
 }
+
+/** The listing line naming the PR's archive manifest. */
+export const ARCHIVE_MANIFEST_LINE = "archive-manifest";
+
+/** The PR's archive manifest, when the listing named one — with the same
+ * trust-boundary checks as an artefact path, and it must be the manifest of
+ * THIS PR's archive. */
+export function parseArchiveManifestLine(stdout: string, root: string, pr: number): string | null {
+  const want = `${root}/archive/pr-${pr}/manifest.json`;
+  for (const line of stdout.split("\n")) {
+    const sp = line.indexOf(" ");
+    if (sp <= 0 || line.slice(0, sp).trim() !== ARCHIVE_MANIFEST_LINE) continue;
+    const path = line.slice(sp + 1).trim();
+    if (path === want && /^[\w./@:+-]+$/.test(path)) return path;
+  }
+  return null;
+}
+
+/** Is this artefact path an archived gzip (read with `zcat`)? */
+const isArchivedGzip = (remotePath: string, root: string): boolean =>
+  remotePath.startsWith(`${root}/archive/`) && remotePath.endsWith(".gz");
 
 /**
  * Parse the listing, refusing any path that is not plainly inside the sandbox
@@ -187,9 +235,77 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
 
 /** `head -c <cap>` one artefact. Every artefact is text (JSONL / Markdown /
  * JSON), so the string the runner returns is the file — no base64 hop, and no
- * dependency on tar being present in the image. */
+ * dependency on tar being present in the image.
+ *
+ * An ARCHIVED transcript (a `.gz` under `archive/`) is decompressed
+ * on the VM: `zcat -t` first proves the whole gzip decompresses — `zcat | head`
+ * alone exits with head's status, so a corrupt gzip would land as a short
+ * file that looks complete — then `zcat | head -c <cap>`. */
 export function fetchArgv(cfg: TuiConfig, remotePath: string, maxBytes = MAX_FILE_BYTES): string[] {
+  if (isArchivedGzip(remotePath, cfg.remote_sandbox_root))
+    return dockerSh(cfg, `zcat -t '${remotePath}' && zcat '${remotePath}' | head -c ${maxBytes}`);
   return dockerSh(cfg, `head -c ${maxBytes} '${remotePath}'`);
+}
+
+/** An archive manifest (`archive/pr-<n>/manifest.json`) as fetched, or null
+ * when it is not one. A manifest is plain, append-only JSON; one
+ * that does not parse is never read as "nothing archived". */
+export function parseArchiveManifest(text: string): Manifest | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const m = parsed as Partial<Manifest>;
+  if (
+    m.format !== 1 ||
+    !Array.isArray(m.passes) ||
+    !Array.isArray(m.entries) ||
+    !m.entries.every((e) => typeof e === "object" && e !== null && typeof e.kind === "string")
+  )
+    return null;
+  return m as Manifest;
+}
+
+/**
+ * Where a role's file sits in the PR's archive, by its manifest:
+ * the latest record of the path the live listing would have found — the
+ * ledger, the session prompt, this round's processed verdict, or the newest
+ * PR transcript — or null when the archive holds none. `pointer` is the
+ * archive file relative to the sandbox root; `path` the live path it was
+ * archived from (its record's name inside a bundle).
+ */
+export function archivedRole(
+  manifest: Manifest,
+  role: EvidenceRole,
+  pr: number,
+  round: number,
+  sessionDir: string,
+): { pointer: string; path: string } | null {
+  const verdictRe = new RegExp(`^verdict/processed/(?:[^/]*-)?pr-${pr}-round-${round}\\.json$`);
+  const match = (r: SettledRecord): boolean => {
+    switch (role) {
+      case "ledger":
+        return r.source === `state/ledgers/pr-${pr}.md`;
+      case "prompt":
+        return r.source === `state/session-prompts/pr-${pr}.md`;
+      case "verdict":
+        return verdictRe.test(r.source);
+      case "transcript":
+        return (
+          r.kind === "transcript" &&
+          !r.legacy &&
+          r.source.startsWith(`${sessionDir}/pr-${pr}/`) &&
+          r.source.endsWith(".jsonl")
+        );
+    }
+  };
+  let best: SettledRecord | null = null;
+  for (const r of settledIndex(manifest).values())
+    if (match(r) && (!best || r.mtime_ms > best.mtime_ms)) best = r;
+  return best ? { pointer: `archive/pr-${pr}/${best.archive}`, path: best.source } : null;
 }
 
 /** The round rows `qcr why --json` reports; only the fields the copier reads. */
@@ -787,8 +903,34 @@ export class EvidenceCopier {
     const watchedFrom = Math.max(this.firstSeen.get(pr) ?? 0, this.watchResumedMs);
     const finishedMs = round.finished_at === null ? NaN : Date.parse(round.finished_at);
     const backfill = !Number.isFinite(finishedMs) || finishedMs < watchedFrom;
-    const skipped = backfill ? PR_CURRENT_ROLES.filter((r) => files.some((f) => f.role === r)) : [];
+    const skipped: EvidenceRole[] = backfill
+      ? PR_CURRENT_ROLES.filter((r) => files.some((f) => f.role === r))
+      : [];
     const toCopy = backfill ? files.filter((f) => f.role === "verdict") : files;
+    // a role found nowhere live may be in the PR's archive. Its
+    // manifest says where; a role it holds is `archived` (a pr-current one
+    // in a backfill is skipped as stale, exactly as a live one is), never
+    // `missing`. A manifest that cannot be fetched or read fails the copy —
+    // a manifest written now would say `missing` forever.
+    const archived: NonNullable<RoundManifest["archived"]> = [];
+    const absent = EVIDENCE_ROLES.filter((r) => !files.some((f) => f.role === r));
+    const manifestPath = parseArchiveManifestLine(listed.stdout, this.cfg.remote_sandbox_root, pr);
+    if (absent.length > 0 && manifestPath) {
+      const got = await this.ssh(this.cfg.ssh_host, fetchArgv(this.cfg, manifestPath), {
+        timeoutMs: this.deps.timeoutMs,
+      });
+      if (!got.ok)
+        return this.fail(report, key, `evidence: ${key} — archive manifest fetch failed`);
+      const manifest = parseArchiveManifest(got.stdout);
+      if (!manifest)
+        return this.fail(report, key, `evidence: ${key} — unreadable archive manifest`);
+      for (const role of absent) {
+        const at = archivedRole(manifest, role, pr, round.round_no, this.deps.sessionDir);
+        if (!at) continue;
+        if (backfill && PR_CURRENT_ROLES.includes(role)) skipped.push(role);
+        else archived.push({ role, ...at });
+      }
+    }
     const written: RoundManifest["files"] = [];
     for (const f of toCopy) {
       const got = await this.ssh(this.cfg.ssh_host, fetchArgv(this.cfg, f.remotePath), {
@@ -806,6 +948,7 @@ export class EvidenceCopier {
         // in bytes — multibyte text would otherwise read as short of the cap.
         truncated: Buffer.byteLength(got.stdout, "utf8") >= MAX_FILE_BYTES,
         scope: PR_CURRENT_ROLES.includes(f.role) ? "pr-current" : "round",
+        from: isArchivedGzip(f.remotePath, this.cfg.remote_sandbox_root) ? "archive" : "live",
       });
     }
     this.store.writeManifest({
@@ -815,14 +958,19 @@ export class EvidenceCopier {
       round,
       roles_note: ROLES_NOTE,
       files: written,
+      archived,
       missing: EVIDENCE_ROLES.filter(
-        (r) => !written.some((w) => w.role === r) && !skipped.includes(r),
+        (r) =>
+          !written.some((w) => w.role === r) &&
+          !skipped.includes(r) &&
+          !archived.some((a) => a.role === r),
       ),
       skipped_stale: skipped,
     });
     this.announced.delete(key);
     report.copied.push(
-      `evidence: ${key} copied (${written.length} file${written.length === 1 ? "" : "s"})`,
+      `evidence: ${key} copied (${written.length} file${written.length === 1 ? "" : "s"}` +
+        `${archived.length > 0 ? `, ${archived.length} archived` : ""})`,
     );
     return true;
   }

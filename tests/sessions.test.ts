@@ -40,6 +40,7 @@ import type { RoundOrder } from "../src/types.js";
 import { flushHeldWakes } from "../src/wakes.js";
 import { WorktreeManager } from "../src/worktrees.js";
 import { daemonOriginWakes, piAuthWatchDirs } from "../src/wire.js";
+import { whyJson } from "../src/cli.js";
 import { PiAuthWatch } from "../src/authwatch.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
@@ -2126,7 +2127,7 @@ describe("archive and close", () => {
     expect(m.newestSessionFile("pr-1")).toBeUndefined();
   });
 
-  it("archives JSONL + ledger + this PR's verdicts, drops the worktree, kills tmux", async () => {
+  it("records the ledger, this PR's verdicts and meta.json — never the JSONL — drops the worktree, kills tmux", async () => {
     const m = manager();
     markExistingSessionReady(m, "pr-42");
     seedSessionArtifacts(m, "pr-42");
@@ -2136,12 +2137,31 @@ describe("archive and close", () => {
     await m.archiveAndClose(42);
 
     const dest = m.archiveDir("pr-42");
-    expect(readFileSync(join(dest, "session.jsonl"), "utf8")).toBe('{"type":"session","n":2}\n');
+    // the transcript is the archiver's to keep (every file,
+    // verified and compressed, once safe to move) — no synchronous copy of the
+    // newest one on the close path any more.
+    expect(existsSync(join(dest, "session.jsonl"))).toBe(false);
     expect(readFileSync(join(dest, "ledger.md"), "utf8")).toBe("LEDGER PR #42 @ abc123\n");
     expect(readdirSync(join(dest, "verdicts"))).toEqual(["pr-42-round-1.json"]);
-    expect(JSON.parse(readFileSync(join(dest, "meta.json"), "utf8")).archived_at).toBe(
-      "2026-08-13T10:00:00.000Z",
+    const meta = JSON.parse(readFileSync(join(dest, "meta.json"), "utf8"));
+    expect(meta.archived_at).toBe("2026-08-13T10:00:00.000Z");
+    // meta.json still names the live source the archiver compares against.
+    expect(meta.session_file).toBe(
+      join(m.sessionDir("pr-42"), "--home-sandbox--", "20260812_new.jsonl"),
     );
+    expect(meta.files.some((f: string) => f.endsWith(".jsonl"))).toBe(false);
+    // The live transcripts are untouched: they leave only through the archiver.
+    expect(existsSync(meta.session_file)).toBe(true);
+    // `qcr why` still reads the record.
+    const store = new StateStore(":memory:");
+    try {
+      const why = whyJson(store, 42, dest);
+      expect(why.ledger).toBe("LEDGER PR #42 @ abc123\n");
+      expect(why.archive).toEqual(expect.arrayContaining(["ledger.md", "meta.json"]));
+      expect(why.archive).not.toContain("session.jsonl");
+    } finally {
+      store.close();
+    }
 
     const gitArgs = calls.filter((c) => c.cmd === "git").map((c) => c.args.join(" "));
     expect(gitArgs.some((a) => a.startsWith("worktree remove --force"))).toBe(true);
@@ -2155,6 +2175,9 @@ describe("archive and close", () => {
     await m.archiveAndClose(42);
     expect(existsSync(join(m.archiveDir("pr-42"), "meta.json"))).toBe(true);
     expect(existsSync(join(m.archiveDir("pr-42"), "session.jsonl"))).toBe(false);
+    expect(
+      JSON.parse(readFileSync(join(m.archiveDir("pr-42"), "meta.json"), "utf8")).session_file,
+    ).toBe(null);
   });
 });
 
@@ -2168,24 +2191,62 @@ describe("overseer rotation", () => {
     expect(await m.rotateOverseerIfDue()).toBe(false);
   });
 
-  it("archives and respawns once the rotation interval elapses", async () => {
+  it("records the run and respawns once the rotation interval elapses — ledger and meta, never the JSONL", async () => {
     let now = new Date("2026-08-13T10:00:00Z");
     const m = manager(() => now);
     await m.ensureOverseerSession();
     const sdir = join(m.sessionDir(OVERSEER_SESSION), "s");
     mkdirSync(sdir, { recursive: true });
     writeFileSync(join(sdir, "run.jsonl"), '{"type":"session"}\n');
+    mkdirSync(join(root, "state", "ledgers"), { recursive: true });
+    writeFileSync(m.ledgerPath(OVERSEER_SESSION), "overseer ledger\n");
 
     now = new Date("2026-08-20T10:00:00Z"); // 7 days
     expect(m.overseerRotationDue()).toBe(true);
     expect(await m.rotateOverseerIfDue()).toBe(true);
 
-    expect(existsSync(join(m.archiveDir(OVERSEER_SESSION), "2026-08-20", "session.jsonl"))).toBe(
-      true,
+    const rec = join(m.archiveDir(OVERSEER_SESSION), "2026-08-20");
+    expect(existsSync(join(rec, "session.jsonl"))).toBe(false);
+    expect(readFileSync(join(rec, "ledger.md"), "utf8")).toBe("overseer ledger\n");
+    expect(JSON.parse(readFileSync(join(rec, "meta.json"), "utf8")).session_file).toBe(
+      join(sdir, "run.jsonl"),
     );
+    // The transcript stays live until the archiver moves it.
+    expect(existsSync(join(sdir, "run.jsonl"))).toBe(true);
     expect(tmuxArgs()).toContainEqual(["kill-session", "-t", "=overseer"]);
     expect(tmuxArgs().filter((a) => a[0] === "new-session" && a[3] === "overseer")).toHaveLength(2);
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
+  });
+
+  it("two rotations on the same date no longer overwrite each other (S4)", async () => {
+    let now = new Date("2026-08-20T09:00:00Z");
+    const m = manager(() => now);
+    await m.ensureOverseerSession();
+    const sdir = m.sessionDir(OVERSEER_SESSION);
+    mkdirSync(sdir, { recursive: true });
+    writeFileSync(join(sdir, "a.jsonl"), '{"n":1}\n');
+    utimesSync(
+      join(sdir, "a.jsonl"),
+      new Date("2026-08-20T08:00:00Z"),
+      new Date("2026-08-20T08:00:00Z"),
+    );
+    expect(await m.rotateOverseer()).toBe("2026-08-20");
+    // The weekly rotation, then an operator restart-session the same day.
+    now = new Date("2026-08-20T15:00:00Z");
+    writeFileSync(join(sdir, "b.jsonl"), '{"n":2}\n');
+    expect(await m.rotateOverseer()).toBe("2026-08-20-2");
+    now = new Date("2026-08-20T16:00:00Z");
+    expect(await m.rotateOverseer()).toBe("2026-08-20-3");
+    const meta = (d: string) =>
+      JSON.parse(readFileSync(join(m.archiveDir(OVERSEER_SESSION), d, "meta.json"), "utf8"));
+    expect(meta("2026-08-20").archived_at).toBe("2026-08-20T09:00:00.000Z");
+    expect(meta("2026-08-20").session_file).toBe(join(sdir, "a.jsonl"));
+    expect(meta("2026-08-20-2").archived_at).toBe("2026-08-20T15:00:00.000Z");
+    expect(meta("2026-08-20-2").session_file).toBe(join(sdir, "b.jsonl"));
+    expect(meta("2026-08-20-3").archived_at).toBe("2026-08-20T16:00:00.000Z");
+    // Both transcripts are still live — nothing was copied, nothing lost.
+    expect(readFileSync(join(sdir, "a.jsonl"), "utf8")).toBe('{"n":1}\n');
+    expect(readFileSync(join(sdir, "b.jsonl"), "utf8")).toBe('{"n":2}\n');
   });
 
   it("reports not-due when no birth record exists (adopted session)", () => {

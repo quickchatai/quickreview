@@ -9,7 +9,7 @@
 // reviewer sessions store tool results verbatim (diffs, file reads, CI logs),
 // and a PR touching OAuth code puts "invalid_grant" in them as plain text.
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 export const PI_AUTH_ERROR_RE = /authentication token is expired|invalid_grant|401 unauthorized/i;
 
@@ -74,22 +74,33 @@ function readFrom(path: string, from: number, bytes: number): { text: string; ne
  * `seen` (path → byte offset, updated in place) makes the scan read only what
  * was APPENDED since the last scan: without it an old error still inside the
  * tail matched again on every healthy write after a re-login, and the flag
- * never cleared. A file not in `seen` is read tail-only, as before. */
+ * never cleared. A file not in `seen` is read tail-only, as before.
+ *
+ * `seen` is also PRUNED (S4): an entry under `sessionsDir` whose file
+ * the listing no longer shows — archived, or its whole session dir gone — is
+ * dropped, so the map tracks the live tree instead of every file that ever
+ * existed. Only a listing that answered prunes: an entry under a directory
+ * that could not be read stays (its file is unknown, never gone). */
 export function scanPiAuthErrors(
   sessionsDir: string,
   sinceMs: number,
   seen?: Map<string, number>,
 ): AuthScanHit[] {
   const hits: AuthScanHit[] = [];
+  /** Every path the listing showed, and the dirs it could not list. */
+  const present = new Set<string>();
+  const unlisted: string[] = [];
   const visit = (dir: string, depth: number): void => {
     let names: string[] = [];
     try {
       names = readdirSync(dir);
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") unlisted.push(dir);
       return;
     }
     for (const name of names) {
       const path = join(dir, name);
+      present.add(path);
       let st;
       try {
         st = statSync(path);
@@ -98,6 +109,7 @@ export function scanPiAuthErrors(
       }
       if (st.isDirectory()) {
         if (depth < 1) visit(path, depth + 1);
+        else unlisted.push(path); // deeper than the scan reads: unknown
         continue;
       }
       if (!name.endsWith(".jsonl") || st.mtimeMs < sinceMs) continue;
@@ -111,6 +123,14 @@ export function scanPiAuthErrors(
     }
   };
   visit(sessionsDir, 0);
+  if (seen) {
+    const under = `${sessionsDir}${sep}`;
+    for (const path of [...seen.keys()]) {
+      if (!path.startsWith(under) || present.has(path)) continue;
+      if (unlisted.some((d) => path === d || path.startsWith(`${d}${sep}`))) continue;
+      seen.delete(path);
+    }
+  }
   return hits;
 }
 
@@ -145,6 +165,12 @@ export class PiAuthWatch {
   ) {
     this.sessionsDirs = typeof sessionsDirs === "string" ? [sessionsDirs] : [...sessionsDirs];
     this.sinceMs = this.now().getTime() - 10 * 60 * 1000;
+  }
+
+  /** How many files the scan is tracking an offset for — the live tree's
+   * session files it has read, never every file that ever existed. */
+  trackedFiles(): number {
+    return this.seen.size;
   }
 
   /** Returns the NEW hits found this scan (empty array when quiet). */

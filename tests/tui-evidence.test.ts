@@ -27,10 +27,13 @@ import {
   MAX_FILE_BYTES,
   SWEEP_PROGRESS_FILE,
   SweepProgressFile,
+  archivedRole,
   evidenceWhyIntervalMs,
   fetchArgv,
   finishedRounds,
   manifestArgv,
+  parseArchiveManifest,
+  parseArchiveManifestLine,
   parseManifest,
   parseSweepProgress,
   prSignature,
@@ -1193,5 +1196,271 @@ describe("L1 — a round that finished during a hold is a backfill", () => {
       heartbeat: clock.now().toISOString(),
     });
     expect(readdirSync(store.roundDir(9, 1)).sort()).toEqual([MANIFEST_NAME, "verdict.json"]);
+  });
+});
+
+// the archive fallback (docs/archiving.md §4, §14). A round
+// copied after its PR's files were archived finds them in archive/pr-<n>/:
+//   (5) with the live transcript missing and the archive .gz present, the
+//       transcript role resolves to the archive and the manifest records it;
+//       a role found only inside a bundle is recorded as `archived` with its
+//       pointer — never `missing`.
+describe("the archive fallback (S4, acceptance 5)", () => {
+  let dir: string;
+  let store: EvidenceStore;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "qcr-evidence-archive-"));
+    store = new EvidenceStore(dir);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const PR = 5406;
+  const GZ = `${ROOT}/archive/pr-${PR}/transcripts/2026-10-02T10-00-00_b.jsonl.gz`;
+  const MANIFEST = `${ROOT}/archive/pr-${PR}/manifest.json`;
+  const archiveManifest = {
+    format: 1,
+    subject: `pr-${PR}`,
+    passes: [{ id: "20261021T120000Z", kind: "archive", started_at: "2026-10-21T12:00:00Z" }],
+    entries: [
+      {
+        pass: "20261021T120000Z",
+        kind: "transcript",
+        source: `state/pi-sessions/pr-${PR}/2026-10-02T10-00-00_b.jsonl`,
+        archive: "transcripts/2026-10-02T10-00-00_b.jsonl.gz",
+        bytes: 10,
+        mtime_ms: 2,
+        dev: 1,
+        ino: 1,
+        sha256: "a".repeat(64),
+        gz_bytes: 5,
+        verified_at: "2026-10-21T12:00:00Z",
+      },
+      {
+        pass: "20261021T120000Z",
+        kind: "bundle",
+        archive: "state-20261021T120000Z.jsonl.gz",
+        records: 2,
+        bytes: 20,
+        gz_bytes: 10,
+        verified_at: "2026-10-21T12:00:00Z",
+        files: [
+          {
+            path: `state/session-prompts/pr-${PR}.md`,
+            bytes: 10,
+            mtime_ms: 1,
+            dev: 1,
+            ino: 2,
+            sha256: "b".repeat(64),
+            class: "session_files",
+          },
+          {
+            path: `verdict/processed/20261001T000000Z-pr-${PR}-round-1.json`,
+            bytes: 10,
+            mtime_ms: 1,
+            dev: 1,
+            ino: 3,
+            sha256: "c".repeat(64),
+            class: "verdicts",
+          },
+        ],
+      },
+    ],
+  };
+
+  /** A VM whose PR was archived: no live transcript, prompt or verdict. */
+  function archivedVm(
+    opts: { manifest?: string | null; failManifest?: boolean; listing?: string[] } = {},
+  ): { ssh: SshRunner; scripts: string[] } {
+    const scripts: string[] = [];
+    const ssh: SshRunner = async (_host, argv) => {
+      const script = argv.join(" ");
+      scripts.push(script);
+      if (script.includes("cli.js") && script.includes("why"))
+        return OK(JSON.stringify({ pr: PR, rounds: [round(1)] }));
+      if (script.includes("state/ledgers"))
+        return OK(
+          (
+            opts.listing ?? [
+              `transcript ${GZ}`,
+              `ledger ${ROOT}/state/ledgers/pr-${PR}.md`,
+              `archive-manifest ${MANIFEST}`,
+            ]
+          ).join("\n"),
+        );
+      if (script.includes(`'${MANIFEST}'`)) {
+        if (opts.failManifest) return FAIL;
+        return OK(opts.manifest ?? JSON.stringify(archiveManifest));
+      }
+      if (script.startsWith(`sudo docker exec quickreview-sandbox sh -c zcat -t '${GZ}'`))
+        return OK('{"type":"message","from":"the archive"}\n');
+      const m = /head -c \d+ '([^']+)'/.exec(script);
+      if (m) return OK(`body of ${m[1]}`);
+      return FAIL;
+    };
+    return { ssh, scripts };
+  }
+
+  const copier = (ssh: SshRunner, notices: string[] = [], now = "2026-08-25T08:00:00Z") =>
+    new EvidenceCopier(CFG, store, ssh, {
+      sessionDir: "state/pi-sessions",
+      timeoutMs: 1000,
+      onNotice: (t) => notices.push(t),
+      now: () => new Date(now),
+    });
+  const manifestFor = () =>
+    JSON.parse(readFileSync(join(store.roundDir(PR, 1), MANIFEST_NAME), "utf8"));
+
+  it("the listing falls back to the newest archived transcript, never a legacy copy, and names the manifest", () => {
+    const script = manifestArgv(CFG, "state/pi-sessions", PR, 1).at(-1)!;
+    // Live first; only with no live JSONL, the archive.
+    expect(script).toContain(`t=$(ls -1t "$r/state/pi-sessions/pr-${PR}"/*.jsonl`);
+    expect(script).toContain(
+      `[ -z "$t" ] && t=$(ls -1t "$r/archive/pr-${PR}/transcripts"/*.gz 2>/dev/null | grep -v '/session-at-close-' | head -1)`,
+    );
+    expect(script).toContain(
+      `[ -f "$r/archive/pr-${PR}/manifest.json" ] && echo "archive-manifest $r/archive/pr-${PR}/manifest.json"`,
+    );
+    expect(script.trimEnd().endsWith("exit 0")).toBe(true);
+    // The manifest line is not an artefact role…
+    expect(parseManifest(`archive-manifest ${MANIFEST}`, ROOT)).toEqual([]);
+    // …and only THIS PR's manifest is believed.
+    expect(parseArchiveManifestLine(`archive-manifest ${MANIFEST}`, ROOT, PR)).toBe(MANIFEST);
+    expect(parseArchiveManifestLine(`archive-manifest ${MANIFEST}`, ROOT, 1)).toBeNull();
+    expect(
+      parseArchiveManifestLine(
+        `archive-manifest ${ROOT}/archive/pr-${PR}/../x/manifest.json`,
+        ROOT,
+        PR,
+      ),
+    ).toBeNull();
+  });
+
+  it("an archived gzip is decompressed on the VM — whole first (`zcat -t`), then capped", () => {
+    const script = fetchArgv(CFG, GZ, 1234).at(-1)!;
+    expect(script).toBe(`zcat -t '${GZ}' && zcat '${GZ}' | head -c 1234`);
+    // Only a gzip under archive/: anything else is read as it is.
+    expect(fetchArgv(CFG, `${ROOT}/state/x.jsonl.gz`, 9).at(-1)).toBe(
+      `head -c 9 '${ROOT}/state/x.jsonl.gz'`,
+    );
+  });
+
+  it("the transcript resolves to the archive and the manifest records it; bundle-only roles are `archived`, never `missing`", async () => {
+    const { ssh } = archivedVm();
+    const notices: string[] = [];
+    const report = await copier(ssh, notices).sweep(snapshot([{ number: PR, rounds: 1 }]));
+    expect(report.copied).toEqual([`evidence: pr-${PR} round 1 copied (2 files, 2 archived)`]);
+    const rd = store.roundDir(PR, 1);
+    expect(readFileSync(join(rd, "session.jsonl"), "utf8")).toBe(
+      '{"type":"message","from":"the archive"}\n',
+    );
+    const m = manifestFor();
+    expect(m.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "transcript",
+          remote_path: GZ,
+          from: "archive",
+          scope: "pr-current",
+        }),
+        expect.objectContaining({ role: "ledger", from: "live" }),
+      ]),
+    );
+    expect(m.archived).toEqual([
+      {
+        role: "prompt",
+        pointer: `archive/pr-${PR}/state-20261021T120000Z.jsonl.gz`,
+        path: `state/session-prompts/pr-${PR}.md`,
+      },
+      {
+        role: "verdict",
+        pointer: `archive/pr-${PR}/state-20261021T120000Z.jsonl.gz`,
+        path: `verdict/processed/20261001T000000Z-pr-${PR}-round-1.json`,
+      },
+    ]);
+    expect(m.missing).toEqual([]);
+    expect(existsSync(join(rd, "prompt.md"))).toBe(false);
+    expect(existsSync(join(rd, "verdict.json"))).toBe(false);
+  });
+
+  it("in a backfill an archived pr-current role is skipped as stale, its round-scoped verdict pointed at", async () => {
+    const { ssh } = archivedVm();
+    await copier(ssh, [], "2026-08-25T10:00:00Z").sweep(snapshot([{ number: PR, rounds: 1 }]));
+    const m = manifestFor();
+    expect(m.files).toEqual([]);
+    expect(m.skipped_stale.sort()).toEqual(["ledger", "prompt", "transcript"]);
+    expect(m.archived).toEqual([expect.objectContaining({ role: "verdict" })]);
+    expect(m.missing).toEqual([]);
+  });
+
+  it("a role neither live nor in the archive is missing — and no manifest is fetched when nothing is absent", async () => {
+    const thin = { ...archiveManifest, entries: [archiveManifest.entries[0]] };
+    const { ssh } = archivedVm({ manifest: JSON.stringify(thin) });
+    await copier(ssh).sweep(snapshot([{ number: PR, rounds: 1 }]));
+    const m = manifestFor();
+    expect(m.archived).toEqual([]);
+    expect(m.missing.sort()).toEqual(["prompt", "verdict"]);
+
+    rmSync(store.roundDir(PR, 1), { recursive: true });
+    const live = archivedVm({
+      listing: [
+        `transcript ${ROOT}/state/pi-sessions/pr-${PR}/x.jsonl`,
+        `ledger ${ROOT}/state/ledgers/pr-${PR}.md`,
+        `prompt ${ROOT}/state/session-prompts/pr-${PR}.md`,
+        `verdict ${ROOT}/verdict/processed/2026-pr-${PR}-round-1.json`,
+        `archive-manifest ${MANIFEST}`,
+      ],
+    });
+    await copier(live.ssh).sweep(snapshot([{ number: PR, rounds: 1 }]));
+    expect(live.scripts.some((s) => s.includes(`'${MANIFEST}'`))).toBe(false);
+    expect(manifestFor().files.every((f: { from: string }) => f.from === "live")).toBe(true);
+  });
+
+  it("a manifest that cannot be fetched or read fails the copy (retried) — never a manifest that says missing", async () => {
+    for (const vm of [archivedVm({ failManifest: true }), archivedVm({ manifest: "{torn" })]) {
+      const notices: string[] = [];
+      await copier(vm.ssh, notices).sweep(snapshot([{ number: PR, rounds: 1 }]));
+      expect(store.has(PR, 1)).toBe(false);
+      expect(notices).toEqual([
+        expect.stringMatching(/archive manifest fetch failed|unreadable archive manifest/),
+      ]);
+    }
+  });
+
+  it("archivedRole: the latest record of the path the live listing would have found", () => {
+    const m = parseArchiveManifest(JSON.stringify(archiveManifest))!;
+    expect(archivedRole(m, "transcript", PR, 1, "state/pi-sessions")).toEqual({
+      pointer: `archive/pr-${PR}/transcripts/2026-10-02T10-00-00_b.jsonl.gz`,
+      path: `state/pi-sessions/pr-${PR}/2026-10-02T10-00-00_b.jsonl`,
+    });
+    // Another round's verdict, or another PR's, is not this round's.
+    expect(archivedRole(m, "verdict", PR, 2, "state/pi-sessions")).toBeNull();
+    expect(archivedRole(m, "verdict", 54, 1, "state/pi-sessions")).toBeNull();
+    expect(archivedRole(m, "ledger", PR, 1, "state/pi-sessions")).toBeNull();
+    expect(parseArchiveManifest('{"format":2,"passes":[],"entries":[]}')).toBeNull();
+  });
+
+  it("archivedRole: a legacy session-at-close copy is never the round's transcript — even the newest, wherever its source says it was", () => {
+    const transcript = archiveManifest.entries[0]!;
+    const legacy = {
+      ...transcript,
+      // A source the transcript rule would otherwise accept: only the legacy
+      // mark keeps it out.
+      source: `state/pi-sessions/pr-${PR}/session.jsonl`,
+      archive: "transcripts/session-at-close-20261021T120000Z.jsonl.gz",
+      mtime_ms: 99,
+      legacy: true,
+    };
+    const only = parseArchiveManifest(
+      JSON.stringify({ ...archiveManifest, entries: [legacy, archiveManifest.entries[1]] }),
+    )!;
+    expect(archivedRole(only, "transcript", PR, 1, "state/pi-sessions")).toBeNull();
+    // Beside an older real transcript, the real one is the pointer.
+    const both = parseArchiveManifest(
+      JSON.stringify({ ...archiveManifest, entries: [transcript, legacy] }),
+    )!;
+    expect(archivedRole(both, "transcript", PR, 1, "state/pi-sessions")).toEqual({
+      pointer: `archive/pr-${PR}/transcripts/2026-10-02T10-00-00_b.jsonl.gz`,
+      path: `state/pi-sessions/pr-${PR}/2026-10-02T10-00-00_b.jsonl`,
+    });
   });
 });

@@ -7,6 +7,13 @@
 import type { ArchiveMode } from "../config.js";
 import { ARCHIVE_MODES } from "../config.js";
 
+/** How long an operator's `archive-run` / `archive-restore` (S4) waits for
+ * its tick or restore before it answers "still running". The operator
+ * channel serves one command at a time, so this bounds what one archive verb
+ * can hold a `qcr drain` or an unwedge behind it for; the work itself goes
+ * on. Here (a leaf) so the CLI client reads it without the archiver. */
+export const OPERATOR_WAIT_MS = 60_000;
+
 export const ARCHIVE_STATES = [
   "unknown",
   "off",
@@ -98,6 +105,29 @@ export interface ArchiveFilesStatus {
   verify_failures: number;
 }
 
+/** One store's last pass (S4, docs/archiving.md §5): the overseer's
+ * non-current transcripts (`overseer`), pi's global session store
+ * (`pi_global`). Null until that store's pass has run (never in plan mode). */
+export interface ArchiveStoreStatus {
+  last_run_at: string;
+  /** `done` | `partial` | `held` | `none` (nothing to move) | `failed`. */
+  outcome: string;
+  /** Why a held, partial or failed pass stopped: `birth_unknown` (the
+   * overseer's birth record could not be read), `manifest_unreadable`, a
+   * hold reason, `budget`, `restore_pending`, `verify_failed`, `legacy_copy_waits`
+   * (an overseer legacy copy whose transcript is still live waits), … */
+  reason: string | null;
+  archived: number;
+  bytes_in: number;
+  bytes_out: number;
+  removed: number;
+  duplicates_removed: number;
+  verify_failures: number;
+  /** Files kept live by design (the overseer's current one, pi files younger
+   * than a day). */
+  kept_live: number;
+}
+
 /** status.json `archive`. */
 export interface ArchiveStatus {
   mode: ArchiveMode;
@@ -144,6 +174,9 @@ export interface ArchiveStatus {
   /** The file phase; null before it has run (and always in plan mode).
    * Absent from an older daemon's block, read as null. */
   files: ArchiveFilesStatus | null;
+  /** The stores that belong to no PR (S4); null from an older daemon or
+   * before the archiver exists, each store null until its pass has run. */
+  stores: { overseer: ArchiveStoreStatus | null; pi_global: ArchiveStoreStatus | null } | null;
 }
 
 /** The block before the archiver exists (the daemon is still assembling):
@@ -170,6 +203,7 @@ export function pendingArchiveStatus(mode: ArchiveMode): ArchiveStatus {
     max_sync_span_ms: null,
     db: null,
     files: null,
+    stores: null,
   };
 }
 
@@ -286,6 +320,67 @@ function readFiles(v: unknown): ArchiveFilesStatus | null {
   return out;
 }
 
+const STORE_NUMBERS = [
+  "archived",
+  "bytes_in",
+  "bytes_out",
+  "removed",
+  "duplicates_removed",
+  "verify_failures",
+  "kept_live",
+] as const;
+
+/** One store's sub-block: absent and null read as null. */
+function readStore(name: string, v: unknown): ArchiveStoreStatus | null {
+  if (v === undefined || v === null) return null;
+  if (!isObj(v)) return bad(`stores.${name} is ${shown(v)}, not an object or null`);
+  if (!isStr(v.last_run_at))
+    bad(`stores.${name}.last_run_at is ${shown(v.last_run_at)}, not a string`);
+  if (!isStr(v.outcome)) bad(`stores.${name}.outcome is ${shown(v.outcome)}, not a string`);
+  const out = {
+    last_run_at: v.last_run_at as string,
+    outcome: v.outcome as string,
+    reason: strOrNull(v, "reason"),
+  } as ArchiveStoreStatus;
+  for (const k of STORE_NUMBERS) {
+    if (!isNum(v[k])) bad(`stores.${name}.${k} is ${shown(v[k])}, not a number`);
+    out[k] = v[k] as number;
+  }
+  return out;
+}
+
+/** The `stores` sub-block: absent (an older daemon) and null read as null. */
+function readStores(v: unknown): ArchiveStatus["stores"] {
+  if (v === undefined || v === null) return null;
+  if (!isObj(v)) return bad(`stores is ${shown(v)}, not an object or null`);
+  return {
+    overseer: readStore("overseer", v.overseer),
+    pi_global: readStore("pi_global", v.pi_global),
+  };
+}
+
+/** The figures an `archive-run` result carries (S4) — the backlog and the
+ * last DB, file and store passes — read with the same checks as the block;
+ * null when they cannot be read whole (never a guess). */
+export function readArchiveRunFigures(
+  v: unknown,
+): Pick<ArchiveStatus, "backlog" | "db" | "files" | "stores"> | null {
+  if (!isObj(v)) return null;
+  try {
+    return {
+      backlog:
+        v.backlog === undefined
+          ? null
+          : numbers(v, "backlog", ["prs", "bytes", "event_rows", "delivery_rows"] as const),
+      db: readDb(v.db),
+      files: readFiles(v.files),
+      stores: readStores(v.stores),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** status.json `archive` read back — total over whatever JSON is there. */
 export function readArchiveStatus(v: unknown): ArchiveStatusRead {
   if (v === undefined) return { kind: "absent" };
@@ -350,6 +445,7 @@ export function readArchiveStatus(v: unknown): ArchiveStatusRead {
       max_sync_span_ms: numOrNull(v, "max_sync_span_ms"),
       db: readDb(v.db),
       files: readFiles(v.files),
+      stores: readStores(v.stores),
     };
     return { kind: "read", view };
   } catch (err) {
@@ -424,6 +520,33 @@ export function filesPhrase(s: ArchiveStatus): string {
   );
 }
 
+/** One store's last pass in a few words. */
+export function storePhrase(label: string, st: ArchiveStoreStatus | null): string {
+  if (!st) return "";
+  if (st.outcome === "none") return `${label}: nothing to move (${st.kept_live} kept live)`;
+  if (st.outcome === "failed" || st.outcome === "held")
+    return `${label} ${st.outcome.toUpperCase()} (${st.reason ?? "reason unknown"}) at ${st.last_run_at}`;
+  const verify = st.verify_failures > 0 ? `, ${st.verify_failures} VERIFY FAILURE(S)` : "";
+  return (
+    `${label}: ${st.archived} file(s) archived last run (${fmtBytes(st.bytes_in)} → ${fmtBytes(st.bytes_out)}, ` +
+    `${st.removed} removed${st.duplicates_removed ? `, ${st.duplicates_removed} legacy duplicate(s)` : ""}${verify}; ` +
+    `${st.kept_live} kept live; ${st.outcome}${st.reason ? `: ${st.reason}` : ""})`
+  );
+}
+
+/** The stores phrase `qcr status` carries: only what needs a look (a held or
+ * failed store, a verify failure) — the full lines are `qcr archive status`'s. */
+export function storesAlertPhrase(s: ArchiveStatus): string {
+  const parts: string[] = [];
+  for (const [label, st] of [
+    ["overseer store", s.stores?.overseer ?? null],
+    ["pi-global store", s.stores?.pi_global ?? null],
+  ] as const)
+    if (st && (st.outcome === "failed" || st.outcome === "held" || st.verify_failures > 0))
+      parts.push(storePhrase(label, st));
+  return parts.join("; ");
+}
+
 /**
  * The one archive line `qcr status` prints. An absent block (an older
  * daemon), an unmeasured one and one this build cannot read whole each say
@@ -444,6 +567,8 @@ export function archiveStatusLine(v: unknown): string {
   if (db) extras.push(db);
   const files = filesPhrase(s);
   if (files) extras.push(files);
+  const stores = storesAlertPhrase(s);
+  if (stores) extras.push(stores);
   const tail = extras.length > 0 ? `; ${extras.join("; ")}` : "";
   const mode = `mode ${s.mode}`;
   switch (s.state) {
