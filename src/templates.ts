@@ -4,7 +4,9 @@
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
 import { stripModelDocs } from "./promptdoc.js";
-import { renderPassTaskNote } from "./passtasks.js";
+import { renderDeltaNote, renderPassTaskNote } from "./passtasks.js";
+
+export { renderDeltaNote };
 import { renderRenderNote } from "./reviewrender.js";
 import { DJANGO_ECOSYSTEM, type Ecosystem } from "./ecosystem.js";
 import {
@@ -505,71 +507,13 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
   ].join("\n");
 }
 
-/** `[start, count]` new-side ranges as `12-18, 40, after 77`. */
-function renderRanges(ranges: ReadonlyArray<readonly [number, number]>): string {
-  return ranges
-    .map(([start, count]) =>
-      count <= 0 ? `after ${start}` : count === 1 ? String(start) : `${start}-${start + count - 1}`,
-    )
-    .join(", ");
-}
-
-/**
- * `{{delta_note}}`: the PR-owned change since the last reviewed
- * head, as the daemon computed it — the reviewed head replayed onto this
- * round's merge base, diffed against the new head, so base-branch merges are
- * already out of it. Each file with its new-side line ranges, the whole
- * patch's path and the per-file git command; a file whose replay conflicted
- * is flagged for the both-parents audit. "" when the order carries none.
- */
-export function renderDeltaNote(delta: RoundOrder["delta"], worktree = "<worktree>"): string {
-  if (!delta) return "";
-  const lines: string[] = [
-    `**THE CHANGE SINCE THE LAST REVIEW** — \`${delta.from_sha.slice(0, 12)}\` → this head,`,
-    `${delta.files.length} file(s), ${delta.lines} changed line(s). The daemon replayed the last`,
-    "reviewed head onto this round's merge base and diffed it against this head, so",
-    "base-branch merges and rebases are already taken out: everything listed here is",
-    "the author's own change since you last reviewed. Ranges are line numbers at",
-    "this head.",
-    "",
-  ];
-  if (delta.files.length === 0) {
-    lines.push(
-      "(no PR-owned file changed since the last review — this round verifies the",
-      "prior findings; the change review has nothing new to read)",
-    );
-  } else {
-    for (const f of delta.files) {
-      const moved =
-        f.old_path !== undefined && f.old_path !== f.path ? ` (from ${codePath(f.old_path)})` : "";
-      const scope = f.whole_file
-        ? "whole file"
-        : f.ranges.length > 0
-          ? `lines ${renderRanges(f.ranges)}`
-          : "no line ranges";
-      const conflict = f.conflict
-        ? " — **CONFLICT**: the replay conflicted here and the author resolved it by hand; audit the resolution against BOTH parents, the reviewed head and the base"
-        : "";
-      lines.push(`- ${codePath(f.path)}${moved} — ${f.status}, ${scope}${conflict}`);
-    }
-  }
-  lines.push(
-    "",
-    `The whole change as one patch: \`${delta.patch_file}\`. One file's hunks:`,
-    `\`git -C ${worktree} diff ${delta.tree} HEAD -- <path>\` (\`${delta.tree.slice(0, 12)}\` is the`,
-    "replayed tree, not a commit). The whole PR is still",
-    "`git diff <merge-base> HEAD`, for the code around a change.",
-  );
-  return lines.join("\n");
-}
-
 /**
  * `{{sweep_note}}`: the pre-approval sweep's plan — "" when the
  * order carries none (the sweep is not owed this round). The step-4b prose in
  * the follow-up template says when to run it; this block is what to run.
  */
 export function renderSweepNote(
-  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files">,
+  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept">,
 ): string {
   const plan = order.sweep_plan;
   if (!plan || plan.length === 0) return "";
@@ -579,7 +523,7 @@ export function renderSweepNote(
     "whole PR gets one blank-slate look with the full plan below (step 4b says",
     "when to launch it and when it is not reached):",
     "",
-    renderPassPlan(plan),
+    renderPassPlan(plan, order.sweep_plan_unswept ?? []),
   ];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {

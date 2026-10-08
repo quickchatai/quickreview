@@ -24,7 +24,7 @@
 // bench) not one byte of a task file changes.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { flatControls, promptTitle } from "./codespan.js";
+import { codePath, flatControls, promptTitle } from "./codespan.js";
 import {
   renderLensLessonsSection,
   renderLessonsFile,
@@ -58,7 +58,7 @@ function fencedBody(body: string | undefined): string[] {
   return ["```text", bounded.replaceAll("```", "ʼʼʼ"), "```"];
 }
 
-function focusLines(worktree: string, p: PassPlanEntry): string[] {
+function focusLines(worktree: string, p: PassPlanEntry, followUp = false): string[] {
   if (p.focus !== undefined)
     return [
       "**Your files this round** — this pass covers exactly these changed files:",
@@ -72,7 +72,69 @@ function focusLines(worktree: string, p: PassPlanEntry): string[] {
       "",
       `> ${flatControls(p.why)}`,
     ];
-  return ["The whole diff is yours; no row focus was set."];
+  return [
+    followUp
+      ? "The whole change since the last review is yours; no row focus was set."
+      : "The whole diff is yours; no row focus was set.",
+  ];
+}
+
+/** `[start, count]` new-side ranges as `12-18, 40, after 77`. */
+function renderRanges(ranges: ReadonlyArray<readonly [number, number]>): string {
+  return ranges
+    .map(([start, count]) =>
+      count <= 0 ? `after ${start}` : count === 1 ? String(start) : `${start}-${start + count - 1}`,
+    )
+    .join(", ");
+}
+
+/**
+ * `{{delta_note}}`: the PR-owned change since the last reviewed
+ * head, as the daemon computed it — the reviewed head replayed onto this
+ * round's merge base, diffed against the new head, so base-branch merges are
+ * already out of it. Each file with its new-side line ranges, the whole
+ * patch's path and the per-file git command; a file whose replay conflicted
+ * is flagged for the both-parents audit. "" when the order carries none.
+ */
+export function renderDeltaNote(delta: RoundOrder["delta"], worktree = "<worktree>"): string {
+  if (!delta) return "";
+  const lines: string[] = [
+    `**THE CHANGE SINCE THE LAST REVIEW** — \`${delta.from_sha.slice(0, 12)}\` → this head,`,
+    `${delta.files.length} file(s), ${delta.lines} changed line(s). The daemon replayed the last`,
+    "reviewed head onto this round's merge base and diffed it against this head, so",
+    "base-branch merges and rebases are already taken out: everything listed here is",
+    "the author's own change since you last reviewed. Ranges are line numbers at",
+    "this head.",
+    "",
+  ];
+  if (delta.files.length === 0) {
+    lines.push(
+      "(no PR-owned file changed since the last review — this round verifies the",
+      "prior findings; the change review has nothing new to read)",
+    );
+  } else {
+    for (const f of delta.files) {
+      const moved =
+        f.old_path !== undefined && f.old_path !== f.path ? ` (from ${codePath(f.old_path)})` : "";
+      const scope = f.whole_file
+        ? "whole file"
+        : f.ranges.length > 0
+          ? `lines ${renderRanges(f.ranges)}`
+          : "no line ranges";
+      const conflict = f.conflict
+        ? " — **CONFLICT**: the replay conflicted here and the author resolved it by hand; audit the resolution against BOTH parents, the reviewed head and the base"
+        : "";
+      lines.push(`- ${codePath(f.path)}${moved} — ${f.status}, ${scope}${conflict}`);
+    }
+  }
+  lines.push(
+    "",
+    `The whole change as one patch: \`${delta.patch_file}\`. One file's hunks:`,
+    `\`git -C ${worktree} diff ${delta.tree} HEAD -- <path>\` (\`${delta.tree.slice(0, 12)}\` is the`,
+    "replayed tree, not a commit). The whole PR is still",
+    "`git diff <merge-base> HEAD`, for the code around a change.",
+  );
+  return lines.join("\n");
 }
 
 /** What a task carries beside the order: the row's delivered lessons
@@ -103,13 +165,34 @@ export function renderPassTask(
   L.push(
     `- Worktree: \`${order.worktree}\` at \`${order.head_sha}\`. You run at the sandbox root, never inside the worktree: every path you read is absolute, under the worktree.`,
   );
+  // a follow-up round's lens reviews the change since the last
+  // review for NEW findings; the whole PR is its context. Only a
+  // `scope: "delta"` order with a delta says so — every other task renders
+  // exactly as before.
+  const delta = order.scope === "delta" ? order.delta : undefined;
   if (order.merge_base)
     L.push(
-      `- The PR's own changes are exactly \`git -C ${order.worktree} diff ${order.merge_base} ${order.head_sha}\`. Commits on the base branch after the merge-base are not part of this PR.`,
+      delta
+        ? `- The whole PR is \`git -C ${order.worktree} diff ${order.merge_base} ${order.head_sha}\` — context for the change below (the code around it, its callers and callees), not this round's review scope. Commits on the base branch after the merge-base are not part of this PR.`
+        : `- The PR's own changes are exactly \`git -C ${order.worktree} diff ${order.merge_base} ${order.head_sha}\`. Commits on the base branch after the merge-base are not part of this PR.`,
     );
   if (order.base_ref)
     L.push(`- Base branch \`${order.base_ref}\` at \`${order.base_sha || "unknown"}\`.`);
   L.push("");
+  if (delta) {
+    L.push("## The change since the last review — your review scope this round");
+    L.push("");
+    L.push(
+      "This is a FOLLOW-UP round. Look for NEW findings in this change: its hunks, read with whatever surrounding code, callers and callees it takes to judge them — a changed line that breaks an unchanged caller is a finding in this change. The change bounds where you start, never what you may report or how hard you look.",
+    );
+    L.push("");
+    L.push(renderDeltaNote(delta, order.worktree));
+    L.push("");
+    L.push(
+      "The launch message may name prior findings assigned to you: verify each one mechanically at this head and report its status (`fixed`, `open`, `obsolete`, `unverifiable`) with evidence BEFORE looking for anything new.",
+    );
+    L.push("");
+  }
   L.push("## What the PR says about itself");
   L.push("");
   L.push(
@@ -122,7 +205,7 @@ export function renderPassTask(
   L.push("");
   L.push("## Your row of the plan");
   L.push("");
-  L.push(...focusLines(order.worktree, p));
+  L.push(...focusLines(order.worktree, p, delta !== undefined));
   L.push("");
   L.push("## SETTLED — do not re-raise; reference the thread instead");
   L.push("");
@@ -237,11 +320,34 @@ export function writeLessonFiles(dir: string, d: RoundLessonDelivery): RoundLess
 /** The round prompt's `{{pass_task_note}}`: "" when the order carries no task
  * files (the knob off), so the round order renders exactly as before. */
 export function renderPassTaskNote(
-  order: Pick<RoundOrder, "pass_plan" | "pass_task_files">,
+  order: Pick<RoundOrder, "pass_plan" | "pass_task_files" | "scope" | "delta">,
 ): string {
   const files = order.pass_task_files;
   if (!files || files.length === 0) return "";
   const rows = files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`);
+  // a follow-up round's task files already carry the change since
+  // the last review; what the session still appends is each lens's assigned
+  // prior findings (step 1), which only it knows.
+  if (order.scope === "delta" && order.delta)
+    return [
+      "",
+      "**Task files — this round's lens tasks are already written.** The daemon",
+      "wrote each discovery row's complete, self-contained task (worktree, head,",
+      "the change since the last review — its files, line ranges and patch — as",
+      "the review scope, the whole PR's diff range as context, the PR text, the",
+      "row's focus or reason, SETTLED, the gate notes) to a file. Do NOT write the",
+      "rest of a task string out: launch every row with its pointer —",
+      "`Task file: <path>. Read it first; it is your complete task.` — followed by",
+      "**the prior findings step 1 assigned to that lens** (title, `path:line`, the",
+      "round it was raised in), with the instruction to verify each first, and",
+      "optionally a few lines of added focus. A raised tier calls the higher",
+      "variant with the same file. An ADDED lens has no file: write its task",
+      "string as step 2 describes.",
+      "",
+      "| row | subagent | task file |",
+      "| --- | --- | --- |",
+      ...rows,
+    ].join("\n");
   return [
     "",
     "**Task files — this round's lens tasks are already written.** The daemon",

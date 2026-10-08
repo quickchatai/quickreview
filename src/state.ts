@@ -249,6 +249,10 @@ export interface RoundRow {
   // ---- follow-up rounds (additive, nullable) ----------------------
   /** The head this round was dispatched to review (the prepared tree's). */
   head_sha: string | null;
+  /** The merge base the round's prepared tree had: the next
+   * follow-up round checks it is still under its own merge base, so a
+   * force-pushed base is a full round, never base drift read as the PR's. */
+  merge_base: string | null;
   /** `full` | `delta` — what the round reviewed. NULL on a first round and on
    * every round before the column (a legacy non-first round was a full
    * re-review). */
@@ -1421,6 +1425,7 @@ export interface RoundStartMeta {
   addable_passes?: Array<{ lens: string; tier: string }>;
   /** follow-up rounds (see RoundRow). */
   head_sha?: string | null;
+  merge_base?: string | null;
   scope?: "full" | "delta" | null;
   delta_base_sha?: string | null;
   delta_lines?: number | null;
@@ -1562,6 +1567,7 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN sweep_owed INTEGER",
       "ALTER TABLE rounds ADD COLUMN sweep_plan TEXT",
       "ALTER TABLE rounds ADD COLUMN sweep_status TEXT",
+      "ALTER TABLE rounds ADD COLUMN merge_base TEXT",
       // held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -2054,6 +2060,7 @@ export class StateStore {
     // given so a round started without them stays exactly as before.
     this.setRoundMeta(id, {
       ...(meta.head_sha !== undefined ? { head_sha: meta.head_sha } : {}),
+      ...(meta.merge_base !== undefined ? { merge_base: meta.merge_base } : {}),
       ...(meta.scope !== undefined ? { scope: meta.scope } : {}),
       ...(meta.delta_base_sha !== undefined ? { delta_base_sha: meta.delta_base_sha } : {}),
       ...(meta.delta_lines !== undefined ? { delta_lines: meta.delta_lines } : {}),
@@ -2076,6 +2083,7 @@ export class StateStore {
       "trigger_ts",
       "validate_tier",
       "head_sha",
+      "merge_base",
       "scope",
       "delta_base_sha",
       "delta_lines",
@@ -2227,8 +2235,9 @@ export class StateStore {
    * a full-scope round, a legacy re-review (scope NULL — every re-review
    * before follow-up rounds was a full one), or a follow-up round whose
    * pre-approval sweep ran. The pre-approval sweep is owed only while this is
-   * false. A legacy staleness round (a post-approval delta look) is NOT one:
-   * when in doubt the sweep is owed, never skipped.
+   * false. A staleness round (a post-approval delta look, whatever scope
+   * it was stamped with) is NOT one: when in doubt the sweep is owed, never
+   * skipped.
    */
   fullLookSinceFirst(pr: number): boolean {
     return (
@@ -2236,7 +2245,7 @@ export class StateStore {
         .prepare(
           `SELECT 1 FROM rounds
             WHERE pr = ? AND backfilled = 0 AND verdict IS NOT NULL AND round_type != 'first'
-              AND (scope = 'full' OR (scope IS NULL AND round_type = 're-review')
+              AND ((round_type = 're-review' AND (scope IS NULL OR scope = 'full'))
                    OR sweep_status = 'ran')
             LIMIT 1`,
         )

@@ -14,6 +14,7 @@ import {
   renderPassTasks,
   writePassTasks,
 } from "../src/passtasks.js";
+import { sweepOrderOf } from "../src/dispatch.js";
 import type { RoundOrder } from "../src/types.js";
 
 function order(over: Partial<RoundOrder> = {}): RoundOrder {
@@ -130,5 +131,65 @@ describe("renderPassTaskNote", () => {
     expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
     expect(note).toContain("Do NOT write task strings out");
     expect(note).toContain("An ADDED lens");
+  });
+});
+
+describe("a follow-up round's task files", () => {
+  const DELTA: NonNullable<RoundOrder["delta"]> = {
+    from_sha: "1111111111111111111111111111111111111111",
+    tree: "2222222222222222222222222222222222222222",
+    lines: 6,
+    files: [{ path: "src/a.py", status: "modified", ranges: [[12, 4]] }],
+    patch_file: "/s/state/pr-42-round-2-delta.patch",
+  };
+  const followUp = () =>
+    order({ round_no: 2, round_type: "re-review", scope: "delta", delta: DELTA });
+
+  it("carry the change since the last review as the scope, the whole PR as context", () => {
+    const [baseline, sweepRow] = renderPassTasks(followUp(), "");
+    for (const t of [baseline!, sweepRow!]) {
+      expect(t.text).toContain(
+        "## The change since the last review — your review scope this round",
+      );
+      expect(t.text).toContain("/s/state/pr-42-round-2-delta.patch");
+      expect(t.text).toContain("`src/a.py` — modified, lines 12-15");
+      expect(t.text).toContain(`git -C /opt/quickreview/wt/pr-42 diff ${DELTA.tree} HEAD -- <path>`);
+      expect(t.text).toContain("not this round's review scope");
+      expect(t.text).not.toContain("The PR's own changes are exactly");
+      expect(t.text).not.toContain("The whole diff is yours");
+    }
+    expect(baseline!.text).toContain("The whole change since the last review is yours");
+  });
+
+  it("a first round's task is unchanged by the delta fields' absence", () => {
+    const t = renderPassTasks(order(), "")[0]!.text;
+    expect(t).toContain("The PR's own changes are exactly");
+    expect(t).toContain("The whole diff is yours; no row focus was set.");
+    expect(t).not.toContain("change since the last review");
+  });
+
+  it("the sweep's tasks are whole-PR tasks again", () => {
+    const o = {
+      ...followUp(),
+      sweep_plan: order().pass_plan,
+      coverage_files: [{ path: "src/a.py", lines: 6 }],
+    };
+    const sweep = sweepOrderOf({ ...o, sweep_plan_unswept: ["src/far.py"] }, o.sweep_plan);
+    expect(sweep.scope).toBeUndefined();
+    expect(sweep.coverage_files).toBeUndefined();
+    expect(sweep.sweep_unswept).toEqual(["src/far.py"]);
+    const t = renderPassTasks(sweep, "")[0]!.text;
+    expect(t).toContain("The PR's own changes are exactly");
+    expect(t).not.toContain("change since the last review");
+  });
+
+  it("the task note asks for each lens's assigned prior findings after the pointer", () => {
+    const note = renderPassTaskNote({
+      ...followUp(),
+      pass_task_files: [{ row: 0, agent: "pass-baseline--sol-med", path: "/s/tasks/01.md" }],
+    });
+    expect(note).toContain("the prior findings step 1 assigned to that lens");
+    expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
+    expect(note).not.toContain("Do NOT write task strings out");
   });
 });

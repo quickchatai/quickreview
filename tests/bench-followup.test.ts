@@ -38,7 +38,8 @@ const {
 type BenchCase = import("../src/bench/aacr.js").BenchCase;
 type PrefetchMeta = import("../src/bench/aacr.js").PrefetchMeta;
 const { prefetchCase, storeDir } = await import("../src/bench/prefetch.js");
-const { benchConfig, prepareTree, renderCasePrompts } = await import("../src/bench/runner.js");
+const { benchConfig, followUpOutcomeOf, prepareTree, renderCasePrompts } =
+  await import("../src/bench/runner.js");
 const { benchDelta, benchPriorList } = await import("../src/bench/followup.js");
 const { ecosystemFor } = await import("../src/ecosystem.js");
 const { buildAgents, identityVars, PASS_ADDENDA } = await import("../src/include.js");
@@ -580,5 +581,54 @@ describe("shell: private sets and the offline prefetch are default-off", () => {
     } finally {
       rmSync(t, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a follow-up case's outcome report", () => {
+  const fu = {
+    round_no: 2,
+    review_no: 2,
+    scope: "delta" as const,
+    sweep_owed: true,
+    prior_findings: 1,
+  };
+  it("keeps each pass's phase and reads the sweep the way production does", () => {
+    const ran = followUpOutcomeOf(
+      fu,
+      {
+        sweep: "ran",
+        passes: [
+          { name: "pass-baseline", tier: "sol-med", phase: "delta" },
+          { name: "pass-security", tier: "sol-high", phase: "sweep" },
+        ],
+      },
+      "APPROVE",
+    );
+    expect(ran.executed_phases).toEqual([
+      { agent: "pass-baseline--sol-med", phase: "delta" },
+      { agent: "pass-security--sol-high", phase: "sweep" },
+    ]);
+    expect(ran.sweep).toMatchObject({
+      claim: "ran",
+      status: "ran",
+      sweep_passes: 1,
+      skipped: false,
+    });
+  });
+
+  it("an APPROVE with the owed sweep not run is flagged skipped", () => {
+    const skipped = followUpOutcomeOf(
+      fu,
+      {
+        sweep: "not_reached",
+        passes: [{ name: "pass-baseline", tier: "sol-med", phase: "delta" }],
+      },
+      "APPROVE",
+    );
+    expect(skipped.sweep).toMatchObject({ status: "unknown", skipped: true });
+    expect(followUpOutcomeOf({ ...fu, scope: "full" }, { sweep: "ran" }, "APPROVE")).toEqual({
+      ...fu,
+      scope: "full",
+    });
   });
 });

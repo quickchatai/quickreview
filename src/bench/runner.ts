@@ -21,6 +21,7 @@
 //     rules would be noise on a Rust PR. `--profile <config.toml [review]
 //     profile>` measures production as deployed.
 
+import { sweepStatusOf, type SweepStatus } from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
 import {
   postedRenderOptions,
@@ -737,6 +738,68 @@ export interface CaseFollowUp {
   conflicted?: string[];
   sweep_owed?: boolean;
   prior_findings: number;
+  /** What the session reported: each executed pass's phase, and
+   * the sweep — its claim and the status production's `sweepStatusOf` gives
+   * it (an APPROVE with the sweep owed and not `ran` is what production flags
+   * as `followup_sweep_skipped`). Absent until the case has an outcome. */
+  executed_phases?: Array<{ agent: string; phase: "delta" | "sweep" | null }>;
+  sweep?: {
+    claim: "ran" | "not_owed" | "not_reached" | null;
+    status: SweepStatus;
+    note?: string;
+    sweep_passes: number | null;
+    skipped: boolean;
+  };
+}
+
+/**
+ * A follow-up case's report of what the session ran: each executed
+ * pass's `phase` and the sweep — its claim and the status production's
+ * `sweepStatusOf` gives it, `skipped` when an APPROVE left an owed sweep
+ * un-run (production's `followup_sweep_skipped`). Pure; a full-scope case is
+ * returned unchanged.
+ */
+export function followUpOutcomeOf(
+  fu: CaseFollowUp,
+  outcome: Record<string, unknown>,
+  verdict: string | null,
+): CaseFollowUp {
+  if (fu.scope !== "delta") return fu;
+  const passes = Array.isArray(outcome["passes"])
+    ? (outcome["passes"] as Array<Record<string, unknown>>)
+    : null;
+  const phaseOf = (p: Record<string, unknown>): "delta" | "sweep" | null =>
+    p["phase"] === "delta" || p["phase"] === "sweep" ? p["phase"] : null;
+  const rawClaim = outcome["sweep"];
+  const claim =
+    rawClaim === "ran" || rawClaim === "not_owed" || rawClaim === "not_reached" ? rawClaim : null;
+  const sweepPasses = passes ? passes.filter((p) => phaseOf(p) === "sweep").length : null;
+  const owed = fu.sweep_owed === true;
+  const { status, note } = sweepStatusOf({
+    owed,
+    claim,
+    sweepPasses,
+    receiptSettled: false,
+    verdict,
+  });
+  return {
+    ...fu,
+    ...(passes
+      ? {
+          executed_phases: passes.map((p) => ({
+            agent: `${String(p["name"])}--${String(p["tier"])}`,
+            phase: phaseOf(p),
+          })),
+        }
+      : {}),
+    sweep: {
+      claim,
+      status,
+      ...(note ? { note } : {}),
+      sweep_passes: sweepPasses,
+      skipped: verdict === "APPROVE" && owed && status !== "ran",
+    },
+  };
 }
 
 /**
@@ -811,6 +874,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       deltaFiles: d.deltaFiles,
       priorFindingsNote: prior.note,
       ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
+      ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
     };
     report = {
       round_no: fu.round_no,
@@ -1461,6 +1525,10 @@ export async function reviewCase(
           (p) => `${String(p["name"])}--${String(p["tier"])}`,
         )
       : [];
+    // a follow-up case keeps the session's own phase and sweep
+    // report, read the way production's verdict tail reads it.
+    if (summary.follow_up && outcome !== undefined)
+      summary.follow_up = followUpOutcomeOf(summary.follow_up, outcome, summary.verdict);
     summary.status = r.timedOut
       ? "timeout"
       : outcome === undefined || rawComments === undefined

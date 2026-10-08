@@ -3870,6 +3870,27 @@ describe("follow-up rounds: sweep telemetry", () => {
     expect(of(true, "not_reached", 0)).toBe("not_reached");
     expect(of(true, "not_reached", 2)).toBe("unknown");
     expect(of(true, "not_owed", 0)).toBe("not_reached");
+    // An APPROVE cannot have decided REQUEST_CHANGES first: a contradiction.
+    const approved = (claim: "not_owed" | "not_reached") =>
+      sweepStatusOf({
+        owed: true,
+        claim,
+        sweepPasses: 0,
+        receiptSettled: false,
+        verdict: "APPROVE",
+      });
+    expect(approved("not_reached").status).toBe("unknown");
+    expect(approved("not_owed").status).toBe("unknown");
+    expect(approved("not_reached").note).toContain("approved");
+    expect(
+      sweepStatusOf({
+        owed: true,
+        claim: "not_reached",
+        sweepPasses: 0,
+        receiptSettled: false,
+        verdict: "REQUEST_CHANGES",
+      }).status,
+    ).toBe("not_reached");
     expect(of(true, null, 0)).toBe("unknown");
     expect(of(true, null, 3)).toBe("unknown");
     expect(of(false, "ran", 3)).toBe("not_owed");

@@ -494,14 +494,38 @@ function entriesAsRows(
 }
 
 /** Delivered rounds: verdicted, never backfilled — `priorRoundCount`'s set. */
-function deliveredBefore(rounds: readonly RoundRow[], roundNo: number): RoundRow[] {
-  return rounds.filter((r) => r.round_no < roundNo && r.backfilled === 0 && r.verdict !== null);
+function isDelivered(r: RoundRow): boolean {
+  return r.backfilled === 0 && r.verdict !== null;
+}
+
+/**
+ * An UNVERDICTED earlier round that may still have put findings on the PR: a
+ * confirmed posting outcome or a GitHub review id on its row, or its head is
+ * the reviewed-head mark's while no verdicted round reviewed that head (the
+ * shell moves the mark when it posts, before any verdict). Such a round's
+ * record is read like a delivered one's, and an unreadable record makes the
+ * list INCOMPLETE — a round that posted and then failed loud is never
+ * silently absent from the list.
+ */
+function mayHavePosted(
+  r: RoundRow,
+  rounds: readonly RoundRow[],
+  markHead: string | null | undefined,
+): boolean {
+  if (r.backfilled !== 0 || r.verdict !== null) return false;
+  if (r.posted_event !== null || r.posted_at !== null || r.gh_review_id !== null) return true;
+  return (
+    !!markHead &&
+    r.head_sha === markHead &&
+    !rounds.some((o) => isDelivered(o) && o.head_sha === markHead)
+  );
 }
 
 /**
  * Collect the open prior findings for round `roundNo` of `pr`. Reads
  * state.db, plus — for every delivered earlier round whose record has not
- * been ingested — the record file itself, synchronously. A round whose
+ * been ingested, and every unverdicted one that may have posted
+ * (`mayHavePosted`) — the record file itself, synchronously. A round whose
  * record is missing or unparseable is INCOMPLETE, never an empty round.
  */
 export function collectPriorFindings(
@@ -525,7 +549,12 @@ export function collectPriorFindings(
     .filter((c) => c.checked_round < roundNo);
   const extra: RoundFindingRow[] = [];
   const incomplete: IncompleteRound[] = [];
-  for (const round of deliveredBefore(store.roundsFor(pr), roundNo)) {
+  const rounds = store.roundsFor(pr);
+  const markHead = store.reviewedHead(pr)?.head_sha;
+  const visited = rounds.filter(
+    (r) => r.round_no < roundNo && (isDelivered(r) || mayHavePosted(r, rounds, markHead)),
+  );
+  for (const round of visited) {
     if (recorded.has(round.round_no)) continue;
     const parsed = readFindingsRecord(
       findingsRecordPath(deps.findingsDir, pr, round.round_no),

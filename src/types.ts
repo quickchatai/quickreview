@@ -285,6 +285,10 @@ export interface RoundOrder {
    * this round. Never part of `pass_plan`/`lenses`: it runs only when the
    * round would approve. Rendered as `{{sweep_note}}`. */
   sweep_plan?: PassPlanEntry[];
+  /** The full plan's files left over the per-round sweep cap (its
+   * `sweep_unswept`) — present only beside `sweep_plan`, and rendered in
+   * `{{sweep_note}}` as round 1 renders its own. */
+  sweep_plan_unswept?: string[];
   /** Task files written for the sweep's rows (their own directory and row
    * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
    * sweep's task strings itself. */

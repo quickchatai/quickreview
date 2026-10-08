@@ -291,6 +291,12 @@ describe("renderSweepNote", () => {
     expect(note).not.toContain("task file");
   });
 
+  it("names the full plan's unswept files, as round 1 does", () => {
+    const note = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_plan_unswept: ["src/far.py"] });
+    expect(note).toContain("Not swept (over the per-round sweep cap): `src/far.py`.");
+    expect(renderSweepNote({ sweep_plan: SWEEP_PLAN })).not.toContain("Not swept");
+  });
+
   it("names the sweep's task files when the daemon wrote them", () => {
     const note = renderSweepNote({
       sweep_plan: SWEEP_PLAN,

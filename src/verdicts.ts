@@ -9,6 +9,9 @@
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (spec §3, §8).
+import { sweepStatusOf, type SweepStatus } from "./sweepstatus.js";
+
+export { sweepStatusOf, type SweepStatus };
 import {
   existsSync,
   lstatSync,
@@ -361,58 +364,6 @@ export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecis
   )
     return { verdict: "APPROVE", approval_withheld: true };
   return null;
-}
-
-/** What became of a follow-up round's pre-approval sweep (,
- * `rounds.sweep_status`). */
-export type SweepStatus = "ran" | "not_owed" | "not_reached" | "unknown";
-
-/**
- * The sweep status a follow-up round's verdict earns. `ran` only
- * when the session CLAIMED it and its executed telemetry carries sweep-phase
- * passes; every contradiction or gap is `unknown` with a note — never `ran`,
- * because a run sweep is a full look and an unknown one must stay owed. Pure.
- *
- * `sweepPasses`: the count of executed `phase: "sweep"` entries, null when the
- * verdict carried no usable pass telemetry.
- */
-export function sweepStatusOf(args: {
-  owed: boolean;
-  claim: "ran" | "not_owed" | "not_reached" | null;
-  sweepPasses: number | null;
-  receiptSettled: boolean;
-}): { status: SweepStatus; note?: string } {
-  const { owed, claim, sweepPasses, receiptSettled } = args;
-  const executed = sweepPasses !== null && sweepPasses > 0;
-  if (!owed) {
-    return claim === "ran" || executed
-      ? {
-          status: "not_owed",
-          note: `the order carried no sweep, yet ${claim === "ran" ? "the session claimed one ran" : `${sweepPasses} sweep-phase passes executed`}`,
-        }
-      : { status: "not_owed" };
-  }
-  if (receiptSettled)
-    return { status: "unknown", note: "settled from the posting receipt — no sweep telemetry" };
-  if (claim === "ran") {
-    if (executed) return { status: "ran" };
-    return {
-      status: "unknown",
-      note:
-        sweepPasses === null
-          ? "claimed ran, but the executed passes are unknown"
-          : "claimed ran, but no sweep-phase pass executed",
-    };
-  }
-  if (executed)
-    return {
-      status: "unknown",
-      note: `${sweepPasses} sweep-phase passes executed, but the claim is ${claim ?? "absent"}`,
-    };
-  if (claim === "not_reached") return { status: "not_reached" };
-  if (claim === "not_owed")
-    return { status: "not_reached", note: "claimed not_owed, but the order carried a sweep" };
-  return { status: "unknown", note: "no sweep claim in the verdict" };
 }
 
 /** The planned lens set the round-end findings check stamps against
@@ -2315,7 +2266,13 @@ export class VerdictWatcher {
       const owed = round.sweep_owed === 1;
       const claim = v.sweep ?? null;
       const sweepPasses = v.passes ? v.passes.filter((p) => p.phase === "sweep").length : null;
-      const { status, note } = sweepStatusOf({ owed, claim, sweepPasses, receiptSettled });
+      const { status, note } = sweepStatusOf({
+        owed,
+        claim,
+        sweepPasses,
+        receiptSettled,
+        verdict: v.verdict,
+      });
       store.setRoundMeta(round.id, { sweep_status: status });
       store.logEvent("followup_sweep_recorded", v.pr, {
         round_id: round.id,

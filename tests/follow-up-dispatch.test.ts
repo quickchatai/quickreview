@@ -294,6 +294,14 @@ describe("follow-up rounds: the delta scope", () => {
       expect(o.scope).toBe("delta");
       // The delta touches no migration; the PR does — the gate reads the PR.
       expect(o.migration_gate).toBe(true);
+      // …and the lens the gate note names rides the delta plan (a
+      // degraded pre-check un-muzzles pass-data-safety, never goes quiet),
+      // before the validator.
+      const lensesInOrder = o.pass_plan.map((p) => p.lens);
+      expect(lensesInOrder).toContain("pass-data-safety");
+      expect(o.addable_lenses).not.toContain("pass-data-safety");
+      const vi = lensesInOrder.indexOf("pass-validate");
+      if (vi >= 0) expect(lensesInOrder.indexOf("pass-data-safety")).toBeLessThan(vi);
       // The diffstat on the round row is the WHOLE PR's.
       expect(lastRound(12)).toMatchObject({ additions: 620, deletions: 70, changed_files: 4 });
       // The coverage check holds the round to the delta's files only.
@@ -568,6 +576,104 @@ describe("decideFollowUp + StateStore.fullLookSinceFirst", () => {
         },
       );
       expect(r.kind).toBe("delta");
+    },
+  );
+});
+
+describe("follow-up rounds: review fixes", () => {
+  it(
+    "a withheld approval is not an approval: the sweep stays owed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(70);
+      reviewed(70, "APPROVE");
+      store.recordApprovalWithheld(70, { head_sha: OLD, reason: "red-ci", ci_state: "failure" });
+      adapter.files.set(70, PR_FILES);
+      const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      expect(orders[0]!.scope).toBe("delta");
+      expect(orders[0]!.sweep_plan?.length).toBeGreaterThan(0);
+      expect(lastRound(70).sweep_owed).toBe(1);
+    },
+  );
+
+  it(
+    "the reviewed head's recorded merge base is handed to the delta reader",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const OLD_MB = "fff6666666666666666666666666666666666666";
+      queue(71);
+      const id = store.startRound(71, "first", ["pass-baseline"], 60, {
+        head_sha: OLD,
+        merge_base: OLD_MB,
+      });
+      store.finishRound(id, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(71, { head_sha: OLD, verdict: "REQUEST_CHANGES", round_no: 1 });
+      adapter.files.set(71, PR_FILES);
+      const { d } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      expect(deltaCalls[0]).toMatchObject({ from: OLD, mergeBase: MB, fromMergeBase: OLD_MB });
+      // This round records its own merge base for the next one.
+      expect(lastRound(71).merge_base).toBe(MB);
+    },
+  );
+
+  it(
+    "a staleness round is never a follow-up round and never stamped a scope",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(72);
+      store.upsertPr({ ...store.getPr(72)!, stale_recheck: 1 });
+      reviewed(72);
+      adapter.files.set(72, PR_FILES);
+      const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      expect(orders[0]!.round_type).toBe("staleness");
+      expect(orders[0]!.scope).toBeUndefined();
+      expect(deltaCalls).toEqual([]);
+      expect(lastRound(72).scope).toBeNull();
+      expect(events(72, "followup_full_round")).toEqual([]);
+    },
+  );
+
+  it("a staleness round stamped full is still no full look", () => {
+    const pr = 73;
+    store.finishRound(store.startRound(pr, "first", [], 60), "REQUEST_CHANGES", null);
+    const stale = store.startRound(pr, "staleness", [], 60, { scope: "full" });
+    store.finishRound(stale, "REQUEST_CHANGES", null);
+    expect(store.fullLookSinceFirst(pr)).toBe(false);
+  });
+
+  it(
+    "an empty full plan owes no sweep; the sweep carries the full plan's unswept files",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const args = {
+        pr: 74,
+        markHead: OLD,
+        tree: { head_sha: NEW, base_sha: BASE, merge_base: MB },
+        files: PR_FILES,
+        standing: "REQUEST_CHANGES",
+        ecosystem: DJANGO_ECOSYSTEM,
+        styleGuide: [] as string[],
+        ciLinters: [],
+      };
+      const seam = { cfg: baseCfg, store, prOwnedDelta: async () => okDelta([]) };
+      const empty = await decideFollowUp(seam, {
+        ...args,
+        fullPlan: { pass_plan: [], addable_lenses: [], sweep_unswept: [] },
+      });
+      expect(empty.kind === "delta" && empty.decision.sweepPlan).toBeFalsy();
+      const full = buildPassPlan(baseCfg, PR_FILES);
+      const carried = await decideFollowUp(seam, {
+        ...args,
+        fullPlan: { ...full, sweep_unswept: ["app/far/away.py"] },
+      });
+      expect(carried.kind).toBe("delta");
+      if (carried.kind === "delta") {
+        expect(carried.decision.sweepPlan).toEqual(full.pass_plan);
+        expect(carried.decision.sweepUnswept).toEqual(["app/far/away.py"]);
+      }
     },
   );
 });

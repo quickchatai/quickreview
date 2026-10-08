@@ -236,6 +236,8 @@ export interface DispatchDeps {
     to: string;
     mergeBase: string;
     baseSha?: string;
+    /** The merge base the reviewed round recorded, when known. */
+    fromMergeBase?: string;
   }) => Promise<PrOwnedDelta>;
   /** Pin a head a round was dispatched to review against gc (,
    * `WorktreeManager.pinReviewedHead`), so the next follow-up round can
@@ -1176,6 +1178,9 @@ export interface FollowUpDecision {
   plan: PassPlan;
   /** The pre-approval sweep's plan — the whole PR's full plan — when owed. */
   sweepPlan?: PassPlanEntry[];
+  /** The full plan's files left over the per-round sweep cap — carried with
+   * `sweepPlan`, so the sweep is told what it does not cover, as round 1 is. */
+  sweepUnswept?: string[];
 }
 
 /**
@@ -1201,6 +1206,10 @@ export async function decideFollowUp(
     files: PrFileEntry[];
     fullPlan: PassPlan;
     standing: string | null;
+    /** An approval-withheld mark stood when this round was picked up: the
+     * standing APPROVE never reached GitHub, so it is not an approval the
+     * sweep may rely on (withheld approval is an approval to be). */
+    approvalWithheld?: boolean;
     ecosystem: Ecosystem;
     styleGuide: readonly string[];
     ciLinters: readonly CiLinter[];
@@ -1215,6 +1224,17 @@ export async function decideFollowUp(
   if ((cfg.review.follow_up ?? "delta") !== "delta") return full("follow_up_full");
   if (!args.markHead) return full("no-reviewed-head");
   if (!args.tree || !args.tree.merge_base || !deps.prOwnedDelta) return full("no-adapter");
+  // The merge base the reviewed head's round recorded (the latest live round
+  // dispatched to that head, a verdicted one first): a base force-pushed
+  // since then is caught by `prOwnedDelta` as `base-rewound`. Unknown (a
+  // round before the column) ⇒ only the base-tip check runs, as before.
+  const atMark = store
+    .roundsFor(args.pr)
+    .filter((r) => r.backfilled === 0 && r.head_sha === args.markHead && r.merge_base)
+    .sort(
+      (a, b) => Number(b.verdict !== null) - Number(a.verdict !== null) || b.round_no - a.round_no,
+    );
+  const fromMergeBase = atMark[0]?.merge_base ?? undefined;
   let delta: PrOwnedDelta;
   try {
     delta = await deps.prOwnedDelta({
@@ -1223,6 +1243,7 @@ export async function decideFollowUp(
       to: args.tree.head_sha,
       mergeBase: args.tree.merge_base,
       ...(args.tree.base_sha ? { baseSha: args.tree.base_sha } : {}),
+      ...(fromMergeBase ? { fromMergeBase } : {}),
     });
   } catch (err) {
     return full("delta-threw", { error: err instanceof Error ? err.message : String(err) });
@@ -1236,7 +1257,9 @@ export async function decideFollowUp(
     ecosystem: args.ecosystem,
     styleGuide: args.styleGuide,
     ciLinters: args.ciLinters,
-    sweepOwed: () => args.standing !== "APPROVE" && !store.fullLookSinceFirst(args.pr),
+    sweepOwed: () =>
+      (args.standing !== "APPROVE" || args.approvalWithheld === true) &&
+      !store.fullLookSinceFirst(args.pr),
   });
 }
 
@@ -1278,7 +1301,7 @@ export function planFollowUp(
       detail: { delta_lines: delta.lines, pr_lines: prLines, ratio },
     };
   const deltaFiles = deltaAsPrFiles(delta.files) as PrFileEntry[];
-  const plan = buildPassPlan(
+  let plan = buildPassPlan(
     cfg,
     deltaFiles,
     undefined,
@@ -1288,11 +1311,35 @@ export function planFollowUp(
     args.ciLinters,
     { tierFiles: args.files },
   );
+  // The migration gate and the pre-check read the WHOLE PR, and their notes
+  // name pass-data-safety (a degraded pre-check un-muzzles that
+  // lens, never goes quiet). A PR whose migrations sit outside the delta
+  // still gets the lens the gate names: the full plan's row rides the delta
+  // plan, before the validator.
+  if (
+    args.ecosystem.migrationGate(args.files) &&
+    !plan.pass_plan.some((p) => p.lens === DATA_SAFETY_PASS)
+  ) {
+    const carried = args.fullPlan.pass_plan.filter((p) => p.lens === DATA_SAFETY_PASS);
+    if (carried.length > 0) {
+      const at = plan.pass_plan.findIndex((p) => p.lens === VALIDATE_PASS);
+      const rows = [...plan.pass_plan];
+      rows.splice(at < 0 ? rows.length : at, 0, ...carried);
+      plan = {
+        ...plan,
+        pass_plan: rows,
+        addable_lenses: plan.addable_lenses.filter((l) => l !== DATA_SAFETY_PASS),
+      };
+    }
+  }
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
   if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS))
     return { kind: "full", reason: "baseline-unplanned" };
-  const sweepOwed = (cfg.review.follow_up_sweep ?? true) && args.sweepOwed();
+  // An owed sweep needs a plan to run: an empty full plan records nothing
+  // owed rather than a sweep no round could ever satisfy.
+  const sweepOwed =
+    (cfg.review.follow_up_sweep ?? true) && args.fullPlan.pass_plan.length > 0 && args.sweepOwed();
   return {
     kind: "delta",
     decision: {
@@ -1300,12 +1347,20 @@ export function planFollowUp(
       fromSha: args.fromSha,
       deltaFiles,
       plan,
-      ...(sweepOwed ? { sweepPlan: args.fullPlan.pass_plan } : {}),
+      ...(sweepOwed
+        ? {
+            sweepPlan: args.fullPlan.pass_plan,
+            ...(args.fullPlan.sweep_unswept.length > 0
+              ? { sweepUnswept: args.fullPlan.sweep_unswept }
+              : {}),
+          }
+        : {}),
     },
   };
 }
 
 const BASELINE_PASS = "pass-baseline";
+const DATA_SAFETY_PASS = "pass-data-safety";
 
 /** A delta's files as one git-style patch (the hunks `prOwnedDelta` read,
  * each under its file header). */
@@ -1358,13 +1413,20 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     delta: _d,
     prior_findings_note: _p,
     sweep_plan: _sp,
+    sweep_plan_unswept: _su,
     sweep_task_files: _st,
+    // The delta plan's facts, not the whole PR's: the sweep carries its own.
+    sweep_unswept: _du,
+    coverage_files: _cf,
     ...whole
   } = order;
   return {
     ...whole,
     pass_plan: sweepPlan,
     lenses: [...new Set(sweepPlan.map((p) => p.lens))],
+    ...(order.sweep_plan_unswept && order.sweep_plan_unswept.length > 0
+      ? { sweep_unswept: order.sweep_plan_unswept }
+      : {}),
   };
 }
 
@@ -1427,6 +1489,7 @@ export function buildRoundOrder(args: {
     deltaFiles: PrFileEntry[];
     priorFindingsNote: string;
     sweepPlan?: PassPlanEntry[];
+    sweepUnswept?: string[];
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
@@ -1524,7 +1587,12 @@ export function buildRoundOrder(args: {
           delta: args.followUp.delta,
           prior_findings_note: args.followUp.priorFindingsNote,
           ...(args.followUp.sweepPlan && args.followUp.sweepPlan.length > 0
-            ? { sweep_plan: args.followUp.sweepPlan }
+            ? {
+                sweep_plan: args.followUp.sweepPlan,
+                ...(args.followUp.sweepUnswept && args.followUp.sweepUnswept.length > 0
+                  ? { sweep_plan_unswept: args.followUp.sweepUnswept }
+                  : {}),
+              }
             : {}),
         }
       : {}),
@@ -1840,7 +1908,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // lessons); only the plan and the coverage check read the delta.
       let followUp: FollowUpDecision | null = null;
       let fullRound: { reason: FollowUpFullReason; detail?: Record<string, unknown> } | null = null;
-      if (roundType !== "first") {
+      if (roundType === "re-review") {
         const decided = await decideFollowUp(deps, {
           pr: row.number,
           markHead: mark?.head_sha,
@@ -1848,6 +1916,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           files,
           fullPlan,
           standing,
+          // Captured before this dispatch cleared it: a withheld approval is
+          // one GitHub never saw, so the sweep stays owed behind it.
+          approvalWithheld: withheld !== undefined,
           ecosystem: eco,
           styleGuide,
           ciLinters,
@@ -1888,7 +1959,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           pass_plan: plannedPasses,
           addable_passes: addablePasses,
           head_sha: tree?.head_sha || row.head_sha,
-          ...(roundType !== "first"
+          ...(tree?.merge_base ? { merge_base: tree.merge_base } : {}),
+          ...(roundType === "re-review"
             ? followUp
               ? {
                   scope: "delta" as const,
@@ -2163,6 +2235,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 deltaFiles: followUp.deltaFiles,
                 priorFindingsNote,
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
+                ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
               },
             }
           : {}),
@@ -2384,7 +2457,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         round_no: roundNo,
         round_type: roundType,
         // what a later round reviewed (absent on a first round).
-        ...(roundType !== "first"
+        ...(roundType === "re-review"
           ? {
               scope: order.scope === "delta" ? "delta" : "full",
               ...(order.delta

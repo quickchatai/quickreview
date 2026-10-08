@@ -239,6 +239,50 @@ describe("collectPriorFindings — what is still open", () => {
     expect(list.incomplete).toEqual([]);
   });
 
+  it("an unverdicted round that POSTED is visited: its record read, or the list INCOMPLETE", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, []);
+    // Round 2 posted (a confirmed posting outcome on its row), then failed loud.
+    const posted = store.startRound(7, "re-review", [], 60);
+    const r2 = store.roundsFor(7).find((r) => r.id === posted)!.round_no;
+    store.db.prepare("UPDATE rounds SET posted_event = 'REQUEST_CHANGES' WHERE id = ?").run(posted);
+    let list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r2 + 1);
+    expect(list.incomplete).toEqual([{ round_no: r2, status: "missing" }]);
+    expect(renderPriorFindingsNote(list)).toContain(`INCOMPLETE: round ${r2}`);
+    writeRecord(7, r2, {
+      pr: 7,
+      round_no: r2,
+      head_sha: HEAD,
+      findings: [
+        {
+          id: "p1",
+          path: "src/x.py",
+          line: 4,
+          lens: "pass-baseline",
+          disposition: "posted",
+          posted_as: "blocker",
+          severity: "P1",
+        },
+      ],
+      prior: [],
+    });
+    list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r2 + 1);
+    expect(list.incomplete).toEqual([]);
+    expect(list.findings.map((f) => f.ref)).toEqual([`${r2}:p1`]);
+  });
+
+  it("an unverdicted round at the reviewed-head mark's head, which no verdicted round reviewed, is visited", () => {
+    const r1 = deliveredRound(7);
+    ingest(7, r1, []);
+    const OTHER = "9".repeat(40);
+    const id = store.startRound(7, "re-review", [], 60, { head_sha: OTHER });
+    const r2 = store.roundsFor(7).find((r) => r.id === id)!.round_no;
+    // The shell moved the mark when it posted; no verdict followed.
+    store.recordReviewedHead(7, { head_sha: OTHER, verdict: null, round_no: r2 });
+    const list = collectPriorFindings({ store, findingsDir: findingsDir() }, 7, r2 + 1);
+    expect(list.incomplete).toEqual([{ round_no: r2, status: "missing" }]);
+  });
+
   it("a recheck's rows under a round's number do not count as that round's record", () => {
     const r1 = deliveredRound(7, "APPROVE");
     store.recordRoundFindings({ pr: 7, round_id: null, round_no: r1, head_sha: HEAD }, [
