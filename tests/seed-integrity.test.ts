@@ -103,6 +103,8 @@ const NON_SEEDED = [
   "agents/scan/pass-scan.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
+  // the follow-up round template — post-seed, ours.
+  "prompts/round-follow-up.md",
   "prompts/round-staleness.md",
   "prompts/round-recheck.md",
   "prompts/companion.md",

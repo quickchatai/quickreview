@@ -18,6 +18,7 @@ import {
   roundTemplateFile,
   roundVars,
   RECHECK_TEMPLATE_FILE,
+  FOLLOW_UP_TEMPLATE_FILE,
 } from "../src/templates.js";
 import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
@@ -392,13 +393,21 @@ describe("renderDirectiveEscalationNote", () => {
   });
 });
 
+/** Every shipped round template, as [round type it renders for, file]: the
+ * three RoundType templates plus the follow-up one, which renders
+ * re-review orders whose scope is "delta". */
+const SHIPPED_ROUND_TEMPLATES: Array<[RoundType, string]> = [
+  ["first", roundTemplateFile("first")],
+  ["re-review", roundTemplateFile("re-review")],
+  ["staleness", roundTemplateFile("staleness")],
+  ["re-review", FOLLOW_UP_TEMPLATE_FILE],
+];
+
 describe("shipped round templates", () => {
-  const roundTypes: RoundType[] = ["first", "re-review", "staleness"];
+  for (const [rt, tplFile] of SHIPPED_ROUND_TEMPLATES) {
+    const text = readFileSync(resolve(process.cwd(), "prompts", tplFile), "utf8");
 
-  for (const rt of roundTypes) {
-    const text = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
-
-    it(`${roundTemplateFile(rt)} renders fully against a RoundOrder`, () => {
+    it(`${tplFile} renders fully against a RoundOrder`, () => {
       const out = renderRoundPrompt(text, { ...order, round_type: rt });
       expect(out).not.toContain("{{");
       // The plan table and the addable list land in the prompt.
@@ -409,7 +418,7 @@ describe("shipped round templates", () => {
 
     // the validator now holds its veto at the top tier; the kill log
     // that feeds the EOD critic must survive that raise unchanged.
-    it(`${roundTemplateFile(rt)} still dispatches the planned validator variant and logs its kills`, () => {
+    it(`${tplFile} still dispatches the planned validator variant and logs its kills`, () => {
       expect(text).toContain("pass-validate");
       expect(text).toMatch(/log\s+(its|the)\s+kills/i);
     });
@@ -418,7 +427,7 @@ describe("shipped round templates", () => {
     // destroyed distinct findings sharing an anchor (#5291), and merge-kills
     // showed up in no telemetry. Same defect merges; different defects both
     // survive (fold, or post separately when P1/P2); every disposition logged.
-    it(`${roundTemplateFile(rt)} merge step carries both defects and logs every disposition`, () => {
+    it(`${tplFile} merge step carries both defects and logs every disposition`, () => {
       // Same defect merges exactly as before.
       expect(text).toContain("SAME defect");
       expect(text).toMatch(/highest severity\s*\n?\s*wins[,;] lens tags\s*\n?\s*concatenate/);
@@ -443,7 +452,7 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/`folded`\s*\n?\s*\(different-defect `FOLDED` lines\)/);
     });
 
-    it(`${roundTemplateFile(rt)} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
+    it(`${tplFile} dispatches via the subagent tool, no bash fan-out, no spend_usd`, () => {
       // spend_usd is gone from the verdict contract — the daemon measures usage.
       expect(text).not.toContain("spend_usd");
       // Launch mechanism: the subagent tool, one turn; the bash fan-out is only
@@ -478,7 +487,7 @@ describe("shipped round templates", () => {
     // file reaches no lens at all unless the session adds one.
     // the rule names Django model fields, so the ecosystem renders it
     // (`{{missing_migration_note}}`) — present for Django, absent for `none`.
-    it(`${roundTemplateFile(rt)} tells the session to add pass-data-safety on a missing migration`, () => {
+    it(`${tplFile} tells the session to add pass-data-safety on a missing migration`, () => {
       expect(text).toContain("\n{{missing_migration_note}}\n<!-- RATIFIED no-exec");
       const out = renderRoundPrompt(
         text,
@@ -501,7 +510,7 @@ describe("shipped round templates", () => {
       expect(out).not.toContain("<!-- RATIFIED");
     });
 
-    it(`${roundTemplateFile(rt)} carries no Django migration rule for ecosystem none`, () => {
+    it(`${tplFile} carries no Django migration rule for ecosystem none`, () => {
       const out = renderRoundPrompt(
         text,
         { ...order, round_type: rt },
@@ -517,7 +526,7 @@ describe("shipped round templates", () => {
 
     // the halves of the shared pass contract that live in the round
     // templates: the Decide-step reachability gate and the Post-step delta rule.
-    it(`${roundTemplateFile(rt)} states the reachability decision rule without moving the blocker bar`, () => {
+    it(`${tplFile} states the reachability decision rule without moving the blocker bar`, () => {
       expect(text).toContain("Reachability gate");
       expect(text).toContain("`reachability: routine | plausible | contrived`");
       // contrived never blocks, at any severity.
@@ -541,7 +550,7 @@ describe("shipped round templates", () => {
 
     // executed-pass telemetry: the "Lenses applied" line derives
     // from what actually ran, and the verdict carries the `passes` record.
-    it(`${roundTemplateFile(rt)} derives the lenses line from executed passes and orders the telemetry`, () => {
+    it(`${tplFile} derives the lenses line from executed passes and orders the telemetry`, () => {
       // The lenses line: real returns only, never the plan.
       expect(text).toContain("**The lenses line reports what actually ran — never the plan.**");
       expect(text).toContain("actually launched via the");
@@ -562,7 +571,7 @@ describe("shipped round templates", () => {
     // the three shapes that carry no reasoning at all. The governing
     // constraint is stated in the template itself and pinned here: this is
     // never a length rule, and success is never counted in characters.
-    it(`${roundTemplateFile(rt)} requires a nit to ask for something`, () => {
+    it(`${tplFile} requires a nit to ask for something`, () => {
       expect(text).toContain("**A nit asks for something, or it is not posted.**");
       expect(text).toContain("That is a remark, not a finding");
       expect(text).toContain("the concrete change it asks for");
@@ -571,7 +580,7 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/at whatever length it takes/);
     });
 
-    it(`${roundTemplateFile(rt)} forbids findings about the review's own earlier findings`, () => {
+    it(`${tplFile} forbids findings about the review's own earlier findings`, () => {
       expect(text).toContain("**Never post a finding about your own earlier findings.**");
       expect(text).toContain("The ledger already");
       // Verification is a status, not a finding — and the one real exception
@@ -580,7 +589,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("A prior finding whose fix broke something else is a **new\ndefect**");
     });
 
-    it(`${roundTemplateFile(rt)} closes the tag grammar and says why it is not a style point`, () => {
+    it(`${tplFile} closes the tag grammar and says why it is not a style point`, () => {
       expect(text).toContain("**The tag grammar is closed.**");
       // All three marker prefixes are in the grammar sentence — `[deferred]`
       // was missing while the template's own section mandated it.
@@ -594,7 +603,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("thread-resolution refusals");
     });
 
-    it(`${roundTemplateFile(rt)} ledger vocab matches the code's closed sets`, () => {
+    it(`${tplFile} ledger vocab matches the code's closed sets`, () => {
       // posted_as includes `deferred` — SANCTIONED_TAGS accepts it, so the
       // template's closed list must too.
       expect(text).toContain(
@@ -605,13 +614,13 @@ describe("shipped round templates", () => {
       expect(text).toContain("`ask-human-unnamed-defect`, `tag-outside-grammar`)");
     });
 
-    it(`${roundTemplateFile(rt)} states the bars for the two addable-only lenses`, () => {
+    it(`${tplFile} states the bars for the two addable-only lenses`, () => {
       expect(text).toContain("**Two lenses exist only to be added — no plan ever selects them.**");
       expect(text).toContain("NAME the suspected\nread-then-write shape");
       expect(text).toContain("why the answer is not in the repository");
     });
 
-    it(`${roundTemplateFile(rt)} refuses to measure any of this in characters`, () => {
+    it(`${tplFile} refuses to measure any of this in characters`, () => {
       expect(text).toContain(
         "**None of this is a length rule, and success is never counted in characters.**",
       );
@@ -622,7 +631,7 @@ describe("shipped round templates", () => {
     // session (it happens after validation), so the rule lives here and not in
     // PASS_ADDENDA. Corrected by the owner: the SESSION files the issue itself in
     // the same round — no author-confirmation step exists.
-    it(`${roundTemplateFile(rt)} makes a deferral cost a ticket the session files itself`, () => {
+    it(`${tplFile} makes a deferral cost a ticket the session files itself`, () => {
       expect(text).toContain("**Deferrals cost a ticket.**");
       expect(text).toContain("**No ticket, no deferral.**");
       // A judgment, not a keyword list.
@@ -650,7 +659,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("**Nothing here blocks a merge or forces a fix.**");
     });
 
-    it(`${roundTemplateFile(rt)} keeps the three markers apart and refuses to resolve a deferral`, () => {
+    it(`${tplFile} keeps the three markers apart and refuses to resolve a deferral`, () => {
       // Each of the three is named with its own single meaning, in one place.
       expect(text).toContain("The finding's comment leads with `[deferred]`");
       expect(text).toContain("[deferred] [question] <title>");
@@ -662,7 +671,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("the daemon refuses it\n  structurally");
     });
 
-    it(`${roundTemplateFile(rt)} posts only deltas — verified-and-fine material never goes inline`, () => {
+    it(`${tplFile} posts only deltas — verified-and-fine material never goes inline`, () => {
       expect(text).toContain("**Only deltas get posted.**");
       expect(text).toContain("collapsible `<details>` section at the bottom of the body");
       expect(text).toContain("**Never inline**");
@@ -671,7 +680,7 @@ describe("shipped round templates", () => {
 
     // a plain-language opener on every review body, and blocker
     // comments that lead with the consequence rather than the mechanism.
-    it(`${roundTemplateFile(rt)} opens the review body in plain language, before the verdict line`, () => {
+    it(`${tplFile} opens the review body in plain language, before the verdict line`, () => {
       expect(text).toContain("**Open in plain language.**");
       expect(text).toMatch(/body's FIRST paragraph is 2-4 plain\s*\n?sentences/);
       // It precedes the verdict line, and it is not a second register: it is the
@@ -696,7 +705,7 @@ describe("shipped round templates", () => {
       );
     });
 
-    it(`${roundTemplateFile(rt)} preserves the framing judgment explicitly`, () => {
+    it(`${tplFile} preserves the framing judgment explicitly`, () => {
       expect(text).toContain("**Keep the framing judgment.**");
       expect(text).toMatch(/is not\s+dropped/);
       expect(text).toMatch(/one thing must change before merge/);
@@ -705,7 +714,7 @@ describe("shipped round templates", () => {
     // self-sufficient blocker bodies (team feedback 2026-08-20:
     // one-sentence blockers were too thin to act on; one sentence stays
     // correct when it is genuinely enough).
-    it(`${roundTemplateFile(rt)} requires self-sufficient blocker bodies`, () => {
+    it(`${tplFile} requires self-sufficient blocker bodies`, () => {
       expect(text).toContain("**Blocker bodies are self-sufficient.**");
       expect(text).toMatch(/the invariant a fix must restore/);
       expect(text).toMatch(
@@ -724,7 +733,7 @@ describe("shipped round templates", () => {
     // the posted-body format is specified by the template itself
     // (first-night audit F7: an under-specified format sent four sessions
     // reading sibling PRs' posted reviews for examples).
-    it(`${roundTemplateFile(rt)} specifies the posted body format explicitly`, () => {
+    it(`${tplFile} specifies the posted body format explicitly`, () => {
       expect(text).toContain("**Body format — this template is the format authority.**");
       // The skeleton, in order: plain opener → verdict line → lenses line →
       // sections → Start here → details/footer.
@@ -748,7 +757,7 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/anchored inside a changed-line run on the exact path and side/);
     });
 
-    it(`${roundTemplateFile(rt)} forbids reading sibling PRs' posted reviews`, () => {
+    it(`${tplFile} forbids reading sibling PRs' posted reviews`, () => {
       expect(text).toContain(
         "**Never read another PR's posted reviews — for format or anything else.**",
       );
@@ -761,7 +770,7 @@ describe("shipped round templates", () => {
     // agent list IS the built pass set (no stock agents ship any more), and
     // any foreign agent name stays banned as the degraded path — never a
     // stand-in for a lens.
-    it(`${roundTemplateFile(rt)} declares foreign agent names off-limits (only built passes exist)`, () => {
+    it(`${tplFile} declares foreign agent names off-limits (only built passes exist)`, () => {
       expect(text).toContain(
         "**Only the built pass agents exist — any foreign agent name is off-limits.**",
       );
@@ -773,12 +782,12 @@ describe("shipped round templates", () => {
     // (a child in the reviewed worktree would load that repo's .pi/ config
     // under always-on trust), so the template must demand absolute paths and
     // forbid passing a cwd.
-    it(`${roundTemplateFile(rt)} tells the session passes run at the sandbox root with absolute paths`, () => {
+    it(`${tplFile} tells the session passes run at the sandbox root with absolute paths`, () => {
       expect(text).toContain("never pass a `cwd`");
       expect(text).toMatch(/absolute/);
     });
 
-    it(`${roundTemplateFile(rt)} makes blocker comments lead with the consequence`, () => {
+    it(`${tplFile} makes blocker comments lead with the consequence`, () => {
       expect(text).toContain("**Blocker comments lead with the consequence.**");
       expect(text).toMatch(/one clause of plain words naming what actually goes wrong/);
       expect(text).toMatch(/silently overwrite each\s+other/);
@@ -1085,10 +1094,10 @@ describe("renderIntentNote", () => {
 // validator batching, and the memory-noise rule. The wording is pinned here;
 // edit template and pin together.
 describe("template & script cleanups", () => {
-  for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
-    const text = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+  for (const [rt, tplFile] of SHIPPED_ROUND_TEMPLATES) {
+    const text = readFileSync(resolve(process.cwd(), "prompts", tplFile), "utf8");
 
-    it(`${roundTemplateFile(rt)} pins the scratch paths next to the verdict path`, () => {
+    it(`${tplFile} pins the scratch paths next to the verdict path`, () => {
       expect(text).toContain("**Scratch paths are pinned — same discipline as the verdict path.**");
       expect(text).toContain("`state/pr-{{n}}-round-{{round_no}}-review.md`");
       expect(text).toContain("`state/pr-{{n}}-round-{{round_no}}-comments.json`");
@@ -1105,7 +1114,7 @@ describe("template & script cleanups", () => {
       expect(out).toContain("state/pr-412-round-2-passes/");
     });
 
-    it(`${roundTemplateFile(rt)} routes self-verification reads through pr-self.sh, raw gh as fallback only`, () => {
+    it(`${tplFile} routes self-verification reads through pr-self.sh, raw gh as fallback only`, () => {
       expect(text).toContain("`scripts/pr-self.sh {{n}} <reviews|threads|head|checks>`");
       expect(text).toContain("Read-only by\n  construction — it has no mutation path.");
       // The old blanket "additional READS" phrasing is gone: raw gh is a
@@ -1115,7 +1124,7 @@ describe("template & script cleanups", () => {
       expect(text).toContain("every mutation goes through a script");
     });
 
-    it(`${roundTemplateFile(rt)} demands exactly the schema fields — no extras`, () => {
+    it(`${tplFile} demands exactly the schema fields — no extras`, () => {
       expect(text).toContain("**Emit exactly the schema fields — no extras.**");
       expect(text).toContain("not licence to invent one");
       // The live incident: a rogue ai_approved on a plain approval.
@@ -1127,7 +1136,7 @@ describe("template & script cleanups", () => {
       expect(text).not.toContain("extra fields are fine");
     });
 
-    it(`${roundTemplateFile(rt)} keeps pass-validate out of the discovery batch`, () => {
+    it(`${tplFile} keeps pass-validate out of the discovery batch`, () => {
       expect(text).toContain("**`pass-validate` is never in this batch.**");
       expect(text).toContain("only after\nevery discovery pass has returned its results");
       expect(text).toContain("never in the same batch");
@@ -1137,7 +1146,7 @@ describe("template & script cleanups", () => {
       expect(text).toContain("the validator waits for step 4");
     });
 
-    it(`${roundTemplateFile(rt)} declares other PRs' memory notes noise — never cited, never reused`, () => {
+    it(`${tplFile} declares other PRs' memory notes noise — never cited, never reused`, () => {
       // the paragraph is the renderer's `{{bleed_note}}` now —
       // VERBATIM whenever no lesson is delivered (here: no memory at all).
       expect(text).toContain("{{bleed_note}}{{lessons_note}}");
@@ -1155,9 +1164,9 @@ describe("template & script cleanups", () => {
 describe("end-of-round ledger discipline", () => {
   const PIN =
     "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
-  for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
-    it(`${roundTemplateFile(rt)} orders the ledger write BEFORE the verdict file, verbatim`, () => {
-      const raw = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+  for (const [rt, tplFile] of SHIPPED_ROUND_TEMPLATES) {
+    it(`${tplFile} orders the ledger write BEFORE the verdict file, verbatim`, () => {
+      const raw = readFileSync(resolve(process.cwd(), "prompts", tplFile), "utf8");
       const flat = raw.replace(/\s+/g, " ");
       expect(flat).toContain(`**${PIN}**`);
       // The step carries its own why — the compaction stake and the ordering.

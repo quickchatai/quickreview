@@ -268,6 +268,62 @@ export interface RoundOrder {
    * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ the
    * order renders exactly as before. */
   coverage_files?: Array<{ path: string; lines: number }>;
+  /** (docs/follow-up-rounds.md): `"delta"` ⇒ a FOLLOW-UP round,
+   * rendered from `prompts/round-follow-up.md` — prior findings verified,
+   * the PR-owned change since the last reviewed head reviewed, one
+   * pre-approval sweep when owed. Absent or `"full"` ⇒ the round renders
+   * from its `round_type`'s template exactly as before. */
+  scope?: "delta" | "full";
+  /** The PR-owned change since the last reviewed head (a `scope: "delta"`
+   * round): rendered as `{{delta_note}}`. */
+  delta?: RoundDelta;
+  /** The daemon-rendered list of prior open findings to verify
+   * (src/priorfindings.ts `renderPriorFindingsNote`), as
+   * `{{prior_findings_note}}`. */
+  prior_findings_note?: string;
+  /** The pre-approval sweep's plan — present only when the sweep is owed
+   * this round. Never part of `pass_plan`/`lenses`: it runs only when the
+   * round would approve. Rendered as `{{sweep_note}}`. */
+  sweep_plan?: PassPlanEntry[];
+  /** Task files written for the sweep's rows (their own directory and row
+   * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
+   * sweep's task strings itself. */
+  sweep_task_files?: Array<{ row: number; agent: string; path: string }>;
+}
+
+/** One file of a follow-up round's delta (worktrees.ts `PrOwnedDeltaFile`,
+ * minus the hunk text, which rides the patch file). */
+export interface RoundDeltaFile {
+  /** The path at the new head (the old path for a deleted file). */
+  path: string;
+  /** The path at the replayed reviewed head, when a rename/copy moved it. */
+  old_path?: string;
+  /** added | modified | removed | renamed | copied | changed. */
+  status: string;
+  /** Changed lines at the new head, `[start, count]` (count 0 = a deletion
+   * point after line `start`). */
+  ranges: Array<[number, number]>;
+  /** The whole file is in scope (deleted, binary, unreadable hunks, a
+   * conflict resolution): `ranges` is a hint at most. */
+  whole_file?: boolean;
+  /** The replay of the reviewed head conflicted here: the author resolved
+   * it by hand, so the file is audited against both parents. */
+  conflict?: boolean;
+}
+
+/** The PR-owned change since the last reviewed head: the reviewed
+ * head replayed onto this round's merge base (`tree`), diffed against the new
+ * head, so base-branch merges cancel out. */
+export interface RoundDelta {
+  /** The last reviewed head. */
+  from_sha: string;
+  /** The synthetic tree: `from_sha` replayed onto this round's merge base. */
+  tree: string;
+  /** additions + deletions over every file. */
+  lines: number;
+  files: RoundDeltaFile[];
+  /** Absolute path of the whole delta's patch, written by the daemon. */
+  patch_file: string;
 }
 
 /** What a round order carries of the PR's ledger (src/ledgercarry.ts). */
@@ -315,6 +371,10 @@ export interface VerdictPassEntry {
    * Additive — older verdicts simply omit them (null/undefined = unknown). */
   merged?: number | null;
   folded?: number | null;
+  /**: which stage of a follow-up round launched the pass — the
+   * step-2 change review (`delta`) or the pre-approval sweep (`sweep`).
+   * Absent on every other round. */
+  phase?: "delta" | "sweep" | null;
 }
 
 /** verdict/pr-<n>-round-<k>.json — written by the PR session at round end. */
@@ -343,6 +403,10 @@ export interface VerdictFile {
    * withholding and re-queues the PR when CI goes green there.
    */
   approval_withheld?: boolean;
+  /**: what became of a follow-up round's pre-approval sweep —
+   * `ran`, `not_owed` (the order carried none) or `not_reached` (the round
+   * decided REQUEST_CHANGES first). Session-written; absent on other rounds. */
+  sweep?: "ran" | "not_owed" | "not_reached";
   head_sha: string;
   spend_usd?: number;
   ledger_snapshot?: string;

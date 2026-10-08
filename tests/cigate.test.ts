@@ -378,7 +378,12 @@ describe("the withheld note", () => {
 // ---- the rule as the session reads it -------------------------------------
 
 describe("the round templates carry the gate in their Decide step", () => {
-  const templates = ["round-first.md", "round-re-review.md", "round-staleness.md"];
+  const templates = [
+    "round-first.md",
+    "round-re-review.md",
+    "round-staleness.md",
+    "round-follow-up.md",
+  ];
   // Line wrapping differs between the three files; the rule does not.
   const read = (name: string): string =>
     readFileSync(resolve(process.cwd(), "prompts", name), "utf8").replace(/\s+/g, " ");

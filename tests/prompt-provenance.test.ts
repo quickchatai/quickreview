@@ -14,6 +14,7 @@ import type { PrFileEntry } from "../src/github.js";
 import { PASS_ADDENDA, buildAgents, configAddenda } from "../src/include.js";
 import type { PrStateRow } from "../src/state.js";
 import {
+  FOLLOW_UP_TEMPLATE_FILE,
   RECHECK_TEMPLATE_FILE,
   renderConversationSystemPrompt,
   renderOverseerSystemPrompt,
@@ -114,6 +115,52 @@ describe("no provenance reaches a model", () => {
           if (directives) expect(text, rt).toContain("FIRST-PARTY DIRECTIVES");
           expect(leaks(text), `${rt}${directives ? " + directives" : ""}`).toEqual([]);
         }
+    },
+  );
+
+  // the follow-up template, with every block it renders filled in.
+  // Mutation: put a ticket id into the step-4b prose or renderDeltaNote → fails.
+  it(
+    "the follow-up round order, every follow-up block filled",
+    { timeout: HEAVY_TIMEOUT_MS },
+    () => {
+      const order = buildRoundOrder({
+        cfg,
+        row: { number: 7, title: "Orders: read X", head_sha: "abc" } as unknown as PrStateRow,
+        files: FILES,
+        roundId: 1,
+        roundNo: 3,
+        reviewNo: 3,
+        roundType: "re-review",
+        worktree: "/wt",
+        settledDigest: "",
+        issuedAt: "ISSUED",
+        ecosystem: NONE_ECOSYSTEM,
+        prBody: "Reads X from the environment so orders can be routed by region.",
+      });
+      const text = renderRoundPrompt(
+        readFileSync(join(sandbox, "prompts", FOLLOW_UP_TEMPLATE_FILE), "utf8"),
+        {
+          ...order,
+          scope: "delta",
+          prior_findings_note: "PRIOR FINDINGS TO VERIFY — none open.",
+          delta: {
+            from_sha: "a".repeat(40),
+            tree: "b".repeat(40),
+            lines: 3,
+            patch_file: "/state/pr-7-round-3-delta.patch",
+            files: [
+              { path: "src/api/orders.py", status: "modified", ranges: [[1, 3]], conflict: true },
+            ],
+          },
+          sweep_plan: order.pass_plan,
+        },
+        undefined,
+        undefined,
+        NONE_ECOSYSTEM,
+      );
+      expect(text).toContain("PRE-APPROVAL SWEEP");
+      expect(leaks(text)).toEqual([]);
     },
   );
 

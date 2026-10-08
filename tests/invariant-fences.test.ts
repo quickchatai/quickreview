@@ -148,6 +148,59 @@ const PINNED: Record<string, PinnedFence[]> = {
       sha256: "5916f6d0d863579e83467924d6920be53aff3ebe9a9ce7d3bcb12ac806192303",
     },
   ],
+  // the follow-up template copies re-review's nine fences byte for
+  // byte — the same bodies, so the same pins; nothing new to ratify.
+  "prompts/round-follow-up.md": [
+    {
+      slug: "no-exec",
+      ft: "",
+      sha256: "ff6d7f5f6d0ef188ad08c546d51918439e64bba8c3e2fe41a77136d176664ffd",
+    },
+    {
+      slug: "ci-gate",
+      ft: "",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
+    },
+    {
+      slug: "verdicts",
+      ft: "",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "2ade641b3e3754a4834721e42dd8d43196ff321cdb8a647198b258dac6407e36",
+    },
+    {
+      slug: "posting-map",
+      ft: "",
+      sha256: "cc384c1650e45820f80db8f90a2f5a74e383baafad5ff29c5c3f518ac27bf66c",
+    },
+    {
+      slug: "never-dismiss",
+      ft: "RULE-2",
+      sha256: "c619376602fc5e032cbf648a135945dd0105cdd8282d1eec122483f8e5ecd84a",
+    },
+    {
+      slug: "nit-scope",
+      ft: "",
+      sha256: "6e36bba0ad59c6d927d1e120826e814ba66c0dd25db2b63b14bdfb45356ed16c",
+    },
+    {
+      slug: "reachability",
+      ft: "",
+      sha256: "94f36825f50099ee2e3f39b14091e15e694548bb61a6c29e5c7daab30d04683f",
+    },
+    {
+      slug: "injection-bright-line",
+      ft: "",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
+    },
+    {
+      slug: "merge-call",
+      ft: "",
+      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
+      sha256: "5916f6d0d863579e83467924d6920be53aff3ebe9a9ce7d3bcb12ac806192303",
+    },
+  ],
   "prompts/round-staleness.md": [
     {
       slug: "no-exec",

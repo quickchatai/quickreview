@@ -126,7 +126,7 @@ import {
   RECHECK_TEMPLATE_FILE,
   renderRecheckPrompt,
   renderRoundPrompt,
-  roundTemplateFile,
+  templateFileForOrder,
 } from "./templates.js";
 import { nodeExec } from "./tmux.js";
 import type { RoundOrder, SessionCommandObservation, SessionHooks } from "./types.js";
@@ -654,7 +654,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const identity = identityVars(cfg);
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
     renderRoundPrompt(
-      readFileSync(join(root, "prompts", roundTemplateFile(order.round_type)), "utf8"),
+      readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8"),
       order,
       memory,
       cfg.owner.name,

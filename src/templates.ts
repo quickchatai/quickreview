@@ -67,6 +67,20 @@ export function roundTemplateFile(roundType: RoundType): string {
  * plans no passes and asks one question. */
 export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 
+/** The follow-up template (docs/follow-up-rounds.md). Not a
+ * RoundType: a follow-up round is a re-review whose order carries
+ * `scope: "delta"`, so every consumer keyed on the round type (the frozen
+ * system prompt, the Slack labels, the stage supervisor) is unchanged, and
+ * `round-re-review.md` stays byte-identical as the full-round fallback. */
+export const FOLLOW_UP_TEMPLATE_FILE = "round-follow-up.md";
+
+/** The template file a dispatched order renders from — the ONE production
+ * choice. A `scope: "delta"` order is a follow-up round; every other order
+ * renders from its round type's template exactly as before. */
+export function templateFileForOrder(order: Pick<RoundOrder, "round_type" | "scope">): string {
+  return order.scope === "delta" ? FOLLOW_UP_TEMPLATE_FILE : roundTemplateFile(order.round_type);
+}
+
 export { codePath };
 
 export { promptTitle };
@@ -491,6 +505,98 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
   ].join("\n");
 }
 
+/** `[start, count]` new-side ranges as `12-18, 40, after 77`. */
+function renderRanges(ranges: ReadonlyArray<readonly [number, number]>): string {
+  return ranges
+    .map(([start, count]) =>
+      count <= 0 ? `after ${start}` : count === 1 ? String(start) : `${start}-${start + count - 1}`,
+    )
+    .join(", ");
+}
+
+/**
+ * `{{delta_note}}`: the PR-owned change since the last reviewed
+ * head, as the daemon computed it — the reviewed head replayed onto this
+ * round's merge base, diffed against the new head, so base-branch merges are
+ * already out of it. Each file with its new-side line ranges, the whole
+ * patch's path and the per-file git command; a file whose replay conflicted
+ * is flagged for the both-parents audit. "" when the order carries none.
+ */
+export function renderDeltaNote(delta: RoundOrder["delta"], worktree = "<worktree>"): string {
+  if (!delta) return "";
+  const lines: string[] = [
+    `**THE CHANGE SINCE THE LAST REVIEW** — \`${delta.from_sha.slice(0, 12)}\` → this head,`,
+    `${delta.files.length} file(s), ${delta.lines} changed line(s). The daemon replayed the last`,
+    "reviewed head onto this round's merge base and diffed it against this head, so",
+    "base-branch merges and rebases are already taken out: everything listed here is",
+    "the author's own change since you last reviewed. Ranges are line numbers at",
+    "this head.",
+    "",
+  ];
+  if (delta.files.length === 0) {
+    lines.push(
+      "(no PR-owned file changed since the last review — this round verifies the",
+      "prior findings; the change review has nothing new to read)",
+    );
+  } else {
+    for (const f of delta.files) {
+      const moved =
+        f.old_path !== undefined && f.old_path !== f.path ? ` (from ${codePath(f.old_path)})` : "";
+      const scope = f.whole_file
+        ? "whole file"
+        : f.ranges.length > 0
+          ? `lines ${renderRanges(f.ranges)}`
+          : "no line ranges";
+      const conflict = f.conflict
+        ? " — **CONFLICT**: the replay conflicted here and the author resolved it by hand; audit the resolution against BOTH parents, the reviewed head and the base"
+        : "";
+      lines.push(`- ${codePath(f.path)}${moved} — ${f.status}, ${scope}${conflict}`);
+    }
+  }
+  lines.push(
+    "",
+    `The whole change as one patch: \`${delta.patch_file}\`. One file's hunks:`,
+    `\`git -C ${worktree} diff ${delta.tree} HEAD -- <path>\` (\`${delta.tree.slice(0, 12)}\` is the`,
+    "replayed tree, not a commit). The whole PR is still",
+    "`git diff <merge-base> HEAD`, for the code around a change.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * `{{sweep_note}}`: the pre-approval sweep's plan — "" when the
+ * order carries none (the sweep is not owed this round). The step-4b prose in
+ * the follow-up template says when to run it; this block is what to run.
+ */
+export function renderSweepNote(
+  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files">,
+): string {
+  const plan = order.sweep_plan;
+  if (!plan || plan.length === 0) return "";
+  const out = [
+    "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
+    "first round and the PR is not approved, so before this round approves, the",
+    "whole PR gets one blank-slate look with the full plan below (step 4b says",
+    "when to launch it and when it is not reached):",
+    "",
+    renderPassPlan(plan),
+  ];
+  const files = order.sweep_task_files;
+  if (files && files.length > 0) {
+    out.push(
+      "",
+      "The sweep's task files are written: launch each row with its pointer as the",
+      "whole task — `Task file: <path>. Read it first; it is your complete task.` —",
+      "followed by the already-known findings it must not re-raise.",
+      "",
+      "| row | subagent | task file |",
+      "| --- | --- | --- |",
+      ...files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`),
+    );
+  }
+  return out.join("\n");
+}
+
 /**'s changed-behavior receipt. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
@@ -654,6 +760,11 @@ export function roundVars(
     dedup_note: renderDedupNote(order),
     // `[review] coverage_check`: "" unless the order carries coverage files.
     coverage_note: renderCoverageNote(order),
+    // follow-up rounds: "" unless the order carries them; only
+    // round-follow-up.md places them, so every other template is unchanged.
+    prior_findings_note: order.prior_findings_note ?? "",
+    delta_note: renderDeltaNote(order.delta, order.worktree),
+    sweep_note: renderSweepNote(order),
   };
 }
 
