@@ -74,7 +74,7 @@ beforeEach(() => {
     state: "reviewing",
     head_sha: HEAD,
     title: "feat(api): import status and label filter",
-    author: "jbennett",
+    author: "pr-author",
     trigger_ts: "2026-10-08T08:15:46.079Z",
     stale_recheck: 0,
     migration_gate: 0,

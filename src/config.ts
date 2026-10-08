@@ -1668,6 +1668,13 @@ export interface Config {
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
+    /** H1b: how long a compaction the session's inject bridge reports
+     * running may hold a waiting command's start lease open. pi refuses every
+     * prompt while it compacts, so a command queued behind one is late, not
+     * lost; past this bound a compaction still "running" is no reason to wait,
+     * and the bounded redelivery → kill-and-replay recovery takes over.
+     * Readers default to DEFAULT_SESSION_COMPACTION_MAX_S. */
+    session_compaction_max_s?: number;
     round_stage_supervisor_stale_s?: number;
     /** L2: the daemon's event-loop watch (src/eventloop.ts). All
      * optional — `eventLoopPolicy` defaults each (300 s window, a 10 s single
@@ -2194,6 +2201,10 @@ export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
 export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
+/** H1b: the post-verdict compaction on #5849 (2026-10-08) took 73 s
+ * with the container CPU-starved; ten minutes is several times the worst seen
+ * and still well inside the 75-minute round deadline. */
+export const DEFAULT_SESSION_COMPACTION_MAX_S = 600;
 export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;
 
 export function sandboxRoot(): string {
@@ -2342,6 +2353,7 @@ export function parseConfig(toml: string): Config {
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
       session_command_max_start_retries: DEFAULT_SESSION_COMMAND_MAX_START_RETRIES,
+      session_compaction_max_s: DEFAULT_SESSION_COMPACTION_MAX_S,
       round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
@@ -2474,6 +2486,10 @@ export function parseConfig(toml: string): Config {
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
   if (!(typeof postedTail === "number" && Number.isFinite(postedTail) && postedTail > 0)) {
     throw new Error("config.toml: require round_posted_tail_grace_min > 0");
+  }
+  const compactionMax = cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S;
+  if (!(typeof compactionMax === "number" && Number.isFinite(compactionMax) && compactionMax > 0)) {
+    throw new Error("config.toml: require session_compaction_max_s > 0");
   }
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.

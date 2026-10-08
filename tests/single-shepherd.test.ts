@@ -751,14 +751,16 @@ describe("wakeOrHold / flushHeldWakes", () => {
       expect(store.heldWakes(7).every((wake) => wake.claim_token !== null)).toBe(true),
     );
 
-    const dropped = store.holdWake(7, "arrived while the batch was injecting", "author_reply");
-    expect(dropped).toHaveLength(1);
-    expect(store.heldWakes(7).map((wake) => wake.payload)).not.toContain(
-      "arrived while the batch was injecting",
-    );
+    // H1b: author replies sit outside the cap — the leased batch is
+    // never evicted and does not crowd out newcomers either: an author reply
+    // and an ordinary wake arriving meanwhile are both held.
+    expect(store.holdWake(7, "a ledger nudge arrived meanwhile", "ledger_stale")).toEqual([]);
+    expect(store.holdWake(7, "arrived while the batch was injecting", "author_reply")).toEqual([]);
 
     accept();
-    expect(await flush).toBe(5);
+    // The batch of five, then (this fake's inject holds no slot) the two
+    // newcomers in arrival order — nothing was lost on the way.
+    expect(await flush).toBe(7);
     expect(store.heldWakes(7)).toHaveLength(0);
     expect(store.recentEvents(20).some((event) => event.kind === "wake_ack_lost")).toBe(false);
   });
@@ -803,14 +805,20 @@ describe("wakeOrHold / flushHeldWakes", () => {
     ]);
   });
 
-  it("caps held wakes per PR, dropping the oldest with an event", async () => {
+  it("caps held ordinary wakes per PR, dropping the oldest with an event", async () => {
     store.startRound(7, "first", ["pass-baseline"], 75);
     for (let i = 0; i < MAX_HELD_WAKES + 2; i++)
-      await wakeOrHold(deps(), 7, `m${i}`, "author_reply");
+      await wakeOrHold(deps(), 7, `m${i}`, "ledger_stale");
     const held = store.heldWakes(7);
     expect(held).toHaveLength(MAX_HELD_WAKES);
     expect(held[0]!.payload).toBe("m2"); // the two oldest were evicted
-    expect(store.recentEvents(50).some((e) => e.kind === "wake_dropped")).toBe(true);
+    const dropped = store.recentEvents(50).filter((e) => e.kind === "wake_dropped");
+    expect(dropped).toHaveLength(2);
+    // The event names what went, not only what arrived.
+    expect(JSON.parse(dropped[0]!.payload!)).toMatchObject({
+      reason: "ledger_stale",
+      dropped_reasons: ["ledger_stale"],
+    });
   });
 
   it("releases a failed oldest batch atomically and retries it before later messages", async () => {

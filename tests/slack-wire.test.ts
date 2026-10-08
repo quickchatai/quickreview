@@ -484,6 +484,7 @@ describe("origin cause, not recency (the belt)", () => {
     const probed: number[] = [];
     const killedPrs: number[] = [];
     const optionalCalls: string[] = [];
+    const forwardedObservation: unknown[] = [];
     const { hooks: fullHooks } = daemonOriginWakes({
       hooks: {
         ...noHooks,
@@ -498,6 +499,14 @@ describe("origin cause, not recency (the belt)", () => {
         ),
         // dropped by the wrap, the stale raw tier is never swept.
         sweepStaleOvSessions: async () => (optionalCalls.push("sweepStaleOvSessions"), null),
+        // H1b: dropped by the wrap, a wake waiting behind a compaction
+        // is read as lost and its live session killed (#5362 ③).
+        redeliverSessionCommand: async (_id, observed) => (
+          optionalCalls.push("redeliverSessionCommand"),
+          forwardedObservation.push(observed),
+          "redelivered" as const
+        ),
+        sessionCompaction: async () => (optionalCalls.push("sessionCompaction"), null),
       },
       origins: runtime.origins,
       enabled: true,
@@ -509,6 +518,8 @@ describe("origin cause, not recency (the belt)", () => {
     expect(fullHooks.redeliverRound).toBeDefined();
     expect(fullHooks.retrySessionCommand).toBeDefined();
     expect(fullHooks.sweepStaleOvSessions).toBeDefined();
+    expect(fullHooks.redeliverSessionCommand).toBeDefined();
+    expect(fullHooks.sessionCompaction).toBeDefined();
     await fullHooks.sessionAlive!(42);
     await fullHooks.killSession!(43);
     await fullHooks.roundPromptAccepted!(42, 1, 0);
@@ -516,6 +527,11 @@ describe("origin cause, not recency (the belt)", () => {
     await fullHooks.redeliverRound!(42, 1);
     await fullHooks.retrySessionCommand!("cmd", "reason");
     await fullHooks.sweepStaleOvSessions!();
+    // The supervisor's due observation must reach the hook: its CAS is on it.
+    const observed = { attempt: 1, redeliveries: 0, next_check_at: "2026-10-08T08:54:10.000Z" };
+    await fullHooks.redeliverSessionCommand!("cmd", observed);
+    expect(forwardedObservation).toEqual([observed]);
+    await fullHooks.sessionCompaction!(42);
     expect(probed).toEqual([42]);
     expect(killedPrs).toEqual([43]);
     expect(optionalCalls).toEqual([
@@ -524,6 +540,8 @@ describe("origin cause, not recency (the belt)", () => {
       "redeliverRound",
       "retrySessionCommand",
       "sweepStaleOvSessions",
+      "redeliverSessionCommand",
+      "sessionCompaction",
     ]);
 
     writeLegacyCommand("blocked", { command: "file-issue", title: "t", body: "b" });

@@ -128,7 +128,7 @@ import {
   roundTemplateFile,
 } from "./templates.js";
 import { nodeExec } from "./tmux.js";
-import type { RoundOrder, SessionHooks } from "./types.js";
+import type { RoundOrder, SessionCommandObservation, SessionHooks } from "./types.js";
 import { WebhookHealer } from "./webhookheal.js";
 
 export interface ProductionParts {
@@ -560,6 +560,18 @@ export function daemonOriginWakes(opts: {
             retrySessionCommand: (commandId: string, reason: string) =>
               hooks.retrySessionCommand!(commandId, reason),
           }
+        : {}),
+      // H1b: the same-session redelivery and the bridge's compaction
+      // report. Dropped here, production would fall straight back to killing
+      // a live session whose wake waited behind a compaction (#5362 ③).
+      ...(hooks.redeliverSessionCommand
+        ? {
+            redeliverSessionCommand: (commandId: string, observed: SessionCommandObservation) =>
+              hooks.redeliverSessionCommand!(commandId, observed),
+          }
+        : {}),
+      ...(hooks.sessionCompaction
+        ? { sessionCompaction: (pr: number) => hooks.sessionCompaction!(pr) }
         : {}),
       // The reconcile pass's raw-tier sweep (S3) — dropped here, the
       // 79 stale sessions would never be deleted in production.

@@ -282,12 +282,38 @@ round the daemon never recorded. It returns `false` when the bytes are gone, and
 the caller then falls through to the expensive path rather than inventing a
 prompt.
 
+`redeliverSessionCommand(commandId, observed)` (H1b) is the same cheap
+fix for ANY durable command — round prompt or wake — whose start lease ran out
+on a **live, bridge-ready** session: it hands the same row back to `pending`
+and rewrites the same bytes at the same inject path. Nothing is killed. The
+CAS is on `observed`, the row as the supervisor found it DUE (attempt,
+`redeliveries` — its own column — and `next_check_at`), never on a fresh read:
+a bridge that reserved the command after the due check holds a fresh
+submission pi may still be preflighting, so that row answers `raced` and keeps
+its own lease. The bridge that still holds the command as
+submitted-but-unstarted drops that barrier and resubmits only when pi never
+took it (pi's `input` event, emitted right after its compaction refusal and
+before the rest of its preflight, never carried the wake's marker), the
+submission is at least a start lease old, and pi itself says it holds nothing —
+`ctx.isIdle()` (no run, no compaction) and no queued prompt
+(`ctx.hasPendingMessages()`). Whenever one of those cannot be shown the
+barrier stays, because unknown is never loss. If the original submission
+starts after all, the bridge takes the handed-back row over and accepts it.
+`not_live` (tmux gone, or no ready bridge generation) hands over to the replay
+below.
+
 `retrySessionCommand(commandId, reason)` is the harder recovery: it verifies the
 payload hash, **kills the tmux session and proves it dead**, re-checks that the
 round is still owed, atomically returns the same row to pending, rewrites the
 same inject path, and rebirths. Rebirth without a delivery-attempt increment is
 reported as a failed retry, not a success — a bridge that became ready without
-reserving the command delivered nothing.
+reserving the command delivered nothing. Since H1b it runs on a missing
+start only when the session is provably dead or its `max_prompt_redeliveries`
+redeliveries are spent: on 2026-10-08 it killed seven live, idle sessions whose
+wake had merely waited behind the post-verdict compaction. The replay lands in a
+new session generation, so it resets `redeliveries`: the reborn conversation
+gets its own bounded redeliveries before any further kill (every replay still
+spends a `recovery_attempts`).
 
 `src/session-command-supervisor.ts` is the reconciler over that one durable slot
 — explicitly *not* a second scheduler. Delivery stays bridge-owned and round
@@ -301,7 +327,19 @@ freshness through a supervisor lease (`round-stage`, stale after
   when available, otherwise the already-expired lease as the conservative
   latest possible origin — never observation time, which would let an outage
   reset the hard cap);
-- receipt definitively absent, or session definitively dead ⇒ recover;
+- the session's bridge reports a compaction running (H1b) ⇒ late, not
+  lost: the start lease is held open, re-checked every
+  `session_command_unknown_grace_s`, bounded by the compaction's own start +
+  `session_compaction_max_s` (600 s); event `session_command_start_deferred`.
+  This comes before the receipt is read, and only for a session not provably
+  dead — liveness is read first, and `sessionCompaction` reports nothing once
+  tmux holds no session (a pi killed mid-compaction never rewrites its
+  "running" receipt);
+- receipt definitively absent, or session definitively dead ⇒ recover —
+  **redelivery first** into a live, bridge-ready session (above), at most
+  `max_prompt_redeliveries` times (`session_command_redelivered`,
+  `…_redelivery_exhausted`); the kill-and-replay only after that, or at once
+  for a dead session;
 - otherwise **unknown**, deferred a bounded number of times
   (`session_command_unknown_grace_s`, `session_command_unknown_max_checks`)
   before recovery.
@@ -313,6 +351,7 @@ Relevant `[daemon]` knobs in `config.example.toml`:
 `session_bridge_ready_timeout_s`, `session_command_start_lease_s`,
 `session_command_running_max_min`, `session_command_unknown_grace_s`,
 `session_command_unknown_max_checks`, `session_command_max_start_retries`,
+`session_compaction_max_s`, `max_prompt_redeliveries`,
 `round_stage_supervisor_stale_s`, `overseer_rotation_days`.
 
 ## Live round progress
@@ -374,11 +413,22 @@ Two details are load-bearing:
   `extensions/vendor/openviking-pi/patches/0001-remove-session-before-compact-handler.patch`
   for exactly this reason.
 
-Compaction itself is triggered from the daemon by `compactSession(pr)`, which
-sends the literal `/compact` into the pane via `Tmux.send`. It is best-effort by
-contract, and it is called **after** a round's verdict file is written: a
-`/compact` arriving mid-turn aborts the turn in flight, so anything a session
-does after its verdict write is expendable by design.
+Compaction itself is REQUESTED by the daemon (H1b): `compactSession(pr)`
+writes `.compact-request.json` into the session's inject dir after a round's
+verdict lands, and the inject bridge — the session's one mailbox consumer —
+runs it through pi's own `ctx.compact()` once nothing is in flight (no run, no
+submitted or active wake), before the wakes queued behind it. While pi
+compacts, the bridge submits nothing: pi 1.0.0 refuses every prompt then
+("Cannot submit a prompt while compaction is in progress"), the refusal is
+swallowed, and manual compaction emits no `agent_settled`. The bridge watches
+`session_before_compact` / `session_compact` / `session_compact_failed` (and pi's
+own `ctx.isIdle()`, which counts compaction), drains when it ends, and
+publishes the state in its ready receipt (`compaction: {state, seq, started_at,
+ended_at, outcome, source}`, read by `sessionCompaction(pr)`). Before H1b the
+daemon typed `/compact` into the pane: that aborted whatever turn was running,
+and a wake flushed right after it was submitted into the compaction, refused
+and never retried — seven healthy sessions were then killed as wedged in one
+morning. Best-effort still: a bridge from before H1b ignores the request.
 
 ## Prompts and rendering
 
@@ -567,7 +617,7 @@ structurally rather than by convention:
    and its own release-on-provable-non-delivery sweep.
 3. **Delivered means acknowledged.** A wake file leaves `inject/` only on a
    marker-correlated user `message_start`, and only `agent_settled` frees the
-   mailbox.
+   mailbox. A compaction holds it too: nothing is submitted until it ends.
 4. **Unreadable is not empty.** Receipt reads are three-valued; `null` must
    never be collapsed into "lost".
 5. **Redelivery sends the exact dispatched bytes.** Never re-render a prompt to

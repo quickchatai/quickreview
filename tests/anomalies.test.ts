@@ -45,6 +45,7 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
       [
         "archive_disk_low",
         "archive_restore_failed",
+        "author_reply_wake_dropped",
         "daemon_event_loop_stalled",
         "eod_curation_missing",
         "eod_inject_failed",

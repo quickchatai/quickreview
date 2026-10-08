@@ -6,7 +6,11 @@ import { parseConfig, type Config } from "../src/config.js";
 import { sessionCommandMarker } from "../src/session-command.js";
 import { SessionCommandSupervisor } from "../src/session-command-supervisor.js";
 import { StateStore } from "../src/state.js";
-import type { RoundRecoveryDisposition, SessionHooks } from "../src/types.js";
+import type {
+  RoundRecoveryDisposition,
+  SessionCommandObservation,
+  SessionHooks,
+} from "../src/types.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
@@ -1098,6 +1102,278 @@ describe("bounded round-stage supervision", () => {
     await pending;
     expect(store.supervisorLease("round-stage")?.last_success_at).toBe(clock.toISOString());
     expect(s.health().healthy).toBe(true);
+  });
+});
+
+// H1b, #5362 ③: on 2026-10-08 a wake flushed right after a verdict
+// waited behind the post-verdict compaction, its start lease ran out, and
+// recovery KILLED the live, idle session seven times that morning. A command
+// waiting behind a compaction is late, not lost; a live, bridge-ready session
+// gets a bounded REDELIVERY of the same command before any kill.
+describe("missing start on a live session: compaction and redelivery come before any kill (H1b)", () => {
+  // The wake was created at 08:52:10, its 120 s lease ran out at 08:54:10.
+  const LEASE_OUT = "2026-08-27T20:04:00.000Z";
+
+  function liveHooks(over: Partial<SessionHooks> = {}) {
+    const retry = vi.fn(async () => "retried" as const);
+    const kill = vi.fn(async () => {});
+    // The real hook's contract: CAS on the row the supervisor OBSERVED.
+    const redeliver = vi.fn(async (commandId: string, observed: SessionCommandObservation) =>
+      store.requeueSessionCommandForRedelivery(
+        commandId,
+        observed,
+        new Date(clock.getTime() + 120_000).toISOString(),
+      )
+        ? ("redelivered" as const)
+        : ("raced" as const),
+    );
+    return {
+      retry,
+      kill,
+      redeliver,
+      h: hooks({
+        wakeReceiptPresent: async () => false, // the JSONL holds no marker
+        sessionAlive: async () => true,
+        retrySessionCommand: retry,
+        killSession: kill,
+        redeliverSessionCommand: redeliver,
+        ...over,
+      }),
+    };
+  }
+
+  it("a wake waiting behind a running compaction keeps its lease: no redelivery, no retry, no kill", async () => {
+    const { id, pr } = seedWakeCommand({ status: "pending", nextCheckAt: LEASE_OUT });
+    const { h, retry, kill, redeliver } = liveHooks({
+      sessionCompaction: async () => ({
+        state: "running",
+        seq: 3,
+        started_at: new Date(clock.getTime() - 73_000).toISOString(),
+        source: "request",
+      }),
+    });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+    const row = store.getSessionCommand(id)!;
+    expect(row).toMatchObject({ status: "pending", unknown_checks: 0, redeliveries: 0 });
+    expect(Date.parse(row.next_check_at)).toBeGreaterThan(clock.getTime());
+    expect(events("session_command_start_deferred")).toMatchObject([
+      { pr, payload: { command_id: id, reason: "compacting", compaction_source: "request" } },
+    ]);
+  });
+
+  it("the compaction deferral is bounded: a compaction 'running' past session_compaction_max_s defers nothing", async () => {
+    const { id } = seedWakeCommand({ status: "pending", nextCheckAt: LEASE_OUT });
+    const bound = baseCfg.daemon.session_compaction_max_s ?? 600;
+    const { h, redeliver, kill } = liveHooks({
+      sessionCompaction: async () => ({
+        state: "running",
+        seq: 0,
+        started_at: new Date(clock.getTime() - bound * 1000).toISOString(),
+      }),
+    });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(redeliver).toHaveBeenCalledWith(id, {
+      attempt: 0,
+      redeliveries: 0,
+      next_check_at: LEASE_OUT,
+    });
+    expect(kill).not.toHaveBeenCalled();
+    expect(events("session_command_start_deferred")).toEqual([]);
+  });
+
+  it("a live, bridge-ready session gets a bounded REDELIVERY of the same command before any kill", async () => {
+    const { id, pr } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const { h, retry, kill, redeliver } = liveHooks();
+    const s = supervisor(h).supervisor;
+    const cap = baseCfg.daemon.max_prompt_redeliveries ?? 2;
+
+    for (let n = 1; n <= cap; n++) {
+      await s.scan();
+      expect(redeliver).toHaveBeenCalledTimes(n);
+      expect(retry).not.toHaveBeenCalled();
+      expect(kill).not.toHaveBeenCalled();
+      expect(store.getSessionCommand(id)).toMatchObject({
+        status: "pending",
+        redeliveries: n,
+        recovery_attempts: 0,
+      });
+      clock = new Date(clock.getTime() + 121_000); // the redelivered lease runs out too
+    }
+    expect(events("session_command_redelivered").map((e) => e.payload)).toMatchObject([
+      { command_id: id, redelivery: 1, cap, result: "redelivered" },
+      { command_id: id, redelivery: 2, cap, result: "redelivered" },
+    ]);
+
+    // Redelivery spent: only now the kill-and-replay recovery.
+    await s.scan();
+    expect(redeliver).toHaveBeenCalledTimes(cap);
+    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("no correlated start"));
+    expect(events("session_command_redelivery_exhausted")).toMatchObject([
+      { pr, payload: { command_id: id, redeliveries: cap, cap } },
+    ]);
+  });
+
+  it("a provably dead session (tmux gone) skips redelivery and goes straight to the replay", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const { h, retry, redeliver } = liveHooks({ sessionAlive: async () => false });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledWith(id, expect.any(String));
+  });
+
+  it("no live, bridge-ready session to redeliver into (not_live) hands over to the replay", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const { h, retry } = liveHooks({ redeliverSessionCommand: async () => "not_live" as const });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(retry).toHaveBeenCalledWith(id, expect.any(String));
+    expect(events("session_command_redelivery_skipped")).toMatchObject([
+      { payload: { command_id: id, result: "not_live" } },
+    ]);
+  });
+
+  it("a command a bridge reserved between the read and the redelivery is looked at again later, not killed", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const { h, retry, kill } = liveHooks({ redeliverSessionCommand: async () => "raced" as const });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(retry).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+    expect(Date.parse(store.getSessionCommand(id)!.next_check_at)).toBeGreaterThan(clock.getTime());
+  });
+
+  it("a round prompt gets the same redelivery-first treatment", async () => {
+    const { id } = seedRoundCommand({ status: "running" });
+    const { h, retry, redeliver } = liveHooks();
+
+    await supervisor(h).supervisor.scan();
+
+    expect(redeliver).toHaveBeenCalledWith(id, expect.objectContaining({ redeliveries: 0 }));
+    expect(retry).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "pending", redeliveries: 1 });
+  });
+
+  // H1b review: the supervisor awaits liveness and the JSONL before it
+  // redelivers. A bridge that reserved the command in that window (a busy run
+  // settled, a compaction ended) holds a FRESH submission pi may still be
+  // preflighting — handing it back would send it twice.
+  it("a bridge reservation made while the evidence was read is not handed back: raced, no kill", async () => {
+    const { id } = seedWakeCommand({ status: "pending", nextCheckAt: LEASE_OUT });
+    const freshLease = new Date(clock.getTime() + 120_000).toISOString();
+    const { h, retry, kill, redeliver } = liveHooks({
+      sessionAlive: async () => {
+        // The bridge reserves (attempt 0 -> 1, a fresh lease) during the
+        // supervisor's awaits, after its due read.
+        store.claimSessionCommand(id, "bridge-2", freshLease);
+        return true;
+      },
+    });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(redeliver).toHaveBeenCalledWith(id, {
+      attempt: 0,
+      redeliveries: 0,
+      next_check_at: LEASE_OUT,
+    });
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "running",
+      owner_token: "bridge-2",
+      attempt: 1,
+      redeliveries: 0,
+      next_check_at: freshLease, // the reservation's own lease, never cut short
+    });
+    expect(events("session_command_redelivered")).toEqual([]);
+    expect(events("session_command_redelivery_raced")).toMatchObject([
+      { payload: { command_id: id, result: "raced" } },
+    ]);
+    expect(retry).not.toHaveBeenCalled();
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  // H1b review: a pi killed or OOM'd mid-compaction never reaches
+  // `session_shutdown`, so its receipt still says "running". A provably dead
+  // session is the kill-and-replay case at once, never held off for
+  // `session_compaction_max_s`.
+  it("a session that died mid-compaction is not deferred: it is replayed on the first check", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const { h, retry, redeliver } = liveHooks({
+      sessionAlive: async () => false,
+      sessionCompaction: async () => ({
+        state: "running",
+        seq: 3,
+        started_at: new Date(clock.getTime() - 73_000).toISOString(),
+        source: "request",
+      }),
+    });
+
+    await supervisor(h).supervisor.scan();
+
+    expect(events("session_command_start_deferred")).toEqual([]);
+    expect(redeliver).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("no correlated start"));
+  });
+
+  // H1b review: the redelivery budget is per session generation. A
+  // command replayed into a fresh conversation after its budget was spent
+  // gets its own: its next missed start there is redelivered, not killed.
+  it("after a kill-and-replay, the fresh session's missed start is redelivered, not killed again", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const cap = baseCfg.daemon.max_prompt_redeliveries ?? 2;
+    store.db.prepare("UPDATE session_commands SET redeliveries=? WHERE id=?").run(cap, id);
+    const retry = vi.fn(async (commandId: string) => {
+      // What PiSessionManager.retrySessionCommand does past its tmux fence,
+      // then the reborn session's bridge reserving the replayed command.
+      const row = store.getSessionCommand(commandId)!;
+      const lease = new Date(clock.getTime() + 120_000).toISOString();
+      store.retrySessionCommandAfterFence(commandId, row.attempt, lease);
+      store.claimSessionCommand(commandId, "bridge-reborn", lease);
+      return "retried" as const;
+    });
+    const { h, redeliver, kill } = liveHooks({ retrySessionCommand: retry });
+    const s = supervisor(h).supervisor;
+
+    await s.scan(); // budget spent: the one kill-and-replay
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "running",
+      owner_token: "bridge-reborn",
+      redeliveries: 0,
+      recovery_attempts: 1,
+    });
+
+    clock = new Date(clock.getTime() + 121_000); // the reborn bridge's start lease runs out
+    await s.scan();
+    expect(redeliver).toHaveBeenCalledTimes(1);
+    expect(retry).toHaveBeenCalledTimes(1); // no second kill
+    expect(kill).not.toHaveBeenCalled();
+    expect(store.getSessionCommand(id)).toMatchObject({ status: "pending", redeliveries: 1 });
+  });
+
+  it("without the redelivery hook (stubs, older wiring) the kill-and-replay path is unchanged", async () => {
+    const { id } = seedWakeCommand({ status: "running", nextCheckAt: LEASE_OUT });
+    const retry = vi.fn(async () => "retried" as const);
+
+    await supervisor(
+      hooks({
+        wakeReceiptPresent: async () => false,
+        sessionAlive: async () => true,
+        retrySessionCommand: retry,
+      }),
+    ).supervisor.scan();
+
+    expect(retry).toHaveBeenCalledWith(id, expect.any(String));
   });
 });
 

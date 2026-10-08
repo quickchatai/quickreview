@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DEFAULT_MAX_PROMPT_REDELIVERIES,
   DEFAULT_ROUND_FINALIZE_GRACE_MIN,
   DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
   DEFAULT_ROUND_PASSES_MAX_MIN,
@@ -15,6 +16,7 @@ import {
   DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN,
   DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
   DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
+  DEFAULT_SESSION_COMPACTION_MAX_S,
   type Config,
 } from "./config.js";
 import { sessionCommandMarker } from "./session-command.js";
@@ -237,6 +239,18 @@ export class SessionCommandSupervisor {
     let receipt: boolean | null = null;
     let alive: boolean | null = null;
     try {
+      alive = this.deps.hooks.sessionAlive ? await this.deps.hooks.sessionAlive(command.pr) : null;
+    } catch {
+      alive = null;
+    }
+    // H1b: a compaction holds the session's one mailbox — pi refuses
+    // every prompt while it runs — so a command waiting behind one is late,
+    // not lost. Its start lease is held open (bounded) before the receipt is
+    // read, so a compaction can never be what spends a redelivery or a kill.
+    // Only for a session not provably dead: a pi that died mid-compaction
+    // leaves a "running" receipt behind, and its recovery must not wait.
+    if (alive !== false && (await this.deferBehindCompaction(command))) return;
+    try {
       receipt = this.deps.hooks.wakeReceiptPresent
         ? await this.deps.hooks.wakeReceiptPresent(
             command.pr,
@@ -246,11 +260,6 @@ export class SessionCommandSupervisor {
         : null;
     } catch {
       receipt = null;
-    }
-    try {
-      alive = this.deps.hooks.sessionAlive ? await this.deps.hooks.sessionAlive(command.pr) : null;
-    } catch {
-      alive = null;
     }
 
     if (receipt === true && alive === false) {
@@ -322,7 +331,123 @@ export class SessionCommandSupervisor {
     const reason = definitive
       ? `command ${command.id} has no correlated start before ${command.next_check_at}`
       : `command ${command.id} start evidence remained unknown after ${command.unknown_checks} finite check(s)`;
+    // #5362 ③: a missing prompt is a DELIVERY fault, so redelivery comes first.
+    // A live session with no order is IDLE, not wedged — the kill-and-replay
+    // recovery below costs its whole conversation, so it runs only when the
+    // session is provably dead or its bounded redeliveries are spent.
+    if (alive === true && (await this.redeliverFirst(command, reason))) return;
     await this.recoverMissingStart(command, reason);
+  }
+
+  /** H1b: hold the start lease of a command queued behind a
+   * compaction the session's bridge reports running. Bounded by the
+   * compaction's own start + `session_compaction_max_s`: one still "running"
+   * past that is no reason to wait. True when the check was deferred. */
+  private async deferBehindCompaction(command: SessionCommandRow): Promise<boolean> {
+    if (!this.deps.hooks.sessionCompaction) return false;
+    let compaction: Awaited<ReturnType<NonNullable<SessionHooks["sessionCompaction"]>>> = null;
+    try {
+      compaction = await this.deps.hooks.sessionCompaction(command.pr);
+    } catch {
+      return false;
+    }
+    if (compaction?.state !== "running") return false;
+    const started = Date.parse(compaction.started_at ?? "");
+    const boundMs =
+      (this.deps.cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S) * 1000;
+    const now = this.now().getTime();
+    if (!Number.isFinite(started) || now >= started + boundMs) return false;
+    const graceMs =
+      (this.deps.cfg.daemon.session_command_unknown_grace_s ??
+        DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S) * 1000;
+    const next = new Date(Math.min(now + graceMs, started + boundMs)).toISOString();
+    if (this.deps.store.scheduleSessionCommandCheck(command.id, next)) {
+      this.deps.store.logEvent("session_command_start_deferred", command.pr, {
+        command_id: command.id,
+        kind: command.kind,
+        round_no: command.round_no,
+        reason: "compacting",
+        compaction_started_at: compaction.started_at,
+        compaction_source: compaction.source ?? null,
+        next_check_at: next,
+      });
+    }
+    return true;
+  }
+
+  /**
+   * #5362 ③ / H1b: redeliver a command that never started into the
+   * same live session — the same row and bytes, no kill — up to
+   * `[daemon] max_prompt_redeliveries` times. True when this check is
+   * answered (redelivered, or the command started/settled/was reserved
+   * meanwhile); false hands over to the kill-and-replay recovery: no
+   * redelivery hook, the budget spent, or no live, bridge-ready session.
+   */
+  private async redeliverFirst(command: SessionCommandRow, reason: string): Promise<boolean> {
+    const hook = this.deps.hooks.redeliverSessionCommand;
+    if (!hook) return false;
+    const cap = this.deps.cfg.daemon.max_prompt_redeliveries ?? DEFAULT_MAX_PROMPT_REDELIVERIES;
+    if (command.redeliveries >= cap) {
+      this.deps.store.logEvent("session_command_redelivery_exhausted", command.pr, {
+        command_id: command.id,
+        kind: command.kind,
+        round_no: command.round_no,
+        redeliveries: command.redeliveries,
+        cap,
+        reason,
+      });
+      return false;
+    }
+    let result: Awaited<ReturnType<typeof hook>>;
+    let error: string | null = null;
+    try {
+      // The row as THIS check found it due: the hook's CAS is on it, so a
+      // bridge reservation made since (a fresh lease) answers `raced`.
+      result = await hook.call(this.deps.hooks, command.id, {
+        attempt: command.attempt,
+        redeliveries: command.redeliveries,
+        next_check_at: command.next_check_at,
+      });
+    } catch (err) {
+      result = "redelivery_failed";
+      error = String(err);
+    }
+    const payload = {
+      command_id: command.id,
+      kind: command.kind,
+      round_no: command.round_no,
+      result,
+      redelivery: command.redeliveries + 1,
+      cap,
+      reason,
+      ...(error ? { error } : {}),
+    };
+    if (result === "redelivered") {
+      this.deps.store.logEvent("session_command_redelivered", command.pr, payload);
+      return true;
+    }
+    if (result === "started" || result === "settled") {
+      this.deps.store.logEvent("session_command_redelivery_raced", command.pr, payload);
+      return true;
+    }
+    if (result === "raced") {
+      // A bridge reserved it after this check found it due: its own start
+      // lease runs from that reservation and is never cut short. Only a row
+      // still due is looked at again one interval on (no hot loop).
+      const current = this.deps.store.getSessionCommand(command.id);
+      if (!current || current.next_check_at <= this.now().toISOString())
+        this.deps.store.scheduleSessionCommandCheck(
+          command.id,
+          this.deadlineFromNowSeconds(
+            this.deps.cfg.daemon.session_command_unknown_grace_s ??
+              DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
+          ),
+        );
+      this.deps.store.logEvent("session_command_redelivery_raced", command.pr, payload);
+      return true;
+    }
+    this.deps.store.logEvent("session_command_redelivery_skipped", command.pr, payload);
+    return false;
   }
 
   private async recoverMissingStart(command: SessionCommandRow, reason: string): Promise<void> {

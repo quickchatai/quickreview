@@ -1721,7 +1721,10 @@ describe("durable command ownership", () => {
       });
       expect(readFileSync(original.payload_path)).toEqual(expectedBytes);
       expect(readFileSync(original.inject_path)).toEqual(expectedBytes);
+      // The replay is never converted into the held queue; the queue itself
+      // keeps every author reply (H1b: the cap never evicts one).
       expect(store.heldWakes(42).map((wake) => wake.payload)).toEqual([
+        "later-0",
         "later-1",
         "later-2",
         "later-3",

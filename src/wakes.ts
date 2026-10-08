@@ -9,8 +9,29 @@
 // So: while a PR's round is running, its wakes are HELD (persisted in
 // `pending_wakes`), and the round-end paths flush them in arrival order.
 // Nothing is dropped silently — the per-PR cap logs what it evicts.
+//
+// H1b: the cap never evicts an author reply. Each one is a claimed
+// obligation nothing else will raise again, and 76 of them were evicted unanswered
+// in three days while the coalesced delivery would have answered them in one
+// run. What the cap may evict goes push recheck nudges first (their claim is
+// released and the reconcile push backstop asks the question again), then
+// every other ordinary wake, oldest first — a ci or base-advance recheck
+// among them: nothing re-raises those, so an eviction releases its claim and
+// records the quiet `recheck_wake_dropped`. A burst of author replies is
+// delivered in chunks of at most MAX_AUTHOR_REPLIES_PER_DELIVERY, so the
+// never-evicted backlog cannot grow one prompt without bound.
 import { randomUUID } from "node:crypto";
-import type { PendingWakeRow, StateStore } from "./state.js";
+import {
+  AUTHOR_REPLY_WAKE_REASON,
+  type EvictedWake,
+  type PendingWakeRow,
+  type StateStore,
+} from "./state.js";
+
+/** The most author replies one coalesced delivery carries (H1b). A
+ * longer backlog goes in several runs, oldest first — the bound the old cap of
+ * five used to give the prompt by throwing the rest away. */
+export const MAX_AUTHOR_REPLIES_PER_DELIVERY = 10;
 
 export interface WakeDeps {
   store: StateStore;
@@ -79,7 +100,7 @@ export async function wakeOrHold(
 function hold(deps: WakeDeps, pr: number, message: string, reason: string): void {
   const { store } = deps;
   const log = deps.log ?? ((): void => {});
-  const dropped = store.holdWake(pr, message, reason);
+  const dropped = store.holdWakeEvicting(pr, message, reason);
   store.logEvent("wake_held", pr, {
     reason,
     dropped: dropped.length,
@@ -87,14 +108,65 @@ function hold(deps: WakeDeps, pr: number, message: string, reason: string): void
   });
   if (dropped.length > 0) {
     log(`wakes: #${pr} dropped ${dropped.length} held wake(s) over the cap`);
-    store.logEvent("wake_dropped", pr, { reason, ids: dropped });
+    // `reason` is the INCOMING wake's; what went is in `ids`/`dropped_reasons`.
+    store.logEvent("wake_dropped", pr, {
+      reason,
+      ids: dropped.map((wake) => wake.id),
+      dropped_reasons: dropped.map((wake) => wake.reason),
+    });
+    for (const wake of dropped) {
+      if (wake.released_recheck === null) continue;
+      store.logEvent("recheck_claim_released_evicted", pr, {
+        wake_id: wake.id,
+        reason: wake.reason,
+        fingerprint: wake.released_recheck,
+        re_raised_by: wake.re_raised_by_reconcile ? "reconcile_backstop" : null,
+      });
+      // A ci or base-advance recheck has no sweep to ask it again: a
+      // post-approval audit that will now run only if the same webhook comes
+      // back. Recorded where the daily heartbeat reads it (quiet grade —
+      // `anomalies.ts` lists it nowhere), never silent.
+      if (!wake.re_raised_by_reconcile)
+        store.logAnomaly(
+          RECHECK_WAKE_DROPPED_KIND,
+          pr,
+          null,
+          `held-wake cap evicted ${wake.reason} nudge ${wake.id} (${wake.released_recheck}); its claim is released, but no sweep re-raises a ${wake.reason} recheck — only an identical webhook asks it again`,
+        );
+    }
+    // Structurally impossible (the store never selects an author reply or an
+    // operator-recovered row for eviction) — and if a later edit makes it
+    // possible, a person hears about it at once: that reply's claim refuses
+    // every redelivery, so it would never be answered.
+    const owed = dropped.filter(isOwedWakeReason);
+    if (owed.length > 0)
+      store.logAnomaly(
+        AUTHOR_REPLY_DROPPED_KIND,
+        pr,
+        null,
+        `held-wake cap evicted ${owed.length} owed wake(s) (${owed
+          .map((wake) => `${wake.id}:${wake.reason}`)
+          .join(", ")}) — an author reply or recovered obligation was dropped unanswered`,
+      );
   }
+}
+
+/** H1b: the anomaly a dropped author reply raises (WAKE grade). */
+export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
+
+/** H1b review: the anomaly an evicted recheck nudge that nothing
+ * re-raises records (a ci or base-advance recheck; QUIET grade — unlisted in
+ * `anomalies.ts`, read at the daily heartbeat). */
+export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
+
+function isOwedWakeReason(wake: EvictedWake): boolean {
+  return wake.reason === AUTHOR_REPLY_WAKE_REASON || wake.reason.startsWith("operator_recovered:");
 }
 
 const AUTHOR_REPLY_HEADING = "# Author reply — PR #";
 
 function isAuthorReplyWake(wake: PendingWakeRow): boolean {
-  if (wake.reason === "author_reply") return true;
+  if (wake.reason === AUTHOR_REPLY_WAKE_REASON) return true;
   return (
     wake.reason.startsWith("operator_recovered:") && wake.payload.startsWith(AUTHOR_REPLY_HEADING)
   );
@@ -104,7 +176,12 @@ function leadingDeliveryCount(wakes: PendingWakeRow[]): number {
   if (wakes.length === 0) return 0;
   if (!isAuthorReplyWake(wakes[0]!)) return 1;
   let count = 1;
-  while (count < wakes.length && isAuthorReplyWake(wakes[count]!)) count++;
+  while (
+    count < wakes.length &&
+    count < MAX_AUTHOR_REPLIES_PER_DELIVERY &&
+    isAuthorReplyWake(wakes[count]!)
+  )
+    count++;
   return count;
 }
 

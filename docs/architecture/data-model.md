@@ -58,7 +58,7 @@ interpreter in `src/standing-review.ts`, never by inspecting columns directly.
 
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
-| `session_commands` | the durable daemon→session command slot: one owner per session at a time, with a finite lease | `id` (PK), `pr`, `session`, `kind`, `payload_sha256`, `payload_path`, `inject_path`, `status`, `owner_token`, `next_check_at` | `createSessionCommand`, `claimSessionCommand`, `markSessionCommandStarted`, `finishSessionCommand`, `dueSessionCommands`, `retrySessionCommand` |
+| `session_commands` | the durable daemon→session command slot: one owner per session at a time, with a finite lease | `id` (PK), `pr`, `session`, `kind`, `payload_sha256`, `payload_path`, `inject_path`, `status`, `owner_token`, `next_check_at`, `redeliveries` (H1b; same-session redeliveries of this delivery, reset by a replay into a new session generation) | `createSessionCommand`, `claimSessionCommand`, `markSessionCommandStarted`, `finishSessionCommand`, `dueSessionCommands`, `retrySessionCommand`, `requeueSessionCommandForRedelivery` |
 | `pending_wakes` | wakes held while the PR's round was in flight, flushed at round end | `id` (PK), `pr`, `payload`, `reason`, `held_at`, `claim_token` | `holdWake`, `heldWakes`, `claimHeldWakeBatch`, `ackHeldWakeBatch`, `dropHeldWakes` |
 | `review_failures` | the canonical loud-failure debt; at most one open row per PR | `incident_id` (PK), `pr`, `stage`, `attempts`, `retry_cap`, `retry_epoch`, `next_retry_at`, `next_action`, `work_owed` | `openReviewFailure`, `openReviewFailures`, `recoverReviewFailure`, `resolveTerminalReviewFailure` |
 | `round_recovery_instructions` | identity-bound instructions for exactly one recovery successor round | `(pr, target_round_no)` (PK), `target_head_sha`, `stage`, `retry_epoch` | `recordRoundRecoveryInstruction`, `roundRecoveryInstruction`, `roundRecoveryInstructionForDispatch` |
@@ -553,7 +553,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `overseer_rotation_days` | number | `7` |
 | `max_self_requeues` | number | `2` |
 | `round_stall_grace_min` | number | `10` |
-| `max_prompt_redeliveries` | number | `2` (`DEFAULT_MAX_PROMPT_REDELIVERIES`) |
+| `max_prompt_redeliveries` | number | `2` (`DEFAULT_MAX_PROMPT_REDELIVERIES`; since H1b it also bounds the same-session redeliveries of a durable command, `session_commands.redeliveries`, before any kill-and-replay) |
 | `session_command_start_lease_s` | number | `120` |
 | `session_bridge_ready_timeout_s` | number | `30` (`DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S`) |
 | `session_command_running_max_min` | number | `45` |
@@ -565,6 +565,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `session_command_unknown_grace_s` | number | `60` |
 | `session_command_unknown_max_checks` | number | `1` |
 | `session_command_max_start_retries` | number | `2` |
+| `session_compaction_max_s` | number | `600` (H1b: how long a compaction the session's bridge reports running may hold a waiting command's start lease open) |
 | `round_stage_supervisor_stale_s` | number | `180` |
 | `event_loop_window_s` | number | `300` (clamped 60–3600; L2, `src/eventloop.ts`) |
 | `event_loop_stall_max_s` | number | `10` (one delay this long is a stall; clamped 1–600) |

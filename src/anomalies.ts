@@ -180,6 +180,12 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // (a status counter; a source that fails to verify is simply kept).
   "archive_disk_low",
   "archive_restore_failed",
+  // H1b (src/wakes.ts): the held-wake cap evicted an author reply or
+  // an operator-recovered obligation. The store never selects either for
+  // eviction, so this cannot fire routinely — it is the loud half of that
+  // guarantee: a dropped reply's ping-pong claim refuses every redelivery, so
+  // nobody would ever answer it (76 went unanswered that way, 10-05..10-08).
+  "author_reply_wake_dropped",
 ]);
 
 /** The WAKE set, sorted — exported so `tests/anomalies.test.ts` can pin it by

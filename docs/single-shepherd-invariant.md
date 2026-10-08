@@ -84,8 +84,13 @@ exception**: if a newer head became durable work owed while the old
 round ran, that successor round claims the session-command slot first and held
 conversation remains behind it until the successor terminates. This is still
 S4—one instruction at a time—and prevents a reply wake from overtaking already
-owed merits work. Per-PR cap of 5 held wakes — the oldest is dropped with an
-event-log line, never silently.
+owed merits work. Per-PR cap of 5 held ORDINARY wakes — push recheck nudges
+go first (their claim released, so the reconcile push backstop asks again),
+then the oldest other wake (a ci or base-advance recheck among them: its claim
+released, its loss recorded as the quiet `recheck_wake_dropped`, since no sweep
+re-raises it), each with an event-log line, never silently. Author replies
+are never evicted and not counted (H1b): each is a claimed obligation
+nothing else will raise again, and a burst is one coalesced run of at most ten.
 
 Verified end to end: `tests/verdicts.test.ts` proves the watcher actually
 flushes on both round-end paths (verdict applied, round abandoned as overdue)

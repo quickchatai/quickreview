@@ -153,10 +153,12 @@ export interface VerdictDeps {
   hooks: SessionHooks;
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
-  /** Settle time between sending /compact and the ledger check.
-   * compactSession only SENDS the keystrokes — an inject typed while the pane
-   * is still compacting is lost with the aborted turn (live 2026-08-19,
-   * #5290 round 7). 0 ⇒ inline (tests). Default 90s. */
+  /** Settle time between requesting the round-end compaction and the
+   * ledger check, so ledger-pin's mirror has landed first. (Before
+   * H1b the compaction was a typed `/compact` and a nudge sent into it
+   * was lost with the aborted turn — live 2026-08-19, #5290 round 7; the
+   * inject bridge now holds every wake until the compaction ends.)
+   * 0 ⇒ inline (tests). Default 90s. */
   ledgerCheckDelayMs?: number;
   /** Slack announcer (S4). Optional: absent ⇒ no Slack, exactly as
    * every existing caller and test sees it. Never allowed to throw in here. */
@@ -1552,16 +1554,18 @@ export class VerdictWatcher {
     // ever-growing prefix were 41% of measured cost; the continuity that
     // matters (SETTLED digest, ledger) survives compaction by design: ledger-pin
     // pins the ledger into pi's summary and the next round order re-hands the
-    // mirrored copy.
+    // mirrored copy. H1b: this only REQUESTS it — the
+    // session's inject bridge runs it once nothing is in flight and delivers
+    // no wake (the ones flushed below included) until it has ended, so a
+    // compaction can neither abort a wake nor refuse one.
     await this.safe(
       () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
       `compact pr-${v.pr}`,
     );
     // Ledger freshness: AFTER compaction, so ledger-pin's mirror has
-    // had its chance — and DELAYED, because compactSession only sends the
-    // keystrokes: the pane is still compacting when apply continues, and a
-    // nudge typed into that window is lost with the aborted turn (live
-    // 2026-08-19, #5290 round 7: wake delivered to .done, never a turn).
+    // had its chance — and DELAYED, because the compaction is only requested:
+    // it is still running when apply continues (live 2026-08-19, #5290 round
+    // 7, when a nudge typed into that window was lost with the aborted turn).
     // Best-effort fire-and-forget — nothing here may disturb the verdict.
     //
     // The reasoning-record check rides the SAME settle window, for the

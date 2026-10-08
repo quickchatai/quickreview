@@ -18,7 +18,7 @@ import {
   type LeverIssuer,
   type LeverKind,
 } from "./levers.js";
-import type { PassPlanEntry, VerdictPassEntry } from "./types.js";
+import { parseRecheckPromptMarker, type PassPlanEntry, type VerdictPassEntry } from "./types.js";
 import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
 import { canonicalLensIds } from "./lensids.js";
 
@@ -557,6 +557,7 @@ const SESSION_COMMAND_COLUMNS_SQL = `(
   attempt        INTEGER NOT NULL DEFAULT 0,
   recovery_attempts INTEGER NOT NULL DEFAULT 0,
   unknown_checks INTEGER NOT NULL DEFAULT 0,
+  redeliveries   INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   next_check_at  TEXT NOT NULL,
@@ -575,9 +576,6 @@ CREATE INDEX IF NOT EXISTS session_commands_pr_created ON session_commands(pr, c
 const PENDING_WAKE_ORDER_SQL = `held_at,
   CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END,
   id`;
-const PENDING_WAKE_REVERSE_ORDER_SQL = `held_at DESC,
-  CASE WHEN reason GLOB 'operator_recovered:*' THEN 0 ELSE 1 END DESC,
-  id DESC`;
 
 const BLOCKING_SESSION_COMMAND_SQL = `(
   c.status IN ('pending', 'running')
@@ -1255,6 +1253,10 @@ export interface SessionCommandRow {
   /** Consecutive supervisor observations where JSONL/liveness evidence was
    * unavailable. Reset on retry; bounded so unknown cannot buy silence. */
   unknown_checks: number;
+  /** H1b: same-session redeliveries (#5362 ③) — the row handed back
+   * to `pending` with its file rewritten, the session left alive. Bounded by
+   * `[daemon] max_prompt_redeliveries` before any kill-and-replay. */
+  redeliveries: number;
   created_at: string;
   updated_at: string;
   next_check_at: string;
@@ -1296,10 +1298,43 @@ export interface PendingWakeRow {
   attempts: number;
 }
 
-/** Per-PR ceiling on held wakes. Ordinary wakes yield their oldest rows when
- * pressure exceeds this cap. Operator-recovered and actively leased rows are
- * protected: preserving owed work wins over the numeric ceiling. */
+/** Per-PR ceiling on held ORDINARY wakes. Ordinary wakes yield rows when
+ * pressure exceeds this cap — push recheck nudges first, oldest first (the
+ * reconcile backstop asks them again), then the rest oldest first (
+ * H1b). Operator-recovered and actively leased rows are protected: preserving
+ * owed work wins over the numeric ceiling. Author replies are outside the cap
+ * altogether (`AUTHOR_REPLY_WAKE_REASON`): never evicted and never counted. */
 export const MAX_HELD_WAKES = 5;
+
+/** H1b review: the one held-wake reason a sweep raises again — the
+ * reconcile push backstop (`reconcile.ts`) re-asks an APPROVE-standing PR's
+ * delta at its current head whenever that push question is unclaimed. A
+ * `recheck:ci` or `recheck:base_advance` nudge has no such sweep: once
+ * evicted, only an identical webhook can ask it again. */
+export const RECHECK_WITH_BACKSTOP_WAKE_REASON = "recheck:push";
+
+/** H1b: the held-wake reason of an author reply in a bot thread. Each
+ * one is a CLAIMED obligation (`pingpong_handled` refuses every redelivery,
+ * and the reconcile comment sweep only captures), so an evicted reply was
+ * never answered: 76 replies went that way between 2026-10-05 and 10-08. A
+ * burst is delivered as one coalesced run, so they cost the session one turn,
+ * not one each — the cap has nothing to save by dropping them. */
+export const AUTHOR_REPLY_WAKE_REASON = "author_reply";
+
+/** One held wake the per-PR cap removed (H1b). */
+export interface EvictedWake {
+  id: number;
+  reason: string;
+  /** The recheck claim this eviction released — the fingerprint — so the
+   * next identical trigger may ask the question again (#5362 ④: a claim is
+   * released on a PROVABLE non-delivery, and a nudge evicted from the held
+   * queue was never sent). Null otherwise. */
+  released_recheck: string | null;
+  /** True only for a push recheck, which the reconcile backstop re-raises
+   * (`RECHECK_WITH_BACKSTOP_WAKE_REASON`); a released ci/base-advance claim
+   * waits on an identical webhook alone. */
+  re_raised_by_reconcile: boolean;
+}
 
 /**
  * How long an `overdue` round may sit before it counts as STRANDED.
@@ -1451,6 +1486,10 @@ export class StateStore {
       // automatic same-command replay attempts are durable even when
       // rebirth fails before a new bridge can reserve the command.
       "ALTER TABLE session_commands ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0",
+      // H1b (#5362 ③): same-session REDELIVERIES of a command whose
+      // start lease ran out on a live, ready bridge — bounded on their own,
+      // before any kill-and-replay recovery is spent.
+      "ALTER TABLE session_commands ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
       // durable circuit-breaker generation and due time. Nullable due
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
@@ -2621,7 +2660,7 @@ export class StateStore {
           }).changes;
         if (changed !== 1) throw new Error(`operator recovery lost command ${row.id}`);
       }
-      const droppedWakeIds = this.trimHeldWakes(pr);
+      const droppedWakeIds = this.trimHeldWakes(pr).map((wake) => wake.id);
       return {
         cancelled_command_ids: rows.map((row) => row.id),
         recovered_wake_ids: wakeIds,
@@ -2918,10 +2957,57 @@ export class StateStore {
     );
   }
 
+  /**
+   * #5362 ③ / H1b: hand a command that never started back to
+   * `pending` for a REDELIVERY into the same live session — same id, path and
+   * bytes, no kill. A CAS on the row the SUPERVISOR found due — its attempt,
+   * redelivery count and `next_check_at` — so a bridge that reserved the
+   * command after that due check (a new attempt, a fresh lease) wins, and a
+   * submission pi may still be preflighting is never handed back as stale
+   * (H1b review). Never for a started command: that one was
+   * delivered.
+   */
+  requeueSessionCommandForRedelivery(
+    id: string,
+    expected: { attempt: number; redeliveries: number; next_check_at: string },
+    nextCheckAt: string,
+  ): boolean {
+    const ts = this.ts();
+    return (
+      this.db
+        .prepare(
+          `UPDATE session_commands
+            SET status='pending', owner_token=NULL, updated_at=@ts, next_check_at=@next,
+                unknown_checks=0, redeliveries=redeliveries+1, failure=NULL
+          WHERE id=@id AND status IN ('pending', 'running') AND started_at IS NULL
+            AND attempt=@attempt AND redeliveries=@redeliveries
+            AND next_check_at=@observed_next
+            -- A round prompt is only ever re-offered while its round is still
+            -- running (the rule queuePrCommand applies at birth).
+            AND (kind != 'round' OR EXISTS (
+              SELECT 1 FROM rounds r
+               WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
+                 AND r.status = 'running'))`,
+        )
+        .run({
+          id,
+          ts,
+          next: nextCheckAt,
+          attempt: expected.attempt,
+          redeliveries: expected.redeliveries,
+          observed_next: expected.next_check_at,
+        }).changes === 1
+    );
+  }
+
   /** Kill-before-replay CAS. The caller has already proved the old session is
    * absent. A round may only replay before correlated acceptance; ordinary
    * wakes may replay after acceptance because the old consumer is fenced and
-   * the same row still owns the immutable payload. */
+   * the same row still owns the immutable payload. The replay lands in a NEW
+   * session generation, so its same-session redelivery budget starts again
+   * (H1b review): otherwise the fresh conversation's first missed
+   * start would skip redelivery and kill it too. Bounded all the same — every
+   * replay spends one `recovery_attempts`. */
   retrySessionCommandAfterFence(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
     const retry = this.db.transaction((): boolean => {
       const row = this.getSessionCommand(id);
@@ -2944,7 +3030,7 @@ export class StateStore {
           .prepare(
             `UPDATE session_commands
             SET status='pending', owner_token=NULL, updated_at=@ts,
-                next_check_at=@next, unknown_checks=0,
+                next_check_at=@next, unknown_checks=0, redeliveries=0,
                 started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
           WHERE id=@id AND status IN ('pending', 'running', 'failed')
             AND attempt=@attempt
@@ -2961,6 +3047,9 @@ export class StateStore {
     return retry();
   }
 
+  /** A terminal command handed back for a fresh delivery (`redeliverRound`,
+   * bounded by the round's own `redeliveries`): a new delivery lifecycle, so
+   * the same-session redelivery budget starts again (H1b review). */
   retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
     const ts = this.ts();
     return (
@@ -2968,7 +3057,7 @@ export class StateStore {
         .prepare(
           `UPDATE session_commands
           SET status='pending', owner_token=NULL, inject_path=@inject_path,
-              updated_at=@ts, next_check_at=@next_check_at, unknown_checks=0,
+              updated_at=@ts, next_check_at=@next_check_at, unknown_checks=0, redeliveries=0,
               started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
         WHERE id=@id AND status IN ('acked', 'failed')
           AND NOT EXISTS (
@@ -3024,29 +3113,70 @@ export class StateStore {
   // ---- held wakes (single-shepherd S4) -----------------------------------
 
   /** Enforce the ordinary wake budget without ever deleting an obligation
-   * restored by operator recovery or leased to an in-flight delivery. Those
-   * protected rows consume capacity first; if they alone meet or exceed the
-   * cap, all survive and new ordinary wakes are dropped. */
-  private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): number[] {
+   * restored by operator recovery, leased to an in-flight delivery, or owed
+   * to an author (H1b). Operator-recovered and leased rows consume
+   * capacity first; if they alone meet or exceed the cap, all survive and new
+   * ordinary wakes are dropped. Author replies neither count nor go. What
+   * goes, goes in this order: push recheck nudges, oldest first — the only
+   * class a sweep re-raises (the reconcile push backstop asks the question
+   * again once its claim is released); then every other ordinary wake,
+   * oldest first, a ci or base-advance recheck among them (nothing re-asks
+   * those, so they get no priority to go). Every evicted recheck's claim is
+   * released: the nudge was never sent. Must run inside the caller's
+   * transaction: the delete and the claim release land together. */
+  private trimHeldWakes(pr: number, cap = MAX_HELD_WAKES): EvictedWake[] {
     const protectedCount = (
       this.db
         .prepare(
           `SELECT COUNT(*) AS c FROM pending_wakes
-        WHERE pr=? AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
+        WHERE pr=@pr AND reason != @author
+          AND (reason GLOB 'operator_recovered:*' OR claim_token IS NOT NULL)`,
         )
-        .get(pr) as { c: number }
+        .get({ pr, author: AUTHOR_REPLY_WAKE_REASON }) as { c: number }
     ).c;
     const ordinaryCap = Math.max(0, cap - protectedCount);
+    // Kept first: every other ordinary wake, newest first; then push recheck
+    // nudges, newest first. Everything past the cap is evicted — so push
+    // rechecks go before any other wake, and the oldest of each class first.
     const overflow = this.db
       .prepare(
-        `SELECT id FROM pending_wakes
-        WHERE pr=? AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
-        ORDER BY ${PENDING_WAKE_REVERSE_ORDER_SQL} LIMIT -1 OFFSET ?`,
+        `SELECT id, reason, payload FROM pending_wakes
+        WHERE pr=@pr AND reason != @author
+          AND reason NOT GLOB 'operator_recovered:*' AND claim_token IS NULL
+        ORDER BY CASE WHEN reason = @backstopped THEN 1 ELSE 0 END,
+          held_at DESC, id DESC
+        LIMIT -1 OFFSET @keep`,
       )
-      .all(pr, ordinaryCap) as Array<{ id: number }>;
-    for (const row of overflow)
+      .all({
+        pr,
+        author: AUTHOR_REPLY_WAKE_REASON,
+        backstopped: RECHECK_WITH_BACKSTOP_WAKE_REASON,
+        keep: ordinaryCap,
+      }) as Array<{
+      id: number;
+      reason: string;
+      payload: string;
+    }>;
+    const evicted: EvictedWake[] = [];
+    for (const row of overflow) {
       this.db.prepare("DELETE FROM pending_wakes WHERE id = ?").run(row.id);
-    return overflow.map((row) => row.id).reverse();
+      let released: string | null = null;
+      if (row.reason.startsWith("recheck:")) {
+        const marker = parseRecheckPromptMarker(row.payload);
+        if (marker && marker.pr === pr) {
+          this.releaseRecheck(pr, marker.fingerprint);
+          released = marker.fingerprint;
+        }
+      }
+      evicted.push({
+        id: row.id,
+        reason: row.reason,
+        released_recheck: released,
+        re_raised_by_reconcile:
+          released !== null && row.reason === RECHECK_WITH_BACKSTOP_WAKE_REASON,
+      });
+    }
+    return evicted.sort((a, b) => a.id - b.id);
   }
 
   /** Hold a rendered wake until this PR's round ends. Returns the ids dropped
@@ -3054,7 +3184,18 @@ export class StateStore {
    * dropped author reply is worse than a late one. Insert + cap enforcement is
    * one transaction, including when another delivery already owns a lease. */
   holdWake(pr: number, payload: string, reason: string, cap = MAX_HELD_WAKES): number[] {
-    const hold = this.db.transaction((): number[] => {
+    return this.holdWakeEvicting(pr, payload, reason, cap).map((wake) => wake.id);
+  }
+
+  /** `holdWake`, answering with what the cap evicted and which recheck claims
+   * the eviction released (H1b). */
+  holdWakeEvicting(
+    pr: number,
+    payload: string,
+    reason: string,
+    cap = MAX_HELD_WAKES,
+  ): EvictedWake[] {
+    const hold = this.db.transaction((): EvictedWake[] => {
       this.db
         .prepare("INSERT INTO pending_wakes (pr, payload, reason, held_at) VALUES (?, ?, ?, ?)")
         .run(pr, payload, reason, this.now().toISOString());

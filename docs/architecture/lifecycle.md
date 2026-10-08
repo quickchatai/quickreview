@@ -485,9 +485,24 @@ running round and no blocking session command, and otherwise persists the wake
 in `pending_wakes`. `flushHeldWakes()` drains them oldest-first with durable
 lease → deliver → ack semantics; a contiguous burst of author replies is
 coalesced into one delivery unit so the session handles every distinct response
-obligation in one run. Nothing is dropped silently: the per-PR cap logs what it
-evicts, and a failed delivery releases the whole oldest unit and stops so later
-messages never overtake it.
+obligation in one run (at most `MAX_AUTHOR_REPLIES_PER_DELIVERY`, 10, per run;
+a longer backlog goes in several). Nothing is dropped silently: the per-PR cap
+(`MAX_HELD_WAKES`, 5) bounds the ORDINARY wakes and logs what it evicts
+(`wake_dropped` names the evicted reasons), and a failed delivery releases the
+whole oldest unit and stops so later messages never overtake it. Since
+H1b the cap **never evicts an author reply** — its comment is claimed before it
+is held and nothing raises a claimed comment again, so 76 evicted replies went
+unanswered between 10-05 and 10-08 — nor an operator-recovered or leased row;
+author replies are not counted against it either. Push recheck nudges go
+first (oldest first) — the one class a sweep re-raises: the reconcile push
+backstop asks the question again once the claim is released; then every other
+ordinary wake, oldest first, ci and base-advance rechecks among them. Every
+evicted recheck releases its claim as it goes (`recheck_claim_released_evicted`,
+`re_raised_by` naming the backstop or null); a ci or base-advance recheck has
+no sweep — only an identical webhook asks it again — so its eviction also
+records the quiet anomaly `recheck_wake_dropped`. A dropped author reply,
+should a later change ever make one possible, is the WAKE anomaly
+`author_reply_wake_dropped`.
 
 **Self-requeue.** Round-level recovery lives in `src/verdicts.ts selfRequeue()`
 and covers a dead session, a live-but-wedged session (killed first, then
@@ -608,8 +623,8 @@ One trigger, one round, one verdict, then the after-life. Time flows downward.
    |            |             |   APPROVE -> tracked        |               |
    |            |             |   REQ_CHANGES -> awaiting_author            |
    |            |             | escalation (if enabled) --------------> comment
-   |            |             | compact session ----------->|               |
-   |            |             | flush held wakes ---------->|               |
+   |            |             | request compaction -------->| (bridge runs  |
+   |            |             | flush held wakes ---------->|  it first)    |
    |            |             |                             |               |
    |-- push --->|-- webhook ->| recheck.ts: classify delta  |               |
    |            |             |   trivial/empty -> no-op    |               |

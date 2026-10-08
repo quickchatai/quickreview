@@ -64,6 +64,17 @@ export function recheckPromptMarker(pr: number, fingerprint: string): string {
   return `<!-- qcr-recheck: pr-${pr} ${fingerprint} -->`;
 }
 
+/** The inverse of `recheckPromptMarker`: the claim a stamped recheck nudge
+ * carries (H1b — a nudge evicted from the held queue releases exactly
+ * that claim). The LAST marker wins, as `stampPrompt` appends it; null when the
+ * text carries none. */
+export function parseRecheckPromptMarker(text: string): { pr: number; fingerprint: string } | null {
+  let found: { pr: number; fingerprint: string } | null = null;
+  for (const m of text.matchAll(/<!-- qcr-recheck: pr-(\d+) (\S+) -->/g))
+    found = { pr: Number(m[1]), fingerprint: m[2]! };
+  return found;
+}
+
 /** Append a receipt token to a rendered prompt. Appended, not prepended: the
  * templates open with the instruction that sets the session's frame, and
  * nothing should come before it. */
@@ -365,6 +376,36 @@ export interface VerdictFile {
  * ships a disk-logging stub so the daemon runs end-to-end without pi. */
 export type SessionCommandRetryResult =
   "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
+/** What one same-session REDELIVERY did (#5362 ③, H1b,
+ * `SessionHooks.redeliverSessionCommand`): `redelivered` — the row is back in
+ * `pending` and its file rewritten, the session untouched; `started` /
+ * `settled` — the command started or ended meanwhile, nothing to redeliver;
+ * `raced` — a bridge reserved it between the read and the write (look again
+ * later); `not_live` — no live, bridge-ready session to redeliver into (the
+ * kill-and-replay recovery owns that); `redelivery_failed` — the payload is
+ * gone or altered, or the write failed. */
+export type SessionCommandRedeliveryResult =
+  "redelivered" | "started" | "settled" | "raced" | "not_live" | "redelivery_failed";
+/** The row the supervisor found DUE, as `redeliverSessionCommand` must find it
+ * still (H1b review): the CAS is on what the supervisor saw, never on
+ * a fresh read — a bridge that reserved the command after the due check moved
+ * `attempt` and `next_check_at`, and that fresh submission is not stale. */
+export interface SessionCommandObservation {
+  attempt: number;
+  redeliveries: number;
+  next_check_at: string;
+}
+/** The inject bridge's compaction report, as `SessionHooks.sessionCompaction`
+ * returns it (the `compaction` block of the bridge's ready receipt,
+ * `src/session-bridge.ts`). */
+export interface SessionCompactionReport {
+  state: "idle" | "running";
+  seq: number;
+  started_at?: string;
+  ended_at?: string;
+  outcome?: "compacted" | "failed" | "stale";
+  source?: "request" | "event";
+}
 /** What the round-stage supervisor's failure callback did with a stage limit.
  * `posted_wait` (H1a): the round's review is already on GitHub (or
  * was refused by guard 2), so the limit is NOT a failure — the session's tail
@@ -403,7 +444,9 @@ export interface SessionHooks {
   sweepStaleOvSessions?(): Promise<OvSessionSweepReport | null>;
   /** After a round's verdict lands: compact the sticky conversation. Cache
    * re-reads were 41% of measured cost (2026-08-14 mining) and sessions never
-   * compacted on their own. Optional — stubs may omit it. */
+   * compacted on their own. H1b: a REQUEST to the session's inject
+   * bridge, which runs it once nothing is in flight and holds every wake until
+   * it ends — never a keystroke into the pane. Optional — stubs may omit it. */
   compactSession?(pr: number): Promise<void>;
   /** Is the PR's session alive (tmux session present)? The stuck-round
    * detector reads this — the EXISTING liveness signal, not a new one.
@@ -465,4 +508,22 @@ export interface SessionHooks {
    * replay an accepted non-round wake; rounds retain the stricter pre-start
    * rule because their merits lifecycle owns accepted-run recovery. */
   retrySessionCommand?(commandId: string, reason: string): Promise<SessionCommandRetryResult>;
+  /** #5362 ③ / H1b: the CHEAP recovery for a command whose start
+   * lease ran out on a live, bridge-ready session — the same row handed back
+   * to `pending` and the same bytes rewritten at the same path, the session
+   * and its conversation left alone. The bridge resubmits only when pi
+   * provably holds nothing of it. `observed` is the row the supervisor found
+   * due; a row that moved since is `raced`, never requeued. Optional: absent ⇒
+   * the kill-and-replay recovery only, exactly as before. */
+  redeliverSessionCommand?(
+    commandId: string,
+    observed: SessionCommandObservation,
+  ): Promise<SessionCommandRedeliveryResult>;
+  /** H1b: what the PR session's inject bridge reports about pi's
+   * compaction, or null when unknown (no live bridge generation — tmux gone
+   * included, so a pi that died mid-compaction never reads "running" — an
+   * older bridge, an unreadable receipt). A compaction holds the session's mailbox,
+   * so a command waiting behind one is late, not lost. Optional: absent ⇒ no
+   * compaction is ever known about, exactly as before. */
+  sessionCompaction?(pr: number): Promise<SessionCompactionReport | null>;
 }

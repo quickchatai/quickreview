@@ -281,7 +281,9 @@ describe("durable PR-session command slot", () => {
   it("never evicts an operator-recovered payload when later wakes fill the cap", () => {
     const store = open();
     store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
-    for (let i = 0; i < 5; i++) store.holdWake(5408, `later-${i}`, "author_reply");
+    // Ordinary (evictable) wakes: since H1b an author reply is never
+    // evicted, so the filler must be a wake the cap may drop.
+    for (let i = 0; i < 5; i++) store.holdWake(5408, `later-${i}`, "ledger_stale");
 
     store.cancelBlockingSessionCommandsForOperator(
       5408,
@@ -289,7 +291,7 @@ describe("durable PR-session command slot", () => {
       "restart-session",
       ["cmd-wake"],
     );
-    store.holdWake(5408, "latest", "author_reply");
+    store.holdWake(5408, "latest", "ledger_stale");
 
     const wakes = store.heldWakes(5408);
     expect(wakes).toHaveLength(5);
@@ -375,5 +377,177 @@ describe("durable PR-session command slot", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// H1b (#5362 ③): the same-session redelivery CAS.
+describe("requeueSessionCommandForRedelivery", () => {
+  const stores: StateStore[] = [];
+  afterEach(() => {
+    for (const store of stores.splice(0)) store.close();
+  });
+  const open = () => {
+    const store = new StateStore(":memory:", () => new Date(T0));
+    stores.push(store);
+    return store;
+  };
+  const wake = (id: string) => ({ ...input(id), kind: "wake" as const, round_no: null });
+
+  it("hands an unstarted command back to pending under the same id, counting the redelivery", () => {
+    const store = open();
+    store.createSessionCommand(wake("cmd-r"));
+    store.claimSessionCommand("cmd-r", "bridge-1", "2026-08-27T20:02:00.000Z");
+
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-r",
+        { attempt: 1, redeliveries: 0, next_check_at: "2026-08-27T20:02:00.000Z" },
+        "2026-08-27T20:04:00.000Z",
+      ),
+    ).toBe(true);
+    expect(store.getSessionCommand("cmd-r")).toMatchObject({
+      status: "pending",
+      owner_token: null,
+      attempt: 1, // a reservation, not a redelivery, moves the attempt
+      redeliveries: 1,
+      started_at: null,
+      next_check_at: "2026-08-27T20:04:00.000Z",
+    });
+    expect(store.blockingSessionCommand("pr-5408")?.id).toBe("cmd-r"); // still the one slot
+  });
+
+  it("loses to a bridge that reserved or started it meanwhile, and never touches a started one", () => {
+    const store = open();
+    store.createSessionCommand(wake("cmd-s"));
+    store.claimSessionCommand("cmd-s", "bridge-1", "2026-08-27T20:02:00.000Z");
+    // Read at attempt 1; a second reservation happened since.
+    store.db.prepare("UPDATE session_commands SET attempt=2 WHERE id='cmd-s'").run();
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-s",
+        { attempt: 1, redeliveries: 0, next_check_at: "2026-08-27T20:02:00.000Z" },
+        T0,
+      ),
+    ).toBe(false);
+
+    store.markSessionCommandStarted("cmd-s", "bridge-1", "2026-08-27T20:45:00.000Z");
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-s",
+        { attempt: 2, redeliveries: 0, next_check_at: "2026-08-27T20:45:00.000Z" },
+        T0,
+      ),
+    ).toBe(false);
+    expect(store.getSessionCommand("cmd-s")).toMatchObject({ status: "running", redeliveries: 0 });
+  });
+
+  it("re-offers a round prompt only while its round is still running", () => {
+    const store = open();
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "t",
+      author: "a",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
+    const roundNo = store.roundsFor(5408)[0]!.round_no;
+    store.createSessionCommand({ ...input("cmd-round"), round_no: roundNo });
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-round",
+        { attempt: 0, redeliveries: 0, next_check_at: "2026-08-27T20:02:00.000Z" },
+        T0,
+      ),
+    ).toBe(true);
+
+    store.markRoundCancelled(roundId, "operator restart-session", "operator");
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-round",
+        { attempt: 0, redeliveries: 1, next_check_at: T0 }, // the row exactly as it stands
+        T0,
+      ),
+    ).toBe(false);
+  });
+
+  // H1b review: the CAS is on the row the supervisor found DUE. A
+  // bridge that re-reserved it since moved `attempt` and `next_check_at`; one
+  // that only rescheduled it moved `next_check_at`. Neither is stale.
+  it("refuses a row whose lease moved since the supervisor's due read, attempt unchanged or not", () => {
+    const store = open();
+    store.createSessionCommand(wake("cmd-m"));
+    store.claimSessionCommand("cmd-m", "bridge-1", "2026-08-27T20:02:00.000Z");
+    const due = { attempt: 1, redeliveries: 0, next_check_at: "2026-08-27T20:02:00.000Z" };
+
+    // Only the lease moved (attempt untouched): still not the row that was due.
+    store.db
+      .prepare("UPDATE session_commands SET next_check_at=? WHERE id='cmd-m'")
+      .run("2026-08-27T20:06:00.000Z");
+    expect(store.requeueSessionCommandForRedelivery("cmd-m", due, T0)).toBe(false);
+    expect(store.getSessionCommand("cmd-m")).toMatchObject({
+      status: "running",
+      owner_token: "bridge-1",
+      redeliveries: 0,
+    });
+
+    // The row exactly as observed is handed back.
+    expect(
+      store.requeueSessionCommandForRedelivery(
+        "cmd-m",
+        { ...due, next_check_at: "2026-08-27T20:06:00.000Z" },
+        T0,
+      ),
+    ).toBe(true);
+  });
+});
+
+// H1b review: the same-session redelivery budget belongs to one
+// session generation (or one delivery lifecycle). A replay into a fresh
+// session — or a terminal command handed back — starts it again, so that
+// conversation's first missed start is redelivered, not killed.
+describe("a replay starts the redelivery budget again", () => {
+  const stores: StateStore[] = [];
+  afterEach(() => {
+    for (const store of stores.splice(0)) store.close();
+  });
+  const open = () => {
+    const store = new StateStore(":memory:", () => new Date(T0));
+    stores.push(store);
+    return store;
+  };
+  const wake = (id: string) => ({ ...input(id), kind: "wake" as const, round_no: null });
+
+  it("retrySessionCommandAfterFence (kill-and-replay into a rebirth) resets redeliveries", () => {
+    const store = open();
+    store.createSessionCommand(wake("cmd-f"));
+    store.claimSessionCommand("cmd-f", "bridge-1", "2026-08-27T20:02:00.000Z");
+    store.db.prepare("UPDATE session_commands SET redeliveries=2 WHERE id='cmd-f'").run();
+
+    expect(store.retrySessionCommandAfterFence("cmd-f", 1, "2026-08-27T20:04:00.000Z")).toBe(true);
+    expect(store.getSessionCommand("cmd-f")).toMatchObject({
+      status: "pending",
+      attempt: 1,
+      redeliveries: 0,
+    });
+  });
+
+  it("retrySessionCommand (a terminal command handed back) resets redeliveries", () => {
+    const store = open();
+    store.createSessionCommand(wake("cmd-t"));
+    store.claimSessionCommand("cmd-t", "bridge-1", "2026-08-27T20:02:00.000Z");
+    store.db.prepare("UPDATE session_commands SET redeliveries=2 WHERE id='cmd-t'").run();
+    store.failActiveSessionCommand("cmd-t", "no start");
+
+    expect(
+      store.retrySessionCommand("cmd-t", {
+        inject_path: "/inject/pr-5408/wake--cmd-cmd-t.md",
+        next_check_at: "2026-08-27T20:04:00.000Z",
+      }),
+    ).toBe(true);
+    expect(store.getSessionCommand("cmd-t")).toMatchObject({ status: "pending", redeliveries: 0 });
   });
 });

@@ -20,6 +20,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -49,9 +50,13 @@ import {
   type OvcliWriteResult,
 } from "./memory/ovsession.js";
 import {
+  bridgeCompaction,
+  COMPACTION_REQUEST_FILE,
   readSessionBridgeState,
   waitForSessionBridgeReady,
   writeSessionBridgeState,
+  type CompactionRequest,
+  type SessionBridgeState,
 } from "./session-bridge.js";
 import { Tmux } from "./tmux.js";
 import type { ExecFn } from "./tmux.js";
@@ -62,7 +67,10 @@ import { RESTORE_WAIT_MS } from "./archive/restore.js";
 import type {
   OvSessionSweepReport,
   RoundOrder,
+  SessionCommandObservation,
+  SessionCommandRedeliveryResult,
   SessionCommandRetryResult,
+  SessionCompactionReport,
   SessionHooks,
 } from "./types.js";
 import { identityVars } from "./include.js";
@@ -667,22 +675,25 @@ export class PiSessionManager implements SessionHooks {
     );
   }
 
-  private currentBridgeReady(session: string): boolean {
+  /** The bridge receipt of the session's CURRENT generation (the one its
+   * birth file names), or undefined when there is none to read. */
+  private currentBridgeState(session: string): SessionBridgeState | undefined {
     try {
       const birth = JSON.parse(readFileSync(this.birthFile(session), "utf8")) as {
         bridge_generation?: string;
       };
-      if (!birth.bridge_generation) return false;
+      if (!birth.bridge_generation) return undefined;
       const state = readSessionBridgeState(this.bridgeStatePath(session, birth.bridge_generation));
-      return Boolean(
-        birth.bridge_generation &&
-        state?.session === session &&
-        state.generation === birth.bridge_generation &&
-        state.stage === "ready",
-      );
+      return state?.session === session && state.generation === birth.bridge_generation
+        ? state
+        : undefined;
     } catch {
-      return false;
+      return undefined;
     }
+  }
+
+  private currentBridgeReady(session: string): boolean {
+    return this.currentBridgeState(session)?.stage === "ready";
   }
 
   bornAt(session: string): Date | undefined {
@@ -1243,6 +1254,89 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
+  /**
+   * SessionHooks (#5362 ③, H1b): REDELIVER one command whose start
+   * lease ran out, into the SAME live, bridge-ready session — never a kill.
+   * The row goes back to `pending` (same id, path and bytes; a CAS on what was
+   * read) and the payload is rewritten at its inject path, which wakes the
+   * bridge. A bridge that still holds the command as submitted-but-unstarted
+   * resubmits it only when pi is idle with nothing queued (`inject-bridge.ts`
+   * `reclaimRedelivered`), so a prompt pi did queue is never sent twice.
+   * `not_live` when there is no live, ready bridge to redeliver into: that is
+   * the kill-and-replay recovery's case.
+   *
+   * `observed` is the row the supervisor found DUE, and every check — this
+   * read and the CAS — is against it, never against a fresh read: a bridge
+   * that reserved the command after the due check (a new attempt, a fresh
+   * lease) may hold a submission pi is still preflighting, and handing that
+   * back would send it twice (H1b review). A row that moved is
+   * `raced`: the supervisor looks again on the fresh lease.
+   */
+  async redeliverSessionCommand(
+    commandId: string,
+    observed: SessionCommandObservation,
+  ): Promise<SessionCommandRedeliveryResult> {
+    const store = this.commandStore;
+    const command = store?.getSessionCommand(commandId);
+    if (!store || !command) return "redelivery_failed";
+    if (command.status === "acked" || command.status === "cancelled") return "settled";
+    if (command.started_at !== null) return "started";
+    if (command.status !== "pending" && command.status !== "running") return "redelivery_failed";
+    // The fast path, before any tmux or file work; the CAS below is what
+    // binds (a reservation landing after this read still loses there).
+    if (
+      command.attempt !== observed.attempt ||
+      command.redeliveries !== observed.redeliveries ||
+      command.next_check_at !== observed.next_check_at
+    )
+      return "raced";
+    const session = prSessionName(command.pr);
+    if (!(await this.tmux.hasSession(session)) || !this.currentBridgeReady(session))
+      return "not_live";
+    let payload: Buffer;
+    try {
+      payload = readFileSync(command.payload_path);
+    } catch {
+      return "redelivery_failed";
+    }
+    if (createHash("sha256").update(payload).digest("hex") !== command.payload_sha256)
+      return "redelivery_failed";
+    if (
+      !store.requeueSessionCommandForRedelivery(
+        command.id,
+        {
+          attempt: observed.attempt,
+          redeliveries: observed.redeliveries,
+          next_check_at: observed.next_check_at,
+        },
+        this.commandDeadline(this.sessionCommandStartLeaseMs()),
+      )
+    ) {
+      const current = store.getSessionCommand(command.id);
+      if (!current || current.status === "acked" || current.status === "cancelled")
+        return "settled";
+      if (current.started_at !== null) return "started";
+      // A round that ended meanwhile is the merits lifecycle's to close.
+      if (
+        current.kind === "round" &&
+        current.round_no !== null &&
+        store.roundStatus(current.pr, current.round_no) !== "running"
+      )
+        return "settled";
+      return "raced";
+    }
+    try {
+      this.writeAtomic(command.inject_path, payload);
+    } catch (err) {
+      store.noteSessionCommandRecoveryFailure(
+        command.id,
+        `redelivery write failed: ${String(err)}`,
+      );
+      return "redelivery_failed";
+    }
+    return "redelivered";
+  }
+
   /**: retry one durable command without ever leaving the old
    * consumer alive beside its replay. Rounds may only use this before start;
    * an ordinary wake may use it after acceptance because the tmux fence comes
@@ -1701,24 +1795,53 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** SessionHooks: PR merged/closed — archive, drop the worktree, kill tmux. */
-  /** Post-round compaction: type `/compact` into the session's pane. Manual
-   * /compact is a documented pi command (findings §compaction).
-   * Verified live 2026-08-19 (tag burned): mid-turn arrival is NOT harmless —
-   * it ABORTS the in-flight turn (stopReason:"aborted"), which cut off every
-   * post-deploy round's tail. The verdict file is therefore the round's LAST
-   * durable write by template order (ledger comes before it); anything a
-   * session does after its verdict write is expendable by design.
-   * Best-effort: a missing session is a no-op, never an error. */
+  /**
+   * Post-round compaction, REQUESTED from the session's inject
+   * bridge (H1b): one `.compact-request.json` in the inject dir, which
+   * the bridge runs through pi's own `ctx.compact()` once nothing is in flight,
+   * holding every wake until it ends. Before H1b this typed `/compact` into the
+   * pane: that ABORTED whatever turn was running (verified live 2026-08-19)
+   * and, worse, left the wakes flushed right after it to be submitted INTO the
+   * compaction, where pi refuses a prompt and the bridge never learned — seven
+   * healthy sessions were killed over it on 2026-10-08. The verdict file is
+   * still the round's last durable write; the tail after it now simply
+   * finishes before the compaction starts.
+   * Best-effort: no live session is a no-op, and a bridge from before H1b
+   * ignores the request (no compaction, never a stuck mailbox).
+   */
   async compactSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
     if (!(await this.tmux.hasSession(session))) return;
+    const request: CompactionRequest = {
+      version: 1,
+      requested_at: this.now().toISOString(),
+      reason: "round-end",
+    };
     try {
-      await this.tmux.send(session, "/compact", true);
-    } catch {
-      // Best-effort by contract: the has/send pair races session death during
-      // shutdown/restart — a vanished pane must not log as a failure.
+      this.writeAtomic(
+        join(this.injectDir(session), COMPACTION_REQUEST_FILE),
+        `${JSON.stringify(request)}\n`,
+      );
+    } catch (err) {
+      // Best-effort by contract: a compaction is an optimisation, never owed.
+      console.log(
+        `[quickreviewd] sessions: could not request compaction of ${session}: ${String(err)}`,
+      );
     }
+  }
+
+  /** SessionHooks (H1b): the current bridge generation's compaction
+   * report — null when there is no ready bridge to read or it predates H1b,
+   * and null when tmux holds no session: a pi killed or OOM'd mid-compaction
+   * never reaches `session_shutdown`, so its last receipt still says
+   * "running", and a dead session must never hold off its own recovery. */
+  async sessionCompaction(pr: number): Promise<SessionCompactionReport | null> {
+    const session = prSessionName(pr);
+    const state = this.currentBridgeState(session);
+    if (state?.stage !== "ready") return null;
+    const compaction = bridgeCompaction(state) ?? null;
+    if (compaction?.state === "running" && !(await this.tmux.hasSession(session))) return null;
+    return compaction;
   }
 
   /** True only when the registry says the PR is closed; unknown is not closed. */
@@ -1734,6 +1857,13 @@ export class PiSessionManager implements SessionHooks {
     this.archiveSession(session, this.archiveDir(session));
     await this.worktrees.remove(pr);
     await this.tmux.killSession(session);
+    // A compaction request the killed bridge never took (H1b) is not
+    // a wake and nothing archives it; it would only keep the inject dir alive.
+    try {
+      rmSync(join(this.injectDir(session), COMPACTION_REQUEST_FILE), { force: true });
+    } catch {
+      /* best-effort */
+    }
     // The raw tier dies with the PR: DELETE removes the session's messages AND
     // its archives (verified — the tree is gone). Deliberately AFTER the tmux
     // kill, so nothing is still syncing turns into it, and deliberately NOT in

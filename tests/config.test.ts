@@ -86,6 +86,18 @@ describe("parseConfig", () => {
     );
   });
 
+  it("H1b: the compaction hold on a start lease defaults to 600 s and must be positive", () => {
+    expect(cfg.daemon.session_compaction_max_s).toBe(600);
+    const set = (line: string) =>
+      readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);
+    expect(parseConfig(set("session_compaction_max_s = 300")).daemon.session_compaction_max_s).toBe(
+      300,
+    );
+    expect(() => parseConfig(set("session_compaction_max_s = 0"))).toThrow(
+      /session_compaction_max_s/,
+    );
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));

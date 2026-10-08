@@ -127,6 +127,12 @@ posting_receipt_grace_s = 120
 session_command_unknown_grace_s = 60
 session_command_unknown_max_checks = 1
 session_command_max_start_retries = 2
+# H1b: pi refuses every prompt while it compacts, so a command queued
+# behind a compaction the session's inject bridge reports running is late, not
+# lost — its start lease is held open for up to this long. Past it, the
+# bounded same-session redelivery (max_prompt_redeliveries), and only then the
+# kill-and-replay recovery, take over.
+session_compaction_max_s = 600
 round_stage_supervisor_stale_s = 180
 # L2: the daemon watches its own event loop (status.json
 # `daemon.event_loop`, `qcr status`, the TUI board). One delay of

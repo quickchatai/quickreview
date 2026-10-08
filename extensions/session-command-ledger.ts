@@ -242,6 +242,19 @@ export class SessionCommandLedger {
     });
   }
 
+  /** #5362 ③ / H1b: has the daemon handed this command back for
+   * REDELIVERY — the row `pending` again, unowned and never started? The
+   * bridge that submitted it reads this to drop a barrier pi never acted on.
+   * Total: an unreadable row is "no". */
+  redeliveryRequested(id: string): boolean {
+    try {
+      const row = this.byId(id);
+      return row?.status === "pending" && row.owner_token == null && row.started_at == null;
+    } catch {
+      return false;
+    }
+  }
+
   ack(id: string): boolean {
     return this.totalUpdate(() => {
       const ts = this.now().toISOString();

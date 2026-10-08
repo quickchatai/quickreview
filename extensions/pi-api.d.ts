@@ -18,6 +18,8 @@ declare module "@earendil-works/pi-coding-agent" {
     | "session_shutdown"
     | "session_before_compact"
     | "session_compact"
+    | "session_compact_failed"
+    | "input"
     | "turn_end"
     | "agent_settled"
     | "tool_call"
@@ -115,6 +117,21 @@ declare module "@earendil-works/pi-coding-agent" {
     modelRegistry?: PiModelRegistry;
     model?: unknown;
     thinkingLevel?: string;
+    /** H1b, read off pi 1.0.0 `dist/core/extensions/types.d.ts`
+     * `ExtensionContext` (implemented in `dist/core/agent-session.js`):
+     * `isIdle()` is `!agentRunActive && !isCompacting`; `hasPendingMessages()`
+     * counts the queued steer + followUp prompts; `compact(options)` starts the
+     * same `AgentSession.compact()` as `/compact` without awaiting it and
+     * reports through `onComplete` / `onError`. Methods resolve state at call
+     * time and throw once the runner is torn down. VERIFY-ON-PIN: not yet
+     * observed in a live session. */
+    isIdle?(): boolean;
+    hasPendingMessages?(): boolean;
+    compact?(options?: {
+      customInstructions?: string;
+      onComplete?: (result: unknown) => void;
+      onError?: (error: Error) => void;
+    }): void;
     [key: string]: unknown;
   }
 
