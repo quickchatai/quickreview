@@ -12,6 +12,7 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer is injected (B4 owns src/templates.ts) so this module has no
 // content dependency.
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, sandboxRoot } from "./config.js";
@@ -94,11 +95,14 @@ import type {
   LedgerCarry,
   PassPlanEntry,
   PassTier,
+  RoundDelta,
   RoundOrder,
   RoundRecoveryContext,
   RoundType,
   SessionHooks,
 } from "./types.js";
+import { preparePriorFindings } from "./priorfindings.js";
+import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
  * the adapter, so this module never touches GitHub directly. */
@@ -219,6 +223,28 @@ export interface DispatchDeps {
     to: string,
     pr?: number,
   ) => Promise<{ files: string[]; degraded: boolean }>;
+  /**
+   * The PR-OWNED change between the last reviewed head and this round's head
+   * (`WorktreeManager.prOwnedDelta`): the reviewed head replayed
+   * onto the round's merge base and diffed against the new head. Absent
+   * (stub-wired core, unit tests without git) ⇒ every later round runs in
+   * full, as before — `followup_full_round {reason: "no-adapter"}`.
+   */
+  prOwnedDelta?: (q: {
+    pr: number;
+    from: string;
+    to: string;
+    mergeBase: string;
+    baseSha?: string;
+  }) => Promise<PrOwnedDelta>;
+  /** Pin a head a round was dispatched to review against gc (,
+   * `WorktreeManager.pinReviewedHead`), so the next follow-up round can
+   * replay it after a force-push. Best-effort; absent ⇒ nothing pinned. */
+  pinReviewedHead?: (pr: number, sha: string) => Promise<boolean>;
+  /** `<root>/state/findings` — where round findings records live, read by
+   * the follow-up round's prior-findings list. Default: under the
+   * sandbox root's state dir. */
+  findingsDir?: string;
   /** The round's integrity baseline, taken before the
    * session hears about the round. Default: `fingerprintRoundIntegrity` —
    * real, async reads of the clone, worktree, pi home and sandbox policy
@@ -893,6 +919,13 @@ export function addTierOf(cfg: Config, lens: string): PassTier {
     : flooredTier(cfg.lenses, lens, "sol-med");
 }
 
+/** What `buildPassPlan` returns. */
+export interface PassPlan {
+  pass_plan: PassPlanEntry[];
+  addable_lenses: string[];
+  sweep_unswept: string[];
+}
+
 /** Deterministic per-round pass plan (agent = `${lens}--${tier}`):
  * - risk passes are always "sol-high", single variant, not raisable;
  * - pass-validate runs at validatorTier() — its own configured tier, never
@@ -922,9 +955,15 @@ export function buildPassPlan(
   /** The linters and formatters a CI job of the repo runs (src/lintconfig.ts);
    * empty or absent ⇒ no lint-conformance row. */
   ciLinters: readonly CiLinter[] = [],
-): { pass_plan: PassPlanEntry[]; addable_lenses: string[]; sweep_unswept: string[] } {
-  const defaultTier = passTier(files, {
-    migrationGate: ecosystem.migrationGate(files),
+  /**: `tierFiles` — the files the round's default TIER is chosen
+   * from, when the plan is built over fewer files than the PR (a follow-up
+   * round plans from the delta, but a small fix push keeps the PR's tier and
+   * its migration floor). Absent ⇒ `files`, exactly as before. */
+  opts: { tierFiles?: PrFileEntry[] } = {},
+): PassPlan {
+  const tierBasis = opts.tierFiles ?? files;
+  const defaultTier = passTier(tierBasis, {
+    migrationGate: ecosystem.migrationGate(tierBasis),
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
@@ -1116,6 +1155,155 @@ export function buildPassPlan(
   return { pass_plan, addable_lenses, sweep_unswept };
 }
 
+/** Why a non-first round runs as today's full re-review: every
+ * doubt is a full round, never a quieter one. */
+export type FollowUpFullReason =
+  | "follow_up_full"
+  | "no-reviewed-head"
+  | "no-adapter"
+  | "delta-too-large"
+  | "baseline-unplanned"
+  | "delta-threw"
+  | "patch-write-failed"
+  | Exclude<PrOwnedDelta, { ok: true }>["reason"];
+
+/** A follow-up round's plan, decided before the round row exists. */
+export interface FollowUpDecision {
+  delta: Extract<PrOwnedDelta, { ok: true }>;
+  /** The reviewed head the delta was computed from. */
+  fromSha: string;
+  deltaFiles: PrFileEntry[];
+  plan: PassPlan;
+  /** The pre-approval sweep's plan — the whole PR's full plan — when owed. */
+  sweepPlan?: PassPlanEntry[];
+}
+
+/**
+ * Decide whether a non-first round is a FOLLOW-UP round (,
+ * docs/follow-up-rounds.md), and plan it. Total: any doubt — the knob, no
+ * reviewed-head mark, no git seam, a delta git could not compute, a delta
+ * above `follow_up_max_delta_ratio` of the PR's diff lines, a delta plan
+ * without pass-baseline — answers `{full: reason}`, and the caller runs
+ * today's full re-review.
+ *
+ * The plan is built over the DELTA's files with the intent text arms off
+ * (the title and body did not change since the last review), its tier chosen
+ * from the WHOLE PR. The sweep is owed while the standing verdict is not
+ * APPROVE and no full look has happened since the first round; its plan is
+ * the whole PR's full plan, exactly as a full round would run it.
+ */
+export async function decideFollowUp(
+  deps: Pick<DispatchDeps, "cfg" | "store" | "prOwnedDelta" | "heuristics">,
+  args: {
+    pr: number;
+    markHead: string | null | undefined;
+    tree: { head_sha: string; base_sha: string; merge_base: string } | undefined;
+    files: PrFileEntry[];
+    fullPlan: PassPlan;
+    standing: string | null;
+    ecosystem: Ecosystem;
+    styleGuide: readonly string[];
+    ciLinters: readonly CiLinter[];
+  },
+): Promise<
+  | { kind: "delta"; decision: FollowUpDecision }
+  | { kind: "full"; reason: FollowUpFullReason; detail?: Record<string, unknown> }
+> {
+  const { cfg, store } = deps;
+  const full = (reason: FollowUpFullReason, detail?: Record<string, unknown>) =>
+    ({ kind: "full", reason, ...(detail ? { detail } : {}) }) as const;
+  if ((cfg.review.follow_up ?? "delta") !== "delta") return full("follow_up_full");
+  if (!args.markHead) return full("no-reviewed-head");
+  if (!args.tree || !args.tree.merge_base || !deps.prOwnedDelta) return full("no-adapter");
+  let delta: PrOwnedDelta;
+  try {
+    delta = await deps.prOwnedDelta({
+      pr: args.pr,
+      from: args.markHead,
+      to: args.tree.head_sha,
+      mergeBase: args.tree.merge_base,
+      ...(args.tree.base_sha ? { baseSha: args.tree.base_sha } : {}),
+    });
+  } catch (err) {
+    return full("delta-threw", { error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!delta.ok) return full(delta.reason, delta.detail ? { detail: delta.detail } : undefined);
+  const prLines = args.files.reduce((n, f) => n + (f.additions ?? 0) + (f.deletions ?? 0), 0);
+  const ratio = cfg.review.follow_up_max_delta_ratio ?? 0.6;
+  if (delta.lines > ratio * prLines)
+    return full("delta-too-large", { delta_lines: delta.lines, pr_lines: prLines, ratio });
+  const deltaFiles = deltaAsPrFiles(delta.files) as PrFileEntry[];
+  const plan = buildPassPlan(
+    cfg,
+    deltaFiles,
+    undefined,
+    args.ecosystem,
+    deps.heuristics,
+    args.styleGuide,
+    args.ciLinters,
+    { tierFiles: args.files },
+  );
+  // pass-baseline carries every prior finding no other planned lens owns: a
+  // follow-up plan without it (a profile switched it off) cannot verify them.
+  if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS)) return full("baseline-unplanned");
+  const sweepOwed =
+    (cfg.review.follow_up_sweep ?? true) &&
+    args.standing !== "APPROVE" &&
+    !store.fullLookSinceFirst(args.pr);
+  return {
+    kind: "delta",
+    decision: {
+      delta,
+      fromSha: args.markHead,
+      deltaFiles,
+      plan,
+      ...(sweepOwed ? { sweepPlan: args.fullPlan.pass_plan } : {}),
+    },
+  };
+}
+
+const BASELINE_PASS = "pass-baseline";
+
+/** A delta's files as one git-style patch (the hunks `prOwnedDelta` read,
+ * each under its file header). */
+export function renderDeltaPatch(files: readonly PrOwnedDeltaFile[]): string {
+  const out: string[] = [];
+  for (const f of files) {
+    const oldPath = f.old_path ?? f.path;
+    out.push(`diff --git a/${oldPath} b/${f.path}`);
+    if (f.conflict)
+      out.push(
+        "# CONFLICT: the replay of the reviewed head conflicted here; the PR's own hunks follow",
+      );
+    if (f.binary) {
+      out.push(`Binary files a/${oldPath} and b/${f.path} differ`);
+      continue;
+    }
+    out.push(f.status === "added" ? "--- /dev/null" : `--- a/${oldPath}`);
+    out.push(f.status === "removed" ? "+++ /dev/null" : `+++ b/${f.path}`);
+    if (f.patch) out.push(f.patch.endsWith("\n") ? f.patch.slice(0, -1) : f.patch);
+  }
+  return out.length ? `${out.join("\n")}\n` : "";
+}
+
+/** The order's view of a delta (types.ts `RoundDelta`). */
+function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta {
+  return {
+    from_sha: d.fromSha,
+    tree: d.delta.tree,
+    lines: d.delta.lines,
+    files: d.delta.files.map((f) => ({
+      path: f.path,
+      ...(f.old_path !== undefined ? { old_path: f.old_path } : {}),
+      status: f.status,
+      ranges: f.ranges.map(([a, b]) => [a, b] as [number, number]),
+      ...(f.whole_file ? { whole_file: true } : {}),
+      ...(f.conflict ? { conflict: true } : {}),
+    })),
+    patch_file: patchFile,
+  };
+}
+
 /** Build the round order for one PR — pure once the files list is in hand. */
 export function buildRoundOrder(args: {
   cfg: Config;
@@ -1163,17 +1351,32 @@ export function buildRoundOrder(args: {
   styleGuide?: readonly string[];
   /** The linters a CI job of the repo runs (src/lintconfig.ts). */
   ciLinters?: readonly CiLinter[];
+  /** The plan, already built by the caller (dispatch builds it ONCE
+   * and records the same plan on the round row). Absent ⇒ built here from
+   * `files`, the PR body, the style guide and the linters, as before. */
+  plan?: PassPlan;
+  /** A FOLLOW-UP round's facts: the delta, the prior findings note,
+   * the owed sweep's plan. The coverage check then holds the round to the
+   * delta's files. Absent ⇒ the order is exactly as before. */
+  followUp?: {
+    delta: RoundDelta;
+    deltaFiles: PrFileEntry[];
+    priorFindingsNote: string;
+    sweepPlan?: PassPlanEntry[];
+  };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
-  const { pass_plan, addable_lenses, sweep_unswept } = buildPassPlan(
-    args.cfg,
-    args.files,
-    { title: args.row.title, body: args.prBody },
-    eco,
-    args.heuristics,
-    args.styleGuide ?? [],
-    args.ciLinters ?? [],
-  );
+  const { pass_plan, addable_lenses, sweep_unswept } =
+    args.plan ??
+    buildPassPlan(
+      args.cfg,
+      args.files,
+      { title: args.row.title, body: args.prBody },
+      eco,
+      args.heuristics,
+      args.styleGuide ?? [],
+      args.ciLinters ?? [],
+    );
   const headSha = args.tree?.head_sha || args.row.head_sha;
   // an addable lens the profile floors above the add rule's own
   // variant is named with its variant in the prompt.
@@ -1216,7 +1419,9 @@ export function buildRoundOrder(args: {
     ...(() => {
       if (!args.cfg.review?.coverage_check || !pass_plan.some((p) => p.lens === "pass-sweep"))
         return {};
-      const coverage_files = coverageEligible(args.files);
+      // a follow-up round's coverage is the delta's — the rest of
+      // the PR was covered by the round that reviewed it.
+      const coverage_files = coverageEligible(args.followUp?.deltaFiles ?? args.files);
       return coverage_files.length > 0 ? { coverage_files } : {};
     })(),
     // `[review] validator_shards` (templates.ts renderValidatorShardNote):
@@ -1249,6 +1454,16 @@ export function buildRoundOrder(args: {
     ...(args.ledgerCarry ? { ledger_carry: args.ledgerCarry } : {}),
     issued_at: args.issuedAt,
     ...(args.prBody !== undefined ? { pr_body: args.prBody } : {}),
+    ...(args.followUp
+      ? {
+          scope: "delta" as const,
+          delta: args.followUp.delta,
+          prior_findings_note: args.followUp.priorFindingsNote,
+          ...(args.followUp.sweepPlan && args.followUp.sweepPlan.length > 0
+            ? { sweep_plan: args.followUp.sweepPlan }
+            : {}),
+        }
+      : {}),
   };
 }
 
@@ -1529,26 +1744,67 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
 
       const files = await deps.adapter.listPrFiles(row.number);
       const gate = eco.migrationGate(files);
-      // The plan is pure and deterministic in `files` + the PR body, so
-      // computing it here and again inside buildRoundOrder yields the same
-      // tiers; taking the lens list off it keeps the round row and the order
-      // from ever disagreeing.
-      const passPolicy = buildPassPlan(
+      // The repo's written style guide, if any: the style lens runs only on
+      // one (`[review] style_lens`). Total — an unreadable tree is no guide.
+      // Read off the prepared tree BEFORE the plan, so the plan is built once
+      // and the round row records exactly the order's plan.
+      const styleGuide = lensEnabled(cfg.lenses, STYLE_PASS, cfg.review.style_lens)
+        ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
+        : [];
+      // The linters a CI job of the repo runs: lint conformance runs only on
+      // them (`[review] lint_conformance`). Total — an unreadable tree is none.
+      const ciLinters = lensEnabled(cfg.lenses, LINT_CONFORMANCE_PASS, cfg.review.lint_conformance)
+        ? findCiLinters(resolve(sandboxRoot(), worktreeFor(row.number)))
+        : [];
+      // The plan is pure and deterministic in `files` + the PR body + the
+      // style guide + the linters: built ONCE here and handed to
+      // buildRoundOrder, so the round row and the order never disagree.
+      const fullPlan = buildPassPlan(
         cfg,
         files,
         { title: row.title, body: prBody },
         eco,
         deps.heuristics,
+        styleGuide,
+        ciLinters,
       );
-      const plannedPasses = passPolicy.pass_plan;
-      const lenses = [...new Set(plannedPasses.map((p) => p.lens))];
-      const addablePasses = passPolicy.addable_lenses.map((lens) => ({
+      // follow-up rounds (docs/follow-up-rounds.md): every round after
+      // the first reviews the PR-owned change since the last reviewed head —
+      // or, on any doubt, runs today's full re-review. `files` stays the WHOLE
+      // PR for every per-PR fact (the migration gate, the pre-check, the
+      // directive escalation, the diffstat, dependency sources, memory and
+      // lessons); only the plan and the coverage check read the delta.
+      let followUp: FollowUpDecision | null = null;
+      let fullRound: { reason: FollowUpFullReason; detail?: Record<string, unknown> } | null = null;
+      if (roundType !== "first") {
+        const decided = await decideFollowUp(deps, {
+          pr: row.number,
+          markHead: mark?.head_sha,
+          tree,
+          files,
+          fullPlan,
+          standing,
+          ecosystem: eco,
+          styleGuide,
+          ciLinters,
+        });
+        if (decided.kind === "delta") followUp = decided.decision;
+        else
+          fullRound = {
+            reason: decided.reason,
+            ...(decided.detail ? { detail: decided.detail } : {}),
+          };
+      }
+      let passPolicy = followUp ? followUp.plan : fullPlan;
+      let plannedPasses = passPolicy.pass_plan;
+      let lenses = [...new Set(plannedPasses.map((p) => p.lens))];
+      let addablePasses = passPolicy.addable_lenses.map((lens) => ({
         lens,
         tier: addTierOf(cfg, lens),
       }));
       // Null when the profile switched the validator off: the round
       // had no validator, and recording the configured tier would say it did.
-      const validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
+      let validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
 
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
@@ -1567,6 +1823,21 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           validate_tier: validateTier,
           pass_plan: plannedPasses,
           addable_passes: addablePasses,
+          head_sha: tree?.head_sha || row.head_sha,
+          ...(roundType !== "first"
+            ? followUp
+              ? {
+                  scope: "delta" as const,
+                  delta_base_sha: followUp.fromSha,
+                  delta_lines: followUp.delta.lines,
+                  delta_files: followUp.delta.files.length,
+                  sweep_owed: followUp.sweepPlan !== undefined,
+                  ...(followUp.sweepPlan
+                    ? { sweep_plan: followUp.sweepPlan }
+                    : { sweep_status: "not_owed" as const }),
+                }
+              : { scope: "full" as const }
+            : {}),
         },
       );
       provisionalRoundId = roundId;
@@ -1575,6 +1846,82 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           round_no: number;
         }
       ).round_no;
+
+      // the delta as one patch file, beside the round's other state
+      // files. A write that fails falls the round back to a full re-review —
+      // the follow-up prompt names the file, and a missing one is never a
+      // quieter round.
+      let roundDelta: RoundDelta | undefined;
+      if (followUp) {
+        const patchFile = resolve(
+          sandboxRoot(),
+          "state",
+          `pr-${row.number}-round-${roundNo}-delta.patch`,
+        );
+        try {
+          mkdirSync(resolve(sandboxRoot(), "state"), { recursive: true });
+          writeFileSync(`${patchFile}.tmp`, renderDeltaPatch(followUp.delta.files));
+          renameSync(`${patchFile}.tmp`, patchFile);
+          roundDelta = roundDeltaOf(followUp, patchFile);
+        } catch (err) {
+          log(`dispatch: #${row.number} delta patch not written — full round`, err);
+          fullRound = {
+            reason: "patch-write-failed",
+            detail: { error: err instanceof Error ? err.message : String(err) },
+          };
+          followUp = null;
+          passPolicy = fullPlan;
+          plannedPasses = passPolicy.pass_plan;
+          lenses = [...new Set(plannedPasses.map((p) => p.lens))];
+          addablePasses = passPolicy.addable_lenses.map((lens) => ({
+            lens,
+            tier: addTierOf(cfg, lens),
+          }));
+          validateTier = plannedPasses.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null;
+          store.setRoundPlan(roundId, lenses, {
+            validate_tier: validateTier,
+            pass_plan: plannedPasses,
+            addable_passes: addablePasses,
+          });
+          store.setRoundMeta(roundId, {
+            scope: "full",
+            delta_base_sha: null,
+            delta_lines: null,
+            delta_files: null,
+            sweep_owed: null,
+            sweep_plan: null,
+            sweep_status: null,
+          });
+        }
+      }
+      if (fullRound) {
+        store.logEvent("followup_full_round", row.number, {
+          round_id: roundId,
+          round_no: roundNo,
+          reason: fullRound.reason,
+          head_sha: tree?.head_sha || row.head_sha,
+          last_reviewed_sha: mark?.head_sha ?? null,
+          ...(fullRound.detail ?? {}),
+        });
+        log(`dispatch: #${row.number} round ${roundNo} runs in full (${fullRound.reason})`);
+      }
+      // the prior findings this follow-up round verifies — listed in
+      // prior_finding_checks and written to the round's sidecar. Total: a list
+      // that cannot be assembled renders an explicit "verify from your ledger"
+      // note, never an empty one.
+      const priorFindingsNote = followUp
+        ? preparePriorFindings(
+            {
+              store,
+              findingsDir: deps.findingsDir ?? resolve(sandboxRoot(), "state", "findings"),
+              stateDir: resolve(sandboxRoot(), "state"),
+              log,
+            },
+            row.number,
+            roundNo,
+            tree?.head_sha || row.head_sha,
+          ).note
+        : "";
 
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
@@ -1742,18 +2089,19 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} dependency sources unavailable`, err);
         }
       }
-      // The repo's written style guide, if any: the style lens runs only on
-      // one (`[review] style_lens`). Total — an unreadable tree is no guide.
-      const styleGuide = lensEnabled(cfg.lenses, STYLE_PASS, cfg.review.style_lens)
-        ? findStyleGuide(resolve(sandboxRoot(), worktreeFor(row.number)))
-        : [];
-      // The linters a CI job of the repo runs: lint conformance runs only on
-      // them (`[review] lint_conformance`). Total — an unreadable tree is none.
-      const ciLinters = lensEnabled(cfg.lenses, LINT_CONFORMANCE_PASS, cfg.review.lint_conformance)
-        ? findCiLinters(resolve(sandboxRoot(), worktreeFor(row.number)))
-        : [];
       const built = buildRoundOrder({
         tree,
+        plan: passPolicy,
+        ...(followUp && roundDelta
+          ? {
+              followUp: {
+                delta: roundDelta,
+                deltaFiles: followUp.deltaFiles,
+                priorFindingsNote,
+                ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
+              },
+            }
+          : {}),
         ecosystem: eco,
         ...(styleGuide.length ? { styleGuide } : {}),
         ...(ciLinters.length ? { ciLinters } : {}),
@@ -1785,18 +2133,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         ...(deps.heuristics !== undefined ? { heuristics: deps.heuristics } : {}),
       });
       store.stampPostingKey(roundId, built.posting_key!);
-      // The order's plan can outgrow the one startRound recorded — the repo's
-      // style guide is read off the prepared tree and adds pass-style — and the
-      // verdict audit reads the round row, so the row takes the order's plan.
-      if (styleGuide.length > 0 || ciLinters.length > 0)
-        store.setRoundPlan(roundId, built.lenses, {
-          validate_tier: built.pass_plan.find((p) => p.lens === VALIDATE_PASS)?.tier ?? null,
-          pass_plan: built.pass_plan,
-          addable_passes: built.addable_lenses.map((lens) => ({
-            lens,
-            tier: addTierOf(cfg, lens),
-          })),
-        });
+      // The round row already holds the order's plan: the style guide and the
+      // linters were read before the plan was built, and the plan was built
+      // once.
 
       // The ONE memory call this round WAITS for, placed after the
       // worktree and the order so the context is seeded from the same sha the
@@ -1888,6 +2227,47 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         } catch (err) {
           log(`dispatch: #${row.number} lens task files unavailable`, err);
         }
+        // the owed pre-approval sweep's task files — its own
+        // directory and row index (`row` indexes `sweep_plan`), the whole PR's
+        // full plan rendered exactly as a full round's. No lesson rows ride
+        // them: lesson selection covers `pass_plan` rows only. Total, as above.
+        if (built.sweep_plan && built.sweep_plan.length > 0) {
+          try {
+            const sweepDir = resolve(
+              sandboxRoot(),
+              "state",
+              `pr-${row.number}-round-${roundNo}-passes`,
+              "tasks-sweep",
+            );
+            const {
+              scope: _s,
+              delta: _d,
+              prior_findings_note: _p,
+              sweep_plan: _sp,
+              ...whole
+            } = built;
+            const sweepOrder: RoundOrder = {
+              ...whole,
+              pass_plan: built.sweep_plan,
+              lenses: [...new Set(built.sweep_plan.map((p) => p.lens))],
+            };
+            const sweepTasks = writePassTasks(
+              sweepDir,
+              sweepOrder,
+              renderGateNotes(sweepOrder, eco),
+            );
+            order = {
+              ...order,
+              sweep_task_files: sweepTasks.map((t) => ({
+                row: t.row,
+                agent: t.agent,
+                path: t.path,
+              })),
+            };
+          } catch (err) {
+            log(`dispatch: #${row.number} sweep task files unavailable`, err);
+          }
+        }
       }
       const memory = deliverRoundLessons(deps, {
         seeded,
@@ -1907,6 +2287,18 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
+      // the head this round reviews is the next follow-up round's
+      // baseline — pin it against gc so a force-push cannot take it away.
+      // Best-effort: an unpinned head is re-fetched, or the round runs in full.
+      if (deps.pinReviewedHead) {
+        try {
+          const pinned = await deps.pinReviewedHead(row.number, order.head_sha);
+          if (!pinned)
+            log(`dispatch: #${row.number} reviewed head ${order.head_sha.slice(0, 7)} not pinned`);
+        } catch (err) {
+          log(`dispatch: #${row.number} reviewed head not pinned`, err);
+        }
+      }
       if (memory.lessons) logLessonDelivery(store, roundId, memory.lessons);
       // the round's lesson selection — the shadow ledger's
       // input. Started only now, with the round handed off, and never
@@ -1938,6 +2330,19 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         round_id: roundId,
         round_no: roundNo,
         round_type: roundType,
+        // what a later round reviewed (absent on a first round).
+        ...(roundType !== "first"
+          ? {
+              scope: order.scope === "delta" ? "delta" : "full",
+              ...(order.delta
+                ? {
+                    delta_lines: order.delta.lines,
+                    delta_files: order.delta.files.length,
+                    sweep_owed: (order.sweep_plan?.length ?? 0) > 0,
+                  }
+                : {}),
+            }
+          : {}),
         lenses: order.lenses,
         validate_tier: validateTier,
         migration_gate: order.migration_gate,

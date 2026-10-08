@@ -128,6 +128,12 @@ export interface DaemonDeps {
     pr: number,
     baseRef: string,
   ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
+  /** The PR-owned change between two reviewed heads (follow-up
+   * rounds) — wire.ts passes `WorktreeManager.prOwnedDelta`. Absent ⇒ every
+   * later round is a full re-review. */
+  prOwnedDelta?: import("./dispatch.js").DispatchDeps["prOwnedDelta"];
+  /** Pin a reviewed head against gc — `WorktreeManager.pinReviewedHead`. */
+  pinReviewedHead?: (pr: number, sha: string) => Promise<boolean>;
   /** Base-branch migration paths at a sha, for the collision pre-check
    *. Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
@@ -801,6 +807,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         // Total: no file, an unreadable one or another PR's ⇒ no carry.
         ledgerCarry: (n) => readLedgerCarry(join(root, "state", "ledgers", `pr-${n}.md`), n),
         prepareWorktree: deps.prepareWorktree,
+        ...(deps.prOwnedDelta ? { prOwnedDelta: deps.prOwnedDelta } : {}),
+        ...(deps.pinReviewedHead ? { pinReviewedHead: deps.pinReviewedHead } : {}),
+        findingsDir: join(root, "state", "findings"),
         listBaseMigrations: deps.listBaseMigrations,
         ...(deps.dependencySources ? { dependencySources: deps.dependencySources } : {}),
         directiveAuthor: deps.directiveAuthor,

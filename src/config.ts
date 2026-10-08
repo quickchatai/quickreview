@@ -504,6 +504,17 @@ export interface ReviewConfig {
    * gets a targeted pass-sweep row (at most two, packed by line budget), each
    * saying why. Off ⇒ the round order renders exactly as before. */
   coverage_check: boolean;
+  /** `follow_up` (docs/follow-up-rounds.md): `"delta"` ⇒ every round
+   * after the first is a FOLLOW-UP round — prior findings verified, the
+   * PR-owned change since the last reviewed head reviewed, one pre-approval
+   * sweep when owed — falling back to today's full re-review on any doubt.
+   * `"full"` ⇒ every later round is today's full re-review, byte for byte. */
+  follow_up: "delta" | "full";
+  /** Above this share of the PR's diff lines (additions + deletions), the
+   * delta is too large to be worth a follow-up round: the round runs in full. */
+  follow_up_max_delta_ratio: number;
+  /** false ⇒ a follow-up round never plans the pre-approval sweep. */
+  follow_up_sweep: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -615,6 +626,9 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   validator_shards: 1,
   dedup_merge: true,
   coverage_check: true,
+  follow_up: "delta",
+  follow_up_max_delta_ratio: 0.6,
+  follow_up_sweep: true,
 };
 
 /**
@@ -1719,6 +1733,11 @@ export interface Config {
      * a self-requeue, so never a second posting. Readers default to
      * DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN. */
     round_posted_tail_grace_min?: number;
+    /**: the extra minutes a follow-up round whose pre-approval sweep
+     * is OWED gets for its passes and its hard cap — the sweep is a whole
+     * round-1 plan run after the delta's. Readers default to
+     * DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN. */
+    follow_up_sweep_extra_min?: number;
     posting_receipt_grace_s?: number;
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
@@ -2252,6 +2271,8 @@ export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
  * 2026-10-01…08); 15 is over twice that and still well inside the 75-minute
  * round deadline. */
 export const DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN = 15;
+/**: `[daemon] follow_up_sweep_extra_min`'s default. */
+export const DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN = 20;
 export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
@@ -2404,6 +2425,7 @@ export function parseConfig(toml: string): Config {
       round_passes_max_min: DEFAULT_ROUND_PASSES_MAX_MIN,
       round_finalize_grace_min: DEFAULT_ROUND_FINALIZE_GRACE_MIN,
       round_posted_tail_grace_min: DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN,
+      follow_up_sweep_extra_min: DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
       posting_receipt_grace_s: DEFAULT_POSTING_RECEIPT_GRACE_S,
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
@@ -2480,6 +2502,24 @@ export function parseConfig(toml: string): Config {
       `config.toml [review]: dedup_merge must be true or false (got ${JSON.stringify(cfg.review.dedup_merge)})`,
     );
   }
+  if (cfg.review.follow_up !== "delta" && cfg.review.follow_up !== "full") {
+    throw new Error(
+      `config.toml [review]: follow_up must be "delta" or "full" (got ${JSON.stringify(cfg.review.follow_up)})`,
+    );
+  }
+  {
+    const ratio = cfg.review.follow_up_max_delta_ratio;
+    if (!(typeof ratio === "number" && Number.isFinite(ratio) && ratio > 0 && ratio <= 1)) {
+      throw new Error(
+        `config.toml [review]: follow_up_max_delta_ratio must be a number in (0, 1] (got ${JSON.stringify(ratio)})`,
+      );
+    }
+  }
+  if (typeof cfg.review.follow_up_sweep !== "boolean") {
+    throw new Error(
+      `config.toml [review]: follow_up_sweep must be true or false (got ${JSON.stringify(cfg.review.follow_up_sweep)})`,
+    );
+  }
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(
       `config.toml [review]: nits must be "strict" or "open" (got ${JSON.stringify(cfg.review.nits)})`,
@@ -2541,6 +2581,10 @@ export function parseConfig(toml: string): Config {
   const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
   if (!(typeof postedTail === "number" && Number.isFinite(postedTail) && postedTail > 0)) {
     throw new Error("config.toml: require round_posted_tail_grace_min > 0");
+  }
+  const sweepExtra = cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN;
+  if (!(typeof sweepExtra === "number" && Number.isFinite(sweepExtra) && sweepExtra >= 0)) {
+    throw new Error("config.toml: require follow_up_sweep_extra_min >= 0");
   }
   const compactionMax = cfg.daemon.session_compaction_max_s ?? DEFAULT_SESSION_COMPACTION_MAX_S;
   if (!(typeof compactionMax === "number" && Number.isFinite(compactionMax) && compactionMax > 0)) {

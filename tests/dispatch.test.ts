@@ -493,6 +493,27 @@ describe("recording at round start", () => {
 });
 
 describe("buildPassPlan", () => {
+  it("tierFiles: the tier (and its migration floor) comes from the given files, the selection from the plan's", () => {
+    const small = [file("app/api/views.py", 3, 1)];
+    const whole = [...small, file("app/big.py", 900, 0), file("app/core/migrations/0042_x.py", 5)];
+    const alone = buildPassPlan(baseCfg, small);
+    const tiered = buildPassPlan(baseCfg, small, undefined, undefined, undefined, [], [], {
+      tierFiles: whole,
+    });
+    // Same lenses — the selection reads `files` only.
+    expect(tiered.pass_plan.map((p) => p.lens)).toEqual(alone.pass_plan.map((p) => p.lens));
+    const def = (plan: typeof alone.pass_plan) =>
+      plan
+        .filter((p) => p.raisable_to.length > 0 && !["pass-sweep", "pass-intent"].includes(p.lens))
+        .map((p) => p.tier);
+    expect(new Set(def(alone.pass_plan))).toEqual(new Set(["terra-med"]));
+    expect(new Set(def(tiered.pass_plan))).toEqual(new Set(["sol-med"]));
+    // Absent ⇒ exactly the legacy plan.
+    expect(buildPassPlan(baseCfg, small, undefined, undefined, undefined, [], [], {})).toEqual(
+      alone,
+    );
+  });
+
   // Deterministic knobs regardless of config.toml churn.
   const planCfg: Config = {
     ...baseCfg,
@@ -2452,6 +2473,30 @@ describe("a newer push/re-request during trigger consumption is never settled aw
       expect(row.state).toBe("queued");
       expect(row.head_sha).toBe("h2");
       expect(row.trigger_ts).toBe("2026-09-30T09:00:05Z");
+    },
+  );
+});
+
+describe("a later round with no git seam is today's full re-review, said out loud", () => {
+  it(
+    "logs followup_full_round {reason: no-adapter}, stamps scope full, and the order carries no follow-up field",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(77, "2026-10-08T10:00:00Z", { head: "h2" });
+      const first = store.startRound(77, "first", ["pass-baseline"], 60);
+      store.finishRound(first, "REQUEST_CHANGES", null);
+      store.recordReviewedHead(77, { head_sha: "h1", verdict: "REQUEST_CHANGES", round_no: 1 });
+      adapter.files.set(77, [file("a.py")]);
+      const { hooks, orders } = recordingHooks();
+      await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
+      expect(orders).toHaveLength(1);
+      expect(orders[0]!.order.round_type).toBe("re-review");
+      expect(orders[0]!.order.scope).toBeUndefined();
+      expect(store.roundsFor(77).at(-1)).toMatchObject({ scope: "full", head_sha: "h2" });
+      const ev = store.db
+        .prepare("SELECT payload FROM events WHERE pr = 77 AND kind = 'followup_full_round'")
+        .all() as Array<{ payload: string }>;
+      expect(ev.map((e) => JSON.parse(e.payload).reason)).toEqual(["no-adapter"]);
     },
   );
 });

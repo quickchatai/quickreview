@@ -246,6 +246,25 @@ export interface RoundRow {
    * verdict watcher resumes it. Null = nothing owed (and every round before
    * the column). */
   usage_owed_to: string | null;
+  // ---- follow-up rounds (additive, nullable) ----------------------
+  /** The head this round was dispatched to review (the prepared tree's). */
+  head_sha: string | null;
+  /** `full` | `delta` — what the round reviewed. NULL on a first round and on
+   * every round before the column (a legacy non-first round was a full
+   * re-review). */
+  scope: string | null;
+  /** A delta round's baseline: the last reviewed head it was diffed from. */
+  delta_base_sha: string | null;
+  /** A delta round's PR-owned change: lines (additions + deletions), files. */
+  delta_lines: number | null;
+  delta_files: number | null;
+  /** 1 when the round's order carried the pre-approval sweep, else 0; NULL
+   * on rounds that are not follow-ups. */
+  sweep_owed: number | null;
+  /** The sweep's plan (JSON PassPlanEntry[]), when owed. */
+  sweep_plan: string | null;
+  /** ran | not_owed | not_reached | unknown — what became of the sweep. */
+  sweep_status: string | null;
 }
 
 /**
@@ -1400,6 +1419,15 @@ export interface RoundStartMeta {
   validate_tier?: string | null;
   pass_plan?: PassPlanEntry[];
   addable_passes?: Array<{ lens: string; tier: string }>;
+  /** follow-up rounds (see RoundRow). */
+  head_sha?: string | null;
+  scope?: "full" | "delta" | null;
+  delta_base_sha?: string | null;
+  delta_lines?: number | null;
+  delta_files?: number | null;
+  sweep_owed?: boolean | null;
+  sweep_plan?: PassPlanEntry[] | null;
+  sweep_status?: "ran" | "not_owed" | "not_reached" | "unknown" | null;
 }
 
 /** One recheck claim, as `rechecksFor` reads it. */
@@ -1524,6 +1552,16 @@ export class StateStore {
       // integration review: an owed round-end measurement survives a
       // restart (the window's end, NULL once measured). Nullable, additive.
       "ALTER TABLE rounds ADD COLUMN usage_owed_to TEXT",
+      // follow-up rounds — nullable, additive. NULL scope on a
+      // non-first round = a legacy full re-review.
+      "ALTER TABLE rounds ADD COLUMN head_sha TEXT",
+      "ALTER TABLE rounds ADD COLUMN scope TEXT",
+      "ALTER TABLE rounds ADD COLUMN delta_base_sha TEXT",
+      "ALTER TABLE rounds ADD COLUMN delta_lines INTEGER",
+      "ALTER TABLE rounds ADD COLUMN delta_files INTEGER",
+      "ALTER TABLE rounds ADD COLUMN sweep_owed INTEGER",
+      "ALTER TABLE rounds ADD COLUMN sweep_plan TEXT",
+      "ALTER TABLE rounds ADD COLUMN sweep_status TEXT",
       // held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
@@ -2011,7 +2049,20 @@ export class StateStore {
         meta.pass_plan ? JSON.stringify(meta.pass_plan) : null,
         meta.addable_passes ? JSON.stringify(meta.addable_passes) : null,
       );
-    return Number(info.lastInsertRowid);
+    const id = Number(info.lastInsertRowid);
+    // the follow-up columns ride the same meta, written only when
+    // given so a round started without them stays exactly as before.
+    this.setRoundMeta(id, {
+      ...(meta.head_sha !== undefined ? { head_sha: meta.head_sha } : {}),
+      ...(meta.scope !== undefined ? { scope: meta.scope } : {}),
+      ...(meta.delta_base_sha !== undefined ? { delta_base_sha: meta.delta_base_sha } : {}),
+      ...(meta.delta_lines !== undefined ? { delta_lines: meta.delta_lines } : {}),
+      ...(meta.delta_files !== undefined ? { delta_files: meta.delta_files } : {}),
+      ...(meta.sweep_owed !== undefined ? { sweep_owed: meta.sweep_owed } : {}),
+      ...(meta.sweep_plan !== undefined ? { sweep_plan: meta.sweep_plan } : {}),
+      ...(meta.sweep_status !== undefined ? { sweep_status: meta.sweep_status } : {}),
+    });
+    return id;
   }
 
   /** Diffstat/trigger stamp for a round that already exists (late arrival). */
@@ -2024,6 +2075,12 @@ export class StateStore {
       "changed_files",
       "trigger_ts",
       "validate_tier",
+      "head_sha",
+      "scope",
+      "delta_base_sha",
+      "delta_lines",
+      "delta_files",
+      "sweep_status",
     ] as const) {
       if (meta[key] !== undefined) {
         sets.push(`${key} = ?`);
@@ -2035,6 +2092,14 @@ export class StateStore {
         sets.push(`${key} = ?`);
         args.push(JSON.stringify(meta[key]));
       }
+    }
+    if (meta.sweep_owed !== undefined) {
+      sets.push("sweep_owed = ?");
+      args.push(meta.sweep_owed === null ? null : meta.sweep_owed ? 1 : 0);
+    }
+    if (meta.sweep_plan !== undefined) {
+      sets.push("sweep_plan = ?");
+      args.push(meta.sweep_plan === null ? null : JSON.stringify(meta.sweep_plan));
     }
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE rounds SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
@@ -2154,6 +2219,29 @@ export class StateStore {
         )
         .get(pr) as { c: number }
     ).c;
+  }
+
+  /**
+   * Has this PR had a FULL LOOK since its first round? A delivered
+   * (verdicted, never backfilled) non-first round that reviewed the whole PR:
+   * a full-scope round, a legacy re-review (scope NULL — every re-review
+   * before follow-up rounds was a full one), or a follow-up round whose
+   * pre-approval sweep ran. The pre-approval sweep is owed only while this is
+   * false. A legacy staleness round (a post-approval delta look) is NOT one:
+   * when in doubt the sweep is owed, never skipped.
+   */
+  fullLookSinceFirst(pr: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM rounds
+            WHERE pr = ? AND backfilled = 0 AND verdict IS NOT NULL AND round_type != 'first'
+              AND (scope = 'full' OR (scope IS NULL AND round_type = 're-review')
+                   OR sweep_status = 'ran')
+            LIMIT 1`,
+        )
+        .get(pr) !== undefined
+    );
   }
 
   roundsFor(pr: number): RoundRow[] {

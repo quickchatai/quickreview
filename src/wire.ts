@@ -850,6 +850,12 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.
     prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
+    // follow-up rounds: the PR-owned change since the last reviewed
+    // head (the reviewed head replayed onto the round's merge base, read-only
+    // git in the base clone), and the pin that keeps a reviewed head
+    // replayable after a force-push.
+    prOwnedDelta: (q) => sessions.worktrees.prOwnedDelta(q),
+    pinReviewedHead: (pr, sha) => sessions.worktrees.pinReviewedHead(pr, sha),
     // Third-party sources at the PR's locked versions, unpacked into a cache
     // on the state volume for the passes to read (`[review]
     // dependency_sources`, benchmark 2026-09-26). Download and unpack only;

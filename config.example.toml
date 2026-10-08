@@ -123,6 +123,10 @@ round_finalize_grace_min = 5
 # then is settled from the posting receipt. Never a requeue, never a second
 # posting.
 round_posted_tail_grace_min = 15
+# a follow-up round whose pre-approval sweep is owed (a whole
+# round-1-style plan after the delta's) gets this many extra minutes for its
+# passes and its hard cap.
+# follow_up_sweep_extra_min = 20
 posting_receipt_grace_s = 120
 session_command_unknown_grace_s = 60
 session_command_unknown_max_checks = 1
@@ -705,6 +709,16 @@ preset = "default"
 # non-test source file no lens raised a finding on gets a targeted pass-sweep
 # row (at most two, packed by line budget), each saying why it ran.
 # coverage_check = false
+# Follow-up rounds (docs/follow-up-rounds.md): every round after the
+# first verifies the prior findings and reviews only the PR-owned change since
+# the last reviewed head (base merges and rebases taken out), with one
+# whole-PR pre-approval sweep before an approval when no full look has run
+# since round 1. Any doubt (no reviewed head, a rewound base, a git failure, a
+# delta above follow_up_max_delta_ratio of the PR's diff lines) runs today's
+# full re-review instead. "full" restores the old behaviour byte for byte.
+# follow_up = "full"
+# follow_up_max_delta_ratio = 0.6
+# follow_up_sweep = false
 # Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout
 # lengthened, an assert removed or commented out, a skip added) are found by

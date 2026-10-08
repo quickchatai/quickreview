@@ -1164,7 +1164,7 @@ describe("template & script cleanups", () => {
 describe("end-of-round ledger discipline", () => {
   const PIN =
     "Update the ledger, then write the verdict file — in that order; nothing comes after the verdict write.";
-  for (const [rt, tplFile] of SHIPPED_ROUND_TEMPLATES) {
+  for (const [, tplFile] of SHIPPED_ROUND_TEMPLATES) {
     it(`${tplFile} orders the ledger write BEFORE the verdict file, verbatim`, () => {
       const raw = readFileSync(resolve(process.cwd(), "prompts", tplFile), "utf8");
       const flat = raw.replace(/\s+/g, " ");

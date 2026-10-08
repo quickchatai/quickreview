@@ -118,6 +118,9 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
     "awaiting_author_stale_h",
     "bot_token_file",
     "broadcast_verdicts",
+    // parsed with the follow-up rounds' config slice; the round-stage
+    // supervisor's sweep allowance reads it in its own slice — its entry goes then.
+    "follow_up_sweep_extra_min",
     "queue_concurrency",
     "soft_exchange_limit",
     "ssh_dir",
