@@ -760,6 +760,37 @@ describe("plan mode moves nothing (acceptance 9)", () => {
 });
 
 describe("the archiver's DB phase, end to end", () => {
+  it("an idle tick at the same outcome logs nothing: no 'db' line a minute forever", async () => {
+    const r = await make();
+    r.adb.close();
+    const logs: string[] = [];
+    const a = new Archiver({
+      store: r.store,
+      cfg: { ...ARCHIVE_DEFAULTS, mode: "on" },
+      root: r.root,
+      sessionsRoot: join(r.root, "state", "pi-sessions"),
+      firstHealthyReconcileAt: () => new Date(T0 - 3_600_000),
+      statfs: async () => ({ bavail: 1e12, bsize: 1 }),
+      plan: async () => fakePlan(),
+      now: () => new Date(T0),
+      sleep: async () => {},
+      schedule: () => () => {},
+      log: (m) => logs.push(m),
+    });
+    try {
+      await a.tick();
+      await a.tick();
+      await a.tick();
+      expect(logs.filter((l) => l.startsWith("archive: db —"))).toHaveLength(1);
+      seedEvents(r.store, [[iso(OLD), "webhook_event"]]);
+      await a.tick();
+      // work done always logs, whatever the shape
+      expect(logs.filter((l) => l.startsWith("archive: db —"))).toHaveLength(2);
+    } finally {
+      a.stop();
+    }
+  });
+
   it("mode on: moves, logs one archive_pass, reports status.db and the totals, and the backlog falls", async () => {
     const r = await make();
     seedEvents(r.store, [

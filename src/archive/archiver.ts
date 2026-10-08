@@ -354,6 +354,11 @@ export class Archiver {
   /** Rows moved since the plan last counted them, so the backlog status
    * shows falls between plans. */
   private movedSincePlan = { events: 0, deliveries: 0 };
+  /** The last per-tick line's SHAPE for each phase (outcome + hold reason,
+   * never the timings). An idle tick at the same shape logs nothing, so a
+   * caught-up archiver does not write a line a minute forever; work done, or a
+   * changed outcome or hold, always logs. */
+  private lastTickLine = new Map<string, string>();
   /** The file phase (S3). */
   private files: ArchiveFilesStatus | null = null;
   /** Crash recovery (§7.6) has run once this start. */
@@ -1210,7 +1215,10 @@ export class Archiver {
         duplicates_removed: run.duplicates_removed,
         verify_failures: run.verify_failures,
       });
-    this.log(
+    this.logTickLine(
+      "files",
+      `${run.outcome}:${run.held_reason ?? ""}:${run.prs_held}:${run.prs_partial}`,
+      run.prs_archived + run.transcripts + run.state_files + run.removed + run.verify_failures > 0,
       `archive: files — ${run.prs_archived} PR(s) archived, ${run.prs_partial} partial, ${run.prs_held} held; ` +
         `${run.transcripts} transcript(s), ${run.state_files} state file(s), ${run.removed} removed` +
         (run.duplicates_removed ? `, ${run.duplicates_removed} legacy duplicate(s) removed` : "") +
@@ -1218,6 +1226,13 @@ export class Archiver {
         ` (${run.outcome}${run.held_reason ? `: ${run.held_reason}` : ""})`,
     );
     return { failure: null, hold };
+  }
+
+  /** Log a per-tick line only when work was done or its shape changed. */
+  private logTickLine(phase: string, shape: string, worked: boolean, line: string): void {
+    if (!worked && this.lastTickLine.get(phase) === shape) return;
+    this.lastTickLine.set(phase, shape);
+    this.log(line);
   }
 
   /** The rate the file work runs at: an UNKNOWN load reading runs at the
@@ -1327,7 +1342,13 @@ export class Archiver {
           verify_failures: r.verifyFailures,
         });
       }
-      if (r.outcome !== "none") this.log(`archive: ${storePhraseOf(p.key, this.stores[p.key])}`);
+      if (r.outcome !== "none")
+        this.logTickLine(
+          `store:${p.key}`,
+          `${r.outcome}:${this.stores[p.key]?.reason ?? ""}`,
+          r.archived + r.removed + r.duplicatesRemoved + r.verifyFailures > 0,
+          `archive: ${storePhraseOf(p.key, this.stores[p.key])}`,
+        );
       // A hold ends the tick — except one file too large for the archive
       // mount while both mounts keep their headroom: that store waits (its
       // status says disk_low, the wake was raised once for the incident) and
@@ -1492,7 +1513,10 @@ export class Archiver {
         live_checkpoints: r.live_checkpoints,
         live_checkpoint_max_ms: r.live_checkpoint_max_ms,
       });
-    this.log(
+    this.logTickLine(
+      "db",
+      `${r.outcome}:${r.skipped_reason ?? ""}`,
+      r.events.moved + r.deliveries.moved + undatable + r.live_checkpoints > 0,
       `archive: db — ${r.events.moved} event / ${r.deliveries.moved} delivery row(s) moved ` +
         `(${r.outcome}${r.skipped_reason ? `: ${r.skipped_reason}` : ""}); ` +
         `${r.sync_ms} ms synchronous, longest ${r.max_span_ms} ms; next batch ${r.batch_rows} rows` +
