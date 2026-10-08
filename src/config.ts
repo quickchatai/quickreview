@@ -1936,9 +1936,15 @@ export interface ArchiveConfig {
    *   `plan` — the SHIPPED value: it computes what it would move (status.json
    *            `archive`, `qcr status`, `qcr archive status --plan`) and
    *            writes nothing;
-   *   `on`   — it moves: the old reader-less event rows and webhook
-   *            deliveries into `archive/db/` (S2), sealing finished
-   *            months. The per-PR files are still only planned in this build.
+   *   `on`   — it MOVES, every tick: it restores reopened PRs' transcripts
+   *            and payloads first; then the old reader-less event rows and
+   *            webhook deliveries into `archive/db/`, sealing finished months
+   *            (S2); then each eligible closed PR's files into
+   *            `archive/pr-<n>/`, removing each from the live tree once its
+   *            copy is verified (S3); then the overseer's non-current
+   *            transcripts and pi's day-old global session files (S4).
+   *            Nothing is deleted that is not verified in the archive or a
+   *            proven duplicate.
    */
   mode: ArchiveMode;
   /** Closed PRs' files and webhook deliveries leave the live tree this many

@@ -319,6 +319,43 @@ export function summarizeManifest(m: Manifest): ManifestSummary {
   return out;
 }
 
+/** What `archive_prs` counts for a PR (and status.json `archive.totals`
+ * sums): the files its archive holds and their bytes, original and
+ * compressed. */
+export interface RowTallies {
+  /** PR transcripts (an earlier version kept under its own entry included;
+   * the legacy session-at-close copy and a `reused` entry not). */
+  transcriptFiles: number;
+  /** State files: each bundle's live records (never a ledger snapshot) and
+   * each state file too large for a bundle. */
+  stateFiles: number;
+  /** Every archived file's original bytes (bundles whole, the legacy copy
+   * included), and their compressed size. */
+  bytesIn: number;
+  bytesOut: number;
+}
+
+/** The counts a PR's manifest holds — derived, so a pass that completes after
+ * one a crash or a throw cut short counts everything the archive holds. A
+ * `reused` entry (bytes another entry already holds) counts nothing. Pure. */
+export function rowTallies(m: Manifest): RowTallies {
+  const out: RowTallies = { transcriptFiles: 0, stateFiles: 0, bytesIn: 0, bytesOut: 0 };
+  for (const e of m.entries) {
+    if (e.kind === "transcript" || e.kind === "file") {
+      if (e.reused) continue;
+      if (e.kind === "file") out.stateFiles += 1;
+      else if (!e.legacy) out.transcriptFiles += 1;
+      out.bytesIn += e.bytes;
+      out.bytesOut += e.gz_bytes;
+    } else if (e.kind === "bundle") {
+      out.stateFiles += e.files.filter((f) => !f.snapshot).length;
+      out.bytesIn += e.bytes;
+      out.bytesOut += e.gz_bytes;
+    }
+  }
+  return out;
+}
+
 /** A deep copy, so a caller's working copy never aliases the one on disk. */
 export const cloneManifest = (m: Manifest): Manifest => JSON.parse(JSON.stringify(m)) as Manifest;
 

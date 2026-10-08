@@ -7,12 +7,13 @@
 //     about to move, never lowered): from that commit on the receipt guard
 //     (`StateStore.archiveScope`, read by `sessions.wakeReceiptPresent`) reads
 //     an archived receipt as UNKNOWN, never as absent;
-//   - `finishArchiveRow` — the pass's tallies, and `archived` once nothing of
-//     the PR is left live;
+//   - `finishArchiveRow` — the counts the PR's manifest holds, and `archived`
+//     once nothing of the PR is left live;
 //   - `setRestoreState` — `restoring`, `restored`, `restore_failed`.
 //
 // Each is one short synchronous statement.
 import type { StateStore } from "../state.js";
+import type { RowTallies } from "./manifest.js";
 
 export type ArchiveRowState =
   "archiving" | "archived" | "restoring" | "restored" | "restore_failed";
@@ -65,17 +66,20 @@ export function armArchiveRow(
     .run({ pr, at: input.at, m: input.maxMtimeMs });
 }
 
-/** A pass's tallies; `archived` when nothing of the PR is left to move. */
+/**
+ * The end of a pass: the counts SET to what the PR's manifest holds
+ * (`rowTallies`) — never this pass's own sums added on, which a pass a crash
+ * or a throw cut short never added, and which the pass that completes it
+ * (reusing those entries) does not have; `archived` when nothing of the PR is
+ * left to move.
+ */
 export function finishArchiveRow(
   store: StateStore,
   pr: number,
   input: {
     at: string;
     complete: boolean;
-    transcriptFiles: number;
-    stateFiles: number;
-    bytesIn: number;
-    bytesOut: number;
+    tallies: RowTallies;
     error: string | null;
   },
 ): void {
@@ -84,10 +88,10 @@ export function finishArchiveRow(
       `UPDATE archive_prs SET
          state = CASE WHEN @complete THEN 'archived' ELSE state END,
          archived_at = CASE WHEN @complete THEN @at ELSE archived_at END,
-         transcript_files = transcript_files + @tf,
-         state_files = state_files + @sf,
-         bytes_in = bytes_in + @bi,
-         bytes_out = bytes_out + @bo,
+         transcript_files = @tf,
+         state_files = @sf,
+         bytes_in = @bi,
+         bytes_out = @bo,
          last_error = @error,
          updated_at = @at
        WHERE pr = @pr`,
@@ -96,10 +100,10 @@ export function finishArchiveRow(
       pr,
       at: input.at,
       complete: input.complete ? 1 : 0,
-      tf: input.transcriptFiles,
-      sf: input.stateFiles,
-      bi: input.bytesIn,
-      bo: input.bytesOut,
+      tf: input.tallies.transcriptFiles,
+      sf: input.tallies.stateFiles,
+      bi: input.tallies.bytesIn,
+      bo: input.tallies.bytesOut,
       error: input.error,
     });
 }

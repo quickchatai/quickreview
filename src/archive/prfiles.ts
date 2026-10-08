@@ -123,7 +123,15 @@ export function groupBy(
 export const PR_DIR = /^pr-(\d+)$/;
 const PR_PREFIX = /^pr-(\d+)-/;
 const ROUND_PROMPT = /^pr-(\d+)-round-\d+\.md$/;
-const STATE_ROUND = /^pr-(\d+)-round-\d+-(?:passes|review\.md|comments\.json)$/;
+/** Every per-round entry at the top of `state/` — the daemon's (`-passes/`,
+ * `-review.md`, `-comments.json`) and any a session wrote beside them (the
+ * rehearsal found a `pr-<n>-round-<k>-body.md` the narrower list left live
+ * forever under an `archived` row). */
+const STATE_ROUND = /^pr-(\d+)-round-\d+-.+$/;
+/** Any top-level `state/` entry named for a PR. Those no class claims are
+ * reported by the plan (`unclassified`) and kept live — never moved on a
+ * guess, never invisible. */
+const STATE_PR = /^pr-(\d+)(?:[-.]|$)/;
 const SESSION_PROMPT = /^pr-(\d+)\.md$/;
 const SESSION_STATE = /^pr-(\d+)\.(?:json|bridge-.+\.json)$/;
 const PROGRESS = /^pr-(\d+)\.json$/;
@@ -142,6 +150,9 @@ export interface LiveListing {
   /** The flat per-PR state files and dirs, by class (`ledger` = the live
    * ledger, snapshotted and kept). */
   flat: Array<[SmallClass | "ledger", Groups]>;
+  /** Top-level `state/` entries named for a PR that no class claims: kept
+   * live, reported by the plan. */
+  unclassified: Groups;
 }
 
 /** List every live directory once. Throws when one cannot be listed (an
@@ -169,14 +180,23 @@ export async function listLiveTree(
   await listing("round_prompts", join(stateDir, "round-prompts"), ROUND_PROMPT);
   await listing("findings", join(stateDir, "findings"), PR_PREFIX);
   await listing("posting_receipts", join(stateDir, "posting-receipts"), PR_PREFIX);
-  await listing("round_files", stateDir, STATE_ROUND, "any");
+  // `state/` itself, listed once: the per-round entries, and what is left.
+  const stateEntries = await listDir(stateDir);
+  flat.push(["round_files", groupBy(meter, stateDir, stateEntries, STATE_ROUND, "any")]);
+  const unclassified = groupBy(
+    meter,
+    stateDir,
+    stateEntries.filter((e) => !STATE_ROUND.test(e.name)),
+    STATE_PR,
+    "any",
+  );
   await listing("session_files", join(stateDir, "session-prompts"), SESSION_PROMPT);
   await listing("session_files", join(stateDir, "sessions"), SESSION_STATE);
   await listing("session_files", join(stateDir, "round-progress"), PROGRESS);
   await listing("verdicts", join(root, "verdict", "processed"), VERDICT, "any");
   await listing("verdicts", join(root, "verdict", "failed"), VERDICT, "any");
   await listing("ledger", join(stateDir, "ledgers"), LEDGER);
-  return { sessionDirs, injectDirs, archiveDirs, flat };
+  return { sessionDirs, injectDirs, archiveDirs, flat, unclassified };
 }
 
 /** `inject/pr-<n>/`, the PR session's drop-box. The archiver only LISTS it

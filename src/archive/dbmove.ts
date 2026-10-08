@@ -24,7 +24,23 @@
 //      count (deliveries), add to the file's running totals, advance the
 //      watermark; COMMIT;
 //   6. a PASSIVE checkpoint past 16 MB of WAL, then an awaited fsync of the
-//      file; `yieldToLoop()`; a 100 ms pause.
+//      file; the LIVE database's checkpoint, on its worker (below);
+//      `yieldToLoop()`; a 100 ms pause, which that checkpoint runs inside.
+//
+// The live state.db's own WAL checkpoint never runs on the loop while the
+// mover deletes. Before its first live delete a run turns the daemon
+// connection's `wal_autocheckpoint` off (restored when the run ends, and by
+// `release()` from the archiver's stop()), and after every batch that deleted
+// it awaits a PASSIVE checkpoint on a worker thread with its own connection
+// under `synchronous = NORMAL` (`livecheckpoint.ts`): the WAL synced before
+// any page is copied, the database file synced before the WAL may restart —
+// SQLite's own protocol, off the loop. Left on, the automatic checkpoint
+// fsyncs the 466 MB file inside every ~4 MB of WAL's commit, a cost no batch
+// size bounds (the 2026-10-08 rehearsal: 35–93 ms commits). A checkpointer
+// that cannot start or fails stops the run (`checkpoint_unavailable`,
+// `checkpoint_failed`) with the setting restored — never a run that deletes
+// with the WAL unbounded or the checkpoint back on the loop. An in-memory
+// store has no WAL and none of this.
 //
 // A crash anywhere leaves a row in both places, never in neither: the re-run's
 // INSERT OR IGNORE and id-exact delete converge. A refusal confined to one
@@ -55,6 +71,7 @@ import {
   type ArchiveDb,
 } from "./archivedb.js";
 import { ARCHIVE_EVENT_KINDS } from "./kinds.js";
+import { workerCheckpointer, type LiveCheckpointer } from "./livecheckpoint.js";
 
 const DAY_MS = 86_400_000;
 
@@ -146,7 +163,9 @@ export type SkipReason =
   | "live_busy" // state.db's write lock was not had inside its busy timeout
   | "verify_mismatch" // a row read back from the archive differs, or is absent
   | "live_changed" // the live delete did not remove exactly the rows copied
-  | "wal_sync_failed"; // the archive's fsync failed
+  | "wal_sync_failed" // the archive's fsync failed
+  | "checkpoint_unavailable" // the live checkpoint's worker could not start
+  | "checkpoint_failed"; // a live checkpoint failed or timed out
 
 /** Refusals confined to one table's rows: the other table still runs. */
 const CONFINED: ReadonlySet<SkipReason> = new Set([
@@ -198,6 +217,10 @@ export interface DbMoveResult {
   batch_rows: number;
   /** Rows the verify found absent or different (a verify failure). */
   verify_mismatches: number;
+  /** The live database's checkpoints this run ran on their worker, and the
+   * longest (the worker's time — never a synchronous span of the loop). */
+  live_checkpoints: number;
+  live_checkpoint_max_ms: number;
 }
 
 export interface DbMoverDeps {
@@ -220,6 +243,11 @@ export interface DbMoverDeps {
   /** Past this much archive WAL a PASSIVE checkpoint runs (default
    * `CHECKPOINT_WAL_BYTES`) — a seam for tests. */
   checkpointWalBytes?: number;
+  /** The live database's checkpointer, off the loop. Default: a worker thread
+   * over `store.path` when the store is a WAL file, none for an in-memory
+   * store. `null` = none (the daemon connection's own automatic checkpoint
+   * stays on) — a seam for tests. */
+  liveCheckpointer?: (() => LiveCheckpointer) | null;
   /** Tests: a crash at a point. */
   fault?: (point: FaultPoint, table: string) => void;
   onBatch?: (b: BatchReport) => void;
@@ -298,11 +326,99 @@ export class DbMover {
   batchRows: number;
   private readonly clock: () => number;
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** While a run deletes: the live checkpointer and the daemon connection's
+   * `wal_autocheckpoint` to put back. */
+  private armed: { checkpointer: LiveCheckpointer; autocheckpoint: number } | null = null;
 
   constructor(private readonly deps: DbMoverDeps) {
     this.batchRows = clampBatch(deps.batchRows);
     this.clock = deps.clock ?? (() => performance.now());
     this.sleep = deps.sleep ?? defaultSleep;
+  }
+
+  /**
+   * Put the daemon connection's automatic checkpoint back and close the live
+   * checkpointer. Synchronous and idempotent: the end of every run, and the
+   * archiver's stop() — the daemon may close the store right after it.
+   */
+  release(): void {
+    const a = this.armed;
+    if (!a) return;
+    this.armed = null;
+    try {
+      if (this.deps.store.db.open)
+        this.deps.store.db.pragma(`wal_autocheckpoint = ${a.autocheckpoint}`);
+    } catch (err) {
+      this.deps.log?.("archive: could not restore the live wal_autocheckpoint", err);
+    }
+    void a.checkpointer.close().catch(() => {});
+  }
+
+  /** The live checkpointer this store gets: none for a database without a
+   * WAL (an in-memory store), the worker for a WAL file. */
+  private liveFactory(): (() => LiveCheckpointer) | null {
+    if (this.deps.liveCheckpointer !== undefined) return this.deps.liveCheckpointer;
+    const { store } = this.deps;
+    if (store.path === ":memory:" || store.path === "") return null;
+    try {
+      if (store.db.pragma("journal_mode", { simple: true }) !== "wal") return null;
+    } catch {
+      return null;
+    }
+    return () => workerCheckpointer(store.path);
+  }
+
+  /**
+   * Before a run's first live delete: the checkpointer up, then the daemon
+   * connection's automatic checkpoint off (§9.3, Build notes). A checkpointer
+   * that cannot start stops the run before anything is deleted.
+   */
+  private async armLive(): Promise<void> {
+    if (this.armed) return;
+    const factory = this.liveFactory();
+    if (!factory) return;
+    const checkpointer = factory();
+    try {
+      await checkpointer.ready();
+    } catch (err) {
+      void checkpointer.close().catch(() => {});
+      this.checkAborted();
+      throw new Stop(
+        "skipped",
+        "checkpoint_unavailable",
+        `the live checkpoint could not run off the loop (${(err as Error).message}) — nothing deleted`,
+      );
+    }
+    if (this.deps.signal?.aborted) {
+      void checkpointer.close().catch(() => {});
+      throw new Stop("aborted", null, "stopped");
+    }
+    const live = this.deps.store.db;
+    const was = Number(live.pragma("wal_autocheckpoint", { simple: true }));
+    live.pragma("wal_autocheckpoint = 0");
+    this.armed = { checkpointer, autocheckpoint: Number.isFinite(was) ? was : 1000 };
+  }
+
+  /** The live checkpoint after a batch, on its worker; never rejects (the
+   * error, or null). */
+  private checkpointLive(result: DbMoveResult): Promise<string | null> {
+    const a = this.armed;
+    if (!a) return Promise.resolve(null);
+    return a.checkpointer.checkpoint().then(
+      (r) => {
+        result.live_checkpoints += 1;
+        result.live_checkpoint_max_ms = Math.max(result.live_checkpoint_max_ms, r.ms);
+        return null;
+      },
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+  }
+
+  /** A failed live checkpoint stops the run (the setting is restored as it
+   * unwinds) — never another delete with nothing checkpointing the WAL. */
+  private liveCheckpointed(error: string | null): void {
+    this.checkAborted();
+    if (error !== null) throw new Stop("skipped", "checkpoint_failed", error);
   }
 
   /** One run: events, then deliveries, inside one budget. Never rejects. */
@@ -319,6 +435,8 @@ export class DbMover {
       max_span_ms: 0,
       batch_rows: this.batchRows,
       verify_mismatches: 0,
+      live_checkpoints: 0,
+      live_checkpoint_max_ms: 0,
     };
     let batchMax = 0;
     const meter = {
@@ -380,6 +498,8 @@ export class DbMover {
         result.outcome = "failed";
         result.error = err instanceof Error ? err.message : String(err);
       }
+    } finally {
+      this.release();
     }
     if (result.skips.length > 0) {
       result.skipped_reason = result.skips[0]!.reason;
@@ -388,6 +508,7 @@ export class DbMover {
     result.batch_rows = this.batchRows;
     result.sync_ms = Math.round(result.sync_ms * 10) / 10;
     result.max_span_ms = Math.round(result.max_span_ms * 10) / 10;
+    result.live_checkpoint_max_ms = Math.round(result.live_checkpoint_max_ms * 10) / 10;
     return result;
   }
 
@@ -551,6 +672,8 @@ export class DbMover {
       this.deps.fault?.("after_verify", spec.table);
 
       // ---- 5: the live delete, the rollup, the watermark — one transaction -----
+      // The live checkpoint off the loop first (once per run).
+      await this.armLive();
       this.checkAborted();
       const ids = JSON.stringify(moves.map((r) => r[0]));
       try {
@@ -590,7 +713,10 @@ export class DbMover {
       into.moved += moves.length;
       into.batches += 1;
 
-      // ---- 6: checkpoint when due; adapt; yield; pause ---------------------------
+      // ---- 6: checkpoints; adapt; yield; pause --------------------------------
+      // The live database's on its worker, from now — it runs while the
+      // archive's is checked and inside the pause.
+      const liveCk = this.checkpointLive(result);
       for (const { conn } of byFile.values()) await this.maybeCheckpoint(conn, meter);
       const worst = takeBatchMax();
       this.adapt(worst);
@@ -603,10 +729,12 @@ export class DbMover {
       });
       if (stop) {
         into.caught_up = true;
+        this.liveCheckpointed(await liveCk);
         return;
       }
       await yieldToLoop();
-      await this.sleep(BATCH_PAUSE_MS, this.deps.signal);
+      const [ckError] = await Promise.all([liveCk, this.sleep(BATCH_PAUSE_MS, this.deps.signal)]);
+      this.liveCheckpointed(ckError);
     }
   }
 

@@ -83,6 +83,11 @@ function planLines(plan: ArchivePlan): string[] {
   out.push(
     `  legacy archive/pr-<n>/session.jsonl copies to check as duplicates: ${plan.legacy_copies.files}, ${fmtBytes(plan.legacy_copies.bytes)}`,
   );
+  if (plan.unclassified && plan.unclassified.files > 0)
+    out.push(
+      `  KEPT LIVE, no class claims them: ${plan.unclassified.files} state/pr-<n>-* file(s) of eligible PRs, ${fmtBytes(plan.unclassified.bytes)} — ` +
+        `${plan.unclassified.first.join(", ")}${plan.unclassified.files > plan.unclassified.first.length ? ", …" : ""}`,
+    );
   if (plan.empty.length > 0)
     out.push(
       `  ${plan.empty.length} eligible PR(s) with nothing live to move (a zero-file archived row each)`,

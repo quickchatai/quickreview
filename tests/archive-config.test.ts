@@ -94,6 +94,28 @@ describe("config.example.toml", () => {
     expect(loadConfig(EXAMPLE).archive).toEqual(ARCHIVE_DEFAULTS);
   });
 
+  it("what `on` does is said as it is built: it removes closed PRs' files from the live tree (never the S2-era 'only planned')", () => {
+    // The operator reads this at the moment of the flip (integration review,
+    // 2026-10-08): the comment above [archive] and the ArchiveConfig doc.
+    const text = readFileSync(EXAMPLE, "utf8");
+    const comment = text.slice(text.indexOf("# Archiving ("), text.indexOf("\n[archive]\n"));
+    const doc = readFileSync(join(process.cwd(), "src", "config.ts"), "utf8");
+    const modeDoc = doc.slice(
+      doc.indexOf("export interface ArchiveConfig"),
+      doc.indexOf("mode: ArchiveMode;"),
+    );
+    for (const [where, t] of [
+      ["config.example.toml", comment.replace(/\n# /g, " ")],
+      ["ArchiveConfig.mode", modeDoc.replace(/\n\s*\* +/g, " ")],
+    ] as const) {
+      expect(t, where).not.toMatch(/only planned|does not move the per-PR files|it plans them/);
+      expect(t, where).toMatch(/restores? reopened PRs/);
+      expect(t, where).toMatch(/archive\/pr-<n>\//);
+      expect(t, where).toMatch(/remov\w+ (each )?from the live tree/i);
+      expect(t, where).toMatch(/overseer's non-current transcripts/);
+    }
+  });
+
   it("a non-default value in a config file reaches the archiver's policy", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-archive-cfg-"));
     try {

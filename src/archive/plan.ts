@@ -22,7 +22,7 @@
 // them, and the longest is measured. Plan mode writes nothing: no file, no
 // directory, no row.
 import { stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { StateStore } from "../state.js";
 import { yieldToLoop } from "../yieldloop.js";
@@ -36,9 +36,11 @@ import {
   ARTIFACT_CLASSES,
   PR_DIR,
   SpanMeter,
+  fileSize,
   listLiveTree,
   prInventory,
   topLevelInjectFiles,
+  walkFiles,
   type ArtifactClass,
 } from "./prfiles.js";
 
@@ -129,6 +131,11 @@ export interface ArchivePlan {
   /** `archive/pr-<n>/session.jsonl` of the candidates: the legacy copies
    * checked as duplicates of an archived transcript (§7.5). */
   legacy_copies: Tally;
+  /** Top-level `state/` entries named for an eligible PR that no §7.2 class
+   * claims: KEPT live (never moved on a guess) and reported here, with the
+   * first few paths, so nothing stays live unseen under an `archived` row.
+   * Absent from a plan an older build made. */
+  unclassified?: Tally & { first: string[] };
   events: RowBacklog;
   deliveries: RowBacklog;
   backlog: { prs: number; bytes: number; event_rows: number; delivery_rows: number };
@@ -463,6 +470,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
   >;
   const ledgerSnapshots = emptyTally();
   const legacyCopies = emptyTally();
+  const unclassified: Tally & { first: string[] } = { files: 0, bytes: 0, first: [] };
   const candidates: PlannedPr[] = [];
   const empty: number[] = [];
   for (const c of eligible) {
@@ -483,6 +491,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     };
     const ledger: Tally = emptyTally();
     const legacy: Tally = emptyTally();
+    const other: Array<{ path: string; size: number }> = [];
     try {
       const inv = await prInventory(listing, c.pr, {
         store,
@@ -495,6 +504,20 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       for (const f of inv.small) tally(f.cls, f.size);
       if (inv.ledger) add(ledger, inv.ledger.size);
       if (inv.legacy) add(legacy, inv.legacy.size);
+      // What no class claims: counted (a directory by the files under it).
+      for (const p of listing.unclassified.get(c.pr) ?? []) {
+        const size = await fileSize(p);
+        if (size !== null) {
+          other.push({ path: p, size });
+          continue;
+        }
+        const files: string[] = [];
+        await walkFiles(p, files, signal);
+        for (const f of files) {
+          const s = await fileSize(f);
+          if (s !== null) other.push({ path: f, size: s });
+        }
+      }
     } catch (err) {
       if (signal?.aborted) throw err;
       counts.held += 1;
@@ -507,6 +530,10 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
       continue;
     }
     counts.eligible += 1;
+    for (const o of other) {
+      add(unclassified, o.size);
+      if (unclassified.first.length < 20) unclassified.first.push(relative(root, o.path));
+    }
     if (planned.files === 0) {
       // Archived already and nothing live left: not backlog.
       if (archivedRows.get(c.pr) === "archived") counts.archived += 1;
@@ -587,6 +614,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     artifacts,
     ledger_snapshots: ledgerSnapshots,
     legacy_copies: legacyCopies,
+    unclassified,
     events: events.backlog,
     deliveries: deliveries.backlog,
     backlog: {

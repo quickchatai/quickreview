@@ -14,8 +14,10 @@
 //     against the manifest, `utimes` to the original mtime, renamed into place
 //     without replacing anything, the directory fsynced.
 //   - Idempotent: a file already present with the recorded bytes is left
-//     alone; one present with OTHER bytes (the live file is newer) is left
-//     alone too and named in the restore entry — never overwritten.
+//     alone — and its identity recorded (`present`), so a file an earlier,
+//     interrupted pass put back is known to a later re-archive; one present
+//     with OTHER bytes (the live file is newer) is left alone too and named
+//     in the restore entry — never overwritten.
 //   - It ends `restored` (`restored_at`, and a `restore` manifest entry
 //     carrying each restored file's new identity, so a re-archive after a
 //     re-close REUSES the archived copy instead of compressing it again), or
@@ -167,8 +169,38 @@ export async function restorePr(
           bytesPerS: deps.bytesPerS,
           ...(deps.signal ? { signal: deps.signal } : {}),
         });
-        if (d.bytes === r.bytes && d.sha256 === r.sha256) out.present += 1;
-        else out.liveDiffers.push(r.source);
+        const after = await identityOrNull(target);
+        const steady =
+          after !== null &&
+          after.dev === live.dev &&
+          after.ino === live.ino &&
+          after.size === live.size &&
+          after.mtimeMs === live.mtimeMs;
+        if (steady && d.bytes === r.bytes && d.sha256 === r.sha256) {
+          out.present += 1;
+          // Its identity is recorded unless it is the one the archive record
+          // already holds (a source that was never unlinked). A file an
+          // earlier restore pass put back — one that died before its entry
+          // was written — has a NEW inode: unrecorded, a re-archive after a
+          // re-close would not know it and would compress the same bytes
+          // again under `.v2`, instead of reusing the archived copy.
+          if (!(
+            live.dev === r.dev &&
+            live.ino === r.ino &&
+            live.size === r.bytes &&
+            live.mtimeMs === r.mtime_ms
+          ))
+            restored.push({
+              source: r.source,
+              archive: r.archive,
+              sha256: r.sha256,
+              bytes: live.size,
+              mtime_ms: live.mtimeMs,
+              dev: live.dev,
+              ino: live.ino,
+              present: true,
+            });
+        } else out.liveDiffers.push(r.source);
         continue;
       }
       // Room on the live mount first (§7.7, §8.4): short of it, nothing more
@@ -224,8 +256,9 @@ export async function restorePr(
     // Outside the per-file catch: a test's crash here is a crash.
     await deps.step?.("restored_file", { pr, source: r.source });
   }
-  // The record: one restore entry (the new identities let a re-archive reuse
-  // the archived copies), whether or not everything came back.
+  // The record: one restore entry (the new identities — of the files put
+  // back now, and of those found already back — let a re-archive reuse the
+  // archived copies), whether or not everything came back.
   if (restored.length > 0 || failed.length > 0 || out.liveDiffers.length > 0) {
     const next = cloneManifest(manifest);
     const id = `restore-${deps
@@ -241,7 +274,7 @@ export async function restorePr(
       kind: "restore",
       trigger,
       at: at(),
-      files: restored.length,
+      files: out.restored,
       restored,
       ...(out.liveDiffers.length > 0 ? { live_differs: out.liveDiffers } : {}),
       ...(failed.length > 0 ? { failed } : {}),

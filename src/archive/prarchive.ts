@@ -12,7 +12,10 @@
 //      time, its manifest entry appended after its rename. A source the
 //      manifest already holds with the SAME identity is not read again (a
 //      re-run after a crash, or a re-archive of a restored file — that one
-//      gets a `reused` entry, never a second gzip).
+//      gets a `reused` entry, never a second gzip). One whose identity moved
+//      with its bytes unchanged is compressed, found equal (sha256, length)
+//      to the source's earlier entry, and its new gzip dropped for a `reused`
+//      entry too (`commitPacked`).
 //   5. The small files as ONE bundle (`bundle.ts`), the ledger snapshotted.
 //   6. The legacy `archive/pr-<n>/session.jsonl`: a verified duplicate (whole,
 //      or a byte-prefix) of the transcript `meta.json` names is removed with a
@@ -24,6 +27,9 @@
 //   8. Each source unlinked only if its identity is still the one hashed;
 //      then the manifest stamped, emptied directories removed with a
 //      NON-recursive rmdir, and the row `archived` once nothing is left live.
+//      The row's counts are the manifest's (`rowTallies`), never this pass's
+//      own sums — a pass a crash or a throw cut short leaves files the pass
+//      that completes only reuses, and those must still be counted.
 //
 // Between files the pass asks whether it must stop (the tick budget, a hold,
 // a restore waiting for the mutex, `stop()`); a stopped PR stays `archiving`
@@ -57,6 +63,7 @@ import {
   cloneManifest,
   readManifest,
   referencedArchives,
+  rowTallies,
   settledIndex,
   writeManifest,
   type BundleFile,
@@ -490,6 +497,57 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
     gz_bytes: r.gzBytes,
   });
 
+  /**
+   * The entry for a freshly verified gzip at `dest` — unless an earlier entry
+   * of the SAME source already holds these exact bytes (sha256 and length) in
+   * an archive file on disk. Then the new gzip is a proven duplicate: it is
+   * removed and a `reused` entry points at the one already there, so a file
+   * whose identity changed with its bytes unchanged (a restore that died
+   * before recording it, a tree copy or migration that renumbered every
+   * inode) is never stored twice. The gzip goes first: a crash before the
+   * entry leaves the source unrecorded, and the next pass converges here
+   * again. Returns how it was recorded.
+   */
+  const commitPacked = async (
+    rel: string,
+    dest: string,
+    p: Packed,
+    entryOf: (archive: string, p: Packed) => FileEntry,
+  ): Promise<"new" | "reused"> => {
+    let held: FileEntry | null = null;
+    for (const e of manifest.entries)
+      if (
+        (e.kind === "transcript" || e.kind === "file") &&
+        !e.reused &&
+        e.source === rel &&
+        e.archive !== dest &&
+        e.sha256 === p.sha256 &&
+        e.bytes === p.bytes &&
+        (await archiveExists(dir, e.archive)) !== null
+      ) {
+        held = e;
+        break;
+      }
+    if (!held) {
+      await commit((next) => next.entries.push(entryOf(dest, p)));
+      return "new";
+    }
+    const same = held;
+    await unlinkIfPresent(join(dir, dest));
+    await fsyncDir(dirname(join(dir, dest)));
+    await commit((next) =>
+      next.entries.push({
+        ...entryOf(same.archive, { ...p, gz_bytes: same.gz_bytes }),
+        reused: true,
+      }),
+    );
+    res.reused += 1;
+    deps.log(
+      `archive: pr-${pr} — ${rel} holds the bytes ${same.archive} already does: reused, the new ${dest} removed`,
+    );
+    return "reused";
+  };
+
   // 4. Transcripts.
   for (const t of transcripts) {
     stop = deps.stopReason();
@@ -562,11 +620,13 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
       break;
     }
     const r = out.ok;
-    await commit((next) => next.entries.push(entryOf(out.dest, packedOf(r, t.id))));
+    const how = await commitPacked(t.rel, out.dest, packedOf(r, t.id), entryOf);
     await deps.step?.("manifest_appended", { pr, source: t.rel });
-    res.transcripts += 1;
-    res.bytesIn += r.bytes;
-    res.bytesOut += r.gzBytes;
+    if (how === "new") {
+      res.transcripts += 1;
+      res.bytesIn += r.bytes;
+      res.bytesOut += r.gzBytes;
+    }
     unlinks.push({ path: t.path, rel: t.rel, identity: toFields(t.id) });
     if (prefixBytes !== undefined)
       legacySrc = { bytes: r.bytes, sha256: r.sha256, prefixSha256: r.prefixSha256 };
@@ -623,10 +683,11 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
           continue;
         }
         const r = out.ok;
-        await commit((next) => next.entries.push(entryOf(out.dest, packedOf(r, id))));
-        res.stateFiles += 1;
-        res.bytesIn += r.bytes;
-        res.bytesOut += r.gzBytes;
+        if ((await commitPacked(rel, out.dest, packedOf(r, id), entryOf)) === "new") {
+          res.stateFiles += 1;
+          res.bytesIn += r.bytes;
+          res.bytesOut += r.gzBytes;
+        }
         unlinks.push({ path: f.path, rel, identity: toFields(id) });
         await yieldToLoop();
         continue;
@@ -766,9 +827,11 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
             if (out === "verify_failed" || out === "changed") incomplete = true;
             else {
               const r = out.ok;
-              await commit((next) => next.entries.push(entryOf(out.dest, packedOf(r, legacyId))));
-              res.bytesIn += r.bytes;
-              res.bytesOut += r.gzBytes;
+              const how = await commitPacked(legacyRel, out.dest, packedOf(r, legacyId), entryOf);
+              if (how === "new") {
+                res.bytesIn += r.bytes;
+                res.bytesOut += r.gzBytes;
+              }
               unlinks.push({ path: inv.legacy.path, rel: legacyRel, identity: toFields(legacyId) });
             }
           }
@@ -897,10 +960,7 @@ export async function archivePr(deps: PrPassDeps, pr: number): Promise<PrPassRes
   finishArchiveRow(store, pr, {
     at,
     complete,
-    transcriptFiles: res.transcripts,
-    stateFiles: res.stateFiles,
-    bytesIn: res.bytesIn,
-    bytesOut: res.bytesOut,
+    tallies: deps.meter.measure(() => rowTallies(manifest)),
     error: complete ? null : res.reason,
   });
   res.outcome = complete ? "archived" : unlinkStop ? "held" : "partial";

@@ -498,6 +498,8 @@ export function dbPhrase(s: ArchiveStatus): string {
   if (!d) return "";
   const moved = `db: ${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved last run`;
   const months = `${d.months_open} open month(s), ${d.months_sealed} sealed`;
+  if (d.outcome === "skipped" && d.skipped_reason === "checkpoint_failed")
+    return `db STOPPED (checkpoint_failed: the live checkpoint off the loop failed) at ${d.last_run_at} after ${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved; ${months}`;
   if (d.outcome === "skipped")
     return `db SKIPPED (${d.skipped_reason ?? "reason unknown"}) at ${d.last_run_at}, nothing deleted; ${months}`;
   if (d.outcome === "failed") return `db FAILED at ${d.last_run_at}; ${months}`;
@@ -547,6 +549,41 @@ export function storesAlertPhrase(s: ArchiveStatus): string {
   return parts.join("; ");
 }
 
+/** How many reopened PRs wait for their archived files to come back, and
+ * who will bring them: in mode `on` a birth or the next tick; in any other
+ * mode nothing does (§8.3, S3 Build notes), so the phrase names the verb. ""
+ * when none waits (or restores could not be counted). */
+export function pendingRestorePhrase(s: ArchiveStatus): string {
+  const n = s.restores?.pending ?? 0;
+  if (n <= 0) return "";
+  return s.mode === "on"
+    ? `${n} reopened PR(s) awaiting restore`
+    : `${n} REOPENED PR(S) AWAITING RESTORE — mode is ${s.mode}, so no tick or birth restores them: run \`qcr archive restore <pr>\``;
+}
+
+/**
+ * What in the archive block needs a PERSON (docs/archiving.md §11) — the
+ * board's banner and the companion's view: held for disk (low, or UNKNOWN), a
+ * restore that failed, a reopened PR no tick or birth will restore (mode not
+ * `on`; until it is restored its archived receipts read UNKNOWN and its
+ * pre-close recheck claims stay standing), or ≥ 3 verify failures in 24 h.
+ * [] when nothing does. Pure.
+ */
+export function archiveAttention(s: ArchiveStatus): string[] {
+  const out: string[] = [];
+  if (s.state === "held" && s.held_reason === "disk_low")
+    out.push("HELD: free disk below the headroom");
+  if (s.state === "held" && s.held_reason === "disk_unknown") out.push("HELD: free disk UNKNOWN");
+  if (s.restores && s.restores.failed > 0) out.push(`${s.restores.failed} RESTORE(S) FAILED`);
+  if (s.mode !== "on" && s.restores && s.restores.pending > 0)
+    out.push(
+      `${s.restores.pending} REOPENED PR(S) AWAITING RESTORE (mode ${s.mode}: qcr archive restore <pr>)`,
+    );
+  if (s.verify_failures_24h !== null && s.verify_failures_24h >= 3)
+    out.push(`${s.verify_failures_24h} VERIFY FAILURES in 24h`);
+  return out;
+}
+
 /**
  * The one archive line `qcr status` prints. An absent block (an older
  * daemon), an unmeasured one and one this build cannot read whole each say
@@ -557,11 +594,21 @@ export function archiveStatusLine(v: unknown): string {
   if (r.kind === "absent") return "archive: NOT REPORTED (this daemon predates the archive block)";
   if (r.kind === "unreadable") return `archive: UNKNOWN (unreadable block: ${r.why})`;
   const s = r.view;
-  if (s.state === "off") return 'archive: off ([archive] mode = "off" — nothing armed)';
+  if (s.state === "off") {
+    // Off arms nothing — but files an earlier `on` period archived are still
+    // archived, and a reopened PR's must come back by hand.
+    const left = [
+      s.restores && s.restores.failed > 0 ? `${s.restores.failed} RESTORE(S) FAILED` : "",
+      pendingRestorePhrase(s),
+    ].filter((x) => x !== "");
+    return `archive: off ([archive] mode = "off" — nothing armed)${left.length > 0 ? `; ${left.join("; ")}` : ""}`;
+  }
   const extras: string[] = [];
   if (s.held_prs && s.held_prs.count > 0) extras.push(`${s.held_prs.count} closed PR(s) held`);
   if (s.orphans && s.orphans.count > 0) extras.push(`${s.orphans.count} orphan session dir(s)`);
   if (s.restores && s.restores.failed > 0) extras.push(`${s.restores.failed} RESTORE(S) FAILED`);
+  const pending = pendingRestorePhrase(s);
+  if (pending) extras.push(pending);
   if (s.verify_failures_24h) extras.push(`${s.verify_failures_24h} verify failure(s) in 24h`);
   const db = dbPhrase(s);
   if (db) extras.push(db);

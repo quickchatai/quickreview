@@ -79,6 +79,10 @@ export const OVERSEER_SESSION = "overseer";
  * world-readable — so no prefix carries a credential. */
 const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
 
+/** The once-per-claim memory of `receipt_archived_unknown` holds at most this
+ * many keys; past it, it starts again (each logged once more). */
+const ARCHIVED_UNKNOWN_LOG_KEYS = 10_000;
+
 /**
  * The config-scope pin: which files git may read configuration from, decided by
  * the DAEMON at spawn time rather than discovered by git at run time.
@@ -265,6 +269,12 @@ export class PiSessionManager implements SessionHooks {
   private readonly ovSweepFailedAt = new Map<string, number>();
   /** The receipt scan's index: each session file's receipt tokens, read once. */
   private readonly receipts = new ReceiptIndex();
+  /** `receipt_archived_unknown` already logged, by (pr, marker, archive
+   * state): once each, not once per sweep — reconcile asks about a standing
+   * claim every pass, and a reopened PR left unrestored (mode not `on`) would
+   * otherwise write ~288 rows a day per claim, indefinitely. A changed
+   * archive state logs again; a restart logs each once more. */
+  private readonly archivedUnknownLogged = new Set<string>();
   /** Awaited before a PR session is born (§8.3): the archiver's
    * restore of a reopened PR's archived files. Unset ⇒ nothing to wait for. */
   private beforeBirthHook?: (pr: number) => Promise<void>;
@@ -1126,12 +1136,19 @@ export class PiSessionManager implements SessionHooks {
           scope.max_mtime_ms !== null &&
           sinceMs - RECEIPT_SCOPE_SLACK_MS <= scope.max_mtime_ms)
       ) {
-        this.commandStore?.logEvent("receipt_archived_unknown", pr, {
-          marker,
-          since_ms: sinceMs,
-          archive_state: scope === "unreadable" ? "unreadable" : scope.state,
-          max_mtime_ms: scope === "unreadable" ? null : scope.max_mtime_ms,
-        });
+        const archiveState = scope === "unreadable" ? "unreadable" : scope.state;
+        const key = `${pr}\u0000${marker}\u0000${archiveState}`;
+        if (!this.archivedUnknownLogged.has(key)) {
+          if (this.archivedUnknownLogged.size >= ARCHIVED_UNKNOWN_LOG_KEYS)
+            this.archivedUnknownLogged.clear();
+          this.archivedUnknownLogged.add(key);
+          this.commandStore?.logEvent("receipt_archived_unknown", pr, {
+            marker,
+            since_ms: sinceMs,
+            archive_state: archiveState,
+            max_mtime_ms: scope === "unreadable" ? null : scope.max_mtime_ms,
+          });
+        }
         return null;
       }
     }

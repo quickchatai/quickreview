@@ -437,10 +437,14 @@ export class Archiver {
     this.cancel?.();
     this.cancel = null;
     this.abort.abort();
+    // The daemon connection's automatic checkpoint back now, synchronously:
+    // the daemon may close the store right after this returns.
+    this.mover?.release();
     if (!this.running) this.closeDb();
   }
 
   private closeDb(): void {
+    this.mover?.release();
     this.adb?.close();
     this.adb = null;
     this.mover = null;
@@ -1465,7 +1469,9 @@ export class Archiver {
     const undatable = r.events.undatable + r.deliveries.undatable;
     if (r.outcome === "skipped")
       this.log(
-        `archive: db batch SKIPPED (${r.skipped_reason}) — nothing deleted; the next tick retries: ${r.error}`,
+        r.skipped_reason === "checkpoint_failed"
+          ? `archive: db run STOPPED (checkpoint_failed) after its last batch — the rows it moved stay moved, the live automatic checkpoint is back on; the next tick retries: ${r.error}`
+          : `archive: db batch SKIPPED (${r.skipped_reason}) — nothing deleted; the next tick retries: ${r.error}`,
       );
     for (const sk of r.skips)
       if (sk.reason === "verify_mismatch")
@@ -1483,11 +1489,16 @@ export class Archiver {
         sync_ms: r.sync_ms,
         max_span_ms: r.max_span_ms,
         batch_rows: r.batch_rows,
+        live_checkpoints: r.live_checkpoints,
+        live_checkpoint_max_ms: r.live_checkpoint_max_ms,
       });
     this.log(
       `archive: db — ${r.events.moved} event / ${r.deliveries.moved} delivery row(s) moved ` +
         `(${r.outcome}${r.skipped_reason ? `: ${r.skipped_reason}` : ""}); ` +
         `${r.sync_ms} ms synchronous, longest ${r.max_span_ms} ms; next batch ${r.batch_rows} rows` +
+        (r.live_checkpoints > 0
+          ? `; ${r.live_checkpoints} live checkpoint(s) off the loop, longest ${r.live_checkpoint_max_ms} ms`
+          : "") +
         (undatable > 0 ? `; ${undatable} undatable row(s) kept live` : ""),
     );
   }

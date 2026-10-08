@@ -15,7 +15,7 @@
 // live mount short of its headroom writes nothing; a crash mid-file is swept
 // at the next start; a file that appears at the target is never replaced;
 // and the tick's restores obey every load hold but the drain.
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
@@ -578,6 +578,124 @@ describe("idempotent, and a re-archive reuses (acceptance 6)", () => {
       c.stop();
       for (const rel of f.transcripts)
         expect(readFileSync(join(f.root, rel)).equals(f.bytes.get(rel)!), rel).toBe(true);
+    },
+  );
+});
+
+describe("a restore cut short, then a re-close: nothing is compressed twice (rehearsal 2026-10-08)", () => {
+  const reclose = async (f: PrFixture, steps: string[], logs: string[] = []): Promise<void> => {
+    f.store.db.prepare("UPDATE pr_state SET state = 'closed' WHERE number = ?").run(f.pr);
+    f.store.logEvent("pr_closed", f.pr, { merged: true });
+    f.clock.ms = T0 + 15 * DAY;
+    const b = onArchiver(
+      f,
+      {},
+      {
+        step: (name, info) => {
+          if (typeof info.src === "string") steps.push(`${name} ${info.src}`);
+        },
+        log: (m) => logs.push(m),
+      },
+    );
+    await b.tick();
+    b.stop();
+    expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
+  };
+  const gzNames = (f: PrFixture): string[] =>
+    filesUnder(join(f.root, "archive", `pr-${f.pr}`, "transcripts")).filter((n) =>
+      n.endsWith(".gz"),
+    );
+
+  it(
+    "files an interrupted restore put back are recorded by the pass that completes it — the re-archive reuses them, no transcript is read into a gzip again",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archived();
+      reopen(f);
+      const deps = {
+        store: f.store,
+        root: f.root,
+        sessionsRoot: join(f.root, "state", "pi-sessions"),
+        now: () => new Date(f.clock.ms),
+        bytesPerS: 1e9,
+        log: () => {},
+      };
+      // Killed after two files landed: no restore entry, no row update.
+      let n = 0;
+      await expect(
+        restorePr(
+          {
+            ...deps,
+            step: (name) => {
+              if (name === "restored_file" && ++n === 2) throw new Error("killed");
+            },
+          },
+          f.pr,
+          "reopen",
+        ),
+      ).rejects.toThrow("killed");
+      const landed = f.transcripts.filter((t) => existsSync(join(f.root, t)));
+      expect(landed.length).toBe(2);
+      const again = await restorePr(deps, f.pr, "reopen");
+      expect(again).toMatchObject({ outcome: "restored", present: 2, restored: 2 });
+      // The restore entry carries the files found back, with their NEW inodes.
+      const restore = manifestOf(f)
+        .entries.filter((e) => e.kind === "restore")
+        .pop()!;
+      const restored = restore.restored as Array<Record<string, unknown>>;
+      for (const t of landed)
+        expect(restored.find((r) => r.source === t)).toMatchObject({
+          present: true,
+          ino: statSync(join(f.root, t)).ino,
+        });
+      expect(restore.files).toBe(2);
+      // Re-closed, past the window: every transcript is reused, none read
+      // into a .partial, and there is no second gzip of any.
+      const before = gzNames(f);
+      const steps: string[] = [];
+      await reclose(f, steps);
+      expect(steps.filter((x) => x.startsWith("partial_written"))).toEqual([]);
+      expect(gzNames(f)).toEqual(before);
+      const added = manifestOf(f).entries.filter(
+        (e) => e.kind === "transcript" && e.reused === true,
+      );
+      expect(added.map((e) => e.source).sort()).toEqual([...f.transcripts].sort());
+      for (const t of f.transcripts) expect(existsSync(join(f.root, t))).toBe(false);
+    },
+  );
+
+  it(
+    "the belt: a transcript whose inode changed with its bytes unchanged (a tree copy) is compressed, found equal to its archived copy, and its new gzip dropped for a reused entry",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = await archived();
+      reopen(f);
+      const a = onArchiver(f);
+      await a.beforeBirth(f.pr);
+      a.stop();
+      // A copy of the tree: same bytes, same mtime, a new inode.
+      const t = f.transcripts[1]!;
+      const p = join(f.root, t);
+      const bytes = readFileSync(p);
+      const { ino, mtime } = statSync(p);
+      rmSync(p);
+      writeFileSync(p, bytes);
+      utimesSync(p, mtime, mtime);
+      expect(statSync(p).ino).not.toBe(ino);
+      const before = gzNames(f);
+      const logs: string[] = [];
+      await reclose(f, [], logs);
+      // No .v2: one gzip per transcript, as before.
+      expect(gzNames(f)).toEqual(before);
+      expect(gzNames(f).some((n) => /\.v\d+\.gz$/.test(n))).toBe(false);
+      const base = `transcripts/${t.slice(`state/pi-sessions/pr-${f.pr}/`.length)}.gz`;
+      const mine = manifestOf(f).entries.filter((e) => e.kind === "transcript" && e.source === t);
+      expect(mine.at(-1)).toMatchObject({ reused: true, archive: base, ino: expect.any(Number) });
+      expect(mine.at(-1)!.source_removed_at).toBeTruthy();
+      expect(logs.some((l) => /holds the bytes .* already does: reused/.test(l))).toBe(true);
+      expect(existsSync(p)).toBe(false);
+      // The row counts the archive's files once.
+      expect(archiveRow(f.store, f.pr)).toMatchObject({ transcript_files: 3 });
     },
   );
 });

@@ -108,11 +108,18 @@ describe("the receipt guard (acceptance 5)", () => {
       put(f.root, `state/pi-sessions/pr-${f.pr}/2026-10-21T12-00-00_new.jsonl`, line("hello"), T0);
 
       expect(await rig.m.wakeReceiptPresent(f.pr, marker, claimMs)).toBeNull();
-      const ev = f.store.db
-        .prepare("SELECT payload FROM events WHERE kind = 'receipt_archived_unknown' AND pr = ?")
-        .all(f.pr) as Array<{ payload: string }>;
-      expect(ev.length).toBeGreaterThan(0);
+      const unknownRows = (): Array<{ payload: string }> =>
+        f.store.db
+          .prepare("SELECT payload FROM events WHERE kind = 'receipt_archived_unknown' AND pr = ?")
+          .all(f.pr) as Array<{ payload: string }>;
+      const ev = unknownRows();
+      expect(ev).toHaveLength(1);
       expect(JSON.parse(ev[0]!.payload)).toMatchObject({ marker, archive_state: "archived" });
+      // Asked again (reconcile asks every pass): still UNKNOWN, logged once —
+      // never a row per sweep for as long as the PR stays unrestored.
+      expect(await rig.m.wakeReceiptPresent(f.pr, marker, claimMs)).toBeNull();
+      expect(await rig.m.wakeReceiptPresent(f.pr, marker, claimMs)).toBeNull();
+      expect(unknownRows()).toHaveLength(1);
 
       // A reconcile pass asks about the claim and keeps it.
       const hooks: SessionHooks = {

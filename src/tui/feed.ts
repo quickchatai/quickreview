@@ -38,6 +38,7 @@ import {
 } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { archiveAttention, archiveStatusLine, readArchiveStatus } from "../archive/status.js";
 import type { StatusSnapshot } from "../state.js";
 import type { DaemonLoadStatus } from "../eventloop.js";
 import type { MemoryStatus, RequestCounter } from "../memory/health.js";
@@ -171,9 +172,26 @@ export interface TuiView {
    * it. `null` when the TUI has no snapshot or the daemon reported no block;
    * the companion renders that as UNKNOWN, never as ok. */
   daemon: DaemonLoadStatus | null;
+  /** The archiver: the `qcr status` archive line, rendered from
+   * status.json's `archive` block as the TUI last read it — an older daemon's
+   * missing block says NOT REPORTED, an unreadable one UNKNOWN — plus what in
+   * it needs a person (`archiveAttention`: held for disk, a failed restore, a
+   * reopened PR no tick will restore, repeated verify failures). `null` when
+   * the TUI has no snapshot; the companion renders that as UNKNOWN. */
+  archive: { line: string; attention: string[] } | null;
 }
 
 const PENDING_COMMITS_MAX = 40;
+
+/** status.json `archive` as the companion reads it: the one line, and what in
+ * it needs a person. Total over the parsed JSON. */
+function archiveView(block: unknown): { line: string; attention: string[] } {
+  const r = readArchiveStatus(block);
+  return {
+    line: archiveStatusLine(block),
+    attention: r.kind === "read" ? archiveAttention(r.view) : [],
+  };
+}
 
 /** Whichever age the health variant carries, in whole seconds. `Infinity`
  * (never reached the daemon) is reported as absent rather than as a number. */
@@ -326,6 +344,7 @@ export function buildTuiView(src: ViewSource): TuiView {
     ...(src.notice ? { notice: src.notice.slice(0, 400) } : {}),
     memory: src.snapshot?.memory ?? null,
     daemon: src.snapshot?.daemon ?? null,
+    archive: src.snapshot ? archiveView(src.snapshot.archive) : null,
     ...(src.tuiMemoryRequests ? { memory_tui_requests: src.tuiMemoryRequests } : {}),
   };
 }

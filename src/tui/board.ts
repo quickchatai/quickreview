@@ -3,6 +3,7 @@
 // age, rounds, verdict chip), colored glyph legend, section titles with
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
+import { archiveAttention, readArchiveStatus } from "../archive/status.js";
 import type { WhyPayload } from "../cli.js";
 import { readDaemonLoad, stallShortPhrase } from "../eventloop.js";
 import { curationNeedsAttention, earlierPhrase } from "../learner/status.js";
@@ -396,6 +397,25 @@ export function curationSegment(snapshot: StatusSnapshot | undefined): string | 
 }
 
 /**
+ * The board's ARCHIVE banner (docs/archiving.md §11), from
+ * status.json `archive` alone, through its total reader: loud only for what
+ * needs a person (`archiveAttention`) — held for disk, a restore that failed,
+ * a reopened PR no tick or birth will restore (mode not `on`: its archived
+ * receipts read UNKNOWN until `qcr archive restore`), or repeated verify
+ * failures. A block this build cannot read is a dim `archive ?`, never
+ * silence; nothing for a daemon that reports no block, and a quiet archiver
+ * is quiet.
+ */
+export function archiveSegment(snapshot: StatusSnapshot | undefined): string | undefined {
+  if (!snapshot) return undefined;
+  const r = readArchiveStatus(snapshot.archive);
+  if (r.kind === "absent") return undefined;
+  if (r.kind === "unreadable") return `${FG.dim}archive ?${RESET}`;
+  const parts = archiveAttention(r.view);
+  return parts.length > 0 ? `${FG.anomaly}⛔ ARCHIVE ${parts.join(" · ")}${RESET}` : undefined;
+}
+
+/**
  * The board's event-loop banner (L2), from status.json `daemon` and
  * nothing else: the daemon measuring its own loop. On 2026-10-07 its /health
  * went unanswered for ~70 s at a time and no surface said so.
@@ -462,6 +482,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const badge = alerts && view.alerts ? alertSegment(view.alerts, view.alertFocus === true) : "";
   const mem = memorySegment(s, view.now ?? new Date());
   const curation = curationSegment(s) ?? "";
+  const archive = archiveSegment(s) ?? "";
   const loop = eventLoopSegment(s);
   return [
     `${HEADING}quickreview${DRESET}`,
@@ -470,6 +491,7 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
     mem?.loud ? mem.text : "",
     loop?.loud ? loop.text : "",
     curation,
+    archive,
     drainSeg,
     breakerSeg,
     rounds,

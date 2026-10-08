@@ -118,6 +118,9 @@ interface ViewJson {
   memory?: Record<string, unknown> | null;
   /** status.json `daemon` as the TUI read it (L2); `null` = unread. */
   daemon?: Record<string, unknown> | null;
+  /** The archiver's `qcr status` line and what in it needs a person, as the
+   * TUI rendered them; `null` = unread. */
+  archive?: { line?: unknown; attention?: unknown } | null;
 }
 
 function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: string } {
@@ -362,6 +365,25 @@ export function daemonLoadLine(value: unknown): string {
   return `daemon event loop: UNKNOWN (not measured yet)${longest}; ${cpu}`;
 }
 
+/**
+ * The archiver as ONE line (docs/archiving.md §11): the line the TUI
+ * rendered from status.json, with what needs a person first. Absent (an older
+ * TUI) or `null` (the TUI has no snapshot) is an explicit UNKNOWN — a dropped
+ * line would read as "nothing to report".
+ */
+export function archiveLine(value: unknown): string {
+  if (value === undefined) return "archive: UNKNOWN (this TUI build publishes no archive field)";
+  if (value === null || typeof value !== "object")
+    return "archive: UNKNOWN (the TUI has not been able to read it — there is no snapshot)";
+  const a = value as { line?: unknown; attention?: unknown };
+  const line =
+    typeof a.line === "string" ? a.line.slice(0, 600) : "archive: UNKNOWN (an unreadable line)";
+  const attention = Array.isArray(a.attention)
+    ? a.attention.filter((x): x is string => typeof x === "string")
+    : [];
+  return attention.length > 0 ? `archive NEEDS ATTENTION: ${attention.join(" · ")}\n${line}` : line;
+}
+
 export function boardAnswer(dir: string, now: Date): string {
   const { view, mtimeMs, error } = loadView(dir);
   if (error !== undefined || !view) return error ?? "no view";
@@ -379,6 +401,7 @@ export function boardAnswer(dir: string, now: Date): string {
     fmt("snapshot written at", b.snapshot_written_at),
     memoryLine(view.memory),
     daemonLoadLine(view.daemon),
+    archiveLine(view.archive),
     fmt("selected PR", view.selected),
     fmt("pi pane", view.pane),
     fmt("notice line", view.notice),
@@ -423,7 +446,7 @@ export function toolDefinitions(
       name: "tui_board",
       label: "TUI board state",
       description:
-        "A small projection of the board behind the screen: tab, daemon health, reviewer-memory health, the daemon's event-loop lag and CPU throttling, PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
+        "A small projection of the board behind the screen: tab, daemon health, reviewer-memory health, the daemon's event-loop lag and CPU throttling, the archiver's status (and what in it needs a person), PR counts by state, rounds running, today's spend, and the PR the owner has selected. " +
         READ_ONLY,
       promptSnippet: "Read the board summary and the selected PR",
       parameters: NO_PARAMS,

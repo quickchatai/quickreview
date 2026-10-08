@@ -16,7 +16,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Archiver } from "../src/archive/archiver.js";
+import { Archiver, archivePolicy } from "../src/archive/archiver.js";
+import { renderArchiveReport } from "../src/archive/report.js";
 import {
   COUNT_WINDOW_ROWS,
   askLiveSessions,
@@ -259,6 +260,42 @@ describe("the plan — what a pass would move (§7.2)", () => {
         expect(p.tmux).toBe("answered");
         expect(p.births_observed).toBe(true);
         expect(p.same_device).toBe(true);
+      } finally {
+        f.store.close();
+      }
+    },
+  );
+
+  it(
+    "any per-round state/ entry a session wrote is a round file; a state/pr-<n>-* entry no class claims is REPORTED and kept (rehearsal 2026-10-08)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      try {
+        put(f.root, "state/pr-100-round-3-body.md", 44); // a session's own round file
+        put(f.root, "state/pr-100-notes.md", 12); // claimed by no class
+        put(f.root, "state/pr-1000-scratch/x.txt", 5); // the "empty" PR's, a dir
+        put(f.root, "state/pr-200-other.md", 9); // PR 200 is inside the window
+        const p = await plan(f);
+        expect(p.artifacts.round_files).toEqual({ files: 4, bytes: 183 + 44 });
+        expect(p.unclassified).toEqual({
+          files: 2,
+          bytes: 17,
+          first: ["state/pr-100-notes.md", "state/pr-1000-scratch/x.txt"],
+        });
+        // Kept live: never counted as backlog or as a candidate's file.
+        expect(p.candidates[0]).toMatchObject({ files: 21 });
+        expect(p.empty).toEqual([1000]);
+        const text = renderArchiveReport({
+          block: undefined,
+          statusNote: "x",
+          ledger: { by_state: {}, archived_event_rows: 0, marks: {} },
+          policy: archivePolicy(ARCHIVE_DEFAULTS),
+          plan: p,
+        });
+        expect(text).toMatch(
+          /KEPT LIVE, no class claims them: 2 state\/pr-<n>-\* file\(s\) of eligible PRs, .* — state\/pr-100-notes\.md, state\/pr-1000-scratch\/x\.txt/,
+        );
       } finally {
         f.store.close();
       }

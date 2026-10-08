@@ -117,6 +117,19 @@ function converged(f: PrFixture): void {
   expect(bundle.kept).toBeUndefined();
   expect(entries.filter((e) => e.kind === "sources_removed")).toEqual([]);
   expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
+  // The row counts what the archive holds — the files the crashed run
+  // archived (and the next pass only reused) included (rehearsal 2026-10-08:
+  // a converged PR read 0 files and 0 bytes after a kill).
+  const gz = entries
+    .filter((e) => e.kind === "transcript")
+    .reduce((n, e) => n + (e.gz_bytes as number), 0);
+  expect(archiveRow(f.store, f.pr)).toMatchObject({
+    transcript_files: 3,
+    state_files: f.small.length,
+    bytes_in:
+      f.transcripts.reduce((n, t) => n + f.bytes.get(t)!.length, 0) + (bundle.bytes as number),
+    bytes_out: gz + (bundle.gz_bytes as number),
+  });
 }
 
 describe("crash injection — the next start converges (acceptance 3)", () => {

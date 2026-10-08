@@ -18,6 +18,7 @@ import {
   renderArchiveReport,
 } from "../src/archive/report.js";
 import {
+  archiveAttention,
   archiveStatusLine,
   pendingArchiveStatus,
   readArchiveStatus,
@@ -323,6 +324,78 @@ describe("the one line `qcr status` prints", () => {
     expect(archiveStatusLine(planned({ state: "failed", last_error: "EACCES" }))).toMatch(
       /^archive: mode plan — FAILED at .*: EACCES; backlog 485/,
     );
+  });
+
+  it("a reopened PR awaiting its restore is said — loudly, with the verb, when the mode will never restore it (integration review 2026-10-08)", () => {
+    const restores = { pending: 2, done: 0, failed: 0 };
+    // Plan mode after an `on` period: no tick or birth restores it.
+    expect(archiveStatusLine(planned({ restores }))).toContain(
+      "2 REOPENED PR(S) AWAITING RESTORE — mode is plan, so no tick or birth restores them: run `qcr archive restore <pr>`",
+    );
+    // Off arms nothing, and still says it.
+    expect(archiveStatusLine({ ...planned({ restores }), mode: "off", state: "off" })).toBe(
+      'archive: off ([archive] mode = "off" — nothing armed); 2 REOPENED PR(S) AWAITING RESTORE — mode is off, so no tick or birth restores them: run `qcr archive restore <pr>`',
+    );
+    // On: the next birth or tick restores it; said quietly.
+    const on = archiveStatusLine({ ...planned({ restores }), mode: "on", state: "idle" });
+    expect(on).toContain("2 reopened PR(s) awaiting restore");
+    expect(on).not.toContain("qcr archive restore");
+    expect(archiveStatusLine(planned())).not.toMatch(/awaiting restore/i);
+  });
+
+  it("archiveAttention: what the board's banner and the companion carry — disk holds, failed and stranded restores, repeated verify failures; nothing else", () => {
+    expect(archiveAttention(planned())).toEqual([]);
+    expect(archiveAttention(planned({ state: "held", held_reason: "draining" }))).toEqual([]);
+    expect(archiveAttention(planned({ state: "held", held_reason: "disk_low" }))).toEqual([
+      "HELD: free disk below the headroom",
+    ]);
+    expect(archiveAttention(planned({ state: "held", held_reason: "disk_unknown" }))).toEqual([
+      "HELD: free disk UNKNOWN",
+    ]);
+    expect(
+      archiveAttention(
+        planned({ restores: { pending: 1, done: 0, failed: 2 }, verify_failures_24h: 3 }),
+      ),
+    ).toEqual([
+      "2 RESTORE(S) FAILED",
+      "1 REOPENED PR(S) AWAITING RESTORE (mode plan: qcr archive restore <pr>)",
+      "3 VERIFY FAILURES in 24h",
+    ]);
+    // In mode on a pending restore is the next tick's or birth's: no banner.
+    expect(
+      archiveAttention({
+        ...planned({ restores: { pending: 1, done: 0, failed: 0 } }),
+        mode: "on",
+      }),
+    ).toEqual([]);
+    expect(archiveAttention(planned({ verify_failures_24h: 2 }))).toEqual([]);
+  });
+
+  it("a DB run the live checkpoint stopped says what it moved — never 'nothing deleted'", () => {
+    const db = {
+      last_run_at: "2026-10-21T12:00:00.000Z",
+      outcome: "skipped",
+      skipped_reason: "checkpoint_failed",
+      events_moved: 1500,
+      deliveries_moved: 0,
+      batch_rows: 750,
+      sync_ms: 40,
+      months_open: 1,
+      months_sealed: 0,
+    };
+    const line = archiveStatusLine({ ...planned(), mode: "on", state: "idle", db });
+    expect(line).toContain(
+      "db STOPPED (checkpoint_failed: the live checkpoint off the loop failed) at 2026-10-21T12:00:00.000Z after 1500 event / 0 delivery row(s) moved",
+    );
+    expect(line).not.toContain("nothing deleted");
+    expect(
+      archiveStatusLine({
+        ...planned(),
+        mode: "on",
+        state: "idle",
+        db: { ...db, skipped_reason: "live_busy", events_moved: 0 },
+      }),
+    ).toContain("db SKIPPED (live_busy) at 2026-10-21T12:00:00.000Z, nothing deleted");
   });
 
   it("renderStatus prints it on every snapshot, right after the event-loop line", () => {

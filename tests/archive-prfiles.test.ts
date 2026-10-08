@@ -159,6 +159,31 @@ describe("the happy path (acceptance 1)", () => {
   );
 
   it(
+    "a per-round file a session wrote beside the daemon's (`pr-<n>-round-<k>-body.md`) leaves with the bundle; an unclaimed state/pr-<n>-* file stays live (rehearsal 2026-10-08)",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const f = fixture();
+      const body = `state/pr-${f.pr}-round-3-body.md`;
+      const notes = `state/pr-${f.pr}-notes.md`;
+      put(f.root, body, "the review body the session drafted\n");
+      put(f.root, notes, "claimed by no class\n");
+      const a = onArchiver(f);
+      try {
+        await a.tick();
+        expect(archiveRow(f.store, f.pr)).toMatchObject({
+          state: "archived",
+          state_files: f.small.length + 1,
+        });
+        expect(existsSync(join(f.root, body))).toBe(false);
+        expect(bundleRecords(f).get(body)).toMatchObject({ class: "round_files" });
+        expect(readFileSync(join(f.root, notes), "utf8")).toBe("claimed by no class\n");
+      } finally {
+        a.stop();
+      }
+    },
+  );
+
+  it(
     "an eligible PR with nothing live gets a zero-file archived row and no manifest",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
