@@ -9,15 +9,7 @@
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
 // (spec §3, §8).
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  watch,
-  type FSWatcher,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { classifyCi, latestRunPerName, type CheckSummary } from "./cigate.js";
@@ -31,6 +23,7 @@ import {
   DEFAULT_MAX_PROMPT_REDELIVERIES,
   DEFAULT_MAX_SELF_REQUEUES,
   DEFAULT_POSTING_RECEIPT_GRACE_S,
+  DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN,
   DEFAULT_ROUND_STALL_GRACE_MIN,
   githubCloneDir,
   sandboxRoot,
@@ -86,6 +79,11 @@ import {
   type StandingDecidedVerdict,
 } from "./standing-review.js";
 import { flushHeldWakes } from "./wakes.js";
+import {
+  readSettledJson,
+  resolvePartialWritePolicy,
+  type PartialWritePolicy,
+} from "./settledread.js";
 
 /** Self-requeue mode → the cancellation cause it records. Two modes
  * mean the same thing to a human — the round stopped dead with no verdict,
@@ -197,9 +195,83 @@ export interface VerdictDeps {
   onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Parse retries for partially-written files. */
-  parseRetries?: number;
-  retryDelayMs?: number;
+  /** Partial-write tolerance (H1a, `src/settledread.ts`): how long an
+   * UNPARSEABLE verdict file is treated as still being written before it is
+   * called malformed. Defaults to DEFAULT_PARTIAL_WRITE_POLICY; a test that
+   * wants one read to decide passes `{ windowMs: 0 }`. */
+  partialWrite?: Partial<PartialWritePolicy>;
+}
+
+/** The round-stage limits the supervisor may report, named once. */
+export type InfrastructureStage =
+  | "command_start"
+  | "first_pass_start"
+  | "passes_incomplete"
+  | "parent_finalize"
+  | "settled_without_verdict"
+  | "running_hard_bound";
+
+/** Every path that may close a round from its posting receipt rather than
+ * from a verdict file (guarded no-op, H1a's posted review). */
+type ReceiptSettleVia = "verdict" | "deadline" | "malformed_verdict" | InfrastructureStage;
+
+/** The merits decision a posting receipt proves (H1a). */
+export interface ReceiptDecision {
+  verdict: "APPROVE" | "REQUEST_CHANGES";
+  /** The session asked for a COMMENT: the round templates' withheld-approval
+   * shape (red or pending CI, no blockers). */
+  approval_withheld?: true;
+}
+
+/**
+ * The merits decision a CONFIRMED posting receipt proves (H1a), or null
+ * when it proves only that something was posted.
+ *
+ * The receipt records what the session ASKED the posting script for
+ * (`intended_event`) beside what the guards let through (`actual_event`), and
+ * the scripts' shapes are fixed: `approve-pr.sh` only ever records
+ * APPROVE→APPROVE, and `post-review.sh` takes REQUEST_CHANGES or COMMENT, with
+ * guard 1 softening REQUEST_CHANGES to COMMENT when a non-author human has
+ * already approved. So:
+ *
+ *   - REQUEST_CHANGES asked for is a REQUEST_CHANGES decision whatever was
+ *     posted — exactly what `receiptMatchesVerdict` accepts from a verdict file;
+ *   - APPROVE posted is an APPROVE;
+ *   - a COMMENT the session asked for is, by the round templates' own contract,
+ *     the withheld-approval shape and nothing else: "red CI and no blockers ⇒
+ *     post the full review as a COMMENT … write `"verdict": "APPROVE"` with
+ *     `"approval_withheld": true`" (step 5's ratified CI gate). Mechanical
+ *     comments (the migration pre-check, an escalation) go through the daemon's
+ *     gate and never write a session receipt, and a softened REQUEST_CHANGES
+ *     says so in `intended_event`. Settling it as APPROVE + withheld records
+ *     the withheld-approval mark, so CI turning green re-queues the PR and the
+ *     SESSION decides again (cigate.ts) — the reading can never approve
+ *     anything by itself.
+ *
+ * Not decided — null — is everything else: a receipt the marker reconcile
+ * SYNTHESISED from GitHub (`reconciled`: its `intended_event` is only the
+ * posted event, so a COMMENT there may be a softened REQUEST_CHANGES), and any
+ * pairing no posting script writes. Those keep the loud paths.
+ *
+ * This is the RECEIPT's reading. The reviewed-head mark's `posted_event`
+ * COMMENT carries no `intended_event` and stays never-guessed
+ * (standing-review.ts rule 4).
+ */
+export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecision | null {
+  if (
+    receipt.intended_event === "REQUEST_CHANGES" &&
+    (receipt.actual_event === "REQUEST_CHANGES" || receipt.actual_event === "COMMENT")
+  )
+    return { verdict: "REQUEST_CHANGES" };
+  if (receipt.intended_event === "APPROVE" && receipt.actual_event === "APPROVE")
+    return { verdict: "APPROVE" };
+  if (
+    receipt.intended_event === "COMMENT" &&
+    receipt.actual_event === "COMMENT" &&
+    receipt.reconciled !== true
+  )
+    return { verdict: "APPROVE", approval_withheld: true };
+  return null;
 }
 
 export const VERDICT_FILE_RE = /^pr-(\d+)-round-(\d+)\.json$/;
@@ -356,10 +428,6 @@ function selfRequeuesSpent(spend: SelfRequeueSpend): number {
   return spend.at_head + spend.unattributed;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 export class VerdictWatcher {
   private watcher: FSWatcher | null = null;
   private readonly inFlight = new Set<string>();
@@ -368,6 +436,9 @@ export class VerdictWatcher {
    * overseer inject that happens anyway can carry a line about them —
    * violations alone never create inject spam. */
   private readonly execViolations = new Map<number, string[]>();
+  /** Rounds whose posted-tail wait has been logged (H1a) — once per
+   * round per process, not once per supervisor scan. */
+  private readonly postedWaitLogged = new Set<number>();
 
   constructor(private readonly deps: VerdictDeps) {
     this.processedDir = join(deps.verdictDir, "processed");
@@ -399,19 +470,38 @@ export class VerdictWatcher {
     this.watcher = null;
   }
 
-  /** Process every verdict file sitting in the directory. */
+  /** Process every verdict file sitting in the directory.
+   *
+   * One PR's files in name order; different PRs side by side (H1a). A
+   * file still being written is now waited out for seconds, and a sweep that
+   * walked every file in one line would hold every other PR's verdict behind
+   * it — the fs.watch path already handles PRs concurrently. */
   async sweep(): Promise<string[]> {
     if (!existsSync(this.deps.verdictDir)) return [];
-    const done: string[] = [];
+    const byPr = new Map<string, string[]>();
     for (const name of readdirSync(this.deps.verdictDir).sort()) {
-      if (!VERDICT_FILE_RE.test(name)) continue;
-      try {
-        if (await this.handleFile(name)) done.push(name);
-      } catch (err) {
-        this.log(`verdicts: ${name} failed`, err);
-      }
+      const match = VERDICT_FILE_RE.exec(name);
+      if (!match) continue;
+      byPr.set(match[1]!, [...(byPr.get(match[1]!) ?? []), name]);
     }
-    return done;
+    const done: string[] = [];
+    await Promise.all(
+      [...byPr.values()].map(async (names) => {
+        for (const name of names) {
+          try {
+            if (await this.handleFile(name)) done.push(name);
+          } catch (err) {
+            this.log(`verdicts: ${name} failed`, err);
+          }
+        }
+      }),
+    );
+    try {
+      await this.resumeInterruptedSettlements();
+    } catch (err) {
+      this.log("verdicts: resuming interrupted receipt settlements failed", err);
+    }
+    return done.sort();
   }
 
   private runningRound(pr: number, roundNo?: number): RoundRow | undefined {
@@ -462,26 +552,42 @@ export class VerdictWatcher {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
 
-      // Partial writes: retry the parse a few times before declaring malformed.
-      const retries = this.deps.parseRetries ?? 3;
-      const delay = this.deps.retryDelayMs ?? 40;
-      let parsed: ParsedVerdict = { ok: false, error: "unread" };
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-          parsed = validateVerdict(JSON.parse(readFileSync(path, "utf8")));
-        } catch (err) {
-          parsed = { ok: false, error: `unparseable: ${String(err)}` };
-        }
-        if (parsed.ok) break;
-        if (attempt < retries) await sleep(delay);
+      // Partial writes (H1a, #5885): an UNPARSEABLE file is waited
+      // out while its bytes are still moving — by its mtime or between our
+      // own looks — and declared only once it has sat still, or after a hard
+      // window. The session writes in place (open O_TRUNC, then the bytes),
+      // and on a CPU-starved container the gap between the two outlived the
+      // 120 ms this loop used to allow. A file that PARSES is complete; its
+      // shape is judged at once, exactly as before.
+      const read = await readSettledJson(path, resolvePartialWritePolicy(this.deps.partialWrite));
+      if (read.kind === "missing") return false;
+      if (read.reads > 1) {
+        this.deps.store.logEvent("verdict_read_waited", pr, {
+          file: name,
+          round_no: roundNo,
+          reads: read.reads,
+          waited_ms: Math.round(read.waited_ms),
+          outcome: read.kind,
+        });
       }
+      const parsed: ParsedVerdict =
+        read.kind === "parsed"
+          ? validateVerdict(read.value)
+          : {
+              ok: false,
+              error:
+                `unparseable: ${read.error}` +
+                (read.why === "no_tolerance"
+                  ? ""
+                  : ` (still unparseable after ${read.reads} read(s) over ${(read.waited_ms / 1000).toFixed(1)}s — ${read.why === "settled" ? "the file had stopped changing" : "the partial-write window ran out"})`),
+            };
 
       if (!parsed.ok || !parsed.verdict) {
-        await this.handleAnomaly(
+        await this.handleMalformed(
           pr,
           roundNo,
+          name,
           `malformed verdict file ${name}: ${parsed.error ?? "unknown"}`,
-          "malformed",
         );
         this.archive(name);
         return true;
@@ -492,11 +598,11 @@ export class VerdictWatcher {
       // lifecycle while this round never gets its verdict; it is this round's
       // malformed verdict instead.
       if (parsed.verdict.pr !== pr || parsed.verdict.round_no !== roundNo) {
-        await this.handleAnomaly(
+        await this.handleMalformed(
           pr,
           roundNo,
+          name,
           `malformed verdict file ${name}: payload names PR #${parsed.verdict.pr} round ${parsed.verdict.round_no}, not the filename's`,
-          "malformed",
         );
         this.archive(name);
         return true;
@@ -508,6 +614,292 @@ export class VerdictWatcher {
       return true;
     } finally {
       this.inFlight.delete(name);
+    }
+  }
+
+  /**
+   * A verdict file that cannot be applied (H1a). Before this was one
+   * line — the anomaly path, FAILED_LOUD — and it never asked whether the
+   * round's review had already reached GitHub. #5885 round 2 had: its APPROVE
+   * was posted and its receipt confirmed 30 s before the watcher misread the
+   * half-written file, and the PR then sat held for ten hours over "no review
+   * was produced".
+   *
+   *   - The round's verdict already SETTLED (a replay of a done round, or a
+   *     round guard 2 already closed): inert, like any replay.
+   *   - A receipt settlement a restart interrupted (the round is done but its
+   *     apply never reached `verdict_settled`): resumed, never failed.
+   *   - Running, with a CONFIRMED receipt that proves the decision
+   *     (`decidedVerdictFromReceipt`): settled from the receipt — the posted
+   *     review is the evidence. No FAILED_LOUD, no self-requeue, so no second
+   *     posting.
+   *   - Running, refused by guard 2 (a `skipped` record): the no-op.
+   *   - Anything else — no receipt, an ambiguous or undecidable one, a legacy
+   *     round: the malformed anomaly exactly as before. A missing receipt still
+   *     fails loud.
+   */
+  private async handleMalformed(
+    pr: number,
+    roundNo: number,
+    name: string,
+    message: string,
+  ): Promise<void> {
+    const found = this.runningRound(pr, roundNo);
+    const round = found && found.round_no === roundNo ? found : undefined;
+    if (round && round.status !== "running") {
+      if (this.roundTerminallySettled(round)) {
+        this.deps.store.logEvent("verdict_replay_ignored", pr, {
+          round_id: round.id,
+          round_no: roundNo,
+          file: name,
+          malformed: message,
+        });
+        this.log(
+          `verdicts: #${pr} round ${roundNo} already settled (${round.status}) — malformed ${name} replays inertly`,
+        );
+        return;
+      }
+      // The file is still in verdict/ because the round's receipt settlement
+      // was cut short (archive runs only after it): finish that settlement.
+      if (await this.resumeReceiptSettlement(round)) return;
+    }
+    let anomaly = message;
+    if (round && round.status === "running" && round.posting_key) {
+      const proof = await this.postingProof(round);
+      if (proof.kind === "confirmed" && proof.receipt) {
+        const decision = decidedVerdictFromReceipt(proof.receipt);
+        if (decision) {
+          await this.settleFromReceipt(
+            round,
+            proof.receipt,
+            decision,
+            "malformed_verdict",
+            message,
+          );
+          return;
+        }
+        // Posted, but nothing on the receipt says what was decided: the loud
+        // path, saying so.
+        anomaly = `${message} (its review was posted — ${proof.receipt.actual_event}${proof.receipt.gh_review_id !== undefined ? `, GitHub review ${proof.receipt.gh_review_id}` : ""} — but the posting receipt does not say what was decided)`;
+      } else if (proof.kind === "skipped" && proof.noop) {
+        await this.settleGuardedNoop(round, proof.noop, "malformed_verdict");
+        return;
+      }
+    }
+    await this.handleAnomaly(pr, roundNo, anomaly, "malformed");
+  }
+
+  /** Has this (non-running) round been closed for good — a verdict (or a
+   * receipt settlement) applied to its last durable step, or a guard-2
+   * no-op? */
+  private roundTerminallySettled(round: RoundRow): boolean {
+    if (round.status === "done") return this.verdictSettled(round.pr, round.id);
+    return round.status === "cancelled" && round.cancel_cause === "no_new_evidence";
+  }
+
+  /**
+   * Hold the round's verdict-file slot — the one `handleFile` holds while it
+   * reads, waits out a partial write and applies — for a settlement that does
+   * not come from the file (H1a). A receipt settlement and a verdict
+   * landing in the same moment can then never both apply. Busy ⇒ undefined:
+   * the caller's next tick decides again.
+   */
+  private async withVerdictSlot<T>(
+    pr: number,
+    roundNo: number,
+    fn: () => Promise<T>,
+  ): Promise<T | undefined> {
+    const name = `pr-${pr}-round-${roundNo}.json`;
+    if (this.inFlight.has(name)) return undefined;
+    this.inFlight.add(name);
+    try {
+      return await fn();
+    } finally {
+      this.inFlight.delete(name);
+    }
+  }
+
+  private verdictFilePresent(pr: number, roundNo: number): boolean {
+    return existsSync(join(this.deps.verdictDir, `pr-${pr}-round-${roundNo}.json`));
+  }
+
+  /**
+   * Close a running round from its CONFIRMED posting receipt (H1a):
+   * the review is on GitHub and the verdict file is malformed, never came, or
+   * did not come within the posted-tail grace. Never posts anything — the
+   * whole point is that the review already went out once.
+   *
+   * Only for a receipt that proves the decision (`decidedVerdictFromReceipt`);
+   * an undecidable one stays on the caller's loud path. The round is applied
+   * exactly as its verdict file would have been — the ONE `apply` path, with
+   * the posting already proven — so the labels, the transition, the
+   * reviewed-head mark, the withheld-approval mark, the successor settlement,
+   * the usage, the ledger and findings-record checks and the held wakes all
+   * happen as usual. Its summary says where the verdict came from; its
+   * executed-pass telemetry is honestly unknown.
+   *
+   * The claim is a FRESH read of the round followed, with no await between, by
+   * `apply`'s own read: a round the operator cancelled, a newer round
+   * superseded, or another path settled while the caller awaited GitHub is
+   * never applied over. The `verdict_settled_from_receipt` event is written
+   * before the apply and carries the verdict it applies, so a restart in the
+   * middle of it is resumed (`resumeReceiptSettlement`), never failed.
+   */
+  private async settleFromReceipt(
+    round: RoundRow,
+    receipt: PostingReceipt,
+    decision: ReceiptDecision,
+    via: ReceiptSettleVia,
+    why: string,
+  ): Promise<"applied" | "replayed"> {
+    const { store } = this.deps;
+    const ghId = receipt.gh_review_id ?? null;
+    const posted = `${receipt.actual_event}${ghId !== null ? `, GitHub review ${ghId}` : ""}`;
+    const plain =
+      via === "malformed_verdict"
+        ? "its verdict file could not be read"
+        : via === "deadline"
+          ? "no verdict file arrived before the round deadline"
+          : via === "settled_without_verdict"
+            ? "the session finished without writing its verdict file"
+            : "the session did not write its verdict file within the grace after posting";
+    const event = {
+      round_id: round.id,
+      round_no: round.round_no,
+      via,
+      why,
+      posting_key: round.posting_key,
+      head_sha: receipt.head_sha,
+      intended_event: receipt.intended_event,
+      actual_event: receipt.actual_event,
+      gh_review_id: ghId,
+      confirmed_at: receipt.confirmed_at ?? null,
+      decided_verdict: decision.verdict,
+      approval_withheld: decision.approval_withheld === true,
+    };
+    // ---- the claim: fresh read → apply, with no await between ---------------
+    const fresh = this.runningRound(round.pr, round.round_no);
+    if (!fresh || fresh.id !== round.id || fresh.status !== "running") {
+      store.logEvent("verdict_settled_from_receipt_replayed", round.pr, {
+        ...event,
+        round_status: fresh?.id === round.id ? fresh.status : "missing",
+      });
+      this.log(
+        `verdicts: #${round.pr} round ${round.round_no} is no longer running (${fresh?.id === round.id ? fresh.status : "missing"}) — its receipt settlement (${via}) is not applied`,
+      );
+      return "replayed";
+    }
+    const reading = decision.approval_withheld
+      ? "a COMMENT the session asked for is the round templates' withheld-approval shape, so it is APPROVE with the approval withheld until CI is green at this head"
+      : `the receipt proves ${decision.verdict}`;
+    const v: VerdictFile = {
+      pr: round.pr,
+      round_no: round.round_no,
+      verdict: decision.verdict,
+      head_sha: receipt.head_sha,
+      ...(decision.approval_withheld ? { approval_withheld: true } : {}),
+      summary:
+        `This round's review was posted (${posted}), but ${plain}, so its verdict was settled from the posted review: ${reading}. ` +
+        "The session's own summary and pass telemetry were not available.",
+      finished_at: this.now().toISOString(),
+    };
+    store.logEvent("verdict_settled_from_receipt", round.pr, { ...event, verdict_file: v });
+    this.log(
+      `verdicts: #${round.pr} round ${round.round_no} settled from its posting receipt (${posted}) as ${decision.verdict}${decision.approval_withheld ? " (approval withheld)" : ""} — ${plain}`,
+    );
+    await this.apply(v, `pr-${round.pr}-round-${round.round_no}.json`, { via, gh_review_id: ghId });
+    return "applied";
+  }
+
+  /** The receipt settlement this round STARTED (its `verdict_settled_from_receipt`
+   * event, with the verdict it was applying), if any. */
+  private receiptSettlementStarted(
+    round: RoundRow,
+  ): { verdict: VerdictFile; via: ReceiptSettleVia; gh_review_id: number | null } | undefined {
+    const row = this.deps.store.db
+      .prepare(
+        "SELECT payload FROM events WHERE kind = 'verdict_settled_from_receipt' AND pr = ? AND json_extract(payload, '$.round_id') = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(round.pr, round.id) as { payload: string } | undefined;
+    if (!row) return undefined;
+    let payload: { verdict_file?: unknown; via?: unknown; gh_review_id?: unknown };
+    try {
+      payload = JSON.parse(row.payload) as typeof payload;
+    } catch {
+      return undefined;
+    }
+    const parsed = validateVerdict(payload.verdict_file);
+    if (!parsed.ok || !parsed.verdict) return undefined;
+    if (parsed.verdict.pr !== round.pr || parsed.verdict.round_no !== round.round_no)
+      return undefined;
+    if (parsed.verdict.verdict !== "APPROVE" && parsed.verdict.verdict !== "REQUEST_CHANGES")
+      return undefined;
+    return {
+      verdict: parsed.verdict,
+      via: typeof payload.via === "string" ? (payload.via as ReceiptSettleVia) : "deadline",
+      gh_review_id: typeof payload.gh_review_id === "number" ? payload.gh_review_id : null,
+    };
+  }
+
+  /**
+   * Finish a receipt settlement a restart cut short (H1a). `apply`
+   * finishes the round row BEFORE its last durable steps (the transition, the
+   * marks, the successor) and records `verdict_settled` only after them; a
+   * verdict FILE survives a restart in that window and resumes the apply, but
+   * a receipt settlement has no file — and on the malformed path the file it
+   * does have is the broken one, which would turn a posted review into
+   * FAILED_LOUD. So the settlement's own event carries the verdict it applies,
+   * and a done round whose apply never settled is re-applied from it, the same
+   * way a surviving file is. Returns false when there is nothing to resume.
+   * The caller holds the round's verdict slot.
+   */
+  private async resumeReceiptSettlement(round: RoundRow): Promise<boolean> {
+    if (round.status !== "done" || this.verdictSettled(round.pr, round.id)) return false;
+    const started = this.receiptSettlementStarted(round);
+    if (!started) return false;
+    this.deps.store.logEvent("verdict_settled_from_receipt_resumed", round.pr, {
+      round_id: round.id,
+      round_no: round.round_no,
+      via: started.via,
+      verdict: started.verdict.verdict,
+    });
+    this.log(
+      `verdicts: #${round.pr} round ${round.round_no} — resuming its interrupted receipt settlement (${started.via})`,
+    );
+    await this.apply(started.verdict, `pr-${round.pr}-round-${round.round_no}.json`, {
+      via: started.via,
+      gh_review_id: started.gh_review_id,
+    });
+    return true;
+  }
+
+  /**
+   * The sweep's half of the resume: receipt settlements with NO verdict file
+   * (the deadline and stage-limit paths) that a restart cut short. Bounded to
+   * the last two days of settlements — a restart is minutes, and a done round
+   * older than that is not touched on the strength of an old event.
+   */
+  private async resumeInterruptedSettlements(): Promise<void> {
+    const { store } = this.deps;
+    const cutoff = new Date(this.now().getTime() - 2 * 86_400_000).toISOString();
+    const rows = store.db
+      .prepare(
+        "SELECT DISTINCT pr, json_extract(payload, '$.round_id') AS round_id FROM events WHERE kind = 'verdict_settled_from_receipt' AND ts >= ?",
+      )
+      .all(cutoff) as Array<{ pr: number; round_id: number | null }>;
+    for (const row of rows) {
+      if (row.round_id === null) continue;
+      const round = store.roundsFor(row.pr).find((r) => r.id === row.round_id);
+      if (!round || round.status !== "done" || this.verdictSettled(round.pr, round.id)) continue;
+      // A file still in verdict/ resumes through handleFile.
+      if (this.verdictFilePresent(round.pr, round.round_no)) continue;
+      try {
+        await this.withVerdictSlot(round.pr, round.round_no, () =>
+          this.resumeReceiptSettlement(round),
+        );
+      } catch (err) {
+        this.log(`verdicts: resuming #${round.pr} round ${round.round_no} failed`, err);
+      }
     }
   }
 
@@ -630,6 +1022,7 @@ export class VerdictWatcher {
             gh_review_id: match.id,
             gh_commit_id: match.commit_id,
             gh_state: match.state,
+            reconciled: true,
           };
           if (verdict && !receiptMatchesVerdict(synthetic, verdict)) {
             return {
@@ -730,7 +1123,7 @@ export class VerdictWatcher {
   private async settleGuardedNoop(
     round: RoundRow,
     noop: GuardedNoopReceipt,
-    via: "verdict" | "deadline" | "settled_without_verdict",
+    via: ReceiptSettleVia,
     verdict?: VerdictFile,
   ): Promise<"settled" | "replayed" | "failed"> {
     const { store, cfg, adapter } = this.deps;
@@ -883,8 +1276,19 @@ export class VerdictWatcher {
     );
   }
 
-  /** The handoff: posting receipt, labels, round record, transition. */
-  private async apply(v: VerdictFile, name: string): Promise<"applied" | "waiting" | "failed"> {
+  /** The handoff: posting receipt, labels, round record, transition.
+   *
+   * `proven` (H1a): the caller already holds this round's CONFIRMED
+   * posting receipt and built `v` from it (`settleFromReceipt`, or the resume
+   * of one a restart cut short). The receipt is not proven a second time — a
+   * second marker reconcile could fail on a transient GitHub read and turn a
+   * posted review into a loud failure — and the durable events say where the
+   * verdict came from. */
+  private async apply(
+    v: VerdictFile,
+    name: string,
+    proven?: { via: ReceiptSettleVia; gh_review_id: number | null },
+  ): Promise<"applied" | "waiting" | "failed"> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
 
@@ -985,7 +1389,7 @@ export class VerdictWatcher {
       return "applied";
     }
 
-    if (round) {
+    if (round && !proven) {
       const proof = await this.postingProof(round, v);
       if (proof.kind === "waiting") {
         store.logEvent("verdict_waiting_posting_receipt", v.pr, {
@@ -1053,6 +1457,13 @@ export class VerdictWatcher {
       head_sha: v.head_sha,
       verdict: v.verdict,
       ai_approved: v.ai_approved ?? null,
+      ...(proven
+        ? {
+            source: "posting_receipt",
+            via: proven.via,
+            gh_review_id: proven.gh_review_id,
+          }
+        : {}),
     });
     // The reviewed-head mark: this head has now been reviewed and
     // decided. Read by the no-new-evidence guard at dispatch and at posting
@@ -1088,7 +1499,7 @@ export class VerdictWatcher {
       store.recordApprovalWithheld(v.pr, { head_sha: v.head_sha, reason: "red-ci", ci_state: ci });
       store.logEvent("approval_withheld_red_ci", v.pr, {
         head_sha: v.head_sha,
-        source: "verdict",
+        source: proven ? "posting_receipt" : "verdict",
         ci_state: ci,
       });
     } else {
@@ -1159,16 +1570,36 @@ export class VerdictWatcher {
     // by the time either runs the verdict is applied, the round row is
     // finished and the PR has transitioned, so a record that never arrives
     // costs one anomaly row and one nudge and CANNOT hold the round open.
-    const planned = round?.lenses ? round.lenses.split(",").filter(Boolean) : [];
-    const roundId = round?.id ?? null;
+    await this.scheduleRoundTail(
+      v.pr,
+      v.round_no,
+      round?.id ?? null,
+      v.head_sha,
+      round?.lenses ?? "",
+    );
+    // The round is over. Fresh-head review work wins the session command slot;
+    // held conversational wakes stay behind it and flush at the successor's
+    // terminal path. Without a successor, ordinary FIFO wake delivery resumes.
+    if (!successorPromoted) await this.flushWakes(v.pr);
+    this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
+    return "applied";
+  }
+
+  /** The round-end ledger and findings-record checks,
+   * after the settle delay — shared by a verdict and a receipt settlement. */
+  private async scheduleRoundTail(
+    pr: number,
+    roundNo: number,
+    roundId: number | null,
+    headSha: string,
+    lenses: string,
+  ): Promise<void> {
+    const planned = lenses ? lenses.split(",").filter(Boolean) : [];
     const tail = async (): Promise<void> => {
+      await this.safe(() => this.checkLedger(pr, roundNo, headSha), `ledger check pr-${pr}`);
       await this.safe(
-        () => this.checkLedger(v.pr, v.round_no, v.head_sha),
-        `ledger check pr-${v.pr}`,
-      );
-      await this.safe(
-        () => this.checkFindingsRecord(v.pr, v.round_no, roundId, v.head_sha, planned),
-        `findings record check pr-${v.pr}`,
+        () => this.checkFindingsRecord(pr, roundNo, roundId, headSha, planned),
+        `findings record check pr-${pr}`,
       );
     };
     const settleMs = this.deps.ledgerCheckDelayMs ?? 90_000;
@@ -1180,12 +1611,6 @@ export class VerdictWatcher {
       }, settleMs);
       timer.unref?.();
     }
-    // The round is over. Fresh-head review work wins the session command slot;
-    // held conversational wakes stay behind it and flush at the successor's
-    // terminal path. Without a successor, ordinary FIFO wake delivery resumes.
-    if (!successorPromoted) await this.flushWakes(v.pr);
-    this.log(`verdicts: #${v.pr} round ${v.round_no} → ${v.verdict}`);
-    return "applied";
   }
 
   // ---- escalation (off by default) -----------------------------
@@ -1923,41 +2348,14 @@ export class VerdictWatcher {
   async recoverInfrastructureFailure(
     pr: number,
     roundNo: number,
-    stage:
-      | "command_start"
-      | "first_pass_start"
-      | "passes_incomplete"
-      | "parent_finalize"
-      | "settled_without_verdict"
-      | "running_hard_bound",
+    stage: InfrastructureStage,
     detail: string,
   ): Promise<RoundRecoveryDisposition> {
     const round = this.runningRound(pr, roundNo);
     if (!round || round.status !== "running") return "requeued";
-    if (stage === "settled_without_verdict" && round.posting_key) {
-      const proof = await this.postingProof(round);
-      if (proof.kind === "waiting") return "retryable";
-      if (proof.kind === "skipped") {
-        // the session was refused by guard 2 and stopped without a
-        // verdict file. The round is over and nothing is owed; the delivered
-        // command stays whatever it is (an acked command proved delivery).
-        return (await this.settleGuardedNoop(round, proof.noop!, "settled_without_verdict")) ===
-          "failed"
-          ? "failed_loud"
-          : "settled";
-      }
-      if (proof.kind === "confirmed") {
-        await this.failPostingProof(
-          round,
-          `GitHub review ${proof.receipt?.gh_review_id ?? "confirmed"} was posted but the session settled before writing its verdict`,
-          "posted_without_verdict",
-        );
-        return "failed_loud";
-      }
-      if (proof.kind === "failed") {
-        await this.failPostingProof(round, proof.detail ?? "settled without a posting receipt");
-        return "failed_loud";
-      }
+    if (round.posting_key) {
+      const answered = await this.receiptAwareStage(round, stage, detail);
+      if (answered) return answered;
     }
     this.deps.store.logEvent("round_infrastructure_failure", pr, {
       round_id: round.id,
@@ -2063,6 +2461,162 @@ export class VerdictWatcher {
   }
 
   /**
+   * Every stage limit asks the posting receipt first (H1a, #5850
+   * round 5). The limits are wall-clock bounds on a session that is supposed
+   * to be reviewing; once its review is CONFIRMED on GitHub, it is not — it is
+   * writing its ledger, its findings record and its verdict file, and on a
+   * CPU-starved container that tail outlived the 5-minute finalize grace by
+   * the time it took to get killed. The round was then cancelled "before any
+   * merits verdict", requeued, and the next round posted a second
+   * REQUEST_CHANGES on the same head.
+   *
+   * So, for a round whose review is on GitHub (or was refused by guard 2,
+   * equally final):
+   *   - a parent that has SETTLED will write nothing more: settle now;
+   *   - otherwise the tail gets `[daemon] round_posted_tail_grace_min` from the
+   *     posting — `posted_wait`: nothing is cancelled, killed or requeued, and
+   *     a verdict file that lands in that window is applied by the sweep as
+   *     usual;
+   *   - past it, settle from the receipt when it proves the decision
+   *     (`decidedVerdictFromReceipt`), and fail loud (`posted_without_verdict`,
+   *     the shape a posted round without a verdict always had) when it does
+   *     not. Never a requeue, so never a second posting.
+   * A POST still inside its ambiguous transport window (a `prepared` receipt
+   * within `posting_receipt_grace_s`) is waited out too: killing the poster
+   * there is how a review lands on GitHub with nothing local to say so.
+   *
+   * Before any of that, and whatever the receipt says — receipt or none — a
+   * verdict file already on disk (or one the watcher is still reading) defers
+   * the limit to the sweep: the session has finished, and cancelling the round
+   * under its own verdict would only make that verdict land on a cancelled
+   * round. The deferral is bounded by the sweep, which consumes the file within
+   * its partial-write window (applied, or malformed and archived) every
+   * `VERDICT_SWEEP_S`.
+   *
+   * Returns null for everything else — no receipt, an unreadable or
+   * mismatched one, a legacy round — and the caller's pre-existing path runs
+   * exactly as before: unknown is not evidence of a posting.
+   */
+  private async receiptAwareStage(
+    round: RoundRow,
+    stage: InfrastructureStage,
+    detail: string,
+  ): Promise<RoundRecoveryDisposition | null> {
+    const { store, cfg } = this.deps;
+    // A verdict file on disk (or one the watcher is still reading) is the
+    // sweep's, whatever the receipt says.
+    if (
+      this.verdictFilePresent(round.pr, round.round_no) ||
+      this.inFlight.has(`pr-${round.pr}-round-${round.round_no}.json`)
+    )
+      return "retryable";
+    const proof = await this.postingProof(round);
+    if (proof.kind === "confirmed" || proof.kind === "skipped") {
+      const postedAt =
+        proof.kind === "confirmed"
+          ? (proof.receipt!.confirmed_at ?? proof.receipt!.prepared_at)
+          : proof.noop!.skipped_at;
+      const graceMin =
+        cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
+      const until = Date.parse(postedAt) + graceMin * 60_000;
+      if (
+        stage !== "settled_without_verdict" &&
+        Number.isFinite(until) &&
+        this.now().getTime() < until
+      ) {
+        if (!this.postedWaitLogged.has(round.id)) {
+          this.postedWaitLogged.add(round.id);
+          store.logEvent("round_stage_posted_wait", round.pr, {
+            round_id: round.id,
+            round_no: round.round_no,
+            stage,
+            detail,
+            posting: proof.kind,
+            posted_at: postedAt,
+            wait_until: new Date(until).toISOString(),
+          });
+          this.log(
+            `verdicts: #${round.pr} round ${round.round_no} hit ${stage} after its review was ${proof.kind === "confirmed" ? "posted" : "refused by guard 2"} — ` +
+              `not a failure; the session's tail has until ${new Date(until).toISOString()}, nothing cancelled or killed`,
+          );
+        }
+        return "posted_wait";
+      }
+      const settled = await this.withVerdictSlot(
+        round.pr,
+        round.round_no,
+        async (): Promise<RoundRecoveryDisposition> => {
+          // The verdict may have landed while this awaited GitHub: it wins.
+          if (this.verdictFilePresent(round.pr, round.round_no)) return "retryable";
+          if (proof.kind === "skipped") {
+            // refused by guard 2 and no verdict file. The round is over
+            // and nothing is owed; the delivered command stays as it is.
+            return (await this.settleGuardedNoop(round, proof.noop!, stage)) === "failed"
+              ? "failed_loud"
+              : "settled";
+          }
+          const receipt = proof.receipt!;
+          const why =
+            stage === "settled_without_verdict"
+              ? detail
+              : `${detail}; no verdict file ${graceMin} min after the review was posted`;
+          const decision = decidedVerdictFromReceipt(receipt);
+          if (decision) {
+            await this.settleFromReceipt(round, receipt, decision, stage, why);
+            return "settled";
+          }
+          // Posted, the session has written nothing, and the receipt does not
+          // say what was decided: loud, as a posted round without a verdict
+          // always was — and never a requeue, which would post a second time.
+          const fresh = this.runningRound(round.pr, round.round_no);
+          if (!fresh || fresh.id !== round.id || fresh.status !== "running") return "settled";
+          await this.failPostingProof(
+            round,
+            `GitHub review ${receipt.gh_review_id ?? "confirmed"} was posted (${receipt.actual_event}) but ${stage === "settled_without_verdict" ? "the session settled before writing its verdict" : `the session wrote no verdict within ${graceMin} min of posting`}, and the posting receipt does not say what was decided`,
+            "posted_without_verdict",
+          );
+          return "failed_loud";
+        },
+      );
+      return settled ?? "retryable";
+    }
+    if (stage === "settled_without_verdict") {
+      // Unchanged: the parent stopped, so an ambiguous receipt
+      // gets its grace and then fails loud — never a requeue that could post
+      // a second time.
+      if (proof.kind === "waiting") return "retryable";
+      if (proof.kind === "failed") {
+        await this.failPostingProof(round, proof.detail ?? "settled without a posting receipt");
+        return "failed_loud";
+      }
+      return null;
+    }
+    if (proof.kind === "waiting" && this.postInFlight(round)) {
+      store.logEvent("round_stage_posting_in_flight", round.pr, {
+        round_id: round.id,
+        round_no: round.round_no,
+        stage,
+        detail,
+      });
+      return "retryable";
+    }
+    return null;
+  }
+
+  /** A `prepared` receipt for exactly this round: a POST whose outcome is not
+   * known yet. */
+  private postInFlight(round: RoundRow): boolean {
+    const receipt = readPostingReceipt(this.postingReceiptDir(), round.pr, round.round_no);
+    return (
+      receipt !== undefined &&
+      receipt.status === "prepared" &&
+      receipt.posting_key === round.posting_key &&
+      receipt.pr === round.pr &&
+      receipt.round_no === round.round_no
+    );
+  }
+
+  /**
    * Self-requeue a stuck round. Returns true when the round was
    * handled here (cancelled + PR re-queued for a fresh dispatch through the
    * NORMAL pump — same move as the overseer's rerun-round and the startup
@@ -2080,7 +2634,7 @@ export class VerdictWatcher {
    * ordinary fresh work naturally starts again at epoch zero. */
   private preFanoutRecovery(
     round: RoundRow,
-    stage: Parameters<VerdictWatcher["recoverInfrastructureFailure"]>[2],
+    stage: InfrastructureStage,
   ): { stage: "first_pass_start"; source_command_id: string; retry_epoch: number } | undefined {
     if (stage !== "first_pass_start") return undefined;
     const command = this.deps.store.sessionCommandForRound(round.pr, round.round_no);
@@ -2424,12 +2978,31 @@ export class VerdictWatcher {
           await this.settleGuardedNoop(round, proof.noop!, "deadline");
           continue;
         }
-        if (proof.kind === "confirmed") {
-          await this.failPostingProof(
-            round,
-            `GitHub review ${proof.receipt?.gh_review_id ?? "confirmed"} was posted but no verdict file arrived before the round deadline`,
-            "posted_without_verdict",
-          );
+        if (proof.kind === "confirmed" && proof.receipt) {
+          // H1a: the review is on GitHub; the missing verdict file is
+          // settled from the receipt, never re-run (a rerun would post a
+          // second review). A receipt that does not say what was decided
+          // keeps the loud path it always had.
+          const receipt = proof.receipt;
+          const decision = decidedVerdictFromReceipt(receipt);
+          if (!decision) {
+            await this.failPostingProof(
+              round,
+              `GitHub review ${receipt.gh_review_id ?? "confirmed"} was posted (${receipt.actual_event}) but no verdict file arrived before the round deadline, and the posting receipt does not say what was decided`,
+              "posted_without_verdict",
+            );
+            continue;
+          }
+          await this.withVerdictSlot(round.pr, round.round_no, async () => {
+            if (this.verdictFilePresent(round.pr, round.round_no)) return;
+            await this.settleFromReceipt(
+              round,
+              receipt,
+              decision,
+              "deadline",
+              `round ${round.round_no} passed its deadline (${round.deadline_at}) with its review posted and no verdict file`,
+            );
+          });
           continue;
         }
         if (proof.kind === "failed") {

@@ -216,10 +216,14 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
 // (pinned into the compaction summary, and re-handed by the next round order); everything
 // else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
+// Re-pinned 2026-10-08 (H1a, #5885): step 7 of the three round templates
+// tells the session never to write the verdict file in place — stage it at
+// `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
+// rename), and the guard-5 head_moved outcome the same way. Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "7d5b96050141b80cef518b0aa212e64fd598dc2d9b323e32f843f67b988e33a1",
-  "re-review": "43965b02c1b55b3e3fc97b1036d3b16304602486eac288318bdda46eb2b9f744",
-  staleness: "51f3a75dfb5e975a47323852a38c46cbc85b9df06b22e4cc301b0aba3e53e470",
+  first: "fc2e700e2ca41c37871fbff3bc88ac6ba3dd1dff1a7efe337e9f1ac0669024a8",
+  "re-review": "717ee68ade48f3b44511882fa9f2a6dd0f5be5567933129938484f95df8c49ba",
+  staleness: "f756f39c39f2b44ab2b4c4674edaf6db37d449de15b9597d16ae5e4761f61ea7",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -246,10 +250,14 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
 // (pinned into the compaction summary, and re-handed by the next round order); everything
 // else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
+// Re-pinned 2026-10-08 (H1a, #5885): step 7 of the three round templates
+// tells the session never to write the verdict file in place — stage it at
+// `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
+// rename), and the guard-5 head_moved outcome the same way. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "a4d94398a9ec33f6174fb74b87ce176c1eeec46f27559936a76b769c5a4d449a",
-  "re-review": "a502b607177e4c097097e3ebc21b6b00b064ffff5a76bf03747715db34293c94",
-  staleness: "148c17eeda67bcbaf63b63e6bf1b8647f199f3ada955be9ec67270165371e5b3",
+  first: "d76dc388ca840cf50e8c45729c906d3676d4758e1e0dd28a5fd749e626b40a59",
+  "re-review": "4b4b0269263b3e3630a20cf2437660961a7e121cf0c856f7ec25dc2140c12da8",
+  staleness: "2646f315557f978edede417794742a562c6ccb69e64b348240f6809ea8f30c82",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -261,10 +269,14 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
 // (pinned into the compaction summary, and re-handed by the next round order); everything
 // else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
+// Re-pinned 2026-10-08 (H1a, #5885): step 7 of the three round templates
+// tells the session never to write the verdict file in place — stage it at
+// `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
+// rename), and the guard-5 head_moved outcome the same way. Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "bfe28d448b373e3865de8b0ae211c46570cad187974057e540f9c5957e16efcd",
-  "re-review": "a22016763792066f322643b24f2e6c2bc5a1e1680e0e240ada3ba2db79d5d3f3",
-  staleness: "e69cffe2b0df3a9d1d8306ff00f26cfa9f96d255e301df343497601ab34838d7",
+  first: "14c54a8a3be79335166b9fba7f14e6f9a79306168b3cb9b627ee039ed3169d86",
+  "re-review": "46187a8c39ae9c406b8b04d43528dc26bb193be5da083fb7e633ed24a9a65fe1",
+  staleness: "025ba7d6b496d3af86c4c904e67091d11a34f56b89a083da4d4c1e27b0a524ba",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -279,10 +291,14 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // compaction promise now says what is true at pi 1.0.0 — the ledger survives word for word
 // (pinned into the compaction summary, and re-handed by the next round order); everything
 // else only as a paraphrase. The fixture has no ledger file, so `{{ledger_note}}` renders "".
+// Re-pinned 2026-10-08 (H1a, #5885): step 7 of the three round templates
+// tells the session never to write the verdict file in place — stage it at
+// `verdict/<name>.tmp`, then publish it with scripts/commit-verdict.sh (one
+// rename), and the guard-5 head_moved outcome the same way. Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "c1ce7e4c49556b75009f44ecb9b9f4e7f442ac0474b2ef9046e423609e07886a",
-  "re-review": "35981186a25516ade9fa111d900f4fedff92a34d9467c7c545d967d3f0affe85",
-  staleness: "54873e308b1bddf1a9c788f9785d4f36c30b43edfeceb6822654aa7a3ba12cfb",
+  first: "945fbe1ff33eee78b06ced3a38cf5e2decf406204bd333cc7285eb5a4fd871a0",
+  "re-review": "7d99a26d5da6d8eb572645089454eec8f4c9c538755a12f1970d30744711b6fa",
+  staleness: "95f96808783f5f495a6eefea2978cfb19f4cc83000f4d45dc10fe450ae2b7013",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

@@ -115,8 +115,7 @@ function watcher(hooks: SessionHooks, cfg: Config = baseCfg): VerdictWatcher {
     verdictDir: dir,
     root: dir,
     usage: { globalStoreDir: null },
-    parseRetries: 0,
-    retryDelayMs: 1,
+    partialWrite: { windowMs: 0 },
     now: () => clock,
   });
 }

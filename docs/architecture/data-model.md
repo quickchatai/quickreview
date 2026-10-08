@@ -193,7 +193,7 @@ processes that do not share memory.
 
 | Directory | Files | Producer | Consumer |
 | --- | --- | --- | --- |
-| `verdict/` | `pr-<n>-round-<k>.json` | the PR's pi session at round end | `VerdictWatcher` (`src/verdicts.ts`); the path is set in `src/daemon.ts` as `join(root, "verdict")` |
+| `verdict/` | `pr-<n>-round-<k>.json`, `pr-<n>-recheck-<head12>.json`; each first staged as `<name>.tmp` | the PR's pi session at round end, published by `scripts/commit-verdict.sh` (one rename, H1a) | `VerdictWatcher` (`src/verdicts.ts`) and `RecheckWatcher` (`src/recheck.ts`), which never read a `.tmp`; the path is set in `src/daemon.ts` as `join(root, "verdict")` |
 | `inject/<session>/` | `*.md` wake files, plus a `.done/` subdirectory | `SessionManager` (`src/sessions.ts`) | `extensions/inject-bridge.ts` inside pi, which moves consumed files to `.done/` |
 | `commands/` | `*.json` command files, plus `results/` and `processed/` | pi sessions (the overseer's action space) | `CommandWatcher` (`src/commands.ts`) |
 | `commands/slack/` | the same envelope, tier-checked | the Slack router | the second `CommandWatcher` built in `src/wire.ts` |
@@ -443,7 +443,14 @@ to say so by name. It is written only by `scripts/post-review.sh`, only before
 
 Identity is `roundPostingKey(pr, roundNo, headSha)` → `v1:<pr>:<round>:<sha>`,
 embedded in the review body as `postingMarker(key)`. A *missing* receipt is
-still a loud failure; a `skipped` one settles the round terminally.
+still a loud failure; a `skipped` one settles the round terminally; a
+`confirmed` one whose round has a malformed or missing verdict file settles
+the round from the receipt (H1a) when `decidedVerdictFromReceipt`
+can read the decision off `intended_event`/`actual_event` — a COMMENT the
+session asked for is the templates' withheld approval (APPROVE,
+`approval_withheld`); a receipt the daemon reconciled from GitHub, whose
+`intended_event` is only the posted event, proves no decision off a COMMENT and
+keeps the loud path.
 
 ---
 
@@ -553,6 +560,7 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `round_first_pass_max_min` | number | `5` |
 | `round_passes_max_min` | number | `35` |
 | `round_finalize_grace_min` | number | `5` |
+| `round_posted_tail_grace_min` | number | `15` (H1a: after a CONFIRMED posting, how long a stage limit waits for the session's tail before settling the round from the receipt) |
 | `posting_receipt_grace_s` | number | `120` |
 | `session_command_unknown_grace_s` | number | `60` |
 | `session_command_unknown_max_checks` | number | `1` |

@@ -166,7 +166,8 @@ delay the outcome file.
 
 ## Return — always, in both cases
 
-Write `verdict/{{decision_file}}` with EXACTLY this shape:
+Write `verdict/{{decision_file}}` with EXACTLY this shape — staged and
+committed, never written in place (below):
 
 ```json
 {
@@ -183,3 +184,11 @@ BEFORE writing the outcome file — the outcome file tells the daemon you are
 done, and anything after it may be cut off. Labels
 and the PR's lifecycle state are the daemon's; never request a reviewer on
 GitHub.
+
+**Never write `verdict/{{decision_file}}` directly** — the daemon reads it the
+moment it appears, and a file still being written reads as broken JSON. Two
+steps, as your last action: write the COMPLETE JSON with your `write` tool to
+`verdict/{{decision_file}}.tmp` (the daemon never reads that name), then run
+`scripts/commit-verdict.sh {{decision_file}}`, which checks it is one whole JSON
+object and renames it into place in a single step. If it refuses, fix the
+staged file and run it again.

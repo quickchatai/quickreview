@@ -774,8 +774,8 @@ describe("recheck decisions", () => {
       store,
       verdictDir: join(root, "verdict"),
       log: () => {},
-      parseRetries: 4,
-      retryDelayMs: 10,
+      // The production partial-write policy (H1a): an empty file
+      // that is still young is waited out, never archived as malformed.
     });
     setTimeout(
       () =>
@@ -799,8 +799,10 @@ describe("recheck decisions", () => {
       store,
       verdictDir: join(root, "verdict"),
       log: (m) => logs.push(m),
-      parseRetries: 1,
-      retryDelayMs: 1,
+      // A short settle so the test does not wait out the production 3 s: the
+      // file must still sit unchanged across several looks before it is
+      // called malformed (H1a).
+      partialWrite: { settleMs: 40, windowMs: 2_000, initialDelayMs: 5, maxDelayMs: 20 },
     });
     await watcher.sweep();
     expect(kinds()).toContain("recheck_decision_malformed");

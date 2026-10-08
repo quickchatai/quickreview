@@ -1657,6 +1657,13 @@ export interface Config {
     round_first_pass_max_min?: number;
     round_passes_max_min?: number;
     round_finalize_grace_min?: number;
+    /** H1a: once a round's review is CONFIRMED posted, a stage limit
+     * no longer cancels it — the session's tail (ledger, findings record,
+     * verdict file) gets this long after the posting to finish, and a round
+     * still without a verdict then is settled from the posting receipt. Never
+     * a self-requeue, so never a second posting. Readers default to
+     * DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN. */
+    round_posted_tail_grace_min?: number;
     posting_receipt_grace_s?: number;
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
@@ -2179,6 +2186,10 @@ export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
 export const DEFAULT_ROUND_FIRST_PASS_MAX_MIN = 5;
 export const DEFAULT_ROUND_PASSES_MAX_MIN = 35;
 export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
+/** H1a: measured posting→verdict tails ran to 6.5 min (210 rounds,
+ * 2026-10-01…08); 15 is over twice that and still well inside the 75-minute
+ * round deadline. */
+export const DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN = 15;
 export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
@@ -2326,6 +2337,7 @@ export function parseConfig(toml: string): Config {
       round_first_pass_max_min: DEFAULT_ROUND_FIRST_PASS_MAX_MIN,
       round_passes_max_min: DEFAULT_ROUND_PASSES_MAX_MIN,
       round_finalize_grace_min: DEFAULT_ROUND_FINALIZE_GRACE_MIN,
+      round_posted_tail_grace_min: DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN,
       posting_receipt_grace_s: DEFAULT_POSTING_RECEIPT_GRACE_S,
       session_command_unknown_grace_s: DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
       session_command_unknown_max_checks: DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS,
@@ -2458,6 +2470,10 @@ export function parseConfig(toml: string): Config {
     throw new Error(
       "config.toml: require 0 < round_first_pass_max_min < round_passes_max_min < session_command_running_max_min and 0 < round_finalize_grace_min < session_command_running_max_min",
     );
+  }
+  const postedTail = cfg.daemon.round_posted_tail_grace_min ?? DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN;
+  if (!(typeof postedTail === "number" && Number.isFinite(postedTail) && postedTail > 0)) {
+    throw new Error("config.toml: require round_posted_tail_grace_min > 0");
   }
   // Shape checks are pure, so they fire on every parse (tests included);
   // the token-file check is I/O and lives in validateSlackConfig.

@@ -71,7 +71,8 @@ not complete this round.
 
 If the script refuses with "head moved" (guard 5), the PR advanced
 while you were reviewing: post NOTHING further on GitHub. Then write the
-verdict file at its normal path (`verdict/pr-{{n}}-round-{{round_no}}.json`)
+verdict file at its normal path (`verdict/pr-{{n}}-round-{{round_no}}.json`,
+staged and committed as step 7 says — never written directly)
 with `"outcome": "head_moved"` in place of a verdict —
 
 ```json
@@ -622,7 +623,8 @@ something to work around — record what happened in the verdict and stop.
 
 ## 7. Return
 
-Write `verdict/pr-{{n}}-round-{{round_no}}.json` with EXACTLY this JSON shape —
+Write `verdict/pr-{{n}}-round-{{round_no}}.json` — staged and committed, never
+written in place ("Writing the verdict file", below) — with EXACTLY this JSON shape —
 the daemon rejects anything else (missing or renamed fields are fatal).
 
 **Scratch paths are pinned — same discipline as the verdict path.** Every
@@ -702,6 +704,23 @@ your last ledger block verbatim into its summary, and the next round's order
 hands it back to you from disk. Everything else survives only as a
 paraphrase, if at all. A round that writes the verdict
 first gets its ledger update cut off and leaves the next round blind.
+
+### Writing the verdict file — stage it, then commit it
+
+**Never write `verdict/pr-{{n}}-round-{{round_no}}.json` directly.** The daemon
+watches that name and reads it the moment it appears; a file still being
+written reads as broken JSON. Always two steps, as the round's very last
+action:
+
+1. With your `write` tool, write the COMPLETE JSON to the staging name
+   `verdict/pr-{{n}}-round-{{round_no}}.json.tmp` (the daemon never reads it).
+2. Run `scripts/commit-verdict.sh pr-{{n}}-round-{{round_no}}.json`. It checks
+   the staged file is one whole JSON object and renames it onto
+   `verdict/pr-{{n}}-round-{{round_no}}.json` in a single step. If it refuses,
+   fix the staged file and run it again — nothing was published.
+
+The same two steps publish a `head_moved` outcome. The commit IS the verdict
+write the paragraph above means: nothing comes after it.
 
 ### The findings record — write it every round, before the verdict file
 

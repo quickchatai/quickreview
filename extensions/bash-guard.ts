@@ -151,6 +151,12 @@ const SANCTIONED_SCRIPTS = new Set([
   // findings record, writes the two pinned scratch files under state/. Posts
   // nothing; posting still goes through post-review.sh / approve-pr.sh.
   "render-review.sh",
+  // H1a: the round templates stage the verdict at verdict/<name>.tmp
+  // and publish it with this — one rename inside verdict/, so the daemon never
+  // reads a half-written verdict (#5885). `mv` itself stays off ALLOWED: the
+  // script takes only the two verdict-file name shapes, touches nothing
+  // outside verdict/, reads no config and posts nothing.
+  "commit-verdict.sh",
 ]);
 
 /** Agent-spawning programs. These already fell off ALLOWED, but the generic

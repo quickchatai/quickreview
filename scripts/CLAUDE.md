@@ -26,3 +26,9 @@ stay behaviourally identical to the TS side:
   the gate. Change a guard on one side → change it on both + both tests.
 - `mint-token.sh` is the only credential source (App JWT → installation
   token, cached, single-flight). Never a personal token, never `GH_TOKEN`.
+- `commit-verdict.sh` (H1a) is sanctioned for sessions but posts
+  nothing: it publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
+  one rename after checking it is one whole JSON object, so the daemon never
+  reads a half-written verdict. It accepts only the two verdict-file name
+  shapes and touches nothing outside `verdict/`; `mv` itself stays off the
+  bash guard's allowlist.

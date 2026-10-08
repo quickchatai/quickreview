@@ -234,8 +234,7 @@ describe("verdict hooks", () => {
       announce,
       now,
       usage: { globalStoreDir: null, fs: { readDir: () => [], readFile: () => "" } },
-      parseRetries: 0,
-      retryDelayMs: 0,
+      partialWrite: { windowMs: 0 },
     });
   }
 

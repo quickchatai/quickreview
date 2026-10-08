@@ -117,6 +117,12 @@ session_command_running_max_min = 45
 round_first_pass_max_min = 5
 round_passes_max_min = 35
 round_finalize_grace_min = 5
+# H1a: once a round's review is CONFIRMED posted, a stage limit no
+# longer cancels it — the session's tail (ledger, findings record, verdict
+# file) gets this long after the posting, and a round still without a verdict
+# then is settled from the posting receipt. Never a requeue, never a second
+# posting.
+round_posted_tail_grace_min = 15
 posting_receipt_grace_s = 120
 session_command_unknown_grace_s = 60
 session_command_unknown_max_checks = 1

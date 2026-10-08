@@ -252,8 +252,7 @@ describe("VerdictWatcher round-end ledger check", () => {
       verdictDir: join(dir, "verdict"),
       root: dir,
       usage: { globalStoreDir: null },
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       // Inline: the production settle delay (compaction race, 2026-08-19) is
       // covered in verdicts.test.ts; these tests pin the check itself.
       ledgerCheckDelayMs: 0,
@@ -341,8 +340,7 @@ describe("RecheckWatcher ledger check on uphold", () => {
       cfg,
       store,
       verdictDir,
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       checkLedger: async (pr, head) => {
         calls.push(`${pr}:${head}`);
         throw new Error("boom"); // must never disturb the decision path

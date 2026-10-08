@@ -365,8 +365,12 @@ export interface VerdictFile {
  * ships a disk-logging stub so the daemon runs end-to-end without pi. */
 export type SessionCommandRetryResult =
   "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
+/** What the round-stage supervisor's failure callback did with a stage limit.
+ * `posted_wait` (H1a): the round's review is already on GitHub (or
+ * was refused by guard 2), so the limit is NOT a failure — the session's tail
+ * is given its bounded grace and nothing is cancelled, killed or requeued. */
 export type RoundRecoveryDisposition =
-  "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled";
+  "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled" | "posted_wait";
 
 /** What one stale raw-tier sweep did (S3,
  * `PiSessionManager.sweepStaleOvSessions`): the `pr-<n>` OpenViking sessions

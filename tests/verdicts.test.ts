@@ -1,11 +1,14 @@
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -19,6 +22,7 @@ import { postingMarker, roundPostingKey } from "../src/posting-receipt.js";
 import type { SessionHooks, VerdictFile } from "../src/types.js";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { validateVerdict, VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { retryWithheldApproval } from "../src/cigate.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 const cfg: Config = parseConfig(
@@ -222,8 +226,7 @@ function watcher(
     verdictDir: dir,
     root: dir, // usage measurement stays inside the temp dir…
     usage: { globalStoreDir: null }, // …and never scans the real ~/.pi store
-    parseRetries: 0,
-    retryDelayMs: 1,
+    partialWrite: { windowMs: 0 },
     ...over,
   });
 }
@@ -384,7 +387,7 @@ describe("valid verdicts", () => {
   it("tolerates a partial write by retrying the parse", async () => {
     reviewingRound(105);
     const name = write(105, 1, '{"pr": 105, "round_no": 1, "verdi');
-    const w = watcher({ parseRetries: 3, retryDelayMs: 5 });
+    const w = watcher({ partialWrite: undefined }); // the production policy
     const pending = w.handleFile(name);
     setTimeout(() => write(105, 1, verdictFile({ pr: 105, verdict: "APPROVE" })), 8);
     await pending;
@@ -393,6 +396,110 @@ describe("valid verdicts", () => {
       store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_malformed'").get(),
     ).toMatchObject({ c: 0 });
   });
+});
+
+// ---------------------------------------------------------------------------
+// H1a — #5885: the session writes the verdict IN PLACE (open O_TRUNC,
+// then the bytes). On a CPU-starved container the gap between the two outlived
+// the watcher's 3 × 40 ms tolerance, and a valid APPROVE was read as
+// "Unexpected end of JSON input". These write the file the way pi does — one
+// open fd, the bytes in two halves — with the PRODUCTION partial-write policy.
+// ---------------------------------------------------------------------------
+describe("partial writes are waited out, not misread (H1a, #5885)", () => {
+  const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const productionWatcher = () => watcher({ partialWrite: undefined });
+
+  async function halvesApart(pr: number, gapMs: number): Promise<boolean> {
+    reviewingRound(pr);
+    const name = `pr-${pr}-round-1.json`;
+    const body = JSON.stringify(verdictFile({ pr, verdict: "APPROVE" }));
+    const cut = Math.floor(body.length / 2);
+    const fd = openSync(join(dir, name), "w"); // O_TRUNC: fs.watch fires here
+    writeSync(fd, body.slice(0, cut));
+    const pending = productionWatcher().handleFile(name);
+    await sleepMs(gapMs);
+    writeSync(fd, body.slice(cut));
+    closeSync(fd);
+    return pending;
+  }
+
+  const malformedCount = () =>
+    (
+      store.db
+        .prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_malformed'")
+        .get() as {
+        c: number;
+      }
+    ).c;
+
+  it("a verdict written in two halves 200 ms apart is parsed and applied, not malformed", async () => {
+    expect(await halvesApart(150, 200)).toBe(true);
+    expect(malformedCount()).toBe(0);
+    expect(store.roundsFor(150)[0]).toMatchObject({ status: "done", verdict: "APPROVE" });
+    expect(store.getPr(150)?.state).toBe("tracked");
+    expect(store.openReviewFailure(150)).toBeUndefined();
+    const waited = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'verdict_read_waited' AND pr = 150")
+      .get() as { payload: string } | undefined;
+    expect(JSON.parse(waited!.payload)).toMatchObject({ outcome: "parsed" });
+    expect(JSON.parse(waited!.payload).reads).toBeGreaterThan(1);
+  });
+
+  it(
+    "a verdict written in two halves 2 s apart is parsed and applied, not malformed",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      expect(await halvesApart(151, 2_000)).toBe(true);
+      expect(malformedCount()).toBe(0);
+      expect(store.roundsFor(151)[0]).toMatchObject({ status: "done", verdict: "APPROVE" });
+      expect(store.openReviewFailure(151)).toBeUndefined();
+    },
+  );
+
+  it(
+    "the sweep never holds one PR's verdict behind another PR's file that is still being written",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(153); // its file is mid-write for 1.5 s
+      reviewingRound(154); // its file is complete
+      const body = JSON.stringify(verdictFile({ pr: 153, verdict: "APPROVE" }));
+      const fd = openSync(join(dir, "pr-153-round-1.json"), "w");
+      writeSync(fd, body.slice(0, 10));
+      write(154, 1, verdictFile({ pr: 154, verdict: "APPROVE" }));
+
+      const t0 = Date.now();
+      const sweeping = productionWatcher().sweep();
+      const deadline = t0 + 1_000;
+      while (store.roundsFor(154)[0]?.status !== "done" && Date.now() < deadline) await sleepMs(10);
+      expect(store.roundsFor(154)[0]?.status).toBe("done");
+      expect(store.roundsFor(153)[0]?.status).toBe("running"); // still waiting it out
+
+      await sleepMs(Math.max(0, t0 + 1_500 - Date.now()));
+      writeSync(fd, body.slice(10));
+      closeSync(fd);
+      expect(await sweeping).toEqual(["pr-153-round-1.json", "pr-154-round-1.json"]);
+      expect(store.roundsFor(153)[0]?.status).toBe("done");
+      expect(malformedCount()).toBe(0);
+    },
+  );
+
+  it(
+    "a truly corrupt file still becomes malformed — after it has sat still, inside the bounded window",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      reviewingRound(152);
+      const name = write(152, 1, '{"pr": 152, "round_no": 1, "verdict": "APPRO');
+      const started = Date.now();
+      expect(await productionWatcher().handleFile(name)).toBe(true);
+      const took = Date.now() - started;
+      expect(took).toBeGreaterThanOrEqual(3_000); // DEFAULT settleMs
+      expect(took).toBeLessThan(30_000); // DEFAULT windowMs
+      expect(malformedCount()).toBe(1);
+      expect(store.openReviewFailure(152)).toMatchObject({ stage: "malformed_verdict" });
+      expect(store.anomalies()[0]!.detail).toContain("the file had stopped changing");
+      expect(existsSync(join(dir, name))).toBe(false);
+    },
+  );
 });
 
 describe("measured round usage", () => {
@@ -899,7 +1006,11 @@ describe("confirmed round posting receipts", () => {
     ).toMatchObject({ c: 1 });
   });
 
-  it("never requeues a confirmed posted review whose session lost only the verdict", async () => {
+  // H1a changed the ending, deliberately: the posted review is the
+  // evidence, so a round whose session stopped without its verdict file is
+  // SETTLED from the receipt — still never requeued (that would post twice),
+  // and no longer FAILED_LOUD over a review that stands on GitHub.
+  it("never requeues a confirmed posted review whose session lost only the verdict — it settles from the receipt", async () => {
     reviewingRound(184);
     const { key } = stampPosting(184, 1);
     writePostingReceipt(184, 1, key, "REQUEST_CHANGES");
@@ -911,20 +1022,742 @@ describe("confirmed round posting receipts", () => {
         "settled_without_verdict",
         "parent settled",
       ),
-    ).toBe("failed_loud");
+    ).toBe("settled");
 
     expect(store.roundsFor(184)[0]).toMatchObject({
-      status: "cancelled",
-      verdict: null,
+      status: "done",
+      verdict: "REQUEST_CHANGES",
       gh_review_id: 991,
+      posted_event: "REQUEST_CHANGES",
     });
-    expect(store.openReviewFailure(184)).toMatchObject({
-      stage: "posted_without_verdict",
-      work_owed: 1,
-    });
+    expect(store.openReviewFailure(184)).toBeUndefined();
+    expect(store.getPr(184)?.state).toBe("awaiting_author");
     expect(
       store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind='round_self_requeued'").get(),
     ).toMatchObject({ c: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H1a — a malformed or missing verdict whose posting receipt is
+// CONFIRMED is settled from the receipt; a missing receipt still fails loud.
+// ---------------------------------------------------------------------------
+describe("settling from a confirmed posting receipt (H1a)", () => {
+  const TRUNCATED = (pr: number) => `{"pr": ${pr}, "round_no": 1, "verdi`;
+  const count = (kind: string, pr?: number) =>
+    (
+      store.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM events WHERE kind = ?${pr === undefined ? "" : " AND pr = ?"}`,
+        )
+        .get(...(pr === undefined ? [kind] : [kind, pr])) as { c: number }
+    ).c;
+  const settledEvent = (pr: number) =>
+    JSON.parse(
+      (
+        store.db
+          .prepare(
+            "SELECT payload FROM events WHERE kind = 'verdict_settled_from_receipt' AND pr = ? ORDER BY id DESC",
+          )
+          .get(pr) as { payload: string }
+      ).payload,
+    );
+
+  it("#5885: a malformed verdict whose APPROVE was confirmed posted settles as APPROVE — no FAILED_LOUD, no requeue", async () => {
+    reviewingRound(5885);
+    const { key } = stampPosting(5885, 1);
+    writePostingReceipt(5885, 1, key, "APPROVE", { gh_review_id: 5449445735 });
+    const { hooks, overseer } = recordingHooks();
+    const name = write(5885, 1, TRUNCATED(5885));
+
+    expect(await watcher({}, hooks).handleFile(name)).toBe(true);
+
+    expect(store.roundsFor(5885)[0]).toMatchObject({
+      status: "done",
+      verdict: "APPROVE",
+      gh_review_id: 5449445735,
+      posted_event: "APPROVE",
+    });
+    expect(store.roundsFor(5885)[0]!.summary).toContain("settled from the posted review");
+    expect(store.getPr(5885)?.state).toBe("tracked");
+    expect(store.reviewedHead(5885)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
+    expect(store.openReviewFailure(5885)).toBeUndefined();
+    expect(count("verdict_malformed")).toBe(0);
+    expect(count("round_self_requeued")).toBe(0);
+    expect(store.anomalies().filter((a) => a.kind === "review_failed_loud")).toEqual([]);
+    expect(overseer.some((m) => m.includes("No review was produced"))).toBe(false);
+    expect(settledEvent(5885)).toMatchObject({
+      via: "malformed_verdict",
+      decided_verdict: "APPROVE",
+      gh_review_id: 5449445735,
+    });
+    const applied = store.db
+      .prepare("SELECT payload FROM events WHERE kind = 'verdict_applied' AND pr = 5885")
+      .get() as { payload: string };
+    expect(JSON.parse(applied.payload)).toMatchObject({
+      source: "posting_receipt",
+      via: "malformed_verdict",
+    });
+    // The in-progress label comes off and the reviewed label goes on — the
+    // same handoff a verdict file gets; nothing is posted (no adapter write).
+    expect(adapter.calls).toEqual([
+      `removeLabel:5885:${cfg.github.in_progress_label}`,
+      `addLabel:5885:${cfg.github.reviewed_label}`,
+    ]);
+    expect(existsSync(join(dir, name))).toBe(false);
+  });
+
+  it("a REQUEST_CHANGES softened to COMMENT by guard 1 settles as REQUEST_CHANGES (what the session asked for)", async () => {
+    reviewingRound(186);
+    const { key } = stampPosting(186, 1);
+    writePostingReceipt(186, 1, key, "COMMENT", { intended_event: "REQUEST_CHANGES" });
+
+    expect(await watcher().handleFile(write(186, 1, TRUNCATED(186)))).toBe(true);
+
+    expect(store.roundsFor(186)[0]).toMatchObject({
+      status: "done",
+      verdict: "REQUEST_CHANGES",
+      posted_event: "COMMENT",
+    });
+    expect(store.getPr(186)?.state).toBe("awaiting_author");
+    expect(store.openReviewFailure(186)).toBeUndefined();
+  });
+
+  it("a COMMENT the session asked for is the templates' withheld-approval shape: APPROVE, approval withheld, and CI going green re-queues it for the SESSION to decide", async () => {
+    reviewingRound(188);
+    const { key } = stampPosting(188, 1);
+    writePostingReceipt(188, 1, key, "COMMENT");
+    adapter.listChecks = async () => [
+      { name: "ci", source: "check_run", status: "in_progress", conclusion: null },
+    ];
+
+    expect(await watcher().handleFile(write(188, 1, TRUNCATED(188)))).toBe(true);
+
+    expect(store.roundsFor(188)[0]).toMatchObject({
+      status: "done",
+      verdict: "APPROVE",
+      gh_review_id: 991,
+      posted_event: "COMMENT",
+    });
+    expect(store.roundsFor(188)[0]!.summary).toContain("withheld");
+    expect(store.getPr(188)?.state).toBe("tracked");
+    expect(store.reviewedHead(188)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
+    // The mark is what the approval waits on — before H1a review
+    // round 1 this shape closed with no mark, and CI turning green never
+    // brought the PR back.
+    expect(store.approvalWithheld(188)).toMatchObject({
+      head_sha: "abc123",
+      reason: "red-ci",
+      ci_state: "pending",
+    });
+    expect(store.openReviewFailure(188)).toBeUndefined();
+    expect(count("round_self_requeued")).toBe(0);
+    expect(settledEvent(188)).toMatchObject({
+      decided_verdict: "APPROVE",
+      approval_withheld: true,
+      intended_event: "COMMENT",
+      actual_event: "COMMENT",
+    });
+    // Labels only: nothing was posted and nothing was approved.
+    expect(adapter.calls).toEqual([
+      `removeLabel:188:${cfg.github.in_progress_label}`,
+      `addLabel:188:${cfg.github.reviewed_label}`,
+    ]);
+
+    // CI goes green at the head: the ordinary withheld-approval retry
+    // re-queues the PR, and the session decides again — the receipt's reading
+    // never approves anything by itself.
+    adapter.listChecks = async () => [
+      { name: "ci", source: "check_run", status: "completed", conclusion: "success" },
+    ];
+    expect(
+      await retryWithheldApproval({ cfg, store, adapter }, { pr: 188, head_sha: "abc123" }),
+    ).toMatchObject({ action: "requeued" });
+    expect(store.getPr(188)?.state).toBe("queued");
+  });
+
+  it("a COMMENT the daemon only RECONCILED from GitHub (no receipt file) is not read as a decision: malformed stays loud", async () => {
+    // The shell never persisted its receipt; the marker reconcile finds the
+    // bot's COMMENT. What the session ASKED for is unknown — a softened
+    // REQUEST_CHANGES looks identical — so nothing is guessed.
+    reviewingRound(196);
+    const { key } = stampPosting(196, 1);
+    adapter.listReviewsFull = async () => [
+      {
+        id: 778,
+        user: cfg.github.bot_login,
+        user_type: "Bot",
+        state: "COMMENTED",
+        body: `review body\n\n${postingMarker(key)}`,
+        commit_id: "abc123",
+        submitted_at: "2026-08-13T11:59:59Z",
+      },
+    ];
+    const { hooks, overseer } = recordingHooks();
+
+    expect(
+      await watcher({ cfg: { ...cfg, dry_run: false } }, hooks).handleFile(
+        write(196, 1, TRUNCATED(196)),
+      ),
+    ).toBe(true);
+
+    expect(overseer[0]).toContain("ANOMALY (malformed)");
+    expect(overseer[0]).toContain("does not say what was decided");
+    expect(store.openReviewFailure(196)).toMatchObject({ stage: "malformed_verdict" });
+    expect(store.reviewedHead(196)).toBeUndefined();
+    expect(store.approvalWithheld(196)).toBeUndefined();
+    expect(count("verdict_settled_from_receipt")).toBe(0);
+  });
+
+  it("a receipt pairing no posting script writes is not read as a decision either: the deadline keeps its loud posted_without_verdict", async () => {
+    reviewingRound(197);
+    const { key } = stampPosting(197, 1);
+    // approve-pr.sh only ever records APPROVE→APPROVE.
+    writePostingReceipt(197, 1, key, "COMMENT", { intended_event: "APPROVE" });
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+
+    await watcher({ now: () => later }).checkDeadlines();
+
+    expect(store.roundsFor(197)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+    });
+    expect(store.openReviewFailure(197)).toMatchObject({
+      stage: "posted_without_verdict",
+      work_owed: 1,
+    });
+    expect(count("round_self_requeued")).toBe(0);
+    expect(count("verdict_settled_from_receipt")).toBe(0);
+  });
+
+  it("the COMMENT case settles a successor owed at the SAME head (the posted review covers it) and keeps a newer one", async () => {
+    const sameId = reviewingRound(194);
+    const { key } = stampPosting(194, 1);
+    writePostingReceipt(194, 1, key, "COMMENT");
+    store.recordSuccessor({
+      pr: 194,
+      predecessor_round_id: sameId,
+      head_sha: "abc123",
+      provenance: "human",
+      reason: "trigger-while-reviewing",
+    });
+
+    expect(await watcher().handleFile(write(194, 1, TRUNCATED(194)))).toBe(true);
+    expect(store.successorFor(194)).toBeUndefined();
+    expect(store.getPr(194)?.state).toBe("tracked"); // nothing queued to post again
+
+    const newerId = reviewingRound(195);
+    const second = stampPosting(195, 1);
+    writePostingReceipt(195, 1, second.key, "COMMENT");
+    store.recordSuccessor({
+      pr: 195,
+      predecessor_round_id: newerId,
+      head_sha: "fresh999",
+      provenance: "system",
+      reason: "push",
+    });
+
+    expect(await watcher().handleFile(write(195, 1, TRUNCATED(195)))).toBe(true);
+    expect(store.getPr(195)).toMatchObject({ state: "queued", head_sha: "fresh999" });
+  });
+
+  it("malformed + NO receipt still fails loud exactly as before", async () => {
+    const roundId = reviewingRound(189);
+    stampPosting(189, 1);
+    const { hooks, overseer } = recordingHooks();
+
+    expect(await watcher({}, hooks).handleFile(write(189, 1, TRUNCATED(189)))).toBe(true);
+
+    expect(overseer[0]).toContain("ANOMALY (malformed)");
+    expect(store.getPr(189)!.state).toBe("queued");
+    expect(store.openReviewFailure(189)).toMatchObject({
+      stage: "malformed_verdict",
+      work_owed: 1,
+    });
+    expect(
+      (store.db.prepare("SELECT status FROM rounds WHERE id = ?").get(roundId) as any).status,
+    ).toBe("overdue");
+    expect(count("verdict_settled_from_receipt")).toBe(0);
+  });
+
+  it("malformed + a guard-2 refusal record settles as the no-op", async () => {
+    reviewingRound(190);
+    const { key } = stampPosting(190, 1);
+    store.recordReviewedHead(190, { head_sha: "abc123", verdict: "REQUEST_CHANGES", round_no: 0 });
+    const mark = store.reviewedHead(190)!;
+    const receiptDir = join(dir, "state", "posting-receipts");
+    mkdirSync(receiptDir, { recursive: true });
+    writeFileSync(
+      join(receiptDir, "pr-190-round-1.json"),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        marker: postingMarker(key),
+        pr: 190,
+        round_no: 1,
+        head_sha: "abc123",
+        status: "skipped",
+        skip_reason: "no-new-evidence",
+        intended_event: "REQUEST_CHANGES",
+        mode: "dryrun",
+        skipped_at: new Date(Date.parse(mark.reviewed_at) + 1000).toISOString(),
+        standing_mark: {
+          head_sha: mark.head_sha,
+          reviewed_at: mark.reviewed_at,
+          verdict: mark.verdict,
+          posted_event: mark.posted_event,
+          round_no: mark.round_no,
+          last_author_reply_at: mark.last_author_reply_at,
+        },
+      }),
+    );
+
+    expect(await watcher().handleFile(write(190, 1, TRUNCATED(190)))).toBe(true);
+
+    expect(store.roundsFor(190)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "no_new_evidence",
+    });
+    expect(store.openReviewFailure(190)).toBeUndefined();
+    expect(store.getPr(190)?.state).toBe("awaiting_author");
+  });
+
+  it("a malformed file arriving AFTER the round settled from its receipt replays inertly — no FAILED_LOUD over a settled round", async () => {
+    reviewingRound(191);
+    const { key } = stampPosting(191, 1);
+    writePostingReceipt(191, 1, key, "REQUEST_CHANGES");
+    const w = watcher();
+    expect(await w.recoverInfrastructureFailure(191, 1, "settled_without_verdict", "x")).toBe(
+      "settled",
+    );
+    const stateBefore = store.getPr(191)?.state;
+
+    expect(await w.handleFile(write(191, 1, TRUNCATED(191)))).toBe(true);
+
+    expect(store.getPr(191)?.state).toBe(stateBefore);
+    expect(store.openReviewFailure(191)).toBeUndefined();
+    expect(count("verdict_malformed")).toBe(0);
+    expect(count("verdict_replay_ignored", 191)).toBe(1);
+    // …and a late VALID file is the same inert replay.
+    expect(await w.handleFile(write(191, 1, verdictFile({ pr: 191 })))).toBe(true);
+    expect(count("verdict_applied", 191)).toBe(1);
+  });
+
+  it("the deadline: a confirmed receipt with no verdict file settles from the receipt (was FAILED_LOUD posted_without_verdict)", async () => {
+    reviewingRound(192);
+    const { key } = stampPosting(192, 1);
+    writePostingReceipt(192, 1, key, "APPROVE");
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+
+    expect(await watcher({ now: () => later }).checkDeadlines()).toEqual([]);
+
+    expect(store.roundsFor(192)[0]).toMatchObject({ status: "done", verdict: "APPROVE" });
+    expect(store.openReviewFailure(192)).toBeUndefined();
+    expect(settledEvent(192)).toMatchObject({ via: "deadline", decided_verdict: "APPROVE" });
+  });
+
+  it("the deadline with NO receipt still fails loud after grace, exactly as before", async () => {
+    reviewingRound(193);
+    stampPosting(193, 1);
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+
+    await watcher({ now: () => later }).checkDeadlines();
+
+    expect(store.roundsFor(193)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+    });
+    expect(store.openReviewFailure(193)).toMatchObject({ stage: "posting_receipt", work_owed: 1 });
+  });
+
+  it("a VALID verdict landing after a deadline settlement — a newer round already running — replays inertly and touches nothing", async () => {
+    const first = reviewingRound(198);
+    const { key } = stampPosting(198, 1);
+    writePostingReceipt(198, 1, key, "COMMENT");
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+    const w = watcher({ now: () => later });
+    await w.checkDeadlines();
+    expect(store.roundsFor(198).find((r) => r.id === first)).toMatchObject({
+      status: "done",
+      verdict: "APPROVE",
+    });
+
+    // The PR moves on: round 2 runs at a fresh head.
+    store.upsertPr({
+      number: 198,
+      state: "reviewing",
+      head_sha: "fresh999",
+      title: "PR 198",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const second = store.startRound(
+      198,
+      "re-review",
+      ["pass-baseline"],
+      cfg.daemon.round_deadline_min,
+    );
+    adapter.calls.length = 0;
+    const mark = store.reviewedHead(198);
+    const withheld = store.approvalWithheld(198);
+    const successor = store.successorFor(198);
+
+    // The session's own verdict for round 1 finally lands.
+    expect(
+      await w.handleFile(
+        write(198, 1, verdictFile({ pr: 198, verdict: "APPROVE", approval_withheld: true })),
+      ),
+    ).toBe(true);
+
+    expect(store.roundsFor(198).find((r) => r.id === second)?.status).toBe("running");
+    expect(store.getPr(198)).toMatchObject({ state: "reviewing", head_sha: "fresh999" });
+    expect(store.reviewedHead(198)).toEqual(mark);
+    expect(store.approvalWithheld(198)).toEqual(withheld);
+    expect(store.successorFor(198)).toEqual(successor);
+    expect(adapter.calls).toEqual([]); // the running round keeps its in-progress label
+    expect(count("verdict_replay_ignored", 198)).toBe(1);
+    expect(count("verdict_applied", 198)).toBe(1);
+  });
+
+  it("a round the operator cancelled while the settlement awaited GitHub is never applied over", async () => {
+    const roundId = reviewingRound(199);
+    const { key } = stampPosting(199, 1);
+    adapter.listReviewsFull = async () => {
+      // The operator's `u` lands while the marker reconcile reads GitHub.
+      store.markRoundCancelled(roundId, "operator rerun", "operator");
+      return [
+        {
+          id: 779,
+          user: cfg.github.bot_login,
+          user_type: "Bot",
+          state: "APPROVED",
+          body: `review body\n\n${postingMarker(key)}`,
+          commit_id: "abc123",
+          submitted_at: "2026-08-13T11:59:59Z",
+        },
+      ];
+    };
+
+    expect(
+      await watcher({ cfg: { ...cfg, dry_run: false } }).handleFile(write(199, 1, TRUNCATED(199))),
+    ).toBe(true);
+
+    expect(store.roundsFor(199)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "operator",
+      verdict: null,
+    });
+    expect(count("verdict_settled_from_receipt_replayed", 199)).toBe(1);
+    expect(count("verdict_settled_from_receipt", 199)).toBe(0);
+    expect(count("verdict_applied", 199)).toBe(0);
+    expect(store.reviewedHead(199)).toBeUndefined();
+  });
+
+  /** A daemon killed inside `apply`: the round row is finished, nothing after
+   * it is (the transition, the marks, `verdict_settled`). */
+  function crashOnceAfterFinishRound(): void {
+    const real = store.finishRound.bind(store);
+    let crash = true;
+    store.finishRound = ((...args: Parameters<StateStore["finishRound"]>) => {
+      real(...args);
+      if (crash) {
+        crash = false;
+        throw new Error("daemon killed mid-apply");
+      }
+    }) as StateStore["finishRound"];
+  }
+
+  it("a receipt settlement a restart cut short is RESUMED — on the malformed path its broken file never turns into FAILED_LOUD", async () => {
+    reviewingRound(200);
+    const { key } = stampPosting(200, 1);
+    writePostingReceipt(200, 1, key, "APPROVE");
+    const name = write(200, 1, TRUNCATED(200));
+    crashOnceAfterFinishRound();
+    const { hooks, overseer } = recordingHooks();
+
+    await expect(watcher({}, hooks).handleFile(name)).rejects.toThrow("daemon killed mid-apply");
+    expect(store.roundsFor(200)[0]?.status).toBe("done");
+    expect(store.getPr(200)?.state).toBe("reviewing");
+    expect(existsSync(join(dir, name))).toBe(true); // the broken file is still there
+
+    // The restarted daemon's sweep meets the same broken file.
+    expect(await watcher({}, hooks).handleFile(name)).toBe(true);
+
+    expect(store.openReviewFailure(200)).toBeUndefined();
+    expect(overseer.filter((m) => m.includes("ANOMALY"))).toEqual([]);
+    expect(store.getPr(200)?.state).toBe("tracked");
+    expect(store.reviewedHead(200)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
+    expect(count("verdict_settled_from_receipt_resumed", 200)).toBe(1);
+    expect(count("verdict_settled", 200)).toBe(1);
+    expect(existsSync(join(dir, name))).toBe(false);
+    // Settled now: the next replay is inert.
+    expect(await watcher().handleFile(write(200, 1, TRUNCATED(200)))).toBe(true);
+    expect(count("verdict_applied", 200)).toBe(1);
+  });
+
+  it("…and with NO file (the deadline path) the next sweep resumes it, once", async () => {
+    reviewingRound(201);
+    const { key } = stampPosting(201, 1);
+    writePostingReceipt(201, 1, key, "REQUEST_CHANGES");
+    const later = new Date(Date.now() + (cfg.daemon.round_deadline_min + 5) * 60_000);
+    crashOnceAfterFinishRound();
+
+    await watcher({ now: () => later })
+      .checkDeadlines()
+      .catch(() => undefined);
+    expect(store.roundsFor(201)[0]?.status).toBe("done");
+    expect(store.getPr(201)?.state).toBe("reviewing"); // the transition never ran
+    expect(count("verdict_settled", 201)).toBe(0);
+
+    await watcher({ now: () => later }).sweep();
+
+    expect(store.getPr(201)?.state).toBe("awaiting_author");
+    expect(store.reviewedHead(201)).toMatchObject({ verdict: "REQUEST_CHANGES" });
+    expect(store.openReviewFailure(201)).toBeUndefined();
+    expect(count("verdict_settled_from_receipt_resumed", 201)).toBe(1);
+    expect(count("verdict_settled", 201)).toBe(1);
+
+    await watcher({ now: () => later }).sweep();
+    expect(count("verdict_settled_from_receipt_resumed", 201)).toBe(1);
+    expect(count("verdict_applied", 201)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H1a — #5850 round 5: every stage limit asks the receipt first.
+// ---------------------------------------------------------------------------
+describe("receipt-aware stage limits (H1a, #5850 r5)", () => {
+  // The receipt helper confirms at 2026-08-13T11:59:59Z.
+  const at = (iso: string) => () => new Date(iso);
+  const killed: number[] = [];
+  const killingHooks = (): SessionHooks => {
+    const { hooks } = recordingHooks();
+    killed.length = 0;
+    hooks.killSession = async (pr) => {
+      killed.push(pr);
+    };
+    return hooks;
+  };
+
+  for (const stage of [
+    "parent_finalize",
+    "passes_incomplete",
+    "first_pass_start",
+    "running_hard_bound",
+  ] as const) {
+    it(`${stage} after a CONFIRMED posting waits for the tail: nothing cancelled, killed or requeued`, async () => {
+      reviewingRound(300);
+      const { key } = stampPosting(300, 1);
+      writePostingReceipt(300, 1, key, "REQUEST_CHANGES");
+      const hooks = killingHooks();
+      const w = watcher({ now: at("2026-08-13T12:01:19Z") }, hooks);
+
+      expect(await w.recoverInfrastructureFailure(300, 1, stage, "limit")).toBe("posted_wait");
+      expect(await w.recoverInfrastructureFailure(300, 1, stage, "limit")).toBe("posted_wait");
+
+      expect(store.roundsFor(300)[0]).toMatchObject({ status: "running" });
+      expect(killed).toEqual([]);
+      expect(store.getPr(300)?.state).toBe("reviewing");
+      const waits = store.db
+        .prepare("SELECT payload FROM events WHERE kind = 'round_stage_posted_wait'")
+        .all() as Array<{ payload: string }>;
+      expect(waits).toHaveLength(1); // logged once, not once per scan
+      expect(JSON.parse(waits[0]!.payload)).toMatchObject({
+        stage,
+        wait_until: "2026-08-13T12:14:59.000Z", // confirmed_at + 15 min
+      });
+      for (const kind of ["round_infrastructure_failure", "round_self_requeued"]) {
+        expect(
+          (store.db.prepare("SELECT COUNT(*) c FROM events WHERE kind = ?").get(kind) as any).c,
+        ).toBe(0);
+      }
+    });
+  }
+
+  it("past the posted-tail grace with still no verdict, the round settles from the receipt — never a second posting", async () => {
+    reviewingRound(301);
+    const { key } = stampPosting(301, 1);
+    writePostingReceipt(301, 1, key, "REQUEST_CHANGES");
+    const hooks = killingHooks();
+
+    expect(
+      await watcher({ now: at("2026-08-13T12:15:00Z") }, hooks).recoverInfrastructureFailure(
+        301,
+        1,
+        "parent_finalize",
+        "all passes terminal for 5 minutes",
+      ),
+    ).toBe("settled");
+
+    expect(store.roundsFor(301)).toHaveLength(1);
+    expect(store.roundsFor(301)[0]).toMatchObject({
+      status: "done",
+      verdict: "REQUEST_CHANGES",
+      gh_review_id: 991,
+    });
+    expect(store.getPr(301)?.state).toBe("awaiting_author");
+    expect(store.openReviewFailure(301)).toBeUndefined();
+    expect(killed).toEqual([]); // the supervisor releases the slot, not this callback
+  });
+
+  it("a verdict file on disk is the sweep's: the stage limit defers, whatever the receipt says", async () => {
+    reviewingRound(302);
+    const { key } = stampPosting(302, 1);
+    writePostingReceipt(302, 1, key, "REQUEST_CHANGES");
+    write(302, 1, '{"pr": 302, "round_no": 1, "verd'); // still being written
+
+    expect(
+      await watcher({ now: at("2026-08-13T12:30:00Z") }).recoverInfrastructureFailure(
+        302,
+        1,
+        "parent_finalize",
+        "x",
+      ),
+    ).toBe("retryable");
+    expect(store.roundsFor(302)[0]?.status).toBe("running");
+  });
+
+  it("a POST still inside its ambiguous window (prepared receipt) is waited out, never killed mid-post", async () => {
+    reviewingRound(303);
+    const { key } = stampPosting(303, 1);
+    writePostingReceipt(303, 1, key, "REQUEST_CHANGES", {
+      status: "prepared",
+      prepared_at: "2026-08-13T12:00:00Z",
+      confirmed_at: undefined,
+      gh_review_id: undefined,
+      gh_commit_id: undefined,
+      gh_state: undefined,
+    });
+    const hooks = killingHooks();
+
+    expect(
+      await watcher({ now: at("2026-08-13T12:01:00Z") }, hooks).recoverInfrastructureFailure(
+        303,
+        1,
+        "parent_finalize",
+        "x",
+      ),
+    ).toBe("retryable");
+    expect(killed).toEqual([]);
+    expect(store.roundsFor(303)[0]?.status).toBe("running");
+  });
+
+  it("NO receipt: the stage limit cancels and self-requeues exactly as before", async () => {
+    reviewingRound(304);
+    stampPosting(304, 1);
+    const hooks = killingHooks();
+
+    expect(
+      await watcher({ now: at("2026-08-13T12:30:00Z") }, hooks).recoverInfrastructureFailure(
+        304,
+        1,
+        "parent_finalize",
+        "all passes terminal for 5 minutes",
+      ),
+    ).toBe("requeued");
+
+    expect(store.roundsFor(304)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+    });
+    expect(killed).toEqual([304]);
+    expect(store.getPr(304)?.state).toBe("queued");
+  });
+
+  it("the posted-tail grace is a config knob", async () => {
+    reviewingRound(305);
+    const { key } = stampPosting(305, 1);
+    writePostingReceipt(305, 1, key, "APPROVE");
+    const short = { ...cfg, daemon: { ...cfg.daemon, round_posted_tail_grace_min: 1 } };
+
+    expect(
+      await watcher({ cfg: short, now: at("2026-08-13T12:01:00Z") }).recoverInfrastructureFailure(
+        305,
+        1,
+        "parent_finalize",
+        "x",
+      ),
+    ).toBe("settled");
+    expect(store.roundsFor(305)[0]).toMatchObject({ status: "done", verdict: "APPROVE" });
+  });
+
+  it("past the grace with a receipt that does not say what was decided: loud posted_without_verdict — never a requeue, never a kill", async () => {
+    reviewingRound(306);
+    const { key } = stampPosting(306, 1);
+    // A pairing no posting script writes (approve-pr.sh records APPROVE→APPROVE).
+    writePostingReceipt(306, 1, key, "COMMENT", { intended_event: "APPROVE" });
+    const hooks = killingHooks();
+
+    expect(
+      await watcher({ now: at("2026-08-13T12:01:19Z") }, hooks).recoverInfrastructureFailure(
+        306,
+        1,
+        "parent_finalize",
+        "x",
+      ),
+    ).toBe("posted_wait");
+    expect(
+      await watcher({ now: at("2026-08-13T12:15:00Z") }, hooks).recoverInfrastructureFailure(
+        306,
+        1,
+        "parent_finalize",
+        "x",
+      ),
+    ).toBe("failed_loud");
+
+    expect(store.roundsFor(306)).toHaveLength(1);
+    expect(store.roundsFor(306)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+    });
+    expect(store.openReviewFailure(306)).toMatchObject({ stage: "posted_without_verdict" });
+    expect(killed).toEqual([]);
+    expect(
+      (
+        store.db
+          .prepare("SELECT COUNT(*) c FROM events WHERE kind = 'round_self_requeued'")
+          .get() as any
+      ).c,
+    ).toBe(0);
+  });
+
+  it("NO receipt but a verdict file on disk: the limit defers to the sweep — and once the file is gone, the old path runs", async () => {
+    // A deliberate widening (docs/health-fixes-2026-10-08.md): the session
+    // has finished, and cancelling the round under its own verdict file would
+    // only land that verdict on a cancelled round.
+    reviewingRound(307);
+    stampPosting(307, 1);
+    const hooks = killingHooks();
+    const name = write(307, 1, verdictFile({ pr: 307 }));
+    const w = watcher({ now: at("2026-08-13T12:30:00Z") }, hooks);
+
+    expect(await w.recoverInfrastructureFailure(307, 1, "parent_finalize", "x")).toBe("retryable");
+    expect(store.roundsFor(307)[0]?.status).toBe("running");
+    expect(killed).toEqual([]);
+
+    rmSync(join(dir, name));
+    expect(await w.recoverInfrastructureFailure(307, 1, "parent_finalize", "x")).toBe("requeued");
+    expect(store.roundsFor(307)[0]).toMatchObject({
+      status: "cancelled",
+      cancel_cause: "infrastructure_failure",
+    });
+    expect(killed).toEqual([307]);
+  });
+
+  it("the no-receipt deferral is bounded by the sweep: one sweep consumes the file and the round stops deferring", async () => {
+    reviewingRound(308);
+    stampPosting(308, 1);
+    const name = write(308, 1, '{"pr": 308, "round_no": 1, "verd');
+    const w = watcher({ now: at("2026-08-13T12:30:00Z") }, killingHooks());
+
+    expect(await w.recoverInfrastructureFailure(308, 1, "parent_finalize", "x")).toBe("retryable");
+    await w.sweep();
+
+    expect(existsSync(join(dir, name))).toBe(false); // consumed (malformed, no receipt: loud)
+    expect(store.roundsFor(308)[0]?.status).not.toBe("running");
+    expect(store.openReviewFailure(308)).toMatchObject({ stage: "malformed_verdict" });
   });
 });
 

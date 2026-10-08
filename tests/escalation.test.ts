@@ -280,8 +280,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
           verdictDir: dir,
           root: dir,
           usage: { globalStoreDir: null },
-          parseRetries: 0,
-          retryDelayMs: 1,
+          partialWrite: { windowMs: 0 },
           ledgerCheckDelayMs: 0,
         });
         await w.sweep();
@@ -371,8 +370,7 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
       verdictDir: dir,
       root: dir,
       usage: { globalStoreDir: null },
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
     const handled = await w.sweep();
@@ -2016,8 +2014,7 @@ describe("the verdict path delivers what the rules found", () => {
       root: dir,
       findingsDir,
       usage: { globalStoreDir: null },
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
     await w.sweep();
@@ -2110,8 +2107,7 @@ describe("the verdict path delivers what the rules found", () => {
           verdictDir: dir,
           root: dir,
           usage: { globalStoreDir: null },
-          parseRetries: 0,
-          retryDelayMs: 1,
+          partialWrite: { windowMs: 0 },
           ledgerCheckDelayMs: 0,
         });
         await w.sweep();

@@ -20,7 +20,8 @@ import {
   RECHECK_TEMPLATE_FILE,
 } from "../src/templates.js";
 import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
-import type { RecheckOrder } from "../src/recheck.js";
+import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
+import { VERDICT_FILE_RE } from "../src/verdicts.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
 
 const order: RoundOrder = {
@@ -1165,4 +1166,52 @@ describe("end-of-round ledger discipline", () => {
       expect(flat).toContain("The round is not finished until the ledger is written");
     });
   }
+});
+
+// H1a (#5885): the session never writes a verdict or recheck-outcome
+// file in place — it stages the COMPLETE JSON at `verdict/<name>.tmp` and
+// publishes it with scripts/commit-verdict.sh (one rename). Pinned on the
+// RENDERED text of all four templates, and against the script's own accepted
+// names, so a typo in either (a missing `.json`, a staging name the script
+// does not look for) fails here instead of in a session's finalize tail.
+describe("atomic verdict publication (H1a)", () => {
+  const script = readFileSync(resolve(process.cwd(), "scripts", "commit-verdict.sh"), "utf8");
+  const accepted = new RegExp(/\[\[ "\$NAME" =~ (\S+) \]\]/.exec(script)![1]!);
+
+  it("the script stages at verdict/<name>.tmp — the name every template must use", () => {
+    expect(script).toContain('DIR="$ROOT/verdict"');
+    expect(script).toContain('STAGED="$DIR/$NAME.tmp"');
+  });
+
+  function publication(rendered: string, name: string): void {
+    expect(rendered).toContain(`Never write \`verdict/${name}\` directly`);
+    expect(rendered).toContain(`\`verdict/${name}.tmp\``);
+    const commands = [...rendered.matchAll(/scripts\/commit-verdict\.sh (\S+?)`/g)].map(
+      (m) => m[1]!,
+    );
+    expect(commands.length).toBeGreaterThan(0);
+    for (const arg of commands) {
+      expect(arg).toBe(name);
+      expect(accepted.test(arg), arg).toBe(true);
+    }
+    // Every staging name the text mentions is the script's `<name>.tmp`.
+    for (const m of rendered.matchAll(/verdict\/(\S+?)\.tmp`/g)) expect(m[1]).toBe(name);
+  }
+
+  for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
+    it(`${roundTemplateFile(rt)} stages verdict/<name>.tmp and commits it by the exact name the watcher reads`, () => {
+      const tpl = readFileSync(resolve(process.cwd(), "prompts", roundTemplateFile(rt)), "utf8");
+      const rendered = renderRoundPrompt(tpl, { ...order, round_type: rt });
+      const name = `pr-${order.pr}-round-${order.round_no}.json`;
+      expect(VERDICT_FILE_RE.test(name)).toBe(true);
+      publication(rendered, name);
+    });
+  }
+
+  it(`${RECHECK_TEMPLATE_FILE} publishes the outcome file the same way`, () => {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", RECHECK_TEMPLATE_FILE), "utf8");
+    const name = recheckDecisionFile(recheckOrder.pr, "bbbbbbbcccccddd");
+    expect(RECHECK_FILE_RE.test(name)).toBe(true);
+    publication(renderRecheckPrompt(tpl, { ...recheckOrder, decision_file: name }), name);
+  });
 });

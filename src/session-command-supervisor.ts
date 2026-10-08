@@ -727,10 +727,27 @@ export class SessionCommandSupervisor {
       });
       return;
     }
+    if (disposition === "posted_wait") {
+      // H1a: the round's review is already on GitHub (or was refused
+      // by guard 2), so this limit is not a failure. The session keeps its
+      // command and its life while it writes its ledger, findings record and
+      // verdict; the callback settles the round from the receipt once its
+      // bounded posted-tail grace runs out. Re-check after the ordinary
+      // finite interval — the callback logs the wait once, not every scan.
+      this.deps.store.scheduleSessionCommandCheck(
+        command.id,
+        this.deadlineFromNowSeconds(
+          this.deps.cfg.daemon.session_command_unknown_grace_s ??
+            DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S,
+        ),
+      );
+      return;
+    }
     if (disposition === "settled") {
       // the round terminalized cleanly (a guard-2 refusal recorded as
       // a no-op). The command was delivered and did its work; failing it here
       // would leave a blocking failed command on a PR that owes nothing.
+      // H1a: the same for a round settled from its posting receipt.
       this.deps.store.logEvent("round_stage_recovery", command.pr, {
         command_id: command.id,
         round_no: command.round_no,

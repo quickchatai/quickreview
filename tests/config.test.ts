@@ -74,6 +74,18 @@ describe("parseConfig", () => {
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
 
+  it("H1a: the posted-tail grace defaults to 15 minutes and must be positive", () => {
+    expect(cfg.daemon.round_posted_tail_grace_min).toBe(15);
+    const set = (line: string) =>
+      readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);
+    expect(
+      parseConfig(set("round_posted_tail_grace_min = 20")).daemon.round_posted_tail_grace_min,
+    ).toBe(20);
+    expect(() => parseConfig(set("round_posted_tail_grace_min = 0"))).toThrow(
+      /round_posted_tail_grace_min/,
+    );
+  });
+
   it("expands secrets_dir to an absolute path", () => {
     expect(cfg.github.secrets_dir.startsWith("~")).toBe(false);
     expect(cfg.github.secrets_dir).toBe(resolve(homedir(), ".config/example-review-bot"));

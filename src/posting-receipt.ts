@@ -26,6 +26,12 @@ export interface PostingReceipt {
   gh_review_id?: number;
   gh_commit_id?: string;
   gh_state?: string;
+  /** In memory only, never written by the posting scripts (H1a): the
+   * daemon SYNTHESISED this receipt from a bot review carrying the round's
+   * marker, because the shell never persisted its own. `intended_event` is
+   * then only the posted event — what the session asked for is unknown — so
+   * `decidedVerdictFromReceipt` reads no decision off a COMMENT here. */
+  reconciled?: true;
 }
 
 /**

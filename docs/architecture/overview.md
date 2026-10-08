@@ -116,10 +116,13 @@ Step by step:
    `scripts/guards.sh` — the shell mirror of the daemon's posting-time guards
    (`src/guards.ts`) and CI gate (`src/cigate.ts`). Credentials come only from
    `scripts/mint-token.sh` (App JWT → installation token).
-7. **Verdict.** The session writes `verdict/pr-<n>-round-<k>.json`.
+7. **Verdict.** The session writes `verdict/pr-<n>-round-<k>.json` (staged,
+   then published by one rename through `scripts/commit-verdict.sh`).
    `src/verdicts.ts` consumes it and owns everything that follows: labels, the
    round record, the state transition, and the optional escalation note. A
-   malformed or overdue verdict becomes an anomaly — never an approval.
+   malformed or overdue verdict becomes an anomaly — never an approval —
+   unless the round's review is already confirmed on GitHub, in which case the
+   round is settled from its posting receipt and never re-run.
 8. **Recheck and ping-pong.** Pushes, CI completions, base advances and author
    replies wake the same session rather than starting a new one
    (`src/recheck.ts`, `src/pingpong.ts`).

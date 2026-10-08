@@ -292,14 +292,25 @@ device for a recheck nudge, keyed on the fingerprint the claim is keyed on.
 The session writes `verdict/pr-<n>-round-<k>.json` (the directory is
 `<root>/verdict`, wired in `src/daemon.ts`). `VerdictWatcher` in
 `src/verdicts.ts` watches the directory and sweeps it; the daemon owns
-everything that touches GitHub from there.
+everything that touches GitHub from there. The round templates tell the
+session never to write that name in place: it stages the complete JSON at
+`verdict/<name>.tmp` and publishes it with `scripts/commit-verdict.sh`, which
+checks it is one whole JSON object and renames it onto the name in one step
+(H1a, #5885). The watcher never reads a `.tmp`.
 
 `validateVerdict()` is deliberately tolerant of model-written JSON: digit
 strings coerce to numbers, `ESCALATE` folds to `NEEDS_HUMAN`, the self-reported
 `spend_usd` is dropped outright (real cost is measured from the session
 transcripts), and malformed `passes` or `escalations` degrade to "unknown"
-rather than rejecting the verdict they ride on. A partial write is re-parsed a
-few times before being declared malformed.
+rather than rejecting the verdict they ride on. An UNPARSEABLE file is treated
+as still being written while its bytes are moving — by its mtime, or between the
+watcher's own looks — and is re-read with backoff (`src/settledread.ts`): it is
+called malformed only once it has sat unchanged for 3 s across several looks,
+or after a 30 s hard window. A file that parses is complete and its shape is
+judged at once. (#5885: the session's in-place write left the file empty for
+longer than the old 3 × 40 ms tolerance on a CPU-starved container, and a valid
+APPROVE was read as "Unexpected end of JSON input".) The recheck outcome file
+is read the same way.
 
 `apply()` then, in order: checks the posting receipt, moves the labels, finishes
 the round row, records executed-pass telemetry, applies the `verdict` event,
@@ -326,6 +337,29 @@ Three endings are not ordinary verdicts:
 Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, the overseer is injected, and the PR
 returns to its standing state. **There is no anomaly path that approves.**
+
+**Except when the review is already on GitHub** (H1a). A malformed
+verdict file, a round that reaches its deadline with no verdict file, and a
+session that settles without writing one are first checked against the round's
+posting receipt. A CONFIRMED receipt that proves the decision settles the round
+from the receipt rather than failing it (`decidedVerdictFromReceipt`):
+REQUEST_CHANGES asked for (whatever guard 1 softened it to) is REQUEST_CHANGES;
+APPROVE posted is APPROVE; and a COMMENT the session asked for is the round
+templates' withheld-approval shape — the only COMMENT they tell a session to
+post — so it is APPROVE with `approval_withheld`, which records the withheld
+mark and lets CI turning green re-queue the PR for the session to decide again
+(it can never approve anything by itself). The round is applied through the
+same `apply()` as a verdict file, its summary saying where the verdict came
+from; no FAILED_LOUD is opened and nothing is re-run, because a rerun would post
+a second review. A receipt that does not prove the decision — one the daemon
+only reconciled from GitHub's marker (its `intended_event` is just the posted
+event), or a pairing no posting script writes — keeps the loud path it always
+had, as does a missing or ambiguous receipt. A guard-2 `skipped` record settles
+as the no-op. A verdict file that lands after any of these settlements
+replays inertly, and a settlement a restart cut short (the round finished, the
+rest of the apply not) is resumed from its own `verdict_settled_from_receipt`
+event, which carries the verdict it was applying — by the malformed file still
+in `verdict/`, or by the sweep when there is no file.
 
 `checkDeadlines()` also cancels a round superseded by a newer one, and runs the
 lost-prompt net well before the deadline: if the inject was consumed, nothing is
@@ -389,7 +423,8 @@ APPROVE, and the decision file accepts exactly two outcomes — `uphold` and
 re-approve and can never park. And no GitHub write lives in this module at all:
 it reads, and the session posts through the gated route.
 
-The session answers in `verdict/pr-<n>-recheck-<head12>.json`. `uphold` posts
+The session answers in `verdict/pr-<n>-recheck-<head12>.json` — staged and
+published with `scripts/commit-verdict.sh`, like the round verdict. `uphold` posts
 nothing and carries a withheld mark forward; `request_changes` clears the
 withheld mark and applies a `REQUEST_CHANGES` verdict event, moving the PR to
 `awaiting_author`.
@@ -462,6 +497,26 @@ failure, and a `NEEDS_HUMAN` with no passes. Every mode is bounded by
 separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
 with no order is idle, not wedged — killing it is not the recovery.
+
+**A stage limit asks the posting receipt first** (H1a, #5850 round 5).
+The round-stage supervisor's limits (`src/session-command-supervisor.ts`:
+command start, first pass, passes, parent finalize, the running hard bound)
+are wall-clock bounds on a session that is supposed to be reviewing. Once the
+round's review is CONFIRMED on GitHub (or refused by guard 2), the session is
+writing its tail — ledger, findings record, verdict file — and a limit is no
+longer an infrastructure failure: `recoverInfrastructureFailure` answers
+`posted_wait`, nothing is cancelled, killed or requeued, and a verdict file
+that lands is applied as usual. The tail gets `[daemon]
+round_posted_tail_grace_min` (15) from the posting; past it the round settles
+from the receipt, as above — or, when the receipt does not prove the decision,
+fails loud as `posted_without_verdict`; never a requeue. A parent that has
+already settled gets no grace (it will write nothing more) and settles at once.
+A POST still inside its ambiguous window (a `prepared` receipt within
+`posting_receipt_grace_s`) is waited out rather than killed mid-post. A verdict
+file already on disk defers any limit to the sweep, receipt or none (the
+session has finished; the sweep consumes the file within its partial-write
+window). With no receipt and no file, the old path runs: cancel, kill, capped
+self-requeue.
 
 ## 9. Escalation (optional, off by default)
 

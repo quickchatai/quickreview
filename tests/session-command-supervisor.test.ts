@@ -1008,6 +1008,33 @@ describe("bounded round-stage supervision", () => {
     expect(events("round_stage_recovery_deferred")).toHaveLength(1);
   });
 
+  it("H1a: a posted_wait disposition keeps the command running and alive — no failure, no kill, re-checked later", async () => {
+    const { id } = seedRoundCommand({ status: "running", started: true });
+    store.db
+      .prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
+      .run("2026-08-27T19:00:00.000Z", "2026-08-27T19:45:00.000Z", id);
+    const onRoundFailure = vi.fn(async () => "posted_wait" as const);
+    const killSession = vi.fn(async () => {});
+
+    await supervisor(hooks({ killSession }), onRoundFailure).supervisor.scan();
+
+    expect(onRoundFailure).toHaveBeenCalledWith(
+      5408,
+      1,
+      "running_hard_bound",
+      expect.stringContaining(id),
+    );
+    expect(store.getSessionCommand(id)).toMatchObject({
+      status: "running",
+      failure: null,
+      next_check_at: "2026-08-27T20:06:00.000Z",
+    });
+    expect(killSession).not.toHaveBeenCalled();
+    expect(store.roundsFor(5408)[0]?.status).toBe("running");
+    expect(events("round_stage_recovery")).toHaveLength(0);
+    expect(events("round_stage_recovery_deferred")).toHaveLength(0);
+  });
+
   it("leaves command ownership due and marks supervisor health red when recovery throws", async () => {
     const { id } = seedRoundCommand({ status: "acked", started: true });
     const onRoundFailure = vi.fn(async () => {

@@ -41,15 +41,7 @@
 //  5. **No GitHub write lives here.** The module reads (compare, files) and
 //     writes nothing; the session posts its review through the gated scripts.
 //     The MutationGate keeps its monopoly by this module having no mutation.
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  watch,
-  type FSWatcher,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.js";
 import { readFindingsRecord } from "./findingsrecord.js";
@@ -59,6 +51,11 @@ import type { StateStore } from "./state.js";
 import { normalizeVerdict, recheckPromptMarker, stampPrompt } from "./types.js";
 import { standingVerdict } from "./standing-review.js";
 import { wakeOrHold } from "./wakes.js";
+import {
+  readSettledJson,
+  resolvePartialWritePolicy,
+  type PartialWritePolicy,
+} from "./settledread.js";
 
 /** What woke the recheck. `author_reply` is listed because it is a decided
  * trigger — its handling is "hand it to ping-pong and do nothing else". */
@@ -552,8 +549,6 @@ export function recheckDecisionFile(pr: number, headSha: string): string {
 }
 
 export const RECHECK_FILE_RE = /^pr-(\d+)-recheck-([0-9a-f]{7,40})\.json$/i;
-
-const recheckSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** The runaway-guard identity of one recheck question: (trigger, head, ci
  * conclusion, base target). Shared by runRecheck's claim and the reconcile
@@ -1058,11 +1053,11 @@ export interface RecheckWatcherDeps {
   findingsDir?: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Parse retries for partially-written files (fs.watch fires on creation,
-   * before the session's write completes — same race the VerdictWatcher
-   * survives with its own retry loop). */
-  parseRetries?: number;
-  retryDelayMs?: number;
+  /** Partial-write tolerance (H1a, `src/settledread.ts`) — fs.watch
+   * fires on creation, before the session's write completes; the same race,
+   * and the same reader, as the VerdictWatcher's. `{ windowMs: 0 }` makes one
+   * read decide (tests). */
+  partialWrite?: Partial<PartialWritePolicy>;
 }
 
 /**
@@ -1100,13 +1095,24 @@ export class RecheckWatcher {
     this.watcher = null;
   }
 
+  /** One PR's decisions in name order, different PRs side by side: a file
+   * still being written is waited out for seconds (H1a) and must not
+   * hold another PR's decision behind it. */
   async sweep(): Promise<string[]> {
     if (!existsSync(this.deps.verdictDir)) return [];
-    const done: string[] = [];
+    const byPr = new Map<string, string[]>();
     for (const name of readdirSync(this.deps.verdictDir).sort()) {
-      if (RECHECK_FILE_RE.test(name) && (await this.handleFile(name))) done.push(name);
+      const match = RECHECK_FILE_RE.exec(name);
+      if (!match) continue;
+      byPr.set(match[1]!, [...(byPr.get(match[1]!) ?? []), name]);
     }
-    return done;
+    const done: string[] = [];
+    await Promise.all(
+      [...byPr.values()].map(async (names) => {
+        for (const name of names) if (await this.handleFile(name)) done.push(name);
+      }),
+    );
+    return done.sort();
   }
 
   private archive(name: string): void {
@@ -1174,21 +1180,19 @@ export class RecheckWatcher {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
       const pr = Number(match[1]);
-      // Retry on parse failure: fs.watch fires the moment the file appears,
-      // often before the session's write completes — an eager single read eats
-      // valid uphold decisions as "unparseable" (live on #5315, 2026-08-19).
-      const retries = this.deps.parseRetries ?? 3;
-      const delay = this.deps.retryDelayMs ?? 40;
-      let parsed: ParsedRecheckDecision = { ok: false, error: "unread" };
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-          parsed = validateRecheckDecision(JSON.parse(readFileSync(path, "utf8")));
-        } catch (err) {
-          parsed = { ok: false, error: `unparseable: ${String(err)}` };
-        }
-        if (parsed.ok) break;
-        if (attempt < retries) await recheckSleep(delay);
-      }
+      // fs.watch fires the moment the file appears, often before the
+      // session's write completes — an eager single read ate valid uphold
+      // decisions as "unparseable" (live on #5315, 2026-08-19), and three
+      // quick re-reads were not enough on a starved container either (#5885,
+      // H1a). An unparseable file is waited out while it is still
+      // moving; one that parses is judged at once.
+      const read = await readSettledJson(path, resolvePartialWritePolicy(this.deps.partialWrite));
+      if (read.kind === "missing") return false;
+      const reads = read.reads;
+      const parsed: ParsedRecheckDecision =
+        read.kind === "parsed"
+          ? validateRecheckDecision(read.value)
+          : { ok: false, error: `unparseable: ${read.error}` };
       if (!parsed.ok || !parsed.decision) {
         // Malformed is the safe direction here — the standing verdict simply
         // stays standing. No park, no anomaly round, nothing posted. But say
@@ -1198,7 +1202,7 @@ export class RecheckWatcher {
           error: parsed.error ?? "unknown",
         });
         this.deps.log?.(
-          `recheck: #${pr} decision ${name} malformed after ${retries + 1} reads — standing verdict kept (${parsed.error ?? "unknown"})`,
+          `recheck: #${pr} decision ${name} malformed after ${reads} read(s) — standing verdict kept (${parsed.error ?? "unknown"})`,
         );
         this.archive(name);
         return true;

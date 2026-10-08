@@ -480,8 +480,7 @@ describe("VerdictWatcher round-end findings check", () => {
       root: dir,
       findingsDir: findingsDir(),
       usage: { globalStoreDir: null },
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0, // inline; the settle delay is pinned in verdicts.test.ts
       ...over,
     });
@@ -610,8 +609,7 @@ describe("VerdictWatcher round-end findings check", () => {
       verdictDir: join(dir, "verdict"),
       root: dir,
       usage: { globalStoreDir: null },
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
       ledgerCheckDelayMs: 0,
     });
     await watcher.sweep();
@@ -639,8 +637,7 @@ describe("RecheckWatcher findings record", () => {
       store,
       verdictDir: join(dir, "verdict"),
       findingsDir: findingsDir(),
-      parseRetries: 0,
-      retryDelayMs: 1,
+      partialWrite: { windowMs: 0 },
     });
   }
 
