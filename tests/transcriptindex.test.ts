@@ -157,6 +157,9 @@ function oldMeasureRoundUsage(opts: TranscriptMeasureOpts): RoundUsage {
     cost_usd: null,
     models: {},
     passes_included: false,
+    // child usage from subagent tool results is new; no fixture here
+    // carries one, so the old answer has none.
+    children_included: false,
   };
   const start = oldParseTs(opts.startedAt);
   const end = oldParseTs(opts.finishedAt);

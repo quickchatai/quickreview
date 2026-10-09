@@ -460,6 +460,10 @@ export class TranscriptIndex {
     const visit = (c: LineContribution): void => {
       if (!part.whole && (c.ts === null || c.ts < start || c.ts > end)) return;
       if (c.usage !== undefined) addLineUsage(usage, c.usage);
+      if (c.childUsage !== undefined) {
+        for (const u of c.childUsage) addLineUsage(usage, u);
+        usage.children_included = true;
+      }
       if (c.audit !== undefined)
         for (const v of c.audit) if (!seen.has(v.command)) seen.set(v.command, v.kind);
     };

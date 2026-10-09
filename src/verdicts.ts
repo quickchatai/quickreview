@@ -2572,7 +2572,7 @@ export class VerdictWatcher {
         });
         this.log(
           `verdicts: #${pr} round usage ${usage.tokens_in}in/${usage.tokens_out}out/${usage.tokens_cache_read}cache` +
-            ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}`,
+            ` est=${est === null ? "unpriced" : `$${est.toFixed(2)}`}${usage.passes_included ? " (+passes)" : ""}${usage.children_included ? " (+children)" : ""}`,
         );
       } else if (measured === "budget") {
         store.logEvent("round_usage_unknown", pr, {

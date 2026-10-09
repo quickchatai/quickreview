@@ -12,6 +12,15 @@
 // marker we control, so they are matched by file mtime falling inside the
 // round window — strictly best-effort, surfaced via `passes_included`.
 //
+// pi's NATIVE subagent children run without a saved session (or,
+//, in a temp session dir removed when they exit), so they leave no
+// transcript anywhere the walk reads — and a round's spend was the main
+// session's alone: 5–9% of what it really cost (12 live rounds, 2026-10-09).
+// Their usage IS in the parent's transcript: the `subagent` / `launch_plan`
+// tool result carries `details.results[]`, each child's model and its summed
+// `usage` (input, output, cacheRead, cost — native runSingleAgent). Each child
+// counts there, once (`childUsage`), surfaced via `children_included`.
+//
 // This file owns WHAT a transcript line contributes — its usage and its
 // exec-policy audit items (`parseTranscriptLine`) — and how contributions add
 // up (`addLineUsage`). READING the transcripts is `transcriptindex.ts` (
@@ -43,6 +52,9 @@ export interface RoundUsage {
   models: Record<string, ModelUsage>;
   /** True when at least one global-store (pass/subagent) file matched. */
   passes_included: boolean;
+  /** True when at least one child's usage counted from a subagent or
+   * launch_plan tool result. */
+  children_included: boolean;
 }
 
 /** The zero a round's usage starts from. */
@@ -54,6 +66,7 @@ export function emptyRoundUsage(): RoundUsage {
     cost_usd: null,
     models: {},
     passes_included: false,
+    children_included: false,
   };
 }
 
@@ -64,6 +77,8 @@ interface JsonlRecord {
   modelId?: unknown;
   message?: {
     role?: unknown;
+    toolName?: unknown;
+    details?: { results?: unknown };
     // Live-verified shape (VM): {input, output, cacheRead, cacheWrite,
     // reasoning, totalTokens, cost: {input, output, cacheRead, cacheWrite, total}}.
     usage?: {
@@ -111,6 +126,8 @@ export interface LineContribution {
    * window, and counts in a whole-file read). */
   ts: number | null;
   usage?: LineUsage;
+  /** Each lens child's usage, from a subagent / launch_plan tool result. */
+  childUsage?: LineUsage[];
   /** Its exec-policy audit items, in the order the audit meets them. */
   audit?: ExecViolation[];
 }
@@ -143,6 +160,7 @@ export function parseTranscriptLine(
   // value without one reads as no timestamp.
   const ts = value === null ? null : parseTs((value as { timestamp?: unknown }).timestamp);
   let usage: LineUsage | undefined;
+  let childUsage: LineUsage[] = [];
   if (typeof value === "object" && value !== null) {
     const rec = value as JsonlRecord;
     // model_change records re-key attribution for everything after them.
@@ -153,17 +171,53 @@ export function parseTranscriptLine(
           : rec.modelId;
     }
     usage = assistantUsage(rec, model);
+    childUsage = childUsageOf(rec);
   }
   const audit = auditItemsOf(value);
-  if (usage === undefined && audit.length === 0) return { model, contribution: null };
+  if (usage === undefined && audit.length === 0 && childUsage.length === 0)
+    return { model, contribution: null };
   return {
     model,
     contribution: {
       ts,
       ...(usage !== undefined ? { usage } : {}),
+      ...(childUsage.length > 0 ? { childUsage } : {}),
       ...(audit.length > 0 ? { audit } : {}),
     },
   };
+}
+
+/** The tools whose result carries the lens children's usage (native pi's
+ * subagent tool and the glue's launch_plan, which returns the same result). */
+const CHILD_RESULT_TOOLS = new Set(["subagent", "launch_plan"]);
+
+/** Each child's usage in a subagent / launch_plan tool result, attributed to
+ * the child's model without its `:<thinking>` suffix (the pricing table's
+ * key). VERIFY-ON-PIN (pi 1.0.0, examples/extensions/subagent): a result's
+ * `usage` is the child's sum over its turns — input, output, cacheRead, and
+ * `cost` as a NUMBER (the sum of each turn's cost.total). */
+function childUsageOf(rec: JsonlRecord): LineUsage[] {
+  if (rec.type !== "message") return [];
+  const msg = rec.message;
+  if (typeof msg !== "object" || msg === null || msg.role !== "toolResult") return [];
+  if (typeof msg.toolName !== "string" || !CHILD_RESULT_TOOLS.has(msg.toolName)) return [];
+  const results = msg.details?.results;
+  if (!Array.isArray(results)) return [];
+  const out: LineUsage[] = [];
+  for (const r of results) {
+    if (typeof r !== "object" || r === null) continue;
+    const { usage, model } = r as { usage?: Record<string, unknown>; model?: unknown };
+    if (typeof usage !== "object" || usage === null) continue;
+    const cost = usage.cost;
+    out.push({
+      model: typeof model === "string" && model ? model.replace(/:[a-z]+$/, "") : UNKNOWN_MODEL,
+      tin: num(usage.input),
+      tout: num(usage.output),
+      cache: num(usage.cacheRead),
+      cost: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+    });
+  }
+  return out;
 }
 
 function assistantUsage(rec: JsonlRecord, model: string): LineUsage | undefined {

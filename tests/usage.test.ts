@@ -108,6 +108,7 @@ describe("measureRoundUsage — through the transcript index", () => {
       cost_usd: null,
       models: {},
       passes_included: false,
+      children_included: false,
     });
   });
 
@@ -194,6 +195,86 @@ describe("measureRoundUsage — through the transcript index", () => {
       fs,
     });
     expect(usage.tokens_in).toBe(0);
+  });
+});
+
+describe("lens children's usage, from the parent's tool results", () => {
+  const costed = (ts: string, input: number, output: number, cost: number): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: ts,
+      message: { role: "assistant", usage: { input, output, cost: { total: cost } } },
+    });
+  const toolResult = (ts: string, toolName: string, results: unknown[]): string =>
+    JSON.stringify({
+      type: "message",
+      timestamp: ts,
+      message: { role: "toolResult", toolName, content: [], details: { mode: "parallel", results } },
+    });
+  const child = (model: string, input: number, output: number, cacheRead: number, cost: number) => ({
+    agent: "pass-x",
+    model,
+    usage: { input, output, cacheRead, cacheWrite: 0, cost, contextTokens: 0, turns: 3 },
+  });
+
+  it("counts each child of a subagent or launch_plan result once, under its model without the thinking suffix", async () => {
+    const fs = fakeFs({
+      "/s/pr-7/a.jsonl": [
+        modelChange("openai-codex", "gpt-6.1-sol"),
+        costed(START, 100, 10, 0.1),
+        toolResult(T("2026-08-14T10:10:00Z"), "launch_plan", [
+          child("openai-codex/gpt-6.1-sol:high", 1000, 100, 5000, 0.5),
+          child("openai-codex/gpt-6.1-sol:medium", 2000, 200, 0, 1.25),
+        ]),
+        toolResult(T("2026-08-14T10:20:00Z"), "subagent", [
+          child("openai-codex/gpt-6.1-terra:medium", 300, 30, 0, 0.05),
+        ]),
+        // Not a child-bearing tool, and a result past the window: neither counts.
+        toolResult(T("2026-08-14T10:21:00Z"), "read", [child("m", 9999, 9, 0, 9)]),
+        toolResult(T("2026-08-14T10:31:00Z"), "subagent", [child("m", 9999, 9, 0, 9)]),
+      ].join("\n"),
+    });
+    const usage = await measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs,
+    });
+    expect(usage.cost_usd).toBeCloseTo(0.1 + 0.5 + 1.25 + 0.05, 10);
+    expect(usage.tokens_in).toBe(100 + 1000 + 2000 + 300);
+    expect(usage.tokens_out).toBe(10 + 100 + 200 + 30);
+    expect(usage.tokens_cache_read).toBe(5000);
+    expect(usage.children_included).toBe(true);
+    expect(usage.models).toEqual({
+      "openai-codex/gpt-6.1-sol": { in: 3100, out: 310 },
+      "openai-codex/gpt-6.1-terra": { in: 300, out: 30 },
+    });
+  });
+
+  it("a round with no child results is the main session's alone, as before", async () => {
+    const fs = fakeFs({ "/s/pr-7/a.jsonl": costed(START, 100, 10, 0.1) });
+    const usage = await measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs,
+    });
+    expect(usage.children_included).toBe(false);
+    expect(usage.cost_usd).toBeCloseTo(0.1, 10);
+  });
+
+  it("a malformed child entry is skipped, never thrown", async () => {
+    const fs = fakeFs({
+      "/s/pr-7/a.jsonl": toolResult(START, "subagent", [null, "x", { model: "m" }, { usage: 3 }]),
+    });
+    const usage = await measureRoundUsage({
+      sessionDir: "/s/pr-7",
+      startedAt: START,
+      finishedAt: END,
+      fs,
+    });
+    expect(usage.tokens_in).toBe(0);
+    expect(usage.cost_usd).toBeNull();
   });
 });
 
