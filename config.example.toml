@@ -278,6 +278,12 @@ session_dir = "state/pi-sessions"
 # review faster on the measured set (bench/aacr/PERF.md §1); each child is
 # ~100 MB, so the VM's 8 GiB holds it.
 subagent_max_concurrency = 12
+# Shared prompt cache for lens children (docs/prompt-caching.md):
+# children share one provider cache key in groups of this many per model,
+# instead of `--no-session`'s random one; 0 = `--no-session` as before. A
+# pack-less group's later children start this many ms after its first.
+# subagent_cache_group = 5
+# subagent_cache_stagger_ms = 2500
 
 [memory]
 # Round seeding — how much memory rides each round prompt and how
@@ -734,6 +740,15 @@ preset = "default"
 # change's files with the whole PR still its charter, so the round's longest
 # reading runs in parallel. 2000 splits only the largest PRs; 0 never splits.
 # baseline_split_lines = 2000
+# The round's CONTEXT PACK (docs/prompt-caching.md): "pack-first"
+# writes the diff, the change since the last review and the most-changed
+# files' full text beside the task files, and every lens child carries it at
+# the start of its prompt, after one cached warm-up per cache group — so the
+# lenses read it from cache instead of re-reading it uncached. It moves each
+# lens's instructions into a developer message after the pack, so it ships
+# OFF until a measured run. Needs [pi] subagent_cache_group > 0.
+# context_pack = "pack-first"
+# context_pack_max_tokens = 40000
 # Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout
 # lengthened, an assert removed or commented out, a skip added) are found by

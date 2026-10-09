@@ -190,6 +190,10 @@ export function renderPassTask(
     );
   if (order.base_ref)
     L.push(`- Base branch \`${order.base_ref}\` at \`${order.base_sha || "unknown"}\`.`);
+  if (order.context_pack_file)
+    L.push(
+      `- This round's CONTEXT PACK — the PR's diff, the change since the last review when there is one, and the full text of its most-changed files, at this head — is the first message of your conversation, ahead of this task. Read the code there instead of fetching it again; open anything it does not hold with your tools. If your conversation has no such message, read the pack file \`${order.context_pack_file}\` first.`,
+    );
   L.push("");
   if (delta) {
     L.push("## The change since the last review — your review scope this round");

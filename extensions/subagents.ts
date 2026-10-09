@@ -71,7 +71,10 @@
 //    simply never registered and the round templates' "Unknown agent = STOP"
 //    rule holds — logged FATAL below, never a crashed pi.
 import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { readdirSync, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 /** Env var pinning the discovery scope. "user" (default) reads ONLY
@@ -742,6 +745,349 @@ export function launchPlanDefinition(
   };
 }
 
+// ---------------------------------------------------------------------------
+// The shared PROMPT CACHE — lens children in cache groups.
+//
+// The provider caches a request's prefix, and pi's cache key is its session
+// id. Native children run `--no-session`, so every child gets a random id and
+// lands on a cold cache: in 12 live rounds the children's first turns read 0
+// cached tokens even where their prompts were byte-identical, and uncached
+// input was 71–81% of their cost.
+//
+// What the reviewer's backend (ChatGPT login, gpt-6.1-sol) was measured to do
+// (2026-10-09, ~30 short probe calls):
+//  - an identical prefix is reused across separate pi processes that share a
+//    session id: 24,320 of 24,467 tokens; under `--no-session`, 0;
+//  - a request that EXTENDS a cached one hits however long the extension is
+//    (a child's own later turns, and a lens after a warm-up: 23,808 cached
+//    beneath a 1,500-word lens text);
+//  - but two requests that share a prefix and then DIVERGE share it only when
+//    the cached one's tail past the prefix is short (≈60 words hit, ≈250
+//    words missed, a 10 s wait made no difference);
+//  - a request sent at the same instant as the one that would warm it misses.
+//
+// So a child's `--no-session` is rewritten, at spawn, to
+// `--session-id <group key> --session-dir <its own temp dir>` (the dir is
+// removed when the child exits). Children share a key in GROUPS of
+// QCR_SUBAGENT_CACHE_GROUP per model (a few children per key, so no one key
+// carries a whole round's request rate):
+//  - a round WITHOUT a context pack: every child after a group's first starts
+//    QCR_SUBAGENT_CACHE_STAGGER_MS after it, so rows of one agent whose prompts
+//    differ only in a short task pointer (the sweep rows) share their prefix;
+//  - a round WITH a context pack (`[review] context_pack`, written beside its
+//    task files): the group's first child first spawns a WARM-UP — the same
+//    model and tools, no lens text, the pack and "reply OK" — and every child
+//    of the group waits for it to finish (at most CACHE_WARMUP_WAIT_S) before
+//    it starts. Each child loads extensions/leaf-cache.ts, which puts the pack
+//    ahead of its lens's instructions, so every lens request EXTENDS the
+//    warm-up's and reads the pack from cache.
+// A child that waits does so through `sh -c '…; exec "$@"'`, so once it runs
+// it IS the child and every signal reaches it.
+//
+// The spawn is native's own (`spawn` from node:child_process, in
+// runSingleAgent); the glue cannot reach its argv any other way without
+// vendoring the extension, which the drift-free sourcing above forbids. Only
+// a spawn whose argv carries native's exact leaf flags
+// (`--mode json -p --no-session`) is touched; every other spawn passes
+// through unchanged. A child stays a LEAF: `-p` alone marks it so for the
+// vendored OpenViking fork's qcr-leaf.ts, and children load no per-spawn
+// extension but leaf-cache.ts.
+//
+// VERIFY-ON-PIN (pi 1.0.0): native builds `["--mode","json","-p","--no-session",
+// …,"--model",<spec>,…,"--append-system-prompt",<file>,"Task: <task>"]` and
+// spawns it with node:child_process `spawn`, imported after this glue patches
+// it (module.syncBuiltinESMExports keeps an ESM binding in step — verified in
+// a real pi 1.0.0 parent); `--session-id <id> --session-dir <dir>` runs `-p`
+// exactly as `--no-session` does, but keyed (probed).
+
+/** Env var: children per shared cache key; 0 or unset ⇒ `--no-session`. */
+export const CACHE_GROUP_ENV = "QCR_SUBAGENT_CACHE_GROUP";
+/** Env var: how long a pack-less group's later children start after its first. */
+export const CACHE_STAGGER_ENV = "QCR_SUBAGENT_CACHE_STAGGER_MS";
+/** Env var: the leaf-cache extension's absolute path (set by the daemon). */
+export const LEAF_CACHE_EXT_ENV = "QCR_LEAF_CACHE_EXT";
+/** Env var the leaf-cache extension reads in the child: the pack's path. */
+export const LEAF_PACK_ENV = "QCR_LEAF_PACK";
+/** The pack's file name beside a round's task dirs (src/contextpack.ts). */
+export const LEAF_PACK_FILE = "context-pack.md";
+/** A group older than this starts afresh: the provider's cache is short-lived. */
+export const CACHE_GROUP_MAX_AGE_MS = 4 * 60_000;
+export const DEFAULT_CACHE_STAGGER_MS = 2500;
+/** The longest a packed group's child waits for its warm-up. */
+export const CACHE_WARMUP_WAIT_S = 30;
+/** The warm-up's whole task: it exists to put the pack in the cache. */
+export const WARMUP_TASK = "Task: Reply with the single word OK.";
+
+function nonNegativeInt(raw: string | undefined, fallback: number): number {
+  const n = Number.parseInt((raw ?? "").trim(), 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+export function resolveCacheGroup(env: Record<string, string | undefined> = process.env): number {
+  return nonNegativeInt(env[CACHE_GROUP_ENV], 0);
+}
+
+export function resolveCacheStagger(env: Record<string, string | undefined> = process.env): number {
+  return nonNegativeInt(env[CACHE_STAGGER_ENV], DEFAULT_CACHE_STAGGER_MS);
+}
+
+/** One cache group's place: its key, whether the caller is its first child,
+ * and how long a pack-less child should wait. */
+export interface CacheSlot {
+  key: string;
+  first: boolean;
+  delayMs: number;
+}
+
+/** Hands out cache keys: per model, one per group of `size` children, a fresh
+ * group when the last is full or stale. */
+export class CacheGrouper {
+  private readonly groups = new Map<string, { key: string; leaderAt: number; members: number }>();
+
+  constructor(
+    readonly size: number,
+    readonly staggerMs: number,
+    private readonly newKey: () => string = randomUUID,
+  ) {}
+
+  next(now: number, model = ""): CacheSlot {
+    const g = this.groups.get(model);
+    if (g === undefined || g.members >= this.size || now - g.leaderAt > CACHE_GROUP_MAX_AGE_MS) {
+      const key = this.newKey();
+      this.groups.set(model, { key, leaderAt: now, members: 1 });
+      return { key, first: true, delayMs: 0 };
+    }
+    g.members += 1;
+    return { key: g.key, first: false, delayMs: Math.max(0, g.leaderAt + this.staggerMs - now) };
+  }
+}
+
+/** The index of `--no-session` when `args` carries native's exact leaf flag
+ * run (`--mode json -p --no-session`), else -1. */
+export function leafNoSessionIndex(args: readonly string[]): number {
+  for (let i = 0; i + 3 < args.length; i += 1) {
+    if (
+      args[i] === "--mode" &&
+      args[i + 1] === "json" &&
+      args[i + 2] === "-p" &&
+      args[i + 3] === "--no-session"
+    )
+      return i + 3;
+  }
+  return -1;
+}
+
+/** The `--model` spec of a child argv ("" when it has none). */
+export function modelOf(args: readonly string[]): string {
+  const i = args.indexOf("--model");
+  return i >= 0 ? (args[i + 1] ?? "") : "";
+}
+
+const TASK_FILE_POINTER_RE = /Task file: (\/\S+?\.md)\. /;
+
+/** The round's pack for a child whose task is a task-file pointer: the
+ * `context-pack.md` beside the task's directory, when it is a regular file. */
+export function packForTask(
+  args: readonly string[],
+  isFile: (path: string) => boolean,
+): string | undefined {
+  const last = args[args.length - 1];
+  if (typeof last !== "string" || !last.startsWith("Task: ")) return undefined;
+  const m = TASK_FILE_POINTER_RE.exec(last);
+  if (!m || m[1] === undefined) return undefined;
+  const pack = join(dirname(dirname(m[1])), LEAF_PACK_FILE);
+  return isFile(pack) ? pack : undefined;
+}
+
+/** A spawn the patch makes: what to run, and the temp dir to remove after. */
+export interface LeafSpawn {
+  command: string;
+  args: string[];
+  options: Record<string, unknown> | undefined;
+  sessionDir: string;
+}
+
+/** The rewrite of one leaf spawn: the child itself, and — for a packed
+ * group's first child — the warm-up to spawn before it, with the file its
+ * finish creates (every child of the group waits for that file). */
+export interface LeafRewrite {
+  child: LeafSpawn;
+  /** The warm-up's spawn, and its ready file — in `readyDir`, its own dir,
+   * which outlives the warm-up so the waiting children can see the file. */
+  warmup?: { spawn: LeafSpawn; readyFile: string; readyDir: string };
+}
+
+/** `sh -c` that waits for `readyFile` (at most `maxS` seconds), then execs. */
+function waitingFor(readyFile: string, maxS: number, command: string, args: string[]) {
+  return {
+    command: "/bin/sh",
+    args: [
+      "-c",
+      `i=0; while [ ! -e "$0" ] && [ "$i" -lt ${maxS * 10} ]; do sleep 0.1; i=$((i+1)); done; exec "$@"`,
+      readyFile,
+      command,
+      ...args,
+    ],
+  };
+}
+
+/** The rewritten spawn of a leaf child, or undefined to spawn it unchanged. */
+export function rewriteLeafSpawn(
+  command: string,
+  args: readonly string[],
+  options: Record<string, unknown> | undefined,
+  deps: {
+    grouper: CacheGrouper;
+    now: () => number;
+    makeSessionDir: () => string;
+    isFile: (path: string) => boolean;
+    leafCacheExt: string | undefined;
+    baseEnv: Record<string, string | undefined>;
+    /** The ready file of a packed group's warm-up, by group key. */
+    warmups: Map<string, string>;
+  },
+): LeafRewrite | undefined {
+  const at = leafNoSessionIndex(args);
+  if (at < 0) return undefined;
+  const slot = deps.grouper.next(deps.now(), modelOf(args));
+  const pack = deps.leafCacheExt ? packForTask(args, deps.isFile) : undefined;
+  const keyed = (dir: string) => ["--session-id", slot.key, "--session-dir", dir];
+  const packEnv = pack ? { ...((options?.env as typeof deps.baseEnv) ?? deps.baseEnv), [LEAF_PACK_ENV]: pack } : undefined;
+  const ext = pack ? ["--extension", deps.leafCacheExt as string] : [];
+
+  const sessionDir = deps.makeSessionDir();
+  let next = [...args.slice(0, at), ...keyed(sessionDir), ...ext, ...args.slice(at + 1)];
+  const opts = packEnv ? { ...options, env: packEnv } : options;
+
+  let warmup: LeafRewrite["warmup"];
+  if (pack && slot.first) {
+    // The group's warm-up: the child's own argv without its lens text, the
+    // task replaced by WARMUP_TASK — so its request is exactly the shared
+    // prefix the group's lens requests extend.
+    const warmDir = deps.makeSessionDir();
+    const readyDir = deps.makeSessionDir();
+    const readyFile = join(readyDir, "warm.ready");
+    const base = args.slice(at + 1, -1);
+    const sp = base.indexOf("--append-system-prompt");
+    const noLens = sp >= 0 ? [...base.slice(0, sp), ...base.slice(sp + 2)] : base;
+    warmup = {
+      readyFile,
+      readyDir,
+      spawn: {
+        command,
+        args: [...args.slice(0, at), ...keyed(warmDir), ...ext, ...noLens, WARMUP_TASK],
+        options: opts,
+        sessionDir: warmDir,
+      },
+    };
+    deps.warmups.set(slot.key, readyFile);
+  }
+  const ready = pack ? deps.warmups.get(slot.key) : undefined;
+  let cmd = command;
+  if (ready) {
+    ({ command: cmd, args: next } = waitingFor(ready, CACHE_WARMUP_WAIT_S, command, next));
+  } else if (slot.delayMs > 0) {
+    next = ["-c", 'sleep "$0"; exec "$@"', (slot.delayMs / 1000).toFixed(2), command, ...next];
+    cmd = "/bin/sh";
+  }
+  return { child: { command: cmd, args: next, options: opts, sessionDir }, ...(warmup ? { warmup } : {}) };
+}
+
+const LEAF_PATCHED = Symbol.for("qcr.leafSpawnPatched");
+
+/** Patch node:child_process `spawn` so native's leaf children run keyed (see
+ * above). Idempotent; does nothing when the cache group is 0. Returns whether
+ * the patch is in place. Must run BEFORE the native extension is imported. */
+export function installLeafSpawnPatch(
+  env: Record<string, string | undefined> = process.env,
+  log: (msg: string) => void = (m) => console.error(m),
+): boolean {
+  const size = resolveCacheGroup(env);
+  if (size <= 0) return false;
+  const cp = createRequire(resolve("qcr-leaf-spawn.js"))("node:child_process") as {
+    spawn: ((...a: unknown[]) => unknown) & { [LEAF_PATCHED]?: boolean };
+  };
+  if (cp.spawn[LEAF_PATCHED]) return true;
+  const real = cp.spawn;
+  const deps = {
+    grouper: new CacheGrouper(size, resolveCacheStagger(env)),
+    now: () => Date.now(),
+    makeSessionDir: () => mkdtempSync(join(tmpdir(), "qcr-leaf-")),
+    isFile: (path: string) => {
+      try {
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
+    leafCacheExt: env[LEAF_CACHE_EXT_ENV]?.trim() || undefined,
+    baseEnv: process.env as Record<string, string | undefined>,
+    warmups: new Map<string, string>(),
+  };
+  // Ready dirs still waiting out their group, removed at the latest when this
+  // process exits (a short-lived parent never reaches the timer).
+  const readyDirs = new Set<string>();
+  process.once("exit", () => {
+    for (const d of readyDirs) rmSync(d, { recursive: true, force: true });
+  });
+  type Child = { once(event: string, fn: () => void): void };
+  const start = (self: unknown, s: LeafSpawn, after?: () => void): Child => {
+    const child = real.call(self, s.command, s.args, s.options) as Child;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      after?.();
+      rmSync(s.sessionDir, { recursive: true, force: true });
+    };
+    child.once("close", finish);
+    child.once("error", finish);
+    return child;
+  };
+  const patched = function (this: unknown, ...a: unknown[]): unknown {
+    const [command, args, options] = a;
+    let r: LeafRewrite | undefined;
+    try {
+      r =
+        typeof command === "string" && Array.isArray(args)
+          ? rewriteLeafSpawn(
+              command,
+              args as string[],
+              options as Record<string, unknown> | undefined,
+              deps,
+            )
+          : undefined;
+    } catch (err) {
+      log(`subagents: cache key not applied (${err instanceof Error ? err.message : String(err)})`);
+      r = undefined;
+    }
+    if (!r) return real.apply(this, a);
+    if (r.warmup) {
+      // The warm-up's finish — success or not — releases its group: the
+      // children wait for the ready file's EXISTENCE only (or run out their
+      // wait). The ready dir outlives the group's children, then goes.
+      const { readyFile, readyDir } = r.warmup;
+      readyDirs.add(readyDir);
+      start(this, r.warmup.spawn, () => {
+        try {
+          writeFileSync(readyFile, "");
+        } catch {
+          /* the children's wait runs out instead */
+        }
+        setTimeout(() => {
+          rmSync(readyDir, { recursive: true, force: true });
+          readyDirs.delete(readyDir);
+        }, CACHE_GROUP_MAX_AGE_MS + 60_000).unref();
+      });
+    }
+    return start(this, r.child);
+  } as typeof cp.spawn;
+  patched[LEAF_PATCHED] = true;
+  cp.spawn = patched;
+  syncBuiltinESMExports();
+  return true;
+}
+
 /** The native extension's path inside the installed pi package. */
 export function nativeExtensionPath(examplesPath: string): string {
   return join(examplesPath, "extensions", "subagent", "index.ts");
@@ -749,6 +1095,8 @@ export function nativeExtensionPath(examplesPath: string): string {
 
 export default async function activate(pi: Pi): Promise<void> {
   const log = (msg: string) => console.error(msg);
+  // Before native is imported, so its `spawn` is the patched one.
+  const cacheGroups = installLeafSpawnPatch(process.env, log);
 
   let factory: (api: unknown) => void | Promise<void>;
   let version = "unknown";
@@ -802,7 +1150,8 @@ export default async function activate(pi: Pi): Promise<void> {
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
                 `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"}; ` +
-                `${LAUNCH_PLAN_TOOL} registered)`,
+                `${LAUNCH_PLAN_TOOL} registered; cache groups ` +
+                `${cacheGroups ? `of ${resolveCacheGroup()}, stagger ${resolveCacheStagger()} ms` : "off"})`,
             );
           } else {
             real(definition);

@@ -518,6 +518,12 @@ export class PiSessionManager implements SessionHooks {
       // `[review] wide_lens_fanout`: a batched lens launch runs as wide as
       // that cap instead of native pi's in-call four (bench/aacr/PERF.md §1).
       QCR_SUBAGENT_WIDE_FANOUT: this.cfg.review?.wide_lens_fanout === false ? "0" : "1",
+      // lens children share the provider's prompt cache in groups
+      // (extensions/subagents.ts), and the leaf-cache extension that puts a
+      // round's context pack first rides a child only where the round has one.
+      QCR_SUBAGENT_CACHE_GROUP: String(this.cfg.pi.subagent_cache_group ?? 0),
+      QCR_SUBAGENT_CACHE_STAGGER_MS: String(this.cfg.pi.subagent_cache_stagger_ms ?? 2500),
+      QCR_LEAF_CACHE_EXT: join(this.root, "extensions", "leaf-cache.ts"),
       // the daemon's own resolved config, so the posting scripts read
       // the file the daemon read. Set by the DAEMON — the bash guard still
       // refuses a session's own `QCR_CONFIG=` prefix.

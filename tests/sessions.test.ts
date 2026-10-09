@@ -494,6 +494,9 @@ describe("birth", () => {
         "OPENVIKING_USER",
         "PATH",
         "QCR_INJECT_DIR",
+        // the leaf-cache extension's path and the prompt-cache
+        // groups (below) — a path and two numbers, not credentials.
+        "QCR_LEAF_CACHE_EXT",
         "QCR_LEDGER_FILE",
         // where the daemon publishes this PR's recall hint (the
         // round's own query and areas) — a path, not a credential.
@@ -507,6 +510,8 @@ describe("birth", () => {
         "QCR_SANDBOX_ROOT",
         "QCR_SECRETS_DIR",
         "QCR_SESSION_NAME",
+        "QCR_SUBAGENT_CACHE_GROUP",
+        "QCR_SUBAGENT_CACHE_STAGGER_MS",
         // the process-wide subagent fan-out cap for the glue.
         "QCR_SUBAGENT_MAX_CONCURRENCY",
         "QCR_SUBAGENT_WIDE_FANOUT",

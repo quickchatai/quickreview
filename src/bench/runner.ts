@@ -66,6 +66,7 @@ import { findStyleGuide } from "../styleguide.js";
 import { findCiLinters } from "../lintconfig.js";
 import { ecosystemFor, type Ecosystem } from "../ecosystem.js";
 import type { PrFileEntry } from "../github.js";
+import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "../contextpack.js";
 import { prepareDependencySources, renderDependencyNote } from "../depsources.js";
 import {
   buildAgents,
@@ -98,7 +99,7 @@ import {
 import { enforceBenchPosting, POLICED_ORIGINALS, type BenchPostingReport } from "./benchposting.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "../severity.js";
 import type { PrStateRow } from "../state.js";
-import type { PassPlanEntry } from "../types.js";
+import type { PassPlanEntry, RoundOrder } from "../types.js";
 import {
   renderConversationSystemPrompt,
   renderGateNotes,
@@ -594,6 +595,37 @@ async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEnt
 }
 
 /** The round order + system prompt this case runs — production renderers. */
+/** (`[review] context_pack = "pack-first"`), as dispatch writes it:
+ * the case's context pack beside its task dirs (`<case>/context-pack.md` —
+ * where the glue looks for a task file's pack), and the order the task files
+ * render from, which then points at it. Off ⇒ the order unchanged, no file. */
+function benchContextPack(
+  cfg: Config,
+  built: RoundOrder,
+  files: PrFileEntry[],
+  tree: string,
+  caseDir: string,
+  deltaPatch?: string,
+): { order: RoundOrder; file?: { path: string; text: string } } {
+  if (
+    !cfg.review.task_files ||
+    cfg.review.context_pack !== "pack-first" ||
+    cfg.pi.subagent_cache_group <= 0
+  )
+    return { order: built };
+  const path = join(caseDir, CONTEXT_PACK_FILE);
+  const pack = renderContextPack({
+    pr: built.pr,
+    headSha: built.head_sha,
+    mergeBase: built.merge_base,
+    files,
+    ...(deltaPatch ? { deltaPatch } : {}),
+    readFile: (p) => readWorktreeFileForPack(tree, p),
+    maxTokens: cfg.review.context_pack_max_tokens,
+  });
+  return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
+}
+
 export function renderCasePrompts(args: {
   root: string;
   cfg: Config;
@@ -662,8 +694,9 @@ export function renderCasePrompts(args: {
   // `[review] task_files`, as production writes them (dispatch.ts): one
   // complete lens task per discovery row, in the case dir.
   // Rendered here, written by the caller (renderCasePrompts stays pure).
+  const packed = benchContextPack(cfg, built, args.files, tree, args.caseDir);
   const taskFiles = cfg.review.task_files
-    ? renderPassTasks(built, renderGateNotes(built, args.ecosystem)).map((t) => ({
+    ? renderPassTasks(packed.order, renderGateNotes(built, args.ecosystem)).map((t) => ({
         ...t,
         path: join(args.caseDir, "tasks", t.file),
       }))
@@ -711,6 +744,7 @@ export function renderCasePrompts(args: {
     plannedLenses: order.pass_plan.map((p) => p.agent),
     passPlan: order.pass_plan,
     taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
+    ...(packed.file ? { contextPack: packed.file } : {}),
   };
 }
 
@@ -722,6 +756,9 @@ export interface CasePrompts {
   /** `[review] task_files`: the lens task files the order points at, for the
    * caller to write before the session starts. */
   taskFiles: Array<{ path: string; text: string }>;
+  /**: the case's context pack, for the caller to write (absent ⇒
+   * remove any stale one). */
+  contextPack?: { path: string; text: string };
   /**, a follow-up case only: every other file the order names (the
    * delta patch, the prior-findings sidecar, the sweep's task files, the
    * pinned ledger), for the caller to write; what the round runs as; and the
@@ -945,8 +982,16 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
     plan: decided.kind === "delta" ? decided.decision.plan : fullPlan,
     ...(followUpArg ? { followUp: followUpArg } : {}),
   });
+  const packed = benchContextPack(
+    cfg,
+    built,
+    args.files,
+    tree,
+    args.caseDir,
+    decided.kind === "delta" ? renderDeltaPatch(decided.decision.delta.files) : undefined,
+  );
   const taskFiles = cfg.review.task_files
-    ? renderPassTasks(built, renderGateNotes(built, args.ecosystem)).map((t) => ({
+    ? renderPassTasks(packed.order, renderGateNotes(built, args.ecosystem)).map((t) => ({
         ...t,
         path: join(args.caseDir, "tasks", t.file),
       }))
@@ -956,7 +1001,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
   const sweepTasks =
     cfg.review.task_files && built.sweep_plan && built.sweep_plan.length > 0
       ? (() => {
-          const sweepOrder = sweepOrderOf(built, built.sweep_plan);
+          const sweepOrder = sweepOrderOf(packed.order, built.sweep_plan);
           return renderPassTasks(sweepOrder, renderGateNotes(sweepOrder, args.ecosystem)).map(
             (t) => ({ ...t, path: join(args.caseDir, "tasks-sweep", t.file) }),
           );
@@ -1009,6 +1054,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
     plannedLenses: order.pass_plan.map((p) => p.agent),
     passPlan: order.pass_plan,
     taskFiles: taskFiles.map((t) => ({ path: t.path, text: t.text })),
+    ...(packed.file ? { contextPack: packed.file } : {}),
     extraFiles,
     followUp: report,
     ...(built.sweep_plan && built.sweep_plan.length > 0 ? { sweepPlan: built.sweep_plan } : {}),
@@ -1304,6 +1350,8 @@ export async function reviewCase(
     // An earlier attempt's task files never leak into this one: launch_plan
     // launches every task file the dir holds.
     rmSync(join(caseDir, "tasks"), { recursive: true, force: true });
+    rmSync(join(caseDir, CONTEXT_PACK_FILE), { force: true });
+    if (prompts.contextPack) writeFileSync(prompts.contextPack.path, prompts.contextPack.text);
     if (prompts.taskFiles.length) {
       mkdirSync(join(caseDir, "tasks"), { recursive: true });
       for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);
@@ -1329,6 +1377,9 @@ export async function reviewCase(
       QCR_SUBAGENT_SCOPE: "project",
       QCR_SUBAGENT_MAX_CONCURRENCY: String(ctx.cfg.pi.subagent_max_concurrency),
       QCR_SUBAGENT_WIDE_FANOUT: ctx.cfg.review?.wide_lens_fanout === false ? "0" : "1",
+      QCR_SUBAGENT_CACHE_GROUP: String(ctx.cfg.pi.subagent_cache_group ?? 0),
+      QCR_SUBAGENT_CACHE_STAGGER_MS: String(ctx.cfg.pi.subagent_cache_stagger_ms ?? 2500),
+      QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
       // the case's task dirs are this replay's sanctioned launch_plan
       // dirs (production's live under state/pr-<n>-round-<k>-passes/).
       QCR_LAUNCH_PLAN_DIRS: [join(caseDir, "tasks"), join(caseDir, "tasks-sweep")].join(delimiter),

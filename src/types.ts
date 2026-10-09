@@ -296,6 +296,10 @@ export interface RoundOrder {
    * so the round will likely approve; `"late"` ⇒ only once steps 1–4 lead to
    * an approval (step 4b). */
   sweep_start?: "early" | "late";
+  /** (`[review] context_pack = "pack-first"`): the round's context
+   * pack, written beside its task files (src/contextpack.ts). The task files
+   * then point at it; absent ⇒ every task renders exactly as before. */
+  context_pack_file?: string;
   /** Task files written for the sweep's rows (their own directory and row
    * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
    * sweep's task strings itself. */

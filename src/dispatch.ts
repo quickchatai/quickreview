@@ -84,6 +84,7 @@ import { findStyleGuide } from "./styleguide.js";
 import { findCiLinters, lintersForFiles, type CiLinter } from "./lintconfig.js";
 import { LENS_PLANNING } from "./lensplanning.js";
 import { writeLessonFiles, writePassTasks } from "./passtasks.js";
+import { CONTEXT_PACK_FILE, readWorktreeFileForPack, renderContextPack } from "./contextpack.js";
 import { renderGateNotes } from "./templates.js";
 import { directiveVocabulary, isFirstPartyDirectivePath } from "./severity.js";
 import type { DispatchAnnouncer } from "./slack/announce.js";
@@ -2519,7 +2520,53 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // task string. Total: a write that fails leaves the order without task
       // files, and the session writes the strings itself, as before. Under
       // `on` each row's delivered lessons ride its task file (S9b).
-      let order = built;
+      // (`[review] context_pack = "pack-first"`): the round's CONTEXT
+      // PACK, written before the task files that point at it, and only where
+      // children share a cache key (`[pi] subagent_cache_group`) — an unshared
+      // pack costs every lens more, not less. Total: a pack that cannot be
+      // written leaves the round exactly as without one; a stale pack from an
+      // earlier attempt of this round number never survives into it.
+      const passesDir = resolve(sandboxRoot(), "state", `pr-${row.number}-round-${roundNo}-passes`);
+      const packPath = join(passesDir, CONTEXT_PACK_FILE);
+      let packed: RoundOrder = built;
+      if (
+        cfg.review.task_files &&
+        cfg.review.context_pack === "pack-first" &&
+        cfg.pi.subagent_cache_group > 0
+      ) {
+        try {
+          const pack = renderContextPack({
+            pr: row.number,
+            headSha: built.head_sha,
+            mergeBase: built.merge_base,
+            files,
+            ...(followUp ? { deltaPatch: renderDeltaPatch(followUp.delta.files) } : {}),
+            readFile: (p) => readWorktreeFileForPack(built.worktree, p),
+            maxTokens: cfg.review.context_pack_max_tokens,
+          });
+          mkdirSync(passesDir, { recursive: true });
+          writeFileSync(`${packPath}.tmp`, pack.text);
+          renameSync(`${packPath}.tmp`, packPath);
+          packed = { ...built, context_pack_file: packPath };
+          store.logEvent("context_pack_written", row.number, {
+            round_id: roundId,
+            chars: pack.chars,
+            diff_files: pack.diffFiles.length,
+            diff_omitted: pack.diffOmitted.length,
+            full_files: pack.fullFiles.length,
+          });
+        } catch (err) {
+          log(`dispatch: #${row.number} context pack not written`, err);
+        }
+      } else {
+        try {
+          rmSync(packPath, { force: true });
+        } catch (err) {
+          log(`dispatch: #${row.number} stale context pack not removed`, err);
+        }
+      }
+
+      let order = packed;
       let rowsDelivered = false;
       if (cfg.review.task_files) {
         try {
@@ -2531,8 +2578,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           );
           const tasks = writePassTasks(
             dir,
-            built,
-            renderGateNotes(built, eco),
+            packed,
+            renderGateNotes(packed, eco),
             delivery
               ? {
                   rows: new Map(delivery.rows.map((r) => [r.row, r.lessons] as const)),
@@ -2541,7 +2588,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               : undefined,
           );
           order = {
-            ...built,
+            ...packed,
             pass_task_files: tasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
           };
           rowsDelivered = true;
@@ -2569,7 +2616,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
         if (built.sweep_plan && built.sweep_plan.length > 0) {
           try {
-            const sweepOrder = sweepOrderOf(built, built.sweep_plan);
+            const sweepOrder = sweepOrderOf(packed, built.sweep_plan);
             const sweepTasks = writePassTasks(
               sweepDir,
               sweepOrder,

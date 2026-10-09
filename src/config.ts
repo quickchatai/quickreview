@@ -538,6 +538,19 @@ export interface ReviewConfig {
    * follow-up round's time tracks its agent count, and 138-line deltas were
    * fanning out to 15–20 agents. */
   follow_up_small_delta_lines: number;
+  /** `context_pack` (src/contextpack.ts): `"pack-first"` ⇒ the
+   * daemon writes the round's CONTEXT PACK (the diff, the change since the
+   * last review, the most-changed files' full text) beside its task files, and
+   * every lens child carries it at the very start of its prompt, ahead of its
+   * lens instructions (extensions/leaf-cache.ts) — one shared, cached prefix
+   * instead of every lens re-reading the same text uncached. `"off"` ⇒ no
+   * pack, prompts exactly as before. Takes effect only with
+   * `[pi] subagent_cache_group` > 0 (an unshared pack would cost more, not
+   * less). Shipped OFF until a measured run: it moves where a lens's
+   * instructions sit in its prompt. */
+  context_pack: "off" | "pack-first";
+  /** The pack's size cap in tokens (≈4 characters each). */
+  context_pack_max_tokens: number;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -655,6 +668,8 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   follow_up_post_approval_sweep_lines: 500,
   follow_up_small_delta_lines: 150,
   baseline_split_lines: 2000,
+  context_pack: "off",
+  context_pack_max_tokens: 40000,
 };
 
 /**
@@ -1829,6 +1844,18 @@ export interface Config {
      * QCR_SUBAGENT_MAX_CONCURRENCY). Default 4 — the companion/desktop
      * number; the VM config sets 6, the old pi-subagents config.json value. */
     subagent_max_concurrency: number;
+    /**: lens children share a provider PROMPT CACHE in groups of this
+     * many (rides the command line as QCR_SUBAGENT_CACHE_GROUP). Each group's
+     * children run under one pi session id — the provider's cache key — instead
+     * of a random one per child, so an identical prompt prefix is read
+     * from cache by every child after the first (probe 2026-10-09: 24,320 of
+     * 24,467 tokens cached; 0 under per-child ids). Groups, not one key per
+     * round, keep each key's request rate low. 0 ⇒ a random id per child, as before. */
+    subagent_cache_group: number;
+    /** How long a group's later children wait after its first one started, so
+     * the cache is written before they ask (QCR_SUBAGENT_CACHE_STAGGER_MS;
+     * probe: simultaneous requests both missed, one 2 s later hit). */
+    subagent_cache_stagger_ms: number;
   };
   openviking: OpenVikingConfig;
   memory: MemoryConfig;
@@ -2473,8 +2500,18 @@ export function parseConfig(toml: string): Config {
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
     pi: {
       subagent_max_concurrency: 4,
-      ...(req(raw, "pi") as Omit<Config["pi"], "subagent_max_concurrency"> &
-        Partial<Pick<Config["pi"], "subagent_max_concurrency">>),
+      subagent_cache_group: 5,
+      subagent_cache_stagger_ms: 2500,
+      ...(req(raw, "pi") as Omit<
+        Config["pi"],
+        "subagent_max_concurrency" | "subagent_cache_group" | "subagent_cache_stagger_ms"
+      > &
+        Partial<
+          Pick<
+            Config["pi"],
+            "subagent_max_concurrency" | "subagent_cache_group" | "subagent_cache_stagger_ms"
+          >
+        >),
     },
     openviking: parseOpenViking((raw.openviking ?? {}) as Record<string, unknown>),
     memory: parseMemory((raw.memory ?? {}) as Record<string, unknown>),
@@ -2561,6 +2598,19 @@ export function parseConfig(toml: string): Config {
         `config.toml [review]: baseline_split_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
       );
     }
+  }
+  if (cfg.review.context_pack !== "off" && cfg.review.context_pack !== "pack-first") {
+    throw new Error(
+      `config.toml [review]: context_pack must be "off" or "pack-first" (got ${JSON.stringify(cfg.review.context_pack)})`,
+    );
+  }
+  for (const [key, n, min] of [
+    ["[review] context_pack_max_tokens", cfg.review.context_pack_max_tokens, 1000],
+    ["[pi] subagent_cache_group", cfg.pi.subagent_cache_group, 0],
+    ["[pi] subagent_cache_stagger_ms", cfg.pi.subagent_cache_stagger_ms, 0],
+  ] as const) {
+    if (!(typeof n === "number" && Number.isInteger(n) && n >= min))
+      throw new Error(`config.toml ${key} must be a whole number >= ${min} (got ${JSON.stringify(n)})`);
   }
   {
     const n = cfg.review.follow_up_small_delta_lines;
