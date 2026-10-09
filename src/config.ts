@@ -419,6 +419,15 @@ export interface ReviewConfig {
    * `behaviour_delta_max_groups` rows (heuristics.ts behaviourDeltaGroups). */
   behaviour_delta: boolean;
   behaviour_delta_max_groups: number;
+  /**: over this many changed lines (heuristics.ts
+   * `baselineSplitLines` — the sweep's sizing: prose half, lockfiles,
+   * generated and vendored files nothing) pass-baseline is planned as 2–3
+   * rows, each STARTING from one group of the change's files with the whole
+   * PR as its charter (heuristics.ts `baselineGroups`). 0 ⇒ never: one row,
+   * as before. At 2000 only the largest live PRs split (2026-10-09 study:
+   * 2,600–3,000-line PRs, where the lone baseline row ran 500 s and set the
+   * round's critical path); every PR under it plans byte-identically. */
+  baseline_split_lines: number;
   /** The loosened-test hint (src/loosenedtests.ts, owner decision
    * 2026-10-03): weakened assertions in the PR's test files are found
    * deterministically and named in pass-tests' plan reason; their presence
@@ -645,6 +654,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   follow_up_sweep: true,
   follow_up_post_approval_sweep_lines: 500,
   follow_up_small_delta_lines: 150,
+  baseline_split_lines: 2000,
 };
 
 /**
@@ -2541,6 +2551,14 @@ export function parseConfig(toml: string): Config {
     if (!(typeof n === "number" && Number.isInteger(n) && n >= 0)) {
       throw new Error(
         `config.toml [review]: follow_up_post_approval_sweep_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
+      );
+    }
+  }
+  {
+    const n = cfg.review.baseline_split_lines;
+    if (!(typeof n === "number" && Number.isInteger(n) && n >= 0)) {
+      throw new Error(
+        `config.toml [review]: baseline_split_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
       );
     }
   }

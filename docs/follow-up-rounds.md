@@ -23,7 +23,7 @@ Every later re-review round is a **follow-up round** (a staleness round never is
 2. **Review the delta.** The PR-owned change since the last reviewed head (`{{delta_note}}`).
    - It is computed by `WorktreeManager.prOwnedDelta`: the old head is replayed onto the new merge base with `git merge-tree`, so base merges cancel out and rebases work.
    - The plan is built from the delta's files, with intent text arms off. The tier is still chosen from the whole PR, so a small fix push keeps the PR's tier.
-   - `pass-baseline` is always planned. It carries every prior finding no other planned lens owns.
+   - `pass-baseline` is always planned. It carries every prior finding no other planned lens owns. On a delta over `baseline_split_lines` (2000) it is split into 2–3 rows by file group (`baselineGroups`, docs/architecture/lifecycle.md); a prior finding that falls to it goes to exactly one row — the one whose files hold its path, else the first — as the plan table's note says.
    - When the whole PR trips the migration gate, the full plan's `pass-data-safety` row rides the delta plan even if no migration is in the delta: the gate note and a degraded pre-check name that lens. It takes its launch-order place, as every row does (slowest first, `slowestFirst` in dispatch.ts).
    - A delta of at most `follow_up_small_delta_lines` (150) lines gets the **lean plan** (`leanFollowUpPlan`): no per-file `pass-sweep` rows, because pass-baseline reads a small change whole, and the quality and style lenses moved to the addable list instead of planned. They judged the PR in round 1, and on a fix push they mostly re-raise nits. No lens leaves the round: the session adds one when the change shows its shape. In the 2026-10-09 replays, a follow-up round's time tracked its agent count, and 138-line deltas were fanning out to 15–20 agents.
    - Each delta-plan task file (`[review] task_files`) carries the change since the last review as the lens's review scope — its files, ranges and patch — with the whole PR as context; the session hands each lens its assigned prior findings through `launch_plan`'s `extra`, keyed by row, and an early sweep's task dir rides the same `launch_plan` call.
@@ -60,6 +60,7 @@ A full round counts as a full look.
 | `follow_up_max_delta_ratio` | 0.6 | Above this share of the PR's diff lines, the round falls back to a full re-review |
 | `follow_up_sweep` | true | false never plans the pre-approval sweep |
 | `follow_up_small_delta_lines` | 150 | A delta of at most this many lines gets the lean plan; 0 never |
+| `baseline_split_lines` | 2000 | Over this many changed lines (the delta's, on a follow-up) pass-baseline is planned as 2–3 rows by file group; 0 never |
 | `follow_up_post_approval_sweep_lines` | 500 | After a posted approval, the sweep is owed only from this many changed lines; 0 never owes it |
 
 ## State

@@ -35,6 +35,8 @@ import {
   selectSubLenses,
   SWEEP_PASS,
   sweepGroups,
+  baselineGroups,
+  baselineSplitLines,
   BEHAVIOUR_DELTA_PASS,
   behaviourDeltaGroups,
   CODE_FILE_RE,
@@ -1104,6 +1106,27 @@ export function buildPassPlan(
       ...(why !== undefined ? { why } : {}),
     };
   });
+  // on a VERY large change pass-baseline — one row, and the round's
+  // critical path once the fan-out launches in one turn — is planned as 2–3
+  // rows, each STARTING from one group of the change's files; every row keeps
+  // the whole PR as its charter (`[review] baseline_split_lines`, 0 = never).
+  // At or under the threshold nothing here runs: the plan is as before.
+  const baselineAt = pass_plan.findIndex((p) => p.lens === BASELINE_PASS);
+  const baselineSplit =
+    baselineAt < 0 ? [] : baselineGroups(files, cfg.review.baseline_split_lines ?? 0);
+  if (baselineSplit.length > 1) {
+    const row = pass_plan[baselineAt]!;
+    const lines = baselineSplitLines(files);
+    pass_plan.splice(
+      baselineAt,
+      1,
+      ...baselineSplit.map((focus, i): PassPlanEntry => ({
+        ...row,
+        why: `pass-baseline split ${i + 1} of ${baselineSplit.length}: the change is ${lines} changed lines, over [review] baseline_split_lines (${cfg.review.baseline_split_lines}) — this row starts from its files; its charter stays whole`,
+        focus,
+      })),
+    );
+  }
   // The sweep (benchmark 2026-09-26; `[review] sweep`): one row per group of
   // changed files, at the cheapest tier — its job is attention, line by line,
   // not deep reasoning — inserted before the validator (appended when a

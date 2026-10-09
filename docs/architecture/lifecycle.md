@@ -287,6 +287,30 @@ the task files' numbering, the order's `lenses`, lesson rows, the recorded
 `pass-data-safety` row is ordered the same way. The cap itself is not touched
 by this.
 
+On a **very large change** `pass-baseline` is split by file group (,
+`[review] baseline_split_lines`, default 2000; 0 = never). Once the fan-out
+launches in one turn, the lone baseline row is the round's critical path: on
+the 2026-10-09 live study it ran 465–504 s on the largest PRs against
+250–390 s for the rest of the batch. Over the threshold — measured by
+`baselineSplitLines`, the sweep's sizing (prose half; lockfiles, generated,
+vendored and binary files nothing) — `baselineGroups` (heuristics.ts) cuts the
+files the PR keeps, in diff order, into `ceil(lines / threshold)` groups, at
+most `BASELINE_SPLIT_MAX_ROWS` (3), balanced by lines, every file in exactly
+one group and a group under a quarter of its share folded into its neighbour.
+Each group becomes one `pass-baseline` row of the SAME agent, tier and raise
+list, with the group as its `focus` and a `why` naming the split. A baseline
+focus is where the row STARTS, never what it covers (`isSplitBaselineRow`):
+the plan table renders it as `starts at: …; its charter stays whole` and adds
+one note under the table, and the row's task file says "Where you start" and
+that the whole PR is still its own — unlike a sweep or behaviour-delta row,
+whose focus is exactly its files, and which alone count toward the coverage
+check's `swept` list. The note also settles prior findings: one that falls to
+`pass-baseline` goes to exactly ONE row, the one whose files hold its path,
+else the first baseline row in the table. At or under the threshold the plan
+is byte-identical to the unsplit plan (`tests/baseline-split.test.ts`). The
+cost is one more whole baseline reading per extra row, paid only on the
+largest PRs; at 2000 only the 2,600–3,000-line PRs of the study split.
+
 ### The round order and its receipt
 
 `RoundOrder` in `src/types.ts` is the daemon↔session contract: pass plan,

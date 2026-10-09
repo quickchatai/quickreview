@@ -728,6 +728,12 @@ preset = "default"
 # rows, and the quality and style lenses offered as addable instead of
 # planned; 0 never.
 # follow_up_small_delta_lines = 150
+# Split pass-baseline on a very large change: over this many changed
+# lines (prose half; lockfiles, generated and vendored files not counted) the
+# baseline is planned as 2-3 rows, each starting from one group of the
+# change's files with the whole PR still its charter, so the round's longest
+# reading runs in parallel. 2000 splits only the largest PRs; 0 never splits.
+# baseline_split_lines = 2000
 # Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout
 # lengthened, an assert removed or commented out, a skip added) are found by

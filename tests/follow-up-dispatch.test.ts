@@ -22,6 +22,7 @@ import {
   type DispatchDeps,
 } from "../src/dispatch.js";
 import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
+import { renderPassPlan } from "../src/templates.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
 import type { PriorFinding, PriorFindingsList } from "../src/priorfindings.js";
@@ -616,6 +617,49 @@ describe("the lean follow-up plan (small deltas)", () => {
         leanFollowUpPlan({ pass_plan: full.pass_plan, addable_lenses: [], sweep_unswept: [] })
           .pass_plan,
       ).toEqual(lean.pass_plan);
+    },
+  );
+});
+
+describe("a split pass-baseline on a large follow-up delta", () => {
+  it(
+    "splits by the DELTA's lines, every delta file starts exactly one row, and the plan says where a prior finding goes",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const bigPr = [
+        file("app/api/views.py", 3000, 400),
+        file("app/web/page.tsx", 2000, 200),
+        file("app/models.py", 1500, 100),
+      ];
+      queue(90);
+      reviewed(90, "REQUEST_CHANGES");
+      adapter.files.set(90, bigPr);
+      // 2,600 delta lines: over the 2000 default, under 0.6 of the PR.
+      const dfiles = [
+        deltaFile("app/api/views.py", 1300, 100),
+        deltaFile("app/models.py", 1100, 100),
+      ];
+      const { d, orders } = deps({ delta: okDelta(dfiles) });
+      await dispatchOnce(d);
+      const o = orders[0]!;
+      expect(o.scope).toBe("delta");
+      const rows = o.pass_plan.filter((p) => p.lens === "pass-baseline");
+      expect(rows.map((r) => r.focus)).toEqual([["app/api/views.py"], ["app/models.py"]]);
+      expect(renderPassPlan(o.pass_plan)).toContain("goes to exactly ONE of these rows");
+      // The knob at 0: one row, the rest of the plan unchanged.
+      queue(91);
+      reviewed(91, "REQUEST_CHANGES");
+      adapter.files.set(91, bigPr);
+      const off = deps({
+        delta: okDelta(dfiles),
+        cfg: { ...baseCfg, review: { ...baseCfg.review, baseline_split_lines: 0 } },
+      });
+      await dispatchOnce(off.d);
+      const o0 = off.orders[0]!;
+      expect(o0.pass_plan.filter((p) => p.lens === "pass-baseline")).toHaveLength(1);
+      expect(o0.pass_plan.filter((p) => p.lens !== "pass-baseline")).toEqual(
+        o.pass_plan.filter((p) => p.lens !== "pass-baseline"),
+      );
     },
   );
 });

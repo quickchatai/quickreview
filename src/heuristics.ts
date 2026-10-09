@@ -1064,3 +1064,89 @@ export function sweepGroups(
   }
   return { groups, unswept };
 }
+
+/** At most this many pass-baseline rows when a very large change splits it
+ *: each row is a whole baseline reading, so more rows buy a shorter
+ * critical path at the price of more parallel full readings. */
+export const BASELINE_SPLIT_MAX_ROWS = 3;
+
+/** The changed lines a reader of `f` reads, by the sweep's own sizing rule:
+ * prose half, lockfiles / generated / vendored / binary nothing, the rest
+ * additions + deletions. */
+function readLines(f: PrFile): number {
+  const lines = f.additions + f.deletions;
+  if (SWEEP_DOC_RE.test(f.filename)) return Math.ceil(lines / 2);
+  return SWEEP_SKIP_RE.test(f.filename) ? 0 : lines;
+}
+
+/** The changed lines `baselineGroups` measures a change by. */
+export function baselineSplitLines(files: readonly PrFile[]): number {
+  return files.reduce((n, f) => n + readLines(f), 0);
+}
+
+/**
+ * Split pass-baseline by file group on a VERY large change (,
+ * `[review] baseline_split_lines`). pass-baseline is one row and, once the
+ * fan-out launches in one turn, the round's critical path: 465–504 s on the
+ * largest live PRs against 250–390 s for the rest of the batch.
+ *
+ * Over `splitLines` changed lines (`baselineSplitLines`; 0 = never) the
+ * change's files — every one the PR does not remove — are cut, in diff order
+ * (directories stay together), into `ceil(lines / splitLines)` groups, at
+ * most `maxRows`, balanced by those lines: each file goes to the group its
+ * line midpoint falls in, so no file is split and every file has exactly one
+ * group. A group under a quarter of its share joins its neighbour, so a
+ * file that weighs nothing, or a few lines beside one file that is nearly
+ * the whole change, never buys a row. Each group is where one baseline row
+ * STARTS; the row's charter stays the whole PR.
+ *
+ * Returns `[]` — one ordinary row, exactly as before — at or under the
+ * threshold, and when the cut leaves fewer than two groups.
+ */
+export function baselineGroups(
+  files: readonly PrFile[],
+  splitLines: number,
+  maxRows: number = BASELINE_SPLIT_MAX_ROWS,
+): string[][] {
+  if (!(splitLines > 0)) return [];
+  const total = baselineSplitLines(files);
+  if (total <= splitLines) return [];
+  const n = Math.min(Math.max(maxRows, 1), Math.ceil(total / splitLines));
+  if (n < 2) return [];
+  const target = total / n;
+  const groups = Array.from({ length: n }, () => ({ files: [] as string[], lines: 0 }));
+  let before = 0;
+  for (const f of files) {
+    if (f.status === "removed") continue;
+    const w = readLines(f);
+    const g = groups[Math.min(n - 1, Math.floor((before + w / 2) / target))]!;
+    g.files.push(f.filename);
+    g.lines += w;
+    before += w;
+  }
+  // A group under a quarter of its share — weightless files past the last
+  // real one, or the crumbs beside one file that is nearly the whole change —
+  // is not worth a whole baseline reading: its files join the group before
+  // it, or the one after when it is first.
+  const kept: string[][] = [];
+  let carry: string[] = [];
+  for (const g of groups) {
+    if (g.lines >= target / 4) {
+      kept.push([...carry, ...g.files]);
+      carry = [];
+    } else if (kept.length > 0) kept.at(-1)!.push(...g.files);
+    else carry.push(...g.files);
+  }
+  if (carry.length > 0) {
+    if (kept.length === 0) return [];
+    kept.at(-1)!.push(...carry);
+  }
+  return kept.length >= 2 ? kept : [];
+}
+
+/** A pass-baseline row of a split baseline (`baselineGroups`): its `focus`
+ * is where it STARTS, never what it covers — unlike a sweep or
+ * behaviour-delta row, whose focus is exactly its files. */
+export function isSplitBaselineRow(p: { lens: string; focus?: readonly string[] }): boolean {
+  return p.lens === "pass-baseline" && p.focus !== undefined;
+}

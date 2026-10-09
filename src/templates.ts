@@ -18,6 +18,7 @@ import {
 } from "./memory/context.js";
 import { renderBleedNote, renderLessonsNote } from "./memory/delivery.js";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
+import { isSplitBaselineRow } from "./heuristics.js";
 import { renderEscalationPromptNote } from "./escalation.js";
 import { renderPostingPolicyNote } from "./postingpolicy.js";
 import { NEUTRAL_IDENTITY_VARS } from "./include.js";
@@ -347,13 +348,15 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     ];
     if (notes)
       cells.push(
-        p.focus !== undefined
-          ? `files: ${p.focus.map((f) => codePath(f, { table: true })).join(", ")}`
-          : p.why !== undefined
-            ? // A sub-lens reason names the file that fired it — author text
-              // in a table cell, so it gets the same containment.
-              `because ${flatControls(p.why).replace(/\|/g, "\\|")}`
-            : "",
+        isSplitBaselineRow(p)
+          ? `starts at: ${p.focus!.map((f) => codePath(f, { table: true })).join(", ")}; its charter stays whole`
+          : p.focus !== undefined
+            ? `files: ${p.focus.map((f) => codePath(f, { table: true })).join(", ")}`
+            : p.why !== undefined
+              ? // A sub-lens reason names the file that fired it — author text
+                // in a table cell, so it gets the same containment.
+                `because ${flatControls(p.why).replace(/\|/g, "\\|")}`
+              : "",
       );
     return `| ${cells.join(" | ")} |`;
   });
@@ -363,6 +366,16 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
         "| --- | --- | --- | --- | --- |",
       ]
     : ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |"];
+  // a split pass-baseline says what its rows are, and which one a
+  // prior finding goes to — exactly one. Absent on every unsplit plan.
+  const baselineRows = plan.filter(isSplitBaselineRow).length;
+  const split =
+    baselineRows > 1
+      ? [
+          "",
+          `**pass-baseline is split into ${baselineRows} rows** — the change is too large for one reading. Each row is a whole pass-baseline, its charter and review scope unchanged, that STARTS from the files its row lists: their callers, callees and cross-file effects anywhere in the PR are its to follow, and it reports everything it meets there. Launch every one. A prior finding that falls to pass-baseline (step 1, when the round has prior findings) goes to exactly ONE of these rows: the row whose files hold the finding's path, else the first pass-baseline row in the table.`,
+        ]
+      : [];
   const tail =
     unswept.length > 0
       ? [
@@ -370,7 +383,7 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
           `Not swept (over the per-round sweep cap): ${unswept.map((f) => codePath(f)).join(", ")}.`,
         ]
       : [];
-  return [...head, ...rows, ...tail].join("\n");
+  return [...head, ...rows, ...split, ...tail].join("\n");
 }
 
 /** Comma list of lenses the session may additionally run this round. A lens

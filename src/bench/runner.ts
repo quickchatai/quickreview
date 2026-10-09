@@ -261,6 +261,9 @@ export interface RunFingerprint {
     follow_up?: string;
     follow_up_max_delta_ratio?: number;
     follow_up_sweep?: boolean;
+    /**: the baseline split threshold, recorded only when it differs
+     * from the shipped default (2000). */
+    baseline_split_lines?: number;
   };
   /**: the profile's resolved per-lens tuning. Absent when untuned, so
    * an untuned run's fingerprint is what it was before per-lens tuning. A
@@ -337,6 +340,9 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
         : {}),
       ...((cfg.review.follow_up_sweep ?? true) !== true
         ? { follow_up_sweep: cfg.review.follow_up_sweep }
+        : {}),
+      ...((cfg.review.baseline_split_lines ?? 2000) !== 2000
+        ? { baseline_split_lines: cfg.review.baseline_split_lines }
         : {}),
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
