@@ -107,10 +107,13 @@ export const CLUSTER_TOOL: PiToolDefinition = {
   },
 };
 
-/** Read `eligible` (the order's coverage files) and `addressed` (paths). */
+/** Read `eligible` (the order's coverage files), `addressed` (paths) and
+ * the optional `swept` (paths a returned sweep row had in focus —;
+ * absent reads as none, so an older caller is the old check). */
 export function readCoverageArgs(params: Record<string, unknown>): {
   eligible: CoverageFile[];
   addressed: string[];
+  swept: string[];
   problems: string[];
 } {
   const problems: string[] = [];
@@ -144,14 +147,18 @@ export function readCoverageArgs(params: Record<string, unknown>): {
   const addressed: string[] = Array.isArray(ad)
     ? ad.filter((x): x is string => typeof x === "string")
     : (problems.push("addressed must be an array"), []);
-  return { eligible, addressed, problems };
+  const sw = params.swept === undefined ? [] : parse(params.swept, "swept");
+  const swept: string[] = Array.isArray(sw)
+    ? sw.filter((x): x is string => typeof x === "string")
+    : (problems.push("swept must be an array"), []);
+  return { eligible, addressed, swept, problems };
 }
 
 export const COVERAGE_TOOL: PiToolDefinition = {
   name: "coverage_gaps",
   label: "Coverage gaps",
   description:
-    "After the planned lenses return: the coverage-eligible changed source files no lens raised a finding on, packed into at most two pass-sweep rows, each with the reason line to put at the top of its task string.",
+    "After the planned lenses return: the coverage-eligible changed source files no lens raised a finding on and no RETURNED pass-sweep / pass-behaviour-delta row had in its focus, packed into at most two pass-sweep rows, each with the reason line to put at the top of its task string.",
   parameters: {
     type: "object",
     properties: {
@@ -169,19 +176,25 @@ export const COVERAGE_TOOL: PiToolDefinition = {
         description: "Every file path any lens raised a finding on (any disposition).",
         items: { type: "string" },
       },
+      swept: {
+        type: "array",
+        description:
+          "Every file in the focus list of a pass-sweep or pass-behaviour-delta row that RETURNED (findings or NONE). A row that failed, errored or was cut short contributes nothing.",
+        items: { type: "string" },
+      },
     },
     required: ["eligible", "addressed"],
   },
   execute(_id, params) {
-    const { eligible, addressed, problems } = readCoverageArgs(params);
-    const gaps = coverageGaps(eligible, addressed);
+    const { eligible, addressed, swept, problems } = readCoverageArgs(params);
+    const gaps = coverageGaps(eligible, addressed, undefined, undefined, swept);
     const warn = problems.length ? `\nProblems: ${problems.join("; ")}` : "";
     const rows = gaps.groups.map(
       (g, i) => `ROW ${i + 1}: focus ${JSON.stringify(g)}\n  reason: ${coverageReason(g)}`,
     );
     const body = gaps.groups.length
-      ? `${gaps.uncovered.length} of ${eligible.length} eligible file(s) unaddressed → ${gaps.groups.length} pass-sweep row(s).\n${rows.join("\n")}${gaps.unchecked.length ? `\nUNCHECKED (past the row cap): ${gaps.unchecked.join(", ")}` : ""}`
-      : `All ${eligible.length} eligible file(s) addressed — no coverage row.`;
+      ? `${gaps.uncovered.length} of ${eligible.length} eligible file(s) unaddressed and unswept → ${gaps.groups.length} pass-sweep row(s).\n${rows.join("\n")}${gaps.unchecked.length ? `\nUNCHECKED (past the row cap): ${gaps.unchecked.join(", ")}` : ""}`
+      : `All ${eligible.length} eligible file(s) addressed or swept — no coverage row.`;
     return text(`${body}${warn}`, {
       groups: gaps.groups,
       uncovered: gaps.uncovered,

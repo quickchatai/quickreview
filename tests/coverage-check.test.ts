@@ -83,6 +83,31 @@ describe("coverageGaps", () => {
     );
     expect(g.groups).toEqual([["x/Big.kt"], ["x/a.kt", "x/b.kt"]]);
   });
+  it("a file a returned sweep row had in focus counts as read, NONE included", () => {
+    // Swept: One and Two (a planned sweep row that answered NONE), Three by a
+    // repo-relative tail. Four was past the sweep cap; Five's row failed, so
+    // the session left it out of `swept`.
+    const g = coverageGaps(el, [], undefined, undefined, [
+      "a/One.java",
+      "a/Two.java",
+      "Three.java",
+    ]);
+    expect(g.uncovered).toEqual(["a/Four.java", "a/Five.java"]);
+    expect(g.groups).toEqual([["a/Four.java"], ["a/Five.java"]]);
+    // Addressed and swept union; nothing left, nothing to launch.
+    expect(
+      coverageGaps(el, ["a/Four.java"], undefined, undefined, [
+        "a/One.java",
+        "a/Two.java",
+        "a/Three.java",
+        "a/Five.java",
+      ]),
+    ).toEqual({ uncovered: [], groups: [], unchecked: [] });
+    // No sweep list: exactly the old check.
+    expect(coverageGaps(el, ["a/One.java"])).toEqual(
+      coverageGaps(el, ["a/One.java"], undefined, undefined, []),
+    );
+  });
   it("says why", () => {
     expect(coverageReason(["a.ts", "b.ts"])).toBe("coverage: no lens addressed a.ts, b.ts");
   });
@@ -109,6 +134,12 @@ describe("the knob and the note", () => {
     expect(note).toContain("COVERAGE <files>");
     expect(note).toContain('[{"path":"a/B.java","lines":12}]');
     expect(note).toContain("At most two such rows");
+    // a returned sweep row's focus counts, NONE included; a failed
+    // row's does not; other NONE lenses still address nothing.
+    expect(note).toContain("`swept` =");
+    expect(note).toContain("row that RETURNED — NONE included");
+    expect(note).toContain("A row that failed, errored or was cut short sweeps nothing");
+    expect(note).not.toContain("a lens that only\nanswered NONE addresses nothing");
   });
   it("sits at the end of step 2 in every round template", () => {
     for (const t of ["round-first.md", "round-re-review.md", "round-staleness.md"]) {
@@ -144,6 +175,24 @@ describe("coverage_gaps on both routes", () => {
       addressed: ["q/Dist.java"],
     });
     expect(all.content[0]!.text).toContain("no coverage row");
+    // `swept` (a returned sweep row's focus) closes the gap too.
+    const swept = await COVERAGE_TOOL.execute("t3", {
+      eligible: [
+        { path: "q/Dist.java", lines: 40 },
+        { path: "q/Other.java", lines: 8 },
+      ],
+      addressed: [],
+      swept: ["q/Dist.java"],
+    });
+    expect(swept.content[0]!.text).toContain('ROW 1: focus ["q/Other.java"]');
+    expect(swept.content[0]!.text).not.toContain('q/Dist.java"]');
+    expect(readCoverageArgs({ eligible: [], addressed: [] }).swept).toEqual([]);
+    expect(readCoverageArgs({ eligible: [], addressed: [], swept: '["a.ts"]' }).swept).toEqual([
+      "a.ts",
+    ]);
+    expect(readCoverageArgs({ eligible: [], addressed: [], swept: 3 }).problems).toEqual([
+      "swept must be an array",
+    ]);
     expect(readCoverageArgs({ eligible: "nope", addressed: [] }).problems).toContain(
       "eligible is not valid JSON",
     );

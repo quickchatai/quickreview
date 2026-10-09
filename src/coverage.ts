@@ -7,6 +7,16 @@
 // the sweep's line budget), each row carrying the reason
 // `coverage: no lens addressed <files>`.
 //
+// A file also counts as addressed when a RETURNED pass-sweep row (or a
+// per-file pass-behaviour-delta row — both carry `focus`) had it in its focus
+// list, NONE answers included: that row read every changed line of
+// the file at the sweep's tier, so a coverage row over it re-read the same
+// lines for nothing (11 of 12 studied live rounds ran one, 7 of them NONE).
+// The check stays total: a row that failed, errored or was cut short is not
+// "returned" and its focus counts for nothing, so a coverage row fires only
+// for files no returned row read — the files past the per-round sweep cap
+// and those of a failed row.
+//
 // Pure, and on the code path both routes share: dispatch puts the eligible
 // files on the round order, the `coverage_gaps` tool
 // (extensions/finding-clusters.ts) answers the uncovered groups.
@@ -52,7 +62,8 @@ function isAddressed(path: string, addressed: ReadonlySet<string>): boolean {
 }
 
 export interface CoverageGaps {
-  /** Eligible files no lens addressed, in the order given. */
+  /** Eligible files no lens addressed and no returned sweep row had in
+   * focus, in the order given. */
   uncovered: string[];
   /** The coverage rows to launch: at most COVERAGE_MAX_GROUPS. */
   groups: string[][];
@@ -70,8 +81,11 @@ export function coverageGaps(
   addressed: Iterable<string>,
   maxGroups: number = COVERAGE_MAX_GROUPS,
   maxLines: number = COVERAGE_GROUP_LINES,
+  swept: Iterable<string> = [],
 ): CoverageGaps {
-  const seen = new Set([...addressed].map((a) => a.trim().replace(/^\.?\//, "")).filter(Boolean));
+  const seen = new Set(
+    [...addressed, ...swept].map((a) => a.trim().replace(/^\.?\//, "")).filter(Boolean),
+  );
   const uncovered = eligible.filter((f) => !isAddressed(f.path, seen));
   const groups: string[][] = [];
   const unchecked: string[] = [];

@@ -478,8 +478,8 @@ export function renderDedupNote(order: Pick<RoundOrder, "dedup_merge">): string 
 
 /**
  * `[review] coverage_check` (src/coverage.ts): after the planned lenses
- * return, the changed non-test source files no lens raised a finding on get a
- * targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
+ * return, the changed non-test source files no lens raised a finding on and no
+ * returned sweep row had in focus get a targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
  * step 2; "" when the order carries no `coverage_files`, so an order without
  * them is byte-identical.
  */
@@ -490,9 +490,13 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
     "",
     "**Coverage check — no changed source file goes unread.** When every",
     "planned lens has returned and BEFORE step 3, call the `coverage_gaps` tool",
-    "ONCE with `eligible` = the JSON list below, verbatim, and `addressed` = every",
-    "file path any lens raised a finding on (any disposition; a lens that only",
-    "answered NONE addresses nothing). For each group it returns, launch",
+    "ONCE with `eligible` = the JSON list below, verbatim, `addressed` = every",
+    "file path any lens raised a finding on (any disposition), and `swept` =",
+    "every file in the `focus` list of a `pass-sweep` or `pass-behaviour-delta`",
+    "row that RETURNED — NONE included: that row read the file's changed lines.",
+    "A row that failed, errored or was cut short sweeps nothing; leave its",
+    "files out. Any other lens that only answered NONE addresses nothing. For",
+    "each group it returns, launch",
     "`pass-sweep` once, at the sweep's planned tier, with `focus` = that group's",
     "files and the reason line it gives (`coverage: no lens addressed …`) at the",
     "top of the task string. At most two such rows; its candidates join step 3",

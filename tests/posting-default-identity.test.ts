@@ -264,10 +264,15 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // since H1b the daemon closes the round and the compaction runs once the run
 // settles — and the findings-record step says nothing written after the
 // verdict is part of the round. Every map moves.
+// Re-pinned 2026-10-09 (coverage row): `{{coverage_note}}` passes
+// `coverage_gaps` a `swept` list — every file in the focus of a RETURNED
+// pass-sweep / pass-behaviour-delta row, NONE included — so a file a sweep row
+// already read no longer draws a coverage row. Only this map moves (the
+// no-coverage map renders no note).
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "4d33dca1cde7395f0d235a61b7403802b5e28db5bc28e6ec7cf647039bddf0f5",
-  "re-review": "39c822bde737cadc35d32fc375610db26f66e2db1cfc21db5071f84722bd2868",
-  staleness: "44333e658bbdcbcd1611814385d97085ed5deda9fe32bf01edf7d0e20d7df12e",
+  first: "3b86eb267a7a48d0e8bf3311a6cee9f9b5d9bf2f3cbff1812f465b0760424fb5",
+  "re-review": "12e51330b93bf031efcaa720354bf63669430184ae341826fe09f2a22c8c80b3",
+  staleness: "19fef89e080cbe5bfbe0c8795c02cc754b4cee88507e015f8a49999f48e3600a",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
