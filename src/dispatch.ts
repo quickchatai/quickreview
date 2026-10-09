@@ -936,6 +936,7 @@ export interface PassPlan {
  * - every other selected lens gets the passTier() tier and may be raised to
  *   any higher tier's variant (ascending order).
  * addable_lenses = every known pass not already in the plan.
+ * The rows come back in launch order, slowest first (`slowestFirst`).
  *
  * The profile's per-lens tuning (`cfg.lenses`) wins over all of
  * that: a `min_tier` floors the lens's row (and so its `raisable_to`) and the
@@ -1155,7 +1156,68 @@ export function buildPassPlan(
   const addable_lenses = [...new Set([...ALL_PASSES, ...cfg.models.risk_passes])].filter(
     (l) => !selected.has(l) && on(l) && !skip.has(l),
   );
-  return { pass_plan, addable_lenses, sweep_unswept };
+  return { pass_plan: slowestFirst(pass_plan, files, risk), addable_lenses, sweep_unswept };
+}
+
+/** The lenses `slowestFirst` launches last within their tier: conditional
+ * lenses that read the change for one narrow concern. */
+const CHEAP_LAST_PASSES: ReadonlySet<string> = new Set([
+  INTENT_PASS,
+  ...QUALITY_PASSES,
+  STYLE_PASS,
+  LINT_CONFORMANCE_PASS,
+]);
+
+/**
+ * The plan's rows in LAUNCH order — the expected-slowest first.
+ *
+ * The session launches a turn's rows in table order, and the subagent glue
+ * (extensions/subagents.ts) runs them under a process-wide cap in that order,
+ * so a 15–27 row plan runs in waves: a slow row listed late starts in the
+ * last wave and sets the round's critical path (live rounds 2026-10-09:
+ * pass-baseline, sol-high sweep and behaviour-delta rows). The order:
+ * pass-baseline; then by tier, highest first; within a tier the risk passes,
+ * then the focused rows (behaviour-delta, then sweep) by the changed lines
+ * their focus covers, larger first, then every other lens, then the cheap
+ * conditional lenses (`CHEAP_LAST_PASSES`); pass-validate stays last. Ties
+ * keep their planned order (a stable sort).
+ *
+ * Only the ORDER moves — the same rows, each byte-identical. Every consumer
+ * that indexes rows (the task files, `lenses`, lesson rows, the recorded
+ * pass_plan) reads this one array, so they agree. Exported for
+ * `planFollowUp`, which splices a carried row into an already-ordered plan.
+ */
+export function slowestFirst(
+  rows: readonly PassPlanEntry[],
+  files: readonly PrFileEntry[],
+  risk: ReadonlySet<string>,
+): PassPlanEntry[] {
+  const lines = new Map(files.map((f) => [f.filename, (f.additions ?? 0) + (f.deletions ?? 0)]));
+  const weight = (p: PassPlanEntry): number =>
+    (p.focus ?? []).reduce((n, f) => n + (lines.get(f) ?? 0), 0);
+  const cls = (p: PassPlanEntry): number =>
+    risk.has(p.lens)
+      ? 0
+      : p.lens === BEHAVIOUR_DELTA_PASS
+        ? 1
+        : p.lens === SWEEP_PASS
+          ? 2
+          : CHEAP_LAST_PASSES.has(p.lens)
+            ? 4
+            : 3;
+  const key = (p: PassPlanEntry): number[] => [
+    p.lens === VALIDATE_PASS ? 1 : 0,
+    p.lens === BASELINE_PASS ? 0 : 1,
+    -PASS_TIER_ORDER.indexOf(p.tier),
+    cls(p),
+    -weight(p),
+  ];
+  const keyed = rows.map((p, i) => ({ p, i, k: key(p) }));
+  keyed.sort((a, b) => {
+    for (let j = 0; j < a.k.length; j++) if (a.k[j] !== b.k[j]) return a.k[j]! - b.k[j]!;
+    return a.i - b.i;
+  });
+  return keyed.map((e) => e.p);
 }
 
 /** Why a non-first round runs as today's full re-review: every
@@ -1358,7 +1420,7 @@ export function planFollowUp(
       rows.splice(at < 0 ? rows.length : at, 0, ...carried);
       plan = {
         ...plan,
-        pass_plan: rows,
+        pass_plan: slowestFirst(rows, deltaFiles, new Set(cfg.models.risk_passes)),
         addable_lenses: plan.addable_lenses.filter((l) => l !== DATA_SAFETY_PASS),
       };
     }

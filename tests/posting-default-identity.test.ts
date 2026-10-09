@@ -225,10 +225,13 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // since H1b the daemon closes the round and the compaction runs once the run
 // settles — and the findings-record step says nothing written after the
 // verdict is part of the round. Every map moves.
+// Re-pinned 2026-10-09 (launch the slowest rows first): the pass
+// plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
+// rows in a new order — and the plan's lens list follows it. Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "7b41e234d14cc37d59fe8e3845e94b47189bc36774dbc558fbb5b284f5486126",
-  "re-review": "1573b7223b4f6edf2e423d9bb492b0a64da68e07157e01c2c22c8a305d0070f5",
-  staleness: "3dab00d11477ca90fe5fabe6cb13549b76f73261b89b878e55da6d559152dc29",
+  first: "546a245de426772305e28974d54480d2f0e00e16a821892bfb1b2d8f682c42f8",
+  "re-review": "bb2007ff950630e923a3d304530a66b6f514ed18a299662ff957bb5af11ea17f",
+  staleness: "21208161bb954572eaf29edc95400e2793ef9842098b2acec7d67709c76b2f4e",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -269,10 +272,13 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // pass-sweep / pass-behaviour-delta row, NONE included — so a file a sweep row
 // already read no longer draws a coverage row. Only this map moves (the
 // no-coverage map renders no note).
+// Re-pinned 2026-10-09 (launch the slowest rows first): the pass
+// plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
+// rows in a new order — and the plan's lens list follows it. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "3b86eb267a7a48d0e8bf3311a6cee9f9b5d9bf2f3cbff1812f465b0760424fb5",
-  "re-review": "12e51330b93bf031efcaa720354bf63669430184ae341826fe09f2a22c8c80b3",
-  staleness: "19fef89e080cbe5bfbe0c8795c02cc754b4cee88507e015f8a49999f48e3600a",
+  first: "7162fe83ced8841976814b29183c31c596b7716ed29d5a1e924ad0f6ef6abb67",
+  "re-review": "d24a5dd60b2bbed02952f313d9bb5e4720d205432e48660ab3ce9d25125b932e",
+  staleness: "cd3d88dd38c4fc7f313228d58382b0193c60f3c7496a5fc47526707b27089072",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -293,10 +299,13 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // since H1b the daemon closes the round and the compaction runs once the run
 // settles — and the findings-record step says nothing written after the
 // verdict is part of the round. Every map moves.
+// Re-pinned 2026-10-09 (launch the slowest rows first): the pass
+// plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
+// rows in a new order — and the plan's lens list follows it. Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "cc8181aca16e223265dd4df88ec9eb248e1c402d4bb4413e0a06b09e2cd7a898",
-  "re-review": "2817f9957f02e3051334c1fd9e677747f328f9f5ce06bd5c43bbfa7b90835d7f",
-  staleness: "fda88e24de228988399b74644da81fe9bce4103a4682311cdabb1ecefb487c5b",
+  first: "413446c715feb23551b1850080675d77f883778f6075d2d322af2ebb0ecb5304",
+  "re-review": "0ef6c611c1df47aef2dd228bdffb94e5ae585f0cdf30823cfceacd4f69a6b072",
+  staleness: "469786d0e27d50c624d03a6efa46e1001833a57943d14707b057491297aec714",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -320,10 +329,13 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // since H1b the daemon closes the round and the compaction runs once the run
 // settles — and the findings-record step says nothing written after the
 // verdict is part of the round. Every map moves.
+// Re-pinned 2026-10-09 (launch the slowest rows first): the pass
+// plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
+// rows in a new order — and the plan's lens list follows it. Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "0f75e667eb49c5c6098be6857cbb7636159533938018765665195f5eb7248531",
-  "re-review": "af988ad739739649ac0471ff16c9c2d3a0884755266a7151ea9ad62d26a2806d",
-  staleness: "076b4cdbf541954d2b66b82e4e375f771ba0ad5b3082d7d5caef3d8371ff6859",
+  first: "b6d41f8bc896003b74298fd9e2de0c165148aae041466ac86b71abc9479844b9",
+  "re-review": "b8fce8ca08594e2d181a7f2bdc57b8e8d1985ec00a53f8dfb071dbeb1c6a5e25",
+  staleness: "32f9a4339b39f170a488c77a9f692da6e1073d74c46a0104b82b8d81121800dc",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

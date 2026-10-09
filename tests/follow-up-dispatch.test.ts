@@ -308,6 +308,9 @@ describe("follow-up rounds: the delta scope", () => {
       expect(o.addable_lenses).not.toContain("pass-data-safety");
       const vi = lensesInOrder.indexOf("pass-validate");
       if (vi >= 0) expect(lensesInOrder.indexOf("pass-data-safety")).toBeLessThan(vi);
+      // The carried row takes its launch-order place (`slowestFirst`):
+      // a sol-high risk pass right after the baseline, not spliced in last.
+      expect(lensesInOrder.slice(0, 2)).toEqual(["pass-baseline", "pass-data-safety"]);
       // The diffstat on the round row is the WHOLE PR's.
       expect(lastRound(12)).toMatchObject({ additions: 620, deletions: 70, changed_files: 4 });
       // The coverage check holds the round to the delta's files only.

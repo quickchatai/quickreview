@@ -271,6 +271,22 @@ configured `validate_tier` is a **floor**, raised to the highest lens tier in
 the round, because a cheaper model must never veto a more expensive one's
 finding. Lenses not planned are offered as `addable_lenses`.
 
+The plan's rows are listed in **launch order, slowest first** (`slowestFirst`,
+). The session launches a turn's rows in table order and the subagent
+glue runs them under a process-wide cap (`[pi] subagent_max_concurrency`) in
+that order, so a 15–27 row plan runs in waves, and a slow row listed late
+started in the last wave and set the round's critical path. The order:
+`pass-baseline`; then by tier, highest first; within a tier the risk passes,
+the focused rows (`pass-behaviour-delta`, then `pass-sweep`) by the changed
+lines their focus covers, larger first, every other lens, and the cheap
+conditional lenses (intent, the quality lenses, style, lint conformance);
+`pass-validate` last. Only the order moves: the rows, their tiers and focus
+and the addable list are unchanged, and every consumer that indexes rows —
+the task files' numbering, the order's `lenses`, lesson rows, the recorded
+`pass_plan` — reads the one ordered array. A follow-up round's carried
+`pass-data-safety` row is ordered the same way. The cap itself is not touched
+by this.
+
 ### The round order and its receipt
 
 `RoundOrder` in `src/types.ts` is the daemon↔session contract: pass plan,

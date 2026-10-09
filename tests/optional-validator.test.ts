@@ -128,15 +128,16 @@ describe("a profile can switch the validator off", () => {
     }
   });
 
-  it("with the validator off the sweep rows go last — no lens is displaced behind them", () => {
+  it("with the validator off the plan is the same rows in the same order, minus the validator", () => {
     const swept = structuredClone(fixture);
     swept.review.sweep = true;
     const withValidator = plan(swept, SMALL).pass_plan.map((r) => r.lens);
-    expect(withValidator.slice(-2)).toEqual(["pass-sweep", "pass-validate"]);
+    expect(withValidator.at(-1)).toBe("pass-validate");
+    expect(withValidator).toContain("pass-sweep");
     profile("novalidate", "[lenses.pass-validate]\nenabled = false\n");
     const without = plan(tuned("novalidate", swept), SMALL).pass_plan.map((r) => r.lens);
-    // MUTATION: splice at `length - 1` unconditionally and the sweep lands
-    // before the last lens instead of after it.
+    // The launch order (`slowestFirst`) keys every row by itself, so
+    // the validator's absence moves nothing else.
     expect(without).toEqual(withValidator.filter((l) => l !== "pass-validate"));
   });
 });
