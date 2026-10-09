@@ -1432,7 +1432,7 @@ export interface RoundStartMeta {
   delta_files?: number | null;
   sweep_owed?: boolean | null;
   sweep_plan?: PassPlanEntry[] | null;
-  sweep_status?: "ran" | "not_owed" | "not_reached" | "unknown" | null;
+  sweep_status?: "ran" | "not_owed" | "not_reached" | "skipped" | "unknown" | null;
 }
 
 /** One recheck claim, as `rechecksFor` reads it. */

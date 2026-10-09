@@ -541,13 +541,26 @@ function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
 /** The verdict's top-level `sweep`: `ran` | `not_owed` |
  * `not_reached`, case forgiven and `-`/space read as `_`; anything else is
  * unusable (null). */
-export function normalizeSweepClaim(raw: unknown): "ran" | "not_owed" | "not_reached" | null {
+export function normalizeSweepClaim(
+  raw: unknown,
+): "ran" | "not_owed" | "not_reached" | "skipped" | null {
   if (typeof raw !== "string") return null;
   const word = raw
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
-  return word === "ran" || word === "not_owed" || word === "not_reached" ? word : null;
+  return word === "ran" || word === "not_owed" || word === "not_reached" || word === "skipped"
+    ? word
+    : null;
+}
+
+/** The verdict's `extent`: what the session did with the follow-up
+ * plan's optional rows — `ran` | `partial` | `skipped`, case forgiven;
+ * anything else is unusable (null). */
+export function normalizeExtentClaim(raw: unknown): "ran" | "partial" | "skipped" | null {
+  if (typeof raw !== "string") return null;
+  const word = raw.trim().toLowerCase();
+  return word === "ran" || word === "partial" || word === "skipped" ? word : null;
 }
 
 /** Shape validation for VerdictFile. Anything off → the anomaly path. */
@@ -633,7 +646,19 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
       delete v.sweep;
     }
   }
-  const notes = [norm.note, esc.note, sweepNote].filter(Boolean).join("; ");
+  // the optional rows' extent — the same tolerant discipline.
+  let extentNote: string | undefined;
+  if (v.extent !== undefined) {
+    const extent = normalizeExtentClaim(v.extent);
+    if (extent) v.extent = extent;
+    else {
+      extentNote = `extent claim unusable (${JSON.stringify(v.extent).slice(0, 40)}) ignored`;
+      delete v.extent;
+    }
+  }
+  for (const k of ["sweep_reason", "extent_reason"] as const)
+    if (v[k] !== undefined && typeof v[k] !== "string") delete v[k];
+  const notes = [norm.note, esc.note, sweepNote, extentNote].filter(Boolean).join("; ");
   return {
     ok: true,
     verdict: raw as unknown as VerdictFile,
@@ -2282,9 +2307,20 @@ export class VerdictWatcher {
         sweep_passes: sweepPasses,
         status,
         ...(note ? { note } : {}),
+        ...(v.sweep_reason ? { reason: v.sweep_reason.slice(0, 500) } : {}),
       });
       if (note) this.log(`verdicts: #${v.pr} round ${v.round_no} sweep ${status}: ${note}`);
-      if (v.verdict === "APPROVE" && owed && status !== "ran") {
+      // what the session did with the optional rows, and why.
+      if (v.extent !== undefined)
+        store.logEvent("followup_extent_decided", v.pr, {
+          round_id: round.id,
+          round_no: v.round_no,
+          extent: v.extent,
+          ...(v.extent_reason ? { reason: v.extent_reason.slice(0, 500) } : {}),
+        });
+      // A sweep the session decided to skip is a decision, not an
+      // anomaly: only an owed sweep left un-run WITHOUT one is.
+      if (v.verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped") {
         store.logAnomaly(
           "followup_sweep_skipped",
           v.pr,

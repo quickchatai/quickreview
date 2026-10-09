@@ -1284,6 +1284,10 @@ export interface FollowUpDecision {
   /** The full plan's files left over the per-round sweep cap — carried with
    * `sweepPlan`, so the sweep is told what it does not cover, as round 1 is. */
   sweepUnswept?: string[];
+  /** (`follow_up_extent = "session"`): the full delta plan's rows the
+   * lean core left out — per-file sweep rows, quality and style lenses —
+   * offered to the session as optional rows. */
+  optionalPlan?: PassPlanEntry[];
 }
 
 /**
@@ -1469,8 +1473,24 @@ export function planFollowUp(
   // pass-baseline reads it whole, so the per-file sweep rows add agents and
   // no coverage, and the quality and style lenses — which judged the PR in
   // round 1 — move to the addable list rather than leaving the round.
-  const smallDelta = cfg.review.follow_up_small_delta_lines ?? 150;
-  if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
+  // under `follow_up_extent = "session"` EVERY follow-up round plans
+  // the lean core, and the rows it leaves out are offered as optional rows
+  // for the session to run, partly run or skip — the 150-line rule is the
+  // session's call. Under `"rules"`, the lean plan at or under the threshold.
+  let optionalPlan: PassPlanEntry[] = [];
+  if ((cfg.review.follow_up_extent ?? "rules") === "session") {
+    const lean = leanFollowUpPlan(plan);
+    const kept = new Set(lean.pass_plan);
+    optionalPlan = plan.pass_plan.filter((p) => !kept.has(p));
+    const optionalLenses = new Set(optionalPlan.map((p) => p.lens));
+    plan = {
+      ...lean,
+      addable_lenses: lean.addable_lenses.filter((l) => !optionalLenses.has(l)),
+    };
+  } else {
+    const smallDelta = cfg.review.follow_up_small_delta_lines ?? 150;
+    if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
+  }
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
   if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS))
@@ -1488,6 +1508,7 @@ export function planFollowUp(
       fromSha: args.fromSha,
       deltaFiles,
       plan,
+      ...(optionalPlan.length > 0 ? { optionalPlan } : {}),
       ...(sweepOwed
         ? {
             sweepPlan: args.fullPlan.pass_plan,
@@ -1575,6 +1596,20 @@ export function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta
  * full plan — exactly the order a full round would hand its lenses. Pure;
  * the daemon and the bench's follow-up replay render the sweep's tasks from
  * it alike. */
+/** The order the follow-up round's OPTIONAL rows render their task files
+ * from: the follow-up order itself — the change since the last
+ * review stays their scope — with `optional_plan` as its plan. Prior
+ * findings ride the core rows only (their assignment indexes `pass_plan`),
+ * so none ride here. Pure. */
+export function optionalOrderOf(order: RoundOrder, optionalPlan: PassPlanEntry[]): RoundOrder {
+  const { prior_assignments: _p, optional_plan: _o, optional_task_files: _f, ...rest } = order;
+  return {
+    ...rest,
+    pass_plan: optionalPlan,
+    lenses: [...new Set(optionalPlan.map((p) => p.lens))],
+  };
+}
+
 export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): RoundOrder {
   const {
     scope: _s,
@@ -1660,6 +1695,8 @@ export function buildRoundOrder(args: {
      * row that owns it and written into that row's task file. Absent (the
      * list could not be assembled) ⇒ the session assigns them, as before. */
     priorFindings?: Pick<PriorFindingsList, "findings" | "round_no">;
+    /**: the optional rows the session decides (`optional_plan`). */
+    optionalPlan?: PassPlanEntry[];
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
   };
@@ -1763,6 +1800,12 @@ export function buildRoundOrder(args: {
           scope: "delta" as const,
           delta: args.followUp.delta,
           prior_findings_note: args.followUp.priorFindingsNote,
+          ...((args.cfg.review.follow_up_extent ?? "rules") === "session"
+            ? { follow_up_extent: "session" as const }
+            : {}),
+          ...(args.followUp.optionalPlan && args.followUp.optionalPlan.length > 0
+            ? { optional_plan: args.followUp.optionalPlan }
+            : {}),
           ...((): { prior_assignments?: PriorAssignment[] } => {
             const list = args.followUp.priorFindings;
             if (!list || list.findings.length === 0) return {};
@@ -2423,6 +2466,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 deltaFiles: followUp.deltaFiles,
                 priorFindingsNote,
                 ...(priorFindings?.list ? { priorFindings: priorFindings.list } : {}),
+                ...(followUp.optionalPlan ? { optionalPlan: followUp.optionalPlan } : {}),
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
                 ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
               },
@@ -2616,6 +2660,42 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             rmSync(sweepDir, { recursive: true, force: true });
           } catch (err) {
             log(`dispatch: #${row.number} stale sweep task dir not removed`, err);
+          }
+        }
+        // the optional rows' task files — their own directory and
+        // row index (`row` indexes `optional_plan`), rendered from the
+        // follow-up order itself, so they carry the change since the last
+        // review exactly as the core rows do. Total, as above.
+        const optionalDir = resolve(
+          sandboxRoot(),
+          "state",
+          `pr-${row.number}-round-${roundNo}-passes`,
+          "tasks-optional",
+        );
+        if (!built.optional_plan || built.optional_plan.length === 0) {
+          try {
+            rmSync(optionalDir, { recursive: true, force: true });
+          } catch (err) {
+            log(`dispatch: #${row.number} stale optional task dir not removed`, err);
+          }
+        } else {
+          try {
+            const optionalOrder = optionalOrderOf(packed, built.optional_plan);
+            const optionalTasks = writePassTasks(
+              optionalDir,
+              optionalOrder,
+              renderGateNotes(optionalOrder, eco),
+            );
+            order = {
+              ...order,
+              optional_task_files: optionalTasks.map((t) => ({
+                row: t.row,
+                agent: t.agent,
+                path: t.path,
+              })),
+            };
+          } catch (err) {
+            log(`dispatch: #${row.number} optional task files unavailable`, err);
           }
         }
         if (built.sweep_plan && built.sweep_plan.length > 0) {

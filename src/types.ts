@@ -330,6 +330,16 @@ export interface RoundOrder {
    * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
    * sweep's task strings itself. */
   sweep_task_files?: Array<{ row: number; agent: string; path: string }>;
+  /** (`[review] follow_up_extent = "session"`): the follow-up plan's
+   * OPTIONAL rows — the full delta plan's per-file sweep rows and quality /
+   * style lenses — that the main session runs, partly runs or skips, and
+   * their task files (`row` indexes `optional_plan`). */
+  optional_plan?: PassPlanEntry[];
+  optional_task_files?: Array<{ row: number; agent: string; path: string }>;
+  /**: set when the session decides the follow-up round's extent —
+   * the optional rows and whether an owed pre-approval sweep runs. Absent ⇒
+   * the fixed rules. */
+  follow_up_extent?: "session";
 }
 
 /** One file of a follow-up round's delta (worktrees.ts `PrOwnedDeltaFile`,
@@ -447,7 +457,13 @@ export interface VerdictFile {
   /**: what became of a follow-up round's pre-approval sweep —
    * `ran`, `not_owed` (the order carried none) or `not_reached` (the round
    * decided REQUEST_CHANGES first). Session-written; absent on other rounds. */
-  sweep?: "ran" | "not_owed" | "not_reached";
+  sweep?: "ran" | "not_owed" | "not_reached" | "skipped";
+  /**: why the session skipped an owed pre-approval sweep. */
+  sweep_reason?: string;
+  /**: what the session did with the follow-up plan's optional rows —
+   * all run, some run, none run — and why. */
+  extent?: "ran" | "partial" | "skipped";
+  extent_reason?: string;
   head_sha: string;
   spend_usd?: number;
   ledger_snapshot?: string;

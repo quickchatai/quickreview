@@ -5,7 +5,7 @@
 
 /** What became of a follow-up round's pre-approval sweep (,
  * `rounds.sweep_status`). */
-export type SweepStatus = "ran" | "not_owed" | "not_reached" | "unknown";
+export type SweepStatus = "ran" | "not_owed" | "not_reached" | "skipped" | "unknown";
 
 /**
  * The sweep status a follow-up round's verdict earns. `ran` only
@@ -21,7 +21,7 @@ export type SweepStatus = "ran" | "not_owed" | "not_reached" | "unknown";
  */
 export function sweepStatusOf(args: {
   owed: boolean;
-  claim: "ran" | "not_owed" | "not_reached" | null;
+  claim: "ran" | "not_owed" | "not_reached" | "skipped" | null;
   sweepPasses: number | null;
   receiptSettled: boolean;
   verdict?: string | null;
@@ -53,6 +53,10 @@ export function sweepStatusOf(args: {
       status: "unknown",
       note: `${sweepPasses} sweep-phase passes executed, but the claim is ${claim ?? "absent"}`,
     };
+  // the session decided the owed sweep was not needed (`follow_up_extent
+  // = "session"`) — a decision with its reason, recorded as such. Never a full
+  // look: a later round that owes the sweep still owes it.
+  if (claim === "skipped") return { status: "skipped" };
   if (args.verdict === "APPROVE" && (claim === "not_reached" || claim === "not_owed"))
     return {
       status: "unknown",

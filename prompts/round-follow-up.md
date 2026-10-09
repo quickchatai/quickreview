@@ -9,6 +9,7 @@
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}} {{nit_policy_note}}
 > {{prior_findings_note}} {{prior_assign_note}} {{delta_note}} {{sweep_note}}
+> {{extent_note}} {{sweep_decision_note}} {{extent_verdict_note}}
 > `intent_note`, `missing_migration_note`, `dependency_note`, `ledger_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), the lesson pair
@@ -190,7 +191,7 @@ read the change since the last review, and the whole PR diff, as needed.
 since the last review; the tier still reflects the whole PR):
 
 {{pass_plan}}
-{{dependency_note}}{{pass_task_note}}
+{{dependency_note}}{{pass_task_note}}{{extent_note}}
 {{nit_policy_note}}
 **Rows with a focus or a reason.** When the plan table has a *focus / why*
 column: a row listing files is ONE launch of that agent with exactly those
@@ -343,7 +344,7 @@ Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
 
 ## 4b. Pre-approval sweep
 
-{{sweep_note}}
+{{sweep_note}}{{sweep_decision_note}}
 
 Read this step only when the order above carries a **PRE-APPROVAL SWEEP**
 block; without one, no sweep is owed this round — go to step 5.
@@ -799,7 +800,7 @@ was APPROVE and the approval is held back because CI is not green at this head
 `sweep` is step 4b: `"ran"` when you launched the pre-approval sweep and its
 validator returned, `"not_reached"` when this round carried a sweep block but
 the decision was REQUEST_CHANGES before it, `"not_owed"` when this round
-carried no sweep block. Write it on every follow-up verdict.
+carried no sweep block. Write it on every follow-up verdict.{{extent_verdict_note}}
 
 `phase` on each `passes` entry says which stage launched it: `"delta"` for the
 step-2 lenses and the step-4 validator, `"sweep"` for the step-4b lenses and

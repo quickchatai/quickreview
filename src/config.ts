@@ -565,6 +565,16 @@ export interface ReviewConfig {
    * addendum; the session's half is `{{validator_output_note}}`). What it
    * decides is unchanged. `false` ⇒ the frozen output format. */
   validate_compact: boolean;
+  /** (the owner, 2026-10-09): who sizes a FOLLOW-UP round.
+   * `"session"` ⇒ every follow-up round plans the lean core (pass-baseline,
+   * the risk lenses, behaviour-delta, the validator) and offers the full
+   * plan's per-file sweep rows and quality/style lenses as OPTIONAL rows the
+   * main session runs, partly runs or skips — and it decides whether an owed
+   * pre-approval sweep is needed — each with a stated reason, logged.
+   * `"rules"` ⇒ the fixed rules before it: the lean plan only at or under
+   * `follow_up_small_delta_lines`, the pre-approval sweep always run when
+   * owed and the round would approve. */
+  follow_up_extent: "session" | "rules";
 }
 
 export type NitPolicy = "strict" | "open";
@@ -690,6 +700,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   context_pack_max_tokens: 40000,
   sweep_light_tier: "",
   validate_compact: true,
+  follow_up_extent: "session",
 };
 
 /**
@@ -2634,6 +2645,11 @@ export function parseConfig(toml: string): Config {
   ) {
     throw new Error(
       `config.toml [review]: sweep_light_tier must be "" or a tier (${PASS_TIER_ORDER.join(", ")}) (got ${JSON.stringify(cfg.review.sweep_light_tier)})`,
+    );
+  }
+  if (cfg.review.follow_up_extent !== "session" && cfg.review.follow_up_extent !== "rules") {
+    throw new Error(
+      `config.toml [review]: follow_up_extent must be "session" or "rules" (got ${JSON.stringify(cfg.review.follow_up_extent)})`,
     );
   }
   if (typeof cfg.review.validate_compact !== "boolean") {

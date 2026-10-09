@@ -552,6 +552,108 @@ export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments
 }
 
 /**
+ * `{{extent_note}}` (`[review] follow_up_extent = "session"`): the
+ * follow-up round's OPTIONAL rows — the full delta plan's per-file sweep rows
+ * and quality/style lenses, which the core plan leaves out — and the rule the
+ * session decides them by. "" when the order carries none.
+ */
+export function renderExtentNote(
+  order: Pick<
+    RoundOrder,
+    "optional_plan" | "optional_task_files" | "follow_up_extent" | "worktree"
+  >,
+): string {
+  const rows = order.optional_plan ?? [];
+  if (order.follow_up_extent !== "session" || rows.length === 0) return "";
+  const files = order.optional_task_files ?? [];
+  const dir = files.length > 0 ? taskDirOf(files) : undefined;
+  const table = rows.map((p, i) => {
+    const f = files.find((t) => t.row === i);
+    const focus = p.focus
+      ? p.focus.length <= 3
+        ? p.focus.map((x) => `\`${x}\``).join(", ")
+        : `${p.focus.length} files`
+      : (p.why ?? "");
+    return `| optional:${i + 1} | \`${p.agent}\` | ${focus} |${f ? ` \`${f.path}\` |` : ""}`;
+  });
+  return [
+    "",
+    "",
+    "**OPTIONAL ROWS — your decision this round.** The plan above is this round's",
+    "core: it verifies the prior findings and reviews the change since the last",
+    "review. The rows below — the per-file sweep of the change and the quality and",
+    "style lenses — are yours to run, run in part, or skip, by what that change IS:",
+    "",
+    "- **a targeted fix** of the listed findings — it stays inside their files and",
+    "  lines, or adds a test for them: the core is enough; skip them;",
+    "- **new or reworked code** — a new function, path or file, a refactor, code no",
+    "  finding named: run them over that code — every row, or the rows whose files",
+    "  hold it;",
+    "- **in doubt**, run them.",
+    "",
+    "Decide from the change (step 1) BEFORE the launch turn, and launch the rows you",
+    "run in the SAME turn as the core:",
+    dir
+      ? `add \`${dir}\` to the \`launch_plan\` call's \`dirs\`, with \`skip\` naming each optional row you do not run (\`optional:<row>\`).`
+      : "one `subagent` call per row you run, with its focus files, in the launch turn.",
+    "Record the decision in the verdict's `extent` and `extent_reason` (step 7).",
+    "",
+    `| row | subagent | focus |${dir ? " task file |" : ""}`,
+    `| --- | --- | --- |${dir ? " --- |" : ""}`,
+    ...table,
+  ].join("\n");
+}
+
+/**
+ * `{{sweep_decision_note}}`: under `follow_up_extent = "session"` an
+ * owed pre-approval sweep is the session's decision, with a stated reason.
+ * "" when no sweep is owed or the rules decide.
+ */
+export function renderSweepDecisionNote(
+  order: Pick<RoundOrder, "sweep_plan" | "follow_up_extent">,
+): string {
+  if (order.follow_up_extent !== "session" || (order.sweep_plan?.length ?? 0) === 0) return "";
+  return [
+    "",
+    "",
+    "**This round, whether the full sweep runs is your decision.** Where the APPROVE",
+    "bullet below says to run the sweep, first decide whether it is needed. It",
+    "re-reads the WHOLE PR with the full plan, on top of round 1's full review, the",
+    "prior findings verified this round and the change you just reviewed. Skip it",
+    "only when you can say why it adds nothing — this round's change is a targeted",
+    "fix, and no file of the PR has gone without a full-plan reading since round 1.",
+    "Run it when the PR changed beyond the findings' fixes since its last full look,",
+    "when a file has never had one, or when in doubt. A skipped sweep is",
+    '`sweep: "skipped"` with a one-line `sweep_reason` (step 7); the round then',
+    "decides from what steps 1–4 found.",
+  ].join("\n");
+}
+
+/** `{{extent_verdict_note}}`: the verdict fields the session's
+ * extent decisions add — "" unless it makes them. */
+export function renderExtentVerdictNote(
+  order: Pick<RoundOrder, "follow_up_extent" | "optional_plan" | "sweep_plan">,
+): string {
+  if (order.follow_up_extent !== "session") return "";
+  const parts: string[] = [];
+  if ((order.optional_plan?.length ?? 0) > 0)
+    parts.push(
+      '`extent` is step 2\'s OPTIONAL ROWS: `"ran"` (every one), `"partial"` (some) or `"skipped"` (none), with `extent_reason` — one line saying why, from what the change is.',
+    );
+  if ((order.sweep_plan?.length ?? 0) > 0)
+    parts.push(
+      '`sweep` may also be `"skipped"`: you decided the owed sweep was not needed (step 4b). Then write `sweep_reason` — one line saying why.',
+    );
+  if (parts.length === 0) return "";
+  return [
+    "",
+    "",
+    "This round's verdict also carries these schema fields:",
+    ...parts.map((p) => `- ${p}`),
+  ].join("\n");
+}
+
+/**
  * `[review] coverage_check` (src/coverage.ts): after the planned lenses
  * return, the changed non-test source files no lens raised a finding on and no
  * returned sweep row had in focus get a targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
@@ -797,6 +899,10 @@ export function roundVars(
     // round-follow-up.md places them, so every other template is unchanged.
     prior_findings_note: order.prior_findings_note ?? "",
     prior_assign_note: renderPriorAssignNote(order),
+    // (`follow_up_extent = "session"`): "" otherwise.
+    extent_note: renderExtentNote(order),
+    sweep_decision_note: renderSweepDecisionNote(order),
+    extent_verdict_note: renderExtentVerdictNote(order),
     delta_note: renderDeltaNote(order.delta, order.worktree),
     sweep_note: renderSweepNote(order),
   };

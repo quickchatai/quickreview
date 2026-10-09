@@ -480,7 +480,7 @@ export function taskPointer(path: string): string {
 /** One unit of a planned launch. */
 export interface LaunchUnit {
   /** "plan" for the round's tasks dir, "sweep" for the sweep's. */
-  phase: "plan" | "sweep";
+  phase: "plan" | "sweep" | "optional";
   /** 1-based row, as the plan tables print it. */
   row: number;
   agent: string;
@@ -519,7 +519,7 @@ function resolveTaskDir(
   realRoot: string,
   extras: ReadonlySet<string>,
   pr: string | undefined,
-): { dir: string; phase: "plan" | "sweep"; passes: string | undefined } | { error: string } {
+): { dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined } | { error: string } {
   const real = realDir(resolve(realRoot, input));
   if (!real) return { error: `${input}: no such directory` };
   // Resolved too: on the VM `<sandbox>/state` is a SYMLINK to the state volume
@@ -537,16 +537,18 @@ function resolveTaskDir(
     return { dir: tasks, phase: "plan", passes: real };
   }
   const name = basename(real);
+  // `tasks-optional` — a follow-up round's optional rows.
+  const phaseOf = (n: string): "plan" | "sweep" | "optional" =>
+    n === "tasks-sweep" ? "sweep" : n === "tasks-optional" ? "optional" : "plan";
   if (
-    (name === "tasks" || name === "tasks-sweep") &&
+    (name === "tasks" || name === "tasks-sweep" || name === "tasks-optional") &&
     dirname(dirname(real)) === state &&
     ownPasses(basename(dirname(real)))
   )
-    return { dir: real, phase: name === "tasks" ? "plan" : "sweep", passes: dirname(real) };
-  if (extras.has(real))
-    return { dir: real, phase: name === "tasks-sweep" ? "sweep" : "plan", passes: undefined };
+    return { dir: real, phase: phaseOf(name), passes: dirname(real) };
+  if (extras.has(real)) return { dir: real, phase: phaseOf(name), passes: undefined };
   return {
-    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks or …/tasks-sweep)`,
+    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks, …/tasks-sweep or …/tasks-optional)`,
   };
 }
 
@@ -568,7 +570,7 @@ function listTaskFiles(dir: string): Array<{ row: number; agent: string; file: s
  * without `.md`), its row (`3`, or `sweep:3` for a sweep row), its agent, its
  * phase's wildcard (`plan:*` / `sweep:*`) and `*`. */
 export function unitKeys(u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent">): string[] {
-  const row = u.phase === "sweep" ? `sweep:${u.row}` : String(u.row);
+  const row = u.phase === "plan" ? String(u.row) : `${u.phase}:${u.row}`;
   return [u.file, u.file.replace(/\.md$/, ""), row, u.agent, `${u.phase}:*`, "*"];
 }
 
@@ -591,9 +593,12 @@ export function planLaunch(
   try {
     const dirs = stringList(params.dirs ?? params.dir);
     if (!dirs || dirs.length === 0)
-      return { ok: false, error: "`dirs` must name the round's task directory (one or two paths)" };
-    if (dirs.length > 2)
-      return { ok: false, error: "at most two dirs: the round's tasks and its tasks-sweep" };
+      return { ok: false, error: "`dirs` must name the round's task directory (one to three paths)" };
+    if (dirs.length > 3)
+      return {
+        ok: false,
+        error: "at most three dirs: the round's tasks, its tasks-optional and its tasks-sweep",
+      };
     const skip = stringList(params.skip);
     if (!skip) return { ok: false, error: "`skip` must be a list of row keys" };
     const extraRaw = params.extra ?? {};
@@ -608,7 +613,7 @@ export function planLaunch(
     if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
     const extras = sanctionedExtras(env);
 
-    const resolved: Array<{ dir: string; phase: "plan" | "sweep"; passes: string | undefined }> =
+    const resolved: Array<{ dir: string; phase: "plan" | "sweep" | "optional"; passes: string | undefined }> =
       [];
     for (const d of dirs) {
       const r = resolveTaskDir(d, realRoot, extras, env.QCR_PR?.trim() || undefined);
@@ -617,11 +622,13 @@ export function planLaunch(
       if (resolved.some((x) => x.phase === r.phase))
         return { ok: false, error: `two ${r.phase} task directories in one launch` };
       if (resolved.some((x) => x.passes !== r.passes))
-        return { ok: false, error: "the two task directories belong to different rounds" };
+        return { ok: false, error: "the task directories belong to different rounds" };
       resolved.push(r);
     }
-    // Plan rows first, then the sweep's — the daemon's launch order within each.
-    resolved.sort((a, b) => (a.phase === b.phase ? 0 : a.phase === "plan" ? -1 : 1));
+    // Plan rows first, then the optional rows, then the sweep's — the daemon's
+    // launch order within each.
+    const rank = { plan: 0, optional: 1, sweep: 2 } as const;
+    resolved.sort((a, b) => rank[a.phase] - rank[b.phase]);
 
     const all: LaunchUnit[] = [];
     for (const r of resolved) {
@@ -707,7 +714,8 @@ export function launchPlanDefinition(
     label: "Launch plan",
     description:
       "Launch EVERY discovery lens of this review round in one call, from the task files the daemon wrote " +
-      "(state/pr-<n>-round-<k>-passes/tasks, and the pre-approval sweep's …/tasks-sweep). Each lens gets its " +
+      "(state/pr-<n>-round-<k>-passes/tasks; a follow-up round's optional rows …/tasks-optional; the pre-approval " +
+      "sweep's …/tasks-sweep). Each lens gets its " +
       "task-file pointer as its task, plus any `extra` text keyed to its row. Never launches pass-validate. " +
       "Returns the same result the subagent tool returns for a parallel call.",
     parameters: {
@@ -717,19 +725,20 @@ export function launchPlanDefinition(
           type: "array",
           items: { type: "string" },
           minItems: 1,
-          maxItems: 2,
+          maxItems: 3,
           description:
-            "The round's task directory (…-passes/tasks, or the …-passes dir itself), and optionally the sweep's " +
-            "…-passes/tasks-sweep (the pre-approval sweep's own launch).",
+            "The round's task directory (…-passes/tasks, or the …-passes dir itself), and optionally the " +
+            "follow-up round's optional rows (…-passes/tasks-optional) and the sweep's …-passes/tasks-sweep " +
+            "(the pre-approval sweep's own launch).",
         },
         extra: {
           type: "object",
           additionalProperties: { type: "string" },
           description:
             "Optional text appended after a row's pointer (prior findings assigned to that lens, a site, a " +
-            "question). Key: the row number as the plan table prints it (`sweep:<row>` for a sweep row), the " +
-            "task file name, the agent name (every row of that agent), `sweep:*` / `plan:*` (every row of " +
-            "that phase) or `*` (every row).",
+            "question). Key: the row number as the plan table prints it (`sweep:<row>` for a sweep row, " +
+            "`optional:<row>` for an optional row), the task file name, the agent name (every row of that " +
+            "agent), `plan:*` / `optional:*` / `sweep:*` (every row of that phase) or `*` (every row).",
         },
         skip: {
           type: "array",

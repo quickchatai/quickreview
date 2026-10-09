@@ -56,6 +56,7 @@ import {
   renderDeltaPatch,
   roundDeltaOf,
   sweepOrderOf,
+  optionalOrderOf,
 } from "../dispatch.js";
 import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { PrOwnedDelta } from "../worktrees.js";
@@ -804,7 +805,7 @@ export interface CaseFollowUp {
    * as `followup_sweep_skipped`). Absent until the case has an outcome. */
   executed_phases?: Array<{ agent: string; phase: "delta" | "sweep" | null }>;
   sweep?: {
-    claim: "ran" | "not_owed" | "not_reached" | null;
+    claim: "ran" | "not_owed" | "not_reached" | "skipped" | null;
     status: SweepStatus;
     note?: string;
     sweep_passes: number | null;
@@ -832,7 +833,12 @@ export function followUpOutcomeOf(
     p["phase"] === "delta" || p["phase"] === "sweep" ? p["phase"] : null;
   const rawClaim = outcome["sweep"];
   const claim =
-    rawClaim === "ran" || rawClaim === "not_owed" || rawClaim === "not_reached" ? rawClaim : null;
+    rawClaim === "ran" ||
+    rawClaim === "not_owed" ||
+    rawClaim === "not_reached" ||
+    rawClaim === "skipped"
+      ? rawClaim
+      : null;
   const sweepPasses = passes ? passes.filter((p) => phaseOf(p) === "sweep").length : null;
   const owed = fu.sweep_owed === true;
   const { status, note } = sweepStatusOf({
@@ -857,7 +863,7 @@ export function followUpOutcomeOf(
       status,
       ...(note ? { note } : {}),
       sweep_passes: sweepPasses,
-      skipped: verdict === "APPROVE" && owed && status !== "ran",
+      skipped: verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped",
     },
   };
 }
@@ -934,6 +940,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       deltaFiles: d.deltaFiles,
       priorFindingsNote: prior.note,
       priorFindings: prior.list,
+      ...(d.optionalPlan ? { optionalPlan: d.optionalPlan } : {}),
       ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
       ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
     };
@@ -1012,6 +1019,17 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
           );
         })()
       : [];
+  // the optional rows' task files, from the same order dispatch
+  // renders them from (`optionalOrderOf`), in their own directory.
+  const optionalTasks =
+    cfg.review.task_files && built.optional_plan && built.optional_plan.length > 0
+      ? (() => {
+          const optionalOrder = optionalOrderOf(packed.order, built.optional_plan);
+          return renderPassTasks(optionalOrder, renderGateNotes(optionalOrder, args.ecosystem)).map(
+            (t) => ({ ...t, path: join(args.caseDir, "tasks-optional", t.file) }),
+          );
+        })()
+      : [];
   const { render_outputs: _renderedByBench, ...unrendered } = built;
   const order = {
     ...unrendered,
@@ -1020,6 +1038,15 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       : {}),
     ...(sweepTasks.length
       ? { sweep_task_files: sweepTasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })) }
+      : {}),
+    ...(optionalTasks.length
+      ? {
+          optional_task_files: optionalTasks.map((t) => ({
+            row: t.row,
+            agent: t.agent,
+            path: t.path,
+          })),
+        }
       : {}),
   };
   const template = readFileSync(join(root, "prompts", templateFileForOrder(order)), "utf8");
@@ -1053,6 +1080,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
     identity,
   );
   for (const t of sweepTasks) extraFiles.push({ path: t.path, text: t.text });
+  for (const t of optionalTasks) extraFiles.push({ path: t.path, text: t.text });
   return {
     system,
     order: orderText,
@@ -1339,6 +1367,7 @@ export async function reviewCase(
       for (const f of ["ledger.md", "delta.patch", "prior.json", "sweep-plan.json"])
         rmSync(join(caseDir, f), { force: true });
       rmSync(join(caseDir, "tasks-sweep"), { recursive: true, force: true });
+      rmSync(join(caseDir, "tasks-optional"), { recursive: true, force: true });
       for (const f of prompts.extraFiles ?? []) {
         mkdirSync(dirname(f.path), { recursive: true });
         writeFileSync(f.path, f.text);
@@ -1387,7 +1416,11 @@ export async function reviewCase(
       QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
       // the case's task dirs are this replay's sanctioned launch_plan
       // dirs (production's live under state/pr-<n>-round-<k>-passes/).
-      QCR_LAUNCH_PLAN_DIRS: [join(caseDir, "tasks"), join(caseDir, "tasks-sweep")].join(delimiter),
+      QCR_LAUNCH_PLAN_DIRS: [
+        join(caseDir, "tasks"),
+        join(caseDir, "tasks-optional"),
+        join(caseDir, "tasks-sweep"),
+      ].join(delimiter),
       QCR_SANDBOX_ROOT: o.root,
       QCR_SESSION_NAME: `bench-${safe}`,
       QCR_PR: String(c.pr),
