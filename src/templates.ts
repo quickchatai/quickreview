@@ -513,18 +513,26 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
  * the follow-up template says when to run it; this block is what to run.
  */
 export function renderSweepNote(
-  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept">,
+  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept" | "sweep_start">,
 ): string {
   const plan = order.sweep_plan;
   if (!plan || plan.length === 0) return "";
-  const out = [
-    "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
-    "first round and the PR is not approved, so before this round approves, the",
-    "whole PR gets one blank-slate look with the full plan below (step 4b says",
-    "when to launch it and when it is not reached):",
-    "",
-    renderPassPlan(plan, order.sweep_plan_unswept ?? []),
-  ];
+  const head =
+    order.sweep_start === "early"
+      ? [
+          "**PRE-APPROVAL SWEEP — owed this round, START EARLY.** No whole-PR review has run",
+          "since the first round and the PR is not approved. Every open prior blocker",
+          "sits in a file the change touched, so this round will likely approve: launch",
+          "the full plan below in the SAME turn as step 2's discovery rows, and validate",
+          "its candidates with theirs in step 4 (step 4b):",
+        ]
+      : [
+          "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
+          "first round and the PR is not approved, so before this round approves, the",
+          "whole PR gets one blank-slate look with the full plan below (step 4b says",
+          "when to launch it and when it is not reached):",
+        ];
+  const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [])];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
     out.push(

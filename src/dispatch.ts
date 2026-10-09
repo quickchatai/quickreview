@@ -42,6 +42,7 @@ import {
   STYLE_PASS,
   LINT_CONFORMANCE_PASS,
   selectQualityLenses,
+  QUALITY_PASSES,
   qualityReason,
 } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
@@ -101,7 +102,7 @@ import type {
   RoundType,
   SessionHooks,
 } from "./types.js";
-import { preparePriorFindings } from "./priorfindings.js";
+import { preparePriorFindings, type PriorFindingsList } from "./priorfindings.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -1362,6 +1363,12 @@ export function planFollowUp(
       };
     }
   }
+  // A small delta gets the LEAN plan (`[review] follow_up_small_delta_lines`):
+  // pass-baseline reads it whole, so the per-file sweep rows add agents and
+  // no coverage, and the quality and style lenses — which judged the PR in
+  // round 1 — move to the addable list rather than leaving the round.
+  const smallDelta = cfg.review.follow_up_small_delta_lines ?? 150;
+  if (smallDelta > 0 && delta.lines <= smallDelta) plan = leanFollowUpPlan(plan);
   // pass-baseline carries every prior finding no other planned lens owns: a
   // follow-up plan without it (a profile switched it off) cannot verify them.
   if (!plan.pass_plan.some((p) => p.lens === BASELINE_PASS))
@@ -1369,7 +1376,8 @@ export function planFollowUp(
   // An owed sweep needs a plan to run: an empty full plan records nothing
   // owed rather than a sweep no round could ever satisfy.
   const sweepOwed =
-    (cfg.review.follow_up_sweep ?? true) && args.fullPlan.pass_plan.length > 0 &&
+    (cfg.review.follow_up_sweep ?? true) &&
+    args.fullPlan.pass_plan.length > 0 &&
     args.sweepOwed(delta.lines);
   return {
     kind: "delta",
@@ -1392,6 +1400,54 @@ export function planFollowUp(
 
 const BASELINE_PASS = "pass-baseline";
 const DATA_SAFETY_PASS = "pass-data-safety";
+
+/**
+ * When an owed pre-approval sweep starts. `"early"` — beside the
+ * delta's discovery rows — when the prior-findings list is complete and every
+ * open prior BLOCKER sits in a file the change touched: the author plausibly
+ * addressed each one, so the round will likely approve, and running the sweep
+ * in parallel saves the serial delta → validate → sweep → validate chain.
+ * `"late"` otherwise (a blocker the change never touched still holds, so the
+ * round will not approve and the sweep is not reached). Unknown — no list,
+ * an incomplete one — is late, never early.
+ */
+export function sweepStartOf(
+  list: Pick<PriorFindingsList, "findings" | "incomplete"> | null,
+  deltaPaths: readonly string[],
+): "early" | "late" {
+  if (!list || list.incomplete.length > 0) return "late";
+  const touched = new Set(deltaPaths);
+  return list.findings.every((f) => !f.blocking || (f.path !== null && touched.has(f.path)))
+    ? "early"
+    : "late";
+}
+
+/** The lenses a lean follow-up plan offers as addable instead of planning. */
+export const LEAN_ADDABLE_PASSES: readonly string[] = [...QUALITY_PASSES, STYLE_PASS];
+
+/**
+ * The LEAN follow-up plan: the plan without its per-file
+ * pass-sweep rows, and with the quality and style lenses moved to
+ * `addable_lenses`. Every other row — baseline, the triggered risk lenses,
+ * the validator — is kept as planned. No lens leaves the round: a session
+ * that sees a quality or style question in the change adds the lens.
+ */
+export function leanFollowUpPlan(plan: PassPlan): PassPlan {
+  const moved = plan.pass_plan
+    .map((p) => p.lens)
+    .filter((l, i, all) => LEAN_ADDABLE_PASSES.includes(l) && all.indexOf(l) === i);
+  return {
+    ...plan,
+    pass_plan: plan.pass_plan.filter(
+      (p) => p.lens !== SWEEP_PASS && !LEAN_ADDABLE_PASSES.includes(p.lens),
+    ),
+    addable_lenses: [
+      ...plan.addable_lenses,
+      ...moved.filter((l) => !plan.addable_lenses.includes(l)),
+    ],
+    sweep_unswept: [],
+  };
+}
 
 /** A delta's files as one git-style patch (the hunks `prOwnedDelta` read,
  * each under its file header). */
@@ -1446,6 +1502,7 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     sweep_plan: _sp,
     sweep_plan_unswept: _su,
     sweep_task_files: _st,
+    sweep_start: _ss,
     // The delta plan's facts, not the whole PR's: the sweep carries its own.
     sweep_unswept: _du,
     coverage_files: _cf,
@@ -1521,6 +1578,7 @@ export function buildRoundOrder(args: {
     priorFindingsNote: string;
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
+    sweepStart?: "early" | "late";
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
@@ -1620,6 +1678,7 @@ export function buildRoundOrder(args: {
           ...(args.followUp.sweepPlan && args.followUp.sweepPlan.length > 0
             ? {
                 sweep_plan: args.followUp.sweepPlan,
+                sweep_start: args.followUp.sweepStart ?? "late",
                 ...(args.followUp.sweepUnswept && args.followUp.sweepUnswept.length > 0
                   ? { sweep_plan_unswept: args.followUp.sweepUnswept }
                   : {}),
@@ -2076,7 +2135,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // prior_finding_checks and written to the round's sidecar. Total: a list
       // that cannot be assembled renders an explicit "verify from your ledger"
       // note, never an empty one.
-      const priorFindingsNote = followUp
+      const priorFindings = followUp
         ? preparePriorFindings(
             {
               store,
@@ -2087,8 +2146,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             row.number,
             roundNo,
             tree?.head_sha || row.head_sha,
-          ).note
-        : "";
+          )
+        : null;
+      const priorFindingsNote = priorFindings?.note ?? "";
+      const sweepStart =
+        followUp?.sweepPlan !== undefined
+          ? sweepStartOf(
+              priorFindings?.list ?? null,
+              followUp.delta.files.flatMap((f) => (f.old_path ? [f.path, f.old_path] : [f.path])),
+            )
+          : undefined;
 
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
@@ -2266,6 +2333,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 deltaFiles: followUp.deltaFiles,
                 priorFindingsNote,
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
+                ...(sweepStart ? { sweepStart } : {}),
                 ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
               },
             }
@@ -2496,6 +2564,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                     delta_lines: order.delta.lines,
                     delta_files: order.delta.files.length,
                     sweep_owed: (order.sweep_plan?.length ?? 0) > 0,
+                    ...(order.sweep_start ? { sweep_start: order.sweep_start } : {}),
                   }
                 : {}),
             }

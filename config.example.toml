@@ -722,6 +722,10 @@ preset = "default"
 # After a posted approval the sweep is owed only when the change since it
 # reaches this many lines (additions + deletions); 0 never owes it.
 # follow_up_post_approval_sweep_lines = 500
+# A delta of at most this many lines gets the LEAN plan: no per-file sweep
+# rows, and the quality and style lenses offered as addable instead of
+# planned; 0 never.
+# follow_up_small_delta_lines = 150
 # Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout
 # lengthened, an assert removed or commented out, a skip added) are found by

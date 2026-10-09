@@ -13,6 +13,9 @@ import {
   buildPassPlan,
   decideFollowUp,
   followUpSweepOwed,
+  leanFollowUpPlan,
+  LEAN_ADDABLE_PASSES,
+  sweepStartOf,
   dispatchOnce,
   renderDeltaPatch,
   type DispatchAdapter,
@@ -21,6 +24,7 @@ import {
 import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
+import type { PriorFinding, PriorFindingsList } from "../src/priorfindings.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { PrOwnedDelta, PrOwnedDeltaFile } from "../src/worktrees.js";
@@ -235,7 +239,8 @@ describe("follow-up rounds: the delta scope", () => {
         [],
         { tierFiles: PR_FILES },
       );
-      expect(o.pass_plan).toEqual(expected.pass_plan);
+      // A 4-line delta is small: the lean plan of that build.
+      expect(o.pass_plan).toEqual(leanFollowUpPlan(expected).pass_plan);
       expect(o.pass_plan.some((p) => p.lens === "pass-baseline")).toBe(true);
       // A 4-line delta would plan its default-tier rows at terra-med on its
       // own; the PR's size keeps them at sol-med.
@@ -451,21 +456,31 @@ describe("follow-up rounds: the pre-approval sweep", () => {
           expect(o.sweep_plan![t.row]!.agent).toBe(t.agent);
         }
       }
-      expect(events(30, "round_dispatched")[0]).toMatchObject({ sweep_owed: true });
+      // No findings record for round 1 here: the prior list is incomplete,
+      // so the sweep starts late — unknown is never early.
+      expect(o.sweep_start).toBe("late");
+      expect(events(30, "round_dispatched")[0]).toMatchObject({
+        sweep_owed: true,
+        sweep_start: "late",
+      });
     },
   );
 
-  it("is not owed after an approval for a push under the size floor", { timeout: HEAVY_TIMEOUT_MS }, async () => {
-    queue(31);
-    reviewed(31, "APPROVE");
-    adapter.files.set(31, PR_FILES);
-    const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
-    await dispatchOnce(d);
-    expect(orders[0]!.scope).toBe("delta");
-    expect(orders[0]!.sweep_plan).toBeUndefined();
-    expect(orders[0]!.sweep_task_files).toBeUndefined();
-    expect(lastRound(31)).toMatchObject({ sweep_owed: 0, sweep_status: "not_owed" });
-  });
+  it(
+    "is not owed after an approval for a push under the size floor",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(31);
+      reviewed(31, "APPROVE");
+      adapter.files.set(31, PR_FILES);
+      const { d, orders } = deps({ delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      expect(orders[0]!.scope).toBe("delta");
+      expect(orders[0]!.sweep_plan).toBeUndefined();
+      expect(orders[0]!.sweep_task_files).toBeUndefined();
+      expect(lastRound(31)).toMatchObject({ sweep_owed: 0, sweep_status: "not_owed" });
+    },
+  );
 
   it(
     "is owed after an approval when the push reaches the size floor, even after a full look",
@@ -543,6 +558,83 @@ describe("follow-up rounds: the first round is untouched", () => {
   );
 });
 
+describe("the lean follow-up plan (small deltas)", () => {
+  const BIG = [file("app/api/views.py", 300, 40), file("app/web/page.tsx", 200, 20)];
+  it("drops the per-file sweep rows and moves the quality and style lenses to addable", () => {
+    const full = buildPassPlan(baseCfg, BIG, undefined, DJANGO_ECOSYSTEM, undefined, ["STYLE.md"]);
+    expect(full.pass_plan.some((p) => p.lens === "pass-sweep")).toBe(true);
+    const moved = full.pass_plan.map((p) => p.lens).filter((l) => LEAN_ADDABLE_PASSES.includes(l));
+    expect(moved.length).toBeGreaterThan(0);
+    const lean = leanFollowUpPlan(full);
+    expect(lean.pass_plan.some((p) => p.lens === "pass-sweep")).toBe(false);
+    for (const l of moved) {
+      expect(lean.pass_plan.some((p) => p.lens === l)).toBe(false);
+      expect(lean.addable_lenses).toContain(l);
+    }
+    // Everything else stays planned, in order, the validator last.
+    expect(lean.pass_plan).toEqual(
+      full.pass_plan.filter(
+        (p) => p.lens !== "pass-sweep" && !LEAN_ADDABLE_PASSES.includes(p.lens),
+      ),
+    );
+    expect(lean.pass_plan.at(-1)!.lens).toBe("pass-validate");
+    expect(lean.sweep_unswept).toEqual([]);
+    // No lens left the round: planned ∪ addable covers the full plan's lenses.
+    for (const l of new Set(full.pass_plan.map((p) => p.lens)))
+      if (l !== "pass-sweep")
+        expect(lean.pass_plan.some((p) => p.lens === l) || lean.addable_lenses.includes(l)).toBe(
+          true,
+        );
+  });
+
+  it(
+    "applies at or under follow_up_small_delta_lines; above it, or at 0, the delta's plan is untouched",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      const at = (n: number): Config => ({
+        ...baseCfg,
+        review: { ...baseCfg.review, follow_up_small_delta_lines: n },
+      });
+      const big = deltaFile("app/api/views.py", 60, 20); // 80 lines
+      const run = async (pr: number, cfg: Config) => {
+        queue(pr);
+        reviewed(pr, "REQUEST_CHANGES");
+        adapter.files.set(pr, PR_FILES);
+        const { d, orders } = deps({ cfg, delta: okDelta([big]) });
+        await dispatchOnce(d);
+        return orders[0]!;
+      };
+      const lean = await run(80, at(80));
+      expect(lean.pass_plan.some((p) => p.lens === "pass-sweep")).toBe(false);
+      const full = await run(81, at(79));
+      const off = await run(82, at(0));
+      expect(off.pass_plan).toEqual(full.pass_plan);
+      expect(
+        leanFollowUpPlan({ pass_plan: full.pass_plan, addable_lenses: [], sweep_unswept: [] })
+          .pass_plan,
+      ).toEqual(lean.pass_plan);
+    },
+  );
+});
+
+describe("sweepStartOf — when an owed sweep starts", () => {
+  const f = (path: string | null, blocking: boolean) => ({ path, blocking }) as PriorFinding;
+  const list = (findings: PriorFinding[], incomplete: unknown[] = []) =>
+    ({ findings, incomplete }) as unknown as PriorFindingsList;
+  it("early when every open prior blocker sits in a touched file (non-blockers never hold it back)", () => {
+    expect(sweepStartOf(list([]), [])).toBe("early");
+    expect(sweepStartOf(list([f("a.py", true), f("z.py", false), f(null, false)]), ["a.py"])).toBe(
+      "early",
+    );
+  });
+  it("late when a blocker's file was not touched, a blocker has no path, or the list is unknown or incomplete", () => {
+    expect(sweepStartOf(list([f("a.py", true), f("b.py", true)]), ["a.py"])).toBe("late");
+    expect(sweepStartOf(list([f(null, true)]), ["a.py"])).toBe("late");
+    expect(sweepStartOf(null, ["a.py"])).toBe("late");
+    expect(sweepStartOf(list([], [{ round_no: 2 }]), ["a.py"])).toBe("late");
+  });
+});
+
 describe("followUpSweepOwed", () => {
   const cfgAt = (n: number): Config => ({
     ...baseCfg,
@@ -564,10 +656,16 @@ describe("followUpSweepOwed", () => {
     expect(ask(cfgAt(0), { deltaLines: 100_000 })).toBe(false);
   });
   it("before an approval (a withheld one included): owed until a full look, whatever the size", () => {
-    for (const a of [{ standing: "REQUEST_CHANGES" }, { standing: null }, { approvalWithheld: true }]) {
+    for (const a of [
+      { standing: "REQUEST_CHANGES" },
+      { standing: null },
+      { approvalWithheld: true },
+    ]) {
       expect(ask(baseCfg, { ...a, deltaLines: 1 })).toBe(true);
       expect(ask(cfgAt(0), { ...a, deltaLines: 1 })).toBe(true);
-      expect(ask(baseCfg, { ...a, deltaLines: 10_000, fullLookSinceFirst: () => true })).toBe(false);
+      expect(ask(baseCfg, { ...a, deltaLines: 10_000, fullLookSinceFirst: () => true })).toBe(
+        false,
+      );
     }
   });
 });

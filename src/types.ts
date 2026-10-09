@@ -289,6 +289,13 @@ export interface RoundOrder {
    * `sweep_unswept`) — present only beside `sweep_plan`, and rendered in
    * `{{sweep_note}}` as round 1 renders its own. */
   sweep_plan_unswept?: string[];
+  /** When the owed sweep launches (present only beside `sweep_plan`):
+   * `"early"` ⇒ in the same turn as the delta's discovery rows, its
+   * candidates validated with theirs by one validator, whatever the decision
+   * — the daemon saw every open prior blocker in a file the change touched,
+   * so the round will likely approve; `"late"` ⇒ only once steps 1–4 lead to
+   * an approval (step 4b). */
+  sweep_start?: "early" | "late";
   /** Task files written for the sweep's rows (their own directory and row
    * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
    * sweep's task strings itself. */

@@ -521,6 +521,14 @@ export interface ReviewConfig {
    * found outside the change sat behind 618–1204-line pushes, while 47 of
    * the 69 post-approval rounds changed fewer than 500 lines. */
   follow_up_post_approval_sweep_lines: number;
+  /** A follow-up delta of at most this many lines (additions + deletions)
+   * gets a LEAN plan: no per-file pass-sweep rows (pass-baseline reads a small
+   * change whole) and the quality and style lenses offered as addable instead
+   * of planned (they judged the PR in round 1; on a fix push they mostly
+   * re-raise nits). 0 ⇒ never lean. Measured 2026-10-09: a
+   * follow-up round's time tracks its agent count, and 138-line deltas were
+   * fanning out to 15–20 agents. */
+  follow_up_small_delta_lines: number;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -636,6 +644,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   follow_up_max_delta_ratio: 0.6,
   follow_up_sweep: true,
   follow_up_post_approval_sweep_lines: 500,
+  follow_up_small_delta_lines: 150,
 };
 
 /**
@@ -2532,6 +2541,14 @@ export function parseConfig(toml: string): Config {
     if (!(typeof n === "number" && Number.isInteger(n) && n >= 0)) {
       throw new Error(
         `config.toml [review]: follow_up_post_approval_sweep_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
+      );
+    }
+  }
+  {
+    const n = cfg.review.follow_up_small_delta_lines;
+    if (!(typeof n === "number" && Number.isInteger(n) && n >= 0)) {
+      throw new Error(
+        `config.toml [review]: follow_up_small_delta_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
       );
     }
   }

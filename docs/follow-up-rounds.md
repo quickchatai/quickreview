@@ -25,9 +25,12 @@ Every later re-review round is a **follow-up round** (a staleness round never is
    - The plan is built from the delta's files, with intent text arms off. The tier is still chosen from the whole PR, so a small fix push keeps the PR's tier.
    - `pass-baseline` is always planned. It carries every prior finding no other planned lens owns.
    - When the whole PR trips the migration gate, the full plan's `pass-data-safety` row rides the delta plan even if no migration is in the delta: the gate note and a degraded pre-check name that lens.
+   - A delta of at most `follow_up_small_delta_lines` (150) lines gets the **lean plan** (`leanFollowUpPlan`): no per-file `pass-sweep` rows, because pass-baseline reads a small change whole, and the quality and style lenses moved to the addable list instead of planned. They judged the PR in round 1, and on a fix push they mostly re-raise nits. No lens leaves the round: the session adds one when the change shows its shape. In the 2026-10-09 replays, a follow-up round's time tracked its agent count, and 138-line deltas were fanning out to 15–20 agents.
    - Each delta-plan task file (`[review] task_files`) carries the change since the last review as the lens's review scope — its files, ranges and patch — with the whole PR as context; the session appends each lens's assigned prior findings to the pointer.
-3. **Validate new candidates only.**
-4. **Pre-approval sweep.** It runs only when the round would APPROVE (approval withheld for CI counts) AND the order carries a sweep plan (`{{sweep_note}}`). The full round-1-style plan runs over the whole PR, then one validator over its candidates, then the decision.
+3. **Validate new candidates only.** When there are none, the validator is not run (the summary says so); prior-finding statuses never go to it.
+4. **Pre-approval sweep.** The order carries a sweep plan (`{{sweep_note}}`) when the sweep is owed, and says when it starts (`sweep_start`, `sweepStartOf`):
+   - **Early**: the prior-findings list is complete and every open prior blocker sits in a file the change touched, so the round will likely approve. The sweep's rows launch in the same turn as the delta's, and ONE validator takes both candidate sets. Its survivors post whatever the decision, and it counts as a full look. This replaces the serial chain of delta review, validator, sweep, validator.
+   - **Late** (otherwise; unknown is late): as before. The sweep runs only when steps 1–4 lead to APPROVE (approval withheld for CI counts): the full round-1-style plan over the whole PR, then one validator over its candidates, then the decision.
    - The sweep is owed when the standing verdict is not APPROVE (an approval withheld for CI does not count as one: GitHub never saw it) and no full look has happened since the first round. A full look is a legacy full re-review, a full-scope re-review round, or a round whose sweep ran — never a staleness round.
    - The sweep note lists the full plan's files left over the per-round sweep cap, as round 1 does.
    - After a posted approval it is owed only when the PR-owned change since then reaches `follow_up_post_approval_sweep_lines` (500), whatever full looks came before. A smaller push after an approval is delta-only. In the live data, the blockers that post-approval re-reviews found outside the change sat behind 618–1204-line pushes; 47 of the 69 post-approval rounds changed fewer than 500 lines. Three tiny pushes (19–36 lines) on large PRs also drew such blockers; the floor deliberately does not chase those.
@@ -56,6 +59,7 @@ A full round counts as a full look.
 | `follow_up` | `"delta"` | `"full"` restores the old behaviour byte-for-byte |
 | `follow_up_max_delta_ratio` | 0.6 | Above this share of the PR's diff lines, the round falls back to a full re-review |
 | `follow_up_sweep` | true | false never plans the pre-approval sweep |
+| `follow_up_small_delta_lines` | 150 | A delta of at most this many lines gets the lean plan; 0 never |
 | `follow_up_post_approval_sweep_lines` | 500 | After a posted approval, the sweep is owed only from this many changed lines; 0 never owes it |
 
 ## State

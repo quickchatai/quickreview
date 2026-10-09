@@ -297,6 +297,24 @@ describe("renderSweepNote", () => {
     expect(renderSweepNote({ sweep_plan: SWEEP_PLAN })).not.toContain("Not swept");
   });
 
+  it("says START EARLY only for an early sweep; late and unset read as before", () => {
+    const early = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_start: "early" });
+    expect(early).toContain("PRE-APPROVAL SWEEP — owed this round, START EARLY.");
+    expect(early).toContain("SAME turn as step 2's discovery rows");
+    expect(early).toContain("| lens | subagent to call | tier | may raise to | focus / why |");
+    const late = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_start: "late" });
+    expect(late).toBe(renderSweepNote({ sweep_plan: SWEEP_PLAN }));
+    expect(late).not.toContain("START EARLY");
+  });
+
+  it("the template carries the early path and the empty-candidate validator skip", () => {
+    const t = read("round-follow-up.md");
+    expect(t).toContain("**An early sweep launches here too.**");
+    expect(t).toContain("**An early sweep is already done.**");
+    expect(t).toContain("**Nothing to validate ⇒ no validator.**");
+    expect(t).toContain("an early sweep shares\nstep 4's validator.");
+  });
+
   it("names the sweep's task files when the daemon wrote them", () => {
     const note = renderSweepNote({
       sweep_plan: SWEEP_PLAN,
