@@ -40,6 +40,8 @@ import { startHeartbeat, type HeartbeatTimer } from "./anomalies.js";
 import { opsDay, promptReader, startEodTimer, type EodTimer } from "./eod.js";
 import { MutationGate, type MutationIntent } from "./gate.js";
 import { GitHubAdapter } from "./github.js";
+import { priorSidecarPath } from "./priorfindings.js";
+import { resolveVerifiedPriorThreads } from "./priorresolve.js";
 import { makePostingGuard } from "./guards.js";
 import { TokenMinter } from "./githubAuth.js";
 import {
@@ -832,6 +834,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // findings record lands.
     lessons: lateLessons,
     onFindingsRecorded: ({ pr, roundNo }) => {
+      // resolve the bot's own threads of the prior findings this
+      // round verified fixed or obsolete — ping-pong resolves only threads
+      // the author replied in, so a fix pushed without a reply stayed open.
+      // Never awaited: GitHub reads and gated writes, each one total.
+      void resolveVerifiedPriorThreads(
+        {
+          store: daemon.store,
+          adapter,
+          sidecarPath: (n, k) => priorSidecarPath(join(root, "state"), n, k),
+          log,
+        },
+        pr,
+        roundNo,
+      ).catch((err) => log(`priorresolve: #${pr} round ${roundNo} failed (ignored)`, err));
       if (!lessonLedger) return;
       try {
         markRound(lessonLedger, daemon.store, pr, roundNo);
