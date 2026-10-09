@@ -37,7 +37,7 @@ So a prefix the lenses share is reused only if each lens request extends a reque
 - Only native's exact leaf argv (`--mode json -p --no-session`) is touched. A child stays a leaf: `-p` alone marks it so for `qcr-leaf.ts`.
 - Without a pack, a group's later children start `subagent_cache_stagger_ms` (2500) after its first. Rows of one agent whose prompts differ only in a short task pointer, such as the sweep rows, then share their system prompt.
 
-**The context pack** (`[review] context_pack = "pack-first"`, shipped **off**). Three pieces:
+**The context pack** (`[review] context_pack = "pack-first"`, the default; `"off"` restores the old prompts). Three pieces:
 - **The pack file.** `src/contextpack.ts` renders the round's pack, written beside its task files as `<passes>/context-pack.md`. It holds, within `context_pack_max_tokens` (40,000):
   - the change since the last review, on follow-up rounds;
   - the PR's diff, file by file;
@@ -57,9 +57,20 @@ The task files tell the lens that the pack is the first message of its conversat
 
 Measured end to end in a real pi 1.0.0 parent with this glue: two lenses with different instructions over a 24k-token pack. Each paid ~1.2k uncached tokens and read 23,808 from cache, against ~25k uncached each without it.
 
-## Why the pack ships off
+## The measured run (2026-10-09)
 
-It moves each lens's instructions from the system prompt into a developer message after the pack. Review quality must be measured on a bench run before it is turned on. The cache groups are on by default: they change nothing the model sees.
+The pack moves each lens's instructions from the system prompt into a developer message after the pack, so it was measured before it was turned on. The run used 10 follow-up replay cases from October, each run under three arms on the bench: the old follow-up code, the new code with the pack off (cache groups on), and the new code with the pack on.
+
+| | Old code | New, pack off | New, pack on |
+|---|---|---|---|
+| Total cost | $33.9 | $48.4 | **$28.9** |
+| Median cost per case | $3.46 | $4.99 | **$3.01** |
+| Share of input read from cache | 0.68 | 0.69 | **0.88** |
+| The same, children's first turns | 0.21 | 0.15 | **0.83** |
+| Verdict matches the live round | 9/10 | 9/10 | **10/10** |
+| Live blockers found again | 3/4 | 4/4 | **4/4** |
+
+The pack was 40% cheaper than the same code without it, case by case, with no loss of verdict agreement or recall, so it is on by default. The pack-off arm cost more than the old code because the early pre-approval sweep then ran in rounds that ended in REQUEST_CHANGES; the early start was removed afterwards (docs/follow-up-rounds.md). The cache groups change nothing the model sees.
 
 ## Debugging
 

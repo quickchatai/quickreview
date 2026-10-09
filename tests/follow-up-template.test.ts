@@ -297,22 +297,12 @@ describe("renderSweepNote", () => {
     expect(renderSweepNote({ sweep_plan: SWEEP_PLAN })).not.toContain("Not swept");
   });
 
-  it("says START EARLY only for an early sweep; late and unset read as before", () => {
-    const early = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_start: "early" });
-    expect(early).toContain("PRE-APPROVAL SWEEP — owed this round, START EARLY.");
-    expect(early).toContain("SAME turn as step 2's discovery rows");
-    expect(early).toContain("| lens | subagent to call | tier | may raise to | focus / why |");
-    const late = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_start: "late" });
-    expect(late).toBe(renderSweepNote({ sweep_plan: SWEEP_PLAN }));
-    expect(late).not.toContain("START EARLY");
-  });
-
-  it("the template carries the early path and the empty-candidate validator skip", () => {
+  it("the template has no early sweep start, and carries the empty-candidate validator skip", () => {
     const t = read("round-follow-up.md");
-    expect(t).toContain("**An early sweep launches here too.**");
-    expect(t).toContain("**An early sweep is already done.**");
+    expect(t).not.toContain("START EARLY");
+    expect(t).not.toMatch(/early sweep/i);
     expect(t).toContain("**Nothing to validate ⇒ no validator.**");
-    expect(t).toContain("an early sweep shares\nstep 4's validator.");
+    expect(renderSweepNote({ sweep_plan: SWEEP_PLAN })).not.toContain("EARLY");
   });
 
   it("names the sweep's task files when the daemon wrote them", () => {
@@ -325,20 +315,11 @@ describe("renderSweepNote", () => {
     expect(note).toContain("| 1 | `pass-security--sol-high` | `/s/tasks/sweep/00-a.md` |");
   });
 
-  it("launches the sweep through launch_plan: in step 2's call when early, alone when late", () => {
+  it("launches the sweep through launch_plan, as its own call", () => {
     const files = [{ row: 0, agent: "pass-security--sol-high", path: "/s/p/tasks-sweep/01-a.md" }];
-    const early = renderSweepNote({
-      sweep_plan: SWEEP_PLAN,
-      sweep_task_files: files,
-      sweep_start: "early",
-    });
-    expect(early).toContain("in `/s/p/tasks-sweep`");
-    expect(early).toContain("rides step 2's ONE call");
-    expect(early).toContain("`extra` keyed `sweep:*`");
-    const late = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_task_files: files });
-    expect(late).toContain(
-      '`launch_plan({ dirs: ["/s/p/tasks-sweep"], extra: { "sweep:*": … } })`',
-    );
-    expect(late).not.toContain("rides step 2's ONE call");
+    const note = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_task_files: files });
+    expect(note).toContain("in `/s/p/tasks-sweep`");
+    expect(note).toContain("`extra` keyed `sweep:*`");
+    expect(note).toContain('`launch_plan({ dirs: ["/s/p/tasks-sweep"], extra: { "sweep:*": … } })`');
   });
 });

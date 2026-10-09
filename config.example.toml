@@ -744,10 +744,11 @@ preset = "default"
 # writes the diff, the change since the last review and the most-changed
 # files' full text beside the task files, and every lens child carries it at
 # the start of its prompt, after one cached warm-up per cache group — so the
-# lenses read it from cache instead of re-reading it uncached. It moves each
-# lens's instructions into a developer message after the pack, so it ships
-# OFF until a measured run. Needs [pi] subagent_cache_group > 0.
-# context_pack = "pack-first"
+# lenses read it from cache instead of re-reading it uncached (each lens's
+# instructions move into a developer message after the pack). On by default
+# since the measured run (10 cases: 40% cheaper, verdicts and recall held);
+# "off" restores the old prompts. Needs [pi] subagent_cache_group > 0.
+# context_pack = "off"
 # context_pack_max_tokens = 40000
 # Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout

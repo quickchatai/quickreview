@@ -28,6 +28,7 @@ import {
   readWorktreeFileForPack,
   renderContextPack,
 } from "../src/contextpack.js";
+import { REVIEW_DEFAULTS } from "../src/config.js";
 import type { PrFileEntry } from "../src/github.js";
 
 /** Native's own child argv shape (pi 1.0.0 runSingleAgent), with the node
@@ -266,6 +267,10 @@ describe("the pack-first payload (child side)", () => {
 });
 
 describe("the context pack (daemon side)", () => {
+  it("is on by default since the measured run (2026-10-09: 40% cheaper, verdicts and recall held)", () => {
+    expect(REVIEW_DEFAULTS.context_pack).toBe("pack-first");
+  });
+
   const f = (filename: string, add: number, patch?: string, status = "modified"): PrFileEntry => ({
     filename,
     additions: add,

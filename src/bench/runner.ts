@@ -56,7 +56,6 @@ import {
   renderDeltaPatch,
   roundDeltaOf,
   sweepOrderOf,
-  sweepStartOf,
 } from "../dispatch.js";
 import { parseLedgerCarry, settledFromLedger } from "../ledgercarry.js";
 import type { PrOwnedDelta } from "../worktrees.js";
@@ -781,8 +780,6 @@ export interface CaseFollowUp {
   delta_files?: number;
   conflicted?: string[];
   sweep_owed?: boolean;
-  /** When the owed sweep starts (production's `sweepStartOf`). */
-  sweep_start?: "early" | "late";
   prior_findings: number;
   /** What the session reported: each executed pass's phase, and
    * the sweep — its claim and the status production's `sweepStatusOf` gives
@@ -921,15 +918,6 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       priorFindingsNote: prior.note,
       ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
       ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
-      // Production's start rule over the case's own prior list (dispatch.ts).
-      ...(d.sweepPlan
-        ? {
-            sweepStart: sweepStartOf(
-              prior.list,
-              d.delta.files.flatMap((f) => (f.old_path ? [f.path, f.old_path] : [f.path])),
-            ),
-          }
-        : {}),
     };
     report = {
       round_no: fu.round_no,
@@ -939,7 +927,6 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       delta_files: d.delta.files.length,
       ...(d.delta.conflicted.length ? { conflicted: d.delta.conflicted } : {}),
       sweep_owed: d.sweepPlan !== undefined,
-      ...(followUpArg.sweepStart ? { sweep_start: followUpArg.sweepStart } : {}),
       prior_findings: prior.list.findings.length,
     };
   } else {

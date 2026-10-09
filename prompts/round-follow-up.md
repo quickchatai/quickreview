@@ -44,8 +44,7 @@ re-review. It does three things, in this order:
    That change, not the whole PR, is what the planned lenses review this round.
 3. **Sweep before approving, when one is owed.** If this round would approve
    and the order carries a pre-approval sweep (step 4b), the whole PR gets one
-   blank-slate look before the approval goes out. When the sweep block says
-   **START EARLY**, that look runs beside step 2 instead of after step 4.
+   blank-slate look before the approval goes out.
 
 Do not make serial parent inspection the gate in front of the lenses: after a
 compact context-and-ledger bootstrap, start the planned discovery fanout and
@@ -227,13 +226,6 @@ that change: its hunks, read with whatever surrounding code, callers and
 callees it takes to judge them — a changed line that breaks an unchanged caller
 is a finding in that change. The change bounds where the lens starts, never
 what it may report or how hard it looks.
-**An early sweep launches here too.** When the order's sweep block says
-**START EARLY**, launch every row of the sweep plan in this SAME turn, beside
-the discovery rows — with task files, in the SAME `launch_plan` call (both
-directories in `dirs`, the prior findings as **do not re-raise** in `extra`
-under `sweep:*`); without them, with the task strings step 4b gives (whole PR,
-`{{merge_base}}..{{head_sha}}`; the prior findings as **do not re-raise**).
-
 A task string may ADD focus — files, a site, a question for that lens —
 but never NARROWS the lens's charter: never tell a pass to check one concern
 only, to skip its own questions, or which findings to leave out.
@@ -244,9 +236,8 @@ every discovery pass has returned its results — never in the same batch as the
 discovery passes: launched early it vets an empty candidate set, and the round
 pays for the validator twice. The one-turn parallel launch above covers the
 discovery passes only; the validator waits for step 4. The one sanctioned
-second validator is a LATE pre-approval sweep's (step 4b), over the sweep's
-own candidates, after the sweep's lenses have returned; an early sweep shares
-step 4's validator.
+second validator is the pre-approval sweep's (step 4b), over the sweep's own
+candidates, after the sweep's lenses have returned.
 
 **Unknown agent = STOP, never improvise.** If `launch_plan` or the `subagent`
 tool answers
@@ -334,11 +325,7 @@ site, and so do sites in other files.
 ## 4. Validate
 
 Dispatch the planned `pass-validate` variant (its row in the plan table) with
-this round's NEW candidates + the SETTLED list. Under an early sweep, wait for
-the sweep's lenses too and give this ONE validator both sets — the change's
-candidates and the sweep's, merged as step 3 says (a NIT SCOPE block armed this
-round drops the sweep's new nits outside the change at that merge,
-`nit-out-of-delta`) — with the prior findings as already known.
+this round's NEW candidates + the SETTLED list.
 
 **Nothing to validate ⇒ no validator.** When the merged set of NEW candidates
 is empty, do not dispatch `pass-validate`: there is nothing for it to vet, and
@@ -358,14 +345,8 @@ Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
 Read this step only when the order above carries a **PRE-APPROVAL SWEEP**
 block; without one, no sweep is owed this round — go to step 5.
 
-**An early sweep is already done.** When the block says **START EARLY**, its
-lenses ran in step 2 and its candidates went through step 4's validator: there
-is nothing left to launch. Its survivors are this round's findings whatever
-the decision — a sweep blocker turns the decision like any other — and the
-verdict's `sweep` is `"ran"`. Go to step 5.
-
-Otherwise (a late sweep), work out the decision steps 1–4 lead to, under step
-5's rules: every still-open prior finding counts, exactly as a new one does.
+When it carries one, work out the decision steps 1–4 lead to, under step 5's
+rules: every still-open prior finding counts, exactly as a new one does.
 
 - **The decision would be REQUEST_CHANGES** — a new or a still-open finding
   blocks. The sweep is **not reached**: do not launch it, go to step 5.
@@ -813,14 +794,13 @@ was APPROVE and the approval is held back because CI is not green at this head
 (the review went out as a COMMENT). Omit it otherwise.
 
 `sweep` is step 4b: `"ran"` when you launched the pre-approval sweep and its
-validator returned (an early sweep always ran), `"not_reached"` when this round carried a sweep block but
+validator returned, `"not_reached"` when this round carried a sweep block but
 the decision was REQUEST_CHANGES before it, `"not_owed"` when this round
 carried no sweep block. Write it on every follow-up verdict.
 
 `phase` on each `passes` entry says which stage launched it: `"delta"` for the
-step-2 lenses and the step-4 validator, `"sweep"` for the sweep's lenses (an
-early sweep's included, though step 2 launched them) and a late sweep's
-validator. A lens that ran in both stages gets one entry per
+step-2 lenses and the step-4 validator, `"sweep"` for the step-4b lenses and
+the sweep's validator. A lens that ran in both stages gets one entry per
 stage; so does `pass-validate`.
 
 `passes` is executed-pass telemetry: ONE entry per pass you actually launched

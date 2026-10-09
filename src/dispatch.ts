@@ -105,7 +105,7 @@ import type {
   RoundType,
   SessionHooks,
 } from "./types.js";
-import { preparePriorFindings, type PriorFindingsList } from "./priorfindings.js";
+import { preparePriorFindings } from "./priorfindings.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -1487,27 +1487,6 @@ export function planFollowUp(
 const BASELINE_PASS = "pass-baseline";
 const DATA_SAFETY_PASS = "pass-data-safety";
 
-/**
- * When an owed pre-approval sweep starts. `"early"` — beside the
- * delta's discovery rows — when the prior-findings list is complete and every
- * open prior BLOCKER sits in a file the change touched: the author plausibly
- * addressed each one, so the round will likely approve, and running the sweep
- * in parallel saves the serial delta → validate → sweep → validate chain.
- * `"late"` otherwise (a blocker the change never touched still holds, so the
- * round will not approve and the sweep is not reached). Unknown — no list,
- * an incomplete one — is late, never early.
- */
-export function sweepStartOf(
-  list: Pick<PriorFindingsList, "findings" | "incomplete"> | null,
-  deltaPaths: readonly string[],
-): "early" | "late" {
-  if (!list || list.incomplete.length > 0) return "late";
-  const touched = new Set(deltaPaths);
-  return list.findings.every((f) => !f.blocking || (f.path !== null && touched.has(f.path)))
-    ? "early"
-    : "late";
-}
-
 /** The lenses a lean follow-up plan offers as addable instead of planning. */
 export const LEAN_ADDABLE_PASSES: readonly string[] = [...QUALITY_PASSES, STYLE_PASS];
 
@@ -1588,7 +1567,6 @@ export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): Rou
     sweep_plan: _sp,
     sweep_plan_unswept: _su,
     sweep_task_files: _st,
-    sweep_start: _ss,
     // The delta plan's facts, not the whole PR's: the sweep carries its own.
     sweep_unswept: _du,
     coverage_files: _cf,
@@ -1664,7 +1642,6 @@ export function buildRoundOrder(args: {
     priorFindingsNote: string;
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
-    sweepStart?: "early" | "late";
   };
 }): RoundOrder {
   const eco = args.ecosystem ?? DJANGO_ECOSYSTEM;
@@ -1764,7 +1741,6 @@ export function buildRoundOrder(args: {
           ...(args.followUp.sweepPlan && args.followUp.sweepPlan.length > 0
             ? {
                 sweep_plan: args.followUp.sweepPlan,
-                sweep_start: args.followUp.sweepStart ?? "late",
                 ...(args.followUp.sweepUnswept && args.followUp.sweepUnswept.length > 0
                   ? { sweep_plan_unswept: args.followUp.sweepUnswept }
                   : {}),
@@ -2235,13 +2211,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           )
         : null;
       const priorFindingsNote = priorFindings?.note ?? "";
-      const sweepStart =
-        followUp?.sweepPlan !== undefined
-          ? sweepStartOf(
-              priorFindings?.list ?? null,
-              followUp.delta.files.flatMap((f) => (f.old_path ? [f.path, f.old_path] : [f.path])),
-            )
-          : undefined;
 
       if (tree && row.head_sha && tree.head_sha !== row.head_sha) {
         log(`dispatch: #${row.number} head drift ${row.head_sha} → ${tree.head_sha}`);
@@ -2419,7 +2388,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 deltaFiles: followUp.deltaFiles,
                 priorFindingsNote,
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
-                ...(sweepStart ? { sweepStart } : {}),
                 ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
               },
             }
@@ -2705,7 +2673,6 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                     delta_lines: order.delta.lines,
                     delta_files: order.delta.files.length,
                     sweep_owed: (order.sweep_plan?.length ?? 0) > 0,
-                    ...(order.sweep_start ? { sweep_start: order.sweep_start } : {}),
                   }
                 : {}),
             }

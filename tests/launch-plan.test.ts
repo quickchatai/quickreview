@@ -129,7 +129,7 @@ describe("launch_plan", () => {
     expect(calls[0]!.tasks).toHaveLength(4);
   });
 
-  it("launches an early sweep in the same call: plan rows first, then the sweep's", async () => {
+  it("given both of a round's dirs, launches them in one call: plan rows first, then the sweep's", async () => {
     write(sweep, "01-pass-baseline--sol-high.md");
     write(sweep, "02-pass-security--sol-high.md");
     const calls: Call[] = [];

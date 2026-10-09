@@ -720,7 +720,7 @@ export function launchPlanDefinition(
           maxItems: 2,
           description:
             "The round's task directory (…-passes/tasks, or the …-passes dir itself), and optionally the sweep's " +
-            "…-passes/tasks-sweep to launch an early sweep in the same call.",
+            "…-passes/tasks-sweep (the pre-approval sweep's own launch).",
         },
         extra: {
           type: "object",

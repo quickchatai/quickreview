@@ -537,30 +537,20 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
  * the follow-up template says when to run it; this block is what to run.
  */
 export function renderSweepNote(
-  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept" | "sweep_start">,
+  order: Pick<RoundOrder, "sweep_plan" | "sweep_task_files" | "sweep_plan_unswept">,
 ): string {
   const plan = order.sweep_plan;
   if (!plan || plan.length === 0) return "";
-  const head =
-    order.sweep_start === "early"
-      ? [
-          "**PRE-APPROVAL SWEEP — owed this round, START EARLY.** No whole-PR review has run",
-          "since the first round and the PR is not approved. Every open prior blocker",
-          "sits in a file the change touched, so this round will likely approve: launch",
-          "the full plan below in the SAME turn as step 2's discovery rows, and validate",
-          "its candidates with theirs in step 4 (step 4b):",
-        ]
-      : [
-          "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
-          "first round and the PR is not approved, so before this round approves, the",
-          "whole PR gets one blank-slate look with the full plan below (step 4b says",
-          "when to launch it and when it is not reached):",
-        ];
+  const head = [
+    "**PRE-APPROVAL SWEEP — owed this round.** No whole-PR review has run since the",
+    "first round and the PR is not approved, so before this round approves, the",
+    "whole PR gets one blank-slate look with the full plan below (step 4b says",
+    "when to launch it and when it is not reached):",
+  ];
   const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [], { sweep: true })];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
-    // the sweep launches through `launch_plan` too — with step 2's
-    // rows in one call when it starts early, alone when it is late.
+    // the sweep launches through `launch_plan` too, as its own call.
     const dir = taskDirOf(files);
     out.push(
       "",
@@ -569,14 +559,7 @@ export function renderSweepNote(
       "as the whole task — `Task file: <path>. Read it first; it is your complete",
       "task.` — and `extra` keyed `sweep:*` carries the already-known findings",
       "every sweep row must not re-raise (`sweep:<row>` for one row).",
-      ...(order.sweep_start === "early"
-        ? [
-            "Starting early, it rides step 2's ONE call: `dirs` names the round's task",
-            `directory AND \`${dir}\`.`,
-          ]
-        : [
-            `Late, it is its own call: \`launch_plan({ dirs: ["${dir}"], extra: { "sweep:*": … } })\`.`,
-          ]),
+      `It is its own call: \`launch_plan({ dirs: ["${dir}"], extra: { "sweep:*": … } })\`.`,
       "Raised and added sweep rows go through `subagent` in the same turn; only if",
       "`launch_plan` is unavailable or errs, launch every row through `subagent`.",
       "",

@@ -546,8 +546,9 @@ export interface ReviewConfig {
    * instead of every lens re-reading the same text uncached. `"off"` ⇒ no
    * pack, prompts exactly as before. Takes effect only with
    * `[pi] subagent_cache_group` > 0 (an unshared pack would cost more, not
-   * less). Shipped OFF until a measured run: it moves where a lens's
-   * instructions sit in its prompt. */
+   * less). On by default since the measured run (2026-10-09, 10 follow-up
+   * cases: 40% cheaper than the same code without it, the cache share of
+   * input 0.69 → 0.88, verdicts matching live 10/10, recall unchanged). */
   context_pack: "off" | "pack-first";
   /** The pack's size cap in tokens (≈4 characters each). */
   context_pack_max_tokens: number;
@@ -668,7 +669,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   follow_up_post_approval_sweep_lines: 500,
   follow_up_small_delta_lines: 150,
   baseline_split_lines: 2000,
-  context_pack: "off",
+  context_pack: "pack-first",
   context_pack_max_tokens: 40000,
 };
 

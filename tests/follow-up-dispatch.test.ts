@@ -15,7 +15,6 @@ import {
   followUpSweepOwed,
   leanFollowUpPlan,
   LEAN_ADDABLE_PASSES,
-  sweepStartOf,
   dispatchOnce,
   renderDeltaPatch,
   type DispatchAdapter,
@@ -25,7 +24,6 @@ import { DJANGO_ECOSYSTEM } from "../src/ecosystem.js";
 import { renderPassPlan } from "../src/templates.js";
 import type { GateResult } from "../src/gate.js";
 import type { PrFileEntry } from "../src/github.js";
-import type { PriorFinding, PriorFindingsList } from "../src/priorfindings.js";
 import { StateStore } from "../src/state.js";
 import type { RoundOrder, SessionHooks } from "../src/types.js";
 import type { PrOwnedDelta, PrOwnedDeltaFile } from "../src/worktrees.js";
@@ -460,13 +458,9 @@ describe("follow-up rounds: the pre-approval sweep", () => {
           expect(o.sweep_plan![t.row]!.agent).toBe(t.agent);
         }
       }
-      // No findings record for round 1 here: the prior list is incomplete,
-      // so the sweep starts late — unknown is never early.
-      expect(o.sweep_start).toBe("late");
-      expect(events(30, "round_dispatched")[0]).toMatchObject({
-        sweep_owed: true,
-        sweep_start: "late",
-      });
+      expect(events(30, "round_dispatched")[0]).toMatchObject({ sweep_owed: true });
+      // No early start: the sweep is the order's sweep_plan alone.
+      expect("sweep_start" in o).toBe(false);
     },
   );
 
@@ -662,24 +656,6 @@ describe("a split pass-baseline on a large follow-up delta", () => {
       );
     },
   );
-});
-
-describe("sweepStartOf — when an owed sweep starts", () => {
-  const f = (path: string | null, blocking: boolean) => ({ path, blocking }) as PriorFinding;
-  const list = (findings: PriorFinding[], incomplete: unknown[] = []) =>
-    ({ findings, incomplete }) as unknown as PriorFindingsList;
-  it("early when every open prior blocker sits in a touched file (non-blockers never hold it back)", () => {
-    expect(sweepStartOf(list([]), [])).toBe("early");
-    expect(sweepStartOf(list([f("a.py", true), f("z.py", false), f(null, false)]), ["a.py"])).toBe(
-      "early",
-    );
-  });
-  it("late when a blocker's file was not touched, a blocker has no path, or the list is unknown or incomplete", () => {
-    expect(sweepStartOf(list([f("a.py", true), f("b.py", true)]), ["a.py"])).toBe("late");
-    expect(sweepStartOf(list([f(null, true)]), ["a.py"])).toBe("late");
-    expect(sweepStartOf(null, ["a.py"])).toBe("late");
-    expect(sweepStartOf(list([], [{ round_no: 2 }]), ["a.py"])).toBe("late");
-  });
 });
 
 describe("followUpSweepOwed", () => {
