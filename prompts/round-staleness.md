@@ -62,14 +62,19 @@ hand-rolled multi-part `gh`/GraphQL spells:
 - `scripts/reply-thread.sh {{n}} <comment-id> <body-file>` — author ping-pong
   replies.
 
-**Before ANY posting script** (post-review.sh, approve-pr.sh): export the head
-this round actually reviewed, so the guard can refuse a stale post if the PR
-moved under you —
+**Every posting call carries this round's head and number as a prefix on the
+SAME command** — the head this round actually reviewed, so the guard can refuse
+a stale post if the PR moved under you. These are the exact calls (the two files
+are this round's pinned scratch paths, step 7):
 
 ```sh
-export QCR_EXPECTED_HEAD={{head_sha}}
-export QCR_ROUND_NO={{round_no}}
+QCR_EXPECTED_HEAD={{head_sha}} QCR_ROUND_NO={{round_no}} scripts/approve-pr.sh {{n}} state/pr-{{n}}-round-{{round_no}}-review.md state/pr-{{n}}-round-{{round_no}}-comments.json
+QCR_EXPECTED_HEAD={{head_sha}} QCR_ROUND_NO={{round_no}} scripts/post-review.sh {{n}} REQUEST_CHANGES state/pr-{{n}}-round-{{round_no}}-review.md state/pr-{{n}}-round-{{round_no}}-comments.json
 ```
+
+(`COMMENT` in place of `REQUEST_CHANGES` for a review whose approval is
+withheld.) Never `export` them: the exec policy refuses `export`, and a
+posting call without the prefix cannot be checked against the head.
 
 The guarded script derives this round's deterministic posting key from the PR,
 round and expected head, embeds its marker, and saves GitHub's returned review
@@ -103,6 +108,26 @@ Token hygiene:
 
 Raw `gh` reads are a fallback only — when a script above already answers the
 question, use the script; every mutation goes through a script.
+
+**What the exec policy always refuses — go straight to the replacement.** Each
+of these is refused every time, and a refused call is a wasted turn:
+
+- `export`, `set`, `source`, `command -v`, `which`, `type` — put a variable
+  on the command itself as a prefix (above); the tools you have are the ones
+  this prompt names.
+- `python`, `python3`, `node`, `awk`, `perl` — read and slice with `jq`, `rg`,
+  `grep`, `sed -n`, `cut`, `sort`; write JSON with the `write` tool.
+- `mv`, `cp`, `rm`, `mkdir`, `touch`, `tee`, and `cat <<EOF > file` — write
+  every file with the `write` tool; publish the verdict with
+  `scripts/commit-verdict.sh` (step 7).
+- `gh api graphql` without `--method GET` — GitHub reads it as a POST and the
+  policy refuses it as a write; `scripts/pr-threads.sh` and
+  `scripts/pr-self.sh` already answer the thread questions.
+
+**Never read the daemon's own scripts or source** (`scripts/*.sh`, `src/`,
+`dist/`) to learn a format: this prompt states every one you need — the posting
+calls above, the review body in step 6, the findings record and the verdict in
+step 7.
 
 ## 1. Sync — scope the delta
 
@@ -710,7 +735,9 @@ action:
    fix the staged file and run it again — nothing was published.
 
 The same two steps publish a `head_moved` outcome. The commit IS the verdict
-write the paragraph above means: nothing comes after it.
+write the paragraph above means: nothing comes after it. When step 6's
+rendered-posting note is present, its one `--from-record` command replaces
+both steps for a decided verdict.
 
 ### The findings record — write it every round, before the verdict file
 

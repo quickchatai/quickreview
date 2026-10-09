@@ -75,13 +75,15 @@ do not re-derive them, do not report them. Look only at the lines marked
 
 ## If — and only if — you move the verdict
 
-First `export QCR_EXPECTED_HEAD={{head_sha}}` — the head this recheck
-examined — so the posting guard can refuse a stale post if the PR moved again.
+Prefix the posting call with `QCR_EXPECTED_HEAD={{head_sha}}` — the head this
+recheck examined, on the SAME command, never `export` (the exec policy refuses
+it) — so the posting guard can refuse a stale post if the PR moved again.
 A "head moved" refusal (guard 5) means the delta you examined is
 already stale: post nothing, return `outcome: "uphold"` with a reason saying
 the head moved, and let the daemon's own push trigger recheck the new head.
-Then post the review through `scripts/post-review.sh {{n}} REQUEST_CHANGES
-<body-file> [comments-json]`, exactly as in a round: one review, anchored inline comments
+Then post the review through `QCR_EXPECTED_HEAD={{head_sha}}
+scripts/post-review.sh {{n}} REQUEST_CHANGES <body-file> [comments-json]`,
+exactly as in a round: one review, anchored inline comments
 inside changed-line runs, blockers leading with the consequence in plain words,
 opening paragraph in plain language. Blocker bodies are self-sufficient
 : the comment is what gets fixed from — by the author or by an AI

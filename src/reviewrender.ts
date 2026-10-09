@@ -511,7 +511,11 @@ export const RENDER_RECORD_FIELDS = [
 
 /** The round prompt's `{{render_note}}` — "" unless the order says this
  * install renders its posted review (`[review] render_outputs`), so a round
- * order without the flag renders exactly as before. */
+ * order without the flag renders exactly as before. Under the flag the record
+ * already carries the verdict's `verdict`, `head_sha` and `summary`, so the
+ * note also hands the verdict file to `scripts/commit-verdict.sh
+ * --from-record` (the round's serial tail spent 12–40 s retyping it,
+ * plus a turn reading the clock). */
 export function renderRenderNote(order: {
   render_outputs?: boolean;
   pr: number;
@@ -536,6 +540,23 @@ export function renderRenderNote(order: {
     "`comments_posted` if fewer posted, then the ledger, then the verdict file.",
     "",
     RENDER_RECORD_FIELDS,
+    "",
+    "Only `posted` entries render. Every other disposition, and the record's",
+    "`prior` array, is recorded and never rendered: a prior finding that is",
+    "still open keeps its existing thread, so it is not a `posted` entry of",
+    "this round — say so in `summary` or `details` when the body should.",
+    "",
+    "**The verdict file comes from the same record — do not retype it.** Put",
+    "step 7's `passes` array in the record's top level too (with",
+    "`approval_withheld: true` when the approval is withheld, and `sweep` /",
+    "`escalations` when the verdict carries them). Then, after the ledger, the",
+    `round's last action is \`scripts/commit-verdict.sh --from-record pr-${n}-round-${k}.json\`:`,
+    "it builds the verdict file from the record's `verdict`, `head_sha`,",
+    "`summary` and those fields, stamps `finished_at`, and publishes it — so you",
+    "neither stage the verdict JSON nor look up the time. If it refuses, it names",
+    "the missing field and publishes nothing: fix the record and run it again,",
+    "or stage the verdict by hand as step 7 says. A `head_moved` outcome is",
+    "always staged by hand.",
     "",
   ].join("\n");
 }

@@ -255,6 +255,13 @@ describe("renderRenderNote", () => {
     expect(note).toContain("state/pr-7-round-2-comments.json");
     expect(note).toContain("`same_as");
   });
+  it("hands the verdict file to commit-verdict.sh --from-record and says what never renders", () => {
+    const note = renderRenderNote({ render_outputs: true, pr: 7, round_no: 2 });
+    expect(note).toContain("`scripts/commit-verdict.sh --from-record pr-7-round-2.json`");
+    expect(note).toContain("`passes` array in the record's top level");
+    expect(note).toContain("Only `posted` entries render");
+    expect(note).toContain("A `head_moved` outcome is\nalways staged by hand");
+  });
 });
 
 describe("the render-review CLI (what scripts/render-review.sh execs)", () => {

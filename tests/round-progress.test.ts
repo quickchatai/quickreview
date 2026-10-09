@@ -137,75 +137,87 @@ describe("round progress extension", () => {
     }
   });
 
-  it("records native tasks[] parallel fanout at tool start, before any progress update", async () => {
-    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
-    dirs.push(root);
-    const previous = { ...process.env };
-    process.env.QCR_SANDBOX_ROOT = root;
-    process.env.QCR_SESSION_NAME = "pr-5467";
-    process.env.QCR_PR = "5467";
-    const handlers = new Map<string, PiEventHandler[]>();
-    const pi = {
-      on(name: string, handler: PiEventHandler) {
-        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-      },
-    };
-    const emit = async (name: string, event: Record<string, unknown> = {}) => {
-      for (const handler of handlers.get(name) ?? []) await handler(event);
-    };
-    try {
-      activate(pi as never);
-      await emit("agent_start");
-      await emit("message_start", {
-        message: {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: [
-                `<!-- qcr-command:cmd-native:${"b".repeat(64)} -->`,
-                "**Worktree**: `/worktree` @ `head-native`",
-                "export QCR_ROUND_NO=10",
-              ].join("\n"),
-            },
-          ],
+  // the round templates carry the round number as an env prefix on
+  // the posting call (`export` is refused by the exec policy); an order from
+  // an older template still carries the `export` line. Both are read.
+  it.each([
+    [
+      "the env-prefix posting call",
+      "QCR_EXPECTED_HEAD=head-native QCR_ROUND_NO=10 scripts/approve-pr.sh 5467 state/a.md state/b.json",
+    ],
+    ["the legacy export line", "export QCR_ROUND_NO=10"],
+  ])(
+    "records native tasks[] parallel fanout at tool start, before any progress update (%s)",
+    async (_label, roundLine) => {
+      const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+      dirs.push(root);
+      const previous = { ...process.env };
+      process.env.QCR_SANDBOX_ROOT = root;
+      process.env.QCR_SESSION_NAME = "pr-5467";
+      process.env.QCR_PR = "5467";
+      const handlers = new Map<string, PiEventHandler[]>();
+      const pi = {
+        on(name: string, handler: PiEventHandler) {
+          handlers.set(name, [...(handlers.get(name) ?? []), handler]);
         },
-      });
-      await emit("tool_execution_start", {
-        toolName: "subagent",
-        toolCallId: "parallel-1",
-        args: {
-          tasks: [
-            { agent: "pass-baseline--sol-med", task: "baseline" },
-            { agent: "pass-security--sol-high", task: "security" },
-          ],
-        },
-      });
+      };
+      const emit = async (name: string, event: Record<string, unknown> = {}) => {
+        for (const handler of handlers.get(name) ?? []) await handler(event);
+      };
+      try {
+        activate(pi as never);
+        await emit("agent_start");
+        await emit("message_start", {
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: [
+                  `<!-- qcr-command:cmd-native:${"b".repeat(64)} -->`,
+                  "**Worktree**: `/worktree` @ `head-native`",
+                  roundLine,
+                ].join("\n"),
+              },
+            ],
+          },
+        });
+        await emit("tool_execution_start", {
+          toolName: "subagent",
+          toolCallId: "parallel-1",
+          args: {
+            tasks: [
+              { agent: "pass-baseline--sol-med", task: "baseline" },
+              { agent: "pass-security--sol-high", task: "security" },
+            ],
+          },
+        });
 
-      const snapshot = parseRoundProgress(
-        readFileSync(join(root, "state", "round-progress", "pr-5467.json"), "utf8"),
-      )!;
-      expect(snapshot).toMatchObject({ round_no: 10, head_sha: "head-native" });
-      expect(snapshot.fanout_started_at).toBe(snapshot.first_lens_started_at);
-      expect(snapshot.agents).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            execution_id: "parallel-1:pass-baseline--sol-med",
-            status: "running",
-          }),
-          expect.objectContaining({
-            execution_id: "parallel-1:pass-security--sol-high",
-            status: "running",
-          }),
-        ]),
-      );
-      expect(
-        roundExecutionStage(snapshot, ["pass-baseline", "pass-security", "pass-validate"]),
-      ).toBe("fanout-started");
-    } finally {
-      process.env = previous;
-    }
-  });
+        const snapshot = parseRoundProgress(
+          readFileSync(join(root, "state", "round-progress", "pr-5467.json"), "utf8"),
+        )!;
+        expect(snapshot).toMatchObject({ round_no: 10, head_sha: "head-native" });
+        expect(snapshot.fanout_started_at).toBe(snapshot.first_lens_started_at);
+        expect(snapshot.agents).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              execution_id: "parallel-1:pass-baseline--sol-med",
+              status: "running",
+            }),
+            expect.objectContaining({
+              execution_id: "parallel-1:pass-security--sol-high",
+              status: "running",
+            }),
+          ]),
+        );
+        expect(
+          roundExecutionStage(snapshot, ["pass-baseline", "pass-security", "pass-validate"]),
+        ).toBe("fanout-started");
+      } finally {
+        process.env = previous;
+      }
+    },
+  );
 
   it("keeps execution milestones immutable across progress updates", async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));

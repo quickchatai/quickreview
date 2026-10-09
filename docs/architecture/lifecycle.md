@@ -312,7 +312,24 @@ everything that touches GitHub from there. The round templates tell the
 session never to write that name in place: it stages the complete JSON at
 `verdict/<name>.tmp` and publishes it with `scripts/commit-verdict.sh`, which
 checks it is one whole JSON object and renames it onto the name in one step
-(H1a, #5885). The watcher never reads a `.tmp`.
+(H1a, #5885). The watcher never reads a `.tmp`. Under `[review]
+render_outputs` the session need not retype the verdict at all: its findings
+record already carries `verdict`, `head_sha` and `summary` for the renderer,
+the render note asks it to add `passes` (and `approval_withheld`, `sweep`,
+`escalations` when they apply) beside them, and
+`scripts/commit-verdict.sh --from-record pr-<n>-round-<k>.json` builds the
+verdict from exactly those fields, stamps `finished_at`, stages it and
+publishes it the same way — refusing, with nothing published, when the record
+lacks a field or names another round. The verdict's shape and
+everything downstream of it are unchanged; a `head_moved` outcome and a
+recheck's are still staged by hand.
+
+The posting calls the templates give are whole commands in env-prefix form,
+`QCR_EXPECTED_HEAD=<head> QCR_ROUND_NO=<k> scripts/approve-pr.sh …` — the exec
+policy refuses `export`, which the templates used to spell out and which cost a
+refused turn in most live rounds. The templates also list the
+commands the policy always refuses, each held to the real guard by
+`tests/templates.test.ts`.
 
 `validateVerdict()` is deliberately tolerant of model-written JSON: digit
 strings coerce to numbers, `ESCALATE` folds to `NEEDS_HUMAN`, the self-reported

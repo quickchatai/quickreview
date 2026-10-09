@@ -5,7 +5,9 @@
 //
 // What it must guarantee: the published name only ever holds a COMPLETE JSON
 // object (a rename of the staged file — the same inode, never a copy written
-// in place), and it touches nothing but verdict/<name>.tmp and verdict/<name>.
+// in place), and it writes nothing but verdict/<name>.tmp and verdict/<name>.
+// `--from-record` builds the round verdict from the round's own
+// findings record — copied fields only, the record never written.
 import { execFile } from "node:child_process";
 import {
   copyFileSync,
@@ -25,7 +27,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkBashCommand } from "../extensions/bash-guard.js";
 import { RECHECK_FILE_RE } from "../src/recheck.js";
-import { VERDICT_FILE_RE } from "../src/verdicts.js";
+import { VERDICT_FILE_RE, validateVerdict } from "../src/verdicts.js";
 
 const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -178,11 +180,146 @@ describe("commit-verdict.sh", () => {
     expect(existsSync(join(verdict, "pr-5-round-1.json.tmp"))).toBe(true);
   });
 
+  describe("--from-record: the verdict built from the round's findings record", () => {
+    const RECORD = {
+      pr: 5885,
+      round_no: 2,
+      head_sha: "ddc5fa9",
+      comments_posted: 1,
+      verdict: "REQUEST_CHANGES",
+      summary: "One blocker found.",
+      lenses_applied: "pass-baseline (sol-high)",
+      passes: [
+        { name: "pass-baseline", tier: "sol-high", findings: 1 },
+        { name: "pass-validate", tier: "sol-high", findings: 0, survived: 1, killed: 0 },
+      ],
+      findings: [{ id: "f1", lens: "pass-baseline", disposition: "posted", posted_as: "blocker" }],
+      prior: [],
+    };
+
+    function writeRecord(rec: unknown, name = "pr-5885-round-2.json"): string {
+      mkdirSync(join(root, "state", "findings"), { recursive: true });
+      const p = join(root, "state", "findings", name);
+      writeFileSync(p, typeof rec === "string" ? rec : JSON.stringify(rec));
+      return p;
+    }
+
+    it("publishes exactly the verdict fields, copied, with finished_at stamped now; the record is untouched", async () => {
+      const p = writeRecord(RECORD);
+      const before = readFileSync(p, "utf8");
+
+      const r = await commit("--from-record", "pr-5885-round-2.json");
+
+      expect(r.code, r.err).toBe(0);
+      expect(r.out).toContain("published verdict/pr-5885-round-2.json");
+      const raw = readFileSync(join(verdict, "pr-5885-round-2.json"), "utf8");
+      const v = JSON.parse(raw) as Record<string, unknown>;
+      expect(Object.keys(v)).toEqual([
+        "pr",
+        "round_no",
+        "verdict",
+        "head_sha",
+        "summary",
+        "passes",
+        "finished_at",
+      ]);
+      expect(v).toMatchObject({
+        pr: 5885,
+        round_no: 2,
+        verdict: "REQUEST_CHANGES",
+        head_sha: "ddc5fa9",
+        summary: "One blocker found.",
+        passes: RECORD.passes,
+      });
+      expect(v.finished_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+      // The daemon's own parser accepts it as written.
+      const parsed = validateVerdict(JSON.parse(raw));
+      expect(parsed.ok, parsed.ok ? "" : parsed.error).toBe(true);
+      expect(readFileSync(p, "utf8")).toBe(before);
+      expect(existsSync(join(verdict, "pr-5885-round-2.json.tmp"))).toBe(false);
+    });
+
+    it("carries approval_withheld only when true, and a follow-up's sweep and escalations when present", async () => {
+      writeRecord({
+        ...RECORD,
+        verdict: "APPROVE",
+        approval_withheld: true,
+        sweep: "ran",
+        escalations: [{ question: "q" }],
+      });
+      expect((await commit("--from-record", "pr-5885-round-2.json")).code).toBe(0);
+      const v = JSON.parse(readFileSync(join(verdict, "pr-5885-round-2.json"), "utf8"));
+      expect(v).toMatchObject({
+        verdict: "APPROVE",
+        approval_withheld: true,
+        sweep: "ran",
+        escalations: [{ question: "q" }],
+      });
+
+      writeRecord({ ...RECORD, approval_withheld: false, summary: "  " });
+      expect((await commit("--from-record", "pr-5885-round-2.json")).code).toBe(0);
+      const w = JSON.parse(readFileSync(join(verdict, "pr-5885-round-2.json"), "utf8"));
+      expect(w).not.toHaveProperty("approval_withheld");
+      expect(w).not.toHaveProperty("summary");
+      expect(w).not.toHaveProperty("findings");
+      expect(w).not.toHaveProperty("lenses_applied");
+    });
+
+    it("refuses, publishing NOTHING, when the record lacks a verdict field or names another round", async () => {
+      const cases: Array<[unknown, string]> = [
+        [{ ...RECORD, verdict: undefined }, '"verdict"'],
+        [{ ...RECORD, verdict: "NEEDS_HUMAN" }, '"verdict"'],
+        [{ ...RECORD, head_sha: "" }, '"head_sha"'],
+        [{ ...RECORD, passes: undefined }, '"passes"'],
+        [{ ...RECORD, round_no: 3 }, "pr/round_no"],
+        [{ ...RECORD, pr: 1 }, "pr/round_no"],
+        ['{"pr": 5885, "round_no": 2, "verdi', "not readable JSON"],
+        ['{"pr": 5885, "round_no": 2, "x": NaN}', "not readable JSON"],
+        ["[1,2]", "not a JSON object"],
+      ];
+      for (const [rec, why] of cases) {
+        writeRecord(rec);
+        const r = await commit("--from-record", "pr-5885-round-2.json");
+        expect(r.code, why).not.toBe(0);
+        expect(r.err, why).toContain(why);
+        expect(r.err, why).toContain("nothing was published");
+        expect(existsSync(join(verdict, "pr-5885-round-2.json")), why).toBe(false);
+      }
+    });
+
+    it("refuses with no record, a symlinked record, and a recheck name", async () => {
+      let r = await commit("--from-record", "pr-5885-round-2.json");
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("no findings record");
+
+      writeFileSync(join(root, "elsewhere.json"), JSON.stringify(RECORD));
+      mkdirSync(join(root, "state", "findings"), { recursive: true });
+      symlinkSync(
+        join(root, "elsewhere.json"),
+        join(root, "state", "findings", "pr-5885-round-2.json"),
+      );
+      r = await commit("--from-record", "pr-5885-round-2.json");
+      expect(r.err).toContain("symlink");
+      expect(existsSync(join(verdict, "pr-5885-round-2.json"))).toBe(false);
+
+      r = await commit("--from-record", "pr-5850-recheck-8693fde76890.json");
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("round verdict only");
+      for (const bad of ["../config.toml", "", "pr-1-round-1.json.tmp"]) {
+        r = await commit("--from-record", bad);
+        expect(r.code, bad).not.toBe(0);
+        expect(r.err, bad).toContain("usage");
+      }
+      expect((await commit("--from-record", "pr-5885-round-2.json", "extra")).code).not.toBe(0);
+    });
+  });
+
   it("is a sanctioned script in the sessions' exec policy (every spelling the templates use)", () => {
     for (const form of [
       "scripts/commit-verdict.sh pr-5885-round-2.json",
       "bash scripts/commit-verdict.sh pr-5885-round-2.json",
       "./scripts/commit-verdict.sh pr-5850-recheck-8693fde76890.json",
+      "scripts/commit-verdict.sh --from-record pr-5885-round-2.json",
     ]) {
       const r = checkBashCommand(form);
       expect(r.allowed, `${form} — ${r.reason ?? ""}`).toBe(true);

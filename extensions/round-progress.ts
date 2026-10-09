@@ -102,8 +102,13 @@ function launchPlanNames(args: Record<string, unknown>): string[] {
   return plan.ok ? plan.units.map((u) => u.agent) : [];
 }
 
+/** The round number rides the order's posting calls. Since the
+ * templates spell it as an env prefix on the call itself
+ * (`QCR_EXPECTED_HEAD=… QCR_ROUND_NO=<k> scripts/…` — `export` is refused by
+ * the exec policy); an order rendered from an older template still carries the
+ * `export QCR_ROUND_NO=<k>` line, so both spellings are read. */
 function reviewIdentity(body: string): { round_no: number; head_sha: string } | undefined {
-  const round = /(?:^|\n)export QCR_ROUND_NO=(\d+)(?:\n|$)/.exec(body);
+  const round = /(?:^|\s)(?:export )?QCR_ROUND_NO=(\d+)(?=\s|$)/.exec(body);
   const head = /\*\*Worktree\*\*:[^\n]* @ `([^`]+)`/.exec(body);
   if (!round || !head) return undefined;
   const roundNo = Number(round[1]);

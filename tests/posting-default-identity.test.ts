@@ -232,10 +232,15 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // launches every discovery row with ONE `launch_plan` call over the task
 // directory — per-row `subagent` calls only without task files or when the
 // tool is unavailable — and never one lens per turn. Every map moves.
+// Re-pinned 2026-10-09 (the main session's serial tail): the posting
+// calls are given whole in env-prefix form (`export` is refused by the exec
+// policy), the templates list what the policy always refuses and forbid reading
+// the daemon's scripts for formats; under render_outputs the note hands the
+// decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "39b54ce63dfc204d11ff5983f69548ef668c190ee65ccc7ded1913ece290633b",
-  "re-review": "b735477b85ee1309c655e068a81531edd81dc4ea757770c48915498221f31bd6",
-  staleness: "2887caf1337ea642fa4b18987a1dd6757c7b5e8ae2aaa8bf577ef2cc57941eff",
+  first: "1cc3eb2e2368b34fa5922e47b9954b051e5947ad833d198acaa31eddc2646da0",
+  "re-review": "fc6a45420abbd1b0cb455eea4e3dc906272fb3a1fd7db91b3909d8720b66b318",
+  staleness: "ea3fa493077cdc0442a56aebc2f5922a6e113b3b3e06509f7e8ed7b7e8618b7d",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -283,10 +288,15 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // launches every discovery row with ONE `launch_plan` call over the task
 // directory — per-row `subagent` calls only without task files or when the
 // tool is unavailable — and never one lens per turn. Every map moves.
+// Re-pinned 2026-10-09 (the main session's serial tail): the posting
+// calls are given whole in env-prefix form (`export` is refused by the exec
+// policy), the templates list what the policy always refuses and forbid reading
+// the daemon's scripts for formats; under render_outputs the note hands the
+// decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "55c83107c07a4fe7de907c9f684a00d6bed79361f84ff6c4577043d2b6e81064",
-  "re-review": "ae01681f87642865648f58123b593ad81541a1c039b0fc4a5df5dc511bf6c719",
-  staleness: "32029a41a96590b260b08e2b2992978dae7df34ed206528cae463ad1b7f91b68",
+  first: "cb02da6f239c08146a97d67a756bf3b582dfbed634d8faafa0ab7a991bf5a704",
+  "re-review": "59e6c0c573bf010df6864c2121b2b58cf24e395d27789e7dd296740aed4560aa",
+  staleness: "75f5e842ce4fcd3d2109d366bf86ff66e51512befc3774101d09de5a20694062",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -314,10 +324,15 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // launches every discovery row with ONE `launch_plan` call over the task
 // directory — per-row `subagent` calls only without task files or when the
 // tool is unavailable — and never one lens per turn. Every map moves.
+// Re-pinned 2026-10-09 (the main session's serial tail): the posting
+// calls are given whole in env-prefix form (`export` is refused by the exec
+// policy), the templates list what the policy always refuses and forbid reading
+// the daemon's scripts for formats; under render_outputs the note hands the
+// decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "9cd9506fe2c240fe0b7db9e7838fdf383d0a80085b901a508df757e57cf832de",
-  "re-review": "e494478c39a4571b929d77d613075acafba4f15e68f30c658609df95ef8770a7",
-  staleness: "eb95e82b0e7f267933ba2938dd3732893f90df4441ebe56f1868d7451a6d1a14",
+  first: "f370d5f65106e8ed0c9a0ca165a64aaf910cdef5c6f471f8277bf3842aabe428",
+  "re-review": "36e76f3a552030ecdf9230c2d80b07d1183906646d8ec8ca380545853f89d38f",
+  staleness: "99fe6265b3eb031a7c23b33c7deab43eecd3035723b02f591554160d7e3412a6",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -348,10 +363,15 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // launches every discovery row with ONE `launch_plan` call over the task
 // directory — per-row `subagent` calls only without task files or when the
 // tool is unavailable — and never one lens per turn. Every map moves.
+// Re-pinned 2026-10-09 (the main session's serial tail): the posting
+// calls are given whole in env-prefix form (`export` is refused by the exec
+// policy), the templates list what the policy always refuses and forbid reading
+// the daemon's scripts for formats; under render_outputs the note hands the
+// decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "3743f02b0d0b904b46027f166910ebb48c7566cb3fbbf5fd122c224969a96021",
-  "re-review": "d07585b43eae751ca3b37279188ad171fd9d939d3d9f29549541e7463bc18b0b",
-  staleness: "45fb6821f615f34e01824db3fe19be0281f785f53878be937ea20f18e16226b7",
+  first: "458c329083eb4df22d167a7bc3ab0b7eeddaa0e7cb623aefa94911a51987a892",
+  "re-review": "519d70354964a35fa87eb4958cd80ec68f25b0ee64ca0eb8d4cfda3dc7f18030",
+  staleness: "911e51a65fb2602143fdeeb603178f3b5b0c79c67fffafcb5ec91bbc7ef38e5d",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

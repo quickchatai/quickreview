@@ -23,6 +23,7 @@ import {
 import { DJANGO_ECOSYSTEM, NONE_ECOSYSTEM } from "../src/ecosystem.js";
 import { RECHECK_FILE_RE, recheckDecisionFile, type RecheckOrder } from "../src/recheck.js";
 import { VERDICT_FILE_RE } from "../src/verdicts.js";
+import { checkBashCommand } from "../extensions/bash-guard.js";
 import type { RoundOrder, RoundType } from "../src/types.js";
 
 const order: RoundOrder = {
@@ -476,7 +477,15 @@ describe("shipped round templates", () => {
       expect(text).toContain("scripts/post-review.sh {{n}} <REQUEST_CHANGES|COMMENT> <body-file>");
       expect(text).toContain("scripts/reply-thread.sh {{n}} <comment-id> <body-file>");
       expect(text).toContain("scripts/approve-pr.sh");
-      expect(text).toContain("export QCR_ROUND_NO={{round_no}}");
+      // the posting calls carry the head and round as an env prefix
+      // on the same command — the exec policy refuses `export`.
+      expect(text).toContain(
+        "QCR_EXPECTED_HEAD={{head_sha}} QCR_ROUND_NO={{round_no}} scripts/approve-pr.sh {{n}} state/pr-{{n}}-round-{{round_no}}-review.md state/pr-{{n}}-round-{{round_no}}-comments.json",
+      );
+      expect(text).toContain(
+        "QCR_EXPECTED_HEAD={{head_sha}} QCR_ROUND_NO={{round_no}} scripts/post-review.sh {{n}} REQUEST_CHANGES state/pr-{{n}}-round-{{round_no}}-review.md state/pr-{{n}}-round-{{round_no}}-comments.json",
+      );
+      expect(text).not.toMatch(/^export QCR_/m);
       expect(text).toContain("deterministic posting key");
     });
 
@@ -1205,6 +1214,12 @@ describe("atomic verdict publication (H1a)", () => {
     }
     // Every staging name the text mentions is the script's `<name>.tmp`.
     for (const m of rendered.matchAll(/verdict\/(\S+?)\.tmp`/g)) expect(m[1]).toBe(name);
+    // the rendered-posting note's `--from-record` publication names
+    // the same file.
+    for (const m of rendered.matchAll(/scripts\/commit-verdict\.sh --from-record (\S+?)`/g)) {
+      expect(m[1]).toBe(name);
+      expect(accepted.test(m[1]!), m[1]).toBe(true);
+    }
   }
 
   for (const rt of ["first", "re-review", "staleness"] as RoundType[]) {
@@ -1214,6 +1229,16 @@ describe("atomic verdict publication (H1a)", () => {
       const name = `pr-${order.pr}-round-${order.round_no}.json`;
       expect(VERDICT_FILE_RE.test(name)).toBe(true);
       publication(rendered, name);
+      expect(rendered).not.toContain("commit-verdict.sh --from-record");
+      // Rendered posting: the note hands the decided verdict to
+      // `--from-record`, by the same name.
+      const withRender = renderRoundPrompt(tpl, {
+        ...order,
+        round_type: rt,
+        render_outputs: true,
+      });
+      expect(withRender).toContain(`scripts/commit-verdict.sh --from-record ${name}\``);
+      publication(withRender, name);
     });
   }
 
@@ -1223,4 +1248,75 @@ describe("atomic verdict publication (H1a)", () => {
     expect(RECHECK_FILE_RE.test(name)).toBe(true);
     publication(renderRecheckPrompt(tpl, { ...recheckOrder, decision_file: name }), name);
   });
+});
+
+// (the main session's serial tail): the round templates give the
+// exact posting calls in env-prefix form and list what the exec policy always
+// refuses. Both are held to the REAL guard, so the prompt can never advertise
+// a call the guard refuses or a refusal the guard no longer makes.
+describe("posting calls and the refused-command list agree with the exec policy", () => {
+  const rounds: Array<[string, RoundType]> = [
+    ["round-first.md", "first"],
+    ["round-re-review.md", "re-review"],
+    ["round-follow-up.md", "re-review"],
+    ["round-staleness.md", "staleness"],
+  ];
+  for (const [file, rt] of rounds) {
+    const tpl = readFileSync(resolve(process.cwd(), "prompts", file), "utf8");
+    const rendered = renderRoundPrompt(tpl, { ...order, round_type: rt });
+
+    it(`${file}: every rendered posting call is one the guard admits, and none is an export`, () => {
+      const calls = rendered
+        .split("\n")
+        .filter((l) => /^QCR_EXPECTED_HEAD=\S+ QCR_ROUND_NO=\d+ scripts\//.test(l));
+      expect(calls.map((c) => c.split(" ")[2])).toEqual([
+        "scripts/approve-pr.sh",
+        "scripts/post-review.sh",
+      ]);
+      for (const c of calls) {
+        expect(c).toContain(`QCR_EXPECTED_HEAD=${order.head_sha} QCR_ROUND_NO=${order.round_no} `);
+        expect(c).toContain(`state/pr-${order.pr}-round-${order.round_no}-review.md`);
+        const r = checkBashCommand(c);
+        expect(r.allowed, `${c} — ${r.reason ?? ""}`).toBe(true);
+      }
+      expect(rendered).not.toMatch(/^export /m);
+      expect(checkBashCommand(`export QCR_EXPECTED_HEAD=${order.head_sha}`).allowed).toBe(false);
+    });
+
+    it(`${file}: every command the refused list names is refused by the guard`, () => {
+      const block = /\*\*What the exec policy always refuses[\s\S]*?\n\n((?:- [\s\S]*?\n)+)\n/.exec(
+        tpl,
+      );
+      expect(block, "the refused-command list is missing").not.toBeNull();
+      const bullets = block![1]!.split(/\n(?=- )/);
+      expect(bullets).toHaveLength(4);
+      const refused: string[] = [];
+      for (const b of bullets.slice(0, 3)) {
+        const head = b.split(" — ")[0]!;
+        for (const m of head.matchAll(/`([^`]+)`/g)) refused.push(m[1]!);
+      }
+      expect(refused).toEqual(
+        expect.arrayContaining(["export", "python3", "mv", "cp", "command -v", "cat <<EOF > file"]),
+      );
+      for (const cmd of refused) {
+        const probe = cmd.startsWith("cat <<") ? "cat <<EOF > state/x.md\nEOF" : `${cmd} x`;
+        const r = checkBashCommand(probe);
+        expect(r.allowed, `${probe} should be refused`).toBe(false);
+      }
+      // The fourth: graphql is a POST unless it says GET.
+      expect(bullets[3]).toContain("`gh api graphql` without `--method GET`");
+      expect(checkBashCommand("gh api graphql -f query=q").allowed).toBe(false);
+      expect(checkBashCommand("gh api --method GET graphql -f query=q").allowed).toBe(true);
+      // The replacements it names are admitted.
+      for (const ok of [
+        "jq . x",
+        "rg x",
+        "sed -n 1,5p x",
+        "scripts/commit-verdict.sh pr-1-round-1.json",
+        "scripts/pr-threads.sh 1",
+        "scripts/pr-self.sh 1 threads",
+      ])
+        expect(checkBashCommand(ok).allowed, ok).toBe(true);
+    });
+  }
 });

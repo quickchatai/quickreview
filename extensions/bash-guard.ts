@@ -154,8 +154,10 @@ const SANCTIONED_SCRIPTS = new Set([
   // H1a: the round templates stage the verdict at verdict/<name>.tmp
   // and publish it with this — one rename inside verdict/, so the daemon never
   // reads a half-written verdict (#5885). `mv` itself stays off ALLOWED: the
-  // script takes only the two verdict-file name shapes, touches nothing
-  // outside verdict/, reads no config and posts nothing.
+  // script takes only the two verdict-file name shapes, writes nothing
+  // outside verdict/, reads no config and posts nothing. Its `--from-record`
+  // mode also READS the round's own findings record to build the
+  // verdict from fields the session already wrote — still no other write.
   "commit-verdict.sh",
 ]);
 
