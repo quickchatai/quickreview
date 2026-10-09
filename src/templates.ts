@@ -496,6 +496,62 @@ export function renderDedupNote(order: Pick<RoundOrder, "dedup_merge">): string 
 }
 
 /**
+ * `[review] validate_compact` (A1): the validator answers with a
+ * DECISION TABLE keyed by candidate id (the `validate-compact-output`
+ * addendum, src/include.ts) instead of restating every survivor — its long
+ * final turn, and the session's re-reading of it, were serial time on every
+ * round (live study 2026-10-09: 87–144 s restating). This is the session's
+ * half: how to read the table. Rendered into `{{validator_output_note}}` at
+ * the end of step 4; "" when the order does not carry the flag.
+ */
+export function renderValidatorOutputNote(
+  order: Pick<RoundOrder, "validate_compact" | "pass_plan">,
+): string {
+  if (!order.validate_compact || !order.pass_plan.some((p) => p.lens === "pass-validate"))
+    return "";
+  return [
+    "",
+    "**The validator answers with a decision table.** Give every candidate an",
+    "`id` in the validate task string — the ids you gave `cluster_findings`, else",
+    "`c1`, `c2`, … in your order — and hand it the candidates' full text as",
+    "always. It returns a `DECISIONS` line per id: `keep` (your text, unchanged),",
+    "`downgrade` / `raise` (at the severity it names), `moved` (at the anchor it",
+    "names; `body-only` = no anchor), `merged:<id>` (record it `merged` into that",
+    "id), `doubted` / `killed` (recorded with its reason, never posted). A",
+    "`REWRITTEN` entry replaces that candidate's text — a restated consequence, a",
+    "merged root cause's combined body. A candidate the table does not name was",
+    "not vetted: record it `doubted` (`unverifiable`) and never post it. The",
+    "table is the kill log: keep its lines whole in the round's log.",
+  ].join("\n");
+}
+
+/**
+ * `{{prior_assign_note}}` (A6): step 1's instruction for the listed
+ * prior findings. When the daemon assigned them (`prior_assignments`), the
+ * session checks that assignment instead of making it — the findings already
+ * ride their lenses' task files. Otherwise the step-1 text as it always read.
+ */
+export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments">): string {
+  if ((order.prior_assignments?.length ?? 0) === 0)
+    return [
+      "**assign every listed prior",
+      "finding to the planned discovery lens that owns it** — the lens that raised it",
+      "when that lens is planned this round, otherwise the planned lens whose charter",
+      "covers it, otherwise `pass-baseline`, which is always planned for exactly this.",
+      "No prior finding goes unassigned.",
+    ].join("\n");
+  return [
+    "**check the daemon's assignment of the listed",
+    "prior findings**: each is ALREADY in the task file of the planned lens that owns",
+    "it — the lens that raised it when it is planned, else `pass-baseline` — and that",
+    "lens answers with one `PRIOR <ref> <status> — <evidence>` line per finding; those",
+    "lines are the statuses you record. A finding only your ledger holds is yours to",
+    "assign the same way, through `launch_plan`'s `extra`. No prior finding goes",
+    "unassigned.",
+  ].join("\n");
+}
+
+/**
  * `[review] coverage_check` (src/coverage.ts): after the planned lenses
  * return, the changed non-test source files no lens raised a finding on and no
  * returned sweep row had in focus get a targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
@@ -732,11 +788,15 @@ export function roundVars(
     validator_shard_note: renderValidatorShardNote(order),
     // `[review] dedup_merge`: "" unless the order groups its candidates.
     dedup_note: renderDedupNote(order),
+    // `[review] validate_compact`: "" unless the validator answers
+    // with a decision table.
+    validator_output_note: renderValidatorOutputNote(order),
     // `[review] coverage_check`: "" unless the order carries coverage files.
     coverage_note: renderCoverageNote(order),
     // follow-up rounds: "" unless the order carries them; only
     // round-follow-up.md places them, so every other template is unchanged.
     prior_findings_note: order.prior_findings_note ?? "",
+    prior_assign_note: renderPriorAssignNote(order),
     delta_note: renderDeltaNote(order.delta, order.worktree),
     sweep_note: renderSweepNote(order),
   };

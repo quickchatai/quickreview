@@ -552,6 +552,19 @@ export interface ReviewConfig {
   context_pack: "off" | "pack-first";
   /** The pack's size cap in tokens (≈4 characters each). */
   context_pack_max_tokens: number;
+  /** (H2, a benchmark lever until measured): a pass-sweep row whose
+   * files are ALL tests, prose or config/data (heuristics.ts
+   * `isLightSweepFile`) runs at this tier instead of the sweep's own. `""` ⇒
+   * off: every sweep row at the sweep's tier, as before. A profile `min_tier`
+   * for pass-sweep still floors it, and a tier at or above the sweep's own
+   * changes nothing. */
+  sweep_light_tier: "" | PassTier;
+  /** (A1): the validator answers with a DECISION TABLE keyed by
+   * candidate id instead of restating every survivor — only a finding whose
+   * text it changed is written out in full (`validate-compact-output`
+   * addendum; the session's half is `{{validator_output_note}}`). What it
+   * decides is unchanged. `false` ⇒ the frozen output format. */
+  validate_compact: boolean;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -602,7 +615,11 @@ const LEAN_LEVERS: PresetLevers = {
   sublenses: true,
   sweep: true,
   sweep_max_groups: 6,
-  sweep_group_files: 5,
+  // (A3): 5 → 8. The 500-line budget binds first on most groups; at 5
+  // files, 130 of the 275 sweep rows on the 145 stored rest145 PRs were cut
+  // by the file cap at a median of 78 changed lines. 8 plans 17% fewer rows
+  // on the 185 stored AACR PRs (334 → 277), none unswept.
+  sweep_group_files: 8,
   sweep_group_lines: 500,
   sweep_wide_files: 40,
   behaviour_delta: true,
@@ -671,6 +688,8 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   baseline_split_lines: 2000,
   context_pack: "pack-first",
   context_pack_max_tokens: 40000,
+  sweep_light_tier: "",
+  validate_compact: true,
 };
 
 /**
@@ -967,6 +986,13 @@ export interface ModelsConfig {
    * (always sol-high). A profile `min_tier` still floors a pin, and the
    * validator never follows a pinned lens's tier. */
   pass_tiers: Record<string, PassTier>;
+  /** Per-lens MODEL overrides (`[models.pass_models]`): pass name →
+   * model spec. Every built variant of that lens runs on that model, at the
+   * thinking level it would otherwise have had (its tier, a pin, the
+   * profile's `effort`) unless the spec names its own. Empty by default — a
+   * benchmark lever (a smaller model for the quality lenses) until measured.
+   * Never for pass-validate nor a risk pass. */
+  pass_models: Record<string, string>;
 }
 
 /** pi's thinking levels, ascending (pi 0.87.1, unchanged at 0.99.1 and 1.0.0 — VERIFY-ON-PIN). */
@@ -1043,8 +1069,10 @@ export const MODELS_TIER_DEFAULTS: Pick<
   | "effort"
   | "effort_max"
   | "pass_tiers"
+  | "pass_models"
 > = {
   pass_tiers: { ...DEFAULT_PASS_TIERS },
+  pass_models: {},
   effort: "",
   effort_max: "max",
   tiers: {
@@ -2600,6 +2628,19 @@ export function parseConfig(toml: string): Config {
       );
     }
   }
+  if (
+    cfg.review.sweep_light_tier !== "" &&
+    !(PASS_TIER_ORDER as readonly unknown[]).includes(cfg.review.sweep_light_tier)
+  ) {
+    throw new Error(
+      `config.toml [review]: sweep_light_tier must be "" or a tier (${PASS_TIER_ORDER.join(", ")}) (got ${JSON.stringify(cfg.review.sweep_light_tier)})`,
+    );
+  }
+  if (typeof cfg.review.validate_compact !== "boolean") {
+    throw new Error(
+      `config.toml [review]: validate_compact must be true or false (got ${JSON.stringify(cfg.review.validate_compact)})`,
+    );
+  }
   if (cfg.review.context_pack !== "off" && cfg.review.context_pack !== "pack-first") {
     throw new Error(
       `config.toml [review]: context_pack must be "off" or "pack-first" (got ${JSON.stringify(cfg.review.context_pack)})`,
@@ -2839,12 +2880,14 @@ function parseModels(raw: Record<string, any>, presetEffort: ReviewEffort = ""):
     small_diff_lines: Number(raw.small_diff_lines ?? MODELS_TIER_DEFAULTS.small_diff_lines),
     pricing: (raw.pricing ?? {}) as Record<string, ModelPricing>,
     pass_tiers: { ...DEFAULT_PASS_TIERS, ...((raw.pass_tiers ?? {}) as Record<string, PassTier>) },
+    pass_models: { ...((raw.pass_models ?? {}) as Record<string, string>) },
   });
 }
 
 /**
  * Validate the per-lens knobs — `[review] skip_lenses`,
- * `[review] validate_consequence_rule` and `[models.pass_tiers]`. Called by
+ * `[review] validate_consequence_rule`, `[models.pass_tiers]` and
+ * `[models.pass_models]`. Called by
  * `parseConfig` and again by the bench's `--config` overrides (which write
  * past the parser), so both routes refuse the same things.
  */
@@ -2891,6 +2934,25 @@ export function validateLensKnobs(cfg: Pick<Config, "review" | "models">): void 
     if (!(PASS_TIER_ORDER as readonly unknown[]).includes(tier))
       throw new Error(
         `config.toml [models.pass_tiers] ${pass}: unknown tier ${JSON.stringify(tier)} (one of ${PASS_TIER_ORDER.join(", ")})`,
+      );
+  }
+  const moved: unknown = cfg.models.pass_models ?? {};
+  if (typeof moved !== "object" || moved === null || Array.isArray(moved))
+    throw new Error("config.toml [models.pass_models] must be a table of pass = model spec");
+  for (const [pass, model] of Object.entries(moved as Record<string, unknown>)) {
+    if (!known.has(pass))
+      throw new Error(`config.toml [models.pass_models]: unknown pass "${pass}"`);
+    if (pass === "pass-validate")
+      throw new Error(
+        "config.toml [models.pass_models] may not move pass-validate — the validator's model is its tier's",
+      );
+    if (risk.has(pass))
+      throw new Error(
+        `config.toml [models.pass_models]: ${pass} is a risk pass — it always runs on the sol-high tier's model`,
+      );
+    if (typeof model !== "string" || !/^[\w.-]+\/[\w.:-]+$/.test(model))
+      throw new Error(
+        `config.toml [models.pass_models] ${pass}: ${JSON.stringify(model)} is not a "provider/model[:thinking]" spec`,
       );
   }
 }

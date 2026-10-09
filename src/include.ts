@@ -577,6 +577,23 @@ const DEDUP_GROUP_VALIDATE_ADDENDUM =
   "- **Different defects → SPLIT**: judge each member on its own, exactly as without groups. A group is a hint, never a verdict: never merge two findings because they share a file, a line range or a word — only because one fix removes both. A P1/P2 is never merged under a lesser finding of a different defect, and a merged body never carries a second fix as a clause: a member that needs its own fix is split out as its own finding.\n" +
   "- Two candidates in no common group may still be one root cause; merge them the same way when the code shows it.\n";
 
+// (A1): the validator's ANSWER as a decision table. Its frozen output
+// format restates every survivor in full, and on a round with 15–30 candidates
+// that final turn ran 87–144 s (live study 2026-10-09) — text the session
+// already holds, which it then read back. What the validator DECIDES is
+// untouched: this is the shape of the answer only.
+const VALIDATE_COMPACT_OUTPUT_ADDENDUM =
+  "\n## Answer with a decision table, not restated findings (sandbox rule)\n" +
+  "Every candidate in your task string carries an id. The session already holds each candidate's full text, so do NOT copy a candidate back out to keep it. Your whole answer is two blocks:\n\n" +
+  "1. `DECISIONS` — one line per candidate id, in the order you received them, none left out:\n" +
+  "   `<id> | <decision> | <severity> | <anchor> | <reason>`\n" +
+  "   - decision: `keep`, `downgrade`, `raise`, `moved` (the anchor changed), `merged:<id>` (one root cause with that surviving candidate), `doubted` or `killed`;\n" +
+  "   - severity: the severity after your audit, or `-` for a merged, doubted or killed candidate;\n" +
+  "   - anchor: the new `path:line:side` when you moved it, `body-only` when you stripped it, else `-`;\n" +
+  "   - reason: the reason word from the closed vocabulary and a short explanation, for every decision but a plain `keep` (`-`).\n" +
+  "2. `REWRITTEN` — ONLY for a candidate whose TEXT must change to be right: a restated consequence, a merged root cause's combined body (every site, every lens), a title or body the audited severity no longer fits. Each one in the standard findings-block format, headed by its id. Every other candidate stays exactly as the session holds it, its `detail:` paragraph included.\n\n" +
+  "This changes how you WRITE the answer, never what you decide: every rule above about re-deriving, killing, doubting, anchoring, severity and merging stands. Your `doubted` and `killed` rows ARE the DOUBTED and KILLED lists — do not write them twice. If a candidate reached you with no id, give it `c<n>` by its position and say so on its line.\n";
+
 /** Addenda that exist only when the config asks for them — composed after the
  * registry by both agent builds (src/wire.ts, src/bench/runner.ts). */
 export function configAddenda(review: {
@@ -584,6 +601,7 @@ export function configAddenda(review: {
   validate_demote?: boolean;
   validate_consequence_rule?: boolean;
   dedup_merge?: boolean;
+  validate_compact?: boolean;
 }): PassAddendum[] {
   const out: PassAddendum[] = [];
   // On unless switched off — the switch exists so a benchmark can measure the
@@ -614,6 +632,15 @@ export function configAddenda(review: {
       scope: [VALIDATE_PASS],
       mode: "pr",
       text: DEDUP_GROUP_VALIDATE_ADDENDUM,
+    });
+  // `[review] validate_compact` (A1): PR builds only — the scan's
+  // skeptic keeps its own answer shape.
+  if (review.validate_compact === true)
+    out.push({
+      id: "validate-compact-output",
+      scope: [VALIDATE_PASS],
+      mode: "pr",
+      text: VALIDATE_COMPACT_OUTPUT_ADDENDUM,
     });
   return out;
 }
@@ -1720,13 +1747,34 @@ export function passTierModels(
   passTiers: Readonly<Record<string, PassTier>> | undefined,
   tiers: Readonly<Record<PassTier, string>>,
   overrides: Readonly<Record<string, string>> = {},
+  passModels: Readonly<Record<string, string>> = {},
+  /** Variants a pin leaves at their OWN tier's spec (`sweepLightVariants`). */
+  unpinned: readonly string[] = [],
 ): Record<string, string> {
   const out: Record<string, string> = { ...overrides };
   for (const [pass, tier] of Object.entries(passTiers ?? {})) {
     const spec = overrides[`${pass}--${tier}`] ?? tiers[tier];
-    for (const t of PASS_TIERS) out[`${pass}--${t}`] = spec;
+    for (const t of PASS_TIERS)
+      if (!unpinned.includes(`${pass}--${t}`)) out[`${pass}--${t}`] = spec;
+  }
+  // `[models.pass_models]`: a lens moved onto another MODEL. Every
+  // variant keeps the thinking level it would have run at (its tier, a pin,
+  // the profile's effort) unless the configured spec names its own.
+  for (const [pass, model] of Object.entries(passModels)) {
+    const own = splitModelSpec(model).thinking;
+    for (const t of PASS_TIERS) {
+      const level = own ?? splitModelSpec(out[`${pass}--${t}`] ?? tiers[t]).thinking;
+      out[`${pass}--${t}`] = level && !own ? `${model}:${level}` : model;
+    }
   }
   return out;
+}
+
+/** The pass-sweep variant `[review] sweep_light_tier` (H2) plans
+ * light rows at — exempt from the sweep's tier pin, so that variant runs at
+ * its own tier's spec. Empty when the lever is off. */
+export function sweepLightVariants(review: { sweep_light_tier?: string }): string[] {
+  return review.sweep_light_tier ? [`pass-sweep--${review.sweep_light_tier}`] : [];
 }
 
 /** The tiers a given pass fans out into.

@@ -8,7 +8,7 @@
 > `{{n}} {{title}} {{worktree}} {{head_sha}} {{lenses}} {{pass_plan}}
 > {{addable_lenses}} {{base_ref}} {{base_sha}} {{merge_base}} {{migration_gate_note}}
 > {{settled_digest}} {{round_type}} {{round_no}} {{nit_scope_note}} {{nit_policy_note}}
-> {{prior_findings_note}} {{delta_note}} {{sweep_note}}
+> {{prior_findings_note}} {{prior_assign_note}} {{delta_note}} {{sweep_note}}
 > `intent_note`, `missing_migration_note`, `dependency_note`, `ledger_note` and `recovery_note`, plus the two memory sections `pinned_head` and
 > `context_block` (written without braces here so this doc line
 > does not render a second copy of the memory seed), the lesson pair
@@ -163,12 +163,8 @@ Your ledger is the second checklist: an open finding it carries that the list
 above does not (a round whose record could not be read, a finding raised in the
 body only) is verified exactly the same way. Before fanout, do only the bounded
 work needed to make blank-slate pass tasks true: run the one compact PR-context
-read, read the ledger's open/settled ids, and **assign every listed prior
-finding to the planned discovery lens that owns it** — the lens that raised it
-when that lens is planned this round, otherwise the planned lens whose charter
-covers it, otherwise `pass-baseline`, which is always planned for exactly this.
-No prior finding goes unassigned. Do **not** broadly inspect source files or
-re-derive findings in the parent yet.
+read, read the ledger's open/settled ids, and {{prior_assign_note}} Do **not**
+broadly inspect source files or re-derive findings in the parent yet.
 
 Each assigned lens must, at `{{head_sha}}`:
 
@@ -295,6 +291,13 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 ## 3. Merge
 
+**Read narrowly in the parent.** The lenses and the validator read
+files whole; you do not need to. When you check a candidate, a prior status or
+an anchor yourself, find the site first (`rg -n` for the symbol or the line)
+and read only the lines around it — `sed -n 'A,Bp'`, or `read` with an offset
+and a limit — never a whole file, and never the whole diff again. Everything
+you read stays in this conversation for the rest of the PR.
+
 Same-run candidates merge ONLY when they are the SAME defect: highest severity
 wins; lens tags concatenate. DIFFERENT defects on one `(path,
 changed-line-run)` both survive — fold the lesser into the survivor's body as
@@ -336,7 +339,7 @@ something else is a new candidate and does). Only survivors post. Log the kills.
 Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
 `unverifiable`, `bad-anchor`) — is never posted either: record each one as
 `doubted` in the findings record (step 7); a doubt is kept, never dropped.
-{{validator_note}}{{validator_shard_note}}{{dedup_note}}
+{{validator_note}}{{validator_shard_note}}{{dedup_note}}{{validator_output_note}}
 
 ## 4b. Pre-approval sweep
 

@@ -973,9 +973,40 @@ export function qualityReason(files: PrFileEntry[], minAdded: number): string {
 }
 
 /** Files the sweep never reads: lockfiles, generated or minified output,
- * vendored trees, snapshots, binaries and prose. */
+ * vendored trees, snapshots, binaries and prose — and translation catalogs
+ * (`TRANSLATION_FILE_RE`). */
 const SWEEP_SKIP_RE =
   /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
+
+/** Translation catalogs (A3): a data file under a locale /
+ * translation directory, or a gettext / XLIFF / ARB catalog anywhere. A
+ * line-by-line sweep of one is a row spent reading strings: one
+ * per-language config change can touch dozens of these at once. The PR's other
+ * lenses still see them (pass-ui owns translations where a profile says so),
+ * and they still count toward the change — only the sweep skips them. */
+const TRANSLATION_FILE_RE =
+  /((^|\/)(locales?|i18n|l10n|translations?|langs?)\/(.+\/)?[^/]+\.(json|ya?ml|po|pot|xliff|xlf|arb|strings|properties|toml)$|\.(po|pot|xliff|xlf|arb)$)/i;
+
+/** Is `path` a translation catalog the sweep skips (`TRANSLATION_FILE_RE`)? */
+export function isTranslationFile(path: string): boolean {
+  return TRANSLATION_FILE_RE.test(path);
+}
+
+/** Config and data files: what a "light" sweep row may hold besides tests and
+ * prose. Source in a config-shaped language (a Dockerfile, a shell script, a
+ * CI workflow's embedded script) is NOT light — it runs. */
+const LIGHT_DATA_FILE_RE = /\.(json|jsonc|ya?ml|toml|ini|cfg|conf|properties|xml|csv|tsv|env)$/i;
+
+/**
+ * Is `path` a file a sweep row can read at a cheaper tier (H2:
+ * `[review] sweep_light_tier`)? Tests, prose and config/data files — the
+ * rows that hold no production code. A CI workflow (`.github/workflows/`)
+ * is not: its steps run.
+ */
+export function isLightSweepFile(path: string): boolean {
+  if (/(^|\/)\.github\/workflows\//.test(path)) return false;
+  return isTestFile(path) || SWEEP_DOC_RE.test(path) || LIGHT_DATA_FILE_RE.test(path);
+}
 
 /** Prose the sweep reads when the PR also changes code (freeze fixes 2). */
 const SWEEP_DOC_RE = /\.(md|mdx|rst|adoc)$/i;
@@ -983,14 +1014,14 @@ const SWEEP_DOC_RE = /\.(md|mdx|rst|adoc)$/i;
 /** Is `path` a file the sweep never reads? Exported for the setup engine's
  * case sizing: a unit is sized by what a pass would actually read. */
 export function isSweepSkipped(path: string): boolean {
-  return SWEEP_SKIP_RE.test(path);
+  return SWEEP_SKIP_RE.test(path) || TRANSLATION_FILE_RE.test(path);
 }
 
 /** A group stays under both caps unless one file alone exceeds them. The
  * first batch capped groups at 3 files and 32 of its 36 groups came out under
  * 60 changed lines — a whole pass for a handful of lines — so the defaults
  * are sized to hold a typical small PR in one or two passes. */
-export const SWEEP_MAX_FILES_PER_GROUP = 5;
+export const SWEEP_MAX_FILES_PER_GROUP = 8;
 export const SWEEP_MAX_LINES_PER_GROUP = 500;
 /** A WIDE change — more eligible files than `maxFiles × maxGroups`, so the
  * file cap would leave files unswept — is packed by its changed-line budget
@@ -1030,6 +1061,7 @@ export function sweepGroups(
       (f) =>
         f.status !== "removed" &&
         f.additions > 0 &&
+        !TRANSLATION_FILE_RE.test(f.filename) &&
         (!SWEEP_SKIP_RE.test(f.filename) || (changesCode && isDoc(f.filename))),
     )
     .map((f, i) => ({ f, i }))

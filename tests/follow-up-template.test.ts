@@ -10,6 +10,7 @@ import {
   placeholdersIn,
   renderDeltaNote,
   renderRoundPrompt,
+  renderPriorAssignNote,
   renderSweepNote,
   roundTemplateFile,
   roundVars,
@@ -203,8 +204,17 @@ describe("round-follow-up.md renders completely", () => {
   it("the validator sees new candidates only, and every prior finding has an owner", () => {
     const flat = tpl.replace(/\s+/g, " ");
     expect(flat).toContain("this round's NEW candidates + the SETTLED list");
-    expect(flat).toContain("otherwise `pass-baseline`, which is always planned for exactly this");
-    expect(flat).toContain("No prior finding goes unassigned.");
+    // step 1's assignment sentence is rendered — the session's own
+    // assignment when the daemon made none, a check of the daemon's otherwise.
+    expect(flat).toContain("{{prior_assign_note}}");
+    const own = renderPriorAssignNote({}).replace(/\s+/g, " ");
+    expect(own).toContain("otherwise `pass-baseline`, which is always planned for exactly this");
+    expect(own).toContain("No prior finding goes unassigned.");
+    const daemon = renderPriorAssignNote({
+      prior_assignments: [{ row: 0, priors: [] }],
+    }).replace(/\s+/g, " ");
+    expect(daemon).toContain("ALREADY in the task file");
+    expect(daemon).toContain("No prior finding goes unassigned.");
     // The change bounds where a lens starts, never its charter.
     expect(flat).toContain("never NARROWS the lens's charter");
   });

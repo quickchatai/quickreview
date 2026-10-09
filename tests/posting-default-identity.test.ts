@@ -237,10 +237,16 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // policy), the templates list what the policy always refuses and forbid reading
 // the daemon's scripts for formats; under render_outputs the note hands the
 // decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
+// Re-pinned 2026-10-09 (the owner's second cost list): step 3 of
+// every round template tells the parent to read narrowly (find the site, read
+// the lines around it — the lenses read whole files), and step 4 carries
+// `{{validator_output_note}}`: the validator answers with a decision table
+// keyed by candidate id (`[review] validate_compact`, on by default). The fixture
+// PR's sweep groups hold up to 8 files (was 5). Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "1cc3eb2e2368b34fa5922e47b9954b051e5947ad833d198acaa31eddc2646da0",
-  "re-review": "fc6a45420abbd1b0cb455eea4e3dc906272fb3a1fd7db91b3909d8720b66b318",
-  staleness: "ea3fa493077cdc0442a56aebc2f5922a6e113b3b3e06509f7e8ed7b7e8618b7d",
+  first: "0badc60ef34b0e17ee37d42a93b91698eb0d76af4ba12c6a2003ea48af960c2d",
+  "re-review": "7ad23311703c0ef41ff70d411225a12937b6d7dc557bb65c34a01594fd1b129d",
+  staleness: "d8cf0a30d4b67e51cc71d7b4c01e56552e1d9b3082078edc574c809238c0de22",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -293,10 +299,16 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // policy), the templates list what the policy always refuses and forbid reading
 // the daemon's scripts for formats; under render_outputs the note hands the
 // decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
+// Re-pinned 2026-10-09 (the owner's second cost list): step 3 of
+// every round template tells the parent to read narrowly (find the site, read
+// the lines around it — the lenses read whole files), and step 4 carries
+// `{{validator_output_note}}`: the validator answers with a decision table
+// keyed by candidate id (`[review] validate_compact`, on by default). The fixture
+// PR's sweep groups hold up to 8 files (was 5). Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "fbf96e86f8a3126363f8bec83fa582ef9f8c52735080f0ebaf067acf50a17598",
-  "re-review": "f36cbf302a8b7f87c2ec36c9f47b6e82da42b1371533c3b14f943eb2de16b0d8",
-  staleness: "a3df1a736698ca45ab0a41cb0ec00b4632575a49f79d8a21052e546212d84065",
+  first: "9784844333520edd1b9547a03406ea74bc66e1fe7556bb99744fc641df8979ac",
+  "re-review": "bf4c0cd168d43613f2e7d73c061b7b81086479e019ec0a2cf29c94aa62d3e864",
+  staleness: "751cecf4c20167632b9d23ec6838b23321c8cf6e51f009ba42c6167ecf1323eb",
 };
 // Re-pinned 2026-10-09 (review fix): the coverage note's `swept` now
 // credits returned pass-sweep rows only — pass-behaviour-delta skips pure additions.
@@ -331,10 +343,16 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // policy), the templates list what the policy always refuses and forbid reading
 // the daemon's scripts for formats; under render_outputs the note hands the
 // decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
+// Re-pinned 2026-10-09 (the owner's second cost list): step 3 of
+// every round template tells the parent to read narrowly (find the site, read
+// the lines around it — the lenses read whole files), and step 4 carries
+// `{{validator_output_note}}`: the validator answers with a decision table
+// keyed by candidate id (`[review] validate_compact`, on by default). The fixture
+// PR's sweep groups hold up to 8 files (was 5). Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "f370d5f65106e8ed0c9a0ca165a64aaf910cdef5c6f471f8277bf3842aabe428",
-  "re-review": "36e76f3a552030ecdf9230c2d80b07d1183906646d8ec8ca380545853f89d38f",
-  staleness: "99fe6265b3eb031a7c23b33c7deab43eecd3035723b02f591554160d7e3412a6",
+  first: "5180d84b459ecdda74d0400bc291d4192faa7c0bce764b620088f5be5c247680",
+  "re-review": "876d45e1f40443bfe7e8237e93d27fd9c017266ff4fe37d095a07ef9310b2733",
+  staleness: "d4a5cf65b6bd961aaf8deaf733e0e0af50bd46adb738e44a7456b064867ce86e",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -370,10 +388,16 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // policy), the templates list what the policy always refuses and forbid reading
 // the daemon's scripts for formats; under render_outputs the note hands the
 // decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
+// Re-pinned 2026-10-09 (the owner's second cost list): step 3 of
+// every round template tells the parent to read narrowly (find the site, read
+// the lines around it — the lenses read whole files), and step 4 carries
+// `{{validator_output_note}}`: the validator answers with a decision table
+// keyed by candidate id (`[review] validate_compact`, on by default). The fixture
+// PR's sweep groups hold up to 8 files (was 5). Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "458c329083eb4df22d167a7bc3ab0b7eeddaa0e7cb623aefa94911a51987a892",
-  "re-review": "519d70354964a35fa87eb4958cd80ec68f25b0ee64ca0eb8d4cfda3dc7f18030",
-  staleness: "911e51a65fb2602143fdeeb603178f3b5b0c79c67fffafcb5ec91bbc7ef38e5d",
+  first: "498182a29e35f2e55a6a10df0e6b7b81b983df45f385592b1e042d7946f3979f",
+  "re-review": "696f32d9d2ff5c0d0354f47808c59ded99f4bfaf42feff8e32c5eea0667a7494",
+  staleness: "fa9df9f27d682c909c1ba8c19e6fadad0637d912bfa83412b3649afb804cd546",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after
@@ -427,7 +451,10 @@ const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): suppression rebalance — exclusions rephrased as scoped reporting rules (report X / X belongs to lens Z) where the meaning allows
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): self-review fixes — external-semantics question as a P3 demotion (reachability untouched) and the slip rule restored to its deliberate-token exclusion
-const GOLDEN_AGENTS_NO_DEDUP = "e1a495f212d46f32de9b2f50c494d99872baff617ba3996e97d110d9f7b7092b";
+// Re-pinned 2026-10-09: the validator carries the
+// `validate-compact-output` addendum (`[review] validate_compact`, on by
+// default) — it answers with a decision table instead of restating survivors.
+const GOLDEN_AGENTS_NO_DEDUP = "7aa60e49ced7c752a1b569d086d2d1d85661f929773e89887e69e5c184486e14";
 //   → (round 7, docs/duplicate-merge.md) `dedup-group-validate` (pass-validate,
 //     `[review] dedup_merge` on by default) and the default profile's posting
 //     addendum for `repeat_sites = false`. Off + no policy = the pin above.
@@ -449,4 +476,7 @@ const GOLDEN_AGENTS_NO_DEDUP = "e1a495f212d46f32de9b2f50c494d99872baff617ba3996e
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): ratified reseeds — validator doubts unverifiable/low-confidence candidates; baseline drops the duplicate-fix scan and reads test vacuity; data-safety folds in its no-exec rule; pass-common schema completed; seed doc headers, dated owner asides and stack names removed
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): suppression rebalance — exclusions rephrased as scoped reporting rules (report X / X belongs to lens Z) where the meaning allows
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): self-review fixes — external-semantics question as a P3 demotion (reachability untouched) and the slip rule restored to its deliberate-token exclusion
-const GOLDEN_AGENTS = "389f35248388735de9fb6038c42765fe3c779f7fef9a71446685891bbc8dffaf";
+// Re-pinned 2026-10-09: the validator carries the
+// `validate-compact-output` addendum (`[review] validate_compact`, on by
+// default) — it answers with a decision table instead of restating survivors.
+const GOLDEN_AGENTS = "fd698961d44bc7330a235a39ca65a88169b862e5d30187be779ae716a97c439b";

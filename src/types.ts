@@ -120,6 +120,30 @@ export interface PassPlanEntry {
   focus?: string[];
 }
 
+/** One prior open finding as a lens's task file carries it (A6). */
+export interface PriorTaskEntry {
+  /** `<round_no>:<finding_key>` — the ref the session reports. */
+  ref: string;
+  /** `path:line`, or `(no anchor)`. */
+  where: string;
+  /** Posted tag and severity, e.g. `[blocker] P1`. */
+  tag: string;
+  /** The lens(es) that raised it. */
+  lens: string;
+  title: string;
+  /** Its file has no change since the last review (not in the delta). */
+  unchanged: boolean;
+  /** The last round's report left it open (or it was posted then). */
+  held_last_round: boolean;
+}
+
+/** The prior findings the daemon put into one plan row's task file. */
+export interface PriorAssignment {
+  /** Index into `pass_plan`. */
+  row: number;
+  priors: PriorTaskEntry[];
+}
+
 export interface RoundRecoveryContext {
   /** Only the exact, pre-publication stage is eligible for automatic replay. */
   stage: "first_pass_start";
@@ -263,6 +287,10 @@ export interface RoundOrder {
    * candidates with the `cluster_findings` tool before the validator. Absent
    * ⇒ the order renders exactly as before. */
   dedup_merge?: boolean;
+  /** `[review] validate_compact` (A1): the validator answers with a
+   * decision table keyed by candidate id. Absent ⇒ the order renders exactly
+   * as before. */
+  validate_compact?: boolean;
   /** `[review] coverage_check` (src/coverage.ts): the changed non-test
    * source files the round holds itself to — after the lenses, the ones no
    * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ the
@@ -281,6 +309,11 @@ export interface RoundOrder {
    * (src/priorfindings.ts `renderPriorFindingsNote`), as
    * `{{prior_findings_note}}`. */
   prior_findings_note?: string;
+  /** (A6): the listed prior findings, each already assigned to the
+   * plan row that owns it and written into that row's task file
+   * (src/priorfindings.ts `assignPriorFindings`). Absent ⇒ the session
+   * assigns them through `launch_plan`'s `extra`, as before. */
+  prior_assignments?: PriorAssignment[];
   /** The pre-approval sweep's plan — present only when the sweep is owed
    * this round. Never part of `pass_plan`/`lenses`: it runs only when the
    * round would approve. Rendered as `{{sweep_note}}`. */

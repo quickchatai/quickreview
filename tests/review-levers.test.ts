@@ -470,7 +470,8 @@ describe("buildPassPlan with the levers", () => {
 
   it("the order lists each lens once even with several sweep rows", () => {
     const cfg = withLevers({ sweep: true, sweep_max_groups: 6 });
-    const many = Array.from({ length: 7 }, (_, i) => file(`src/f${i}.ts`, ["x();"]));
+    // More files than one sweep group holds (`sweep_group_files`, 8).
+    const many = Array.from({ length: 10 }, (_, i) => file(`src/f${i}.ts`, ["x();"]));
     const row = { number: 7, title: "t", head_sha: "h" } as unknown as PrStateRow;
     const order = buildRoundOrder({
       cfg,

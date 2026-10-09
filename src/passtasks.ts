@@ -33,6 +33,7 @@ import {
   type RoundLessonDelivery,
 } from "./memory/delivery.js";
 import { VALIDATOR_LENS } from "./memory/selection.js";
+import { renderPriorTaskSection } from "./priortasks.js";
 import type { PassPlanEntry, RoundOrder } from "./types.js";
 
 /** A rendered task: the file name (row-ordered, so two rows of one agent stay
@@ -164,6 +165,9 @@ export function renderPassTask(
   p: PassPlanEntry,
   gateNotes: string,
   lessons?: { lessons: readonly DeliveredLesson[]; repo: string },
+  /** The row's index in `pass_plan` — selects its assigned prior findings
+   * (A6). */
+  row?: number,
 ): string {
   const L: string[] = [];
   L.push(`# Lens task — PR #${order.pr}: ${promptTitle(order.title)}`);
@@ -208,6 +212,13 @@ export function renderPassTask(
       "The launch message may name prior findings assigned to you: verify each one mechanically at this head and report its status (`fixed`, `open`, `obsolete`, `unverifiable`) with evidence BEFORE looking for anything new.",
     );
     L.push("");
+    // (A6): the daemon's assignment — this row's prior findings.
+    const mine = order.prior_assignments?.find((a) => a.row === row)?.priors ?? [];
+    const section = renderPriorTaskSection(mine);
+    if (section) {
+      L.push(section);
+      L.push("");
+    }
   }
   L.push("## What the PR says about itself");
   L.push("");
@@ -273,6 +284,7 @@ export function renderPassTasks(
           p,
           gateNotes,
           mine && mine.length > 0 ? { lessons: mine, repo: lessons!.repo } : undefined,
+          row,
         ),
       };
     });
@@ -353,7 +365,10 @@ export function taskDirOf(files: ReadonlyArray<{ path: string }>): string {
  * directory (extensions/subagents.ts) — the one-turn launch made structural;
  * the hand-written per-row `subagent` calls are the fallback only. */
 export function renderPassTaskNote(
-  order: Pick<RoundOrder, "pass_plan" | "pass_task_files" | "scope" | "delta">,
+  order: Pick<
+    RoundOrder,
+    "pass_plan" | "pass_task_files" | "scope" | "delta" | "prior_assignments"
+  >,
 ): string {
   const files = order.pass_task_files;
   if (!files || files.length === 0) return "";
@@ -378,18 +393,29 @@ export function renderPassTaskNote(
         "the PR's diff range, the PR text, the row's focus or reason, SETTLED, the",
         `gate notes) to a file in \`${dir}\`.`,
       ];
-  const extra = followUp
+  const assigned = followUp && (order.prior_assignments?.length ?? 0) > 0;
+  const extra = assigned
     ? [
-        "`extra` carries, keyed by the row number, **the prior findings step 1",
-        "assigned to that lens** (title, `path:line`, the round it was raised in) with",
-        "the instruction to verify each first, and optionally a few lines of added",
-        "focus — it is appended after the row's pointer.",
+        "**The listed prior findings are already in their lenses' task files** —",
+        "the daemon assigned each to the planned lens that owns it (the lens that",
+        "raised it when planned, else pass-baseline), and each such lens answers",
+        "with one `PRIOR <ref> <status> — <evidence>` line per finding. Do not",
+        "repeat them in `extra`. `extra`, keyed by the row number, carries only a",
+        "finding your LEDGER holds that the list does not, assigned the same way,",
+        "and optionally a few lines of added focus — appended after the row's pointer.",
       ]
-    : [
-        "`extra` (optional), keyed by the row number, appends a few lines of added",
-        "focus after the row's pointer: a site, a question, a prior open finding",
-        "this lens must verify first.",
-      ];
+    : followUp
+      ? [
+          "`extra` carries, keyed by the row number, **the prior findings step 1",
+          "assigned to that lens** (title, `path:line`, the round it was raised in) with",
+          "the instruction to verify each first, and optionally a few lines of added",
+          "focus — it is appended after the row's pointer.",
+        ]
+      : [
+          "`extra` (optional), keyed by the row number, appends a few lines of added",
+          "focus after the row's pointer: a site, a question, a prior open finding",
+          "this lens must verify first.",
+        ];
   return [
     "",
     ...intro,

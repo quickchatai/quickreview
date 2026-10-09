@@ -35,6 +35,7 @@ import {
   selectSubLenses,
   SWEEP_PASS,
   sweepGroups,
+  isLightSweepFile,
   baselineGroups,
   baselineSplitLines,
   BEHAVIOUR_DELTA_PASS,
@@ -99,13 +100,15 @@ import type {
   LedgerCarry,
   PassPlanEntry,
   PassTier,
+  PriorAssignment,
   RoundDelta,
   RoundOrder,
   RoundRecoveryContext,
   RoundType,
   SessionHooks,
 } from "./types.js";
-import { preparePriorFindings } from "./priorfindings.js";
+import { preparePriorFindings, type PriorFindingsList } from "./priorfindings.js";
+import { assignPriorFindings } from "./priortasks.js";
 import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./worktrees.js";
 
 /** The slice of GitHubAdapter dispatch needs — all mutations are gated inside
@@ -1143,14 +1146,27 @@ export function buildPassPlan(
       cfg.review.sweep_wide_files,
     );
     sweep_unswept = unswept;
-    const rows = groups.map((focus): PassPlanEntry => ({
-      lens: SWEEP_PASS,
-      agent: `${SWEEP_PASS}--${sweepTier}`,
-      tier: sweepTier,
-      raisable_to: pins[SWEEP_PASS] !== undefined ? [] : raisableFrom(SWEEP_PASS, sweepTier),
-      why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one`,
-      focus,
-    }));
+    // (H2, `[review] sweep_light_tier`): a row holding no production
+    // code — tests, prose, config/data only — runs at the light tier when it
+    // is below the sweep's own (the profile's floor still applies).
+    const light = cfg.review.sweep_light_tier
+      ? flooredTier(cfg.lenses, SWEEP_PASS, cfg.review.sweep_light_tier)
+      : undefined;
+    const lightApplies =
+      light !== undefined && PASS_TIER_ORDER.indexOf(light) < PASS_TIER_ORDER.indexOf(sweepTier);
+    const rows = groups.map((focus): PassPlanEntry => {
+      const isLight = lightApplies && focus.every(isLightSweepFile);
+      const tier = isLight ? light! : sweepTier;
+      return {
+        lens: SWEEP_PASS,
+        agent: `${SWEEP_PASS}--${tier}`,
+        tier,
+        raisable_to:
+          pins[SWEEP_PASS] !== undefined && !isLight ? [] : raisableFrom(SWEEP_PASS, tier),
+        why: `every changed line of ${focus.length === 1 ? focus[0] : `${focus.length} changed files`}, read one by one${isLight ? " (tests, prose or config only: the light tier, [review] sweep_light_tier)" : ""}`,
+        focus,
+      };
+    });
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
     pass_plan.splice(at, 0, ...rows);
   }
@@ -1640,6 +1656,10 @@ export function buildRoundOrder(args: {
     delta: RoundDelta;
     deltaFiles: PrFileEntry[];
     priorFindingsNote: string;
+    /** The listed prior findings (A6): each is assigned to the plan
+     * row that owns it and written into that row's task file. Absent (the
+     * list could not be assembled) ⇒ the session assigns them, as before. */
+    priorFindings?: Pick<PriorFindingsList, "findings" | "round_no">;
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
   };
@@ -1693,6 +1713,11 @@ export function buildRoundOrder(args: {
     ...(args.cfg.review?.dedup_merge && pass_plan.some((p) => p.lens === "pass-validate")
       ? { dedup_merge: true }
       : {}),
+    // `[review] validate_compact` (src/templates.ts
+    // renderValidatorOutputNote): only when the plan has a validator.
+    ...(args.cfg.review?.validate_compact && pass_plan.some((p) => p.lens === "pass-validate")
+      ? { validate_compact: true }
+      : {}),
     // `[review] coverage_check` (src/coverage.ts): only when the plan has a
     // sweep to launch for the uncovered files and there is a file to hold it to.
     ...(() => {
@@ -1738,6 +1763,16 @@ export function buildRoundOrder(args: {
           scope: "delta" as const,
           delta: args.followUp.delta,
           prior_findings_note: args.followUp.priorFindingsNote,
+          ...((): { prior_assignments?: PriorAssignment[] } => {
+            const list = args.followUp.priorFindings;
+            if (!list || list.findings.length === 0) return {};
+            const assigned = assignPriorFindings(
+              list,
+              pass_plan,
+              new Set(args.followUp.delta.files.map((f) => f.path)),
+            );
+            return assigned.length > 0 ? { prior_assignments: assigned } : {};
+          })(),
           ...(args.followUp.sweepPlan && args.followUp.sweepPlan.length > 0
             ? {
                 sweep_plan: args.followUp.sweepPlan,
@@ -2387,6 +2422,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
                 delta: roundDelta,
                 deltaFiles: followUp.deltaFiles,
                 priorFindingsNote,
+                ...(priorFindings?.list ? { priorFindings: priorFindings.list } : {}),
                 ...(followUp.sweepPlan ? { sweepPlan: followUp.sweepPlan } : {}),
                 ...(followUp.sweepUnswept ? { sweepUnswept: followUp.sweepUnswept } : {}),
               },

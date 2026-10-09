@@ -93,9 +93,11 @@ describe("defaults reproduce today's review", () => {
 
   it("the default config addenda and the default model map are unchanged", () => {
     // + the duplicate merge's validator rule, on by default since round 7 (docs/duplicate-merge.md)
+    // + the validator's decision-table answer, on by default
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
       "validate-demote-not-kill",
       "dedup-group-validate",
+      "validate-compact-output",
     ]);
     // the shipped pins' variants carry the sol-high spec; no other lens is touched
     const pinned = passTierModels(baseCfg.models.pass_tiers, baseCfg.models.tiers);

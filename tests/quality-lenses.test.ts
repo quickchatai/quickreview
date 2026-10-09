@@ -174,6 +174,7 @@ describe("[review] nits — strict by default, open on request", () => {
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
       "validate-demote-not-kill",
       "dedup-group-validate",
+      "validate-compact-output",
     ]);
     expect(renderNitPolicyNote(undefined)).toBe("");
     const open = configAddenda({ nits: "open" });
@@ -211,9 +212,15 @@ describe("the validator demotes a true observation instead of killing it", () =>
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
       "validate-demote-not-kill",
       "dedup-group-validate",
+      "validate-compact-output",
     ]);
     expect(
-      configAddenda({ ...baseCfg.review, validate_demote: false, dedup_merge: false }),
+      configAddenda({
+        ...baseCfg.review,
+        validate_demote: false,
+        dedup_merge: false,
+        validate_compact: false,
+      }),
     ).toEqual([]);
     const cap = addendaForPass(VALIDATE_PASS).find((a) => a.id === "quality-cap-validate")!;
     expect(cap.text).toContain("are NOT kill reasons for them");

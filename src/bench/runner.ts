@@ -72,6 +72,7 @@ import {
   configAddenda,
   identityVars,
   passTierModels,
+  sweepLightVariants,
   PASS_ADDENDA,
 } from "../include.js";
 import { MEMORY_LESS } from "../memory/context.js";
@@ -264,6 +265,9 @@ export interface RunFingerprint {
     /**: the baseline split threshold, recorded only when it differs
      * from the shipped default (2000). */
     baseline_split_lines?: number;
+    /**: set only when the lever is on (H2) or the table is off (A1). */
+    sweep_light_tier?: string;
+    validate_compact?: boolean;
   };
   /**: the profile's resolved per-lens tuning. Absent when untuned, so
    * an untuned run's fingerprint is what it was before per-lens tuning. A
@@ -271,6 +275,9 @@ export interface RunFingerprint {
   lenses?: Record<string, FingerprintLensTuning>;
   /** Per-lens tier pins (`[models.pass_tiers]`) and the risk passes. */
   pass_tiers?: Record<string, string>;
+  /** Per-lens model overrides (`[models.pass_models]`). Absent when
+   * none, so a run without one keeps its fingerprint. */
+  pass_models?: Record<string, string>;
   risk_passes?: string[];
   /** The profile's `[posting]` policy. Absent at today's posting, so a run
    * without one keeps its fingerprint. */
@@ -311,6 +318,9 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
     tiers: { ...cfg.models.tiers },
     validate_tier: cfg.models.validate_tier,
     pass_tiers: { ...(cfg.models.pass_tiers ?? {}) },
+    ...(Object.keys(cfg.models.pass_models ?? {}).length > 0
+      ? { pass_models: { ...cfg.models.pass_models } }
+      : {}),
     risk_passes: [...cfg.models.risk_passes],
     pi: cfg.pi.version,
     effort: { effort: cfg.models.effort, effort_max: cfg.models.effort_max },
@@ -344,6 +354,8 @@ export function runFingerprint(cfg: Config, profile: string, overrides = ""): Ru
       ...((cfg.review.baseline_split_lines ?? 2000) !== 2000
         ? { baseline_split_lines: cfg.review.baseline_split_lines }
         : {}),
+      ...(cfg.review.sweep_light_tier ? { sweep_light_tier: cfg.review.sweep_light_tier } : {}),
+      ...(cfg.review.validate_compact === false ? { validate_compact: false } : {}),
     },
     ...(Object.keys(cfg.lenses ?? {}).length > 0 ? { lenses: fingerprintLenses(cfg.lenses!) } : {}),
     ...(isDefaultPosting(cfg.posting) ? {} : { posting: { ...cfg.posting! } }),
@@ -397,7 +409,10 @@ export function benchConfig(profile: string): Config {
  */
 /** Config maps whose keys are data rather than schema — `--config` may add a
  * key to them. Every other path must already exist. */
-export const OPEN_MAP_KEYS: ReadonlySet<string> = new Set(["models.pass_tiers"]);
+export const OPEN_MAP_KEYS: ReadonlySet<string> = new Set([
+  "models.pass_tiers",
+  "models.pass_models",
+]);
 /** The config text with `[review] preset` set to `preset` — replaced when the
  * section already names one, inserted under the section header otherwise. */
 export function withPresetInToml(toml: string, preset: ReviewPreset): string {
@@ -533,6 +548,8 @@ export function buildBenchAgents(root: string, cfg: Config): number {
       cfg.models.pass_tiers,
       cfg.models.tiers,
       lensModelOverrides(cfg.models, cfg.lenses),
+      cfg.models.pass_models,
+      sweepLightVariants(cfg.review),
     ),
     addenda: [
       ...PASS_ADDENDA,
@@ -916,6 +933,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
       delta: roundDeltaOf(d, patchPath),
       deltaFiles: d.deltaFiles,
       priorFindingsNote: prior.note,
+      priorFindings: prior.list,
       ...(d.sweepPlan ? { sweepPlan: d.sweepPlan } : {}),
       ...(d.sweepUnswept ? { sweepUnswept: d.sweepUnswept } : {}),
     };

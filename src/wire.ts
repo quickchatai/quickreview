@@ -59,6 +59,7 @@ import {
   lessonAddendaFor,
   identityVars,
   passTierModels,
+  sweepLightVariants,
 } from "./include.js";
 import { ecosystemFor } from "./ecosystem.js";
 import { applyProfileTuning, lensModelOverrides, lensTuningAddenda } from "./lenstuning.js";
@@ -1108,6 +1109,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               cfg.models.pass_tiers,
               cfg.models.tiers,
               lensModelOverrides(cfg.models, cfg.lenses),
+              cfg.models.pass_models,
+              sweepLightVariants(cfg.review),
             ),
             addenda: [
               ...PASS_ADDENDA,

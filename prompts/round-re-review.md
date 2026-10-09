@@ -254,6 +254,13 @@ tests, builds, or package managers — no test runners, no app entrypoints, no
 
 ## 3. Merge
 
+**Read narrowly in the parent.** The lenses and the validator read
+files whole; you do not need to. When you check a candidate, a prior status or
+an anchor yourself, find the site first (`rg -n` for the symbol or the line)
+and read only the lines around it — `sed -n 'A,Bp'`, or `read` with an offset
+and a limit — never a whole file, and never the whole diff again. Everything
+you read stays in this conversation for the rest of the PR.
+
 Same-run candidates merge ONLY when they are the SAME defect: highest severity
 wins; lens tags concatenate. DIFFERENT defects on one `(path,
 changed-line-run)` both survive — fold the lesser into the survivor's body as
@@ -288,7 +295,7 @@ all candidates + the SETTLED list. Only survivors post. Log the kills.
 Its **DOUBTED** block — candidates it could not stand behind (`refuted`,
 `unverifiable`, `bad-anchor`) — is never posted either: record each one as
 `doubted` in the findings record (step 7); a doubt is kept, never dropped.
-{{validator_note}}{{validator_shard_note}}{{dedup_note}}
+{{validator_note}}{{validator_shard_note}}{{dedup_note}}{{validator_output_note}}
 
 ## 5. Decide
 
