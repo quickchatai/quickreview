@@ -68,7 +68,10 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
       }
       if (e.type === "message_end" && e.message?.role === "assistant")
         usd += num(e.message.usage?.cost?.total);
-      else if (e.type === "tool_execution_end" && e.toolName === "subagent")
+      else if (
+        e.type === "tool_execution_end" &&
+        (e.toolName === "subagent" || e.toolName === "launch_plan")
+      )
         for (const r of e.result?.details?.results ?? []) {
           const c = r.usage?.cost;
           usd +=

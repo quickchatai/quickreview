@@ -373,6 +373,7 @@ describe("stripAgentSpawnTools", () => {
       "tools: read, bash, grep\n",
     );
     expect(stripAgentSpawnTools("tools: read, Task, agent, glob\n")).toBe("tools: read, glob\n");
+    expect(stripAgentSpawnTools("tools: read, launch_plan, grep\n")).toBe("tools: read, grep\n");
   });
 
   it("leaves a clean tools line untouched", () => {

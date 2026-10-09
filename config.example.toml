@@ -687,7 +687,9 @@ preset = "default"
 #   wide_lens_fanout — a batched lens launch runs as wide as
 #     [pi] subagent_max_concurrency, not native pi's in-call four;
 #   task_files — the daemon writes each lens's complete task to a file, and
-#     the session launches the lens with a short pointer to it;
+#     the session launches every row with ONE `launch_plan` call over the
+#     round's task dir (extensions/subagents.ts; off ⇒ hand-written
+#     per-row subagent calls, as before);
 #   render_outputs — the review body and inline comments are rendered from
 #     the findings record instead of being written out a second time;
 #   validator_shards — EXPERIMENTAL, off (1), unvalidated: split the

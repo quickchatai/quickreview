@@ -40,7 +40,7 @@ import {
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import {
   applyReviewEffort,
   loadConfig,
@@ -1320,6 +1320,9 @@ export async function reviewCase(
       QCR_SUBAGENT_SCOPE: "project",
       QCR_SUBAGENT_MAX_CONCURRENCY: String(ctx.cfg.pi.subagent_max_concurrency),
       QCR_SUBAGENT_WIDE_FANOUT: ctx.cfg.review?.wide_lens_fanout === false ? "0" : "1",
+      // the case's task dirs are this replay's sanctioned launch_plan
+      // dirs (production's live under state/pr-<n>-round-<k>-passes/).
+      QCR_LAUNCH_PLAN_DIRS: [join(caseDir, "tasks"), join(caseDir, "tasks-sweep")].join(delimiter),
       QCR_SANDBOX_ROOT: o.root,
       QCR_SESSION_NAME: `bench-${safe}`,
       QCR_PR: String(c.pr),

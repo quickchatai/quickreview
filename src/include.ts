@@ -194,7 +194,15 @@ export function applyThinkingOverride(frontmatter: string, thinking: string): st
 /** Tool names that would let a pass launch another agent. Passes are LEAVES
  * (single-shepherd invariant S3): the PR's main pi is the only scheduler of
  * agents, so a nested fan-out is a topology violation, not a capability. */
-const AGENT_SPAWN_TOOLS = new Set(["subagent", "subagents", "task", "agent", "agents", "dispatch"]);
+const AGENT_SPAWN_TOOLS = new Set([
+  "subagent",
+  "subagents",
+  "launch_plan", //: launches the round's lens task files
+  "task",
+  "agent",
+  "agents",
+  "dispatch",
+]);
 
 /**
  * Strip agent-spawning tools from a built variant's `tools:` list.

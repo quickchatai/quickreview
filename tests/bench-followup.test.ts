@@ -525,6 +525,27 @@ describe("stagesFromEvents", () => {
     expect(s.phases.sweep).toMatchObject({ calls: 2, agents: 2, cost: 1, wall_ms: 1000 });
     expect(stagesFromEvents([]).phases.sweep).toMatchObject({ calls: 0, wall_ms: null });
   });
+
+  it("counts a launch_plan call as a lens launch, its agents read from the result", () => {
+    const lines = [
+      msg(1000),
+      JSON.stringify({
+        type: "tool_execution_start",
+        toolCallId: "lp",
+        toolName: "launch_plan",
+        args: { dirs: ["/s/state/pr-1-round-1-passes/tasks"] },
+      }),
+      end("lp", [
+        { agent: "pass-baseline--x", ts: [1100, 1500], usage: { input: 1, output: 1, cost: 0.5 } },
+        { agent: "pass-tests--x", ts: [1100, 1600], usage: { input: 1, output: 1, cost: 0.5 } },
+      ]).replace('"toolName":"subagent"', '"toolName":"launch_plan"'),
+    ];
+    const s = stagesFromEvents(lines);
+    expect(s.calls.map((c) => [c.kind, c.phase, c.agents, c.end_ms])).toEqual([
+      ["lens", "delta", ["pass-baseline--x", "pass-tests--x"], 1600],
+    ]);
+    expect(s.phases.delta.cost).toBeCloseTo(1);
+  });
 });
 
 describe("shell: private sets and the offline prefetch are default-off", () => {

@@ -20,6 +20,7 @@ import type {
   RoundProgressSnapshot,
 } from "../src/round-progress.js";
 import { parseSessionCommandMarker } from "../src/session-command.js";
+import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
 
 /**
  * One subagent's slot in the tool result's `details.results` array.
@@ -89,6 +90,16 @@ function subagentNames(args: Record<string, unknown>): string[] {
     .map(record)
     .map((task) => text(task?.agent))
     .filter((name): name is string => name !== undefined);
+}
+
+/** The agents a `launch_plan` call launches, read at tool START
+ * from the same plan the tool computes — its args name directories, not
+ * agents, and the pre-fanout stall clock must see the fan-out begin exactly as
+ * it sees a `subagent` call's. A plan the tool will refuse names no agent:
+ * nothing launches, so nothing started. */
+function launchPlanNames(args: Record<string, unknown>): string[] {
+  const plan = planLaunch(args);
+  return plan.ok ? plan.units.map((u) => u.agent) : [];
 }
 
 function reviewIdentity(body: string): { round_no: number; head_sha: string } | undefined {
@@ -302,8 +313,8 @@ export default function activate(pi: Pi): void {
     if (!snapshot) return;
     const name = toolName(event);
     const args = toolArgs(event);
-    if (name === "subagent") {
-      const names = subagentNames(args);
+    if (name === "subagent" || name === LAUNCH_PLAN_TOOL) {
+      const names = name === "subagent" ? subagentNames(args) : launchPlanNames(args);
       if (names.length > 0) {
         const at = nowIso();
         const callId = toolId(event);

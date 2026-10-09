@@ -33,6 +33,12 @@ extension, loaded from the installed pi package by `extensions/subagents.ts`;
 the invariant predates and survives the third-party pi-subagents extension it
 replaced.) The main pi is the only scheduler of agents. Passes are
 **leaves**: a pass never launches another agent and never posts to GitHub.
+`launch_plan` (registered by the same glue beside the subagent tool)
+does not change this: the main pi calls it, and it launches the round's
+discovery task files — confined to that round's `tasks/` and `tasks-sweep/`
+dirs, never the validator's — as ONE call through the subagent tool's own
+wrapped execute and semaphore. It exists because the one-turn launch the
+templates asked for was not always made.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
 interleaved with another instruction to the same session. Wakes that arrive

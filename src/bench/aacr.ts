@@ -1275,7 +1275,9 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
       for (const c of awaitingEnd.splice(0)) c.end_ms = ts;
       lastTs = ts;
     }
-    if (e["toolName"] !== "subagent") continue;
+    // `launch_plan` launches lenses through the subagent tool's own
+    // execute; its args name task dirs, so its agents come from the result.
+    if (e["toolName"] !== "subagent" && e["toolName"] !== "launch_plan") continue;
     const id = typeof e["toolCallId"] === "string" ? e["toolCallId"] : null;
     if (e["type"] === "tool_execution_start") {
       const args = (e["args"] ?? {}) as Record<string, unknown>;
@@ -1311,6 +1313,11 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
       const res = e["result"] as Record<string, unknown> | undefined;
       const details = res?.["details"] as Record<string, unknown> | undefined;
       const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
+      // A launch_plan call named no agent at start: its results do.
+      if (call.agents.length === 0)
+        call.agents = results
+          .map((r) => (r as Record<string, unknown> | null)?.["agent"])
+          .filter((a): a is string => typeof a === "string");
       let last: number | null = null;
       for (const r0 of results) {
         const r = (r0 ?? {}) as Record<string, unknown>;

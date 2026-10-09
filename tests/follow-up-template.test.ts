@@ -324,4 +324,21 @@ describe("renderSweepNote", () => {
     });
     expect(note).toContain("| 1 | `pass-security--sol-high` | `/s/tasks/sweep/00-a.md` |");
   });
+
+  it("launches the sweep through launch_plan: in step 2's call when early, alone when late", () => {
+    const files = [{ row: 0, agent: "pass-security--sol-high", path: "/s/p/tasks-sweep/01-a.md" }];
+    const early = renderSweepNote({
+      sweep_plan: SWEEP_PLAN,
+      sweep_task_files: files,
+      sweep_start: "early",
+    });
+    expect(early).toContain("in `/s/p/tasks-sweep`");
+    expect(early).toContain("rides step 2's ONE call");
+    expect(early).toContain("`extra` keyed `sweep:*`");
+    const late = renderSweepNote({ sweep_plan: SWEEP_PLAN, sweep_task_files: files });
+    expect(late).toContain(
+      '`launch_plan({ dirs: ["/s/p/tasks-sweep"], extra: { "sweep:*": … } })`',
+    );
+    expect(late).not.toContain("rides step 2's ONE call");
+  });
 });

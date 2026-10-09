@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -347,6 +347,78 @@ describe("round progress extension", () => {
     try {
       activate({ on() {} } as never);
       expect(() => readFileSync(join(root, "state", "round-progress", "pr-0.json"))).toThrow();
+    } finally {
+      process.env = previous;
+    }
+  });
+});
+
+// a `launch_plan` call names task DIRECTORIES, not agents. The
+// pre-fanout stall clock must still see the fan-out begin at tool START, from
+// the same plan the tool computes; a refused plan starts nothing.
+describe("round progress — launch_plan", () => {
+  it("records the planned agents and the fan-out start at tool start", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-lp-"));
+    dirs.push(root);
+    const tasks = join(root, "state", "pr-5409-round-1-passes", "tasks");
+    mkdirSync(tasks, { recursive: true });
+    writeFileSync(join(tasks, "01-pass-baseline--sol-high.md"), "t");
+    writeFileSync(join(tasks, "02-pass-security--sol-high.md"), "t");
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5409";
+    process.env.QCR_PR = "5409";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("message_start", {
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: `round order\n<!-- qcr-command:cmd-5409:${"b".repeat(64)} -->` },
+          ],
+        },
+      });
+      const path = join(root, "state", "round-progress", "pr-5409.json");
+      await emit("tool_execution_start", {
+        toolName: "launch_plan",
+        toolCallId: "refused",
+        args: { dirs: [join(root, "elsewhere")] },
+      });
+      await emit("tool_execution_end", {
+        toolName: "launch_plan",
+        toolCallId: "refused",
+        isError: true,
+      });
+      expect(JSON.parse(readFileSync(path, "utf8")).fanout_started_at).toBeUndefined();
+
+      await emit("tool_execution_start", {
+        toolName: "launch_plan",
+        toolCallId: "plan-1",
+        args: { dirs: [tasks] },
+      });
+      const running = JSON.parse(readFileSync(path, "utf8"));
+      expect(running.fanout_started_at).toEqual(expect.any(String));
+      expect(running.agents.map((a: { agent: string }) => a.agent)).toEqual([
+        "pass-baseline--sol-high",
+        "pass-security--sol-high",
+      ]);
+      expect(
+        roundExecutionStage(parseRoundProgress(JSON.stringify(running))!, [
+          "pass-baseline",
+          "pass-security",
+          "pass-validate",
+        ]),
+      ).toBe("fanout-started");
     } finally {
       process.env = previous;
     }

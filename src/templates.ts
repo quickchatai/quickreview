@@ -4,7 +4,7 @@
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
 import { stripModelDocs } from "./promptdoc.js";
-import { renderDeltaNote, renderPassTaskNote } from "./passtasks.js";
+import { renderDeltaNote, renderPassTaskNote, taskDirOf } from "./passtasks.js";
 
 export { renderDeltaNote };
 import { renderRenderNote } from "./reviewrender.js";
@@ -539,11 +539,26 @@ export function renderSweepNote(
   const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [])];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
+    // the sweep launches through `launch_plan` too — with step 2's
+    // rows in one call when it starts early, alone when it is late.
+    const dir = taskDirOf(files);
     out.push(
       "",
-      "The sweep's task files are written: launch each row with its pointer as the",
-      "whole task — `Task file: <path>. Read it first; it is your complete task.` —",
-      "followed by the already-known findings it must not re-raise.",
+      `The sweep's task files are written, in \`${dir}\`. Launch them through`,
+      "`launch_plan`, never by hand-written task strings: each row gets its pointer",
+      "as the whole task — `Task file: <path>. Read it first; it is your complete",
+      "task.` — and `extra` keyed `sweep:*` carries the already-known findings",
+      "every sweep row must not re-raise (`sweep:<row>` for one row).",
+      ...(order.sweep_start === "early"
+        ? [
+            "Starting early, it rides step 2's ONE call: `dirs` names the round's task",
+            `directory AND \`${dir}\`.`,
+          ]
+        : [
+            `Late, it is its own call: \`launch_plan({ dirs: ["${dir}"], extra: { "sweep:*": … } })\`.`,
+          ]),
+      "Raised and added sweep rows go through `subagent` in the same turn; only if",
+      "`launch_plan` is unavailable or errs, launch every row through `subagent`.",
       "",
       "| row | subagent | task file |",
       "| --- | --- | --- |",

@@ -163,8 +163,8 @@ describe("the plan lists its rows slowest first", () => {
         ...order,
         pass_task_files: tasks.map((t) => ({ row: t.row, agent: t.agent, path: t.path })),
       });
-      expect(note).toContain("Launch the rows in the");
-      expect(note).toContain("slowest first");
+      expect(note).toContain("in the table's order (the daemon");
+      expect(note).toContain("lists the slowest first");
     });
   });
 });

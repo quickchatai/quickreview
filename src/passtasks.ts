@@ -23,7 +23,7 @@
 // task string it writes. With no lessons (every `off`/`shadow` round, the
 // bench) not one byte of a task file changes.
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
 import {
   renderLensLessonsSection,
@@ -317,51 +317,71 @@ export function writeLessonFiles(dir: string, d: RoundLessonDelivery): RoundLess
   };
 }
 
+/** The directory a round's task files sit in — what `launch_plan` takes. */
+export function taskDirOf(files: ReadonlyArray<{ path: string }>): string {
+  return files.length > 0 ? dirname(files[0]!.path) : "";
+}
+
 /** The round prompt's `{{pass_task_note}}`: "" when the order carries no task
- * files (the knob off), so the round order renders exactly as before. */
+ * files (the knob off), so the round order renders exactly as before.
+ *
+ * the rows launch through ONE `launch_plan` call over the task
+ * directory (extensions/subagents.ts) — the one-turn launch made structural;
+ * the hand-written per-row `subagent` calls are the fallback only. */
 export function renderPassTaskNote(
   order: Pick<RoundOrder, "pass_plan" | "pass_task_files" | "scope" | "delta">,
 ): string {
   const files = order.pass_task_files;
   if (!files || files.length === 0) return "";
   const rows = files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`);
+  const dir = taskDirOf(files);
   // a follow-up round's task files already carry the change since
-  // the last review; what the session still appends is each lens's assigned
+  // the last review; what the session still adds is each lens's assigned
   // prior findings (step 1), which only it knows.
-  if (order.scope === "delta" && order.delta)
-    return [
-      "",
-      "**Task files — this round's lens tasks are already written.** The daemon",
-      "wrote each discovery row's complete, self-contained task (worktree, head,",
-      "the change since the last review — its files, line ranges and patch — as",
-      "the review scope, the whole PR's diff range as context, the PR text, the",
-      "row's focus or reason, SETTLED, the gate notes) to a file. Do NOT write the",
-      "rest of a task string out: launch every row with its pointer —",
-      "`Task file: <path>. Read it first; it is your complete task.` — followed by",
-      "**the prior findings step 1 assigned to that lens** (title, `path:line`, the",
-      "round it was raised in), with the instruction to verify each first, and",
-      "optionally a few lines of added focus. A raised tier calls the higher",
-      "variant with the same file. An ADDED lens has no file: write its task",
-      "string as step 2 describes. Launch the rows in the table's order: the",
-      "daemon lists the slowest first, so they start in the first wave.",
-      "",
-      "| row | subagent | task file |",
-      "| --- | --- | --- |",
-      ...rows,
-    ].join("\n");
+  const followUp = order.scope === "delta" && order.delta !== undefined;
+  const intro = followUp
+    ? [
+        "**Task files — this round's lens tasks are already written.** The daemon",
+        "wrote each discovery row's complete, self-contained task (worktree, head,",
+        "the change since the last review — its files, line ranges and patch — as",
+        "the review scope, the whole PR's diff range as context, the PR text, the",
+        "row's focus or reason, SETTLED, the gate notes) to a file in",
+        `\`${dir}\`.`,
+      ]
+    : [
+        "**Task files — this round's lens tasks are already written.** The daemon",
+        "wrote each discovery row's complete, self-contained task (worktree, head,",
+        "the PR's diff range, the PR text, the row's focus or reason, SETTLED, the",
+        `gate notes) to a file in \`${dir}\`.`,
+      ];
+  const extra = followUp
+    ? [
+        "`extra` carries, keyed by the row number, **the prior findings step 1",
+        "assigned to that lens** (title, `path:line`, the round it was raised in) with",
+        "the instruction to verify each first, and optionally a few lines of added",
+        "focus — it is appended after the row's pointer.",
+      ]
+    : [
+        "`extra` (optional), keyed by the row number, appends a few lines of added",
+        "focus after the row's pointer: a site, a question, a prior open finding",
+        "this lens must verify first.",
+      ];
   return [
     "",
-    "**Task files — this round's lens tasks are already written.** The daemon",
-    "wrote each discovery row's complete, self-contained task (worktree, head,",
-    "the PR's diff range, the PR text, the row's focus or reason, SETTLED, the",
-    "gate notes) to a file. Do NOT write task strings out: launch every row with",
-    "its pointer as the whole task — `Task file: <path>. Read it first; it is",
-    "your complete task.` — optionally followed by a few lines of added focus",
-    "(a site, a question, a prior open finding this lens must verify first).",
-    "A raised tier calls the higher variant with the same file. An ADDED lens",
-    "has no file: write its task string as before. Launch the rows in the",
-    "table's order: the daemon lists the slowest first, so they start in the",
-    "first wave.",
+    ...intro,
+    "",
+    `**Launch them with ONE \`launch_plan\` call:** \`launch_plan({ dirs: ["${dir}"] })\``,
+    "launches every discovery row below at once, in the table's order (the daemon",
+    "lists the slowest first), each with its pointer as the whole task —",
+    "`Task file: <path>. Read it first; it is your complete task.` — and never",
+    "pass-validate. Do NOT write task strings out for these rows.",
+    ...extra,
+    "A row you RAISE goes in `skip` and is launched through `subagent` at the",
+    "higher variant with the same pointer; an ADDED lens has no file — write its",
+    "task string and launch it through `subagent`. Both in the SAME turn as the",
+    "`launch_plan` call. Only if `launch_plan` is unavailable or answers with an",
+    "error, launch every row through `subagent` with its pointer (plus what",
+    "`extra` would have carried), all in that one turn, in the table's order.",
     "",
     "| row | subagent | task file |",
     "| --- | --- | --- |",

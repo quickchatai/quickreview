@@ -130,7 +130,13 @@ describe("renderPassTaskNote", () => {
     );
     expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
     expect(note).toContain("Do NOT write task strings out");
-    expect(note).toContain("An ADDED lens");
+    expect(note).toContain("an ADDED lens");
+    // ONE launch_plan call over the task directory; per-row subagent
+    // calls only as the fallback.
+    expect(note).toContain('`launch_plan({ dirs: ["/s/tasks"] })`');
+    expect(note).toContain("`Task file: <path>. Read it first; it is your complete task.`");
+    expect(note).toMatch(/goes in `skip`/);
+    expect(note).toMatch(/Only if `launch_plan` is unavailable or answers with an\nerror/);
   });
 });
 
@@ -188,8 +194,11 @@ describe("a follow-up round's task files", () => {
       ...followUp(),
       pass_task_files: [{ row: 0, agent: "pass-baseline--sol-med", path: "/s/tasks/01.md" }],
     });
-    expect(note).toContain("the prior findings step 1 assigned to that lens");
+    expect(note.replaceAll("\n", " ")).toContain(
+      "**the prior findings step 1 assigned to that lens**",
+    );
+    expect(note).toContain("`extra` carries, keyed by the row number");
+    expect(note).toContain('`launch_plan({ dirs: ["/s/tasks"] })`');
     expect(note).toContain("| 1 | `pass-baseline--sol-med` | `/s/tasks/01.md` |");
-    expect(note).not.toContain("Do NOT write task strings out");
   });
 });

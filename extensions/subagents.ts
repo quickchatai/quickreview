@@ -41,6 +41,11 @@
 //     state/agents on the VM, docker/companion/agents in the companion) and
 //     forces `confirmProjectAgents: false` (never an interactive modal).
 //
+// Beside the wrapped subagent tool the glue registers `launch_plan` (,
+// below): the round's discovery task files launched as ONE call through the
+// same wrapped execute, so the one-turn launch the round templates ask for is
+// one tool call rather than a discipline.
+//
 // What stays structural without any glue: children never gain the `subagent`
 // tool (this extension rides per-spawn argv, never the global settings.json,
 // and children load only global extensions), so a pass cannot fan out — the
@@ -66,7 +71,8 @@
 //    simply never registered and the round templates' "Unknown agent = STOP"
 //    rule holds — logged FATAL below, never a crashed pi.
 import type { Pi, PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { join } from "node:path";
+import { readdirSync, realpathSync } from "node:fs";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 /** Env var pinning the discovery scope. "user" (default) reads ONLY
  * ~/.pi/agent/agents — repo-controlled `.pi/agents` dirs are unreachable no
@@ -414,6 +420,321 @@ async function runWide(
   };
 }
 
+// ---------------------------------------------------------------------------
+// launch_plan — the one-turn discovery launch, made structural.
+//
+// The round templates have always asked the PR's main session to launch every
+// discovery row in ONE assistant turn. Live rounds show it often did not: in
+// 6 of 12 studied rounds the session launched one lens per turn (fan-out
+// 850–1,740 s instead of ~150–220 s) or launched pass-baseline alone and
+// waited, and every round spent 20–150 s hand-writing 20-odd near-identical
+// subagent calls whose whole task is a pointer to the task file the daemon
+// already wrote (`[review] task_files`, src/passtasks.ts). `launch_plan`
+// reads the round's task directory and launches every discovery task file in
+// it as ONE `tasks:[…]` call through the SAME wrapped execute the subagent
+// tool runs — the same sanitizer, the same process-wide semaphore, the same
+// wide fan-out — so the result is exactly what the subagent tool returns and
+// the session merges it as before.
+//
+// Still the main session's act (root rule 9): the session calls the tool; the
+// daemon schedules nothing. Bounded on purpose:
+//  - only a round's sanctioned task dirs — `<sandbox root>/state/pr-<n>-round-
+//    <k>-passes/tasks` (the plan) and `…/tasks-sweep` (the owed pre-approval
+//    sweep), or the pass dir itself, which means its `tasks` — every path
+//    resolved through symlinks first; the bench names its case dirs exactly in
+//    QCR_LAUNCH_PLAN_DIRS (the session cannot set its own environment);
+//  - only regular files named as passtasks.ts names them (`NN-<agent>.md`), so
+//    a symlink planted in the dir is never followed;
+//  - never the validator (`pass-validate…`): it runs after discovery, over
+//    the candidates, and has no task file anyway — excluded here as a belt;
+//  - no cwd and no free-form agent: each unit is the row's file-named agent
+//    and the pointer the templates prescribe, plus optional `extra` text the
+//    session keys to a row (a prior finding to verify, a site to look at).
+// Rows the session RAISES are named in `skip` and launched through the
+// subagent tool in the same turn; rows it ADDS have no file and go there too.
+
+/** The tool's name, as the round templates spell it. */
+export const LAUNCH_PLAN_TOOL = "launch_plan";
+
+/** Env var naming EXTRA sanctioned task dirs, exactly, separated by the
+ * platform path delimiter — the bench's `<case>/tasks` and `<case>/tasks-sweep`
+ * (src/bench/runner.ts). Production never sets it. */
+export const LAUNCH_PLAN_DIRS_ENV = "QCR_LAUNCH_PLAN_DIRS";
+
+/** A round's pass directory, as dispatch.ts names it. */
+const PASSES_DIR_RE = /^pr-\d+-round-\d+-passes$/;
+/** A task file, as passtasks.ts names it: the 1-based row, then the agent. */
+const TASK_FILE_RE = /^(\d{2,})-([a-z0-9][a-z0-9-]*)\.md$/;
+/** The validator's agent ids — `pass-validate` and its tier variants. */
+const VALIDATOR_AGENT_RE = /^pass-validate(--|$)/;
+
+/** The pointer a task-file launch carries — the exact words the round
+ * templates prescribe (src/passtasks.ts renderPassTaskNote). */
+export function taskPointer(path: string): string {
+  return `Task file: ${path}. Read it first; it is your complete task.`;
+}
+
+/** One unit of a planned launch. */
+export interface LaunchUnit {
+  /** "plan" for the round's tasks dir, "sweep" for the sweep's. */
+  phase: "plan" | "sweep";
+  /** 1-based row, as the plan tables print it. */
+  row: number;
+  agent: string;
+  file: string;
+  path: string;
+  task: string;
+}
+
+export type LaunchPlan =
+  { ok: true; units: LaunchUnit[]; skipped: LaunchUnit[] } | { ok: false; error: string };
+
+function realDir(path: string): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The extra sanctioned dirs from the environment, each resolved; one that
+ * does not exist sanctions nothing. */
+function sanctionedExtras(env: Record<string, string | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const raw of (env[LAUNCH_PLAN_DIRS_ENV] ?? "").split(delimiter)) {
+    const p = raw.trim();
+    if (!p || !isAbsolute(p)) continue;
+    const real = realDir(p);
+    if (real) out.add(real);
+  }
+  return out;
+}
+
+/** Resolve one `dirs` entry to a sanctioned task dir, or say why not. */
+function resolveTaskDir(
+  input: string,
+  realRoot: string,
+  extras: ReadonlySet<string>,
+): { dir: string; phase: "plan" | "sweep"; passes: string | undefined } | { error: string } {
+  const real = realDir(resolve(realRoot, input));
+  if (!real) return { error: `${input}: no such directory` };
+  const state = join(realRoot, "state");
+  if (dirname(real) === state && PASSES_DIR_RE.test(basename(real))) {
+    // The round's pass dir: its plan tasks. The sweep's dir is named itself.
+    const tasks = realDir(join(real, "tasks"));
+    if (!tasks || tasks !== join(real, "tasks"))
+      return { error: `${input}: the round has no task files (no tasks/ directory)` };
+    return { dir: tasks, phase: "plan", passes: real };
+  }
+  const name = basename(real);
+  if (
+    (name === "tasks" || name === "tasks-sweep") &&
+    dirname(dirname(real)) === state &&
+    PASSES_DIR_RE.test(basename(dirname(real)))
+  )
+    return { dir: real, phase: name === "tasks" ? "plan" : "sweep", passes: dirname(real) };
+  if (extras.has(real))
+    return { dir: real, phase: name === "tasks-sweep" ? "sweep" : "plan", passes: undefined };
+  return {
+    error: `${input}: not a round's task directory (only state/pr-<n>-round-<k>-passes/tasks or …/tasks-sweep)`,
+  };
+}
+
+/** The discovery task files of one dir, in row order (= the daemon's launch
+ * order). Regular files only: a symlink is never followed. */
+function listTaskFiles(dir: string): Array<{ row: number; agent: string; file: string }> {
+  const out: Array<{ row: number; agent: string; file: string }> = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const m = TASK_FILE_RE.exec(entry.name);
+    if (!m || m[1] === undefined || m[2] === undefined) continue;
+    if (VALIDATOR_AGENT_RE.test(m[2])) continue;
+    out.push({ row: Number.parseInt(m[1], 10), agent: m[2], file: entry.name });
+  }
+  return out.sort((a, b) => a.row - b.row || a.file.localeCompare(b.file));
+}
+
+/** The keys a unit answers to in `extra` and `skip`: its file name (with or
+ * without `.md`), its row (`3`, or `sweep:3` for a sweep row), its agent, its
+ * phase's wildcard (`plan:*` / `sweep:*`) and `*`. */
+export function unitKeys(u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent">): string[] {
+  const row = u.phase === "sweep" ? `sweep:${u.row}` : String(u.row);
+  return [u.file, u.file.replace(/\.md$/, ""), row, u.agent, `${u.phase}:*`, "*"];
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (value === undefined) return [];
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) return undefined;
+  return value as string[];
+}
+
+/**
+ * Plan a launch: resolve and confine the dirs, list their discovery task
+ * files, apply `skip` and `extra`. Pure over the filesystem it reads; never
+ * throws — every refusal is an `{ ok: false }` with the reason.
+ */
+export function planLaunch(
+  params: Record<string, unknown>,
+  env: Record<string, string | undefined> = process.env,
+): LaunchPlan {
+  try {
+    const dirs = stringList(params.dirs ?? params.dir);
+    if (!dirs || dirs.length === 0)
+      return { ok: false, error: "`dirs` must name the round's task directory (one or two paths)" };
+    if (dirs.length > 2)
+      return { ok: false, error: "at most two dirs: the round's tasks and its tasks-sweep" };
+    const skip = stringList(params.skip);
+    if (!skip) return { ok: false, error: "`skip` must be a list of row keys" };
+    const extraRaw = params.extra ?? {};
+    if (typeof extraRaw !== "object" || extraRaw === null || Array.isArray(extraRaw))
+      return { ok: false, error: "`extra` must map a row key to text" };
+    const extra = Object.entries(extraRaw as Record<string, unknown>);
+    if (extra.some(([, v]) => typeof v !== "string"))
+      return { ok: false, error: "`extra` values must be text" };
+
+    const root = env.QCR_SANDBOX_ROOT?.trim() || process.cwd();
+    const realRoot = realDir(root);
+    if (!realRoot) return { ok: false, error: `sandbox root ${root} is not readable` };
+    const extras = sanctionedExtras(env);
+
+    const resolved: Array<{ dir: string; phase: "plan" | "sweep"; passes: string | undefined }> =
+      [];
+    for (const d of dirs) {
+      const r = resolveTaskDir(d, realRoot, extras);
+      if ("error" in r) return { ok: false, error: r.error };
+      if (resolved.some((x) => x.dir === r.dir)) continue;
+      if (resolved.some((x) => x.phase === r.phase))
+        return { ok: false, error: `two ${r.phase} task directories in one launch` };
+      if (resolved.some((x) => x.passes !== r.passes))
+        return { ok: false, error: "the two task directories belong to different rounds" };
+      resolved.push(r);
+    }
+    // Plan rows first, then the sweep's — the daemon's launch order within each.
+    resolved.sort((a, b) => (a.phase === b.phase ? 0 : a.phase === "plan" ? -1 : 1));
+
+    const all: LaunchUnit[] = [];
+    for (const r of resolved) {
+      for (const f of listTaskFiles(r.dir)) {
+        const path = join(r.dir, f.file);
+        all.push({ phase: r.phase, ...f, path, task: taskPointer(path) });
+      }
+    }
+    if (all.length === 0)
+      return {
+        ok: false,
+        error: `no discovery task files in ${resolved.map((r) => r.dir).join(", ")}`,
+      };
+
+    // Every key must hit a row: a typo must never silently drop the prior
+    // findings the session meant to assign, nor launch a row it meant to raise.
+    const hits = (key: string) => all.filter((u) => unitKeys(u).includes(key));
+    for (const key of skip)
+      if (hits(key).length === 0) return { ok: false, error: `skip: no row answers to "${key}"` };
+    for (const [key] of extra)
+      if (hits(key).length === 0) return { ok: false, error: `extra: no row answers to "${key}"` };
+
+    const skipped = all.filter((u) => skip.some((k) => unitKeys(u).includes(k)));
+    const units = all
+      .filter((u) => !skipped.includes(u))
+      .map((u) => {
+        const added = extra
+          .filter(([k]) => unitKeys(u).includes(k))
+          .map(([, v]) => (v as string).trim())
+          .filter((v) => v);
+        return added.length ? { ...u, task: [u.task, ...added].join("\n\n") } : u;
+      });
+    if (units.length === 0) return { ok: false, error: "every row was skipped: nothing to launch" };
+    return { ok: true, units, skipped };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** An error result, never a throw (VERIFY-ON-PIN: pi renders a returned
+ * `isError` result to the model as a failed tool call — the native subagent
+ * tool returns its own failures the same way). */
+function launchError(error: string): Awaited<ReturnType<ToolExecute>> {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `launch_plan: ${error}. Nothing was launched — launch the rows with the subagent tool, all in this one turn.`,
+      },
+    ],
+    details: { launch_plan: { error } },
+    isError: true,
+  } as Awaited<ReturnType<ToolExecute>>;
+}
+
+/** The `launch_plan` tool's execute over the subagent tool's WRAPPED execute
+ * (sanitizer + semaphore + wide fan-out): one `tasks:[…]` call. */
+export function launchPlanExecute(
+  wrapped: ToolExecute,
+  env: Record<string, string | undefined> = process.env,
+): ToolExecute {
+  return async function launchPlan(this: unknown, id, params, signal, onUpdate, ctx) {
+    const plan = planLaunch(params ?? {}, env);
+    if (!plan.ok) return launchError(plan.error);
+    const tasks = plan.units.map((u) => ({ agent: u.agent, task: u.task }));
+    const result = await wrapped.call(this, id, { tasks }, signal, onUpdate, ctx);
+    const summary = {
+      launched: plan.units.map((u) => ({ phase: u.phase, row: u.row, agent: u.agent })),
+      skipped: plan.skipped.map((u) => ({ phase: u.phase, row: u.row, agent: u.agent })),
+    };
+    return { ...result, details: { ...result.details, launch_plan: summary } };
+  };
+}
+
+/** The `launch_plan` tool definition. Parameters are plain JSON Schema
+ * (VERIFY-ON-PIN: equivalent to TypeBox at runtime — pi-api.d.ts). */
+export function launchPlanDefinition(
+  wrapped: ToolExecute,
+  env: Record<string, string | undefined> = process.env,
+): PiToolDefinition {
+  return {
+    name: LAUNCH_PLAN_TOOL,
+    label: "Launch plan",
+    description:
+      "Launch EVERY discovery lens of this review round in one call, from the task files the daemon wrote " +
+      "(state/pr-<n>-round-<k>-passes/tasks, and the pre-approval sweep's …/tasks-sweep). Each lens gets its " +
+      "task-file pointer as its task, plus any `extra` text keyed to its row. Never launches pass-validate. " +
+      "Returns the same result the subagent tool returns for a parallel call.",
+    parameters: {
+      type: "object",
+      properties: {
+        dirs: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 2,
+          description:
+            "The round's task directory (…-passes/tasks, or the …-passes dir itself), and optionally the sweep's " +
+            "…-passes/tasks-sweep to launch an early sweep in the same call.",
+        },
+        extra: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description:
+            "Optional text appended after a row's pointer (prior findings assigned to that lens, a site, a " +
+            "question). Key: the row number as the plan table prints it (`sweep:<row>` for a sweep row), the " +
+            "task file name, the agent name (every row of that agent), `sweep:*` / `plan:*` (every row of " +
+            "that phase) or `*` (every row).",
+        },
+        skip: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Rows (same keys as `extra`) NOT to launch here because you launch them yourself through the " +
+            "subagent tool in this same turn at a RAISED tier.",
+        },
+      },
+      required: ["dirs"],
+    },
+    execute: launchPlanExecute(wrapped, env),
+  };
+}
+
 /** The native extension's path inside the installed pi package. */
 export function nativeExtensionPath(examplesPath: string): string {
   return join(examplesPath, "extensions", "subagent", "index.ts");
@@ -466,13 +787,15 @@ export default async function activate(pi: Pi): Promise<void> {
             return;
           }
           if (definition?.name === "subagent" && typeof definition.execute === "function") {
-            real({
-              ...definition,
-              execute: wrapExecute(definition.execute.bind(definition), semaphore),
-            });
+            const wrapped = wrapExecute(definition.execute.bind(definition), semaphore);
+            real({ ...definition, execute: wrapped });
+            // launch_plan rides the same wrapped execute, so it exists exactly
+            // where the subagent tool does and shares its semaphore.
+            real(launchPlanDefinition(wrapped));
             log(
               `subagents: native subagent tool registered (pi ${version}, scope=${scope}, ` +
-                `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"})`,
+                `max_concurrency=${maxConcurrency}, fanout=${resolveWideFanout() ? "wide" : "native"}; ` +
+                `${LAUNCH_PLAN_TOOL} registered)`,
             );
           } else {
             real(definition);

@@ -228,10 +228,14 @@ describe("[review] dedup_merge = false — byte-identical to before the duplicat
 // Re-pinned 2026-10-09 (launch the slowest rows first): the pass
 // plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
 // rows in a new order — and the plan's lens list follows it. Every map moves.
+// Re-pinned 2026-10-09 (launch_plan): step 2 of the round templates
+// launches every discovery row with ONE `launch_plan` call over the task
+// directory — per-row `subagent` calls only without task files or when the
+// tool is unavailable — and never one lens per turn. Every map moves.
 const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
-  first: "546a245de426772305e28974d54480d2f0e00e16a821892bfb1b2d8f682c42f8",
-  "re-review": "bb2007ff950630e923a3d304530a66b6f514ed18a299662ff957bb5af11ea17f",
-  staleness: "21208161bb954572eaf29edc95400e2793ef9842098b2acec7d67709c76b2f4e",
+  first: "39b54ce63dfc204d11ff5983f69548ef668c190ee65ccc7ded1913ece290633b",
+  "re-review": "b735477b85ee1309c655e068a81531edd81dc4ea757770c48915498221f31bd6",
+  staleness: "2887caf1337ea642fa4b18987a1dd6757c7b5e8ae2aaa8bf577ef2cc57941eff",
 };
 // Re-pinned 2026-10-03 (round 7, docs/duplicate-merge.md, the owner's
 // decisions): `[review] dedup_merge` defaults on, so step 4 carries the
@@ -275,10 +279,14 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // Re-pinned 2026-10-09 (launch the slowest rows first): the pass
 // plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
 // rows in a new order — and the plan's lens list follows it. Every map moves.
+// Re-pinned 2026-10-09 (launch_plan): step 2 of the round templates
+// launches every discovery row with ONE `launch_plan` call over the task
+// directory — per-row `subagent` calls only without task files or when the
+// tool is unavailable — and never one lens per turn. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "7162fe83ced8841976814b29183c31c596b7716ed29d5a1e924ad0f6ef6abb67",
-  "re-review": "d24a5dd60b2bbed02952f313d9bb5e4720d205432e48660ab3ce9d25125b932e",
-  staleness: "cd3d88dd38c4fc7f313228d58382b0193c60f3c7496a5fc47526707b27089072",
+  first: "55c83107c07a4fe7de907c9f684a00d6bed79361f84ff6c4577043d2b6e81064",
+  "re-review": "ae01681f87642865648f58123b593ad81541a1c039b0fc4a5df5dc511bf6c719",
+  staleness: "32029a41a96590b260b08e2b2992978dae7df34ed206528cae463ad1b7f91b68",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
@@ -302,10 +310,14 @@ const GOLDEN_ORDERS: Record<string, string> = {
 // Re-pinned 2026-10-09 (launch the slowest rows first): the pass
 // plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
 // rows in a new order — and the plan's lens list follows it. Every map moves.
+// Re-pinned 2026-10-09 (launch_plan): step 2 of the round templates
+// launches every discovery row with ONE `launch_plan` call over the task
+// directory — per-row `subagent` calls only without task files or when the
+// tool is unavailable — and never one lens per turn. Every map moves.
 const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
-  first: "413446c715feb23551b1850080675d77f883778f6075d2d322af2ebb0ecb5304",
-  "re-review": "0ef6c611c1df47aef2dd228bdffb94e5ae585f0cdf30823cfceacd4f69a6b072",
-  staleness: "469786d0e27d50c624d03a6efa46e1001833a57943d14707b057491297aec714",
+  first: "9cd9506fe2c240fe0b7db9e7838fdf383d0a80085b901a508df757e57cf832de",
+  "re-review": "e494478c39a4571b929d77d613075acafba4f15e68f30c658609df95ef8770a7",
+  staleness: "eb95e82b0e7f267933ba2938dd3732893f90df4441ebe56f1868d7451a6d1a14",
 };
 // Re-pinned 2026-10-03: pass-behaviour-delta is planned (one row per group of files the PR modifies or deletes code in; `[review] behaviour_delta`, freeze fixes 2) — the fixture PR modifies code, so its plan and the built agents gain the lens
 // Re-pinned 2026-10-03: pass-lint-conformance agent built (planned only when a CI job runs a linter covering a changed file; freeze fixes 2)
@@ -332,10 +344,14 @@ const GOLDEN_ORDERS_NO_COVERAGE: Record<string, string> = {
 // Re-pinned 2026-10-09 (launch the slowest rows first): the pass
 // plan lists its rows slowest first (dispatch.ts `slowestFirst`) — the same
 // rows in a new order — and the plan's lens list follows it. Every map moves.
+// Re-pinned 2026-10-09 (launch_plan): step 2 of the round templates
+// launches every discovery row with ONE `launch_plan` call over the task
+// directory — per-row `subagent` calls only without task files or when the
+// tool is unavailable — and never one lens per turn. Every map moves.
 const GOLDEN_ORDERS_UNRENDERED: Record<string, string> = {
-  first: "b6d41f8bc896003b74298fd9e2de0c165148aae041466ac86b71abc9479844b9",
-  "re-review": "b8fce8ca08594e2d181a7f2bdc57b8e8d1985ec00a53f8dfb071dbeb1c6a5e25",
-  staleness: "32f9a4339b39f170a488c77a9f692da6e1073d74c46a0104b82b8d81121800dc",
+  first: "3743f02b0d0b904b46027f166910ebb48c7566cb3fbbf5fd122c224969a96021",
+  "re-review": "d07585b43eae751ca3b37279188ad171fd9d939d3d9f29549541e7463bc18b0b",
+  staleness: "45fb6821f615f34e01824db3fe19be0281f785f53878be937ea20f18e16226b7",
 };
 // Deliberate re-pins — the default profile's built agents changed ON PURPOSE,
 // never through `[posting]` (owner-approved review changes, 2026-10-02, after

@@ -92,7 +92,12 @@ export function lensOutputsFromEvents(lines: Iterable<string>): LensOutput[] {
     } catch {
       continue;
     }
-    if (e["type"] !== "tool_execution_end" || e["toolName"] !== "subagent") continue;
+    // `launch_plan` returns the subagent tool's own parallel result.
+    if (
+      e["type"] !== "tool_execution_end" ||
+      (e["toolName"] !== "subagent" && e["toolName"] !== "launch_plan")
+    )
+      continue;
     const details = (e["result"] as Record<string, unknown> | undefined)?.["details"] as
       Record<string, unknown> | undefined;
     const results = Array.isArray(details?.["results"]) ? (details["results"] as unknown[]) : [];
