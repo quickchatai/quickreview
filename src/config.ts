@@ -515,6 +515,12 @@ export interface ReviewConfig {
   follow_up_max_delta_ratio: number;
   /** false ⇒ a follow-up round never plans the pre-approval sweep. */
   follow_up_sweep: boolean;
+  /** After a POSTED approval the sweep is owed only when the PR-owned change
+   * since it reaches this many lines (additions + deletions); 0 ⇒ never.
+   * Measured 2026-10-09: the post-approval blockers live re-reviews
+   * found outside the change sat behind 618–1204-line pushes, while 47 of
+   * the 69 post-approval rounds changed fewer than 500 lines. */
+  follow_up_post_approval_sweep_lines: number;
 }
 
 export type NitPolicy = "strict" | "open";
@@ -629,6 +635,7 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
   follow_up: "delta",
   follow_up_max_delta_ratio: 0.6,
   follow_up_sweep: true,
+  follow_up_post_approval_sweep_lines: 500,
 };
 
 /**
@@ -2519,6 +2526,14 @@ export function parseConfig(toml: string): Config {
     throw new Error(
       `config.toml [review]: follow_up_sweep must be true or false (got ${JSON.stringify(cfg.review.follow_up_sweep)})`,
     );
+  }
+  {
+    const n = cfg.review.follow_up_post_approval_sweep_lines;
+    if (!(typeof n === "number" && Number.isInteger(n) && n >= 0)) {
+      throw new Error(
+        `config.toml [review]: follow_up_post_approval_sweep_lines must be a whole number >= 0 (got ${JSON.stringify(n)})`,
+      );
+    }
   }
   if (cfg.review.nits !== "strict" && cfg.review.nits !== "open") {
     throw new Error(

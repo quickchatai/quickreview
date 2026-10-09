@@ -355,6 +355,17 @@ describe("the follow-up round the bench runs is production's", () => {
     expect(q.sweepPlan).toBeUndefined();
   });
 
+  it("a post-approval case follows production's size rule, not the recorded answer", async () => {
+    // The delta here is one changed line: under the default floor nothing is
+    // owed even though the recorded answer says so; at floor 1 it is.
+    const small = await render(followCase({ sweep_owed: true, prev_approved: true }));
+    expect(small.sweepPlan).toBeUndefined();
+    const big = await render(followCase({ sweep_owed: false, prev_approved: true }), {
+      follow_up_post_approval_sweep_lines: 1,
+    });
+    expect(big.sweepPlan!.length).toBeGreaterThan(0);
+  });
+
   it("every doubt is today's full re-review, and says why", async () => {
     const full = await render(followCase(), { follow_up: "full" });
     expect(full.followUp).toMatchObject({ scope: "full", reason: "follow_up_full" });

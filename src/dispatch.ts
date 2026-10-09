@@ -1257,10 +1257,39 @@ export async function decideFollowUp(
     ecosystem: args.ecosystem,
     styleGuide: args.styleGuide,
     ciLinters: args.ciLinters,
-    sweepOwed: () =>
-      (args.standing !== "APPROVE" || args.approvalWithheld === true) &&
-      !store.fullLookSinceFirst(args.pr),
+    sweepOwed: (deltaLines) =>
+      followUpSweepOwed(cfg, {
+        standing: args.standing,
+        approvalWithheld: args.approvalWithheld === true,
+        fullLookSinceFirst: () => store.fullLookSinceFirst(args.pr),
+        deltaLines,
+      }),
   });
+}
+
+/**
+ * Whether a follow-up round owes the pre-approval sweep, the
+ * `[review] follow_up_sweep` knob aside. Before a posted approval (a withheld
+ * one never reached GitHub, so it counts as none): owed until a full look has
+ * happened since the first round. After a posted approval: owed only when the
+ * change since it reaches `follow_up_post_approval_sweep_lines` — a large push
+ * onto an approved PR is where live re-reviews found blockers outside the
+ * change; a small one stays delta-only.
+ */
+export function followUpSweepOwed(
+  cfg: Config,
+  args: {
+    standing: string | null;
+    approvalWithheld: boolean;
+    fullLookSinceFirst: () => boolean;
+    deltaLines: number;
+  },
+): boolean {
+  if (args.standing === "APPROVE" && !args.approvalWithheld) {
+    const floor = cfg.review.follow_up_post_approval_sweep_lines ?? 500;
+    return floor > 0 && args.deltaLines >= floor;
+  }
+  return !args.fullLookSinceFirst();
 }
 
 /**
@@ -1286,7 +1315,8 @@ export function planFollowUp(
     ecosystem: Ecosystem;
     styleGuide: readonly string[];
     ciLinters: readonly CiLinter[];
-    sweepOwed: () => boolean;
+    /** Handed the delta's line count. */
+    sweepOwed: (deltaLines: number) => boolean;
   },
 ):
   | { kind: "delta"; decision: FollowUpDecision }
@@ -1339,7 +1369,8 @@ export function planFollowUp(
   // An owed sweep needs a plan to run: an empty full plan records nothing
   // owed rather than a sweep no round could ever satisfy.
   const sweepOwed =
-    (cfg.review.follow_up_sweep ?? true) && args.fullPlan.pass_plan.length > 0 && args.sweepOwed();
+    (cfg.review.follow_up_sweep ?? true) && args.fullPlan.pass_plan.length > 0 &&
+    args.sweepOwed(delta.lines);
   return {
     kind: "delta",
     decision: {

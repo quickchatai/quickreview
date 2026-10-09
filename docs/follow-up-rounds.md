@@ -30,7 +30,7 @@ Every later re-review round is a **follow-up round** (a staleness round never is
 4. **Pre-approval sweep.** It runs only when the round would APPROVE (approval withheld for CI counts) AND the order carries a sweep plan (`{{sweep_note}}`). The full round-1-style plan runs over the whole PR, then one validator over its candidates, then the decision.
    - The sweep is owed when the standing verdict is not APPROVE (an approval withheld for CI does not count as one: GitHub never saw it) and no full look has happened since the first round. A full look is a legacy full re-review, a full-scope re-review round, or a round whose sweep ran — never a staleness round.
    - The sweep note lists the full plan's files left over the per-round sweep cap, as round 1 does.
-   - It is never owed after a posted approval: a re-request after an approval is delta-only.
+   - After a posted approval it is owed only when the PR-owned change since then reaches `follow_up_post_approval_sweep_lines` (500), whatever full looks came before. A smaller push after an approval is delta-only. In the live data, the blockers that post-approval re-reviews found outside the change sat behind 618–1204-line pushes; 47 of the 69 post-approval rounds changed fewer than 500 lines. Three tiny pushes (19–36 lines) on large PRs also drew such blockers; the floor deliberately does not chase those.
 5. **Decide, post, verdict.** Unchanged fences. The verdict carries `"sweep": "ran" | "not_owed" | "not_reached"`, and each pass entry carries `"phase": "delta" | "sweep"`. An APPROVE claiming `not_reached` or `not_owed` beside an owed sweep is a contradiction, recorded `unknown`.
 
 ## Fallback to a full round (today's re-review, unchanged template)
@@ -56,6 +56,7 @@ A full round counts as a full look.
 | `follow_up` | `"delta"` | `"full"` restores the old behaviour byte-for-byte |
 | `follow_up_max_delta_ratio` | 0.6 | Above this share of the PR's diff lines, the round falls back to a full re-review |
 | `follow_up_sweep` | true | false never plans the pre-approval sweep |
+| `follow_up_post_approval_sweep_lines` | 500 | After a posted approval, the sweep is owed only from this many changed lines; 0 never owes it |
 
 ## State
 
@@ -72,8 +73,8 @@ An APPROVE with the sweep owed but not run is the quiet `followup_sweep_skipped`
 
 ## Validation
 
-The bench gets a follow-up replay case kind (`src/bench/followup.ts`). It replays real round pairs of the reviewed repo from a local mirror of the VM's base clone, and the live full re-review of the same pair is the baseline. See.
-- A case carries `followup`: the previous head, the round and review numbers, whether the sweep was owed, the open prior findings and the ledger. Its id names the round (`<owner>__<name>-<pr>-r<k>@<head7>`).
+The bench gets a follow-up replay case kind (`src/bench/followup.ts`). It replays real round pairs of the reviewed repo from a local mirror of the VM's base clone, and the live full re-review of the same pair is the baseline. See for the 40-run validation (2026-10-09). Delta-only rounds were about 40% cheaper and 1.5–3× faster than a full re-review; rounds that ran the sweep cost about the same as one and took a little longer.
+- A case carries `followup`: the previous head, the round and review numbers, whether the sweep was owed, the open prior findings and the ledger. A case whose previous round was a posted approval may say `prev_approved: true`; the replay then decides the sweep by production's size rule instead of the recorded answer. Its id names the round (`<owner>__<name>-<pr>-r<k>@<head7>`).
 - Prefetch stores base, previous head and head, deepened until every merge-base the replay needs is verified; `QCR_BENCH_MIRROR_ONLY=1` (or `QCR_BENCH_PREFETCH_OFFLINE=1`, no network at all) never asks the network for anything.
 - The delta is production's `prOwnedDelta` over the replay tree, and the order is built by dispatch's own `planFollowUp`, `renderDeltaPatch`, `roundDeltaOf` and `sweepOrderOf`, with the prior findings through `computePriorFindings`. Every doubt runs the full re-review, and the case summary says why. `[review] follow_up = "full"` is the baseline arm on the same cases.
 - Private sets live outside the image: `QCR_BENCH_PRIVATE_SETS` is mounted read-only for the containers, under the explicitly unpinned `private-unpinned` pin, which scores nothing. A set carries a round's inputs only, never its outcome.

@@ -25,6 +25,7 @@
 import { basename, dirname } from "node:path";
 import type { Config } from "../config.js";
 import {
+  followUpSweepOwed,
   planFollowUp,
   type FollowUpDecision,
   type FollowUpFullReason,
@@ -138,7 +139,17 @@ export function decideBenchFollowUp(
     ecosystem: args.ecosystem,
     styleGuide: args.styleGuide,
     ciLinters: args.ciLinters,
-    sweepOwed: () => fu.sweep_owed,
+    // A post-approval case follows production's size rule; any other keeps
+    // the answer recorded when the case was built.
+    sweepOwed: (deltaLines) =>
+      fu.prev_approved === true
+        ? followUpSweepOwed(cfg, {
+            standing: "APPROVE",
+            approvalWithheld: false,
+            fullLookSinceFirst: () => true,
+            deltaLines,
+          })
+        : fu.sweep_owed,
   });
 }
 

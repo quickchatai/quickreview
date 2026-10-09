@@ -12,6 +12,7 @@ import { parseConfig, type Config } from "../src/config.js";
 import {
   buildPassPlan,
   decideFollowUp,
+  followUpSweepOwed,
   dispatchOnce,
   renderDeltaPatch,
   type DispatchAdapter,
@@ -454,7 +455,7 @@ describe("follow-up rounds: the pre-approval sweep", () => {
     },
   );
 
-  it("is never owed after an approval", { timeout: HEAVY_TIMEOUT_MS }, async () => {
+  it("is not owed after an approval for a push under the size floor", { timeout: HEAVY_TIMEOUT_MS }, async () => {
     queue(31);
     reviewed(31, "APPROVE");
     adapter.files.set(31, PR_FILES);
@@ -465,6 +466,28 @@ describe("follow-up rounds: the pre-approval sweep", () => {
     expect(orders[0]!.sweep_task_files).toBeUndefined();
     expect(lastRound(31)).toMatchObject({ sweep_owed: 0, sweep_status: "not_owed" });
   });
+
+  it(
+    "is owed after an approval when the push reaches the size floor, even after a full look",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      queue(34);
+      reviewed(34, "APPROVE");
+      const id = store.startRound(34, "re-review", ["pass-baseline"], 60, { scope: "full" });
+      store.finishRound(id, "APPROVE", null);
+      adapter.files.set(34, PR_FILES);
+      // deltaFile is 3 + 1 = 4 lines.
+      const cfg: Config = {
+        ...baseCfg,
+        review: { ...baseCfg.review, follow_up_post_approval_sweep_lines: 4 },
+      };
+      const { d, orders } = deps({ cfg, delta: okDelta([deltaFile("app/api/views.py")]) });
+      await dispatchOnce(d);
+      expect(orders[0]!.scope).toBe("delta");
+      expect(orders[0]!.sweep_plan?.length).toBeGreaterThan(0);
+      expect(lastRound(34).sweep_owed).toBe(1);
+    },
+  );
 
   it(
     "is not owed after a full look since the first round",
@@ -518,6 +541,35 @@ describe("follow-up rounds: the first round is untouched", () => {
       expect("scope" in events(40, "round_dispatched")[0]!).toBe(false);
     },
   );
+});
+
+describe("followUpSweepOwed", () => {
+  const cfgAt = (n: number): Config => ({
+    ...baseCfg,
+    review: { ...baseCfg.review, follow_up_post_approval_sweep_lines: n },
+  });
+  const ask = (cfg: Config, a: Partial<Parameters<typeof followUpSweepOwed>[1]>) =>
+    followUpSweepOwed(cfg, {
+      standing: "APPROVE",
+      approvalWithheld: false,
+      fullLookSinceFirst: () => false,
+      deltaLines: 0,
+      ...a,
+    });
+  it("after a posted approval: owed exactly from the floor, never at 0, whatever the full looks", () => {
+    expect(baseCfg.review.follow_up_post_approval_sweep_lines).toBe(500);
+    expect(ask(baseCfg, { deltaLines: 499 })).toBe(false);
+    expect(ask(baseCfg, { deltaLines: 500 })).toBe(true);
+    expect(ask(baseCfg, { deltaLines: 500, fullLookSinceFirst: () => true })).toBe(true);
+    expect(ask(cfgAt(0), { deltaLines: 100_000 })).toBe(false);
+  });
+  it("before an approval (a withheld one included): owed until a full look, whatever the size", () => {
+    for (const a of [{ standing: "REQUEST_CHANGES" }, { standing: null }, { approvalWithheld: true }]) {
+      expect(ask(baseCfg, { ...a, deltaLines: 1 })).toBe(true);
+      expect(ask(cfgAt(0), { ...a, deltaLines: 1 })).toBe(true);
+      expect(ask(baseCfg, { ...a, deltaLines: 10_000, fullLookSinceFirst: () => true })).toBe(false);
+    }
+  });
 });
 
 describe("decideFollowUp + StateStore.fullLookSinceFirst", () => {

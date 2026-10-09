@@ -110,6 +110,11 @@ export interface BenchFollowUp {
   /** Whether the pre-approval sweep was owed at that round (the standing
    * verdict was not APPROVE and no full look had run since round 1). */
   sweep_owed: boolean;
+  /** The previous round's verdict was a POSTED approval. When set, the
+   * replay decides the sweep by production's post-approval rule (the delta's
+   * size against `[review] follow_up_post_approval_sweep_lines`) instead of
+   * `sweep_owed`. */
+  prev_approved?: boolean;
   prior_findings: BenchPriorFinding[];
   /** The PR session's ledger as it stood when the round was dispatched —
    * carried as production's `ledger_carry` and pinned as the case's ledger. */
@@ -437,6 +442,11 @@ function followUpOf(raw: unknown, where: string, c: BenchCase): BenchFollowUp {
     sweep_owed: r["sweep_owed"],
     prior_findings: prior,
   };
+  if (r["prev_approved"] !== undefined) {
+    if (typeof r["prev_approved"] !== "boolean")
+      throw new Error(`${where}: prev_approved must be a boolean`);
+    out.prev_approved = r["prev_approved"];
+  }
   if (r["ledger"] !== undefined) {
     if (typeof r["ledger"] !== "string") throw new Error(`${where}: ledger must be a string`);
     out.ledger = r["ledger"];
