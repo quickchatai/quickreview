@@ -204,6 +204,11 @@ describe("what the session and each row are told", () => {
     );
     // Sweep rows keep their exact-files cell.
     expect(text).toMatch(/\| pass-sweep \|.*\| files: /);
+    // The pre-approval sweep's table hands every row the prior findings as
+    // "do not re-raise": it never assigns them to one baseline row.
+    const sweep = renderPassPlan(plan, [], { sweep: true });
+    expect(sweep).toContain("**pass-baseline is split into 2 rows**");
+    expect(sweep).not.toContain("goes to exactly ONE of these rows");
   });
 
   it("each baseline task says where it starts and that the whole PR is still its own", () => {

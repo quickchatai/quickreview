@@ -158,7 +158,7 @@ export const COVERAGE_TOOL: PiToolDefinition = {
   name: "coverage_gaps",
   label: "Coverage gaps",
   description:
-    "After the planned lenses return: the coverage-eligible changed source files no lens raised a finding on and no RETURNED pass-sweep / pass-behaviour-delta row had in its focus, packed into at most two pass-sweep rows, each with the reason line to put at the top of its task string.",
+    "After the planned lenses return: the coverage-eligible changed source files no lens raised a finding on and no RETURNED pass-sweep row had in its focus, packed into at most two pass-sweep rows, each with the reason line to put at the top of its task string.",
   parameters: {
     type: "object",
     properties: {
@@ -179,7 +179,7 @@ export const COVERAGE_TOOL: PiToolDefinition = {
       swept: {
         type: "array",
         description:
-          "Every file in the focus list of a pass-sweep or pass-behaviour-delta row that RETURNED (findings or NONE). A row that failed, errored or was cut short contributes nothing.",
+          "Every file in the focus list of a pass-sweep row that RETURNED (findings or NONE). A pass-behaviour-delta row does not count (it skips pure additions). A row that failed, errored or was cut short contributes nothing.",
         items: { type: "string" },
       },
     },

@@ -515,11 +515,18 @@ function resolveTaskDir(
   input: string,
   realRoot: string,
   extras: ReadonlySet<string>,
+  pr: string | undefined,
 ): { dir: string; phase: "plan" | "sweep"; passes: string | undefined } | { error: string } {
   const real = realDir(resolve(realRoot, input));
   if (!real) return { error: `${input}: no such directory` };
-  const state = join(realRoot, "state");
-  if (dirname(real) === state && PASSES_DIR_RE.test(basename(real))) {
+  // Resolved too: on the VM `<sandbox>/state` is a SYMLINK to the state volume
+  // (entrypoint.sh.j2), so a resolved task dir lives under its target.
+  const state = realDir(join(realRoot, "state")) ?? join(realRoot, "state");
+  // A PR session (QCR_PR, set by the daemon — the session cannot set its own
+  // environment) launches only its own PR's rounds.
+  const ownPasses = (name: string) =>
+    PASSES_DIR_RE.test(name) && (pr === undefined || name.startsWith(`pr-${pr}-round-`));
+  if (dirname(real) === state && ownPasses(basename(real))) {
     // The round's pass dir: its plan tasks. The sweep's dir is named itself.
     const tasks = realDir(join(real, "tasks"));
     if (!tasks || tasks !== join(real, "tasks"))
@@ -530,7 +537,7 @@ function resolveTaskDir(
   if (
     (name === "tasks" || name === "tasks-sweep") &&
     dirname(dirname(real)) === state &&
-    PASSES_DIR_RE.test(basename(dirname(real)))
+    ownPasses(basename(dirname(real)))
   )
     return { dir: real, phase: name === "tasks" ? "plan" : "sweep", passes: dirname(real) };
   if (extras.has(real))
@@ -601,7 +608,7 @@ export function planLaunch(
     const resolved: Array<{ dir: string; phase: "plan" | "sweep"; passes: string | undefined }> =
       [];
     for (const d of dirs) {
-      const r = resolveTaskDir(d, realRoot, extras);
+      const r = resolveTaskDir(d, realRoot, extras, env.QCR_PR?.trim() || undefined);
       if ("error" in r) return { ok: false, error: r.error };
       if (resolved.some((x) => x.dir === r.dir)) continue;
       if (resolved.some((x) => x.phase === r.phase))

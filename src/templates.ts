@@ -337,7 +337,13 @@ const NO_BASE = "(unknown — the daemon could not resolve the base branch this 
  * reason (content-triggered sub-lenses), so a plan without either renders
  * exactly as it always has. Files past the sweep cap are named under the
  * table. */
-export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): string {
+export function renderPassPlan(
+  plan: PassPlanEntry[],
+  unswept: string[] = [],
+  /** The pre-approval sweep's table: its rows take the prior findings as
+   * "do not re-raise", so the split note does not assign them to one row. */
+  opts: { sweep?: boolean } = {},
+): string {
   const notes = plan.some((p) => p.focus !== undefined || p.why !== undefined);
   const rows = plan.map((p) => {
     const cells = [
@@ -373,7 +379,7 @@ export function renderPassPlan(plan: PassPlanEntry[], unswept: string[] = []): s
     baselineRows > 1
       ? [
           "",
-          `**pass-baseline is split into ${baselineRows} rows** — the change is too large for one reading. Each row is a whole pass-baseline, its charter and review scope unchanged, that STARTS from the files its row lists: their callers, callees and cross-file effects anywhere in the PR are its to follow, and it reports everything it meets there. Launch every one. A prior finding that falls to pass-baseline (step 1, when the round has prior findings) goes to exactly ONE of these rows: the row whose files hold the finding's path, else the first pass-baseline row in the table.`,
+          `**pass-baseline is split into ${baselineRows} rows** — the change is too large for one reading. Each row is a whole pass-baseline, its charter and review scope unchanged, that STARTS from the files its row lists: their callers, callees and cross-file effects anywhere in the PR are its to follow, and it reports everything it meets there. Launch every one.${opts.sweep ? "" : " A prior finding that falls to pass-baseline (step 1, when the round has prior findings) goes to exactly ONE of these rows: the row whose files hold the finding's path, else the first pass-baseline row in the table."}`,
         ]
       : [];
   const tail =
@@ -505,8 +511,9 @@ export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): s
     "planned lens has returned and BEFORE step 3, call the `coverage_gaps` tool",
     "ONCE with `eligible` = the JSON list below, verbatim, `addressed` = every",
     "file path any lens raised a finding on (any disposition), and `swept` =",
-    "every file in the `focus` list of a `pass-sweep` or `pass-behaviour-delta`",
-    "row that RETURNED — NONE included: that row read the file's changed lines.",
+    "every file in the `focus` list of a `pass-sweep` row that RETURNED — NONE",
+    "included: that row read the file's changed lines (a `pass-behaviour-delta`",
+    "row does not count: it skips pure additions).",
     "A row that failed, errored or was cut short sweeps nothing; leave its",
     "files out. Any other lens that only answered NONE addresses nothing. For",
     "each group it returns, launch",
@@ -549,7 +556,7 @@ export function renderSweepNote(
           "whole PR gets one blank-slate look with the full plan below (step 4b says",
           "when to launch it and when it is not reached):",
         ];
-  const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [])];
+  const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [], { sweep: true })];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
     // the sweep launches through `launch_plan` too — with step 2's

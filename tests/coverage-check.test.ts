@@ -137,7 +137,8 @@ describe("the knob and the note", () => {
     // a returned sweep row's focus counts, NONE included; a failed
     // row's does not; other NONE lenses still address nothing.
     expect(note).toContain("`swept` =");
-    expect(note).toContain("row that RETURNED — NONE included");
+    expect(note).toContain("`pass-sweep` row that RETURNED — NONE\nincluded");
+    expect(note).toContain("row does not count: it skips pure additions");
     expect(note).toContain("A row that failed, errored or was cut short sweeps nothing");
     expect(note).not.toContain("a lens that only\nanswered NONE addresses nothing");
   });

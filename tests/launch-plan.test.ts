@@ -250,6 +250,33 @@ describe("launch_plan", () => {
       expect(plan.ok && plan.units.map((u) => u.agent)).not.toContain("pass-evil--sol-med");
     });
 
+    it("accepts a round whose state dir is a symlink, as on the VM (state → the state volume)", () => {
+      const vm = mkdtempSync(join(tmpdir(), "qcr-launch-plan-vm-"));
+      try {
+        const volume = join(vm, "state-volume");
+        const sandbox = join(vm, "sandbox");
+        const vmTasks = join(volume, "pr-5-round-2-passes", "tasks");
+        write(vmTasks, "01-pass-baseline--sol-high.md");
+        mkdirSync(sandbox, { recursive: true });
+        symlinkSync(volume, join(sandbox, "state"));
+        for (const dirs of [
+          [join(sandbox, "state", "pr-5-round-2-passes", "tasks")],
+          ["state/pr-5-round-2-passes"],
+        ]) {
+          const plan = planLaunch({ dirs }, { QCR_SANDBOX_ROOT: sandbox });
+          expect(plan.ok && plan.units.map((u) => u.agent)).toEqual(["pass-baseline--sol-high"]);
+        }
+      } finally {
+        rmSync(vm, { recursive: true, force: true });
+      }
+    });
+
+    it("a PR session launches only its own PR's rounds", () => {
+      expect(planLaunch({ dirs: [tasks] }, { QCR_SANDBOX_ROOT: root, QCR_PR: "1" }).ok).toBe(false);
+      const own = /pr-(\d+)-round-/.exec(tasks)![1]!;
+      expect(planLaunch({ dirs: [tasks] }, { QCR_SANDBOX_ROOT: root, QCR_PR: own }).ok).toBe(true);
+    });
+
     it("refuses two dirs of different rounds, or two plan dirs", async () => {
       const other = join(root, "state", "pr-5894-round-3-passes", "tasks-sweep");
       write(other, "01-pass-baseline--sol-high.md");

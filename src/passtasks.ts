@@ -22,7 +22,7 @@
 // `lessons/<lens>.md` beside the tasks, which the main session names in the
 // task string it writes. With no lessons (every `off`/`shadow` round, the
 // bench) not one byte of a task file changes.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { codePath, flatControls, promptTitle } from "./codespan.js";
 import { isSplitBaselineRow } from "./heuristics.js";
@@ -274,14 +274,22 @@ export function renderPassTasks(
     });
 }
 
-/** Write the round's task files into `dir` (created), returning the tasks with
- * their absolute paths. */
+/** Write the round's task files into `dir`, returning the tasks with their
+ * absolute paths. The dir is EMPTIED first: `launch_plan` launches every task
+ * file it finds there, and a dispatch retried after a failed handoff reuses
+ * its round number (`discardRunningRound`), so an earlier attempt's rows —
+ * another head, another plan — must never survive into this one. The dir
+ * holds task files only (`taskDirOf`). */
 export function writePassTasks(
   dir: string,
   order: RoundOrder,
   gateNotes: string,
   lessons?: PassTaskLessons,
 ): Array<PassTask & { path: string }> {
+  // Only a real directory is emptied; anything else at the path is left to
+  // fail the write below, as it always did.
+  if (lstatSync(dir, { throwIfNoEntry: false })?.isDirectory())
+    rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   return renderPassTasks(order, gateNotes, lessons).map((t) => {
     const path = join(dir, t.file);

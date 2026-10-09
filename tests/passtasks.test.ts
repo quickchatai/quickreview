@@ -5,7 +5,7 @@
 // all be in the file; the validator gets no file; an order without files
 // renders exactly as before.
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -110,6 +110,19 @@ describe("renderPassTasks", () => {
       const written = writePassTasks(join(dir, "tasks"), order(), "");
       expect(written).toHaveLength(3);
       for (const t of written) expect(readFileSync(t.path, "utf8")).toBe(t.text);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writePassTasks empties the dir first: an earlier attempt's rows never survive", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qcr-passtasks-"));
+    try {
+      const tasks = join(dir, "tasks");
+      writePassTasks(tasks, order(), "");
+      writeFileSync(join(tasks, "07-pass-stale--sol-med.md"), "an earlier attempt's row");
+      const written = writePassTasks(tasks, order(), "");
+      expect(readdirSync(tasks).sort()).toEqual(written.map((t) => t.file).sort());
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

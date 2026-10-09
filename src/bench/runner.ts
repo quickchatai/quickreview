@@ -1301,6 +1301,9 @@ export async function reviewCase(
         );
       }
     }
+    // An earlier attempt's task files never leak into this one: launch_plan
+    // launches every task file the dir holds.
+    rmSync(join(caseDir, "tasks"), { recursive: true, force: true });
     if (prompts.taskFiles.length) {
       mkdirSync(join(caseDir, "tasks"), { recursive: true });
       for (const t of prompts.taskFiles) writeFileSync(t.path, t.text);

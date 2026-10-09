@@ -7,15 +7,17 @@
 // the sweep's line budget), each row carrying the reason
 // `coverage: no lens addressed <files>`.
 //
-// A file also counts as addressed when a RETURNED pass-sweep row (or a
-// per-file pass-behaviour-delta row — both carry `focus`) had it in its focus
-// list, NONE answers included: that row read every changed line of
-// the file at the sweep's tier, so a coverage row over it re-read the same
+// A file also counts as addressed when a RETURNED pass-sweep row had it in
+// its focus list, NONE answers included: that row read every
+// changed line of the file at the sweep's tier, so a coverage row over it re-read the same
 // lines for nothing (11 of 12 studied live rounds ran one, 7 of them NONE).
 // The check stays total: a row that failed, errored or was cut short is not
 // "returned" and its focus counts for nothing, so a coverage row fires only
 // for files no returned row read — the files past the per-round sweep cap
-// and those of a failed row.
+// and those of a failed row. A pass-behaviour-delta row does NOT count, though
+// it carries `focus` too: that lens reads only modified, replaced and deleted
+// hunks ("pure additions are not yours"), so a file past the sweep cap with new
+// code in it would lose its only line-by-line read.
 //
 // Pure, and on the code path both routes share: dispatch puts the eligible
 // files on the round order, the `coverage_gaps` tool

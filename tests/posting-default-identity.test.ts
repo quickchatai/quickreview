@@ -294,10 +294,12 @@ const GOLDEN_ORDERS_NO_DEDUP: Record<string, string> = {
 // the daemon's scripts for formats; under render_outputs the note hands the
 // decided verdict to `scripts/commit-verdict.sh --from-record`. Every map moves.
 const GOLDEN_ORDERS: Record<string, string> = {
-  first: "cb02da6f239c08146a97d67a756bf3b582dfbed634d8faafa0ab7a991bf5a704",
-  "re-review": "59e6c0c573bf010df6864c2121b2b58cf24e395d27789e7dd296740aed4560aa",
-  staleness: "75f5e842ce4fcd3d2109d366bf86ff66e51512befc3774101d09de5a20694062",
+  first: "fbf96e86f8a3126363f8bec83fa582ef9f8c52735080f0ebaf067acf50a17598",
+  "re-review": "f36cbf302a8b7f87c2ec36c9f47b6e82da42b1371533c3b14f943eb2de16b0d8",
+  staleness: "a3df1a736698ca45ab0a41cb0ec00b4632575a49f79d8a21052e546212d84065",
 };
+// Re-pinned 2026-10-09 (review fix): the coverage note's `swept` now
+// credits returned pass-sweep rows only — pass-behaviour-delta skips pure additions.
 // Re-pinned 2026-10-03: pass-behaviour-delta planned only where base behaviour is at risk (owner decision): the fixture removes only `pass` and adds a line, so its plan no longer carries the lens
 // Re-pinned 2026-10-03 (owner decision after the decisions validation, dv1 vs dv1hi): pass-baseline, pass-sweep and pass-behaviour-delta run at the sol-high tier by default (src/config.ts DEFAULT_PASS_TIERS), so their plan rows name sol-high and are not raisable
 // Re-pinned 2026-10-03 (prompt cleanup, owner-approved): the doc header and the RATIFIED fence marker lines no longer reach the model (stripped at render and at agent build; kept in the source)

@@ -12,7 +12,7 @@
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
 // prompt renderer is injected (B4 owns src/templates.ts) so this module has no
 // content dependency.
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
 import { githubCloneDir, sandboxRoot } from "./config.js";
@@ -2552,14 +2552,23 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         // directory and row index (`row` indexes `sweep_plan`), the whole PR's
         // full plan rendered exactly as a full round's. No lesson rows ride
         // them: lesson selection covers `pass_plan` rows only. Total, as above.
+        // With no sweep owed, an earlier attempt's sweep dir is removed, so
+        // nothing stale can be launched from it.
+        const sweepDir = resolve(
+          sandboxRoot(),
+          "state",
+          `pr-${row.number}-round-${roundNo}-passes`,
+          "tasks-sweep",
+        );
+        if (!built.sweep_plan || built.sweep_plan.length === 0) {
+          try {
+            rmSync(sweepDir, { recursive: true, force: true });
+          } catch (err) {
+            log(`dispatch: #${row.number} stale sweep task dir not removed`, err);
+          }
+        }
         if (built.sweep_plan && built.sweep_plan.length > 0) {
           try {
-            const sweepDir = resolve(
-              sandboxRoot(),
-              "state",
-              `pr-${row.number}-round-${roundNo}-passes`,
-              "tasks-sweep",
-            );
             const sweepOrder = sweepOrderOf(built, built.sweep_plan);
             const sweepTasks = writePassTasks(
               sweepDir,
