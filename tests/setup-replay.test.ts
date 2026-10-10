@@ -636,6 +636,49 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(c!.findings.new.every((f) => !f.validated)).toBe(true);
   });
 
+  it("a lens answering with neither findings nor NONE fails its case — the side is incomplete, never a clean review", async () => {
+    const calls: Call[] = [];
+    const inner = fakeRunner(calls);
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) =>
+          spec.agent.startsWith("pass-baseline--")
+            ? { ok: true, output: "I could not finish.", cost_usd: 0.0001 }
+            : inner(agentsDir).run(spec, signal, onCost),
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const run = await ran(rr, p.key);
+    const baseline = run.cases.filter((c) => c.kind === "lens" && c.lens === "pass-baseline");
+    expect(baseline.length).toBeGreaterThan(0);
+    for (const b of baseline) {
+      expect(b.status).toBe("failed");
+      expect(b.error).toContain("no finding and no NONE line");
+    }
+    expect(run.state).not.toBe("complete");
+    const [c] = compareRun(run);
+    expect(c!.complete).toEqual({ old: false, new: false });
+  });
+
   it("stops HARD at the cap: what is in flight is aborted, the rest never starts", async () => {
     const calls: Call[] = [];
     const rr = runner(calls, () => 100); // every case costs far past any estimate

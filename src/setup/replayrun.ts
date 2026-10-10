@@ -886,6 +886,14 @@ export class ReplayRunner {
     }
     if (c.kind === "lens") {
       const answer = parseScanAnswer(outcome.output, { root: job.root, deepLenses: [] });
+      if (answer.candidates.length === 0 && !answer.none) {
+        // Prose with neither findings nor NONE (a tool error told in
+        // words, a broken grammar) is not "nothing found": the side is
+        // incomplete, never shown as a clean review.
+        c.status = "failed";
+        c.error = "the lens answered with no finding and no NONE line";
+        return spent;
+      }
       c.findings = answer.candidates.map((f) => ({
         ...f,
         lens: c.lens,
