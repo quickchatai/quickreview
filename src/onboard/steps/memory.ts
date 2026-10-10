@@ -410,8 +410,31 @@ function modeOk(path: string): boolean {
 
 export type { MemoryChoice };
 
-export function normalizeMemoryChoice(answer: string | undefined): MemoryChoice {
-  return /^\s*(n|no|skip|declin|later|without)/i.test(answer ?? "") ? "declined" : "configure";
+const MEMORY_CHOICE_IDS: readonly MemoryChoice[] = ["configure", "declined"];
+
+/**
+ * Read a typed answer as a choice, or `null` when it is neither a yes nor a
+ * no. An empty answer is the [Y/n] prompt's default, "configure"; anything
+ * unrecognised is null, so the step refuses with the options rather than
+ * guessing — a guessed "configure" mints keys and turns memory on.
+ */
+export function normalizeMemoryChoice(answer: string | undefined): MemoryChoice | null {
+  const text = (answer ?? "").trim();
+  if (text === "") return "configure";
+  if (/^(n|no|nope|skip|declin|later|without)/i.test(text)) return "declined";
+  if (/^(y|yes|yep|yeah|sure|ok|okay|configure|set ?up)\b/i.test(text)) return "configure";
+  return null;
+}
+
+/** The refusal for an answer that is not a recognised choice. */
+export function memoryChoiceOfferCheck(answer: string): CheckResult {
+  return {
+    name: "choice",
+    ok: false,
+    detail:
+      `"${answer.trim()}" is not a recognised answer — pick one of ${MEMORY_CHOICE_IDS.join(" | ")} and call this ` +
+      'step again with it (choice: "<id>"): "configure" sets memory up, "declined" runs the reviewer memory-less.',
+  };
 }
 
 export const DECLINED_CHECKS: readonly CheckResult[] = [
@@ -421,8 +444,8 @@ export const DECLINED_CHECKS: readonly CheckResult[] = [
     detail:
       "memory setup DECLINED — running memory-less, which is a legal mode: rounds still run (context assembly resolves " +
       "empty and never blocks or delays a round), the TUI's Memory tab paints its MEMORY STORE row red, and the EOD " +
-      "curator and the [feedback] sink have nowhere to write. No key was minted or placed. Re-run this step after " +
-      "clearing the recorded choice to set memory up later.",
+      "curator and the [feedback] sink have nowhere to write. No key was minted or placed. Re-run this step with " +
+      'choice "configure" to set memory up later.',
   },
 ];
 
@@ -689,26 +712,28 @@ export function placeKeys(args: {
 }
 
 export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
-  const askChoice = async (ctx: StepContext): Promise<MemoryChoice> => {
+  // A choice, or the answer that was not one (the step refuses with the options).
+  const askChoice = async (ctx: StepContext): Promise<MemoryChoice | { unrecognised: string }> => {
+    const read = (answer: string) => normalizeMemoryChoice(answer) ?? { unrecognised: answer };
     // The operator's answer through the tool call wins: it is how the pi
     // wizard, which has no prompter, says yes or no, and how an earlier
     // decline is reversed.
     const given = ctx.input.choice;
     if (given === "declined" || given === "configure") return given;
-    if (typeof given === "string" && given.trim() !== "") return normalizeMemoryChoice(given);
+    if (typeof given === "string" && given.trim() !== "") return read(given);
     const recorded = ctx.choices[MEMORY_CHOICE_KEY];
     if (recorded === "declined" || recorded === "configure") return recorded;
     const prompter = ctx.adapters.prompter;
     if (!prompter) return "configure";
+    let answer: string;
     try {
-      return normalizeMemoryChoice(
-        await prompter(
-          "Set up memory now? The reviewer remembers what it learned across PRs. Saying no is fine — it runs memory-less. [Y/n]",
-        ),
+      answer = await prompter(
+        "Set up memory now? The reviewer remembers what it learned across PRs. Saying no is fine — it runs memory-less. [Y/n]",
       );
     } catch {
       return "configure";
     }
+    return read(answer);
   };
 
   const loaders = (ctx: StepContext) => {
@@ -747,6 +772,7 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
 
     async run(ctx): Promise<StepReport> {
       const choice = await askChoice(ctx);
+      if (typeof choice !== "string") return { ok: false, checks: [memoryChoiceOfferCheck(choice.unrecognised)] };
       ctx.recordChoice(CHOICE_KEYS.memory, choice);
       const switched = switchMemory(ctx, choice === "configure");
       if (choice === "declined") {

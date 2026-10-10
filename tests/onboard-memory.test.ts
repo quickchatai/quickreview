@@ -716,6 +716,34 @@ describe("degraded modes stay legal and loud", () => {
     for (const no of ["n", "No", "skip", "later", "decline", "without memory"])
       expect(normalizeMemoryChoice(no)).toBe("declined");
     expect(normalizeMemoryChoice(undefined)).toBe("configure");
+    for (const unclear of ["maybe", "configur", "turn it off", "?", "memory"])
+      expect(normalizeMemoryChoice(unclear)).toBeNull();
+  });
+
+  it("an unrecognised answer is a refusal naming the options — never a guessed configure", async () => {
+    const text = placeConfig();
+    const engine = engineWith(fakeServer().fetchFn);
+    const result = await engine.runStep(MEMORY_STEP_ID, { choice: "maybe" });
+    expect(result.ok).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({ name: "choice", ok: false });
+    expect(result.checks[0]?.detail).toMatch(/"maybe".*configure \| declined/);
+    expect(engine.choices()[MEMORY_CHOICE_KEY]).toBeUndefined();
+    expect(existsSync(keysFile)).toBe(false);
+    expect(readFileSync(liveConfig(), "utf8")).toBe(text);
+
+    // The same holds for a typed answer at the interactive prompt.
+    const prompted = engineWith(fakeServer().fetchFn, {}, async () => "perhaps");
+    const fromPrompt = await runStep(prompted);
+    expect(fromPrompt.ok).toBe(false);
+    expect(fromPrompt.checks[0]?.detail).toMatch(/"perhaps"/);
+    expect(prompted.choices()[MEMORY_CHOICE_KEY]).toBeUndefined();
+    expect(existsSync(keysFile)).toBe(false);
+  });
+
+  it("the decline advice names the answer that sets memory up later", () => {
+    expect(DECLINED_CHECKS[0]?.detail).toMatch(/choice "configure"/);
+    expect(DECLINED_CHECKS[0]?.detail).not.toMatch(/clearing the recorded choice/);
   });
 
   it("places the keys in the configured [github] secrets_dir — the dir the daemon and the compose mount read", async () => {
