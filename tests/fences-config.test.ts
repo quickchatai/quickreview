@@ -101,9 +101,7 @@ describe("[T4] every config knob has a reader, not just a parser", () => {
    * fails naming it. Delete the last reader of a knob — same.
    */
   const PARSED_BUT_UNREAD: readonly string[] = [
-    "app_token_file",
     "awaiting_author_stale_h",
-    "bot_token_file",
     "broadcast_verdicts",
     "queue_concurrency",
     "soft_exchange_limit",
