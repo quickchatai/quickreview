@@ -4,7 +4,7 @@
 // run/record helpers) and why the suite is split are in
 // tests/helpers/guards-shell-rig.ts; this file owns its own stub instance.
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HEAD, exec, root, useGuardsShellRig } from "./helpers/guards-shell-rig.js";
 
@@ -120,6 +120,24 @@ describe("posting receipts", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.out).toContain("refusing a duplicate POST");
+    expect(dryrunRecords()).toEqual([]);
+  });
+
+  it("an approval refused by another attempt's receipt lock leaves that lock in place", async () => {
+    const key = `v1:5180:10:${HEAD}`;
+    const lock = join(s.dir, "receipts", "pr-5180-round-10.json.lock");
+    mkdirSync(lock, { recursive: true });
+    const commentsFile = join(s.dir, "inline-comments.json");
+    writeFileSync(commentsFile, JSON.stringify(inlineComments));
+    const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "10",
+      QCR_POSTING_KEY: key,
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("another posting attempt owns");
+    expect(existsSync(lock)).toBe(true);
     expect(dryrunRecords()).toEqual([]);
   });
 

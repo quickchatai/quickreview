@@ -84,6 +84,13 @@ POST_ALREADY_CONFIRMED=0
 RECEIPT_LOCK=""
 cleanup_receipt_lock() { [[ -z "$RECEIPT_LOCK" ]] || rmdir "$RECEIPT_LOCK" 2>/dev/null || true; }
 trap cleanup_receipt_lock EXIT
+# The lock is recorded for cleanup only once this attempt holds it: a refused
+# attempt must never remove the lock another attempt owns.
+acquire_receipt_lock() {
+  mkdir -p "$RECEIPT_DIR"
+  mkdir "$POSTING_RECEIPT.lock" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+  RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+}
 ROUND_NO="${QCR_ROUND_NO:-}"
 if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
   [[ "$ROUND_NO" =~ ^[0-9]+$ ]] || die "QCR_ROUND_NO must be an integer"
@@ -103,17 +110,11 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
         POST_ALREADY_CONFIRMED=1
       else
         mv "$POSTING_RECEIPT" "$POSTING_RECEIPT.dryrun-$(date -u +%Y%m%dT%H%M%SZ)"
-        RECEIPT_LOCK="$POSTING_RECEIPT.lock"
-        mkdir -p "$RECEIPT_DIR"
-        mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
+        acquire_receipt_lock
       fi
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
-    none)
-      RECEIPT_LOCK="$POSTING_RECEIPT.lock"
-      mkdir -p "$RECEIPT_DIR"
-      mkdir "$RECEIPT_LOCK" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
-      ;;
+    none) acquire_receipt_lock ;;
     *) die "invalid or mismatched posting receipt for $POSTING_KEY" ;;
   esac
 fi
