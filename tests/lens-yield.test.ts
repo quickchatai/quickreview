@@ -107,6 +107,54 @@ print(json.dumps(sorted([sorted(ls), real] for ls, real in out)))`,
   });
 });
 
+describe("lens_yield: AACR judge numbering", () => {
+  it("credits a deleted-line comment the defect judge numbered after the scored rows, and skips blank rows as it does", () => {
+    const runs = mkdtempSync(join(tmpdir(), "ly-runs-"));
+    const run = "r";
+    const iid = "c1";
+    mkdirSync(join(runs, run, "results", "all"), { recursive: true });
+    mkdirSync(join(runs, run, "judge", "j1"), { recursive: true });
+    mkdirSync(join(runs, run, "cases", iid), { recursive: true });
+    writeFileSync(
+      join(runs, run, "results", "all", `${iid}.json`),
+      JSON.stringify({
+        review: {
+          comments: [
+            { path: "a.py", start_line: 3, content: "   " },
+            { path: "a.py", start_line: 5, content: "[nit] x\n· lens pass-style" },
+          ],
+        },
+      }),
+    );
+    writeFileSync(
+      join(runs, run, "cases", iid, "comments.json"),
+      JSON.stringify([
+        { path: "a.py", line: 5, side: "RIGHT", body: "[nit] x\n· lens pass-style" },
+        { path: "b.py", line: 9, side: "LEFT", body: "[blocker] gone\n· lens pass-baseline" },
+      ]),
+    );
+    writeFileSync(
+      join(runs, run, "judge", "j1", `${iid}.r1.json`),
+      JSON.stringify({ comments: [{ id: "C1" }, { id: "C2", defect: "D1" }] }),
+    );
+    const got = py(
+      `from pathlib import Path
+print(json.dumps([[p.name, cs] for p, cs in ly.aacr_comments(Path(sys.argv[1]), sys.argv[2])]))`,
+      runs,
+      run,
+    );
+    expect(got).toEqual([
+      [
+        iid,
+        [
+          ["a.py", 5, ["pass-style"], false],
+          ["b.py", 9, ["pass-baseline"], true],
+        ],
+      ],
+    ]);
+  });
+});
+
 describe("lens_yield: Martian case identity", () => {
   it("a PR is read from its own case dir by instance id; an empty review never borrows another PR's case", () => {
     const runs = mkdtempSync(join(tmpdir(), "ly-runs-"));

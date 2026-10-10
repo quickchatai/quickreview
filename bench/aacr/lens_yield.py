@@ -170,10 +170,19 @@ def aacr_comments(runs: Path, run: str):
     for res in sorted(glob.glob(str(runs / run / "results" / "all" / "*.json"))):
         iid = Path(res).stem
         d = read_json(res) or {}
-        comments = ((d.get("review") or {}).get("comments")) or []
         j = read_json(jdir / f"{iid}.r1.json") if jdir else None
         real_ids = {c.get("id") for c in (j or {}).get("comments", []) if c.get("defect")}
-        out = [(c.get("path"), _line(c.get("start_line")), lenses_of_text(c.get("content", "")), f"C{i + 1}" in real_ids) for i, c in enumerate(comments)]
+        # Numbered as the defect judge numbers them (src/bench/defects.ts
+        # reviewForJudge): the scored rows with a non-blank body, then the
+        # posted comments on DELETED lines, which the scored file leaves out.
+        rows = [(c.get("path"), _line(c.get("start_line")), c.get("content"))
+                for c in ((d.get("review") or {}).get("comments")) or [] if isinstance(c, dict)]
+        posted = read_json(runs / run / "cases" / iid / "comments.json")
+        rows += [(c.get("path"), _line(c.get("line")), c.get("body"))
+                 for c in (posted if isinstance(posted, list) else [])
+                 if isinstance(c, dict) and isinstance(c.get("side"), str) and c["side"].upper() == "LEFT"]
+        rows = [r for r in rows if isinstance(r[2], str) and r[2].strip()]
+        out = [(path, line, lenses_of_text(body), f"C{i + 1}" in real_ids) for i, (path, line, body) in enumerate(rows)]
         yield runs / run / "cases" / iid, out
 
 
