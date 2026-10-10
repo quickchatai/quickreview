@@ -65,6 +65,17 @@ export function splitList(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+/** Split a comma-separated answer of NAMES (PR labels, check names) into
+ * trimmed, non-empty items. Commas and line breaks separate; a space is part
+ * of the name — `AI review requested` is one label, `CI / test` one check. */
+export function splitNames(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+  return String(raw ?? "")
+    .split(/[,\r\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function yesNo(raw: unknown): boolean | null {
   const v = String(raw ?? "")
     .trim()
@@ -302,8 +313,8 @@ function answersFrom(ctx: StepContext, enabled: boolean): EscalationAnswers {
     targets,
     session_judgement: yesNo(ctx.input.session_judgement) === true,
     paths: splitList(ctx.input.paths),
-    labels: splitList(ctx.input.labels),
-    failing_checks: splitList(ctx.input.failing_checks),
+    labels: splitNames(ctx.input.labels),
+    failing_checks: splitNames(ctx.input.failing_checks),
     min_severity: String(ctx.input.min_severity ?? "")
       .trim()
       .toUpperCase(),

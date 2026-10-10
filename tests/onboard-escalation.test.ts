@@ -183,3 +183,21 @@ describe("escalation step: a hand rule's recipient is read in every TOML spellin
     expect([...cfg.escalation.targets].sort()).toEqual(["alice", "bob"]);
   });
 });
+
+describe("escalation step: a label or check name with spaces stays one name", () => {
+  it("writes `AI review requested` as one label and `CI / test` as one check", async () => {
+    writeFileSync(configPath, EXAMPLE);
+    const { cfg } = await runStep({
+      enable: "yes",
+      targets: "alice bob",
+      why: "owns the schema",
+      labels: "AI review requested, needs-db",
+      failing_checks: "CI / test,lint",
+    });
+    const rule = cfg.escalation.rules.find((r) => r.name === "onboarding:alice")!;
+    expect(rule.labels).toEqual(["AI review requested", "needs-db"]);
+    expect(rule.failing_checks).toEqual(["CI / test", "lint"]);
+    // logins still split on whitespace as well as commas
+    expect([...cfg.escalation.targets].sort()).toEqual(["alice", "bob"]);
+  });
+});
