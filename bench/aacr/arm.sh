@@ -112,6 +112,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${QCR_BENCH_RUNS_DIR:?set QCR_BENCH_RUNS_DIR to a directory outside any worktree}"
 export QCR_BENCH_RUNS_DIR
+mkdir -p "$QCR_BENCH_RUNS_DIR" || { echo "cannot create QCR_BENCH_RUNS_DIR $QCR_BENCH_RUNS_DIR" >&2; exit 2; }
 
 PREFIX="" CONFIG="" CASES="" PAR=auto JUDGE=1 REPEAT=1 ARM=qcr MODE="" EVAL=0 RETRIES=1
 EVAL_SHARDS="${QCR_BENCH_EVAL_SHARDS:-6}" EVAL_VARIANTS="" JCONC=4

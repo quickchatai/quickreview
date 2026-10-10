@@ -147,6 +147,17 @@ describe("arm.sh", () => {
     expect(calls().filter((c) => c.includes(" judge "))).toEqual([]);
   });
 
+  it("a runs directory that does not exist yet is created, not a failed review", async () => {
+    const fresh = join(t, "new-runs", "nested");
+    const r = await arm(["--prefix", "p", "--cases", `fresh10:${A}`, "--no-judge"], {
+      QCR_BENCH_RUNS_DIR: fresh,
+    });
+    expect(r.out).not.toContain("FAILED");
+    expect(r.code).toBe(0);
+    expect(existsSync(join(fresh, "p-fresh10.arm.json"))).toBe(true);
+    expect(existsSync(join(fresh, "p-fresh10.review.log"))).toBe(true);
+  });
+
   it("a run.json left over from an earlier run is never judged as this one", async () => {
     mkdirSync(join(runs, "p-fresh10"));
     writeFileSync(join(runs, "p-fresh10", "run.json"), JSON.stringify({ cases: [A] }));
