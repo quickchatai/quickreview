@@ -400,6 +400,29 @@ describe("re-running the step", () => {
     expect(readFileSync(join(secretsDir, REVIEWER_KEY_FILE), "utf8").trim()).toBe("STALE-REVIEWER");
     expect(server.users.get("reviewer")).toBe("SERVER-REVIEWER");
   });
+
+  it("verify() stays red while the daemon's reviewer copy disagrees with the proven operator copy", async () => {
+    const server = fakeServer({
+      users: { reviewer: "SERVER-REVIEWER", companion: "SERVER-COMPANION" },
+    });
+    mkdirSync(secretsDir, { recursive: true });
+    writeFileSync(join(secretsDir, REVIEWER_KEY_FILE), "STALE-REVIEWER\n", { mode: 0o600 });
+    const engine = engineWith(server.fetchFn);
+    await runStep(engine);
+    // The operator file got the server's key and the matrix passes on it.
+    expect(readKeysFile(keysFile)[REVIEWER_VAR]).toBe("SERVER-REVIEWER");
+
+    const report = await engine.verifyAll();
+    const memory = report.results.find((r) => r.id === MEMORY_STEP_ID);
+    expect(memory?.ok).toBe(false);
+    expect(memory?.failures.join(" ")).toMatch(/DIFFERENT reviewer key/);
+    expect(readFileSync(join(secretsDir, REVIEWER_KEY_FILE), "utf8").trim()).toBe("STALE-REVIEWER");
+
+    // Restoring the right value turns it green again.
+    writeFileSync(join(secretsDir, REVIEWER_KEY_FILE), "SERVER-REVIEWER\n", { mode: 0o600 });
+    const healed = await engine.verifyAll();
+    expect(healed.results.find((r) => r.id === MEMORY_STEP_ID)?.ok).toBe(true);
+  });
 });
 
 // ---- placement rules --------------------------------------------------------

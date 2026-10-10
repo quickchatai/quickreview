@@ -940,6 +940,23 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
               : `${keysPath} is readable by others — chmod 600 it`,
       });
 
+      // The matrix proves the operator copy of the reviewer key; the daemon
+      // reads its own copy from the secrets dir. Only when the two agree does
+      // that proof cover the key the daemon and its sessions actually hold.
+      const daemonReviewerKey = readSecretFile(reviewerPath);
+      if (daemonReviewerKey !== "" && reviewerKey !== "") {
+        const same = daemonReviewerKey === reviewerKey;
+        checks.push({
+          name: "reviewer-key-match",
+          ok: same,
+          detail: same
+            ? `${reviewerPath} holds the same reviewer key as ${keysPath}`
+            : `${reviewerPath} holds a DIFFERENT reviewer key than ${REVIEWER_VAR} in ${keysPath} — the daemon would ` +
+              "authenticate with a key the matrix never proved. Nothing is rotated: restore the correct value, or remove " +
+              "the stale copy and run this step again to adopt the server's key.",
+        });
+      }
+
       const leaked = [
         ...(companionKey ? filesContaining(secretsDir, companionKey) : []),
         ...(isInside(secretsDir, keysPath) ? [keysPath] : []),
