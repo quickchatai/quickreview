@@ -99,3 +99,32 @@ export function caseCostUsd(caseDir: string): CaseCost | null {
     1e6;
   return { usd, source: "priced", model };
 }
+
+/** A case's token counts from its case-summary.json, whichever arm wrote it:
+ * `usage` (pi style, input without cache reads — our arm, Codex, OpenCode,
+ * PR-Agent), `ocr_tokens` (the OCR arm) or Claude Code's `tokens` (input,
+ * cache reads and cache writes apart). Input counts cache reads. A summary
+ * that records no counts is null — unknown, never zero. */
+export function caseTokenCounts(summary: unknown): { input: number; output: number } | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const s = summary as {
+    usage?: { input?: unknown; output?: unknown; cacheRead?: unknown } | null;
+    ocr_tokens?: { input?: unknown; output?: unknown } | null;
+    tokens?: {
+      input?: unknown;
+      output?: unknown;
+      cache_read?: unknown;
+      cache_creation?: unknown;
+    } | null;
+  };
+  if (s.usage)
+    return { input: num(s.usage.input) + num(s.usage.cacheRead), output: num(s.usage.output) };
+  if (s.ocr_tokens) return { input: num(s.ocr_tokens.input), output: num(s.ocr_tokens.output) };
+  const t = s.tokens;
+  if (t && typeof t.input === "number" && typeof t.output === "number")
+    return {
+      input: num(t.input) + num(t.cache_read) + num(t.cache_creation),
+      output: num(t.output),
+    };
+  return null;
+}

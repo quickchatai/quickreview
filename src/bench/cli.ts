@@ -124,7 +124,7 @@ import {
 } from "./defects.js";
 import { clearJudgeCase, judgeCase, judgeLabel, loadJudgements } from "./defectjudge.js";
 import { codexCommand } from "./codexcli.js";
-import { caseCostUsd, ratesFor } from "./cost.js";
+import { caseCostUsd, caseTokenCounts, ratesFor } from "./cost.js";
 
 const DEFAULTS = {
   root: "/opt/quickreview/sandbox",
@@ -1154,19 +1154,22 @@ async function main(): Promise<number> {
       reviews,
     );
     // Cost, from what the run itself recorded (both arms).
+    // A case that recorded no token counts is left out of the token average
+    // rather than counted as zero.
     let tin = 0,
-      tout = 0;
+      tout = 0,
+      tokened = 0;
     const secs: number[] = [];
     for (const c of cases) {
       const p = join(outDir, "cases", safeId(c.instance_id), "case-summary.json");
       if (!existsSync(p)) continue;
-      const s = JSON.parse(readFileSync(p, "utf8")) as {
-        usage?: { input?: number; output?: number; cacheRead?: number };
-        ocr_tokens?: { input?: number; output?: number };
-        duration_seconds?: number;
-      };
-      tin += (s.usage?.input ?? s.ocr_tokens?.input ?? 0) + (s.usage?.cacheRead ?? 0);
-      tout += s.usage?.output ?? s.ocr_tokens?.output ?? 0;
+      const s = JSON.parse(readFileSync(p, "utf8")) as { duration_seconds?: number };
+      const t = caseTokenCounts(s);
+      if (t) {
+        tin += t.input;
+        tout += t.output;
+        tokened++;
+      }
       secs.push(s.duration_seconds ?? 0);
     }
     secs.sort((a, b) => a - b);
@@ -1194,8 +1197,7 @@ async function main(): Promise<number> {
       .join("; ");
     const extra = secs.length
       ? {
-          tokensInPerPr: tin / secs.length,
-          tokensOutPerPr: tout / secs.length,
+          ...(tokened ? { tokensInPerPr: tin / tokened, tokensOutPerPr: tout / tokened } : {}),
           medianMinPerPr: (secs[Math.floor(secs.length / 2)] ?? 0) / 60,
           ...(priced
             ? {

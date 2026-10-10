@@ -31,7 +31,7 @@ import {
   readJudgeEvents,
 } from "../src/bench/defectjudge.js";
 import { judgePiArgv, runJudgeSession } from "../src/bench/runner.js";
-import { caseCostUsd } from "../src/bench/cost.js";
+import { caseCostUsd, caseTokenCounts } from "../src/bench/cost.js";
 
 const D = (id: string, severity: "high" | "medium" | "low" = "high"): Defect => ({
   id,
@@ -744,5 +744,36 @@ describe("dollar cost, as pi prices it", () => {
     // 0.5M uncached × $2 + 0.5M cached × $0.20 + 0.1M output × $10
     expect(caseCostUsd(dir)).toEqual({ usd: 1 + 0.1 + 1, source: "priced", model: "gpt-6-sol" });
     expect(caseCostUsd(join(dir, "nope"))).toBeNull();
+  });
+});
+
+describe("token counts, whichever arm recorded them", () => {
+  it("reads pi's usage, the OCR arm's ocr_tokens and Claude Code's tokens; input counts cache reads", () => {
+    expect(caseTokenCounts({ usage: { input: 10, cacheRead: 90, output: 5 } })).toEqual({
+      input: 100,
+      output: 5,
+    });
+    expect(caseTokenCounts({ ocr_tokens: { input: 40, output: 7, total: 47 } })).toEqual({
+      input: 40,
+      output: 7,
+    });
+    expect(
+      caseTokenCounts({
+        tokens: { input: 10, output: 900, cache_read: 1000, cache_creation: 200 },
+      }),
+    ).toEqual({ input: 1210, output: 900 });
+  });
+
+  it("is unknown (null) when the summary records no counts — never zero", () => {
+    expect(caseTokenCounts({ tokens: null, usage: null })).toBeNull();
+    expect(caseTokenCounts({ duration_seconds: 3 })).toBeNull();
+    expect(caseTokenCounts(null)).toBeNull();
+  });
+
+  it("a report with no recorded tokens says so rather than 0k", () => {
+    const set = parseDefectSet(SET);
+    const s = scoreRun(set, ["o__r@1234567"], { "o__r@1234567": [] }, { "o__r@1234567": REVIEW });
+    const md = renderDefectReport("t", set, s, { medianMinPerPr: 2 });
+    expect(md).toContain("| — | — | — | — | 2.0 |");
   });
 });

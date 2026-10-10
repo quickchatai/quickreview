@@ -712,13 +712,15 @@ export function renderDefectReport(
     `| ${c.total} | ${num(c.finds_defect)} | ${num(c["correct-valuable"])} | ${num(c["correct-minor"])} | ${num(c["partly-correct"])} | ${num(c.incorrect)} | ${num(c.unverifiable)} | ${pct(c.correct_share)} | ${pct(c.valuable_share)} | ${num(c.wrong_blockers)} |`,
     "",
   ];
-  if (extra.tokensInPerPr !== undefined)
+  // No run-level cost at all hides the section; a cell the run did not record
+  // reads "—", never 0.
+  if (extra.medianMinPerPr !== undefined || extra.tokensInPerPr !== undefined)
     lines.push(
       "## Cost",
       "",
       "| $ / PR (pi's prices) | $ total | Input tokens / PR | Output tokens / PR | Median minutes / PR |",
       "|---|---|---|---|---|",
-      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${Math.round((extra.tokensInPerPr ?? 0) / 1000)}k | ${((extra.tokensOutPerPr ?? 0) / 1000).toFixed(1)}k | ${(extra.medianMinPerPr ?? 0).toFixed(1)} |`,
+      `| ${extra.usdPerPr !== undefined ? `$${extra.usdPerPr.toFixed(3)}` : "—"} | ${extra.usdTotal !== undefined ? `$${extra.usdTotal.toFixed(2)}` : "—"} | ${extra.tokensInPerPr !== undefined ? `${Math.round(extra.tokensInPerPr / 1000)}k` : "—"} | ${extra.tokensOutPerPr !== undefined ? `${(extra.tokensOutPerPr / 1000).toFixed(1)}k` : "—"} | ${extra.medianMinPerPr !== undefined ? extra.medianMinPerPr.toFixed(1) : "—"} |`,
       "",
       ...(extra.usdSource ? [extra.usdSource, ""] : []),
     );
