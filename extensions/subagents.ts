@@ -344,6 +344,12 @@ export function wrapExecute(
   };
 }
 
+/** A not-yet-reported task's slot, in native's own still-running shape. */
+function runningPlaceholder(task: unknown): Record<string, unknown> {
+  const fields = typeof task === "object" && task !== null ? (task as Record<string, unknown>) : {};
+  return { agent: fields.agent, task: fields.task, exitCode: -1, messages: [] };
+}
+
 /**
  * The wide fan-out: one `tasks:[…]` call, split into contiguous chunks of at
  * most native's in-call concurrency, every chunk launched at once. Each chunk
@@ -367,7 +373,11 @@ async function runWide(
   const chunks: unknown[][] = [];
   for (let offset = 0; offset < tasks.length; offset += size)
     chunks.push(tasks.slice(offset, offset + size));
-  const partial: unknown[][] = chunks.map(() => []);
+  // Every chunk's slots stand in the combined update from the start, as the
+  // still-running placeholders native itself emits (`exitCode: -1`), so a
+  // chunk that reports before an earlier one never shifts that earlier one's
+  // tasks out of their positions: position i of every update is task i.
+  const partial: unknown[][] = chunks.map((chunk) => chunk.map(runningPlaceholder));
   const notify =
     typeof onUpdate === "function"
       ? (onUpdate as unknown as (update: ParallelNativeResult) => void)

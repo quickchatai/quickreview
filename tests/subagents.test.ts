@@ -428,6 +428,35 @@ describe("wide fan-out (QCR_SUBAGENT_WIDE_FANOUT=1, bench/aacr/PERF.md §1)", ()
     expect(log.sizes.reduce((x, y) => x + y, 0)).toBe(15);
   });
 
+  it("keeps every task at its own position in an update a later chunk sends first", async () => {
+    const tasks = Array.from({ length: 6 }, (_, i) => ({
+      agent: i === 0 || i === 4 ? "pass-sweep" : `pass-${i}`,
+      task: `task-${i}`,
+    }));
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
+    const native = asExecute(async (_id, params, _signal, onUpdate) => {
+      const chunk = (params as { tasks: Array<{ agent: string; task: string }> }).tasks;
+      if (chunk[0]?.task === "task-0") await firstHeld;
+      const results = chunk.map((task) => ({ ...task, exitCode: 0 }));
+      (onUpdate as (u: unknown) => void)({
+        content: [{ type: "text", text: "Parallel: 1 done" }],
+        details: { mode: "parallel", results },
+      });
+      if (chunk[0]?.task !== "task-0") releaseFirst();
+      return { content: [{ type: "text", text: "ok" }], details: { mode: "parallel", results } };
+    });
+    const updates: Array<Array<{ agent: string; task: string; exitCode: number }>> = [];
+    const wrapped = wrapExecute(native, new WeightedSemaphore(8), WIDE);
+    await wrapped("round", { tasks }, undefined, (u: unknown) =>
+      updates.push((u as { details: { results: never } }).details.results),
+    );
+    const early = updates[0]!;
+    expect(early.map((r) => r.task)).toEqual(tasks.map((t) => t.task));
+    expect(early.map((r) => r.agent)).toEqual(tasks.map((t) => t.agent));
+    expect(early.map((r) => r.exitCode)).toEqual([-1, -1, -1, -1, 0, 0]);
+  });
+
   it("leaves single-mode calls and the native shape alone when off", async () => {
     const log = { inFlight: 0, peak: 0, sizes: [] as number[] };
     const wrapped = wrapExecute(nativeStub(log), new WeightedSemaphore(12), {});
