@@ -822,6 +822,16 @@ describe("the provisioning report", () => {
     );
     expect(mainBody).toMatch(/finally \{\s*finish\(report\);/);
   });
+
+  it("main()'s fallback report logs nothing up front — a clean run never prints a failure line", () => {
+    const src = readFileSync(resolve(process.cwd(), "scripts/openviking-provision.mjs"), "utf8");
+    const mainBody = src.slice(src.indexOf("async function main"));
+    // The pre-try fallback is built without logging; its line is printed only
+    // when provision() throws.
+    expect(mainBody).toMatch(/let report = failureReport\(incomplete\);/);
+    expect(mainBody).not.toMatch(/let report = failed\(/);
+    expect(mainBody).toMatch(/catch \(err\) \{\s*log\(`\$\{incomplete\}/);
+  });
 });
 
 describe("the daemon's reading of the report (src/openviking/provisionreport.ts)", () => {

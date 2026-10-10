@@ -1014,16 +1014,17 @@ async function main(argv) {
       ),
       log,
     );
+  const failureReport = (line) => ({
+    created: [],
+    kept: [],
+    failed: [],
+    reviewer: "skipped",
+    ok: false,
+    errors: [line.replace(/^openviking: /, "")],
+  });
   const failed = (line) => {
     log(line);
-    return {
-      created: [],
-      kept: [],
-      failed: [],
-      reviewer: "skipped",
-      ok: false,
-      errors: [line.replace(/^openviking: /, "")],
-    };
+    return failureReport(line);
   };
   let child;
   let embedder = null;
@@ -1073,7 +1074,10 @@ async function main(argv) {
       return cfg.strict ? 1 : 0;
     }
   }
-  let report = failed("openviking: provisioning did not complete");
+  // The fallback report is logged only if provisioning actually throws: a
+  // clean run never prints a failure line.
+  const incomplete = "openviking: provisioning did not complete";
+  let report = failureReport(incomplete);
   try {
     report = await provision({
       base: cfg.base,
@@ -1084,6 +1088,9 @@ async function main(argv) {
       reviewerUser: cfg.reviewerUser,
       log,
     });
+  } catch (err) {
+    log(`${incomplete} (${err instanceof Error ? err.message : String(err)})`);
+    throw err;
   } finally {
     finish(report);
     // Bounded stop: SIGTERM → grace → SIGKILL, child unref'd. A server that
