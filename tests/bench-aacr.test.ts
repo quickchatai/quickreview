@@ -1181,6 +1181,23 @@ describe("the open-code-review baseline arm", () => {
       expect(md).toMatch(/^\| 1 \| 10\/1 \| 40 \| 8\/62 \|/m);
       expect(md).toMatch(/^\| 2 \| 10\/1 \| 40 \| 6\/62 \|/m);
       expect(md).toContain("| 31 (0) | 120k (60k) / 8k (5k) |");
+      expect(md).toContain("no PR title/description — the harness passes none");
+      expect(md).not.toContain("--background");
+      // The equal-inputs switch: the report says the PR text reached OCR,
+      // and names a case whose PR text was missing.
+      const runRec = JSON.parse(readFileSync(join(tmp, "run.json"), "utf8"));
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ ...runRec, pr_text: true }));
+      writeFileSync(
+        join(tmp, "cases", safeId(c.instance_id), "case-summary.json"),
+        JSON.stringify({ ...s, pr_text: false }),
+      );
+      const withText = renderOcrReport(set, tmp, [c]);
+      expect(withText).not.toContain("the harness passes none)");
+      expect(withText).toContain("--max-tools 30 --background <PR title/description>");
+      expect(withText).toContain("PR title/description through --background");
+      expect(withText).toContain(
+        `- Reviewed WITHOUT the PR title/description (none prefetched): \`${c.instance_id}\``,
+      );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
