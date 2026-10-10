@@ -92,6 +92,32 @@ describe("every replay task names where to open each file", () => {
     expect(task).toContain(`open ${ROOT}/svc/auth/token.py`);
     expect(task).toContain(WORKTREE_PATHS_NOTE);
   });
+
+  it("the validator receives each candidate's detail, reachability and the severity its lens wrote", () => {
+    const task = replayValidatorPrompt(pr, tree, "pass-validate", [
+      {
+        path: "svc/auth/token.py",
+        start: 2,
+        end: 2,
+        kind: "bug",
+        severity: "P3",
+        capped_from: "P1",
+        confidence: 0.8,
+        reachability: "contrived",
+        claim: "returns the token unchecked",
+        evidence: "line 2",
+        fix: null,
+        detail: "an expired token passes check() and reaches the session",
+        lens: "pass-baseline",
+        doubt: null,
+        validated: false,
+      },
+    ]);
+    expect(task).toContain("  severity: P1");
+    expect(task).toContain("  reachability: contrived");
+    expect(task).toContain("  detail: an expired token passes check() and reaches the session");
+    expect(task).toMatch(/keep each survivor's path, line, kind and detail/);
+  });
 });
 
 describe("a read counts as reading the PR only when it resolved inside its worktree", () => {

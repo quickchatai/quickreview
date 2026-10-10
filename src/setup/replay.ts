@@ -363,10 +363,17 @@ export function replayValidatorPrompt(
           `- path: ${f.path}`,
           `  line: ${f.start === f.end ? f.end : `${f.start}-${f.end}`}`,
           `  kind: ${f.kind}`,
-          `  severity: ${f.severity}`,
+          // The severity the LENS wrote, not the capped one: the validator
+          // audits reachability, and its survivors are re-read, so the cap
+          // applies again on the way out.
+          `  severity: ${f.capped_from ?? f.severity}`,
           ...(f.confidence !== null ? [`  confidence: ${f.confidence}`] : []),
+          ...(f.reachability !== null ? [`  reachability: ${f.reachability}`] : []),
           `  claim: ${f.claim}`,
           ...(f.evidence ? [`  evidence: ${f.evidence}`] : []),
+          // The failure mechanism: the validator judges with it, and a
+          // survivor is re-read from the validator's answer.
+          ...(f.detail ? [`  detail: ${f.detail}`] : []),
           ...(f.fix ? [`  fix: ${f.fix}`] : []),
         ].join("\n"),
       ),
@@ -379,7 +386,7 @@ export function replayValidatorPrompt(
     `The lenses' ${candidates.length} candidate finding(s):`,
     blocks.join("\n\n"),
     "",
-    `Validate every candidate against the worktree. Return the survivors as a findings block headed \`FINDINGS ${validator} PR#${pr.number} @${tree.sha}\` (keep each survivor's path, line and kind), then your DOUBTED and KILLED blocks.`,
+    `Validate every candidate against the worktree. Return the survivors as a findings block headed \`FINDINGS ${validator} PR#${pr.number} @${tree.sha}\` (keep each survivor's path, line, kind and detail), then your DOUBTED and KILLED blocks.`,
   ].join("\n");
 }
 
