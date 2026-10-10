@@ -760,3 +760,38 @@ describe("the sandbox wiring", () => {
     }
   });
 });
+
+describe("the report describes the run it reads", () => {
+  const render = (run: Record<string, unknown>): string => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-report-"));
+    try {
+      writeFileSync(join(tmp, "run.json"), JSON.stringify(run));
+      return renderOpencodeReport(SET, tmp, [CASE]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  };
+  const line = (md: string, prefix: string): string =>
+    md.split("\n").find((l) => l.startsWith(prefix)) ?? "";
+
+  it("names the recorded endpoint, not always the ChatGPT bridge", () => {
+    const native = "ChatGPT Codex backend through OpenCode's own ChatGPT login (provider openai)";
+    const nat = line(render({ provider: "native", endpoint: native }), "- Model:");
+    expect(nat).toContain(native);
+    expect(nat).not.toContain("loopback bridge");
+    expect(nat).not.toContain("Chat Completions");
+    const key =
+      "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)";
+    const api = line(render({ provider: "bridge", endpoint: key }), "- Model:");
+    expect(api).toContain(key);
+    expect(api).not.toContain("ChatGPT Codex backend");
+    expect(line(render({}), "- Model:")).toContain("endpoint ?");
+  });
+
+  it("says whether the PR title/description was supplied", () => {
+    const withText = line(render({ pr_text: true }), "- Reviewer:");
+    expect(withText).toContain("PR title/description appended");
+    expect(withText).not.toContain("no PR title/description");
+    expect(line(render({ pr_text: false }), "- Reviewer:")).toContain("no PR title/description");
+  });
+});

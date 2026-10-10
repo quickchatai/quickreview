@@ -1283,10 +1283,10 @@ export function renderOpencodeReport(set: CaseSet, outDir: string, cases: BenchC
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: OpenCode ${String(run["opencode_version"] ?? "?")}, run in the shape of the AACR harness's reviewers/codex.py: \`opencode run --command review "<base>...<head> (<findings fragment>)"\` (OpenCode's built-in /review), findings through the harness's codex MCP findings server, timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); no PR title/description`,
+    `- Reviewer: OpenCode ${String(run["opencode_version"] ?? "?")}, run in the shape of the AACR harness's reviewers/codex.py: \`opencode run --command review "<base>...<head> (<findings fragment>)"\` (OpenCode's built-in /review), findings through the harness's codex MCP findings server, timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); ${run["pr_text"] === true ? "PR title/description appended to the review arguments (the equal-inputs switch)" : "no PR title/description"}`,
   );
   L.push(
-    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` (asked: --variant \`${String(run["variant"] ?? "?")}\`) — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py, streaming Chat Completions)`,
+    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` (asked: --variant \`${String(run["variant"] ?? "?")}\`) — ${typeof run["endpoint"] === "string" ? run["endpoint"] : "endpoint ?"}${run["provider"] === "native" ? "" : ", streaming Chat Completions"}`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
