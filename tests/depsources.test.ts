@@ -2140,6 +2140,41 @@ describe("selfscan2: the version a file actually runs against", () => {
     ]);
   });
 
+  it("npm: a private-registry yarn.lock block at the same version as a public one keeps its foreign mark", async () => {
+    const yarn = [
+      "# yarn lockfile v1",
+      "",
+      "left-pad@~1.3.0:",
+      '  version "1.3.0"',
+      '  resolved "https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#def"',
+      "",
+      "left-pad@^1.3.0:",
+      '  version "1.3.0"',
+      '  resolved "https://npm.internal.corp/left-pad/-/left-pad-1.3.0.tgz#abc"',
+      "",
+    ].join("\n");
+    expect(parseYarnLock(yarn).entries.get("left-pad")).toEqual([
+      { version: "1.3.0", specs: ["~1.3.0"] },
+      { version: "1.3.0", specs: ["^1.3.0"], foreign: true },
+    ]);
+    const root = tree({
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "left-pad": "^1.3.0" },
+      }),
+      "yarn.lock": yarn,
+      "src/a.ts": `import lp from "left-pad";\n`,
+    });
+    const { fetch, calls } = fakeFetch({});
+    const m = await prepareDependencySources(root, [{ filename: "src/a.ts" }], {
+      cacheDir: tmp(),
+      fetch,
+    });
+    expect(m.sources).toEqual([]);
+    expect(m.skipped.map((s) => s.name)).toEqual(["left-pad"]);
+    expect(calls).toEqual([]);
+  });
+
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
     const sdist = gzipSync(tarball(tarEntry("somepkg-1.8/somepkg/__init__.py", "V = '1.8'\n")));
     const live = "https://files.pythonhosted.org/packages/aa/somepkg-1.8.tar.gz";

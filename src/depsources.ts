@@ -653,8 +653,10 @@ function emptyLock(): NpmLock {
   return { entries: new Map(), links: new Set() };
 }
 
-/** Per lock: `(name, version, scope)` → its entry plus the spec set, so each
- * insertion is O(1). A lockfile is PR-controlled and parsed on the event loop
+/** Per lock: `(name, version, scope, foreign)` → its entry plus the spec set,
+ * so each insertion is O(1). Foreign is part of the key: a private-registry
+ * copy at a public copy's version is a different artifact, and merging the two
+ * would drop its mark. A lockfile is PR-controlled and parsed on the event loop
  * before any deadline exists; a linear find per entry made one package with
  * 100k versions a daemon stall. */
 const lockIndex = new WeakMap<NpmLock, Map<string, { entry: LockEntry; specs: Set<string> }>>();
@@ -662,7 +664,7 @@ const lockIndex = new WeakMap<NpmLock, Map<string, { entry: LockEntry; specs: Se
 function addLock(lock: NpmLock, name: string, entry: LockEntry): void {
   let index = lockIndex.get(lock);
   if (!index) lockIndex.set(lock, (index = new Map()));
-  const key = `${name}\0${entry.version}\0${entry.scope ?? ""}\0${entry.scope === undefined ? 0 : 1}`;
+  const key = `${name}\0${entry.version}\0${entry.scope ?? ""}\0${entry.scope === undefined ? 0 : 1}\0${entry.foreign ? 1 : 0}`;
   const have = index.get(key);
   if (!have) {
     const list = lock.entries.get(name) ?? [];
