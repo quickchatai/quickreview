@@ -223,7 +223,10 @@ export function unquoteGitPath(s: string): string | null {
   for (let i = 0; i < body.length; i++) {
     const c = body[i]!;
     if (c !== "\\") {
-      for (const b of Buffer.from(c, "utf8")) bytes.push(b);
+      // A whole code point: a supplementary character is two UTF-16 units.
+      const cp = String.fromCodePoint(body.codePointAt(i)!);
+      for (const b of Buffer.from(cp, "utf8")) bytes.push(b);
+      i += cp.length - 1;
       continue;
     }
     const n = body[i + 1];

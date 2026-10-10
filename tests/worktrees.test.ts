@@ -960,6 +960,7 @@ describe("unquoteGitPath", () => {
     expect(unquoteGitPath("plain.txt")).toBe("plain.txt");
     expect(unquoteGitPath('"a\\tb\\"c\\\\d"')).toBe('a\tb"c\\d');
     expect(unquoteGitPath('"caf\\303\\251.txt"')).toBe("café.txt");
+    expect(unquoteGitPath('"icon😀\\".txt"')).toBe('icon😀".txt');
     expect(unquoteGitPath('"broken')).toBeNull();
   });
 });
