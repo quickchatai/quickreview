@@ -177,7 +177,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe("a wake behind the post-verdict compaction (H1b, #5849 08:52Z)", () => {
+describe("a wake behind the post-verdict compaction (#5849 08:52Z)", () => {
   it(
     "starts once the compaction ends — the supervisor holds its lease, nothing is killed or respawned",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -236,7 +236,7 @@ describe("a wake behind the post-verdict compaction (H1b, #5849 08:52Z)", () => 
   );
 });
 
-describe("a pi that died mid-compaction (H1b review)", () => {
+describe("a pi that died mid-compaction", () => {
   it("reads no compaction once tmux is gone, though its last receipt still says running", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -252,7 +252,7 @@ describe("a pi that died mid-compaction (H1b review)", () => {
   });
 });
 
-describe("a live, bridge-ready session whose wake did not start (#5362 ③, H1b)", () => {
+describe("a live, bridge-ready session whose wake did not start (#5362 ③)", () => {
   it("a bridge reservation made after the supervisor's due read is never handed back: raced, sent once", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});

@@ -176,7 +176,7 @@ function parts(out: string): { seed: string; layout: string; curation: string; m
   };
 }
 
-describe("the ratified reseed is the seed on disk (R8)", () => {
+describe("the ratified reseed is the seed on disk", () => {
   it("prompts/eod-sweep.md is the ratified text, hash-pinned and recorded as a ratified divergence", () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, "tests/fixtures/seed-manifest.json"), "utf8"),
@@ -423,7 +423,7 @@ function receiptVia(learner: Learner | null) {
     executeCommand({ command: "eod-curation-receipt", day, decisions: [] }, deps);
 }
 
-describe("a sweep without a packet still has the section the seed points at (R8)", () => {
+describe("a sweep without a packet still has the section the seed points at", () => {
   it("off: no learner on this daemon — no candidates, no receipt, and why", () => {
     const { curation } = parts(rendered(renderNoPacketSection(DAY, "off")));
     expect(curation).toContain(

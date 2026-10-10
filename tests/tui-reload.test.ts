@@ -274,7 +274,7 @@ describe("argv plumbing", () => {
 // that wants a reload exits. There is still no condition on when a reload
 // fires.
 
-describe("the reload chain stays two processes deep, however many reloads (S3)", () => {
+describe("the reload chain stays two processes deep, however many reloads", () => {
   /** A simulated process tree. Each spawned "TUI" runs `life` — it reloads
    * `reloads` times across the whole tree, then quits with `finalCode`. */
   function simulate(reloads: number, finalCode: number | null = 0) {

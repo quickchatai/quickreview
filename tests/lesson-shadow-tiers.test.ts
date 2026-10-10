@@ -558,9 +558,9 @@ describe("the tier line is honest-unknown", () => {
     unknown: 0,
     as_of: "2026-10-07T10:00:00.000Z",
   };
-  it("a daemon that predates R9 reports no tiers: UNKNOWN, never an empty split", () => {
+  it("a daemon that predates lens-level matching reports no tiers: UNKNOWN, never an empty split", () => {
     expect(lessonTierLine(S)).toBe(
-      "by tier: UNKNOWN (this daemon predates lens-level matching, R9)",
+      "by tier: UNKNOWN (this daemon predates lens-level matching)",
     );
     expect(lessonDeliveryPhrase(S)).toContain(" — by tier: UNKNOWN");
     expect(lessonDeliveryPhrase(S)).not.toMatch(/class 0|lens 0/);
@@ -596,7 +596,7 @@ describe("the tier line is honest-unknown", () => {
 
 // ---- the migration of a class-only ledger ------------------------------------------------
 
-describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens tier added", () => {
+describe("a ledger without lens tiers migrates once: existing rows kept as `class`, the lens tier added", () => {
   const S9A_SCHEMA = readFileSync(
     resolve(process.cwd(), "tests/fixtures/lesson-ledger-s9a.sql"),
     "utf8",
@@ -653,7 +653,7 @@ describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens
     severity: "P2",
     path: "docs/a.md",
     via: '["row:0"]',
-    why: "the S9a matcher's own words",
+    why: "the class matcher's own words",
     marked_at: T_MARKED,
   };
 
@@ -696,7 +696,7 @@ describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens
         .all() as Array<{ payload: string }>
     ).map((e) => JSON.parse(e.payload) as unknown);
 
-  it("keeps every existing row byte for byte as `class`, adds the R9 marks, and records it", () => {
+  it("keeps every existing row byte for byte as `class`, adds the lens-tier marks, and records it", () => {
     seedOld();
     new LessonLedger(store, () => new Date("2026-10-07T12:00:00Z"));
     const rows = all();
@@ -777,7 +777,7 @@ describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens
     expect(migratedEvents()).toHaveLength(1);
   });
 
-  it("the migrated ledger reports the lens tier for pre-R9 rounds — never a zero it never measured", () => {
+  it("the migrated ledger reports the lens tier for rounds recorded before tiers — never a zero it never measured", () => {
     seedOld();
     const ledger = new LessonLedger(store, () => new Date("2026-10-07T12:00:00Z"));
     const r = shadowReport(ledger, {
@@ -795,7 +795,7 @@ describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens
     ]);
   });
 
-  it("a fresh database is created in the R9 shape and never migrates", () => {
+  it("a fresh database is created in the tiered shape and never migrates", () => {
     const fresh = new StateStore(":memory:");
     try {
       new LessonLedger(fresh);

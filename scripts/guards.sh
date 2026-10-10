@@ -162,8 +162,7 @@ except Exception:
 # The undecided carve-out, mirroring src/guards.ts hasNewEvidence: a
 # NEEDS_HUMAN (legacy spelling ESCALATE, folded by normalizeVerdict) mark is an
 # UNDECIDED review, and undecided is not reviewed-and-decided — it must never
-# suppress a re-run or a posting. Missing from this route until, so the
-# live posting route enforced a rule its TypeScript twin did not.
+# suppress a re-run or a posting.
 if row is not None and (row[3] or "").strip().upper() in ("NEEDS_HUMAN", "ESCALATE"):
     print("new")
 elif row is None or row[0] != head:

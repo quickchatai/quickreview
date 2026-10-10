@@ -284,7 +284,7 @@ describe("bounded round-stage supervision", () => {
     expect(store.dueSessionCommands(clock.toISOString())).toEqual([]);
   });
 
-  it("reproduces #5454: attempt-zero rebirths fail precisely and keep four wakes plus queued work blocked", async () => {
+  it("attempt-zero rebirths fail precisely and keep four wakes plus queued work blocked", async () => {
     const { id, pr } = seedWakeCommand({ status: "failed", attempt: 0 });
     for (let n = 1; n <= 4; n++)
       store.holdWake(pr, `# Author reply — PR #${pr}\n\nreply ${n}`, "author_reply");
@@ -1012,7 +1012,7 @@ describe("bounded round-stage supervision", () => {
     expect(events("round_stage_recovery_deferred")).toHaveLength(1);
   });
 
-  it("H1a: a posted_wait disposition keeps the command running and alive — no failure, no kill, re-checked later", async () => {
+  it("a posted_wait disposition keeps the command running and alive — no failure, no kill, re-checked later", async () => {
     const { id } = seedRoundCommand({ status: "running", started: true });
     store.db
       .prepare("UPDATE session_commands SET started_at=?, next_check_at=? WHERE id=?")
@@ -1109,7 +1109,7 @@ describe("bounded round-stage supervision", () => {
 // compaction until its start lease runs out. A command waiting behind a
 // compaction is late, not lost; a live, bridge-ready session gets a bounded
 // REDELIVERY of the same command before any kill.
-describe("missing start on a live session: compaction and redelivery come before any kill (H1b)", () => {
+describe("missing start on a live session: compaction and redelivery come before any kill", () => {
   // The moment the wake's 120 s start lease has run out.
   const LEASE_OUT = "2026-08-27T20:04:00.000Z";
 

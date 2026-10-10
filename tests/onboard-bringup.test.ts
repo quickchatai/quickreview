@@ -139,7 +139,7 @@ function harness(
 
 const envText = (): string => readFileSync(join(root, ".env"), "utf8");
 
-describe("the registered sequence (tail)", () => {
+describe("the registered sequence's tail", () => {
   it("runs after memory, in one order, with tool-name-safe ids", () => {
     const steps = defaultSteps();
     const ids = steps.map((s) => s.id);

@@ -1056,7 +1056,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
 
 // ---- PATCH 7 ----------------------------------------------------------------
 
-describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
+describe("PATCH 7 — bounded recall, no commit", () => {
   const ROOT = "viking://user/reviewer/memories";
   const SEARCH_OK = (entries: Array<Record<string, unknown>>) => ({
     ok: true,

@@ -298,7 +298,7 @@ describe("store — drain holds", () => {
     store.close();
   });
 
-  it("a legacy draining row (no issuer recorded) is the OPERATOR's and never lapses", () => {
+  it("a draining row with no issuer recorded is the OPERATOR's and never lapses", () => {
     const { store, tick } = clocked();
     store.engageDrain({ issuer: "session", expires_at: minutesFromNow(T0, 5) });
     store.db
@@ -395,7 +395,7 @@ describe("store — pause holds", () => {
     store.close();
   });
 
-  it("a legacy paused row (no issuer recorded) is the operator's and never lapses", () => {
+  it("a paused row with no issuer recorded is the operator's and never lapses", () => {
     const { store, tick } = clocked();
     queue(store, 3);
     store.pausePr(3, { issuer: "session", expires_at: minutesFromNow(T0, 5) }, "old");

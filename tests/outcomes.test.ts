@@ -1194,7 +1194,7 @@ describe("whole-review signals are recorded per review, never smeared over findi
 // ---------------------------------------------------------------------------
 
 describe("the bounded pass", () => {
-  it("yields a real event-loop turn per PR it considers (boot stall)", async () => {
+  it("yields a real event-loop turn per PR it considers", async () => {
     // With no git (or every git answer memoised) a capture never awaits real
     // I/O, so without a yield per PR a pass would block the loop throughout.
     const h = harness();

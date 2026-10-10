@@ -283,7 +283,7 @@ describe("expandHome", () => {
 });
 
 describe("manifestYaml", () => {
-  it("reproduces the §5 manifest", () => {
+  it("reproduces the Slack app manifest", () => {
     const y = wiz.manifestYaml("public");
     expect(y).toContain("name: quickreview-concierge");
     expect(y).toContain("display_name: quickreview");

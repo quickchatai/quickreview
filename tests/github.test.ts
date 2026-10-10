@@ -115,7 +115,7 @@ describe("triggered-set queries", () => {
     expect(q).toContain("-author:app/example-review");
   });
 
-  it("no longer exposes the awaiting-reviewer search (scrapped 2026-08-18)", () => {
+  it("does not expose an awaiting-reviewer search", () => {
     const { adapter } = build(() => ({ items: [] }));
     expect(
       (adapter as unknown as Record<string, unknown>).searchAwaitingEscalationReviewer,

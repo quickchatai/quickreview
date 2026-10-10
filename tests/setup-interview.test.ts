@@ -170,7 +170,7 @@ const modelOf = (bytes: string | undefined): string | undefined =>
 // ---- the table ------------------------------------------------------------------
 
 describe("the priority → settings table", () => {
-  it("is the one ratified table: critical blocks at full strength, ignore switches off, normal is the shipped behaviour", () => {
+  it("is the one table: critical blocks at full strength, ignore switches off, normal is the shipped behaviour", () => {
     expect(PRIORITY_SETTINGS).toEqual({
       critical: { enabled: true, min_tier: "sol-high", effort: "high", max_severity: "P0" },
       important: { enabled: true, min_tier: "sol-med", effort: "medium" },

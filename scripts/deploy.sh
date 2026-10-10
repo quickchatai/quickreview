@@ -56,7 +56,7 @@
 #     name never reads as a dirty tree.
 #
 # This script performs no live run on its own beyond ansible/ssh; every live
-# invocation belongs to the owner on a machine with VM access.
+# invocation belongs to the operator on a machine with VM access.
 #
 # Usage:
 #   scripts/deploy.sh [--dry-run] [sync|rebuild|verify]

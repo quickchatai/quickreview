@@ -97,7 +97,7 @@ function tierPhrase(name: string, label: string, t: LessonTierCounts): string {
 export function lessonTierLine(s: LessonDeliveryStatus | null): string | null {
   if (s === null || s.delivery === "off" || s.lessons_off) return null;
   if (s.tiers === undefined)
-    return "by tier: UNKNOWN (this daemon predates lens-level matching, R9)";
+    return "by tier: UNKNOWN (this daemon predates lens-level matching)";
   return (
     `by tier: ${tierPhrase("class", "would-demote", s.tiers.class)} · ` +
     tierPhrase("lens", "evidence only", s.tiers.lens)

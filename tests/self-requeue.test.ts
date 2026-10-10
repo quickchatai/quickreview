@@ -350,7 +350,7 @@ describe("stuck-round detection + self-requeue", () => {
     expect(adapter.calls).toEqual([]);
   });
 
-  it("a live session with no killSession hook keeps the legacy overdue-anomaly path (no park since 2026-08-19)", async () => {
+  it("a live session with no killSession hook keeps the overdue-anomaly path (no park)", async () => {
     const roundId = reviewingRound(301);
     pastDeadline();
     const { hooks, overseer } = hooksWith(true);
@@ -774,7 +774,7 @@ describe("NEEDS_HUMAN requires a finished review", () => {
 // cheap first: re-deliver the same order to the same session, and escalate to
 // a cancelled round only when redelivery is spent or impossible.
 
-describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
+describe("lost-prompt net — a round with no prompt receipt", () => {
   const GRACE_MIN = baseCfg.daemon.round_stall_grace_min ?? 10;
 
   /** hooksWith + the observation hooks, with redelivery ALWAYS failing so the
@@ -885,7 +885,7 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
     expect(events("round_self_requeued")).toHaveLength(1);
   });
 
-  it("a HEAD_MOVED requeue no longer disarms the net — the #5362 regression", async () => {
+  it("a HEAD_MOVED requeue no longer disarms the net", async () => {
     // `head_moved` spends a self-requeue seconds before dispatching the round
     // whose delivery races the session's still-running turn — the most
     // loss-prone dispatch there is, so a spent requeue must not disarm the net.
@@ -1094,7 +1094,7 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(events("head_moved_reported")).toHaveLength(1);
     const requeued = events("round_self_requeued");
     expect(requeued).toHaveLength(1);
-    expect(requeued[0]!.payload).toMatchObject({ mode: "head_moved", head_sha: "fresh-head" }); // SAME counter, fresh head
+    expect(requeued[0]!.payload).toMatchObject({ mode: "head_moved", head_sha: "fresh-head" }); // SAME self-requeue counter, fresh head
     expect(store.selfRequeueSpend(340, "fresh-head")).toEqual({ at_head: 1, unattributed: 0 });
     expect(overseer.some((m) => m.startsWith("SELF-REQUEUE (recovery) — PR #340"))).toBe(true);
     // No verdict applied: no reviewed-head mark, in-progress label off,
@@ -1106,7 +1106,7 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
     expect(existsSync(join(dir, "pr-340-round-1.json"))).toBe(false);
   });
 
-  it("respects the cap: past it the round terminalizes through the anomaly path, never loops", async () => {
+  it("respects the self-requeue cap: past it the round terminalizes through the anomaly path, never loops", async () => {
     const { hooks } = hooksWith(true);
     const w = watcher(hooks);
     const latestRoundNo = () =>
@@ -1153,7 +1153,7 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
 
 // ---- held wakes with no round left to flush them ----------------------------
 
-describe("stranded held wakes (#5362 W3)", () => {
+describe("stranded held wakes", () => {
   // A verdict landing and the anomaly path flush held wakes, but three
   // cancellations reach neither — `superseded`, a startup orphan that is NOT
   // requeued, and a self-requeue whose successor is cancelled the same way.
@@ -1175,7 +1175,7 @@ describe("stranded held wakes (#5362 W3)", () => {
     expect(events("wakes_stranded")).toHaveLength(1);
   });
 
-  it("never flushes while the round is still running — that hold is the point (S4)", async () => {
+  it("never flushes while the round is still running — that hold is the point", async () => {
     reviewingRound(701);
     store.holdWake(701, "mid-round reply", "author_reply");
     const { hooks, injects } = hooksWith(true);
@@ -1203,7 +1203,7 @@ describe("stranded held wakes (#5362 W3)", () => {
 
 // ---- the operator's unwedge levers actually clear the round -----------------
 
-describe("cancelRunningRounds — the missing half of rerun-round (#5362 W4)", () => {
+describe("cancelRunningRounds — the missing half of rerun-round", () => {
   it("cancels the phantom round so a requeued PR can actually dispatch", async () => {
     // Both `rerun-round` and `restart-session` set the PR to `queued` and
     // pump — but the pump skips a PR whose round is still `running`, so

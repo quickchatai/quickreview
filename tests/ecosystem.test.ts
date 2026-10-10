@@ -228,19 +228,19 @@ describe("the seam's two implementations", () => {
 });
 
 describe("migration-gate prose byte-identity (django)", () => {
-  it("renders the legacy GATE_ON bytes exactly", () => {
+  it("renders the original Django GATE_ON bytes exactly", () => {
     expect(DJANGO_ECOSYSTEM.gateNote({ migration_gate: true })).toBe(EXPECTED_GATE_ON);
     expect(roundVars(order).migration_gate_note).toBe(EXPECTED_GATE_ON);
   });
 
-  it("renders the legacy GATE_OFF bytes exactly", () => {
+  it("renders the original Django GATE_OFF bytes exactly", () => {
     expect(DJANGO_ECOSYSTEM.gateNote({ migration_gate: false })).toBe(EXPECTED_GATE_OFF);
     expect(roundVars({ ...order, migration_gate: false }).migration_gate_note).toBe(
       EXPECTED_GATE_OFF,
     );
   });
 
-  it("renders the legacy degraded note bytes exactly (the un-muzzle key)", () => {
+  it("renders the original Django degraded note bytes exactly (the un-muzzle key)", () => {
     expect(
       DJANGO_ECOSYSTEM.gateNote({ migration_gate: true, migration_precheck_degraded: true }),
     ).toBe(EXPECTED_GATE_ON + EXPECTED_DEGRADED_NOTE);

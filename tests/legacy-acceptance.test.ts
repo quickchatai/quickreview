@@ -54,7 +54,7 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
     expect(foldSlackTier(undefined)).toBeNull();
   });
 
-  it("a legacy origin record on disk parses as tier 'owner' with its rights intact", () => {
+  it("a pre-rename origin record on disk parses as tier 'owner' with its rights intact", () => {
     const rec = parseOriginRecord({
       source: "slack",
       event_id: "EvOLD",
@@ -108,7 +108,7 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
     }
   });
 
-  it("a legacy slack_events row reads back as tier 'owner'", () => {
+  it("a pre-rename slack_events row reads back as tier 'owner'", () => {
     const store = new StateStore(":memory:");
     try {
       // Simulate a row written before the rename — raw SQL, the shape such

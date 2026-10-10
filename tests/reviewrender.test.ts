@@ -298,7 +298,7 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
 // comment with a hidden marker naming its finding, so the daemon can link the
 // posted comment back to its `round_findings` row. Only on request — the bench
 // never asks, and its outputs must stay byte-identical.
-describe("the finding marker (S6)", () => {
+describe("the finding marker", () => {
   const rec = () =>
     record([
       entry({ id: "F1" }),

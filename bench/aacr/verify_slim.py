@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 
 C10_ANCHOR = '    mins = summary["duration_seconds"] / 60 if "duration_seconds" in summary else None\n'
 C10_PATCH = ('    if not os.path.exists(ev) and "bench_cost_usd" in summary:\n'
-             '        # The slim re-score bundle (C10): compare.py\'s own figure, computed\n'
+             '        # The slim re-score bundle: compare.py\'s own figure, computed\n'
              '        # from pi-events.jsonl before the bundle left that file out.\n'
              '        usd = summary["bench_cost_usd"]\n')
 
@@ -221,7 +221,7 @@ def main():
     events = list(slim.glob("runs/*/cases/*/pi-events.jsonl"))
     print(f"unpacked {nfiles} files, {bad} hash mismatches, {len(events)} pi-events.jsonl (expected 0)")
 
-    # 2. the tools: a copy of bench/aacr (+ the C10 patch when compare.py lacks it)
+    # 2. the tools: a copy of bench/aacr (+ the slim-bundle patch when compare.py lacks it)
     tools.mkdir()
     for item in ("compare.py", "charts.py", "defects", "references.json", "sets", "bot_references.json", "final", "ext"):
         s = HERE / item
@@ -229,9 +229,9 @@ def main():
     src = (tools / "compare.py").read_text()
     patched = "bench_cost_usd" not in src
     if patched:
-        assert C10_ANCHOR in src, "compare.py changed shape; update the C10 patch"
+        assert C10_ANCHOR in src, "compare.py changed shape; update the slim-bundle patch"
         (tools / "compare.py").write_text(src.replace(C10_ANCHOR, C10_PATCH + C10_ANCHOR))
-    print(f"compare.py C10 patch {'applied to the copy' if patched else 'already in the tree'}")
+    print(f"compare.py slim-bundle patch {'applied to the copy' if patched else 'already in the tree'}")
 
     rep = Report()
     env = dict(os.environ, QCR_BENCH_RUNS_DIR=str(slim / "runs"))

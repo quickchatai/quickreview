@@ -1018,7 +1018,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
   // The local English embedder's model file is a pin like the
   // server version: config.toml == group_vars (== the image layer, which
   // interpolates group_vars). Port and threads ride the same check.
-  describe("local embedder pin drift (S4)", () => {
+  describe("local embedder pin drift", () => {
     const PIN: LocalEmbedderPin = {
       dir: "/opt/openviking/models",
       model: "bge-small-en-v1.5-f16",
@@ -1460,7 +1460,7 @@ describe("deploy.sh — base clone name", () => {
 // A sync can ship code whose entrypoint half is baked into an older image; the
 // post-deploy check must then not read the previous daemon's status.json as
 // healthy. These cases pin the guards against that.
-describe("deploy — the 2026-10-03 stale-image outage", () => {
+describe("deploy — the stale-image outage", () => {
   const checker = join(root, "scripts", "heartbeat-fresh.mjs");
   const STARTED = "2026-10-03T09:55:40.000000000Z";
   const NOW = "2026-10-03T09:57:00Z";

@@ -105,7 +105,7 @@ export function issueTitleFor(e: MemoryEntry): string {
  * `Memory-key:` backstop (searchable if the `filed=` stamp is ever refused),
  * then the flagged entry verbatim. */
 export function issueBodyFor(e: MemoryEntry): string {
-  return `The reviewer's overseer flagged an operational defect in the review system (memory entry ${e.id} @ ${e.ts}, auto-filed by the TUI per FT-0129 §9). Diagnose, fix, and close — or close as duplicate/stale with a note.
+  return `The reviewer's overseer flagged an operational defect in the review system (memory entry ${e.id} @ ${e.ts}, auto-filed by the TUI). Diagnose, fix, and close — or close as duplicate/stale with a note.
 
 ${MEMORY_KEY_LINE} ${memoryKey(e)}
 

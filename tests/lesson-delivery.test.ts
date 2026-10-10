@@ -868,7 +868,7 @@ describe("on: the selection is awaited beside the seed, within the budget (fake 
 
 // ---- the validator's addendum ----------------------------------------------------------------
 
-describe("the validator's lesson addendum (R2: demotion only)", () => {
+describe("the validator's lesson addendum (demotion only)", () => {
   it("composes ONLY under `on` with the kill switch on, and only for pass-validate", () => {
     expect(lessonAddenda({ delivery: "off", lessonsOff: false })).toEqual([]);
     expect(lessonAddenda({ delivery: "shadow", lessonsOff: false })).toEqual([]);
@@ -1167,7 +1167,7 @@ describe("repo facts for the touched paths — the recheck nudge and the ping-po
 // ---- selection for the lenses the session may add ---------------------------------------------
 
 describe("selection: one shared find for every addable lens, filtered per lens", () => {
-  it("the addable lenses filter the round's ONE lesson find (F2) and select per lens over the PR's files", () => {
+  it("the addable lenses filter the round's ONE lesson find and select per lens over the PR's files", () => {
     const rows = [{ row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" }];
     const plan = planFinds({
       title: "T",
@@ -1473,7 +1473,7 @@ describe("a round discarded before its handoff leaves no lesson record", () => {
   });
 });
 
-describe("a discovery lens holding a dont-raise lesson still raises the candidate (R2: only the validator demotes)", () => {
+describe("a discovery lens holding a dont-raise lesson still raises the candidate (only the validator demotes)", () => {
   const dr = {
     uri: `${EXP}/dr.md`,
     kind: "dont-raise" as const,

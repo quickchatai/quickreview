@@ -57,7 +57,7 @@ const file = (filename: string, additions: number): PrFileEntry => ({
   status: "modified",
 });
 
-describe("[#22] the validator tier (as amended)", () => {
+describe("[#22] the validator tier", () => {
   /**
    * MUTATION: fold the lens tiers into the validator's
    * (`lensTiers.reduce(higherTier, floor)`) — the risk and big-diff plans below

@@ -100,7 +100,7 @@ describe("the tolerant reader — the live store's legacy shapes", () => {
     });
   });
 
-  it("the import: the type sits mid-line after its own tags", () => {
+  it("the curated pi-memory import: the type sits mid-line after its own tags", () => {
     const p = parseLesson(
       "#imported #learning import-key:sha1:2f3c9494425c8aab — from pi-memory 2026-08-20 18:04:46 [01a01fbe#2]\n#wontfix-pattern #eod-learning [[pr-5197]] type: wontfix-pattern — Do not demand exactly-once delivery here.",
     );
@@ -124,7 +124,7 @@ describe("the tolerant reader — the live store's legacy shapes", () => {
     expect(parseLesson("# Gotcha\n\ntype: repo-gotcha\nlens: pass-tests")?.kind).toBe("repo-fact");
   });
 
-  it("conventions: kind convention, a class from the topic", () => {
+  it("corpus conventions: kind convention, a class from the topic", () => {
     expect(
       parseLesson(
         "#convention #corpus topic=typing source=FT-9238 day=2026-08-25 Typing conventions…",

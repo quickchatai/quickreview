@@ -2987,7 +2987,7 @@ export class VerdictWatcher {
     }
   }
 
-  /** Deliver the wakes held while this PR's round was in flight (S4). */
+  /** Deliver the wakes held while this PR's round was in flight. */
   private async flushWakes(pr: number): Promise<void> {
     await this.safe(
       () =>
@@ -3432,7 +3432,7 @@ export class VerdictWatcher {
    * dry-run and live behave identically. The cancelled round keeps a NULL
    * verdict, so `priorRoundCount`/review_no never age (a failed round must
    * not age the PR). Held wakes stay held: the requeued round is about to
-   * dispatch, and its own round-end paths flush them (S4).
+   * dispatch, and its own round-end paths flush them.
    */
   private async selfRequeue(
     round: RoundRow,

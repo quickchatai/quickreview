@@ -67,7 +67,7 @@ fi
 # TUI's steer/queue keys die. Requires tmux ≥3.5 (built from source in the
 # image). Same three lines as the VM entrypoint — keep them in sync.
 cat > "$HOME/.tmux.conf" <<'TMUXCONF'
-# csi-u extended keys end-to-end (§3E /) — do not remove.
+# csi-u extended keys end-to-end — do not remove.
 set -g extended-keys on
 set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
@@ -78,7 +78,7 @@ set -g mouse on
 set -g set-clipboard on
 set -as terminal-features 'xterm*:clipboard'
 set -g history-limit 50000
-# Muted look — no bright greens anywhere (operator order, 2026-08-14).
+# Muted look — no bright greens anywhere.
 set -g status-style 'bg=colour235,fg=colour247'
 set -g status-left-style 'fg=colour250'
 set -g status-right-style 'fg=colour244'
@@ -127,7 +127,7 @@ let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path, "utf8")); } catch {}
 if (!Array.isArray(cfg.extensions)) cfg.extensions = [];
 // Never block on pi's interactive "Trust project folder?" modal (mirrors the
-// VM entrypoint; the owner, 2026-08-20 — pr-5334 stall).
+// VM entrypoint — the pr-5334 stall).
 cfg.defaultProjectTrust = "always";
 // pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
 // tmux and the operator TUI mirrors and scrolls their panes, so keep the
@@ -143,7 +143,7 @@ cfg.tuiMode = "regular";
 const DISABLED_BUILTINS = ["-builtin:mcp", "-builtin:codemode", "-builtin:tool-search", "-builtin:llama.cpp"];
 cfg.extensions = cfg.extensions.filter((p) => !/^[-+!]?builtin:/.test(p)).concat(DISABLED_BUILTINS);
 
-// Skills (2026-08-21). The repo carries the vendored mattpocock set at
+// Skills. The repo carries the vendored mattpocock set at
 // /workspace/.claude/skills/ — wayfinder, grilling, domain-modeling and 22
 // more. pi supports SKILL.md natively, but `.claude/skills` is NOT one of the
 // paths it looks in on its own (~/.pi/agent/skills, ~/.agents/skills,
@@ -214,7 +214,7 @@ if (trust["/workspace"] !== true) {
 }
 console.log("pi project trust: defaultProjectTrust=always, /workspace pre-trusted");
 
-// agent discovery for the native subagent extension (loaded by the
+// Agent discovery for the native subagent extension (loaded by the
 // first-party glue extensions/subagents.ts — the vendored pi-subagents is
 // removed). The native default "user" scope reads $HOME/.pi/agent/agents;
 // link that at the companion agent set (explore/evidence/study) riding the

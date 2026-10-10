@@ -274,7 +274,7 @@ function expectOnePostingAndNothingOwed(): void {
   });
 }
 
-describe("#5850 round 5 replayed (H1a)", () => {
+describe("#5850 round 5 replayed", () => {
   it("the parent_finalize limit after a confirmed posting waits; the late verdict then lands — one posting", async () => {
     const { watcher, supervisor } = wire();
     postReview();

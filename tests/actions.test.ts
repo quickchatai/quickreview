@@ -317,7 +317,7 @@ describe("executeTuiAction — driver dispatch + traces", () => {
   });
 });
 
-describe("memory_pin — pin/unpin through the TUI's one store (S5, the owner's ruling R7)", () => {
+describe("memory_pin — pin/unpin through the TUI's one store", () => {
   it("parses an id or a viking:// URI and an explicit pin flag", () => {
     expect(
       ok({ verb: "memory_pin", params: { entry: "reviewer:experiences/a.md", pin: true } }),

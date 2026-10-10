@@ -317,7 +317,7 @@ describe("arm.sh", () => {
     expect(Math.max(...conc)).toBe(2);
   });
 
-  it("a case --resume skipped does not hold memory admission (2026-10-02 resume stall)", async () => {
+  it("a case --resume skipped does not hold memory admission", async () => {
     // Room for exactly one growing review: (4000 - 3072) / 768 = 1. Without the
     // fix every skipped case counted as a review started in the last five
     // minutes, so the second launch waited 300 s; the test's own timeout catches that.

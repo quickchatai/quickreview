@@ -903,7 +903,7 @@ describe("ops", () => {
     });
   });
 
-  describe("expired rounds in the aggregates (finding 1)", () => {
+  describe("expired rounds in the aggregates", () => {
     beforeEach(() => {
       // A round that ran, burned $4, blew its deadline and was later buried by
       // the zombie sweep — with a `finished_at` stamped by that sweep, hours

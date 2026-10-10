@@ -242,7 +242,7 @@ describe("readArchiveStatus — total over whatever JSON is there", () => {
   });
 });
 
-describe("the file phase's block (S3)", () => {
+describe("the file phase's block", () => {
   const files = {
     last_run_at: "2026-10-21T12:00:00.000Z",
     outcome: "done",
@@ -326,7 +326,7 @@ describe("the one line `qcr status` prints", () => {
     );
   });
 
-  it("a reopened PR awaiting its restore is said — loudly, with the verb, when the mode will never restore it (integration review 2026-10-08)", () => {
+  it("a reopened PR awaiting its restore is said — loudly, with the verb, when the mode will never restore it", () => {
     const restores = { pending: 2, done: 0, failed: 0 };
     // Plan mode after an `on` period: no tick or birth restores it.
     expect(archiveStatusLine(planned({ restores }))).toContain(

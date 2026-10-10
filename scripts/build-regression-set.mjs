@@ -121,7 +121,7 @@ for (const c of report.cases) {
 }
 
 const set = {
-  provenance: `export/corpus.jsonl (${prs} PRs, ${candidates.length} human reviews with inline threads); selected by src/regression.ts selectCases on SUBSTANCE (L>=${sel.QUALIFYING_RUNG}), never on the GitHub verdict; outdated threads dropped; cutoff ${sel.CONTAMINATION_CUTOFF}. Expectation labels default to expected-catch and want a human pass.`,
+  provenance: `review-corpus export corpus.jsonl (${prs} PRs, ${candidates.length} human reviews with inline threads); selected by src/regression.ts selectCases on SUBSTANCE (L>=${sel.QUALIFYING_RUNG}), never on the GitHub verdict; outdated threads dropped; cutoff ${sel.CONTAMINATION_CUTOFF}. Expectation labels default to expected-catch and want a human pass.`,
   builtAt: new Date().toISOString(),
   cases: report.cases,
 };

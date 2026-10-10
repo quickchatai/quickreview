@@ -203,7 +203,7 @@ describe("usage-aware spend reporting", () => {
     }
   });
 
-  it("counts an expired round's spend (finding 1)", () => {
+  it("counts an expired round's spend", () => {
     const store = seededStore();
     try {
       const zombie = store.startRound(9, "first", [], 45);
@@ -257,7 +257,7 @@ describe("cancellation reporting", () => {
   });
 });
 
-describe("qcr memory relayout — flags (S5)", () => {
+describe("qcr memory relayout — flags", () => {
   const fromConfig = () => "reviewer";
   const noConfig = (): string => {
     throw new Error("the config was read");

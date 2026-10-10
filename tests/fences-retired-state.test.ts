@@ -74,7 +74,7 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
     expect(
       actual,
       "the awaiting_human surface changed. GROWN means a new reader of a state nothing can enter — do not add one. " +
-        "SHRUNK means is doing its work: edit the counts down (and delete the entry at zero); when the list " +
+        "SHRUNK means the retirement is doing its work: edit the counts down (and delete the entry at zero); when the list " +
         "is empty, replace it with `expect(actual).toEqual([])` and delete this record.",
     ).toEqual(recorded);
   });
@@ -86,7 +86,7 @@ describe("[#10] the retired park's readers are counted, not assumed gone", () =>
     );
     expect(
       total,
-      "two mentions across two modules, both tombstones — cut 28, took the digest tab's with the old tab",
+      "two mentions across two modules, both tombstones",
     ).toBe(2);
   });
 });

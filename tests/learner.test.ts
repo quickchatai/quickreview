@@ -248,7 +248,7 @@ function harness(opts: { lessons?: LessonSource | null; git?: RecallGit; healthy
 
 // ---- 1. the miner --------------------------------------------------------------
 
-describe("the miner — human fates (S6)", () => {
+describe("the miner — human fates", () => {
   it("one dont-raise candidate per refuted CHAIN, keyed by its root; a contested one points either way", async () => {
     const h = harness();
     h.pr(10);
@@ -633,7 +633,7 @@ describe("the miner — recall: what a human found on lines the bot approved", (
 // candidate — the reviewer's own conclusion, so never a lesson directly: gated
 // on a standing APPROVE at that head (`verdictAt`), one per (PR, head), and
 // worded as the reviewer's re-check, never a human's.
-describe("the miner — recheck reversals (owner ruling R6)", () => {
+describe("the miner — recheck reversals", () => {
   const H1 = "c".repeat(40);
   const H2 = "d".repeat(40);
   const flip = (h: ReturnType<typeof harness>, pr: number, head: unknown, reason?: string) =>
@@ -1474,7 +1474,7 @@ describe("the miner — fates are re-read, never trusted as written", () => {
       )
       .run(fate, "2026-10-07T10:00:00.000Z", "2026-10-07T10:00:00.000Z", pr, key);
 
-  it("a fate S6 re-decides revises its candidate in place, withdraws it (recorded, never deleted), and reinstates it", async () => {
+  it("a fate the outcome capture re-decides revises its candidate in place, withdraws it (recorded, never deleted), and reinstates it", async () => {
     const h = harness();
     h.pr(11);
     h.finding(11, { key: "F" }, "refuted_conceded", { roundNo: 1 });
@@ -1603,7 +1603,7 @@ describe("the miner — candidates say what the record shows (integration review
     expect(md).not.toContain("A person's words");
   });
 
-  it("a [feedback] reply mined before its bot comment was linked takes the finding's class once S6 links it", async () => {
+  it("a [feedback] reply mined before its bot comment was linked takes the finding's class once the outcome capture links it", async () => {
     const h = harness();
     h.pr(72);
     h.store.recordFeedbackSignal({

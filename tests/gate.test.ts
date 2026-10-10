@@ -250,7 +250,7 @@ describe("request_reviewer — the escalation feature's second delivery shape", 
   });
 });
 
-describe("forceLive (supersede_own_review only — the owner, 2026-08-13)", () => {
+describe("forceLive (supersede_own_review only)", () => {
   const supersede: MutationIntent = {
     kind: "supersede_own_review",
     method: "PUT",
@@ -291,7 +291,7 @@ describe("forceLive (supersede_own_review only — the owner, 2026-08-13)", () =
   });
 });
 
-describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)", () => {
+describe("the app-self-config gate class (rule-1 exception)", () => {
   const repoint: MutationIntent = {
     kind: "update_own_webhook_url",
     method: "PATCH",

@@ -60,7 +60,7 @@ afterEach(() => vi.useRealTimers());
 
 // ---- 2. the embedding tail, on the round-activity tracker --------------------------------
 
-describe("RoundMemoryActivity — the case writer's embedding tail (H3)", () => {
+describe("RoundMemoryActivity — the case writer's embedding tail", () => {
   it("quiet with no batch: answers 0 at once, and busy-for is 0", async () => {
     const a = new RoundMemoryActivity();
     expect(a.embedderBusyForMs()).toBe(0);
@@ -619,7 +619,7 @@ describe("reviewsInFlight — running rounds, and queued PRs the pump would star
 
 // ---- 3. the budgets: longer, bounded, named ---------------------------------------------
 
-describe("the memory budgets (H3): longer, bounded, named in config.example.toml", () => {
+describe("the memory budgets: longer, bounded, named in config.example.toml", () => {
   it("ship at 9000 / 8000 / 6000 ms, with a 4000 ms tail a case; the module defaults agree", () => {
     expect(MEMORY_DEFAULTS.context_timeout_ms).toBe(9000);
     expect(MEMORY_DEFAULTS.case_embed_tail_ms).toBe(4000);

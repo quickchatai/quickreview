@@ -74,7 +74,7 @@ describe("parseConfig", () => {
     expect(() => parseConfig(invalid)).toThrow(/round_first_pass_max_min/);
   });
 
-  it("H1a: the posted-tail grace defaults to 15 minutes and must be positive", () => {
+  it("the posted-tail grace defaults to 15 minutes and must be positive", () => {
     expect(cfg.daemon.round_posted_tail_grace_min).toBe(15);
     const set = (line: string) =>
       readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);
@@ -86,7 +86,7 @@ describe("parseConfig", () => {
     );
   });
 
-  it("H1b: the compaction hold on a start lease defaults to 600 s and must be positive", () => {
+  it("the compaction hold on a start lease defaults to 600 s and must be positive", () => {
     expect(cfg.daemon.session_compaction_max_s).toBe(600);
     const set = (line: string) =>
       readFileSync(configPath, "utf8").replace(/^\[daemon\]$/m, `[daemon]\n${line}`);

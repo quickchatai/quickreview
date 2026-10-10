@@ -698,7 +698,7 @@ export interface CandidateSweepDeps {
 
 /** Named once so the family report and the skill say the same thing. */
 export const COMMENT_TRANSPORT_GAP =
-  "no local copy of pr_comments — captures them into the daemon's SQLite on the VM and nothing brings them down yet";
+  "no local copy of pr_comments — the daemon captures them into its SQLite on the VM and nothing brings them down yet";
 export const SIGNAL_TRANSPORT_GAP =
   "no local copy of feedback_signals — the ledger lives in the daemon's SQLite on the VM";
 

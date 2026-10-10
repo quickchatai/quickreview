@@ -87,7 +87,7 @@ describe("exchange cap", () => {
   });
 });
 
-describe("the thread decision's outcome field (S6)", () => {
+describe("the thread decision's outcome field", () => {
   const base = { pr: 77, thread_id: 4000, comment_id: 5001, resolution: "resolve", reply: "r" };
   it("folds the known spellings onto fixed | refuted | held", () => {
     expect(["fixed", "Fix", "addressed"].map(normalizeThreadOutcome)).toEqual([

@@ -374,7 +374,7 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(readdirSync(feedDir)).toContain("snapshot.json"); // …and the feed wrote
   });
 
-  it("memory_pin pins through the TUI's ONE store, with the hash a fresh read carries (S5, R7)", async () => {
+  it("memory_pin pins through the TUI's ONE store, with the hash a fresh read carries", async () => {
     const rig = makeRig();
     const target = (await rig.mem.read()).find((e) => e.text.includes("stale recheck flag"))!;
     const dir = actionDir();

@@ -452,7 +452,7 @@ describe("the sweep and the empty answer", () => {
     );
   }
 
-  it("reads round facts out of's manifests, ignoring half-copies", () => {
+  it("reads round facts out of the evidence manifests, ignoring half-copies", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-ev-"));
     writeManifest(dir, 5249, 2, "done", "REQUEST_CHANGES");
     writeManifest(dir, 5249, 1, "done", "REQUEST_CHANGES");

@@ -726,7 +726,7 @@ export function renderShadowReport(r: ShadowReport): string {
       `class tier (would-demote) ${ft.class.total} finding(s) (${r.marks_by_tier.class} mark(s)), ` +
       `lens tier (evidence only) ${ft.lens.total} finding(s) (${r.marks_by_tier.lens} mark(s))`,
     ...tierLines("  ", r.findings, ft),
-    "  class = the lesson's lens, class and path all held — what the validator's lesson-shape license needs; lens = lens and path held, the class differs or the lesson names none (lens-level matching, ruling R9) — evidence only. A finding both tiers touched counts on the class tier.",
+    "  class = the lesson's lens, class and path all held — what the validator's lesson-shape license needs; lens = lens and path held, the class differs or the lesson names none (lens-level matching) — evidence only. A finding both tiers touched counts on the class tier.",
     "  harm = humans then FIXED it (the lesson would have hidden a real finding); help = humans refuted it, or set its review aside (a whole-review signal); P0 is never demoted.",
   );
   out.push("", "Per lesson:");

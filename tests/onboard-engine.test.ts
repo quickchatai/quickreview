@@ -270,7 +270,7 @@ describe("finish", () => {
     expect(checklistComplete(stateDir)).toBe(false);
   });
 
-  it("green: marks the checklist complete and writes the first-run marker with the exact shape", async () => {
+  it("green: marks the checklist complete and writes the first-run marker with the exact marker shape", async () => {
     const e = engine();
     await e.runStep(PREFLIGHT_STEP_ID);
     const result = await e.finish();

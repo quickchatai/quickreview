@@ -807,7 +807,7 @@ export function renderIndex(results: CompareResult[]): string {
   const L: string[] = [];
   L.push("# Cutover comparison — index");
   L.push("");
-  L.push("rubric: (a) blocker parity, (b) invariant scan, (c) anchor validity,");
+  L.push("Cutover rubric: (a) blocker parity, (b) invariant scan, (c) anchor validity,");
   L.push("(d) settled-thread discipline are hard gates; (e) tone/format is judgment.");
   L.push("Pass = (a)–(d) clean on all five PRs. The flip itself stays manual.");
   L.push("");

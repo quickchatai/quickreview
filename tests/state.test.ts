@@ -1813,7 +1813,7 @@ describe("durable fresh-head successor obligation", () => {
   });
 });
 
-describe("priorRoundCount semantics (finding 3)", () => {
+describe("priorRoundCount semantics", () => {
   it('counts VERDICTED rounds only — "first" really means "never successfully reviewed"', () => {
     store.upsertPr(prRow(50));
     const one = store.startRound(50, "first", [], 45);

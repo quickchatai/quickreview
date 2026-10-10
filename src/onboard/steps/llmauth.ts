@@ -436,7 +436,7 @@ function loginCheck(
         ok: false,
         detail:
           `${label}: the container has no volume mounted on its pi home, so any /login would live in the writable layer ` +
-          "and vanish on the next recreate (the hazard). Recreate it with its pihome volume before logging in.",
+          "and vanish on the next recreate. Recreate it with its pihome volume before logging in.",
       };
     case "stopped":
       return {

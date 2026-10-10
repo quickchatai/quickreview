@@ -1300,7 +1300,7 @@ export function describeForwardStats(cfg, read) {
   if (read.state !== "live") {
     const why = {
       off: "no stats file (XDG_RUNTIME_DIR is not set)",
-      absent: `no forward has written ${cfg.statsFile} (none running on this port, or one started before F1)`,
+      absent: `no forward has written ${cfg.statsFile} (none running on this port, or one too old to write a stats file)`,
       unreadable: `${cfg.statsFile} is unreadable (${read.error})`,
       stale: `${cfg.statsFile} names pid ${read.snapshot?.pid}, which is not running`,
     }[read.state];

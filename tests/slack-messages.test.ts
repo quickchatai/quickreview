@@ -62,7 +62,7 @@ describe("escaping and refs", () => {
 });
 
 describe("pickup (the thread root)", () => {
-  it("renders the ratified two lines", () => {
+  it("renders the two lines", () => {
     expect(
       pickupMessage(cfg, {
         pr: 5263,
@@ -223,7 +223,7 @@ describe("re-round, pre-flag, superseded", () => {
     ).toBe("🔄 round 5 started — re-run by mhale (`0123456`)");
   });
 
-  it("no longer exports the escalation-worthy pre-flag (scrapped 2026-08-18)", async () => {
+  it("no longer exports the escalation-worthy pre-flag", async () => {
     const mod = (await import("../src/slack/messages.js")) as Record<string, unknown>;
     expect(mod.escalationWorthyMessage).toBeUndefined();
     expect(mod.escalationRef).toBeUndefined();

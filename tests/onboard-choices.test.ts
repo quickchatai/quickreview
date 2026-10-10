@@ -56,7 +56,7 @@ describe("every shared choice key is written by a step", () => {
       const writers = CHOICE_WRITERS[name];
       expect(
         writers,
-        `CHOICE_KEYS.${name} has no writer — a key nothing writes is the defect`,
+        `CHOICE_KEYS.${name} has no writer — a key nothing writes is a defect`,
       ).toBeDefined();
       expect(writers.length, `CHOICE_KEYS.${name} has an EMPTY writer list`).toBeGreaterThan(0);
       for (const id of writers) {

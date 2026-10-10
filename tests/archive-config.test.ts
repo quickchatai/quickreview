@@ -94,7 +94,7 @@ describe("config.example.toml", () => {
     expect(loadConfig(EXAMPLE).archive).toEqual(ARCHIVE_DEFAULTS);
   });
 
-  it("what `on` does is said as it is built: it removes closed PRs' files from the live tree (never the S2-era 'only planned')", () => {
+  it("what `on` does is said as it is built: it removes closed PRs' files from the live tree (never 'only planned')", () => {
     // The operator reads these at the moment of the flip: the comment above
     // [archive] and the ArchiveConfig doc.
     const text = readFileSync(EXAMPLE, "utf8");

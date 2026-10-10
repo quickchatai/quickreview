@@ -138,7 +138,7 @@ describe("extractHostname — the vendor's own output, nothing else", () => {
 
 // ---- the file contract ------------------------------------------------------
 
-describe("writeHostname —'s file contract", () => {
+describe("writeHostname — the file contract", () => {
   const file = (): string => join(dir, "ingress", "hostname");
 
   it("writes ONE bare lowercase hostname with a trailing newline, creating the dir", () => {

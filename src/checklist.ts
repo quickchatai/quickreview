@@ -452,7 +452,7 @@ export async function runChecklist(
 ): Promise<ChecklistRun> {
   const results = await runChecklistProbes(deps);
   const report = [
-    "cutover checklist — automated items",
+    "Cutover checklist — automated items",
     "",
     renderTable(results),
     "",

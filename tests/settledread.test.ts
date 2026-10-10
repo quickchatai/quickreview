@@ -51,7 +51,7 @@ function scripted(
 const WHOLE = JSON.stringify({ pr: 5885, round_no: 2, verdict: "APPROVE" });
 const HALF = WHOLE.slice(0, Math.floor(WHOLE.length / 2));
 
-describe("readSettledJson (H1a)", () => {
+describe("readSettledJson", () => {
   it("a complete file parses on the first read, with no wait", async () => {
     const { io, sleeps } = scripted([[0, WHOLE]]);
     const r = await readSettledJson("v.json", DEFAULT_PARTIAL_WRITE_POLICY, io);

@@ -360,7 +360,7 @@ describe("nothing runs unseen", () => {
     await s.idle();
   });
 
-  it("two starts issued together run the scan once (review)", async () => {
+  it("two starts issued together run the scan once", async () => {
     const r = runner();
     const s = new ScanRunner(ports(r));
     const p = await previewOf(s);
@@ -416,7 +416,7 @@ describe("hard stop at the estimate", () => {
   });
 });
 
-describe("hard stop — mid-case, and what a failure spent (review)", () => {
+describe("hard stop — mid-case, and what a failure spent", () => {
   it("a case whose running cost crosses the cap is aborted mid-flight, and what it spent is counted", async () => {
     // One calibration case that keeps spending until it is stopped.
     const specs: CaseSpec[] = [];
@@ -780,7 +780,7 @@ describe("a lens that read none of its focus files is not a reading (scan-loop r
   });
 });
 
-describe("the validator — a survivor it also doubts (review)", () => {
+describe("the validator — a survivor it also doubts", () => {
   it("is one finding, doubted, counted once", async () => {
     const answer = (spec: CaseSpec): string => {
       if (spec.agent.startsWith("pass-validate")) {

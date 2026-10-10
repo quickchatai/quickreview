@@ -106,7 +106,7 @@ export class OpenVikingContextAssembler implements ContextAssembler {
     const ignored = Object.keys(opts.quotas ?? {}).filter((k) => !ROUND_SEARCH_AREAS.includes(k));
     if (ignored.length > 0)
       this.log(
-        `openviking: [memory] context_quotas ${ignored.join(", ")} ignored — a round searches ${ROUND_SEARCH_AREAS.join(", ")} only (S5)`,
+        `openviking: [memory] context_quotas ${ignored.join(", ")} ignored — a round searches ${ROUND_SEARCH_AREAS.join(", ")} only`,
       );
   }
 

@@ -111,7 +111,7 @@ function deliver(store: StateStore, payload: unknown, event: string, guid: strin
 
 // ---- THE invariant: routing is unchanged ---------------------------------
 
-describe("capture never changes routing (§1)", () => {
+describe("capture never changes routing", () => {
   // One row per existing routing case: what the interpreter decided BEFORE
   // capture existed, and what it must still decide with capture in the path.
   const cases: Array<{
@@ -323,7 +323,7 @@ describe("captureFromEvent", () => {
 
 // The learner reads a human REQUEST_CHANGES off the captured
 // review's own state — recorded as a fact, routing untouched.
-describe("a captured review keeps its state (S8)", () => {
+describe("a captured review keeps its state", () => {
   const deps = { botLogin: BOT, isTrackedPr: () => true };
   it("the webhook and the sweep record it lowercased; a comment has none", () => {
     const hook = captureFromEvent(
@@ -474,7 +474,7 @@ const hooks = (): SessionHooks =>
     archiveAndClose: async () => {},
   }) as unknown as SessionHooks;
 
-describe("the reconcile capture sweep (§6)", () => {
+describe("the reconcile capture sweep", () => {
   it("picks up a comment the webhook missed, and re-running captures nothing twice", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

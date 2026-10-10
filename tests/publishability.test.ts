@@ -10,7 +10,7 @@
 //   (a) no denylisted private token in any published text file (case-
 //       insensitive), with two sanctioned exemption channels: the manifest's
 //       `pending_reseed` section (frozen seed files whose de-identification
-//       is the owner-ratified de-identification reseed) and the in-file
+//       is the de-identification reseed) and the in-file
 //       ALLOWLIST below (each entry names the file, the tokens, and the
 //       reason); and a third: the manifest's `profile`. The
 //       INTERNAL profile (the company-private snapshot) replaces the token
@@ -113,7 +113,7 @@ const isPendingReseed = (path: string) => pendingReseed.some((e) => matchesEntry
 const DENYLIST: { token: string; why: string }[] = [
   {
     token: "owner_legacy",
-    why: "the original operator's personal name — owner identity is config since",
+    why: "the original operator's personal name — owner identity is config",
   },
   { token: "mhale", why: "the original operator's personal GitHub handle" },
   {
@@ -222,7 +222,7 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "src/wire.ts",
     tokens: ["owner_legacy"],
     reason:
-      "legacy origin records live on in the legacy owner-legacy.log audit file — read forever, written never",
+      "older origin records live on in the legacy owner-legacy.log audit file — read forever, written never",
   },
   {
     path: "config.example.toml",
@@ -265,7 +265,7 @@ const ALLOWLIST: AllowlistEntry[] = [
   {
     path: "deploy/collect-slack-secrets.mjs",
     tokens: ["owner_legacy"],
-    reason: "the Slack wizard reads/patches the legacy legacy_owner_slack_id config key (alias)",
+    reason: "the Slack wizard reads/patches the legacy legacy_owner_slack_id config key alias",
   },
   {
     path: "tests/slack-setup-wizard.test.ts",
@@ -313,7 +313,7 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "docker/companion/entrypoint.sh",
     tokens: ["quickchat"],
     reason:
-      "provisions the [companion] git identity (its commit email) — the mount path itself is generic since",
+      "provisions the [companion] git identity (its commit email) — the mount path itself is generic",
   },
   {
     path: "tests/tui-companion.test.ts",
@@ -611,7 +611,7 @@ describe("publishability lint", () => {
       );
       expect(
         offenders,
-        "per-teammate review corpora never travel — in ANY profile (owner ruling, 2026-09-03)",
+        "per-teammate review corpora never travel — in ANY profile",
       ).toEqual([]);
       // …and their absence is recorded as deliberate, not incidental.
       const dropped = (manifest.applied_exclusions ?? manifest.exclude).map((e) => e.path);
@@ -720,7 +720,7 @@ describe("publishability lint", () => {
     else expect(retroPlant).not.toEqual([]);
     const seedPlant = scanFiles([{ path: "prompts/planted.md", text: "the owner" }]);
     if (isPendingReseed("prompts/planted.md"))
-      expect(seedPlant).toEqual([]); // pending_reseed (dead)
+      expect(seedPlant).toEqual([]); // pending_reseed (a dead section)
     else expect(seedPlant).not.toEqual([]);
     expect(scanFiles([{ path: "tests/legacy-acceptance.test.ts", text: "flag-owner-legacy" }])).toEqual(
       [],

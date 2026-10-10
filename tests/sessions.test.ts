@@ -949,7 +949,7 @@ describe("injection", () => {
     );
   });
 
-  it("reads the receipt out of the session JSONL — present, absent, unknowable (#5362)", async () => {
+  it("reads the receipt out of the session JSONL — present, absent, unknowable", async () => {
     const m = manager();
     await m.dispatchRound(order, "ROUND PROMPT BODY");
     const started = Date.parse("2026-08-13T10:00:00Z");
@@ -1355,7 +1355,7 @@ describe("durable command ownership", () => {
   });
 
   it(
-    "composes #5454 through wire, supervisor, manager, and the real failing bridge",
+    "composes attempt-zero rebirth failures through wire, supervisor, manager, and the real failing bridge",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       const dbPath = join(root, "state", "state.db");
@@ -1513,7 +1513,7 @@ describe("durable command ownership", () => {
     },
   );
 
-  it("quarantines #5454-shaped terminal residue and transfers five replies into one live command", async () => {
+  it("quarantines stale terminal residue and transfers five replies into one live command", async () => {
     const dbPath = join(root, "state", "state.db");
     const store = new StateStore(dbPath, () => new Date("2026-09-01T12:00:00.000Z"));
     let shutdownBridge = (): void => {};
@@ -2228,7 +2228,7 @@ describe("overseer rotation", () => {
     expect(liveSessions.has(OVERSEER_SESSION)).toBe(true);
   });
 
-  it("two rotations on the same date no longer overwrite each other (S4)", async () => {
+  it("two rotations on the same date no longer overwrite each other", async () => {
     let now = new Date("2026-08-20T09:00:00Z");
     const m = manager(() => now);
     await m.ensureOverseerSession();

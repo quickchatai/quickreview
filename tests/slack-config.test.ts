@@ -35,7 +35,7 @@ describe("shipped config.toml [slack]", () => {
     expect(cfg.owner.slack_id).toBe("");
   });
 
-  it("carries the ratified policy numbers", () => {
+  it("carries the policy numbers", () => {
     expect(cfg.slack.policy.daily_turns).toBe(80);
     expect(cfg.slack.policy.per_user_daily_turns).toBe(20);
     expect(cfg.slack.policy.thread_replies_per_day).toBe(6);

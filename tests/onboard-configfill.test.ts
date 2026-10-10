@@ -402,7 +402,7 @@ describe("dry_run (rule 1)", () => {
     },
   );
 
-  it("never flips an owner's ratified dry_run = false back to true", async () => {
+  it("never flips an owner's dry_run = false back to true", async () => {
     const live = TEMPLATE.replace("dry_run = true", "dry_run = false");
     writeFileSync(join(root, "config.toml"), live);
     const { report } = await runStep();

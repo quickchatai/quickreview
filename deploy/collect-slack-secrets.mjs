@@ -716,7 +716,7 @@ async function main() {
 
   // ---- step 0 — overview -----------------------------------------------------
 
-  title("Slack concierge setup —");
+  title("Slack concierge setup");
   info(`config      ${CONFIG_PATH}`);
   info(`secrets     ${SECRETS_DIR}`);
   if (!VERIFY) info("--no-verify: every Slack API call is skipped (offline run)");

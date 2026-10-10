@@ -326,7 +326,7 @@ async function board(h: Harness): Promise<string> {
   return h.frame();
 }
 
-describe("the first frame (ruling 6 — structural, not timed)", () => {
+describe("the first frame (structural, not timed)", () => {
   const tmp = mkdtempSync(join(tmpdir(), "qcr-startup-"));
   const savedPort = process.env.QCR_MEMORY_PORT;
   const savedGateway = process.env.QCR_MEMORY_GATEWAY;
@@ -358,7 +358,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     // failure (vitest's own transform cost dwarfs the startup under test).
     if (h.paintMs > 2_000) {
       console.warn(
-        `first frame took ${h.paintMs}ms under vitest — over the 2000ms soft budget`,
+        `[tui-startup] first frame took ${h.paintMs}ms under vitest — over the 2000ms soft budget`,
       );
     }
 
@@ -1177,7 +1177,7 @@ describe("the companion column during startup", () => {
     expect(blank).not.toContain("starting up — progress above");
   });
 
-  it("takes its width from nothing but the terminal — not config, not docker (the answer, made absolute)", async () => {
+  it("takes its width from nothing but the terminal — not config, not docker", async () => {
     const { CompanionSidebar, sidebarWidth } = await import("../src/tui/sidebar.js");
     const { COMPANION_DEFAULTS } = await import("../src/config.js");
     const docker = vi.fn(async () => ({ ok: false, stdout: "", stderr: "", code: 1 }));

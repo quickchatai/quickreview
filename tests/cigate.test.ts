@@ -153,7 +153,7 @@ describe("latest-run-per-name", () => {
 // passing status reads green.
 // Every row below is an input the real adapter produces, driven through the
 // real adapter's own payload shapes.
-describe("— a same-named commit status is a second check, never a superseded run", () => {
+describe("a same-named commit status is a second check, never a superseded run", () => {
   const TS = "2026-09-01T10:00:00Z";
   const minter = {
     appJwt: () => "jwt",

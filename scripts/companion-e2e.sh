@@ -154,12 +154,9 @@ const snap = (round) => ({
 writer.write(snap(1), [], "ok");
 const first = writer.write(snap(2), [{ ts: "2026-08-14T09:05:00Z", kind: "round_started", pr: 5012, payload: null }], "ok");
 check(first.meaningful, "a real board change is meaningful");
-// The `/feed/wake` → pi.sendUserMessage path was retired on 2026-08-21 (it
-// interrupted an active turn), and `FeedWriter.start` now DELETES the marker.
-// This step used to assert the marker existed and to import the wake-gate
-// extension deleted the same day — it survived only because `dist/` is never
-// cleaned (see tests/clean-clone.test.ts). Both are gone; what
-// remains is the live contract: the ambient feed never wakes pi.
+// There is no `/feed/wake` → pi.sendUserMessage path (it would interrupt an
+// active turn), and `FeedWriter.start` DELETES any stale marker. The live
+// contract: the ambient feed never wakes pi.
 check(!existsSync(join(feed, "wake")), "the ambient feed never mints a wake marker");
 const quiet = writer.write(snap(2), [], "ok");
 check(!quiet.meaningful, "an unchanged board wakes nobody");

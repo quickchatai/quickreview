@@ -32,7 +32,7 @@ const manifest = JSON.parse(
 
 const RULE_6 =
   "CLAUDE.md hard rule 6: prompts/ + agents/ seeded content is canonical " +
-  "(byte-identical to the seeds/ canonical copies, lineage) and must " +
+  "(byte-identical to the seeds/ canonical copies) and must " +
   "never be rewritten. " +
   "Per-pass model overrides go through config.toml [models.passes]. " +
   "A genuinely ratified reseed refreshes seeds/ and regenerates " +

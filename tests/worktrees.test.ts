@@ -366,7 +366,7 @@ describe("resolvedFilesInMerges", () => {
     expect(res.files).toEqual(["shared.txt"]);
   });
 
-  it("fetches missing objects on demand instead of degrading (2026-08-19 recheck storm)", async () => {
+  it("fetches missing objects on demand instead of degrading", async () => {
     const m = mgr();
     await m.ensureBaseClone(); // clone BEFORE the merge exists — the live recheck timing
     const { from, to } = mergeScenario({
@@ -450,7 +450,7 @@ describe("lastHumanAuthor", () => {
 // Outcome capture: did the code at a posted finding's anchor
 // change between two commits? Read-only git in the base clone, no fetch; a
 // commit the clone does not hold is UNKNOWN (null), never a guess.
-describe("anchorTouched (S6)", () => {
+describe("anchorTouched", () => {
   const lines = (n: number, edit: Record<number, string> = {}) =>
     Array.from({ length: n }, (_, i) => edit[i + 1] ?? `line ${i + 1}`).join("\n") + "\n";
 
@@ -501,7 +501,7 @@ describe("anchorTouched (S6)", () => {
 
 // A reply's "Fixed in <sha>" counts only when <sha> is a commit
 // made after the reviewed head and carried by a later one.
-describe("introducedBetween (S6)", () => {
+describe("introducedBetween", () => {
   it("is true only for a commit `to` contains and `from` does not", async () => {
     const reviewed = commit("app.py", "a\n");
     const fix = commit("app.py", "b\n");

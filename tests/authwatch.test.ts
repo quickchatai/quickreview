@@ -176,7 +176,7 @@ describe("PiAuthWatch", () => {
 // The archiver unlinks closed PRs' transcripts and
 // removes their dirs; the per-file offset map must follow the live tree, not
 // keep every file that ever existed.
-describe("the seen map follows the live tree (S4)", () => {
+describe("the seen map follows the live tree", () => {
   it("shrinks once source files are unlinked — a whole session dir, or one file", () => {
     let t = Date.parse("2026-10-21T12:00:00Z");
     const watch = new PiAuthWatch(dir, () => new Date(t));

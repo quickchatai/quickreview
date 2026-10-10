@@ -281,7 +281,7 @@ describe("management verbs", () => {
   });
 });
 
-describe("mouse operation (FT-0129 UX)", () => {
+describe("mouse operation", () => {
   it("clicking a timeline row selects it and the detail pane shows the FULL text", async () => {
     const rig = await loaded();
     const frame = rig.app.hooks.tabs.memory!.screen(rig.app, 140, 40); // paint captures zones
@@ -362,7 +362,7 @@ class UnhealthyMemory implements MemoryStore {
 const DEAD =
   "cannot reach OpenViking at http://127.0.0.1:1933 (connect ECONNREFUSED) — check: systemctl --user status qcr-memory-forward";
 
-describe("memory unreachable (FT-0164)", () => {
+describe("memory unreachable", () => {
   it("paints an explicit failure banner with the reason, never 'none yet' — and the defect count reads unknown", async () => {
     const rig = await loaded({
       memory: new UnhealthyMemory({ ok: false, namespaces: [], error: DEAD }),
@@ -511,7 +511,7 @@ describe("memory forward on the tab", () => {
     expect(order).toContain("read");
   });
 
-  it("paints the forward as it stands at THIS paint — an owned forward's relay counts move between memory reloads (FT-0546 F1)", async () => {
+  it("paints the forward as it stands at THIS paint — an owned forward's relay counts move between memory reloads", async () => {
     let counts = "relays 1/6 open, 0 waiting";
     const now = () => ({ ...UP, detail: `ours · ${counts}` });
     const rig = await loaded({ forward: { view: now, ensure: () => Promise.resolve(now()) } });

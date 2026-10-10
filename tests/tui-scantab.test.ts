@@ -536,7 +536,7 @@ describe("a finding's detail paragraph reaches the detail pane (selfscan fc1128a
   });
 });
 
-describe("validity tiers (owner ruling 2026-09-30: the scan validator is the skeptic)", () => {
+describe("validity tiers (the scan validator is the skeptic)", () => {
   const tiered = [
     scanFinding({
       fingerprint: "t1".padEnd(64, "0"),

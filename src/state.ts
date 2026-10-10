@@ -632,7 +632,7 @@ CREATE TABLE IF NOT EXISTS pr_state (
   author TEXT NOT NULL DEFAULT '',
   trigger_ts TEXT,
   stale_recheck INTEGER NOT NULL DEFAULT 0,
-  -- LEGACY (escalation scrapped 2026-08-18): no longer read or written. Kept
+  -- LEGACY (the old escalation mechanism): no longer read or written. Kept
   -- in the DDL so live databases, which cannot drop it without a table
   -- rebuild, keep satisfying its NOT NULL via the default.
   escalation_worthy INTEGER NOT NULL DEFAULT 0,
@@ -656,8 +656,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 -- Every per-PR read of rounds (hasRunningRound, roundsFor, the status
 -- snapshot's latest-verdict subquery, the due-command check) was a full scan
 -- of the table: 0.14 ms a call, 2,548 calls a reconcile pass, and 70-140 ms
--- for each heartbeat and each command-supervisor scan on the live 2,434 rows
--- (boot stall, 2026-10-07).
+-- for each heartbeat and each command-supervisor scan on 2,434 live rows.
 CREATE INDEX IF NOT EXISTS rounds_pr_round ON rounds(pr, round_no);
 CREATE TABLE IF NOT EXISTS bot_comments (
   comment_id INTEGER PRIMARY KEY,
@@ -667,7 +666,7 @@ CREATE TABLE IF NOT EXISTS bot_comments (
 );
 -- The per-PR count of the bot's comments (qcr why, the outcome capture's
 -- signature) read the whole table; closed-PR history stays live here, so it
--- must stop costing a scan (§9.7).
+-- must stop costing a scan (docs/archiving.md §9.7).
 CREATE INDEX IF NOT EXISTS bot_comments_pr ON bot_comments(pr);
 CREATE TABLE IF NOT EXISTS backfill_pr_meta (
   pr INTEGER PRIMARY KEY,
@@ -721,7 +720,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_review
 -- ops day — a re-blocked, re-merged PR months later is a fresh signal.
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_by_pr_day
   ON feedback_signals (kind, pr, day) WHERE comment_id IS NULL AND review_id IS NULL;
--- Human-comment capture (deciding): every human comment on a
+-- Human-comment capture: every human comment on a
 -- tracked PR, kept locally because the companion cannot read GitHub and review
 -- prose has no other local copy (bot_comments stores ids only). A SIDE
 -- RECORD — nothing here changes how a comment is routed, and nothing here
@@ -757,10 +756,10 @@ CREATE TABLE IF NOT EXISTS pr_comments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS pr_comments_identity ON pr_comments (source, comment_id);
 CREATE INDEX IF NOT EXISTS pr_comments_pr ON pr_comments (pr, id);
--- The durable reasoning record (deciding): why each candidate
+-- The durable reasoning record: why each candidate
 -- finding was raised or killed. Parsed out of the session-written
 -- state/findings/pr-<n>-round-<k>.json — the file is the artifact, these are
--- the countable rows's "how often the review backs down" needs.
+-- the countable rows "how often the review backs down" needs.
 -- The unplanned flag is the daemon's own judgement (the lens is not in
 -- rounds.lenses), never the session's: the add protocol lets the main pi run a
 -- lens that appears in no plan, so the executed set is never assumed equal to
@@ -838,8 +837,8 @@ CREATE TABLE IF NOT EXISTS supervisor_leases (
   last_error_at   TEXT,
   last_error      TEXT
 );
--- Wakes held while their PR's round was in flight (single-shepherd invariant
--- S4: the PR's ONE main pi is never given two instructions at once). Flushed
+-- Wakes held while their PR's round was in flight (single-shepherd invariant:
+-- the PR's ONE main pi is never given two instructions at once). Flushed
 -- in insertion order once the round ends.
 CREATE TABLE IF NOT EXISTS pending_wakes (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -886,7 +885,7 @@ CREATE TABLE IF NOT EXISTS trigger_levels (
   observed_at TEXT NOT NULL,
   PRIMARY KEY (pr, kind)
 );
--- a newer head observed while an older round owns the PR is durable
+-- A newer head observed while an older round owns the PR is durable
 -- work owed. It survives the predecessor's every terminal path and is retained
 -- after queue promotion until a verdict actually covers the target head.
 CREATE TABLE IF NOT EXISTS successor_obligations (
@@ -898,9 +897,9 @@ CREATE TABLE IF NOT EXISTS successor_obligations (
   reason               TEXT NOT NULL,
   updated_at           TEXT NOT NULL
 );
--- canonical FAILED_LOUD review debt. Orthogonal to GitHub lifecycle:
+-- Canonical FAILED_LOUD review debt. Orthogonal to GitHub lifecycle:
 -- a PR may be queued while this hold prevents dispatch. Most failure classes
--- remain until explicit operator recovery.'s exact pre-fanout class is
+-- remain until explicit operator recovery. The exact pre-fanout class is
 -- instead a durable circuit breaker with a finite next_retry_at.
 CREATE TABLE IF NOT EXISTS review_failures (
   incident_id  TEXT PRIMARY KEY,
@@ -924,7 +923,7 @@ CREATE TABLE IF NOT EXISTS review_failures (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS review_failures_one_open_pr
   ON review_failures(pr) WHERE work_owed=1;
--- identity-bound instructions for one recovery successor. Rows are
+-- Identity-bound instructions for one recovery successor. Rows are
 -- historical receipts, so retry epochs survive restart and a successful
 -- fanout naturally resets the next unrelated round to epoch zero.
 CREATE TABLE IF NOT EXISTS round_recovery_instructions (
@@ -952,7 +951,7 @@ CREATE TABLE IF NOT EXISTS approval_withheld (
   reason     TEXT,
   created_at TEXT NOT NULL
 );
--- Deploy-window drain (2026-08-25): ONE row, id = 1. While draining the
+-- Deploy-window drain: ONE row, id = 1. While draining the
 -- webhook drops deliveries (counted here), the pump starts nothing, and
 -- recheck/ping-pong/EOD hold -- in-flight rounds still run to their natural
 -- end. Persistent on purpose: the flag must survive the container restart the
@@ -1001,7 +1000,7 @@ CREATE TABLE IF NOT EXISTS filed_items (
 -- One row per escalation that ACTUALLY REACHED GITHUB. A suppressed one --
 -- dry-run, or a posting guard refusing -- writes no row, so a dry-run
 -- bring-up can never consume the dedup key or the cap that a later live run
--- needs (review, blocker 1).
+-- needs.
 --
 -- The unique index below buys exactly this and no more: the same person is not
 -- pointed at the same file (or the same named decision) on the same PR twice.
@@ -1058,8 +1057,8 @@ CREATE INDEX IF NOT EXISTS slack_posts_day ON slack_posts(posted_at);
 CREATE TABLE IF NOT EXISTS slack_cooldowns (
   key           TEXT PRIMARY KEY,
   last_fired_at TEXT NOT NULL,
-  -- (ops-timezone lift): the STORED name predates the configurable
-  -- operations timezone and is deliberately KEPT — a rename migration on live
+  -- The STORED name predates the configurable operations timezone and is
+  -- deliberately KEPT — a rename migration on live
   -- state buys nothing. It now holds the ops-day token whatever the
   -- configured zone; code reads it as "day" (SlackCooldownRow) through the
   -- alias in slackCooldown(), so "warsaw" appears nowhere outside this file.
@@ -1089,14 +1088,14 @@ CREATE TABLE IF NOT EXISTS archive_prs (
   last_error       TEXT,
   updated_at       TEXT NOT NULL
 );
--- The DB mover's watermarks (§9.2): 'events.last_id',
+-- The DB mover's watermarks (docs/archiving.md §9.2): 'events.last_id',
 -- 'deliveries.last_rowid'. Absent = nothing moved yet.
 CREATE TABLE IF NOT EXISTS archive_marks (
   name  TEXT PRIMARY KEY,
   value NOT NULL
 );
 -- Event rows moved to the archive DB, per (kind, UTC day), updated in the
--- same transaction as the live delete (§9.4): what keeps the
+-- same transaction as the live delete (docs/archiving.md §9.4): what keeps the
 -- all-time window of qcr metrics continuous.
 CREATE TABLE IF NOT EXISTS archived_event_counts (
   kind TEXT NOT NULL,
@@ -1804,7 +1803,7 @@ export class StateStore {
         if (r.pr !== ev.pr || r.kind !== kind || r.created_at > ev.ts || owed.has(r.id)) continue;
         if (!match || r.created_at >= match.created_at) match = r;
       }
-      if (match) owed.set(match.id, error || "write failed before S2");
+      if (match) owed.set(match.id, error || "write failed before memory writes were tracked");
     }
     const at = this.ts();
     const markPending = this.db.prepare(

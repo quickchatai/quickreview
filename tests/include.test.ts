@@ -752,7 +752,7 @@ describe("addendum registry", () => {
   });
 });
 
-describe("the built pass contract (rules)", () => {
+describe("the built pass contract", () => {
   const sandbox = join(import.meta.dirname, "..");
   let out: string;
   let bodies: Map<string, string>;
@@ -895,7 +895,7 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
-  it("pass-baseline no longer carries the duplicate-fix scan (2026-10-03 reseed R2)", () => {
+  it("pass-baseline no longer carries the duplicate-fix scan", () => {
     for (const text of bodies.values()) {
       expect(text).not.toContain("Duplicate-fix check");
       expect(text).not.toContain("gh pr list");
@@ -1568,7 +1568,7 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain("`pass-backcompat`'s territory");
     });
 
-    it("the four kept migration sub-rules are all present, and R1 never blocks", () => {
+    it("the four kept migration sub-rules are all present, and the one-migration rule never blocks", () => {
       const text = bodies.get("pass-data-safety--sol-high")!;
       expect(text).toContain("**One migration per PR.**");
       expect(text).toContain("never as a blocker");
@@ -1704,7 +1704,7 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain("Never kill, shorten or demote a candidate for being verbose");
     });
 
-    it("the lens rules never reach pass-validate, and its rule never reaches a lens", () => {
+    it("the lens-side nit rule never reaches pass-validate, and the validator's rule never reaches a lens", () => {
       for (const [name, text] of bodies) {
         const isValidator = name.startsWith("pass-validate--");
         expect(text.includes("## A nit ASKS FOR SOMETHING"), name).toBe(!isValidator);

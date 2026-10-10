@@ -176,7 +176,7 @@ describe("pr-checks.sh --why", () => {
   // guard 4 — src/cigate.ts and guards.sh alike — says red. A status is its
   // own check, never collapsed with a run of its context.
   // MUTATION: drop the status read (or `or any(... statuses)`) — these fail.
-  it("reads the commit statuses too: a failing status beside green runs is red (MC-51)", async () => {
+  it("reads the commit statuses too: a failing status beside green runs is red", async () => {
     pagedRuns = [
       {
         id: 1,

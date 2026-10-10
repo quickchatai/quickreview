@@ -58,7 +58,7 @@ describe("[T8] every src/ module is reachable from a real entrypoint", () => {
     {
       file: "src/posting.ts",
       why:
-        "[F1] / the manifesto audit's structural finding: ~950 lines of review-assembly law — the " +
+        "the manifesto audit's structural finding: ~950 lines of review-assembly law — the " +
         "severity-to-tag mapping's caller, anchor validation, the [check this] grammar — that execute ONLY in " +
         "tests, because sessions post through scripts/*.sh instead. The audit's sharpest sentence about it is " +
         "'the tested guard is not the enforcing guard'. Delete, wire up, or keep as the specification the shell " +

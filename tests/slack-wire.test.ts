@@ -154,7 +154,7 @@ describe("slack off", () => {
     },
   );
 
-  it("leaves the legacy command watcher exactly as it was before", () => {
+  it("leaves the legacy command watcher exactly as it was before the Slack concierge", () => {
     const watcher = buildLocalCommandWatcher({
       root: dir,
       deps: noopCommandDeps,

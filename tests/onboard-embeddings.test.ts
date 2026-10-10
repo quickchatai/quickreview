@@ -377,7 +377,7 @@ describe("the writers that carry the answer to the boot", () => {
   });
 });
 
-describe("localEmbedderEnvEntries (S4 review)", () => {
+describe("localEmbedderEnvEntries", () => {
   it("reads the loader's port and threads, and falls back to the shipped defaults", () => {
     expect(localEmbedderEnvEntries("")).toEqual([
       ["QCR_OPENVIKING_LOCAL_EMBEDDER_PORT", "1934"],

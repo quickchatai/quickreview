@@ -158,7 +158,7 @@ describe("extraction is byte-identical (acceptance 2)", () => {
   );
 });
 
-describe("every byte is checked against the manifest's sha256 (S4 review)", () => {
+describe("every byte is checked against the manifest's sha256", () => {
   it(
     "a gzip that decompresses cleanly to OTHER bytes (swapped, tampered) is reported and not written",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -309,7 +309,7 @@ describe("what extract will not pretend", () => {
   });
 });
 
-describe("qcr why carries the manifest summary (S4)", () => {
+describe("qcr why carries the manifest summary", () => {
   it(
     "the ledger as before, plus what the archive holds and what left the live tree",
     { timeout: HEAVY_TIMEOUT_MS },

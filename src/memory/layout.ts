@@ -137,8 +137,8 @@ export function areaForNewEntry(text: string, fallback: string): string {
  * it, which `tests/eod-seed-coherence.test.ts` checks over the real seed.
  */
 export const MEMORY_LAYOUT_NOTE = [
-  "Reviewer memory (`viking://user/reviewer/memories/`) is laid out in areas — the",
-  "§1 layout. Write each entry where it belongs; `viking_write` takes the",
+  "Reviewer memory (`viking://user/reviewer/memories/`) is laid out in areas.",
+  "Write each entry where it belongs; `viking_write` takes the",
   "full URI, so the area is the directory you name:",
   "",
   "- `experiences/` — the day's learnings (product 1). The ONLY area a review round",

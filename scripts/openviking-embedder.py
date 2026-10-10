@@ -286,7 +286,7 @@ def make_handler(model, describe):
 
 
 def parse_args(argv):
-    p = argparse.ArgumentParser(description="Loopback OpenAI-compatible embeddings over one pinned GGUF (S4).")
+    p = argparse.ArgumentParser(description="Loopback OpenAI-compatible embeddings over one pinned GGUF.")
     p.add_argument("--model-path", help="the GGUF file baked into the image")
     p.add_argument("--model-name", help="the name ov.conf sends; must be in the model table")
     p.add_argument("--sha256", help="the pinned sha256 of the GGUF; refused on mismatch")

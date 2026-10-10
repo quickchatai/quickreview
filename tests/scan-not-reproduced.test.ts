@@ -171,7 +171,7 @@ describe("a re-read of UNCHANGED content that does not report a finding", () => 
 });
 
 describe("a re-read of CHANGED content that does not report a finding", () => {
-  it("is fixed, as before (FT-0428)", () => {
+  it("is fixed, as before", () => {
     const st = new FindingsStore(stateHomeFs(dir));
     st.report([reported()], S("r1", "2026-09-30T10:00:00Z"));
     const rows = [row({ blob: "b2", run: "r2", at: "2026-09-30T11:00:00Z" })];

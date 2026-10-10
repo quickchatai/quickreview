@@ -71,7 +71,7 @@ describe("standingReview — one interpretation of the reviewed-head mark", () =
     expect(standingVerdict(mark({ verdict: " approve " }))).toBe("APPROVE");
   });
 
-  it("NEEDS_HUMAN and the retired ESCALATE spelling are UNDECIDED, even beside a posted REQUEST_CHANGES (carve-out)", () => {
+  it("NEEDS_HUMAN and the retired ESCALATE spelling are UNDECIDED, even beside a posted REQUEST_CHANGES", () => {
     for (const verdict of ["NEEDS_HUMAN", "ESCALATE", "escalate"]) {
       const m = mark({ verdict, posted_event: "REQUEST_CHANGES", round_no: 2 });
       expect(standingReview(m)).toEqual({ kind: "undecided" });

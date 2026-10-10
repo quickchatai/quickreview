@@ -29,11 +29,11 @@ describe("wire.ts: the memory phase is actually connected", () => {
     expect(Object.keys(MEMORY_DEFAULTS.context_quotas)).toContain(DEFAULT_CATEGORY);
   });
 
-  it("the round context block searches experiences/ only (S5) — the default quotas name nothing else", () => {
+  it("the round context block searches experiences/ only — the default quotas name nothing else", () => {
     expect(MEMORY_DEFAULTS.context_quotas).toEqual({ experiences: 24 });
   });
 
-  it("every round publishes its query as the PR session's recall hint (S5)", () => {
+  it("every round publishes its query as the PR session's recall hint", () => {
     expect(wire).toMatch(
       /publishQuery: \(pr: number, query: string\) => \{\s*writeRecallHint\(\s*sessions\.ovRecallHintPath\(prSessionName\(pr\)\),\s*\{ query, areas: ROUND_SEARCH_AREAS \}/,
     );
@@ -97,7 +97,7 @@ describe("wire.ts: the memory phase is actually connected", () => {
 // Memory failures reach a person. Like everything above, this
 // wiring degrades silently when disconnected (no block, no wake, no banner),
 // so the tripwire is structural.
-describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
+describe("wire.ts: reviewer-memory health is actually connected", () => {
   it("BOTH credentials in use are probed, authenticated, separately", () => {
     expect(wire).toContain("new MemoryHealthMonitor({");
     expect(wire).toMatch(/daemon: credentialProbe\(\{[\s\S]*?reviewerKey\(\)/);
@@ -185,7 +185,7 @@ describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
   });
 });
 
-describe("tui/index.ts: memory failures reach the operator (S1)", () => {
+describe("tui/index.ts: memory failures reach the operator", () => {
   const tui = readFileSync(join(process.cwd(), "src", "tui", "index.ts"), "utf8");
 
   it("the desktop notification rides the alert pipeline, from status.json", () => {
@@ -199,7 +199,7 @@ describe("tui/index.ts: memory failures reach the operator (S1)", () => {
     expect(tui).toContain("full.memory.incident_ticket_after_min * 60_000");
   });
 
-  it("an EOD curation incident (S8) files the same way, with its own memo", () => {
+  it("an EOD curation incident files the same way, with its own memo", () => {
     expect(tui).toMatch(
       /maybeFileCurationIncident\(incidentTracker, a\.view\.snapshot\?\.memory, \{[\s\S]{0,200}?afterMs: full\.memory\.incident_ticket_after_min \* 60_000,\s*memo: curationMemo,/,
     );
@@ -210,7 +210,7 @@ describe("tui/index.ts: memory failures reach the operator (S1)", () => {
   });
 });
 
-describe("wire.ts: bounded sessions, shed load (S3)", () => {
+describe("wire.ts: bounded sessions, shed load", () => {
   it("the daemon's store publishes the retired list where the sessions' recall reads it", () => {
     expect(wire).toMatch(
       /openVikingStore\(memoryClient, \{[\s\S]*?onRetired: \(uris\) => \{\s*writeRetiredUris\(sessions\.ovRetiredPath\(\), uris,/,
@@ -240,7 +240,7 @@ describe("wire.ts: bounded sessions, shed load (S3)", () => {
 // The local English embedder. Unwired, the server would start
 // with nothing on its api_base: every search and every new vector fails while
 // the server itself looks up. The tripwire is structural, like the rest.
-describe("wire.ts: the local English embedder is actually connected (S4)", () => {
+describe("wire.ts: the local English embedder is actually connected", () => {
   it("the embedder supervisor starts BEFORE the server, and gates the server's first start, bounded", () => {
     const embedderAt = wire.indexOf(
       "new LocalEmbedderSupervisor({ cfg: cfg.openviking, repoRoot: root, log })",
@@ -345,7 +345,7 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
 // Delivery — each slice below degrades silently (a hook method
 // not forwarded ⇒ dispatch never delivers; an addendum not composed ⇒ the
 // validator never learns `lesson-shape`), so these are tripwires too.
-describe("wire.ts: lesson delivery (S9b) is actually connected", () => {
+describe("wire.ts: lesson delivery is actually connected", () => {
   const daemon = readFileSync(join(process.cwd(), "src", "daemon.ts"), "utf8");
 
   it("the late-bound hook forwards delivering, select and repoFacts to the selector", () => {

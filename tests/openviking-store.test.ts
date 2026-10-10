@@ -541,7 +541,7 @@ describe("OpenVikingStore round trip", () => {
     expect(texts).toContain("#feedback machine-authored");
   });
 
-  it("pins and unpins by MOVING the entry (S5), retires by tag — and a retired entry leaves the timeline", async () => {
+  it("pins and unpins by MOVING the entry, retires by tag — and a retired entry leaves the timeline", async () => {
     const { store } = wire(server);
     await store.apply({ op: "note", text: "#repo-gotcha guard 2 can suppress a same-head review" });
 
@@ -1625,7 +1625,7 @@ describe("the pinned watchdog reads fresh through a shared, cached store", () =>
 // size or modification time moved since this store last read it — except on
 // the periodic full refresh, so the TUI, the companion and the daemon do not
 // each re-read the whole store every few minutes.
-describe("the incremental sweep (S3)", () => {
+describe("the incremental sweep", () => {
   const reads = (server: FakeOpenViking) =>
     server.calls.filter((c) => c.path === "/api/v1/content/read").length;
   const ROOT_EXP = `${ROOT}/experiences`;
@@ -1867,7 +1867,7 @@ describe("the incremental sweep (S3)", () => {
     expect(reads(server) - before).toBe(0);
   });
 
-  it("areaSize (F2): the last sweep's LISTING per area — retired and unread files counted; unknown before a sweep; a failed listing keeps its count", async () => {
+  it("areaSize: the last sweep's LISTING per area — retired and unread files counted; unknown before a sweep; a failed listing keeps its count", async () => {
     const { server } = seeded();
     server.files.set(`${ROOT_EXP}/20260804T000000-d.md`, "#retired four\n");
     server.files.set(`${ROOT}/events/20260805T000000-e.md`, "an event\n");

@@ -170,7 +170,7 @@ Closed: —
 ## Question
 
 The overseer flagged an operational defect in the review system (memory
-entry ${e.id} @ ${e.ts}, auto-filed by the TUI per FT-0129 §9). Diagnose,
+entry ${e.id} @ ${e.ts}, auto-filed by the TUI). Diagnose,
 fix, and resolve — or close as duplicate/stale with a note.
 
 Memory-key: ${memoryKey(e)}

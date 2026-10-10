@@ -489,7 +489,7 @@ describe("metrics dashboard", () => {
     }
   });
 
-  it("every card rides the ONE accent (§8 retired the five-hue rotation)", () => {
+  it("every card rides the ONE accent, never a per-card hue rotation", () => {
     const cards = metricsCards(fullWindow as never, daily, 24);
     const hues = new Set(cards.map((c) => c.accent));
     expect(hues.size).toBe(1);

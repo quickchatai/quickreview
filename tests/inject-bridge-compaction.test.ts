@@ -90,7 +90,7 @@ function start(opts: { withContext?: boolean } = {}): FakePiSession {
   return session;
 }
 
-describe("a compaction holds the mailbox (H1b)", () => {
+describe("a compaction holds the mailbox", () => {
   it("a wake written while pi compacts is submitted only after it ends — nothing refused, nothing lost", async () => {
     const s = start();
     s.startCompaction(); // a manual compaction, `/compact` typed into the pane
@@ -165,7 +165,7 @@ describe("a compaction holds the mailbox (H1b)", () => {
   });
 });
 
-describe("the daemon's round-end compaction request (H1b)", () => {
+describe("the daemon's round-end compaction request", () => {
   it("runs through ctx.compact once the active run settles, before the wakes queued behind it", async () => {
     const s = start();
     writeAtomic(join(dir, "2026-10-08T08-51-00-0000.md"), "round tail");
@@ -226,7 +226,7 @@ describe("the daemon's round-end compaction request (H1b)", () => {
   });
 });
 
-describe("redelivery into the same live session (#5362 ③, H1b)", () => {
+describe("redelivery into the same live session (#5362 ③)", () => {
   const LEASE_MS = 60;
 
   function commandStore(): StateStore {

@@ -137,7 +137,7 @@ describe("parseFindingsRecord", () => {
     },
   );
 
-  it("is tolerant in the direction: digit-strings, aliases, partial entries", () => {
+  it("is tolerant of model output: digit-strings, aliases, partial entries", () => {
     const parsed = parseFindingsRecord(
       {
         pr: "7",
@@ -600,7 +600,7 @@ describe("VerdictWatcher round-end findings check", () => {
     expect(injects).toHaveLength(1);
   });
 
-  it("without a findingsDir the check does not exist at all (legacy behaviour)", async () => {
+  it("without a findingsDir the check does not exist at all", async () => {
     verdicted(100);
     const injects: string[] = [];
     const watcher = new VerdictWatcher({
@@ -764,7 +764,7 @@ describe("per-round comment attribution", () => {
 // nit entries. The audit is measurement, never a gate: the round is finished by
 // the time it runs, and nothing here can hold a PR open.
 
-describe("conformance audit", () => {
+describe("the conformance audit", () => {
   const entry = (over: Record<string, unknown>) => ({
     id: "f1",
     lens: "pass-baseline",
@@ -814,7 +814,7 @@ describe("conformance audit", () => {
     expect(c.nits_without_request).toEqual([]);
   });
 
-  it("counts restatements without judging them — escalation across rounds is ratified", () => {
+  it("counts restatements without judging them — escalation across rounds is legitimate", () => {
     const c = parse([
       entry({ id: "f1", posted_as: "blocker", raised_in_round: 1 }),
       entry({ id: "f2", posted_as: "blocker" }),

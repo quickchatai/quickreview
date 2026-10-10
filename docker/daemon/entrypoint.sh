@@ -200,7 +200,7 @@ const conf = {
     session_skill_extraction_enabled: false,
     link_enabled: false,
   },
-  // S3. No model-based intent analysis / query planning on a search
+  // No model-based intent analysis / query planning on a search
   // that carries a session id: this deployment configures no model for it,
   // every attempt failed on a missing key, and in list mode an error there
   // fails the whole search (retrieval_config.py `enable_intent`). The raw
@@ -229,14 +229,14 @@ if (conf.server.auth_mode === "api_key") {
 }
 // The embedder is ALWAYS written explicitly, so ov.conf states which vector
 // space the store is in and the migration check below can compare it against
-// the collection on disk. "local" is the local English embedder (S4)
+// the collection on disk. "local" is the local English embedder
 // and needs no key. Any other provider is a hosted opt-in and reads ITS OWN
 // credential file. A hosted provider whose key file is missing is rendered
 // WITHOUT a key on purpose: the server then refuses to start (loud, memory
 // degrades) rather than this render silently switching to another embedder —
 // which would reset a hosted store's vectors on boot.
 conf.embedding = {
-  // concurrent embedding calls bounded by the same 2-CPU knob as
+  // Concurrent embedding calls bounded by the same 2-CPU knob as
   // the queue workers (the server's default is 10).
   max_concurrent: Number(process.env.QCR_OV_QUEUE_CONCURRENCY),
   dense: {
@@ -373,13 +373,13 @@ let settings = {};
 if (fs.existsSync(file)) settings = JSON.parse(fs.readFileSync(file, "utf8"));
 if (!Array.isArray(settings.extensions)) settings.extensions = [];
 
-// pi-memory is NOT registered here any more — the hand-rolled memory
-// engine is retired. Memory is OpenViking, and its (vendored, patched) pi
+// pi-memory is NOT registered here — the hand-rolled memory engine is
+// retired. Memory is OpenViking, and its (vendored, patched) pi
 // extension is passed per spawn by src/sessions.ts, deliberately NOT registered
 // globally: a globally-registered memory extension would also load in the
 // isolated children the subagent tool spawns, and lens passes must do no
 // ambient memory work.
-// the third-party pi-subagents entry is gone the same way pi-memory
+// The third-party pi-subagents entry is gone the same way pi-memory
 // went — the native subagent extension rides per-spawn argv via
 // extensions/subagents.ts (a global entry would arm leaves with fan-out; the
 // prune below retires the stale /opt/pi-extensions path on older volumes).
@@ -398,7 +398,7 @@ for (const p of wanted) {
 }
 // settings.json lives on the PERSISTENT pihome volume, so entries written by
 // an older image survive a rebuild. Adding the wanted list is not enough —
-// after retired pi-memory the volume still registered
+// after pi-memory was retired the volume still registered
 // /usr/lib/node_modules/pi-memory/index.ts, which the image no longer has. pi
 // tolerates a missing extension, so it never surfaced as a failure; it just
 // sat there misreporting what the reviewer loads. Prune anything that is not
@@ -410,11 +410,11 @@ if (stale.length) {
   settings.extensions = settings.extensions.filter((p) => isBuiltinEntry(p) || fs.existsSync(p));
   console.log("pi extensions pruned (not on disk): " + stale.join(", "));
 }
-// The reviewer never blocks on interactive input (the owner, 2026-08-20 —
-// pr-5334 stalled on pi's "Trust project folder?" modal after .pi/settings.json
-// shipped). Belt: trust every project by default. Braces: pre-seed the trust
-// store for /opt/quickreview so even a settings regression cannot re-surface the
-// prompt. Third layer: sessions.ts passes --approve on every spawn.
+// The reviewer never blocks on interactive input (pr-5334 stalled on pi's
+// "Trust project folder?" modal after .pi/settings.json shipped). Belt: trust
+// every project by default. Braces: pre-seed the trust store for
+// /opt/quickreview so even a settings regression cannot re-surface the prompt.
+// Third layer: sessions.ts passes --approve on every spawn.
 settings.defaultProjectTrust = "always";
 // pi 1.0 made the interactive TUI fullscreen by default. Sessions run under
 // tmux and the operator TUI mirrors and scrolls their panes, so keep the
@@ -443,7 +443,7 @@ if (trust["/opt/quickreview"] !== true) {
 }
 console.log("pi project trust: defaultProjectTrust=always, /opt/quickreview pre-trusted");
 
-// agent discovery for the native subagent extension. Its default
+// Agent discovery for the native subagent extension. Its default
 // "user" scope reads $HOME/.pi/agent/agents; link that at the daemon-built
 // lens passes (state/agents, written by buildAgents at wire start — a
 // dangling link until the first build is fine, discovery just sees none).
@@ -497,7 +497,7 @@ if [[ -f "$SANDBOX/docker/vm/tmux.conf" ]]; then
   cp "$SANDBOX/docker/vm/tmux.conf" "$HOME/.tmux.conf"
 else
   cat > "$HOME/.tmux.conf" <<'TMUXCONF'
-# csi-u extended keys end-to-end (§3E /) — do not remove.
+# csi-u extended keys end-to-end — do not remove.
 set -g extended-keys on
 set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
@@ -508,7 +508,7 @@ set -g mouse on
 set -g set-clipboard on
 set -as terminal-features 'xterm*:clipboard'
 set -g history-limit 50000
-# Muted look — no bright greens anywhere (operator order, 2026-08-14).
+# Muted look — no bright greens anywhere.
 set -g status-style 'bg=colour235,fg=colour247'
 set -g status-left-style 'fg=colour250'
 set -g status-right-style 'fg=colour244'

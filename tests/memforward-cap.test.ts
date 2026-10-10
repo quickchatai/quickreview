@@ -250,7 +250,7 @@ async function start(
 
 // ---- the cap -------------------------------------------------------------------
 
-describe("the relay cap (F1)", () => {
+describe("the relay cap", () => {
   it("defaults under sshd's MaxSessions, with room to spare", () => {
     expect(forward.SSHD_DEFAULT_MAX_SESSIONS).toBe(10);
     expect(forward.DEFAULTS.maxRelays).toBe(6);

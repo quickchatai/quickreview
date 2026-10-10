@@ -380,7 +380,7 @@ describe("degradation is 'could not check', never 'changed'", () => {
     await expect(whole()).resolves.toEqual([pinned]);
   });
 
-  it("reads the pinned AREA when the store has one (S5) — the directory every round's head reads", async () => {
+  it("reads the pinned AREA when the store has one — the directory every round's head reads", async () => {
     const pinned = { ...entry("b1", 0, "h1"), pinned: true };
     let sweeps = 0;
     let invalidated = 0;

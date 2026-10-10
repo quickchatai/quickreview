@@ -319,7 +319,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
         {
           file: "src/archive/prfiles.ts",
           why:
-            "the closed-PR archiver's inventory (§7.1/§7.2, shared by the plan and the archive pass) LISTS " +
+            "the closed-PR archiver's inventory (shared by the plan and the archive pass) LISTS " +
             "inject/pr-<n>/ of closed PRs: an undelivered top-level wake holds the PR; the consumed .done/.terminal " +
             "files, quarantines and terminal-row leftovers are archived and — only after they verify and the " +
             "synchronous eligibility re-check passes — removed. It never puts a wake there; recorded because it " +

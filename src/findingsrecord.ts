@@ -740,7 +740,7 @@ export async function enforceFindingsRecord(
           "review_output_unreasoned",
           pr,
           roundNo,
-          `posted output outside the rules: ${c.ungrammatical_tags.length} tag(s) outside the grammar ` +
+          `posted output outside the output rules: ${c.ungrammatical_tags.length} tag(s) outside the grammar ` +
             `(${c.ungrammatical_tags.join(", ")}), ${c.nits_without_request.length} nit(s) asking for nothing ` +
             `(${c.nits_without_request.join(", ")})` +
             (c.doubted_posted.length > 0

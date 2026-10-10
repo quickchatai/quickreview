@@ -258,7 +258,7 @@ evidence_timeout_s = 60           # evidence copier: per-remote-read
                                   # budget. A wedged ssh costs one sweep — the
                                   # copy is retried on the next poll, never
                                   # blocking the poll or the paint loop.
-evidence_why_interval_s = 10      # L1 evidence sweep pace: at most one
+evidence_why_interval_s = 10      # evidence sweep pace: at most one
                                   # `qcr why` per this many seconds (gap from
                                   # the end of the last one), clamped 5–600 s.
                                   # No `why` at all while the daemon is draining

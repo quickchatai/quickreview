@@ -484,7 +484,7 @@ describe("OAuth route", () => {
     expect(noDocker.ok).toBe(true);
   });
 
-  it("probeContainerLogin asks about the MOUNT, not $HOME — the hazard", async () => {
+  it("probeContainerLogin asks about the MOUNT, not $HOME", async () => {
     const calls: string[][] = [];
     const adapters = fakeAdapters(
       { containers: { c1: { piHome: "/home/review/.pi", auth: true } } },

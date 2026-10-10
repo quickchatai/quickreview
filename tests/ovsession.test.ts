@@ -78,7 +78,7 @@ describe("lifecycle", () => {
     expect(await life.create("pr-7")).toBe(true);
   });
 
-  it("a BUSY 409 is not 'already there' — nothing was created (S2)", async () => {
+  it("a BUSY 409 is not 'already there' — nothing was created", async () => {
     const logs: string[] = [];
     const busy = openVikingSessionLifecycle(
       {
@@ -196,7 +196,7 @@ describe("session environment", () => {
     expect(Object.keys(env).some((k) => /KEY|TOKEN|SECRET/i.test(k))).toBe(false);
   });
 
-  it("names the retired-URIs file the extension's recall excludes by (S3)", () => {
+  it("names the retired-URIs file the extension's recall excludes by", () => {
     const env = openVikingSessionEnv({
       baseUrl: "http://h:1933",
       peerId: "pr-42",
@@ -444,7 +444,7 @@ describe("keyChangeWatcher — a rotated daemon key reaches the sessions", () =>
 
 // ---- the retired list and the stale-session sweep -------------------------
 
-describe("the retired-URIs file (S3)", () => {
+describe("the retired-URIs file", () => {
   it("lives beside ovcli.conf and round-trips into what the extension's recall reads", () => {
     const home = join(dir, "pihome");
     const path = ovRetiredPathIn(home);
@@ -499,7 +499,7 @@ describe("the retired-URIs file (S3)", () => {
 
 // ---- the PR session's recall hint ------------------------------------------
 
-describe("the recall hint (S5)", () => {
+describe("the recall hint", () => {
   it("lives beside ovcli.conf, one file per PR session, and round-trips into what the extension reads", () => {
     const home = join(dir, "pihome");
     const path = ovRecallHintPathIn(home, "pr-42");
@@ -555,7 +555,7 @@ describe("the recall hint (S5)", () => {
   });
 });
 
-describe("the stale-session sweep plan (S3)", () => {
+describe("the stale-session sweep plan", () => {
   const state = (closed: number[], open: number[]) => (pr: number) =>
     closed.includes(pr)
       ? ("closed" as const)
@@ -587,7 +587,7 @@ describe("the stale-session sweep plan (S3)", () => {
   });
 });
 
-describe("lifecycle.list (S3)", () => {
+describe("lifecycle.list", () => {
   it("lists the server's sessions through the real client", async () => {
     const server = fakeServer();
     const client = new OpenVikingClient({

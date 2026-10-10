@@ -161,7 +161,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(cfg.pi.subagent_max_concurrency).toBe(12);
   });
 
-  it("sets HOME explicitly beside the uid-parameterized user (the lesson)", () => {
+  it("sets HOME explicitly beside the uid-parameterized user", () => {
     expect(dockerfile).toMatch(/^ARG REVIEW_UID=1001$/m);
     expect(dockerfile).toContain("--non-unique");
     expect(dockerfile).toMatch(/^ENV HOME=\/home\/review$/m);
@@ -427,7 +427,7 @@ describe("the rendered ov.conf (executed)", () => {
     expect(entrypoint).toContain('"${OV_EMBEDDER_ARGS[@]}" \\');
   });
 
-  it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob (S3)", () => {
+  it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob", () => {
     const conf = render({}, { openviking_root_key: "r" });
     expect(conf.retrieval).toEqual({ enable_intent: false });
     expect(conf.embedding.max_concurrent).toBe(cfg.openviking.queue_concurrency);

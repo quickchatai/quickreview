@@ -1188,7 +1188,7 @@ describe("end-of-round ledger discipline", () => {
 // RENDERED text of all four templates, and against the script's own accepted
 // names, so a typo in either (a missing `.json`, a staging name the script
 // does not look for) fails here instead of in a session's finalize tail.
-describe("atomic verdict publication (H1a)", () => {
+describe("atomic verdict publication", () => {
   const script = readFileSync(resolve(process.cwd(), "scripts", "commit-verdict.sh"), "utf8");
   const accepted = new RegExp(/\[\[ "\$NAME" =~ (\S+) \]\]/.exec(script)![1]!);
 

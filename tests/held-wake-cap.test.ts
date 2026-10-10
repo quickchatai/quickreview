@@ -104,7 +104,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("the held-wake cap (H1b)", () => {
+describe("the held-wake cap", () => {
   it("never evicts an author reply, evicts push recheck nudges first, then the oldest other wake", async () => {
     for (let c = 1; c <= 6; c++) await wakeOrHold(deps(), PR, authorReply(c), "author_reply");
     expect(heldReasons()).toEqual(Array(6).fill("author_reply"));

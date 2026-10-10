@@ -84,7 +84,7 @@ describe("prodStats", () => {
 });
 
 describe("escalationWorthy is gone", () => {
-  it("exports no escalation heuristic at all (scrapped 2026-08-18)", async () => {
+  it("exports no escalation heuristic at all", async () => {
     const mod = (await import("../src/heuristics.js")) as Record<string, unknown>;
     for (const name of ["escalationWorthy", "ESCALATION_PATH_PATTERNS", "escalationReasons"]) {
       expect(mod[name], name).toBeUndefined();

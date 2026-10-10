@@ -98,7 +98,7 @@ Closed: —
 ## Question
 
 Reviewer memory (OpenViking) has been unusable since ${since} — ${age} when
-this was filed (FT-0546 S1). Every round runs memory-less and nothing the
+this was filed. Every round runs memory-less and nothing the
 reviewer learns is written until it is fixed. Auto-filed by the TUI from the
 daemon's status.json \`memory\` block — not from memory, which is the thing
 that is down. Diagnose and fix the cause, then resolve with a note; the
@@ -282,7 +282,7 @@ Closed: —
 
 ## Question
 
-The learner's EOD curation did not reach reviewer memory (FT-0546 S8): ${what}.
+The learner's EOD curation did not reach reviewer memory: ${what}.
 Unresolved since ${i.since} — ${age} when this was filed. The overseer was
 woken; this ticket is the person half. Auto-filed by the TUI from the
 daemon's status.json \`memory.curation\` block. Find out why the curation did

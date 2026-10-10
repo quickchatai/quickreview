@@ -999,8 +999,8 @@ Unpack it and point the tools at its `runs/`:
                         their file and lines), judge/JUDGE.txt
     FILES.sha256                                sha256, size and path of every file
 
-compare.py reads `bench_cost_usd` when a case has no `pi-events.jsonl`
-(C10). SWE-PRBench run data is in the archive only.
+compare.py reads `bench_cost_usd` when a case has no `pi-events.jsonl`.
+SWE-PRBench run data is in the archive only.
 
 Licence: Apache-2.0, as the run archive (its README carries the AACR notice,
 the modified-work statement and the citations).

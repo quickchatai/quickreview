@@ -374,7 +374,7 @@ describe("cases", () => {
   });
 });
 
-describe("planFinds — TWO finds a round (F2)", () => {
+describe("planFinds — TWO finds a round", () => {
   const rows: SelectionRow[] = [
     { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
     { row: 1, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
@@ -435,7 +435,7 @@ describe("planFinds — TWO finds a round (F2)", () => {
     ).toBeLessThanOrEqual(600);
   });
 
-  it("a wide plan is still TWO finds — no row is left unasked (S9a capped them at 24)", () => {
+  it("a wide plan is still TWO finds — no row is left unasked", () => {
     const many: SelectionRow[] = Array.from({ length: 40 }, (_, i) => ({
       row: i,
       lens: "pass-sweep",
@@ -901,7 +901,7 @@ describe("selectRound", () => {
 
 // ---- two finds select what the per-row finds did ---------------------
 
-describe("F2 equivalence — over an engine that returns the whole corpus, TWO finds select exactly what S9a's per-row finds did", () => {
+describe("two-find equivalence — over an engine that returns the whole corpus, TWO finds select exactly what per-row finds would", () => {
   const rows: SelectionRow[] = [
     { row: 0, lens: "pass-baseline", agent: "pass-baseline--sol-med" },
     { row: 1, lens: "pass-security", agent: "pass-security--sol-high" },

@@ -1065,7 +1065,7 @@ describe("cli surface", () => {
 // loopback api_base). Nothing new is needed in the script but the records:
 // the provider, the model AND the dimension all change, so it is a reset and a
 // re-embed, never a server refusing to boot.
-describe("the move to the local English embedder (S4)", () => {
+describe("the move to the local English embedder", () => {
   const LOCAL_EN = {
     provider: LOCAL_EMBEDDER_WIRE_PROVIDER,
     model: LOCAL_EMBEDDING.model,
@@ -1121,7 +1121,7 @@ describe("the move to the local English embedder (S4)", () => {
     });
   });
 
-  it("a journal (hosted → built-in local, completed) does not trip the loop guard — a new embedder is a new migration", async () => {
+  it("an earlier journal (hosted → built-in local, completed) does not trip the loop guard — a new embedder is a new migration", async () => {
     seedStore(LOCAL);
     writeFileSync(
       join(home, "reembed.json"),

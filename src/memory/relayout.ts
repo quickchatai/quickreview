@@ -111,7 +111,7 @@ export const RELAYOUT_CURATION: ReadonlyArray<{
     hash: "adjudication",
     kv: { pr: "5359", attribution: "accepted-policy-cost" },
     why:
-      "contradicted by (the concrete-injection-evidence rule): it records a carve-out as " +
+      "contradicted by the concrete-injection-evidence rule: it records a carve-out as " +
       "rejected policy, and that policy was reversed",
   },
 ];

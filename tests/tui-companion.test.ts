@@ -525,7 +525,7 @@ describe("mount drift", () => {
     expect(progress.some((l) => l.includes(`missing ${CONTAINER.trackerDocs}`))).toBe(true);
   });
 
-  it("recreates a container carrying a STALE mount — the legacy ssh case", async () => {
+  it("recreates a container carrying a STALE mount — the old ssh mount case", async () => {
     // A container created with ~/.ssh + an agent socket bound in must be
     // recreated: `docker start` would resurrect that boundary breach silently,
     // and rule 8 is meant to be structural.
@@ -609,7 +609,7 @@ describe("mount drift", () => {
     expect(lc.mountDrift(new Map())).toEqual([]);
   });
 
-  describe("pinned DNS (network roaming, 2026-08-28)", () => {
+  describe("pinned DNS (network roaming)", () => {
     // Docker's embedded DNS forwards to the upstream the HOST had at
     // container creation. That upstream is network-specific, so the first
     // network change after a long-lived start kills every lookup in the
@@ -1260,7 +1260,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(lc.spawnArgv()).toContain(`QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/github-read.env`);
   });
 
-  it("tells the companion's recall where the TUI publishes its retired memories (S3)", () => {
+  it("tells the companion's recall where the TUI publishes its retired memories", () => {
     const argv = withFiles([]).lc.spawnArgv();
     // The extension's own variable name, at the state-home mount — where the
     // TUI's store writes `MEMORY.retiredFile` on the host side.
@@ -1307,7 +1307,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     expect(made.some((d) => d.includes("secrets"))).toBe(false);
   });
 
-  it("mount drift covers them: a container from before is recreated", async () => {
+  it("mount drift covers them: a container without these mounts is recreated", async () => {
     // A container with the old repo-named reviewed-repo mount, and none of
     // the homes.
     const OLD: Record<string, string> = {
@@ -1377,7 +1377,7 @@ describe("the install's homes and the read-only GitHub token", () => {
   });
 });
 
-describe("the config mirror (review)", () => {
+describe("the config mirror", () => {
   const base = mkdtempSync(join(tmpdir(), "qcr-cfg-mirror-"));
   afterAll(() => rmSync(base, { recursive: true, force: true }));
 

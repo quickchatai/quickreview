@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS finding_cases (
   owed_since TEXT,
   written_at TEXT,
   updated_at TEXT NOT NULL,
-  -- H3: the step that last made it owed ('sync' | 'late' |
+  -- the step that last made it owed ('sync' | 'late' |
   -- 'backfill'); NULL = owed before the column existed (read as history)
   origin TEXT
 );

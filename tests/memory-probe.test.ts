@@ -128,7 +128,7 @@ describe("credentialProbe — fs/ls of the memories root with ONE credential", (
   });
 });
 
-describe("keyFromFile — a rotated key is re-read (S1)", () => {
+describe("keyFromFile — a rotated key is re-read", () => {
   it("re-stats every TTL and re-reads a key that changed", () => {
     const path = tempKeyFile("old-key-aaaaaaaa");
     let clock = 0;

@@ -270,7 +270,7 @@ describe("MANIFESTO.md is pinned by something", () => {
       {
         host: "huggingface.co",
         why:
-          "the local English embedder's model file (S4): ONE GGUF, fetched at image BUILD from a pinned commit " +
+          "the local English embedder's model file: ONE GGUF, fetched at image BUILD from a pinned commit " +
           "URL and refused unless its sha256 matches the pin. Build-time only — the running container never fetches a " +
           "model, and no memory text or query ever goes there.",
       },

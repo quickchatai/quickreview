@@ -1753,7 +1753,7 @@ describe("system re-trigger short-circuit", () => {
   });
 
   it(
-    "a withheld approval at this head still dispatches —'s retry must post",
+    "a withheld approval at this head still dispatches — the CI-gate retry must post",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(47, "2026-08-19T10:00:00Z", { head: OLD, provenance: "system" });
@@ -1797,7 +1797,7 @@ describe("system re-trigger short-circuit", () => {
   );
 
   it(
-    "carries a withheld approval to the new head on a trivial short-circuit (amendment 3)",
+    "carries a withheld approval to the new head on a trivial short-circuit",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(50, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
@@ -1824,7 +1824,7 @@ describe("system re-trigger short-circuit", () => {
   );
 
   it(
-    "an existing recheck claim is left untouched — no double-claim against",
+    "an existing recheck claim is left untouched — no double-claim against the recheck",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(51, "2026-08-19T10:00:00Z", { head: NEW, provenance: "system" });
@@ -2265,7 +2265,7 @@ describe("round-memory seeding", () => {
   );
 
   it(
-    "publishes the round's own context query as the PR session's recall hint, before memory is asked (S5)",
+    "publishes the round's own context query as the PR session's recall hint, before memory is asked",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
       queue(88, "2026-08-20T09:00:00Z");

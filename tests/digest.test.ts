@@ -88,7 +88,7 @@ describe("dailyUsage / usageSummaryLine", () => {
     },
   );
 
-  it("counts expired rounds' spend (finding 1 — expiry is not a refund)", async () => {
+  it("counts expired rounds' spend (expiry is not a refund)", async () => {
     const { StateStore } = await import("../src/state.js");
     const { dailyUsage } = await import("../src/digest.js");
     const store = new StateStore(":memory:");

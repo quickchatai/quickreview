@@ -1289,7 +1289,7 @@ describe("arm.sh / compare.py — the defect-benchmark loop", () => {
   });
 });
 
-describe("consistency in the benchmark", () => {
+describe("run-to-run consistency in the benchmark", () => {
   it("arm.sh repeats an arm and compare.py scores repeats with a consistency line", () => {
     const arm = readFileSync(join(ROOT, "bench", "aacr", "arm.sh"), "utf8");
     const py = readFileSync(join(ROOT, "bench", "aacr", "compare.py"), "utf8");

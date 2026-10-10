@@ -366,7 +366,7 @@ describe("valid verdicts", () => {
   // These park pins carry `passes` telemetry: a NEEDS_HUMAN
   // with no executed-pass evidence is an unfinished review and is requeued,
   // not parked (see self-requeue.test.ts "NEEDS_HUMAN requires a finished review").
-  it("a legacy NEEDS_HUMAN lands the PR tracked (park retired 2026-08-19), no reviewer touched", async () => {
+  it("a legacy NEEDS_HUMAN lands the PR tracked (the park is retired), no reviewer touched", async () => {
     reviewingRound(102);
     await watcher().handleFile(
       write(
@@ -461,7 +461,7 @@ describe("valid verdicts", () => {
 // These write the file the way pi does — one open fd, the bytes in two halves —
 // with the production partial-write policy.
 // ---------------------------------------------------------------------------
-describe("partial writes are waited out, not misread (H1a, #5885)", () => {
+describe("partial writes are waited out, not misread", () => {
   const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   const productionWatcher = () => watcher({ partialWrite: undefined });
 
@@ -838,7 +838,7 @@ describe("measured round usage", () => {
   // The transcripts are read off the event loop, and what cannot
   // be read is UNKNOWN: never a partial sum posing as a measurement, and never
   // a reason to hold the verdict.
-  describe("unknown, never a partial sum — and the verdict still applies (H2)", () => {
+  describe("unknown, never a partial sum — and the verdict still applies", () => {
     const usageUnknown = (pr: number): Record<string, unknown> | undefined => {
       const row = store.db
         .prepare("SELECT payload FROM events WHERE kind = 'round_usage_unknown' AND pr = ?")
@@ -1352,7 +1352,7 @@ describe("confirmed round posting receipts", () => {
 // A malformed or missing verdict whose posting receipt is
 // CONFIRMED is settled from the receipt; a missing receipt still fails loud.
 // ---------------------------------------------------------------------------
-describe("settling from a confirmed posting receipt (H1a)", () => {
+describe("settling from a confirmed posting receipt", () => {
   const TRUNCATED = (pr: number) => `{"pr": ${pr}, "round_no": 1, "verdi`;
   const count = (kind: string, pr?: number) =>
     (
@@ -1373,7 +1373,7 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
       ).payload,
     );
 
-  it("#5885: a malformed verdict whose APPROVE was confirmed posted settles as APPROVE — no FAILED_LOUD, no requeue", async () => {
+  it("a malformed verdict whose APPROVE was confirmed posted settles as APPROVE — no FAILED_LOUD, no requeue", async () => {
     reviewingRound(5885);
     const { key } = stampPosting(5885, 1);
     writePostingReceipt(5885, 1, key, "APPROVE", { gh_review_id: 5449445735 });
@@ -1589,7 +1589,7 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
     expect(count("verdict_settled_from_receipt")).toBe(0);
   });
 
-  it("malformed + a guard-2 refusal record settles as the no-op", async () => {
+  it("malformed + a guard-2 refusal record settles as the guarded no-op", async () => {
     reviewingRound(190);
     const { key } = stampPosting(190, 1);
     store.recordReviewedHead(190, { head_sha: "abc123", verdict: "REQUEST_CHANGES", round_no: 0 });
@@ -1838,7 +1838,7 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
 // ---------------------------------------------------------------------------
 // Every stage limit asks the receipt first.
 // ---------------------------------------------------------------------------
-describe("receipt-aware stage limits (H1a, #5850 r5)", () => {
+describe("receipt-aware stage limits", () => {
   // The receipt helper confirms at 2026-08-13T11:59:59Z.
   const at = (iso: string) => () => new Date(iso);
   const killed: number[] = [];
@@ -2887,7 +2887,7 @@ describe("guarded no-op settlement", () => {
         .all(kind, pr) as Array<{ payload: string }>
     ).map((row) => JSON.parse(row.payload) as Record<string, unknown>);
 
-  it("the #5409 shape: closes the round as no_new_evidence, restores awaiting_author, applies nothing from the unposted verdict", async () => {
+  it("the guard-2 refusal shape: closes the round as no_new_evidence, restores awaiting_author, applies nothing from the unposted verdict", async () => {
     const { roundId, key, mark } = skippedRound(500);
     store.recordApprovalWithheld(500, {
       head_sha: "older-head",

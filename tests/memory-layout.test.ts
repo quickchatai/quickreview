@@ -494,7 +494,7 @@ function fixtureEntries(): { entries: MemoryEntry[]; retired: MemoryEntry[] } {
 // ---- the vocabulary ---------------------------------------------------------
 
 describe("the layout vocabulary (src/memory/layout.ts)", () => {
-  it("names the §1 areas and the round's one search area", () => {
+  it("names the layout's areas and the round's one search area", () => {
     expect(PINNED_AREA).toBe("preferences/pinned");
     expect(PREFERENCES_AREA).toBe("preferences");
     expect(EXPERIENCES_AREA).toBe("experiences");
@@ -1184,7 +1184,7 @@ describe("the relayout plan over a fixture shaped like the live store", () => {
       why: "confinement probe",
     });
     expect(action("experiences/20260825T183100-adjudication-pr5359-comment1.md")).toMatchObject({
-      why: expect.stringContaining(""),
+      why: expect.stringContaining("contradicted by the concrete-injection-evidence rule"),
     });
     expect(RELAYOUT_CURATION).toHaveLength(1);
     // Retire is the tag, in place, over the bytes the plan read.

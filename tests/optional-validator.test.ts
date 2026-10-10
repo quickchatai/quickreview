@@ -142,7 +142,7 @@ describe("a profile can switch the validator off", () => {
   });
 });
 
-describe("the validator runs at its own tier, never raised (amended)", () => {
+describe("the validator runs at its own tier, never raised", () => {
   const lowFloor = structuredClone(fixture);
   lowFloor.models.validate_tier = "terra-med";
 

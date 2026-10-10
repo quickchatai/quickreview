@@ -65,7 +65,7 @@ const MARKS_TABLE_COLUMNS_SQL = `(
   -- the lesson's class; NULL for a lesson with none (it can match only on the
   -- lens tier)
   lesson_class TEXT,
-  -- R9: which tier matched — class (lens, class and path) | lens
+  -- which tier matched — class (lens, class and path) | lens
   -- (lens and path; the class differs or the lesson names none)
   match TEXT NOT NULL DEFAULT 'class' CHECK (match IN ('class', 'lens')),
   severity TEXT,

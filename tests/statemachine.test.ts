@@ -79,7 +79,7 @@ describe("invariants", () => {
   // `awaiting_human`, because those return `current` unchanged. It
   // is inert while it sits there (the board paints glyph `?`, `sortPrs` ranks
   // it last, no live surface names it), and the next verdict moves it.
-  it("a restored pre-2026-08-19 row rejoins normal flow on its first verdict, with no migration", () => {
+  it("a restored awaiting_human row rejoins normal flow on its first verdict, with no migration", () => {
     const restored = "awaiting_human" as unknown as PrLifecycleState;
     expect(transition(restored, { type: "verdict", verdict: "APPROVE" })).toBe("tracked");
     expect(transition(restored, { type: "verdict", verdict: "REQUEST_CHANGES" })).toBe(

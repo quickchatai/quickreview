@@ -529,7 +529,7 @@ describe("reconcileOnce", () => {
 // closed-sync, so a PR closed THIS pass is already closed when it runs — and
 // it is never an error of the pass: the boot's first healthy pass lifts a
 // deploy drain, and memory must not be able to hold that.
-describe("the stale raw-tier sweep rides the reconcile pass (S3)", () => {
+describe("the stale raw-tier sweep rides the reconcile pass", () => {
   it("runs after the closed-sync and lands its outcome on the report and the pass event", async () => {
     gh.closedPrs.set(4, ref(4, { state: "closed", merged: true }));
     seed(4, "tracked");
@@ -954,7 +954,7 @@ describe("stale-trigger residue sweep", () => {
   });
 });
 
-describe("undelivered recheck-claim sweep (#5362 W2)", () => {
+describe("undelivered recheck-claim sweep", () => {
   // The worst of the wedge family, because nothing bounded it. `claimRecheck`
   // is written BEFORE the nudge goes out and released only on a synchronous
   // throw — which a bridge-level drop is not — and `rechecks` has no deadline,
@@ -1079,7 +1079,7 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
   });
 });
 
-describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)", () => {
+describe("undelivered recheck-claim sweep — bounded (boot stall)", () => {
   // An unbounded sweep blocks the event loop: it would ask about every claim
   // ever written — already-delivered ones re-proven every pass, claims on
   // closed PRs, no-op claims that never carried a token — every 5 minutes.
@@ -1134,7 +1134,7 @@ describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)",
     expect(store.hasRecheck(700, "push:a")).toBe(true);
   });
 
-  it("#5841: a no-op claim carries no token, so it is never released and the backstop is never re-armed", async () => {
+  it("a no-op claim carries no token, so it is never released and the backstop is never re-armed", async () => {
     // Releasing a no-op claim the moment the session writes anything (reading
     // the absent token as a lost nudge) would let the next pass's backstop
     // re-ask a question the trivial-delta classifier already answered.

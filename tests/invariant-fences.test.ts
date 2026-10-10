@@ -519,7 +519,7 @@ describe("ratified invariant fences", () => {
     for (const { slug, ft } of PINNED[rel] as PinnedFence[]) {
       expect(
         found.has(slug),
-        `${rel.split("/").pop()}#${slug} is MISSING — ratified ${ft}, the owner only. ` +
+        `${rel.split("/").pop()}#${slug} is MISSING — ratified ${ft}, owner only. ` +
           `Deleting the fence markers is not a way around the pin: restore ` +
           `<!-- RATIFIED ${ft} ${slug} — do not edit; owner only --> … <!-- /RATIFIED ${slug} -->.`,
       ).toBe(true);
@@ -533,9 +533,9 @@ describe("ratified invariant fences", () => {
       if (!fence) continue; // the presence test above owns this failure
       expect(
         sha256(fence.body),
-        `${rel.split("/").pop()}#${pin.slug} changed — ratified ${pin.ft}, the owner only. ` +
+        `${rel.split("/").pop()}#${pin.slug} changed — ratified ${pin.ft}, owner only. ` +
           `The text inside a RATIFIED fence is a decision, not prose: propose the ` +
-          `change on the tracker and let the owner ratify it. If he did, re-pin the ` +
+          `change on the tracker and let the owner ratify it. If they did, re-pin the ` +
           `hash in tests/invariant-fences.test.ts in the same commit.`,
       ).toBe(pin.sha256);
     }
@@ -553,7 +553,7 @@ describe("ratified invariant fences", () => {
     }
   });
 
-  it.each(files)("%s: the fence's reseed annotation is exactly the pin's (R8)", (rel) => {
+  it.each(files)("%s: the fence's reseed annotation is exactly the pin's", (rel) => {
     // Both ways: a marker may not claim a reseed the pin never recorded, and a
     // pinned reseed may not lose its annotation from the marker.
     const bySlug = new Map(parseFences(read(rel), rel).map((f) => [f.slug, f]));
@@ -627,7 +627,7 @@ describe("ratified invariant fences", () => {
     expect(OPEN.exec("<!-- RATIFIED x — do not edit; anyone only -->")).toBe(null);
   });
 
-  it("the reseed annotation parses in exactly one spelling: a ticket and a date (R8)", () => {
+  it("the reseed annotation parses in exactly one spelling: a ticket and a date", () => {
     const m = OPEN.exec(
       "<!-- RATIFIED memory-discipline (reseeded 2026-10-07) — do not edit; owner only -->",
     );

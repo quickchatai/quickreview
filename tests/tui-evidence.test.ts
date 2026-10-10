@@ -501,7 +501,7 @@ function handClock(start = "2026-08-25T08:00:00Z"): {
 const isWhy = (script: string): boolean => script.includes("cli.js") && script.includes(" why ");
 const whyPr = (script: string): number => Number(/ why (\d+) /.exec(script)![1]);
 
-describe("L1 — the sweep's progress survives a re-exec", () => {
+describe("the sweep's progress survives a re-exec", () => {
   let dir: string;
   let store: EvidenceStore;
   let recordPath: string;
@@ -841,7 +841,7 @@ describe("L1 — the sweep's progress survives a re-exec", () => {
   });
 });
 
-describe("L1 — the sweep is paced, and held while the daemon is busy", () => {
+describe("the sweep is paced, and held while the daemon is busy", () => {
   let dir: string;
   let store: EvidenceStore;
 
@@ -934,7 +934,7 @@ describe("L1 — the sweep is paced, and held while the daemon is busy", () => {
     expect(whys).toEqual([1, 2]);
   });
 
-  it("a PR failing at the FETCH waits its turn in the rotation (under pacing)", async () => {
+  it("a PR failing at the FETCH waits its turn in the rotation under pacing", async () => {
     const clock = handClock();
     // PR 1 fails at the fetch every time; 2 and 3 are healthy.
     const { ssh, whys } = slowWhyVm(
@@ -1111,7 +1111,7 @@ describe("L1 — the sweep is paced, and held while the daemon is busy", () => {
   });
 });
 
-describe("L1 — a round that finished during a hold is a backfill", () => {
+describe("a round that finished during a hold is a backfill", () => {
   let dir: string;
   let store: EvidenceStore;
 
@@ -1204,7 +1204,7 @@ describe("L1 — a round that finished during a hold is a backfill", () => {
 //       transcript role resolves to the archive and the manifest records it;
 //       a role found only inside a bundle is recorded as `archived` with its
 //       pointer — never `missing`.
-describe("the archive fallback (S4, acceptance 5)", () => {
+describe("the archive fallback", () => {
   let dir: string;
   let store: EvidenceStore;
   beforeEach(() => {

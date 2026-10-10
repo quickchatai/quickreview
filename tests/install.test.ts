@@ -260,7 +260,7 @@ describe("qcr install", () => {
     expect(moved.code).toBe(0);
     expect(moved.lines.join("\n")).toContain(to);
     // deploy.sh sync|rebuild ships the config home from there.
-    expect(moved.lines.join("\n")).toMatch(/deploy\.sh[\s\S]*/);
+    expect(moved.lines.join("\n")).toMatch(/deploy\.sh sync\|rebuild ships the config home to the VM from there/);
     expect(migrateReport({ kind: "already", to }).code).toBe(0);
     expect(migrateReport({ kind: "deduplicated", from, to }).code).toBe(0);
     expect(migrateReport({ kind: "nothing", to }).code).toBe(0);
@@ -522,7 +522,7 @@ describe("migrateProfiles", () => {
     expect(profileMigrateReport([]).code).toBe(0);
     const moved = profileMigrateReport([{ kind: "moved", name: "q", from: "/a", to: "/b" }]);
     expect(moved.code).toBe(0);
-    expect(moved.lines.join("\n")).toMatch(/deploy\.sh[\s\S]*/);
+    expect(moved.lines.join("\n")).toMatch(/deploy\.sh sync\|rebuild ships the config home's profiles\/ to the VM with the config\./);
     expect(profileMigrateReport([{ kind: "conflict", name: "q", from: "/a", to: "/b" }]).code).toBe(
       1,
     );
@@ -874,7 +874,7 @@ describe("migrateSecrets", () => {
   });
 });
 
-describe("migrate repoints the compose .env (review)", () => {
+describe("migrate repoints the compose .env", () => {
   const legacy = (): string => legacySecretsDir(env);
   it("a QCR_SECRETS_DIR naming the legacy dir follows the move; nothing else changes", async () => {
     const { cmdInstall } = await import("../src/cli.js");

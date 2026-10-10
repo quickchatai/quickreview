@@ -268,7 +268,7 @@ const caseUri = (name: string) => `${CASES}/${name}.md`;
 
 // ---- which findings get a case -----------------------------------------------
 
-describe("the tick's sync is paced (boot stall)", () => {
+describe("the tick's sync is paced so boot never stalls", () => {
   it("syncs one PR per event-loop turn — fifty PRs are never one synchronous span", async () => {
     const h = harness();
     const prs = Array.from({ length: 12 }, (_, i) => PR + 1 + i);
@@ -450,7 +450,7 @@ describe("the case document", () => {
     expect(parseEventTags(doc)).not.toHaveProperty("filed");
   });
 
-  it("a row recorded before S6 (no title) takes the posted comment's first line as its title", async () => {
+  it("a row recorded with no title takes the posted comment's first line as its title", async () => {
     const h = harness();
     const r = h.round(H1, [posted({ key: "F1", title: null })]);
     h.capture.observeBotComments(PR, [
@@ -1228,7 +1228,7 @@ describe("the case area is not one of the engine's own memory types", () => {
 
 // ---- not in the round's search scope --------------------------------------------
 
-describe("cases are not in the round's search scope (that is S9)", () => {
+describe("cases are not in the round's search scope", () => {
   it("the round block searches experiences/ only, and drops a case that comes back anyway", () => {
     expect(ROUND_SEARCH_AREAS).not.toContain(CASES_AREA);
     expect(inRoundSearchScope(`${CASES}/case-1-r1-0000000000000000.md`)).toBe(false);
@@ -1597,7 +1597,7 @@ describe("a reply or signal recorded after the capture stopped visiting a closed
 // finds wait on. So batches are SMALL (2), and no batch STARTS while a round's
 // memory window is open.
 
-describe("the case writer yields to rounds (F2)", () => {
+describe("the case writer yields to rounds", () => {
   /** Five posted findings, each with a decided fate: five cases owed. */
   async function fiveOwed() {
     const h = harness();
@@ -1841,7 +1841,7 @@ describe("the case writer yields to rounds (F2)", () => {
 // every batch sent reports its embedding tail to the tracker a round seed
 // waits on (tests/memory-embed-tail.test.ts).
 
-describe("history waits while review rounds are in flight (H3)", () => {
+describe("history waits while review rounds are in flight", () => {
   /** Two closed PRs the backfill has not covered (4002, 4003); an OPEN PR
    * whose one owed case the BACKFILL found (4005 — history although the PR
    * is open); and a LIVE PR whose one owed case the capture pass's sync found (5100). */
