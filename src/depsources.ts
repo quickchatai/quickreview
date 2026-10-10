@@ -1097,15 +1097,37 @@ function parsePep508(line: string): ({ name: string } & PyReq) | null {
   return { name, pin: pin?.[1] ?? null, range: spec };
 }
 
-/** requirements*.txt / *.in: every requirement line (options, `-r`, `-e` and comments skipped). */
+/**
+ * requirements*.txt / *.in: every requirement line (options, `-r`, `-e` and
+ * comments skipped). An index option anywhere in the file binds every
+ * requirement in it, as pip reads it: `--index-url`/`-i` naming anything but
+ * public PyPI, or any `--extra-index-url`, `--find-links`/`-f` or
+ * `--no-index`, makes each one `@ index source` (PY_FOREIGN_PIN_PREFIX) with
+ * no pin — PyPI's same-named release is not what that file installs. A
+ * direct reference keeps its own `@ url`.
+ */
 export function parseRequirements(text: string): Map<string, PyReq> {
   const out = new Map<string, PyReq>();
+  let foreign = false;
   for (const raw of text.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
     const line = raw.replace(/(^|\s)#.*$/, "").trim();
-    if (!line || line.startsWith("-")) continue;
+    if (!line) continue;
+    if (line.startsWith("-")) {
+      const index = /^(?:--index-url|-i)(?:\s*=\s*|\s+)(\S+)/.exec(line);
+      if (index) {
+        if (!/^https:\/\/pypi\.(?:python\.)?org\/simple\/?$/i.test(index[1] ?? "")) foreign = true;
+      } else if (/^(?:--extra-index-url|--find-links|-f|--no-index)(?:[=\s]|$)/.test(line)) {
+        foreign = true;
+      }
+      continue;
+    }
     const r = parsePep508(line);
     if (r && !out.has(r.name)) out.set(r.name, { pin: r.pin, range: r.range });
   }
+  if (foreign)
+    for (const [k, r] of out)
+      if (!r.range.startsWith("@"))
+        out.set(k, { pin: null, range: `${PY_FOREIGN_PIN_PREFIX}index source` });
   return out;
 }
 

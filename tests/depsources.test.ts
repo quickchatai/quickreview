@@ -540,7 +540,7 @@ describe("lockfile parsers", () => {
       [
         "# pinned deps",
         "-r base.txt",
-        "--index-url https://example.com/simple",
+        "--index-url https://pypi.org/simple",
         "-e ./local",
         "requests[socks]==2.31.0 ; python_version >= '3.8'  # http",
         "Django>=4.2,<5",
@@ -557,6 +557,37 @@ describe("lockfile parsers", () => {
       urllib3: { pin: "2.0.7", range: "==2.0.7" },
       flask: { pin: null, range: "*" },
       numpy: { pin: null, range: "==1.26.*" },
+      mylib: { pin: null, range: "@ https://example.com/mylib.tar.gz" },
+    });
+  });
+
+  it("requirements: a file installing from a private or extra index pins nothing to PyPI", () => {
+    const body = ["acme-core==1.2.0", "requests>=2", "mylib @ https://example.com/mylib.tar.gz"];
+    const foreign = {
+      "acme-core": { pin: null, range: "@ index source" },
+      requests: { pin: null, range: "@ index source" },
+      mylib: { pin: null, range: "@ https://example.com/mylib.tar.gz" },
+    };
+    for (const opt of [
+      "--index-url https://private.example/simple",
+      "-i https://private.example/simple",
+      "--index-url=https://private.example/simple",
+      "--extra-index-url https://private.example/simple",
+      "--find-links ./wheels",
+      "--no-index",
+    ]) {
+      // The option binds the whole file wherever it sits.
+      expect(Object.fromEntries(parseRequirements([...body, opt].join("\n"))), opt).toEqual(
+        foreign,
+      );
+    }
+    expect(
+      Object.fromEntries(
+        parseRequirements(["-i https://pypi.python.org/simple/", ...body].join("\n")),
+      ),
+    ).toEqual({
+      "acme-core": { pin: "1.2.0", range: "==1.2.0" },
+      requests: { pin: null, range: ">=2" },
       mylib: { pin: null, range: "@ https://example.com/mylib.tar.gz" },
     });
   });
