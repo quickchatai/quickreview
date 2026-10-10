@@ -51,15 +51,16 @@ All three must be green before you commit. Notes that will bite otherwise:
 - **ESM, `module: NodeNext`** — local imports carry the **`.js` suffix** even
   from `.ts` files.
 - **Minimal dependencies.** Runtime: `better-sqlite3`, `smol-toml`,
-  `@xterm/headless`, `node-pty`. Dev: `typescript`, `vitest`, `@types/*`. Adding
+  `@xterm/headless`, `node-pty`. Dev: `typescript`, `vitest`, `@types/*`,
+  `eslint` + `@eslint/js` + `typescript-eslint`, `prettier`. Adding
   one is a decision, not a convenience.
 - **Tests mock all I/O**: fake fetch and adapters, `StateStore(":memory:")`,
   temp directories. The suite must stay green **offline, with no secrets, on a
   fresh clone** — a stranger's first command is the suite. A handful of suites
   spawn real subprocesses because the subprocess *is* the thing under test (the
   worktree manager against a scratch git repo, the shell posting scripts against
-  a loopback HTTP stub, the CLI and deploy preflight); find the current set with
-  `grep -l child_process tests/*.test.ts`.
+  a loopback HTTP stub, the CLI and deploy preflight); the current set is
+  `PROCESS_SUITES` in `tests/helpers/suite-timeouts.ts`.
 - **Every behaviour change needs a test at the seam it changes.** See
   [`tests/CLAUDE.md`](tests/CLAUDE.md) for the house style.
 - **Fences are verified by mutation.** A structural test that cannot be made to

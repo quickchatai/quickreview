@@ -70,8 +70,8 @@ hang. `suite-timeouts.test.ts` pins the rules, and the constants live in
 - **Leave the worker count at vitest's default.** Capping it lowered the
   suite's share of a loaded CPU and made the wall time worse.
 - **Load breaks more than timeouts:**
-  - A wait loop is a deadline inside the test's timeout (`pollUntil`), never
-    a count of ticks.
+  - A wait loop is a deadline inside the test's timeout (`pollUntil` in
+    `tui-startup.test.ts`), never a count of ticks.
   - A wait for a real socket or child effect is a deadline loop, never a
     fixed `setTimeout`.
   - A scratch repo whose `.git` is copied disables auto-maintenance
@@ -98,18 +98,19 @@ Fix the code, not the test.
 
 - **`invariant-fences.test.ts`** pins the ratified passages inside the
   editable prompt files.
-  - Each `<!-- RATIFIED FT-NNNN <slug> -->` fence is hashed by its contents,
-    and a missing marker fails as loudly as changed text.
+  - Each `<!-- RATIFIED <citation> <slug> — do not edit; owner only -->`
+    fence (citation `FT-NNNN` or `RULE-N`) is hashed by its contents, and a
+    missing marker fails as loudly as changed text.
   - A failure names the ratifying citation. The fix is a ratification, not
     a re-pin.
   - A fenced frozen seed must also carry a `ratified-divergence.json` entry.
   - A marker may record a ratified reseed of its words after the slug —
-    ` (reseeded FT-NNNN, YYYY-MM-DD)`, that spelling only (R8) — and
-    the pin's `reseeded` must match it both ways.
+    ` (reseeded FT-NNNN, YYYY-MM-DD)`, that spelling only — and the pin's
+    `reseeded` must match it both ways.
 - **`eod-seed-coherence.test.ts`** renders the real `prompts/eod-sweep.md`
   with the sections the daemon renders after it (`MEMORY_LAYOUT_NOTE`, the
   curation or no-packet section, the measured lines) and fails when the two
-  halves contradict each other (R8). The seed is frozen: fix the
+  halves contradict each other. The seed is frozen: fix the
   daemon-rendered side. A new variant of the curation section joins the
   `describe.each` there, and a claim a section makes about what the daemon
   does is driven through the real handler (the receipt goes through

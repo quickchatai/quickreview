@@ -8,15 +8,14 @@ stay behaviourally identical to the TS side:
   `src/cigate.ts` (guard 1 human-approval downgrade, guard 2 unchanged-head
   no-op, guard 3 merged/closed re-check, guard 4 red-CI approval refusal,
   guard 5 the stale-head refusal — the round must still be posting about the
-  sha it reviewed). Any new script that posts
-  to GitHub MUST source it and call the guards before the mutation, and must
-  honour dry-run (write the intent to `state/dryrun/`, send nothing).
+  sha it reviewed). Any new script that posts to GitHub MUST source it and
+  call the guards before the mutation, and must honour dry-run (write the intent to `state/dryrun/`, send nothing).
   Coverage per script: post-review.sh guards 1+2+3+5, approve-pr.sh 3+4+5,
   reply-thread.sh 3 — and that sentence is DERIVED from the call sites by
   `tests/fences-guards.test.ts` [T10] rather than trusted, so it cannot drift
-  from what the scripts do. A guard-2 refusal in post-review.sh is RECORDED
- : `guard_on_no_new_evidence` writes a `skipped` record into the
-  round's posting-receipt slot via `posting-receipt.py skip`, carrying the
+  from what the scripts do. A guard-2 refusal in post-review.sh is RECORDED:
+  `guard_on_no_new_evidence` writes a `skipped` record into the round's
+  posting-receipt slot via `posting-receipt.py skip`, carrying the
   mark the guard read, so the daemon settles the round as a no-op instead of
   a lost POST. The record is never written over an attempted post and an
   attempt is never written over it; a legacy round (no `QCR_ROUND_NO`)
@@ -26,9 +25,9 @@ stay behaviourally identical to the TS side:
   the gate. Change a guard on one side → change it on both + both tests.
 - `mint-token.sh` is the only credential source (App JWT → installation
   token, cached, single-flight). Never a personal token, never `GH_TOKEN`.
-- `commit-verdict.sh` (H1a) is sanctioned for sessions but posts
-  nothing: it publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
+- `commit-verdict.sh` is sanctioned for sessions but posts nothing: it
+  publishes a staged `verdict/<name>.tmp` onto `verdict/<name>` by
   one rename after checking it is one whole JSON object, so the daemon never
   reads a half-written verdict. It accepts only the two verdict-file name
-  shapes and touches nothing outside `verdict/`; `mv` itself stays off the
+  shapes and writes nothing outside `verdict/`; `mv` itself stays off the
   bash guard's allowlist.
