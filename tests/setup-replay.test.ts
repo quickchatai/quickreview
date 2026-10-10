@@ -1072,4 +1072,34 @@ describe("gitReplaySource (a scratch git repo — git is the thing under test)",
     );
     expect(!missing.ok && missing.reason).toContain("pull it on the host");
   });
+
+  it("a base that already contains the head diffs the merge commit, never the head against itself", () => {
+    git("checkout", "-qb", "feature");
+    write(join(repo, "app/a.py"), "one\ntwo\nthree\n");
+    git("commit", "-qam", "feature");
+    const head = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-");
+    git("merge", "-q", "--no-ff", "-m", "merge feature", "feature");
+    const merge = git("rev-parse", "HEAD");
+    const src = gitReplaySource({
+      github: github({}),
+      repo: "acme/app",
+      repoRoot: repo,
+      stateRoot: stateRoot(),
+    });
+    const opened = src.open(
+      { ...pr(), head_sha: head, base_sha: merge, merge_commit_sha: merge },
+      [],
+    );
+    if (!opened.ok) throw new Error(opened.reason);
+    expect(opened.tree.sha).toBe(merge);
+    expect(opened.tree.base).toBe(git("rev-parse", "HEAD^1"));
+    expect(opened.tree.files.map((x) => x.filename)).toEqual(["app/a.py"]);
+    const noMerge = src.open(
+      { ...pr(), head_sha: head, base_sha: merge, merge_commit_sha: null },
+      [],
+    );
+    expect(noMerge.ok).toBe(false);
+    expect(!noMerge.ok && noMerge.reason).toContain("already contains the head");
+  });
 });

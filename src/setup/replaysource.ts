@@ -116,13 +116,31 @@ export function gitReplaySource(opts: {
     },
     open: (pr, keep) => {
       // The change as reviewed (the head, against the merge base), else as it
-      // landed (the merge commit, against its first parent).
+      // landed (the merge commit, against its first parent). A base that
+      // already contains the head makes the head its own merge base — an
+      // empty diff, not the PR's change — so the merge commit is used instead,
+      // and without one the PR is refused.
       let sha: string;
       let base: string | null = null;
-      if (has(pr.head_sha)) {
+      const headHere = has(pr.head_sha);
+      const mergeHere = pr.merge_commit_sha !== null && has(pr.merge_commit_sha);
+      const headBase =
+        headHere && has(pr.base_sha)
+          ? git(["merge-base", pr.base_sha, pr.head_sha])?.trim() || null
+          : null;
+      const headInBase = headBase === pr.head_sha;
+      if (headHere && headInBase && !mergeHere) {
+        return {
+          ok: false,
+          reason:
+            `PR #${pr.number}: its base ${pr.base_sha.slice(0, 12)} already contains the head ${pr.head_sha.slice(0, 12)}, ` +
+            `so the head against the merge base is no change at all, and its merge commit is not in the reviewed checkout at ${opts.repoRoot}`,
+        };
+      }
+      if (headHere && !headInBase) {
         sha = pr.head_sha;
-        if (has(pr.base_sha)) base = git(["merge-base", pr.base_sha, pr.head_sha])?.trim() || null;
-      } else if (pr.merge_commit_sha !== null && has(pr.merge_commit_sha)) {
+        base = headBase;
+      } else if (pr.merge_commit_sha !== null && mergeHere) {
         sha = pr.merge_commit_sha;
         base = git(["rev-parse", "--verify", "--quiet", `${sha}^1`])?.trim() || null;
       } else {
