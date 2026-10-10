@@ -88,8 +88,9 @@ def arm_stats(runs_dir, runs, cases, judge_model):
     return {
         "found": dict(found), "total": dict(total),
         "correct": ok_comments / max(all_comments, 1),
-        "usd": sum(usd) / max(len(usd), 1),
-        "median_min": statistics.median(mins) if mins else 0,
+        # No priced or timed case is unknown (None, "?" on a chart), never $0 or 0 minutes.
+        "usd": statistics.mean(usd) if usd else None,
+        "median_min": statistics.median(mins) if mins else None,
         "aacr_recall": hit / max(n_refs, 1), "aacr_precision": hit / max(generated, 1),
     }
 
@@ -162,9 +163,12 @@ def chart_cost(arms, out):
     fig, ax = plt.subplots(figsize=(9, 4.8))
     for name, color, s in arms:
         x, y = s["usd"], recall(s) * 100
+        if x is None:  # unpriced: listed in the legend, never placed at $0
+            ax.scatter([], [], s=140, color=color, label=f"{name} — {y:.0f}% · $?/PR (unpriced)")
+            continue
         ax.scatter([x], [y], s=140, color=color, zorder=3, label=f"{name} — {y:.0f}% · ${x:.2f}/PR")
     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False, fontsize=10)
-    ax.set_xlim(0, max(s["usd"] for _, _, s in arms) * 1.6)
+    ax.set_xlim(0, max([s["usd"] for _, _, s in arms if s["usd"] is not None] or [1]) * 1.6)
     ax.set_ylim(0, 100)
     ax.set_xlabel("model cost per PR (list prices)")
     ax.set_ylabel("share of real defects found")
@@ -358,6 +362,9 @@ def chart_sensitivity(groups, reference, out):
         ax.text(r + 1.8, yy, f"{r:.0f}%{d}", va="center", fontsize=10, fontweight="bold" if is_best else None,
                 color=INK if (is_best or first) else MUTED)
         u = st["usd"]
+        if u is None:  # unpriced: no marker on the cost axis, never $0
+            bx.text(0.06, yy, "$?", va="center", fontsize=9.5, color=MUTED)
+            continue
         bx.scatter([u], [yy], s=150 if is_best else 80, facecolor=GROUND if first else color, edgecolor=color,
                    linewidth=2, zorder=4)
         bx.text(u * 1.18, yy, f"${u:.2f}", va="center", fontsize=9.5, color=INK if is_best else MUTED,
