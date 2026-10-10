@@ -700,6 +700,22 @@ describe("reverse direction: the reviewer key cannot reach companion memory", ()
     });
     expect(report.unclear).toBeGreaterThan(0);
   });
+
+  it("exits nonzero when any row is inconclusive, not only when one fails", async () => {
+    const unreachable = await forward.runVerify({
+      base: "http://127.0.0.1:1933",
+      keys: { companion: "companion-key", reviewer: "reviewer-key" },
+      fetchFn: async () => {
+        throw new Error("connect ECONNREFUSED");
+      },
+      log: () => {},
+    });
+    expect(unreachable.failed).toBe(0);
+    expect(unreachable.unclear).toBe(4);
+    expect(forward.verifyExitCode(unreachable)).toBe(1);
+    expect(forward.verifyExitCode({ failed: 1, unclear: 0 })).toBe(1);
+    expect(forward.verifyExitCode({ failed: 0, unclear: 0 })).toBe(0);
+  });
 });
 
 // ---- degradation: unreachable memory alerts, and nothing wedges -------------

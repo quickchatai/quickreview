@@ -1632,6 +1632,12 @@ export async function runVerify({
   return { rows, failed, unclear };
 }
 
+// Success means a conclusive passing matrix: an inconclusive row proves
+// nothing, so it fails the command as surely as a failed one.
+export function verifyExitCode(report) {
+  return report.failed > 0 || report.unclear > 0 ? 1 : 0;
+}
+
 // ---- cli --------------------------------------------------------------------
 
 export function parseArgs(argv, env = process.env) {
@@ -1827,7 +1833,7 @@ async function verify(cfg) {
   }
   console.log(`probing ${cfg.base} (${cfg.write ? "read + write" : "read-only"})\n`);
   const report = await runVerify({ base: cfg.base, keys, write: cfg.write });
-  return report.failed > 0 ? 1 : 0;
+  return verifyExitCode(report);
 }
 
 async function main(argv) {
