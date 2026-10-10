@@ -366,12 +366,16 @@ export default function activate(pi: Pi): void {
       if (!agent) continue;
       const key = executionKey(toolId(event), agent.agent);
       const previous = agents.get(key);
+      // A parallel slot can finish while its siblings still run: a terminal
+      // record carries its completion milestone from the first update that
+      // reports it, and a running one never carries one.
+      const { finished_at: previousFinished, ...kept } = previous ?? {};
       agents.set(key, {
-        ...previous,
+        ...kept,
         ...agent,
         execution_id: key,
         started_at: previous?.started_at ?? nowIso(),
-        ...(previous?.finished_at ? { finished_at: previous.finished_at } : {}),
+        ...(agent.status === "running" ? {} : { finished_at: previousFinished ?? nowIso() }),
       });
       snapshot.active_tool = `subagent: ${agent.agent}`;
       changed = true;

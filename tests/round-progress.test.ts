@@ -306,6 +306,65 @@ describe("round progress extension", () => {
     }
   });
 
+  it("stamps a parallel slot's completion on the update that first reports it finished", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5470";
+    process.env.QCR_PR = "5470";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    const update = (exitCodes: [number, number]) =>
+      emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "par-1",
+        partialResult: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-baseline", exitCode: exitCodes[0] },
+              { agent: "pass-security", exitCode: exitCodes[1] },
+            ],
+          },
+        },
+      });
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "par-1",
+        args: { tasks: [{ agent: "pass-baseline" }, { agent: "pass-security" }] },
+      });
+      const path = join(root, "state", "round-progress", "pr-5470.json");
+      await update([0, -1]);
+      const first = parseRoundProgress(readFileSync(path, "utf8"));
+      expect(first).toBeDefined();
+      const done = first!.agents.find((agent) => agent.agent === "pass-baseline")!;
+      const live = first!.agents.find((agent) => agent.agent === "pass-security")!;
+      expect(done).toMatchObject({ status: "completed", finished_at: expect.any(String) });
+      expect(live.status).toBe("running");
+      expect(live.finished_at).toBeUndefined();
+
+      await update([0, -1]);
+      const later = parseRoundProgress(readFileSync(path, "utf8"));
+      expect(later).toBeDefined();
+      expect(later!.agents.find((agent) => agent.agent === "pass-baseline")!.finished_at).toBe(
+        done.finished_at,
+      );
+    } finally {
+      process.env = previous;
+    }
+  });
+
   it("rejects malformed milestone ordering while retaining legacy display snapshots", () => {
     const legacy = {
       version: 1,
