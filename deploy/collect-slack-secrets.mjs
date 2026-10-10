@@ -40,7 +40,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -212,10 +212,13 @@ export function readSlackValues(text) {
   const legacyId = scalar("legacy_owner_slack_id").trim();
   const enabledM = section.body.match(/^\s*enabled\s*=\s*(true|false)/m);
   const usersSection = sliceSection(String(text ?? ""), "[slack.users]");
+  /** @type {Record<string, string>} */
   const users = {};
   for (const line of usersSection.body.split("\n")) {
-    const m = line.match(/^\s*(?:"([^"]+)"|([A-Za-z\d_-]+))\s*=\s*"([^"]*)"/);
-    if (m) users[m[1] ?? m[2]] = m[3];
+    const m = line.match(
+      /^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z\d_-]+))\s*=\s*(?:"([^"]*)"|'([^']*)')/,
+    );
+    if (m) users[m[1] ?? m[2] ?? m[3]] = m[4] ?? m[5];
   }
   return {
     enabled: enabledM ? enabledM[1] === "true" : false,
@@ -242,7 +245,7 @@ function sliceSection(text, header) {
   return { start, end, body: lines.slice(start + 1, end).join("\n") };
 }
 
-const isKvLine = (l) => !/^\s*#/.test(l) && /^\s*(?:"[^"]*"|[A-Za-z\d_-]+)\s*=/.test(l);
+const isKvLine = (l) => !/^\s*#/.test(l) && /^\s*(?:"[^"]*"|'[^']*'|[A-Za-z\d_-]+)\s*=/.test(l);
 
 function replaceScalar(line, key, value) {
   const re = new RegExp(`^(\\s*${key}\\s*=\\s*)("(?:[^"\\\\]|\\\\.)*"|'[^']*')(.*)$`);
@@ -461,6 +464,25 @@ export function readSecretsDir(text) {
   return m ? m[1] : "";
 }
 
+/**
+ * Absolute paths of the two Slack token files, resolved as the daemon resolves
+ * them: `[slack] bot_token_file` / `app_token_file` (default `slack_bot_token`
+ * / `slack_app_token`), a bare name under `secretsDir`, an absolute or
+ * ~-rooted name taken as given.
+ */
+export function slackTokenPaths(text, secretsDir, home = homedir()) {
+  const section = sliceSection(String(text ?? ""), "[slack]");
+  const pathOf = (key, fallback) => {
+    const m = section.body.match(new RegExp(`^\\s*${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "m"));
+    const name = expandHome(m ? (m[1] ?? m[2]) : fallback, home);
+    return isAbsolute(name) ? name : join(secretsDir, name);
+  };
+  return {
+    bot: pathOf("bot_token_file", "slack_bot_token"),
+    app: pathOf("app_token_file", "slack_app_token"),
+  };
+}
+
 // -------------------------------------------------------------------- runtime
 // Below this line: I/O, prompts and network. Not covered by unit tests. It all
 // lives inside main(), which runs only when this file is executed directly —
@@ -610,8 +632,7 @@ async function main() {
         ).trim(),
     ),
   );
-  const BOT_FILE = join(SECRETS_DIR, "slack_bot_token");
-  const APP_FILE = join(SECRETS_DIR, "slack_app_token");
+  const { bot: BOT_FILE, app: APP_FILE } = slackTokenPaths(configText, SECRETS_DIR);
 
   mkdirSync(SECRETS_DIR, { recursive: true, mode: 0o700 });
   try {
@@ -655,6 +676,7 @@ async function main() {
   function saveSecret(path, value) {
     const prev = process.umask(0o077);
     try {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
       const tmp = `${path}.tmp-${process.pid}`;
       writeFileSync(tmp, value, { mode: 0o600 });
       chmodSync(tmp, 0o600);

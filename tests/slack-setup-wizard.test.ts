@@ -3,7 +3,8 @@
 // config.toml goes in, the daemon's own parseConfig reads the result back.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfig } from "../src/config.js";
 // A plain ESM script with no type declarations by design; `tsconfig.tests.json`
@@ -249,9 +250,9 @@ describe("readSlackValues", () => {
     const v = wiz.readSlackValues(configured);
     const checks = wiz.finalChecks({ ...v, botTokenOk: true, appTokenOk: true });
     expect(checks.every((c: { ok: boolean }) => c.ok)).toBe(true);
-    expect(parseConfig(configured.replace(/^enabled = false/m, "enabled = true")).owner.slack_id).toBe(
-      "U0OWNER",
-    );
+    expect(
+      parseConfig(configured.replace(/^enabled = false/m, "enabled = true")).owner.slack_id,
+    ).toBe("U0OWNER");
 
     // A changed id follows into the set canonical key, so the pair never differs.
     const changed: string = wiz.patchConfigToml(configured, {
@@ -294,6 +295,28 @@ describe("readSecretsDir", () => {
 
   it("reads an absent key as empty — the install locator's call", () => {
     expect(wiz.readSecretsDir('[github]\nrepo = "x"\n')).toBe("");
+  });
+});
+
+describe("slackTokenPaths", () => {
+  it("defaults to the daemon's file names under the secrets dir", () => {
+    expect(wiz.slackTokenPaths("[slack]\nenabled = false\n", "/sec")).toEqual({
+      bot: "/sec/slack_bot_token",
+      app: "/sec/slack_app_token",
+    });
+  });
+
+  it("follows configured file names exactly as the daemon resolves them", () => {
+    const text = shipped
+      .replace(/^bot_token_file = "slack_bot_token"/m, 'bot_token_file = "concierge_bot_token"')
+      .replace(/^app_token_file = "slack_app_token"/m, "app_token_file = '~/tok/app'");
+    const cfg = parseConfig(text);
+    const daemon = (n: string) => (isAbsolute(n) ? n : join("/sec", n));
+    const paths = wiz.slackTokenPaths(text, "/sec", homedir());
+    expect(paths.bot).toBe(daemon(cfg.slack.bot_token_file));
+    expect(paths.app).toBe(daemon(cfg.slack.app_token_file));
+    expect(paths.bot).toBe("/sec/concierge_bot_token");
+    expect(paths.app).toBe(join(homedir(), "tok/app"));
   });
 });
 
@@ -356,6 +379,28 @@ function section(text: string, header: string): string {
   }
   return lines.slice(start, end).join("\n");
 }
+
+describe("[slack.users] literal strings", () => {
+  const withLiteral = shipped.replace(
+    /^\[slack\.users\]\n/m,
+    "[slack.users]\nU0LIT = 'literal-login'\n'U0QK' = 'quoted-key'\n",
+  );
+
+  it("reads single-quoted keys and values as the daemon does", () => {
+    const users = wiz.readSlackValues(withLiteral).users;
+    const daemon = parseConfig(withLiteral).slack.users;
+    expect(users.U0LIT).toBe("literal-login");
+    expect(users.U0QK).toBe("quoted-key");
+    expect(users).toEqual(daemon);
+  });
+
+  it("keeps them through a read-back-and-patch round trip", () => {
+    const users = wiz.readSlackValues(withLiteral).users;
+    const patched = wiz.patchConfigToml(withLiteral, { users });
+    expect(parseConfig(patched).slack.users).toEqual(parseConfig(withLiteral).slack.users);
+    expect(patched.match(/U0LIT/g)).toHaveLength(1);
+  });
+});
 
 describe("patchConfigToml", () => {
   const patched: string = wiz.patchConfigToml(shipped, PATCH);
