@@ -111,6 +111,17 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git restore src/tui/app.ts; git diff --staged")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore src/tui/app.ts | git diff --staged")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore src/tui/app.ts\ngit diff --staged")).toMatch(/rule 11/);
+    // --staged beside a worktree flag still discards the files.
+    expect(bashBlockReason("git restore --staged --worktree src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --worktree --staged src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -W src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore -W --staged src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -SW src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore -SW src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -WS src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged --work src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --source=HEAD~1 --staged --worktree src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --source HEAD --worktree --staged .")).toMatch(/rule 11/);
     expect(bashBlockReason("git clean -fd")).toMatch(/rule 11/);
   });
 
@@ -122,6 +133,8 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git stash show -p stash@{0}")).toBeUndefined();
     expect(bashBlockReason("git restore --staged src/tui/app.ts")).toBeUndefined();
     expect(bashBlockReason("git restore --staged src/tui/app.ts && git status")).toBeUndefined();
+    expect(bashBlockReason("git restore --source=HEAD~1 --staged src/tui/app.ts")).toBeUndefined();
+    expect(bashBlockReason("git restore --staged src/Widget.ts && git worktree list")).toBeUndefined();
     expect(bashBlockReason("git log --oneline -5")).toBeUndefined();
     // Words INSIDE other words or paths never trip the anchored patterns.
     expect(bashBlockReason("grep -rn 'git push' docs/")).toMatch(/rule 8/); // quoted text still matches — accepted: belt, not parser

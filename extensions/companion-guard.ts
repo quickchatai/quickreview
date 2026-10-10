@@ -114,12 +114,17 @@ export const BASH_RULES: BashRule[] = [
       "rule 11: git checkout -- <path> / git checkout . discards uncommitted changes. Branch switches and -b are fine; discarding is not.",
   },
   {
-    // The --staged exemption is read inside the restore's own command
-    // segment only: a `--staged` in a later command (`git restore f && git
-    // diff --staged`) does not exempt the discard before it.
-    pattern: /\bgit\s+restore\b(?![^;&|\n]*--staged)/,
+    // A restore is allowed only when it is staged-only: `--staged` in the
+    // restore's own command segment and no worktree flag beside it. Both are
+    // read inside that segment only: a `--staged` in a later command (`git
+    // restore f && git diff --staged`) does not exempt the discard before it.
+    // The worktree flag is `--worktree` or any abbreviation git accepts for it
+    // (`--w…` — the only restore long option starting with w), or `-W` alone
+    // or inside a combined short flag (`-SW`, `-WS`).
+    pattern:
+      /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W[A-Za-z]*)(?=[\s=]|$)))/,
     reason:
-      "rule 11: git restore (worktree form) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
+      "rule 11: git restore that touches the worktree (--worktree, -W, or no --staged) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
   },
   {
     pattern: /\bgit\s+clean\b/,
