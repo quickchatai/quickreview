@@ -709,6 +709,8 @@ export interface OpencodeFingerprint {
   opencode_version: string;
   model: string;
   effort: string;
+  /** The bridge's text verbosity (its /health); absent when it reports none. */
+  verbosity?: string;
   variant: string;
   timeout_min: number;
   /** Present only on the native provider (the published arm is the bridge). */
@@ -1117,6 +1119,7 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
     opencode_version: r.opencodeVersion,
     model: r.model,
     effort: r.effort,
+    ...(r.verbosity !== null ? { verbosity: r.verbosity } : {}),
     variant: r.flags.variant,
     timeout_min: r.flags.timeoutMin,
     ...(r.flags.provider === "native" ? { provider: "native" as const } : {}),
@@ -1145,7 +1148,7 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
       continue;
     if (prior)
       r.log(
-        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/flags — its result is dropped`,
+        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/verbosity/flags — its result is dropped`,
       );
     rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
     rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });

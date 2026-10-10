@@ -618,17 +618,20 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
     try {
       const out = join(tmp, "out");
       const SAME: BenchCase = { ...CASE, instance_id: "acme__widget@ccccccc" };
+      const VERB: BenchCase = { ...CASE, instance_id: "acme__widget@ddddddd" };
       const base: OpencodeFingerprint = {
         qcr_commit: "c",
         opencode_version: "1.18.33",
         model: "model-B",
         effort: "medium",
+        verbosity: "medium",
         variant: "medium",
         timeout_min: 30,
         ...authFingerprint(),
       };
       const fpA: OpencodeFingerprint = { ...base, model: "model-A" };
       const fpB: OpencodeFingerprint = base;
+      const fpLow: OpencodeFingerprint = { ...base, verbosity: "low" };
       // Case 0 was reviewed under A; case 1 under B (already matches the resume).
       const seed = (c: BenchCase, fp: OpencodeFingerprint) => {
         mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
@@ -646,6 +649,7 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
       };
       seed(CASE, fpA);
       seed(SAME, fpB);
+      seed(VERB, fpLow);
       const src = join(tmp, "src");
       mkdirSync(src);
       // A login too close to expiry for one case: the run stops at the first case it must review.
@@ -663,7 +667,7 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
       const lines: string[] = [];
       const code = await runOpencodeReview({
         set: SET,
-        cases: [SAME, CASE],
+        cases: [SAME, CASE, VERB],
         outDir: out,
         root: join(tmp, "root"),
         store: join(tmp, "store"),
@@ -692,6 +696,9 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
       // Model A's result is gone, not left to be scored under the model-B label…
       expect(existsSync(join(out, "results", "all", `${CASE.instance_id}.json`))).toBe(false);
       expect(existsSync(join(out, "cases", CASE.instance_id, "case-summary.json"))).toBe(false);
+      // …and so is the one reviewed at another bridge verbosity…
+      expect(existsSync(join(out, "results", "all", `${VERB.instance_id}.json`))).toBe(false);
+      expect(existsSync(join(out, "cases", VERB.instance_id, "case-summary.json"))).toBe(false);
       // …while the matching one is kept.
       expect(existsSync(join(out, "results", "all", `${SAME.instance_id}.json`))).toBe(true);
       expect(existsSync(join(out, "cases", SAME.instance_id, "case-summary.json"))).toBe(true);
