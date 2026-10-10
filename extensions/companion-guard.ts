@@ -120,9 +120,10 @@ export const BASH_RULES: BashRule[] = [
     // restore f && git diff --staged`) does not exempt the discard before it.
     // The worktree flag is `--worktree` or any abbreviation git accepts for it
     // (`--w…` — the only restore long option starting with w), or `-W` alone
-    // or inside a combined short flag (`-SW`, `-WS`).
+    // or anywhere in a combined short flag (`-SW`, `-WS`, `-WsHEAD` with an
+    // attached source).
     pattern:
-      /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W[A-Za-z]*)(?=[\s=]|$)))/,
+      /\bgit\s+restore\b(?:(?![^;&|\n]*--staged)|(?=[^;&|\n]*\s(?:--w[\w-]*|-[A-Za-z]*W)))/,
     reason:
       "rule 11: git restore that touches the worktree (--worktree, -W, or no --staged) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
   },

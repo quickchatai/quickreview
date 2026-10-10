@@ -119,6 +119,8 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git restore --staged -SW src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore -SW src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --staged -WS src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -WsHEAD~1 src/tui/app.ts")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore --staged -Wsorigin/main src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --staged --work src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --source=HEAD~1 --staged --worktree src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore --source HEAD --worktree --staged .")).toMatch(/rule 11/);
