@@ -423,6 +423,28 @@ describe("the revert, armed and confirmed", () => {
     expect(rig.learning.feedback.changeSel).toBe(1);
   });
 
+  it.each(["signal", "prop"])(
+    "clicking a %s row moves focus off an armed revert and disarms it — y runs nothing",
+    async (t) => {
+      const changes = new FakeChanges([changeEntry("a".repeat(40), "severity change")]);
+      const rig = await loaded({ changes });
+      key(rig, { kind: "char", ch: "t" });
+      key(rig, { kind: "char", ch: "t" }); // focus changed
+      key(rig, { kind: "char", ch: "R" });
+      expect(rig.learning.feedback.armed).toBe("a".repeat(40));
+      const frame = rig.app.hooks.tabs.feedback!.screen(rig.app, 140, 44);
+      const row = frame.zones.find((z) => (z.action as { t: string }).t === t)!;
+      expect(row).toBeDefined();
+      rig.app.hooks.tabs.feedback!.click!(rig.app, row.x1, row.y1);
+      expect(rig.learning.feedback.focus).toBe(t === "signal" ? "inbox" : "proposed");
+      expect(rig.learning.feedback.armed).toBeUndefined();
+      expect(rig.app.registeredKeys().has("y")).toBe(false);
+      key(rig, decodeKey(Buffer.from("y")));
+      await settle();
+      expect(changes.reverted).toEqual([]);
+    },
+  );
+
   it("on a short terminal the pane scrolls the focused proposal, the armed confirmation and the change into view", async () => {
     const proposals = Array.from({ length: 6 }, (_, i) => ({
       slug: `proposal-${i}`,

@@ -882,6 +882,16 @@ export function installFeedbackTab(
     click: (theApp, x, y): boolean => {
       const action = hitTest(lastZones, x, y);
       if (!action) return false;
+      // A click that moves focus off the armed change disarms it: the pane may
+      // scroll the confirmation out of view, and `y` must never run a revert
+      // the operator can no longer see.
+      if (
+        action.t === "signal" ||
+        action.t === "prop" ||
+        action.t === "prop-accept" ||
+        action.t === "prop-reject"
+      )
+        st.armed = undefined;
       switch (action.t) {
         case "key":
           theApp.pressKey(action.key);
