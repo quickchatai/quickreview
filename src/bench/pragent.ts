@@ -650,7 +650,10 @@ export async function reviewCasePragent(
   summary.unlocated = unlocated.length;
   summary.comments = comments.length;
   const body = reviewBody(caps.review, unlocated);
+  // The judge reads review.md as this attempt's body: an attempt with none
+  // removes the one an earlier attempt left.
   if (body) writeFileSync(join(caseDir, "review.md"), body + "\n");
+  else rmSync(join(caseDir, "review.md"), { force: true });
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeResult(
     o.outDir,
@@ -687,6 +690,7 @@ export function unprefetchedPragentCase(
   const summary = { ...emptySummary(c, fingerprint), error };
   const caseDir = join(outDir, "cases", safeId(c.instance_id));
   mkdirSync(caseDir, { recursive: true });
+  rmSync(join(caseDir, "review.md"), { force: true });
   writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary, null, 2) + "\n");
   writeResult(
     outDir,

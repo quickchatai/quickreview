@@ -610,6 +610,46 @@ describe("one case end to end, PR-Agent stubbed", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("an attempt that produces no review body removes the body an earlier attempt left", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-stale-"));
+    try {
+      const { c, meta, store } = scratchCase(tmp);
+      const root = join(tmp, "root");
+      const outDir = join(tmp, "out");
+      mkdirSync(join(root, "wt"), { recursive: true });
+      const caseDir = join(outDir, "cases", c.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      writeFileSync(join(caseDir, "review.md"), "an earlier attempt's SQL injection finding\n");
+      const runImpl: typeof run = async (bin, args, opts = {}) => {
+        if (bin !== "py") return run(bin, args, opts);
+        return { code: 1, stdout: "", stderr: "boom", timedOut: false };
+      };
+      const s = await reviewCasePragent(
+        c,
+        { ...meta, title: null, body: null },
+        {
+          root,
+          store,
+          outDir,
+          python: "py",
+          driver: "d",
+          bridgeUrl: "http://127.0.0.1:1",
+          model: "gpt-6.1-sol",
+          timeoutMin: 30,
+          prText: false,
+          fingerprint: { ...FP, pr_text: false },
+          runImpl,
+          log: () => {},
+        },
+      );
+      expect(s.status).toBe("failed");
+      expect(readdirSync(caseDir)).not.toContain("review.md");
+      expect(reviewForJudge(outDir, c.instance_id).body).toBeNull();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the run", () => {
@@ -643,6 +683,7 @@ describe("the run", () => {
           fingerprint: { ...FP, model: "gpt-6-sol" },
         }),
       );
+      writeFileSync(join(out, "cases", CASE.instance_id, "review.md"), "the other model's body\n");
       const base = {
         set: SET,
         cases: [CASE],
@@ -678,6 +719,7 @@ describe("the run", () => {
       );
       expect(s.fingerprint.model).toBe("gpt-6.1-sol");
       expect(s.status).toBe("failed");
+      expect(readdirSync(join(out, "cases", CASE.instance_id))).not.toContain("review.md");
       expect(
         JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8"))
           .review.comments,
