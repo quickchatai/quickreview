@@ -278,8 +278,11 @@ function tokenSeams(lines: string[]): string {
           RESTRICTED_WORD_END.test(out.slice(-9)) ||
           /(?:\+\+|--)$/.test(out.slice(-2)) ||
           /^(?:\+\+|--)/.test(text));
+      // A seam keeps its space and gains the break, so deleting every "\n"
+      // gives back the form without breaks exactly — before and after
+      // `maskSeams` — and the break form only ever refines it.
+      if (seam) out += " ";
       if (ends) out += "\n";
-      else if (seam) out += " ";
     }
     out += text;
     gap = false;

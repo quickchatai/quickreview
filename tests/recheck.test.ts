@@ -142,6 +142,13 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-return f(a,b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
   });
 
+  it("a statement-ending break never makes a renumber look trivial once digits are masked", () => {
+    // A seam gap and a no-gap end both carry the break; only the seam keeps
+    // its space, so masking a number-prefixed token cannot merge the two.
+    expect(digitsOnly("@@\n-return\n-12_x\n+return\n+#_x", "app/migrations/0002_x.py")).toBe(false);
+    expect(digitsOnly("@@\n-x = a++\n-1_y\n+x = a++\n+#_y", "app/migrations/0002_x.py")).toBe(false);
+  });
+
   it("keeps a line break that can end a statement significant", () => {
     // `return\nvalue;` returns undefined.
     expect(formattingOnly("@@\n-return value;\n+return\n+value;", "src/x.ts")).toBe(false);
