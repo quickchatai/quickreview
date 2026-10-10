@@ -471,15 +471,21 @@ PI_EXT_MERGE
 git config --global credential.helper \
   "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"
 
-# Build on boot when needed (fresh volume or bumped dependencies). The lockfile
-# hash marker keeps steady-state restarts instant.
+# Build on every boot. The checkout is bind-mounted, so a pulled or edited
+# source tree reaches this container only through this build — skipping it
+# would run the previous dist/ against the new source. The build is
+# incremental (tsconfig's buildinfo), so an unchanged tree costs only the
+# up-to-date check. Dependencies are reinstalled only when the lockfile hash
+# marker says they moved (or nothing is installed yet).
 cd "$SANDBOX"
 marker=/opt/quickreview/state/.build-lock-hash
 current="$(sha256sum package-lock.json | cut -d' ' -f1)"
-if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
+if [[ ! -d node_modules || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   npm ci
   npm run build
   echo "$current" > "$marker"
+else
+  npm run build
 fi
 
 # NO reviewer context stub on this path (deploy/reviewer/AGENTS.override.md is

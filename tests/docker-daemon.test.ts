@@ -313,6 +313,64 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 });
 
+// The boot build, checked by execution: the block is lifted out of the
+// entrypoint and run against a temp checkout with a stub npm that logs its
+// argv. The checkout is bind-mounted, so a source change must reach dist/
+// on restart even when the lockfile did not move.
+describe("the boot build (executed)", () => {
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function boot(): string[] {
+    const start = entrypoint.indexOf('cd "$SANDBOX"\nmarker=');
+    const end = entrypoint.indexOf("\nfi\n", start) + 4;
+    expect(start).toBeGreaterThan(0);
+    const block = entrypoint
+      .slice(start, end)
+      .replace("/opt/quickreview/state/.build-lock-hash", join(dir, "state", ".build-lock-hash"));
+    const bin = join(dir, "bin");
+    const log = join(dir, "npm.log");
+    const script = join(dir, "build.sh");
+    writeFileSync(script, `set -euo pipefail\nSANDBOX=${JSON.stringify(join(dir, "sandbox"))}\n${block}`);
+    const result = spawnSync("bash", [script], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, NPM_LOG: log },
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`build block failed: ${result.stderr}`);
+    const out = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
+    rmSync(log, { force: true });
+    return out;
+  }
+
+  function setup(): void {
+    dir = mkdtempSync(join(tmpdir(), "qcr-bootbuild-"));
+    mkdirSync(join(dir, "bin"));
+    mkdirSync(join(dir, "state"));
+    mkdirSync(join(dir, "sandbox", "dist"), { recursive: true });
+    mkdirSync(join(dir, "sandbox", "node_modules"));
+    writeFileSync(join(dir, "sandbox", "package-lock.json"), '{"v":1}\n');
+    writeFileSync(join(dir, "bin", "npm"), '#!/usr/bin/env bash\necho "$*" >> "$NPM_LOG"\n', { mode: 0o755 });
+  }
+
+  it("a restart with an unchanged lockfile still builds — never runs a stale dist/", () => {
+    setup();
+    expect(boot()).toEqual(["ci", "run build"]);
+    expect(boot()).toEqual(["run build"]);
+  });
+
+  it("a moved lockfile, or no node_modules, reinstalls before building", () => {
+    setup();
+    boot();
+    writeFileSync(join(dir, "sandbox", "package-lock.json"), '{"v":2}\n');
+    expect(boot()).toEqual(["ci", "run build"]);
+    rmSync(join(dir, "sandbox", "node_modules"), { recursive: true });
+    expect(boot()).toEqual(["ci", "run build"]);
+  });
+});
+
 // The sovereignty claim, checked by execution: the render heredoc is
 // lifted out of the plain entrypoint and run with node, driven by the same env
 // knobs the shell sets, against a temp secrets dir.

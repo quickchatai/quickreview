@@ -28,8 +28,10 @@ curl -s http://127.0.0.1:8787/health
 docker compose logs -f daemon
 ```
 
-The first boot runs `npm ci` + `npm run build` inside the mounted repo;
-steady-state restarts are instant (a lockfile-hash marker on the state volume
+The first boot runs `npm ci` + `npm run build` inside the mounted repo.
+Every later boot runs the incremental `npm run build` too, so a pulled or
+edited checkout is what the restarted daemon runs; `npm ci` reruns only when
+`package-lock.json` changes (a lockfile-hash marker on the state volume
 decides). The state volume is mounted at **both** `/opt/quickreview/state` (the
 absolute path the docs, the TUI's `remote_state_dir` and the ingress checks
 use) and `<sandbox>/state` (where the code itself looks), so the two spellings
