@@ -578,13 +578,23 @@ fi
 if ! grep -Eq '^[[:space:]]*sandbox_src[[:space:]]*:' "$GROUP_VARS"; then
   die "group_vars/all.yml has no active 'sandbox_src' — uncomment it (it must point at $SANDBOX_DIR) or the working copy is never synced"
 fi
+# The playbook is handed the checkout this preflight validated and builds
+# (`-e sandbox_src=…`), so the rsync ships that tree and never the group_vars
+# default (the playbook's own checkout, which QC_SANDBOX_DIR may differ from).
+# Absolute, because ansible resolves a relative src against the playbook, not
+# this shell's directory. `-e k=v` splits on whitespace and ansible templates
+# the value.
+SANDBOX_SRC="$(cd "$SANDBOX_DIR" && pwd)" || die "cannot resolve the sandbox path '$SANDBOX_DIR'"
+if [[ "$MODE" != "verify" && "$SANDBOX_SRC" =~ [[:space:]\"\'{}] ]]; then
+  die "the sandbox path '$SANDBOX_SRC' contains whitespace, quotes or braces — the playbook cannot be handed it; deploy from a checkout at a plain path"
+fi
 
 # ---- plan --------------------------------------------------------------------
 
 ANSIBLE_CMD=(ansible-playbook -i "$INVENTORY" "$PLAYBOOK")
 case "$MODE" in
-  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
-  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
+  sync)    ANSIBLE_CMD+=(--start-at-task "$SYNC_START_TASK" -e force_restart=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
+  rebuild) ANSIBLE_CMD+=(-e rebuild_image=true -e "sandbox_src=$SANDBOX_SRC" -e "base_clone_dir=$CLONE_DIR" -e "secrets_src=$SECRETS_SRC" -e "config_home_src=$CONFIG_HOME_SRC" -e "config_file_name=$CONFIG_NAME") ;;
   verify)  ANSIBLE_CMD=() ;;
 esac
 

@@ -411,6 +411,25 @@ describe("deploy.sh — the config home ships", () => {
     expect(v.stdout).not.toContain("config home");
   });
 
+  it("sync and rebuild hand the playbook the checkout they validated and built, never its own default", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    for (const mode of ["sync", "rebuild"]) {
+      const r = run(env, ["--dry-run", mode]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(planVars(r.stdout).sandbox_src).toBe(env.sandbox);
+    }
+  });
+
+  it("REFUSES a sandbox path the playbook cannot be handed whole", () => {
+    env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
+    const spaced = join(env.dir, "my sandbox");
+    symlinkSync(env.sandbox, spaced);
+    const r = run(env, ["--dry-run"], { QC_SANDBOX_DIR: spaced });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("contains whitespace, quotes or braces");
+    expect(r.stdout).not.toContain("ansible-playbook");
+  });
+
   it("QCR_CONFIG names the file: its directory is the home that ships, under its own name", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const elsewhere = join(env.dir, "elsewhere");
