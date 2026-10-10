@@ -76,7 +76,8 @@ def arm_stats(runs_dir, runs, cases, judge_model):
                 all_comments += 1
                 ok_comments += c["verdict"] in ("correct-valuable", "correct-minor")
             u, m = compare.usd_and_minutes(os.path.join(runs_dir, run, "cases", iid))
-            usd.append(u)
+            if u is not None:  # an unpriced case is left out of the mean, as compare.score does
+                usd.append(u)
             if m is not None:
                 mins.append(m)
             break
