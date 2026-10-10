@@ -500,8 +500,14 @@ export function dbPhrase(s: ArchiveStatus): string {
   const months = `${d.months_open} open month(s), ${d.months_sealed} sealed`;
   if (d.outcome === "skipped" && d.skipped_reason === "checkpoint_failed")
     return `db STOPPED (checkpoint_failed: the live checkpoint off the loop failed) at ${d.last_run_at} after ${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved; ${months}`;
-  if (d.outcome === "skipped")
-    return `db SKIPPED (${d.skipped_reason ?? "reason unknown"}) at ${d.last_run_at}, nothing deleted; ${months}`;
+  if (d.outcome === "skipped") {
+    // A skip confined to one table still lets the other table's rows move.
+    const done =
+      d.events_moved > 0 || d.deliveries_moved > 0
+        ? `${fmtCount(d.events_moved)} event / ${fmtCount(d.deliveries_moved)} delivery row(s) moved`
+        : "nothing deleted";
+    return `db SKIPPED (${d.skipped_reason ?? "reason unknown"}) at ${d.last_run_at}, ${done}; ${months}`;
+  }
   if (d.outcome === "failed") return `db FAILED at ${d.last_run_at}; ${months}`;
   const tail = d.outcome === "caught_up" ? "caught up" : d.outcome;
   return `${moved} (${tail}); ${months}`;

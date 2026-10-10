@@ -398,6 +398,29 @@ describe("the one line `qcr status` prints", () => {
     ).toContain("db SKIPPED (live_busy) at 2026-10-21T12:00:00.000Z, nothing deleted");
   });
 
+  it("a skip confined to one table still reports the rows the other table moved", () => {
+    const line = archiveStatusLine({
+      ...planned(),
+      mode: "on",
+      state: "idle",
+      db: {
+        last_run_at: "2026-10-21T12:00:00.000Z",
+        outcome: "skipped",
+        skipped_reason: "archive_busy",
+        events_moved: 0,
+        deliveries_moved: 900,
+        batch_rows: 450,
+        sync_ms: 30,
+        months_open: 1,
+        months_sealed: 0,
+      },
+    });
+    expect(line).toContain(
+      "db SKIPPED (archive_busy) at 2026-10-21T12:00:00.000Z, 0 event / 900 delivery row(s) moved",
+    );
+    expect(line).not.toContain("nothing deleted");
+  });
+
   it("renderStatus prints it on every snapshot, right after the event-loop line", () => {
     const base: StatusSnapshot = {
       written_at: "2026-10-21T12:00:00.000Z",
