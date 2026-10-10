@@ -507,6 +507,48 @@ describe("the daemon's reconcile (boot stall)", () => {
   );
 
   it(
+    "a boot whose first pass never settles still installs the periodic timers",
+    { timeout: HEAVY_TIMEOUT_MS },
+    async () => {
+      // start() awaits the boot pass; the poll, the recovery scans and the
+      // status heartbeat must not wait behind it.
+      const base = loadConfig(resolve(process.cwd(), "tests/fixtures/config.toml"));
+      const intervalS = 0.2;
+      const store = new StateStore(":memory:");
+      let calls = 0;
+      const lines: string[] = [];
+      const daemon = createDaemon({
+        cfg: { ...base, dry_run: true, daemon: { ...base.daemon, poll_interval_s: intervalS } },
+        root,
+        store,
+        adapter: adapter({
+          listOpenPrs: async () => {
+            calls++;
+            // The boot pass hangs forever; every later pass answers.
+            if (calls === 1) await new Promise(() => {});
+            return [ref(PR)];
+          },
+        }),
+        listen: false,
+        log: (m) => lines.push(m),
+      });
+      let started = false;
+      void daemon.start().then(() => (started = true));
+      try {
+        expect(await until(() => calls >= 2)).toBe(true);
+        expect(started).toBe(false); // the boot pass is still pending
+        expect(overdueAnomalies(store)).toBe(1);
+      } finally {
+        await daemon.stop();
+        await until(
+          () => lines.filter((l) => l.startsWith("reconcile: open=")).length >= calls - 1,
+          5_000,
+        );
+      }
+    },
+  );
+
+  it(
     "the boot's first pass lifts the drain without the receipt sweep; the next pass runs it",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {

@@ -1001,8 +1001,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           throw err;
         }
       }
-      await reconcile();
-
+      // The periodic timers go in BEFORE the boot's first reconcile is
+      // awaited: that pass, and the dispatch pump it runs after, can hang on
+      // an await with no deadline of its own (a worktree fetch), and a boot
+      // left waiting there would install no later reconcile, no recovery scan
+      // and no status heartbeat. A tick that finds the boot pass still
+      // running is skipped like any other overlap.
       every(cfg.daemon.poll_interval_s, reconcileTick);
       every(DISPATCH_TICK_S, () => void pump());
       every(
@@ -1062,6 +1066,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       });
       every(STATUS_TICK_S, writeStatus);
       if (piAuthWatch) every(AUTHWATCH_TICK_S, authWatchTick);
+
+      await reconcile();
     },
 
     async stop(): Promise<void> {
