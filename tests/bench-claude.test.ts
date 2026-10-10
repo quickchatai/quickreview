@@ -605,6 +605,42 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(readClaudeSummary(out, c)!.fingerprint.model).toBeUndefined();
   });
 
+  it("a re-review drops the run's metrics — old scores never sit beside new reviews; a resume that skips every case keeps them", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-"));
+    const { set, c, meta, store } = scratchCase(t);
+    const out = join(t, "run");
+    const all = join(out, "results", "all");
+    const lines: string[] = [];
+    const opts = {
+      set,
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: stubDriver(t, "ok"),
+      timeoutMin: 30,
+      keepTree: false,
+      env: { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" },
+      readMeta: () => meta,
+      log: (l: string) => lines.push(l),
+    };
+    expect(await claudeReviewRun({ ...opts, resume: false })).toBe(0);
+    // the run was scored…
+    writeFileSync(join(all, "metrics_ocr_round_1.json"), "{}\n");
+    writeFileSync(join(all, "metrics_ocr_average.json"), "{}\n");
+    // …a resume that re-reviews nothing leaves the score standing
+    expect(await claudeReviewRun({ ...opts, resume: true })).toBe(0);
+    expect(existsSync(join(all, "metrics_ocr_round_1.json"))).toBe(true);
+    expect(existsSync(join(all, "metrics_ocr_average.json"))).toBe(true);
+    // …a fresh review of the same run replaces the results, so the score goes
+    lines.length = 0;
+    expect(await claudeReviewRun({ ...opts, resume: false })).toBe(0);
+    expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+    expect(lines.join("\n")).toMatch(/metrics.*re-run eval/i);
+    expect(existsSync(join(all, `${c.instance_id}.json`))).toBe(true);
+  });
+
   it("a raw-text answer gets its view from the prose parser, paths checked against the tree's diff", async () => {
     const t = mkdtempSync(join(tmpdir(), "qcr-claude-"));
     const { set, c, meta, store } = scratchCase(t);

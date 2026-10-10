@@ -876,25 +876,33 @@ export async function claudeRebuildRun(o: ClaudeRebuildCommand): Promise<ClaudeR
           : ""),
     );
   }
-  // The harness scored the result files as they were; a rewritten one makes
-  // every metrics file beside them a score of findings that no longer exist.
-  // They go (as the eval step's own `rm -f metrics_*.json` does), so a report
-  // before the next eval shows no score rather than a stale one.
-  if (changed > 0) {
-    const all = join(o.outDir, "results", "all");
-    const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
-    for (const f of stale) rmSync(join(all, f), { force: true });
-    if (stale.length)
-      o.log(
-        `claude-rebuild: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt view`,
-      );
-  }
+  if (changed > 0) dropStaleMetrics(o.outDir, o.log, "claude-rebuild", "the rebuilt view");
   const n = out.reduce((a, x) => a + x.comments, 0);
   o.log(
     `claude-rebuild: ${out.length} case(s) rebuilt (${out.filter((x) => x.source === "prose").length} from prose), ${n} comment(s)` +
       (missing ? `; ${missing} case(s) had no result file` : ""),
   );
   return out;
+}
+
+/** The harness scored the result files as they were; a rewritten or removed
+ * one makes every metrics file beside them a score of findings that no longer
+ * exist. They go (as the eval step's own `rm -f metrics_*.json` does), so a
+ * report before the next eval shows no score rather than a stale one. */
+function dropStaleMetrics(
+  outDir: string,
+  log: (line: string) => void,
+  who: string,
+  what: string,
+): void {
+  const all = join(outDir, "results", "all");
+  if (!existsSync(all)) return;
+  const stale = readdirSync(all).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
+  for (const f of stale) rmSync(join(all, f), { force: true });
+  if (stale.length)
+    log(
+      `${who}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score ${what}`,
+    );
 }
 
 // ---- the whole run -------------------------------------------------------------
@@ -939,7 +947,16 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     throw new Error(
       `${o.outDir} holds another arm's run (reviewer ${JSON.stringify(previous["reviewer"] ?? "QuickReview")}) — pick a new --run`,
     );
+  // Every case reviewed again rewrites its result file, so the run's metrics
+  // go before the first one does; a resume that skips every case keeps them.
+  let metricsDropped = false;
+  const dropMetricsOnce = (): void => {
+    if (metricsDropped) return;
+    metricsDropped = true;
+    dropStaleMetrics(o.outDir, o.log, "claude-review", "the new reviews");
+  };
   if (!o.resume) {
+    dropMetricsOnce();
     for (const c of cases) {
       rmSync(join(o.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
       rmSync(join(o.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
@@ -977,6 +994,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       }
       o.log(`claude: ${c.instance_id} was reviewed by a different build/version — re-running`);
     }
+    dropMetricsOnce();
     let meta: PrefetchMeta;
     try {
       meta = o.readMeta(c);
