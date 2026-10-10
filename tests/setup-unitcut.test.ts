@@ -146,6 +146,18 @@ describe("applyOps — all or nothing", () => {
     expect(r.errors.join("\n")).toMatch(/unknown op "explode"/);
   });
 
+  it("an ignored repo root is refused for an adjusted cut as for a proposed one", () => {
+    const r = applyOps({ units: [unit("backend", "backend")], ignored: [] }, [
+      { op: "ignore", roots: ["."] },
+    ]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.cut.ignored).toEqual([""]);
+    const { errors, blocking_save } = checkCut(r.cut, FILES);
+    expect(errors.join("\n")).toMatch(/repo root cannot be ignored/);
+    expect(blocking_save).toEqual([]);
+  });
+
   it("refuses a note op without a note rather than silently doing nothing", () => {
     const r = applyOps(base, [{ op: "note", unit: "backend" }]);
     expect(r.ok).toBe(false);

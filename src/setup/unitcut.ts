@@ -100,9 +100,9 @@ function sample(paths: readonly string[]): string {
 
 /**
  * Structural refusals (bad names, duplicate names or roots, a root that could
- * leave the repo or matches no file) and the two save-only conditions (a unit
- * that ends up with no files, files no unit claims). The cut is expected
- * normalised (see `normalizeCut`).
+ * leave the repo or matches no file, an ignored repo root) and the two
+ * save-only conditions (a unit that ends up with no files, files no unit
+ * claims). The cut is expected normalised (see `normalizeCut`).
  */
 export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
   const errors: string[] = [];
@@ -127,6 +127,8 @@ export function checkCut(cut: UnitCut, files: readonly string[]): CutProblems {
     }
   }
   for (const r of cut.ignored) {
+    if (r === "")
+      errors.push("the repo root cannot be ignored — that would leave nothing to review");
     const owner = roots.get(r);
     if (owner !== undefined) errors.push(`root "${r}" is both ignored and owned by "${owner}"`);
     roots.set(r, "(ignored)");
