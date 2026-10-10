@@ -1005,8 +1005,20 @@ function checkProgram(
     }
     return block("exec policy: 'bash' may only run sanctioned scripts/*.sh");
   }
-  if (base === "gh") return checkGh(args.filter((a) => a.length > 0));
-  if (base === "git") return checkGit(args.filter((a) => a.length > 0));
+  if (base === "gh" || base === "git") {
+    // gh and git are judged on the argv they RECEIVE. Plain quotes and
+    // backslashes are removed exactly (`dequote`); ANSI-C `$'…'` and locale
+    // `$"…"` quoting can spell any byte (or a translated string), so a word
+    // carrying either is refused rather than guessed at.
+    const unmodelled = args.find((a) => UNMODELLED_QUOTING.test(a));
+    if (unmodelled !== undefined) {
+      return block(
+        `exec policy: '${base}' argument ${unmodelled} uses $'…' or $"…" quoting, which the guard does not decode — spell it with plain quotes`,
+      );
+    }
+    if (base === "gh") return checkGh(args.map(dequote).filter((a) => a.length > 0));
+    return checkGit(args.filter((a) => a.length > 0));
+  }
   if (base === "xargs") {
     // xargs runs another program — vet the target too.
     const target = args.find((a) => !a.startsWith("-") && a !== "{}");
@@ -1905,6 +1917,10 @@ const REDIRECT_OP_ATTACHED_RE = /^\d*>>?(.+)$/;
 function dequote(word: string): string {
   return word.replace(/["'\\]/g, "");
 }
+
+/** ANSI-C (`$'…'`) or locale (`$"…"`) quoting — forms `dequote` does not
+ * decode, so a gh/git word that carries one is refused. */
+const UNMODELLED_QUOTING = /\$['"]/;
 
 /**
  * Every spelling of an OUTPUT redirection, rewritten onto the canonical `>` /

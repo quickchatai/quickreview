@@ -110,8 +110,12 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    modes of their own, both refused: the diff options' `--output=<file>` (`git log`/`show`/`diff` WRITE
    their output there — a committed blob or a `--format=format:` string makes
    the bytes anything) and `git grep`'s `-O<cmd>`/`--open-files-in-pager`
-   (which RUNS `<cmd>`), and every git option is judged as git receives it,
-   inner quotes removed (so `--up"load"-pack=` is `--upload-pack=`). This is
+   (which RUNS `<cmd>`), and every git and gh option is judged as the tool
+   receives it, inner quotes removed (so `--up"load"-pack=` is
+   `--upload-pack=` and `gh api … --in"p"ut` sends a body). A git or gh word
+   carrying ANSI-C `$'…'` or locale `$"…"` quoting, which can spell any byte,
+   is refused rather than decoded; the transcript audit flags such a `gh`
+   segment as a GitHub write. This is
    the pattern-based layer and it stays pattern-based: its job is to narrow the
    surface and to stop a caller *lifting* layer 1, both of which are
    command-shaped acts.

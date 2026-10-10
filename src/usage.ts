@@ -710,7 +710,12 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // it, but a `bash -c '… ; QCR_CONFIG=… script'` (prog is `bash`, not a
   // reader) still does.
   if (POLICY_RELOCATION_RE.test(segment)) return "policy_relocation";
-  if (ghApiWrites(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
+  // gh is judged as it receives its words, like the guard: on the dequoted
+  // segment too, and a `gh` segment carrying `$'…'`/`$"…"` quoting — which can
+  // spell any flag — is a write until shown otherwise.
+  if (ghApiWrites(segment) || ghApiWrites(bare) || GITHUB_DIRECT_WRITE_RE.test(segment))
+    return "github_write";
+  if (prog === "gh" && /\$['"]/.test(segment)) return "github_write";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
     const ns = gh[1]!;

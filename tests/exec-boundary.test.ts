@@ -478,6 +478,44 @@ const CORPUS = [
     outcome: null,
     note: "found closing --output: git grep's pager option runs a program — arbitrary exec through a read verb",
   },
+  // Round 11. gh judged on its words as written, not as bash hands them to it:
+  // plain quotes, ANSI-C `$'…'` and locale `$"…"` quoting all spell `--input`
+  // or `-f` (bash's own `printf '[%s]' --in$'p'ut` prints `--input`).
+  {
+    round: 11,
+    via: "bash",
+    chain: `gh api repos/o/n/pulls/5/reviews --in"p"ut body.json`,
+    outcome: "APPROVED",
+    note: "a plain-quoted body flag read as a GET",
+  },
+  {
+    round: 11,
+    via: "bash",
+    chain: `gh api repos/o/n/pulls/5/reviews --in$'p'ut body.json`,
+    outcome: "APPROVED",
+    note: "ANSI-C quoting inside the flag",
+  },
+  {
+    round: 11,
+    via: "bash",
+    chain: `gh api repos/o/n/pulls/5/reviews --in$'\\x70'ut body.json`,
+    outcome: "APPROVED",
+    note: "ANSI-C hex escape inside the flag",
+  },
+  {
+    round: 11,
+    via: "bash",
+    chain: `gh api repos/o/n/pulls/5/reviews --in$"p"ut body.json`,
+    outcome: "APPROVED",
+    note: "locale quoting inside the flag",
+  },
+  {
+    round: 11,
+    via: "bash",
+    chain: `gh api repos/o/n/pulls/5/reviews -$'f' event=APPROVE`,
+    outcome: "APPROVED",
+    note: "ANSI-C quoting on the short body flag",
+  },
 ] as const;
 
 /**
