@@ -332,7 +332,8 @@ export interface Selection<T> {
  * post. Deterministic and order-preserving for what it keeps:
  *   1. tag rules — `nits = off`, `questions = off | blocking` (a question of
  *      unknown severity is kept: it cannot be shown non-blocking);
- *   2. repeat sites — a second item with the same key is withheld;
+ *   2. repeat sites — of the items sharing a key, only the strongest (class,
+ *      then severity, then the first posted) is kept; the rest are withheld;
  *   3. the budget — blockers always kept; the remaining slots go to the rest
  *      ranked by class (question, then marker items, then nits), then
  *      severity, then a changed line before an unknown one before unchanged
@@ -364,13 +365,25 @@ export function selectPosted<T>(
   });
   const pass2: typeof pass1 = [];
   if (!p.repeat_sites) {
-    const seen = new Set<string>();
+    // The site that posts is the finding's strongest occurrence — by class,
+    // then severity, then the session's order — so a blocker is never
+    // withheld behind a weaker site of itself.
+    const best = new Map<string, (typeof pass1)[number]>();
     for (const e of pass1) {
-      if (e.v.key !== "" && seen.has(e.v.key)) {
+      if (e.v.key === "") continue;
+      const b = best.get(e.v.key);
+      if (
+        b === undefined ||
+        (CLASS_RANK[e.v.cls] - CLASS_RANK[b.v.cls] ||
+          sevRank(e.v.severity) - sevRank(b.v.severity)) < 0
+      )
+        best.set(e.v.key, e);
+    }
+    for (const e of pass1) {
+      if (e.v.key !== "" && best.get(e.v.key) !== e) {
         withheld.push({ item: e.item, word: "repeat-site" });
         continue;
       }
-      if (e.v.key !== "") seen.add(e.v.key);
       pass2.push(e);
     }
   } else pass2.push(...pass1);

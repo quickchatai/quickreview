@@ -279,6 +279,24 @@ describe("selectPosted — the deterministic cut", () => {
     ]);
   });
 
+  it("one site per finding keeps its strongest occurrence, never a weaker site over a blocker", () => {
+    const s = selectPosted(
+      [
+        v("question", "P2", "race"),
+        v("nit", "nit", "x"),
+        v("blocker", "P1", "race"),
+        v("blocker", "P0", "race"),
+      ],
+      (x) => x,
+      { ...DEFAULT_POSTING_POLICY, repeat_sites: false },
+    );
+    expect(s.kept).toEqual([v("nit", "nit", "x"), v("blocker", "P0", "race")]);
+    expect(s.withheld.map((w) => [w.item.cls, w.item.severity, w.word])).toEqual([
+      ["question", "P2", "repeat-site"],
+      ["blocker", "P1", "repeat-site"],
+    ]);
+  });
+
   it("more blockers than the budget: every blocker still posts", () => {
     const many = [1, 2, 3, 4, 5, 6].map((i) => v("blocker", "P1", `b${i}`));
     const s = selectPosted([...many, v("question", "P2", "q")], (x) => x, SNAPPY);
