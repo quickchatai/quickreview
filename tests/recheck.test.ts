@@ -142,6 +142,26 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-return f(a,b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
   });
 
+  it("keeps a line break that can end a statement significant", () => {
+    // `return\nvalue;` returns undefined.
+    expect(formattingOnly("@@\n-return value;\n+return\n+value;", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-return (value);\n+return\n+(value);", "src/x.ts")).toBe(false);
+    expect(formattingOnly('@@\n-throw "x";\n+throw\n+"x";', "src/x.js")).toBe(false);
+    // `a++; b` against `a; ++b`.
+    expect(formattingOnly("@@\n-a++\n-b\n+a\n+++b", "src/x.ts")).toBe(false);
+    // Two shell commands against one, wherever the break falls.
+    expect(formattingOnly("@@\n-run x -y\n+run x\n+-y", "scripts/x.sh")).toBe(false);
+    expect(formattingOnly("@@\n-a b\n+a\n+b", "src/x.ts")).toBe(false);
+    const d = classifyDelta([file({ filename: "src/x.ts", patch: "@@\n-return value;\n+return\n+value;" })], {
+      prFiles: new Set(["src/x.ts"]),
+    });
+    expect(d.class).toBe("significant");
+    // …while a re-flow that ends no statement, and a shell re-indent, are formatting.
+    expect(formattingOnly("@@\n-const x = a && b;\n+const x = a &&\n+  b;", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-return f(a, b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-  run x -y\n+    run  x -y", "scripts/x.sh")).toBe(true);
+  });
+
   it("does not call a reordering formatting", () => {
     expect(formattingOnly("@@\n-a()\n-b()\n+b()\n+a()")).toBe(false);
   });

@@ -182,15 +182,31 @@ function indentSignificant(path: string | undefined): boolean {
   return /\.(py|pyi|ya?ml)$/i.test(base) || base === "Makefile" || /\.mk$/i.test(base);
 }
 
+/** Languages where a line break ends a command or statement — in a shell
+ * script `a\n-b` runs two commands where `a -b` runs one; Ruby and Go end a
+ * statement at most line breaks. */
+function lineTerminated(path: string | undefined): boolean {
+  if (!path) return false;
+  const base = baseName(path);
+  return /\.(sh|bash|zsh|ksh|rb|go)$/i.test(base) || base === "Dockerfile" || base === "Gemfile";
+}
+
 /**
  * The whitespace-insensitive form of a side of a patch. Whitespace between
  * tokens is dropped (quoted literals kept verbatim) and the lines are
  * concatenated, so a re-indent or a re-flow compares equal. For an
  * indentation-significant file each non-blank line keeps its leading
  * whitespace and stays its own line — a re-flow or re-indent there is not
- * provably meaningless, so it is not formatting.
+ * provably meaningless, so it is not formatting. For a file whose line
+ * breaks end statements each non-blank line stays its own line, so a re-flow
+ * there is not formatting while a re-indent still is.
  */
 function squash(lines: string[], path?: string): string {
+  if (lineTerminated(path))
+    return lines
+      .filter((l) => l.trim() !== "")
+      .map(stripOutsideQuotes)
+      .join("\n");
   if (!indentSignificant(path)) return lines.map(stripOutsideQuotes).join("");
   return lines
     .filter((l) => l.trim() !== "")
@@ -229,30 +245,49 @@ function joinClass(ch: string): "word" | "op" | null {
   return null;
 }
 
+/** A word after which a line break ends the statement (JavaScript's
+ * restricted productions: `return\n(x)` returns undefined). Matched against
+ * the last nine characters, one more than the longest word. */
+const RESTRICTED_WORD_END = /(?:^|[^\w$])(?:return|throw|break|continue|yield|async)$/;
+
 /**
  * The token-seam form of a side of a patch: whitespace outside quoted
  * literals is dropped EXCEPT where it separates two characters of one join
- * class, where it becomes a single space — a line break counts as
- * whitespace. Dropping that whitespace would merge two tokens into one
+ * class, where it becomes a single space — or a line break, when the gap
+ * holds one. Dropping that whitespace would merge two tokens into one
  * (`a + ++b` and `a++ + b` both squash to `a+++b`), so whether it is there is
- * content. Compared beside `squash`, this form can only make a delta less
- * trivial, never more.
+ * content. A line break is also kept wherever it can end a statement however
+ * the tokens join: after a restricted word (`return\n(x)`) and beside `++` or
+ * `--` (`a++\nb` against `a\n++b`). Every line break kept is a `\n` the form
+ * holds nowhere else, so compared beside `squash` this form can only make a
+ * delta less trivial, never more.
  */
 function tokenSeams(lines: string[]): string {
   let out = "";
   let gap = false;
+  let lineBreak = false;
   const push = (text: string): void => {
     if (text === "") return;
     const prev = out.slice(-1);
     if (gap && prev !== "") {
       const cls = joinClass(prev);
-      if (cls !== null && cls === joinClass(text.charAt(0))) out += " ";
+      const seam = cls !== null && cls === joinClass(text.charAt(0));
+      const ends =
+        lineBreak &&
+        (seam ||
+          RESTRICTED_WORD_END.test(out.slice(-9)) ||
+          /(?:\+\+|--)$/.test(out.slice(-2)) ||
+          /^(?:\+\+|--)/.test(text));
+      if (ends) out += "\n";
+      else if (seam) out += " ";
     }
     out += text;
     gap = false;
+    lineBreak = false;
   };
   for (const line of lines) {
     gap = true;
+    lineBreak = true;
     line.split(QUOTED).forEach((part, i) => {
       if (i % 2 === 1) return push(part);
       part.split(/(\s+)/).forEach((chunk, k) => {
