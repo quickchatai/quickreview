@@ -916,6 +916,15 @@ const BROKEN: Array<{ name: string; fetch: HttpFetch }> = [
     fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("null") }),
   },
   {
+    name: "200 with an empty body",
+    fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("") }),
+  },
+  {
+    name: "200 with a JSON object that is not an envelope",
+    fetch: () =>
+      Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"hello":"world"}') }),
+  },
+  {
     name: "text() itself rejecting",
     fetch: () =>
       Promise.resolve({

@@ -742,20 +742,22 @@ export class OpenVikingClient {
     const ms = this.clock() - started;
 
     // Every OpenViking answer is a `{status, result, error}` envelope. Anything
-    // else — an nginx error page, a bare `null`, a truncated body — is NOT an
-    // answer, and a 200 carrying one must not be read as success: that is how
-    // a write that never happened gets reported as a write that did.
+    // else — an nginx error page, a bare `null`, an empty or truncated body, an
+    // object with no `status` — is NOT an answer, and a 200 carrying one must
+    // not be read as success: that is how a write that never happened gets
+    // reported as a write that did. A 200 succeeds only on `status: "ok"`.
     let body: {
       status?: unknown;
       result?: unknown;
       error?: { code?: unknown; message?: unknown };
     } | null = null;
     try {
-      const parsed: unknown = raw === "" ? {} : JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed;
     } catch {
       body = null;
     }
+    if (res.ok && body !== null && body.status !== "ok" && body.status !== "error") body = null;
     if (body === null) {
       if (res.ok) {
         const gap: OvGap = {
