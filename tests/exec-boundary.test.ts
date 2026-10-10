@@ -829,6 +829,10 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "git_config_injection",
     );
     expect(kindOf(bashLine("HOME=/tmp/evil git diff --no-index a b"))).toBe("git_config_injection");
+    expect(kindOf(bashLine("git --up$'load'-pack=x fetch"))).toBe("git_config_injection");
+    expect(
+      kindOf(bashLine(`gh api repos/o/n/pulls/5/comments --jq '.[] | select(.body | test("x$"))'`)),
+    ).toBeUndefined();
     expect(kindOf(bashLine("git push origin HEAD"))).toBe("git_write");
     expect(kindOf(writeLine("/opt/quickreview/reviewed-repo/.git/config"))).toBe(
       "git_config_surface_write",

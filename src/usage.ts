@@ -673,6 +673,28 @@ function segmentProgram(segment: string): string | null {
   return sawXargs ? "xargs" : null; // bare `xargs` runs echo
 }
 
+/** Whether `segment` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting
+ * outside quotes — where it can spell any option; inside quotes `$'`/`$"` is
+ * literal. */
+function opensAnsiOrLocaleQuote(segment: string): boolean {
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+    } else if (c === "\\") {
+      i++;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+    } else if (c === "$" && (segment[i + 1] === "'" || segment[i + 1] === '"')) {
+      return true;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    }
+  }
+  return false;
+}
+
 /** Which rule, if any, this ONE segment trips. */
 function segmentViolationKind(segment: string): ExecViolationKind | null {
   // The redirection/`sed -i` surface rules run on every segment, reader or not:
@@ -711,11 +733,12 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // reader) still does.
   if (POLICY_RELOCATION_RE.test(segment)) return "policy_relocation";
   // gh is judged as it receives its words, like the guard: on the dequoted
-  // segment too, and a `gh` segment carrying `$'…'`/`$"…"` quoting — which can
-  // spell any flag — is a write until shown otherwise.
+  // segment too, and a gh or git segment opening `$'…'`/`$"…"` quoting —
+  // which can spell any flag — is flagged until shown otherwise.
   if (ghApiWrites(segment) || ghApiWrites(bare) || GITHUB_DIRECT_WRITE_RE.test(segment))
     return "github_write";
-  if (prog === "gh" && /\$['"]/.test(segment)) return "github_write";
+  if (prog === "gh" && opensAnsiOrLocaleQuote(segment)) return "github_write";
+  if (prog === "git" && opensAnsiOrLocaleQuote(segment)) return "git_config_injection";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
   if (gh) {
     const ns = gh[1]!;

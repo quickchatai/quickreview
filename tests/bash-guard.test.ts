@@ -109,6 +109,15 @@ describe("checkBashCommand — gh mutating verbs", () => {
     allow("gh api repos/x/pulls/5/files");
     allow("gh api -X GET repos/x/pulls/5");
   });
+
+  it("refuses $'…' / $\"…\" quoting on gh and git words, but not a literal $' inside quotes", () => {
+    block("gh api repos/x/pulls/5/reviews --in$'p'ut body.json");
+    block("gh api repos/x/pulls/5/reviews --in$\"p\"ut body.json");
+    block("git --up$'load'-pack=x fetch");
+    allow(`gh api repos/x/pulls/5/comments --jq '.[] | select(.body | test("x$"))'`);
+    allow(`gh api repos/x/pulls/5/comments --jq ".[] | .body | test(\\"x$\\")"`);
+    allow("git log --grep='fix$'");
+  });
 });
 
 /**

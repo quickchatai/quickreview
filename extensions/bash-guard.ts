@@ -1010,7 +1010,7 @@ function checkProgram(
     // backslashes are removed exactly (`dequote`); ANSI-C `$'…'` and locale
     // `$"…"` quoting can spell any byte (or a translated string), so a word
     // carrying either is refused rather than guessed at.
-    const unmodelled = args.find((a) => UNMODELLED_QUOTING.test(a));
+    const unmodelled = args.find((a) => opensUnmodelledQuoting(a));
     if (unmodelled !== undefined) {
       return block(
         `exec policy: '${base}' argument ${unmodelled} uses $'…' or $"…" quoting, which the guard does not decode — spell it with plain quotes`,
@@ -1918,9 +1918,31 @@ function dequote(word: string): string {
   return word.replace(/["'\\]/g, "");
 }
 
-/** ANSI-C (`$'…'`) or locale (`$"…"`) quoting — forms `dequote` does not
- * decode, so a gh/git word that carries one is refused. */
-const UNMODELLED_QUOTING = /\$['"]/;
+/** Whether `text` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting — forms
+ * `dequote` does not decode. Only a `$` OUTSIDE quotes opens one: inside
+ * single or double quotes `$'`/`$"` is literal (`--jq 'test("x$")'`).
+ * Exported because `src/usage.ts` audits the same forms. */
+export function opensUnmodelledQuoting(text: string): boolean {
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') quote = null;
+      continue;
+    }
+    if (c === "$" && (text[i + 1] === "'" || text[i + 1] === '"')) return true;
+    if (c === "'" || c === '"') quote = c;
+  }
+  return false;
+}
 
 /**
  * Every spelling of an OUTPUT redirection, rewritten onto the canonical `>` /
