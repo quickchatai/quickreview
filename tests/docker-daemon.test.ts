@@ -165,6 +165,21 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(dockerfile).toContain("--non-unique");
     expect(dockerfile).toMatch(/^ENV HOME=\/home\/review$/m);
   });
+
+  // A fresh named volume takes its owner from the image directory it mounts
+  // over; a mount point the image lacks is root-owned and the non-root boot
+  // cannot write it.
+  it("creates the pihome and state volume mount points owned by the container user, before USER", () => {
+    const prep = /^RUN install -d -o review -g review (.+)$/m.exec(dockerfile);
+    expect(prep).not.toBeNull();
+    const dirs = prep![1].split(/\s+/);
+    expect(dirs).toContain("/home/review/.pi");
+    expect(dirs).toContain("/opt/quickreview/state");
+    expect(compose).toContain("qcr-pihome:/home/review/.pi");
+    expect(compose).toContain("qcr-state:/opt/quickreview/state");
+    expect(dockerfile.indexOf(prep![0])).toBeGreaterThan(dockerfile.indexOf("RUN useradd"));
+    expect(dockerfile.indexOf(prep![0])).toBeLessThan(dockerfile.indexOf("USER review"));
+  });
 });
 
 describe("plain entrypoint — same invariants as the templated boot", () => {

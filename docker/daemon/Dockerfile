@@ -138,6 +138,12 @@ ENV QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL=${LOCAL_EMBEDDER_MODEL} \
 # silently costing the pi OAuth login on every rebuild.
 ARG REVIEW_UID=1001
 RUN useradd --create-home --non-unique --uid ${REVIEW_UID} review
+# The named volumes' mount points, owned by the container user. Docker seeds a
+# fresh named volume from the image directory it is mounted over — contents,
+# owner and mode — and a mount point the image lacks makes it root-owned, which
+# the non-root entrypoint could not write (pi's settings merge under
+# ~/.pi/agent, OpenViking's state dir).
+RUN install -d -o review -g review /home/review/.pi /home/review/.pi/agent /opt/quickreview/state
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
