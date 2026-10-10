@@ -13,7 +13,17 @@
 //   5. the host side mounts no login volume on the route and keeps the key
 //      file off every argv; the third-party arms' bridges and the Codex
 //      driver have a keyed path.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -28,7 +38,15 @@ import {
 } from "../src/bench/auth.js";
 import { codexDriverArgv, codexDriverEnv } from "../src/bench/codex.js";
 import { judgeLabel } from "../src/bench/defectjudge.js";
-import { contextFor, runFingerprint, withAuthModels } from "../src/bench/runner.js";
+import { safeId, type BenchCase } from "../src/bench/aacr.js";
+import {
+  contextFor,
+  prepareReviewCases,
+  recordUnprefetched,
+  runFingerprint,
+  withAuthModels,
+  type CaseSummary,
+} from "../src/bench/runner.js";
 import { buildAgents, identityVars, PASS_ADDENDA } from "../src/include.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -154,7 +172,11 @@ describe("dry config check: a fresh clone's config on the key route", () => {
       () => contextFor(ROOT, "", "models.pass_models.pass-baseline=openai-codex/gpt-6-sol").cfg,
     );
     expect(keyed.models.pass_models["pass-baseline"]).toBe("openai/gpt-6-sol");
-    const login = contextFor(ROOT, "", "models.pass_models.pass-baseline=openai-codex/gpt-6-sol").cfg;
+    const login = contextFor(
+      ROOT,
+      "",
+      "models.pass_models.pass-baseline=openai-codex/gpt-6-sol",
+    ).cfg;
     expect(login.models.pass_models["pass-baseline"]).toBe("openai-codex/gpt-6-sol");
   });
 
@@ -189,6 +211,63 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     expect(loginFp).not.toHaveProperty("auth");
     expect(keyedFp.auth).toBe("api-key");
     expect(keyedFp.conversation).toMatch(/^openai\//);
+  });
+
+  it("a keyed resume's init keeps every case the keyed case containers finished; a changed lever drops exactly its own", () => {
+    // What the review command computes, in init and in every case container:
+    // runFingerprint over contextFor, with the environment bench.sh gives it.
+    const fingerprint = (overrides = "") =>
+      runFingerprint(contextFor(ROOT, "", overrides).cfg, "", overrides);
+    const keyed = withEnv({ QCR_BENCH_AUTH: "api-key" }, () => fingerprint());
+    const keyedLever = withEnv({ QCR_BENCH_AUTH: "api-key" }, () =>
+      fingerprint("review.nits=open"),
+    );
+    const out = mkdtempSync(join(tmpdir(), "bench-apikey-resume-"));
+    try {
+      const cases = ["o__r@1", "o__r@2", "o__r@3"].map(
+        (instance_id) => ({ instance_id }) as BenchCase,
+      );
+      const finished = (c: BenchCase, fp: typeof keyed): void => {
+        const dir = join(out, "cases", safeId(c.instance_id));
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+          join(dir, "case-summary.json"),
+          JSON.stringify({ instance_id: c.instance_id, status: "ok", fingerprint: fp }),
+        );
+        mkdirSync(join(out, "results", "all"), { recursive: true });
+        writeFileSync(join(out, "results", "all", `${safeId(c.instance_id)}.json`), "{}\n");
+      };
+      finished(cases[0]!, keyed);
+      finished(cases[1]!, keyedLever);
+      recordUnprefetched(out, cases[2]!, "o__r@3: not prefetched", keyed);
+      const present = () =>
+        cases
+          .filter((c) => existsSync(join(out, "cases", safeId(c.instance_id), "case-summary.json")))
+          .map((c) => c.instance_id);
+
+      // init on the key route, the shipped levers: the lever's case goes, the rest stay
+      const dropped = withEnv({ QCR_BENCH_AUTH: "api-key" }, () =>
+        prepareReviewCases(out, cases, { resume: true, fingerprint: fingerprint() }, () => {}),
+      );
+      expect(dropped).toEqual(["o__r@2"]);
+      expect(present()).toEqual(["o__r@1", "o__r@3"]);
+      const failed = JSON.parse(
+        readFileSync(join(out, "cases", safeId("o__r@3"), "case-summary.json"), "utf8"),
+      ) as CaseSummary;
+      expect(failed.status).toBe("failed");
+      expect(existsSync(join(out, "results", "all", `${safeId("o__r@3")}.json`))).toBe(true);
+      // and a second keyed init drops nothing more
+      expect(
+        withEnv({ QCR_BENCH_AUTH: "api-key" }, () =>
+          prepareReviewCases(out, cases, { resume: true, fingerprint: fingerprint() }, () => {}),
+        ),
+      ).toEqual([]);
+      // An init WITHOUT the route (no QCR_BENCH_AUTH) computes the login
+      // fingerprint and would drop every keyed case — why bench.sh gives it the route.
+      expect(withEnv({ QCR_BENCH_AUTH: undefined }, () => fingerprint())).not.toEqual(keyed);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
   });
 });
 
@@ -273,6 +352,59 @@ describe("the host side (bench.sh, ext.sh)", () => {
       /^openai\.env$/m,
     );
     expect(ext).toContain('--env-file "$OPENAI_ENV"');
+  });
+
+  it("the review init/finish phases get the credential ROUTE (and no credential) on the key route only", () => {
+    // The real script against a stub `docker` that logs its argv: no container runs.
+    const tmp = mkdtempSync(join(tmpdir(), "bench-apikey-init-"));
+    try {
+      const bin = join(tmp, "bin");
+      mkdirSync(bin);
+      const log = join(tmp, "docker.log");
+      writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`);
+      chmodSync(join(bin, "docker"), 0o755);
+      const runOf = (auth: string | undefined, phase: string, run: string): string => {
+        const env: NodeJS.ProcessEnv = {
+          PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+          HOME: tmp,
+          QCR_BENCH_RUNS_DIR: join(tmp, "runs"),
+          // no key file exists: init and finish must not need one
+          QCR_BENCH_OPENAI_ENV: join(tmp, "openai.env"),
+        };
+        if (auth !== undefined) env["QCR_BENCH_AUTH"] = auth;
+        const r = spawnSync(
+          "bash",
+          [
+            join(ROOT, "bench", "aacr", "bench.sh"),
+            "review",
+            "--phase",
+            phase,
+            "--run",
+            run,
+            "--set",
+            "smoke",
+            "--resume",
+          ],
+          { env, encoding: "utf8" },
+        );
+        expect(r.status, r.stderr).toBe(0);
+        const calls = readFileSync(log, "utf8").trim().split("\n");
+        return calls.filter((l) => l.startsWith("run ")).at(-1)!;
+      };
+      for (const phase of ["init", "finish"]) {
+        const keyed = runOf("api-key", phase, `k-${phase}`);
+        expect(keyed).toContain("-e QCR_BENCH_AUTH=api-key");
+        expect(keyed).toContain("--network none");
+        expect(keyed).not.toContain("--env-file");
+        expect(keyed).not.toContain("pi-agent-src");
+        const login = runOf(undefined, phase, `l-${phase}`);
+        expect(login).not.toContain("QCR_BENCH_AUTH");
+        expect(login).not.toContain("--env-file");
+        expect(runOf("login", phase, `l2-${phase}`)).not.toContain("QCR_BENCH_AUTH");
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("the login-only AACR judge shim is refused on the key route (--judge openai is the keyed path)", () => {

@@ -41,6 +41,7 @@ import {
   parseSessionComments,
   patchFromGitDiff,
   safeId,
+  VARIANTS,
   selectCases,
   tagOf,
   toOcrResult,
@@ -73,12 +74,15 @@ import {
   buildBenchAgents,
   benchConfig,
   collectComments,
+  prepareReviewCases,
+  recordUnprefetched,
   HEAD_PATCHES_FILE,
   rebuildResults,
   renderCasePrompts,
   resultLine,
   retryable,
   type CaseSummary,
+  type RunFingerprint,
 } from "../src/bench/runner.js";
 import { loadConfig } from "../src/config.js";
 import { ecosystemFor } from "../src/ecosystem.js";
@@ -1448,5 +1452,126 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+});
+
+describe("prepareReviewCases: what a review run keeps of an earlier invocation", () => {
+  const fp = { qcr_commit: "new" } as unknown as RunFingerprint;
+  const old = { qcr_commit: "old" } as unknown as RunFingerprint;
+  const summaryFor = (id: string, fingerprint?: RunFingerprint): CaseSummary => ({
+    instance_id: id,
+    status: "ok",
+    ...(fingerprint ? { fingerprint } : {}),
+    verdict: "APPROVE",
+    duration_seconds: 1,
+    usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
+    planned_lenses: [],
+    executed_passes: [],
+    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
+    pr_meta: { title: false, body: false, base_ref_source: "none" },
+    diff: { files: 0, additions: 0, deletions: 0 },
+    continued: false,
+    warnings: [],
+  });
+  const cases = ["o__r@1", "o__r@2", "o__r@3", "o__r@4", "o__r@5"].map(
+    (instance_id) => ({ instance_id }) as BenchCase,
+  );
+  /** cases[0] finished under `fp`, cases[1] under `old`, cases[2] with no
+   * fingerprint, cases[3] only a result file, cases[4] never prefetched
+   * under `fp` (a failed summary and an EMPTY result file). */
+  const seed = (out: string): void => {
+    const write = (c: BenchCase, s: CaseSummary | null): void => {
+      const dir = join(out, "cases", safeId(c.instance_id));
+      mkdirSync(dir, { recursive: true });
+      if (s) writeFileSync(join(dir, "case-summary.json"), JSON.stringify(s));
+      for (const v of Object.keys(VARIANTS)) {
+        mkdirSync(join(out, "results", v), { recursive: true });
+        writeFileSync(join(out, "results", v, `${safeId(c.instance_id)}.json`), "{}\n");
+      }
+    };
+    write(cases[0]!, summaryFor(cases[0]!.instance_id, fp));
+    write(cases[1]!, summaryFor(cases[1]!.instance_id, old));
+    write(cases[2]!, summaryFor(cases[2]!.instance_id));
+    write(cases[3]!, null);
+    recordUnprefetched(out, cases[4]!, "o__r@5: not prefetched", fp);
+  };
+  /** [summary present, every variant's result present] */
+  const has = (out: string, c: BenchCase): [boolean, boolean] => [
+    existsSync(join(out, "cases", safeId(c.instance_id), "case-summary.json")),
+    Object.keys(VARIANTS).every((v) =>
+      existsSync(join(out, "results", v, `${safeId(c.instance_id)}.json`)),
+    ),
+  ];
+  const run = (fn: (out: string) => void): void => {
+    const out = mkdtempSync(join(tmpdir(), "bench-prepare-"));
+    try {
+      seed(out);
+      fn(out);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  };
+
+  it("a resume under the same configuration drops nothing it produced, a never-prefetched case included", () => {
+    run((out) => {
+      const lines: string[] = [];
+      const dropped = prepareReviewCases(
+        out,
+        [cases[0]!, cases[4]!],
+        { resume: true, fingerprint: fp },
+        (l) => lines.push(l),
+      );
+      expect(dropped).toEqual([]);
+      expect(lines).toEqual([]);
+      expect(has(out, cases[0]!)).toEqual([true, true]);
+      // the failed summary AND its empty result file: the scorer's denominator keeps it
+      expect(has(out, cases[4]!)).toEqual([true, true]);
+      const s = JSON.parse(
+        readFileSync(
+          join(out, "cases", safeId(cases[4]!.instance_id), "case-summary.json"),
+          "utf8",
+        ),
+      ) as CaseSummary;
+      expect(s.status).toBe("failed");
+      expect(s.fingerprint).toEqual(fp);
+      expect(
+        JSON.parse(
+          readFileSync(
+            join(out, "results", "all", `${safeId(cases[4]!.instance_id)}.json`),
+            "utf8",
+          ),
+        ),
+      ).toBeTruthy();
+    });
+  });
+
+  it("a resume under a changed configuration drops exactly the cases another one produced", () => {
+    run((out) => {
+      const lines: string[] = [];
+      expect(
+        prepareReviewCases(out, cases, { resume: true, fingerprint: fp }, (l) => lines.push(l)),
+      ).toEqual(["o__r@2", "o__r@3"]);
+      expect(has(out, cases[0]!)).toEqual([true, true]);
+      expect(has(out, cases[1]!)).toEqual([false, false]);
+      expect(has(out, cases[2]!)).toEqual([false, false]);
+      // no summary claims it for any configuration: left as it is
+      expect(has(out, cases[3]!)).toEqual([false, true]);
+      expect(has(out, cases[4]!)).toEqual([true, true]);
+      expect(lines).toHaveLength(2);
+      // and under the OTHER configuration, the same seed loses everything `fp` produced
+      expect(prepareReviewCases(out, cases, { resume: true, fingerprint: old }, () => {})).toEqual([
+        "o__r@1",
+        "o__r@5",
+      ]);
+    });
+  });
+
+  it("a fresh run clears every case it owns, whatever produced it", () => {
+    run((out) => {
+      expect(prepareReviewCases(out, cases, { resume: false, fingerprint: fp }, () => {})).toEqual(
+        [],
+      );
+      for (const c of cases) expect(has(out, c), c.instance_id).toEqual([false, false]);
+    });
   });
 });

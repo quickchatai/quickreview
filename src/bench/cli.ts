@@ -65,7 +65,6 @@ import {
   parsePrefetchMeta,
   safeId,
   selectCases,
-  VARIANTS,
   type BenchCase,
   type CaseSet,
   type PrefetchMeta,
@@ -105,12 +104,13 @@ import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
   buildBenchAgents,
   contextFor,
+  prepareReviewCases,
   prepareTree,
   rebuildResults,
+  recordUnprefetched,
   resultLine,
   reviewCase,
   runFingerprint,
-  writeResults,
   type CaseSummary,
 } from "./runner.js";
 import {
@@ -177,24 +177,6 @@ function readMeta(store: string, c: BenchCase): PrefetchMeta {
   const meta = existsSync(p) ? parsePrefetchMeta(JSON.parse(readFileSync(p, "utf8"))) : null;
   if (!meta) throw new Error(`${c.instance_id}: not prefetched (run \`bench.sh prefetch\` first)`);
   return meta;
-}
-
-function unprefetchedSummary(c: BenchCase, error: string): CaseSummary {
-  return {
-    instance_id: c.instance_id,
-    status: "failed",
-    error,
-    verdict: null,
-    duration_seconds: 0,
-    usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
-    planned_lenses: [],
-    executed_passes: [],
-    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
-    pr_meta: { title: false, body: false, base_ref_source: "none" },
-    diff: { files: 0, additions: 0, deletions: 0 },
-    continued: false,
-    warnings: [],
-  };
 }
 
 /** A command of one arm refuses the other arm's run dir: the QuickReview
@@ -364,18 +346,11 @@ async function main(): Promise<number> {
             resumes?: unknown[];
           })
         : null;
-      if (!resume) {
-        // A fresh run owns its cases outright: nothing an earlier invocation
-        // left for them may be scored as this run's (an interrupted run then
-        // shows its unreached cases as MISSING, and eval refuses the number).
-        for (const c of cases) {
-          rmSync(join(outDir, "cases", safeId(c.instance_id), "case-summary.json"), {
-            force: true,
-          });
-          for (const v of Object.keys(VARIANTS))
-            rmSync(join(outDir, "results", v, `${safeId(c.instance_id)}.json`), { force: true });
-        }
-      }
+      // A fresh run owns its cases outright: nothing an earlier invocation
+      // left for them may be scored as this run's (an interrupted run then
+      // shows its unreached cases as MISSING, and eval refuses the number).
+      // A resumed run keeps only what this configuration produced.
+      prepareReviewCases(outDir, cases, { resume, fingerprint: ctx.fingerprint }, log);
       run.started_at = (resume && previous?.started_at) || run.started_at;
       run.resumes = [
         ...(resume && Array.isArray(previous?.resumes) ? previous.resumes : []),
@@ -426,19 +401,10 @@ async function main(): Promise<number> {
       try {
         meta = readMeta(store, c);
       } catch (err) {
-        // Recorded as a failed case WITH an empty result file: the scorer
-        // silently drops an instance that has no file from both denominators,
-        // so a skipped case would shrink the benchmark instead of costing its
-        // references.
+        // A failed case WITH an empty result file (recordUnprefetched).
         const error = String(err instanceof Error ? err.message : err);
         log(error);
-        const s = unprefetchedSummary(c, error);
-        mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
-        writeFileSync(
-          join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
-          JSON.stringify(s, null, 2) + "\n",
-        );
-        writeResults(outDir, c, [], s);
+        const s = recordUnprefetched(outDir, c, error, ctx.fingerprint);
         log(resultLine(s));
         summaries.push(s);
         return;

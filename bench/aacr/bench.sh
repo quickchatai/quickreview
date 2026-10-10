@@ -483,7 +483,11 @@ case "$cmd" in
     if [[ "$PHASE" == init || "$PHASE" == finish ]]; then
       # Bookkeeping only (run.json, the outcome tally): no model, no repos.
       [[ "$ARM" == qcr ]] || die "--phase belongs to the QuickReview arm"
-      args=("${HARDEN[@]}" --network none --mount "type=bind,src=$d,dst=/bench-out"
+      # The credential ROUTE, never a credential: init computes the run's
+      # fingerprint (and its models) as every case container does, so a
+      # resume keeps exactly the cases this configuration produced.
+      am=(); [[ "$AUTH_MODE" == api-key ]] && am=(-e QCR_BENCH_AUTH=api-key)
+      args=("${HARDEN[@]}" ${am[@]+"${am[@]}"} --network none --mount "type=bind,src=$d,dst=/bench-out"
         ${PRIV[@]+"${PRIV[@]}"}
         "$IMAGE" review "$SET" ${ONLY_ARGS[@]+"${ONLY_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"})
       record "${args[@]}"

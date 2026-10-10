@@ -1722,6 +1722,100 @@ export function collectComments(caseDir: string): {
   };
 }
 
+/** The case summary and every variant's result file of one case. */
+function caseFiles(outDir: string, c: BenchCase): [string, ...string[]] {
+  return [
+    join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
+    ...Object.keys(VARIANTS).map((v) =>
+      join(outDir, "results", v, `${safeId(c.instance_id)}.json`),
+    ),
+  ];
+}
+
+/** Every case whose summary records another fingerprint (or none, or cannot
+ * be read) loses its summary and every variant's result file. A case with no
+ * summary is left as it is: nothing claims it for any configuration. Returns
+ * the dropped instance ids. */
+export function dropForeignCases(
+  outDir: string,
+  cases: readonly BenchCase[],
+  fingerprint: RunFingerprint,
+  log: (line: string) => void,
+): string[] {
+  const dropped: string[] = [];
+  for (const c of cases) {
+    const files = caseFiles(outDir, c);
+    if (!existsSync(files[0])) continue;
+    let prior: CaseSummary | null = null;
+    try {
+      prior = JSON.parse(readFileSync(files[0], "utf8")) as CaseSummary;
+    } catch {
+      // an unreadable summary is no proof of this run's fingerprint
+    }
+    if (JSON.stringify(prior?.fingerprint ?? null) === JSON.stringify(fingerprint)) continue;
+    log(
+      `review: ${c.instance_id} was reviewed by a different build/profile — its result is dropped`,
+    );
+    for (const f of files) rmSync(f, { force: true });
+    dropped.push(c.instance_id);
+  }
+  return dropped;
+}
+
+/** The review command's case set-up before run.json is written: a fresh run
+ * clears every case it owns; a resumed run keeps the cases this fingerprint
+ * produced and drops the rest (dropForeignCases), so a run stopped partway
+ * (AuthExpiring) leaves those cases missing rather than scored under the new
+ * configuration's label. The fingerprint is the one the case containers
+ * compute: bench.sh gives the init phase the same QCR_BENCH_AUTH. Returns the
+ * dropped instance ids of a resume. */
+export function prepareReviewCases(
+  outDir: string,
+  cases: readonly BenchCase[],
+  opts: { resume: boolean; fingerprint: RunFingerprint },
+  log: (line: string) => void,
+): string[] {
+  if (opts.resume) return dropForeignCases(outDir, cases, opts.fingerprint, log);
+  for (const c of cases) for (const f of caseFiles(outDir, c)) rmSync(f, { force: true });
+  return [];
+}
+
+/** The record of a case that was never prefetched: a failed summary carrying
+ * the run's fingerprint (a resume under the same configuration keeps it) and
+ * an EMPTY result file per variant — the scorer silently drops an instance
+ * with no file from both denominators, so a skipped case would shrink the
+ * benchmark instead of costing its references. */
+export function recordUnprefetched(
+  outDir: string,
+  c: BenchCase,
+  error: string,
+  fingerprint: RunFingerprint,
+): CaseSummary {
+  const s: CaseSummary = {
+    instance_id: c.instance_id,
+    status: "failed",
+    error,
+    fingerprint,
+    verdict: null,
+    duration_seconds: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
+    planned_lenses: [],
+    executed_passes: [],
+    comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
+    pr_meta: { title: false, body: false, base_ref_source: "none" },
+    diff: { files: 0, additions: 0, deletions: 0 },
+    continued: false,
+    warnings: [],
+  };
+  mkdirSync(join(outDir, "cases", safeId(c.instance_id)), { recursive: true });
+  writeFileSync(
+    join(outDir, "cases", safeId(c.instance_id), "case-summary.json"),
+    JSON.stringify(s, null, 2) + "\n",
+  );
+  writeResults(outDir, c, [], s);
+  return s;
+}
+
 /** Write the scorer's input for every variant; returns the variants whose
  * file for this case now holds different bytes than before. */
 export function writeResults(
