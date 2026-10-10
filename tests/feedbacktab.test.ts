@@ -423,6 +423,33 @@ describe("the revert, armed and confirmed", () => {
     expect(rig.learning.feedback.changeSel).toBe(1);
   });
 
+  it("on a short terminal the pane scrolls the focused proposal, the armed confirmation and the change into view", async () => {
+    const proposals = Array.from({ length: 6 }, (_, i) => ({
+      slug: `proposal-${i}`,
+      head: [`## Rationale ${i}`],
+    }));
+    const changes = new FakeChanges([changeEntry("a".repeat(40), "severity change")]);
+    const rig = await loaded({
+      changes,
+      fetchProposals: () => Promise.resolve({ proposals, improvements: [] }),
+    });
+    expect(screenOf(rig, 110, 24)).not.toContain("severity change"); // below the fold
+    key(rig, { kind: "char", ch: "t" }); // focus proposed
+    for (let i = 0; i < 5; i++) key(rig, { kind: "down" });
+    expect(screenOf(rig, 110, 24)).toContain("proposal-5");
+    key(rig, { kind: "char", ch: "t" }); // focus changed
+    key(rig, { kind: "char", ch: "R" });
+    const frame = rig.app.hooks.tabs.feedback!.screen(rig.app, 110, 24);
+    const screen = stripAnsi(frame.render());
+    expect(screen).toContain("git revert --no-edit aaaaaaa");
+    expect(screen).toContain("y do it");
+    expect(screen).toContain("severity change");
+    // The click zones move with the rows they belong to.
+    const zone = frame.zones.find((z) => (z.action as { t: string }).t === "change")!;
+    expect(zone.y1).toBeLessThanOrEqual(24);
+    expect(stripAnsi(frame.render().split("\n")[zone.y1 - 1] ?? "")).toContain("severity change");
+  });
+
   it("the register is scanned once behind the first paint, and again on r", async () => {
     const changes = new FakeChanges([]);
     const rig = await loaded({ changes });

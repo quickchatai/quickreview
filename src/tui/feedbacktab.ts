@@ -452,6 +452,15 @@ export function renderFeedbackTab(
   const row = (chunks: Array<RowChunk<FeedbackAction>>, gap?: string): void => {
     right.push(zonedRow(chunks, gap));
   };
+  // The rows the focused verb acts on — the selected proposal, or the armed
+  // confirmation and the selected change — which the pane scrolls to keep on
+  // screen: a verb must never act on a row the operator cannot see.
+  let focusFrom: number | undefined;
+  let focusTo = 0;
+  const markFocus = (from: number): void => {
+    focusFrom = from;
+    focusTo = right.length - 1;
+  };
   const selected = inbox[sel];
   const card = selected ? feedbackPresentation(selected, store.entries) : undefined;
   if (selected && card) {
@@ -485,6 +494,7 @@ export function renderFeedbackTab(
     },
     { text: "the companion's rubric changes, waiting on you", dim: true },
   ]);
+  if (st.focus === "proposed") markFocus(right.length - 1);
   if (!store.propLoaded)
     row([{ text: emptyLine({ kind: "unread", how: "listing state/rubric/" }) }]);
   else if (store.proposals.length === 0)
@@ -498,6 +508,7 @@ export function renderFeedbackTab(
     ]);
   store.proposals.forEach((p, i) => {
     const isSel = st.focus === "proposed" && i === st.propSel;
+    const from = right.length;
     row([
       {
         text: isSel
@@ -509,6 +520,7 @@ export function renderFeedbackTab(
       { text: button("x reject"), action: { t: "prop-reject", i } },
     ]);
     if (p.head[0]) row([{ text: truncate(`  ${p.head[0]}`, rightW - 2), dim: true }]);
+    if (isSel) markFocus(from);
   });
   row([{ text: "" }]);
 
@@ -527,6 +539,7 @@ export function renderFeedbackTab(
       dim: true,
     },
   ]);
+  if (st.focus === "changed") markFocus(right.length - 1);
   // "none yet" is a claim, made only when a scan succeeded and found none.
   // The two ways of not knowing each get their own sentence, and
   // neither hides the rows already in memory.
@@ -572,12 +585,14 @@ export function renderFeedbackTab(
     ]);
   }
   const armedEntry = st.armed ? entries.find((e) => e.sha === st.armed) : undefined;
+  const armedFrom = right.length;
   if (armedEntry) for (const l of armedLines(armedEntry, rightW - 3)) row([{ text: l }]);
   const changeSel = Math.min(st.changeSel, Math.max(0, entries.length - 1));
   const changeStart = windowStart(changeSel, entries.length, 4);
   entries.slice(changeStart, changeStart + 4).forEach((e, offset) => {
     const i = changeStart + offset;
     const head = headline(e, now, rightW - 3);
+    const from = armedEntry ? armedFrom : right.length;
     row([
       {
         text: st.focus === "changed" && i === changeSel ? selectedLine(head) : head,
@@ -585,8 +600,12 @@ export function renderFeedbackTab(
       },
     ]);
     row([{ text: `  ${provenance(e, rightW - 5)}`, action: { t: "change", i } }]);
+    if (st.focus === "changed" && i === changeSel) markFocus(from);
   });
-  if (st.result) row([{ text: truncate(st.result, rightW - 2) }]);
+  if (st.result) {
+    row([{ text: truncate(st.result, rightW - 2) }]);
+    if (st.focus === "changed") focusTo = right.length - 1;
+  }
   row([{ text: "" }]);
 
   // The lesson shadow ledger's headline — the evidence the
@@ -684,7 +703,21 @@ export function renderFeedbackTab(
     row([{ text: truncate(store.status, rightW - 2) }]);
   }
 
-  paintSplit(frame, { left, leftActions, right, leftW, rightW, top: 1, bodyRows });
+  // Scroll only as far as the focused rows need; when they cannot all fit,
+  // their first row (the armed confirmation's head) stays on screen.
+  const rightStart =
+    focusFrom !== undefined && focusTo >= bodyRows
+      ? Math.min(focusFrom, focusTo - bodyRows + 1)
+      : 0;
+  paintSplit(frame, {
+    left,
+    leftActions,
+    right: right.slice(rightStart),
+    leftW,
+    rightW,
+    top: 1,
+    bodyRows,
+  });
   paintCmdBar(frame, "feedback", cols, rows, live.bar);
   frame.set(rows - 1, rule(cols, "└", "┘", []));
   return frame;
