@@ -107,6 +107,13 @@ export function digestKeys(st: DigestState): LiveKeys {
   return { bar, inline: [] };
 }
 
+/** The calendar day before a `YYYY-MM-DD` date, or undefined when it is not one. */
+function previousDay(day: string): string | undefined {
+  const t = Date.parse(`${day}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(t)) return undefined;
+  return new Date(t - 86_400_000).toISOString().slice(0, 10);
+}
+
 export function renderDigestTab(
   st: DigestState,
   dryRun: boolean | undefined,
@@ -117,7 +124,7 @@ export function renderDigestTab(
   const frame = new Frame(cols, rows);
   const file = currentDigestFile(st);
   const date = file?.slice(0, 10);
-  const tag = date && date < today ? " (yesterday)" : "";
+  const tag = date && date === previousDay(today) ? " (yesterday)" : "";
   const files = st.files;
   const count = files === undefined ? "—" : String(files.length);
   frame.set(

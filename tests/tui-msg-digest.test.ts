@@ -250,6 +250,19 @@ describe("digest tab", () => {
     expect(digestKeys({ back: 0, scroll: 0 }).bar).toEqual([]);
   });
 
+  it("tags only the immediately preceding day as yesterday", () => {
+    const render = (file: string, today: string) =>
+      renderDigestTab({ files: [file], back: 0, scroll: 0, content: "x" }, true, today, 100, 24)
+        .lines.map(stripAnsi)
+        .join("\n");
+    expect(render("2026-02-28.md", "2026-03-01")).toContain("digest 2026-02-28 (yesterday)");
+    expect(render("2025-12-31.md", "2026-01-01")).toContain("digest 2025-12-31 (yesterday)");
+    const old = render("2026-07-01.md", "2026-08-13");
+    expect(old).toContain("digest 2026-07-01");
+    expect(old).not.toContain("(yesterday)");
+    expect(render("2026-08-13.md", "2026-08-13")).not.toContain("(yesterday)");
+  });
+
   // One full-width column, with no awaiting-you panel, attach hint or click
   // zone — a document is read, not chosen from.
   it("styles headings and renders one full-width column with the yesterday tag", () => {
