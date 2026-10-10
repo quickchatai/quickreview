@@ -275,6 +275,31 @@ describe("conversation parsing and compaction", () => {
     expect(tail.length).toBeLessThanOrEqual(2000);
     expect(tail.split("\n").length).toBeLessThanOrEqual(6);
   });
+
+  it("keeps the newest turns of the ending when the budget runs out", () => {
+    const turns: Turn[] = Array.from({ length: 6 }, (_, i) => ({
+      role: "user" as const,
+      text: `${i}`.repeat(400),
+    }));
+    const tail = conversationTail(turns);
+    expect(tail.length).toBeLessThanOrEqual(2000);
+    expect(tail).toContain("5".repeat(50));
+    expect(tail).not.toContain("0".repeat(50));
+    const lines = tail.split("\n");
+    expect(lines.at(-1)).toContain("5".repeat(50));
+    expect(lines[0]).not.toContain("5".repeat(50));
+
+    const long: Turn[] = Array.from({ length: 30 }, (_, i) => ({
+      role: "assistant" as const,
+      text: `t${String(i).padStart(2, "0")} `.repeat(100),
+    }));
+    const summary = compactConversation(long);
+    const ended = summary.slice(summary.indexOf("**How it ended**"));
+    expect(ended).toContain("t29");
+    expect(ended).not.toContain("t18");
+    const opened = summary.slice(0, summary.indexOf("**How it ended**"));
+    expect(opened).toContain("t00");
+  });
 });
 
 describe("carry items", () => {

@@ -266,15 +266,25 @@ function ownerLabel(ownerName?: string): string {
   return ownerName?.trim() || "the operator";
 }
 
-function renderTurns(turns: Turn[], budget: number, ownerName?: string): string {
+/** Renders turns in chronological order within a character budget. `keep`
+ * says which end survives when the budget runs out: an opening keeps its
+ * oldest turns, an ending its newest. */
+function renderTurns(
+  turns: Turn[],
+  budget: number,
+  ownerName?: string,
+  keep: "oldest" | "newest" = "oldest",
+): string {
+  const ordered = keep === "oldest" ? turns : [...turns].reverse();
   const lines: string[] = [];
   let used = 0;
-  for (const t of turns) {
+  for (const t of ordered) {
     const line = `- **${t.role === "user" ? ownerLabel(ownerName) : "you"}**: ${oneLine(t.text)}`;
     if (used + line.length > budget) break;
     lines.push(line);
     used += line.length + 1;
   }
+  if (keep === "newest") lines.reverse();
   return lines.join("\n");
 }
 
@@ -300,7 +310,7 @@ export function compactConversation(
   ];
   sections.push(`**How it opened**\n${renderTurns(head, half, ownerName)}`);
   if (skipped > 0) sections.push(`…${skipped} turn${skipped === 1 ? "" : "s"} elided…`);
-  if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName)}`);
+  if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName, "newest")}`);
   const out = sections.join("\n\n");
   return out.length <= budget ? out : `${out.slice(0, budget - 1)}…`;
 }
@@ -309,7 +319,7 @@ export function compactConversation(
  * deliberately not summarised. */
 export function conversationTail(turns: Turn[], budget: number = TAIL_MAX_CHARS): string {
   if (turns.length === 0) return "";
-  return renderTurns(turns.slice(-6), budget);
+  return renderTurns(turns.slice(-6), budget, undefined, "newest");
 }
 
 // ---- the other carry items --------------------------------------------------
