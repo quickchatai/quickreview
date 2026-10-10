@@ -17,6 +17,10 @@ case of the runs:
   none_after  NONE cases among the kept ones
   unique_real cases with a unique real finding by the lens (lens_yield.py
               --cases-json) and how many the candidate keeps — the bar: ALL.
+              A unique-real case inside a selected run that could not be
+              loaded (its files.json, pass-plan.json or findings-record.json
+              missing or unreadable) is listed as UNREAD: the bar is then
+              unchecked for it, never met by leaving it out.
 
 A candidate reads only what a stored case keeps: files.json (filename,
 additions, deletions, status). A trigger that needs the patch or the PR text
@@ -89,6 +93,7 @@ def main() -> None:
     ur = json.loads(a.unique_real.read_text())
     lenses = a.lens or list(CANDIDATES)
     cases = []
+    run_roots = {(Path(a.runs_dir) / run / "cases").resolve() for run in a.run}
     for run in a.run:
         for cd in sorted(glob.glob(str(Path(a.runs_dir) / run / "cases" / "*"))):
             files = read(Path(cd) / "files.json")
@@ -100,23 +105,26 @@ def main() -> None:
             for fnd in rec.get("findings") or []:
                 for l in re.findall(r"pass-[a-z][a-z-]*[a-z]", str(fnd.get("lens") or "")):
                     raised.add(l)
-            cases.append({"dir": cd, "files": files, "planned": {r.get("lens") for r in plan}, "raised": raised})
+            cases.append({"dir": cd, "key": Path(cd).resolve(), "files": files, "planned": {r.get("lens") for r in plan}, "raised": raised})
     print(f"cases: {len(cases)} over {len(a.run)} run(s)\n")
     print("| lens | candidate | planned | NONE | kept | NONE after | unique-real cases kept |")
     print("|---|---|---|---|---|---|---|")
+    loaded = {c["key"] for c in cases}
     for lens in lenses:
-        ur_cases = set(ur.get(lens, []))
+        ur_cases = {Path(p).resolve() for p in ur.get(lens, [])}
+        unread = sorted(p.name for p in ur_cases if p.parent in run_roots and p not in loaded)
         for name, fn in CANDIDATES.get(lens, []):
             planned = [c for c in cases if lens in c["planned"]]
             none = [c for c in planned if lens not in c["raised"]]
             kept = [c for c in planned if fn(c["files"])]
             none_after = [c for c in kept if lens not in c["raised"]]
-            ur_in = [c for c in cases if c["dir"] in ur_cases]
+            ur_in = [c for c in cases if c["key"] in ur_cases]
             ur_kept = [c for c in ur_in if fn(c["files"])]
             lost = sorted(Path(c["dir"]).name for c in ur_in if not fn(c["files"]))
             print(f"| {lens} | {name} | {len(planned)} | {len(none)} ({100 * len(none) / max(1, len(planned)):.0f}%) | "
                   f"{len(kept)} | {len(none_after)} ({100 * len(none_after) / max(1, len(kept)):.0f}%) | "
-                  f"{len(ur_kept)}/{len(ur_in)}{' LOST: ' + ', '.join(lost) if lost else ''} |")
+                  f"{len(ur_kept)}/{len(ur_in)}{' LOST: ' + ', '.join(lost) if lost else ''}"
+                  f"{' UNREAD: ' + ', '.join(unread) if unread else ''} |")
 
 
 if __name__ == "__main__":
