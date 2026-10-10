@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PLUMBING ONLY — a fake judge for wiring checks (ext.sh ... with EXT_JUDGE=mock).
 
-Answers the Martian and SWE-PRBench judge prompts with well-formed, contentless
+Answers the Martian, SWE-PRBench and Qodo judge prompts with well-formed, contentless
 JSON (no issue matches, nothing confirmed), so the containers, the internal
 network, the harness invocations and the report extraction can be exercised
 with no model and no login. Its numbers mean nothing; every output dir of a
@@ -27,6 +27,8 @@ def answer(system: str, user: str) -> dict:
         return {"reasoning": "mock", "match": False, "confidence": 0.0}
     if "assessing AI code review quality" in system:
         return {"agent_classifications": [], "human_comment_statuses": []}
+    if "judge of a code-review benchmark" in system:
+        return {"matches": []}
     return {"mock": True}
 
 
