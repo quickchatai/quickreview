@@ -218,6 +218,22 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
+    # The Slack concierge's tokens, under config.toml's default
+    # `bot_token_file` / `app_token_file` names. Copied-if-present: Slack is
+    # optional and off by default, but with `[slack] enabled = true` a missing
+    # token is a hard startup error (validateSlackConfig), so whatever the
+    # Slack wizard saved in the secrets dir must reach the container.
+    - name: Slack tokens (optional — present once the Slack wizard has run)
+      ansible.builtin.copy:
+        src: "{{ secrets_src }}/{{ item }}"
+        dest: "{{ sandbox_root }}/secrets/{{ item }}"
+        mode: "0400"
+        owner: "{{ container_uid }}"
+        group: "{{ container_uid }}"
+      loop: [slack_bot_token, slack_app_token]
+      no_log: true
+      when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
+
     # The seed content (prompts/, agents/) has no copy task of its own: it rides
     # the rsync below, byte-identical to the canonical seed set (enforced by
     # tests/seed-integrity.test.ts — root CLAUDE.md rule 6).

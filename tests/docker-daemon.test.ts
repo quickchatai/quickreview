@@ -19,6 +19,7 @@ import {
   LOCAL_EMBEDDING,
   OPENVIKING_DEFAULTS,
   RETIRED_LOCAL_EMBEDDING,
+  SLACK_DEFAULTS,
   ovConfEmbedder,
   parseConfig,
 } from "../src/config.js";
@@ -612,6 +613,23 @@ describe("ansible decoupling", () => {
     // The tunnel token is only read where it is used, so a tunnel-less run
     // never needs the tunnel_token secret to exist.
     expect(playbook).not.toMatch(/^\s+vars:\n\s+cloudflared_tunnel_token/m);
+  });
+
+  it("ships the Slack tokens into the container's secrets, copied-if-present", () => {
+    // An enabled [slack] with a missing token refuses to start, so the token
+    // files the Slack wizard saves must reach the VM under the names the
+    // config reads by default.
+    const at = playbook.indexOf("- name: Slack tokens");
+    expect(at).toBeGreaterThan(0);
+    const next = playbook.indexOf("- name:", at + 1);
+    const block = playbook.slice(at, next === -1 ? undefined : next);
+    expect(block).toContain(
+      `loop: [${SLACK_DEFAULTS.bot_token_file}, ${SLACK_DEFAULTS.app_token_file}]`,
+    );
+    expect(block).toContain('dest: "{{ sandbox_root }}/secrets/{{ item }}"');
+    expect(block).toContain('mode: "0400"');
+    expect(block).toContain("no_log: true");
+    expect(block).toContain("fileglob");
   });
 
   it("the live inventory is untracked; the example stays and documents what to fill", () => {
