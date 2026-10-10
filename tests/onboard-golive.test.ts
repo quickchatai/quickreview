@@ -383,6 +383,20 @@ describe("declining is a first-class outcome", () => {
     expect(report.checks[0]!.detail).toMatch(/posted to GitHub/);
   });
 
+  it("a recorded decline over an unreadable config verifies UNKNOWN and red, never green", async () => {
+    writeFileSync(join(root, "config.toml"), "this is = = not toml\n");
+    const report = await goLiveStep().verify({
+      adapters: harness().adapters,
+      input: {},
+      choices: { [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "dry_run" },
+      data: {},
+      recordChoice: () => undefined,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks[0]!.detail).toMatch(/unknown/);
+    expect(report.checks[0]!.detail).not.toMatch(/finished installation/);
+  });
+
   it("with no answer at all the step is red — the wizard wants a decision, not a default", async () => {
     const h = harness();
     const all = await h.engine.verifyAll();

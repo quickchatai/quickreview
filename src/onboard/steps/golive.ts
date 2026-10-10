@@ -457,13 +457,27 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
             ],
           };
         }
+        if (dryRun === null) {
+          return {
+            ok: false,
+            checks: [
+              {
+                name: "decision",
+                ok: false,
+                detail:
+                  `dry-run was chosen here once, but ${configPath(ctx.adapters)} could not be read, so whether this ` +
+                  "installation is in dry-run is unknown. Fix the config, then verify again.",
+              },
+            ],
+          };
+        }
         return {
           ok: true,
           checks: [
             {
               name: "decision",
               ok: true,
-              detail: `dry-run, by the operator's own decision (config.toml has dry_run = ${String(dryRun)}). A finished installation.`,
+              detail: "dry-run, by the operator's own decision (config.toml has dry_run = true). A finished installation.",
             },
           ],
         };
