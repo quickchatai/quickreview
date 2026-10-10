@@ -5,7 +5,9 @@
 //      the first 30, so the cap only ever drops the least severe);
 //   2. a comment on a DELETED line (side LEFT) is exported with `line: null`
 //      instead of being dropped (a PR whose only finding sits on a deleted
-//      line would otherwise score as an empty review, a hard zero).
+//      line would otherwise score as an empty review, a hard zero);
+//   3. a case that did not finish (any status but ok) answers [], whatever
+//      partial comments it left in either source.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -16,14 +18,14 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "sweprbench-export-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
-function exportRun(results: object[], caseComments: object[]) {
+function exportRun(results: object[], caseComments: object[], status = "ok") {
   const id = "o__r@1111111";
   const run = join(tmp, `run-${Math.random().toString(36).slice(2)}`);
   mkdirSync(join(run, "results", "all"), { recursive: true });
   mkdirSync(join(run, "cases", id), { recursive: true });
   writeFileSync(
     join(run, "results", "all", `${id}.json`),
-    JSON.stringify({ qcr: { status: "ok" }, review: { comments: results } }),
+    JSON.stringify({ qcr: { status }, review: { comments: results } }),
   );
   writeFileSync(join(run, "cases", id, "comments.json"), JSON.stringify(caseComments));
   const data = join(run, "data");
@@ -97,6 +99,20 @@ describe("sweprbench_export.py", () => {
       },
     ]);
   });
+});
+
+describe("sweprbench_export.py — unfinished cases", () => {
+  it.each(["timeout", "failed", "no-output", "no-verdict"])(
+    "a %s case answers [] despite partial comments",
+    (status) => {
+      const items = exportRun(
+        [{ content: "[blocker] crash\n\n_P1 · confidence 1.00_", path: "a.py", start_line: 9 }],
+        [{ path: "a.py", line: 4, side: "LEFT", body: "[question] gone?\n\n_P2 · confidence 0.9_" }],
+        status,
+      );
+      expect(items).toEqual([]);
+    },
+  );
 });
 
 describe("sweprbench_report.py", () => {

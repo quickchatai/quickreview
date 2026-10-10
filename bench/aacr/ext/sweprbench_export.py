@@ -31,8 +31,10 @@ deleted line as an empty review, a hard zero). Each becomes one array item:
             P0/P1/P2 as is; P3 (QuickReview's nit level, below SWE-PRBench's
             scale) and an unstamped comment → null, i.e. "unspecified"
 
-A case that failed or timed out answers `[]` (no comments — SWE-PRBench
-scores that a hard zero, as for a model that tried nothing).
+A case that did not finish — any status but `ok`: failed, timed out, no
+output, no verdict — answers `[]` (no comments — SWE-PRBench scores that a
+hard zero, as for a model that tried nothing), whatever partial comments it
+left behind.
 
 The replay table maps sha256(context `rendered`) — the exact user message the
 harness sends for that PR and config — to that PR's array, for all three
@@ -78,6 +80,8 @@ def agent_array(run: Path, instance_id: str) -> tuple[list[dict], str]:
         return [], "no result file"
     res = json.loads(raw)
     status = (res.get("qcr") or {}).get("status") or "unknown"
+    if status != "ok":
+        return [], status
     items = []
     for c in (res.get("review") or {}).get("comments") or []:
         body = str(c.get("content") or "").strip()
