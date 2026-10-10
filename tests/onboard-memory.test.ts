@@ -645,6 +645,28 @@ describe("degraded modes stay legal and loud", () => {
     expect(detailOf(again, MEMORY_SWITCH_CHECK)?.detail).toMatch(/already/);
   });
 
+  it("the pi wizard (no prompter) declines through the tool's choice input, and the step declares it", async () => {
+    placeConfig();
+    const params = memoryStep().parameters as {
+      properties: { choice: { enum: string[] } };
+    };
+    expect(params.properties.choice.enum).toEqual(["configure", "declined"]);
+
+    const engine = engineWith(fakeServer().fetchFn);
+    const result = await engine.runStep(MEMORY_STEP_ID, { choice: "declined" });
+    expect(result.ok).toBe(true);
+    expect(result.checks[0]?.detail).toMatch(/DECLINED/);
+    expect(engine.choices()[MEMORY_CHOICE_KEY]).toBe("declined");
+    expect(existsSync(keysFile)).toBe(false);
+    expect(memoryEnabled()).toBe(false);
+
+    // An explicit answer overrides the recorded one: configuring later is reachable too.
+    const later = await engine.runStep(MEMORY_STEP_ID, { choice: "configure" });
+    expect(engine.choices()[MEMORY_CHOICE_KEY]).toBe("configure");
+    expect(memoryEnabled()).toBe(true);
+    expect(later.checks.some((c) => /DECLINED/.test(c.detail))).toBe(false);
+  });
+
   it("a declined install whose config says ON again is RED on verify — the daemon would page about it", async () => {
     placeConfig();
     const engine = engineWith(fakeServer().fetchFn, {}, async () => "no");

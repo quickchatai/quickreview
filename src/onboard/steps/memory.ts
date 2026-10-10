@@ -690,6 +690,12 @@ export function placeKeys(args: {
 
 export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
   const askChoice = async (ctx: StepContext): Promise<MemoryChoice> => {
+    // The operator's answer through the tool call wins: it is how the pi
+    // wizard, which has no prompter, says yes or no, and how an earlier
+    // decline is reversed.
+    const given = ctx.input.choice;
+    if (given === "declined" || given === "configure") return given;
+    if (typeof given === "string" && given.trim() !== "") return normalizeMemoryChoice(given);
     const recorded = ctx.choices[MEMORY_CHOICE_KEY];
     if (recorded === "declined" || recorded === "configure") return recorded;
     const prompter = ctx.adapters.prompter;
@@ -726,6 +732,18 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
       "this step lands the root key, says so, and finishes when you re-run it after bring-up. Declining memory entirely is a " +
       "supported answer — the reviewer then runs memory-less.",
     order: 60,
+    parameters: {
+      type: "object",
+      properties: {
+        choice: {
+          type: "string",
+          enum: ["configure", "declined"],
+          description:
+            'The operator\'s answer: "configure" to set memory up, "declined" to run memory-less. Omit to keep the ' +
+            "recorded answer (configure when none is recorded).",
+        },
+      },
+    },
 
     async run(ctx): Promise<StepReport> {
       const choice = await askChoice(ctx);
