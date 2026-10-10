@@ -117,7 +117,7 @@ describe("the signal, as a card", () => {
     expect(feedbackInbox([raw, adjudication, actedOn], true)).toEqual([raw]);
   });
 
-  it("RAW FEEDBACK is the comment's FULL text when the entry carries it — not the 280-character cut (S7)", async () => {
+  it("RAW FEEDBACK is the comment's FULL text when the entry carries it — not the 280-character cut", async () => {
     const body = `[feedback] First line of the complaint.\nSECONDLINE says ${"why ".repeat(90)}and ends at TAILWORD.`;
     const full = memoryEntry(
       memoryEntryFor(

@@ -817,7 +817,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   );
 });
 
-describe("the prose beside the posting map says what the map does (MC-45)", () => {
+describe("the prose beside the posting map says what the map does", () => {
   /**
    * `src/severity.ts`'s module header must not claim a first-party directive
    * injection "never blocks" or "posts as a [question]" while `postTag` maps
@@ -834,7 +834,7 @@ describe("the prose beside the posting map says what the map does (MC-45)", () =
    * header — fails. Put "the ONLY session-side input that parks a PR" on
    * `needsHuman` — fails.
    */
-  it("src/severity.ts no longer claims a first-party directive injection never blocks, and postTag agrees", () => {
+  it("src/severity.ts does not claim a first-party directive injection never blocks, and postTag agrees", () => {
     const src = readFileSync(join(ROOT, "src", "severity.ts"), "utf8");
     // The directive paragraph is the last one of the module header; the
     // reachability paragraph above it legitimately says `contrived` "never blocks".

@@ -102,7 +102,7 @@ describe("layout/hit round-trip", () => {
   });
 });
 
-describe("the bar wraps instead of dropping buttons (→)", () => {
+describe("the bar wraps instead of dropping buttons", () => {
   /** Every `[label]` painted on the bar rows, in order. */
   function paintedLabels(frame: Frame, rows: number, height: number): string[] {
     const out: string[] = [];
@@ -155,7 +155,7 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
     }
   });
 
-  it("[u unwedge] survives on the board at the shipped companion width — the ratified lever is always on screen", () => {
+  it("[u unwedge] survives on the board at the shipped companion width — the unwedge lever is always on screen", () => {
     // The shipped default gives the companion column half the terminal, so
     // the board renders at `cols - sidebarWidth(cols) + 1`; the bar must wrap
     // rather than truncate there, or `u` falls off.

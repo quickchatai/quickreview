@@ -67,7 +67,7 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("scripts/deploy.sh sync")).toMatch(/rule 8/);
   });
 
-  it("lets the companion READ the gate's scripts — refused when run, never when read (2026-10-06)", () => {
+  it("lets the companion READ the gate's scripts — refused when run, never when read", () => {
     for (const cmd of [
       "git diff scripts/approve-pr.sh",
       "git diff -- scripts/approve-pr.sh tests/guards-shell-receipts.test.ts",

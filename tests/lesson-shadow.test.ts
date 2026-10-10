@@ -1710,7 +1710,7 @@ describe("the [7] feedback tab's LESSONS line", () => {
     ];
     expect(unknowns[0]).toContain("not read yet");
     expect(unknowns[1]).toContain("reports no memory block");
-    expect(unknowns[2]).toContain("predates S9a");
+    expect(unknowns[2]).toContain("predates the lesson shadow ledger");
     expect(unknowns[3]).toContain("lessons UNKNOWN");
     for (const u of unknowns) {
       expect(u).toContain("LESSONS (—)");

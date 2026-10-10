@@ -757,7 +757,7 @@ export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
       lines: [
         emptyLine({
           kind: "unreadable",
-          why: "this daemon does not report the lesson shadow ledger (it predates S9a) — UNKNOWN",
+          why: "this daemon predates the lesson shadow ledger and does not report it — UNKNOWN",
         }),
       ],
     };

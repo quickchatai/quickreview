@@ -345,7 +345,7 @@ describe("promotion files one ticket, never twice", () => {
     });
   });
 
-  it("a dismissal a re-scan no longer reports is not promoted — it used to read fixed; a re-sighting puts it back in play (scan-loop)", async () => {
+  it("a dismissal a re-scan no longer reports is not promoted; a re-sighting puts it back in play", async () => {
     const sink = new FakeSink();
     const { findings, triage } = setup({ sink });
     findings.report([reported(FP("a"))], { run: "scan-1", sha: SHA1, at: "t" });

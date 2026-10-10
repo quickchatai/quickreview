@@ -343,10 +343,8 @@ describe("recordRatification", () => {
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
     );
-    // New notes say "owner", older notes carry the owner's name — the
-    // verifying grammar accepts both, so existing history validates.
     expect(div.files["agents/pass-baseline.md"][0]).toMatch(
-      /^2026-08-20 (?:the owner|owner): rubric proposal 'fix-mergebase'/,
+      /^2026-08-20 owner: rubric proposal 'fix-mergebase'/,
     );
   });
 
@@ -410,8 +408,7 @@ describe("acceptProposal (local dirs, fake git)", () => {
     ]);
     // The refreshed canonical copy rides the same commit as the reseed.
     expect(gitCalls[4]).toContain("seeds/agents/pass-baseline.md");
-    // Role wording, with the older spelling still accepted (history never rewrites).
-    expect(gitCalls[5]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
+    expect(gitCalls[5]!.join(" ")).toMatch(/ratified by the owner via TUI/);
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
     );

@@ -202,7 +202,7 @@ describe("checkBashCommand — gh is read-only", () => {
    *
    * Verified sending POST on gh 2.93.0 against a loopback server.
    */
-  it("blocks the ATTACHED and CLUSTERED short body flags — same failure mode as F1", () => {
+  it("blocks the ATTACHED and CLUSTERED short body flags — same failure mode as the --input chain", () => {
     block("gh api repos/o/n/pulls/5/reviews -fevent=APPROVE", "sends POST");
     block("gh api repos/o/n/pulls/5/reviews -Fevent=APPROVE", "sends POST");
     block("gh api repos/o/n/pulls/5/reviews -if event=APPROVE", "sends POST");
@@ -481,7 +481,7 @@ describe("activate (pi hookup)", () => {
   });
 });
 
-describe("live-day regressions (2026-08-17): quoted patterns and substitutions", () => {
+describe("quoted patterns and substitutions", () => {
   const allow = (cmd: string) =>
     expect(checkBashCommand(cmd), cmd).toMatchObject({ allowed: true });
   const deny = (cmd: string) => expect(checkBashCommand(cmd).allowed, cmd).toBe(false);
@@ -893,7 +893,7 @@ describe("checkWritePath / this system's own policy surface", () => {
 // the finding cases and feedback events no round may read (vendored patches
 // 0009/0011) until the daemon rewrote the hint. The write boundary protects
 // both, through the same predicate both channels read.
-describe("checkWritePath / the memory-scope files a session's recall reads (S8b)", () => {
+describe("checkWritePath / the memory-scope files a session's recall reads", () => {
   const PI_HOME = "/opt/quickreview/pihome";
   const HINT = ovRecallHintPathIn(PI_HOME, "pr-5249");
   const RETIRED = ovRetiredPathIn(PI_HOME);
@@ -1040,7 +1040,7 @@ describe("checkWritePath / the memory-scope files a session's recall reads (S8b)
 // shell's quotes removed, so a quote inside an option name
 // (`--up"load"-pack=`) must not spell a refused option the guard fails to
 // recognise.
-describe("git's own write and exec options (S8b review)", () => {
+describe("git's own write and exec options", () => {
   // MUTATION: drop `GIT_OUTPUT_FILE_OPT` from `checkGit` — every --output
   // line fails.
   it("refuses --output on every read verb that takes diff options, quoted or not", () => {
@@ -1174,7 +1174,7 @@ describe("read-only programs with write/exec modes", () => {
 // awk is a language whose exec and write forms take arbitrary EXPRESSIONS, so
 // a command-string rule cannot parse it; it stays off the allowlist rather
 // than gaining another pattern.
-describe("awk is not a read-only program (round 3)", () => {
+describe("awk is not a read-only program", () => {
   it("refuses awk in every spelling, including the indirection that beat the rules", () => {
     block(`awk 'BEGIN{c="sh"; print "id" | c}'`, "programming language");
     block(`awk 'BEGIN{f="/tmp/out"; print "x" > f}'`, "programming language");
@@ -1259,7 +1259,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     expect(res.allowed, `${cmd} → ${res.reason ?? ""}`).toBe(true);
   };
 
-  it("re-runs the MC-63 probe: cat of the App key is refused by the full guard", () => {
+  it("cat of the App key is refused by the full guard", () => {
     const res = checkBashCommand("cat /opt/quickreview/secrets/app.pem");
     expect(res.allowed).toBe(false);
     expect(res.reason).toContain("App's credentials");
@@ -1402,7 +1402,7 @@ describe("checkSecretPaths — the App's secret files and dir", () => {
     passes("git diff --stat");
   });
 
-  it("is a SPELLING belt: variable indirection still passes (is the real fix)", () => {
+  it("is a SPELLING belt: variable indirection still passes (the uid/mount split is the real fix)", () => {
     // Pinned so nobody reads this belt as a sandbox. When the uid/mount split
     // lands and these stop mattering, delete the belt rather than this pin.
     passes("D=/opt/quickreview/sec; cat ${D}rets/app_id");

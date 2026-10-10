@@ -645,7 +645,7 @@ describe("the pass-survey agent and the case runner", () => {
     expect(args.at(-1)).toBe("Task: SURVEY — do it");
   });
 
-  it("reports the paths its file-read tool calls named — read and grep, in call order; find/ls are not reads (scan-loop)", async () => {
+  it("reports the paths its file-read tool calls named — read and grep, in call order; find/ls are not reads", async () => {
     const tool = (toolName: string, args: Record<string, unknown>) => ({
       type: "tool_execution_start",
       toolCallId: `c-${toolName}`,

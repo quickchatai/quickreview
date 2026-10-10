@@ -238,7 +238,7 @@ export function writeBlockReason(
   if ((REGISTRY_FIXTURES as readonly string[]).includes(rel)) {
     return `rule 6: ${rel} is a registry fixture with exactly two sanctioned writers (a human recording a ratified reseed; the TUI rubric-accept path) — the companion is neither. Argue for the change; never make it.`;
   }
-  return `rule 6: ${rel} is a frozen seed (byte-identical to the assets, pinned by the seed manifest). Pass behaviour changes go through PASS_ADDENDA in src/include.ts; a reseed is the owner's to ratify.`;
+  return `rule 6: ${rel} is a frozen seed (byte-identical to the canonical copies under seeds/, pinned by the seed manifest). Pass behaviour changes go through PASS_ADDENDA in src/include.ts; a reseed is the owner's to ratify.`;
 }
 
 /** Same hookup shape as extensions/bash-guard.ts: `pi.on("tool_call", …)`

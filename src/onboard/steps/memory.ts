@@ -355,7 +355,7 @@ export function renderKeysFile(
     if (v && !merged[k]) merged[k] = v;
   }
   const head = [
-    "# OpenViking USER keys — the operator's copy (qcr onboard).",
+    "# OpenViking USER keys — the operator's copy (written by qcr onboard).",
     "# BOTH user keys, and never a root or admin key: an admin key lists every",
     "# user key in plaintext. The companion key must never reach the daemon-side",
     "# secrets dir — review sessions run in that container.",

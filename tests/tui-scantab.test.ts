@@ -120,7 +120,7 @@ describe("the report", () => {
     });
   });
 
-  it("a not-reproduced finding is marked ↺ and counted, and its detail says it stays open for triage (scan-loop)", () => {
+  it("a not-reproduced finding is marked ↺ and counted, and its detail says it stays open for triage", () => {
     const f = scanFinding({
       fingerprint: "fa".padEnd(64, "0"),
       not_reproduced: { count: 2, run: "scan-9", sha: "9".repeat(40), at: "2026-09-30T10:00:00Z" },
@@ -133,7 +133,7 @@ describe("the report", () => {
     expect(text).toContain("scan-9 at 9999999");
   });
 
-  it("a new finding resembling a dismissed one is marked ≈, says so in its detail, and sorts below its tier (scan-loop)", async () => {
+  it("a new finding resembling a dismissed one is marked ≈, says so in its detail, and sorts below its tier", async () => {
     const flagged = scanFinding({
       fingerprint: "fb".padEnd(64, "0"),
       path: "billing/a.py",
@@ -164,7 +164,7 @@ describe("the report", () => {
     });
   });
 
-  it("a dismissed finding a re-scan no longer reports says so, and still reads dismissed (scan-loop: a dismissal is sticky)", () => {
+  it("a dismissed finding a re-scan no longer reports says so, and still reads dismissed: a dismissal is sticky", () => {
     const f = scanFinding({
       fingerprint: "fb".padEnd(64, "0"),
       state: "dismissed",
@@ -175,7 +175,7 @@ describe("the report", () => {
     expect(screen()).toContain(`state: dismissed — "by design" · no longer reported at 8888888`);
   });
 
-  it("a dismissed finding a re-scan no longer reports is not a promote target; an unstamped one is (scan-loop)", () => {
+  it("a dismissed finding a re-scan no longer reports is not a promote target; an unstamped one is", () => {
     const gone = scanFinding({
       fingerprint: "fc".padEnd(64, "0"),
       state: "dismissed",

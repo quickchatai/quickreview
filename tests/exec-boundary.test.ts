@@ -254,7 +254,7 @@ const CORPUS = [
     via: "bash",
     chain: "QCR_POSTING_RECEIPT_DIR=/tmp/r scripts/approve-pr.sh 5 b.md",
     outcome: null,
-    note: "ruling: the receipt dir is a relocator, not an argument — it moves the record that settles a round",
+    note: "the receipt dir is a relocator, not an argument — it moves the record that settles a round",
   },
   {
     round: 8,
@@ -433,35 +433,35 @@ const CORPUS = [
     via: "bash",
     chain: `echo '{"query":"x","areas":["finding-cases","events"]}' > ~/.openviking/recall-hint?/pr-5249.json`,
     outcome: null,
-    note: "S8b review: a pathname glob in the redirection target — bash expands it onto the existing hint",
+    note: "a pathname glob in the redirection target — bash expands it onto the existing hint",
   },
   {
     round: 10,
     via: "bash",
     chain: `echo '{"uris":[]}' > /opt/quickreview/pihome/.openviking/retired-uri[s].json`,
     outcome: null,
-    note: "S8b review: a bracket glob onto the retired list",
+    note: "a bracket glob onto the retired list",
   },
   {
     round: 10,
     via: "bash",
     chain: `printf x > ~/.openviking/recall-hint{s..s}/pr-5249.json`,
     outcome: null,
-    note: "S8b review: a one-element sequence brace is ONE word, so it is no 'ambiguous redirect'",
+    note: "a one-element sequence brace is ONE word, so it is no 'ambiguous redirect'",
   },
   {
     round: 10,
     via: "bash",
     chain: `printf '{"uris":[]}'>~/.openviking/retired-uris.json`,
     outcome: null,
-    note: "S8b review: an operator glued to the word before it — no token the whitespace scan knew",
+    note: "an operator glued to the word before it — no token the whitespace scan knew",
   },
   {
     round: 10,
     via: "bash",
     chain: `git log -1 --format='format:{"query":"x","areas":["events"]}' --output="$HOME/.openviking/recall-hints/pr-5249.json"`,
     outcome: null,
-    note: "S8b review: a read verb's own --output writes arbitrary text — no redirection at all",
+    note: "a read verb's own --output writes arbitrary text — no redirection at all",
   },
   {
     round: 10,
@@ -469,7 +469,7 @@ const CORPUS = [
     chain:
       "git show HEAD:hint.json --output=/opt/quickreview/pihome/.openviking/recall-hints/pr-5249.json",
     outcome: null,
-    note: "S8b review: --output on a committed blob — a PR under review can carry the hint's bytes",
+    note: "--output on a committed blob — a PR under review can carry the hint's bytes",
   },
   {
     round: 10,
@@ -533,7 +533,7 @@ const INDIRECTION_CHAIN = "T=.git/config; cat payload >> $T";
 /** Its twin onto the policy surface — same shape, same answer: layer 4. */
 const POLICY_INDIRECTION_CHAIN = "T=config.toml; cat payload > $T";
 
-describe("— the four proven bypasses, replayed against the COMPILED guard", () => {
+describe("the four proven bypasses, replayed against the COMPILED guard", () => {
   // The container runs `dist/`, not `extensions/*.ts`, so a source fix must be
   // exercised in its compiled form. `npm run build` first — when dist is
   // absent the probe says so loudly instead of passing vacuously.
@@ -579,7 +579,7 @@ describe("— the four proven bypasses, replayed against the COMPILED guard", ()
   });
 });
 
-describe("— the layer that was NOT told about them", () => {
+describe("the layer that was NOT told about them", () => {
   // The ungated-review audit never sees a command. It is handed what GitHub
   // reports and what the daemon recorded, and asked whether they agree. Every
   // chain in the corpus whose outcome is a review — directly, or through the
@@ -782,7 +782,7 @@ describe("— the layer that was NOT told about them", () => {
   });
 });
 
-describe("— the post-hoc audit is no longer blind to the corpus", () => {
+describe("the post-hoc audit is not blind to the corpus", () => {
   const bashLine = (command: string): string =>
     JSON.stringify({
       type: "message",
@@ -967,7 +967,7 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
   });
 });
 
-describe("— the write class that no command string can show (round 2)", () => {
+describe("the write class that no command string can show", () => {
   const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 
   it("the guard cannot see the indirection chain, and that is not a bug to patch", () => {
@@ -1398,7 +1398,7 @@ describe("— the write class that no command string can show (round 2)", () => 
 // extensions/, the seeds, ~14 MB — so it is async, yielding a loop turn after
 // every file, and its value must equal the synchronous hash bit for bit: a
 // baseline taken before a deploy is compared with a re-check taken after it.
-describe("H2 — the integrity fingerprint, off the event loop", () => {
+describe("the integrity fingerprint, off the event loop", () => {
   // The synchronous reference hash, verbatim (src/execboundary.ts at
   // 75c9aa50), over a synchronous fs.
   const oldErrno = (err: unknown): string | undefined => {
@@ -1532,7 +1532,7 @@ describe("H2 — the integrity fingerprint, off the event loop", () => {
   });
 });
 
-describe("— the audit no longer fires on the reads that ARE the job", () => {
+describe("the audit does not fire on the reads that ARE the job", () => {
   const bashLine = (command: string): string =>
     JSON.stringify({
       type: "message",
@@ -1599,7 +1599,7 @@ describe("— the audit no longer fires on the reads that ARE the job", () => {
   });
 });
 
-describe("— the config-scope pin, as the daemon builds it", () => {
+describe("the config-scope pin, as the daemon builds it", () => {
   it("names the file instead of searching for it, and does not throw the credential helper away", () => {
     const pins = sessionGitConfigPins("/opt/quickreview/pihome");
     expect(pins).toEqual({

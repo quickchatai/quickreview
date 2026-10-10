@@ -287,7 +287,7 @@ describe("a promoted finding still becomes fixed (its ticket closes)", () => {
   });
 });
 
-describe("a store written before the dismissal was sticky", () => {
+describe("a legacy store row: a finding fixed from dismissed", () => {
   it("reads a finding fixed FROM dismissed back as dismissed, the fix kept as the audit", () => {
     const st = store();
     st.report([reported(OLD)], S("r1", "2026-09-30T10:00:00Z"));
