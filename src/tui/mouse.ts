@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder";
+
 // SGR mouse support: full pointer navigation.
 // The terminal reports \x1b[<b;x;yM (press) / m (release); we decode presses,
 // wheel steps, and hit-test them against the zones the renderer declared.
@@ -50,12 +52,17 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
  * column or the pi pane holds the keyboard those bytes are typed into pi.
  * Only an unfinished `\x1b[<…` is held back: a bare ESC at the end of a
  * chunk is the Esc key and must go through now.
+ *
+ * A read can split a multi-byte UTF-8 character the same way. Decoded per
+ * chunk, each half becomes U+FFFD and the character is lost for good, so the
+ * unfinished bytes of a character wait for the read that completes it.
  */
 export class MouseDecoder {
   private carry = "";
+  private readonly utf8 = new StringDecoder("utf8");
 
   feed(buf: Buffer): { events: MouseEvent[]; rest: Buffer } {
-    let s = this.carry + buf.toString("utf8");
+    let s = this.carry + this.utf8.write(buf);
     this.carry = "";
     const tail = /\x1b\[<[\d;]*$/.exec(s);
     // A real report is at most ~20 bytes; anything longer is not one, and is

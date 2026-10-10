@@ -93,6 +93,26 @@ describe("MouseDecoder — a report split across two reads", () => {
     expect(r.events).toEqual([{ kind: "click", x: 3, y: 4 }]);
     expect(r.rest.toString()).toBe("jk");
   });
+
+  it("keeps a UTF-8 character split across two reads whole", () => {
+    const d = new MouseDecoder();
+    const a = d.feed(Buffer.from([0x61, 0xc3]));
+    expect(a.rest.toString("utf8")).toBe("a");
+    const b = d.feed(Buffer.from([0xa9, 0x62]));
+    expect(b.rest.toString("utf8")).toBe("éb");
+  });
+
+  it("keeps a split character beside a split mouse report", () => {
+    const d = new MouseDecoder();
+    const a = d.feed(Buffer.concat([Buffer.from("x\x1b[<0;3;4M"), Buffer.from([0xe2, 0x82])]));
+    expect(a.events).toEqual([{ kind: "click", x: 3, y: 4 }]);
+    expect(a.rest.toString("utf8")).toBe("x");
+    const b = d.feed(Buffer.concat([Buffer.from([0xac]), Buffer.from("\x1b[<0;5")]));
+    expect(b.rest.toString("utf8")).toBe("€");
+    const c = d.feed(Buffer.from(";6M"));
+    expect(c.events).toEqual([{ kind: "click", x: 5, y: 6 }]);
+    expect(c.rest.length).toBe(0);
+  });
 });
 
 describe("cleanCopiedBlock — a block of screen made into text", () => {
