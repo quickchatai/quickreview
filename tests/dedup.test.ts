@@ -131,6 +131,33 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     expect((record as { comments_posted: number }).comments_posted).toBe(2);
     expect(input.findings[0]!.disposition).toBe("posted"); // input not mutated
   });
+  it("a lead later merged into a stronger one hands on every site it absorbed", () => {
+    const entry = (id: string, posted_as: string, severity: string, line: number) => ({
+      id,
+      disposition: "posted",
+      posted_as,
+      severity,
+      path: "a.ts",
+      line,
+      group: `G-${id}`,
+      title: "`retry` misbehaves",
+      body: `${id} body`,
+    });
+    const { record, merges } = postCheckRecord({
+      findings: [
+        entry("Q", "question", "P2", 10),
+        entry("N", "nit", "P3", 11),
+        entry("B", "blocker", "P1", 12),
+      ],
+    });
+    expect(merges).toEqual([
+      { follower: "N", lead: "Q", path: "a.ts", line: 11 },
+      { follower: "Q", lead: "B", path: "a.ts", line: 10 },
+    ]);
+    const f = (record as { findings: Array<Record<string, unknown>> }).findings;
+    expect(f[2]).toMatchObject({ disposition: "posted" });
+    expect(f[2]!.body).toBe("B body\n\nAlso at `a.ts:10`.\n\nAlso at `a.ts:11`.");
+  });
   it("is a no-op (same object) when nothing merges", () => {
     const r = {
       findings: [

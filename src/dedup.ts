@@ -404,6 +404,10 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
     );
   const ids = posted.map((x) => identifiersOf(`${s(x.e.title)}\n${s(x.e.body)}\n${s(x.e.reason)}`));
   const gone = new Set<number>();
+  // Lines each posted entry carries as a lead: its own, then every follower's
+  // (and that follower's own absorbed lines) — so a lead later merged into a
+  // stronger one hands all of them on, and the surviving comment names every site.
+  const sites = posted.map((x) => [lineOf(x.e.line)!]);
   const merges: PostCheckMerge[] = [];
   for (let a = 0; a < posted.length; a++) {
     if (gone.has(a)) continue;
@@ -421,8 +425,9 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       if (!distinctGroups(A, B)) continue;
       // The higher severity leads; equal → the earlier entry.
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];
+      const leadIdx = folIdx === a ? b : a;
       gone.add(folIdx);
-      const leadId = s(lead.id) || `#${posted[folIdx === a ? b : a]!.i + 1}`;
+      const leadId = s(lead.id) || `#${posted[leadIdx]!.i + 1}`;
       const folId = s(fol.id) || `#${posted[folIdx]!.i + 1}`;
       fol.withheld_as = fol.posted_as;
       delete fol.posted_as;
@@ -432,8 +437,11 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       fol.reason =
         `Merged by the post-check into ${leadId}: same file, anchors within ${POST_CHECK_LINES} lines, a shared identifier. ${s(fol.reason)}`.trim();
       const folLine = lineOf(fol.line)!;
-      if (folLine !== lineOf(lead.line)) {
-        const site = `\`${s(fol.path)}:${folLine}\``;
+      const leadLine = lineOf(lead.line)!;
+      for (const line of sites[folIdx]!) {
+        if (line === leadLine || sites[leadIdx]!.includes(line)) continue;
+        sites[leadIdx]!.push(line);
+        const site = `\`${s(fol.path)}:${line}\``;
         const body = s(lead.body);
         if (body && !body.includes(site)) lead.body = `${body}\n\nAlso at ${site}.`;
       }
