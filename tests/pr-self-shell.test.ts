@@ -65,8 +65,12 @@ beforeEach(async () => {
       return;
     }
     if (req.url?.includes("/pulls/5180/reviews")) {
+      // Paged as GitHub pages it: per_page rows of page N, oldest first.
+      const q = new URL(req.url, "http://stub").searchParams;
+      const per = Number(q.get("per_page") ?? 30);
+      const page = Number(q.get("page") ?? 1);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(reviews));
+      res.end(JSON.stringify(reviews.slice((page - 1) * per, page * per)));
       return;
     }
     if (req.url?.endsWith("/pulls/5180")) {
@@ -152,6 +156,28 @@ describe("scripts/pr-self.sh — reviews", () => {
     expect(res.out).not.toContain("mhale");
     expect(res.out).not.toContain("[1]");
     expect(res.out).not.toContain("[3]");
+    expect(new Set(methodsSeen)).toEqual(new Set(["GET"]));
+  });
+
+  it("reads every page: the bot's latest review past row 100 is listed", async () => {
+    reviews = Array.from({ length: 150 }, (_, i) => ({
+      id: i + 1,
+      user: { login: "mhale" },
+      state: "COMMENTED",
+      commit_id: HEAD,
+    }));
+    reviews.push({
+      id: 151,
+      user: { login: "example-review[bot]" },
+      state: "APPROVED",
+      commit_id: HEAD,
+      submitted_at: "2026-08-20T10:00:00Z",
+      body: "Looks good.",
+    });
+    const res = await run(["5180", "reviews"]);
+    expect(res.ok).toBe(true);
+    expect(res.out).toContain(`[151] APPROVED @ ${HEAD} (2026-08-20T10:00:00Z) Looks good.`);
+    expect(res.out).not.toContain("no reviews posted");
     expect(new Set(methodsSeen)).toEqual(new Set(["GET"]));
   });
 

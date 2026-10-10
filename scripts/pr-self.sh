@@ -74,7 +74,8 @@ REPO="$(cfg github repo)"
 TOKEN="$("$ROOT/scripts/mint-token.sh" 2>/dev/null || true)"
 
 OUT="$(mktemp)"
-trap 'rm -f "$OUT"' EXIT
+ALL="$(mktemp)"
+trap 'rm -f "$OUT" "$ALL"' EXIT
 
 get() { # get <path>  → body in $OUT, dies on non-200. GET only, ever.
   local status
@@ -95,8 +96,25 @@ case "$SUB" in
   reviews)
     BOT="$(cfg github bot_login)"
     [[ -n "$BOT" ]] || die "config.toml: [github].bot_login missing"
-    get "/repos/$REPO/pulls/$PR/reviews?per_page=100"
-    python3 - "$OUT" "$BOT" "$PR" <<'PY'
+    # Every page, as guards.sh and src/github.ts listReviews read them: reviews
+    # are oldest-first, so on a long PR the bot's latest reviews are exactly
+    # what a first-page read misses. Up to 30 pages; a short page ends it. A
+    # page that is not an array is an error, never an empty page.
+    echo '[]' >"$ALL"
+    for ((page = 1; page <= 30; page++)); do
+      get "/repos/$REPO/pulls/$PR/reviews?per_page=100&page=$page"
+      n="$(python3 -c '
+import json, sys
+acc = json.load(open(sys.argv[1]))
+rows = json.load(open(sys.argv[2]))
+if not isinstance(rows, list):
+    raise SystemExit("reviews page is not a list")
+acc += rows
+json.dump(acc, open(sys.argv[1], "w"))
+print(len(rows))' "$ALL" "$OUT")" || die "reviews page $page unreadable"
+      if ((n < 100)); then break; fi
+    done
+    python3 - "$ALL" "$BOT" "$PR" <<'PY'
 import json, sys
 reviews = json.load(open(sys.argv[1]))
 bot, pr = sys.argv[2], sys.argv[3]
