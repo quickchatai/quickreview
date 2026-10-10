@@ -213,8 +213,8 @@ FINAL_IDS = {  # bench/aacr/final/arms.txt name -> arm id
     "PR-Agent": "pragent-g61",
 }
 SOL_IDS = {  # bench/aacr/final/arms-gpt6sol.txt name -> arm id
-    "quickreviewd default": "quickreview-default-sol",
-    "quickreviewd low": "quickreview-low-sol",
+    "QuickReview default": "quickreview-default-sol",
+    "QuickReview low": "quickreview-low-sol",
     "open-code-review": "ocr-medium-sol",
     "Codex CLI": "codex-medium-sol",
     "OpenCode": "opencode-bridge-sol",
@@ -254,7 +254,7 @@ def aacr_arms() -> list[dict]:
         add(FINAL_IDS[name], name, runs, "final comparison (best-shot, gpt-6.1-sol)",
             ["benchmark: tab:final, tab:ci, tab:grades, tab:lang, tab:aacr, tab:costfinal, tab:selection"])
     for name, runs in read_arms_file(os.path.join(HERE, "final", "arms-gpt6sol.txt")):
-        add(SOL_IDS[name], scrub(name).replace("quickreview", "QuickReview"), runs,
+        add(SOL_IDS[name], name, runs,
             "earlier study (as shipped, gpt-6-sol; two judges)",
             ["benchmark: tab:sol-summary, tab:ci-sol, tab:grades-sol, tab:persets, tab:persets2"])
     add("quickreview-default-sol-rerun", "QuickReview default, gpt-6-sol, current build (9106a64)", _sets("v2-default"),

@@ -10,7 +10,8 @@
 //   3. defect_summary counts a defect with no verdict row as missed and a
 //      partial find as 1/2;
 //   4. qodo_effective reads the Qodo judge's append-only cache as its scorer
-//      does: one pass-1 judgement per PR and tool, a retry's success winning.
+//      does: one pass-1 judgement per PR and tool, a retry's success winning;
+//   5. aacr_arms resolves every arm name the committed arms files list.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -188,5 +189,21 @@ describe("hf_export.qodo_effective", () => {
       ["a", "y", { tries: 1 }],
       ["b", "x", { error: "second" }],
     ]);
+  });
+});
+
+describe("hf_export.aacr_arms", () => {
+  it("maps every name in the committed arms files to an arm id", () => {
+    const r = py(
+      "import os\n" +
+        "names = lambda f: [n for n, _ in h.read_arms_file(os.path.join(h.HERE, 'final', f))]\n" +
+        "print(json.dumps({'final': [n for n in names('arms.txt') if n not in h.FINAL_IDS],\n" +
+        "  'sol': [n for n in names('arms-gpt6sol.txt') if n not in h.SOL_IDS],\n" +
+        "  'ids': [a['arm_id'] for a in h.aacr_arms()]}))",
+    ) as { final: string[]; sol: string[]; ids: string[] };
+    expect(r.final).toEqual([]);
+    expect(r.sol).toEqual([]);
+    expect(r.ids).toContain("quickreview-default-sol");
+    expect(r.ids).toContain("quickreview-low-sol");
   });
 });
