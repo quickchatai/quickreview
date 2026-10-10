@@ -665,6 +665,14 @@ describe("degraded modes stay legal and loud", () => {
     expect(engine.choices()[MEMORY_CHOICE_KEY]).toBe("configure");
     expect(memoryEnabled()).toBe(true);
     expect(later.checks.some((c) => /DECLINED/.test(c.detail))).toBe(false);
+
+    // Verify follows the CURRENT choice, not the merged-in flag of the
+    // earlier decline: memory is configured and on, so verify is green.
+    expect(later.ok).toBe(true);
+    const verified = await engine.verifyAll();
+    const row = verified.results.find((r) => r.id === MEMORY_STEP_ID)!;
+    expect(row.failures.join(" ")).not.toMatch(/memory was declined/);
+    expect(row.ok).toBe(true);
   });
 
   it("a declined install whose config says ON again is RED on verify — the daemon would page about it", async () => {

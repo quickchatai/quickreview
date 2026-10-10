@@ -892,7 +892,11 @@ export function memoryStep(opts: MemoryStepOptions = {}): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      if (ctx.choices[MEMORY_CHOICE_KEY] === "declined" || ctx.data.declined === true) {
+      // The recorded choice is authoritative: a run's data is merged into the
+      // step record, so an earlier decline's `declined` flag outlives a later
+      // configure. The flag counts only when no choice is recorded.
+      const recorded = ctx.choices[MEMORY_CHOICE_KEY];
+      if (recorded === "declined" || (recorded === undefined && ctx.data.declined === true)) {
         const declined = [...DECLINED_CHECKS, switchStillOff(ctx)];
         return { ok: declined.every((c) => c.ok), checks: declined };
       }
