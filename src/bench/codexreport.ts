@@ -37,7 +37,7 @@ export function renderCodexReport(set: CaseSet, outDir: string, cases: BenchCase
     `- Dataset: AACR-Bench v1.0 (\`${set.dataset.commit.slice(0, 7)}\`), ${cases.length} PRs, ${cases.reduce((a, c) => a + c.references, 0)} reference comments`,
   );
   L.push(
-    `- Reviewer: Codex CLI ${String(run["codex_version"] ?? "?")}, run by the AACR harness's own reviewers/codex.py: \`codex --sandbox workspace-write exec review --json --skip-git-repo-check "/review <base>...<head> (<report-tool instructions>)"\`, findings through its \`report\` MCP tool, timeout ${String(run["timeout_min"] ?? "?")} min (no PR title/description — the harness passes none)`,
+    `- Reviewer: Codex CLI ${String(run["codex_version"] ?? "?")}, run by the AACR harness's own reviewers/codex.py: \`codex --sandbox workspace-write exec review --json --skip-git-repo-check "/review <base>...<head> (<report-tool instructions>)"\`, findings through its \`report\` MCP tool, timeout ${String(run["timeout_min"] ?? "?")} min; ${run["pr_text"] === true ? "PR title/description appended to the /review instructions (the equal-inputs switch)" : "no PR title/description (the harness passes none)"}`,
   );
   L.push(
     `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — Codex's native ChatGPT login (the refresh-disabled token copy)`,

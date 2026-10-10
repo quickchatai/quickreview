@@ -34,7 +34,8 @@ import {
 import { caseCostUsd } from "../src/bench/cost.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { runArmOf } from "../src/bench/ocr.js";
-import type { BenchCase } from "../src/bench/aacr.js";
+import { renderCodexReport } from "../src/bench/codexreport.js";
+import type { BenchCase, CaseSet } from "../src/bench/aacr.js";
 
 const execp = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -340,6 +341,19 @@ describe("the result file: the harness's payload + the OCR-shaped view", () => {
     expect(e["reviewer"]).toBe("codex");
     expect(e["review_output"]).toEqual([]);
     expect((e["review"] as { comments: unknown[] }).comments).toEqual([]);
+  });
+
+  it("the report says whether Codex was given the PR title/description, from run.json", () => {
+    const set = { name: "s", dataset: { commit: "c".repeat(40) } } as unknown as CaseSet;
+    const reviewerLine = () =>
+      renderCodexReport(set, t, [CASE])
+        .split("\n")
+        .find((l) => l.startsWith("- Reviewer:")) ?? "";
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex", pr_text: false }));
+    expect(reviewerLine()).toContain("no PR title/description (the harness passes none)");
+    writeFileSync(join(t, "run.json"), JSON.stringify({ reviewer: "codex", pr_text: true }));
+    expect(reviewerLine()).toContain("PR title/description appended to the /review instructions");
+    expect(reviewerLine()).not.toContain("no PR title/description");
   });
 
   it("a Codex run dir is its own arm: quickreviewd commands refuse it", () => {
