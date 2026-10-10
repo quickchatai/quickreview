@@ -126,6 +126,22 @@ describe("trivial-delta classifier", () => {
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 
+  it("keeps a whitespace change that merges or splits tokens significant", () => {
+    // Both sides squash to `constn=a+++b;`, yet a different variable is incremented.
+    expect(formattingOnly("@@\n-const n = a + ++b;\n+const n = a++ + b;", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-x = a - -b;\n+x = a --b;", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-return value;\n+returnvalue;", "src/x.ts")).toBe(false);
+    // A line break is a token boundary too.
+    expect(formattingOnly("@@\n-return\n-value;\n+returnvalue;", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-    x = a + ++b\n+    x = a++ + b", "app/x.py")).toBe(false);
+    expect(
+      digitsOnly("@@\n-n = a + ++b  # 0042_x\n+n = a++ + b  # 0043_x", "app/migrations/0043_x.py"),
+    ).toBe(false);
+    // …while re-spacing that keeps every token is still formatting.
+    expect(formattingOnly("@@\n-const n=a+b;\n+const  n = a + b;", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-return f(a,b);\n+return f(\n+  a,\n+  b\n+);", "src/x.ts")).toBe(true);
+  });
+
   it("does not call a reordering formatting", () => {
     expect(formattingOnly("@@\n-a()\n-b()\n+b()\n+a()")).toBe(false);
   });

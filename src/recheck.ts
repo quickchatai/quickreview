@@ -219,19 +219,69 @@ function slashSpans(lines: string[]): string {
     .join("");
 }
 
+/** The class of a character for token joining: two characters of one class
+ * that whitespace separates would read as ONE token once it is dropped —
+ * `const n` → `constn`, `a + ++b` → `a+++b` (the same as `a++ + b`). Null for
+ * a character no neighbour joins with (brackets, separators, quotes). */
+function joinClass(ch: string): "word" | "op" | null {
+  if (/[\w$]/.test(ch) || ch.charCodeAt(0) > 127) return "word";
+  if (/[+\-*/%&|^!~<>=?:.@#]/.test(ch)) return "op";
+  return null;
+}
+
+/**
+ * The token-seam form of a side of a patch: whitespace outside quoted
+ * literals is dropped EXCEPT where it separates two characters of one join
+ * class, where it becomes a single space — a line break counts as
+ * whitespace. Dropping that whitespace would merge two tokens into one
+ * (`a + ++b` and `a++ + b` both squash to `a+++b`), so whether it is there is
+ * content. Compared beside `squash`, this form can only make a delta less
+ * trivial, never more.
+ */
+function tokenSeams(lines: string[]): string {
+  let out = "";
+  let gap = false;
+  const push = (text: string): void => {
+    if (text === "") return;
+    const prev = out.slice(-1);
+    if (gap && prev !== "") {
+      const cls = joinClass(prev);
+      if (cls !== null && cls === joinClass(text.charAt(0))) out += " ";
+    }
+    out += text;
+    gap = false;
+  };
+  for (const line of lines) {
+    gap = true;
+    line.split(QUOTED).forEach((part, i) => {
+      if (i % 2 === 1) return push(part);
+      part.split(/(\s+)/).forEach((chunk, k) => {
+        if (k % 2 === 1) gap = true;
+        else push(chunk);
+      });
+    });
+  }
+  return out;
+}
+
 /**
  * Whitespace-only change: the added and removed text are identical once
  * insignificant whitespace is dropped (see `squash` — never inside a quoted
  * literal, never leading indentation of a whitespace-significant language),
  * and no line's whitespace changed between its first and last `/` (see
- * `slashSpans` — a regex literal's whitespace is content).
+ * `slashSpans` — a regex literal's whitespace is content), and no whitespace
+ * that separates two tokens appeared or vanished (see `tokenSeams`).
  * Concatenation (not a per-line set) is the comparison, so a re-indent or a
  * re-flow passes while a reordering of real lines does not.
  */
 export function formattingOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
   if (added.length === 0 && removed.length === 0) return false;
-  return squash(added, path) === squash(removed, path) && slashSpans(added) === slashSpans(removed);
+  return (
+    squash(added, path) === squash(removed, path) &&
+    slashSpans(added) === slashSpans(removed) &&
+    tokenSeams(added) === tokenSeams(removed)
+  );
 }
 
 /** Same text once every MIGRATION-NUMBER run is masked — the renumber's
@@ -244,7 +294,12 @@ export function digitsOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
   const mask = (lines: string[]): string => squash(lines, path).replace(/\d+(?=_)/g, "#");
   const maskSpans = (lines: string[]): string => slashSpans(lines).replace(/\d+(?=_)/g, "#");
-  return mask(added) === mask(removed) && maskSpans(added) === maskSpans(removed);
+  const maskSeams = (lines: string[]): string => tokenSeams(lines).replace(/\d+(?=_)/g, "#");
+  return (
+    mask(added) === mask(removed) &&
+    maskSpans(added) === maskSpans(removed) &&
+    maskSeams(added) === maskSeams(removed)
+  );
 }
 
 /** One release-version line and nothing else on it: `"version": "1.2.3",`
