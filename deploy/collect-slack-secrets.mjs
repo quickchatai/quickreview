@@ -193,13 +193,23 @@ export function renderSlackValues(values) {
   return lines.join("\n");
 }
 
-/** Read back the [slack] scalars + users map from config.toml text (no TOML dep). */
+/**
+ * Read back the [slack] scalars + users map from config.toml text (no TOML dep).
+ * `legacy_owner_slack_id` is the owner's Slack id resolved as the daemon resolves it:
+ * `[owner] slack_id` when set, else the legacy `[slack] legacy_owner_slack_id`.
+ * `owner_id_conflict` is true when both are set and differ — a config the
+ * daemon refuses to load.
+ */
 export function readSlackValues(text) {
   const section = sliceSection(String(text ?? ""), "[slack]");
-  const scalar = (key) => {
-    const m = section.body.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, "m"));
+  const ownerSection = sliceSection(String(text ?? ""), "[owner]");
+  const scalarIn = (body, key) => {
+    const m = body.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, "m"));
     return m ? m[1] : "";
   };
+  const scalar = (key) => scalarIn(section.body, key);
+  const ownerId = scalarIn(ownerSection.body, "slack_id").trim();
+  const legacyId = scalar("legacy_owner_slack_id").trim();
   const enabledM = section.body.match(/^\s*enabled\s*=\s*(true|false)/m);
   const usersSection = sliceSection(String(text ?? ""), "[slack.users]");
   const users = {};
@@ -211,7 +221,8 @@ export function readSlackValues(text) {
     enabled: enabledM ? enabledM[1] === "true" : false,
     channel: scalar("channel"),
     channel_kind: scalar("channel_kind") || "public",
-    legacy_owner_slack_id: scalar("legacy_owner_slack_id"),
+    legacy_owner_slack_id: ownerId || legacyId,
+    owner_id_conflict: ownerId !== "" && legacyId !== "" && ownerId !== legacyId,
     users,
   };
 }
@@ -269,6 +280,18 @@ export function patchConfigToml(text, values) {
       out[i] = replaceScalar(out[i], "channel_kind", values.channel_kind);
     if (values.legacy_owner_slack_id !== undefined) {
       out[i] = replaceScalar(out[i], "legacy_owner_slack_id", values.legacy_owner_slack_id);
+    }
+  }
+
+  // A set `[owner] slack_id` wins over the legacy key at load, and the two
+  // differing is a load error — so a set canonical id follows the same value.
+  const owner = sliceSection(src, "[owner]");
+  if (String(values.legacy_owner_slack_id ?? "").trim() !== "" && owner.start !== -1) {
+    for (let i = owner.start + 1; i < owner.end; i++) {
+      const m = out[i].match(/^\s*slack_id\s*=\s*"([^"]*)"/);
+      if (m && m[1].trim() !== "") {
+        out[i] = replaceScalar(out[i], "slack_id", values.legacy_owner_slack_id);
+      }
     }
   }
 
@@ -403,6 +426,11 @@ export function finalChecks(state) {
       ok: id !== "" && Object.prototype.hasOwnProperty.call(users, id),
       label: "legacy_owner_slack_id is a key in [slack.users]",
       hint: "boot fails otherwise — it is the only source of own-PR rights",
+    },
+    {
+      ok: state.owner_id_conflict !== true,
+      label: "[owner] slack_id and legacy [slack] legacy_owner_slack_id agree",
+      hint: "boot fails otherwise — set `[owner] slack_id` only and empty the legacy key",
     },
     {
       ok: state.botTokenOk === true,

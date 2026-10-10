@@ -213,6 +213,55 @@ describe("readSlackValues", () => {
     });
     expect(v.users).toEqual({});
   });
+
+  // The canonical [owner] slack_id with the legacy alias empty is a config the
+  // daemon accepts; the wizard resolves the owner's id the same way.
+  const canonical = shipped.replace(/^slack_id = ""/m, 'slack_id = "U0OWNER"');
+
+  it("reads the owner's id from [owner] slack_id when the legacy alias is empty", () => {
+    const v = wiz.readSlackValues(canonical);
+    expect(v.legacy_owner_slack_id).toBe("U0OWNER");
+    expect(v.owner_id_conflict).toBe(false);
+  });
+
+  it("falls back to the legacy alias when [owner] slack_id is empty", () => {
+    const legacy = shipped.replace(/^legacy_owner_slack_id = ""/m, 'legacy_owner_slack_id = "U0LEGACY"');
+    expect(wiz.readSlackValues(legacy).legacy_owner_slack_id).toBe("U0LEGACY");
+  });
+
+  it("flags a conflicting pair, which the daemon refuses", () => {
+    const both = canonical.replace(/^legacy_owner_slack_id = ""/m, 'legacy_owner_slack_id = "U0OTHER"');
+    expect(() => parseConfig(both)).toThrow(/both set and differ/);
+    const v = wiz.readSlackValues(both);
+    expect(v.legacy_owner_slack_id).toBe("U0OWNER");
+    expect(v.owner_id_conflict).toBe(true);
+  });
+
+  it("an owner-configured install reads ready, and a re-patch keeps the daemon loading it", () => {
+    const users = new Map([["U0OWNER", "mhale"]]);
+    // only the canonical id is set: the legacy alias stays empty
+    const configured: string = wiz.patchConfigToml(canonical, {
+      channel: PATCH.channel,
+      channel_kind: PATCH.channel_kind,
+      users,
+    });
+    expect(configured).toMatch(/^legacy_owner_slack_id = ""/m);
+    const v = wiz.readSlackValues(configured);
+    const checks = wiz.finalChecks({ ...v, botTokenOk: true, appTokenOk: true });
+    expect(checks.every((c: { ok: boolean }) => c.ok)).toBe(true);
+    expect(parseConfig(configured.replace(/^enabled = false/m, "enabled = true")).owner.slack_id).toBe(
+      "U0OWNER",
+    );
+
+    // A changed id follows into the set canonical key, so the pair never differs.
+    const changed: string = wiz.patchConfigToml(configured, {
+      legacy_owner_slack_id: "U0NEWID",
+      users: new Map([["U0NEWID", "mhale"]]),
+    });
+    const cfg = parseConfig(changed.replace(/^enabled = false/m, "enabled = true"));
+    expect(cfg.owner.slack_id).toBe("U0NEWID");
+    expect(wiz.readSlackValues(changed).owner_id_conflict).toBe(false);
+  });
 });
 
 describe("readSecretsDir", () => {
@@ -456,5 +505,6 @@ describe("finalChecks", () => {
     expect(fails({ botTokenOk: false })).toBe(1);
     expect(fails({ appTokenOk: false })).toBe(1);
     expect(fails({ legacy_owner_slack_id: "" })).toBe(2); // empty AND not a key
+    expect(fails({ owner_id_conflict: true })).toBe(1);
   });
 });
