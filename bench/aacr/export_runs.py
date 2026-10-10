@@ -1045,8 +1045,11 @@ def regrep_stream(cmd: list[str]) -> tuple[collections.Counter, list]:
                 c[k] += n
                 if k in ("sk- key-shaped", "gh?_ token-shaped", "Fernet blob (gAAAAA, 100+)") and len(hits) < 20:
                     hits.append((k, m[:24].decode(errors="replace") + "..."))
-    g.wait()
-    z.wait()
+    grc, zrc = g.wait(), z.wait()
+    if zrc != 0 or grc not in (0, 1):
+        # grep exits 1 for "no match"; anything else, or a decompressor
+        # failure, means the stream was not scanned whole.
+        raise SystemExit(f"regrep failed for {cmd[-1]}: {cmd[0]} exit {zrc}, grep exit {grc}")
     return c, hits
 
 
