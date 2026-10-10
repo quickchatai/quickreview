@@ -600,6 +600,18 @@ describe("validity tiers (owner ruling 2026-09-30: the scan validator is the ske
     expect(text).toContain("✔ confirmed — the nightly job passes an empty batch");
   });
 
+  it("tier headings count against the list's row budget, so a short terminal still shows the selected finding's detail", () => {
+    const { app } = rig({ findings: tiered });
+    for (const rows of [16, 17, 18, 20]) {
+      const text = app.hooks.tabs
+        .scan!.screen(app, COLS, rows)
+        .lines.map(stripAnsi)
+        .join("\n");
+      expect(text, `rows=${rows}`).toContain("CONFIRMED — the skeptic traced");
+      expect(text, `rows=${rows}`).toContain("P3 data-safety · billing/a.py:88-90");
+    }
+  });
+
   it("a doubtful finding's detail carries the skeptic's word, class and reason; an unjudged one says unknown", async () => {
     const { app, type, screen } = rig({ findings: tiered });
     await driving(app, () => {

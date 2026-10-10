@@ -923,7 +923,20 @@ export function renderScanTab(
                 }),
         },
       ]);
-    const listCap = Math.max(3, Math.floor((bodyRows - 1) * 0.5));
+    // The list's budget is in painted rows — a tier heading costs one as a
+    // finding does — so headings can never eat the selected finding's detail.
+    const listRows = Math.max(3, Math.floor((bodyRows - 1) * 0.5));
+    const paintedRows = (start: number, n: number): number =>
+      v.items
+        .slice(start, start + n)
+        .filter((it, k) => k === 0 || itemValidity(v.items[start + k - 1]!) !== itemValidity(it))
+        .length + Math.min(n, v.items.length - start);
+    let listCap = Math.min(listRows, Math.max(1, v.items.length));
+    while (
+      listCap > 1 &&
+      paintedRows(windowStart(st.item, v.items.length, listCap), listCap) > listRows
+    )
+      listCap--;
     const istart = windowStart(st.item, v.items.length, listCap);
     v.items.slice(istart, istart + listCap).forEach((it, k) => {
       const i = istart + k;
