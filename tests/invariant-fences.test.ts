@@ -39,8 +39,8 @@ interface PinnedFence {
   ft: string;
   /**
    * A ratified reseed of the fenced words, when the marker records one:
-   * `<!-- RATIFIED memory-discipline (reseeded,
-   * 2026-10-07) — … -->`. The citation stays the rule's own ticket (the rule is
+   * `<!-- RATIFIED FT-NNNN <slug> (reseeded FT-NNNN,
+   * YYYY-MM-DD) — … -->`. The citation stays the rule's own ticket (the rule is
    * the same decision); the annotation names the reseed that changed its words,
    * and must match the pin exactly, both ways.
    */

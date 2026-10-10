@@ -21,7 +21,8 @@
 - **Others shell out to git on the way to something else,** each in a scratch
   repo or a scratch config home: `deploy`, `publish-snapshot`,
   `setup-extension`, `scan-tree`, `setup-interview`, `setup-replay`.
-  `publishability` runs `ls-files` on the checkout to list what it lints.
+  `publishability` and `fences-provenance` run `ls-files` on the checkout
+  to list what they lint.
 - **Other subprocesses** are this repo's own shell scripts and CLIs, never a
   network service or a VM. For example, `guards-shell-*.test.ts` runs the
   real posting scripts against a loopback HTTP stub (see "Shell parity").
