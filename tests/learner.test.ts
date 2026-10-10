@@ -1269,6 +1269,42 @@ describe("the curation receipt", () => {
     expect(h.learner.status()).toMatchObject({ not_persisted: 0, unresolved: [], incident: null });
   });
 
+  it("a receipt applied while memory is being read is not overturned by that read", async () => {
+    let gate: Promise<void> | null = null;
+    const h = await offered(
+      harness({
+        lessons: {
+          sweep: async () => {
+            if (gate) await gate;
+            return { entries: [], unread: [] };
+          },
+        },
+      }),
+    );
+    h.learner.applyReceipt({
+      day: "2026-10-07",
+      decisions: [{ candidates: [1, 2], decision: "adopted" }],
+    });
+    h.addMinutes(30);
+    let release!: () => void;
+    gate = new Promise<void>((r) => (release = r));
+    const verifying = h.learner.verify();
+    // During the read: c1 is declined, c2's adoption is receipted again.
+    h.addMinutes(1);
+    h.learner.applyReceipt({
+      day: "2026-10-07",
+      decisions: [
+        { candidates: [1], decision: "declined", reason: "one-off" },
+        { candidates: [2], decision: "adopted" },
+      ],
+    });
+    release();
+    await verifying;
+    expect(h.learner.candidate(1)).toMatchObject({ status: "declined", reason: "one-off" });
+    expect(h.learner.candidate(2)!.status).toBe("adopting");
+    expect(h.wakes).toEqual([]);
+  });
+
   it("memory unhealthy: nothing is read, nothing is concluded", async () => {
     const h = await offered();
     h.learner.applyReceipt({

@@ -1315,12 +1315,16 @@ export class Learner {
     const at = this.ts();
     const db = this.store.db;
     const missingByDay = new Map<string, Array<{ id: number; why: string }>>();
+    // `pending` was read before the memory read awaited: a receipt applied
+    // meanwhile may have settled a candidate or re-dated its adoption, so
+    // every write below holds only against the state it was decided from.
     for (const c of pending) {
       const lessons = cited.get(c.id);
       if (lessons) {
         db.prepare(
           `UPDATE lesson_candidates SET status = 'adopted', lesson_ids = ?, decided_at = COALESCE(decided_at, ?),
-             decided_day = COALESCE(decided_day, receipt_day, ?), updated_at = ? WHERE id = ?`,
+             decided_day = COALESCE(decided_day, receipt_day, ?), updated_at = ?
+           WHERE id = ? AND status IN ('open', 'adopting')`,
         ).run(JSON.stringify(lessons), at, this.today(), at, c.id);
         continue;
       }
@@ -1331,14 +1335,19 @@ export class Learner {
       // Back to the packet, with a fresh expiry clock: the wake promised the
       // next packet, and a candidate first offered days ago must not expire
       // at it.
-      db.prepare(
-        `UPDATE lesson_candidates SET status = 'open', reopened_day = ?, reason = ?, updated_at = ? WHERE id = ?`,
-      ).run(
-        this.today(),
-        `the receipt of ${c.receipt_day} said adopted, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
-        at,
-        c.id,
-      );
+      const reopened = db
+        .prepare(
+          `UPDATE lesson_candidates SET status = 'open', reopened_day = ?, reason = ?, updated_at = ?
+           WHERE id = ? AND status = 'adopting' AND receipt_at IS ?`,
+        )
+        .run(
+          this.today(),
+          `the receipt of ${c.receipt_day} said adopted, but no lesson in experiences/ cites cand:${candidateLabel(c.id)}`,
+          at,
+          c.id,
+          c.receipt_at,
+        );
+      if (reopened.changes === 0) continue;
       const day = c.receipt_day ?? this.today();
       missingByDay.set(day, [
         ...(missingByDay.get(day) ?? []),
