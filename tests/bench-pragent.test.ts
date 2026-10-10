@@ -63,6 +63,7 @@ const FP: PragentFingerprint = {
   pragent_version: "0.46.0",
   model: "gpt-6.1-sol",
   effort: "medium",
+  verbosity: "medium",
   pr_text: true,
   timeout_min: 30,
 };
@@ -724,6 +725,75 @@ describe("the run", () => {
         JSON.parse(readFileSync(join(out, "results", "all", `${CASE.instance_id}.json`), "utf8"))
           .review.comments,
       ).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("--resume drops a result the bridge produced at another text verbosity, and keeps one at the same", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-verbosity-"));
+    try {
+      const src = join(tmp, "src");
+      mkdirSync(src);
+      const jwtPayload = Buffer.from(
+        JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "acc" } }),
+      ).toString("base64url");
+      writeFileSync(
+        join(src, "auth.json"),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: `h.${jwtPayload}.s`,
+            refresh: "R",
+            expires: Date.now() + 5 * 86_400_000,
+          },
+        }),
+      );
+      const out = join(tmp, "out");
+      const summaryFile = join(out, "cases", CASE.instance_id, "case-summary.json");
+      const base = {
+        set: SET,
+        cases: [CASE],
+        outDir: out,
+        root: join(tmp, "root"),
+        store: join(tmp, "store"),
+        authSrc: src,
+        agentDir: join(tmp, "agent"),
+        python: "py",
+        driver: "d",
+        pragentVersion: "0.46.0",
+        bridgeUrl: "http://127.0.0.1:1",
+        model: "gpt-6.1-sol",
+        effort: "medium",
+        verbosity: "low",
+        timeoutMin: 30,
+        prText: true,
+        qcrCommit: "c",
+        keepTree: false,
+        resume: true,
+        readMeta: () => {
+          throw new Error("not prefetched");
+        },
+        log: () => {},
+      };
+      const seed = (verbosity: string) => {
+        mkdirSync(join(out, "cases", CASE.instance_id), { recursive: true });
+        writeFileSync(
+          summaryFile,
+          JSON.stringify({ arm: "pragent", status: "ok", fingerprint: { ...FP, verbosity } }),
+        );
+      };
+      // Reviewed at medium, resumed at low: the result goes.
+      seed("medium");
+      await runPragentReview(base);
+      let s = JSON.parse(readFileSync(summaryFile, "utf8"));
+      expect(s.status).toBe("failed");
+      expect(s.fingerprint.verbosity).toBe("low");
+      // Reviewed at low, resumed at low: the result stays.
+      seed("low");
+      await runPragentReview(base);
+      s = JSON.parse(readFileSync(summaryFile, "utf8"));
+      expect(s.status).toBe("ok");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

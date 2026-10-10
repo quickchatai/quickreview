@@ -342,6 +342,8 @@ export interface PragentFingerprint {
   pragent_version: string;
   model: string;
   effort: string;
+  /** The bridge's text verbosity (its /health); null when it reports none. */
+  verbosity: string | null;
   pr_text: boolean;
   /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
   auth?: "api-key";
@@ -747,6 +749,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
     pragent_version: r.pragentVersion,
     model: r.model,
     effort: r.effort,
+    verbosity: r.verbosity,
     pr_text: r.prText,
     timeout_min: r.timeoutMin,
     ...authFingerprint(),
@@ -765,7 +768,7 @@ export async function runPragentReview(r: PragentReviewRun): Promise<number> {
       continue;
     if (prior)
       r.log(
-        `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/flags — its result is dropped`,
+        `pragent: ${c.instance_id} was reviewed by a different PR-Agent/model/verbosity/flags — its result is dropped`,
       );
     rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
     rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
