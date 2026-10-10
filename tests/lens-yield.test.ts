@@ -106,3 +106,35 @@ print(json.dumps(sorted([sorted(ls), real] for ls, real in out)))`,
     ]);
   });
 });
+
+describe("lens_yield: Martian case identity", () => {
+  it("a PR is read from its own case dir by instance id; an empty review never borrows another PR's case", () => {
+    const runs = mkdtempSync(join(tmpdir(), "ly-runs-"));
+    const run = "r";
+    for (const id of ["acme__app-1@aaaaaaa", "acme__app-2@bbbbbbb"]) {
+      const d = join(runs, run, "cases", id);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "comments.json"), JSON.stringify([{ body: `finding in ${id} widget`, path: "a.py", line: 3 }]));
+    }
+    const res = join(runs, `${run}.martian`, "results", "gpt-6.1-sol");
+    mkdirSync(res, { recursive: true });
+    writeFileSync(
+      join(res, "candidates.json"),
+      JSON.stringify({
+        "https://github.com/acme/app/pull/2": { quickreview: [] },
+        "https://github.com/acme/app/pull/9": { quickreview: [{ text: "finding widget" }] },
+      }),
+    );
+    writeFileSync(join(res, "evaluations.json"), "{}");
+    const audit = join(runs, "audit.json");
+    writeFileSync(audit, "[]");
+    const got = py(
+      `from pathlib import Path
+print(json.dumps([p.name for p, _ in ly.martian_comments(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))]))`,
+      runs,
+      run,
+      audit,
+    );
+    expect(got).toEqual(["acme__app-2@bbbbbbb"]);
+  });
+});

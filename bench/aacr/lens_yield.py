@@ -206,6 +206,18 @@ def toks(s: str) -> set[str]:
     return set(re.findall(r"[a-z0-9_]{3,}", (s or "").lower()))
 
 
+def martian_case(cases: dict, pr_url: str) -> str | None:
+    """The run's case dir for one PR, by identity: the instance id is
+    `<owner>__<repo>-<num>@<head7>` (bench/aacr/ext/martian_set.py). A PR with
+    no case dir, or with more than one, is None — never another PR's case."""
+    owner_repo, _, num = pr_url.removeprefix("https://github.com/").partition("/pull/")
+    if not num.isdigit():
+        return None
+    prefix = f"{owner_repo.replace('/', '__')}-{int(num)}@"
+    hits = [k for k in cases if Path(k).name.startswith(prefix)]
+    return hits[0] if len(hits) == 1 else None
+
+
 def martian_comments(runs: Path, run: str, audit: Path):
     real_golden = set()
     for a in json.load(open(audit)):
@@ -226,8 +238,9 @@ def martian_comments(runs: Path, run: str, audit: Path):
         tp = collections.defaultdict(set)
         for t in e.get("true_positives") or []:
             tp[t["matched_candidate"].strip()].add(t["golden_comment"].strip())
-        allt = toks(" ".join(c["text"] for c in qc))
-        cd = max(cases, key=lambda k: len(allt & set().union(*[x[0] for x in cases[k]] or [set()])))
+        cd = martian_case(cases, pr)
+        if cd is None:
+            continue
         items = cases[cd]
         real_idx = set()
         for c in qc:
