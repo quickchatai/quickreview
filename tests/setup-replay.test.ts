@@ -591,6 +591,51 @@ describe("replay: cost first, subagents, side by side", () => {
     expect(shown).toContain("Only the NEW profile (1)");
   });
 
+  it("a validator that judges nothing fails its case — the side keeps its lenses' candidates, never an empty review", async () => {
+    const calls: Call[] = [];
+    const inner = fakeRunner(calls);
+    const rr = new ReplayRunner({
+      state: stateHomeFs(stateRoot()),
+      clock: () => now,
+      source: {
+        pr: async (n) => ({ ok: true, pr: pr(n) }),
+        open: () => ({ ok: true, tree: tree() }),
+      },
+      sides: (req) =>
+        replaySides(
+          {
+            root: sandbox,
+            env,
+            stateRoot: stateRoot(),
+            state: stateHomeFs(stateRoot()),
+            clock: () => now,
+          },
+          req,
+        ),
+      cases: (agentsDir) => ({
+        run: async (spec, signal, onCost) =>
+          spec.agent.startsWith(`${VALIDATE_PASS}--`)
+            ? { ok: true, output: "I could not finish the validation.", cost_usd: 0.0001 }
+            : inner(agentsDir).run(spec, signal, onCost),
+      }),
+      styleGuide: () => [],
+      concurrency: 2,
+    });
+    const p = previewOf(await rr.preview({ prs: [7], old: "none" }));
+    const run = await ran(rr, p.key);
+    const validations = run.cases.filter((c) => c.kind === "validate");
+    expect(validations.length).toBeGreaterThan(0);
+    for (const v of validations) {
+      expect(v.status).toBe("failed");
+      expect(v.error).toContain("no survivor, NONE, DOUBTED or KILLED");
+      expect(v.killed ?? 0).toBe(0);
+    }
+    const [c] = compareRun(run);
+    expect(c!.complete).toEqual({ old: false, new: false });
+    expect(c!.findings.new.length).toBeGreaterThan(0);
+    expect(c!.findings.new.every((f) => !f.validated)).toBe(true);
+  });
+
   it("stops HARD at the cap: what is in flight is aborted, the rest never starts", async () => {
     const calls: Call[] = [];
     const rr = runner(calls, () => 100); // every case costs far past any estimate
@@ -830,6 +875,11 @@ describe("replay rules", () => {
       ["pass-baseline", "P2", "unverifiable"],
     ]);
     expect([v.kept, v.doubted, v.killed]).toEqual([1, 1, 1]);
+  });
+
+  it("a validator's prose that judges nothing kills nothing", () => {
+    const v = validated("I could not finish the validation.", "/t", [f({}), f({ path: "b.py" })]);
+    expect(v).toMatchObject({ answered: false, findings: [], killed: 0 });
   });
 
   it("reads a unified diff into the files API's shape", () => {

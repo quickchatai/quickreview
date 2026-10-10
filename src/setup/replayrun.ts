@@ -896,6 +896,13 @@ export class ReplayRunner {
       c.none = answer.none;
     } else {
       const v = validated(outcome.output, job.root, candidates);
+      if (!v.answered) {
+        // Prose with no survivor, NONE, DOUBTED or KILLED judged nothing:
+        // the side shows its lenses' candidates, unvalidated.
+        c.status = "failed";
+        c.error = "the validator answered with no survivor, NONE, DOUBTED or KILLED";
+        return spent;
+      }
       c.findings = v.findings;
       c.dropped = v.dropped;
       c.kept = v.kept;
@@ -935,13 +942,21 @@ function planKeyOf(parts: unknown): string {
 /**
  * A validator's answer over `candidates`: its survivors (attributed back to
  * the lens that raised them), the candidates it DOUBTED (kept, marked "may
- * not be valid"), and the rest killed.
+ * not be valid"), and the rest killed — or `answered: false` when the text
+ * judged nothing (no survivor, NONE, DOUBTED or KILLED), which kills nothing.
  */
 export function validated(
   output: string,
   root: string,
   candidates: readonly ReplayFinding[],
-): { findings: ReplayFinding[]; dropped: number; kept: number; doubted: number; killed: number } {
+): {
+  findings: ReplayFinding[];
+  dropped: number;
+  kept: number;
+  doubted: number;
+  killed: number;
+  answered: boolean;
+} {
   const answer = parseValidatorAnswer(output, root);
   const near = (
     a: { path: string; start: number; end: number },
@@ -971,7 +986,8 @@ export function validated(
     dropped: answer.dropped,
     kept,
     doubted,
-    killed: Math.max(0, candidates.length - used.size),
+    killed: answer.answered ? Math.max(0, candidates.length - used.size) : 0,
+    answered: answer.answered,
   };
 }
 
