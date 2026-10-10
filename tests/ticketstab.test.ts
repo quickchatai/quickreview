@@ -186,3 +186,19 @@ describe("the list and the pane", () => {
     }
   });
 });
+
+describe("a short terminal", () => {
+  it("scrolling all the way down brings the body's last line into view", () => {
+    const rig = learningRig({ readTickets: () => [ticket("FT-0302", "open", 20)] });
+    rig.app.tab = "tickets";
+    rig.learning.store.reloadTickets();
+    for (const rows of [9, 10, 11, 12]) {
+      rig.learning.tickets.scroll = 0;
+      screenOf(rig, 120, rows); // the paint sets how far the body can scroll
+      for (let i = 0; i < 20; i++) key(rig, { kind: "down", wheel: true });
+      const screen = screenOf(rig, 120, rows);
+      expect(screen, `rows=${rows}`).toContain("line 19");
+      expect(screen, `rows=${rows}`).not.toContain("more lines");
+    }
+  });
+});

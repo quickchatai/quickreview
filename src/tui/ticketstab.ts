@@ -169,7 +169,11 @@ export function renderTicketsTab(
     ]);
     row([{ text: "" }]);
     const lines = wrap(sanitizeText(selected.body), rightW - 3);
-    const cap = Math.max(4, bodyRows - right.length - 1);
+    // The cap is the rows the pane actually paints, less one for the "more
+    // lines" notice when the body overflows: a cap past the painted rows
+    // stops the scroll before the body's last lines come into view.
+    const room = Math.max(0, bodyRows - right.length);
+    const cap = lines.length > room && room > 1 ? room - 1 : room;
     st.scrollMax = Math.max(0, lines.length - cap);
     const from = Math.min(st.scroll, st.scrollMax);
     for (const line of lines.slice(from, from + cap)) row([{ text: line }]);
