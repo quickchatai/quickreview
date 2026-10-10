@@ -109,10 +109,16 @@ export async function judgeCase(o: JudgeCaseOptions): Promise<CaseJudgement[]> {
     if (o.resume && existsSync(file)) {
       const prior = JSON.parse(readFileSync(file, "utf8")) as CaseJudgement;
       // A round kept on resume must have judged THIS review against THIS
-      // defect-set version (judgedReview);
+      // defect-set version (judgedReview) with THIS judge model — an explicit
+      // `--label` reuses a judge dir across a model change, and a mixed dir
+      // would be scored under the new model's name;
       // a legacy unstamped round is kept on matching ids — re-paying every
       // legacy round on resume would be a silent spend.
-      if (!prior.error && judgedReview(prior, o.review, o.defectSetVersion)) {
+      if (
+        !prior.error &&
+        prior.model === o.pi.model &&
+        judgedReview(prior, o.review, o.defectSetVersion)
+      ) {
         out.push(prior);
         continue;
       }

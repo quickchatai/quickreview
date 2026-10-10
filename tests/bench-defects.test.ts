@@ -547,6 +547,18 @@ describe("the judge session", () => {
     );
     await judgeCase({ ...common, defectSetVersion: "2", rounds: 2, resume: true });
     expect(readFileSync(counter, "utf8").trim()).toBe("9");
+    // The judge model changed under an explicit --label: a round judged by
+    // the old model is re-asked on resume, never mixed into the new model's.
+    writeFileSync(join(dir, "judge", "o__r@1234567.r1.json"), JSON.stringify(again[0]));
+    writeFileSync(
+      join(dir, "judge", "o__r@1234567.r2.json"),
+      JSON.stringify({ ...again[0]!, round: 2 }),
+    );
+    const kept2 = await judgeCase({ ...common, rounds: 2, resume: true });
+    expect(readFileSync(counter, "utf8").trim()).toBe("9");
+    expect(kept2.map((j) => j.error)).toEqual([undefined, undefined]);
+    await judgeCase({ ...common, pi: { ...common.pi, model: "m2" }, rounds: 2, resume: true });
+    expect(readFileSync(counter, "utf8").trim()).toBe("11");
   });
 });
 
