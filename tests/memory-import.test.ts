@@ -191,6 +191,18 @@ describe("importMemory — what crosses", () => {
     expect(dest.entries[0]!.text).toContain("always cite the sha");
   });
 
+  it("each category is written into its layout area, not the round-searched default", async () => {
+    const { dest } = await run();
+    const notes = dest.ops.filter((o): o is Extract<MemoryOp, { op: "note" }> => o.op === "note");
+    const areaOf = (needle: string) => notes.find((o) => o.text.includes(needle))!.category;
+    expect(areaOf("never dismiss an approval")).toBe("preferences");
+    expect(areaOf("merge base")).toBe("experiences");
+    expect(areaOf("guard 2 suppressed")).toBe("events");
+    expect(areaOf("too picky about naming")).toBe("events");
+    // The pinned entry's own `#pinned` header places it; the `pin` op follows.
+    expect(areaOf("always cite the sha")).toBeUndefined();
+  });
+
   it("a #manual entry that is not pinned is imported without a pin", async () => {
     const { report } = await run();
     expect(byExcerpt(report, "never dismiss an approval")!.category).toBe("standing");

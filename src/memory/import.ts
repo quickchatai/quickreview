@@ -55,6 +55,7 @@ import {
   type MemoryStore,
   type MemoryWriteResult,
 } from "./store.js";
+import { EVENTS_AREA, EXPERIENCES_AREA, PREFERENCES_AREA } from "./layout.js";
 
 /** Tag stamped on every imported entry — the TUI's handle on this migration. */
 export const IMPORT_TAG = "imported";
@@ -88,6 +89,20 @@ export type SkipReason =
   | "empty";
 
 export type Classification = { keep: true; category: ImportCategory } | { keep: false; reason: SkipReason };
+
+/**
+ * The memory-layout area each category is written into. The provenance header
+ * leads the entry, so the store cannot read an original `#manual` off it; the
+ * area is named here instead. Pinned entries name none: their header carries
+ * `#pinned`, which places them in the pinned area, and the `pin` op follows.
+ */
+export const IMPORT_AREAS: Readonly<Record<ImportCategory, string | undefined>> = {
+  pinned: undefined,
+  standing: PREFERENCES_AREA,
+  learning: EXPERIENCES_AREA,
+  bug: EVENTS_AREA,
+  feedback: EVENTS_AREA,
+};
 
 const STANDING_TAGS = new Set(["manual"]);
 
@@ -371,7 +386,12 @@ export async function importMemory(opts: ImportOptions): Promise<ImportReport> {
         if (plan.category === "pinned" && !already.pinned) repins.push({ ref: plan.ref, entry: already });
         continue;
       }
-      const res = await applyQuietly(opts.dest, { op: "note", text: plan.text });
+      const area = IMPORT_AREAS[plan.category];
+      const res = await applyQuietly(opts.dest, {
+        op: "note",
+        text: plan.text,
+        ...(area !== undefined ? { category: area } : {}),
+      });
       const record: ImportedRecord = { ...plan.ref, category: plan.category, message: res.message };
       if (res.ok) {
         report.imported.push(record);
