@@ -212,8 +212,11 @@ def main() -> None:
             j = json.loads(ln)
             if "error" not in j["meta"]:
                 done[(j["pr"], j["tool"], j["pass"])] = j
-    todo = [j for j in jobs if (j[0], j[1], j[2]) not in done]
-    print(f"{len(jobs)} judgements ({len(done)} cached, {len(todo)} to ask), {len(tools)} tools", flush=True)
+    # A cached judgement stands only for the comments it judged: a case that
+    # was unfinished at an interim score (judged silent) or whose comments
+    # changed since is asked again.
+    todo = [j for j in jobs if (c := done.get((j[0], j[1], j[2]))) is None or c.get("comments") != j[4]]
+    print(f"{len(jobs)} judgements ({len(jobs) - len(todo)} cached, {len(todo)} to ask), {len(tools)} tools", flush=True)
 
     def run(job):
         pr, t, p, issues, cm = job
