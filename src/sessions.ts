@@ -1713,12 +1713,13 @@ export class PiSessionManager implements SessionHooks {
       }
       const pr = Number(id.slice(3));
       // A closed PR whose pi is still running (archiveAndClose failed to kill
-      // it) keeps its raw tier until the session is gone.
-      let alive = false;
+      // it) keeps its raw tier until the session is gone. A probe that could
+      // not ask tmux proves nothing either way, so it holds like a live one.
+      let alive: boolean;
       try {
         alive = await this.tmux.hasSession(prSessionName(pr));
       } catch {
-        alive = false;
+        alive = true;
       }
       // The plan read the registry once; the probe and earlier deletes have
       // awaited since. A PR reopened and re-triggered in that window is

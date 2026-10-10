@@ -818,6 +818,17 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
       expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: ["pr-7"] });
     });
 
+    it("a liveness probe that could not ask tmux holds the raw tier, never reads it as gone", async () => {
+      const store = new StateStore(":memory:");
+      pr(store, 8, "closed");
+      const { m, removed } = sweeper(store, ["pr-8"]);
+      const probe = vi.spyOn(m.tmux, "hasSession").mockRejectedValueOnce(new Error("spawn EAGAIN"));
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: [], deferred: 1 });
+      expect(removed).toEqual([]);
+      probe.mockRestore();
+      expect(await m.sweepStaleOvSessions()).toMatchObject({ deleted: ["pr-8"] });
+    });
+
     it("a delete that fails is logged and recorded, and waits an hour before the next try", async () => {
       const store = new StateStore(":memory:");
       pr(store, 9, "closed");
