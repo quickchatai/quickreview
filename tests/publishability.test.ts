@@ -416,6 +416,12 @@ const ALLOWLIST: AllowlistEntry[] = [
       "the HF dataset export's scrub rules name the strings they rewrite, and its NOTICE names the copyright holder",
   },
   {
+    path: "tests/fences-provenance.test.ts",
+    tokens: ["owner_legacy"],
+    reason:
+      "the provenance fence names the owner to forbid the name in code comments, and allowlists the legacy wire spellings it must accept",
+  },
+  {
     path: "bench/aacr/export_runs.py",
     tokens: [
       "owner_legacy",
