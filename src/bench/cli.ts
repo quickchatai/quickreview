@@ -493,6 +493,7 @@ async function main(): Promise<number> {
         left_side: collected.comments.filter((x) => x.side === "LEFT").length,
         unparseable: collected.dropped,
         body: collected.body,
+        reanchored: collected.reanchored,
       };
       for (const x of collected.comments)
         s.comments.by_tag[x.tag] = (s.comments.by_tag[x.tag] ?? 0) + 1;

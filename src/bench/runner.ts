@@ -1291,7 +1291,7 @@ export async function reviewCase(
   // wt volume — not in /tmp, a tmpfs charged to the container's memory cap.
   const tmpDir = join(o.root, "wt", `${safe}.tmp`);
   mkdirSync(caseDir, { recursive: true });
-  for (const f of [...Object.values(CASE_FILES), ...POLICED_ORIGINALS])
+  for (const f of [...Object.values(CASE_FILES), ...POLICED_ORIGINALS, HEAD_PATCHES_FILE])
     rmSync(join(caseDir, f), { force: true });
   const started = Date.now();
   const summary: CaseSummary = {
@@ -1319,6 +1319,11 @@ export async function reviewCase(
     rmSync(tmpDir, { recursive: true, force: true });
     mkdirSync(tmpDir, { recursive: true });
     const files = await changedFiles(tree, meta);
+    // The head-side patches, kept per case so a results rebuild re-anchors
+    // LEFT comments exactly as this run does (collectComments).
+    const headPatches: Record<string, string> = {};
+    for (const f of files) if (f.patch !== undefined) headPatches[f.filename] = f.patch;
+    writeFileSync(join(caseDir, HEAD_PATCHES_FILE), JSON.stringify(headPatches) + "\n");
     // Third-party sources, exactly as the daemon's dispatch unpacks them
     // (`[review] dependency_sources`): one cache per run container, on the
     // disk-backed wt volume, shared by concurrent cases. What was unpacked and
@@ -1623,14 +1628,8 @@ export async function reviewCase(
     }
     const rawComments = readJson(join(caseDir, CASE_FILES.comments));
     const collected = collectComments(caseDir);
-    // A comment the session anchored on a DELETED line is moved to the head
-    // side of its hunk: every scorer the bench feeds reads head-side lines
-    // only, and the comment was otherwise dropped whole (reanchorLeftComments).
-    const headPatches: Record<string, string> = {};
-    for (const f of files) if (f.patch !== undefined) headPatches[f.filename] = f.patch;
-    const moved = reanchorLeftComments(collected.comments, headPatches);
-    comments = moved.comments;
-    summary.comments.reanchored = moved.reanchored;
+    comments = collected.comments;
+    summary.comments.reanchored = collected.reanchored;
     summary.comments.unparseable = collected.dropped;
     summary.comments.body = collected.body;
     summary.verdict = typeof outcome?.["verdict"] === "string" ? outcome["verdict"] : null;
@@ -1676,14 +1675,23 @@ export async function reviewCase(
   return summary;
 }
 
+/** The case file holding the run's head-side patches by path. */
+export const HEAD_PATCHES_FILE = "head-patches.json";
+
 /** Everything this case POSTED, as scored comments: the inline comments the
  * session wrote, plus the findings its record marks posted that went into the
- * review body for want of an inline anchor. The one reader of a case dir's
- * output, shared by a live run and `cli results` so a rebuild scores the same. */
+ * review body for want of an inline anchor. A comment the session anchored on
+ * a DELETED line is moved to the head side of its hunk, from the patches the
+ * run kept: every scorer the bench feeds reads head-side lines only, and the
+ * comment was otherwise dropped whole (reanchorLeftComments). A case dir
+ * without that file leaves LEFT comments where they are. The one reader of a
+ * case dir's output, shared by a live run and `cli results` so a rebuild
+ * scores the same. */
 export function collectComments(caseDir: string): {
   comments: BenchComment[];
   dropped: number;
   body: number;
+  reanchored: number;
 } {
   const parsed = parseSessionComments(readJson(join(caseDir, CASE_FILES.comments)));
   let reviewMd = "";
@@ -1697,10 +1705,20 @@ export function collectComments(caseDir: string): {
     reviewMd,
     parsed.comments,
   );
+  const rawPatches = readJson(join(caseDir, HEAD_PATCHES_FILE));
+  const patches: Record<string, string> = {};
+  if (typeof rawPatches === "object" && rawPatches !== null && !Array.isArray(rawPatches))
+    for (const [path, patch] of Object.entries(rawPatches))
+      if (typeof patch === "string") patches[path] = patch;
+  const moved = reanchorLeftComments(
+    [...parsed.comments.map((c) => ({ ...c, source: "inline" as const })), ...inBody],
+    patches,
+  );
   return {
-    comments: [...parsed.comments.map((c) => ({ ...c, source: "inline" as const })), ...inBody],
+    comments: moved.comments,
     dropped: parsed.dropped,
     body: inBody.length,
+    reanchored: moved.reanchored,
   };
 }
 

@@ -71,6 +71,8 @@ import {
   boundBody,
   buildBenchAgents,
   benchConfig,
+  collectComments,
+  HEAD_PATCHES_FILE,
   renderCasePrompts,
   resultLine,
   retryable,
@@ -1369,5 +1371,30 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
     }) as { review: { comments: unknown[] }; qcr: { excluded: { left_side: number } } };
     expect(res.review.comments).toHaveLength(2);
     expect(res.qcr.excluded.left_side).toBe(1);
+  });
+
+  it("collectComments re-anchors from the case's kept patches, so a results rebuild scores the same", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bench-reanchor-"));
+    try {
+      writeFileSync(
+        join(dir, "comments.json"),
+        JSON.stringify([{ path: "f.ts", line: 12, side: "LEFT", body: "[blocker] guard removed" }]),
+      );
+      // No kept patches: the LEFT comment stays where it is.
+      const before = collectComments(dir);
+      expect(before.reanchored).toBe(0);
+      expect(before.comments[0]!.side).toBe("LEFT");
+      writeFileSync(join(dir, HEAD_PATCHES_FILE), JSON.stringify({ "f.ts": patch }));
+      const after = collectComments(dir);
+      expect(after.reanchored).toBe(1);
+      expect(after.comments[0]).toMatchObject({
+        side: "RIGHT",
+        line: 12,
+        source: "inline",
+        reanchored_from: { side: "LEFT", line: 12, how: "hunk" },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
