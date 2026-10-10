@@ -106,6 +106,11 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git checkout -- src/tui/app.ts")).toMatch(/rule 11/);
     expect(bashBlockReason("git checkout .")).toMatch(/rule 11/);
     expect(bashBlockReason("git restore src/tui/app.ts")).toMatch(/rule 11/);
+    // A --staged in a LATER command never exempts the discard before it.
+    expect(bashBlockReason("git restore src/tui/app.ts && git diff --staged")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore src/tui/app.ts; git diff --staged")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore src/tui/app.ts | git diff --staged")).toMatch(/rule 11/);
+    expect(bashBlockReason("git restore src/tui/app.ts\ngit diff --staged")).toMatch(/rule 11/);
     expect(bashBlockReason("git clean -fd")).toMatch(/rule 11/);
   });
 
@@ -116,6 +121,7 @@ describe("bashBlockReason", () => {
     expect(bashBlockReason("git stash list")).toBeUndefined();
     expect(bashBlockReason("git stash show -p stash@{0}")).toBeUndefined();
     expect(bashBlockReason("git restore --staged src/tui/app.ts")).toBeUndefined();
+    expect(bashBlockReason("git restore --staged src/tui/app.ts && git status")).toBeUndefined();
     expect(bashBlockReason("git log --oneline -5")).toBeUndefined();
     // Words INSIDE other words or paths never trip the anchored patterns.
     expect(bashBlockReason("grep -rn 'git push' docs/")).toMatch(/rule 8/); // quoted text still matches — accepted: belt, not parser

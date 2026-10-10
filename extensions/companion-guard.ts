@@ -114,7 +114,10 @@ export const BASH_RULES: BashRule[] = [
       "rule 11: git checkout -- <path> / git checkout . discards uncommitted changes. Branch switches and -b are fine; discarding is not.",
   },
   {
-    pattern: /\bgit\s+restore\b(?!.*--staged)/,
+    // The --staged exemption is read inside the restore's own command
+    // segment only: a `--staged` in a later command (`git restore f && git
+    // diff --staged`) does not exempt the discard before it.
+    pattern: /\bgit\s+restore\b(?![^;&|\n]*--staged)/,
     reason:
       "rule 11: git restore (worktree form) discards uncommitted changes. --staged alone is allowed — it touches the index, not the files.",
   },
