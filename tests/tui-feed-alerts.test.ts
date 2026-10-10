@@ -685,6 +685,31 @@ describe("companion tab", () => {
     await h.close();
   });
 
+  it("a folded repeat of an acknowledged alert does not take ⏎ back", async () => {
+    const h = harness();
+    // The consumer publishes ONE badge object; a fold bumps its counters and
+    // keeps `latest`, a new alert replaces `latest`.
+    const badge: AlertBadge = {
+      count: 1,
+      folds: 0,
+      latest: { tier: "alert", title: "t", cause: "c", pr: 5012, ts: "x" },
+    };
+    h.app.setAlertBadge(badge);
+    expect(h.app.view.alertFocus).toBe(true);
+    h.s.type("\x1b"); // Esc acknowledges
+    expect(h.app.view.alertFocus).toBe(false);
+    badge.count = 2;
+    badge.folds = 1;
+    h.app.setAlertBadge(badge);
+    expect(h.app.view.alertFocus).toBe(false);
+    // A genuinely new alert arms it again.
+    badge.count = 3;
+    badge.latest = { tier: "alert", title: "t2", cause: "c2", pr: 5012, ts: "y" };
+    h.app.setAlertBadge(badge);
+    expect(h.app.view.alertFocus).toBe(true);
+    await h.close();
+  });
+
   it("a notice-tier badge never steals ⏎", async () => {
     const h = harness();
     h.app.setAlertBadge({

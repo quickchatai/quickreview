@@ -363,6 +363,7 @@ export class App {
       this.view.help = true;
       this.hooks.helpSeen.set();
     }
+    this.repaint();
     this.poller.start();
     await new Promise<void>((resolve) => (this.quitResolve = resolve));
     this.teardown();
@@ -1325,10 +1326,19 @@ export class App {
       );
   }
 
-  /** Alert consumer → top bar. `alert` tier also grabs ⏎ (see handleInput). */
+  /** The alert that last armed `alertFocus`. A folded repeat keeps the
+   * consumer's `latest` object, so it updates the counters without re-arming
+   * an alert the operator already acknowledged. */
+  private armedAlert: AlertBadge["latest"];
+
+  /** Alert consumer → top bar. A NEW `alert`-tier alert also grabs ⏎ (see
+   * handleInput); a folded repeat of it does not. */
   setAlertBadge(badge: AlertBadge): void {
     this.view.alerts = badge;
-    if (badge.latest?.tier === "alert") this.view.alertFocus = true;
+    if (badge.latest?.tier === "alert" && badge.latest !== this.armedAlert) {
+      this.armedAlert = badge.latest;
+      this.view.alertFocus = true;
+    }
     this.repaint();
   }
 

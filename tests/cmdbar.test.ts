@@ -830,11 +830,16 @@ describe("drag-to-copy", () => {
     // together on every row. A block is what makes "copy this bit of pi's
     // output" mean the pi output and nothing else.
     const h = harness();
-    h.mouse(0, 30, 3);
-    h.mouse(32, 40, 5);
-    h.mouse(0, 40, 5, false);
+    // Let the first poll land: a drag freezes the frame it starts on, and
+    // `onScreen` reads the last painted one, so both must be the same frame.
     await settle();
-    expect(h.copied).toEqual([h.onScreen(30, 3, 40, 5)]);
+    // Inside the board's detail pane (columns 31..59, rows 2..4 of this
+    // 60×12 frame), whose border a selection never picks up.
+    h.mouse(0, 32, 2);
+    h.mouse(32, 42, 4);
+    h.mouse(0, 42, 4, false);
+    await settle();
+    expect(h.copied).toEqual([h.onScreen(32, 2, 42, 4)]);
     // Every copied line came from columns 30..40 ONLY — a block, not a run of
     // whole rows spliced across panes.
     for (const line of h.copied[0]!.split("\n")) expect(line.length).toBeLessThanOrEqual(11);

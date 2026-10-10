@@ -171,10 +171,12 @@ function fakeTerminal(): {
     rows: 48,
     write: (s: string) => {
       written.push(s);
-      // ALT_SCREEN_ON is the first byte of the first frame: from here the TUI
-      // owns the screen, and everything external must already be behind it.
+      // The first frame is the first write that carries the LAYOUT (its top
+      // bar), not the alt-screen switch alone: a cleared screen with nothing
+      // on it is not a frame, and everything external must be behind the
+      // real one.
       const log = startupLog();
-      if (log.paintedAt === undefined && s.includes("\x1b[?1049h")) {
+      if (log.paintedAt === undefined && stripAnsi(s).includes("quickreview")) {
         log.paintedAt = log.entries.length;
         log.entries.push("FIRST PAINT");
         resolvePainted();
