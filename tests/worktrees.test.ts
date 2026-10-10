@@ -767,6 +767,7 @@ describe("postMergeTouches (the learner's recall source)", () => {
       windowDays: 14,
     });
     expect(scan!.truncated).toBe(true);
+    expect(scan!.unread).toBeUndefined(); // a cap, not a failed read
     expect(scan!.checked).toBe(POST_MERGE_LIMITS.laterCommits);
     expect(scan!.touches.map((t) => t.commit)).toEqual([fix]);
   });
@@ -796,7 +797,7 @@ describe("postMergeTouches (the learner's recall source)", () => {
       mergedAt: "2026-09-10T12:00:03Z",
       windowDays: 14,
     });
-    expect(scan).toMatchObject({ checked: 1, touches: [], truncated: true });
+    expect(scan).toMatchObject({ checked: 1, touches: [], truncated: true, unread: true });
   });
 
   it("is UNKNOWN — never 'nothing touched' — when no commit names the PR or the branch is absent", async () => {

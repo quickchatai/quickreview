@@ -1002,7 +1002,8 @@ function postMergeDraft(
  * verdict at the merge was APPROVE is scanned until its window has passed —
  * commits keep landing for `windowDays` after a merge. A git answer of
  * "unknown" (no merge commit names the PR, the branch not fetched) is
- * retried, then given up on, recorded.
+ * retried, then given up on, recorded; so is a scan with a read that failed
+ * (`unread`) — a cap's partiality is final, a failed read's is not.
  *
  * One pass reads at most `maxPrs` PRs and starts none after `budgetMs`. The
  * ORDER (`tierOf`): a window that passed since its last read gets its final
@@ -1140,15 +1141,33 @@ export async function minePostMerge(
     // touched" is the unknown-as-nothing this source must never do.
     const tipMs = Date.parse(scan.tip_at);
     const fetchedPast = Number.isFinite(tipMs) && tipMs >= windowEnd;
+    // A read that FAILED (not a cap) may be recovered by another: a closed
+    // window is re-read, at least once past its end and for up to `attempts`
+    // days after it, then given up on, recorded.
+    const lastMs = row.last_scan_at === null ? NaN : Date.parse(row.last_scan_at);
+    const unreadRetry =
+      scan.unread === true &&
+      !(
+        Number.isFinite(lastMs) &&
+        lastMs > windowEnd &&
+        nowMs - windowEnd >= RECALL_SCAN_LIMITS.attempts * RECALL_SCAN_LIMITS.rescanMs
+      );
+    const done = closed && fetchedPast && !unreadRetry;
     finish.run(
       row.attempts + 1,
       nowIso,
       scan.merge,
       scan.touches.length,
       baseRef,
-      closed && fetchedPast ? 1 : 0,
+      done ? 1 : 0,
       `${scan.shape}${scan.truncated ? " (partial)" : ""}${
         closed && !fetchedPast ? " (the clone is not fetched past the window yet)" : ""
+      }${
+        closed && fetchedPast && scan.unread === true
+          ? unreadRetry
+            ? " (a read failed: retried)"
+            : " (a read failed: gave up)"
+          : ""
       }`,
       row.pr,
     );

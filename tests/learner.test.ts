@@ -574,6 +574,58 @@ describe("the miner — recall: what a human found on lines the bot approved", (
     expect(h.learner.allCandidates()).toHaveLength(1); // the same touch is the same candidate
   });
 
+  it("post-merge: a read that failed is retried past the window, then given up, recorded; a cap's partiality is final", async () => {
+    const scans = new Map<number, PostMergeScan>();
+    const git: RecallGit = { postMergeTouches: async (q) => scans.get(q.pr) ?? null };
+    const scan = (over: Partial<PostMergeScan>): PostMergeScan => ({
+      merge: "m".repeat(40),
+      shape: "squash",
+      checked: 1,
+      truncated: false,
+      tip_at: "2027-01-01T00:00:00Z",
+      touches: [],
+      ...over,
+    });
+    const h = harness({ git });
+    for (const pr of [50, 51, 52]) {
+      h.pr(pr);
+      h.verdict(pr, "APPROVE");
+    }
+    h.addMinutes(1);
+    for (const pr of [50, 51, 52])
+      h.store.logEvent("pr_closed", pr, { merged: true, source: "webhook" });
+    scans.set(50, scan({ truncated: true, unread: true })); // never recovers
+    scans.set(51, scan({ truncated: true, unread: true })); // recovers next read
+    scans.set(52, scan({ truncated: true })); // a cap: final
+    const rows = () =>
+      h.store.db
+        .prepare("SELECT pr, done, outcome FROM learner_recall_scans ORDER BY pr")
+        .all();
+    h.setNow("2026-10-22T10:00:00.000Z"); // the window closed 10-21
+    await h.learner.mine();
+    expect(rows()).toEqual([
+      { pr: 50, done: 0, outcome: "squash (partial) (a read failed: retried)" },
+      { pr: 51, done: 0, outcome: "squash (partial) (a read failed: retried)" },
+      { pr: 52, done: 1, outcome: "squash (partial)" },
+    ]);
+    scans.set(51, scan({}));
+    h.setNow("2026-10-23T10:00:00.000Z");
+    await h.learner.mine();
+    expect(rows()).toContainEqual({ pr: 51, done: 1, outcome: "squash" });
+    expect(rows()).toContainEqual({
+      pr: 50,
+      done: 0,
+      outcome: "squash (partial) (a read failed: retried)",
+    });
+    h.setNow("2026-10-25T10:00:00.000Z");
+    await h.learner.mine();
+    expect(rows()).toContainEqual({
+      pr: 50,
+      done: 1,
+      outcome: "squash (partial) (a read failed: gave up)",
+    });
+  });
+
   it("post-merge recall runs every tick, a few PRs at a time: closing windows first, the stale backlog last", async () => {
     const asked: number[] = [];
     const git: RecallGit = {

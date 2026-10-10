@@ -589,6 +589,9 @@ export interface PostMergeScan {
    * were read), or a blame could not be read — what it did not read is
    * unknown, never "not touched". */
   truncated: boolean;
+  /** Part of the partiality is a READ that failed (a blame git could not
+   * answer), not a cap: another read may recover it. Absent means none. */
+  unread?: boolean;
   /** The committer date of the base branch's tip in the clone: commits after
    * it have not been fetched, so a window ending later is not fully read yet
    * (the learner keeps such a PR pending — no fetch happens here). */
@@ -1180,8 +1183,9 @@ export class WorktreeManager {
             );
             if (blame.code !== 0) {
               // Unread is unknown, never "not the PR's lines": the scan says
-              // it is partial.
+              // it is partial, and that a re-read may recover it.
               scan.truncated = true;
+              scan.unread = true;
               continue;
             }
             const shas = parseBlameShas(blame.stdout);
