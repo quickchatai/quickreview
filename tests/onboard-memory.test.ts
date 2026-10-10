@@ -13,7 +13,7 @@
 //     INCONCLUSIVE cell is not a pass;
 //   * declining memory is legal, loud, mints nothing, and writes exactly one
 //     thing: `[openviking] enabled = false`, the daemon's word for "off"
-//     (S1 — without it memory health pages about a choice).
+//     (without it, memory health pages about a choice).
 //
 // The provisioning and matrix modules under test are the REAL scripts — this
 // suite drives them through a fake server rather than reimplementing them.
@@ -446,7 +446,7 @@ describe("placement rules", () => {
   it("a secrets dir holding the key file's home is REFUSED — there is nowhere to relocate to", () => {
     const home = mkdtempSync(join(tmpdir(), "qcr-mem-home-"));
     try {
-      // The old dir is never the answer now, even when it holds a key file.
+      // The legacy dir is never the answer, even when it holds a key file.
       const old = join(home, ".config", "quickreview-bot");
       mkdirSync(old, { recursive: true });
       writeFileSync(join(old, "openviking-keys.env"), "K=1\n");
@@ -628,7 +628,7 @@ describe("degraded modes stay legal and loud", () => {
     expect(engine.choices()[MEMORY_CHOICE_KEY]).toBe("declined");
     // The one write: the daemon's word for "off", so memory health reports
     // "not monitored" instead of paging about a missing key it was told to
-    // expect (S1).
+    // expect.
     expect(memoryEnabled()).toBe(false);
     expect(detailOf(result, MEMORY_SWITCH_CHECK)).toMatchObject({ ok: true });
     expect(detailOf(result, MEMORY_SWITCH_CHECK)?.detail).toMatch(/not monitored/);

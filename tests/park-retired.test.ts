@@ -1,17 +1,14 @@
-// the park is retired end to end, and stays retired.
-//
-// The park (`awaiting_human`) was killed as BEHAVIOUR: nothing has
-// transitioned into it since 2026-08-19. Its readers outlived it by two weeks —
-// a permanently empty `AWAITING YOU (0)` panel on ~45% of tab [2], six key
-// registrations that silently ate keystrokes over its empty selection, a legend
-// entry, a board-filter value, and a metric presented to the operator as a
-// measurement that was structurally always zero.
+// There is no park state (`awaiting_human`): a PR is never handed to a human,
+// so no state, panel, key binding, legend entry, board filter or metric may
+// represent one. A writerless state is not harmless — its readers render an
+// always-empty panel, key registrations eat keystrokes over an empty
+// selection, and a metric that is structurally zero reads as a measurement.
 //
 // These tests are the fence. The load-bearing one is the FIRST: every member of
 // `PrLifecycleState` must be REACHABLE from `INITIAL_STATE` by a walk over the
 // real transition function. That is the general form of "a state that cannot
 // exist should not be representable", so re-adding a writerless state fails
-// here rather than being noticed two weeks later on a screen.
+// here rather than on a screen.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -64,20 +61,18 @@ const ALL_EVENTS: SmEvent[] = [
 /**
  * THE WALK. A BFS from `INITIAL_STATE` over whatever step function it is
  * given — parameterized so the island test below can drive THIS code rather
- * than a copy of it. That distinction is not pedantry: an earlier version
- * inlined its own BFS in the island test, so reverting this function to the
- * weak "does any arrow point at S" form left the whole file green. The island
- * test was guarding a hand-written walk, not the fence.
+ * than a copy of it. An island test with its own inlined BFS would stay green
+ * if this function were weakened to the "does any arrow point at S" form; it
+ * would guard a hand-written walk, not the fence.
  *
  * Reachability, not "is any arrow pointing at it". The weaker question passes
  * for a pair of writerless states that only produce each other: `limbo_a ⇄
  * limbo_b` both have an incoming arrow, and no PR can ever be in either.
  *
  * Identity results do not count as *discovery* — they are the `to === from`
- * case that adds nothing to the frontier — which is what killed the FIRST
- * version of this fence: `awaiting_human` answered `track`, `author_reply` and
- * `synchronize` with itself for the entire two weeks it was unreachable, so
- * counting self-arrows made it look produced.
+ * case that adds nothing to the frontier. An unreachable state that answers
+ * events with itself (as `awaiting_human` did for `track`, `author_reply` and
+ * `synchronize`) would look produced if self-arrows counted.
  */
 function reachableFrom(step: (from: string, ev: SmEvent) => string): Set<string> {
   const seen = new Set<string>([INITIAL_STATE]);
@@ -102,12 +97,11 @@ function producibleStates(): Set<string> {
 }
 
 describe("the lifecycle union has no unreachable member", () => {
-  // THE fence, and the general form of what removed: `awaiting_human`
-  // sat in the union for two weeks with no writer anywhere in src/, and every
-  // surface below dutifully rendered it. The union is read from the source and
+  // THE fence: a state in the union with no writer anywhere in src/ is still
+  // rendered by every surface below. The union is read from the source and
   // the producible set is DERIVED by driving the real transition function over
-  // the whole event × state matrix, so a member added back without a writer
-  // fails here rather than being noticed on a screen a fortnight later.
+  // the whole event × state matrix, so a member added without a writer fails
+  // here rather than on a screen.
   it("every PrLifecycleState is REACHABLE from the initial state", () => {
     const producible = producibleStates();
     for (const state of ALL_STATES) expect([state, producible.has(state)]).toEqual([state, true]);
@@ -151,7 +145,7 @@ describe("the lifecycle union has no unreachable member", () => {
 // The claim this file can honestly make is about LIVE state surfaces. It is
 // deliberately not "no surface anywhere mentions the string": the metrics tab's
 // TIME IN STATE card is derived from the `pr_transition` event log, which holds
-// 75 real transitions into the park on the live install, and those are history.
+// real transitions into the park on a live install, and those are history.
 // Erasing them would be falsifying the record. The rule for that one surface is
 // the next describe: history must READ as history.
 describe("no LIVE state surface renders a state the state machine cannot produce", () => {
@@ -164,17 +158,17 @@ describe("no LIVE state surface renders a state the state machine cannot produce
 
   it("the board's colour table answers for every producible state and nothing retired", () => {
     for (const state of ALL_STATES) expect(stateColor(state)).not.toBe(stateColor("no-such-state"));
-    // The magenta survives, but as the NEEDS_HUMAN *verdict* colour only — a
-    // verdict spelling older rounds still carry. It is no longer a state.
+    // The magenta is the NEEDS_HUMAN *verdict* colour only — a verdict
+    // spelling older rounds still carry — never a state's.
     expect(stateColor("awaiting_human")).toBe(stateColor("no-such-state"));
   });
 
-  // The ONE survivor of the retired vocabulary, and the scenario it is for:
-  // `NEEDS_HUMAN` is still a legal verdict SPELLING (rounds recorded before
-  // 2026-08-18 carry it, `normalizeVerdict` folds `ESCALATE` into it, and
-  //'s optional escalation keeps the word live). The magenta the park's
-  // state used to own is now its colour and nothing else's — which is why the
-  // FG key is named `needs_human`, not `awaiting_human`.
+  // The one survivor of the park's vocabulary, and the scenario it is for:
+  // `NEEDS_HUMAN` is still a legal verdict SPELLING (older recorded rounds
+  // carry it, `normalizeVerdict` folds `ESCALATE` into it, and the optional
+  // escalation feature keeps the word live). The magenta is its colour and
+  // nothing else's — which is why the FG key is named `needs_human`, not
+  // `awaiting_human`.
   it("the NEEDS_HUMAN verdict still chips and colours — the verdict survived, the state did not", () => {
     expect(stripAnsi(verdictChip("NEEDS_HUMAN"))).toBe("⚑H");
     expect(stripAnsi(verdictChip("ESCALATE"))).toBe("⚑H");
@@ -287,18 +281,16 @@ describe("historical dwell is kept, and reads as history", () => {
     // The live bucket beside it is NOT marked — otherwise the marker is noise.
     expect(plain).toContain("awaiting_author");
     expect(plain).not.toContain("† awaiting_author");
-    // …and it is painted MUTED rather than in a state hue. Before it
-    // was magenta; renaming the colour key silently degraded it to ordinary
-    // text, which reads exactly like a current state. This makes it a choice.
+    // …and it is painted MUTED rather than in a state hue: ordinary text
+    // would read exactly like a current state.
     const retiredRow = rows.find((l) => stripAnsi(l).includes("awaiting_human"))!;
     expect(retiredRow).toContain(MUTED);
     expect(retiredRow).not.toContain(FG.needs_human);
     // The card explains the glyph on its own subtitle — the mark is useless
     // if the reader has to guess what it means.
     expect(card.subtitle).toContain("† = retired state, history only");
-    // And the mark survives the TRUNCATING path, which is the case that broke
-    // the first attempt at this (a `(retired …)` suffix was cut off). 45 is
-    // chosen deliberately: below ~40 `hbar`'s `avail < 3` fallback fires and
+    // And the mark survives the TRUNCATING path, where a suffix mark would be
+    // cut off. 45 is chosen deliberately: below ~40 `hbar`'s `avail < 3` fallback fires and
     // returns `fit(label + " " + value)` with no label column at all, so a
     // narrower pin would not exercise the truncation it claims to.
     const narrow = card.body(45).map(stripAnsi);
@@ -309,9 +301,8 @@ describe("historical dwell is kept, and reads as history", () => {
   });
 });
 
-// The container runs the BUILD, not the sources above (the standing practice
-// out: probe the compiled artifact). `dist/` is not cleaned between
-// builds, so a module deleted from src can linger there — which is exactly the
+// The container runs the BUILD, not the sources above, so probe the compiled
+// artifact. `dist/` is not cleaned between builds, so a module deleted from src can linger there — which is exactly the
 // case worth catching.
 describe("the compiled artifact agrees with the source", () => {
   const distPath = (rel: string): string => resolve(process.cwd(), "dist", rel);
@@ -380,7 +371,7 @@ describe("the always-zero metric is gone from the computation and from every sur
   });
 });
 
-// ---- the six freed keystrokes ----------------------------------------------
+// ---- six keystrokes the memory tab does not claim ---------------------------
 
 function harness(
   tab: Tab = "memory",
@@ -410,7 +401,7 @@ describe("the six keys the awaiting panel registered now reach the companion col
     await settle();
     const keys = h.app.registeredKeys();
     for (const k of ["a", "m", "w", "g", "o", "M"]) expect([k, keys.has(k)]).toEqual([k, false]);
-    // The two that are genuinely this tab's still are.
+    // These two are this tab's own.
     expect(keys.has("W")).toBe(true);
     expect(keys.has("n")).toBe(true);
     h.app.quit();
@@ -449,10 +440,9 @@ describe("the six keys the awaiting panel registered now reach the companion col
     await h.running;
   });
 
-  // Deleting the awaiting panel took the arrow keys' old job (moving a
-  // selection over it) and gave them the digest's scroll. Both halves need
-  // pinning: gutting `down`/`up` in the digest key handler once left the
-  // whole suite green.
+  // The arrow keys scroll the digest. Both halves need pinning: without this
+  // test, gutting `down`/`up` in the digest key handler leaves the whole
+  // suite green.
   it("j/k AND the arrows scroll the digest, and up clamps at the top", async () => {
     const h = harness("digest");
     await settle();
@@ -475,8 +465,7 @@ describe("the six keys the awaiting panel registered now reach the companion col
   });
 
   // A live alert owns ⏎ from wherever you are. Every learning surface must
-  // agree about that: before the two halves of the old tab [2]
-  // disagreed, so following an alert worked or did not depending on the view.
+  // agree about that, or following an alert works or not depending on the view.
   for (const tab of ["memory", "digest", "tickets", "feedback"] as const) {
     it(`a live alert still owns ⏎ on the ${tab} tab`, async () => {
       const h = harness(tab);

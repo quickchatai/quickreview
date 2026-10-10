@@ -1,12 +1,13 @@
-// leaf-cache — the CHILD half of the shared context pack (,
-// `[review] context_pack = "pack-first"`; the daemon half is src/contextpack.ts,
-// the launcher half extensions/subagents.ts).
+// leaf-cache — the CHILD half of the shared context pack
+// (`[review] context_pack = "pack-first"`; the daemon half is
+// src/contextpack.ts, the launcher half extensions/subagents.ts).
 //
-// The model provider caches a request's PREFIX. A lens child's request today is
-// `instructions` = pi's base system prompt + the lens agent's body (appended
-// with --append-system-prompt), then `input` = the task. Every lens body is
-// different, so two lenses share nothing past pi's base prompt — and the diff
-// and files every lens then reads arrive as fresh, uncached tool output.
+// The model provider caches a request's PREFIX. Without this extension, a
+// lens child's request is `instructions` = pi's base system prompt + the lens
+// agent's body (appended with --append-system-prompt), then `input` = the task.
+// Every lens body is different, so two lenses share nothing past pi's base
+// prompt — and the diff and files every lens then reads arrive as fresh,
+// uncached tool output.
 //
 // This extension, loaded ONLY into a lens child (or its cache group's warm-up)
 // and ONLY when the launcher found the round's pack (QCR_LEAF_PACK), reorders

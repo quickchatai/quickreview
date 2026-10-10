@@ -5,21 +5,22 @@
 //
 // Two seams live here:
 //
-//   * `ProcessRunner` (the engine adapter) for every SHORT command — compose
+//   * `ProcessRunner` (the engine adapter) for every short command — compose
 //     ps, an exec into the daemon, reading a file out of the container. These
 //     answer in seconds and their whole output matters.
-//   * `StreamRunner` (a step option, defaulted here) for the LONG ones — the
+//   * `StreamRunner` (a step option, defaulted here) for the long ones — the
 //     first `docker compose up --build` compiles the local embedder from
 //     source and runs for tens of minutes. The engine's runner returns only
 //     when the child is done and caps its wait at a minute, so a build driven
 //     through it would look like a hang and then fail on a timeout. The
 //     streaming runner reports every line as it arrives and has no timeout of
-//     its own. Same discipline as's callback-server seam: an extra
-//     injectable that tests replace wholesale, never a second ambient I/O path.
+//     its own. Same discipline as the GitHub App step's callback-server seam:
+//     an extra injectable that tests replace wholesale, never a second
+//     ambient I/O path.
 //
 // Nothing here knows about GitHub, and nothing here writes config.toml — the
-// only step that may touch `dry_run` is golive.ts, and it is the only file in
-// this slice that writes that key at all (root CLAUDE.md rule 1).
+// only step that may touch `dry_run` is golive.ts, and it is the only
+// onboarding file that writes that key at all (root CLAUDE.md rule 1).
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -122,7 +123,7 @@ export function ingressOptionOf(choices: Readonly<Record<string, unknown>>): Ing
 
 // ---- compose command construction -------------------------------------------
 
-/** Every compose invocation this slice makes, built in one place. */
+/** Every compose invocation the onboarding steps make, built in one place. */
 export function composeArgs(root: string, rest: readonly string[]): string[] {
   return ["compose", "--project-directory", root, ...rest];
 }
@@ -181,7 +182,7 @@ export interface StreamRunner {
 
 /**
  * The real one: spawn, split both streams into lines, and hand each line to
- * the caller as it arrives. Deliberately WITHOUT a timeout — the first image
+ * the caller as it arrives. Deliberately without a timeout — the first image
  * build compiles llama-cpp-python from source and legitimately runs for tens
  * of minutes; a timeout here would kill exactly the case this exists for.
  */
@@ -219,7 +220,7 @@ export const nodeStreamRunner: StreamRunner = {
 export const DEFAULT_WEBHOOK_PORT = 8787;
 
 /**
- * Where the daemon's `GET /health` answers on THIS machine.
+ * Where the daemon's `GET /health` answers on this machine.
  *
  * compose publishes the webhook port as `${QCR_WEBHOOK_BIND:-127.0.0.1}:
  * ${QCR_WEBHOOK_PORT:-8787}:8787`, so the project `.env` is the authority for

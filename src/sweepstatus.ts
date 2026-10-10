@@ -3,8 +3,8 @@
 // replay (src/bench/runner.ts, which may not import verdicts.ts) read a
 // session's sweep report one way.
 
-/** What became of a follow-up round's pre-approval sweep (,
- * `rounds.sweep_status`). */
+/** What became of a follow-up round's pre-approval sweep
+ * (`rounds.sweep_status`). */
 export type SweepStatus = "ran" | "not_owed" | "not_reached" | "skipped" | "unknown";
 
 /**
@@ -53,7 +53,7 @@ export function sweepStatusOf(args: {
       status: "unknown",
       note: `${sweepPasses} sweep-phase passes executed, but the claim is ${claim ?? "absent"}`,
     };
-  // the session decided the owed sweep was not needed (`follow_up_extent
+  // The session decided the owed sweep was not needed (`follow_up_extent
   // = "session"`) — a decision with its reason, recorded as such. Never a full
   // look: a later round that owes the sweep still owes it.
   if (claim === "skipped") return { status: "skipped" };

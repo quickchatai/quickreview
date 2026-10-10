@@ -1,4 +1,4 @@
-// the AUTHENTICATED memory probe, the key source that re-reads a
+// The authenticated memory probe, the key source that re-reads a
 // rotated key, and the client's per-request observer. Fake fetch, fake clock,
 // temp dirs for the key file; no network.
 import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -138,8 +138,7 @@ describe("keyFromFile — a rotated key is re-read (S1)", () => {
     // Inside the TTL the cached key stands (no stat per request)…
     clock = 500;
     expect(read()).toBe("old-key-aaaaaaaa");
-    // …and past it the rotation is picked up. (Until a found key was
-    // cached for the life of the process.)
+    // …and past it the rotation is picked up.
     clock = 1500;
     expect(read()).toBe("new-key-bbbbbbbbbbbb");
   });

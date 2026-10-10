@@ -1,8 +1,8 @@
-// When each lens runs, and how strongly the planner prefers it — the owner's
-// 2026-10-03 planning decision, as ONE table every lens must appear in
-// (tests/freeze-fixes-2.test.ts holds it equal to ALL_PASSES).
+// When each lens runs, and how strongly the planner prefers it — ONE table
+// every lens must appear in (tests/freeze-fixes-2.test.ts holds it equal to
+// ALL_PASSES).
 //
-// The decision: no lens is removed or disabled for being expensive —
+// No lens is removed or disabled for being expensive —
 // abstraction, placement and backcompat included; a profile's per-lens
 // `enabled` switch stays the only off switch. Instead each lens is planned
 // where its concern is actually present, and every planned row says WHY

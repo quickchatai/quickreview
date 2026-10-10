@@ -44,7 +44,7 @@
 // src/bench/prtext.ts): then they follow the target in the `review` command's
 // arguments ($ARGUMENTS — the template's own "Input").
 //
-// THE NATIVE PROVIDER (fairness audit item B; QCR_BENCH_OPENCODE_PROVIDER=native).
+// The native provider (QCR_BENCH_OPENCODE_PROVIDER=native).
 // The bridge above costs OpenCode two things its own path has: reasoning carried
 // between tool turns (encrypted reasoning content) and prompt caching. Native,
 // OpenCode talks to the ChatGPT Codex backend itself, through its OWN built-in
@@ -147,9 +147,8 @@ export function opencodeReviewArguments(
  * the binary's embedded template). It is re-declared in the config ONLY to set
  * `subtask: false`: the built-in runs as a subtask, and after the subtask
  * returns OpenCode tells the parent session to "continue with your task" — the
- * parent, which also holds the findings tool and the fragment, then reviewed
- * the PR again and re-reported the same findings (smoke test, 2026-09-28:
- * 3 + 2 and 1 + 1 reports of the same issues). Codex's /review delegates too,
+ * parent, which also holds the findings tool and the fragment, would then
+ * review the PR again and re-report the same findings. Codex's /review delegates too,
  * but its main thread only relays. With `subtask: false` the one session gets
  * exactly this prompt and reports once. Re-check it on every version bump.
  */

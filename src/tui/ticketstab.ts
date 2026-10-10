@@ -1,8 +1,6 @@
 // `[4] tickets` — what adjudication filed on the issue tracker, read-only.
 //
-// Its own surface: it used to be a right-column layout of the old
-// `[2]` tab reached by a `t` that appeared in no help text. The list on the
-// left is actionable tickets first (`c` shows the closed ones too); the pane
+// The list on the left is actionable tickets first (`c` shows the closed ones too); the pane
 // on the right is the selected ticket's whole body, `[` / `]` and the wheel
 // scroll it. The reader never claims, locks or rewrites a ticket
 // (src/tui/trackertickets.ts).

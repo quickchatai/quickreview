@@ -6,7 +6,7 @@ import type { VerdictFile } from "./types.js";
 
 export type PostingReceiptStatus = "prepared" | "confirmed" | "dryrun";
 
-/** A receipt for a review the shell route ATTEMPTED to post:
+/** A receipt for a review the shell route attempted to post:
  * `prepared` brackets the ambiguous transport window, `confirmed` carries
  * GitHub's returned identity, `dryrun` records the intent that was written to
  * `state/dryrun/` instead of sent. */
@@ -26,7 +26,7 @@ export interface PostingReceipt {
   gh_review_id?: number;
   gh_commit_id?: string;
   gh_state?: string;
-  /** In memory only, never written by the posting scripts (H1a): the
+  /** In memory only, never written by the posting scripts: the
    * daemon SYNTHESISED this receipt from a bot review carrying the round's
    * marker, because the shell never persisted its own. `intended_event` is
    * then only the posted event — what the session asked for is unknown — so
@@ -35,10 +35,10 @@ export interface PostingReceipt {
 }
 
 /**
- * The terminal record of a review the shell route was FORBIDDEN to post
- *: posting guard 2 found the head already reviewed with no author
- * reply since, and refused before any receipt was prepared. It proves that no
- * POST was attempted — it is written only by `scripts/post-review.sh`, only
+ * The terminal record of a review the shell route was forbidden to post:
+ * posting guard 2 found the head already reviewed with no author reply since,
+ * and refused before any receipt was prepared. It proves that no POST was
+ * attempted — it is written only by `scripts/post-review.sh`, only
  * before `prepare`, and `scripts/posting-receipt.py` refuses to write it over
  * any attempted-post status — and it carries the standing mark the guard read,
  * so settlement restores state from evidence rather than from session prose.

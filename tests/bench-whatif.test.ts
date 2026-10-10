@@ -18,7 +18,7 @@
 //      container hardened.
 //
 // Fixtures (tests/fixtures/bench-whatif/source): five cases cut from the real
-// smoke10-2 run (gpt-5.6-sol, 2026-09-25) — every `subagent` tool_execution_end
+// smoke10-2 run (gpt-5.6-sol) — every `subagent` tool_execution_end
 // event with each pass reduced to its final findings text (task elided), plus
 // one bash event and one non-JSON line; the case's findings record, comments,
 // review body (its bot-name footer genericised for the publishability lint),

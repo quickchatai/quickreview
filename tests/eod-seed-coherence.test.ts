@@ -1,21 +1,21 @@
-// the ratified eod-sweep reseed, and the daemon-rendered sections
-// that ride after it, say ONE thing.
+// The ratified eod-sweep seed and the daemon-rendered sections that ride
+// after it say ONE thing.
 //
-// The owner ratified the reseed of `prompts/eod-sweep.md` on 2026-10-07
-// ("Yes, ratify it"): the curator starts §1 from the daemon's outcomes packet
-// (the "Outcomes to curate" section), names the `events/` and `experiences/`
-// areas, writes typed lessons through `viking_write`'s `lesson` fields citing
-// `cand:c<id>`, files repo facts as `repo-fact`/`convention` lessons (no more
-// `viking://resources/`), and closes §1 with the `eod-curation-receipt`; the
-// memory-discipline fence names `preferences/pinned/`, `#manual` in
-// `preferences/` and `kind=bug area=operations` in an `events/` entry's header.
+// The seed `prompts/eod-sweep.md`: the curator starts §1 from the daemon's
+// outcomes packet (the "Outcomes to curate" section), names the `events/` and
+// `experiences/` areas, writes typed lessons through `viking_write`'s `lesson`
+// fields citing `cand:c<id>`, files repo facts as `repo-fact`/`convention`
+// lessons (never under `viking://resources/`), and closes §1 with the
+// `eod-curation-receipt`; the memory-discipline fence names
+// `preferences/pinned/`, `#manual` in `preferences/` and
+// `kind=bug area=operations` in an `events/` entry's header.
 //
 // The seed is frozen (rule 6; pinned by tests/seed-integrity.test.ts and its
 // fences by tests/invariant-fences.test.ts). What this file holds is the
 // OTHER half: the prompt the curator actually receives is the seed PLUS the
 // sections the daemon renders after it — "Reviewer memory layout"
 // (`MEMORY_LAYOUT_NOTE`), "Outcomes to curate" (`renderCurationSection`, or
-// since R8 `renderNoPacketSection` when no packet came) and the daemon-measured
+// `renderNoPacketSection` when no packet came) and the daemon-measured
 // lines — and none of those may contradict the seed. Each check below names
 // the claim on both sides, rendered from the real seed file and the real
 // renderers, so either side drifting fails here.
@@ -190,14 +190,13 @@ describe("the ratified reseed is the seed on disk (R8)", () => {
       readFileSync(join(ROOT, "tests/fixtures/ratified-divergence.json"), "utf8"),
     ) as { files: Record<string, string[]> };
     const notes = divergence.files["prompts/eod-sweep.md"] ?? [];
-    // The human-recorded path: dated, the owner, the ticket and the ruling.
+    // A ratified reseed is recorded by a human, with its date and citation.
     expect(notes.at(-1)).toMatch(/^2026-10-07 owner ratified in-session \(R8, /);
   });
 
   it("keeps its {{date}} placeholders, and nothing else the renderer would have to know", () => {
-    // The four the old seed had (the sweep's date, the events' day=, the
-    // digest's path and title) and the two the reseed added (the packet's
-    // path, the receipt's day).
+    // The sweep's date, the events' day=, the digest's path and title, the
+    // packet's path and the receipt's day.
     expect(SEED.match(/\{\{date\}\}/g)?.length).toBe(6);
     for (const at of [
       "Date: {{date}}.",
@@ -294,7 +293,8 @@ describe("the seed and the daemon-rendered sections do not contradict each other
 
   it("the layout note leaves #manual entries to the seed's memory discipline (its old 'Not yours to write' is gone)", () => {
     // The seed lets the curator consolidate or retire a #manual entry when a
-    // newer manual entry supersedes it; the note said "Not yours to write".
+    // newer manual entry supersedes it; the layout note must not say "Not
+    // yours to write".
     expect(flat(seed)).toContain(
       "consolidate or retire them only when one is superseded by a newer manual entry",
     );
@@ -364,10 +364,10 @@ describe("the seed and the daemon-rendered sections do not contradict each other
 });
 
 // The section the seed sends the curator to comes in three variants: the
-// packet's instructions, and — since R8 — the two no-packet sections that
-// stand in for it whenever there is no learner, the packet build throws, or
-// it misses the day-context wait. Each one is checked for every claim the old
-// sections made against the reseed, rendered where the curator reads it.
+// packet's instructions, and the two no-packet sections that stand in for it
+// whenever there is no learner, the packet build throws, or it misses the
+// day-context wait. Each one is checked against every claim of the seed,
+// rendered where the curator reads it.
 describe.each([
   ["packet", () => renderCurationSection(packet())],
   ["off", () => renderNoPacketSection(DAY, "off")],

@@ -21,11 +21,11 @@
 // Supersession: every note is written as its case finishes (a stopped run
 // keeps what it read). The survey memory live when the run starts is read
 // once; a unit's entries among it — any run but this one — are retired once
-// ALL of that unit's cases finished and every note of
-// theirs was written; a unit whose read failed keeps its old entries, since
-// stale is better than none. Only engine-written entries (a `run=` in the
-// header) are ever superseded, and never one the owner pinned or wrote
-// himself (#manual). When the whole run completes, whatever survey
+// ALL of that unit's cases finished and every note of theirs was written; a
+// unit whose read failed keeps its old entries, since stale is better than
+// none. Only engine-written entries (a `run=` in the header) are ever
+// superseded, and never one a person pinned or wrote by hand (#manual). When
+// the whole run completes, whatever survey
 // memory is left from earlier runs (units since removed from the cut) goes
 // too. Retire, never delete: the timeline keeps the history.
 //
@@ -652,8 +652,8 @@ export class SurveyRunner {
     let ok = true;
     for (const e of [...earlier]) {
       // Only what a survey RUN wrote (engine-written header with a `run=`),
-      // never this run's own, and never an entry the owner made his — pinned
-      // or #manual stays, exactly as the EOD curator leaves it.
+      // never this run's own, and never an entry a person made their own —
+      // pinned or #manual stays, exactly as the EOD curator leaves it.
       if (e.run === null || e.run === run.id || !which(e.unit)) continue;
       if (e.entry.pinned || e.entry.tags.some((t) => normalizeTag(t) === "manual")) continue;
       earlier.splice(earlier.indexOf(e), 1);

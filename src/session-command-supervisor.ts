@@ -1,4 +1,4 @@
-// bounded daemon→Pi stage supervision.
+// Bounded daemon→Pi stage supervision.
 //
 // This is a reconciler over the ONE durable session-command slot, not another
 // scheduler. Delivery remains inject-bridge-owned; round recovery remains the
@@ -40,11 +40,14 @@ export interface SessionCommandSupervisorDeps {
   store: StateStore;
   hooks: SessionHooks;
   verdictDir: string;
-  /** Existing bounded round recovery. true = fresh round queued; false = its
-   * recovery budget is exhausted and failed work remains owed. */
   /** Independent observational sidecar. It can corroborate a durable start
    * that settled after the bridge died; it never creates/renews a lease. */
   progress?: (pr: number) => RoundProgressSnapshot | undefined;
+  /** Existing bounded round recovery. `requeued` = fresh round queued;
+   * `exhausted` = its recovery budget is spent and failed work remains owed;
+   * `retryable` = re-check later; `settled` = the round terminalized cleanly;
+   * `posted_wait` = its review is already posted, so the session keeps its
+   * command while it finishes (see `failRound` for each). */
   onRoundFailure: (
     pr: number,
     roundNo: number,
@@ -244,7 +247,7 @@ export class SessionCommandSupervisor {
     } catch {
       alive = null;
     }
-    // H1b: a compaction holds the session's one mailbox — pi refuses
+    // A compaction holds the session's one mailbox — pi refuses
     // every prompt while it runs — so a command waiting behind one is late,
     // not lost. Its start lease is held open (bounded) before the receipt is
     // read, so a compaction can never be what spends a redelivery or a kill.
@@ -329,7 +332,7 @@ export class SessionCommandSupervisor {
     const reason = definitive
       ? `command ${command.id} has no correlated start before ${command.next_check_at}`
       : `command ${command.id} start evidence remained unknown after ${command.unknown_checks} finite check(s)`;
-    // #5362 ③: a missing prompt is a DELIVERY fault, so redelivery comes first.
+    // A missing prompt is a delivery fault, so redelivery comes first.
     // A live session with no order is IDLE, not wedged — the kill-and-replay
     // recovery below costs its whole conversation, so it runs only when the
     // session is provably dead or its bounded redeliveries are spent.
@@ -337,7 +340,7 @@ export class SessionCommandSupervisor {
     await this.recoverMissingStart(command, reason);
   }
 
-  /** H1b: hold the start lease of a command queued behind a
+  /** Hold the start lease of a command queued behind a
    * compaction the session's bridge reports running. Bounded by the
    * compaction's own start + `session_compaction_max_s`: one still "running"
    * past that is no reason to wait. True when the check was deferred. */
@@ -374,7 +377,7 @@ export class SessionCommandSupervisor {
   }
 
   /**
-   * #5362 ③ / H1b: redeliver a command that never started into the
+   * Redeliver a command that never started into the
    * same live session — the same row and bytes, no kill — up to
    * `[daemon] max_prompt_redeliveries` times. True when this check is
    * answered (redelivered, or the command started/settled/was reserved
@@ -584,7 +587,7 @@ export class SessionCommandSupervisor {
     const firstPassAt =
       started +
       (this.deps.cfg.daemon.round_first_pass_max_min ?? DEFAULT_ROUND_FIRST_PASS_MAX_MIN) * minute;
-    // a follow-up round whose pre-approval sweep is OWED may run a
+    // A follow-up round whose pre-approval sweep is OWED may run a
     // whole round-1 plan after its delta stage — its passes limit and its
     // hard cap both get `[daemon] follow_up_sweep_extra_min` more.
     const sweepOwed = round.sweep_owed === 1;
@@ -882,7 +885,7 @@ export class SessionCommandSupervisor {
       return;
     }
     if (disposition === "posted_wait") {
-      // H1a: the round's review is already on GitHub (or was refused
+      // The round's review is already on GitHub (or was refused
       // by guard 2), so this limit is not a failure. The session keeps its
       // command and its life while it writes its ledger, findings record and
       // verdict; the callback settles the round from the receipt once its
@@ -898,10 +901,10 @@ export class SessionCommandSupervisor {
       return;
     }
     if (disposition === "settled") {
-      // the round terminalized cleanly (a guard-2 refusal recorded as
-      // a no-op). The command was delivered and did its work; failing it here
-      // would leave a blocking failed command on a PR that owes nothing.
-      // H1a: the same for a round settled from its posting receipt.
+      // The round terminalized cleanly (a guard-2 refusal recorded as a
+      // no-op, or a round settled from its posting receipt). The command was
+      // delivered and did its work; failing it here would leave a blocking
+      // failed command on a PR that owes nothing.
       this.deps.store.logEvent("round_stage_recovery", command.pr, {
         command_id: command.id,
         round_no: command.round_no,
@@ -980,8 +983,8 @@ export function roundStageSupervisorHealth(
 }
 
 /** Each lens's FIRST execution, by start (list order breaks ties and stands in
- * for an execution with no start milestone) — a follow-up round's delta stage
- *. */
+ * for an execution with no start milestone) — a follow-up round's delta
+ * stage. */
 function firstExecutionPerLens(
   agents: RoundProgressSnapshot["agents"],
 ): Map<string, RoundProgressSnapshot["agents"][number]> {

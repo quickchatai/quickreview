@@ -1,6 +1,6 @@
-// a sandbox root with one closed PR carrying one file of every
-// §7.2 class, three transcripts, the legacy archive record and a ledger, and
-// an Archiver in mode `on` over it with every outside fact injected.
+// A sandbox root with one closed PR carrying one file of every artifact class
+// (docs/archiving.md §7.2), three transcripts, the legacy archive record and
+// a ledger, and an Archiver in mode `on` over it with every outside fact injected.
 import { createHash } from "node:crypto";
 import {
   existsSync,

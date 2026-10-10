@@ -1,5 +1,5 @@
 // The ORIGIN RECORD — the sole authority on what a Slack-driven overseer turn
-// is allowed to do (S3, ratified D5).
+// is allowed to do.
 //
 // The overseer reads a Slack message as *text*, and text is attacker-controlled:
 // nothing the model repeats back to the daemon can be trusted to carry rights.
@@ -11,9 +11,9 @@
 // never whatever parses in the directory. The daemon runs as the same uid as
 // every pi session, so `state/slack/origin/` is session-writable: a persuaded
 // overseer could otherwise drop a far-future `source: "local", tier: "system"`
-// file and sort itself to the top (the problem, which the operator
-// channel solved with a root seal; here the daemon itself is the writer, so the
-// seal is its own memory). The files are the AUDIT trail — forensically joined
+// file and sort itself to the top. The operator command channel answers the
+// same problem with a root seal; here the daemon itself is the writer, so the
+// seal is its own memory. The files are the AUDIT trail — forensically joined
 // to the inject they sit beside, read back by `onDisk()` — and grant nothing.
 // Across a restart the memory is empty: the Slack dir fails closed (no live
 // origin), and the legacy belt is seeded from disk only when that can RESTRICT
@@ -23,7 +23,7 @@
 // Slack record at boot, but no Slack turn survives a restart for the belt to
 // hold anyway: the container restart takes the overseer's turn with it).
 //
-// Attribution (ratified D5): a command in `commands/slack/` is attributed to
+// Attribution: a command in `commands/slack/` is attributed to
 // the most recent UNEXPIRED origin. The window is short by design — an origin
 // is a "a human is mid-conversation with you right now" marker, not a
 // session-long grant, and no origin means no rights (fail closed).
@@ -89,9 +89,9 @@ export function parseOriginRecord(raw: unknown): OriginRecord | null {
   if (!isRecord(raw)) return null;
   const { source, event_id, slack_user, tier, authorized_prs, expires_at } = raw;
   if (typeof event_id !== "string" || typeof slack_user !== "string") return null;
-  // `foldSlackTier` accepts the retired "owner_legacy" spelling (records written
-  // before are still on disk) and folds it to "owner" — accepted on
-  // input, never emitted; everything unknown still grants nothing.
+  // `foldSlackTier` accepts a legacy spelling of the owner tier (older records
+  // on disk still carry it) and folds it to "owner" — accepted on input, never
+  // emitted; everything unknown still grants nothing.
   const foldedTier = foldSlackTier(tier);
   if (foldedTier === null) return null;
   if (typeof expires_at !== "string" || Number.isNaN(Date.parse(expires_at))) return null;
@@ -164,8 +164,8 @@ export class OriginStore {
    *
    * This is the other half of "who caused this turn": without it, a daemon wake
    * during a stale Slack origin would still look like the Slack user's turn, so
-   * the legacy-dir belt would refuse the daemon's OWN commands (one guest
-   * message every 15 minutes would have blocked the EOD pipeline forever).
+   * the legacy-dir belt would refuse the daemon's own commands (one guest
+   * message every 15 minutes would block the EOD pipeline indefinitely).
    * Tier `system` with no user: the daemon keeps the autonomy it always had —
    * this is the stamped, auditable form of the same authority a missing origin
    * record grants (`authorizeCommand(_, null)` ⇒ ok).
@@ -306,7 +306,7 @@ export class OriginStore {
    *
    * The NEWEST record is always kept, expired or not: `latestAny()` is what the
    * legacy-dir belt consults, and deleting the last expired Slack origin would
-   * silently release the belt — patience would once again buy rights.
+   * silently release the belt — waiting would buy rights.
    */
   prune(): void {
     const now = this.now().getTime();

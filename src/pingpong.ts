@@ -2,7 +2,7 @@
 // daemon wakes the PR session with thread context, the session posts exactly
 // one reply through the gate.
 //
-// Reply discipline (spec §4, conversation-system.md): one reply per author
+// Reply discipline (conversation-system.md): one reply per author
 // message; ≤3 exchanges per finding, then concede-or-hold; replies never change
 // a posted verdict; no new findings in ping-pong. The mechanical halves — "one
 // reply per message" and the exchange cap — are enforced here in SQLite; the
@@ -23,10 +23,10 @@ import { GitHubRequestError, type GitHubAdapter } from "./github.js";
 import type { GateResult } from "./gate.js";
 import type { StateStore } from "./state.js";
 
-/** Ported: three exchanges per finding, then concede or hold. */
+/** Three exchanges per finding, then concede or hold. */
 export const MAX_EXCHANGES_PER_FINDING = 3;
 
-/** An author reply, as interpreted by the webhook/reconcile layer (B2). */
+/** An author reply, as interpreted by the webhook/reconcile layer. */
 export interface AuthorReplyEvent {
   pr: number;
   comment_id: number;
@@ -106,7 +106,7 @@ export class PingPongLedger {
     private readonly now: () => Date = () => new Date(),
   ) {
     this.db.exec(SCHEMA);
-    // Additive: cap hits per thread (ping-pong depth metric).
+    // Additive column: cap hits per thread (the ping-pong depth metric).
     try {
       this.db.exec("ALTER TABLE pingpong_threads ADD COLUMN cap_hits INTEGER NOT NULL DEFAULT 0");
     } catch {
@@ -336,18 +336,18 @@ export class PingPongLedger {
 
 // ---- the wake message ----------------------------------------------------
 
+/** The decision file's `outcome` field, as the wake states it. */
+const OUTCOME_FIELD_NOTE =
+  "`outcome` records what became of the finding: `fixed` (the code at the head now " +
+  "addresses it), `refuted` (you accept the author's argument — it was wrong or does " +
+  "not apply) or `held` (you keep it open). Leave it out when you cannot tell.";
+
 /**
  * The inject payload that wakes the PR session for one author reply. The
  * daemon writes it through the session hooks (`inject(pr, message)`); the
  * discipline rules are restated every time because a compacted session may no
  * longer hold them verbatim.
  */
-/** The decision file's `outcome` field, as the wake states it (S6). */
-const OUTCOME_FIELD_NOTE =
-  "`outcome` records what became of the finding: `fixed` (the code at the head now " +
-  "addresses it), `refuted` (you accept the author's argument — it was wrong or does " +
-  "not apply) or `held` (you keep it open). Leave it out when you cannot tell.";
-
 export function buildWakeMessage(
   event: AuthorReplyEvent,
   ctx: ThreadContext,
@@ -500,7 +500,7 @@ export const THREAD_DECISION_RE = /^pr-(\d+)-thread-(\d+)-comment-(\d+)\.json$/;
 
 /**
  * What became of the finding, in the session's judgement at the time of the
- * reply (S6, outcome capture): `fixed` — the code at the head now
+ * reply, read by the outcome capture: `fixed` — the code at the head now
  * addresses it; `refuted` — the author's argument holds, the finding was wrong
  * or does not apply, and the reviewer concedes; `held` — the reviewer keeps it
  * open. A RECORD, read by `src/outcomes.ts`; it changes nothing the daemon
@@ -543,7 +543,7 @@ export interface ThreadDecision {
   reply: string;
   reason?: string;
   human_requested?: boolean;
-  /** S6 — optional; see `ThreadOutcome`. */
+  /** Optional; see `ThreadOutcome`. */
   outcome?: ThreadOutcome;
 }
 
@@ -1058,7 +1058,7 @@ export class ThreadDecisionWatcher {
         comment_id: d.comment_id,
         resolution: d.resolution,
         human_requested: d.human_requested ?? false,
-        // the session's own account of the finding's fate — the
+        // The session's own account of the finding's fate — the
         // outcome capture's strongest evidence for this thread.
         outcome: d.outcome ?? null,
       });
@@ -1128,7 +1128,7 @@ export class ThreadDecisionWatcher {
    * already posted it (same thread, the bot's login, the exact body, newer
    * than the author message it answers — GitHub ids are monotonic), else
    * undefined. A failed or unavailable read answers undefined and the retry
-   * posts, which is the old behaviour. */
+   * posts. */
   private async findLandedReply(
     pr: number,
     threadId: number,

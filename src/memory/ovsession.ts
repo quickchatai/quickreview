@@ -72,7 +72,7 @@ export interface OvSessionApi {
     sessionId: string,
   ): Promise<{ ok: boolean; status: number; conflict?: boolean; busy?: boolean }>;
   deleteSession(sessionId: string): Promise<{ ok: boolean; status: number }>;
-  /** Every session the key can see (S3). Optional: a lifecycle over
+  /** Every session the key can see. Optional: a lifecycle over
    * an api without it has no stale-session sweep. */
   listSessions?(): Promise<
     { ok: true; status: number; result: string[] } | { ok: false; status: number; message?: string }
@@ -85,7 +85,7 @@ export interface OvSessionLifecycle {
   create(sessionId: string): Promise<boolean>;
   /** Removes the session's messages and archives. */
   remove(sessionId: string): Promise<boolean>;
-  /** The session ids the server lists, or why it could not (S3).
+  /** The session ids the server lists, or why it could not.
    * Optional, like the api call under it. Total: never rejects. */
   list?(): Promise<{ ok: true; ids: string[] } | { ok: false; reason: string }>;
 }
@@ -142,7 +142,7 @@ export function openVikingSessionLifecycle(
         out = fail;
       }
       if (out.ok) return true;
-      // A BUSY 409 (S2: a lock the client's retries could not get)
+      // A BUSY 409 (a lock the client's retries could not get)
       // is not "already there" — nothing was created.
       if (out.conflict === true || (out.status === 409 && out.busy !== true)) {
         log(`openviking: session ${sessionId} already exists — reusing it`);
@@ -183,11 +183,11 @@ export function openVikingSessionLifecycle(
   };
 }
 
-// ---- the stale-session sweep (S3) -----------------------------------
+// ---- the stale-session sweep ------------------------------------------------
 
-/** How many stale sessions one reconcile pass deletes. 79 were stale on the
- * VM on 2026-10-06; at one pass every 5 minutes the backlog clears in under an
- * hour, and no pass ever sends a burst of deletes at the server. */
+/** How many stale sessions one reconcile pass deletes. At one pass every 5
+ * minutes a backlog of ~100 clears in under an hour, and no pass ever sends a
+ * burst of deletes at the server. */
 export const OV_SESSION_SWEEP_MAX = 10;
 
 /** How long one pass may spend deleting before it leaves the rest for the
@@ -218,13 +218,12 @@ export interface StaleOvSessionPlan {
 }
 
 /**
- * Which listed sessions the reconcile sweep may delete (S3). Pure.
+ * Which listed sessions the reconcile sweep may delete. Pure.
  *
  * The raw tier is meant to age out by DELETE when its PR closes
- * (`archiveAndClose`), but a delete that failed — silently, before S1 — or a
- * close the daemon never saw left 79 sessions of closed PRs on the server. The
- * sweep removes exactly those: a `pr-<n>` session whose PR the registry says
- * is CLOSED. An open PR, a PR the registry does not know, and any id that is
+ * (`archiveAndClose`), but a delete that failed or a close the daemon never
+ * saw leaves sessions of closed PRs on the server. The sweep removes exactly
+ * those: a `pr-<n>` session whose PR the registry says is CLOSED. An open PR, a PR the registry does not know, and any id that is
  * not `pr-<n>` are left alone.
  */
 export function planStaleOvSessions(
@@ -360,13 +359,13 @@ export function ovcliConfPathIn(piHome: string): string {
 }
 
 /** Where the daemon publishes the RETIRED entries' URIs for the sessions'
- * recall (S3, vendored PATCH 7), beside their ovcli.conf. */
+ * recall (vendored PATCH 7), beside their ovcli.conf. */
 export function ovRetiredPathIn(piHome: string): string {
   return join(piHome, ".openviking", "retired-uris.json");
 }
 
 /**
- * Publish the retired URIs the daemon's store sweep found (S3).
+ * Publish the retired URIs the daemon's store sweep found.
  *
  * Retire is a `#retired` header tag and the file stays in the indexed root, so
  * a semantic search still finds it. The daemon's own context search excludes
@@ -401,13 +400,13 @@ export function writeRetiredUris(
   }
 }
 
-/** Where the daemon publishes a PR session's RECALL HINT (S5) — one
+/** Where the daemon publishes a PR session's RECALL HINT — one
  * file per session, beside ovcli.conf. */
 export function ovRecallHintPathIn(piHome: string, session: string): string {
   return join(piHome, ".openviking", "recall-hints", `${session}.json`);
 }
 
-/** What a PR session's own recall searches for, and where (S5). */
+/** What a PR session's own recall searches for, and where. */
 export interface RecallHint {
   /** The round's context query (`roundContextQuery`: the PR title plus the
    * areas and file kinds it touches). */
@@ -417,15 +416,15 @@ export interface RecallHint {
 }
 
 /**
- * Publish a PR session's recall hint (S5, vendored PATCH 8).
+ * Publish a PR session's recall hint (vendored PATCH 8).
  *
- * The vendored extension recalls on every prompt, and it queried with the
- * WHOLE delivered message — a 55–80k-character round order, cut to its first
- * 128 tokens by the local embedder (S4), i.e. the template's fixed header,
- * the same for every PR. The daemon already builds a PR-derived query for the
- * round's own context block; this file hands the session's recall the same
- * query and the same areas (`experiences/` only), so neither route brings ops
- * notes or raw feedback into a round. Rewritten whole and atomically at every
+ * The vendored extension recalls on every prompt. Querying with the WHOLE
+ * delivered message — a 55–80k-character round order, cut to its first 128
+ * tokens by the local embedder — would embed only the template's fixed
+ * header, the same for every PR. The daemon already builds a PR-derived query
+ * for the round's own context block; this file hands the session's recall
+ * the same query and the same areas (`experiences/` only), so neither route
+ * brings ops notes or raw feedback into a round. Rewritten whole and atomically at every
  * round; not a secret and not a write into memory. Total: a disk that refuses
  * leaves the session on its last hint (or, with none, the prompt), never a
  * throw.
@@ -481,7 +480,7 @@ export function readRetiredUrisFile(path: string): string[] | null {
 
 /**
  * The key the sessions are actually handed, read back out of `ovcli.conf`
- * (S1) — what the memory health probe authenticates with, so the
+ * — what the memory health probe authenticates with, so the
  * SESSIONS' credential is judged, not assumed to equal the daemon's. `absent`
  * is no file yet (no session born); `unreadable` is a file a session could not
  * use either. The key is returned to the caller and never logged.
@@ -506,7 +505,7 @@ export function readOvcliKey(
 }
 
 /**
- * Notice when the daemon's key CHANGES (S1). Call `check()` with the
+ * Notice when the daemon's key CHANGES. Call the returned function with the
  * current key on a cadence (the health probe's tick); `onChange` fires when a
  * non-null key differs from the last one seen — the first sighting only
  * records. wire.ts rewrites the live sessions' `ovcli.conf` from it, so a
@@ -543,10 +542,10 @@ export interface OvSessionEnvOptions {
    * PR and therefore no raw tier. */
   ovSessionId?: string;
   /** Where the daemon publishes the retired URIs (`ovRetiredPathIn`), read
-   * by the extension's recall (S3). */
+   * by the extension's recall. */
   retiredFile?: string;
   /** Where the daemon publishes this PR session's recall hint
-   * (`ovRecallHintPathIn`, S5). PR sessions only: the overseer and
+   * (`ovRecallHintPathIn`). PR sessions only: the overseer and
    * the companion recall on their own prompts. */
   recallHintFile?: string;
 }

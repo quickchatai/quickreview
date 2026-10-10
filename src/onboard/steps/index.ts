@@ -1,9 +1,6 @@
-// The onboarding step registry. ships the tracer step (preflight);
-// the later slices (topology/auth, GitHub App manifest,
-// tunnel/memory/bring-up/proof) register their steps HERE, in
-// `order` order — the pi extension turns each into a tool automatically, and
-// the engine handles persistence, resume re-verification and finish for all
-// of them.
+// The onboarding step registry. Every step registers here, in `order` order —
+// the pi extension turns each into a tool automatically, and the engine
+// handles persistence, resume re-verification and finish for all of them.
 import type { OnboardingStep } from "../engine.js";
 import { appSlugStep } from "./appslug.js";
 import { bringUpStep } from "./bringup.js";
@@ -27,15 +24,15 @@ import { vmDeployStep } from "./vmdeploy.js";
 export function defaultSteps(): OnboardingStep[] {
   // Order matters and the steps interlock: config_fill records the reviewed
   // repo the App step needs, and the App step records the slug config_fill
-  // consumes when it runs again. reconciles the slug the App actually
-  // got against the one recorded here (app_slug_reconcile), and then owns the
-  // whole bring-up tail: the stack comes up, memory's second phase completes
+  // consumes when it runs again. app_slug_reconcile reconciles the slug the
+  // App actually got against the one recorded here, and then the bring-up
+  // tail runs: the stack comes up, memory's second phase completes
   // against the now-running server, the running system is verified in layers,
   // a real PR is reviewed in front of the operator, and only then — once, on
   // their explicit word — the dry-run flip is offered.
   //
-  // adds the VM-over-ssh topology as the second first-class route.
-  // Three of these steps are route-specific and say so with `enabled`:
+  // The VM-over-ssh topology is the second first-class route. The route split,
+  // step by step (the route-specific steps gate themselves with `enabled`):
   //   topology (20)      asks the question — both answers first-class, the
   //                      server route advertised as the recommendation;
   //   ssh_preflight (22) VM only, and FIRST on that route: the alias, the

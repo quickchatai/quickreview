@@ -1,5 +1,5 @@
-// The LIVE state.db's WAL checkpoint, OFF the event loop (the
-// 2026-10-08 rehearsal; docs/archiving.md §9.3, Build notes).
+// The live state.db's WAL checkpoint, off the event loop (docs/archiving.md
+// §9.3, Build notes).
 //
 // The daemon's connection checkpoints automatically (`wal_autocheckpoint`,
 // 1000 pages) inside whichever commit crosses the threshold, and under

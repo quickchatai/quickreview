@@ -1,7 +1,7 @@
 // Posting helpers — the review payload the PR session hands to the daemon.
 //
-// Everything here is pure assembly plus one gated submit. The ported summary
-// format is preserved: verdict line → lenses line → severity sections → the
+// Everything here is pure assembly plus one gated submit. The summary format:
+// verdict line → lenses line → severity sections → the
 // "Start here" handoff guide on NEEDS_HUMAN → footer. Inline comments are anchor-
 // validated (src/anchors.ts) and capped at 50; anything stripped or overflowing
 // is appended to the body rather than dropped, and rather than failing the
@@ -43,11 +43,11 @@ import {
   type Verdict,
 } from "./severity.js";
 
-/** GitHub caps a single review at 50 inline comments (ported constraint). */
+/** GitHub caps a single review at 50 inline comments. */
 export const INLINE_COMMENT_CAP = 50;
 
-/** The review-body footer, naming the configured bot identity (:
- * `[github] bot_login` — never a hardcoded login). "" degrades to the role. */
+/** The review-body footer, naming the configured bot identity
+ * (`[github] bot_login` — never a hardcoded login). "" degrades to the role. */
 export function reviewFooter(botLogin?: string): string {
   return (
     `_Automated review by \`${botLogin?.trim() || "the review bot"}\` (quickreview sandbox). ` +
@@ -88,19 +88,18 @@ export interface ReviewInput {
   /**
    * Prior findings still open and unchanged at this head (re-review).
    *
-   * these are POINTED AT, never restated. 14.2% of the corpus's
-   * findings were bookkeeping about the reviewer's own earlier findings —
-   * output spent narrating itself, in a body the author pays to read, while
-   * `state/ledgers/pr-<n>.md` already carries exactly that round-to-round state
-   * and each of those findings already has a live thread carrying its full
-   * reasoning. So the body renders ONE line saying how many are still open and
+   * These are pointed at, never restated: restating them is output spent
+   * narrating the reviewer's own earlier findings, in a body the author pays
+   * to read, while `state/ledgers/pr-<n>.md` already carries that
+   * round-to-round state and each finding already has a live thread carrying
+   * its full reasoning. So the body renders one line saying how many are still open and
    * where they live. Nothing is dropped and no reasoning is lost: the original
    * threads are untouched, and a finding whose severity or evidence CHANGED is
    * not this — it is a new finding and posts as one.
    */
   carried_over?: string[];
   /**
-   * the deterministically-picked teammate to @-mention in the ONE
+   * The deterministically-picked teammate to @-mention in the one
    * escalation comment a first-party-directive review carries (dispatch picks
    * it: most recent human author of the touched directive files, falling back
    * to config `[review] escalation_mention_default`). Rendered only when the
@@ -108,14 +107,14 @@ export interface ReviewInput {
    */
   escalation_mention?: string;
   /**
-   * the configured `[github] bot_login`, rendered into the review
+   * The configured `[github] bot_login`, rendered into the review
    * footer. Absent ⇒ the footer names the role ("the review bot") — never a
    * hardcoded personal login.
    */
   bot_login?: string;
   /**
    * The profile's `[posting]` policy (src/postingpolicy.ts). Absent or
-   * all-default => today's assembly, byte for byte. Otherwise the findings are
+   * all-default => the unpoliced assembly, byte for byte. Otherwise the findings are
    * cut to the policy BEFORE anchoring (blockers never) and what is cut is
    * returned as `withheld` for the findings record, never dropped silently.
    */
@@ -126,8 +125,8 @@ export interface ReviewInput {
 }
 
 /** The first-party directive paths this review's surviving injection findings
- * sit on, in finding order, deduplicated. means these are proven
- * malicious/source-to-sink cases, not routine directive prose. */
+ * sit on, in finding order, deduplicated. A surviving injection finding is a
+ * proven malicious or source-to-sink case, not routine directive prose. */
 export function directiveEscalationFiles(
   findings: readonly Finding[],
   vocab?: import("./severity.js").DirectiveVocabulary,
@@ -141,11 +140,11 @@ export function directiveEscalationFiles(
 }
 
 /**
- * The ONE escalation comment: max three sentences, an explicit
- * @-mention, and the named files containing the proved injection. One comment
- * total, however many directive files the PR touches. It is a comment inside
- * the gated review — never a GitHub reviewer nomination (`request_reviewer`
- * stays a rejected non-kind; CLAUDE.md rule 10).
+ * The one escalation comment: max three sentences, an explicit @-mention, and
+ * the named files containing the proved injection. One comment total, however
+ * many directive files the PR touches. It is a comment inside the gated review
+ * — never a GitHub reviewer nomination (`request_reviewer` belongs only to the
+ * optional escalation feature; CLAUDE.md rule 10).
  */
 export function renderDirectiveEscalationComment(
   mention: string,
@@ -191,8 +190,8 @@ export interface AssembledReview {
 }
 
 export function eventForVerdict(v: Verdict): ReviewPayload["event"] {
-  // NEEDS_HUMAN posts the complete review as a COMMENT — the merge decision is
-  // the human's (ported).
+  // NEEDS_HUMAN (accepted on legacy input only) posts the complete review as
+  // a COMMENT: it is not a decision.
   return v === "APPROVE" ? "APPROVE" : v === "REQUEST_CHANGES" ? "REQUEST_CHANGES" : "COMMENT";
 }
 
@@ -208,8 +207,7 @@ function verdictLine(v: Verdict, counts: Record<PostTag, number>): string {
 }
 
 /**
- * The one line that replaces the old "Previously deferred, unchanged" section
- *. It states the fact and names where the reasoning lives; it never
+ * The one line that points at the prior findings still open. It states the fact and names where the reasoning lives; it never
  * repeats a title, a severity or a rationale, because all three are already on
  * the thread the reader can click.
  */
@@ -229,8 +227,8 @@ function bullet(f: Finding): string {
 }
 
 /**
- * Findings whose title arrived wearing a tag outside the closed grammar
- *. The tag is stripped before posting — an invented tag is a finding
+ * Findings whose title arrived wearing a tag outside the closed grammar. The
+ * tag is stripped before posting — an invented tag is a finding
  * that escapes the machinery keyed on the real one — and reported here so the
  * escape is countable rather than silent.
  */
@@ -246,21 +244,21 @@ export function ungrammaticalTags(
 }
 
 export function inlineBody(f: Finding, tag: PostTag): string {
-  // an ask-your-human question leads with its own marker, BEFORE the
+  // An ask-your-human question leads with its own marker, BEFORE the
   // ordinary posting tag — the first line is a routing instruction to the PR
   // author's AI implementer ("put this to a person, do not answer it
   // yourself"), and the reviewed repo's directives key on it appearing there.
   // The severity tag stays on the same line so a blocking question still reads
   // as a blocker. It is never `[check this]`, whose meaning is unchanged.
-  // a deferral leads with `[deferred]` — the finding is real and this
-  // PR is not where it gets fixed. It is a THIRD marker, never a spelling of
+  // A deferral leads with `[deferred]` — the finding is real and this PR is
+  // not where it gets fixed. It is a third marker, never a spelling of
   // either other one, and exactly one marker ever rides a comment: when a
   // question is being deferred, the deferral is the outer state and the one
   // that says what happens next.
   const deferred = isDeferredFinding(f.kind);
   const askHuman = !deferred && isAskHumanFinding(f.kind, f.lens);
   const marker = deferred ? `${DEFERRED_TAG} ` : askHuman ? `${ASK_HUMAN_TAG} ` : "";
-  // the tag grammar is closed. A title that arrived carrying its own
+  // The tag grammar is closed. A title that arrived carrying its own
   // bracketed tag loses it here — a duplicate of the one about to be minted, or
   // an invented one that would escape every consumer keyed on the real grammar.
   // Only the label goes; the finding's words are untouched.
@@ -375,8 +373,8 @@ export function renderBody(
   const of = (tag: PostTag) => input.findings.filter((f) => tags.get(f) === tag);
   // `[posting] body = "verdict"`: the verdict line and one sentence. A kept
   // finding with no inline anchor is the one exception (one bullet line, so
-  // a posted finding is never invisible), and the security-attention
-  // comment stays, because that one is not optional.
+  // a posted finding is never invisible), and the security-attention comment
+  // stays, because that one is not optional.
   if (input.policy && !isDefaultPosting(input.policy) && input.policy.body === "verdict") {
     const short: string[] = [verdictLine(input.verdict, counts)];
     const sentence = firstSentence(input.summary ?? "");
@@ -408,7 +406,7 @@ export function renderBody(
   section("Nits", of("nit").map(bullet));
   section("Questions", of("question").map(bullet));
 
-  // a POINTER, not a restatement — see ReviewInput.carried_over.
+  // A pointer, not a restatement — see ReviewInput.carried_over.
   if (input.carried_over?.length) {
     out.push("", carriedOverLine(input.carried_over.length));
   }
@@ -422,7 +420,7 @@ export function renderBody(
     );
   }
 
-  // EXACTLY ONE security-attention comment per review carrying a
+  // Exactly one security-attention comment per review carrying a
   // surviving first-party directive injection — rendered once here, however
   // many files it touches. It never softens the ordinary merits verdict.
   const directiveFiles = directiveEscalationFiles(input.findings);
@@ -496,7 +494,7 @@ export async function submitReview(
   roundNo?: number | null,
 ): Promise<SubmitResult> {
   const { pr, payload } = review;
-  // an invented tag never reaches GitHub (it was stripped at assembly)
+  // An invented tag never reaches GitHub (it was stripped at assembly)
   // but it must never vanish silently either — the whole defect is a finding
   // that escapes its own machinery unnoticed.
   if (review.ungrammatical.length > 0) {

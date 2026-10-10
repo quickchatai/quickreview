@@ -1,4 +1,4 @@
-// One STORE's archive writer (S4, docs/archiving.md §5, §7.3): the
+// One STORE's archive writer (docs/archiving.md §5, §7.3): the
 // files that belong to no PR — the overseer's non-current transcripts
 // (`overseer.ts`) and pi's global session store (`piglobal.ts`) — go through
 // the SAME per-file protocol as a PR's (`gzfile.ts`), into one archive dir
@@ -108,7 +108,7 @@ export interface StorePassResult {
   keptLive: number;
 }
 
-/** A store as the plan measures it (S4, §13): what is there, and what a
+/** A store as the plan measures it (§13): what is there, and what a
  * pass would move — `null` when that cannot be said (the overseer's birth
  * unknown, as in a CLI). Read-only: listings and lstats, nothing opened. */
 export type StoreTally =

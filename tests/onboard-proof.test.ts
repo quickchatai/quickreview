@@ -1,4 +1,4 @@
-// the proof round: the operator watches a real PR of theirs get
+// The proof round: the operator watches a real PR of theirs get
 // reviewed, and reads the review out of the dry-run record before anything
 // could ever post.
 //
@@ -514,9 +514,9 @@ describe("verify and resumability", () => {
     ).toMatchObject({ review_shown: false });
   });
 
-  // the proof round is NOT a laptop-only step any more. It is one
-  // implementation that runs over whichever transport the topology picked —
-  // the dry-run record is read out of the daemon container either way.
+  // The proof round is not a laptop-only step: it is one implementation that
+  // runs over whichever transport the topology picked — the dry-run record is
+  // read out of the daemon container either way.
   it("on the VM topology it reads the same dry-run record over ssh", async () => {
     const seen: string[][] = [];
     const runner = {

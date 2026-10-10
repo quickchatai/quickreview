@@ -1,5 +1,4 @@
-// tests/launch-order.test.ts — the plan lists its rows SLOWEST FIRST
-// (dispatch.ts `slowestFirst`).
+// The plan lists its rows slowest first (dispatch.ts `slowestFirst`).
 //
 // The session launches a turn's rows in table order and the subagent glue runs
 // them under a process-wide cap in that order, so a slow row listed late
@@ -8,9 +7,9 @@
 // (behaviour-delta, then sweep) by changed lines covered, larger first, every
 // other lens, the cheap conditional lenses; pass-validate last.
 //
-// What is pinned: ONLY the order moved. The rows (each byte-identical), their
-// tiers and focus, and the addable list are the same SETS as before the lever
-// — the hashes below were taken on the tree before `slowestFirst` existed —
+// What is pinned: the ordering changes only the order. The rows (each
+// byte-identical), their tiers and focus, and the addable list are the same
+// sets as the unordered plan — the hashes below were taken from it —
 // and every consumer that indexes rows (task files, `lenses`) follows the one
 // ordered array.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -73,7 +72,7 @@ const sha = (v: unknown): string => createHash("sha256").update(JSON.stringify(v
 describe("the plan lists its rows slowest first", () => {
   it("only the order moved: the same rows, tiers, focus and addable list as before the lever", () => {
     const p = plan();
-    // Taken on the tree before `slowestFirst` (the rows as a sorted set of
+    // Taken from the plan without `slowestFirst` (the rows as a sorted set of
     // their JSON, and the addable list as planned).
     expect(sha(canon(p.pass_plan))).toBe(PRE_LEVER_ROWS);
     expect(sha(p.addable_lenses)).toBe(PRE_LEVER_ADDABLE);
@@ -118,7 +117,7 @@ describe("the plan lists its rows slowest first", () => {
     const risk = new Set(fixture.models.risk_passes);
     expect(slowestFirst(rows, FILES, risk)).toEqual(rows);
     // Reversed input: the same rows, the same frame (rows with equal keys
-    // keep their INPUT order, so ties may swap).
+    // keep their input order, so ties may swap).
     const again = slowestFirst([...rows].reverse(), FILES, risk);
     expect(canon(again)).toEqual(canon(rows));
     expect(again[0]!.lens).toBe("pass-baseline");

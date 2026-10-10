@@ -1,5 +1,5 @@
 // The rig behind the tests/guards-shell-*.test.ts files: the guards on the
-// OTHER posting route. The sessions post through
+// other posting route. The sessions post through
 // scripts/post-review.sh, approve-pr.sh and reply-thread.sh, which do not go
 // through src/gate.ts — so scripts/guards.sh mirrors the guards there the same
 // way the dry-run gate is mirrored, and those files are the bypass-attempt
@@ -11,8 +11,7 @@
 // mint-token.sh finds no PEM and the scripts fall back to an unauthenticated
 // read against the stub. Everything runs in dry-run, so nothing is ever sent.
 //
-// One file used to hold every case and, run serially, set the whole suite's
-// wall time. It is split by area so vitest runs the parts in parallel; every
+// The cases are split by area so vitest runs the parts in parallel; every
 // part calls useGuardsShellRig() once at module level, which gives it its OWN
 // stub server (port 0 — the kernel picks, so parts never collide), its own
 // temp home and its own state.db, fresh for every test.
@@ -59,7 +58,7 @@ export interface GuardsShellRig {
   /** What GET /pulls/5180 answers; null makes the stub 404. */
   pr: PrStub | null;
   reviews: ReviewStub[];
-  /** Check-runs at HEAD (guard 4). Green by default: every case that
+  /** Check-runs at HEAD (guard 4, the CI gate). Green by default: every case that
    * is about another guard must not trip this one. */
   checkRuns: CheckRunStub[];
   /** Commit statuses at HEAD (the combined status endpoint). Empty by default

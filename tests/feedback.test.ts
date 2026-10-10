@@ -1,6 +1,6 @@
-// The [feedback] tuning loop: explicit [feedback] comments +
-// behavioral signals, diverted OUT of the round path, deduped, written to
-// reviewer memory through the ONE MemoryStore seam, and composed into a same-day
+// The [feedback] tuning loop: explicit [feedback] comments + behavioral
+// signals, diverted out of the round path, deduped, written to reviewer
+// memory through the one MemoryStore seam, and composed into a same-day
 // validator-only addendum.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,8 +29,8 @@ import { applyInterpretation, interpretEvent, type Interpretation } from "../src
  * non-default-zone coverage uses America/New_York explicitly). */
 const TZ = "Europe/Warsaw";
 
-/** The [feedback] sink talks to the ONE MemoryStore seam — no
- * subprocess, no engine knowledge. */
+/** The [feedback] sink talks to the one MemoryStore seam — no subprocess,
+ * no engine knowledge. */
 class FakeMemoryStore implements MemoryStore {
   applied: MemoryOp[] = [];
   constructor(private readonly result: MemoryWriteResult = { ok: true, message: "ok: note" }) {}
@@ -855,7 +855,7 @@ describe("FeedbackEngine.ingest", () => {
     settle?.();
   });
 
-  // ----: day scoping follows the configured ops timezone ----------
+  // ---- day scoping follows the configured ops timezone -------------------
   it("stamps and expires the same-day addendum on the configured zone's day, not the old Warsaw constant", async () => {
     const tz = "America/New_York";
     let clock = new Date("2026-01-15T04:30:00Z"); // 23:30 Jan 14 in New York — already Jan 15 in Warsaw AND UTC
@@ -896,11 +896,9 @@ describe("FeedbackEngine.ingest", () => {
   });
 });
 
-// ---- the `note` contract, after the engine swap ------------------
-// This used to drive `scripts/memedit.mjs` as a real subprocess and lean on the
-// engine to refuse untagged text. That engine is gone, so the property is
-// re-proved where it now lives: on the WRITER. Every entry the sink produces
-// opens with a `#tag`, and it always reaches the seam as `note` — never `add`.
+// ---- the `note` contract ---------------------------------------------------
+// The property lives on the writer: every entry the sink produces opens with
+// a `#tag`, and it always reaches the seam as `note` — never `add`.
 // Both halves matter downstream: the leading tag is what the EOD curator, the
 // import classifier and the store's native tag mirror all read, and `note` vs
 // `add` is what keeps a quoted PR comment from masquerading as the owner's own

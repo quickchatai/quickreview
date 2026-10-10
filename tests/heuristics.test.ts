@@ -19,11 +19,11 @@ import type { PrFileEntry } from "../src/github.js";
 import { stageFixtureProfile } from "./helpers/tracked-profiles.js";
 
 const sandbox = join(import.meta.dirname, "..");
-/** The quickchat profile's heuristics.toml — the predicates moved out
- * of the compiled-in core — as the frozen fixture copy
- * (tests/fixtures/profiles/quickchat,: the live pack now lives in the
- * install's config home). These tests are the equivalence proof for those
- * bytes. The fixture is dropped from the assembled snapshots, so the
+/** The quickchat profile's heuristics.toml — the repo-shaped predicates that
+ * live in the profile, not the compiled-in core — as the frozen fixture copy
+ * (tests/fixtures/profiles/quickchat; the live pack lives in the install's
+ * config home). These tests are the equivalence proof for those bytes. The
+ * fixture is dropped from the assembled publication snapshots, so the
  * proofs self-skip (HAS_QC) there — and only there: in the source tree a
  * missing fixture throws (tests/helpers/tracked-profiles.ts). */
 const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
@@ -222,15 +222,15 @@ describe("selectLenses", () => {
     ]);
     expect(backend).not.toContain("pass-ui");
     expect(backend).not.toContain("pass-contracts");
-    // models/ without a migration is not a data-safety trigger anymore.
+    // models/ without a migration is not a data-safety trigger.
     expect(selectLenses([f("src/models.py"), f("app/models/user.py")])).not.toContain(
       "pass-data-safety",
     );
     // A plain worker/task file with no patch signals is delivery, not statelessness.
     expect(selectLenses([f("src/workers/queue.py")])).not.toContain("pass-statelessness");
-    // "deploy"/"docker" as a mere substring no longer trips prod-risk.
+    // "deploy"/"docker" as a mere substring does not trip prod-risk.
     expect(selectLenses([f("docs/deployment_notes.md")])).not.toContain("pass-prod-risk");
-    // Email/notification content dirs are no longer a delivery trigger.
+    // Email/notification content dirs are not a delivery trigger.
     expect(selectLenses([f("src/notifications/send.py"), f("src/email/render.py")])).not.toContain(
       "pass-delivery",
     );
@@ -249,14 +249,14 @@ describe("selectLenses", () => {
   });
 });
 
-// ---- placement / simplicity / backcompat ---------------
+// ---- placement / simplicity / backcompat -----------------------------------
 
 describe("selectLenses: pass-placement", () => {
   it("fires on a new code file of 30+ lines (the default preset's floor)", () => {
     expect(selectLenses([{ ...f("src/service/limiter.py", 40), status: "added" }])).toContain(
       "pass-placement",
     );
-    // A tiny new file rarely poses a placement question (2026-09-27 lean plan)…
+    // A tiny new file rarely poses a placement question (the lean plan)…
     expect(selectLenses([{ ...f("src/service/limiter.py", 5), status: "added" }])).not.toContain(
       "pass-placement",
     );
@@ -419,7 +419,7 @@ describe("selectLenses: pass-backcompat", () => {
   });
 });
 
-// ---- pass-intent --------------------------------------------------
+// ---- pass-intent ----------------------------------------------------------
 
 const SUBSTANTIVE_BODY =
   "This PR introduces a token-bucket rate limiter for the public API. " +
@@ -489,11 +489,11 @@ describe("selectLenses: pass-intent", () => {
   });
 });
 
-// ---- equivalence proof ----------------------------------------------
+// ---- profile-heuristics equivalence proof ---------------------------------
 //
-// The heart of the slice: `legacySelectLenses` below is a FROZEN, verbatim
-// copy of the legacy compiled-in selection (constants inlined so nothing
-// tracks future source drift). Over the corpus, selection with the REAL
+// `legacySelectLenses` below is a frozen, verbatim copy of the selection as it
+// was compiled in before its repo-shaped predicates moved into the profile
+// (constants inlined so nothing tracks future source drift). Over the corpus, selection with the REAL
 // quickchat heuristics.toml must equal the legacy selection EXACTLY — same
 // lenses, same order — and the empty extension (no profile / the minimal
 // profile) must fire only the generic core.
@@ -506,9 +506,9 @@ const LEGACY_DEPS_MANIFEST_RE =
 const LEGACY_DEEP_INDENT_RE = /^\+(?: {20,}|\t{5,})\S/m;
 const LEGACY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|when)\b/gm;
 
-/** Verbatim legacy selectLenses (src/heuristics.ts at commit 50ca772). */
-/** The thresholds the frozen legacy selection was written with (before the
- * 2026-09-27 default preset raised them): the proof is about the
+/** Verbatim compiled-in selectLenses (src/heuristics.ts at commit 50ca772). */
+/** The thresholds the frozen legacy selection was written with (the default
+ * preset raises them): the equivalence proof is about the
  * profile's PREDICATES, so it holds the thresholds at the legacy values. */
 const LEGACY_TUNING = { intentMinWords: 20, placementMinCodeFiles: 4, placementMinNewFileLines: 0 };
 

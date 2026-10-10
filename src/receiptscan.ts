@@ -1,18 +1,13 @@
-// The receipt scan (#5362 rule ①) without the event-loop block (boot
-// stall, 2026-10-07).
+// The receipt scan, read without blocking the event loop.
 //
 // A receipt is a fact: the daemon stamps a token into a wake, and pi writes the
 // user message it ACCEPTED — token included — into the session JSONL. Present
-// = delivered, absent = never arrived, unreadable = unknown. That rule is
-// unchanged here. What changed is how the bytes are read.
+// = delivered, absent = never arrived, unreadable = unknown. This module only
+// decides how the bytes are read.
 //
-// The old read was `readFileSync(file, "utf8").includes(marker)` on every
-// in-scope JSONL, for every query, from the start of the file, inside an
-// `async` function with no real await. Reconcile asked it once per recheck
-// claim — 2,548 claims, 1,217 of them already delivered and re-proven every
-// pass — so one pass decoded ~23 GB of transcripts as ONE synchronous span:
-// 132.7 s of a blocked loop on the VM at the 15:35 boot, ~2 minutes of every
-// 5-minute pass all day.
+// Reconcile asks once per recheck claim, and many claims are re-proven every
+// pass, so reading each in-scope JSONL whole for every query decodes gigabytes
+// of transcripts in one synchronous span and blocks the loop for minutes.
 //
 // This index reads each byte of a session file AT MOST ONCE per daemon
 // lifetime:
@@ -24,9 +19,9 @@
 //     grew is scanned only from where the last scan stopped. A file that
 //     shrank, was replaced (dev/ino), or whose last ≤ 511 bytes before the old
 //     end changed (the tail check) is rescanned from 0.
-//   - That rests on ONE assumption the old scan never needed: a session file
-//     is APPEND-ONLY — pi writes its session JSONL by appending entries, and
-//     nothing rewrites one in place (VERIFY-ON-PIN: pi 1.0.0's session manager
+//   - That rests on one assumption: a session file is APPEND-ONLY — pi
+//     writes its session JSONL by appending entries, and nothing rewrites one
+//     in place (VERIFY-ON-PIN: pi 1.0.0's session manager
 //     was not at hand to check). The checks above catch the rewrites that
 //     break it visibly — shorter, replaced, or changed just before the old
 //     end — and nothing more. A file whose dev, ino, size and mtime are all
@@ -37,9 +32,9 @@
 //     that out is exactly the cost this index exists to remove.
 //   - Bytes are searched raw (`Buffer.indexOf` on the ASCII prefix), never
 //     decoded: the tokens are deliberately plain ASCII, so they survive JSON
-//     string encoding byte for byte, a byte match is exactly the old
-//     substring match (no per-line parsing, no partial-write hazard), and it
-//     is ~4x cheaper than a utf8 decode.
+//     string encoding byte for byte, a byte match is exactly a substring
+//     match on the decoded text (no per-line parsing, no partial-write
+//     hazard), and it is ~4x cheaper than a utf8 decode.
 //   - Reads are async, in chunks of RECEIPT_CHUNK_BYTES with a real
 //     event-loop turn between them, so no file — however large — is one
 //     synchronous span.
@@ -48,10 +43,9 @@
 // A query marker that is not of the token shape (none in production) falls
 // back to a streamed search of its own, chunked the same way and not cached.
 //
-// The scope rule is the old one, byte for byte: a file counts for a query only
-// if its mtime is at or after `sinceMs - RECEIPT_SCOPE_SLACK_MS`, and only
-// `.jsonl` files under the session dir are read. A readdir or stat failure
-// anywhere, or a failed read of an in-scope file, makes an absent marker
+// The scope rule: a file counts for a query only if its mtime is at or after
+// `sinceMs - RECEIPT_SCOPE_SLACK_MS`, and only `.jsonl` files under the
+// session dir are read. A readdir or stat failure anywhere, or a failed read of an in-scope file, makes an absent marker
 // UNKNOWN.
 
 import { open, readdir, stat } from "node:fs/promises";
@@ -68,7 +62,7 @@ export const RECEIPT_TOKEN_MAX_BYTES = 512;
 export const RECEIPT_CHUNK_BYTES = 1 << 20;
 /** Files whose token sets are kept; the oldest-touched is dropped past it. */
 export const RECEIPT_INDEX_MAX_FILES = 4096;
-/** The scope slack the old scan used: coarse mtimes and small clock skew. */
+/** The scope slack: coarse mtimes and small clock skew. */
 export const RECEIPT_SCOPE_SLACK_MS = 60_000;
 
 const PREFIX = Buffer.from(RECEIPT_TOKEN_PREFIX, "latin1");
@@ -112,7 +106,7 @@ interface FileEntry {
 }
 
 /** Can `marker` be answered from the token index? Only when finding it as a
- * token is EXACTLY the old substring test: the token prefix, the suffix only
+ * token is exactly a substring test: the token prefix, the suffix only
  * at its end (so the first suffix after the prefix is its own), ASCII, and
  * short enough to be indexed. */
 export function indexableMarker(marker: string): boolean {
@@ -177,12 +171,10 @@ export class ReceiptIndex {
     // lost.
     const floor = sinceMs - RECEIPT_SCOPE_SLACK_MS;
     const indexed = indexableMarker(marker);
-    // An I/O failure anywhere in the scan makes an absent marker UNKNOWN
-    // (#5362 rule ①: present = delivered, absent = never arrived, unreadable =
-    // unknown — and unknown is NEVER read as loss; before a failed
-    // read answered `false`, which after redelivery is spent kills a live
-    // conversation). A failed read never aborts the scan — the marker may
-    // still be in the next file.
+    // An I/O failure anywhere in the scan makes an absent marker UNKNOWN, and
+    // unknown is never read as loss: a `false` here, once redelivery is spent,
+    // kills a live conversation. A failed read never aborts the scan — the
+    // marker may still be in the next file.
     let unreadable = false;
     let sawCandidate = false;
     const walk = async (dir: string): Promise<boolean> => {

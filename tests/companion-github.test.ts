@@ -1,9 +1,9 @@
-// the companion's read-only GitHub token, minted on the host.
+// The companion's read-only GitHub token, minted on the host.
 // What matters is external: what is ASKED of GitHub (read-only permissions,
 // one repository), what is REFUSED (a grant wider than read), and what lands
 // in the env file the companion mounts (the token, never the App key).
 //
-// H4: the file is `source`d in the container, so one test sources it
+// The file is `source`d in the container, so one test sources it
 // with the real `sh`. That makes this a process suite
 // (tests/helpers/suite-timeouts.ts PROCESS_SUITES).
 import { execFileSync } from "node:child_process";
@@ -35,10 +35,9 @@ const NOW = Date.parse("2026-09-29T10:00:00Z");
 const EXPIRES = "2026-09-29T11:00:00Z";
 
 /**
- * A SYNTHETIC token in GitHub's installation-token format as of 2026-10:
- * `ghs_`, then three base64url segments joined by dots, 383 characters. The
- * shape was measured on a real token that scripts/mint-token.sh cached on
- * 2026-10-07: segments of 48 (with the prefix), 247 and 86 characters, with
+ * A SYNTHETIC token in GitHub's installation-token format: `ghs_`, then three
+ * base64url segments joined by dots, 383 characters. The shape was measured on
+ * a real token: segments of 48 (with the prefix), 247 and 86 characters, with
  * `-`, `.` and `_` beside the alphanumerics. No real token is in this file.
  */
 function realFormatToken(): string {
@@ -269,16 +268,16 @@ describe("CompanionGithubToken — the env file the companion mounts", () => {
   });
 });
 
-// H4. From 2026-10-02 to 2026-10-08 the companion never received
-// its token. renderTokenEnv accepted only [A-Za-z0-9_], but GitHub's
-// installation tokens now also contain `.` and `-`. Each 5-minute refresh
-// minted a real token and threw it away.
+// GitHub's installation tokens contain `.` and `-` as well as [A-Za-z0-9_].
+// An env-file renderer that accepted only plain word characters would refuse
+// every real token, so the companion would never receive one and every refresh
+// would mint a token and throw it away.
 describe("GitHub's current token format — the env file carries it, and only safe characters", () => {
   it("the sample has the real token's shape", () => {
     expect(REAL_FORMAT_TOKEN).toHaveLength(383);
     expect(REAL_FORMAT_TOKEN.startsWith("ghs_")).toBe(true);
     expect(REAL_FORMAT_TOKEN.split(".").map((s) => s.length)).toEqual([48, 247, 86]);
-    // The two characters the old plain-word check refused.
+    // The two characters beyond a plain-word character class.
     expect(REAL_FORMAT_TOKEN).toContain("-");
     expect(REAL_FORMAT_TOKEN).toContain(".");
   });
@@ -297,7 +296,7 @@ describe("GitHub's current token format — the env file carries it, and only sa
     expect(text).toContain(`\n${TOKEN_VAR}=${REAL_FORMAT_TOKEN}\n`);
     for (const line of text.split("\n").filter((l) => l !== "" && !l.startsWith("#")))
       expect(line).toMatch(/^[A-Z_]+=[^\s'"$`\\#]+$/);
-    // Fresh now: the next check mints nothing. Before H4, every check minted.
+    // Fresh now: the next check mints nothing.
     expect((await t.refresh()).kind).toBe("fresh");
   });
 

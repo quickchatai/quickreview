@@ -5,7 +5,7 @@
 // memory tab, where the OPERATOR pins — nothing that writes this file pins.
 //
 // A leaf: no runtime import of any setup sibling, so the TUI can read the
-// file without reaching the rest of src/setup/ (single-shepherd S2 fence).
+// file without reaching the rest of src/setup/ (the single-shepherd fence).
 
 export const PIN_PROPOSALS_FILE = "setup/pin-proposals.json";
 

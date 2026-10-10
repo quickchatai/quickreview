@@ -1,37 +1,32 @@
-// structural fences, so this map does not have to be run again.
+// Structural fences: checks for defects that are otherwise undetectable by
+// construction. A key could be registered with no handler, a union member
+// could lose its last producer, a shipped config could describe a retired
+// state, and nothing anywhere would notice. Each repeatable check is a
+// permanent test here.
 //
-// Two audits (manifesto compliance,'s dead-surface
-// inventory) reached the same conclusion independently: most of what they
-// found was UNDETECTABLE BY CONSTRUCTION. A key could be registered with no
-// handler, a union member could lose its last producer, a shipped config could
-// describe a retired state, and nothing anywhere would notice. What follows
-// turns each repeatable check into a permanent test.
+// Three rules this file is written under, each guarding against a fence that
+// looks right and proves nothing:
 //
-// THREE RULES THIS FILE IS WRITTEN UNDER, each learned from a fence that
-// looked right and proved nothing:
+//   1. Grep for a reader, never for a name. A name appears in its own
+//      declaration; that is not evidence of use.
 //
-//   1. GREP FOR A READER, NEVER FOR A NAME. The charting session's "every
-//      config knob is read somewhere" check was mention-based and came back
-//      clean while six knobs were parsed and never consumed. A name appears in
-//      its own declaration; that is not evidence of use.
+//   2. A derived set can be satisfied by a self-loop. "Every lifecycle state
+//      is produced by some transition" passes for a dead state, because
+//      `track`, `author_reply` and `synchronize` all `return current` — a
+//      state with no writer anywhere still "produces" itself. Every fence of
+//      the form "every X is reachable from Y" has this shape. The answer here
+//      is real reachability (a BFS from the initial state) rather than "has a
+//      producer", which is immune to self-loops and to producer-chains rooted
+//      in a dead member.
 //
-//   2. A DERIVED SET CAN BE SATISFIED BY A SELF-LOOP. built "every
-//      lifecycle state is produced by some transition" and it PASSED with the
-//      dead state deliberately re-added, because `track`, `author_reply` and
-//      `synchronize` all `return current` — a state with no writer anywhere
-//      still "produces" itself. Every fence of the form "every X is reachable
-//      from Y" has this shape. The answer here is real reachability (a BFS
-//      from the initial state) rather than "has a producer", which is immune
-//      to self-loops AND to producer-chains rooted in a dead member.
-//
-//   3. EVERY FENCE IS VERIFIED BY MUTATION. A fence that cannot be made to
-//      fail is not a fence. The mutation that proved each one is named in its
+//   3. Every fence is verified by mutation. A fence that cannot be made to
+//      fail is not a fence. The mutation that proves each one is named in its
 //      comment, so a future reader can re-run it.
 //
 // Deliberate exemptions live in an explicit, commented allowlist beside the
 // fence that would otherwise fail — so a reader can always tell "protected"
-// from "overlooked". Where an allowlist can rot, it is checked by SET
-// EQUALITY, not by subset: an entry that stopped being load-bearing fails too.
+// from "overlooked". Where an allowlist can rot, it is checked by set
+// equality, not by subset: an entry that stopped being load-bearing fails too.
 import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,13 +89,11 @@ function codeOf(path: string): string {
  * check is worse than no fence.
  */
 function unionMembers(relPath: string, typeName: string): string[] {
-  // Comments FIRST. Several of these unions carry a doc comment per member,
+  // Comments first. Several of these unions carry a doc comment per member,
   // and the terminator search below stops at the first `;` — a prose
   // semicolon ("The PR advanced mid-round; the session correctly posted
-  // nothing") silently truncated `CancelCause` to three of its nine members,
-  // and a fence over three members that claims to cover nine is worse than
-  // none. Caught only because the truncated read disagreed with the runtime
-  // array it was being compared to.
+  // nothing") would silently truncate the union, and a fence over three
+  // members that claims to cover nine is worse than none.
   const text = stripComments(readFileSync(join(ROOT, relPath), "utf8"));
   const m = new RegExp(`export type ${typeName}\\b[^=]*=([\\s\\S]*?);`).exec(text);
   if (!m?.[1])
@@ -122,18 +115,17 @@ describe("[T3] union members have producers", () => {
    * `transition` is a pure function, so this drives it rather than grepping
    * it: a BFS from `INITIAL_STATE` over every event shape, with every
    * payload variant that changes the outcome. A state is legitimate only if
-   * some sequence of events actually LANDS on it.
+   * some sequence of events actually lands on it.
    *
    * That is deliberately stronger than the obvious version. "Some transition
    * returns this state" is satisfied by `return current` — `track`,
    * `author_reply`, `synchronize` and `human_requested` all do — so a state
    * with no writer in the entire codebase still produces itself, and the fence
-   * that exists to catch exactly that member passes. built that
-   * version and it passed with the dead state re-added. BFS from the initial
+   * that exists to catch exactly that member passes. BFS from the initial
    * state cannot be fooled that way: a self-loop adds no new node, and a
    * producer that only fires from an unreachable state is never visited.
    *
-   * MUTATION: add `| "awaiting_human"` back to `PrLifecycleState` in
+   * MUTATION: add `| "awaiting_human"` to `PrLifecycleState` in
    * src/state.ts (nothing transitions into it) — this fails naming it.
    */
   it("every PrLifecycleState is REACHABLE from the initial state — self-loops do not count", () => {
@@ -184,18 +176,13 @@ describe("[T3] union members have producers", () => {
     }
 
     /**
-     * A SELF-RETIRING record, not an exemption — and it is EMPTY, so the
+     * A self-retiring record, not an exemption — and it is empty, so the
      * fence below demands a clean union outright.
      *
-     * It held one entry, `awaiting_human`, while (retire the park
-     * surface) was in flight in a parallel worktree. That entry was
-     * deliberately intolerant of its own ticket landing: the state left the
-     * union, this test went red, and the fix was to delete it. That is the
-     * point — an entry that quietly kept passing after its ticket closed is
-     * how the surface it describes becomes invisible again.
-     *
-     * The mechanism stays for the next such removal. An entry needs a ticket
-     * id, and it retires itself the moment that ticket lands.
+     * An entry records a state whose removal is in flight. It is deliberately
+     * intolerant of its own removal landing: once the state leaves the union
+     * this test goes red and the fix is to delete the entry, so an entry
+     * cannot quietly outlive its reason. An entry needs a ticket id.
      */
     const UNREACHABLE_PENDING_REMOVAL: ReadonlyArray<{ state: string; ticket: string }> = [];
     for (const e of UNREACHABLE_PENDING_REMOVAL) {
@@ -233,10 +220,10 @@ describe("[T3] union members have producers", () => {
         .join("\n");
 
       /**
-       * ALLOWLIST — event types with no producer, each with the reason it is
+       * Allowlist — event types with no producer, each with the reason it is
        * still in the union and the ticket that will remove it.
        *
-       * This is NOT a place to park a member nobody wants to think about: an
+       * This is not a place to park a member nobody wants to think about: an
        * entry needs a ticket id, and the fence below refuses an entry that has
        * quietly acquired a producer, so a resolved item cannot linger here
        * pretending to be debt.
@@ -278,9 +265,8 @@ describe("[T3] union members have producers", () => {
 describe("[T5] the cancel-cause list and its union agree", () => {
   /**
    * `CANCEL_CAUSES` is a runtime array beside an erased union — exactly the
-   * shape that drifts silently. The inventory proposed deleting the array as
-   * unused; pinning it against the union is better, because it makes the list
-   * earn its keep instead.
+   * shape that drifts silently. Pinning it against the union makes the list
+   * earn its keep.
    *
    * MUTATION: add `| "rogue"` to the `CancelCause` union in src/state.ts
    * without touching CANCEL_CAUSES — this fails.
@@ -296,15 +282,12 @@ describe("[T5] the cancel-cause list and its union agree", () => {
 
 describe("[T12] the pi version pin is one fact, spelled the same everywhere", () => {
   /**
-   * OpenViking has this check (tests/openviking.test.ts pins its triple
-   * mirror, and `scripts/deploy.sh` refuses to deploy on drift). pi did not —
-   * which is exactly why two of its five spellings drifted while the suite
-   * stayed green.
-   *
-   * Two of the five were covered before this: `tests/docker-daemon.test.ts`
-   * pins config.toml ↔ group_vars ↔ Dockerfile. The two that were not are the
-   * two that drifted: `package.json`'s `pi` block (never read by any test —
-   * `scripts/deploy.sh` only tells the operator to reconcile it by hand) and
+   * The pi pin is written in several places, and any one can drift while the
+   * suite stays green unless every spelling is compared (OpenViking's pins
+   * have the same check in tests/openviking.test.ts).
+   * `tests/docker-daemon.test.ts` pins config.toml ↔ group_vars ↔ Dockerfile;
+   * this file pins the others, among them `package.json`'s `pi` block
+   * (`scripts/deploy.sh` only tells the operator to reconcile it by hand) and
    * the version quoted in the operating rulebook's rule 7.
    *
    * MUTATION: change `version` in the `pi` block of package.json — this fails.
@@ -314,15 +297,14 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
    * follow, both private-only.
    */
   /**
-   * PRIVATE-ONLY SPELLINGS. Two of the places this fact is written down are
+   * Private-only spellings. Two of the places this fact is written down are
    * absent from the published snapshot: the operating rulebook `CLAUDE.md`
-   * and the deploying skill (bound to the private VM). (The operator's LIVE
-   * `config.toml` left the checkout altogether with; deploy.sh's
-   * preflight holds its pin, and the test fixture stands in below.) Each of
-   * their fences is
-   * GUARDED on the file existing rather than deleted, so in this tree they
-   * run exactly as before and drift still fails; in a published tree they
-   * skip visibly instead of reading a file that is not there. The PUBLIC
+   * and the deploying skill (bound to the private VM). (The operator's live
+   * `config.toml` is outside the checkout; deploy.sh's preflight holds its
+   * pin, and the test fixture stands in below.) Each of their fences is
+   * guarded on the file existing, so in this tree drift still fails; in a
+   * published tree they skip visibly instead of reading a file that is not
+   * there. The public
    * spellings below are asserted unconditionally in every tree, and
    * `config.example.toml` — which carries the same pin — is the reference the
    * guarded ones are reconciled against.
@@ -363,11 +345,11 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   });
 
   /**
-   * The test fixture is the fifth spelling. The LIVE config — the one
-   * `scripts/deploy.sh` and the container read — left the checkout with
-   * `qcr install migrate`, so no test can see it; its pin is held
-   * by deploy.sh's preflight instead, which reads it through the install
-   * locator and REFUSES on drift from group_vars (pinned in
+   * The test fixture is the fifth spelling. The live config — the one
+   * `scripts/deploy.sh` and the container read — lives outside the checkout,
+   * so no test can see it; its pin is held by deploy.sh's preflight instead,
+   * which reads it through the install locator and refuses on drift from
+   * group_vars (pinned in
    * tests/deploy.test.ts). The fixture is the config every other test
    * parses, so a stale pin there would let those tests exercise a pi the
    * image never runs.
@@ -388,12 +370,7 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   });
 
   /**
-   * The rulebook half. Until this recorded a KNOWN stale value
-   * (`0.84.1`, [P11]) rather than asserting the truth, because the
-   * rulebook is the owner's file — and was written to fail the moment the
-   * value was corrected, so the record would retire itself. It fired on
-   *'s correction, made on the owner's order to complete this effort,
-   * and this is the direct form it demanded.
+   * The rulebook half: rule 7 must quote the real pin.
    *
    * MUTATION: change the version in rule 7's first sentence — this fails.
    */
@@ -412,9 +389,8 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
   );
 
   /**
-   * The deploy checklist quotes the pin too ("currently `…`"), and it sat at
-   * `0.84.1` after rule 7 was corrected — the same file said `0.84.4` two
-   * hundred lines later. An operator reads this one before every deploy.
+   * The deploy checklist quotes the pin too ("currently `…`"), and an
+   * operator reads it before every deploy.
    *
    * MUTATION: change the version after "currently" in the deploying skill —
    * this fails.
@@ -440,19 +416,18 @@ describe("[T12] the pi version pin is one fact, spelled the same everywhere", ()
 });
 
 // ---------------------------------------------------------------------------
-// The exec policy and the prompt contract cannot disagree  (audit #6, MC-08)
+// The exec policy and the prompt contract cannot disagree
 // ---------------------------------------------------------------------------
 
 describe("the sanctioned-script set is DERIVED from the prompts, not maintained beside them", () => {
   /**
-   * `scripts/pr-self.sh` was mandated by all three round templates and absent
-   * from the exec policy's `SANCTIONED_SCRIPTS`, so every invocation form was
-   * blocked and a mandated read simply failed — fail-closed, and a live
-   * functional defect that no test could see, because the two halves were
-   * asserted separately and never against each other.
+   * A script the round templates mandate but the exec policy's
+   * `SANCTIONED_SCRIPTS` omits is blocked in every invocation form, so a
+   * mandated read simply fails — invisible while the two halves are asserted
+   * separately and never against each other.
    *
-   * SET EQUALITY, both directions: a script the prompts name and the policy
-   * refuses is the MC-08 bug; a script the policy sanctions and no prompt
+   * Set equality, both directions: a script the prompts name and the policy
+   * refuses breaks the round; a script the policy sanctions and no prompt
    * names is an allowlist wider than the contract it exists to serve.
    *
    * MUTATION: remove "pr-self.sh" from SANCTIONED_SCRIPTS — this fails naming
@@ -497,9 +472,9 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
   });
 
   /**
-   * Every invocation FORM a template could produce, not just the bare one —
-   * the MC-08 report noted the block hit "every invocation form", and a fence
-   * that only probes one spelling would pass on a policy that accepts one.
+   * Every invocation form a template could produce, not just the bare one —
+   * a fence that only probes one spelling would pass on a policy that
+   * accepts one.
    */
   it("accepts each mandated script through every spelling a session would use", async () => {
     const { checkBashCommand } = await import("../extensions/bash-guard.js");
@@ -515,29 +490,28 @@ describe("the sanctioned-script set is DERIVED from the prompts, not maintained 
 });
 
 // ---------------------------------------------------------------------------
-// The posting guards are not a knob a session may relocate  (audit #5, MC-05)
+// The posting guards are not a knob a session may relocate
 // ---------------------------------------------------------------------------
 
 describe("no env prefix can move the posting guards' own configuration", () => {
   /**
-   * MC-05. `VAR=val` prefixes are skipped by the segment splitter, and only
-   * the git family was named — so
+   * `VAR=val` prefixes are skipped by the segment splitter, so without a
+   * named relocating-env set
    *
    *     QCR_CONFIG=/tmp/mine.toml bash scripts/approve-pr.sh 5 body.md
    *
-   * passed the exec policy on a SANCTIONED script. Every guard knob the
+   * would pass the exec policy on a sanctioned script. Every guard knob the
    * posting scripts consult is read out of `$QCR_CONFIG`, and `guard_enabled`
    * treats a knob as on unless the value is literally `false`; the same file
    * also carries `dry_run`. One hand-written TOML, written with the ordinary
-   * write tool, turned guards 2-5 off on a real approval and could flip a
+   * write tool, would turn guards 2-5 off on a real approval and could flip a
    * dry-run install into posting for real.
    *
-   * SCOPE: this fence covers the ENV-PREFIX spelling. The two further routes
-   * the review named are now CLOSED by and fenced in
-   * tests/bash-guard.test.ts: `bash -c '<sanctioned> ; <anything>'` (the payload
-   * is re-parsed as its own command) and overwriting the config / `guards.sh` /
-   * the posting scripts / the compiled guard (the policy surface is unwritable
-   * at both boundaries). `QCR_POSTING_RECEIPT_DIR` joined this set there too.
+   * Scope: this fence covers the env-prefix spelling. The two further routes
+   * are fenced in tests/bash-guard.test.ts: `bash -c '<sanctioned> ; <anything>'`
+   * (the payload is re-parsed as its own command) and overwriting the config /
+   * `guards.sh` / the posting scripts / the compiled guard (the policy surface
+   * is unwritable at both boundaries).
    *
    * MUTATION: remove "QCR_CONFIG" from POLICY_RELOCATING_ENV in
    * extensions/bash-guard.ts — this fails.
@@ -564,9 +538,8 @@ describe("no env prefix can move the posting guards' own configuration", () => {
   });
 
   /**
-   * Rule 2 of this map's review discipline: PROBE THE COMPILED ARTIFACT. The
-   * container runs `dist/`, and two rounds of live bypasses on this exact
-   * module were found by testing the build rather than the source.
+   * Probe the compiled artifact: the container runs `dist/`, so the build,
+   * not the source, is what must refuse these.
    */
   it("the COMPILED guard agrees with the source", async () => {
     const dist = join(ROOT, "dist", "extensions", "bash-guard.js");
@@ -583,7 +556,7 @@ describe("no env prefix can move the posting guards' own configuration", () => {
       "QCR_CONFIG=/tmp/x.toml bash scripts/approve-pr.sh 5 b.md",
       "scripts/pr-self.sh 5 reviews",
       "gh pr review 5 --approve",
-      // the memory-scope files a session's own recall reads.
+      // The memory-scope files a session's own recall reads.
       `printf '{"areas":["events"]}' > ~/.openviking/recall-hints/pr-5.json`,
       "cat ~/.openviking/recall-hints/pr-5.json",
     ]) {
@@ -595,20 +568,17 @@ describe("no env prefix can move the posting guards' own configuration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The prompt half and the enforcing half of the no-exec policy are ONE fact,
-// and the retired park is in no prompt a model reads 
+// The prompt half and the enforcing half of the no-exec policy are one fact,
+// and the retired park is in no prompt a model reads
 // ---------------------------------------------------------------------------
 
 describe("what a built pass is told it may run is exactly what the guard lets through", () => {
   /**
-   * took `awk` off the guard's allowlist; the execution-policy
-   * addendum — composed onto all 37 built pass variants — kept advertising it,
-   * so `checkBashCommand("awk '{print $1}' f")` blocked a command the prompt
-   * had just offered. Nothing noticed, because the prompt was pinned by a
-   * prefix (`"Allowed commands: git, rg, grep, cat, ls, find"`) and the guard
-   * by its own probes, never against each other. The sentence is now RENDERED
-   * from `ALLOWED_PROGRAMS`; this fence holds the two to set equality anyway,
-   * so a literal pasted back over the render fails too.
+   * The execution-policy addendum, composed onto every built pass variant,
+   * must advertise exactly what the guard admits — otherwise the guard blocks
+   * a command the prompt has just offered (as `awk` would be). The sentence
+   * is rendered from `ALLOWED_PROGRAMS`; this fence holds the two to set
+   * equality anyway, so a literal pasted over the render fails too.
    *
    * The sentence is read off the body, never off the render helper: what
    * ships is the text.
@@ -637,7 +607,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
 
   /**
    * MUTATION: replace `${ALLOWED_COMMANDS_CLAUSE}` in EXECUTION_POLICY_ADDENDUM
-   * with the legacy literal (which names `awk`) — this fails twice, on
+   * with a literal that names `awk` — this fails twice, on
    * the set and on the probe. Add "awk" back to ALLOWED_PROGRAMS — the probe
    * `awk '{print $1}' f` is then allowed and this fails.
    */
@@ -651,7 +621,7 @@ describe("what a built pass is told it may run is exactly what the guard lets th
       const r = checkBashCommand(cmd);
       expect(r.allowed, `advertised but refused: ${cmd} — ${r.reason ?? ""}`).toBe(true);
     }
-    // The ticket's own reproduction, plus awk's kin: advertised nowhere, and
+    // awk and its kin: advertised nowhere, and
     // refused by the function — not merely absent from a list.
     for (const cmd of [
       "awk '{print $1}' file.txt",
@@ -667,10 +637,10 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   /**
    * Every BUILT variant — all of them, from the real `agents/` seeds, in the
    * default composition and under every shipped profile pack — and never a
-   * sample: the stale-prose sweep grepped `src/` and `docs/` and
-   * missed this text entirely, because a composed body exists in no file.
+   * sample: a grep of `src/` and `docs/` misses this text entirely, because a
+   * composed body exists in no file.
    *
-   * MUTATION: put the old sentence ("route such findings to a human park
+   * MUTATION: put the sentence ("route such findings to a human park
    * (NEEDS_HUMAN with an escalation comment)") back into
    * FIRST_PARTY_DIRECTIVE_ADDENDUM — fails on every variant. Put `awk` back
    * into the allowlist sentence — fails on every variant.
@@ -679,8 +649,8 @@ describe("what a built pass is told it may run is exactly what the guard lets th
     "no built pass variant names the park, NEEDS_HUMAN or awk, and each carries the rendered allowlist",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
-      // Every pack the locator would load (a stranded checkout pack is
-      // not one — it is never read, so it composes into nothing): the generic
+      // Every pack the locator would load (a stranded checkout pack is not one
+      // — it is never read, so it composes into nothing): the generic
       // examples, plus the frozen fixture copy of the deployment's pack
       // (tests/fixtures/profiles/), staged into the temp config home so the
       // deployed composition stays one of the compositions this fence covers.
@@ -802,12 +772,11 @@ describe("what a built pass is told it may run is exactly what the guard lets th
    * is composed: the frozen seed rendered, plus — when `[slack] enabled` —
    * the non-seeded appendix, concatenated at spawn (`ensureOverseerSession`;
    * `tests/slack-appendix.test.ts` proves this is the body that is spawned).
-   * The appendix is ours, and it still told the overseer "a PR stops for a
-   * person only when a round returns NEEDS_HUMAN" — the MC-48 sentence this
-   * ticket took out of src/commands.ts — plus that the seed still listed a
-   * command the 2026-08-18 reseed had removed.
+   * The appendix is ours, and must not tell the overseer "a PR stops for a
+   * person only when a round returns NEEDS_HUMAN", nor that the seed still
+   * lists a command the seed no longer carries.
    *
-   * MUTATION: restore that sentence in prompts/slack-overseer-appendix.md —
+   * MUTATION: put that sentence in prompts/slack-overseer-appendix.md —
    * fails. Put `mark-escalation-worthy` into the seed's command list — fails.
    */
   it("the composed overseer body — seed rendered plus the Slack appendix — names neither the park nor NEEDS_HUMAN", () => {
@@ -827,8 +796,8 @@ describe("what a built pass is told it may run is exactly what the guard lets th
   });
 
   /**
-   * Rule 2 of this map's review discipline: PROBE THE COMPILED ARTIFACT. The
-   * daemon builds `state/agents` from `dist/src/include.js`, so the sentence
+   * Probe the compiled artifact: the daemon builds `state/agents` from
+   * `dist/src/include.js`, so the sentence
    * the VM's passes read is the compiled module's, not the source's.
    */
   it(
@@ -850,13 +819,11 @@ describe("what a built pass is told it may run is exactly what the guard lets th
 
 describe("the prose beside the posting map says what the map does (MC-45)", () => {
   /**
-   * `src/severity.ts` is where the directive gate was first built and
-   * where reshaped it, and its module header outlived both: it kept
-   * asserting that a first-party directive injection "never blocks" and
-   * "posts as a [question]" while `postTag`, four lines below, mapped exactly
-   * that finding to a blocker. A header that contradicts its own function is
-   * the MC-45 defect, and a grep-shaped sweep missed it twice because the
-   * paragraph also mentioned the park's retirement, which READ as fixed.
+   * `src/severity.ts`'s module header must not claim a first-party directive
+   * injection "never blocks" or "posts as a [question]" while `postTag` maps
+   * exactly that finding to a blocker. A header that contradicts its own
+   * function is easy for a grep-shaped sweep to miss when the same paragraph
+   * also mentions the park's retirement, which reads as fixed.
    *
    * The fence pairs the two halves: the behaviour (a surviving P0/P1/P2
    * injection on a first-party directive path blocks) and the prose (no
@@ -864,13 +831,13 @@ describe("the prose beside the posting map says what the map does (MC-45)", () =
    *
    * MUTATION: put "never blocks — directive text inside a directive file is
    * the file doing its job. The finding posts as a [question]" back into the
-   * header — fails. Restore "the ONLY session-side input that parks a PR" on
+   * header — fails. Put "the ONLY session-side input that parks a PR" on
    * `needsHuman` — fails.
    */
   it("src/severity.ts no longer claims a first-party directive injection never blocks, and postTag agrees", () => {
     const src = readFileSync(join(ROOT, "src", "severity.ts"), "utf8");
     // The directive paragraph is the last one of the module header; the
-    // paragraph above it legitimately says `contrived` "never blocks".
+    // reachability paragraph above it legitimately says `contrived` "never blocks".
     const header = src.slice(0, src.indexOf("\nimport "));
     const directive = header.slice(header.indexOf("//"));
     expect(directive.length, "the paragraph is the header's last").toBeGreaterThan(0);

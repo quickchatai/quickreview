@@ -75,7 +75,7 @@ describe("mintAppJwt", () => {
     expect(payload.iss).toBe(APP_ID);
     expect(payload.iat).toBe(Math.floor(T0 / 1000) - 60);
     expect(payload.exp - payload.iat).toBe(600);
-    // exp is never more than 10 minutes past the real clock (findings §4.2).
+    // exp is never more than 10 minutes past the real clock (GitHub's JWT limit).
     expect(payload.exp - Math.floor(T0 / 1000)).toBeLessThanOrEqual(600);
   });
 

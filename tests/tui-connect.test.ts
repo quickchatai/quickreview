@@ -40,10 +40,9 @@ describe("TripleCtrlC", () => {
   });
 });
 
-// (A "triple Ctrl-C inside a hung attach" test lived here. The full-screen
-// attach — and with it the only pty the TUI ever held — was retired
-// 2026-09-02, so there is no hung attach to escape from; the board's own
-// Ctrl-C ×3 hatch is pinned in tests/cmdbar.test.ts.)
+// (The TUI holds no full-screen attach and no pty of its own, so there is no
+// hung attach to escape from; the board's own Ctrl-C ×3 hatch is pinned in
+// tests/cmdbar.test.ts.)
 
 describe("ensureSshMaster", () => {
   const record = (checkStatus: number, connectStatus: number) => {

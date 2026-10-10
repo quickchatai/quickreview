@@ -1,12 +1,10 @@
-// Startup progress (ruling 3) — the bring-up, reported IN the
-// companion column.
+// Startup progress — the bring-up, reported IN the companion column.
 //
 // The column is empty at that moment and already the right shape (its width
-// comes from config, ruling 2), so it costs no new surface: memory forward,
-// OpenViking namespaces, container bring-up, day rollover and the first poll
-// each report there, and when the companion is up the mirror takes the space
-// back. Before these lines were printed on the NORMAL screen and then
-// erased by the alt screen's clear — that erasure was the flicker.
+// comes from config), so it costs no new surface: memory forward, OpenViking
+// namespaces, container bring-up, day rollover and the first poll each report
+// there, and when the companion is up the mirror takes the space back. Lines
+// printed on the NORMAL screen would be erased by the alt screen's clear.
 //
 // A step that never completes must be distinguishable from one still working:
 // past STALL_AFTER_MS a running step stops looking like a spinner and says so,
@@ -70,12 +68,12 @@ export interface StartupOpts {
   onUpdate?: (progress: ProgressView) => void;
   /** Re-render cadence while a step is running (0 disables the ticker).
    *
-   * WITHOUT THIS THE OVERDUE WARNING CAN NEVER APPEAR. A step that hangs emits
+   * Without this the overdue warning can never appear. A step that hangs emits
    * no transition, so nothing calls `onUpdate`, so the column keeps painting
    * the elapsed time it had at the last transition — `⟳ companion container ·
-   * 0ms`, frozen, forever. The whole point of ruling 3 is that a docker daemon
-   * which is down looks different from one that is slow, and it is exactly
-   * this tick that makes the difference visible. */
+   * 0ms`, frozen, forever. A docker daemon which is down must look different
+   * from one that is slow, and it is exactly this tick that makes the
+   * difference visible. */
   tickMs?: number;
 }
 

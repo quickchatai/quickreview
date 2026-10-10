@@ -1,9 +1,9 @@
 // The posted review rendered from the findings record (`[review]
-// render_outputs`, bench/aacr/PERF.md §6 proposal 3).
+// render_outputs`).
 //
-// A round used to end with the session generating four files token by token:
-// the inline-comments JSON, the review body, the findings record and the
-// verdict. The first two restate the third — every posted comment is a
+// Without this lever a round ends with the session generating four files token
+// by token: the inline-comments JSON, the review body, the findings record and
+// the verdict. The first two restate the third — every posted comment is a
 // `posted` entry of the record, and the body's sections are one bullet per
 // posted entry — so with this lever the session writes the record ONCE, with
 // the few posting fields only it can write (each posted entry's comment title
@@ -214,10 +214,10 @@ export function renderReviewFromRecord(
     /** The profile's `[posting] body`: `verdict` renders the verdict line,
      * one sentence and a bullet per finding with no inline anchor. */
     bodyMode?: "full" | "verdict";
-    /** S6: append the hidden `<!-- qcr:f=<round>:<key> -->` marker to
+    /** Append the hidden `<!-- qcr:f=<round>:<key> -->` marker to
      * every inline comment, so the posted comment links back to its finding.
-     * The LIVE route only (src/reviewrendercli.ts): the bench never passes it,
-     * so its outputs stay byte-identical. */
+     * The live route only (src/reviewrendercli.ts): the bench never passes it,
+     * so its outputs carry no markers. */
     findingMarkers?: { roundNo: number };
   } = {},
 ): RenderedReview {
@@ -352,9 +352,9 @@ export interface PostedRenderOptions {
   dedupMerge?: boolean;
   /** The profile's `[posting]` policy; absent or all-default ⇒ no cut. */
   policy?: PostingPolicy;
-  /** S6: the live route's hidden finding markers (see
-   * `renderReviewFromRecord`). Never set by `postedRenderOptions`, so a
-   * caller that does not ask — the bench — renders exactly as before. */
+  /** The live route's hidden finding markers (see `renderReviewFromRecord`).
+   * Never set by `postedRenderOptions`, so a caller that does not ask — the
+   * bench — renders without them. */
   findingMarkers?: { roundNo: number };
 }
 
@@ -463,8 +463,8 @@ export function applyPostingPolicyToRecord(
 }
 
 /**
- * The render step both routes run (decision 12, docs/duplicate-merge.md:
- * the bench matches a live round): the post-check over the record when
+ * The render step both routes run (docs/duplicate-merge.md: the bench
+ * matches a live round): the post-check over the record when
  * `dedupMerge` is on, then `renderReviewFromRecord`. Returns the record to
  * write back (the same object when the post-check merged nothing, or when it
  * is off) beside what to post.
@@ -511,11 +511,11 @@ export const RENDER_RECORD_FIELDS = [
 
 /** The round prompt's `{{render_note}}` — "" unless the order says this
  * install renders its posted review (`[review] render_outputs`), so a round
- * order without the flag renders exactly as before. Under the flag the record
- * already carries the verdict's `verdict`, `head_sha` and `summary`, so the
- * note also hands the verdict file to `scripts/commit-verdict.sh
- * --from-record` (the round's serial tail spent 12–40 s retyping it,
- * plus a turn reading the clock). */
+ * order without the flag renders the template unchanged. Under the flag the
+ * record already carries the verdict's `verdict`, `head_sha` and `summary`, so
+ * the note also hands the verdict file to `scripts/commit-verdict.sh
+ * --from-record` — the session neither retypes it nor reads the clock, which
+ * would otherwise lengthen the round's serial tail. */
 export function renderRenderNote(order: {
   render_outputs?: boolean;
   pr: number;

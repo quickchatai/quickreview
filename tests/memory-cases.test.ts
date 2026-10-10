@@ -1,6 +1,6 @@
-// knowledge into the engine: finding CASES.
+// Knowledge into the engine: finding CASES.
 //
-// The slice's contract, one block per acceptance criterion:
+// The contract, one block per property:
 //
 //   * ONE case document per posted finding that drew a human response or
 //     reached a fate — and none for a finding with neither; one per FINDING,
@@ -23,7 +23,7 @@
 //   * The backfill: the last 60 days, from state.db plus ONE adapter read per
 //     PR, resumable across a restart, rate-limited, and — like every write —
 //     gated on memory health reading healthy.
-//   * Not in the round's search scope (S9): cases are never searched by a
+//   * Not in the round's search scope: cases are never searched by a
 //     round and never listed by the store's whole-tree sweep.
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -1199,12 +1199,12 @@ describe("OpenVikingStore.putDocuments and the sweep", () => {
  * server rebuild the type's `.overview.md` — listing and re-reading EVERY file
  * in the directory — inside the request, before it answers
  * (`content_write.py` `_refresh_batch` → `refresh_schema_overview`). For a
- * small curated area that is nothing; for the case documents (≈1,800 at the
- * first backfill and growing every day) it was ≈1,800 file reads per batch,
- * forever, plus a "missing embedding template variables" warning per case.
+ * small curated area that is nothing; for the case documents (thousands, and
+ * growing every day) it would be one file read per case on every batch, plus a
+ * "missing embedding template variables" warning per case.
  * `experiences` has a schema too but no overview template (lessons stay
  * cheap); `events` and `preferences` have both and stay small. Re-check this
- * list on an OpenViking bump (rule 7) — integration review,.
+ * list on an OpenViking bump (rule 7).
  */
 const OV_0_4_15_MEMORY_TYPES = [
   "cases",
@@ -1267,7 +1267,7 @@ describe("[feedback] comments land in events/ with their full text", () => {
     expect(readFencedData(text, FEEDBACK_FULL_TEXT_LABEL)).toBe(
       cleanQuotedText(body.replace(/^\[feedback\]\s*/, "")),
     );
-    // The header is the S2 header — nothing in the quote reaches it.
+    // The header is the event header — nothing in the quote reaches it.
     expect(parseEventTags(text)).toEqual({
       kind: "feedback",
       pr: "5325",
@@ -1590,12 +1590,12 @@ describe("a reply or signal recorded after the capture stopped visiting a closed
   });
 });
 
-// ---- the case writer yields to rounds (F2) ------------------------------------
+// ---- the case writer yields to rounds ------------------------------------
 //
-// Every case is embedded on the server's one local-embedder thread — ~3.4 s a
-// case on the live VM's throttled CPUs (2026-10-07) — the thread a review
-// round's memory seed and lesson finds wait on. So batches are SMALL (2), and
-// no batch STARTS while a round's memory window is open.
+// Every case is embedded on the server's one local-embedder thread — seconds a
+// case on throttled CPUs — the thread a review round's memory seed and lesson
+// finds wait on. So batches are SMALL (2), and no batch STARTS while a round's
+// memory window is open.
 
 describe("the case writer yields to rounds (F2)", () => {
   /** Five posted findings, each with a decided fate: five cases owed. */
@@ -1832,21 +1832,19 @@ describe("the case writer yields to rounds (F2)", () => {
   });
 });
 
-// ---- history waits while review rounds are in flight (H3) -------------------
+// ---- history waits while review rounds are in flight -------------------
 //
-// 2026-10-08: the case batches that put three round seeds behind their
-// embeddings were BACKFILL cases, sent 1–3 s before the seed (08:33:38.6,
-// 09:08:14.9) — F2's window opens at the seed and could not stop a batch sent
-// just before it. While a review round runs or is queued, the backfill, the
-// late activity and every HISTORY case (a PR the capture no longer visits)
-// wait; live cases still go; and every batch sent reports its embedding tail
-// to the tracker a round seed waits on (tests/memory-embed-tail.test.ts).
+// The round window opens at the seed, so it cannot stop a backfill batch sent
+// just before it, whose embeddings then hold the seed's search. While a review
+// round runs or is queued, the backfill, the late activity and every HISTORY
+// case (a PR the capture no longer visits) wait; live cases still go; and
+// every batch sent reports its embedding tail to the tracker a round seed
+// waits on (tests/memory-embed-tail.test.ts).
 
 describe("history waits while review rounds are in flight (H3)", () => {
   /** Two closed PRs the backfill has not covered (4002, 4003); an OPEN PR
-   * whose one owed case the BACKFILL found (4005 — the shape of the
-   * 2026-10-08 09:08 batch's #5596: history although the PR is open); and a
-   * LIVE PR whose one owed case the capture pass's sync found (5100). */
+   * whose one owed case the BACKFILL found (4005 — history although the PR
+   * is open); and a LIVE PR whose one owed case the capture pass's sync found (5100). */
   async function mixed() {
     const h = harness({ pr: 1 });
     h.store.db.prepare("DELETE FROM pr_state").run();
@@ -2228,7 +2226,7 @@ describe("wire.ts: the case writer is actually connected", () => {
 
   it("its knobs come from [memory], with floors", () => {
     expect(wire).toMatch(/intervalMs: Math\.max\(10, cfg\.memory\.cases_interval_s\) \* 1000/);
-    // F2: the writer reads the SAME round-activity tracker the round
+    // The writer reads the SAME round-activity tracker the round
     // seed (the memory seed's `activity`) and the lesson selector open
     // windows on — one instance, or the yield gates nothing.
     expect(wire).toMatch(/const roundActivity = new RoundMemoryActivity\(\);/);

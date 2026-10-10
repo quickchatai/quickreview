@@ -1,9 +1,9 @@
-// the laptop topology: `[tui] target = "local"` drives every TUI
+// The laptop topology: `[tui] target = "local"` drives every TUI
 // remote op through the local runner. The property that matters is absolute:
 // in local mode NO ssh argv is ever constructed and no ssh process is ever
 // spawned — not by the runner, not by attach, not by the power buttons, not
 // by the ssh-master bootstrap. The ssh route is the live production path and
-// must be byte-identical to what it was.
+// local mode leaves it byte-identical.
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";

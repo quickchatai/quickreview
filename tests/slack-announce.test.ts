@@ -1,4 +1,4 @@
-// The announcer (S4): threading, idempotence, caps, failure
+// The announcer: threading, idempotence, caps, failure
 // containment, the daemon lifecycle and the pinned heartbeat. All I/O is faked
 // — the Slack seam is a recording object and the store is in-memory.
 import { readFileSync } from "node:fs";
@@ -263,7 +263,7 @@ describe("idempotence", () => {
     expect(slack.posts.filter((p) => p.text.includes("APPROVED"))).toHaveLength(1);
   });
 
-  // The 🚩 pre-flag was removed on 2026-08-18 with the heuristic behind it.
+  // There is no 🚩 pre-flag: no escalation-worthiness heuristic exists.
   it("announces no pre-flag: a round opens its thread and says nothing else", async () => {
     const a = announcer();
     expect((a as unknown as Record<string, unknown>).escalationWorthy).toBeUndefined();

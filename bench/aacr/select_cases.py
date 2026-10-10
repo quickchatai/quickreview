@@ -36,7 +36,7 @@ other filters, none of smoke10's or holdout10's repositories, quota C++ 2 /
 TypeScript 1 / JavaScript 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1
 (C++ is the dataset's largest language), smallest first, one PR per repo.
 
-`fresh10` — an OUT-OF-SAMPLE set for the 2026-09-26 review levers, which were
+`fresh10` — an OUT-OF-SAMPLE set for the review levers that were
 designed from the missed defects of smoke10, dev10 and holdout10: none of those
 30 PRs (a different PR of the same repository is allowed — the levers were
 built from specific defects, not from projects), 60 <= change_line_count <=
@@ -89,7 +89,7 @@ UNREACHABLE_HEADS = {
 }
 
 # More heads GitHub no longer serves, found by check_available.py on the whole
-# dataset (2026-09-27). Kept apart from UNREACHABLE_HEADS so the earlier sets
+# dataset. Kept apart from UNREACHABLE_HEADS so the earlier sets
 # (and their backups) regenerate byte-identical; rest145 excludes both.
 UNAVAILABLE_HEADS_2026_09_27 = {
     "ClickHouse__ClickHouse@fd6ba0c": "upload-pack: not our ref fd6ba0c1 (checked 2026-09-27)",

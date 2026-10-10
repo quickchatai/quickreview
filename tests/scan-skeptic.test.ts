@@ -1,8 +1,7 @@
-// The scan SKEPTIC (owner ruling 2026-09-30: "the scan validator is the skeptic,
-// on by default"). The self-scan loop put every finding in front of an
-// adversarial skeptic before anyone read it; this builds that skeptic INTO the
-// scan: the scan's validator, in scan mode, sorts every finding into a
-// validity tier — confirmed / likely / doubtful — and never kills one.
+// The scan skeptic: the scan's validator, on by default, puts every finding in
+// front of an adversarial check before anyone reads it. In scan mode it sorts
+// every finding into a validity tier — confirmed / likely / doubtful — and
+// never kills one.
 //
 // Pinned here, at the seams: the `scan-skeptic-validate` addendum (scan mode,
 // pass-validate only, the ONE class list, a PR build byte-identical without
@@ -160,10 +159,9 @@ describe("the skeptic addendum is a scan-mode registry entry for the validator a
       expect(SCAN_SKEPTIC_ADDENDUM).toContain(k);
   });
 
-  // scan-loop: the skeptic vs an outside adversarial check on the 30 findings
-  // of self-scan rounds 6–7 — confirmed held 86%, likely 50%. The seven misses
-  // each skipped one link; these are the rules that would have failed them
-  // (recorded in the scan-and-setup effort's improvement-loop notes).
+  // The tier rules that keep a finding with an untraced link out of
+  // `confirmed`: each misjudged shape seen against an outside adversarial
+  // check skipped exactly one link of the chain.
   it("tightened from its disagreements: confirmed names every link with file:line; likely names its untraced link; the misses' shapes are doubtful", () => {
     const t = SCAN_SKEPTIC_ADDENDUM;
     // confirmed: every link, anchored, and "at most likely" when one is missing.

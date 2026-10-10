@@ -1,9 +1,8 @@
-// The reconcile poll's one-pass-at-a-time guard, and its bound (boot
-// stall, review fix). One pass at a time is what stopped overlapping passes
-// paying every step twice; the bound is what keeps a pass that never settles
-// from holding the guard for the rest of the daemon's life — and with it the
+// The reconcile poll's one-pass-at-a-time guard, and its bound. One pass at a
+// time keeps overlapping passes from paying every step twice; the bound keeps
+// a pass that never settles from holding the guard for the rest of the daemon's life — and with it the
 // authoritative reconcile, the push backstop and the sweep that releases a
-// lost nudge's claim (#5362 rule ④).
+// lost nudge's claim.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SingleFlight } from "../src/singleflight.js";
 

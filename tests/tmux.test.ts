@@ -127,7 +127,7 @@ describe("Tmux", () => {
     const { exec, calls } = fakeExec();
     await new Tmux({ exec }).send("pr-9", "hi");
     expect(calls.map((c) => c.args)).toEqual([
-      // `=name:` — tmux 3.5 rejects bare `=name` as a pane target (live, 2026-08-17)
+      // `=name:` — tmux 3.5 rejects bare `=name` as a pane target
       ["send-keys", "-t", "=pr-9:", "-l", "hi"],
       ["send-keys", "-t", "=pr-9:", "Enter"],
     ]);

@@ -1,7 +1,7 @@
 // EOD scheduling — a daily wall-clock fire in the configured [eod] timezone,
 // DST-correct, using Intl only (no date libs).
 //
-// Why daemon-side (§4): every pi scheduler extension is in-process —
+// Why daemon-side: every pi scheduler extension is in-process —
 // it fires only while a session happens to be open, queues nothing, and none
 // exposes a timezone, so a "Warsaw end of day" trigger would drift an hour
 // across CET/CEST and silently skip days. The daemon owns the clock instead.
@@ -12,8 +12,7 @@
 //     calendar day, on transition days too: the spring-forward day is 23h long
 //     (gap between consecutive fires 23h), the fall-back day 25h — the fire
 //     still lands at 18:00 local on both, with the UTC offset flipping
-//     (17:00Z under CEST → 16:00Z... i.e. 18:00 CEST = 16:00Z, 18:00 CET =
-//     17:00Z).
+//     (18:00 CEST = 16:00Z, 18:00 CET = 17:00Z).
 //   * Nonexistent wall times (inside a spring-forward gap — cannot happen for
 //     18:00 in Warsaw, but the helper is general): fire at the shifted-forward
 //     instant, i.e. the candidate whose local clock lands after the requested
@@ -179,10 +178,10 @@ export function nextEodFire(now: Date, timeHHMM: string, timeZone: string): Date
   return candidate;
 }
 
-/** The headings of the sections the daemon renders after the seed. The R8
- * reseed (2026-10-07) sends the curator to "Outcomes to curate" by
- * name, so a rename here is a contradiction with a frozen seed —
- * tests/eod-seed-coherence.test.ts holds the two together. */
+/** The headings of the sections the daemon renders after the seed. The
+ * frozen eod-sweep seed sends the curator to "Outcomes to curate" by name, so
+ * a rename here contradicts the seed — tests/eod-seed-coherence.test.ts holds
+ * the two together. */
 export const EOD_SECTIONS = Object.freeze({
   layout: "Reviewer memory layout",
   curation: "Outcomes to curate",
@@ -204,15 +203,14 @@ export function renderEodPrompt(
   curation?: string,
 ): string {
   let out = render(stripModelDocs(template), { ...identity, date });
-  // where each kind of memory entry lives — the §1
-  // layout, which the seed did not spell until the R8 reseed and still does
-  // not in full. Not digest material: its own section, before the lines the
-  // digest carries.
+  // Where each kind of memory entry lives — the memory layout, which the
+  // seed does not spell in full. Not digest material: its own section, before
+  // the lines the digest carries.
   if (memoryLayout?.trim())
     out = `${out.replace(/\n*$/, "\n")}\n## ${EOD_SECTIONS.layout}\n\n${memoryLayout.trim()}\n`;
-  // what to do with the day's outcomes packet — the learner's
+  // What to do with the day's outcomes packet — the learner's
   // candidates, the typed-lesson write and the curation receipt. Instructions,
-  // not digest material: its own section, like the layout note. The R8 reseed
+  // not digest material: its own section, like the layout note. The seed
   // names this section ("Start from the outcomes packet"), so the heading is
   // a contract with the seed (tests/eod-seed-coherence.test.ts).
   if (curation?.trim())
@@ -228,8 +226,8 @@ export function renderEodPrompt(
 
 export type TimerHandle = unknown;
 
-/** What `dayContext` may answer: the digest's lines, and (S8) the
- * curation section the prompt renders after the seed. */
+/** What `dayContext` may answer: the digest's lines, and the curation
+ * section the prompt renders after the seed. */
 export interface EodDayContext {
   lines: string;
   curation?: string;
@@ -261,8 +259,8 @@ async function resolveDayContext(
   }
 }
 
-/** `context`, with `noCuration`'s section in place of a curation it lacks
- * (R8). Total: a throwing or empty fallback leaves it as it was. */
+/** `context`, with `noCuration`'s section in place of a curation it lacks.
+ * Total: a throwing or empty fallback leaves it as it was. */
 function withCurationFallback(
   context: EodDayContext,
   noCuration: EodTimerDeps["noCuration"],
@@ -285,31 +283,31 @@ export interface EodTimerDeps {
   timeZone: string;
   /** eod-sweep.md contents; read lazily so an edit lands without a restart. */
   readPrompt: () => string;
-  /** identity variable map (`identityVars(cfg)` in production);
+  /** Identity variable map (`identityVars(cfg)` in production);
    * neutral role wording when absent. */
   identity?: Readonly<TemplateVars>;
   /** Daemon-measured lines for the fired date, appended to the prompt so the
-   * sweep carries them into the digest (the cancellation summary).
+   * sweep carries them into the digest (e.g. the cancellation summary).
    * A throw here never loses the sweep: the prompt just goes out bare.
-   * it may answer ASYNCHRONOUSLY (the learner builds the day's
+   * It may answer ASYNCHRONOUSLY (the learner builds the day's
    * outcomes packet here) and with a `curation` section beside the lines —
    * waited for at most `dayContextTimeoutMs`, after which the sweep goes out
    * without it. */
   dayContext?: (date: string) => string | EodDayContext | Promise<string | EodDayContext>;
   /** How long the sweep waits for `dayContext` (default 90 s). */
   dayContextTimeoutMs?: number;
-  /** R8: the `## Outcomes to curate` section for a sweep whose
+  /** The `## Outcomes to curate` section for a sweep whose
    * `dayContext` brought no curation — no learner, a packet that failed, or a
-   * context that did not answer in time. The reseeded seed starts §1 from
+   * context that did not answer in time. The seed starts §1 from
    * that section, so with this set it is never silently absent
    * (`renderNoPacketSection` in wire.ts). A throw costs the section, never
    * the sweep. */
   noCuration?: (date: string) => string;
-  /** The memory layout the curator writes into (S5,
-   * `MEMORY_LAYOUT_NOTE`), rendered after the seed in its own section. */
+  /** The memory layout the curator writes into (`MEMORY_LAYOUT_NOTE`),
+   * rendered after the seed in its own section. */
   memoryLayout?: string;
-  /** Deploy-window drain (2026-08-25): when this returns true at fire time
-   * the sweep is DEFERRED (S2 — it used to be skipped for the day):
+  /** Deploy-window drain: when this returns true at fire time the sweep is
+   * DEFERRED, never skipped:
    * `onHeld` fires, the day joins the `deferred` set, and it fires once this
    * returns false again — checked every `deferPollMs`, and across a restart
    * when `deferred` persists the set. A throwing probe counts as "not held":
@@ -336,7 +334,7 @@ export interface EodTimerDeps {
    * deferred day's, not today's — so a wrapper (the pin watch) can name the
    * window after the day it watches. */
   injectOverseer: (message: string, date: string) => Promise<void>;
-  /** The waits before each RETRY of a failed injection (S2) — its
+  /** The waits before each RETRY of a failed injection — its
    * length is the retry count. Defaults to `EOD_DEFAULTS.retryBackoffMs`. */
   retryBackoffMs?: readonly number[];
   /** Every attempt failed: the day's sweep did not reach the overseer.
@@ -356,15 +354,15 @@ export const EOD_DEFAULTS = Object.freeze({
   deferPollMs: 60_000,
   /** Three retries of a failed injection: after 1, 5 and 15 minutes. */
   retryBackoffMs: Object.freeze([60_000, 300_000, 900_000]),
-  /** How long a fire waits for its day context (S8: the learner
-   * builds the outcomes packet there, a mine and a memory read included). */
+  /** How long a fire waits for its day context (the learner builds the
+   * outcomes packet there, a mine and a memory read included). */
   dayContextTimeoutMs: 90_000,
 });
 
 export interface EodTimer {
   /** The instant the currently-armed timer is aiming at. */
   nextFire(): Date;
-  /** The days a drain deferred that have not fired yet (S2). */
+  /** The days a drain deferred that have not fired yet. */
   deferredDates(): string[];
   stop(): void;
 }
@@ -374,22 +372,6 @@ export function promptReader(path: string): () => string {
   return () => readFileSync(path, "utf8");
 }
 
-/**
- * Arm the daily EOD injection: at each fire, render prompts/eod-sweep.md with
- * the zone-local date and inject it into the overseer, then reschedule.
- * Long waits are chunked around the 2^31-1 ms setTimeout ceiling.
- *
- * Two S2 guarantees ride on top. A drain DEFERS the day rather than
- * skipping it: the date joins a persisted set and fires, oldest first and
- * one at a time, once the drain lifts — a deploy-window drain is usually
- * followed by a restart, which is why the set is persisted. "One at a time"
- * means one SWEEP at a time, not one inject: a day never fires while another
- * fire is in flight or `sweepInFlight` says the last sweep is still being
- * worked, and a day whose hour comes up then is deferred behind it. And an injection
- * that fails is retried (`retryBackoffMs`) before `onInjectFailed` says the
- * day's curation did not happen; a deferred day leaves the set only once its
- * fire has finished, so a restart mid-retry fires it again rather than never.
- */
 /** Run an observer callback; a throw from it is swallowed — it must never
  * turn into a lost or a doubled sweep. */
 function safely(fn: () => void): void {
@@ -400,6 +382,22 @@ function safely(fn: () => void): void {
   }
 }
 
+/**
+ * Arm the daily EOD injection: at each fire, render prompts/eod-sweep.md with
+ * the zone-local date and inject it into the overseer, then reschedule.
+ * Long waits are chunked around the 2^31-1 ms setTimeout ceiling.
+ *
+ * Two guarantees ride on top. A drain DEFERS the day rather than
+ * skipping it: the date joins a persisted set and fires, oldest first and
+ * one at a time, once the drain lifts — a deploy-window drain is usually
+ * followed by a restart, which is why the set is persisted. "One at a time"
+ * means one SWEEP at a time, not one inject: a day never fires while another
+ * fire is in flight or `sweepInFlight` says the last sweep is still being
+ * worked, and a day whose hour comes up then is deferred behind it. And an injection
+ * that fails is retried (`retryBackoffMs`) before `onInjectFailed` says the
+ * day's curation did not happen; a deferred day leaves the set only once its
+ * fire has finished, so a restart mid-retry fires it again rather than never.
+ */
 export function startEodTimer(deps: EodTimerDeps): EodTimer {
   const now = deps.now ?? (() => new Date());
   const setT = deps.setTimer ?? ((cb, ms) => setTimeout(cb, ms));

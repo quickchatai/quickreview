@@ -1,12 +1,12 @@
 // Post-approval delta recheck.
 //
 // The three things these tests exist to hold down, because each one is a
-// measured failure of the predecessor system:
+// measured, costly failure mode:
 //   * a trivial or empty delta must cost a classification and nothing else
-//     (the old staleness gate burned 19% of all output concluding
+//     (a delta-blind staleness check spends heavily concluding
 //     "byte-identical");
 //   * the path can produce ONLY APPROVE → REQUEST_CHANGES — never a re-approve
-//     (138 of those, 1.86M output tokens) and never a park;
+//     (repeat approvals are pure output cost) and never a park;
 //   * the author-reply trigger stays inside src/pingpong.ts.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,8 +67,8 @@ describe("trivial-delta classifier", () => {
   });
 
   it("keeps a Python indentation change significant — it can move a line out of a block", () => {
-    // Selfscan finding 410aac68: dropping every whitespace character made a
-    // dedent out of an `if` body read as formatting.
+    // Dropping every whitespace character would make a dedent out of an `if`
+    // body read as formatting.
     const d = classifyDelta([
       file({
         filename: "app/views.py",
@@ -110,8 +110,8 @@ describe("trivial-delta classifier", () => {
     expect(d.files.map((f) => f.reason)).toEqual(["version-bump", "version-bump"]);
   });
 
-  // Selfscan 8c54fd9f: "every changed line mentions version" let dependency
-  // and script edits that merely carry the word pass as a release bump.
+  // "Every changed line mentions version" is not a release bump: dependency
+  // and script edits that merely carry the word must not pass as one.
   it("calls a manifest edit that only MENTIONS version significant", () => {
     const cases: Array<[string, string]> = [
       ["Cargo.toml", '@@\n+evil = { version = "1", git = "https://example.com/evil" }'],
@@ -143,8 +143,8 @@ describe("trivial-delta classifier", () => {
     }
   });
 
-  // Selfscan e0d7c6a8: a renamed migration WITH churn but no patch (GitHub
-  // omits it on large files) proved nothing, yet classified as a renumber.
+  // A renamed migration WITH churn but no patch (GitHub omits it on large
+  // files) proves nothing, so it must not classify as a renumber.
   it("keeps a renamed migration with churn and no patch significant", () => {
     const d = classifyDelta([
       file({
@@ -227,9 +227,8 @@ describe("trivial-delta classifier", () => {
   });
 
   it("keeps a delete + add migration pair significant when the DDL changed", () => {
-    // Selfscan finding bb94437e: the pair was trivial from the filenames
-    // alone. GitHub reports a rename as delete + add exactly when similarity
-    // is LOW — i.e. when the content changed most.
+    // The filenames alone must not make the pair trivial. GitHub reports a
+    // rename as delete + add exactly when similarity is LOW — i.e. when the content changed most.
     const d = classifyDelta([
       file({
         filename: "app/migrations/0042_add_col.py",
@@ -459,8 +458,8 @@ describe("runRecheck", () => {
     },
   );
 
-  // Regression (live, #5290 2026-08-19): a failed inject burned the head's
-  // only recheck — the claim deduped every retry forever.
+  // A failed inject must not burn the head's only recheck — a kept claim
+  // would dedupe every retry forever.
   it("releases the claim when delivery fails, so the next sweep retries", async () => {
     const h = harness();
     const realInject = h.deps.inject;
@@ -511,17 +510,17 @@ describe("runRecheck", () => {
     expect(h.store.rechecksFor(PR)[0]?.reason).toBe("noop:trivial-delta");
     // No wake went out, so no receipt token can ever exist for it: the claim
     // is written un-nudged and the undelivered sweep never reads its absence
-    // as a lost nudge (#5841, boot stall).
+    // as a lost nudge.
     expect(h.store.rechecksFor(PR)[0]?.nudged).toBe(0);
     // The standing verdict is untouched — uphold is the default, not an action.
     expect(h.store.reviewedHead(PR)?.verdict).toBe("APPROVE");
     expect(h.store.getPr(PR)?.state).toBe("tracked");
   });
 
-  // Selfscan 5bd5d43c: GitHub caps a compare at 300 files. A 300+ file base
-  // merge with a PR-owned edit past file 300 came back all base-merge, so the
-  // recheck no-op'd and CLAIMED the head — an approval standing over code no
-  // one read. A truncated delta is significant by construction.
+  // GitHub caps a compare at 300 files. A 300+ file base merge with a
+  // PR-owned edit past file 300 would read all base-merge, so the recheck
+  // would no-op and CLAIM the head — an approval standing over code no one
+  // read. A truncated delta is significant by construction.
   it("a delta GitHub truncated is significant, whatever the visible files say", async () => {
     const h = harness();
     const visible = Array.from({ length: 300 }, (_, i) =>
@@ -538,7 +537,7 @@ describe("runRecheck", () => {
     expect(h.store.rechecksFor(PR)[0]?.nudged).toBe(1);
   });
 
-  // Selfscan a78c7cba: an incomplete PR file list is not an ownership answer —
+  // An incomplete PR file list is not an ownership answer —
   // a PR-owned file missing from it would read as base-merge, i.e. trivial.
   it("a truncated PR file list is not used to call a delta file base-merge", async () => {
     const h = harness();
@@ -548,7 +547,7 @@ describe("runRecheck", () => {
     expect(out).toMatchObject({ action: "recheck", class: "significant" });
   });
 
-  // The owner, 2026-08-19 (amendment): a hand-resolved conflict is
+  // A hand-resolved conflict is
   // never trivial — the resolved file escapes the base-merge ownership rule
   // and the session is asked to audit it against both merge parents.
   it("a resolved conflict file turns an otherwise-trivial base merge into a session recheck", async () => {
@@ -556,7 +555,7 @@ describe("runRecheck", () => {
       resolvedFilesInMerges: async () => ({ files: ["src/base_only.py"], degraded: false }),
     });
     // The delta is entirely outside the PR's own files — trivially base-merge
-    // under the old rule.
+    // under the ownership rule alone.
     h.adapter.delta = [file({ filename: "src/base_only.py", additions: 5, deletions: 5 })];
     h.adapter.own = [file({ filename: "src/app.ts" })];
     const out = await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
@@ -583,16 +582,16 @@ describe("runRecheck", () => {
       h.store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>
     ).map((e) => e.kind);
     expect(kinds).toContain("recheck_merge_verify_degraded");
-    // degraded is also never unqueryable — a durable anomaly record.
+    // Degraded is also never unqueryable — a durable anomaly record.
     const anomalies = h.store.anomalies();
     expect(anomalies).toHaveLength(1);
     expect(anomalies[0]).toMatchObject({ kind: "recheck_merge_verify_degraded", pr: PR });
     expect(anomalies[0]!.detail).toContain("merge-verify degraded");
   });
 
-  // Carry-forward (the owner, 2026-08-19): a withheld approval moves with the
-  // head when the delta upholds — otherwise the retry no-ops on
-  // "head-moved" forever and the never-posted approval is stranded (#5307).
+  // Carry-forward: a withheld approval moves with the head when the delta
+  // upholds — otherwise the CI-gate retry no-ops on "head-moved" forever and
+  // the never-posted approval is stranded.
   it("a trivial-delta noop carries the withheld-approval mark to the new head", async () => {
     const h = harness();
     h.store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });
@@ -600,7 +599,7 @@ describe("runRecheck", () => {
     h.adapter.own = [file({ filename: "yarn.lock" })];
     await runRecheck(h.deps, { pr: PR, trigger: "push", head_sha: HEAD });
     expect(h.store.approvalWithheld(PR)?.head_sha).toBe(HEAD);
-    // the classifier verdict that caused the withhold rides along.
+    // The classifier verdict that caused the withhold rides along.
     expect(h.store.approvalWithheld(PR)?.ci_state).toBe("red");
     expect(h.store.approvalWithheld(PR)?.reason).toBe("red-ci");
   });
@@ -612,9 +611,9 @@ describe("runRecheck", () => {
     expect(h.store.approvalWithheld(PR)?.head_sha).toBe(OLD);
   });
 
-  // Selfscan 8dd186e2: ownership read only at the CURRENT head labelled a
-  // post-approval REVERSION of a reviewed file base-merge — the file left the
-  // PR's diff exactly because the push undid it.
+  // Ownership read only at the CURRENT head would label a post-approval
+  // REVERSION of a reviewed file base-merge — the file leaves the PR's diff
+  // exactly because the push undid it.
   it("a push reverting a reviewed file to its base content is significant, not base-merge", async () => {
     const h = harness();
     h.adapter.ownedAtReview = [file({ filename: "app/auth.py" }), file({ filename: "app/api.py" })];
@@ -639,8 +638,8 @@ describe("runRecheck", () => {
     expect(out).toMatchObject({ action: "noop", reason: "trivial-delta" });
   });
 
-  // Selfscan 3ed511f1: two overlapping trivial rechecks — the older one
-  // finishing last carried the withheld mark BACK to the older head.
+  // Two overlapping trivial rechecks: the older one finishing last must not
+  // carry the withheld mark BACK to the older head.
   it("a stale trivial recheck never carries the withheld mark off the PR's current head", async () => {
     const H3 = "3333333333333333333333333333333333333333";
     const h = harness();
@@ -763,8 +762,8 @@ describe("recheck decisions", () => {
       store.db.prepare("SELECT kind FROM events WHERE pr = ?").all(PR) as Array<{ kind: string }>
     ).map((e) => e.kind);
 
-  // Regression (live, #5315 2026-08-19): fs.watch fires before the session's
-  // write completes; an eager single read ate valid upholds as "unparseable".
+  // fs.watch fires before the session's write completes; an eager single read
+  // would archive a valid uphold as "unparseable".
   it("retries a partially-written decision instead of archiving it as malformed", async () => {
     const name = recheckDecisionFile(PR, HEAD);
     const path = join(root, "verdict", name);
@@ -774,7 +773,7 @@ describe("recheck decisions", () => {
       store,
       verdictDir: join(root, "verdict"),
       log: () => {},
-      // The production partial-write policy (H1a): an empty file
+      // The production partial-write policy: an empty file
       // that is still young is waited out, never archived as malformed.
     });
     setTimeout(
@@ -801,7 +800,7 @@ describe("recheck decisions", () => {
       log: (m) => logs.push(m),
       // A short settle so the test does not wait out the production 3 s: the
       // file must still sit unchanged across several looks before it is
-      // called malformed (H1a).
+      // called malformed.
       partialWrite: { settleMs: 40, windowMs: 2_000, initialDelayMs: 5, maxDelayMs: 20 },
     });
     await watcher.sweep();
@@ -817,7 +816,7 @@ describe("recheck decisions", () => {
     expect(kinds()).toContain("recheck_upheld");
   });
 
-  // The owner, 2026-08-19: an explicit session uphold carries a withheld
+  // An explicit session uphold carries a withheld
   // approval to the examined head; a request_changes kills the mark outright.
   it("uphold carries the withheld-approval mark to the upheld head", async () => {
     store.recordApprovalWithheld(PR, { head_sha: OLD, ci_state: "red", reason: "red-ci" });

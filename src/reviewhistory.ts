@@ -1,4 +1,4 @@
-// The review history digest (setup & scan spec "Review history").
+// The review history digest — what setup reads of a repo's past reviews.
 //
 // Setup reads what a repo's reviews have ALREADY said: the human review
 // comments on the last six months of merged PRs, the daemon's own rounds, and

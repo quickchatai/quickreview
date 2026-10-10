@@ -1,33 +1,32 @@
 // The go-live offer — the one place in the entire wizard that may
 // touch `dry_run`, and the strictest thing in it.
 //
-// ROOT RULE 1. `dry_run` is the owner's flag alone — in a fresh installation,
-// whoever now owns that installation —
-// and the decision is that the flip is THEIR conscious ratification
-// act, offered once, after they have watched a real review, never assumed and
+// Root rule 1: `dry_run` is the owner's flag alone — in a fresh installation,
+// whoever now owns that installation — and the flip is their conscious act,
+// offered once, after they have watched a real review, never assumed and
 // never a side effect. Everything below is that sentence made structural:
 //
-//   * `flipDryRunToFalse` is the ONLY function in this slice that writes the
-//     flag, and it THROWS unless it is handed (a) the exact confirmation
+//   * `flipDryRunToFalse` is the only function in the wizard that writes the
+//     flag, and it throws unless it is handed (a) the exact confirmation
 //     phrase and (b) a completed proof record. No caller can flip by omission,
 //     by a default argument, or by passing an empty object.
-//   * every other step in this slice routes its config edits through
+//   * every other step in the wizard routes its config edits through
 //     `assertNoDryRunEdit`, which refuses an edit naming the flag however it
 //     is spelled — so the flag cannot move as a side effect of a slug
 //     correction, a hostname fill or anything else.
-//   * the proof is re-verified against the DAEMON'S OWN STATE STORE at flip
+//   * the proof is re-verified against the daemon's own state store at flip
 //     time, not merely read from the checklist: a forged or stale checklist
 //     entry does not buy a flip.
 //   * with no `decision` in the tool call the step OFFERS and changes nothing.
 //     The offer is red (the wizard wants an answer) but the answer "no" is
 //     green.
 //
-// DECLINING IS A FIRST-CLASS OUTCOME, and this file has to mean it. A dry-run
+// Declining is a first-class outcome, and this file has to mean it. A dry-run
 // installation is a fully working installation: every round runs, every review
 // is written, the TUI, the memory engine, the companion and the feedback loop
 // all work — the single difference is that the gate writes the result to a
 // file instead of to GitHub. The decline path therefore records the decision,
-// writes nothing, and reports GREEN with that explanation. It is not a failure
+// writes nothing, and reports green with that explanation. It is not a failure
 // and must never be presented as one.
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -81,7 +80,7 @@ export const GO_LIVE_EXPLANATION = [
 
 /**
  * What comes after onboarding, said at its end whichever way the operator
- * answered (setup & scan spec "Setup entry"): the reviewer knows
+ * answered: the reviewer knows
  * nothing about the repo yet. A recommendation only — this step starts
  * nothing, and setup changes no review until the operator deploys the
  * profile it writes.
@@ -98,8 +97,8 @@ export const SETUP_RECOMMENDATION =
 export class GoLiveRefused extends Error {}
 
 /**
- * Set `dry_run = false` in a config document — the ONE writer of that key in
- * this slice, and a total refusal without both guards.
+ * Set `dry_run = false` in a config document — the one writer of that key in
+ * the wizard, and a total refusal without both guards.
  *
  * @throws GoLiveRefused when the confirmation phrase is not exactly right, when
  * there is no completed proof round behind it, or when the document does not

@@ -1,13 +1,10 @@
-// Companion startup healing (slice C2; retired the
-// companion TAB; retired the full-screen attach behind it; 2026-09-02
-// retired every other full-screen path in the TUI too).
+// Companion startup healing.
 //
-// What is left is the part that was never about full-screen: the companion's
-// startup can FAIL and later HEAL, so asking for it while it is down must
-// re-run the startup rather than shrug. The conversation itself now lives in
-// the permanent sidebar column (src/tui/sidebar.ts), so once the retry
-// succeeds there is nothing to open — the column is already on screen and the
-// only thing left to do is give it the keyboard.
+// The companion's startup can fail and later heal, so asking for it while it
+// is down must re-run the startup rather than shrug. The conversation itself
+// lives in the permanent sidebar column (src/tui/sidebar.ts), so once the
+// retry succeeds there is nothing to open — the column is already on screen
+// and the only thing left to do is give it the keyboard.
 import type { App } from "./app.js";
 import type { CompanionLifecycle } from "./companion.js";
 
@@ -22,14 +19,13 @@ export interface CompanionTabDeps {
 }
 
 /**
- * The companion's start, wherever it is asked for — the boot bring-up AND
+ * The companion's start, wherever it is asked for — the boot bring-up and
  * the operator's later retry. The feed / alert / tui-actions channels are
- * wired after the FIRST start that leaves the companion up, whichever path
- * that was: wiring only after a successful BOOT start left a companion healed
- * by retry running with no view feed, no alerts and a dead action channel
- * until the TUI restarted. Wired at most once — every wiring chains pollers.
+ * wired after the first start that leaves the companion up, whichever path
+ * that was, so a companion healed by retry gets its view feed, alerts and
+ * action channel too. Wired at most once — every wiring chains pollers.
  *
- * A start asked for while another is still in flight JOINS it rather than
+ * A start asked for while another is still in flight joins it rather than
  * starting again: two overlapping starts each run the day rollover, and the
  * later one kills the conversation the earlier one just spawned.
  */
@@ -63,8 +59,8 @@ export function installCompanionTabHooks(app: App, deps: CompanionTabDeps): void
       return;
     }
     // No retry wired, or one already in flight: say what is actually wrong.
-    // "not started" is the last resort — a mislabel here sent the owner looking
-    // for a --no-companion flag he had not passed.
+    // "not started" is the last resort — a mislabel here points the operator
+    // at a cause (such as a --no-companion flag) that is not the real one.
     if (retrying || !deps.retry) {
       theApp.notice(`companion not running: ${deps.failure?.() ?? "not started"}`);
       return;

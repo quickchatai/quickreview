@@ -1,17 +1,16 @@
-// inject-bridge — the daemon→session wake channel (spec §4, brief B3 step 3).
+// inject-bridge — the daemon→session wake channel.
 //
-// Modelled on pi's shipped examples/extensions/file-trigger.ts (findings §3
-// option 2): fs.watch a directory and offer the oldest pending *.md file to
-// pi.sendUserMessage(). Pi's extension API is fire-and-forget, so the file
-// remains pending until the next `agent_start` acknowledges that Pi accepted
-// a run. Only then is it moved to .done/ (consumption means
-// accepted delivery, never pickup or attempted submission). The daemon writes
-// files atomically (tmp + rename), so a watch event sees a complete file.
+// Modelled on pi's shipped examples/extensions/file-trigger.ts: fs.watch a
+// directory and offer the oldest pending *.md file to pi.sendUserMessage().
+// Pi's extension API is fire-and-forget, so the file remains pending until the
+// next `agent_start` acknowledges that Pi accepted a run. Only then is it moved
+// to .done/ (consumption means accepted delivery, never pickup or attempted
+// submission). The daemon writes files atomically (tmp + rename), so a watch
+// event sees a complete file.
 //
-// #5362 (2026-08-21) proved that "resolved" is not "accepted": pi's
-// extension-facing sendUserMessage is fire-and-forget and swallows every
-// failure into an error banner, so a drop cannot be detected from here at all.
-// Four things cover different halves of that loss:
+// "Resolved" is not "accepted": pi's extension-facing sendUserMessage is
+// fire-and-forget and swallows every failure into an error banner, so a drop
+// cannot be detected from here at all. Four things cover that loss:
 //   1. only one unacknowledged wake may exist per PR session,
 //   2. a marker-correlated user `message_start` after `agent_start` is the
 //      acceptance acknowledgement, and the busy flag brackets the whole RUN,
@@ -21,22 +20,19 @@
 //   4. the daemon independently reads the prompt receipt out of the session's
 //      own JSONL (`SessionHooks.roundPromptAccepted`).
 //
-// H1b (2026-10-08, seven live sessions killed in one morning): pi
-// REFUSES a prompt while it compacts — `prompt()` throws "Cannot submit a
-// prompt while compaction is in progress" — and the refusal is swallowed like
-// every other extension-side send failure. The daemon used to type `/compact`
-// into the pane at round end and flush the held wakes a moment later, so the
-// first wake was submitted INTO the compaction, refused, and never retried:
-// manual compaction emits no `agent_settled`, nothing re-drained, the start
-// lease ran out, and the supervisor killed a healthy, idle session. Three
-// changes close it here:
+// pi also REFUSES a prompt while it compacts — `prompt()` throws "Cannot
+// submit a prompt while compaction is in progress" — and the refusal is
+// swallowed like every other extension-side send failure. A wake submitted
+// INTO a compaction is lost, and manual compaction emits no `agent_settled`
+// to re-drain, so the start lease would run out on a healthy, idle session.
+// Three more rules cover it:
 //   5. compaction holds the mailbox — no submission while pi is not idle
 //      (pi's own `ctx.isIdle()`, which counts compaction, else the bridge's
 //      compaction events), and the queue drains again when it ends,
 //   6. the round-end compaction is the bridge's to run (`ctx.compact()` on the
 //      daemon's request file), only while nothing is in flight — never a
 //      keystroke that aborts a running wake,
-//   7. a command the daemon hands back for REDELIVERY (#5362 ③) is resubmitted
+//   7. a command the daemon hands back for REDELIVERY is resubmitted
 //      only when pi provably holds nothing of it: it never took it (pi's
 //      `input` event never carried its marker), its start lease has passed,
 //      and pi is idle with nothing queued.
@@ -105,8 +101,8 @@ export function pendingFiles(dir: string): string[] {
 export const RETRY_BASE_MS = 2_000;
 export const RETRY_MAX_MS = 30_000;
 /** A submitted wake should start a Pi run almost immediately. This bound is
- * deliberately generous for local preflight while remaining far below the
- * old 75-minute round deadline. Expiry never retries or consumes the wake: it
+ * deliberately generous for local preflight while remaining far below a
+ * round's deadline. Expiry never retries or consumes the wake: it
  * emits one FAILED_LOUD record and leaves the pending file as recovery
  * evidence for the daemon/operator watchdogs. */
 export const START_ACK_TIMEOUT_MS = 2 * 60_000;
@@ -159,7 +155,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   const bridgeStateFile = process.env.QCR_SESSION_BRIDGE_STATE_FILE?.trim();
   let bridgeFailed = false;
   let readyPublished = false;
-  // H1b: pi's compaction, as far as the bridge knows it. Published
+  // pi's compaction, as far as the bridge knows it. Published
   // with the ready receipt so the daemon can tell "waiting behind a
   // compaction" from "lost".
   let compaction: SessionBridgeCompaction = { state: "idle", seq: 0 };
@@ -220,9 +216,9 @@ export const activate: (pi: Pi) => void = (pi) => {
     }
   }
   // The span that matters is the AGENT RUN, not one assistant turn:
-  // `turn_start`/`turn_end` fire once per turn INSIDE a run. #5362's order
-  // landed in one of those gaps. `agent_settled` is the only event that may
-  // make the session available for another wake.
+  // `turn_start`/`turn_end` fire once per turn INSIDE a run, so a wake sent
+  // in one of those gaps reaches a running agent. `agent_settled` is the only
+  // event that may make the session available for another wake.
   let busy = false;
   let runGeneration = 0;
   interface SubmittedWake {
@@ -374,11 +370,11 @@ export const activate: (pi: Pi) => void = (pi) => {
       const failure = `${wake.file} was submitted ${Date.now() - wake.submittedAt}ms ago without its correlated run message`;
       // Do NOT terminalize the durable reservation here. A stale busy reading
       // can make Pi queue `followUp`; that queued command cannot be withdrawn.
-      // Leaving the short running lease expired lets reconcile JSONL/
-      // liveness: on a live, ready session it REDELIVERS first (#5362 ③,
-      // `reclaimRedelivered` below resubmits only when pi provably holds
-      // nothing), and only a dead session or spent redeliveries reach the
-      // kill-before-replay.
+      // Leaving the short running lease expired lets the daemon's recovery
+      // reconcile JSONL/liveness: on a live, ready session it REDELIVERS
+      // first (`reclaimRedelivered` below resubmits only when pi provably
+      // holds nothing), and only a dead session or spent redeliveries reach
+      // the kill-before-replay.
       console.error(
         `[inject-bridge] FAILED_LOUD ${failure}; preserving the pending file and refusing successor delivery`,
       );
@@ -437,7 +433,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     const full = join(dir, file);
     if (closed || bridgeFailed || busy || submitted || activeWake || !existsSync(full))
       return false;
-    // H1b: pi refuses a prompt while it compacts, and the refusal is
+    // pi refuses a prompt while it compacts, and the refusal is
     // invisible here. Nothing is reserved or submitted until pi is idle again;
     // the compaction's end (or the recheck) drains the queue.
     if (piNotReady()) {
@@ -524,14 +520,14 @@ export const activate: (pi: Pi) => void = (pi) => {
   };
 
   /**
-   * #5362 ③ / H1b: the daemon REDELIVERS a command whose start lease
+   * The daemon REDELIVERS a command whose start lease
    * ran out on this live, ready bridge by handing the same row back to
    * `pending` (same id, path and bytes) and rewriting its file. If this bridge
    * still holds that command as submitted-but-never-started, its barrier is
    * stale — but only pi can say whether the earlier submission is truly gone.
    * It is resubmitted only when ALL of these hold; unknown is never loss, so
    * whenever one cannot be shown the barrier stays and the daemon's bounded
-   * recovery decides (H1b review):
+   * recovery decides:
    *   - pi never took it: its `input` event never carried this wake's marker
    *     (pi reads idle through its whole prompt preflight — auth, a pre-prompt
    *     compaction check, before_agent_start — so idleness alone cannot say a
@@ -577,7 +573,7 @@ export const activate: (pi: Pi) => void = (pi) => {
   const requestPath = join(dir, COMPACTION_REQUEST_FILE);
 
   /**
-   * H1b: run the daemon's round-end compaction request through pi's
+   * Run the daemon's round-end compaction request through pi's
    * own `ctx.compact()` — but only while the mailbox is empty-handed: no run,
    * no submitted or active wake, pi idle. Returns true while a compaction holds
    * the mailbox (running, or just started), so the caller delivers nothing.
@@ -681,7 +677,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     try {
       mkdirSync(dir, { recursive: true });
       mkdirSync(doneDir, { recursive: true });
-      // H1b: a compaction request left from before this pi started
+      // A compaction request left from before this pi started
       // belonged to the conversation that was there then; a newborn one has
       // nothing to compact, and its first job is the command a recovery wrote
       // before birth, which the startup drain below must reserve at once.
@@ -772,7 +768,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     watcher = undefined;
   });
 
-  // Run boundaries. Verified on the pinned 0.84.1 dist
+  // Run boundaries. Verified on the 0.84.1 dist
   // (`core/extensions/types.d.ts`): `agent_start` = "fired when an agent loop
   // starts", `agent_end` = "…ends", `agent_settled` = "fired after an agent
   // run has FULLY SETTLED and no automatic retry, compaction, or queued
@@ -794,7 +790,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     busy = true;
   });
 
-  // H1b review: pi 1.0.0 `prompt()` emits `input` (source
+  // pi 1.0.0 `prompt()` emits `input` (source
   // "extension" for this bridge's own sends) right after its compaction
   // refusal and BEFORE the rest of its preflight — auth, the pre-prompt
   // compaction check, before_agent_start — during all of which it still reads
@@ -841,7 +837,7 @@ export const activate: (pi: Pi) => void = (pi) => {
       busy = true;
     }
     // The daemon may have handed this very command back for redelivery
-    // (#5362 ③) a moment before pi started it: the row is `pending` again.
+    // a moment before pi started it: the row is `pending` again.
     // The run that just started IS that command, so take it back and accept
     // it rather than fail the lane.
     if (
@@ -867,8 +863,8 @@ export const activate: (pi: Pi) => void = (pi) => {
     activeWake = wake;
     retryDelay = RETRY_BASE_MS;
   });
-  // `agent_settled` is the ONLY clear. `turn_end` must not clear it (that was
-  // the #5362 bug) and neither may `agent_end`: pi emits `agent_settled`
+  // `agent_settled` is the ONLY clear. `turn_end` must not clear it (a turn
+  // ends inside a run) and neither may `agent_end`: pi emits `agent_settled`
   // strictly later, once retries/compaction/queued continuations are done.
   // Never override a missing settle by submitting into a run: daemon-side
   // bounded recovery owns that failure. Delivery is scheduled onto a later
@@ -911,7 +907,7 @@ export const activate: (pi: Pi) => void = (pi) => {
     }, 0);
   });
 
-  // H1b: compaction boundaries. pi 1.0.0 emits `session_before_compact`
+  // Compaction boundaries. pi 1.0.0 emits `session_before_compact`
   // once its compaction state is set (manual and automatic alike, and only
   // while some extension handles it — ledger-pin always does), then exactly
   // one of `session_compact` (the summary landed) or `session_compact_failed`

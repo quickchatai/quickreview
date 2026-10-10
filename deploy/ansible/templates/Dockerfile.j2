@@ -1,5 +1,5 @@
 # Review sandbox runtime — single container, plain Ubuntu base.
-# Built by the ansible; managed by ansible/docker, never hand-edited on the VM.
+# Built by deploy/ansible; managed by ansible/docker, never hand-edited on the VM.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -36,16 +36,15 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # pi — pinned, never floating
 RUN npm install -g {{ pi_npm_package }}@{{ pi_version }}
 
-# NOTE: the pi-memory extension and the qmd search CLI used to be
-# installed here. Both retired with the hand-rolled memory engine — memory is
-# OpenViking (below) and the only memory extension a session loads is the
-# vendored, patched `extensions/vendor/openviking-pi`, passed per spawn. Do not
-# re-add either: a second memory engine writing MEMORY.md would fork memory,
-# and pi-memory also hooks `session_before_compact`, which extensions/
-# ledger-pin.ts must own alone.
+# No npm memory extension or search CLI is installed: memory is OpenViking
+# (below) and the only memory extension a session loads is the vendored,
+# patched `extensions/vendor/openviking-pi`, passed per spawn. A second memory
+# engine writing MEMORY.md would fork memory, and an extension hooking
+# `session_before_compact` would collide with extensions/ledger-pin.ts, which
+# must own compaction alone.
 
-# RETIRED: the third-party pi-subagents clone layer. Subagents are
-# pi's own first-party extension, shipped inside the pinned pi package above
+# No subagent-extension layer: subagents are pi's own first-party extension,
+# shipped inside the pinned pi package above
 # (examples/extensions/subagent) and loaded from the install path by
 # extensions/subagents.ts — the pi layer's version pin covers it. The layer
 # hard-fails if the shipped example is missing from the published package.
@@ -58,9 +57,8 @@ RUN test -f "$(npm root -g)/{{ pi_npm_package }}/examples/extensions/subagent/in
 # llama-cpp-python is installed FIRST and deliberately: it is NOT an openviking
 # dependency but an undeclared optional extra, and without it the default local
 # dense embedder raises EmbeddingConfigurationError at startup — the official
-# image cannot boot (verified against a running 0.4.15, 2026-08-20). Since
-# S4 it is also the runtime of the local English embedder (the model
-# layer below).
+# image cannot boot (verified against a running 0.4.15). It is also the
+# runtime of the local English embedder (the model layer below).
 #
 # Both versions come from group_vars (the triple mirror with config.toml
 # [openviking]); a literal here would be exactly the drift the pin prevents.
@@ -85,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     || { echo "FATAL: openviking=={{ openviking_version }} / llama-cpp-python=={{ llama_cpp_python_version }} failed verification" >&2; exit 1; }
 
-# The LOCAL ENGLISH EMBEDDER's model file (S4) — pinned by URL AND
+# The LOCAL ENGLISH EMBEDDER's model file — pinned by URL AND
 # sha256 (group_vars openviking_local_embedder_*, the triple mirror with
 # config.toml [openviking] local_embedder_*). Downloaded HERE, at build time,
 # so the running container never fetches a model; the layer hard-fails unless

@@ -1,5 +1,5 @@
-// extensions/setup-scan.ts — the scan half of the companion's setup belt
-//, driven over a ScanRunner with faked ports and a temp state home:
+// extensions/setup-scan.ts — the scan half of the companion's setup belt,
+// driven over a ScanRunner with faked ports and a temp state home:
 // what each tool SAYS for a preview, a start, a refusal, the status and the
 // stored findings. The run's own behaviour is tests/scan-run.test.ts's.
 import { mkdtempSync, rmSync } from "node:fs";

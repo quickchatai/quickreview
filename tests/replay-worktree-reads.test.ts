@@ -1,4 +1,4 @@
-// scan-loop: a replay lens's reads land in the replayed PR's worktree.
+// A replay lens's reads land in the replayed PR's worktree.
 //
 // The replay runs its cases through the same case runner as the scan, with
 // cwd = the app root (first-party ground: `.pi/settings.json` and reviewer
@@ -67,8 +67,8 @@ describe("every replay task names where to open each file", () => {
     expect(task).toContain(`svc/auth/token.py (modified, +1/-0) — open ${ROOT}/svc/auth/token.py`);
     expect(task).toContain(WORKTREE_PATHS_NOTE);
     expect(WORKTREE_PATHS_NOTE).toMatch(/working directory is NOT the worktree/);
-    // The old "every path is relative to the worktree" instruction is gone:
-    // it is what sent a lens to the app root's copy.
+    // No "every path is relative to the worktree" instruction: it would send
+    // a lens to the app root's copy.
     expect(task).not.toMatch(/Every path below and in your answer is relative to the worktree/);
     // A deleted file is not in the worktree — nothing to open.
     expect(task).not.toContain(`${ROOT}/svc/old.py`);

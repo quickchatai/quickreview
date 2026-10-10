@@ -155,7 +155,7 @@ describe("authoritative per-PR reads", () => {
       author: "alice",
       head_sha: "abc",
       base_ref: "master",
-      body: "", //: no description on the wire normalizes to ""
+      body: "", // no description on the wire normalizes to ""
       updated_at: "2026-08-13T10:00:00Z",
       state: "open",
       draft: false,
@@ -361,8 +361,8 @@ describe("mutations in dry-run", () => {
     ]);
   });
 
-  // Live noise fix (2026-08-19, #5309/#5314): removing an already-absent
-  // label 404s — that is idempotent success, not an error to log.
+  // Removing an already-absent label 404s — that is idempotent success, not
+  // an error to log.
   it("treats a 404 on remove_label as already-removed (live mode)", async () => {
     const { adapter } = build(() => {
       const err = new Error('DELETE .../labels/x → 404: {"message":"Label does not exist"}');
@@ -455,7 +455,7 @@ describe("resolveOwnReviewThread ownership gate", () => {
     expect(dryrunRecords()).toHaveLength(0);
   });
 
-  // addendum (the owner, 2026-08-19): a [check this] thread is resolved
+  // A [check this] thread is resolved
   // by a human, never by the reviewer — the repo merge rule (every
   // conversation resolved) is what forces human eyes onto it.
   it("never resolves a [check this] thread — human-only, even when bot-owned and unresolved", async () => {
@@ -478,10 +478,10 @@ describe("resolveOwnReviewThread ownership gate", () => {
     expect((await ordinary.adapter.resolveOwnReviewThread(3, 555)).skipped).toBeNull();
   });
 
-  // (decided §5): the sibling tag is AUTHOR-RESOLVABLE. What a
-  // human owes an [ask your human] thread is the ANSWER, not the resolution —
-  // borrowing [check this]'s human-only machinery was rejected because it
-  // forces a person into every thread. The only caller is ping-pong, so this
+  // The sibling tag is author-resolvable. What a
+  // human owes an [ask your human] thread is the answer, not the resolution —
+  // [check this]'s human-only machinery is not used because it would
+  // force a person into every thread. The only caller is ping-pong, so this
   // path is reached only after the author replied.
   it("DOES resolve an [ask your human] thread — that tag is author-resolvable, not human-only", async () => {
     for (const body of [
@@ -502,7 +502,7 @@ describe("resolveOwnReviewThread ownership gate", () => {
     );
   });
 
-  // an IGNORED deferral must not be tidied away by the bot, or a
+  // An ignored deferral must not be tidied away by the bot, or a
   // deferral is free again — the exact thing the mechanism exists to stop. Same
   // structural refusal as [check this], its own distinct reason string.
   it("never resolves a [deferred] thread — human-only, with its own reason", async () => {
@@ -544,12 +544,10 @@ describe("resolveOwnReviewThread ownership gate", () => {
   });
 });
 
-// (2026-08-31): reviewer nomination came back as the optional
-// escalation feature's second delivery shape, and this describe changed with
-// it. What it pins now is that the return is ORDINARY — a gated mutation with
-// no special case anywhere — because "the gate rejects it" is no longer the
-// guarantee. It never was the interesting one: the interesting one is that
-// nothing here can dismiss a review (rule 2, unchanged and pinned elsewhere).
+// Reviewer nomination is the optional escalation feature's second delivery
+// shape. What this pins is that it is ordinary — a gated mutation with no
+// special case anywhere. The guarantee that matters is that nothing here can
+// dismiss a review (rule 2, pinned elsewhere).
 describe("requesting a human reviewer is an ORDINARY gated mutation", () => {
   it("goes through the gate as request_reviewer, POSTing to requested_reviewers", async () => {
     const { adapter, calls } = build(() => ({}));
@@ -724,7 +722,7 @@ describe("the App's own webhook config (app-self-config class)", () => {
       "https://new.trycloudflare.com/webhook",
       "https://old.example.com/webhook",
     );
-    // The ratified rule-1 amendment: real execution despite dry-run, no dryrun record.
+    // The app-self-config exception (CLAUDE.md rule 1): real execution despite dry-run, no dryrun record.
     expect(result.executed).toBe(true);
     expect(readdirSync(dryrunDir)).toHaveLength(0);
     expect(calls[0]).toMatchObject({
@@ -752,8 +750,8 @@ describe("the App's own webhook config (app-self-config class)", () => {
   });
 });
 
-// ---- selfscan 2026-09-30: list reads that stopped at page one ------------
-// Each of these used to read ONE page (or a fixed ten) and hand the truncated
+// ---- list reads read every page ------------------------------------------
+// Each of these must not read one page (or a fixed ten) and hand the truncated
 // list on as the whole. The stub serves `total` rows, 100 per page, and the
 // assertion is that every row arrives.
 

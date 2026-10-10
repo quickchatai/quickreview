@@ -1,13 +1,11 @@
-// The 2026-10-07 boot stall: the daemon's event loop blocked for
-// 132.7 s at the 15:35 boot, and for about two minutes of every 5-minute
-// reconcile pass all day. The culprit was the undelivered-recheck sweep: 2,548
-// recheck claims, each re-proving its receipt by `readFileSync`-decoding the
-// PR's whole session transcript (~23 GB a pass), inside an `async` loop whose
-// `await`s never left the microtask queue. These pin the fix at the scale of
-// the live data's shape: what the sweep may read, that it reads each byte
-// once, that it yields, and the cheaper paths the investigation found around
-// it (the rounds index, the `/health` pipeline block, one reconcile at a time,
-// the boot pass).
+// The undelivered-recheck sweep must never block the daemon's event loop.
+// Every recheck claim re-proves its receipt from the PR's session transcript;
+// decoding a whole transcript per claim, synchronously, inside an `async` loop
+// whose `await`s never leave the microtask queue stalls the loop for minutes
+// at live scale. These pin, at the scale of the live data's shape: what the
+// sweep may read, that it reads each byte once, that it yields, and the
+// cheaper paths around it (the rounds index, the `/health` pipeline block,
+// one reconcile at a time, the boot pass).
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -172,8 +170,8 @@ describe("the undelivered-recheck sweep at the live data's shape", () => {
         carried: 0,
       });
       expect(asked.every((pr) => pr >= 6000)).toBe(true);
-      // …each transcript was read ONCE for all ten of its claims (the old scan
-      // decoded it ten times), and no closed PR's transcript at all.
+      // …each transcript was read ONCE for all ten of its claims, and no
+      // closed PR's transcript at all.
       const read = index.stats().bytes_read;
       expect(read).toBe(openBytes);
       expect(index.stats().full_scans).toBe(OPEN);
@@ -405,11 +403,11 @@ describe("the daemon's reconcile (boot stall)", () => {
     "a dispatch pump that never settles does not hold the next reconcile pass back",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      // Review finding (boot stall): the guard was held across the
-      // pass's trailing `await pump()`, and dispatch's own lock makes every
-      // pump wait for one already running — so a worktree fetch hung on a dead
-      // connection held every later pass, the backstop and the receipt sweep
-      // with it. The pump now runs after the guard is released.
+      // The pump runs after the reconcile guard is released: dispatch's own
+      // lock makes every pump wait for one already running, so a guard held
+      // across the pass's trailing `await pump()` would let a worktree fetch
+      // hung on a dead connection hold every later pass, the backstop and the
+      // receipt sweep with it.
       const QUEUED = 7002;
       const store = new StateStore(":memory:");
       store.upsertPr({

@@ -1,4 +1,4 @@
-// Ambient feed writer (build slice C2) — the TUI is the only writer
+// Ambient feed writer — the TUI is the only writer
 // of `/feed`, the companion reads it on demand.
 //
 // Four local short-term files, all owned by the TUI:
@@ -6,23 +6,22 @@
 //                  (tmp + rename) on every successful poll;
 //   events.jsonl   a bounded, append-only-in-normal-operation event tail; only
 //                  events not already written, keyed by ts+kind+pr.
-//   screen.txt     the LAST PAINTED FRAME as plain text — exactly
-//                  what is on the owner's screen, ANSI stripped, never escapes;
+//   screen.txt     the last painted frame as plain text — exactly
+//                  what is on the operator's screen, ANSI stripped, never escapes;
 //   view.json      a small projection of the derived state behind
 //                  that frame, deploy state first.
 //
-// discipline, and it is the whole point of the split: these are FILES.
+// These are files, and that is the whole point of the split.
 // Writing them costs bytes on disk and nothing in the companion's context; the
 // companion pays only when it fires a `tui_*` tool (extensions/tui-view.ts) to
 // read one. That is why the projection is deliberately small and why the
-// snapshot was NOT widened — `prompts/companion.md` tells the companion to read
+// snapshot is not widened — `prompts/companion.md` tells the companion to read
 // snapshot.json before answering anything about "now", so every field added
 // there is paid on every turn.
 //
-// IMPORTANT (the owner, 2026-08-21): feed changes NEVER inject a companion chat
-// turn. The old `/feed/wake` → pi.sendUserMessage path interrupted active
-// conversations with synthetic "feed updated" messages. The files are ambient
-// short-term state only; a real operator message or alert is a separate path.
+// Feed changes never inject a companion chat turn: a synthetic "feed updated"
+// message interrupts an active conversation. The files are ambient short-term
+// state only; a real operator message or alert is a separate path.
 import {
   appendFileSync,
   closeSync,
@@ -57,8 +56,8 @@ export interface FeedWriteResult {
   appended: number;
 }
 
-/** Health remains part of the feed writer call contract even though the
- * snapshot is now the only place it is observed. */
+/** Health is part of the feed writer's call contract; the snapshot is the
+ * only place it is observed. */
 export type FeedHealth = "ok" | "pipeline_unhealthy" | "stale" | "unreachable";
 
 /** Bound both dedupe memory and the disk journal. On overflow the oldest half
@@ -70,7 +69,7 @@ export function eventKey(e: FeedEvent): string {
   return `${e.ts}|${e.kind}|${e.pr ?? "-"}`;
 }
 
-// ---- the operator's view -----------------------------------------
+// ---- the operator's view ------------------------------------------------
 
 /** Hard caps. The frame is a picture in prose: a 200×50 screen is ~10 KB, so
  * the cap only ever bites on an absurd terminal, and biting is better than
@@ -81,8 +80,8 @@ export const SCREEN_MAX_CHARS = 20_000;
  * on this throttle letting a write through. */
 export const VIEW_MIN_INTERVAL_MS = 500;
 
-/** Deploy state as the deploy tab already fetched it — the trigger and
- * the reason `view.json` leads with it. Structural on purpose: `feed.ts` does
+/** Deploy state as the deploy tab already fetched it — the reason `view.json`
+ * leads with it. Structural on purpose: `feed.ts` does
  * not import the deploy tab, and the deploy tab does not know it is published. */
 export interface ViewDeploy {
   loaded: boolean;
@@ -91,9 +90,9 @@ export interface ViewDeploy {
    * is a VM this system has never deployed to (the first deploy writes the
    * marker); `"unparseable"` is a marker the TUI read but could not parse (a
    * corrupt file, not a failed read); `null` is a read that failed and says
-   * NOTHING about what the VM runs. Never a dropped key: the
-   * companion's renderer shows an absent key as nothing at all, and "nothing"
-   * read as "nothing to report". */
+   * nothing about what the VM runs. Never a dropped key: the companion's
+   * renderer shows an absent key as nothing at all, which reads as "nothing to
+   * report". */
   deployed: { sha: string; at?: string; mode?: string } | "absent" | "unparseable" | null;
   /** Local HEAD in the sandbox checkout; `null` when git could not be read. */
   head: string | null;
@@ -110,7 +109,7 @@ export interface ViewDeploy {
   /** `docker ps` Status line ("Up 2 hours" / "Exited (0) …"); `""` when docker
    * lists no such container; `null` when the read failed. */
   container_status: string | null;
-  /**: the deploy tab's config-home sentence ("profile changed, not
+  /** The deploy tab's config-home sentence ("profile changed, not
    * deployed", …) — `null` when either end could not be read, so an
    * uncompared home is never published as matching or as changed. */
   config_home: string | null;
@@ -126,10 +125,10 @@ export interface TuiView {
   screen: { tab: string; rows: number; chars: number; truncated: boolean };
   board: {
     snapshot_written_at?: string;
-    /** `null` until a heartbeat proves a mode. NEVER a default — this is the
-     * companion-facing twin of the badge whose `true` default told a live
-     * installation it was in dry-run (the incident this ticket is
-     * named for). The companion states this in WORDS to the owner. */
+    /** `null` until a heartbeat proves a mode, never a default — the
+     * companion-facing twin of the mode badge, and a defaulted `true` would
+     * tell a live installation it is in dry-run. The companion states this in
+     * words to the operator. */
     dry_run: boolean | null;
     health: string;
     health_stale_s?: number;
@@ -144,7 +143,7 @@ export interface TuiView {
     pipeline_causes?: Array<{ key: string; pr: number | null }>;
     pipeline_recoveries?: Array<{ key: string; pr: number }>;
   };
-  /** The row the owner is pointing at — the shared referent for "this one". */
+  /** The row the operator is pointing at — the shared referent for "this one". */
   selected?: {
     number: number;
     title?: string;
@@ -158,26 +157,26 @@ export interface TuiView {
   /** Which pi session the board's pane is mirroring, and whether it has focus. */
   pane?: { pr?: number; focused: boolean };
   notice?: string;
-  /** Reviewer-memory health (S1): status.json's `memory` block as the
+  /** Reviewer-memory health: status.json's `memory` block as the
    * TUI last read it. `null` when the TUI has no snapshot or the daemon
-   * reported no block — the companion renders that as UNKNOWN, never as
+   * reported no block — the companion renders that as unknown, never as
    * healthy. */
   memory: MemoryStatus | null;
-  /** The TUI's OWN OpenViking requests since it started, per `user/op` — so
+  /** The TUI's own OpenViking requests since it started, per `user/op` — so
    * the load the TUI puts on memory is attributed from this side (the server
    * logs no caller). Absent when no store is wired. */
   memory_tui_requests?: Record<string, RequestCounter>;
-  /** The daemon's own load (L2): status.json's `daemon` block — its
+  /** The daemon's own load: status.json's `daemon` block — its
    * event-loop lag and the container's CPU throttling — as the TUI last read
    * it. `null` when the TUI has no snapshot or the daemon reported no block;
-   * the companion renders that as UNKNOWN, never as ok. */
+   * the companion renders that as unknown, never as ok. */
   daemon: DaemonLoadStatus | null;
   /** The archiver: the `qcr status` archive line, rendered from
    * status.json's `archive` block as the TUI last read it — an older daemon's
    * missing block says NOT REPORTED, an unreadable one UNKNOWN — plus what in
    * it needs a person (`archiveAttention`: held for disk, a failed restore, a
    * reopened PR no tick will restore, repeated verify failures). `null` when
-   * the TUI has no snapshot; the companion renders that as UNKNOWN. */
+   * the TUI has no snapshot; the companion renders that as unknown. */
   archive: { line: string; attention: string[] } | null;
 }
 
@@ -214,7 +213,7 @@ export interface ViewSource {
   paneFocused?: boolean;
   notice?: string;
   screen?: string;
-  /** The TUI memory store's per-`user/op` request counts (S1). */
+  /** The TUI memory store's per-`user/op` request counts. */
   tuiMemoryRequests?: Record<string, RequestCounter>;
   deploy?: {
     loaded: boolean;
@@ -264,9 +263,9 @@ export function buildTuiView(src: ViewSource): TuiView {
   const d = src.deploy;
   const commits = d?.commits;
   const diffstat = d?.diffstat ?? [];
-  // A view PUBLISHED from no data is the same lie as a value RENDERED from no
-  // data, and it is worse here: the companion reads this file and repeats it to
-  // the owner in prose. Every field below that a snapshot would have filled is
+  // A view published from no data is the same lie as a value rendered from no
+  // data, and worse here: the companion reads this file and repeats it to the
+  // operator in prose. Every field below that a snapshot would have filled is
   // `null` when there is no snapshot — never a confident zero.
   const prs = src.snapshot?.prs;
   const by_state: Record<string, number> | null = prs === undefined ? null : {};
@@ -373,12 +372,12 @@ export class FeedWriter {
     return join(this.dir, "events.jsonl");
   }
 
-  /**: the last painted frame, plain text. */
+  /** The last painted frame, plain text. */
   get screenPath(): string {
     return join(this.dir, "screen.txt");
   }
 
-  /**: the derived state behind that frame, deploy state first. */
+  /** The derived state behind that frame, deploy state first. */
   get viewPath(): string {
     return join(this.dir, "view.json");
   }
@@ -386,7 +385,7 @@ export class FeedWriter {
   private lastViewMs = Number.NEGATIVE_INFINITY;
 
   /**
-   * publish the operator's view. Called from the poll AND from every
+   * Publish the operator's view. Called from the poll and from every
    * repaint (a repaint follows a keystroke, and "what is on their screen" is only
    * true if it tracks keystrokes), throttled to `VIEW_MIN_INTERVAL_MS`.
    *
@@ -404,14 +403,13 @@ export class FeedWriter {
     return true;
   }
 
-  /** Idempotent: creates the dir, removes the retired wake marker, seeds the
-   * seen-set from the retained tail, and bounds an old unbounded journal. */
+  /** Idempotent: creates the dir, removes any leftover `wake` marker, seeds
+   * the seen-set from the retained tail, and bounds an over-long journal. */
   start(): void {
     if (this.started) return;
     this.started = true;
     mkdirSync(this.dir, { recursive: true });
-    // A currently-running copy of the retired extension treats removal as a
-    // no-op (the file no longer exists), while no future companion loads it.
+    // Nothing reads a `wake` file; removing a leftover one is harmless.
     rmSync(join(this.dir, "wake"), { force: true });
     if (!existsSync(this.eventsPath)) return;
 
@@ -528,11 +526,12 @@ export class FeedWriter {
     this.noteJournal();
   }
 
-  /** Stage-then-rename. The staging name is unique per process AND per
+  /** Stage-then-rename. The staging name is unique per process and per
    *  write, created exclusively (`wx`): two TUIs open at once publish into one
-   *  feed dir, and a shared `<target>.tmp` let one truncate and rename the
-   *  other's inode — a half-written file for the companion and an ENOENT for
-   *  the loser. A failed write removes its own staging file, never another's. */
+   *  feed dir, and a shared `<target>.tmp` would let one truncate and rename
+   *  the other's inode — a half-written file for the companion and an ENOENT
+   *  for the loser. A failed write removes its own staging file, never
+   *  another's. */
   private writeAtomic(target: string, body: string): void {
     const tmp = `${target}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     try {

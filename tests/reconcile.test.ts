@@ -286,7 +286,7 @@ describe("reconcileOnce", () => {
 
     // No trigger-level rows exist: this is the first reconcile after a build
     // which added the table to an existing database. Unknown history is not a
-    // fresh human edge and must not recreate #5372 during rollout.
+    // fresh human edge and must not re-trigger an already-reviewed PR.
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
     expect(store.getPr(39)!.state).toBe("tracked");
@@ -314,10 +314,10 @@ describe("reconcileOnce", () => {
     expect(store.getPr(38)!.trigger_provenance).toBe("human");
   });
 
-  // push-trigger backstop (live gap 2026-08-19, #5307): with webhooks
-  // dead, a post-review push was never rechecked and a withheld approval had
-  // no path forward — reconcile must hand detected pushes to the same recheck
-  // route the webhook's onSynchronize uses.
+  // Push-trigger backstop: with webhooks dead, a post-review push would never
+  // be rechecked and a withheld approval would have no path forward —
+  // reconcile hands detected pushes to the same recheck route the webhook's
+  // onSynchronize uses.
   it("invokes onHeadPush when a tracked PR's head moved, after updating the row", async () => {
     seed(30, "tracked", { head: "old-sha" });
     gh.open = [ref(30, { head_sha: "new-sha" })];
@@ -335,10 +335,9 @@ describe("reconcileOnce", () => {
     expect(pushes).toEqual([{ pr: 30, head: "new-sha", rowHeadAtCall: "new-sha" }]);
   });
 
-  // Lost-recheck backstop (live gap 2026-08-19, #5290): a recheck that failed
-  // to deliver never retried once the head was tracked — change-detection
-  // fires exactly once. A standing APPROVE at a stale reviewed head with the
-  // question unclaimed is re-asked; a claimed question dedupes.
+  // Lost-recheck backstop: change-detection fires exactly once, so a recheck
+  // that failed to deliver would never retry once the head was tracked. A
+  // standing APPROVE at a stale reviewed head with the question unclaimed is re-asked; a claimed question dedupes.
   it("backstop: re-invokes onHeadPush for a standing APPROVE at a stale reviewed head, unless claimed", async () => {
     seed(35, "tracked", { head: "cur-sha" });
     store.recordReviewedHead(35, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
@@ -468,8 +467,7 @@ describe("reconcileOnce", () => {
 
   // A human reviewer requested on GitHub is somebody else's business: it must
   // not move our lifecycle state, and it can never produce a park — there is
-  // no park (removed the state and the migration that used to
-  // drain it, after a live check found no row left carrying one).
+  // no park state at all.
   it("never changes local state off a GitHub review request", async () => {
     gh.open = [ref(16), ref(17)];
     gh.requested.set(16, { users: ["mhale"], teams: [] });
@@ -527,7 +525,7 @@ describe("reconcileOnce", () => {
   });
 });
 
-// the raw-tier sweep rides the reconcile pass — after the
+// The raw-tier sweep rides the reconcile pass — after the
 // closed-sync, so a PR closed THIS pass is already closed when it runs — and
 // it is never an error of the pass: the boot's first healthy pass lifts a
 // deploy drain, and memory must not be able to hold that.
@@ -874,11 +872,11 @@ describe("reconcileOrphanedRounds", () => {
   });
 });
 
-// ----: stale-trigger residue ----------------------------------------
+// ---- stale-trigger residue -------------------------------------------------
 
 describe("stale-trigger residue sweep", () => {
   it("clears stale_recheck + trigger_ts on a settled PR with no round running, and logs it", async () => {
-    // #5180's live shape: tracked, stale_recheck=1, a days-old trigger_ts,
+    // The residue shape: tracked, stale_recheck=1, a days-old trigger_ts,
     // zero rounds running, and GitHub no longer lists it as triggered.
     gh.open = [ref(5180)];
     seed(5180, "tracked", { stale: 1, trigger: "2026-08-14T14:01:56.715Z" });
@@ -905,7 +903,7 @@ describe("stale-trigger residue sweep", () => {
     const { hooks } = recordingHooks();
     await reconcileOnce({ cfg, store, adapter: gh, hooks });
 
-    // The owner re-labels the PR: an explicit human trigger, days later.
+    // A human re-labels the PR: an explicit trigger, days later.
     applyEvent(
       store,
       5180,
@@ -1037,7 +1035,7 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
   });
 
   it("never releases a claim that is merely HELD — a round in flight, or a wake still queued", async () => {
-    // wakeOrHold holds a mid-round nudge in `pending_wakes` by design (S4).
+    // wakeOrHold holds a mid-round nudge in `pending_wakes` by design.
     // It has not been delivered and has no receipt, but it is not lost either.
     gh.open = [ref(603), ref(604)];
     seed(603, "reviewing");
@@ -1082,10 +1080,9 @@ describe("undelivered recheck-claim sweep (#5362 W2)", () => {
 });
 
 describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)", () => {
-  // The sweep held the event loop for 132.7 s at the 15:35 boot: it asked
-  // about all 2,548 claims ever written — 1,217 already delivered and
-  // re-proven every pass, 2,078 on closed PRs, 1,133 no-op claims that never
-  // carried a token — every 5 minutes, forever.
+  // An unbounded sweep blocks the event loop: it would ask about every claim
+  // ever written — already-delivered ones re-proven every pass, claims on
+  // closed PRs, no-op claims that never carried a token — every 5 minutes.
   const NOW = () => new Date("2026-08-14T12:00:00Z");
   const STALE = "2026-08-14T09:00:00.000Z";
 
@@ -1138,16 +1135,15 @@ describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)",
   });
 
   it("#5841: a no-op claim carries no token, so it is never released and the backstop is never re-armed", async () => {
-    // Live 2026-10-07 15:33: twenty no-op claims of #5841 released in one
-    // pass the moment its session wrote anything (the absent token read as a
-    // lost nudge), and the next pass's backstop re-asked push:b224bda — a
-    // question the trivial-delta classifier had already answered.
+    // Releasing a no-op claim the moment the session writes anything (reading
+    // the absent token as a lost nudge) would let the next pass's backstop
+    // re-ask a question the trivial-delta classifier already answered.
     seed(701, "tracked", { head: "cur-sha" });
     store.recordReviewedHead(701, { head_sha: "approved-sha", verdict: "APPROVE", round_no: 1 });
     gh.open = [ref(701, { head_sha: "cur-sha" })];
     claimAt(701, "push:cur-sha::", { reason: "noop:trivial-delta", nudge: false });
-    // The session HAS written since, without any token: the old sweep's
-    // "provable absence".
+    // The session HAS written since, without any token: what an unbounded
+    // sweep would read as "provable absence".
     const hooks = askingHooks(() => false);
     const pushes: number[] = [];
     const onHeadPush = async (pr: number): Promise<void> => {
@@ -1240,9 +1236,9 @@ describe("undelivered recheck-claim sweep — bounded (boot stall, 2026-10-07)",
       claimAt(800 + i, "push:a");
     }
     gh.open = Array.from({ length: n }, (_, i) => ref(800 + i));
-    // The receipt answers WITHOUT real I/O — exactly the old hook's shape (an
-    // async function whose body is synchronous), which kept the old loop on
-    // the microtask queue for 2,548 claims.
+    // The receipt answers WITHOUT real I/O — an async function whose body is
+    // synchronous, which keeps an unyielding loop on the microtask queue for
+    // every claim.
     const hooks = askingHooks(() => true);
     let turns = 0;
     let ticking = true;

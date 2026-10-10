@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Build the regression case set out of the corpus export.
+// Build the regression case set out of the review-corpus export.
 //
 //   node scripts/build-regression-set.mjs <corpus.jsonl> [out.json]
 //
@@ -13,7 +13,7 @@
 // fixture is built by exactly the instrument the tests use. Nothing here talks
 // to GitHub, to the daemon, or to a gate: it reads one file and writes another.
 //
-// Extraction follows's test-set-notes:
+// Extraction rules:
 //   - one finding = one THREAD OPENER by a non-author, non-bot login, linked to
 //     its review by comments.nodes[0].pullRequestReview.id (not login+time —
 //     reviewers open threads across several reviews on one PR);

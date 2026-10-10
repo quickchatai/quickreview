@@ -1,4 +1,4 @@
-// The onboarding docs are pinned to the onboarding CODE.
+// The onboarding docs are pinned to the onboarding code.
 //
 // `qcr onboard` composes the tools the manual path documents, so the wizard and
 // the docs must describe ONE truth — drift between them is the bug this suite
@@ -131,8 +131,8 @@ describe("the GitHub App doc matches the labels the wizard creates", () => {
 });
 
 describe("the entry point is the one the docs promise", () => {
-  // the spec called for an `onboard` npm script beside the wrapper and
-  // it never shipped, so a reader following `npm run …` found nothing.
+  // The docs tell a reader to `npm run onboard`, so that script must exist and
+  // run the wrapper.
   const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
 
   it("package.json carries an onboard script that runs the wrapper", () => {

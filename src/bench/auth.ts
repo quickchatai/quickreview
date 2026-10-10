@@ -1,13 +1,12 @@
 // The benchmark's pi login: a ChatGPT login volume, READ-ONLY, never refreshed.
 //
 // The login volume (default: the operator's companion's) is reused. Sharing its
-// agent/ dir read-write (the first design) let a prompt-injected review write
-// the companion's persistent pi config — AGENTS.md, skills/, extensions/,
-// bin/ — which the companion loads with its much wider authority (adversarial
-// review of 35cc9d3). So the companion's dir is mounted READ-ONLY at
-// `/pi-agent-src`, and every case gets a private copy of the access token in a
-// tmpfs agent dir, with the refresh token replaced by a value no OAuth server
-// accepts. The sandbox therefore:
+// agent/ dir read-write would let a prompt-injected review write the
+// companion's persistent pi config — AGENTS.md, skills/, extensions/, bin/ —
+// which the companion loads with its much wider authority. So the companion's
+// dir is mounted read-only at `/pi-agent-src`, and every case gets a private
+// copy of the access token in a tmpfs agent dir, with the refresh token
+// replaced by a value no OAuth server accepts. The sandbox therefore:
 //   - never writes anything the companion reads;
 //   - never refreshes, so it can never rotate (and invalidate) the companion's
 //     grant — which a second refresher would do;
@@ -21,8 +20,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { join } from "node:path";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 
-// The API-KEY route. The published runs used the login above; an
-// outsider re-running the benchmark brings their own API key instead.
+// The API-key route: the published runs used the login above; an outsider
+// re-running the benchmark brings their own API key instead.
 // `QCR_BENCH_AUTH=api-key` (set by bench.sh from the host's QCR_BENCH_AUTH):
 //   - no login is mounted or read: the sandbox's agent dir gets an EMPTY
 //     auth.json, so pi resolves every provider's key from the environment

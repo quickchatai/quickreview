@@ -160,10 +160,9 @@ describe("dailyCancellations / cancellationSummaryLine", () => {
     }
   });
 
-  // The wiring half: the helpers above were dead code until the
-  // summary line rode the EOD sweep prompt (eod.ts renderEodPrompt dayContext,
-  // wired in wire.ts) — the digest is written by the sweep session, so the
-  // prompt is the only render the daemon owns.
+  // The summary line reaches the digest through the EOD sweep prompt (eod.ts
+  // renderEodPrompt dayContext, wired in wire.ts): the digest is written by
+  // the sweep session, so the prompt is the only render the daemon owns.
   it("eodDigestContext is the day's cancellation line, 'none' included", async () => {
     const { eodDigestContext } = await import("../src/digest.js");
     const store = await openStore();

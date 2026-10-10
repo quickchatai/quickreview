@@ -1,8 +1,8 @@
-// ledger-pin's compaction hook against pi 1.0.0's REAL contract (,
-// MC-64). Before the hook returned `instructions`/`summary`/
-// `retainedTail`/`details`, every one of which pi 1.0.0 ignores. The contract
-// here is not restated from memory: it is parsed out of verbatim excerpts of
-// pi 1.0.0's shipped dist (tests/fixtures/pi-1.0.0/, provenance and sha256s in
+// ledger-pin's compaction hook against pi 1.0.0's real contract. pi silently
+// ignores any field it does not read (a top-level `instructions`, `summary`,
+// `retainedTail` or `details` on the hook result does nothing), so the
+// contract here is not restated from memory: it is parsed out of verbatim
+// excerpts of pi 1.0.0's shipped dist (tests/fixtures/pi-1.0.0/, provenance and sha256s in
 // their headers), so a hook result that drifts from what pi reads fails here.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

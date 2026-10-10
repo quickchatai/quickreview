@@ -1,16 +1,14 @@
-// the TUI half of the structural fences. See tests/fences.test.ts
+// The TUI half of the structural fences. See tests/fences.test.ts
 // for the three rules this file is written under; the second one bites hardest
 // here.
 //
-// [T1] is the single highest-value check the dead-surface inventory proposed,
-// and the reason is the failure MODE, not the count: a registered key with no
-// reachable effect does not merely do nothing — `App.handleInput` routes any
-// printable that is NOT in `app.registeredKeys()` to the companion column, so a
-// dead registration STEALS the keystroke. The operator types a character
-// meant for pi and it vanishes. Six such registrations were shipped
-// ([C1]-[C6]) and nothing could see them. Since the set is
-// derived from what each surface is painting, so the recorded exceptions
-// below collapsed to the one genuine self-loop.
+// [T1] is the highest-value check here because of its failure mode: a
+// registered key with no reachable effect does not merely do nothing —
+// `App.handleInput` routes any printable that is not in `app.registeredKeys()`
+// to the companion column, so a dead registration steals the keystroke. The
+// operator types a character meant for pi and it vanishes. The registered set
+// is derived from what each surface is painting, so the recorded exceptions
+// below are the one genuine self-loop.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -71,9 +69,7 @@ function universe(tab: Tab): Set<string> {
 describe("[T9] HELP_LINES and the key vocabulary agree", () => {
   /**
    * The direction that misleads an operator: a key the help NAMES must be a
-   * key some surface can claim — `u unwedge`, `\`, `W` and `F` were once live
-   * keys the help never mentioned ([C14]) and the help promised a
-   * full-screen attach that ⏎/`a` no longer did ([H4]).
+   * key some surface can claim, or the help promises something no key does.
    *
    * MUTATION: add `"Z            does something"` to HELP_LINES — this fails
    * naming Z.
@@ -136,7 +132,7 @@ describe("[T9] HELP_LINES and the key vocabulary agree", () => {
 
 describe("[T1] every registered key is answerable", () => {
   /**
-   * The bar is EFFECT, not handler-existence.
+   * The bar is effect, not handler-existence.
    *
    * "A handler exists for this key" is the vacuous version of this fence — the
    * same self-loop shape that let a dead lifecycle state produce itself. A
@@ -314,8 +310,8 @@ describe("[T1] every registered key is answerable", () => {
      *
      * Selection indexes, scroll offsets, the metrics window and the loading
      * flags live here, not on `app.view` — so with an empty fixture list
-     * `j`, `k`, `[`, `]`, `r` and `7` moved something real while changing no
-     * pixel, and were reported dead. Including this state is NOT the
+     * `j`, `k`, `[`, `]`, `r` and `7` move something real while changing no
+     * pixel, and would read as dead without it. Including this state is not the
      * `consumed` clause coming back: a handler that returns `true` and does
      * nothing still moves none of it.
      */
@@ -345,12 +341,10 @@ describe("[T1] every registered key is answerable", () => {
   /**
    * The keys that are registered and do nothing in this state ON PURPOSE.
    *
-   * With the bar state-derived this is the one genuine self-loop:
-   * a tab's own digit while that tab is showing. Every other registration
-   * is a button the surface is painting right now, and a painted button that
-   * does nothing is a lie. There is no second list any more — the old
-   * `DEAD_PENDING_TICKET` was seven buttons the old tab [2] painted for a
-   * view that was not up, and that tab no longer exists.
+   * With the bar state-derived this is the one genuine self-loop: a tab's
+   * own digit while that tab is showing. Every other registration is a
+   * button the surface is painting right now, and a painted button that
+   * does nothing is a lie.
    *
    * Checked by SET EQUALITY below, so an entry that stops being needed fails
    * as loudly as a key that stops working.
@@ -407,15 +401,14 @@ describe("[T1] every registered key is answerable", () => {
         app.view.boardFilter = { author: "alice" };
         // A FIXED clock. `renderBoard` falls back to `new Date()`, and the tab
         // screens carry ages and timestamps, so without this every render
-        // differs from the last and EVERY key looks alive — the signal would
-        // be a false-negative machine, strictly worse than the inert one it
-        // replaced. The self-check below is what caught it.
+        // differs from the last and every key looks alive — a false-negative
+        // machine. The self-check below guards it.
         app.view.now = new Date("2026-08-20T12:00:00Z");
 
-        // WAIT FOR THE TAB TO SETTLE. Every tab hook kicks off an async load
-        // on install, and a fixed sleep raced it: the first key of each tab
-        // was pressed while the pane still said "loading…", so the load
-        // resolving between the two renders looked like that key's effect.
+        // Wait for the tab to settle. Every tab hook kicks off an async load
+        // on install; a fixed sleep would race it, pressing the first key of
+        // each tab while the pane still says "loading…", so the load
+        // resolving between the two renders would look like that key's effect.
         await settle(app, tab);
         // Off the list boundary: `k` at index 0 correctly moves nothing, and
         // reporting it would be a rig artefact rather than a dead key.
@@ -430,7 +423,7 @@ describe("[T1] every registered key is answerable", () => {
           opened: opened.length,
           fetched: fetched.length,
         };
-        // THE SIGNAL MUST BE STABLE UNDER NO INPUT, or "changed" means
+        // The signal must be stable under no input, or "changed" means
         // "rendered twice" and every key passes. Asserted per key rather than
         // once, because a tab can become non-deterministic only after some
         // other key has loaded it.
@@ -443,11 +436,11 @@ describe("[T1] every registered key is answerable", () => {
         app.pressKey(key);
         await new Promise((r) => setTimeout(r, 10));
 
-        // NOTE what is NOT here: "the tab's key hook returned true". That was
-        // in the disjunction, and it is precisely the degenerate handler the
-        // header of this describe says the fence rejects — a `return true`
-        // with no body satisfies it. The bar is EFFECT: a different screen, a
-        // different tab, changed state, a remote call, or an opened URL.
+        // Deliberately absent: "the tab's key hook returned true". That is
+        // precisely the degenerate handler the header of this describe says
+        // the fence rejects — a `return true` with no body satisfies it. The
+        // bar is effect: a different screen, a different tab, changed state,
+        // a remote call, or an opened URL.
         const changed =
           screenOf(app, tab) !== before.screen ||
           app.tab !== before.tab ||
@@ -478,10 +471,8 @@ describe("[T1] every registered key is answerable", () => {
 describe("[T2] every click-zone action variant is constructed", () => {
   /**
    * A `{ t: "..." }` member no `zones.push` ever builds is a click target that
-   * cannot be clicked — `BoardAction`'s `tab` and `key` arms and
-   * `MetricsAction`'s `back` were exactly that ([C9]-[C11]); all
-   * three are deleted, so nothing is recorded as pending any more
-   * and the fence is a plain equality with the empty list.
+   * cannot be clicked. Nothing is recorded as pending, so the fence is a
+   * plain equality with the empty list.
    *
    * Some push sites build into a LOCAL array that is re-based onto
    * `frame.zones` later, so this scans for the tag anywhere in the tab's own
@@ -526,9 +517,8 @@ describe("[T2] every click-zone action variant is constructed", () => {
 
 describe("[T7] every repo path a script or doc points at exists", () => {
   /**
-   * `npm run e2e:companion` imported a module that had been deleted
-   * ([F8]) and nothing noticed, because a path in a shell script is
-   * just a string until someone runs it.
+   * A path in a shell script is just a string until someone runs it, so a
+   * script importing a deleted module goes unnoticed without this fence.
    *
    * MUTATION: add `node dist/src/does-not-exist.js` to any scripts/*.sh —
    * this fails naming it.
@@ -541,7 +531,7 @@ describe("[T7] every repo path a script or doc points at exists", () => {
         if (!f.isFile()) continue;
         const text = readFileSync(join(ROOT, dir, f.name), "utf8");
         for (const line of text.split("\n")) {
-          // A doc that RECORDS a deletion names the path it deleted, and that
+          // A doc that records a deletion names the path it deleted, and that
           // is the documentation working, not a broken pointer. Narrow, and
           // per-line so it cannot mute a whole file.
           if (

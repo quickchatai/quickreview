@@ -1,15 +1,14 @@
-// tests/stack-neutral.test.ts — the stack-neutral reseed (ratified on
-//).
+// tests/stack-neutral.test.ts — the stack-neutral seeds.
 //
-// Three frozen seeds (`pass-baseline`, `pass-ui`, `pass-data-safety`) carried
-// one company's stack — pytest markers, Django Ninja, Tailwind tokens, lucide,
-// a translation path, MySQL's ALGORITHM, Django's migration file shape — into
-// every install. They were reseeded stack-neutral; the stack rules moved into
-// the quickchat profile's addenda; and the two Django-only compiled addenda
+// Three frozen seeds (`pass-baseline`, `pass-ui`, `pass-data-safety`) are
+// stack-neutral: no one company's stack (pytest markers, Django Ninja, Tailwind
+// tokens, lucide, a translation path, MySQL's ALGORITHM, Django's migration
+// file shape) reaches every install. The stack rules live in the quickchat
+// profile's addenda, and the two Django-only compiled addenda
 // (`migration-numbering`, `django-migration-orm`) plus the round templates'
-// missing-migration rule now follow the profile's ecosystem.
+// missing-migration rule follow the profile's ecosystem.
 //
-// Asserted at the seam (spec seam 2): what `buildAgents` puts in the BUILT pass
+// Asserted at the seam: what `buildAgents` puts in the BUILT pass
 // bodies, and what `renderRoundPrompt` puts in a round order — for a generic
 // install (no profile, ecosystem none) and for quickchat (its pack, django).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -149,7 +148,7 @@ describe("ecosystem none: no pre-check claim, no Django rule", () => {
     expect(ds).not.toContain("handled daemon-side");
     expect(ds).not.toMatch(/pre-check/i);
     expect(ds).not.toContain("## Django migrations: ORM first");
-    // The no-exec reading (folded into the seed, 2026-10-03) is generic and stays.
+    // The no-exec reading (part of the seed) is generic and stays.
     expect(ds).toContain("judge from the migration file and the model diff");
     // With no pre-check, nothing withdraws the lens's own ordering P1.
     expect(ds).not.toContain("That classification is withdrawn");
@@ -262,9 +261,9 @@ describe.skipIf(!HAS_QC)("quickchat reviews lose nothing", () => {
 
   it("the pack's MySQL vocabulary composes AFTER the supersessions and defers to them", () => {
     // Profile addenda compose after every compiled-in entry, so the moved
-    // ALGORITHM words now sit BELOW the no-exec and ORM-first sections that
-    // superseded them when they lived in the seed. The pack must say so, or
-    // the last word on the page re-arms the INSTANT demand #5312 retired.
+    // ALGORITHM words sit BELOW the no-exec and ORM-first sections that
+    // supersede them. The pack must say so, or the last word on the page
+    // re-arms a demand for an `ALGORITHM=INSTANT` clause.
     const ds = bodies.get("pass-data-safety")!;
     const pack = ds.indexOf("## This repo's database and migrations for the data-safety lens");
     expect(pack).toBeGreaterThan(ds.indexOf("## Django migrations: ORM first"));

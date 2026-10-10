@@ -13,7 +13,7 @@
 //   enabled = false            # remove the lens from the plan and the add list
 //
 //   [lenses.pass-style]
-//   guide = "style-guide.md"   #: a guide file in this profile's dir
+//   guide = "style-guide.md"   # a guide file in this profile's dir
 //
 // The resolved map (the whole `extends` chain merged, child-wins per key —
 // src/profiles.ts `loadProfileLensTuning`) rides the `Config` as `cfg.lenses`,
@@ -25,8 +25,8 @@
 //     whatever tier the plan would otherwise choose, so plan rows, `raisable_to`,
 //     the sweep rows and the add rule's variant all move with it. A floor never
 //     lowers: a risk pass stays at `sol-high`, the validator stays at or above
-//     its configured tier. A lens's floor never moves the validator (:
-//     it is not raised to match any lens).
+//     its configured tier. A lens's floor never moves the validator (it is
+//     not raised to match any lens).
 //   * `effort` — build time, through the per-variant model hook
 //     (`BuildAgentsOptions.models`): only that lens's `<pass>--<tier>` specs get
 //     the new thinking suffix. `high` means the model's ceiling
@@ -37,9 +37,9 @@
 //     heuristics stay ADD-only. `true` is the default and only matters for a
 //     lens a `[review]` lever gates (sub-lenses, the sweep, the tests, quality
 //     and style lenses) — there it switches that one lens on whatever the lever
-//     says. It never plans an addable-only lens or anything
-//     else the selector did not choose. `false` on `pass-validate` switches
-//     the validator off: the round then posts the merged candidates
+//     says. It never plans an addable-only lens or anything else the
+//     selector did not choose. `false` on `pass-validate` switches the
+//     validator off: the round then posts the merged candidates
 //     with no adversary in front of them, and nothing is doubted.
 //   * `emphasis` and `max_severity` — compiled into addenda
 //     (`lensTuningAddenda`) that wire.ts and the bench compose after the
@@ -223,7 +223,7 @@ export function parseLensTable(
 }
 
 /** Merge a child profile's lens tables over its base's: per lens, per key,
- * the child wins (scalar rule). */
+ * the child wins (the profile chain's scalar rule). */
 export function mergeLensTuning(
   base: Record<string, LensTuning>,
   child: Record<string, LensTuning>,

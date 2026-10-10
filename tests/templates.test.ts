@@ -162,7 +162,7 @@ describe("roundVars", () => {
     expect(note.toLowerCase()).not.toContain("escalate unless");
   });
 
-  // the pre-check's result has to REACH the session, or the lens
+  // The pre-check's result has to REACH the session, or the lens
   // re-derives the collision and blocks on it anyway. It rides on
   // migration_gate_note, which all three round templates already print.
   it("carries the daemon-handled migration collisions into the gate note", () => {
@@ -279,7 +279,7 @@ describe("renderRoundPrompt", () => {
   });
 });
 
-// the nit treadmill's stopping rule: from round 3 onward a new nit
+// The nit treadmill's stopping rule: from round 3 onward a new nit
 // is only raisable inside the current delta, and the round number reaches the
 // blank-slate passes only through the task string, so the note carries a
 // verbatim block the session copies into every pass task string.
@@ -322,7 +322,7 @@ describe("renderNitScopeNote", () => {
     }
   });
 
-  // `[review] nits = "open"` lifts the volume limits, never the ratified
+  // `[review] nits = "open"` lifts the volume limits, never the fenced
   // treadmill rule: from review 3 the two notes must not give opposite
   // posting orders (own inline `[nit]` vs never a new inline nit thread).
   it("an open nit policy defers to an armed NIT SCOPE instead of contradicting it", () => {
@@ -417,19 +417,19 @@ describe("shipped round templates", () => {
       expect(out).toContain("pass-ui, pass-contracts");
     });
 
-    // the validator now holds its veto at the top tier; the kill log
-    // that feeds the EOD critic must survive that raise unchanged.
+    // The kill log that feeds the EOD critic is stated whatever tier the
+    // validator runs at.
     it(`${tplFile} still dispatches the planned validator variant and logs its kills`, () => {
       expect(text).toContain("pass-validate");
       expect(text).toMatch(/log\s+(its|the)\s+kills/i);
     });
 
-    // merge-not-drop: the old "highest severity wins" dedup silently
-    // destroyed distinct findings sharing an anchor (#5291), and merge-kills
-    // showed up in no telemetry. Same defect merges; different defects both
-    // survive (fold, or post separately when P1/P2); every disposition logged.
+    // Merge-not-drop: a "highest severity wins" dedup would silently destroy
+    // distinct findings sharing an anchor, invisibly to telemetry. Same defect
+    // merges; different defects both survive (fold, or post separately when
+    // P1/P2); every disposition logged.
     it(`${tplFile} merge step carries both defects and logs every disposition`, () => {
-      // Same defect merges exactly as before.
+      // Same defect merges.
       expect(text).toContain("SAME defect");
       expect(text).toMatch(/highest severity\s*\n?\s*wins[,;] lens tags\s*\n?\s*concatenate/);
       // Different defects on one run both survive — never dropped.
@@ -443,7 +443,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("MERGED <src> into <dst>");
       expect(text).toContain("FOLDED <src> under <dst>");
       expect(text).toContain("validate task string");
-      // Old rule gone: dedup is no longer unconditional.
+      // Dedup is never unconditional.
       expect(text).not.toMatch(
         /Dedup (candidates )?by `\(path, changed-line-run\)`[;:] highest severity wins/,
       );
@@ -461,9 +461,9 @@ describe("shipped round templates", () => {
       expect(text).toContain("`subagent` tool");
       expect(text).toMatch(/ONE assistant turn/);
       expect(text).toMatch(/no\n?`pi --no-session`/);
-      // Live incident 2026-08-18: an unregistered pass agent must never be
-      // improvised around — the whole first backlog sweep ran generic workers
-      // "acting as" lenses at the wrong model tier. STOP-and-anomaly instead.
+      // An unregistered pass agent must never be improvised around — generic
+      // workers "acting as" lenses run at the wrong model tier.
+      // STOP-and-anomaly instead.
       expect(text).toContain("Unknown agent = STOP, never improvise");
       expect(text).toMatch(/do NOT substitute another agent/);
       expect(text).toContain("produce no\nverdict at all");
@@ -477,7 +477,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("scripts/post-review.sh {{n}} <REQUEST_CHANGES|COMMENT> <body-file>");
       expect(text).toContain("scripts/reply-thread.sh {{n}} <comment-id> <body-file>");
       expect(text).toContain("scripts/approve-pr.sh");
-      // the posting calls carry the head and round as an env prefix
+      // The posting calls carry the head and round as an env prefix
       // on the same command — the exec policy refuses `export`.
       expect(text).toContain(
         "QCR_EXPECTED_HEAD={{head_sha}} QCR_ROUND_NO={{round_no}} scripts/approve-pr.sh {{n}} state/pr-{{n}}-round-{{round_no}}-review.md state/pr-{{n}}-round-{{round_no}}-comments.json",
@@ -489,12 +489,12 @@ describe("shipped round templates", () => {
       expect(text).toContain("deterministic posting key");
     });
 
-    // the ONE corpus rule that is about WHICH LENS RUNS rather than
+    // The one corpus rule that is about WHICH LENS RUNS rather than
     // how a lens judges, so it lives here and not in PASS_ADDENDA. The daemon's
     // plan is path-shaped (`migrationGate` and pass-data-safety selection both
     // key on `migrations/`-ish paths), so a models change with no migration
     // file reaches no lens at all unless the session adds one.
-    // the rule names Django model fields, so the ecosystem renders it
+    // The rule names Django model fields, so the ecosystem renders it
     // (`{{missing_migration_note}}`) — present for Django, absent for `none`.
     it(`${tplFile} tells the session to add pass-data-safety on a missing migration`, () => {
       expect(text).toContain("\n{{missing_migration_note}}\n<!-- RATIFIED no-exec");
@@ -512,7 +512,7 @@ describe("shipped round templates", () => {
       expect(out).toContain("the **absence** of a\nfile is the defect");
       // It rides the existing add protocol — it is not a second dispatch path.
       expect(out).toContain("one-line reason");
-      // The paragraph keeps its old place and spacing: one blank line either side.
+      // The paragraph keeps its place and spacing: one blank line either side.
       expect(out).toContain("the lens is not added.\n\n**Add on a missing migration.**");
       // Fence markers stay in the source and never reach the model.
       expect(out).toContain("needs to run.\n\n**No-exec policy (absolute).**");
@@ -533,7 +533,7 @@ describe("shipped round templates", () => {
       expect(out).toContain("the lens is not added.\n\n**No-exec policy (absolute).**");
     });
 
-    // the halves of the shared pass contract that live in the round
+    // The halves of the shared pass contract that live in the round
     // templates: the Decide-step reachability gate and the Post-step delta rule.
     it(`${tplFile} states the reachability decision rule without moving the blocker bar`, () => {
       expect(text).toContain("Reachability gate");
@@ -557,7 +557,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("reaches the owner and the overseer");
     });
 
-    // executed-pass telemetry: the "Lenses applied" line derives
+    // Executed-pass telemetry: the "Lenses applied" line derives
     // from what actually ran, and the verdict carries the `passes` record.
     it(`${tplFile} derives the lenses line from executed passes and orders the telemetry`, () => {
       // The lenses line: real returns only, never the plan.
@@ -577,7 +577,7 @@ describe("shipped round templates", () => {
       expect(text).toContain('"passes": []');
     });
 
-    // the three shapes that carry no reasoning at all. The governing
+    // The three shapes that carry no reasoning at all. The governing
     // constraint is stated in the template itself and pinned here: this is
     // never a length rule, and success is never counted in characters.
     it(`${tplFile} requires a nit to ask for something`, () => {
@@ -600,8 +600,8 @@ describe("shipped round templates", () => {
 
     it(`${tplFile} closes the tag grammar and says why it is not a style point`, () => {
       expect(text).toContain("**The tag grammar is closed.**");
-      // All three marker prefixes are in the grammar sentence — `[deferred]`
-      // was missing while the template's own section mandated it.
+      // All three marker prefixes are in the grammar sentence, `[deferred]`
+      // included, since the template's own deferral section mandates it.
       expect(text).toContain(
         "optionally prefixed by `[check this]`,\n`[ask your human]` or `[deferred]` where those apply",
       );
@@ -636,10 +636,10 @@ describe("shipped round templates", () => {
       expect(text).toContain("not one word of\njustification is cut");
     });
 
-    // a deferral costs a ticket. The decision to defer belongs to the
+    // A deferral costs a ticket. The decision to defer belongs to the
     // session (it happens after validation), so the rule lives here and not in
-    // PASS_ADDENDA. Corrected by the owner: the SESSION files the issue itself in
-    // the same round — no author-confirmation step exists.
+    // PASS_ADDENDA. The SESSION files the issue itself in the same round — no
+    // author-confirmation step exists.
     it(`${tplFile} makes a deferral cost a ticket the session files itself`, () => {
       expect(text).toContain("**Deferrals cost a ticket.**");
       expect(text).toContain("**No ticket, no deferral.**");
@@ -687,7 +687,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("verification\ninventory is not");
     });
 
-    // a plain-language opener on every review body, and blocker
+    // A plain-language opener on every review body, and blocker
     // comments that lead with the consequence rather than the mechanism.
     it(`${tplFile} opens the review body in plain language, before the verdict line`, () => {
       expect(text).toContain("**Open in plain language.**");
@@ -720,9 +720,8 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/one thing must change before merge/);
     });
 
-    // self-sufficient blocker bodies (team feedback 2026-08-20:
-    // one-sentence blockers were too thin to act on; one sentence stays
-    // correct when it is genuinely enough).
+    // Self-sufficient blocker bodies: a one-sentence blocker is often too thin
+    // to act on, but one sentence stays correct when it is genuinely enough.
     it(`${tplFile} requires self-sufficient blocker bodies`, () => {
       expect(text).toContain("**Blocker bodies are self-sufficient.**");
       expect(text).toMatch(/the invariant a fix must restore/);
@@ -739,9 +738,9 @@ describe("shipped round templates", () => {
       );
     });
 
-    // the posted-body format is specified by the template itself
-    // (first-night audit F7: an under-specified format sent four sessions
-    // reading sibling PRs' posted reviews for examples).
+    // The posted-body format is specified by the template itself (an
+    // under-specified format sends sessions reading sibling PRs' posted
+    // reviews for examples).
     it(`${tplFile} specifies the posted body format explicitly`, () => {
       expect(text).toContain("**Body format — this template is the format authority.**");
       // The skeleton, in order: plain opener → verdict line → lenses line →
@@ -753,7 +752,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("`### Blockers`, then `### Nits`, then `### Questions`");
       expect(text).toContain("- `path:line` — <title> _(<severity>/<confidence>, <lens>)_");
       expect(text).toContain("`### For a human to double-check` section");
-      // addendum: every double-check item is also an inline
+      // Every double-check item is also an inline
       // resolvable thread a human must touch, never resolved by the reviewer.
       expect(text).toContain("inline `[check this]` comment");
       expect(text).toContain("you never resolve a `[check this]` thread");
@@ -775,8 +774,8 @@ describe("shipped round templates", () => {
       expect(text).toMatch(/re-read this section — never a\s+sibling PR/);
     });
 
-    // half 1, reworded: with the native extension the
-    // agent list IS the built pass set (no stock agents ship any more), and
+    // With the native extension the agent list IS the built pass set (no
+    // stock agents ship), and
     // any foreign agent name stays banned as the degraded path — never a
     // stand-in for a lens.
     it(`${tplFile} declares foreign agent names off-limits (only built passes exist)`, () => {
@@ -787,7 +786,7 @@ describe("shipped round templates", () => {
       expect(text).toContain("never treat it as a fallback for a lens");
     });
 
-    // children run at the sandbox root: the glue strips task `cwd`
+    // Children run at the sandbox root: the glue strips task `cwd`
     // (a child in the reviewed worktree would load that repo's .pi/ config
     // under always-on trust), so the template must demand absolute paths and
     // forbid passing a cwd.
@@ -867,7 +866,7 @@ describe("system prompts", () => {
   });
 });
 
-// ---- the fourth template: the delta recheck ---------------------
+// ---- the fourth template: the delta recheck ---------------------------------
 
 const recheckOrder: RecheckOrder = {
   pr: 5109,
@@ -887,7 +886,7 @@ const recheckOrder: RecheckOrder = {
   issued_at: "2026-08-18T10:00:00Z",
 };
 
-// The owner, 2026-08-19: hand-resolved merge files get an explicit audit block
+// Hand-resolved merge files get an explicit audit block
 // telling the session to diff against BOTH parents; clean deltas get nothing.
 describe("conflict audit note", () => {
   it("renders the audit block only when resolved files exist", () => {
@@ -928,7 +927,7 @@ describe("shipped recheck template", () => {
     for (const name of placeholdersIn(text)) expect(supplied).toContain(name);
   });
 
-  // the missing-migration add trigger is deliberately NOT here. A
+  // The missing-migration add trigger is deliberately NOT here. A
   // recheck plans no passes and launches no subagent ("This is not a review
   // round"), so an instruction to add a lens would be an instruction it cannot
   // follow. A models-vs-migration mismatch introduced by a delta comes back
@@ -957,7 +956,7 @@ describe("shipped recheck template", () => {
     expect(text).toContain("not the scope of the requested fix");
   });
 
-  // the nit-scope rule holds on the recheck path too, and here it is
+  // The nit-scope rule holds on the recheck path too, and here it is
   // always armed: a recheck only ever follows a posted review.
   it("arms the nit-scope rule unconditionally in recheck mode", () => {
     expect(text).toContain("**Nit scope — always armed in this mode.**");
@@ -972,7 +971,7 @@ describe("shipped recheck template", () => {
     expect(text).toContain("this thread does not need another round to\n  close");
   });
 
-  // a deferral costs a ticket on the recheck path too, and the
+  // A deferral costs a ticket on the recheck path too, and the
   // session files it itself, in the same recheck. No confirmation step.
   it("makes a recheck deferral cost a self-filed ticket through the capped path", () => {
     expect(text).toContain("**A `[deferred]` finding costs a ticket here too");
@@ -984,13 +983,13 @@ describe("shipped recheck template", () => {
     // Loud refusal, never retried; the thread stays human-resolve-only.
     expect(text).toContain("Never retry, never route around it");
     expect(text).toContain("You never resolve a `[deferred]`\nthread");
-    // The two senses of "deferred" are disambiguated outside the ratified
+    // The two senses of "deferred" are disambiguated outside the RATIFIED
     // fences: the ledger mark is free and private, only the TAG files a ticket.
     expect(text).toContain('Two spellings of "deferred" appear in this template');
     expect(text).toContain("only the tag files a ticket");
   });
 
-  // the sibling-review ban holds on the recheck path too; the
+  // The sibling-review ban holds on the recheck path too; the
   // format authority is the round template the session already holds.
   it("forbids reading sibling PRs' posted reviews in recheck mode too", () => {
     expect(text).toContain(
@@ -1001,7 +1000,7 @@ describe("shipped recheck template", () => {
   });
 });
 
-// ---- the INTENT note ----------------------------------------------
+// ---- the INTENT note ---------------------------------------------------------
 
 describe("renderIntentNote", () => {
   const intentEntry = {
@@ -1092,16 +1091,13 @@ describe("renderIntentNote", () => {
   });
 });
 
-// item 5 — ledger discipline. Every round template mandates a ledger
-// rewrite, and it must come BEFORE the verdict file: the verdict file is the
-// daemon's round-over signal — consumption compacts the conversation, so a
-// post-verdict ledger write was aborted mid-turn on every live 2026-08-19
-// round (all post-deploy sessions ended stopReason:aborted with ledgers/
-// stale). The wording is pinned here; edit template and pin together.
-// template & script cleanups (second-day audit, the owner 2026-08-19):
-// pinned scratch paths, the pr-self.sh read helper, verdict-schema discipline,
-// validator batching, and the memory-noise rule. The wording is pinned here;
-// edit template and pin together.
+// Ledger discipline. Every round template mandates a ledger rewrite, and it
+// must come BEFORE the verdict file: the verdict file is the daemon's
+// round-over signal and consumption compacts the conversation, so a
+// post-verdict ledger write is aborted mid-turn and the ledger left stale.
+// Also pinned: scratch paths, the pr-self.sh read helper, verdict-schema
+// discipline, validator batching, and the memory-noise rule. The wording is
+// pinned here; edit template and pin together.
 describe("template & script cleanups", () => {
   for (const [rt, tplFile] of SHIPPED_ROUND_TEMPLATES) {
     const text = readFileSync(resolve(process.cwd(), "prompts", tplFile), "utf8");
@@ -1126,8 +1122,8 @@ describe("template & script cleanups", () => {
     it(`${tplFile} routes self-verification reads through pr-self.sh, raw gh as fallback only`, () => {
       expect(text).toContain("`scripts/pr-self.sh {{n}} <reviews|threads|head|checks>`");
       expect(text).toContain("Read-only by\n  construction — it has no mutation path.");
-      // The old blanket "additional READS" phrasing is gone: raw gh is a
-      // fallback, not routine.
+      // No blanket "additional READS" phrasing: raw gh is a fallback, not
+      // routine.
       expect(text).toContain("Raw `gh` reads are a fallback only");
       expect(text).not.toContain("Raw `gh` is for additional READS only");
       expect(text).toContain("every mutation goes through a script");
@@ -1136,12 +1132,12 @@ describe("template & script cleanups", () => {
     it(`${tplFile} demands exactly the schema fields — no extras`, () => {
       expect(text).toContain("**Emit exactly the schema fields — no extras.**");
       expect(text).toContain("not licence to invent one");
-      // The live incident: a rogue ai_approved on a plain approval.
+      // The template names the failure: a rogue ai_approved on a plain approval.
       expect(text).toMatch(/rogue\s*\n?`ai_approved: true` on a plain approval/);
       expect(text).toContain(
         "appear only under their\nstated conditions below; nothing else, ever.",
       );
-      // The old tolerance phrasing no longer invites extras.
+      // No tolerance phrasing that invites extra fields.
       expect(text).not.toContain("extra fields are fine");
     });
 
@@ -1156,8 +1152,8 @@ describe("template & script cleanups", () => {
     });
 
     it(`${tplFile} declares other PRs' memory notes noise — never cited, never reused`, () => {
-      // the paragraph is the renderer's `{{bleed_note}}` now —
-      // VERBATIM whenever no lesson is delivered (here: no memory at all).
+      // The paragraph is the renderer's `{{bleed_note}}`, rendered VERBATIM
+      // whenever no lesson is delivered (here: no memory at all).
       expect(text).toContain("{{bleed_note}}{{lessons_note}}");
       const rendered = renderRoundPrompt(text, { ...order, round_type: rt });
       expect(rendered).toContain("**Notes from other PRs are noise.**");
@@ -1186,7 +1182,7 @@ describe("end-of-round ledger discipline", () => {
   }
 });
 
-// H1a (#5885): the session never writes a verdict or recheck-outcome
+// The session never writes a verdict or recheck-outcome
 // file in place — it stages the COMPLETE JSON at `verdict/<name>.tmp` and
 // publishes it with scripts/commit-verdict.sh (one rename). Pinned on the
 // RENDERED text of all four templates, and against the script's own accepted
@@ -1214,7 +1210,7 @@ describe("atomic verdict publication (H1a)", () => {
     }
     // Every staging name the text mentions is the script's `<name>.tmp`.
     for (const m of rendered.matchAll(/verdict\/(\S+?)\.tmp`/g)) expect(m[1]).toBe(name);
-    // the rendered-posting note's `--from-record` publication names
+    // The rendered-posting note's `--from-record` publication names
     // the same file.
     for (const m of rendered.matchAll(/scripts\/commit-verdict\.sh --from-record (\S+?)`/g)) {
       expect(m[1]).toBe(name);
@@ -1250,7 +1246,7 @@ describe("atomic verdict publication (H1a)", () => {
   });
 });
 
-// (the main session's serial tail): the round templates give the
+// The main session's serial tail: the round templates give the
 // exact posting calls in env-prefix form and list what the exec policy always
 // refuses. Both are held to the REAL guard, so the prompt can never advertise
 // a call the guard refuses or a refusal the guard no longer makes.

@@ -1105,13 +1105,12 @@ describe("bounded round-stage supervision", () => {
   });
 });
 
-// H1b, #5362 ③: on 2026-10-08 a wake flushed right after a verdict
-// waited behind the post-verdict compaction, its start lease ran out, and
-// recovery KILLED the live, idle session seven times that morning. A command
-// waiting behind a compaction is late, not lost; a live, bridge-ready session
-// gets a bounded REDELIVERY of the same command before any kill.
+// A wake flushed right after a verdict can wait behind the post-verdict
+// compaction until its start lease runs out. A command waiting behind a
+// compaction is late, not lost; a live, bridge-ready session gets a bounded
+// REDELIVERY of the same command before any kill.
 describe("missing start on a live session: compaction and redelivery come before any kill (H1b)", () => {
-  // The wake was created at 08:52:10, its 120 s lease ran out at 08:54:10.
+  // The moment the wake's 120 s start lease has run out.
   const LEASE_OUT = "2026-08-27T20:04:00.000Z";
 
   function liveHooks(over: Partial<SessionHooks> = {}) {
@@ -1264,7 +1263,7 @@ describe("missing start on a live session: compaction and redelivery come before
     expect(store.getSessionCommand(id)).toMatchObject({ status: "pending", redeliveries: 1 });
   });
 
-  // H1b review: the supervisor awaits liveness and the JSONL before it
+  // The supervisor awaits liveness and the JSONL before it
   // redelivers. A bridge that reserved the command in that window (a busy run
   // settled, a compaction ended) holds a FRESH submission pi may still be
   // preflighting — handing it back would send it twice.
@@ -1302,7 +1301,7 @@ describe("missing start on a live session: compaction and redelivery come before
     expect(kill).not.toHaveBeenCalled();
   });
 
-  // H1b review: a pi killed or OOM'd mid-compaction never reaches
+  // A pi killed or OOM'd mid-compaction never reaches
   // `session_shutdown`, so its receipt still says "running". A provably dead
   // session is the kill-and-replay case at once, never held off for
   // `session_compaction_max_s`.
@@ -1325,7 +1324,7 @@ describe("missing start on a live session: compaction and redelivery come before
     expect(retry).toHaveBeenCalledWith(id, expect.stringContaining("no correlated start"));
   });
 
-  // H1b review: the redelivery budget is per session generation. A
+  // The redelivery budget is per session generation. A
   // command replayed into a fresh conversation after its budget was spent
   // gets its own: its next missed start there is redelivered, not killed.
   it("after a kill-and-replay, the fresh session's missed start is redelivered, not killed again", async () => {
@@ -1386,7 +1385,7 @@ function events(kind: string): Array<{ pr: number | null; payload: any }> {
   ).map((row) => ({ pr: row.pr, payload: JSON.parse(row.payload) }));
 }
 
-// (docs/follow-up-rounds.md): a follow-up round whose pre-approval
+// docs/follow-up-rounds.md: a follow-up round whose pre-approval
 // sweep is OWED runs a whole round-1 plan after its delta stage. Its passes
 // limit and its hard cap get `[daemon] follow_up_sweep_extra_min` more, and a
 // sweep lens started after the delta stage is an ADDED pass, never a missing

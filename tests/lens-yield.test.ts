@@ -1,6 +1,6 @@
 // bench/aacr/lens_yield.py counts per ROOT CAUSE (merge group), so "posted"
-// can never exceed "raised" and a lens has one unique count (FREEZE-ANALYSIS
-// B, 2026-10-03: the per-trailer count gave pass-abstraction 6 and 2).
+// can never exceed "raised" and a lens has one unique count (a per-trailer
+// count would give one lens two different totals).
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

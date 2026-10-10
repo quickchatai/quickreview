@@ -1,4 +1,4 @@
-// supervision, health polling and the heartbeat block.
+// Supervision, health polling and the heartbeat block.
 //
 // Nothing here touches a real process, socket or clock: the supervisor takes a
 // spawn seam, a fetch seam and a timer seam precisely so its two dangerous
@@ -414,9 +414,9 @@ describe("OpenVikingSupervisor", () => {
     expect(s.checked_at).toBeTruthy();
   });
 
-  // review: the daemon materializes the memory root when the server
-  // comes up. The hook fires on each not-ready → ready flip and never while
-  // the server merely stays ready.
+  // The daemon materializes the memory root when the server comes up. The
+  // hook fires on each not-ready → ready flip and never while the server
+  // merely stays ready.
   it("onReady fires once per not-ready → ready flip, and a throwing callback cannot take the loop down", async () => {
     let ready = false;
     let fired = 0;

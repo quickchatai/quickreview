@@ -1,4 +1,4 @@
-// the install locator's shell mirror (`scripts/install-locator.sh`)
+// The install locator's shell mirror (`scripts/install-locator.sh`)
 // against the reference (`src/install.ts`), case for case: the posting route,
 // mint-token and deploy.sh read their config through the shell copy, so a
 // drift between the two would have the scripts and the daemon read different
@@ -50,7 +50,7 @@ function shell(env: InstallEnv): { code: number; lines: string[]; stderr: string
     {
       encoding: "utf8",
       cwd: dir,
-      // ONLY the locator's inputs (plus PATH): nothing from the runner's shell.
+      // Only the locator's inputs (plus PATH): nothing from the runner's shell.
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env } as NodeJS.ProcessEnv,
     },
   );
@@ -175,7 +175,7 @@ describe("install-locator.sh ≡ src/install.ts", () => {
 
 describe("qcr_profile_dir ≡ locateProfile", () => {
   // deploy.sh's preflight and bench.sh decide which profiles the VM / image
-  // can read from this; the checkout serves the generic examples ONLY.
+  // can read from this; the checkout serves the generic examples only.
   function shellDir(env: InstallEnv, name: string): string {
     const r = spawnSync(
       "bash",
@@ -288,8 +288,8 @@ describe("qcr_profile_dirs ≡ profileSearchDirs", () => {
 });
 
 describe("every script that reads the live config reads it through the locator", () => {
-  // No reader builds the checkout path itself (acceptance): the old
-  // `${QCR_CONFIG:-$ROOT/config.toml}` spelling is gone from every script, and
+  // No reader builds the checkout path itself: the
+  // `${QCR_CONFIG:-$ROOT/config.toml}` spelling appears in no script, and
   // each one that reads a config sources the shell locator.
   const readers = [
     "approve-pr.sh",
@@ -315,7 +315,7 @@ describe("every script that reads the live config reads it through the locator",
   }
 });
 
-// the secrets half of the mirror: `qcr_locate_secrets` ≡
+// The secrets half of the mirror: `qcr_locate_secrets` ≡
 // `locateSecrets`, `qcr_locate_keys_file` ≡ `locateKeysFile`, over temp homes.
 describe("qcr_locate_secrets / qcr_locate_keys_file ≡ src/install.ts", () => {
   type KeysEnv = InstallEnv & { QCR_OPENVIKING_KEYS?: string };

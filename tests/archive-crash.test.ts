@@ -1,4 +1,4 @@
-// the per-file protocol under crash injection and interference
+// The per-file protocol under crash injection and interference
 // (docs/archiving.md §7.3, §7.4, §7.6):
 //
 //   (3) a crash after each step — a partial written, a gzip renamed, a
@@ -118,8 +118,8 @@ function converged(f: PrFixture): void {
   expect(entries.filter((e) => e.kind === "sources_removed")).toEqual([]);
   expect(archiveRow(f.store, f.pr)?.state).toBe("archived");
   // The row counts what the archive holds — the files the crashed run
-  // archived (and the next pass only reused) included (rehearsal 2026-10-08:
-  // a converged PR read 0 files and 0 bytes after a kill).
+  // archived (and the next pass only reused) included, so a PR converged
+  // after a kill never reads 0 files and 0 bytes.
   const gz = entries
     .filter((e) => e.kind === "transcript")
     .reduce((n, e) => n + (e.gz_bytes as number), 0);

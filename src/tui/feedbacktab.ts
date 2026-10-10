@@ -1,6 +1,6 @@
-// `[7] feedback` — the tuning loop on ONE surface, end to end:
+// `[7] feedback` — the tuning loop on one surface, end to end:
 //
-//   signal        the INBOX: every `#feedback` memory entry, unprocessed first,
+//   signal        the inbox: every `#feedback` memory entry, unprocessed first,
 //                 acted-on ones archived (`a` shows them)
 //   adjudication  the selected signal's card, and what the record says about it
 //   proposal      PROPOSED: the companion's rubric proposals, `A` accept / `x` reject
@@ -8,12 +8,10 @@
 //   revert        `R` arms a revert of the focused change, `y` runs it
 //   filed         a summary of the tracker tickets adjudication opened ([4] is the list)
 //
-// The loop used to START on tab [2] (the inbox behind a `v` toggle and a
-// filter only the companion could set) and END on tab [5] (the change
-// register), so you adjudicated in one place and learned what it did in
-// another. That seam was the owner's complaint; this surface is its answer.
+// The whole loop lives here so that adjudicating a signal and learning what
+// it changed happen in one place, not across tabs.
 //
-// THE REVERT CONFIRMATION IS DELIBERATE. The board is read-only over
+// The revert confirmation is deliberate. The board is read-only over
 // ssh with a short list of user-initiated exceptions and this revert is one:
 // it writes a commit into the checkout the companion is live in, and the rows
 // in the register look alike by construction (same author, same prefix,
@@ -106,7 +104,7 @@ export function feedbackInbox(entries: MemoryEntry[], showArchived = false): Mem
 }
 
 function feedbackRaw(text: string): string {
-  // The comment's full text, when the entry carries it (S7) — what
+  // The comment's full text, when the entry carries it — what
   // the human wrote, not the sentence's 280-character cut.
   const full = readFencedData(text, FEEDBACK_FULL_TEXT_LABEL);
   if (full !== null && full.trim() !== "") return full.trim();
@@ -276,8 +274,8 @@ const STATUS_LINE: Record<FeedbackStatus, string> = {
  * hand in a fake without a git checkout. */
 export interface ChangeRegisterSource {
   readonly register: ChangeRegister | undefined;
-  /** Why `register` may not be the whole story: an unreadable file
-   * or a failed scan is SAID in the section header, never painted as "no
+  /** Why `register` may not be the whole story: an unreadable file or a
+   * failed scan is said in the section header, never painted as "no
    * changes yet" — and rows already in memory stay on screen under it. */
   readonly problem?: ChangeLogProblem | undefined;
   /** Re-scan; the outcome is read back off `register`/`problem`. */
@@ -285,7 +283,7 @@ export interface ChangeRegisterSource {
   revert(sha: string): Promise<RevertResult>;
 }
 
-/** `#5270 · · ratified "yes, all three"` — the provenance line. */
+/** `feedback #<pr> · <adjudication> · ratified <words>` — the provenance line. */
 export function provenance(entry: ChangeEntry, width: number): string {
   const bits: string[] = [];
   bits.push(
@@ -529,8 +527,8 @@ export function renderFeedbackTab(
       dim: true,
     },
   ]);
-  // "none yet" is a CLAIM, made only when a scan succeeded and found none
-  //. The two ways of not knowing each get their own sentence, and
+  // "none yet" is a claim, made only when a scan succeeded and found none.
+  // The two ways of not knowing each get their own sentence, and
   // neither hides the rows already in memory.
   if (problem?.kind === "register_unreadable") {
     row([
@@ -591,8 +589,8 @@ export function renderFeedbackTab(
   if (st.result) row([{ text: truncate(st.result, rightW - 2) }]);
   row([{ text: "" }]);
 
-  // The lesson shadow ledger's headline (S9a) — the evidence the
-  // owner reads before switching `[memory] delivery` on.
+  // The lesson shadow ledger's headline — the evidence the
+  // operator reads before switching `[memory] delivery` on.
   const lessons = lessonsHeadline(snapshot);
   row([
     { text: sectionTitle(lessons.title) },
@@ -693,11 +691,11 @@ export function renderFeedbackTab(
 }
 
 /**
- * The LESSONS section (S9a): status.json `memory.lessons`, painted
+ * The LESSONS section: status.json `memory.lessons`, painted
  * honest-unknown — no snapshot yet is "not read yet", a daemon whose status
  * carries no memory block or no lesson block says so, and a ledger the daemon
- * could not read (null) is UNKNOWN. None of the four ever reads as zero
- * marks, which would tell the owner a lesson harmed nothing.
+ * could not read (null) is unknown. None of the four ever reads as zero
+ * marks, which would tell the operator a lesson harmed nothing.
  */
 export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
   title: string;
@@ -740,14 +738,14 @@ export function lessonsHeadline(snapshot: StatusSnapshot | undefined): {
       ? "LESSONS (delivery off)"
       : s.lessons_off
         ? "LESSONS (kill switch OFF)"
-        : // S9b: `on` is delivering only with a selector built (memory
+        : // `on` is delivering only with a selector built (memory
           // on); `on` without one runs nothing — never "shadow", which runs
           // the selection and its ledger.
           `LESSONS (${s.delivering ? "on" : s.delivery === "on" ? "on — nothing delivered" : "shadow"}, ${s.window_days}d)`;
   const line = lessonHeadline(s);
-  // the marked findings by match tier — class the would-demote
-  // one, lens evidence only — on a line of its own (the headline already
-  // fills the pane); UNKNOWN from a daemon that predates R9, never an empty
+  // The marked findings by match tier — class the would-demote one, lens
+  // evidence only — on a line of its own (the headline already fills the
+  // pane); unknown from a daemon that reports no tier split, never an empty
   // split.
   const tiers = lessonTierLine(s);
   return {
@@ -883,7 +881,7 @@ export function installFeedbackTab(
       return true;
     },
     key: (theApp, key: BoardKey): boolean => {
-      // Armed is MODAL: every key is either the confirmation or a cancel, so a
+      // Armed is modal: every key is either the confirmation or a cancel, so a
       // stray keystroke can never both cancel and do something else.
       if (st.armed !== undefined) {
         const ch = keyChar(key);

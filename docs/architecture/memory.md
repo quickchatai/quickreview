@@ -24,17 +24,17 @@ migration have their own page: [../memory-embeddings.md](../memory-embeddings.md
 | The vocabulary every caller speaks (entries, ops, refusals) | `src/memory/store.ts` |
 | Round seeding — pinned head + one budgeted block | `src/memory/context.ts` |
 | The `#tag` / `k=v` entry header, one parser only | `src/memory/eventtags.ts` |
-| The §1 layout: areas, the pinned area, the curator's layout note | `src/memory/layout.ts` |
+| The layout: areas, the pinned area, the curator's layout note | `src/memory/layout.ts` |
 | The one-off relayout of a flat store (`qcr memory relayout`) | `src/memory/relayout.ts` (the plan), `src/openviking/relayout.ts` (the run) |
 | A PR session's identity, credential file and raw-notes tier | `src/memory/ovsession.ts` |
-| The one-time import from the retired file engine | `src/memory/import.ts`, `src/memory/legacy-file.ts`, `scripts/import-pi-memory.mjs` |
+| The one-time import from the archived file engine | `src/memory/import.ts`, `src/memory/legacy-file.ts`, `scripts/import-pi-memory.mjs` |
 | The engine process: spawn, restart ladder, heartbeat block | `src/openviking/supervisor.ts`, `proc.ts`, `types.ts` |
 | The health gate (`/health`, `/ready`) — unauthenticated: is the server up | `src/openviking/health.ts` |
 | Memory HEALTH — does memory work with the credentials in use, and who is told | `src/memory/health.ts`, `src/openviking/probe.ts`, `src/openviking/provisionreport.ts`, `src/tui/memincident.ts` |
 | HTTP: the single write route, determinism pins, auth | `src/openviking/client.ts` |
 | `MemoryStore` over the engine (entries as files, pin/unpin as moves, retire, the pinned-area read) | `src/openviking/store.ts` |
 | `ContextAssembler` over the engine (head + block) | `src/openviking/context.ts` |
-| Embedder knob, re-embed migration | `src/openviking/reembed.ts`, `scripts/openviking-reembed.mjs` |
+| The local embedder, embedder knob, re-embed migration | `src/openviking/embedder.ts`, `scripts/openviking-embedder.py`, `src/openviking/reembed.ts`, `scripts/openviking-reembed.mjs` |
 | The daily curation sweep and its clock | `src/eod.ts` |
 | The pinned-area watchdog around that sweep | `src/eodpinwatch.ts` |
 | The `[feedback]` tuning loop | `src/feedback.ts` |
@@ -62,7 +62,7 @@ Nothing in `src/memory/` knows that memory is an HTTP server; nothing above
 `src/openviking/client.ts` knows the wire format. The seam has exactly one
 `MemoryStore` implementation (`src/openviking/store.ts`). The only other
 implementation of anything in the seam is `MemorySource` — read-only, over the
-archived file of the retired engine, kept so the one-time import can still see
+archived file of the earlier file-based engine, kept so the one-time import can still see
 what it is importing (`src/memory/legacy-file.ts`).
 
 ## The seam
@@ -94,7 +94,7 @@ Four shape decisions are load-bearing:
 that already carries its own tags and must be stored verbatim. Collapsing them
 would let the daemon's `#feedback` lines masquerade as the operator's words.
 
-A `note` may carry a deterministic address (S2): `name` plus
+A `note` may carry a deterministic address: `name` plus
 `category` (the area — `events` for signals). It is then created at exactly
 that address or not at all: a replay of the same bytes is a plain success
 (the engine answers "unchanged"), and an entry already there with other bytes
@@ -125,17 +125,16 @@ There is one parser and one writer for this vocabulary because the store, the
 curator, the `[feedback]` sink and the TUI auto-filer all read it; a second
 parser would be free to disagree about exactly the case above.
 
-### The layout — `src/memory/layout.ts` (S5)
+### The layout — `src/memory/layout.ts`
 
-The §1 areas (ratified 2026-08-20, built in S5), under
-`viking://user/<user>/memories/`:
+The memory areas, under `viking://user/<user>/memories/`:
 
 | Area | Holds | Written by |
 |---|---|---|
-| `preferences/pinned/` | the GUARANTEED HEAD — the owner's standing instructions, in every round | the pin verb (the TUI's `p`, the companion's `memory_pin` action — R7) |
+| `preferences/pinned/` | the guaranteed head — the owner's standing instructions, in every round | the pin verb (the TUI's `p`, the companion's `memory_pin` action) |
 | `preferences/` | unpinned standing instructions — the owner's own words (`#manual`) | the TUI's `n`, an unpin |
-| `experiences/` | curated lessons, conventions, setup/scan notes — the ONLY area a round's context block searches | the EOD curator, setup, scans |
-| `finding-cases/` | finding cases (S7) | — |
+| `experiences/` | curated lessons, conventions, setup/scan notes — the only area a round's context block searches | the EOD curator, setup, scans |
+| `finding-cases/` | the daemon's finding cases (`src/cases.ts`); never searched by a round | the case writer |
 | `events/` | feedback, bug and ops signals with `k=v` tags (`kind=feedback|bug|ops`) | the `[feedback]` sink, the curator (`kind=bug`) |
 
 **Pinned is placement.** An entry is pinned because it sits in
@@ -146,9 +145,8 @@ A new entry written through the seam lands where its writer says (a `note`'s
 the pinned area, `#manual` → `preferences/`, else the default area,
 `areaForNewEntry`). The curator learns the layout from a section the daemon
 renders after the frozen `eod-sweep.md` seed (`MEMORY_LAYOUT_NOTE`, via
-`renderEodPrompt`'s `memoryLayout`). Since the owner's 2026-10-07 reseed
-(R8) the seed names `events/`, `experiences/` and
-`preferences/pinned/` itself; the note only adds where the rest lives, and
+`renderEodPrompt`'s `memoryLayout`). The seed names `events/`,
+`experiences/` and `preferences/pinned/` itself; the note only adds where the rest lives, and
 `tests/eod-seed-coherence.test.ts` fails if it says anything against the seed.
 
 ### Round seeding — `src/memory/context.ts`
@@ -163,8 +161,8 @@ contextBlock(query, { maxTokens, onSent?, timeoutMs? }): Promise<MemoryRead>
 `MemoryRead` is `{ status: "read", text }` or `{ status: "unreadable", reason }`.
 That split is the point of the type: **empty is not degraded.** A store with
 nothing pinned yet has *answered*; a store that could not be reached has not.
-Collapsing both into `""` made every fresh install look broken and alarmed the
-operator hourly about a healthy system.
+Collapsing both into `""` would make every fresh install look broken and alarm
+the operator about a healthy system.
 
 `assembleRoundMemory(assembler, query, opts)` is total by construction. It:
 
@@ -177,21 +175,21 @@ operator hourly about a healthy system.
 4. returns a `RoundMemory` whose `degraded` is exactly `gaps.length > 0`.
 
 Defaults (`ROUND_CONTEXT_DEFAULTS`): 2000 tokens, a 9000 ms deadline for the
-whole seed (3000 until H3 — shorter than one document embedding on the
-live VM), 3000 ms of it reserved for the search, 6 chars/token for the
+whole seed (long enough to cover a document embedding on a loaded VM), 3000 ms
+of it reserved for the search, 6 chars/token for the
 defensive clamp, 600 chars of query. The configured knobs are `[memory]
 context_tokens`, `context_timeout_ms` (clamped 100…15000), `context_quotas`
 (and the memory-health knobs, below).
 
-**The embedding tail (H3).** OpenViking embeds a written document
-AFTER `content/batch-write` returns, on the one-thread local embedder, so a
-finding-case batch sent a few seconds before a seed still holds the embedder
-when the seed's query arrives (about 4 s a case on the live VM, 8–29 s a call
-under CPU throttling). The case writer reports every batch it sends to the
+**The embedding tail.** OpenViking embeds a written document after
+`content/batch-write` returns, on the one-thread local embedder, so a
+finding-case batch sent a few seconds before a seed can still hold the embedder
+when the seed's query arrives (seconds per case, far more under CPU
+throttling). The case writer reports every batch it sends to the
 round-activity tracker (`embeddingSent` → a `settled(tailMs)` at the write's
 answer, `[memory] case_embed_tail_ms` a case); with a `quiet` option
 (`RoundActivityWindow.whenEmbedderQuiet`, wired by dispatch from
-`RoundMemorySeed.activity`) the CONTEXT SEARCH waits for that tail before it is
+`RoundMemorySeed.activity`) the context search waits for that tail before it is
 sent — at most `timeoutMs − searchReserveMs`, so the seed's deadline is never
 moved — and is then told the time it has left (`contextBlock`'s `timeoutMs`),
 which the OpenViking assembler applies to its request when shorter than its
@@ -206,14 +204,14 @@ its diff shape (top directory areas at two segments deep, top file
 extensions), counted and sorted so the result is a function of the file *set*,
 never of the order the files API returned them. Pure — the same PR at the same
 head always produces the same query, which is what keeps the round prompt
-reproducible from the round order. Since S5 the same query is the PR
-session's RECALL HINT: dispatch hands it to `RoundMemorySeed.publishQuery`
+reproducible from the round order. The same query is the PR session's recall
+hint: dispatch hands it to `RoundMemorySeed.publishQuery`
 before memory is asked, and the daemon writes it, with the round-search areas,
 to the session's `QCR_OV_RECALL_HINT_FILE` (`writeRecallHint`), so the
 vendored extension's per-prompt recall (patch 8) searches for this PR inside
 `experiences/` instead of embedding the round order's fixed header across
-every scope. The session's own shell may not write that file (S8b:
-`MEMORY_SCOPE_SURFACE` in `extensions/bash-guard.ts`, beside the retired list
+every scope. The session's own shell may not write that file
+(`MEMORY_SCOPE_SURFACE` in `extensions/bash-guard.ts`, beside the retired list
 below) — its areas bound the session's recall and memory tools, so a session
 that could rewrite it could widen its own reach.
 
@@ -244,9 +242,8 @@ respawned tmux session keeps its notes); a 404 on delete is the desired end
 state. Both are bounded by a deadline and swallow every throw — a PR whose
 session could not be created simply runs without a raw tier.
 
-**Stale sessions are swept** (S3). A close the daemon never saw, or a
-delete that failed — silently, before S1 — left 79 sessions of closed PRs on
-the server. Each reconcile pass, after its closed-sync, lists the sessions
+**Stale sessions are swept.** A close the daemon never saw, or a delete that
+failed, leaves sessions of closed PRs on the server. Each reconcile pass, after its closed-sync, lists the sessions
 (`lifecycle.list`, `GET /api/v1/sessions`) and deletes the `pr-<n>` ones whose
 PR the registry says is closed (`planStaleOvSessions`): at most
 `OV_SESSION_SWEEP_MAX` (10) a pass, lowest PR first; an open PR, one the
@@ -270,13 +267,13 @@ sweep sees the set of retired URIs change, `writeRetiredUris` rewrites
 session is launched with `QCR_OV_RETIRED_FILE` naming it; the extension's
 recall excludes them (patch 7, below). A derived list of URIs, not a write
 into memory, and not one a session may write: the bash guard refuses it at
-both write boundaries (S8b). **Only a complete sweep may shrink it**: a sweep that could not
+both write boundaries. **Only a complete sweep may shrink it**: a sweep that could not
 list the root or a category, or read a file, keeps every URI it knew (the
 last list, the cached reads it could not re-check) and adds what it saw, and
 the daemon's store starts from the file the last daemon wrote
 (`readRetiredUrisFile`, the store's `initialRetired`) — so a restart while
 the server is still warming up never wipes the sessions' exclusions. The
-companion's recall gets the same list for ITS tree from the TUI: the TUI's
+companion's recall gets the same list for its own tree from the TUI: the TUI's
 store publishes the companion namespace's retired URIs into the state home
 (`MEMORY.retiredFile`, `openviking/companion-retired-uris.json`), which the
 companion mounts and names in `QCR_OV_RETIRED_FILE`.
@@ -337,12 +334,11 @@ timeout, 503, unparseable body) and never rejects. `/ready` is skipped when
 `/health` did not answer: there is nothing to learn from a second connection
 refusal.
 
-**Up is not working.** Both of those endpoints are unauthenticated: from
-2026-09-03 to 10-02 they said "ready" every 30 s while every round's memory
-read was refused with `Invalid API Key` and nothing was written. That is what
-the next section is for.
+**Up is not working.** Both of those endpoints are unauthenticated: they can
+say "ready" while every authenticated read is refused with `Invalid API Key`
+and nothing is written. That is what the next section is for.
 
-### Memory health — `src/memory/health.ts` (S1)
+### Memory health — `src/memory/health.ts`
 
 The state a person sees: `unknown` (nothing measured yet; never painted
 healthy), `healthy`, `degraded` (answers, but the latest probe or too many
@@ -351,7 +347,7 @@ for `[memory] down_after_min`, counted from boot when there never was one;
 `boot_grace_min` keeps a warming server `unknown`) and `auth_failed` (a
 credential in use is refused, or there is none to send).
 
-Two inputs. An AUTHENTICATED probe (`src/openviking/probe.ts`: `fs/ls` of
+Two inputs. An authenticated probe (`src/openviking/probe.ts`: `fs/ls` of
 `viking://user/<user>/memories`, a `NOT_FOUND` root counting as authenticated)
 of each credential in use every `probe_interval_s` — the daemon's key file and
 the `ovcli.conf` the sessions are handed, judged and reported separately,
@@ -361,7 +357,7 @@ seed that timed out is seen). A `NOT_FOUND` answer to a real request is
 `absent` — authenticated, counted on its own, and never a failure, exactly as
 the probe and the store read it.
 
-Only memory switched OFF (`[openviking] enabled = false`, which declining memory
+Only memory switched off (`[openviking] enabled = false`, which declining memory
 in onboarding writes) is "not monitored". Memory configured ON whose server
 cannot run — a binary missing after a rebuild — is monitored and reads `down`:
 an outage, not a choice.
@@ -387,8 +383,8 @@ incident began. A daemon restarted inside an outage passes through `degraded`
 with no answer when its boot grace ends; that decides nothing, so the outage
 keeps its start (and its one ticket).
 
-The overseer is not the audience — it reported the outage in 33 digests nobody
-read. The `memory` block of `state/status.json` is: `qcr status` prints it, the
+The overseer is not the audience — a digest nobody reads tells nobody. The
+`memory` block of `state/status.json` is: `qcr status` prints it, the
 TUI board paints a banner in its top bar, the TUI raises one desktop
 notification per transition into `auth_failed`/`down`, the TUI files ONE
 issue-tracker ticket for an incident older than `incident_ticket_after_min`
@@ -412,7 +408,7 @@ returns `OvOutcome<T>`, never a rejection. `conflict` is broken out of the
 failure arm because a 409 is not a gap — it means the optimistic-concurrency
 precondition did its job.
 
-A 409 is not always that, though (S2). Batch-write takes a
+A 409 is not always that, though. Batch-write takes a
 **zero-timeout try-lock** on its root directory, and a second writer into the
 same directory gets `409 CONFLICT` with `details.conflict_type = "path_busy"`
 and `retryable: true` — nothing was checked and nothing was written. That one
@@ -422,8 +418,8 @@ past 10 s from the first attempt — `BUSY_RETRY_DEFAULTS`), observes each
 retried answer as an answer, and returns `busy: true` with one gap only when
 the lock is still held at the end. It is told apart by `details.conflict_type`
 alone; a hash-precondition 409 has the same status and code and stays a
-refusal. Reading every 409 as a refusal is what dropped 6 of 8 EOD writes on
-2026-10-05.
+refusal. Reading every 409 as a refusal would drop writes that merely
+collided on the lock.
 
 Four facts about the pinned server version shape this module:
 
@@ -482,7 +478,7 @@ unread, because a namespace nobody has written to yet is known-empty. The two
 share one cached, single-flight sweep (`read_cache_ttl_ms`), so the round path
 and the TUI poll never double the server's load.
 
-**The sweep is incremental** (S3). Every category is still listed on
+**The sweep is incremental.** Every category is still listed on
 every sweep, but a file is read only when its listed size or modification time
 differs from the read this store already holds — a periodic **full** refresh
 (`fullRefreshMs`, an hour by default) reads everything again, a file whose
@@ -496,8 +492,8 @@ list is `unread` and serves none of its files, but keeps their cached reads
 for when it lists again. `invalidate()` therefore means "list again", not "read
 everything again" — the listing is what says which files moved. The TUI's
 candidate sweeper and memory tab, the companion's setup tools and the daemon
-all hold `OpenVikingStore`s, so all of them stopped re-reading the whole store
-(about 716 `content/read` per 10 minutes on the live server before).
+all hold `OpenVikingStore`s, so none of them re-reads the whole store on
+every poll.
 `lastSweepStats()` says what the last sweep listed, read and reused.
 
 `search()` is **free-text and tag matching over the entries, not a vector
@@ -508,7 +504,7 @@ stored bytes. Handing those back would mint hashes that conflict on first use.
 The semantic surface is `searchContext`, consumed by the round's context block,
 where nothing is addressed.
 
-Pin is **a tag plus placement** (S5 built the placement half):
+Pin is **a tag plus placement**:
 `pin` MOVES an entry into `preferences/pinned/` with `#pinned` prepended and a
 `from=<area>` event tag recording where it came from; `unpin` moves it back
 there (or into `preferences/` when nothing was recorded), both tags removed. A
@@ -551,7 +547,7 @@ turns its moves' new copies back into pointers at their sources; a batch
 whose answer proves nothing has each item read back, by the same rule as a
 move.
 
-### The relayout — `qcr memory relayout` (S5)
+### The relayout — `qcr memory relayout`
 
 Run by the operator from the PC that holds the keys (over the memory forward,
 like `qcr memory reembed`), never by the daemon. `--plan` (the default) does
@@ -563,14 +559,14 @@ of the read, so a second `--apply` plans nothing. Its rules, first match wins:
 the pinned area is never touched; retired entries are skipped; the one-off
 curation retires confinement probes, `needs-attention` feedback reviews a
 later adjudication of the same episode answered, and the adjudications the
-curation table names (contradicts them); a header `#pinned` moves into
+curation table names (the prompt-injection rule contradicts them); a header `#pinned` moves into
 the pinned area and `#manual` into `preferences/`; the feedback family moves
 to `events/`; the ops family (`#bug`, `#operations`, `#openviking`,
 `#review-ops`, `kind=bug|ops`, `area=operations` — read from the header and
-from tag LINES, where half the ops notes carry them) moves to `events/` with
+from tag lines, where many ops notes carry them) moves to `events/` with
 `kind=bug|ops area=operations` added to its header; everything else stays. A
 destination already holding other bytes blocks that one move, and a run whose
-plan still holds a BLOCKED move fails (exit 1) and says the store is not laid
+plan still holds a blocked move fails (exit 1) and says the store is not laid
 out — `--plan` and `--apply` alike. An ops note that
 becomes `kind=bug` with no `filed=` ticket is flagged in the plan: the TUI's
 auto-filer will file it.
@@ -591,23 +587,21 @@ refused with an error naming neither the namespace nor the missing directory.
 The two halves are asymmetric on purpose:
 
 - **`pinnedHead()` is exact and guaranteed.** It reads the stored bytes of the
-  pinned DIRECTORY through `store.pinnedSweep()` (S5; it read every
-  file of the store before) — never a search, whose budget and tier
+  pinned directory through `store.pinnedSweep()` — never a search, whose budget and tier
   degradation could silently truncate a standing instruction. It is strict
   about `unread`: if a pinned file could not be read it returns `unreadable`,
   because the head cannot vouch that no standing instruction was in it; an
   unreadable lesson elsewhere is not the head's gap.
 - **`contextBlock()` is budgeted and approximate.** One deterministic
-  `mode: "context"` search over `experiences/` ONLY (S5:
-  `roundSearchQuotas` keeps the configured quotas for the round-search areas
+  `mode: "context"` search over `experiences/` only (`roundSearchQuotas` keeps the configured quotas for the round-search areas
   and drops every other key, and an entry from anywhere else that comes back
   anyway is dropped), rendered server-side, pasted verbatim. The rendered
   block is used rather than re-rendering entries locally, so there is only one
   place the token budget can be wrong (the exception: a retired or
   out-of-scope entry that leaked through is dropped and the block rebuilt from
   what is left). Its own deadline
-  (`[openviking] search_timeout_ms`, default 8000 ms since H3, was
-  2500; clamped 100…15000) is shorter than the round's memory deadline, and a
+  (`[openviking] search_timeout_ms`, default 8000 ms; clamped 100…15000) is
+  shorter than the round's memory deadline, and a
   seed that sent its search late (it waited for the case writer's embedding
   tail) passes the time it has left, which wins when shorter: a request that
   outlives the round's seed is pure cost.
@@ -642,8 +636,7 @@ The three outcomes render differently, and the difference matters:
 
 **Who is told when memory is down:** the session (that note) and the operator
 — through memory health (above), on state transitions, never once per round.
-The per-round `round_memory_degraded` anomaly it replaces was never a wake
-kind and told nobody (S1). **Not the PR.** The posted review is about
+**Not the PR.** The posted review is about
 the code; an outage on the reviewer's side is the operator's to read about.
 
 There is a second, narrower alert: when the store answers and the pinned area
@@ -659,14 +652,14 @@ is fed from.
 
 A review session is not limited to the block the daemon pasted. The vendored pi
 extension (`extensions/vendor/openviking-pi/`, provenance in `upstream.json`,
-eight recorded patches) gives it `viking_search`, `viking_read`, `viking_browse`,
+twelve recorded patches under `patches/`) gives it `viking_search`, `viking_read`, `viking_browse`,
 `viking_write` and `viking_archive_expand`. It is passed per spawn with
 `--extension` (`SessionSpec.extensionPaths`, `src/sessions.ts`) rather than
 registered globally, and subagent children are launched with no argv
 extensions — so a **lens pass gets no memory surface at all**, and does no
 ambient memory work.
 
-Two of those patches matter here:
+The patches that matter here:
 
 - `viking_write` (patch 4) exists because upstream's "remember" tool is **not a
   write**: it appends a session message that becomes durable memory only
@@ -676,7 +669,7 @@ Two of those patches matter here:
   (`qcr-write.ts`) validates URIs and the strict tag grammar.
 - Patch 1 removes the upstream compaction handler so `extensions/ledger-pin.ts`
   owns compaction alone.
-- Patch 6 (S2) makes those writes stick and those failures honest: a
+- Patch 6 makes those writes stick and those failures honest: a
   busy 409 is retried and a precondition 409 is not (`qcr-honest.ts`, the
   same rule as the daemon client); `viking_write` takes several `entries` as
   ONE batch-write under their common directory, so the EOD curator's day of
@@ -684,10 +677,9 @@ Two of those patches matter here:
   entries' own addresses (`routeWrite`), so a two-key process writes a
   reviewer-only batch without naming the namespace; `find()` and the read/browse tools
   return the server's answer instead of collapsing every failure into "No
-  results found." / "No content at …" (which is all any PR session ever saw,
-  two of them during the five-week bad-key outage); and a refused key is
+  results found." / "No content at …"; and a refused key is
   re-read once from the ovcli.conf the daemon rewrites on a rotation.
-- Patch 7 (S3, owner ruling R3) bounds the session's ambient memory
+- Patch 7 bounds the session's ambient memory
   work. The `context` hook waits at most **500 ms** for recall
   (`RECALL_WAIT_MS`): every request of one recall runs on that one deadline,
   nothing is sent once it has passed (so no `/search/recall` or raw-find
@@ -695,19 +687,25 @@ Two of those patches matter here:
   into a later turn. Query expansion is forced off in code. A retired entry is
   never recalled: the daemon's published list goes out as `exclude_uris` and
   any recalled entry whose own header says `#retired` is dropped. And nothing
-  commits a session — not at 20k pending tokens, not at shutdown, not on
-  `/viking commit`, not from a commit an older build queued on disk. Per-turn
+  commits a session — not at a pending-token threshold, not at shutdown, not
+  on `/viking commit`, not from a commit queued on disk. Per-turn
   sync into the PR's raw tier stays.
-- Patch 8 (S5) makes a PR session's recall ask about ITS PR. Upstream
-  queried with the whole delivered prompt — a 55–80k-character round order, of
-  which the local embedder reads the first 128 tokens, i.e. the template's
-  fixed header, the same for every PR. The extension now reads the daemon's
+- Patch 8 makes a PR session's recall ask about its own PR. Upstream queries
+  with the whole delivered prompt — a long round order, of which the local
+  embedder reads only the first 128 tokens, i.e. the template's fixed header,
+  the same for every PR. The extension instead reads the daemon's
   per-session hint (`QCR_OV_RECALL_HINT_FILE`: the round's `roundContextQuery`
   and the round-search areas) on every prompt and queues that query, and
   `scopeGuard` keeps the recall inside those areas (quotas naming them alone,
-  out-of-area entries dropped, the raw-find fallback filtered). No hint (the
-  overseer, the companion): the prompt, unscoped, as before. Patch 7's budget
-  wraps the same chain.
+  out-of-area entries dropped, the raw-find fallback filtered). With no hint
+  (the overseer, the companion) it queries with the prompt, unscoped. Patch
+  7's budget wraps the same chain.
+- Patches 9 and 11 keep a PR session's `viking_search`, `viking_read` and
+  `viking_browse` inside the same areas (failing closed to them when the hint
+  is missing), send the areas as the server's `target_uri` list, and refuse a
+  PR session's writes into `experiences/`, `preferences/` and
+  `finding-cases/`; no session may type a `#lesson` header by hand. Patch 10 gives
+  `viking_write` a structured `lesson` that renders the typed lesson header.
 
 ## Writers into memory
 
@@ -728,13 +726,13 @@ into the overseer session. Two things ride alongside:
   grouped cancellation summary from `src/digest.ts`. The sweep is told to carry
   them into the digest verbatim.
 - `shouldHold` — a deploy-window drain probe. When it returns true the sweep is
-  **deferred** (S2; it used to be skipped for the day): the date joins
+  **deferred**, never skipped: the date joins
   a set persisted in `state.db` (`eod_deferred` events) and fires — oldest
   first, one at a time — on the first minute-poll after the drain lifts, also
   after a restart, which is what a deploy-window drain usually precedes. A
   deferred day leaves the set only when its fire has finished. A throwing
   probe counts as "not held": a broken check must not silently eat the sweep.
-- `sweepInFlight` — one SWEEP at a time, not one inject: no day fires while
+- `sweepInFlight` — one sweep at a time, not one inject: no day fires while
   another fire is in flight or the pinned-area watch window of the last sweep
   is still open (wire.ts: `pinWatch.isOpen()`), and a day whose hour comes up
   then is deferred behind it. Days deferred by a drain otherwise fire a minute
@@ -743,16 +741,15 @@ into the overseer session. Two things ride alongside:
   that day and closes it on that day's digest.
 - A failed injection is retried three times (after 1, 5 and 15 minutes); when
   all four attempts fail, `eod_inject_failed` wakes — the day's curation did
-  not happen, which used to be one log line.
+  not happen.
 
 The curator authors its learnings into memory through the extension's write
-tool, never into a file. Under the reseeded prompt (R8, ratified
-2026-10-07) it starts §1 from the day's outcomes packet — the "Outcomes to
+tool, never into a file. The sweep prompt starts its §1 from the day's outcomes packet — the "Outcomes to
 curate" section the daemon renders after the seed (`EOD_SECTIONS`) and
 `state/eod/<day>/outcomes.md` — writes each learning as a typed lesson in
 `experiences/` through `viking_write`'s `lesson` fields, citing `cand:c<id>`
 (an objective repo fact is a `repo-fact` or `convention` lesson there; nothing
-goes to `viking://resources/` any more), and closes §1 with the
+goes to `viking://resources/`), and closes §1 with the
 `eod-curation-receipt`. A sweep the packet did not reach still carries that
 section: `renderNoPacketSection` says the learner is off (no packet, no
 receipt) or that the packet failed or missed the wait (curate the file if it
@@ -761,9 +758,9 @@ section that is not there.
 
 ### The pinned-area watchdog — `src/eodpinwatch.ts`
 
-Curation must never modify the operator's pinned standing instructions. That
-rule used to live only in the sweep prompt — an instruction to a model, with
-nothing outside able to tell whether it was kept. The watchdog makes it
+Curation must never modify the operator's pinned standing instructions. In the
+sweep prompt alone that rule would be an instruction to a model, with nothing
+outside able to tell whether it was kept. The watchdog makes it
 **detectable**: fingerprint the pinned area just before the sweep prompt goes
 in, fingerprint it again once the sweep has had its window, raise an anomaly on
 any difference.
@@ -789,10 +786,8 @@ any difference.
 
 Defaults: a 90-minute window (`[eod] pinned_watchdog_window_min`), a
 60-second poll, a 5-second deadline on one pinned read. The window closes early
-when the day's digest appears — note that `src/wire.ts` wires that probe at
-`<root>/state/digest/<date>.md` while the digest reader
-(`latestDigestHeadline`) and the sweep prompt use `<root>/digest/<date>.md`, so
-in practice the window runs its full length.
+when the day's digest appears at `<root>/digest/<date>.md` (`digestWritten`,
+wired in `src/wire.ts`).
 
 ### The `[feedback]` loop — `src/feedback.ts`
 
@@ -812,7 +807,7 @@ Two sinks, and one of them is authoritative:
 1. **The ledger is the record.** `feedback_signals` in `src/state.ts`, deduped
    per kind. Ingest is: dedupe → ledger → memory → (explicit comments only)
    agents rebuild.
-2. **Memory is a sink — and since S2 the ledger says what it owes.**
+2. **Memory is a sink — and the ledger says what it owes.**
    One tagged event entry per signal — `#feedback` plus the `k=v` run `kind` /
    `pr` / `day` / `signal` — written through the seam as a `note` op (never
    `add`: it must not be dressed up as the operator's own words) at a
@@ -835,9 +830,9 @@ Two sinks, and one of them is authoritative:
    first, through the same `note` op — a retry on the one route, not a second
    channel — and only while memory health reads `healthy`. The deterministic
    address makes the replay of a write that landed but timed out find its own
-   entry. Rows from before S2 were classified once at boot: those a
-   `feedback_memory_write_failed` event followed are `pending` (the
-   2026-08-31..10-02 losses), the rest `written` with no recorded address;
+   entry. Rows that predate the memory columns are classified once at boot:
+   those a `feedback_memory_write_failed` event followed are `pending`, the
+   rest `written` with no recorded address;
    before writing such a row the pump looks for an entry that landed after all
    (same header `signal`/`pr`/`day` tags and id) in a COMPLETE sweep, and a
    partial sweep makes those rows wait rather than risk a duplicate. The
@@ -851,7 +846,7 @@ Two sinks, and one of them is authoritative:
    — on the crossing and every `rewake_h`, a cadence kept in `state.db` so a
    restart does not wake again at once — and a tick that gave rows up wakes
    it once. "Owed for" runs from `memory_owed_since` (the insert, the
-   migration for a pre-S2 row, the re-queue for a given-up one), never from
+   migration for a pre-existing row, the re-queue for a given-up one), never from
    the signal's own date, and the backlog is not judged while memory health
    reads `unknown` (its boot grace). status.json's `memory.feedback_writes`
    and `qcr status` show what is owed — `null`, rendered UNKNOWN, when the
@@ -947,9 +942,11 @@ deliberately **no** admin/root entry.
 
 ## Embeddings
 
-Every entry and every query is embedded. The shipped default is **local**: the
-server's own llama-cpp embedder runs inside the container, so no memory text
-leaves the machine. A hosted provider is an explicit opt-in with its own
+Every entry and every query is embedded. The shipped default is **local**: a
+local English embedder (`scripts/openviking-embedder.py`, an OpenAI-compatible
+service on `127.0.0.1:1934` over llama-cpp-python, supervised beside the
+server by `src/openviking/embedder.ts`) runs inside the container, so no
+memory text leaves the machine. A hosted provider is an explicit opt-in with its own
 credential file, never a fallback — a hosted provider whose key is missing
 renders without a key and the server refuses to start, loudly, rather than
 silently switching embedder and resetting the store.
@@ -1029,7 +1026,7 @@ store mutation and can be refused. The second is the rubric-proposal surface
 1. **Memory never blocks or delays a round.** Every call on the round path is
    bounded by a deadline and swallows every throw. The worst case is a
    memory-less prompt, on time. The one wait inside a seed — for the case
-   writer's embedding tail (H3) — is inside that deadline. Inside the
+   writer's embedding tail — is inside that deadline. Inside the
    session the same holds per turn: the extension's recall waits at most
    500 ms (patch 7).
 2. **Empty is not degraded.** A store that answered with nothing has answered.
@@ -1049,13 +1046,14 @@ store mutation and can be refused. The second is the rubric-proposal surface
 8. **Curation never touches pinned entries**, and the watchdog exists so that
    rule is detectable rather than merely instructed.
 9. **The ledger is the record, memory is a sink.** A signal that failed to
-   reach memory is still recorded — as OWED (`memory_state = pending`), so the
+   reach memory is still recorded — as owed (`memory_state = pending`), so the
    backfill writes it — and every derived surface re-derives from the ledger.
 10. **A busy 409 is not a refusal.** Only `details.conflict_type =
     "path_busy"` is retried; a precondition 409 never is.
 11. **The round reads `experiences/` and the pinned area, nothing else.** The
     context block's quotas name `experiences` alone and an out-of-scope entry
-    is dropped; a PR session's own recall is scoped the same way (patch 8).
+    is dropped; a PR session's own recall and memory tools are scoped the
+    same way (patches 8, 9 and 11).
 
 ## Tests
 

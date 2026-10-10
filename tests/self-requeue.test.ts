@@ -1,7 +1,7 @@
-// stuck-round self-requeue. A round that is overdue, has no verdict
-// on disk and whose session is DEAD is requeued by the daemon itself (through
-// the normal dispatch path), capped per PR head; past the cap the round
-// terminalizes through the existing overdue-anomaly park. Failed/self-requeued
+// Stuck-round self-requeue. A round that is overdue, has no verdict on disk
+// and whose session is dead is requeued by the daemon itself (through the
+// normal dispatch path), capped per PR head; past the cap the round ends
+// `overdue` through the overdue-anomaly path. Failed/self-requeued
 // rounds never age the PR (verdicted-only priorRoundCount discipline), and the
 // restart orphan-requeue path and this one can never double-dispatch a round.
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -96,8 +96,8 @@ function reviewingRound(pr: number, head = "abc123", opts: { stampMarker?: boole
     ["pass-baseline", "pass-validate"],
     baseCfg.daemon.round_deadline_min,
   );
-  // Dispatch stamps the receipt token (#5362); a round without one was
-  // dispatched by an older build and is deliberately unjudgeable.
+  // Dispatch stamps the receipt token; a round without one predates the
+  // receipt and is deliberately unjudgeable.
   if (opts.stampMarker !== false)
     store.stampPromptMarker(id, roundPromptMarker(pr, store.roundsFor(pr).length));
   return id;
@@ -627,7 +627,7 @@ describe("idempotency against the restart orphan-requeue", () => {
   );
 });
 
-// 2026-08-19 (the owner): recover, don't park — a live-but-wedged session is
+// Recover, don't park: a live-but-wedged session is
 // killed and its round requeued through the same capped path, and a
 // NEEDS_HUMAN verdict with no executed-pass evidence is an unfinished review
 // that gets redone instead of handed to a person.
@@ -759,17 +759,15 @@ describe("NEEDS_HUMAN requires a finished review", () => {
   });
 });
 
-// ---- / #5362: the lost-prompt net, rebuilt on a receipt ------------
+// ---- the lost-prompt net, built on a receipt --------------------------------
 //
-// The original net inferred loss from a session-JSONL mtime and fired ZERO
-// times in the eight days it was live. Two independent reasons, the second
-// structural: it refused to act once the head had spent a self-requeue (and a
-// `head_moved` requeue spends one four seconds before dispatching the round
-// most likely to be lost), and it required "no activity since the round
-// started" — but a prompt is dropped precisely BECAUSE the agent is busy, and
-// a busy agent always has activity after round start.
+// Loss cannot be inferred from session activity: a prompt is dropped precisely
+// because the agent is busy, and a busy agent always has activity after round
+// start. Nor may the net stand down once the head has spent a self-requeue — a
+// `head_moved` requeue spends one seconds before dispatching the round most
+// likely to be lost.
 //
-// `roundPromptAccepted` replaces the inference with a fact: the dispatched
+// `roundPromptAccepted` is the fact the net acts on: the dispatched
 // receipt token is echoed into the session JSONL only when pi accepted the
 // message. false = provably never arrived, true = the session owns it, null =
 // no evidence. And because a missing prompt is a DELIVERY fault, recovery is
@@ -888,16 +886,14 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
   });
 
   it("a HEAD_MOVED requeue no longer disarms the net — the #5362 regression", async () => {
-    // This is the interaction that wedged #5362 for its full deadline. The old
-    // net gave up once the head had spent a self-requeue, and `head_moved`
-    // spends one FOUR SECONDS before dispatching the round whose delivery
-    // races the session's still-running turn. The most loss-prone dispatch in
-    // the system was the one dispatch the net refused to watch.
+    // `head_moved` spends a self-requeue seconds before dispatching the round
+    // whose delivery races the session's still-running turn — the most
+    // loss-prone dispatch there is, so a spent requeue must not disarm the net.
     const pr = 322;
     const first = reviewingRound(pr);
     store.markRoundCancelled(first, "self-requeue 1/2 — head_moved");
-    // The head_moved requeue, exactly as verdicts.ts records it — this is the
-    // event the old net read as "budget spent, stand down".
+    // The head_moved requeue, exactly as verdicts.ts records it — an event
+    // that must not read as "budget spent, stand down".
     store.logEvent("round_self_requeued", pr, {
       head_sha: "abc123",
       mode: "head_moved",
@@ -928,9 +924,8 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
   });
 
   it("does nothing when the receipt IS there — a busy session is not a lost prompt", async () => {
-    // The case the old net could not express. #5362's session had activity
-    // after round start (it was finishing the previous turn), which the mtime
-    // inference read as "alive, so not lost". The receipt separates the two:
+    // A session finishing its previous turn has activity after round start
+    // whether or not the prompt arrived. The receipt separates the two:
     // activity is irrelevant, presence of the token is the whole question.
     const roundId = reviewingRound(312);
     pastGrace();
@@ -1065,7 +1060,7 @@ describe("lost-prompt net (#5362) — a round with no prompt receipt", () => {
   });
 });
 
-// ---- guard-5 landing: outcome "head_moved" (follow-up) -----
+// ---- guard-5 landing: outcome "head_moved" --------------------------------
 
 describe("head_moved outcome — a guard-5 refusal lands cheaply, session survives", () => {
   function headMovedFile(pr: number, roundNo: number, extra: Record<string, unknown> = {}): void {
@@ -1156,15 +1151,15 @@ describe("head_moved outcome — a guard-5 refusal lands cheaply, session surviv
   });
 });
 
-// ---- #5362 W3: held wakes with no round left to flush them -----------------
+// ---- held wakes with no round left to flush them ----------------------------
 
 describe("stranded held wakes (#5362 W3)", () => {
-  // `flushWakes` runs from exactly two places: a verdict landing and the
-  // anomaly path. Three cancellations reach neither — `superseded`, a startup
-  // orphan that is NOT requeued, and a self-requeue whose successor is
-  // cancelled the same way — so the wakes held while that round was in flight,
-  // author replies included, sat in `pending_wakes` forever. That table has no
-  // expiry and nothing swept it.
+  // A verdict landing and the anomaly path flush held wakes, but three
+  // cancellations reach neither — `superseded`, a startup orphan that is NOT
+  // requeued, and a self-requeue whose successor is cancelled the same way.
+  // `pending_wakes` has no expiry, so without a flush on those paths the wakes
+  // held while that round was in flight, author replies included, would sit
+  // there forever.
   it("flushes wakes held behind a round that was cancelled without a verdict", async () => {
     const roundId = reviewingRound(700);
     store.holdWake(700, "the author replied", "author_reply");
@@ -1206,16 +1201,14 @@ describe("stranded held wakes (#5362 W3)", () => {
   });
 });
 
-// ---- #5362 W4: the operator's unwedge levers actually clear the round ------
+// ---- the operator's unwedge levers actually clear the round -----------------
 
 describe("cancelRunningRounds — the missing half of rerun-round (#5362 W4)", () => {
   it("cancels the phantom round so a requeued PR can actually dispatch", async () => {
     // Both `rerun-round` and `restart-session` set the PR to `queued` and
     // pump — but the pump skips a PR whose round is still `running`, so
-    // neither could clear a phantom round. The state flipped, nothing
-    // dispatched, and the PR sat queued behind a round that would never end.
-    // The anomaly message told the overseer to run `rerun-round` for exactly
-    // the case `rerun-round` could not fix.
+    // without cancelling the round the PR would sit queued behind a round
+    // that never ends.
     const roundId = reviewingRound(710);
     expect(store.runningRounds().map((r) => r.id)).toContain(roundId);
 
@@ -1251,11 +1244,9 @@ describe("cancelRunningRounds — the missing half of rerun-round (#5362 W4)", (
 });
 
 // ---------------------------------------------------------------------------
-// every cancelling path declares WHY, and only one of them is loud.
-//
-// 55 silent cancellations against 5 loud `overdue`s. The split that
-// matters is 70% boot orphan sweep (a redeploy artefact, by construction) vs
-// the residual real defect — a round that stopped dead inside its deadline.
+// Every cancelling path declares WHY, and only one of them is loud: a boot
+// orphan sweep is a redeploy artefact by construction, while a round that
+// stopped dead inside its deadline is a real defect.
 // ---------------------------------------------------------------------------
 
 describe("cancellation causes on the live paths", () => {
@@ -1275,7 +1266,7 @@ describe("cancellation causes on the live paths", () => {
     expect(store.cancellationsByCause()).toEqual([
       { cause: "deadline_overrun", count: 1, loud: true },
     ]);
-    // The durable record found missing…
+    // The durable anomaly record…
     expect(anomalies()).toEqual([{ kind: "round_stopped_dead", pr: 800, round_no: 1 }]);
     // …beside exactly ONE overseer wake, the bespoke self-requeue text. The
     // anomaly kind is deliberately not a WAKE class, or this would double.
@@ -1313,10 +1304,10 @@ describe("cancellation causes on the live paths", () => {
   });
 });
 
-// a `round_self_requeued` row whose payload cannot be read is still a
-// requeue that happened. The old count dropped it, so a corrupt row bought a
-// requeue past the cap; now it is spent against the cap, which can only ever
-// tighten the budget (ending in FAILED_LOUD and `u` — the recoverable side).
+// A `round_self_requeued` row whose payload cannot be read is still a requeue
+// that happened, so it is spent against the cap. Dropping it would let a
+// corrupt row buy a requeue past the cap; counting it can only tighten the
+// budget (ending in FAILED_LOUD and `u` — the recoverable side).
 describe("a self-requeue row whose head cannot be read still counts", () => {
   const tornRow = (pr: number, payload: string | null): void => {
     store.db
@@ -1349,8 +1340,8 @@ describe("a self-requeue row whose head cannot be read still counts", () => {
     expect(roundStatus(id)).toBe("cancelled");
 
     // …and the next is refused: 1 unattributed + 1 at this head = the cap.
-    // Under the old count the corrupt row was invisible and a third requeue
-    // went through — a loop past the budget.
+    // Ignoring the corrupt row would let a third requeue through — a loop
+    // past the budget.
     id = reviewingRound(352, "head-a");
     pastDeadline();
     expect(await w.checkDeadlines()).toEqual([352]);

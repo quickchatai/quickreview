@@ -1,5 +1,5 @@
-// The three-way empty grammar (§3.5, under's contract): a
-// list with nothing in it is one of THREE different facts, and a count is a
+// The three-way empty grammar: a list with nothing in it is one of three
+// different facts, and a count is a
 // claim. Every list on every surface renders one of these — never a bare
 // "none", and never `(0)` for something nobody has read.
 //
@@ -8,9 +8,8 @@
 //   ▍SECTION (—)     not read yet — <what would read it>        unknown, pending
 //   ▍SECTION (—)     could not read — <why>                     unknown, failed
 //
-// `(—)` is the unknown count. fixed this class one surface at a time
-// (PRS (?), the ticket panes, the bot-PR read); this is the shared spelling so
-// the surfaces cannot each invent their own.
+// `(—)` is the unknown count. This is the shared spelling, so the surfaces
+// cannot each invent their own.
 import { MUTED, RESET, WARN } from "./design.js";
 
 export type Emptiness =

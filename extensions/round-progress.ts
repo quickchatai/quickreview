@@ -25,10 +25,10 @@ import { LAUNCH_PLAN_TOOL, planLaunch } from "./subagents.js";
 /**
  * One subagent's slot in the tool result's `details.results` array.
  *
- * Two shapes have shipped here: the retired third-party pi-subagents carried a
- * `progress` record (status/durationMs/toolCount/lastMessage/error), while
- * pi's native subagent extension carries `exitCode` (-1 = still
- * running in parallel mode), `stopReason`/`errorMessage`, and the raw
+ * Two shapes are read: a `progress` record
+ * (status/durationMs/toolCount/lastMessage/error), and pi's native subagent
+ * extension's `exitCode` (-1 = still running in parallel mode),
+ * `stopReason`/`errorMessage`, and the raw
  * `messages` transcript. Both are probed defensively — an unfamiliar payload
  * degrades to parent activity, never to a session failure.
  */
@@ -80,8 +80,8 @@ function toolArgs(event: PiEventPayload): Record<string, unknown> {
 }
 
 /** Native subagent supports one `{agent, task}` or parallel `{tasks:[...]}`.
- * Capture the latter at tool START — waiting for its first streaming update is
- * precisely the false pre-fanout stall must eliminate. */
+ * Capture the latter at tool START — waiting for its first streaming update
+ * would read as a false pre-fanout stall. */
 function subagentNames(args: Record<string, unknown>): string[] {
   const single = text(args.agent);
   if (single) return [single];
@@ -102,11 +102,11 @@ function launchPlanNames(args: Record<string, unknown>): string[] {
   return plan.ok ? plan.units.map((u) => u.agent) : [];
 }
 
-/** The round number rides the order's posting calls. Since the
- * templates spell it as an env prefix on the call itself
- * (`QCR_EXPECTED_HEAD=… QCR_ROUND_NO=<k> scripts/…` — `export` is refused by
- * the exec policy); an order rendered from an older template still carries the
- * `export QCR_ROUND_NO=<k>` line, so both spellings are read. */
+/** The round number rides the order's posting calls. The templates spell it
+ * as an env prefix on the call itself (`QCR_EXPECTED_HEAD=… QCR_ROUND_NO=<k>
+ * scripts/…` — `export` is refused by the exec policy); an order rendered from
+ * an older template carries an `export QCR_ROUND_NO=<k>` line, so both
+ * spellings are read. */
 function reviewIdentity(body: string): { round_no: number; head_sha: string } | undefined {
   const round = /(?:^|\s)(?:export )?QCR_ROUND_NO=(\d+)(?=\s|$)/.exec(body);
   const head = /\*\*Worktree\*\*:[^\n]* @ `([^`]+)`/.exec(body);

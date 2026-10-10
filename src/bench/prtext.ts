@@ -1,5 +1,5 @@
-// The equal-inputs switch for the third-party CLI arms (fairness audit item C,
-// the owner 2026-09-30): the PR's title and description, handed to a benchmarked
+// The equal-inputs switch for the third-party CLI arms (fairness audit item
+// C): the PR's title and description, handed to a benchmarked
 // tool the way that tool naturally takes review context — OCR's `--background`,
 // Codex's custom `/review` instructions, OpenCode's `review` command arguments,
 // pi-review's natural-language target. QuickReview always reads them (aacr.ts

@@ -1,7 +1,7 @@
-// The bench's FOLLOW-UP replay (docs/follow-up-rounds.md
-// "Validation"): round k of a recorded PR, replayed offline at its head after
-// an earlier round reviewed `prev_head`, so the follow-up round can be
-// measured against the full re-review of the same pair.
+// The bench's follow-up replay (docs/follow-up-rounds.md "Validation"):
+// round k of a recorded PR, replayed offline at its head after an earlier
+// round reviewed `prev_head`, so the follow-up round can be measured against
+// the full re-review of the same pair.
 //
 // Everything that decides what the round looks like is PRODUCTION's, called,
 // never re-implemented:

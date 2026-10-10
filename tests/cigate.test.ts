@@ -66,7 +66,7 @@ describe("classifyCi", () => {
   });
 
   it("treats infra shapes exactly like a failing test — no special-casing", () => {
-    // The eleven improvised approvals all argued one of these was different.
+    // None of these is an exception, however arguable each looks.
     for (const conclusion of [
       "cancelled",
       "timed_out",
@@ -100,10 +100,9 @@ describe("classifyCi", () => {
   });
 });
 
-// The owner, 2026-08-19: only the MOST RECENT run of each check name counts —
-// GitHub auto-cancels superseded runs, and their permanent cancelled husks
-// were withholding every approval forever (live: 4× sync cancelled + 3× sync
-// success at #5288's head, red under the old any-run rule).
+// Only the MOST RECENT run of each check name counts — GitHub auto-cancels
+// superseded runs, and their permanent cancelled husks would otherwise
+// withhold every approval forever.
 describe("latest-run-per-name", () => {
   const at = (c: CheckSummary, started_at: string): CheckSummary => ({ ...c, started_at });
   it("a cancelled husk beside a newer successful run of the same name is green", () => {
@@ -144,17 +143,14 @@ describe("latest-run-per-name", () => {
   });
 });
 
-//. The audit read `latestRunPerName`, called it honest and
-// cleared it; one constructed input broke it. Recency defaulted an absent
-// `started_at` to "", so an entry WITHOUT a timestamp always lost the name
-// collision to one WITH a timestamp — and the adapter sets `started_at` on
-// every check-run and on no commit status, so a failing status under the same
-// context as a passing check-run was masked, and red CI read green. The first
-// fix keyed the rule on the timestamp and left the inverse hole: an
-// UNTIMESTAMPED check-run collapsed with a same-named status by list position,
-// and the adapter lists statuses last, so a queued or failed null-start run
-// plus a passing status read green (review round 1). The rule now keys on the
-// KIND the adapter stamps: only check-runs collapse, a status never does.
+// The latest-run rule keys on the KIND the adapter stamps: only check-runs
+// collapse, a status never does. Keying on the timestamp fails both ways. The
+// adapter sets `started_at` on every check-run and on no commit status, so if
+// an entry without a timestamp loses the name collision, a failing status
+// under the same context as a passing check-run is masked; and if an
+// untimestamped check-run collapses with a same-named status by list position,
+// the status (listed last) wins, so a queued or failed null-start run plus a
+// passing status reads green.
 // Every row below is an input the real adapter produces, driven through the
 // real adapter's own payload shapes.
 describe("— a same-named commit status is a second check, never a superseded run", () => {
@@ -197,7 +193,7 @@ describe("— a same-named commit status is a second check, never a superseded r
   ] as const)(
     "a %s commit status under a passing check-run's name reads %s, in both orders",
     async (state, expected) => {
-      // The ticket's table, through the adapter: the two of them, the status
+      // The collision table, through the adapter: the two of them, the status
       // alone, and distinct names as the control that nothing else changed.
       const mixed = await adapterChecks([passingRun], [statusOf(state)]);
       expect(mixed).toHaveLength(2);
@@ -253,10 +249,10 @@ describe("— a same-named commit status is a second check, never a superseded r
   ] as const)(
     "a %s/%s check-run with a null started_at is never masked by a passing status of its name, in either order",
     async (status, conclusion, expected) => {
-      // Review round 1: the timestamp-keyed rule collapsed an
-      // untimestamped check-run with a same-named status by list position, and
-      // the adapter always lists statuses after check-runs — so the status won
-      // and the head read green on the gate route while guards.sh said red.
+      // A timestamp-keyed rule would collapse an untimestamped check-run with a
+      // same-named status by list position, and the adapter always lists
+      // statuses after check-runs — so the status would win and the head read
+      // green on the gate route while guards.sh said red.
       const nullStart = { name: "ci", status, conclusion, started_at: null };
       const mixed = await adapterChecks([nullStart], [statusOf("success")]);
       expect(mixed).toHaveLength(2);
@@ -340,7 +336,7 @@ describe("— a same-named commit status is a second check, never a superseded r
   });
 });
 
-// The owner, 2026-08-19: zero checks at a head withholds approval too when the
+// Zero checks at a head withholds approval too when the
 // repo normally runs CI (conflicted PR / CI not started = no execution
 // evidence). Off by default — a no-CI repo must never be wedged.
 describe("no_checks_is_red", () => {
@@ -407,7 +403,7 @@ describe("the round templates carry the gate in their Decide step", () => {
       expect(decide).toContain("no blockers were found");
       expect(decide).toContain("approval is withheld pending green CI");
       expect(decide).toContain("never **REQUEST_CHANGES** on red CI alone");
-      // NEEDS_HUMAN retired 2026-08-19: there is no third verdict to forbid.
+      // NEEDS_HUMAN is not a verdict: there is no third verdict to forbid.
       expect(decide).toContain("there is no third verdict");
     },
   );
@@ -415,9 +411,9 @@ describe("the round templates carry the gate in their Decide step", () => {
   it.each(templates)(
     "%s defers to the pr-checks.sh CLASSIFIED verdict and the latest-run rule",
     (name) => {
-      // The owner, 2026-08-19: sessions re-deriving CI from the raw run list is
-      // exactly the loop that burned rounds on cancelled husks — the CLASSIFIED
-      // line (same table as classifyCi/guards.sh) is the single verdict source.
+      // A session re-deriving CI from the raw run list loops on cancelled
+      // husks — the CLASSIFIED line (same table as classifyCi/guards.sh) is
+      // the single verdict source.
       const text = read(name);
       expect(text).toContain("`CLASSIFIED:` line IS the CI verdict");
       expect(text).toContain("LATEST run of each check name");
@@ -428,7 +424,7 @@ describe("the round templates carry the gate in their Decide step", () => {
   it.each(templates)(
     "%s withholds on a zero-checks head, matching this repo's no_checks_is_red = true",
     (name) => {
-      // The owner, 2026-08-19: a conflicted / CI-less head carries no execution
+      // A conflicted / CI-less head carries no execution
       // evidence. The code default stays exempt (a no-CI repo must never wedge);
       // the original deployment's config and templates both gate it.
       const text = read(name);

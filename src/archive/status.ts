@@ -7,7 +7,7 @@
 import type { ArchiveMode } from "../config.js";
 import { ARCHIVE_MODES } from "../config.js";
 
-/** How long an operator's `archive-run` / `archive-restore` (S4) waits for
+/** How long an operator's `archive-run` / `archive-restore` waits for
  * its tick or restore before it answers "still running". The operator
  * channel serves one command at a time, so this bounds what one archive verb
  * can hold a `qcr drain` or an unwedge behind it for; the work itself goes
@@ -60,7 +60,7 @@ export interface ArchiveDisk {
   headroom: number;
 }
 
-/** The DB phase (S2, docs/archiving.md §9): what the last run of the
+/** The DB phase (docs/archiving.md §9): what the last run of the
  * event and delivery mover did, and the archive databases. Null until the
  * DB phase has run (never in plan mode). */
 export interface ArchiveDbStatus {
@@ -82,7 +82,7 @@ export interface ArchiveDbStatus {
   months_sealed: number;
 }
 
-/** The file phase (S3, docs/archiving.md §7): what the last run of
+/** The file phase (docs/archiving.md §7): what the last run of
  * the per-PR archiver did. Null until it has run (never in plan mode). */
 export interface ArchiveFilesStatus {
   last_run_at: string;
@@ -105,7 +105,7 @@ export interface ArchiveFilesStatus {
   verify_failures: number;
 }
 
-/** One store's last pass (S4, docs/archiving.md §5): the overseer's
+/** One store's last pass (docs/archiving.md §5): the overseer's
  * non-current transcripts (`overseer`), pi's global session store
  * (`pi_global`). Null until that store's pass has run (never in plan mode). */
 export interface ArchiveStoreStatus {
@@ -174,7 +174,7 @@ export interface ArchiveStatus {
   /** The file phase; null before it has run (and always in plan mode).
    * Absent from an older daemon's block, read as null. */
   files: ArchiveFilesStatus | null;
-  /** The stores that belong to no PR (S4); null from an older daemon or
+  /** The stores that belong to no PR; null from an older daemon or
    * before the archiver exists, each store null until its pass has run. */
   stores: { overseer: ArchiveStoreStatus | null; pi_global: ArchiveStoreStatus | null } | null;
 }
@@ -359,7 +359,7 @@ function readStores(v: unknown): ArchiveStatus["stores"] {
   };
 }
 
-/** The figures an `archive-run` result carries (S4) — the backlog and the
+/** The figures an `archive-run` result carries — the backlog and the
  * last DB, file and store passes — read with the same checks as the block;
  * null when they cannot be read whole (never a guess). */
 export function readArchiveRunFigures(
@@ -551,7 +551,7 @@ export function storesAlertPhrase(s: ArchiveStatus): string {
 
 /** How many reopened PRs wait for their archived files to come back, and
  * who will bring them: in mode `on` a birth or the next tick; in any other
- * mode nothing does (§8.3, S3 Build notes), so the phrase names the verb. ""
+ * mode nothing does (§8.3), so the phrase names the verb. ""
  * when none waits (or restores could not be counted). */
 export function pendingRestorePhrase(s: ArchiveStatus): string {
   const n = s.restores?.pending ?? 0;

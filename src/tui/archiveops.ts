@@ -1,7 +1,7 @@
-// The operator's archive verbs client (S4) — `qcr archive run` and
+// The operator's archive verbs client — `qcr archive run` and
 // `qcr archive restore <pr>`.
 //
-// The lesson kill switch's channel (src/tui/lessonswitch.ts), unchanged: ONE
+// The same channel as the lesson kill switch (src/tui/lessonswitch.ts): ONE
 // command file written AS ROOT into the root-sealed `commands/operator/`
 // (`docker exec -u 0`, payload on stdin, tmp+mv), then the daemon's own result
 // file read back as the receipt. The two commands validate ONLY from that

@@ -1,9 +1,8 @@
 # The single-shepherd invariant
 
-> Design + audit, 2026-08-17. This document states the dispatch topology the
-> sandbox is *required* to have, audits the shipped code against it, and
-> records the three gaps that were closed to make it structural rather than
-> prompted.
+This document states the dispatch topology the sandbox is *required* to have,
+the audit of the code against it (2026-08-17), and the three fixes that make
+it structural rather than prompted.
 
 ## The invariant
 
@@ -28,18 +27,17 @@ The daemon never launches a pass, never runs `pi`, and never picks a lens at
 runtime.
 
 **S3 — Every agent runs through the `subagent` tool, launched by the
-PR's main pi.** (Since that tool is pi's own first-party subagent
-extension, loaded from the installed pi package by `extensions/subagents.ts`;
-the invariant predates and survives the third-party pi-subagents extension it
-replaced.) The main pi is the only scheduler of agents. Passes are
+PR's main pi.** (That tool is pi's own first-party subagent extension, loaded
+from the installed pi package by `extensions/subagents.ts`.) The main pi is
+the only scheduler of agents. Passes are
 **leaves**: a pass never launches another agent and never posts to GitHub.
 `launch_plan` (registered by the same glue beside the subagent tool)
 does not change this: the main pi calls it, and it launches the round's
 discovery task files — confined to a round's `tasks/` and `tasks-sweep/`
 dirs of the session's own PR (`QCR_PR`), both from one round per call, never
 the validator's — as ONE call through the subagent tool's own
-wrapped execute and semaphore. It exists because the one-turn launch the
-templates asked for was not always made.
+wrapped execute and semaphore. It exists because a main pi asked to launch
+every row in one turn does not reliably do so.
 
 **S4 — One instruction at a time per main pi.** A round in flight is never
 interleaved with another instruction to the same session. Wakes that arrive
@@ -83,7 +81,7 @@ is a directive error message and an invariant that greps.
 
 ### G3 — mid-round wakes are held, not interleaved
 
-New `pending_wakes` table in `state.ts`. When an author reply arrives for a PR
+The `pending_wakes` table in `state.ts`. When an author reply arrives for a PR
 whose round is running, the rendered wake is stored instead of injected. The
 verdict and overdue/anomaly paths normally flush it once the round is over and
 the session has been compacted. **Fresh-head successor work is the one ordering
@@ -96,10 +94,10 @@ go first (their claim released, so the reconcile push backstop asks again),
 then the oldest other wake (a ci or base-advance recheck among them: its claim
 released, its loss recorded as the quiet `recheck_wake_dropped`, since no sweep
 re-raises it), each with an event-log line, never silently. Author replies
-are never evicted and not counted (H1b): each is a claimed obligation
+are never evicted and not counted: each is a claimed obligation
 nothing else will raise again, and a burst is one coalesced run of at most ten.
-A flush that finds the PR's NEXT round already running delivers nothing
-(H2): a round end that awaited long enough for it to be dispatched
+A flush that finds the PR's next round already running delivers nothing: a
+round end that awaited long enough for it to be dispatched
 leaves the wakes held for that round's end. An acked round command holds no
 session slot, so the slot check alone could not see such a round.
 

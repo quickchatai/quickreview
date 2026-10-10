@@ -242,7 +242,7 @@ export function parseManifestText(text: string, where: string): Manifest {
   return parsed as unknown as Manifest;
 }
 
-/** A manifest in brief (`qcr why`, S4): what it holds and what left
+/** A manifest in brief (`qcr why`): what it holds and what left
  * the live tree. Pure. */
 export interface ManifestSummary {
   passes: number;

@@ -1,5 +1,5 @@
-// The PR replay's SOURCE port, for real: the pull request read
-// through the companion's read-only GitHub token (GET only), and
+// The PR replay's SOURCE port, for real: the pull request read through the
+// companion's read-only GitHub token (GET only), and
 // its code read from the reviewed checkout, READ-ONLY.
 //
 // GitHub gives the PR's facts — title, body, state, head, base, the commit it

@@ -1,8 +1,6 @@
-// `[7] feedback`: the loop on one surface — the inbox and
-// its cards, the proposals, the change register and its confirmed revert, the
-// filed-ticket summary — and the honest empties of each. The register half
-// carries over the tab tests; the inbox half carries over the
-// presentation tests.
+// `[7] feedback`: the loop on one surface — the inbox and its cards, the
+// proposals, the change register and its confirmed revert, the filed-ticket
+// summary — and the honest empties of each.
 import { describe, expect, it, vi } from "vitest";
 import { memoryEntryFor } from "../src/feedback.js";
 import type { MemoryEntry } from "../src/memory/store.js";
@@ -330,7 +328,7 @@ describe("proposals", () => {
     );
   });
 
-  // selfscan2: each accept is several awaited git subprocesses in ONE shared
+  // Each accept is several awaited git subprocesses in one shared
   // checkout; a second A while the first is running would interleave them
   // (the first commit sweeping up both staged sets).
   it("a second A while an accept is still running does not start another", async () => {
@@ -435,11 +433,11 @@ describe("the revert, armed and confirmed", () => {
     expect(changes.refreshes).toBe(2);
   });
 
-  // "none yet" is a CLAIM, made only when a scan succeeded and found
-  // none. The two ways of not knowing each get their own sentence, and neither
-  // hides the rows already in memory. The loader arming once per run (above)
-  // is the other half: measured at 502 `git log` spawns in 200 ms when it
-  // re-armed on "still no register" against an unreadable file.
+  // "none yet" is a claim, made only when a scan succeeded and found none. The
+  // two ways of not knowing each get their own sentence, and neither hides the
+  // rows already in memory. The loader arming once per run (above) is the
+  // other half: re-arming on "still no register" against an unreadable file
+  // would spawn `git log` in a tight loop.
   it("an unreadable register or a failed scan is SAID, never painted as 'none yet' or 'not read yet'", async () => {
     const unreadable = screenOf(
       await loaded({

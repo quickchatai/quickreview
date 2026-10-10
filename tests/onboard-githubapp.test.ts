@@ -1,4 +1,4 @@
-// the GitHub App onboarding step: manifest one-click, code exchange,
+// The GitHub App onboarding step: manifest one-click, code exchange,
 // credential landing, install verification, labels.
 //
 // Everything is faked: a routed fake fetch stands in for GitHub, a fake

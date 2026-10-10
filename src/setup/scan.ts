@@ -1,25 +1,25 @@
-// Scan stage 1's RULES (setup & scan spec "Scan stage 1"), pure:
+// Scan stage 1's rules, pure:
 // what a stage-1 case reads, what it is expected to cost, what the lens is
 // told, how its answer is read back, and a scan finding's identity. The
 // stateful half — the run, the ledger, the findings store — is scanrun.ts,
 // ledger.ts and findings.ts, every effect through a port.
 //
-// Stage 1 is `pass-scan` over every unit of the SAVED unit cut, one case per
-// unit (an oversized unit splits, its name kept; a single FILE over one case
-// is read in overlapping line ranges, one case each — `cutRanges`), at the `[scan]` tier and
-// effort. It never reads tests or migrations (they enter only in stage 2,
-// paired with their code), nor what no pass reads (lockfiles, generated
+// Stage 1 is `pass-scan` over every unit of the saved unit cut, one case per
+// unit (an oversized unit splits, its name kept; a single file over one case
+// is read in overlapping line ranges, one case each — `cutRanges`), at the
+// `[scan]` tier and effort. It never reads tests or migrations (they enter
+// only in stage 2, paired with their code), nor what no pass reads (lockfiles, generated
 // output, binaries, prose — `isSweepSkipped`), nor the operator's `[scan]
 // exclude` globs. A file the coverage ledger already holds at the same
 // content hash for `pass-scan` is not read again: that is how an interrupted
 // scan resumes, and why a finished one costs nothing to "re-run".
 //
-// A DELTA re-scan is stage 1 over the files whose content CHANGED
-// since the last scan (read by the ledger at another content, or new or
-// different against the tree the last scan read) AND every file no complete
-// reading covers at its content — never read (a capped or stopped run's
-// tail; unreadable then, readable now) or cut short between ranges. Those
-// are OWED, not skipped: a delta that left them out would leave a file no
+// A delta re-scan is stage 1 over the files whose content changed since the
+// last scan (read by the ledger at another content, or new or different
+// against the tree the last scan read) and every file no complete reading
+// covers at its content — never read (a capped or stopped run's tail;
+// unreadable then, readable now) or cut short between ranges. Those are
+// owed, not skipped: a delta that left them out would leave a file no
 // lens ever read out of every delta for as long as it stays unchanged.
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -34,7 +34,7 @@ import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 export const SCAN_PASS = "pass-scan";
 
 /** Lenses a stage-1 suggestion may NOT name: each needs a diff, a PR body or
- * a mid-round session to mean anything (diff-only exclusions),
+ * a mid-round session to mean anything,
  * plus the validator, which is not a lens. */
 export const DIFF_ONLY_LENSES: readonly string[] = [
   "pass-intent",
@@ -257,11 +257,11 @@ export interface PriorReading {
 }
 
 /**
- * Coverage first (scan-loop). The hard stop ends a run whose actuals outrun
- * its estimate before the plan's tail, so the tail must not be the SAME
- * cases every run: a file the ledger never read, or whose newest reading was
- * cut short between ranges, is tier 0; a file read before at other content
- * is tier 1 (changed); anything else is tier 2. A case takes its best file's
+ * Coverage first. The hard stop ends a run whose actuals outrun its estimate
+ * before the plan's tail, so the tail must not be the same cases every run:
+ * a file the ledger never read, or whose newest reading was cut short
+ * between ranges, is tier 0; a file read before at other content is tier 1
+ * (changed); anything else is tier 2. A case takes its best file's
  * tier; a tier keeps the plan's order.
  */
 export function readTier(
@@ -320,8 +320,8 @@ export function planStage1(input: PlanInput): Stage1Plan {
     // unfinished scan; unreadable then, readable now), or cut short between
     // ranges. Past `covered`, that is every file left: a delta leaves out only
     // what an ordinary plan leaves out, and says how much it owes unchanged.
-    // (Self-scan round 7: a never-read, unchanged file was skipped as
-    // "unchanged" — no lens had ever read it.)
+    // An unchanged file that was never read is owed, never skipped as
+    // "unchanged".
     if (input.delta !== undefined && !changedSince(f, input.delta)) unchangedPaths.add(f.path);
     if (n > input.budget.maxLines) {
       const done = input.partial?.get(coverKey(f.path, f.blob)) ?? [];
@@ -449,9 +449,9 @@ export function treePath(root: string, path: string): string {
   return posix.join(root, path);
 }
 
-/** The line every scan task carries about paths: the lens runs OUTSIDE the
+/** The line every scan task carries about paths: the lens runs outside the
  * tree (first-party cwd — the case runner), so a relative path it opens is
- * some other checkout's file, never the scanned one (scan-loop). */
+ * some other checkout's file, never the scanned one. */
 export const TREE_PATHS_NOTE =
   "Your working directory is NOT the tree: a relative path opens some other checkout's file. Open every file — focus files, callers, tests — by its absolute path under the tree root (each focus file below says where). Paths in your answer are relative to the tree root.";
 
@@ -815,18 +815,17 @@ const PATH_LINE =
   /(?:[A-Za-z0-9_][\w./-]*\.[A-Za-z][A-Za-z0-9]*|[A-Za-z0-9_.][\w.-]*(?:\/[\w.-]+)+|\b(?:Dockerfile|Containerfile|Makefile|GNUmakefile|Jenkinsfile|Procfile|Gemfile|Rakefile|Vagrantfile|Brewfile|Justfile|justfile|Earthfile|Tiltfile))(?:\.[\w-]+)?:\d+/;
 
 /**
- * Whether a skeptic's scenario is ANCHORED: it cites at least one `path:line`
- * of the path it traced. scan-loop (skeptic vs the outside check, self-scan
- * rounds 6–7): every refuted `confirmed` was a prose chain of names and
- * arrows with no `path:line` — the hop it had not read is exactly the one it
- * could not cite. The engine can check that structure; the rest of the
- * tightening lives in SCAN_SKEPTIC_ADDENDUM.
+ * Whether a skeptic's scenario is anchored: it cites at least one `path:line`
+ * of the path it traced. A `confirmed` scenario told as a prose chain of
+ * names and arrows with no `path:line` hides the hop the skeptic did not
+ * read — that hop is exactly the one it cannot cite. The engine checks that
+ * structure; the rest of the tightening lives in SCAN_SKEPTIC_ADDENDUM.
  */
 export function scenarioIsAnchored(scenario: string): boolean {
   return PATH_LINE.test(scenario);
 }
 
-/** A survivor as the scan's skeptic sorted it (owner ruling 2026-09-30). */
+/** A survivor as the scan's skeptic sorted it. */
 export interface SkepticSurvivor extends ScanCandidate {
   /** `confirmed` only with a written `scenario:` that cites a `path:line`
    * (scenarioIsAnchored) — a demonstration not written down, or not anchored
@@ -863,10 +862,10 @@ function judgementLines(body: string | null, root: string | null): DoubtLine[] {
 }
 
 /**
- * Read the validator's answer over a scan case — the scan's SKEPTIC
- * (owner ruling 2026-09-30): the survivors (its findings block — they carry the
- * lens's anchors), each with its tier (`validity: confirmed` with a
- * `scenario:` citing a `path:line`, else `likely`), its DOUBTED lines,
+ * Read the validator's answer over a scan case — the scan's skeptic: the
+ * survivors (its findings block — they carry the lens's anchors), each with
+ * its tier (`validity: confirmed` with a `scenario:` citing a `path:line`,
+ * else `likely`), its DOUBTED lines,
  * `- <lens> <path:line> — <word>: [<class>] <reason>`, and its KILLED lines
  * in the same shape. In a scan nothing is killed: the caller stores a KILLED
  * line as a doubt exactly like a DOUBTED one (the frozen validator's kill

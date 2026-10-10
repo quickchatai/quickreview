@@ -327,7 +327,7 @@ describe("derivables", () => {
     // the sink default
     expect(cfg.sink.kind).toBe("github");
     // directory defaults
-    // written empty, resolved by the install locator at load.
+    // Written empty, resolved by the install locator at load.
     expect(cfg.github.secrets_dir).toBe(locateSecrets().path);
     expect(cfg.companion.repo_dir).not.toBe("");
     // escalation mention falls back to the owner's login

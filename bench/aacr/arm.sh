@@ -12,7 +12,7 @@
 #   --cases G+G+...   case groups joined by '+', each one of:
 #                       <set>              every PR of bench/aacr/sets/<set>.json
 #                       <set>:id,id        those PRs of that set
-#                       levers16           the 16 PRs the 2026-09-27 levers were measured on
+#                       levers16           the 16 PRs the review levers were measured on
 #                       all30              smoke10 + dev10 + holdout10
 #                       full               the 196-PR AACR set: judged against every defect
 #                                          set it overlaps (the 40 PRs with ground truth)
@@ -85,7 +85,7 @@
 # are FIXED caps: no ramp, no halving (the pause and retry still apply).
 #
 #   QCR_BENCH_REVIEW_MB=768      memory budget per concurrent review (auto + the admission check;
-#                                measured 2026-10-02 from cgroup memory.peak of live review
+#                                measured from cgroup memory.peak of live review
 #                                containers: 577-788 MB peak incl. page cache, ~210 MB anon steady)
 #   QCR_BENCH_RESERVE_MB=3072    MemAvailable kept free for the rest of the machine
 #   QCR_BENCH_START_PARALLEL=10  where adaptive auto starts (never above what memory admits)
@@ -94,7 +94,7 @@
 #   QCR_BENCH_RAMP_STEP=2        slots added per step
 #   QCR_BENCH_HALVE_GAP=60       rate-limited cases closer than this halve the target once
 #   QCR_BENCH_ADAPTIVE=0         auto without the ramp (start value fixed)
-#   QCR_BENCH_MAX_PARALLEL=N     auto = min(memory, N), fixed (the pre-adaptive behaviour)
+#   QCR_BENCH_MAX_PARALLEL=N     auto = min(memory, N), fixed (no ramp, no halving)
 #   QCR_BENCH_REVIEW_MEMORY=3g   the hard cap of one case container (QCR_BENCH_MEMORY for it)
 #   QCR_BENCH_REVIEW_CPUS=4      its cpu cap
 #   QCR_BENCH_EVAL_CPUS=8        the eval container's cpu cap (it runs shards × variants pi judges)
@@ -497,8 +497,8 @@ post_run() { # job
 running=0 seq=0 last=0 pause_until=0 stop=0 done_n=0 ok_n=0 bad_n=0 waiting=0
 # Launch time per case seq. A case `--resume` skipped (already reviewed) is
 # dropped at once: it never grew, so it must not hold memory admission for
-# five minutes (2026-10-02: a resume of 77 done cases admitted one new review
-# a minute for 25 minutes with 14 GB free).
+# five minutes (a resume of many done cases would otherwise admit new reviews
+# one a minute however much memory is free).
 declare -A LAUNCHED=(); POSTS=()
 mem_ok() { # room for one more review, counting the ones launched in the last 5 min as still growing
   local a now=$1 recent=0 t

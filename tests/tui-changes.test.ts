@@ -1,7 +1,7 @@
-// The change register (FT-0234): what counts as a feedback-derived change, how
+// The change register: what counts as a feedback-derived change, how
 // reverts are read back out of git, that the list survives a restart, and that
-// the revert is bounded (dirty tree, unknown sha, conflict). The SURFACE that
-// paints it and confirms the revert is the feedback tab since FT-0398 —
+// the revert is bounded (dirty tree, unknown sha, conflict). The surface that
+// paints it and confirms the revert is the feedback tab —
 // tests/feedbacktab.test.ts.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -354,8 +354,8 @@ describe("the companion is told to stamp it", () => {
       expect(prompt).toContain(t);
     expect(prompt).toMatch(/`Ratified-in-session:` is never omitted/);
     expect(prompt).toMatch(/last paragraph only/);
-    // FT-0398: the register is the CHANGED pane of the feedback tab; the old
-    // `[5] changes` tab is gone and the prompt must not send the companion there.
+    // The register is the CHANGED pane of the feedback tab; there is no
+    // `[5] changes` tab, and the prompt must not send the companion to one.
     expect(prompt.replace(/\s+/g, " ")).toContain("`[7] feedback` tab");
     expect(prompt).not.toMatch(/\[5\] changes/);
   });
@@ -367,14 +367,13 @@ describe("the companion is told to stamp it", () => {
   });
 });
 
-// FT-0397 — the register's docstrings promise two things `refresh` cannot keep
-// from a baseline it could not read: rows the scan no longer reaches are kept,
-// and `first_seen` is never rewritten. A torn file merged as "no previous
-// entries" and saved falsifies both at once. And the fix has to land BOTH
-// halves: the first attempt at it stood the save down but left the tab's
-// loader re-arming on "still no register", which the review measured at 502
-// `git log` spawns and 502 paints in 200 ms. The SURFACE half (what is said
-// on screen, and that the loader arms once) is tests/feedbacktab.test.ts.
+// The register promises two things `refresh` cannot keep from a baseline it
+// could not read: rows the scan no longer reaches are kept, and `first_seen`
+// is never rewritten. A torn file merged as "no previous entries" and saved
+// falsifies both at once, so an unreadable register stands the save down.
+// The surface half (what is said on screen, and that the tab's loader arms
+// once rather than re-spawning `git log` on every paint) is
+// tests/feedbacktab.test.ts.
 describe("an unreadable register is neither saved over nor merged onto", () => {
   let dir = "";
   beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "qcr-changes-"))));

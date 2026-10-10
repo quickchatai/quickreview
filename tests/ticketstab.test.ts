@@ -1,4 +1,4 @@
-// `[4] tickets` (FT-0398): the tracker projection as its own surface. The four
+// `[4] tickets`: the tracker projection as its own surface. The four
 // states of the read are the point — not scanned, no tracker, scan failed,
 // read — and the bar offers only what the state can answer.
 import { describe, expect, it } from "vitest";

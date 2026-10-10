@@ -43,15 +43,15 @@ describe("renderStatus", () => {
     expect(lines[0]).toBe("quickreview — DRY-RUN — snapshot 2026-08-13T17:04:00.000Z");
     expect(lines[1]).toBe("digest: 2 approved · 1 escalated");
     expect(lines[2]).toBe("rounds running: 2   total spend: $3.50");
-    // the memory line, every time — a snapshot with no block (an
+    // The memory line, every time — a snapshot with no block (an
     // older daemon) says so, never "healthy".
     expect(lines[3]).toContain("memory: NOT REPORTED");
-    // L2: the daemon's event-loop line, every time — the same
+    // The daemon's event-loop line, every time — the same
     // honest-unknown for a snapshot with no block.
     expect(lines[4]).toBe(
       "daemon event loop: NOT REPORTED (this daemon predates the event-loop block)",
     );
-    // the archiver's line, every time — the same honest-unknown.
+    // The archiver's line, every time — the same honest-unknown.
     expect(lines[5]).toBe("archive: NOT REPORTED (this daemon predates the archive block)");
     expect(lines[7]).toMatch(/^PR\s+state\s+stale\s+head\s+title$/);
 
@@ -95,7 +95,7 @@ describe("renderStatus", () => {
     expect(out).not.toContain("x".repeat(61));
   });
 
-  // selfscan: a PR title is an author's text headed for the operator's
+  // A PR title is an author's text headed for the operator's
   // terminal — same one-line, no-control-bytes treatment as a pause reason.
   it("strips control bytes (ESC/CSI, CR, LF, C1) from a PR title", () => {
     const title = "Fix\x1b[2J\x1b[31m widget\r\nrow\x9b2Kend";

@@ -1,12 +1,10 @@
-// the curated-memory import: the archived markdown file → the store.
+// The curated-memory import: the archived markdown file → the store.
 //
-// One repeatable pass that moves the memory WORTH KEEPING out of the retired
-// engine's MEMORY.md and into the `MemoryStore` the engine phase stands up.
-// Both ends are the seam (`store.ts`): the source is a `MemorySource` (in
-// production the read-only `legacy-file.ts` reader), the destination is a
-// `MemoryStore` (in production the OpenViking one). Nothing in this file knows
-// either end's mechanics — that is the point, and it is why the import could
-// be written before the destination existed.
+// One repeatable pass that moves the memory WORTH KEEPING out of the archived
+// pi-memory MEMORY.md and into the `MemoryStore`. Both ends are the seam
+// (`store.ts`): the source is a `MemorySource` (in production the read-only
+// `legacy-file.ts` reader), the destination is a `MemoryStore` (in production
+// the OpenViking one). Nothing in this file knows either end's mechanics.
 //
 // What crosses, and what deliberately does not:
 //
@@ -32,12 +30,12 @@
 //     prompt, the operator's own `add` by minting `#manual`, a machine `note`
 //     by refusing untagged text at all.
 //
-// Best effort, NO GATE (the owner, 2026-08-20): there is no probe-parity
-// check, no pass/fail bar and no abort path. Whatever imports, imports; gaps
-// get fixed forward. That decision puts the whole burden of visibility on the
-// LOG — so the log names every skipped entry with its reason and every failed
-// write with the store's own refusal message, and the report carries the same
-// data structured for a caller that wants to render it elsewhere.
+// Best effort, NO GATE: there is no probe-parity check, no pass/fail bar and
+// no abort path. Whatever imports, imports; gaps get fixed forward. That puts
+// the whole burden of visibility on the LOG — so the log names every skipped
+// entry with its reason and every failed write with the store's own refusal
+// message, and the report carries the same data structured for a caller that
+// wants to render it elsewhere.
 //
 // Re-running is safe: each written entry carries an `import-key:` derived
 // from the source entry's own words, the destination is re-read immediately
@@ -140,8 +138,8 @@ export function classify(e: MemoryEntry): Classification {
  * Identity of a source entry = its own words. NOT its (ts, id, block)
  * address: retiring an earlier block shifts later indices and pinning
  * rewrites the batch id, so an address-keyed import would re-import half the
- * file the day after someone tidied it (the auto-filer learned this the same
- * way — see `src/tui/autofile.ts`).
+ * file the day after someone tidied it (`src/tui/autofile.ts` keys its
+ * dedup the same way).
  */
 export function importKey(text: string): string {
   const normalized = stripImportHeader(text)
@@ -522,9 +520,9 @@ const octal = (mode: number): string => `0${(mode & 0o777).toString(8)}`;
  * Leave the legacy memory file exactly where it is, read-only: every write
  * bit cleared, the read bits exactly as they were (0600 → 0400, 0644 →
  * 0444; owner read always kept) — archiving takes write away and never
- * widens who else may read. It is
- * never deleted or moved: after the engine cutover it is the historical
- * record, and a stray writer finding it writable would silently fork memory.
+ * widens who else may read. It is never deleted or moved: it is the
+ * historical record, and a stray writer finding it writable would silently
+ * fork memory.
  * Failure is reported, never thrown — the import has no abort path.
  */
 export async function archiveReadOnly(path: string, fs: ArchiveFs = nodeArchiveFs): Promise<ArchiveResult> {

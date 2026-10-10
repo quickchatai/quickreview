@@ -2,27 +2,26 @@
 // iff confidence ≥ 0.8 else [question]; P3 → [question] (or [nit] when the
 // finding is a nit-class polish item). Nits and questions never block.
 //
-// adds a third axis, `reachability` — how often the triggering state
-// actually arises, as opposed to how bad it is (severity) or whether the claim
-// is true (confidence). It is applied as a gate BEFORE the severity mapping and
-// can only ever weaken a tag: `contrived` never blocks at any severity,
+// A third axis, `reachability`, says how often the triggering state actually
+// arises, as opposed to how bad it is (severity) or whether the claim is true
+// (confidence). It is applied as a gate BEFORE the severity mapping and can
+// only ever weaken a tag: `contrived` never blocks at any severity,
 // `plausible` demotes P2 to a question, `routine` (and an absent field) leaves
-// the mapping exactly as it was. The blocker bar itself does not move — a
-// `routine` P0/P1 blocks today as it always did.
+// the mapping unchanged. The blocker bar itself does not move — a `routine`
+// P0/P1 blocks.
 //
-// introduced first-party directive provenance (the owner, 2026-08-19):
-// the reviewed repo's OWN agent-directive files (.claude/**, prompts/**,
-// AGENTS.md/CLAUDE.md and kin — `isFirstPartyDirectivePath`). What that
-// provenance DOES was reshaped by (the owner, 2026-08-25): routine
-// first-party instructions — directive text inside a directive file doing its
-// job — are suppressed at the lens/validator layer and never reach this map as
-// a finding. A kind=injection candidate that DOES survive has proved an
-// obvious malicious payload or a concrete untrusted-source→model path, and
-// its first-party location softens nothing: `postTag` maps it by severity
-// exactly like any other finding, so a P0/P1 blocks. The verdict is decided on
-// the merits (the NEEDS_HUMAN park first routed to was retired in
-//), and the review additionally carries exactly one short
-// security-attention comment @-mentioning a deterministically-picked teammate
+// (ids pinned by tests/fences.test.ts) — first-party
+// directive provenance: the reviewed repo's own agent-directive files
+// (.claude/**, prompts/**, AGENTS.md/CLAUDE.md and kin —
+// `isFirstPartyDirectivePath`). Routine first-party instructions — directive
+// text inside a directive file doing its job — are suppressed at the
+// lens/validator layer and never reach this map as a finding. A
+// kind=injection candidate that does survive has proved an obvious malicious
+// payload or a concrete untrusted-source→model path, and its first-party
+// location softens nothing: `postTag` maps it by severity exactly like any
+// other finding, so a P0/P1 blocks. The verdict is decided on the merits, and
+// the review additionally carries exactly one short security-attention
+// comment @-mentioning a deterministically-picked teammate
 // (rendered by posting.ts `renderDirectiveEscalationComment`, mention picked
 // in dispatch.ts). Third-party/vendored directive content keeps the P1 bright
 // line unchanged.
@@ -37,22 +36,21 @@ export type Reachability = "routine" | "plausible" | "contrived";
 
 export const REACHABILITY_VALUES: readonly Reachability[] = ["routine", "plausible", "contrived"];
 
-/** Findings that omit the axis are read as `routine` — the legacy
- * behaviour, so an un-upgraded pass can never accidentally soften a blocker. */
+/** Findings that omit the axis are read as `routine`, so a pass that does not
+ * emit it can never accidentally soften a blocker. */
 export function normalizeReachability(value: string | undefined | null): Reachability {
   return REACHABILITY_VALUES.includes(value as Reachability) ? (value as Reachability) : "routine";
 }
 
-// ---- first-party directive provenance ---------------------------
+// ---- first-party directive provenance -------------------------------------
 
-/** The directive-path vocabulary the predicate below walks. lifts it
- * into config as an EXTEND-only surface: `[review.directives]` `extra_*` keys
- * ADD entries and nothing can remove the built-ins. Replacement is
- * deliberately not offered — dropping, say, `CLAUDE.md` from the vocabulary
- * would silently re-enable auto-blocking on first-party directive edits,
- * which is's ratified behaviour drifting by config typo. A repo whose
- * tree genuinely uses one of these names for something else loses at most an
- * escalation comment; the reverse mistake loses a ratified guarantee. */
+/** The directive-path vocabulary the predicate below walks. Config can only
+ * EXTEND it: `[review.directives]` `extra_*` keys add entries and nothing can
+ * remove the built-ins. Replacement is deliberately not offered — dropping,
+ * say, `CLAUDE.md` from the vocabulary would let a config typo silently
+ * change how first-party directive edits are treated. A repo whose tree
+ * genuinely uses one of these names for something else loses at most an
+ * escalation comment; the reverse mistake loses a guarantee. */
 export interface DirectiveVocabulary {
   /** Path segments that mark VENDORED/third-party content: a directive file
    * under one of these keeps the injection bright line — it was not authored
@@ -79,7 +77,7 @@ export interface DirectiveVocabularyExtras {
   extra_files?: string[];
 }
 
-/** The compiled-in vocabulary — today's exact lists; the shipped default. */
+/** The compiled-in vocabulary; the shipped default. */
 export const DEFAULT_DIRECTIVE_VOCABULARY: DirectiveVocabulary = {
   vendoredSegments: new Set([
     "node_modules",
@@ -116,9 +114,9 @@ export function directiveVocabulary(extras: DirectiveVocabularyExtras = {}): Dir
  * `.claude/**`, top-level `prompts/**`, an `AGENTS.md`/`CLAUDE.md` (and kin)
  * at any depth — and NOT under a vendored tree? The predicate is deliberately
  * path-shaped and shared: dispatch uses it to pick the escalation mention,
- * the tag mapping below uses it to keep such findings off the blocker bar.
- * `vocab` defaults to the compiled-in vocabulary, so every call without
- * config in reach behaves exactly as before.
+ * and posting.ts (through `isFirstPartyDirectiveInjection`) to name the files
+ * the escalation comment cites. `vocab` defaults to the compiled-in
+ * vocabulary for callers without config in reach.
  */
 export function isFirstPartyDirectivePath(
   path: string | undefined | null,
@@ -138,8 +136,8 @@ export function isFirstPartyDirectivePath(
   return false;
 }
 
-/** The gate condition: an injection-kind finding anchored on a
- * first-party directive path. Findings without a `kind` are never gated. */
+/** An injection-kind finding anchored on a first-party directive path.
+ * Findings without a `kind` never match. */
 export function isFirstPartyDirectiveInjection(
   kind: string | undefined | null,
   path: string | undefined | null,
@@ -161,11 +159,11 @@ export function postTag(
   reachability?: Reachability | null,
   ctx?: PostTagContext,
 ): PostTag {
-  // routine first-party instructions are suppressed before this
-  // posting map. A kind=injection candidate that survives has proved an
-  // obvious malicious payload or a concrete untrusted-source→model path, so
-  // the file's first-party location cannot soften it. `ctx` remains part of
-  // the interface for telemetry/callers and the deterministic mention route.
+  // Routine first-party instructions are suppressed before this posting map.
+  // A kind=injection candidate that survives has proved an obvious malicious
+  // payload or a concrete untrusted-source→model path, so the file's
+  // first-party location cannot soften it. `ctx` remains part of the
+  // interface for telemetry/callers and the deterministic mention route.
   void ctx;
   const reach = normalizeReachability(reachability);
   // Reachability gate — never blocks something the base mapping wouldn't.
@@ -207,16 +205,16 @@ export type { Verdict } from "./types.js";
 
 export interface VerdictInput {
   hasBlockers: boolean;
-  /** LEGACY input: the session's own "I cannot decide this" call, which used
-   * to park a PR. retired the park — a NEEDS_HUMAN verdict is still
-   * ACCEPTED (older prompts and containers emit it; `normalizeVerdict` folds
-   * ESCALATE into it) and the daemon lands it as `tracked`: review posted, no
-   * approval, the AI keeps driving. No daemon-side criteria feed it. */
+  /** Legacy input: the session's own "I cannot decide this" call. A
+   * NEEDS_HUMAN verdict is still accepted (older prompts and containers emit
+   * it; `normalizeVerdict` folds ESCALATE into it) and the daemon lands it as
+   * `tracked`: review posted, no approval, the AI keeps driving. There is no
+   * park. No daemon-side criteria feed it. */
   needsHuman: boolean;
-  /** Legacy input retained for older callers/containers.
-   * removed its verdict effect: routine first-party instructions produce no
-   * finding, while a surviving malicious/path-proven injection follows the
-   * ordinary blocker map. */
+  /** Legacy input retained for older callers/containers; it has no verdict
+   * effect: routine first-party instructions produce no finding, while a
+   * surviving malicious/path-proven injection follows the ordinary blocker
+   * map. */
   firstPartyDirectiveInjection?: boolean;
 }
 
@@ -230,9 +228,9 @@ export function deriveVerdict(v: VerdictInput): VerdictType {
 }
 
 /**
- * The "[check this]" inline-comment grammar (addendum, the owner
- * 2026-08-19): every "For a human to double-check" item is ALSO posted as an
- * inline review comment whose first line starts with this tag. The repo's
+ * The "[check this]" inline-comment grammar: every "For a human to
+ * double-check" item is ALSO posted as an inline review comment whose first
+ * line starts with this tag. The repo's
  * merge rule requires every conversation resolved, so each item opens a
  * thread a person must touch — and the reviewer never resolves one:
  * github.ts resolveOwnReviewThread refuses on this marker, so only the author
@@ -241,7 +239,7 @@ export function deriveVerdict(v: VerdictInput): VerdictType {
 export const CHECK_THIS_TAG = "[check this]";
 export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;
 
-// ---- the "[ask your human]" grammar -----------------------------
+// ---- the "[ask your human]" grammar --------------------------------------
 //
 // A SECOND, deliberately distinct marker — same shape, opposite addressee.
 //
@@ -254,17 +252,14 @@ export const CHECK_THIS_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[check this\]/i;
 //                       the person you are working for and bring the answer
 //                       back here". Addressed to the PR author's AI agent.
 //
-// The two must never be conflated: overloading `[check this]` with a second
-// meaning was rejected outright on (a third meaning had already been
-// proposed for deferrals, and a marker that means three things routes nothing).
-// Nothing here changes what `[check this]` means or how it is treated.
+// The two must never be conflated: a marker that means several things routes
+// nothing. Nothing here changes what `[check this]` means or how it is treated.
 //
 // RESOLUTION: an `[ask your human]` thread is AUTHOR-RESOLVABLE once answered —
-// no new refusal in resolveOwnReviewThread, by decision (§5, which
-// rejected borrowing `[check this]`'s human-only machinery: it "forces a person
-// into every thread", and the thread's whole point is that the ANSWER, not the
-// resolution, is what a human owes). The ordinary path already gives the right
-// shape: the bot resolves one of its own threads only through ping-pong, i.e.
+// resolveOwnReviewThread has no refusal for it, because `[check this]`'s
+// human-only machinery would force a person into every thread, and the
+// thread's point is that the ANSWER, not the resolution, is what a human
+// owes. The ordinary path already gives the right shape: the bot resolves one of its own threads only through ping-pong, i.e.
 // only after the author has replied and the session judged the reply settles
 // it. Rule 2 is untouched either way — resolving one's OWN finding thread after
 // an answer is not dismissing a review, and no review-dismissal path exists.
@@ -284,20 +279,19 @@ export function isAskHumanFinding(kind?: string | null, lens?: string | null): b
   return (lens ?? "").toLowerCase().includes(ASK_HUMAN_LENS);
 }
 
-// ---- the "[deferred]" grammar -----------------------------------
+// ---- the "[deferred]" grammar --------------------------------------------
 //
-// The THIRD marker, and the last one: "next iteration" was never the author
-// proving the finding wrong — it was a cost decision (right finding, real fix,
-// not worth an hour then), and that cost has collapsed now that the implementer
-// is an AI. So a deferral stops being free: the review session files a ticket
+// The THIRD marker, and the last one: "next iteration" is not the author
+// proving the finding wrong — it is a cost decision (right finding, real fix,
+// not worth the time now), and that cost is small when the implementer is an
+// AI. So a deferral is not free: the review session files a ticket
 // itself, in the round that deferred, through the daemon's existing capped
 // issue path — no confirmation step. **No ticket, no deferral.**
 //
-// WHY A THIRD TAG RATHER THAN REUSING ONE OF THE TWO. The owner's decision
-// (amendment): a deferral is neither of the other two things, and a
-// marker that means three things routes nothing — the same argument that got
-// `[ask your human]` its own tag on instead of a second meaning for
-// `[check this]`. The three, side by side:
+// WHY A THIRD TAG RATHER THAN REUSING ONE OF THE TWO: a deferral is neither of
+// the other two things, and a marker that means three things routes nothing —
+// the same reason `[ask your human]` has its own tag rather than a second
+// meaning for `[check this]`. The three, side by side:
 //
 //   [check this]      → a HUMAN should VERIFY this before merge.
 //                       Addressee: whoever reads the PR.
@@ -326,7 +320,7 @@ export function isAskHumanFinding(kind?: string | null, lens?: string | null): b
 // anywhere else. Nothing about `[check this]` or `[ask your human]` changes.
 //
 // NOTHING HERE BLOCKS. A deferral never holds the merge gate and never forces a
-// fix; it only stops a deferral being free. The falsifier the owner named is a
+// fix; it only stops a deferral being free. The failure mode to watch for is a
 // backlog nobody works.
 export const DEFERRED_TAG = "[deferred]";
 export const DEFERRED_RE = /^\s*(?:[*_`~>]|\[?!?\[)*\s*\[deferred\]/i;
@@ -339,11 +333,11 @@ export function isDeferredFinding(kind?: string | null): boolean {
   return k === "deferred" || k === "deferral";
 }
 
-// ---- the closed tag grammar -------------------------------------
+// ---- the closed tag grammar ----------------------------------------------
 //
-// 14.4% of the corpus's findings wore a tag this system does not define —
-// `[start here 3/5]`, `[verified]`, and nine spellings of "blocker, now fixed".
-// That is not a style problem. The tag is what the posting guards, the thread
+// Sessions invent tags this system does not define — `[start here 3/5]`,
+// `[verified]`, many spellings of "blocker, now fixed". That is not a style
+// problem. The tag is what the posting guards, the thread
 // resolution refusals and every downstream consumer key on, so an invented tag
 // is A FINDING THAT SILENTLY ESCAPES ITS OWN MACHINERY: a mis-tagged
 // check-this, for instance, would not be protected by resolveOwnReviewThread.

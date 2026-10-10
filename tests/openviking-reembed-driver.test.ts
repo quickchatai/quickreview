@@ -1,4 +1,4 @@
-// the daemon half of the embedder migration (src/openviking/reembed.ts).
+// The daemon half of the embedder migration (src/openviking/reembed.ts).
 //
 // The driver is a thin loop over the script: what it owes is (1) that it
 // never runs before /ready, never overlaps two runs and never blocks the
@@ -61,11 +61,11 @@ class FakeClock {
 }
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-// The engine's BUILT-IN local embedder — what a legacy-S4 entrypoint
-// still renders.
+// The engine's built-in local embedder — what an entrypoint that predates the
+// local English embedder still renders.
 const LOCAL = { provider: "local", model: "bge-small-zh-v1.5-f16", dimension: 512 };
 const HOSTED = { provider: "openai", model: "text-embedding-3-small", dimension: 1536 };
-// the local English embedder as ov.conf spells it — the engine's
+// The local English embedder as ov.conf spells it — the engine's
 // OpenAI-compatible provider at the loopback service.
 const LOCAL_EN = { provider: "openai", model: "bge-small-en-v1.5-f16", dimension: 384 };
 const LOCAL_EN_BASE = "http://127.0.0.1:1934/v1";
@@ -367,7 +367,7 @@ describe("config.toml against ov.conf", () => {
     expect(readFileSync(join(home, "ov.conf"), "utf8")).toContain("text-embedding-3-small"); // untouched
   });
 
-  // a `sync` without the `rebuild` keeps the image's OLD entrypoint,
+  // A `sync` without the `rebuild` keeps the image's old entrypoint,
   // which still renders the engine's built-in Chinese model.
   it("an ov.conf from an entrypoint that predates the local English embedder is DRIFT", async () => {
     ovConf({ ...LOCAL, input: "text" });
@@ -476,9 +476,9 @@ describe("the real scripts/openviking-reembed.mjs satisfies the driver's contrac
       await flush();
       expect(d.status().state).toBe("pending");
       await clock.fire();
-      // The script polls the task on a real 2s sleep; wait for it to settle —
-      // by deadline, not by a count of ticks, which was a 5s budget around a 2s
-      // sleep and too tight on a loaded machine. The deadline sits inside the
+      // The script polls the task on a real 2s sleep; wait for it to settle by
+      // deadline, not by a count of ticks, which is too tight on a loaded
+      // machine. The deadline sits inside the
       // test's timeout, so a miss still fails on the assertion below.
       const deadline = Date.now() + 45_000;
       while (d.status().state !== "completed" && Date.now() < deadline)

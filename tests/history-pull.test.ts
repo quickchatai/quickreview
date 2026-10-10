@@ -1,5 +1,5 @@
-// Carrying the review history digest to the PC's state home (,
-// src/tui/historypull.ts). The runner is a fake — no ssh, no docker — and the
+// Carrying the review history digest to the PC's state home
+// (src/tui/historypull.ts). The runner is a fake — no ssh, no docker — and the
 // state home a temp dir: what is asserted is the exact argv the VM is asked to
 // run, and that the ONE file lands where the companion reads it, 0600, and
 // nowhere else — or not at all.

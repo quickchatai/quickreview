@@ -1,33 +1,22 @@
-// The exec boundary's OUTCOME layer.
+// The exec boundary's OUTCOME layer (docs/exec-boundary.md).
 //
 // Everything else in this system that defends the exec boundary asks about an
 // ATTEMPT: `extensions/bash-guard.ts` inspects a command string, `usage.ts`
-// re-reads those strings after the fact. hardened the command-string
-// guard over four adversarial rounds, and each of the first three looked
-// complete to its author and to a green suite while a live bypass stood:
-//
-//   1. `gh pr review --approve` closed; `gh api … --input` left open — the
-//      channel the retro says the predecessor used for EVERY review it posted.
-//   2. that closed and `git -c` closed; `gh api -fevent=APPROVE` (same flag,
-//      different form) and `git --git-dir=` (same family, third mechanism) left.
-//   3. both made structural; `HOME` / `XDG_CONFIG_HOME` — the implicit config
-//      search path behind the explicit pointers — left.
-//   4. those closed.
-//
-// The pattern is not "the lists were short". It is that a guard which must
-// enumerate every way a general-purpose tool reaches `exec` will be wrong
-// again, and that nothing else in the system would have noticed. This module
-// asks a different question, and it is the only question in the codebase whose
+// re-reads those strings after the fact. A guard which must enumerate every
+// way a general-purpose tool reaches `exec` (`gh api … --input`,
+// `-fevent=APPROVE`, `git --git-dir=`, `HOME` / `XDG_CONFIG_HOME` …) will
+// always miss a spelling, and nothing else would notice. This module asks a
+// different question, and it is the only question in the codebase whose
 // answer does not depend on knowing how the write was made:
 //
 //   **Is there a review on GitHub, authored by the bot, that this daemon has
 //   no record of posting?**
 //
-// A review is the terminal harm of the whole class — bypasses 1 and 2 existed
-// to post one, and bypasses 3, 4 and 5 grant the arbitrary execution from which
-// one can be posted. GitHub is the authority here, exactly as `reconcile.ts`
-// already treats it for every other fact; the read is free, because the comment
-// sweep already fetches full review bodies for the same PRs.
+// A review is the terminal harm of the whole class — every command-string
+// bypass either posts one directly or grants the arbitrary execution from
+// which one can be posted. GitHub is the authority here, exactly as
+// `reconcile.ts` treats it for every other fact; the read is free, because
+// the comment sweep already fetches full review bodies for the same PRs.
 //
 // FALSIFIABLE CLAIM, stated as a claim so it can be shown false rather than as
 // a reassurance: *for a review at a PR's current head, authored by the bot, at
@@ -56,27 +45,20 @@ import { POLICY_SURFACE_DIRS, POLICY_SURFACE_FILES } from "../extensions/bash-gu
 import { configHome, locateConfig, PROFILES_DIR, type InstallEnv } from "./install.js";
 import { yieldToLoop } from "./yieldloop.js";
 
-// ---- git-config integrity (round 2) --------------------------------
+// ---- git-config integrity ---------------------------------------------------
 //
 // The second thing in this file that asks about an OUTCOME rather than an
-// attempt, and it exists because the first review of this ticket demolished the
-// layer that did ask about attempts.
+// attempt.
 //
-// The write veto in `extensions/bash-guard.ts` reads command strings, and five
-// primitives already on the guard's own read-only allowlist write
-// `<clone>/.git/config` straight past it — all five VERIFIED to make a
-// subsequent plain `git diff <base> <head>` execute, with the config-scope pin
-// in force:
+// The write veto in `extensions/bash-guard.ts` reads command strings, and a
+// write to `<clone>/.git/config` makes a later plain `git diff <base> <head>`
+// execute config-supplied shell. Some spellings of that write can never be
+// seen by a string scan:
 //
-//   T=.git/config; cat payload >> $T          find . -maxdepth 0 -fprintf .git/config …
-//   awk 'BEGIN{print x >>".git/config"}'      sort -o .git/config payload
-//   sed -n 'w .git/config' payload
+//   T=.git/config; cat payload >> $T
 //
-// The first of those settles the design argument: `T=` is not a
-// config-injecting variable and the redirection target is `$T`, so **no scan
-// over a command string can ever see it.** A write veto built to compensate for
-// a command guard's blindness had inherited exactly that blindness. Adding five
-// more spellings would have been the fifth round of the same mistake.
+// `T=` is not a config-injecting variable and the redirection target is `$T`,
+// so **no scan over a command string can ever see it.**
 //
 // So: hash the files at round start, hash them again at round end, and treat a
 // change as an anomaly. It enumerates nothing, it is immune to variable
@@ -91,7 +73,7 @@ import { yieldToLoop } from "./yieldloop.js";
 // getting a clean round — or by naming a config location git reads that
 // `gitConfigWatchPaths` omits.
 //
-// widened the SAME check to this system's own policy surface —
+// The SAME check covers this system's own policy surface —
 // `config.toml`, the sanctioned scripts, the compiled `dist/`, the extensions
 // and the frozen seeds (`policySurfaceWatchPaths`). The write veto refuses a
 // redirection or write-tool call onto those paths; this is what sees the one
@@ -101,8 +83,8 @@ import { yieldToLoop } from "./yieldloop.js";
 // guard (`POLICY_SURFACE_FILES` / `POLICY_SURFACE_DIRS`), so the write veto and
 // this check cannot protect different files.
 //
-// Since the LIVE config is not `<sandbox>/config.toml` but wherever the
-// install locator finds it (on the VM, the shipped config home named by
+// The LIVE config is not `<sandbox>/config.toml` but wherever the install
+// locator finds it (on the VM, the shipped config home named by
 // `$QCR_CONFIG`), so layer 4 also watches that located file and the
 // config home's `profiles/` (`locatedPolicyWatchPaths`). Those are concrete
 // paths, not names under the root, so they sit beside the one definition
@@ -114,7 +96,7 @@ import { yieldToLoop } from "./yieldloop.js";
 //     That is the honest trade for a check that needs no enumeration.
 //   · Its window is round start → round measurement. A write made and REVERTED
 //     inside that window leaves both hashes equal. Closing that needs a
-//     filesystem watch, which is a different mechanism and a different ticket.
+//     filesystem watch, which is a different mechanism.
 //   · `unreadable` is recorded distinctly from `absent`, so a permissions
 //     change is a change rather than silently matching.
 
@@ -125,8 +107,8 @@ export interface IntegrityFingerprint {
   files: Record<string, string>;
 }
 
-/** The fingerprint's filesystem seam. Production reads are async (
- * H2); a test double may answer synchronously — every call is awaited. */
+/** The fingerprint's filesystem seam. Production reads are async; a test
+ * double may answer synchronously — every call is awaited. */
 export interface FingerprintFs {
   readFile: (path: string) => Buffer | string | Promise<Buffer | string>;
   readDir: (path: string) => string[] | Promise<string[]>;
@@ -186,9 +168,9 @@ export function policySurfaceWatchPaths(sandboxRoot: string): string[] {
 }
 
 /**
- * The policy surface that lives OUTSIDE the sandbox root: the
- * LIVE config, wherever the install locator finds it (`$QCR_CONFIG` — on the
- * VM the shipped config home,, whose basename is the operator's
+ * The policy surface that lives OUTSIDE the sandbox root: the LIVE config,
+ * wherever the install locator finds it (`$QCR_CONFIG` — on the VM the
+ * shipped config home, whose basename is the operator's
  * choice — else `<config home>/config.toml`), and the profile directories the
  * loader reads from the homes (`<config home>/profiles`, and `profiles/`
  * beside `$QCR_CONFIG` — the same two places `locateProfile` searches before
@@ -227,11 +209,11 @@ const MAX_HASH_DEPTH = 16;
  * content hash (so a rewritten `scripts/guards.sh` changes `scripts`, not only
  * a planted file — a listing hash would miss the rewrite), or "absent".
  *
- * Async, with a real event-loop turn after every file hashed (H2): the
- * policy surface is the whole of dist/, scripts/, extensions/ and the seeds —
- * hundreds of files, ~14 MB — and hashing it synchronously at every round end
- * held the daemon's loop. The value is the synchronous one, byte for byte:
- * the same reads, the same sorted names, the same strings hashed. */
+ * Async, with a real event-loop turn after every file hashed: the policy
+ * surface is the whole of dist/, scripts/, extensions/ and the seeds —
+ * hundreds of files, ~14 MB — and hashing it synchronously would hold the
+ * daemon's loop. The value equals a synchronous hash byte for byte: the same
+ * reads, the same sorted names, the same strings hashed. */
 async function hashPath(path: string, fs: FingerprintFs, depth: number): Promise<string> {
   try {
     const raw = await fs.readFile(path);
@@ -263,14 +245,14 @@ function errnoCode(err: unknown): string | undefined {
 }
 
 /** Nothing at the path. An error with no errno code (a test double's bare
- * `Error`) keeps the historical reading, absent. */
+ * `Error`) reads as absent. */
 function isMissing(code: string | undefined): boolean {
   return code === undefined || code === "ENOENT" || code === "ENOTDIR";
 }
 
 /** Hash every watched path. Total: a missing or unreadable path is a RECORDED
  * value, never a throw — a fingerprint that fails to compute would silently
- * disable the check, which is the failure mode this whole ticket is about. */
+ * disable the check, which is the failure mode this whole layer exists for. */
 export async function integrityFingerprint(
   paths: readonly string[],
   fs: FingerprintFs,
@@ -302,19 +284,18 @@ export interface RoundIntegrityOpts {
   /** The sandbox root whose policy surface is watched; omitted ⇒
    * git's paths only, which is what a caller with no sandbox has. */
   sandboxRoot?: string | undefined;
-  /** The install env the live config is located from (follow-up);
-   * default `process.env`. Only read when `sandboxRoot` is given — the
-   * located config is part of the policy half. */
+  /** The install env the live config is located from; default
+   * `process.env`. Only read when `sandboxRoot` is given — the located config
+   * is part of the policy half. */
   installEnv?: InstallEnv | undefined;
 }
 
 /**
  * How long a dispatch waits for a round's integrity baseline, and a round end
- * for its re-hash (H2). The hash is async and yields after every file,
- * so the loop is free throughout; this bounds a read that never returns. Past
- * it the round goes UNCHECKED — no baseline at the start, no verdict on the
- * re-hash at the end, a `round_integrity_unchecked` event either way — which
- * is the legacy reading of a fingerprint that cannot be taken. Never a
+ * for its re-hash. The hash is async and yields after every file, so the
+ * loop is free throughout; this bounds a read that never returns. Past it the
+ * round goes UNCHECKED — no baseline at the start, no verdict on the re-hash
+ * at the end, a `round_integrity_unchecked` event either way. Never a
  * held dispatch pump, never a round end that does not finish.
  */
 export const INTEGRITY_BUDGET_MS = 60_000;
@@ -346,17 +327,16 @@ export function integrityChanges(
   after: IntegrityFingerprint,
 ): IntegrityChange[] {
   if (before.digest === after.digest) return [];
-  // Total over a malformed fingerprint rather than throwing on one. That is not
-  // defensiveness for its own sake: it makes the caller's "no baseline ⇒ never
-  // judged" guard LOAD-BEARING instead of a comment in front of an exception
-  // the surrounding try/catch happened to swallow. Remove that guard now and a
-  // round with no baseline reports every watched path as changed — which a test
-  // can see, and which mutation-verification could not see before.
+  // Total over a malformed fingerprint rather than throwing on one. That makes
+  // the caller's "no baseline ⇒ never judged" guard LOAD-BEARING rather than
+  // an exception a surrounding try/catch happens to swallow: without that
+  // guard a round with no baseline reports every watched path as changed,
+  // which a test can see.
   const beforeFiles = before.files ?? {};
   const afterFiles = after.files ?? {};
   // A path only ONE well-formed side watched is watch-set drift, not a change:
-  // the set grows between releases (located config joined it), and a
-  // round dispatched before a deploy and judged after it would otherwise read
+  // the set grows between releases, and a round dispatched before a deploy
+  // and judged after it would otherwise read
   // every newly watched file as "absent → sha256" — a false
   // policy_surface_modified on every round in flight across an undrained
   // deploy (deploy.sh only warns). Unknown is not evidence of a change. A
@@ -525,11 +505,9 @@ export function auditUngatedReviews(
   const head = headSha.toLowerCase();
   const out: UngatedReview[] = [];
   // The migration pre-check posts AT MOST ONE comment per head, so it excuses
-  // at most one unaccounted COMMENT. The first cut excused every COMMENT
-  // forever on any PR that had ever had one — a permanent detection hole opened
-  // by an unbounded flag, the same shape as the claim-without-a-bound
-  // rule. It is still not bounded to the RIGHT one; that limit is recorded in
-  // docs/exec-boundary.md rather than implied away.
+  // at most one unaccounted COMMENT — an unbounded excuse would be a permanent
+  // detection hole. It is not bounded to the RIGHT one; that limit is
+  // recorded in docs/exec-boundary.md rather than implied away.
   let migrationExcusesLeft = traces.migrationPrecheck ? 1 : 0;
   for (const r of reviews) {
     if (!isBotAuthored(r, opts.botLogin, opts.appSlug)) continue;

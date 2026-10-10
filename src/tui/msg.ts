@@ -100,9 +100,8 @@ export class InjectSender implements MessageSender {
         return;
       }
       if (probe.ok && probe.stdout.trim() === "missing") {
-        // Neither pending nor archived — the bridge is the only mover, so
-        // treat a vanished file as consumed-but-unarchived only never; be
-        // honest and keep waiting for .done until the timeout.
+        // Neither pending nor archived: a vanished file is never read as
+        // delivered; keep waiting for .done until the timeout.
       }
     }
     onState("undelivered", `✖ msg ${session} undelivered (session down?)`);

@@ -1,5 +1,5 @@
-// extensions/onboarding.ts — the wizard's pi tool belt over the engine
-//. Driven with a fake engine assembly (fake adapters, temp dirs) —
+// extensions/onboarding.ts — the wizard's pi tool belt over the engine.
+// Driven with a fake engine assembly (fake adapters, temp dirs) —
 // no pi, no docker, no network. The load-bearing property: finish_and_exit
 // NEVER triggers shutdown while anything is red, and on green it writes the
 // first-run marker and shuts down exactly once.

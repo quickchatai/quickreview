@@ -1,17 +1,17 @@
-// Deterministic dispatch (spec §3). No LLM in this path: FIFO by trigger time,
-// at most `daemon.max_concurrent_rounds` rounds in flight, triggers consumed at
-// dispatch, lenses/gates derived from the files API by the ported heuristics.
+// Deterministic dispatch. No LLM in this path: FIFO by trigger time, at most
+// `daemon.max_concurrent_rounds` rounds in flight, triggers consumed at
+// dispatch, lenses/gates derived from the files API by the heuristics.
 //
-// before paying for a re-review round, a SYSTEM-provenance trigger
-// (push / CI / staleness — `pr_state.trigger_provenance`, stamped by
-// statemachine.applyEvent) is run through the delta classifier;
-// an empty/trivial delta since the reviewed head consumes the trigger and
-// upholds the standing verdict instead of dispatching. A human ask (fresh
-// label, fresh team re-review request, author reply) always gets its round.
+// Before paying for a re-review round, a SYSTEM-provenance trigger (push / CI /
+// staleness — `pr_state.trigger_provenance`, stamped by
+// statemachine.applyEvent) is run through the recheck delta classifier; an
+// empty/trivial delta since the reviewed head consumes the trigger and upholds
+// the standing verdict instead of dispatching. A human ask (fresh label, fresh
+// team re-review request, author reply) always gets its round.
 //
 // The round order (types.ts `RoundOrder`) is the daemon↔session contract; the
-// prompt renderer is injected (B4 owns src/templates.ts) so this module has no
-// content dependency.
+// prompt renderer (src/templates.ts) is injected so this module has no content
+// dependency.
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.js";
@@ -116,9 +116,8 @@ import { deltaAsPrFiles, type PrOwnedDelta, type PrOwnedDeltaFile } from "./work
 export interface DispatchAdapter {
   listPrFiles(n: number): Promise<PrFileEntry[] & { truncated?: boolean }>;
   /** Read-only; dispatch needs `base_ref` to keep the base branch fresh, and
-   * `body` as pass-intent's artifact + substance-bar input. `body`
-   * stays optional so legacy fakes and adapters remain valid — absent
-   * body ⇒ the intent lens is simply never selected. */
+   * `body` as pass-intent's artifact + substance-bar input. Absent body ⇒ the
+   * intent lens is never selected. */
   getPr(n: number): Promise<{ base_ref: string; body?: string }>;
   addLabel(n: number, label: string): Promise<GateResult>;
   removeLabel(n: number, label: string): Promise<GateResult>;
@@ -135,10 +134,10 @@ export interface DispatchAdapter {
     },
     options?: { purpose?: "migration_precheck" },
   ): Promise<GateResult>;
-  /** `GET /compare/<base>...<head>` — read-only, the short-circuit's
-   * delta source. Optional: an adapter without it (stub-wired core, legacy
-   * fakes) simply never short-circuits — every re-trigger pays a full round,
-   * exactly the prior behaviour. */
+  /** `GET /compare/<base>...<head>` — read-only, the trivial-delta
+   * short-circuit's delta source. Optional: an adapter without it (stub-wired
+   * core, test fakes) never short-circuits — every re-trigger pays a full
+   * round. */
   compareFiles?(base: string, head: string): Promise<DeltaList>;
 }
 
@@ -148,32 +147,30 @@ export interface DispatchDeps {
   adapter: DispatchAdapter;
   hooks: SessionHooks;
   /**
-   * The profile-selected ecosystem seam: the tier-forcing migration
-   * gate, the round pre-check, and the prompt's gate prose all come off it.
-   * Absent ⇒ Django, the shipped legacy behavior every historical call
-   * site and test means; the production assembly (wire.ts) always passes the
-   * profile's selection explicitly, so a `none` profile really runs none of
-   * the machinery.
+   * The profile-selected ecosystem seam: the tier-forcing migration gate, the
+   * round pre-check, and the prompt's gate prose all come off it. Absent ⇒
+   * Django; the production assembly (wire.ts) always passes the profile's
+   * selection explicitly, so a `none` profile really runs none of the
+   * machinery.
    */
   ecosystem?: Ecosystem;
-  /** B4's template renderer, injected. Default: the order as JSON. The second
-   * argument is the round's memory seed; a renderer that ignores it
-   * renders exactly the legacy prompt. */
+  /** The template renderer, injected. Default: the order as JSON. The second
+   * argument is the round's memory seed; a renderer may ignore it. */
   renderPrompt?: (order: RoundOrder, memory: RoundMemory) => string;
   /**
-   * Round-memory seeding: the assembler the ONE per-round context
-   * call goes through, plus its budget/deadline. Absent ⇒ every round renders
-   * memory-less, which is exactly the prior behaviour — memory is a seasoning
-   * on the prompt, never a precondition for a round.
+   * Round-memory seeding: the assembler the one per-round context call goes
+   * through, plus its budget/deadline. Absent ⇒ every round renders
+   * memory-less — memory is a seasoning on the prompt, never a precondition
+   * for a round.
    */
   memory?: RoundMemorySeed;
   /**
-   * The round's lesson selection (S9a, src/lessonselect.ts). Under
-   * `[memory] delivery = "shadow"` it is started once per round, AFTER the
+   * The round's lesson selection (src/lessonselect.ts). Under
+   * `[memory] delivery = "shadow"` it is started once per round, after the
    * round was handed to its session (seed, prompt and marker done), and
-   * NEVER awaited — nothing the session sees depends on it, and starting it
+   * never awaited — nothing the session sees depends on it, and starting it
    * after the seed keeps its finds out of the seed's way on the server's
-   * one-thread embedder. Under `on` (S9b, `delivering()`) it is AWAITED
+   * one-thread embedder. Under `on` (`delivering()`) it is awaited
    * beside the seed (`select`), no lesson find sent before the seed's search
    * is, and the round's task files, lessons files and prompt are rendered
    * from it; a round discarded before its handoff is `discard`ed from the
@@ -181,14 +178,14 @@ export interface DispatchDeps {
    * swallowed).
    */
   lessons?: RoundLessonHook;
-  /** SETTLED digest carried from the session ledger (B3/B4). When absent,
-   * the digest comes from `ledgerCarry`'s SETTLED items. */
+  /** SETTLED digest carried from the session ledger. When absent, the digest
+   * comes from `ledgerCarry`'s SETTLED items. */
   settledDigest?: (pr: number) => string;
   /**
-   * The PR's mirrored ledger, re-handed in every round order (,
-   * MC-18; src/ledgercarry.ts). Production reads `state/ledgers/pr-<n>.md`
-   * (daemon.ts). Total: undefined carry ⇒ the order has no `ledger_carry`
-   * and renders exactly as before. Absent ⇒ no carry and an empty digest.
+   * The PR's mirrored ledger, re-handed in every round order
+   * (src/ledgercarry.ts). Production reads `state/ledgers/pr-<n>.md`
+   * (daemon.ts). Total: undefined carry ⇒ the order has no `ledger_carry`.
+   * Absent ⇒ no carry and an empty digest.
    */
   ledgerCarry?: (pr: number) => { carry?: LedgerCarry; settled: string };
   worktreeFor?: (pr: number) => string;
@@ -203,8 +200,8 @@ export interface DispatchDeps {
     baseRef: string,
   ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
   /**
-   * Every migration file present on the base branch at a commit.
-   * Read-only git in the base clone, which the worktree preparation has just
+   * Every migration file present on the base branch at a commit. Read-only
+   * git in the base clone, which the worktree preparation has just
    * re-fetched — so `base_sha` really is the branch's tip this round. Optional:
    * absent (stub-wired core, unit tests without git) ⇒ the collision pre-check
    * is skipped and logged, never fatal.
@@ -221,10 +218,10 @@ export interface DispatchDeps {
     sha: string,
     paths: string[],
   ) => Promise<{ login: string | null; name: string; email: string } | null>;
-  /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
-   * conflict resolutions are never trivial), for the short-circuit's
-   * classification. Same seam RecheckDeps carries. Absent ⇒ merges classify by
-   * the ownership rule alone. */
+  /** Hand-resolved merge files between two shas (conflict resolutions are
+   * never trivial), for the trivial-delta short-circuit's classification.
+   * Same seam RecheckDeps carries. Absent ⇒ merges classify by the ownership
+   * rule alone. */
   resolvedFilesInMerges?: (
     from: string,
     to: string,
@@ -232,10 +229,10 @@ export interface DispatchDeps {
   ) => Promise<{ files: string[]; degraded: boolean }>;
   /**
    * The PR-OWNED change between the last reviewed head and this round's head
-   * (`WorktreeManager.prOwnedDelta`): the reviewed head replayed
-   * onto the round's merge base and diffed against the new head. Absent
-   * (stub-wired core, unit tests without git) ⇒ every later round runs in
-   * full, as before — `followup_full_round {reason: "no-adapter"}`.
+   * (`WorktreeManager.prOwnedDelta`): the reviewed head replayed onto the
+   * round's merge base and diffed against the new head. Absent (stub-wired
+   * core, unit tests without git) ⇒ every later round runs in full —
+   * `followup_full_round {reason: "no-adapter"}`.
    */
   prOwnedDelta?: (q: {
     pr: number;
@@ -246,22 +243,21 @@ export interface DispatchDeps {
     /** The merge base the reviewed round recorded, when known. */
     fromMergeBase?: string;
   }) => Promise<PrOwnedDelta>;
-  /** Pin a head a round was dispatched to review against gc (,
-   * `WorktreeManager.pinReviewedHead`), so the next follow-up round can
+  /** Pin a head a round was dispatched to review against gc
+   * (`WorktreeManager.pinReviewedHead`), so the next follow-up round can
    * replay it after a force-push. Best-effort; absent ⇒ nothing pinned. */
   pinReviewedHead?: (pr: number, sha: string) => Promise<boolean>;
   /** `<root>/state/findings` — where round findings records live, read by
    * the follow-up round's prior-findings list. Default: under the
    * sandbox root's state dir. */
   findingsDir?: string;
-  /** The round's integrity baseline, taken before the
-   * session hears about the round. Default: `fingerprintRoundIntegrity` —
-   * real, async reads of the clone, worktree, pi home and sandbox policy
-   * surface (H2). Injected only by a test whose fake clock cannot wait
-   * on real file reads. */
+  /** The round's integrity baseline, taken before the session hears about
+   * the round. Default: `fingerprintRoundIntegrity` — real, async reads of the
+   * clone, worktree, pi home and sandbox policy surface. Injected only by a
+   * test whose fake clock cannot wait on real file reads. */
   integrityFingerprint?: (opts: RoundIntegrityOpts) => Promise<IntegrityFingerprint>;
-  /** How long the baseline may take before the round goes unchecked
-   * (H2). Default INTEGRITY_BUDGET_MS. */
+  /** How long the baseline may take before the round goes unchecked.
+   * Default INTEGRITY_BUDGET_MS. */
   integrityBudgetMs?: number;
   /**
    * Unpack the third-party sources this PR touches and return the rendered
@@ -269,7 +265,7 @@ export interface DispatchDeps {
    * Must never throw or hang past its own budget. Absent ⇒ no note.
    */
   dependencySources?: (worktreePath: string, files: PrFileEntry[]) => Promise<string>;
-  /** Slack announcer (S4). Optional: absent ⇒ no Slack at all, which
+  /** Slack announcer. Optional: absent ⇒ no Slack at all, which
    * is what the stub-wired daemon core and every non-Slack test see. */
   announce?: DispatchAnnouncer;
   /** Profile lens-heuristics extension: the selected repo profile's
@@ -322,7 +318,7 @@ export function queuedInOrder(store: StateStore): PrStateRow[] {
     });
 }
 
-/** Review rounds in flight, for the case writer (H3): rounds running
+/** Review rounds in flight, for the case writer: rounds running
  * (a provisional one included — its seed is about to read memory) and PRs
  * QUEUED that the pump would dispatch — not paused, not held FAILED_LOUD
  * (those wait for the operator or their retry time, not for a pump tick),
@@ -362,7 +358,7 @@ function alreadyConsumed(err: unknown): boolean {
 }
 
 /**
- * The round's ecosystem pre-check (behind the seam), run once
+ * The round's ecosystem pre-check (behind the ecosystem seam), run once
  * per round after the worktree is prepared and BEFORE the session is handed
  * the order.
  *
@@ -377,8 +373,8 @@ function alreadyConsumed(err: unknown): boolean {
  * lost to the pre-check.
  *
  * A DEGRADED check (Django only: the check exists but could not run while the
- * PR touches migrations) must never be quieter than no check at all (
- * acceptance: "more reliable, never quieter"): the caller renders an explicit
+ * PR touches migrations) must never be quieter than no check at all ("more
+ * reliable, never quieter"): the caller renders an explicit
  * "the pre-check did not run — check collisions yourself" note into the round
  * prompt, which is what conditionally un-muzzles pass-data-safety's withdrawn
  * finding class for exactly that round (see src/include.ts,
@@ -441,8 +437,8 @@ async function ecosystemPreCheck(
 }
 
 /**
- * First-party directive detection + the deterministic escalation-mention pick
- *, run per round after the worktree is prepared. Pure path predicate
+ * First-party directive detection + the deterministic escalation-mention pick,
+ * run per round after the worktree is prepared. Pure path predicate
  * over the files API (`isFirstPartyDirectivePath`), plus one read-only git log
  * at the round's MERGE BASE — pre-PR history, so the PR's own commits never
  * elect the PR author as their own approver. The pick is logged
@@ -454,15 +450,15 @@ async function directiveEscalationFor(
   args: { pr: number; files: PrFileEntry[]; merge_base: string; base_sha: string },
 ): Promise<{ files: string[]; mention: string } | undefined> {
   const log = deps.log ?? (() => {});
-  // the vocabulary is the compiled-in default EXTENDED by
-  // [review.directives] — extension only, so default behaviour is unchanged.
+  // The vocabulary is the compiled-in default extended by [review.directives]
+  // — extension only, never a narrowing.
   const vocab = directiveVocabulary(deps.cfg.review.directives);
   const directiveFiles = args.files
     .filter((f) => isFirstPartyDirectivePath(f.filename, vocab))
     .map((f) => f.filename);
   if (directiveFiles.length === 0) return undefined;
-  // an unset [review] escalation_mention_default falls back to the
-  // owner's GitHub login — the config default itself stays "".
+  // An unset [review] escalation_mention_default falls back to the owner's
+  // GitHub login — the config default itself stays "".
   const fallback = deps.cfg.review.escalation_mention_default || deps.cfg.owner.github_login;
   const sha = args.merge_base || args.base_sha;
   let author: { login: string | null; name: string; email: string } | null = null;
@@ -499,34 +495,31 @@ async function directiveEscalationFor(
  * breaks the contract, and the outcome is identical either way: log the gap,
  * tell the memory health monitor (`seed.onSeeded`), dispatch memory-less.
  *
- * There is no per-round memory anomaly any more (S1). The old
- * `round_memory_degraded` was never a WAKE kind, so its "alert" reached
- * nobody for five weeks; the monitor (src/memory/health.ts) now owns telling
- * a person, on state transitions rather than once per round. The
- * `round_memory_seeded` event stays — it is the per-round record, and it is
- * what the monitor is fed from.
+ * There is no per-round memory anomaly: the health monitor
+ * (src/memory/health.ts) owns telling a person, on state transitions rather
+ * than once per round. The `round_memory_seeded` event is the per-round
+ * record, and it is what the monitor is fed from.
  */
 async function seedRoundMemory(
   deps: DispatchDeps,
   order: RoundOrder,
   files: PrFileEntry[],
-  /** Told once the round's context search was issued (S9b — the
-   * lesson finds under `on` wait for it). Absent ⇒ the assembler is asked
-   * exactly as before. */
+  /** Told once the round's context search was issued (the lesson finds
+   * under `delivery = "on"` wait for it). Optional. */
   onContextSent?: () => void,
 ): Promise<RoundMemory> {
   const seed = deps.memory;
   if (!seed) return MEMORY_LESS;
   const log = deps.log ?? (() => {});
   const query = roundContextQuery({ title: order.title, files });
-  // The session's own recall searches for the same thing (S5).
+  // The session's own recall searches for the same thing.
   try {
     seed.publishQuery?.(order.pr, query);
   } catch (err) {
     log(`dispatch: #${order.pr} recall hint not published (ignored)`, err);
   }
   const timeoutMs = seed.timeoutMs ?? ROUND_CONTEXT_DEFAULTS.timeoutMs;
-  // H3: the seed's search waits — inside its own budget, never past
+  // The seed's search waits — inside its own budget, never past
   // it — until the case writer's last batch is estimated done embedding, so
   // it is not queued behind those embeddings on the one-thread embedder.
   const activity = seed.activity;
@@ -572,18 +565,17 @@ async function seedRoundMemory(
     degraded: mem.degraded,
     gaps: mem.gaps,
     ms: mem.ms,
-    // H3: how long the search waited for the case writer's
-    // embedding tail, inside `ms` (absent when no tracker is wired).
+    // How long the search waited for the case writer's embedding tail,
+    // inside `ms` (absent when no tracker is wired).
     ...(mem.quiet_wait_ms !== undefined ? { quiet_wait_ms: mem.quiet_wait_ms } : {}),
   });
   if (previousHead && previousHead.head_chars > 0) {
-    // EMPTY IS NOT DEGRADED made a genuinely empty pinned area a
-    // healthy answer — which is right for a fresh install and wrong for a
-    // container recreated without its data volume, where the same answer
-    // used to be loud. One anomaly on the transition itself restores that
-    // signal deliberately; the next round's baseline is this empty row, so
-    // it cannot repeat. An owner who unpinned their last standing instruction
-    // sees it once too, and knows why.
+    // Empty is not degraded: a genuinely empty pinned area is a healthy
+    // answer — right for a fresh install, wrong for a container recreated
+    // without its data volume. One anomaly on the transition itself carries
+    // that signal; the next round's baseline is this empty row, so it cannot
+    // repeat. An owner who unpinned their last standing instruction sees it
+    // once too, and knows why.
     deps.store.logAnomaly(
       "pinned_head_emptied",
       order.pr,
@@ -609,7 +601,7 @@ async function seedRoundMemory(
 }
 
 /**
- * Open the round's MEMORY WINDOW (F2, `RoundMemorySeed.activity`):
+ * Open the round's memory window (`RoundMemorySeed.activity`):
  * from just before the seed until the round's lesson selection has taken
  * over, the case writer starts no batch, so no case embedding is queued in
  * front of the round's own reads on the server's one-thread embedder. Returns
@@ -637,8 +629,8 @@ function openMemoryWindow(
   }
 }
 
-/** `[memory] delivery = "on"` with a hook that can deliver (S9b).
- * Total: a throwing hook is "not delivering" — the S9a path. */
+/** `[memory] delivery = "on"` with a hook that can deliver. Total: a
+ * throwing hook is "not delivering" — the shadow path. */
 function lessonsDelivering(
   deps: DispatchDeps,
   log: (msg: string, extra?: unknown) => void,
@@ -675,10 +667,10 @@ async function selectRoundLessons(
 }
 
 /**
- * Hand the round's delivered lessons to its prompt (S9b): write the
+ * Hand the round's delivered lessons to its prompt: write the
  * lessons files (the validator's, and each lens the session may add) and
  * return the seed carrying the delivery — or the seed untouched when nothing
- * was selected, so the prompt keeps today's bleed rule verbatim. Total: a
+ * was selected, so the prompt keeps the standard bleed rule verbatim. Total: a
  * lessons file that cannot be written is simply not named in the prompt.
  */
 function deliverRoundLessons(
@@ -719,7 +711,7 @@ function logLessonDelivery(store: StateStore, roundId: number, d: RoundLessonDel
   });
 }
 
-/** The short-circuit's answer for one system-provenance re-trigger. */
+/** The trivial-delta short-circuit's answer for one system-provenance re-trigger. */
 type ShortCircuit =
   | { skip: false }
   | {
@@ -730,8 +722,8 @@ type ShortCircuit =
     };
 
 /**
- * classify the delta (last reviewed head → current head) for a
- * SYSTEM-provenance re-trigger, using the ONE classifier
+ * Classify the delta (last reviewed head → current head) for a
+ * SYSTEM-provenance re-trigger, using the one recheck classifier
  * (`recheck.classifyDelta`) — never a copy. Every uncertainty resolves to
  * "run the full round": an unknown head, a missing compare seam, or a failed
  * read must never quietly swallow a review.
@@ -746,16 +738,16 @@ async function classifySystemRetrigger(
   if (!row.head_sha) return { skip: false };
   if (row.head_sha === mark.head_sha) {
     // Same head. An author reply pending on the mark is a person's ask (the
-    // rule guard 2 reads) → full round; anything else is the #5308 r2 case — a
-    // full round whose output posting-time guard 2 would throw away.
+    // rule guard 2 reads) → full round; anything else would be a full round
+    // whose output posting-time guard 2 throws away.
     if (hasNewEvidence(mark, row.head_sha)) return { skip: false };
     return { skip: true, reason: "unchanged-head", class: "empty", files: [] };
   }
   if (!deps.adapter.compareFiles) return { skip: false };
   try {
     const delta = await deps.adapter.compareFiles(mark.head_sha, row.head_sha);
-    // The union with the reviewed head's ownership (selfscan 8dd186e2): a
-    // push reverting a reviewed file is the PR's own change, not a base merge.
+    // The union with the reviewed head's ownership: a push reverting a
+    // reviewed file is the PR's own change, not a base merge.
     // A truncated listing leaves ownership unknown (undefined).
     const prFiles = await reviewedOwnership(
       deps.adapter,
@@ -770,7 +762,7 @@ async function classifySystemRetrigger(
       resolvedFiles = new Set(res.files);
       if (res.degraded) {
         // Same bar as recheck.ts: a degraded merge-verify keeps the delta-only
-        // classification but is never silently quieter (the owner, 2026-08-19).
+        // classification but is never silently quieter.
         deps.store.logEvent("recheck_merge_verify_degraded", row.number, {
           from: mark.head_sha,
           to: row.head_sha,
@@ -902,16 +894,13 @@ function raisableFrom(lens: string, tier: PassTier): string[] {
 }
 
 /**
- * The tier the round's validator runs at (amended).
- *
- * raised `pass-validate` to the round's highest lens tier, because its
- * veto killed a finding outright: a cheaper model must never delete what a
- * more expensive one found. changed what a veto IS — a finding the
+ * The tier the round's validator runs at: its own tier, the configured
+ * `validate_tier` under the profile's `min_tier` for it, whatever tier or
+ * effort any lens runs at. It is never raised to match a lens: a finding the
  * validator cannot stand behind is kept as `doubted` in the findings record
- * (never posted, shown in the TUI), not discarded — so the raise no longer
- * protects anything and is gone: the validator runs at its OWN tier, the
- * configured `validate_tier` under the profile's `min_tier` for it, whatever
- * tier or effort any lens runs at. `lensTiers` is deliberately not an input.
+ * (never posted, shown in the TUI), not discarded, so a cheaper validator
+ * cannot make a stronger lens's finding vanish. Lens tiers are deliberately
+ * not an input.
  */
 export function validatorTier(cfg: Pick<Config, "lenses" | "models">): PassTier {
   return flooredTier(cfg.lenses, VALIDATE_PASS, cfg.models.validate_tier);
@@ -954,8 +943,8 @@ export function buildPassPlan(
   cfg: Config,
   files: PrFileEntry[],
   intent?: { title?: string | null; body?: string | null },
-  /**: whose tier-forcing gate applies. Default Django — the shipped
-   * pre-seam behavior; `none` never forces sol-med off a migrations path. */
+  /** Whose tier-forcing gate applies. Default Django; `none` never forces
+   * sol-med off a migrations path. */
   ecosystem: Ecosystem = DJANGO_ECOSYSTEM,
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension,
@@ -965,10 +954,10 @@ export function buildPassPlan(
   /** The linters and formatters a CI job of the repo runs (src/lintconfig.ts);
    * empty or absent ⇒ no lint-conformance row. */
   ciLinters: readonly CiLinter[] = [],
-  /**: `tierFiles` — the files the round's default TIER is chosen
-   * from, when the plan is built over fewer files than the PR (a follow-up
-   * round plans from the delta, but a small fix push keeps the PR's tier and
-   * its migration floor). Absent ⇒ `files`, exactly as before. */
+  /** `tierFiles` — the files the round's default TIER is chosen from, when
+   * the plan is built over fewer files than the PR (a follow-up round plans
+   * from the delta, but a small fix push keeps the PR's tier and its
+   * migration floor). Absent ⇒ `files`. */
   opts: { tierFiles?: PrFileEntry[] } = {},
 ): PassPlan {
   const tierBasis = opts.tierFiles ?? files;
@@ -977,11 +966,11 @@ export function buildPassPlan(
     smallDiffLines: cfg.models.small_diff_lines,
   });
   const risk = new Set(cfg.models.risk_passes);
-  // the profile's switch for one lens — explicit `enabled` wins,
+  // The profile's switch for one lens — explicit `enabled` wins,
   // otherwise the `[review]` lever that gates it (true for an ungated lens).
   const on = (lens: string, lever = true): boolean => lensEnabled(cfg.lenses, lens, lever);
-  // The owner's 2026-10-03 planning decision: the plan explains WHY each
-  // lens was chosen — the path-shaped lenses included, not only sub-lenses.
+  // The plan explains why each lens was chosen — the path-shaped lenses
+  // included, not only sub-lenses.
   const reasons0 = new Map<string, string>();
   const selected0 = selectLenses(
     files,
@@ -995,7 +984,7 @@ export function buildPassPlan(
     reasons0,
   );
   // Sub-lenses ride after the path-selected lenses, each with the reason its
-  // trigger fired (benchmark 2026-09-26; `[review] sublenses`).
+  // trigger fired (`[review] sublenses`).
   const sub = selectSubLenses(files, intent).filter(
     (s) => on(s.lens, cfg.review.sublenses) && !selected0.includes(s.lens),
   );
@@ -1003,9 +992,9 @@ export function buildPassPlan(
     ...reasons0,
     ...sub.map((s) => [s.lens, s.why] as [string, string]),
   ]);
-  // existing tests are consumers of every code change, and the PR's
-  // own tests are claims about the code — one lens reads both.
-  // The loosened-test hint (owner decision 2026-10-03): weakened assertions
+  // Existing tests are consumers of every code change, and the PR's own
+  // tests are claims about the code — one lens reads both.
+  // The loosened-test hint: weakened assertions
   // found deterministically in the PR's test files are handed to the lens.
   const loosened = cfg.review.loosened_test_hint ? detectLoosenedAssertions(files) : [];
   const tests =
@@ -1025,7 +1014,7 @@ export function buildPassPlan(
         (loosened.length ? `; and ${loosenedReason(loosened)}` : ""),
     );
   for (const l of quality) whyOf.set(l, qualityReason(files, cfg.review.quality_min_added_lines));
-  // a guide the repo writes wins; the profile's drafted guide is
+  // A guide the repo writes wins; the profile's drafted guide is
   // the standard only when the repo writes none.
   const profileGuide = cfg.lenses?.[STYLE_PASS]?.guide;
   const style =
@@ -1041,7 +1030,7 @@ export function buildPassPlan(
         ? `the repo's written style guide: ${styleGuide.join(", ")}`
         : `this repo's profile style guide (\`${profileGuide!.file}\`, in your instructions) — the repo writes none of its own`,
     );
-  // Freeze fixes 2: lint conformance only where a CI job runs a linter whose
+  // Lint conformance only where a CI job runs a linter whose
   // rules cover a changed file — the plan names the tools and their CI files.
   const coveredLinters = lintersForFiles(
     ciLinters,
@@ -1093,14 +1082,14 @@ export function buildPassPlan(
   // or floored by the profile.
   const sweepOn = on(SWEEP_PASS, cfg.review.sweep) && !skip.has(SWEEP_PASS);
   const sweepTier = flooredTier(cfg.lenses, SWEEP_PASS, pins[SWEEP_PASS] ?? "terra-med");
-  // the validator runs at its own tier — never raised to match a
-  // lens, pinned or not.
+  // The validator runs at its own tier — never raised to match a lens,
+  // pinned or not.
   const validate = validatorTier(cfg);
   const pass_plan = lenses.map((lens): PassPlanEntry => {
     const pinned = lens === VALIDATE_PASS || risk.has(lens) || pins[lens] !== undefined;
     const tier: PassTier = lens === VALIDATE_PASS ? validate : tierOf(lens);
-    // Every planned lens says why (owner decision 2026-10-03): the signal
-    // that fired, else the lens's documented planning rule.
+    // Every planned lens says why: the signal that fired, else the lens's
+    // documented planning rule.
     const why = whyOf.get(lens) ?? (lens !== VALIDATE_PASS ? LENS_PLANNING[lens]?.when : undefined);
     return {
       lens,
@@ -1110,11 +1099,11 @@ export function buildPassPlan(
       ...(why !== undefined ? { why } : {}),
     };
   });
-  // on a VERY large change pass-baseline — one row, and the round's
+  // On a very large change pass-baseline — one row, and the round's
   // critical path once the fan-out launches in one turn — is planned as 2–3
   // rows, each STARTING from one group of the change's files; every row keeps
   // the whole PR as its charter (`[review] baseline_split_lines`, 0 = never).
-  // At or under the threshold nothing here runs: the plan is as before.
+  // At or under the threshold nothing here runs.
   const baselineAt = pass_plan.findIndex((p) => p.lens === BASELINE_PASS);
   const baselineSplit =
     baselineAt < 0 ? [] : baselineGroups(files, cfg.review.baseline_split_lines ?? 0);
@@ -1131,7 +1120,7 @@ export function buildPassPlan(
       })),
     );
   }
-  // The sweep (benchmark 2026-09-26; `[review] sweep`): one row per group of
+  // The sweep (`[review] sweep`): one row per group of
   // changed files, at the cheapest tier — its job is attention, line by line,
   // not deep reasoning — inserted before the validator (appended when a
   // profile switched the validator off: the validator is always last or
@@ -1146,7 +1135,7 @@ export function buildPassPlan(
       cfg.review.sweep_wide_files,
     );
     sweep_unswept = unswept;
-    // (H2, `[review] sweep_light_tier`): a row holding no production
+    // `[review] sweep_light_tier`: a row holding no production
     // code — tests, prose, config/data only — runs at the light tier when it
     // is below the sweep's own (the profile's floor still applies).
     const light = cfg.review.sweep_light_tier
@@ -1170,7 +1159,7 @@ export function buildPassPlan(
     const at = pass_plan.at(-1)?.lens === VALIDATE_PASS ? pass_plan.length - 1 : pass_plan.length;
     pass_plan.splice(at, 0, ...rows);
   }
-  // The behaviour-delta lens (freeze fixes 2): one row per group of files the
+  // The behaviour-delta lens: one row per group of files the
   // PR modifies or deletes code in, at the round's tier — comparing base and
   // head is reasoning, not attention — inserted before the validator.
   if (on(BEHAVIOUR_DELTA_PASS, cfg.review.behaviour_delta) && !skip.has(BEHAVIOUR_DELTA_PASS)) {
@@ -1214,8 +1203,8 @@ const CHEAP_LAST_PASSES: ReadonlySet<string> = new Set([
  * The session launches a turn's rows in table order, and the subagent glue
  * (extensions/subagents.ts) runs them under a process-wide cap in that order,
  * so a 15–27 row plan runs in waves: a slow row listed late starts in the
- * last wave and sets the round's critical path (live rounds 2026-10-09:
- * pass-baseline, sol-high sweep and behaviour-delta rows). The order:
+ * last wave and sets the round's critical path (typically pass-baseline,
+ * sol-high sweep and behaviour-delta rows). The order:
  * pass-baseline; then by tier, highest first; within a tier the risk passes,
  * then the focused rows (behaviour-delta, then sweep) by the changed lines
  * their focus covers, larger first, then every other lens, then the cheap
@@ -1260,8 +1249,8 @@ export function slowestFirst(
   return keyed.map((e) => e.p);
 }
 
-/** Why a non-first round runs as today's full re-review: every
- * doubt is a full round, never a quieter one. */
+/** Why a non-first round runs as a full re-review: every doubt is a full
+ * round, never a quieter one. */
 export type FollowUpFullReason =
   | "follow_up_full"
   | "no-reviewed-head"
@@ -1284,19 +1273,19 @@ export interface FollowUpDecision {
   /** The full plan's files left over the per-round sweep cap — carried with
    * `sweepPlan`, so the sweep is told what it does not cover, as round 1 is. */
   sweepUnswept?: string[];
-  /** (`follow_up_extent = "session"`): the full delta plan's rows the
+  /** `follow_up_extent = "session"`: the full delta plan's rows the
    * lean core left out — per-file sweep rows, quality and style lenses —
    * offered to the session as optional rows. */
   optionalPlan?: PassPlanEntry[];
 }
 
 /**
- * Decide whether a non-first round is a FOLLOW-UP round (,
- * docs/follow-up-rounds.md), and plan it. Total: any doubt — the knob, no
+ * Decide whether a non-first round is a FOLLOW-UP round
+ * (docs/follow-up-rounds.md), and plan it. Total: any doubt — the knob, no
  * reviewed-head mark, no git seam, a delta git could not compute, a delta
  * above `follow_up_max_delta_ratio` of the PR's diff lines, a delta plan
- * without pass-baseline — answers `{full: reason}`, and the caller runs
- * today's full re-review.
+ * without pass-baseline — answers `{full: reason}`, and the caller runs a
+ * full re-review.
  *
  * The plan is built over the DELTA's files with the intent text arms off
  * (the title and body did not change since the last review), its tier chosen
@@ -1315,7 +1304,7 @@ export async function decideFollowUp(
     standing: string | null;
     /** An approval-withheld mark stood when this round was picked up: the
      * standing APPROVE never reached GitHub, so it is not an approval the
-     * sweep may rely on (withheld approval is an approval to be). */
+     * sweep may rely on (a withheld approval is an approval yet to be posted). */
     approvalWithheld?: boolean;
     ecosystem: Ecosystem;
     styleGuide: readonly string[];
@@ -1334,7 +1323,7 @@ export async function decideFollowUp(
   // The merge base the reviewed head's round recorded (the latest live round
   // dispatched to that head, a verdicted one first): a base force-pushed
   // since then is caught by `prOwnedDelta` as `base-rewound`. Unknown (a
-  // round before the column) ⇒ only the base-tip check runs, as before.
+  // round recorded before the column existed) ⇒ only the base-tip check runs.
   const atMark = store
     .roundsFor(args.pr)
     .filter((r) => r.backfilled === 0 && r.head_sha === args.markHead && r.merge_base)
@@ -1449,8 +1438,8 @@ export function planFollowUp(
     { tierFiles: args.files },
   );
   // The migration gate and the pre-check read the WHOLE PR, and their notes
-  // name pass-data-safety (a degraded pre-check un-muzzles that
-  // lens, never goes quiet). A PR whose migrations sit outside the delta
+  // name pass-data-safety (a degraded pre-check un-muzzles that lens, never
+  // goes quiet). A PR whose migrations sit outside the delta
   // still gets the lens the gate names: the full plan's row rides the delta
   // plan, before the validator.
   if (
@@ -1473,9 +1462,9 @@ export function planFollowUp(
   // pass-baseline reads it whole, so the per-file sweep rows add agents and
   // no coverage, and the quality and style lenses — which judged the PR in
   // round 1 — move to the addable list rather than leaving the round.
-  // under `follow_up_extent = "session"` EVERY follow-up round plans
-  // the lean core, and the rows it leaves out are offered as optional rows
-  // for the session to run, partly run or skip — the 150-line rule is the
+  // Under `follow_up_extent = "session"` every follow-up round plans the
+  // lean core, and the rows it leaves out are offered as optional rows for
+  // the session to run, partly run or skip — the small-delta threshold is the
   // session's call. Under `"rules"`, the lean plan at or under the threshold.
   let optionalPlan: PassPlanEntry[] = [];
   if ((cfg.review.follow_up_extent ?? "rules") === "session") {
@@ -1591,11 +1580,6 @@ export function roundDeltaOf(d: FollowUpDecision, patchFile: string): RoundDelta
   };
 }
 
-/** The order the pre-approval sweep's task files render from: the
- * follow-up order minus its follow-up fields, planned with the whole PR's
- * full plan — exactly the order a full round would hand its lenses. Pure;
- * the daemon and the bench's follow-up replay render the sweep's tasks from
- * it alike. */
 /** The order the follow-up round's OPTIONAL rows render their task files
  * from: the follow-up order itself — the change since the last
  * review stays their scope — with `optional_plan` as its plan. Prior
@@ -1610,6 +1594,11 @@ export function optionalOrderOf(order: RoundOrder, optionalPlan: PassPlanEntry[]
   };
 }
 
+/** The order the pre-approval sweep's task files render from: the
+ * follow-up order minus its follow-up fields, planned with the whole PR's
+ * full plan — exactly the order a full round would hand its lenses. Pure;
+ * the daemon and the bench's follow-up replay render the sweep's tasks from
+ * it alike. */
 export function sweepOrderOf(order: RoundOrder, sweepPlan: PassPlanEntry[]): RoundOrder {
   const {
     scope: _s,
@@ -1668,9 +1657,9 @@ export function buildRoundOrder(args: {
    * artifact and the substance-bar input. Absent (stub-wired core, unit tests
    * without an adapter body) ⇒ the intent lens is never selected. */
   prBody?: string;
-  /**: the round's ecosystem. Absent ⇒ Django (pre-seam behavior). */
+  /** The round's ecosystem. Absent ⇒ Django. */
   ecosystem?: Ecosystem;
-  /** exact predecessor identity for a pre-fanout recovery successor. */
+  /** Exact predecessor identity for a pre-fanout recovery successor. */
   recovery?: RoundRecoveryContext;
   /** Profile lens-heuristics extension; absent ⇒ generic core. */
   heuristics?: HeuristicsExtension;
@@ -1680,22 +1669,22 @@ export function buildRoundOrder(args: {
   styleGuide?: readonly string[];
   /** The linters a CI job of the repo runs (src/lintconfig.ts). */
   ciLinters?: readonly CiLinter[];
-  /** The plan, already built by the caller (dispatch builds it ONCE
-   * and records the same plan on the round row). Absent ⇒ built here from
-   * `files`, the PR body, the style guide and the linters, as before. */
+  /** The plan, already built by the caller (dispatch builds it once and
+   * records the same plan on the round row). Absent ⇒ built here from
+   * `files`, the PR body, the style guide and the linters. */
   plan?: PassPlan;
-  /** A FOLLOW-UP round's facts: the delta, the prior findings note,
-   * the owed sweep's plan. The coverage check then holds the round to the
-   * delta's files. Absent ⇒ the order is exactly as before. */
+  /** A FOLLOW-UP round's facts: the delta, the prior findings note, the owed
+   * sweep's plan. The coverage check then holds the round to the delta's
+   * files. Absent ⇒ a full round's order. */
   followUp?: {
     delta: RoundDelta;
     deltaFiles: PrFileEntry[];
     priorFindingsNote: string;
-    /** The listed prior findings (A6): each is assigned to the plan
-     * row that owns it and written into that row's task file. Absent (the
-     * list could not be assembled) ⇒ the session assigns them, as before. */
+    /** The listed prior findings: each is assigned to the plan row that owns
+     * it and written into that row's task file. Absent (the list could not be
+     * assembled) ⇒ the session assigns them. */
     priorFindings?: Pick<PriorFindingsList, "findings" | "round_no">;
-    /**: the optional rows the session decides (`optional_plan`). */
+    /** The optional rows the session decides (`optional_plan`). */
     optionalPlan?: PassPlanEntry[];
     sweepPlan?: PassPlanEntry[];
     sweepUnswept?: string[];
@@ -1714,7 +1703,7 @@ export function buildRoundOrder(args: {
       args.ciLinters ?? [],
     );
   const headSha = args.tree?.head_sha || args.row.head_sha;
-  // an addable lens the profile floors above the add rule's own
+  // An addable lens the profile floors above the add rule's own
   // variant is named with its variant in the prompt.
   const addable_tiers = Object.fromEntries(
     addable_lenses
@@ -1743,7 +1732,7 @@ export function buildRoundOrder(args: {
     ...(isDefaultPosting(args.cfg.posting) ? {} : { posting_policy: args.cfg.posting }),
     // `[review] render_outputs` (src/reviewrender.ts): the round renders its
     // posted review from the findings record. Absent ⇒ the session writes
-    // both files itself and step 6 renders as before.
+    // both files itself.
     ...(args.cfg.review?.render_outputs ? { render_outputs: true } : {}),
     // `[review] dedup_merge` (src/templates.ts renderDedupNote): only when
     // the plan has a validator to hand the groups to.
@@ -1760,7 +1749,7 @@ export function buildRoundOrder(args: {
     ...(() => {
       if (!args.cfg.review?.coverage_check || !pass_plan.some((p) => p.lens === "pass-sweep"))
         return {};
-      // a follow-up round's coverage is the delta's — the rest of
+      // A follow-up round's coverage is the delta's — the rest of
       // the PR was covered by the round that reviewed it.
       const coverage_files = coverageEligible(args.followUp?.deltaFiles ?? args.files);
       return coverage_files.length > 0 ? { coverage_files } : {};
@@ -1779,8 +1768,8 @@ export function buildRoundOrder(args: {
     ...(args.firstPartyDirectives !== undefined
       ? { first_party_directives: args.firstPartyDirectives }
       : {}),
-    // absent unless escalation is enabled AND session judgement is
-    // on, so the default install's order (and prompt) is unchanged.
+    // Absent unless escalation is enabled AND session judgement is on, so the
+    // default install's order (and prompt) carries no escalation targets.
     ...((): { escalation_targets?: string[] } => {
       const targets = promptTargetsFor(args.cfg.escalation);
       return targets ? { escalation_targets: targets } : {};
@@ -1862,7 +1851,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
     deps.ledgerCarry ?? ((): { carry?: LedgerCarry; settled: string } => ({ settled: "" }));
   const log = deps.log ?? (() => {});
 
-  // Deploy-window drain (2026-08-25): the pump starts NOTHING while draining.
+  // Deploy-window drain: the pump starts NOTHING while draining.
   // In-flight rounds keep running to their natural end; queued rows simply
   // wait and dispatch when the drain lifts. The refusal stays quiet at the
   // 15s tick — the drain itself is loud (status.json, qcr status, the board
@@ -1904,36 +1893,34 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       continue;
     }
     let provisionalRoundId: number | undefined;
-    // F2: the round's memory window (opened before the seed, below).
+    // The round's memory window (opened before the seed, below).
     let endMemoryWindow: () => void = () => {};
     try {
       // Backfilled (imported) rounds are excluded: a historical review must
       // never flip a still-open PR's next live round to "re-review", whose
-      // template references a settled digest that never existed (§2.1).
+      // template references a settled digest that never existed.
       const priorRounds = store.priorRoundCount(row.number);
       const roundType = roundTypeFor(row, priorRounds);
 
-      // guard 2, daemon half: a tick with nothing new to look at is a
+      // Guard 2, daemon half: a tick with nothing new to look at is a
       // no-op. The triggers are still consumed (leaving them would re-queue the
       // PR on the next reconcile, forever) and the PR returns to the state its
       // last verdict put it in — that verdict still stands.
       //
-      // The mark is read through the ONE standing-review interpretation
-      //. #5409 round 18: the shell had stamped `posted_event =
-      // REQUEST_CHANGES` at this head but the watcher never enriched
-      // `verdict`, this code read `verdict` alone, saw null, and paid for a
-      // full round whose review posting guard 2 was guaranteed to refuse.
-      // Guard 2 keys on head + author reply and nothing else, so THAT is the
-      // test here — provenance (a label, a team re-request, a reconcile
-      // re-derivation) is a scheduling signal and never widens the posting
-      // boundary. If the standing verdict cannot be read off the mark
-      // (a COMMENT-only row), no round runs either — guard 2 would still
-      // refuse it — but nothing is guessed: the PR lands in `tracked` with a
-      // precise anomaly instead of an invented verdict.
+      // The mark is read through the one standing-review interpretation
+      // (standing-review.ts): the shell stamps `posted_event` and the watcher
+      // may never enrich `verdict`, so `verdict` alone can read null for a
+      // standing REQUEST_CHANGES. Guard 2 keys on head + author reply and
+      // nothing else, so THAT is the test here — provenance (a label, a team
+      // re-request, a reconcile re-derivation) is a scheduling signal and
+      // never widens the posting boundary. If the standing verdict cannot be
+      // read off the mark (a COMMENT-only row), no round runs either — guard
+      // 2 would still refuse it — but nothing is guessed: the PR lands in
+      // `tracked` with a precise anomaly instead of an invented verdict.
       const mark = store.reviewedHead(row.number);
       const standingInfo = standingReview(mark);
       const standing = standingInfo.kind === "decided" ? standingInfo.verdict : null;
-      // a withholding standing at THIS head is new evidence of its
+      // A withholding standing at THIS head is new evidence of its
       // own. The last round decided "no blockers, approval withheld for CI",
       // and something re-queued the PR — CI going green (cigate.ts) or a
       // person. Skipping here would leave that PR waiting for a verdict that is
@@ -1943,8 +1930,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       const withheldHere = withheld?.head_sha === row.head_sha;
       if (cfg.guards.skip_unchanged_head && !withheldHere && !hasNewEvidence(mark, row.head_sha)) {
         // Captured BEFORE the transition below clears them: current PR state
-        // is not historical evidence (#5409's provenance was overwritten by
-        // the failure that followed).
+        // is not historical evidence (a later failure overwrites the
+        // provenance).
         const decision = {
           stage: "dispatch",
           head_sha: row.head_sha,
@@ -1952,7 +1939,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           trigger_provenance: row.trigger_provenance,
           standing_verdict: standing,
           standing_source: standingInfo.kind === "decided" ? standingInfo.source : null,
-          // Kept for readers of the legacy payload shape.
+          // Duplicate of standing_verdict, for readers of the older payload shape.
           last_verdict: standing,
           reviewed_at: mark!.reviewed_at,
           mark: snapshotMark(mark!),
@@ -1983,14 +1970,14 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         continue;
       }
 
-      // a SYSTEM-provenance re-trigger (push / CI / staleness at an
-      // existing trigger state — never a fresh human ask, which applyEvent
-      // stamps "human") consults the delta classifier before paying
-      // for a full round. Empty/trivial delta since the reviewed head ⇒
-      // consume the trigger and leave state as an uphold would; significant ⇒
-      // the full round below runs as today. First reviews never short-circuit,
-      // and a withheld approval at this head is its own new evidence
-      //: that round must run so the approval can finally post.
+      // A SYSTEM-provenance re-trigger (push / CI / staleness at an existing
+      // trigger state — never a fresh human ask, which applyEvent stamps
+      // "human") consults the recheck delta classifier before paying for a
+      // full round. Empty/trivial delta since the reviewed head ⇒ consume the
+      // trigger and leave state as an uphold would; significant ⇒ the full
+      // round below runs. First reviews never short-circuit, and a withheld
+      // approval at this head is its own new evidence: that round must run so
+      // the approval can finally post.
       if (
         roundType !== "first" &&
         (standing === "APPROVE" || standing === "REQUEST_CHANGES") &&
@@ -2007,8 +1994,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             continue;
           }
           if (row.head_sha !== mark.head_sha) {
-            // The uphold semantics of amendment ③, daemon-side: a
-            // never-posted approval follows the head on a trivial/empty delta.
+            // Uphold semantics, daemon-side: a never-posted (withheld) approval
+            // follows the head on a trivial/empty delta.
             carryWithheldMark(
               store,
               row.number,
@@ -2020,9 +2007,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               // This head's push question is answered (trivially). Claim the
               // same fingerprint the reconcile push-backstop checks so it is
               // not re-asked every sweep; INSERT OR IGNORE means a claim a
-              // real recheck already holds is left untouched. No
-              // wake is sent, so no receipt can exist: never the undelivered
-              // sweep's to release.
+              // real recheck already holds is left untouched. No wake is sent,
+              // so no receipt can exist: never the undelivered sweep's to
+              // release.
               store.claimRecheck(
                 row.number,
                 recheckFingerprint({ trigger: "push" }, row.head_sha),
@@ -2072,8 +2059,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           store.logEvent("approval_retry_dispatched", row.number, { head_sha: row.head_sha });
       }
 
-      // The branch this PR targets (base freshness) and its body (:
-      // pass-intent's artifact + substance bar) come off one getPr read. A
+      // The branch this PR targets (base freshness) and its body
+      // (pass-intent's artifact + substance bar) come off one getPr read. A
       // failed read degrades to "no base facts, no intent lens", never a
       // failed round.
       let baseRef = "";
@@ -2087,19 +2074,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       }
 
       // Prepare the tree BEFORE building the order, so the prompt cites the sha
-      // the passes will actually read. The old sequence built the order from
-      // `row.head_sha` (a webhook/reconcile snapshot) and only then fetched, so
-      // a push landing in between made the prompt quietly wrong — passes cited
-      // one sha while reading another tree, and their anchors were computed
-      // against a diff the review was not about.
+      // the passes will actually read. `row.head_sha` is a webhook/reconcile
+      // snapshot; a push landing between it and the fetch would otherwise have
+      // passes cite one sha while reading another tree, with anchors computed
+      // against a diff the review is not about.
       //
       // And BEFORE the changed-files read: every file-derived fact of the round
       // — the migration gate, the pass plan and sweep focus, the collision
-      // pre-check, the diffstat — must describe the head the tree holds. Read
-      // first, a push landing before the fetch left the round reviewing the
-      // new head with the old head's files (a migration the push added got no
-      // gate and no collision check). The files API is by PR number, so read
-      // after the fetch it lists at least the prepared head.
+      // pre-check, the diffstat — must describe the head the tree holds (read
+      // first, a migration a racing push added would get no gate and no
+      // collision check). The files API is by PR number, so read after the
+      // fetch it lists at least the prepared head.
       const tree = deps.prepareWorktree
         ? await deps.prepareWorktree(row.number, baseRef)
         : undefined;
@@ -2130,9 +2115,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         styleGuide,
         ciLinters,
       );
-      // follow-up rounds (docs/follow-up-rounds.md): every round after
-      // the first reviews the PR-owned change since the last reviewed head —
-      // or, on any doubt, runs today's full re-review. `files` stays the WHOLE
+      // Follow-up rounds (docs/follow-up-rounds.md): every round after the
+      // first reviews the PR-owned change since the last reviewed head — or,
+      // on any doubt, runs a full re-review. `files` stays the WHOLE
       // PR for every per-PR fact (the migration gate, the pre-check, the
       // directive escalation, the diffstat, dependency sources, memory and
       // lessons); only the plan and the coverage check read the delta.
@@ -2174,7 +2159,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // Diffstat comes free off the files list dispatch already fetched — no
       // extra GitHub call in the hot path. trigger_ts is copied off pr_state
       // here because the `dispatched` transition clears it moments later.
-      // validate_tier is recorded so a later audit can tell which tier killed
+      // validate_tier is recorded so a later audit can tell which tier judged
       // which finding.
       const diffstat = diffstatOf(files);
       const roundId = store.startRound(
@@ -2213,7 +2198,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       ).round_no;
 
-      // the delta as one patch file, beside the round's other state
+      // The delta as one patch file, beside the round's other state
       // files. A write that fails falls the round back to a full re-review —
       // the follow-up prompt names the file, and a missing one is never a
       // quieter round.
@@ -2271,7 +2256,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
         log(`dispatch: #${row.number} round ${roundNo} runs in full (${fullRound.reason})`);
       }
-      // the prior findings this follow-up round verifies — listed in
+      // The prior findings this follow-up round verifies — listed in
       // prior_finding_checks and written to the round's sidecar. Total: a list
       // that cannot be assembled renders an explicit "verify from your ledger"
       // note, never an empty one.
@@ -2300,19 +2285,17 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         });
       }
 
-      // the integrity fingerprint — git's config/hook files and, since
-      //, this system's own policy surface under the sandbox root —
-      // taken HERE: after the worktree is materialised (so the tree is the one
-      // the round will read) and before the session hears about the round (so
-      // nothing it does is inside the baseline). `verdicts.measureUsage`
-      // re-checks it when the round ends. Best-effort in both directions: a
-      // fingerprint that cannot be taken leaves the round unchecked, which is
-      // the legacy behaviour — it never fails a round. Async since
-      // H2: it hashes the whole policy surface (dist/, scripts/, …),
-      // a loop turn after every file — and BOUNDED, because this await sits
-      // inside the one serialized dispatch pump: a read that never returns
-      // leaves this round unchecked (no baseline), never every later PR
-      // undispatched.
+      // The integrity fingerprint — git's config/hook files and this system's
+      // own policy surface under the sandbox root — taken HERE: after the
+      // worktree is materialised (so the tree is the one the round will read)
+      // and before the session hears about the round (so nothing it does is
+      // inside the baseline). `verdicts.measureUsage` re-checks it when the
+      // round ends. Best-effort in both directions: a fingerprint that cannot
+      // be taken leaves the round unchecked — it never fails a round. It hashes
+      // the whole policy surface (dist/, scripts/, …) asynchronously, a loop
+      // turn after every file, and is BOUNDED, because this await sits inside
+      // the one serialized dispatch pump: a read that never returns leaves
+      // this round unchecked (no baseline), never every later PR undispatched.
       try {
         const budgetMs = Math.max(0, deps.integrityBudgetMs ?? INTEGRITY_BUDGET_MS);
         const baseline = await withinBudget(
@@ -2341,8 +2324,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         log(`dispatch: #${row.number} git-config fingerprint unavailable`, err);
       }
 
-      // The ecosystem pre-check, before the session hears about the round
-      // (behind the seam). Django delivers collisions as its
+      // The ecosystem pre-check, before the session hears about the round.
+      // Django delivers collisions as its
       // own COMMENT, so whatever the review concludes, the renumber never
       // rides on the verdict; a `none` ecosystem runs nothing at all.
       const precheck = await ecosystemPreCheck(deps, eco, {
@@ -2361,8 +2344,8 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // ecosystem ("none") can never reach this block — off is not degraded,
       // and the seam's outcome union keeps the two apart structurally.
       if (precheck.degraded) {
-        // Durable anomaly record + the overseer wake (WAKE class,
-        //) — one logAnomaly call, the store's sink writes the inject.
+        // Durable anomaly record + the overseer wake (WAKE class) — one
+        // logAnomaly call, the store's sink writes the inject.
         store.logAnomaly(
           "migration_precheck_degraded",
           row.number,
@@ -2442,9 +2425,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
               : {}),
           }
         : undefined;
-      // Third-party sources for the passes (benchmark 2026-09-26; `[review]
-      // dependency_sources`). Total by contract — a dead registry yields an
-      // empty note, never a failed or delayed-past-budget round.
+      // Third-party sources for the passes (`[review] dependency_sources`).
+      // Total by contract — a dead registry yields an empty note, never a
+      // failed or delayed-past-budget round.
       let dependencyNote = "";
       if (cfg.review.dependency_sources && deps.dependencySources) {
         try {
@@ -2490,7 +2473,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         roundType,
         worktree: worktreeFor(row.number),
         ...((): { settledDigest: string; ledgerCarry?: LedgerCarry } => {
-          // one read of the ledger mirror per order; an explicit
+          // One read of the ledger mirror per order; an explicit
           // settledDigest supplier still wins for the digest.
           const fromLedger = ledgerCarry(row.number);
           return {
@@ -2512,7 +2495,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // passes read. It is bounded and total: the worst case is this round's
       // prompt arriving memory-less a couple of seconds later.
       //
-      // under `[memory] delivery = "on"` the round's LESSON
+      // Under `[memory] delivery = "on"` the round's LESSON
       // SELECTION is awaited beside it — the prompt, the task files and the
       // lessons files are rendered from it. Its budget (≤ 2 s) runs from
       // here, inside the seed's deadline, so the round waits for the slower
@@ -2523,9 +2506,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // the way when it settles. So the seed's search never queues behind a
       // lesson find on the server's one-thread embedder. Under
       // `shadow`/`off` the selection starts only after the handoff,
-      // unawaited (below), exactly as S9a shipped it.
+      // unawaited (below).
       const delivering = lessonsDelivering(deps, log);
-      // F2: no case batch starts while this round reads memory — the
+      // No case batch starts while this round reads memory — the
       // window opens here, before the seed, and closes once the selection
       // has taken over: under `on` when the awaited selection is in; under
       // `shadow` once `start` has opened the selector's own window, after the
@@ -2566,9 +2549,9 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       // complete lens task, written beside the round's pass outputs so the
       // session launches lenses with a pointer instead of generating every
       // task string. Total: a write that fails leaves the order without task
-      // files, and the session writes the strings itself, as before. Under
-      // `on` each row's delivered lessons ride its task file (S9b).
-      // (`[review] context_pack = "pack-first"`): the round's CONTEXT
+      // files, and the session writes the strings itself. Under `on` each
+      // row's delivered lessons ride its task file.
+      // `[review] context_pack = "pack-first"`: the round's CONTEXT
       // PACK, written before the task files that point at it, and only where
       // children share a cache key (`[pi] subagent_cache_group`) — an unshared
       // pack costs every lens more, not less. Total: a pack that cannot be
@@ -2643,7 +2626,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         } catch (err) {
           log(`dispatch: #${row.number} lens task files unavailable`, err);
         }
-        // the owed pre-approval sweep's task files — its own
+        // The owed pre-approval sweep's task files — its own
         // directory and row index (`row` indexes `sweep_plan`), the whole PR's
         // full plan rendered exactly as a full round's. No lesson rows ride
         // them: lesson selection covers `pass_plan` rows only. Total, as above.
@@ -2662,7 +2645,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
             log(`dispatch: #${row.number} stale sweep task dir not removed`, err);
           }
         }
-        // the optional rows' task files — their own directory and
+        // The optional rows' task files — their own directory and
         // row index (`row` indexes `optional_plan`), rendered from the
         // follow-up order itself, so they carry the change since the last
         // review exactly as the core rows do. Total, as above.
@@ -2728,16 +2711,16 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
       });
 
       // The round is provisional until the worktree/session/prompt handoff
-      // completes. Publishing reviewing/running state earlier created orphan
-      // rounds whenever worktree preparation failed.
+      // completes; publishing reviewing/running state any earlier would leave
+      // an orphan round whenever worktree preparation fails.
       await deps.hooks.dispatchRound(order, render(order, memory));
-      // Record the receipt token this round's prompt carries (#5362), so the
+      // Record the receipt token this round's prompt carries, so the
       // recovery paths can tell "delivered" from "never arrived" instead of
       // inferring it. Stamped only AFTER dispatchRound resolved: the marker
       // asserts that a prompt bearing it was written, and a dispatch that
       // threw wrote nothing.
       store.stampPromptMarker(roundId, roundPromptMarker(row.number, roundNo));
-      // the head this round reviews is the next follow-up round's
+      // The head this round reviews is the next follow-up round's
       // baseline — pin it against gc so a force-push cannot take it away.
       // Best-effort: an unpinned head is re-fetched, or the round runs in full.
       if (deps.pinReviewedHead) {
@@ -2750,13 +2733,13 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         }
       }
       if (memory.lessons) logLessonDelivery(store, roundId, memory.lessons);
-      // the round's lesson selection — the shadow ledger's
+      // The round's lesson selection — the shadow ledger's
       // input. Started only now, with the round handed off, and never
       // awaited: under `shadow` it changes nothing in this round's prompt,
       // task files or agents, so nothing is gained by starting it sooner —
       // and starting it before the seed would queue its finds ahead of the
       // round's own memory search on the server's one-thread embedder. Under
-      // `on` it already ran, awaited beside the seed (S9b, above).
+      // `on` it already ran, awaited beside the seed (above).
       if (deps.lessons && !delivering) {
         try {
           deps.lessons.start(order, files);
@@ -2764,7 +2747,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           log(`dispatch: #${row.number} lesson selection not started (ignored)`, err);
         }
       }
-      // F2: `start` opened the selector's own window synchronously (or there
+      // `start` opened the selector's own window synchronously (or there
       // is no selection) — the round's own window closes now.
       endMemoryWindow();
 
@@ -2780,7 +2763,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         round_id: roundId,
         round_no: roundNo,
         round_type: roundType,
-        // what a later round reviewed (absent on a first round).
+        // What a later round reviewed (absent on a first round).
         ...(roundType === "re-review"
           ? {
               scope: order.scope === "delta" ? "delta" : "full",
@@ -2810,7 +2793,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         trigger_provenance: row.trigger_provenance,
         recovery: order.recovery ?? null,
       });
-      // Slack (S4): the PR's thread root on the first round we see, a
+      // Slack: the PR's thread root on the first round we see, a
       // 🔄 line in-thread on later ones. Fire-and-forget: a slow or
       // blackholed Slack (bounded retries, capped Retry-After, one shared
       // post queue) must never stall the pump behind it — the announcer's
@@ -2881,7 +2864,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
           }
         } else {
           store.discardRunningRound(provisionalRoundId);
-          // under `on` the round's lesson selection ran — and was
+          // Under `on` the round's lesson selection ran — and was
           // recorded — before the handoff; a discarded round never ran, so
           // its ledger rows go too (and a selection still in flight records
           // nothing), or the shadow report would count the attempt.
@@ -2911,7 +2894,7 @@ async function dispatchUnlocked(deps: DispatchDeps): Promise<RoundOrder[]> {
         log(`dispatch: #${row.number} failure event write failed`, eventError);
       }
     } finally {
-      // F2: a round that failed after its seed never leaves the case
+      // A round that failed after its seed never leaves the case
       // writer held (idempotent: a closed window stays closed).
       endMemoryWindow();
     }

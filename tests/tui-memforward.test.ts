@@ -1,4 +1,4 @@
-// the TUI owning the memory forward.
+// The TUI owning the memory forward.
 //
 // The behaviour that actually matters here is the ADOPT/OWN split: a forward
 // somebody else is running (the systemd unit, another qcr tui) must be used
@@ -216,7 +216,7 @@ describe("MemoryForward", () => {
 describe("the real forward script satisfies the ForwardModule contract", () => {
   // The TUI imports this script dynamically and untyped (it is dependency-free
   // ESM outside tsconfig's include). Nothing else would notice a rename of
-  // `createForwarder`/`parseArgs` until a live TUI failed to start a forward.
+  // `createForwarder`/`parseArgs` before a live TUI failed to start a forward.
   it("exports parseArgs and createForwarder with the shapes memforward.ts assumes", async () => {
     const mod =
       (await import("../scripts/companion-memory-forward.mjs")) as unknown as ForwardModule;
@@ -236,7 +236,7 @@ describe("the real forward script satisfies the ForwardModule contract", () => {
 });
 
 describe("the companion's namespace is materialized before the container starts", () => {
-  // Ordering is the whole fix. The companion's pi extension resolves which
+  // Ordering is the contract. The companion's pi extension resolves which
   // user namespace to write into ONCE and caches it; a namespace whose
   // directory appears afterwards is not picked up until the process restarts.
   // So `ensureNamespaces()` must run before `companion.ensureUp`, and it needs

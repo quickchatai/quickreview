@@ -276,7 +276,7 @@ describe("finish", () => {
     const result = await e.finish();
     expect(result.ok).toBe(true);
     expect(checklistComplete(stateDir)).toBe(true);
-    // The contract path consumes — keep it stable.
+    // The contract path the first-run handoff consumes — keep it stable.
     const markerPath = join(stateDir, "companion", "first-run.json");
     expect(firstRunMarkerPath(stateDir)).toBe(markerPath);
     const marker = JSON.parse(readFileSync(markerPath, "utf8")) as { completed_at: string };

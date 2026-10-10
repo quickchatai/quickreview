@@ -1,4 +1,4 @@
-// Per-lens cost knobs (2026-09-29): `[review] skip_lenses`,
+// Per-lens cost knobs: `[review] skip_lenses`,
 // `[models.pass_tiers]`, `[review] validate_consequence_rule`, and the bench
 // `--config` route that sets them. Every default reproduces the review as
 // shipped — pinned first, below.
@@ -60,7 +60,7 @@ const tomlWith = (section: string, lines: string): string =>
 
 describe("defaults reproduce today's review", () => {
   it("every config parses to no skips, the shipped pins, no consequence rule", () => {
-    // The shipped pins (owner decision 2026-10-03, src/config.ts DEFAULT_PASS_TIERS):
+    // The shipped pins (src/config.ts DEFAULT_PASS_TIERS):
     // baseline, sweep and behaviour-delta at sol-high; nothing else pinned.
     for (const cfg of [baseCfg, example]) {
       expect(cfg.review.skip_lenses).toEqual([]);
@@ -82,7 +82,7 @@ describe("defaults reproduce today's review", () => {
     };
     delete legacy.review.skip_lenses;
     delete legacy.review.validate_consequence_rule;
-    // pass_tiers is not one of the legacy-absent keys any more: its default
+    // pass_tiers is not a legacy-absent key: its default
     // carries the shipped pins (DEFAULT_PASS_TIERS), so a config without the
     // table still pins — exercised in the test below.
     for (const files of [SMALL, LARGE])
@@ -92,7 +92,7 @@ describe("defaults reproduce today's review", () => {
   });
 
   it("the default config addenda and the default model map are unchanged", () => {
-    // + the duplicate merge's validator rule, on by default since round 7 (docs/duplicate-merge.md)
+    // + the duplicate merge's validator rule, on by default (docs/duplicate-merge.md)
     // + the validator's decision-table answer, on by default
     expect(configAddenda(baseCfg.review).map((a) => a.id)).toEqual([
       "validate-demote-not-kill",

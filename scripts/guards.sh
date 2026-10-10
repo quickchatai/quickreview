@@ -1,7 +1,7 @@
 # guards.sh — the posting-time guards, shell mirror of src/guards.ts.
 #
 # Sourced, never executed. The daemon posts through the single MutationGate,
-# where src/guards.ts installs the three guards; the PR sessions post through
+# where src/guards.ts installs the guards; the PR sessions post through
 # scripts/post-review.sh, approve-pr.sh and reply-thread.sh, which do not go
 # through the gate. This file is the mirror for that route, exactly as those
 # scripts already mirror the dry-run gate — so no posting route reaches GitHub
@@ -17,11 +17,11 @@
 #   4. No green CI at this head ⇒ APPROVE is unavailable (approve-pr.sh
 #      only — post-review.sh cannot approve). Refuses; the review is posted as a
 #      COMMENT with approval withheld instead.
-#   5. The live head must be the head the round actually reviewed
-#     . The session sets QCR_EXPECTED_HEAD — the sha its
-#      round prompt cites — as a prefix on the posting call; a mismatch refuses the post. A
-#      missing expectation (session on an older prompt) warns loudly and
-#      proceeds — belt-and-braces, never a wedge.
+#   5. The live head must be the head the round actually reviewed. The
+#      session sets QCR_EXPECTED_HEAD — the sha its round prompt cites — as a
+#      prefix on the posting call; a mismatch refuses the post. A missing
+#      expectation (session on an older prompt) warns and proceeds —
+#      belt-and-braces, never a wedge.
 #
 # Nothing here dismisses, retracts or edits any existing review. A guard can
 # only refuse a post or soften REQUEST_CHANGES to COMMENT.
@@ -107,20 +107,19 @@ guard_require_open() { # refuses on merged/closed; fails closed in live mode
 
 # ---- guard 5: the head the round reviewed must still be the head -----------
 #
-# (#5270 round 7, recurred on #4844): the PR advanced between
-# the round's validation and its posting step; this script re-read the CURRENT
-# head and posted the stale review against the new head. The expected sha is
+# The PR can advance between the round's validation and its posting step, and
+# a review posted then would land on a head it never read. The expected sha is
 # the one the round prompt cites; the session sets it as QCR_EXPECTED_HEAD, an
 # env prefix on the posting call (the exec policy refuses `export`).
-# On a mismatch the ONLY correct move is to post nothing: a fresh-head rerun
+# On a mismatch the only correct move is to post nothing: a fresh-head rerun
 # is the daemon's job, never the session's.
 
 guard_require_expected_head() { # guard_require_expected_head <live-head-sha>
   guard_enabled refuse_on_head_drift || return 0
   local live="${1:-}" expected="${QCR_EXPECTED_HEAD:-}"
   if [[ -z "$expected" ]]; then
-    # Older round prompts do not set the expectation. Warn — loudly — but
-    # never refuse: wedging every legacy session is worse than the drift race.
+    # Older round prompts do not set the expectation. Warn, but never refuse:
+    # wedging every legacy session is worse than the drift race.
     echo "guard: WARNING — QCR_EXPECTED_HEAD is not set; cannot verify that #$PR's live head (${live:0:7}) is the sha this round reviewed (guard 5). Prefix the posting call with QCR_EXPECTED_HEAD=<reviewed head sha> (never export it)." >&2
     return 0
   fi
@@ -133,13 +132,12 @@ guard_require_expected_head() { # guard_require_expected_head <live-head-sha>
 
 # ---- guard 2: no new evidence ----------------------------------------------
 
-# The refusal is final and unchanged. What is new (#5409 round 18) is
-# that the refusal leaves EVIDENCE: the standing mark the guard read is handed
-# to `guard_on_no_new_evidence` when the sourcing script defines it, so
-# post-review.sh can write an identity-bound guarded-no-op record before the
-# exit. Without that record the daemon could not tell "POST was forbidden and
-# never attempted" from "POST may have been lost", and read the missing receipt
-# as infrastructure failure. The hook runs BEFORE die and its failure never
+# The refusal is final, and it leaves evidence: the standing mark the guard
+# read is handed to `guard_on_no_new_evidence` when the sourcing script
+# defines it, so post-review.sh can write an identity-bound guarded-no-op
+# record before the exit. Without that record the daemon could not tell "POST
+# was forbidden and never attempted" from "POST may have been lost", and read the missing receipt
+# as infrastructure failure. The hook runs before die and its failure never
 # changes the guard's answer.
 
 GUARD_STANDING_MARK_JSON=""   # the mark guard 2 refused on, as JSON (set on refusal)
@@ -259,15 +257,15 @@ guard_downgrade_note() { # guard_downgrade_note <approver> <head-sha>
     "$1" "${2:0:7}"
 }
 
-# ---- guard 4: no green CI at this head ⇒ no approval -------------
+# ---- guard 4: no green CI at this head ⇒ no approval -----------------------
 #
 # Mirrors src/cigate.ts `classifyCi`. Only approve-pr.sh sources this one —
 # post-review.sh hard-rejects APPROVE already, so it has nothing to withhold.
-# The shell half REFUSES instead of softening: this script can only approve, so
+# The shell half refuses instead of softening: this script can only approve, so
 # the session posts the full review as a COMMENT through post-review.sh (with
 # approval_withheld in its verdict file) exactly as the round template says.
 #
-# CI is READ here and nowhere triggered or re-run. An unreadable CI is not
+# CI is read here and nowhere triggered or re-run. An unreadable CI is not
 # evidence of red: it never blocks, for the same reason guard 1's failed read
 # never blocks — a GitHub outage must not turn into a pile of withheld
 # approvals.
@@ -282,7 +280,7 @@ guard_ci_pages() { # guard_ci_pages <path?per_page=100> <key> — every page's <
   local path="$1" key="$2" page body page_rows rows="" n
   for ((page = 1; page <= 10; page++)); do
     body="$(guard_api_get "${path}&page=${page}")"
-    # Page 1 keeps the historical reading (an error object counts as no rows).
+    # On page 1 an error object counts as no rows.
     # A later page must actually carry the <key> array: an error body there
     # (rate limit, 5xx JSON) would otherwise read as a short page and pass a
     # truncated list off as the whole — src/github.ts throws on it instead.
@@ -305,11 +303,11 @@ guard_ci_state() { # guard_ci_state <head-sha> — green|red|pending|none|unknow
   runs="$(guard_ci_pages "/repos/$REPO/commits/$head/check-runs?per_page=100" check_runs)"
   status="$(guard_ci_pages "/repos/$REPO/commits/$head/status?per_page=100" statuses)"
   # Mirrors src/cigate.ts classifyCi — keep the two in step.
-  # Latest-run-per-name (the owner, 2026-08-19; rule stated exactly on
-  # src/cigate.ts latestRunPerName): GitHub auto-cancels superseded
-  # runs; only the most recent run of each check name counts. Recency collapses
-  # ONLY check-runs that carry a started_at (latest wins, equal start → later
-  # list position); a run WITHOUT one never competes with a timestamped one —
+  # Latest-run-per-name (rule stated exactly on src/cigate.ts
+  # latestRunPerName): GitHub auto-cancels superseded runs; only the most
+  # recent run of each check name counts. Recency collapses only check-runs
+  # that carry a started_at (latest wins, equal start → later list position);
+  # a run without one never competes with a timestamped one —
   # it is kept beside it and counts on its own, the last such per name. Commit
   # statuses carry no time and are never grouped with check-runs at all: a
   # status under the same context as a check-run is a second check, and a
@@ -359,7 +357,7 @@ guard_require_green_ci() { # guard_require_green_ci <head-sha>
       die "CI is ${state} at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4). Post the full review as a COMMENT via scripts/post-review.sh, say plainly that no blockers were found and that approval is withheld pending green CI, and set \"approval_withheld\": true in the verdict file."
       ;;
     none)
-      # The owner 2026-08-19: in a CI-running repo, zero checks at the head
+      # In a CI-running repo, zero checks at the head
       # (conflicted PR, CI not started) is no execution evidence — withhold.
       if [[ "$(cfg guards no_checks_is_red 2>/dev/null || true)" == "true" ]]; then
         die "no CI has run at ${head:0:7} on #$PR — APPROVE is unavailable (guard 4, no_checks_is_red). Post the full review as a COMMENT via scripts/post-review.sh, say approval is withheld until checks run green, and set \"approval_withheld\": true in the verdict file."

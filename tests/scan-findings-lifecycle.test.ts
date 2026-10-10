@@ -1,6 +1,5 @@
-// The scan findings store's reconcile and collapse bookkeeping (selfscan
-// setup-scan unit): a collapsed finding's severity, content hash and lenses
-// after an alias sighting; a reverted tree; a moved finding from an
+// The scan findings store's reconcile and collapse bookkeeping: a collapsed
+// finding's severity, content hash and lenses after an alias sighting; a reverted tree; a moved finding from an
 // interrupted run. Driven at the FindingsStore seam through the real rooted
 // state port on a temp dir.
 import { mkdtempSync, rmSync } from "node:fs";
@@ -97,7 +96,7 @@ describe("a collapsed finding after an alias sighting", () => {
     // r3 finishes the ranges without another report: r2 already saw it at b2,
     // so it is not other content. r3's range does hold the finding's lines
     // and stayed silent — at the same content that is a re-read that did not
-    // reproduce it, stamped, never a fix (scan-loop).
+    // reproduce it, stamped, never a fix.
     expect(
       st.reconcile({ rows, tree: new Set([CANON.path]), run: S("r3", "2026-09-30T12:00:01Z") }),
     ).toEqual({ fixed: 0, pending: 0, not_reproduced: 1, dismissed_unreported: 0 });

@@ -1,6 +1,6 @@
 // bench.sh scoring a stored run with no image named uses the image the run was
-// reviewed on (arm.sh's <run>.arm.json), not qcr-bench:latest — 2026-10-03,
-// `judge` on r7-dedup5-aacr failed "no image qcr-bench:latest".
+// reviewed on (arm.sh's <run>.arm.json), not qcr-bench:latest, which a host
+// scoring an older run may not have.
 import { describe, expect, it } from "vitest";
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

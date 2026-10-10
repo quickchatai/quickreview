@@ -1,13 +1,13 @@
-// the ratified invariants inside the prompt files we OWN are fenced,
-// and the fences are pinned here.
+// The ratified invariants inside the prompt files we own are fenced, and the
+// fences are pinned here.
 //
-// Root CLAUDE.md rule 6 freezes the SEEDS; it says nothing about the round
+// Root CLAUDE.md rule 6 freezes the seeds; it says nothing about the round
 // templates and the post-seed lens agents, which are "ours to edit". But
-// "ours to edit" is a freeze exemption, not a DECISION exemption: those files
+// "ours to edit" is a freeze exemption, not a decision exemption: those files
 // carry ratified rules (the CI gate, the reachability gate, the nit cap, the
-// recheck's one-way contract, the pass severity caps). opens every
-// prompt file to the companion while keeping the ratified invariants
-// propose-only — so each such passage is wrapped in
+// recheck's one-way contract, the pass severity caps). Every prompt file is
+// open to the companion while the ratified invariants stay propose-only — so
+// each such passage is wrapped in
 //
 //     <!-- RATIFIED FT-NNNN <slug> — do not edit; owner only -->
 //     …the ratified text, byte for byte…
@@ -18,8 +18,8 @@
 // (deleting the marker must not be the way around the pin).
 //
 // Changing any fenced passage is the owner's call, recorded on the tracker. If
-// he ratifies a change, update the hash here IN THE SAME COMMIT and say which
-// ticket ratified it.
+// the owner ratifies a change, update the hash here in the same commit and say
+// in the commit message which ticket ratified it.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -33,19 +33,19 @@ interface PinnedFence {
   slug: string;
   /**
    * The citation: the ticket on which the owner ratified this rule (`FT-NNNN`),
-   * or — for the invariants that predate the FT numbering and live in root
-   * CLAUDE.md's hard rules — the rule number (`RULE-N`).
+   * or — for the invariants that live in root CLAUDE.md's hard rules — the
+   * rule number (`RULE-N`).
    */
   ft: string;
   /**
-   * A ratified RESEED of the fenced words, when the marker records one (
-   * R8): `<!-- RATIFIED memory-discipline (reseeded,
+   * A ratified reseed of the fenced words, when the marker records one:
+   * `<!-- RATIFIED memory-discipline (reseeded,
    * 2026-10-07) — … -->`. The citation stays the rule's own ticket (the rule is
    * the same decision); the annotation names the reseed that changed its words,
    * and must match the pin exactly, both ways.
    */
   reseeded?: { ft: string; date: string };
-  /** sha256 of the fence CONTENTS (the lines between the two markers). */
+  /** sha256 of the fence contents (the lines between the two markers). */
   sha256: string;
 }
 
@@ -65,13 +65,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
     },
     {
       slug: "verdicts",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "5c0678e3dadc9de828794542797bfa0e2e03996252871d4874370e891caa7d35",
     },
     {
@@ -87,13 +85,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "84f6d74be948d4415181a0b745d3be4ffdbe81c607a6befe8579d415d64611d0",
     },
   ],
@@ -106,13 +102,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
     },
     {
       slug: "verdicts",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "2ade641b3e3754a4834721e42dd8d43196ff321cdb8a647198b258dac6407e36",
     },
     {
@@ -138,18 +132,16 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "5916f6d0d863579e83467924d6920be53aff3ebe9a9ce7d3bcb12ac806192303",
     },
   ],
-  // the follow-up template copies re-review's nine fences byte for
-  // byte — the same bodies, so the same pins; nothing new to ratify.
+  // The follow-up template copies re-review's nine fences byte for byte —
+  // the same bodies, so the same pins.
   "prompts/round-follow-up.md": [
     {
       slug: "no-exec",
@@ -159,13 +151,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "104d79df41ab434adba45578463e225631d1543309b015818274a5093b80a74b",
     },
     {
       slug: "verdicts",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "2ade641b3e3754a4834721e42dd8d43196ff321cdb8a647198b258dac6407e36",
     },
     {
@@ -191,13 +181,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "5916f6d0d863579e83467924d6920be53aff3ebe9a9ce7d3bcb12ac806192303",
     },
   ],
@@ -210,13 +198,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "ci-gate",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "2a22664b85e435f0f3a8b6954d315be455397053dc4aaded72454097595f947d",
     },
     {
       slug: "verdicts",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "9151774037ac9b64b078f20c74c73fd62dbf384682a4717d0dd556426e0a5dae",
     },
     {
@@ -232,13 +218,11 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "injection-bright-line",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "9f96c237378849a92fecb86e830d06f5b922acefd0f397ab7399a1bc96883b67",
     },
     {
       slug: "merge-call",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "1eff370952c6fbc4ecc43beb893967578a73852e828947546a5f285a3bc9f904",
     },
   ],
@@ -264,9 +248,8 @@ const PINNED: Record<string, PinnedFence[]> = {
       sha256: "efba0b28e5a0652b33c805f9cb680590c16b465c2216d378872dfd87b4e4ecda",
     },
   ],
-  // The four FROZEN seeds. Fencing them is itself a reseed under root rule 6,
-  // ratified by the owner on 2026-08-24 and recorded in
-  // tests/fixtures/ratified-divergence.json.
+  // The four frozen seeds. Fencing them is itself a reseed under root rule 6,
+  // recorded in tests/fixtures/ratified-divergence.json.
   "prompts/pass-common.md": [
     {
       slug: "passes-post-nothing",
@@ -288,7 +271,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "decide-step",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "fcfdceba94b75096c5e59491d8abacbe4fa1f481e3f8d683c415a5fea4fd1b34",
     },
     {
@@ -311,7 +293,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "action-space",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the action-space command schemas corrected to what the daemon accepts (flag-owner {message}, file-improvement-pr {branch, title, body, slug})
       sha256: "6e8ea028dec90920b7b9d9ccec544c835de35195b3426d0b213533e4ccee7192",
     },
     {
@@ -329,12 +310,8 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "memory-discipline",
       ft: "",
-      // Re-pinned 2026-10-07 (owner ratified in-session, R8): the
-      // eod-sweep reseed — the fence names the pinned area
-      // (preferences/pinned/), #manual in preferences/, and kind=bug
-      // area=operations in an events/ entry's header; an outage still writes
-      // the curation receipt. The rule is unchanged; its marker records the
-      // reseed.
+      // The fence's words were reseeded; the rule is unchanged and its marker
+      // records the reseed.
       reseeded: { ft: "", date: "2026-10-07" },
       sha256: "d53aafba4f9d2326fe316ce6735b81d38a9600b4aa40594f340af0de151cb420",
     },
@@ -348,7 +325,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "intent-artifact",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "8d1559e24bf9eb36176b515d5caa58e78f8984fad45f3ee79a56373d128ce8a6",
     },
     {
@@ -366,7 +342,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "repo-anchor",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "ad35fc4537f743de86f178271bd25d4a3e3b4f0fd1cc5da2bcdae69ad204b3a9",
     },
     {
@@ -379,7 +354,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "beyond-the-diff",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "fde21c9fc81ecbb31a885df0c2b59bc50ebab09cabf0a88978f30afad14a99da",
     },
     {
@@ -397,7 +371,6 @@ const PINNED: Record<string, PinnedFence[]> = {
     {
       slug: "lens-boundaries",
       ft: "",
-      // Re-pinned 2026-10-03 (owner ratified in-session): prompt cleanup — the dated owner aside / FT id removed from the fenced text; the rule is unchanged
       sha256: "b2c91de07ce4d73ccae6a239c61b73f175843976e13831c9d07be92ba0a22113",
     },
     {
@@ -406,7 +379,7 @@ const PINNED: Record<string, PinnedFence[]> = {
       sha256: "cdb65345b6db3eecf9f89211ac5f2153d7328a622815198670f6ec171728cdea",
     },
   ],
-  // the concurrency lens's two ratified burdens. Both are RAISE-side
+  // The concurrency lens's two ratified burdens. Both are raise-side
   // bars, and both exist because a confidently-wrong race story costs more than
   // a missed one: the four-part shape is what makes a finding falsifiable at
   // all, and the self-falsification duty is the only place in the system where
@@ -424,9 +397,9 @@ const PINNED: Record<string, PinnedFence[]> = {
       sha256: "914fab18800b9ba3008da2270ef1ecd32491e3f3d38671342dd6e066e30b33b5",
     },
   ],
-  // the ask-your-human lens's named-defect bar (the owner's words on
-  // "it can only block if it says what is wrong under the bad answer.
-  // Not 'unclear' — an actual described failure."). The blocker bar never
+  // The ask-your-human lens's named-defect bar: it can only block if it says
+  // what is wrong under the bad answer — an actual described failure, not
+  // "unclear". The blocker bar never
   // moves, and a lens whose whole output is questions is exactly where it would
   // move first: without this passage "I do not understand this" becomes a
   // blocker. `ask-human-named-defect-validate` enforces the same line from the
@@ -452,22 +425,21 @@ const FROZEN_SEEDS = [
  * The citation half of the marker grammar.
  *
  * `FT-NNNN` is the normal case: the ticket on which the owner ratified the rule.
- * `RULE-N` is for the invariants that have no ticket to cite because they
- * predate the numbering and live as hard rules in root CLAUDE.md — never
- * dismiss a review (rule 2), the credential rule (rule 3), passes post nothing
- * (rule 9). the owner's call, 2026-08-24: cite the rule number, not a made-up
- * ticket.
+ * `RULE-N` is for the invariants that have no ticket to cite because they live
+ * as hard rules in root CLAUDE.md — never dismiss a review (rule 2), the
+ * credential rule (rule 3), passes post nothing (rule 9). They cite the rule
+ * number, never a made-up ticket.
  */
 const CITATION = String.raw`FT-\d{4}|RULE-\d{1,2}`;
 
 /**
- * The role half of the marker grammar: new fences say `owner only`
- * — the role, so the machinery reads for any installation's owner. The
- * personal spelling `the owner only` is GRANDFATHERED: existing fences keep
+ * The role half of the marker grammar: new fences say `owner only` — the
+ * role, so the machinery reads for any installation's owner. The personal
+ * spelling in older markers is grandfathered: existing fences keep
  * their ratified bytes (rewriting a fence marker just to rename it would
  * itself be a fence edit — rule 6 territory), so both spellings parse.
  *
- * The reseed half (R8): a fence whose WORDS a ratified reseed changed
+ * The reseed half: a fence whose words a ratified reseed changed
  * may record it after the slug — ` (reseeded FT-NNNN, YYYY-MM-DD)`, exactly
  * that, a ticket and a date and nothing else. The citation before it stays the
  * rule's own ticket. Optional, and narrow for the same reason as the citation:
@@ -607,11 +579,11 @@ describe("ratified invariant fences", () => {
   });
 
   it("every fenced frozen seed is a ratified divergence (rule 6)", () => {
-    // The four seeds are FROZEN (root CLAUDE.md rule 6): a fence is a byte
+    // The four seeds are frozen (root CLAUDE.md rule 6): a fence is a byte
     // change, so it is a reseed and needs the owner's explicit ratification.
-    // He gave it on 2026-08-24 — and the entry in
-    // ratified-divergence.json is what makes these fences legitimate rather
-    // than a unilateral seed edit. Losing that entry must fail here too.
+    // The entry in ratified-divergence.json is what makes these fences
+    // legitimate rather than a unilateral seed edit. Losing that entry must
+    // fail here too.
     const divergence = JSON.parse(read("tests/fixtures/ratified-divergence.json")) as {
       files: Record<string, string[]>;
     };
@@ -627,7 +599,7 @@ describe("ratified invariant fences", () => {
   });
 
   it("a rule citation is accepted, and only in the sanctioned spelling", () => {
-    // widened the grammar. Keep it narrow: RULE-N, nothing else — a
+    // Keep the grammar narrow: FT-NNNN or RULE-N, nothing else — a
     // free-text citation would let anyone mint their own authority.
     expect(
       OPEN.exec("<!-- RATIFIED RULE-2 invariants-absolute — do not edit; owner only -->")?.[1],

@@ -1,32 +1,31 @@
-// Memory, phase B (inherited obligation ② from the ticket's note).
+// Memory, phase B.
 //
-// The memory step (order 60) is TWO-PHASE by design and says so in
-// its own header: the server's root key must be on disk BEFORE the daemon
-// boots (the entrypoint renders it into ov.conf; without it the server
-// degrades to auth_mode=dev and the confinement this whole design exists for
-// is not enforced), while the two USER keys can only be MINTED BY A RUNNING
-// SERVER. Run at order 60 the step therefore lands phase A, says plainly that
+// The memory step (order 60) is two-phase by design: the server's root key
+// must be on disk before the daemon boots (the entrypoint renders it into
+// ov.conf; without it the server degrades to auth_mode=dev and confinement is
+// not enforced), while the two USER keys can only be minted by a running
+// server. Run at order 60 the step therefore lands phase A, says plainly that
 // phase B is waiting, and stops.
 //
 // This step is phase B's place in the sequence: after bring-up, with the
 // server answering, drive the SAME step again so it mints and places the user
 // keys and proves the confinement with the four-cell matrix.
 //
-// DRIVE IT, DO NOT DUPLICATE IT. There is exactly one implementation of key
-// minting, placement and the confinement proof, and it is memory.ts — which is
-// itself only a driver for scripts/openviking-provision.mjs and the ONE
-// four-cell matrix in scripts/companion-memory-forward.mjs. This file holds no
-// key logic at all: it constructs that step and calls its run/verify with this
-// step's context. The consequences are the ones we want:
+// Drive it, do not duplicate it. There is exactly one implementation of key
+// minting, placement and the confinement proof, and it is memory.ts — itself
+// only a driver for scripts/openviking-provision.mjs and the one four-cell
+// matrix in scripts/companion-memory-forward.mjs. This file holds no key
+// logic: it constructs that step and calls its run/verify with this step's
+// context. Consequently:
 //
 //   * the recorded choices (memory declined / where the key file went) are
-//     shared, because choices are engine-wide — so declining memory at order
-//     60 is still declined here, and nothing is asked twice;
-//   * the memory step's OWN checklist row goes green on its own terms at the
+//     shared, because choices are engine-wide — declining memory at order 60
+//     is still declined here, and nothing is asked twice;
+//   * the memory step's own checklist row goes green on its own terms at the
 //     next verifyAll (the engine promotes a pending step whose verify holds),
 //     so the two rows never disagree about reality;
-//   * a second minting path — the thing rule 8's "two write paths is what this
-//     retired" warns about — never comes into existence.
+//   * there is never a second minting path (CLAUDE.md rule 8: one memory
+//     write path).
 import type { OnboardingStep, StepContext, StepReport } from "../engine.js";
 import { MEMORY_CHOICE_KEY, memoryStep, type MemoryStepOptions } from "./memory.js";
 import { topologyOf } from "./topology.js";
@@ -49,7 +48,7 @@ export function memoryUserKeysStep(opts: MemoryKeysStepOptions = {}): Onboarding
     }
     const base =
       "phase B of the memory step: the server is up now, so the two USER keys can be minted and the confinement proved";
-    // on the server route the memory engine listens on the VM's
+    // On the server route the memory engine listens on the VM's
     // loopback and is never published, so this machine reaches it through the
     // memory forward — the same loopback address either way, which is exactly
     // why the forward binds 127.0.0.1. If minting cannot reach a server, that

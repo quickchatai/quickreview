@@ -1,5 +1,5 @@
-// Freeze fixes 2 (2026-10-03): the cross-benchmark miss analysis — general
-// bug-class rules, PR builds only, no benchmark names in any prompt text.
+// General bug-class rules for PR builds only, with no benchmark names in any
+// prompt text.
 import { describe, expect, it } from "vitest";
 import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
 

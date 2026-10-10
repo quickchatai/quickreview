@@ -1,7 +1,7 @@
 // Ledger freshness enforcement: after each verdicted round the
 // daemon requires `state/ledgers/pr-<n>.md` to be headed
 // `LEDGER PR #<n> @ <round head>`. Stale/missing ⇒ queryable anomaly + exactly
-// ONE re-nudge per round through wakeOrHold — never a loop.
+// one re-nudge per round through wakeOrHold — never a loop.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -104,7 +104,7 @@ describe("enforceLedgerFreshness", () => {
     expect(injects[0]).toContain(HEAD);
     expect(anomalyKinds()).toEqual(["ledger_stale"]);
 
-    // Second stale detection, same round: anomaly recorded again, NO nudge.
+    // Second stale detection, same round: anomaly recorded again, no nudge.
     expect(await enforceLedgerFreshness(d, { pr: 7, roundNo: 2, headSha: HEAD })).toBe(
       "already_nudged",
     );
@@ -155,7 +155,7 @@ describe("enforceLedgerFreshness", () => {
   it("a delayed check for round N never queues a rewrite once round N+1 has started", async () => {
     // The tail timer fires ~90s after round 1's verdict; by then the
     // fresh-head successor (round 2, head B) is already running. A wake held
-    // now would be flushed after round 2 and demand the OLD head's header over
+    // now would be flushed after round 2 and demand the old head's header over
     // the ledger round 2 just wrote — so the superseded check records the miss
     // and nudges nothing; round 2's own check owns the ledger now.
     store.upsertPr({
@@ -253,7 +253,7 @@ describe("VerdictWatcher round-end ledger check", () => {
       root: dir,
       usage: { globalStoreDir: null },
       partialWrite: { windowMs: 0 },
-      // Inline: the production settle delay (compaction race, 2026-08-19) is
+      // Inline: the production settle delay (it avoids a compaction race) is
       // covered in verdicts.test.ts; these tests pin the check itself.
       ledgerCheckDelayMs: 0,
     });
@@ -319,7 +319,7 @@ describe("VerdictWatcher round-end ledger check", () => {
 
   it("a stale-PR ledger (sibling leak shape) is caught", async () => {
     verdicted(101);
-    writeLedger(101, `LEDGER PR #5288 @ ${HEAD}`); // the leak shape
+    writeLedger(101, `LEDGER PR #5288 @ ${HEAD}`); // a sibling PR's ledger header
     const { watcher, injects } = setup();
     await watcher.sweep();
     expect(injects).toHaveLength(1);

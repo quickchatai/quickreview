@@ -190,7 +190,7 @@ describe("[scan] — config.toml defaults, the profile's overrides", () => {
     expect(() => parseConfig(`${fixtureToml}\n[scan]\nturbo = true\n`)).toThrow(
       /unknown key "turbo"/,
     );
-    // stage 2's stand-in factor — at least 1 (never a discount on stage 1's rate).
+    // Stage 2's stand-in factor — at least 1 (never a discount on stage 1's rate).
     expect(
       parseConfig(`${fixtureToml}\n[scan]\nunmeasured_rate_factor = 2.5\n`).scan
         .unmeasured_rate_factor,

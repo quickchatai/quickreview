@@ -1,10 +1,10 @@
-// the STRUCTURAL half of the choice-key fix: a cheap, no-I/O check
-// that catches a fourth key drift before anyone runs anything.
+// The structural half of the choice-key contract: a cheap, no-I/O check that
+// catches key drift before anyone runs anything.
 //
-// The defect this file exists to make impossible: the GitHub App step read the
-// reviewed repo under "github_repo", a key NO step ever wrote, and its own
-// suite stayed green because it injected that key directly. Two rules close it,
-// and this file is where they are enforced:
+// The defect class this file makes impossible: a step reading a shared choice
+// under a key NO step ever writes, while its own suite stays green because it
+// injects that key directly. Two rules close it, and this file is where they
+// are enforced:
 //
 //   1. every shared key lives in ONE declaration (src/onboard/choices.ts) and
 //      no step carries its own string literal for one;
@@ -69,8 +69,8 @@ describe("every shared choice key is written by a step", () => {
   });
 
   it("each named writer really records the key", () => {
-    // The assertion that would have failed on the day the bug landed: the App
-    // step read CHOICE_KEYS.repo and no source contained a matching write.
+    // Catches a key that a step reads while no source contains a matching
+    // write.
     for (const name of Object.keys(CHOICE_KEYS) as ChoiceName[]) {
       for (const id of CHOICE_WRITERS[name]) {
         const src = sourceFor(id);
@@ -130,10 +130,9 @@ describe("no step carries its own string literal for a shared key", () => {
   });
 
   it("a literal-keyed choice constant is PRIVATE to its step, and declared as such", () => {
-    // This is the rule that would have stopped at review: the App
-    // step's `REPO_CHOICE_KEY = "github_repo"` was a literal cross-step key.
-    // A literal is now only legal for a key one step keeps to itself, and the
-    // closed list says which — so a value meant for another step has to go
+    // A literal cross-step key (`REPO_CHOICE_KEY = "github_repo"`) slips past
+    // the writer check. A literal is only legal for a key one step keeps to
+    // itself, and the closed list says which — so a value meant for another step has to go
     // through CHOICE_KEYS, where the writer check bites.
     for (const src of sources) {
       for (const m of src.text.matchAll(/export const ([A-Z][A-Z0-9_]*_KEY) = "([^"]+)"/g)) {
@@ -192,7 +191,7 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
     for (const option of INGRESS_OPTIONS) {
       // Round-trip through the shared reader: an id the ingress step records
       // must be an id `IngressChoice` accepts, or the interview's conditional
-      // question can never fire (it never did — it tested "named-tunnel").
+      // question can never fire.
       expect(
         ingressChoiceOf({ [CHOICE_KEYS.ingress]: option.id }),
         `ingress id "${option.id}" is not an IngressChoice`,
@@ -211,7 +210,7 @@ describe("the value vocabularies agree on both sides of a handoff", () => {
         `route "${route}" is not an AuthRoute`,
       ).toBe(route);
     }
-    // The vocabulary the interview used to test for, and which nothing writes.
+    // A spelling nothing writes is not a route.
     expect(authRouteOf({ [CHOICE_KEYS.authRoute]: "api_key" })).toBeNull();
   });
 

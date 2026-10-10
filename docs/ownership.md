@@ -5,20 +5,16 @@ what only **the owner** — the one accountable human running the installation �
 may change. The owner-only surfaces are structural: each one is enforced by
 code or by a pinned test, not by convention. This document lists them.
 
-A note on names: this project's history was built with one owner, and older
-artifacts (fence markers, divergence-registry notes, commit messages) name him
-— "the owner". Since the vocabulary is role-worded ("owner"), and the
-verifying grammars accept **both** spellings: existing markers and notes are
-history and keep validating byte-for-byte; new ones say "owner". FT-#### ids
-cited below are the tickets on which each decision was ratified — provenance,
-not required reading.
+A note on names: the vocabulary is role-worded ("owner"). Older artifacts
+(fence markers, divergence-registry notes) name the original owner, "the owner",
+and the verifying grammars accept **both** spellings, so existing markers and
+notes keep validating byte for byte; new ones say "owner".
 
 ## 1. The dry-run flag
 
 `dry_run` in `config.toml` decides whether GitHub mutations execute or are
 written to `state/dryrun/` as would-be calls. Flipping it — in **either
-direction** — is the owner's explicit call, never an agent's (hard rule 1;
-ratified at the cutover).
+direction** — is the owner's explicit call, never an agent's (hard rule 1).
 
 - Tripwire: `tests/config.test.ts` pins the live config's `dry_run` value, so
   an accidental flip reddens the suite.
@@ -33,7 +29,7 @@ ratified at the cutover).
   fills — refuses an edit naming that key however it is spelled, so the flag
   cannot move as a side effect of anything else. Declining is a first-class
   outcome: a dry-run installation is a complete one.
-- One narrow exception to "dry-run executes nothing" is ratified and closed:
+- One narrow, closed exception to "dry-run executes nothing":
   the App-self-config class, a single mutation kind that re-points **the App's
   own webhook URL** when a rotating tunnel hostname changes. It touches only
   the App's configuration, can never reach the reviewed repo, is logged every
@@ -89,7 +85,7 @@ sha-pinned, so any *further* drift is still caught.
 
 Rubric proposals (`state/rubric/<slug>/` — a pitch plus a patch targeting
 `agents/`/`prompts/` only) are decided in the TUI by the owner. **The accept
-click IS the ratification**: the TUI applies the patch, refreshes
+click is the ratification**: the TUI applies the patch, refreshes
 the `seeds/` canonical copies, re-pins the manifest hashes, appends the
 divergence note, and commits locally. Reject removes the proposal and records
 a `#rejected-proposal` memory entry so the same change is never re-proposed.

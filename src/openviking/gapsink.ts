@@ -1,4 +1,4 @@
-// The counted `openviking_gap` (S1).
+// The counted `openviking_gap`.
 //
 // Every gap the daemon's memory client reports (a failed request: transport,
 // 5xx, a bad body, an auth refusal) is COUNTED — into the memory health block,

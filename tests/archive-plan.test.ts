@@ -1,4 +1,4 @@
-// the archive PLAN (docs/archiving.md §7.2, §13) over a real
+// The archive PLAN (docs/archiving.md §7.2, §13) over a real
 // temp root: what a pass would move, per artifact class; the orphan reported
 // and never touched; the reader-less event rows and the old deliveries
 // counted through rowid windows; and PLAN MODE WRITES NOTHING — the tree's
@@ -667,7 +667,7 @@ describe("PLAN MODE WRITES NOTHING (acceptance 6)", () => {
           mode: "on",
           state: "idle",
           db: { outcome: "caught_up", events_moved: 2, deliveries_moved: 2 },
-          // the per-PR files move only where the daemon's
+          // The per-PR files move only where the daemon's
           // in-flight births can be read — here they cannot, so nothing moves.
           files: { outcome: "held", held_reason: "births_unknown", prs_started: 0 },
         });

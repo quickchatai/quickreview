@@ -30,7 +30,7 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "qcr-prchecks-"));
   mkdirSync(join(dir, "scripts"));
   copyFileSync(join(root, "scripts", "pr-checks.sh"), join(dir, "scripts", "pr-checks.sh"));
-  // the script finds its config through the install locator.
+  // The script finds its config through the install locator.
   copyFileSync(
     join(root, "scripts", "install-locator.sh"),
     join(dir, "scripts", "install-locator.sh"),
@@ -146,7 +146,7 @@ describe("pr-checks.sh --why", () => {
 
   it("reads every page of check-runs: a failure past row 100 still classifies red", async () => {
     // The same table as the daemon gate and guards.sh, which both page — a
-    // first-page read of a big matrix showed only its green runs.
+    // first-page read of a big matrix can show only its green runs.
     pagedRuns = [
       ...Array.from({ length: 100 }, (_, i) => ({
         id: 100 + i,
@@ -171,9 +171,9 @@ describe("pr-checks.sh --why", () => {
     expect(stdout.trim().split("\n").pop()).toBe("CLASSIFIED: red");
   });
 
-  // (MC-51, found by execution): the script read check-runs only, so a
-  // failing commit status beside green runs printed CLASSIFIED: green while
-  // guard 4 — src/cigate.ts and guards.sh alike — said red. A status is its
+  // Commit statuses are read beside check-runs: reading check-runs alone
+  // prints CLASSIFIED: green for a failing status beside green runs, while
+  // guard 4 — src/cigate.ts and guards.sh alike — says red. A status is its
   // own check, never collapsed with a run of its context.
   // MUTATION: drop the status read (or `or any(... statuses)`) — these fail.
   it("reads the commit statuses too: a failing status beside green runs is red (MC-51)", async () => {

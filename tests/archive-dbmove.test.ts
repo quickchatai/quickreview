@@ -1,4 +1,4 @@
-// the DB MOVER (docs/archiving.md §9.1–§9.3) on a seeded
+// The DB MOVER (docs/archiving.md §9.1–§9.3) on a seeded
 // StateStore(":memory:") and a temp `archive/db/`: only the reader-less kinds
 // older than `events_after_days` move, ids and DDL preserved; a crash at any
 // step leaves every row in at least one place and a re-run converges; a

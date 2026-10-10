@@ -1,4 +1,4 @@
-// slice F: the bench's follow-up replay case kind (src/bench/
+// The bench's follow-up replay case kind (src/bench/
 // followup.ts). A recorded round k of a PR is replayed offline: the store
 // holds base, the previous round's head and the head (from a local mirror,
 // mirror-only), the replay tree gets refs/bench/prev-head, the delta is

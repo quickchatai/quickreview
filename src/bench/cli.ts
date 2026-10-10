@@ -133,7 +133,7 @@ const DEFAULTS = {
   authSrc: "/pi-agent-src",
   /** The sandbox's own agent dir (tmpfs): a refresh-disabled token copy. */
   agentDir: "/tmp/pi-agent",
-  /** 75 min: with sol-high on baseline/sweep/behaviour-delta (the shipped default) a large PR exceeded 45 (mpv, 2026-10-03). */
+  /** 75 min: with sol-high on baseline/sweep/behaviour-delta (the shipped default) a large PR can exceed 45. */
   timeoutMin: 75,
 };
 
@@ -287,7 +287,7 @@ async function main(): Promise<number> {
     assertArm(outDir, "qcr");
     // --phase splits one review run so arm.sh can schedule its cases on a
     // machine-wide queue, one container per case (bench/aacr/arm.sh):
-    //   all     (default) the whole run in this process, as always
+    //   all     (default) the whole run in this process
     //   init    write run.json (and, without --resume, clear the cases'
     //           earlier results) — no case is reviewed
     //   case    review the --only cases with --resume semantics, never

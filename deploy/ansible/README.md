@@ -2,11 +2,11 @@
 
 Minimal, idempotent provisioning for the review sandbox: **one VM → one Docker
 container** (plain Ubuntu + pinned pi + node/gh/tmux + secrets; the prompts
-and agents ride the repo rsync — there is no separate seed source since
-), optionally with **cloudflared on the host** forwarding a public
+and agents ride the repo rsync — there is no separate seed source),
+optionally with **cloudflared on the host** forwarding a public
 hostname → `localhost:8787` → the container.
 
-> **`qcr onboard` drives this route for you**. The wizard's
+> **`qcr onboard` drives this route for you.** The wizard's
 > **topology** step offers it as one of two first-class answers — advertised as
 > the always-on recommendation, because a reviewer that is asleep reviews
 > nothing — then checks your ssh alias and agent *before* anything is built
@@ -29,8 +29,7 @@ tasks are gated on `cloudflared_enabled` (group_vars, default `true` — the
 live deployment keeps its tunnel); set `-e cloudflared_enabled=false` to
 bring your own ingress.
 
-Written at the owner's direction, 2026-08-13. Architecture note:
-running the whole sandbox inside one container is the isolation answer to pi
+Running the whole sandbox inside one container is the isolation answer to pi
 having no built-in permission system.
 
 ## Prerequisites (once, manual)
@@ -51,13 +50,13 @@ yours either way — the wizard never creates a machine.
    wizard's ingress step writes that flag into `inventory.ini` for you: `true`
    for the named-tunnel shape, `false` for every other one.
 3. **Local secrets dir** — the install's `~/.config/qcr/<install>/secrets/`
-   (`deploy.sh rebuild` passes the install locator's answer as `secrets_src`,
-; an old `~/.config/quickreview-bot/` is never read — `qcr install
-   migrate` moves it) contains:
+   (`deploy.sh rebuild` passes the install locator's answer as `secrets_src`;
+   an old `~/.config/quickreview-bot/` is never read — `qcr install migrate`
+   moves it) contains:
    `app_id`, `app.pem`, `webhook_secret` (plus `openai_api_key` optional —
    pi's API-key route — and `tunnel_token` when the tunnel is enabled), and
    `openviking_root_key` / `openviking_reviewer_key` for the memory engine.
-   Memory embeds LOCALLY by default (nothing but the model call leaves the
+   Memory embeds locally by default (nothing but the model call leaves the
    VM); `openai_embeddings_api_key` exists only under the hosted-embeddings
    opt-in, written as inventory host vars beside `cloudflared_enabled`
    ([docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
@@ -130,7 +129,7 @@ works.
 
 ## OpenAI auth for pi
 
-Native in pi — nothing to install (verified). Both routes and their
+Native in pi — nothing to install. Both routes and their
 cost shapes are in [../../docs/llm-setup.md](../../docs/llm-setup.md); here is
 what this route does with each:
 
@@ -158,7 +157,7 @@ rebuilds — required for the sticky per-PR conversations, not just for auth.
   proxy/tunnel you point at it (the optional cloudflared service, or your
   own). No inbound firewall rule is ever needed.
 - Image pins: pi and node are pinned in `group_vars/all.yml`; bumping them is
-  a deliberate edit + `rebuild_image=true`, never automatic (spec §9).
+  a deliberate edit + `rebuild_image=true`, never automatic.
 - Jump-in from your own machine: `ssh -t <vm> docker exec -it quickreview-sandbox
   tmux attach -t <pr-N|overseer>` — `scripts/qcr attach <n>` wraps it, and the
   operator TUI (`scripts/qcr tui`, with `[tui] target = "ssh"`) embeds the same

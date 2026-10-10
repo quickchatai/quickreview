@@ -279,13 +279,13 @@ Rendering:
 - `BoardView.dryRun` is `boolean | undefined` and initialises to `undefined`
   (`src/tui/app.ts`); `modeBadge` (`src/tui/design.ts`) renders `MODE UNKNOWN`
   for that, and `LIVE` / `DRY-RUN` only once a heartbeat has proved one.
-- Reviewer memory (S1, `memorySegment` in `src/tui/board.ts`, read
+- Reviewer memory (`memorySegment` in `src/tui/board.ts`, read
   from status.json `memory` and never from OpenViking): `⛔ MEMORY AUTH
   FAILED` / `⛔ MEMORY DOWN` / `▲ MEMORY DEGRADED` sit right after the daemon
   health in the board's top bar; an unmeasured or unreported state is a dim
   `mem ?` (`mem off` when memory is switched off in config.toml) at the end — never nothing, which
   would read healthy. Only `healthy` paints nothing.
-- The daemon's own event loop (L2, `eventLoopSegment` in
+- The daemon's own event loop (`eventLoopSegment` in
   `src/tui/board.ts`, read from status.json `daemon` and nothing else): a
   stall is a loud `⛔ DAEMON LOOP STALLED <max> · <cause>` (`⛔ DAEMON LOOP
   SLOW p99 …` for a sustained one) right after the memory banner, its cause
@@ -361,20 +361,19 @@ refusing a remote-driven action in `src/tui/index.ts` — and must not be wired
 into the reloader. A reload at an awkward moment is visible and recoverable;
 a reload that never fires is neither. Pinned by `tests/tui-reload.test.ts`.
 
-**The process chain stays two deep** (S3). Node cannot replace its
-own image, so a re-exec runs the new build as a child with the terminal
-inherited and waits. It used to do that at every reload, so each generation
-sat frozen in `spawnSync` under the next — 14 `cli.js tui --resume-state`
-processes, about 200 MB each, on the owner's PC on 2026-10-06. Now the first
-TUI to reload becomes the **supervisor** (`superviseReloads`): it runs every
+**The process chain stays two deep.** Node cannot replace its own image, so
+a re-exec runs the new build as a child with the terminal inherited and
+waits. Doing that at every reload would leave each generation frozen in
+`spawnSync` under the next, about 200 MB apiece. Instead the first TUI to
+reload becomes the **supervisor** (`superviseReloads`): it runs every
 later build as its own child, handing each `QCR_TUI_SUPERVISOR_PID`, and a
 TUI whose parent is that supervisor reloads by **exiting** with
 `RELOAD_EXIT_CODE` (75) after its teardown; the supervisor starts the next
 build with the snapshot the exiting one wrote (`tui-resume-<its pid>.json`).
 The exit handler skips the terminal restore on that one code, so the next
-build inherits the alt screen and raw mode exactly as a frozen generation used
-to leave them — no flash of the shell between builds. The supervisor exits
-with the last build's code. Nothing about *when* a reload fires changed.
+build inherits the alt screen and raw mode as they were — no flash of the
+shell between builds. The supervisor exits with the last build's code. The
+supervisor changes only how a reload runs, never *when* one fires.
 
 `scripts/dev-tui.sh` (`npm run dev`) owns both halves in one terminal and one
 process group:
@@ -512,8 +511,8 @@ files validated against a strict schema and executed against a `TuiDriver`
 supplied at wiring time. The verb set is closed and is exactly what the
 operator's own keyboard can do — tab switches, PR selection, filters, digest
 and memory paging, metrics window/PR, quick-messages, overseer injects, the
-deploy-tab buttons, and (`memory_pin`, the owner's ruling R7 on —
-root rule 8's fourth amendment) the memory tab's `p`: pin or unpin one
+deploy-tab buttons, and (`memory_pin`, root CLAUDE.md rule 8) the memory
+tab's `p`: pin or unpin one
 existing entry through the TUI's `MemoryStore`, awaited so the result file
 carries the store's answer, and nothing else about memory. Requests execute instantly; there is no confirmation step,
 and the executed trace lands on the notice line. Idempotency comes from
@@ -532,7 +531,7 @@ round that has finished is a round whose evidence is complete.
 
 The sweep that finds those rounds asks the daemon `qcr why <n> --json` only
 for a PR whose snapshot signature moved, and it is built not to load the
-container (L1). Its per-PR progress — which signature each PR was
+container. Its per-PR progress — which signature each PR was
 last cleanly reconciled at — is kept in `state/tui-evidence-sweep.json`
 beside the TUI's other state files, written temp + rename and stamped with
 the evidence store it describes, so a re-exec resumes instead of re-asking

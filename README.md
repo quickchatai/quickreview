@@ -368,8 +368,9 @@ tokens, picks the channel and patches your config.
   packs, lens-selection heuristics, and per-lens switches (any lens can be
   turned off, given a minimum tier or a severity ceiling). Ship-included:
   `profiles/default/` (the shipped behaviour, the base to extend),
-  `profiles/example-django/` (a worked Django profile) and
-  `profiles/minimal/`. Start from `extends = "default"` and write only what
+  `profiles/example-django/` (a worked Django profile), `profiles/minimal/`,
+  and two leaner review shapes, `profiles/fast/` and `profiles/snappy/`
+  (each with its own README). Start from `extends = "default"` and write only what
   differs.
 - **Presets**: `[review] preset` names the whole configuration in one word:
   `default`, `max` (every model at its ceiling) or `low` (about half the cost
@@ -429,10 +430,9 @@ in [MANIFESTO.md](MANIFESTO.md).
 What enforces "the reviewer never runs your code" is a set of layers: an
 allowlist of read-only programs, a veto over writes to git's configuration
 and to this system's own policy surface, a re-parse of `bash -c` payloads at
-every depth, and a round-boundary integrity check over those files. Every
-layer exists because an earlier version was **found false by running
-something, not by reading it**; eight adversarial rounds turned up real
-bypasses. What is guaranteed, what is explicitly *not* (none of it is a
+every depth, and a round-boundary integrity check over those files. Each
+layer has been tested **by running bypass attempts against it, not by
+reading it**. What is guaranteed, what is explicitly *not* (none of it is a
 sandbox; the session runs as the daemon's uid), and the probes to try are in
 [**docs/exec-boundary.md**](docs/exec-boundary.md), written as claims that
 can be shown false. Please try.

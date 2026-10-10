@@ -1,6 +1,6 @@
-// runPi resolves only once its output files are flushed (selfscan
-// bench-harness). The end-to-end race in bench-defects.test.ts loses only
-// under load; this pins it deterministically with a SLOW write stream: every
+// runPi resolves only once its output files are flushed. The end-to-end race
+// in bench-defects.test.ts loses only under load; this pins it
+// deterministically with a SLOW write stream: every
 // write lands 20 ms late, so a runPi that resolves on the child's `close`
 // (before the files flush) reads an empty tail every time.
 import {

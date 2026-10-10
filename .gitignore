@@ -20,19 +20,18 @@ wt/
 # .git/info/exclude instead — a tracked line would name one repo.
 # The daemon's WorktreeManager.ensureBaseClone writes the same line when the
 # sandbox root is a checkout (npm run daemon, the plain-docker bind mount).
-# finished-round evidence copied down from the VM. The default store
+# Finished-round evidence copied down from the VM. The default store
 # lives outside the repo (~/.local/share/qcr/evidence) because it grows without
 # bound; this covers an in-repo `[companion] evidence_dir` (and the empty-string
-# default of <root>/evidence). Private-repo transcripts NEVER get committed.
-# ROOT-ANCHORED on purpose: the bare `evidence/` spelling also swallowed
-# skills/companion/evidence/ and silently dropped that skill from a commit.
+# default of <root>/evidence). Private-repo transcripts never get committed.
+# Root-anchored so it does not also match skills/companion/evidence/.
 /evidence/
 reports/
 pihome/
 *.log
 BUILD_SHA
 state-snapshots/
-# the LIVE inventory is operator-local (real hostnames); the tracked
+# The live inventory is operator-local (real hostnames); the tracked
 # template is inventory.example.ini — copy it to inventory.ini and fill in.
 deploy/ansible/inventory.ini
 
@@ -41,7 +40,7 @@ deploy/ansible/inventory.ini
 # tracked there, and gitignore never affects tracked files.
 /config.toml
 
-# compose's project env file — the onboarding wizard writes the
+# Compose's project env file — the onboarding wizard writes the
 # chosen ingress profile (COMPOSE_PROFILES) here, and operators add their own
 # QCR_* overrides beside it. Operator-local, never committed.
 /.env

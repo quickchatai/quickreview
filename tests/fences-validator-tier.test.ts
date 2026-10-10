@@ -1,18 +1,11 @@
-// audit assertion #22: the validator tier, checked POST-HOC against
-// the passes that actually RAN. Restated.
+// The validator tier, checked post-hoc against the passes that actually ran
+// (`rounds.executed_passes`) as well as at plan time.
 //
-// The ratified decision was "the validator is never cheaper than the findings
-// it vetoes": `validatorTier` raised it at PLAN time to the round's
-// hottest lens, and this fence checked the passes the session reported running
-// (`rounds.executed_passes`) against the tier the round fixed
-// (`rounds.validate_tier`), because a lens can be added or raised mid-round.
-//
-// amended the decision: the validator is OPTIONAL (a profile may
-// switch it off), it is NOT raised to match any lens, and its validity veto
-// is a mark — the finding is kept as `doubted`, never posted, shown in the
-// TUI — not a deletion. A lens hotter than the validator is therefore no
-// longer a breach: the cheaper model can doubt the stronger one's finding but
-// can no longer make it vanish. What the fence still owes the decision:
+// The validator is optional (a profile may switch it off), it is not raised
+// to match any lens, and its validity veto is a mark — the finding is kept as
+// `doubted`, never posted, shown in the TUI — not a deletion. A lens hotter
+// than the validator is therefore not a breach: the cheaper model can doubt
+// the stronger one's finding but cannot make it vanish. What the fence pins:
 //
 //   1. PLAN time — the validator runs at its own tier (`validatorTier(cfg)`),
 //      whatever the lenses run at, and it is last or absent;
@@ -66,8 +59,8 @@ const file = (filename: string, additions: number): PrFileEntry => ({
 
 describe("[#22] the validator tier (as amended)", () => {
   /**
-   * MUTATION: fold the lens tiers back into the validator's (the legacy
-   * `lensTiers.reduce(higherTier, floor)`) — the risk and big-diff plans below
+   * MUTATION: fold the lens tiers into the validator's
+   * (`lensTiers.reduce(higherTier, floor)`) — the risk and big-diff plans below
    * start running the validator at sol-high/sol-med and this fails.
    */
   it("plan time: the validator runs at its own tier, never raised by a hotter lens", () => {

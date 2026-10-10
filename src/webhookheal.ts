@@ -1,10 +1,9 @@
-// Webhook URL self-heal. A tunnel sidecar writes its
-// assigned bare public hostname to a file on a shared volume; this watcher
-// notices a change, debounces it, and re-points the GitHub App's OWN webhook
-// URL through the one MutationGate — the `update_own_webhook_url` kind in the
-// app-self-config class, which executes even in dry-run (ratified rule-1
-// amendment, the owner, 2026-08-30) because new users run dry-run during exactly
-// the window the self-heal matters.
+// Webhook URL self-heal. A tunnel sidecar writes its assigned bare public
+// hostname to a file on a shared volume; this watcher notices a change,
+// debounces it, and re-points the GitHub App's own webhook URL through the one
+// MutationGate — the `update_own_webhook_url` kind in the app-self-config
+// class, which executes even in dry-run (CLAUDE.md rule 1) because new users
+// run dry-run during exactly the window the self-heal matters.
 //
 // Shape mirrors the verdict watcher: fs.watch is the fast path only, the
 // periodic sweep is the reliable one. Every failure surfaces as a log event +

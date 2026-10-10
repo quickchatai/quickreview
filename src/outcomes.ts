@@ -1,16 +1,14 @@
-// Outcome capture (S6): what became of every finding the reviewer
-// posted.
+// Outcome capture: what became of every finding the reviewer posted.
 //
-// WHY. `round_findings` records why each candidate was raised or killed, but
-// nothing recorded what happened AFTER a finding reached the PR: did the
-// author fix it, argue it away, or leave it standing? Posted findings were not
-// even linked to the GitHub comments that carried them (17 of 1,226 rows had a
-// thread id), so a human reply could not be joined back to the lens that
-// raised the finding. The learner (S7 cases, S8 lessons) needs exactly that
-// join. This module builds it, daemon-side and deterministic — no model in the
+// Why. `round_findings` records why each candidate was raised or killed; this
+// module records what happened after a finding reached the PR — did the
+// author fix it, argue it away, or leave it standing? — and links each posted
+// finding to the GitHub comment that carried it, so a human reply joins back
+// to the lens that raised the finding. The learner (finding cases, lessons)
+// needs exactly that join. This module builds it, daemon-side and deterministic — no model in the
 // loop, no GitHub write, nothing a round or a bench prompt can see.
 //
-// THREE TABLES, OWNED HERE (on the state database, like the ping-pong
+// Three tables, owned here (on the state database, like the ping-pong
 // ledger's):
 //
 // - `finding_comments` — one row per ROOT inline comment the bot posted, with
@@ -26,7 +24,7 @@
 //        the tag (`path_line_tag`). A comment none of these settles stays
 //        UNMATCHED (null) — never a guess.
 //   Facts arrive from the reconcile comment sweep's existing read (the bot's
-//   own inline comments, which it used to discard), from the human replies
+//   own inline comments), from the human replies
 //   already in `pr_comments` (a reply names its thread's root, path and line —
 //   GitHub's CURRENT line, which drifts as the branch moves, so it is the
 //   weakest fact), and from the record's `thread_id`. A fallback link is kept
@@ -40,7 +38,7 @@
 //   the review's findings: nothing says which finding made a human set a
 //   review aside.
 //
-// THE FATES, and what decides them. Every piece of evidence is timestamped;
+// The fates, and what decides them. Every piece of evidence is timestamped;
 // the LATEST decisive one wins, so a finding upheld after a reply and fixed by
 // a later push reads `fixed`.
 //   fixed               — the session's thread decision said `fixed`; a human
@@ -66,8 +64,8 @@
 //                         verified stands, one it cannot check is `unknown`.
 //   open_at_close       — none of the above, and the PR is closed.
 //   unknown             — none of the above, and the PR is open.
-// A `conceded` record is NOT read as a refutation on its own: on the live
-// store 77% of them were fixes ("Fixed in <sha>"). It counts as `fixed` when a
+// A `conceded` record is not read as a refutation on its own: most of them
+// are fixes ("Fixed in <sha>"). It counts as `fixed` when a
 // sha was cited or the anchored code changed, as `refuted_conceded` only when
 // the code provably did not, and as no evidence when that cannot be told — a
 // cited sha git cannot check included.
@@ -79,7 +77,7 @@
 // `[deferred]`) are no resolve at all. A decision that names its own
 // `outcome` overrides the resolve it made.
 //
-// A LATER ROUND'S ENTRY IS THIS FINDING only when that is provable: it names
+// A later round's entry is this finding only when that is provable: it names
 // this finding's thread or `settled:` it, or it names this finding's round in
 // `raised_in_round` and either carries this finding's key or — same path,
 // shared lens, within `CONTINUATION_LINES` — is nearer to this finding than
@@ -92,7 +90,7 @@
 // the later one's evidence, so one finding raised in three rounds reads one
 // fate three times rather than three different ones.
 //
-// BOUNDED. The reconcile pass runs `sweep()`: open PRs and PRs closed in the
+// Bounded. The reconcile pass runs `sweep()`: open PRs and PRs closed in the
 // last day, at most `OUTCOME_SWEEP_MAX_PRS`, and a PR whose inputs have not
 // moved since its last capture is skipped. Git reads (`AnchorGit`) are local,
 // read-only and memoised; a commit the clone does not hold is UNKNOWN, never a
@@ -141,8 +139,7 @@ export interface AnchorGit {
   introducedBetween(sha: string, from: string, to: string): Promise<boolean | null>;
 }
 
-/** Bump when a rule changes, so every PR is re-captured once. 2: the
- * integration review's linker and fate fixes. */
+/** Bump when a rule changes, so every PR is re-captured once. */
 export const OUTCOME_RULES_VERSION = 2;
 /** PRs captured per reconcile pass. */
 export const OUTCOME_SWEEP_MAX_PRS = 25;
@@ -374,10 +371,8 @@ function lensIdsOf(row: RoundFindingRow): string[] {
  * must not both inherit one entry's fate. Returns the owner's key, or null.
  *
  * An equal key ALONE is no match: sessions number their keys per round (f1,
- * f2, …), so a later round's `f1` is usually a different finding. On the
- * live store 4 of 5 key-only carries sat more than 10 lines apart — one
- * carried line 233's finding onto line 968's and merged their cases
- * (integration review).
+ * f2, …), so a later round's `f1` is usually a different finding; a key-only
+ * match would carry one finding's fate onto another far away in the file.
  */
 export function predecessorOf(
   round: readonly RoundFindingRow[],
@@ -421,10 +416,9 @@ interface Evidence {
  * fixed or the description corrected? A deliberately small lexicon, read
  * only to hold back a refutation the record would otherwise infer from the
  * session's own act (it resolved the thread, or a later round conceded) with
- * the anchored code unchanged. On the live store about half of those
- * "refutations" were agreements: "fair catch", "You are right, … I have
- * corrected it", "Updated: the description now says …", a fix made away
- * from the anchor (integration review). It over-matches on purpose
+ * the anchored code unchanged. Many such "refutations" are agreements: "fair
+ * catch", "You are right, … I have corrected it", "Updated: the description
+ * now says …", a fix made away from the anchor. It over-matches on purpose
  * — a hit only turns a refutation into `unknown`, never into a fix.
  */
 const CONCESSION_RE =
@@ -601,8 +595,8 @@ export class OutcomeCapture {
     );
     // The registry knows when the bot posted the comment. Without it a
     // reply- or record-sourced row has no posting time, and a fate rule
-    // falls back to the ROUND's record time — a later round's, on a link
-    // the registry contradicts (integration review).
+    // falls back to the round's record time — a later round's, on a link
+    // the registry contradicts.
     const backfill = this.store.db.prepare(
       "UPDATE finding_comments SET created_at = ? WHERE comment_id = ? AND created_at IS NULL",
     );
@@ -658,15 +652,13 @@ export class OutcomeCapture {
    * the order). A marker link is final. Every other comment is resolved
    * AGAIN on every capture, from its facts alone, so the result never
    * depends on the order comments are visited or on what an earlier pass
-   * linked (integration review,: a second capture of the live store
-   * moved a link and a fate).
+   * linked.
    *
    *   * The round: the one the comment's review id names, else the one the
    *     registry (`bot_comments.round_no`) attributes it to. When either is
    *     known, ONLY that round's findings are candidates — a comment whose
    *     round holds no posted finding at its path and line is unmatched,
-   *     never linked to another round's finding (36 of 998 such links on the
-   *     live store named a round the registry contradicts). Only a comment
+   *     never linked to another round's finding. Only a comment
    *     neither names falls back to the first round recorded after it was
    *     posted.
    *   * A finding two comments could claim by fallback is NEITHER's, and one
@@ -1021,11 +1013,10 @@ export class OutcomeCapture {
         } else if (d.resolution === "keep_open") {
           // Keeping a thread open right after "Fixed in <sha>" is the
           // session not having re-verified the new head yet — not the bot
-          // holding against a human (integration review,: 64 of 92
-          // live `kept_open` fates followed a sha-citing reply). When the
-          // human reply it answered cites a commit: a fix git verified
-          // stands (nothing is added — `sha_cited` is the evidence); one git
-          // cannot check yet leaves the finding undecided.
+          // holding against a human. When the human reply it answered cites
+          // a commit: a fix git verified stands (nothing is added —
+          // `sha_cited` is the evidence); one git cannot check yet leaves the
+          // finding undecided.
           const answered = [...replies].reverse().find((r) => replyAt(r) <= d.at) ?? null;
           const citesSha = answered !== null && citedShas(answered.body).length > 0;
           if (citesSha && cited.state === "verified" && replyAt(cited.reply) <= d.at) continue;
@@ -1399,8 +1390,8 @@ export class OutcomeCapture {
         if (report.captured >= max) break;
         if (report.captured > 0 && performance.now() - started > budget) break;
         // A real event-loop turn per PR: a capture whose git answers are all
-        // memoized (or with no git at all) never awaits real I/O, and 25 of
-        // them in a row were one ~130 ms block (boot stall).
+        // memoized (or with no git at all) never awaits real I/O, so a run of
+        // them would otherwise block the loop as one long synchronous stretch.
         await yieldToLoop();
         report.considered++;
         try {

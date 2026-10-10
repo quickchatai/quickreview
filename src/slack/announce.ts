@@ -1,4 +1,4 @@
-// The daemon-templated announcer (S4).
+// The daemon-templated announcer.
 //
 // Everything the daemon says in Slack on its own initiative is assembled HERE,
 // in deterministic TypeScript, from state the daemon already holds: no model
@@ -7,7 +7,7 @@
 //
 // Three rules shape the whole file:
 //
-//  1. **Root-on-first-event (ratified DP-2a).** Whichever event reaches a PR
+//  1. **Root-on-first-event.** Whichever event reaches a PR
 //     first — the pickup at dispatch, or a `pr.not_picked_up` notice while it
 //     still waits — posts the top-level message and writes `slack_threads`.
 //     Every later post targets that recorded `root_ts`, never a reply's own ts.
@@ -109,7 +109,7 @@ export interface SupersededAnnouncement {
 }
 
 /** The slice src/dispatch.ts depends on — optional there, so the stub-wired
- * daemon core and every existing test keep working with no Slack at all. */
+ * daemon core and tests work with no Slack at all. */
 export interface DispatchAnnouncer {
   roundStarted(a: RoundAnnouncement): Promise<void>;
 }
@@ -139,8 +139,9 @@ export interface AnnouncerDeps {
   statusPath?: string;
   /** Test seam for the above (returns the file contents, or undefined). */
   readStatus?: () => string | undefined;
-  /** Duplicate-socket-consumer signal. NOT a channel post — ops signals ship
-   * OFF in v1; the wiring agent hooks this to the overseer-inject anomaly path. */
+  /** Duplicate-socket-consumer signal. NOT a channel post — ops signals are
+   * off for the channel; wire.ts hooks this to the overseer-inject anomaly
+   * path. */
   onAnomalySignal?: (message: string) => void | Promise<void>;
   /** Bound on the shutdown announcement so it can never delay an exit. */
   stopTimeoutMs?: number;
@@ -191,7 +192,7 @@ export interface NotPickedUpItem {
 /**
  * PRs that have waited past `pickup_grace_min` without a round: queued, not
  * paused, triggered, and with no round started since that trigger. Pure over
- * the store — the wiring agent drives it on a timer.
+ * the store — the caller drives it on a timer.
  */
 export function scanNotPickedUp(
   store: StateStore,
@@ -386,9 +387,9 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   // ---- thread lifecycle --------------------------------------------------
 
   /**
-   * A round was created. Says the ratified pickup message the first time — as
-   * the thread ROOT when nothing has spoken for this PR yet, or as the first
-   * REPLY when a `pr.not_picked_up` notice already opened the thread (DP-2a is
+   * A round was created. Says the pickup message the first time — as the
+   * thread ROOT when nothing has spoken for this PR yet, or as the first REPLY
+   * when a `pr.not_picked_up` notice already opened the thread (the rule is
    * root-on-first-event, NOT pickup-only-if-first) — and the 🔄 line in-thread
    * on every genuinely later round.
    *
@@ -436,11 +437,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
   }
 
-  // escalationWorthy() — the one-per-PR pre-flag — was removed on 2026-08-18
-  // along with the heuristic that produced it. A PR now announces its verdict
-  // and nothing before it.
-
-  /** The verdict, in-thread. RATIFIED: never `reply_broadcast`, whatever
+  /** The verdict, in-thread. Never `reply_broadcast`, whatever
    * `broadcast_verdicts` says — the seam has no broadcast parameter at all. */
   async verdict(a: VerdictAnnouncement): Promise<void> {
     if (!this.lifecycleEnabled(LIFECYCLE_CAUSES.verdict)) return;
@@ -652,7 +649,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     const refreshedAt = this.now();
     // The banner names only a JUST-recovered incident; the incident message's
     // correction is owed until Slack accepts it, whatever the tick cadence —
-    // so it reads a day-long window and retries a refusal (selfscan 3087bc73).
+    // so it reads a day-long window and retries a refusal.
     const recoveries = store.recentReviewRecoveries(
       new Date(refreshedAt.getTime() - RECOVERY_BANNER_WINDOW_MS).toISOString(),
     );
@@ -706,7 +703,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
     }
     const ts = await this.post({ idemKey: HEARTBEAT_IDEM_KEY, kind: "announce", text });
     if (ts) {
-      // Pinning may be refused (`no_permission`) — the owner can pin by hand.
+      // Pinning may be refused (`no_permission`) — the operator can pin by hand.
       try {
         const pin = await slack.pinsAdd({ channel: cfg.slack.channel, ts });
         if (!pin.ok) this.log(`slack: heartbeat pin skipped (${pin.error ?? "unknown"})`);
@@ -735,7 +732,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
 
   /**
    * `hello.num_connections > 1` outside a deploy window means a second consumer
-   * is eating our events. v1 ships ops signals OFF for the channel, so this
+   * is eating our events. Ops signals are off for the channel, so this
    * surfaces as an anomaly callback (the overseer-inject path) only, and only
    * when the count changes — a duplicate consumer is one event, not a stream.
    */
@@ -754,7 +751,7 @@ export class SlackAnnouncer implements DispatchAnnouncer, VerdictAnnouncer {
   }
 }
 
-/** Convenience for the wiring agent: an announcer that is only built when
+/** Convenience for wiring: an announcer that is only built when
  * Slack is on, so callers can pass `undefined` straight through. */
 export function makeAnnouncer(deps: AnnouncerDeps): SlackAnnouncer | undefined {
   return deps.cfg.slack.enabled ? new SlackAnnouncer(deps) : undefined;

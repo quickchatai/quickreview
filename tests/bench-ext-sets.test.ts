@@ -36,7 +36,7 @@ describe("dataset pin registry", () => {
       "private-unpinned",
       "qodo-pr-review-bench-a73957c",
     ]);
-    // the private replay pin is EXPLICITLY unpinned and scores nothing.
+    // The private replay pin is EXPLICITLY unpinned and scores nothing.
     const priv = DATASET_PINS.find((p) => p.id === "private-unpinned")!;
     expect(priv.sha256).toBe("unpinned-private");
     expect(priv.denomination).toMatch(/never scored/);
@@ -115,7 +115,7 @@ describe("the committed external sets", () => {
       expect(c.expect_merge_base).toMatch(/^[0-9a-f]{40}$/);
       expect(all.cases.some((a) => a.instance_id === c.instance_id)).toBe(true);
     }
-    // The decision asked for at least one PR whose base moved past its merge-base.
+    // The smoke set holds at least one PR whose base moved past its merge-base.
     expect(smoke.cases.some((c) => c.expect_merge_base !== c.base_commit)).toBe(true);
   });
 

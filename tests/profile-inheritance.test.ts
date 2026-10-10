@@ -1,5 +1,4 @@
-// tests/profile-inheritance.test.ts — `extends` chains and the default base
-//.
+// tests/profile-inheritance.test.ts — `extends` chains and the default base.
 //
 // Every case resolves a profile the way wire.ts does (the three loaders in
 // src/profiles.ts) and asserts on what the resolved profile makes the PLAN

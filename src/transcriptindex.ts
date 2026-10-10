@@ -1,17 +1,11 @@
-// Round transcripts, read off the event loop (H2, the 2026-10-08
-// health check).
+// Round transcripts, read off the event loop.
 //
 // At every round end — the verdict, and the overdue, malformed, posting-receipt
 // and self-requeue paths — the daemon measures the round from the pi session
-// JSONLs: its token usage and spend and the post-hoc exec-policy
-// audit. Until this slice that was `measureRoundUsage` and then
-// `collectWindowLines`, each of which `readFileSync`ed EVERY top-level .jsonl
-// of the PR's session dir and JSON-parsed every line — the whole dir twice, on
-// the daemon's own thread, at every round end. The dirs are large (#5849
-// 68.8 MB in 5 files, #5850 92.3 MB, #5839 90.1 MB in 10) and grow by a file
-// at every session rebirth. On 2026-10-08 at 08:51:31Z #5849's round 5 settled
-// and the loop stalled for 16.8 s: its usage line was logged 4.1 s in, and the
-// integrity fingerprint and the audit's second pass filled the rest.
+// JSONLs: its token usage and spend and the post-hoc exec-policy audit. A PR's
+// session dir can hold tens of megabytes across several files and grows by a
+// file at every session rebirth, so reading it synchronously stalls the
+// daemon's event loop for seconds.
 //
 // This index reads each byte of a transcript AT MOST ONCE per daemon lifetime,
 // and never in one synchronous span:
@@ -45,17 +39,17 @@
 //     cannot hold a line inside the window. The slack covers coarse mtimes.
 //   - Concurrent queries for one file share one scan.
 //
-// The answer is the old one, exactly: session-dir lines counted when their
-// timestamp is inside [startedAt, finishedAt] (inclusive), global-store files
-// counted whole when their mtime is inside the window, files in the old order
-// (session files by name, then the store in its walk order), records in file
-// order — so even the floating-point cost sum is the same sum.
+// What counts: session-dir lines whose timestamp is inside [startedAt,
+// finishedAt] (inclusive), and global-store files counted whole when their
+// mtime is inside the window — files in a fixed order (session files by name,
+// then the store in its walk order), records in file order, so the
+// floating-point cost sum is deterministic.
 //
-// What changed on purpose: an in-scope file that cannot be read (or listed)
-// makes the usage UNKNOWN (`usage: null`) instead of a silent partial sum —
-// an undercount posing as a measurement — and the audit INCOMPLETE (every
-// violation found in what was read is still reported). ABSENT is not
-// unreadable, and stays "nothing there" as before: a missing session dir or
+// An in-scope file that cannot be read (or listed) makes the usage UNKNOWN
+// (`usage: null`), never a silent partial sum — an undercount posing as a
+// measurement — and the audit INCOMPLETE (every violation found in what was
+// read is still reported). ABSENT is not unreadable, and is "nothing there":
+// a missing session dir or
 // global store, a listed file gone by the time it is stat'ed or opened
 // (ENOENT/ENOTDIR — the daemon's own pi-global archiver unlinks store files a
 // day old while this walk awaits, and a dangling link is the same), and a
@@ -88,7 +82,7 @@ export const TRANSCRIPT_INDEX_MAX_FILES = 1024;
 export const TRANSCRIPT_INDEX_MAX_RECORDS = 1_000_000;
 /** Bytes before the committed offset re-read and compared before a resume. */
 const TAIL_BYTES = 512;
-/** The global store's walk depth — the old `jsonlFilesUnder` bound. */
+/** The global store's walk depth. */
 const GLOBAL_STORE_DEPTH = 6;
 const NEWLINE = 0x0a;
 const NEWLINE_BUF = Buffer.from([NEWLINE]);
@@ -114,7 +108,7 @@ export interface TranscriptHandle {
 }
 
 /** The filesystem seam: node's own `fs/promises` in production. `stat`
- * follows symlinks, as the old `statSync` did. */
+ * follows symlinks. */
 export interface TranscriptFs {
   readdir(dir: string): Promise<string[]>;
   stat(path: string): Promise<TranscriptStat>;
@@ -306,7 +300,7 @@ export class TranscriptIndex {
     const usage = emptyRoundUsage();
     const start = parseTs(opts.startedAt);
     const end = parseTs(opts.finishedAt);
-    // An unparseable window measured nothing before this slice either.
+    // An unparseable window measures nothing.
     if (start === null || end === null) return { usage, violations: [], unreadable: [] };
     const unreadable: UnreadableTranscript[] = [];
     try {
@@ -351,7 +345,7 @@ export class TranscriptIndex {
     try {
       names = await this.fs.readdir(dir);
     } catch (err) {
-      // No session dir is no transcript — zero, as before. Anything else
+      // No session dir is no transcript — zero. Anything else
       // means transcripts we cannot see.
       if (!isMissing(err)) unreadable.push({ path: dir, reason: reasonOf(err) });
       return;
@@ -400,9 +394,8 @@ export class TranscriptIndex {
     }
   }
 
-  /** The global store, walked depth-first in listing order (the old
-   * `jsonlFilesUnder` order); a `*.jsonl` whose mtime is inside the window
-   * counts whole. */
+  /** The global store, walked depth-first in listing order; a `*.jsonl`
+   * whose mtime is inside the window counts whole. */
   private async globalParts(
     dir: string,
     depth: number,
@@ -438,7 +431,7 @@ export class TranscriptIndex {
         continue;
       }
       // Any other name is followed only when it is a directory — a stat that
-      // fails says nothing is there to follow (the old `isDir` reading).
+      // fails says nothing is there to follow.
       let isDir = false;
       try {
         isDir = (await this.fs.stat(path)).isDirectory();

@@ -1,15 +1,15 @@
-// The SHADOW LEDGER's half that reads outcomes (S9a): which posted
-// findings a delivered dont-raise lesson WOULD have touched, and what humans
-// then did with those findings.
+// The SHADOW LEDGER's half that reads outcomes: which posted findings a
+// delivered dont-raise lesson WOULD have touched, and what humans then did
+// with those findings.
 //
-// WHY. R2 gives a curated dont-raise lesson authority over the validator: a
-// finding matching the lesson's lens, class and path precondition may be
-// DEMOTED (`lesson-shape`; P0 always survives, a P1 on solid evidence too).
-// That authority is not switched on until the owner has read the evidence
-// this module produces in shadow: for every lesson, the findings it would
-// have touched that humans then FIXED (harm — a real finding hidden), that
-// humans refuted or set aside (help), and the ones still unknown — on the
-// CLASS tier (below) the ones it would have demoted, on the LENS tier
+// WHY. Under `delivery = "on"` a curated dont-raise lesson has authority over
+// the validator: a finding matching the lesson's lens, class and path
+// precondition may be DEMOTED (`lesson-shape`; P0 always survives, a P1 on
+// solid evidence too). Whether to grant that authority is decided on the
+// evidence this module produces in shadow: for every lesson, the findings it
+// would have touched that humans then FIXED (harm — a real finding hidden),
+// that humans refuted or set aside (help), and the ones still unknown — on
+// the CLASS tier (below) the ones it would have demoted, on the LENS tier
 // evidence the license does not reach.
 //
 // THE MATCHER is deterministic and runs on what state.db already holds — the
@@ -19,8 +19,7 @@
 // recorded after its round's findings (it never is in practice: the
 // selection runs at dispatch). A posted finding is MARKED by a dont-raise
 // lesson selected for the round (for any discovery row or the validator)
-// at LENS LEVEL (the owner's ruling R9, 2026-10-07: "Lens level" over "Keep
-// strict") — the lens and path preconditions are enough:
+// at LENS LEVEL — the lens and path preconditions are enough:
 //   lens  — the finding's canonical lens ids share one with the lesson's
 //           `lens=` (or the lesson names `pass-validate`, which judges every
 //           finding, or names no lens — no precondition);
@@ -32,8 +31,8 @@
 //           one is a dot-prefix of the other (`baseline` covers
 //           `baseline.authz`) — the learner's coverage rule. The STRONGER
 //           tier, and the only one the validator's `lesson-shape` license
-//           (R2, the `lesson-validate` addendum, `on` only) reaches: R9
-//           widens the evidence, not the authority;
+//           (the `lesson-validate` addendum, `on` only) reaches: the lens
+//           tier widens the evidence, not the authority;
 //   lens  — the class differs, or the lesson names none (the legacy prose
 //           shapes). Only for a lesson that says WHERE it applies: one
 //           naming `paths=`, or, with no `paths=`, exactly one discovery
@@ -44,7 +43,8 @@
 // A finding two lessons touch on different tiers counts on the class tier.
 //
 // THE REPORT (`qcr lessons shadow-report [--days N]`) joins the marks with
-// S6's `finding_outcomes` (src/outcomes.ts) and its `review_outcomes`:
+// the outcome capture's `finding_outcomes` (src/outcomes.ts) and its
+// `review_outcomes`:
 //   harm      — fate `fixed`;
 //   help      — fate `refuted_conceded`, or (no fate about the finding
 //               itself — none, `unknown` or `open_at_close`) the review that
@@ -52,9 +52,9 @@
 //   upheld    — `upheld_after_reply` (a human pushed back, the bot held);
 //   ignored   — `open_at_close`;
 //   unknown   — no fate yet, or no outcome row;
-//   exempt    — a P0: R2 never demotes one, whatever the lesson says.
+//   exempt    — a P0: the license never demotes one, whatever the lesson says.
 // A finding is counted ONCE however many rounds posted it: marks on the
-// postings of one `carried_to` chain (S6) collapse onto its root, which
+// postings of one `carried_to` chain collapse onto its root, which
 // carries the chain's fate.
 // …in total and per tier (a finding on its strongest tier, so the two add up
 // to the total), per lesson and per lens, plus the look-for lessons whose
@@ -88,7 +88,7 @@ export function classesRelated(a: string, b: string): boolean {
 }
 
 /**
- * Whether a dont-raise lesson can mark on the LENS tier (R9): it must
+ * Whether a dont-raise lesson can mark on the LENS tier: it must
  * say where it applies — `paths=` globs, or, with none, exactly one discovery
  * lens. `pass-validate` alone narrows nothing (the validator judges every
  * lens's finding), and neither does naming no lens or several: such a lesson
@@ -134,7 +134,7 @@ function deliveredDontRaise(
 
 /**
  * The marks of one round: every POSTED finding a delivered dont-raise lesson
- * would have touched — on its lens and path (R9) — with the tier it matched
+ * would have touched — on its lens and path — with the tier it matched
  * on and why. Pure and deterministic (sorted by finding, then lesson).
  */
 export function matchShadow(
@@ -210,7 +210,7 @@ export function matchShadow(
  * Mark one round (pr, round_no) from what state.db holds: its newest
  * recorded selection and its findings record. Replaces the round's marks. A
  * round with no recorded selection (delivery `off`, the kill switch, a
- * daemon that predates S9a) is left alone. Returns the marks written, or
+ * round recorded before selection existed) is left alone. Returns the marks written, or
  * null when there was nothing to match against.
  */
 export function markRound(
@@ -289,7 +289,7 @@ export interface ShadowReport {
   /** Distinct marked findings, each counted once in its bucket — a finding
    * posted again in a later round (its `carried_to` chain) is ONE finding. */
   findings: BucketCounts & { total: number };
-  /** The same findings split by tier (R9), each on its STRONGEST:
+  /** The same findings split by tier, each on its STRONGEST:
    * `class` — some lesson's class matched it too (what the validator's
    * license needs); `lens` — lens and path alone. The two add up to
    * `findings`. */
@@ -424,7 +424,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
   // so both read the same fate. A lesson selected in both rounds marks both
   // rows — counted per row, a single human fix would read as harm twice. So
   // every mark is counted against its finding CHAIN, named by the chain's
-  // root (its first posting — S7's cases do the same): the chain's fate is
+  // root (its first posting — the finding cases do the same): the chain's fate is
   // the root's (it inherits its successors' evidence), its severity the
   // earliest MARKED posting's (the one a delivered lesson would have touched
   // first), and it counts as set aside when any marked posting's review was.
@@ -491,7 +491,7 @@ export function shadowReport(ledger: LessonLedger, opts: ReportOptions): ShadowR
     bucketFor.set(id, bucketOf(c.first.severity, fate, c.setAside));
   }
   const keyOf = (m: ShadowMarkRow): string => chainOf(m);
-  // each chain on its STRONGEST tier — a finding some lesson
+  // Each chain on its STRONGEST tier — a finding some lesson
   // matched on its class is a class-tier finding however many others touched
   // it on lens and path alone — so the two tiers add up to the total.
   const chainTier = new Map<string, ShadowMatchTier>();
@@ -720,8 +720,8 @@ export function renderShadowReport(r: ShadowReport): string {
   const ft = r.findings_by_tier;
   out.push(
     "",
-    // Since R9 the total holds lens-tier findings, which the validator's
-    // license never reaches: only the class tier is "would-demote".
+    // The total holds lens-tier findings, which the validator's license
+    // never reaches: only the class tier is "would-demote".
     `marked: ${r.marks} mark(s) on ${r.findings.total} posted finding(s) — ` +
       `class tier (would-demote) ${ft.class.total} finding(s) (${r.marks_by_tier.class} mark(s)), ` +
       `lens tier (evidence only) ${ft.lens.total} finding(s) (${r.marks_by_tier.lens} mark(s))`,
@@ -782,7 +782,7 @@ export function lessonDeliveryStatus(
   const r = shadowReport(ledger, { days, mode, now: () => now });
   return {
     delivery: mode,
-    // lessons reach a prompt only under `on`, with the kill
+    // Lessons reach a prompt only under `on`, with the kill
     // switch on and something to select from.
     delivering: mode === "on" && !r.lessons_off && opts.selecting !== false,
     lessons_off: r.lessons_off,

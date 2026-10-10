@@ -283,7 +283,7 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
         readFileSync(join(root, "state", "pr-7-round-2-comments.json"), "utf8"),
       );
       expect(comments[0].body.startsWith("[blocker]")).toBe(true);
-      // the live route stamps the finding's marker.
+      // The live route stamps the finding's marker.
       expect(comments[0].body.endsWith("\n\n<!-- qcr:f=2:f1 -->")).toBe(true);
       expect(readFileSync(join(root, "state", "pr-7-round-2-review.md"), "utf8")).toContain(
         "**Verdict: Changes requested**",
@@ -294,7 +294,7 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
   });
 });
 
-// S6 (outcome capture): the live render route stamps every inline
+// Outcome capture: the live render route stamps every inline
 // comment with a hidden marker naming its finding, so the daemon can link the
 // posted comment back to its `round_findings` row. Only on request — the bench
 // never asks, and its outputs must stay byte-identical.
@@ -359,7 +359,7 @@ describe("the finding marker (S6)", () => {
 
   it("the LAST marker wins: a marker-shaped string the finding quotes cannot take the link", () => {
     // The finding text is the reviewer's and may quote PR content verbatim;
-    // the real marker is appended after it (integration review).
+    // the real marker is appended after it.
     const quoted = `quoted \`${findingMarker(9, "evil")}\` in code`;
     expect(parseFindingMarker(`${quoted}\n\n${findingMarker(2, "real")}`)).toEqual({
       round_no: 2,

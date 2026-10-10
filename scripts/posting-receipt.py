@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Atomic, crash-durable receipts for guarded shell review posting.
+"""Atomic, crash-durable posting receipts for guarded shell review posting.
 
 The shell owns the existing mutation route. This helper performs no network
 access: it only records and inspects the before/after facts of that route.
@@ -142,7 +142,7 @@ def main() -> None:
         if value.get("posting_key") != key:
             raise SystemExit("posting-receipt: existing receipt key mismatch")
         if value.get("status") == "skipped":
-            # this identity was refused by guard 2 and that refusal is
+            # This identity was refused by guard 2 and that refusal is
             # terminal for the key. The shell's `check` already turns a skip
             # into a refusal before it gets here; this is the fail-closed
             # second layer, so no attempt can be recorded over a skip either.

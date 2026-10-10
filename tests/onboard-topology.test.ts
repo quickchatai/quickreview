@@ -1,4 +1,4 @@
-// the topology question: where the reviewer lives.
+// The topology question: where the reviewer lives.
 //
 // The three properties worth pinning: both answers are offered as first-class
 // (with the server route named as the recommendation), the recorded choice is
@@ -107,7 +107,7 @@ describe("recording the choice", () => {
     const choices = recordedChoices();
     expect(choices[TOPOLOGY_CHOICE_KEY]).toBe("vm");
     expect(choices[SSH_ALIAS_CHOICE_KEY]).toBe("review-box");
-    // The key IS the one config_fill and every step already read.
+    // The key is the one config_fill and every later step already read.
     expect(TOPOLOGY_CHOICE_KEY).toBe(CHOICE_KEYS.topology);
     expect(topologyOf(choices)).toBe("vm");
   });

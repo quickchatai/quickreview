@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// runner for the curated-memory import (src/memory/import.ts).
+// Runner for the one-time curated-memory import (src/memory/import.ts).
 //
 // Thin on purpose: everything that decides what crosses lives in the import
 // module; this file only wires the two ends of the seam and prints the log.
 //
-//   source — the retired engine's MEMORY.md through the read-only
+//   source — the archived MEMORY.md through the read-only
 //            `legacy-file.ts` reader (the file this process can see;
 //            --memory overrides the path).
-//   dest   — ANY MemoryStore, loaded dynamically from `--dest <module>#<export>`
+//   dest   — any MemoryStore, loaded dynamically from `--dest <module>#<export>`
 //            so the runner never names a particular engine. The export may be
 //            a store or a zero-arg factory returning one (sync or async).
 //
-// With no --dest it is a DRY RUN against an in-memory store: nothing is
+// With no --dest it is a dry run against an in-memory store: nothing is
 // written anywhere, and the log tells you exactly what a real run would
 // import and what it would leave behind.
 //
@@ -19,7 +19,7 @@
 //   node scripts/import-pi-memory.mjs [--memory PATH] [--dest MODULE#EXPORT]
 //                                     [--batch-size N] [--archive] [--log FILE]
 //
-// The import is BEST EFFORT with no gate (the owner, 2026-08-20): it always
+// The import is best effort with no gate: it always
 // exits 0 unless it could not even start. Read the log.
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";

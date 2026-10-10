@@ -44,7 +44,7 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     expect(dryrunRecords()).toHaveLength(3);
   });
 
-  // Parity with classifyCi's latest-run-per-name rule (the owner, 2026-08-19).
+  // Parity with classifyCi's latest-run-per-name rule.
   it("ignores a cancelled husk when a newer run of the same name succeeded", async () => {
     s.checkRuns = [
       {
@@ -90,11 +90,9 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     expect(res.out).toContain("CI is red");
   });
 
-  // Parity with: a commit status under a check-run's name is a second
-  // check. The shell half never grouped statuses with runs, so it was already
-  // red here while the gate half read green — the parity both files claim was
-  // false until the classifier was fixed. These pin the shell side so it can
-  // never regress to the gate's old answer.
+  // A commit status under a check-run's name is a second check, never
+  // collapsed with the run. These pin the shell side of that parity with the
+  // gate's classifier.
   it.each([
     ["failure", "CI is red"],
     ["error", "CI is red"],
@@ -139,9 +137,8 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
   ] as const)(
     "a %s/%s check-run with a null started_at is never masked by a passing status of its name",
     async (status, conclusion, message) => {
-      // Review round 1: the gate route collapsed this untimestamped
-      // run with the same-named status and read green; the shell never grouped
-      // them and was right. Pinned so the shell can never regress to match.
+      // An untimestamped run is never collapsed with the same-named status:
+      // collapsing them would read green here.
       s.checkRuns = [{ name: "ci", status, conclusion, started_at: null }];
       s.statuses = [{ context: "ci", state: "success" }];
       const res = await run("approve-pr.sh", ["5180", bodyFile()]);
@@ -165,7 +162,7 @@ describe("scripts/approve-pr.sh — guard 4 (red CI hard-gates APPROVE)", () => 
     expect(res.ok).toBe(true);
   });
 
-  // Parity with no_checks_is_red (the owner, 2026-08-19).
+  // Parity with no_checks_is_red.
   it("refuses a zero-checks head when no_checks_is_red is on; allows it when off", async () => {
     s.checkRuns = [];
     const base = readFileSync(join(s.dir, "config.toml"), "utf8");

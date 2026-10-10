@@ -1,4 +1,4 @@
-// The board's `u` key (#5362) — the one write action the board has beyond
+// The board's `u` key — the one write action the board has beyond
 // wakes. Every ssh call is faked; nothing spawns.
 //
 // What the tests pin, in order of what would hurt most if it regressed:
@@ -86,7 +86,7 @@ describe("the unwedge command channel", () => {
     expect(write.stdin).toBe(commandPayload("rerun-round", 5362));
     expect(write.argv.join(" ")).not.toContain("5362");
     // tmp+mv, so the watcher never sees a half-written file — into the
-    // OPERATOR directory, never the session dir beside it.
+    // operator directory, never the session dir beside it.
     const script = write.argv[write.argv.length - 1]!;
     expect(script).toContain("cd -P '/opt/quickreview/sandbox/commands/operator'");
     expect(script).not.toContain("/opt/quickreview/sandbox/commands/.");

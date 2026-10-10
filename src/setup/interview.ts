@@ -1,5 +1,5 @@
-// The setup interview's deterministic half (setup & scan spec
-// "Interview mapping"). The companion runs the interview — adaptive, driven by
+// The setup interview's deterministic half (setup & scan spec "Interview
+// mapping"). The companion runs the interview — adaptive, driven by
 // the repo portrait — and this file is what its answers MEAN: a fixed list of
 // concerns, a priority per concern, and one table in code that turns a
 // priority into lens settings. The same answers always produce the same
@@ -79,7 +79,7 @@ export interface Concern {
 /**
  * The concerns, and the lenses each one decides. Neither the validator
  * (`pass-validate` — a profile may switch it off by hand, the interview never
- * does), `pass-intent` (its question/nit cap is a ratified decision) nor
+ * does), `pass-intent` (its question/nit cap is fixed by design) nor
  * `pass-ask-human` is here.
  */
 export const CONCERNS: readonly Concern[] = [

@@ -1,6 +1,6 @@
-// Passive pi auth-failure detection (the owner, 2026-08-19): NO smoke calls —
-// watch the session JSONLs pi already writes and raise when sessions start
-// failing with token-expired API errors. Live signature (15:0xZ outage):
+// Passive pi auth-failure detection: no smoke calls — watch the session
+// JSONLs pi already writes and raise when sessions start failing with
+// token-expired API errors. The live signature:
 //   "errorMessage":"Provided authentication token is expired."
 // The scanner tail-reads recently-modified *.jsonl under the pi sessions dir
 // (one nesting level: pi groups sessions by cwd) — cheap enough for a 60s
@@ -72,11 +72,11 @@ function readFrom(path: string, from: number, bytes: number): { text: string; ne
  * never throw into the daemon tick.
  *
  * `seen` (path → byte offset, updated in place) makes the scan read only what
- * was APPENDED since the last scan: without it an old error still inside the
- * tail matched again on every healthy write after a re-login, and the flag
- * never cleared. A file not in `seen` is read tail-only, as before.
+ * was appended since the last scan, so an old error still inside the tail
+ * never matches again after a re-login and the flag can clear. A file not in
+ * `seen` is read tail-only.
  *
- * `seen` is also PRUNED (S4): an entry under `sessionsDir` whose file
+ * `seen` is also pruned: an entry under `sessionsDir` whose file
  * the listing no longer shows — archived, or its whole session dir gone — is
  * dropped, so the map tracks the live tree instead of every file that ever
  * existed. Only a listing that answered prunes: an entry under a directory

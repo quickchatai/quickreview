@@ -60,9 +60,9 @@ export const GITHUB_APP_STEP_ID = "github_app";
 // Written: everything the config-fill step needs to write config.toml, so the
 // App identity is derived once and never re-typed.
 
-// Every one of these is an ALIAS of the shared declaration in
-// src/onboard/choices.ts — this step used to spell the reviewed repo
-// "github_repo", a key no step ever wrote, and a real run stopped here.
+// Every one of these is an alias of the shared declaration in
+// src/onboard/choices.ts, so this step reads exactly the keys its siblings
+// write.
 
 /** "owner/name" of the reviewed repo — recorded by the interview (config_fill). */
 export const REPO_CHOICE_KEY = CHOICE_KEYS.repo;
@@ -841,7 +841,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       // is unusable): CONFIG_FILL_STEP_ID is the step that records this key,
       // and it is order 35 against this step's 40. Say which step, not just
       // which key — a refusal that names a choice nobody can set by hand is
-      // exactly the dead end was filed for.
+      // a dead end.
       return (
         `no reviewed repo recorded — the "${CHOICE_KEYS.repo}" choice must hold "owner/name" before the App can be ` +
         `created or verified. Fix: run the ${CONFIG_FILL_STEP_ID} step (the interview) first; it asks for the repository ` +
@@ -852,7 +852,7 @@ export function githubAppStep(opts: GithubAppStepOptions = {}): OnboardingStep {
       typeof ctx.choices[CHOICE_KEYS.secretsDir] === "string"
         ? (ctx.choices[CHOICE_KEYS.secretsDir] as string).trim()
         : "";
-    // the install locator decides whatever the choice does not name.
+    // The install locator decides whatever the choice does not name.
     const secretsDir =
       opts.secretsDir ??
       locateSecrets({ configured: choiceDir, override: process.env.QC_SECRETS_DIR }).path;

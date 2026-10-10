@@ -62,7 +62,7 @@ naming what broke.
 
 ## The checklist
 
-Eighteen steps, in this order. Three are specific to the server route and three
+Eighteen steps, in this order. Three are specific to the server route and one
 to the laptop route; the rest run on both, over whichever transport your
 topology chose.
 
@@ -276,7 +276,7 @@ however many rounds it takes.
 
 Decides where the memory engine computes the vectors it stores and searches by.
 The shipped default is **local**: a small English embedding model
-(`bge-small-en-v1.5`, its file pinned in the image, S4) is served on
+(`bge-small-en-v1.5`, its file pinned in the image) is served on
 loopback inside the daemon container, so nothing but the model call ever leaves
 the machine — memory text included — and no key is needed. Calling the step with no
 arguments confirms that default and writes nothing.
@@ -473,7 +473,7 @@ config.toml — the daemon's word for "off" — so memory health reports "not
 monitored" and raises nothing (on the server route it ships with the next
 deploy sync). Configuring memory later switches it back on. The difference
 matters: with memory left ON and no reviewer key, a missing key is what it is —
-a credential failure — and memory health (S1) treats it as one: every
+a credential failure — and memory health treats it as one: every
 round prompt carries a short `MEMORY UNAVAILABLE THIS ROUND` note (the session
 reviews normally and never mentions it in the posted review), the TUI board
 shows `MEMORY AUTH FAILED`, the overseer is woken (`memory_auth_failed`, again
@@ -485,10 +485,9 @@ fresh install.
 
 One placement detail you may see: the key file's home is
 `~/.config/qcr-operator/<install>/openviking-keys.env` — outside the secrets dir
-and the config home, both of which the container mounts. The old
-location (`~/.config/quickreview-bot/openviking-keys.env`) sat inside the old
-secrets dir, exactly where the companion key must not be; nothing reads it
-since (`qcr install migrate` moves it). A layout that would put the
+and the config home, both of which the container mounts. A key file at the
+legacy location (`~/.config/quickreview-bot/openviking-keys.env`) is never read;
+`qcr install migrate` moves it. A layout that would put the
 key file inside a mounted dir anyway is refused, and the wizard tells you the
 `export QCR_OPENVIKING_KEYS=…` line — the TUI, the companion and
 `scripts/companion-memory-forward.mjs` all read that variable, and you have to
@@ -689,8 +688,8 @@ Four areas, conversationally, one at a time:
 
 Confirmed answers go into reviewer memory tagged `#calibration`, so the very
 first review round benefits. The few standing instructions you confirm — the
-blocker/nit line, the escalation mention — are pinned, which is the one tag with
-guaranteed reach into every round prompt.
+blocker/nit line, the escalation mention — are pinned (moved into the pinned
+area), the one part of memory with guaranteed reach into every round prompt.
 
 Answers that map onto a `config.toml` knob become **proposals**, never silent
 edits: a pitch plus a patch, waiting in the TUI's `[7] feedback` tab (its

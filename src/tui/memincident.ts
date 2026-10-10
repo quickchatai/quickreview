@@ -1,22 +1,21 @@
-// Memory incident → ONE issue-tracker ticket (FT-0546 S1).
+// Memory incident → one issue-tracker ticket.
 //
-// Reviewer memory was dead from 2026-09-03 to 10-02 and the only party ever
-// told was the overseer, which wrote it into 33 digests nobody reads. The
-// `#bug` auto-filer (autofile.ts) could never have filed it either: it reads
-// its defects OUT OF MEMORY, the very thing that was down. This filer reads
-// the daemon's status.json `memory` block instead — never OpenViking — and
-// files ONE ticket per incident once the incident is older than
-// `[memory] incident_ticket_after_min` (2 h).
+// A memory outage must reach a person, not only the overseer's digest. The
+// `#bug` auto-filer (autofile.ts) cannot report it: it reads its defects out
+// of memory, the very thing that is down. This filer reads the daemon's
+// status.json `memory` block instead — never OpenViking — and files one
+// ticket per incident once the incident is older than
+// `[memory] incident_ticket_after_min` (default 2 h).
 //
 // Same tracker protocol as autofile.ts, which it reuses: actor `qcr-tui`, the
 // next FT id claimed by exclusive create, the ticket in the configured
-// effort. Dedup is by INCIDENT START: the ticket carries a
+// effort. Dedup is by incident start: the ticket carries a
 // `Memory-incident: <since>` line, and the daemon persists an open incident's
 // start across restarts (src/memory/health.ts), so a restart inside the same
 // outage never mints a second ticket. Only a wayfinder tracker is an issue
 // tracker; with another `[sink]` this files nothing and says so once.
 //
-// Acts only on FRESH data (the caller passes the poller's verdict): a stale
+// Acts only on fresh data (the caller passes the poller's verdict): a stale
 // snapshot may describe an outage that already ended. Never throws — a broken
 // tracker must not take down the TUI poll loop.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -27,7 +26,7 @@ import { claimNextId, type TrackerPaths } from "./autofile.js";
 
 export const MEMORY_INCIDENT_LINE = "Memory-incident:";
 
-/** The dedup key: the incident's START, whatever its kind became since. */
+/** The dedup key: the incident's start, whatever its kind became since. */
 export function incidentKey(m: MemoryStatus): string | undefined {
   return m.incident?.since;
 }
@@ -56,7 +55,7 @@ function filedKeys(paths: TrackerPaths, line: RegExp): Set<string> {
 }
 
 /** The ticket, from the status block alone. Never carries a key: the block
- * holds credential VERDICTS, not credentials. */
+ * holds credential verdicts, not credentials. */
 export function incidentTicketBody(
   id: string,
   m: MemoryStatus,
@@ -132,7 +131,7 @@ ${MEMORY_INCIDENT_LINE} ${since}
   return { name, content };
 }
 
-/** The `serving` block as one phrase — UNKNOWN when unmeasured, never "yes". */
+/** The `serving` block as one phrase — unknown when unmeasured, never "yes". */
 function servingLine(m: MemoryStatus): string {
   const s = m.serving;
   if (s === undefined) return "not reported (this daemon predates the serving check)";
@@ -148,7 +147,7 @@ export interface IncidentFilerMemo {
   filed: Set<string>;
   /** "no issue tracker configured" was said once already. */
   noTrackerSaid: boolean;
-  /** When the last attempt FAILED (ms) — a broken tracker is retried every
+  /** When the last attempt failed (ms) — a broken tracker is retried every
    * `RETRY_AFTER_FAILURE_MS`, not rescanned on every 3 s poll. */
   failedAt?: number;
 }
@@ -223,16 +222,16 @@ export function maybeFileMemoryIncident(
   }
 }
 
-// ---- FT-0546 S8: an EOD curation that did not reach memory → ONE ticket ----
+// ---- an EOD curation that did not reach memory → one ticket ---------------
 //
 // The learner's two failures — no curation receipt (`missing`), and lessons
 // the curator adopted or tried to write that memory does not hold
-// (`not_persisted`) — are overseer wakes, and the person half of S1's path
-// carries them too: the board banner, the desktop notification, `qcr status`,
-// the companion's view, and this ticket. The daemon keeps a failure in
-// status.json `memory.curation.unresolved` until something made it good (a
-// later receipt; the candidate decided), and names the OLDEST as the
-// `incident`: one ticket per incident, keyed by its state and day, once it is
+// (`not_persisted`) — are overseer wakes, and the same person-facing path as
+// a memory incident carries them too: the board banner, the desktop
+// notification, `qcr status`, the companion's view, and this ticket. The
+// daemon keeps a failure in status.json `memory.curation.unresolved` until
+// something made it good (a later receipt; the candidate decided), and names
+// the oldest as the `incident`: one ticket per incident, keyed by its state and day, once it is
 // older than the same `incident_ticket_after_min`. A run of missed days is one
 // incident (its oldest day stays the key until a receipt resolves the run).
 

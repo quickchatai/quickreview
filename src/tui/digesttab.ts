@@ -1,10 +1,10 @@
 // `[3] digest` — the document the EOD sweep writes, `digest/<date>.md`,
 // rendered full width and read top to bottom. Its own tab because
-// the owner reads it as a document rather than looking things up in it; `[`
+// the operator reads it as a document rather than looking things up in it; `[`
 // and `]` page to older / newer days, j/k scroll. Pre-18:00 the newest digest
 // is yesterday's — it renders with a "(yesterday)" tag rather than pretending.
 //
-// The digest is a FILE on the VM, so "there is none" and "I could not look"
+// The digest is a file on the VM, so "there is none" and "I could not look"
 // are different facts: the fetcher's `list` is undefined when the
 // listing itself failed, and the tab says so instead of showing an empty day.
 import type { TuiConfig } from "../config.js";

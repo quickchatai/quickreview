@@ -1,13 +1,5 @@
-// writes that stick.
-//
-// Before this slice a memory write that did not land on the first try was
-// gone: the client read every 409 as "the precondition refused" (so the
-// server's "directory busy, try again" answer was never retried — 6 of 8 EOD
-// writes on 2026-10-05), the [feedback] sink dropped any failure (36 of 39
-// signals in September), a signal that arrived before the engine existed was
-// dropped outright, a drain SKIPPED the day's EOD sweep, and a failed EOD
-// inject was one log line. Every acceptance criterion of the S2 contract is
-// pinned here:
+// Writes that stick: a memory write that does not land on the first try is
+// retried, ledgered or re-owed — never silently gone. Pinned here:
 //
 //   * a busy 409 is retried (jittered, ≤10 s); a precondition 409 is not;
 //   * a named `note` is created at its deterministic address, and a replay
@@ -15,8 +7,8 @@
 //   * the ledger records memory_state/attempts/last_error/uri; a write that
 //     committed but timed out is backfilled EXACTLY once; a signal received
 //     before the engine was ready ends up written; the pump writes ≤20 a tick
-//     and only while memory is healthy; the pre-S2 losses are backfilled
-//     without duplicating entries that landed after all;
+//     and only while memory is healthy; legacy losses (rows with no memory
+//     state) are backfilled without duplicating entries that landed after all;
 //   * `memory_write_backlog` wakes past 2 h;
 //   * a drain DEFERS the EOD sweep — across a restart too — and a failed
 //     inject is retried 3× before `eod_inject_failed` wakes.
@@ -1033,7 +1025,7 @@ describe("the backfill pump", () => {
     expect(wire).toContain("cfg.memory.write_backlog_after_min");
     expect(wire).toMatch(/feedbackPump\.start\(\)/);
     expect(wire).toMatch(/feedbackPump\?\.stop\(\)/);
-    // Pre-S2 rows are checked against a COMPLETE sweep, never a collapsed read.
+    // Legacy rows are checked against a complete sweep, never a collapsed read.
     expect(wire).toMatch(/complete: sweep\.unread\.length === 0/);
     expect(MEMORY_DEFAULTS).toMatchObject({
       backfill_interval_s: 60,
@@ -1042,7 +1034,7 @@ describe("the backfill pump", () => {
   });
 });
 
-// ---- 4. the pre-S2 losses -----------------------------------------------------
+// ---- 4. the legacy losses ----------------------------------------------------
 
 describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () => {
   let dir: string;
@@ -1051,7 +1043,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  /** A pre-S2 database: rows with no memory state, and the failure events
+  /** A legacy database: rows with no memory state, and the failure events
    * the old sink logged right after a failed write. */
   function legacyDb(): string {
     const path = join(dir, "state.db");
@@ -1177,7 +1169,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
     s.close();
   });
 
-  /** A pre-S2 database built by `build`: `row` inserts a feedback row at an
+  /** A legacy database built by `build`: `row` inserts a feedback row at an
    * instant, `failed` logs the old sink's failure event at one. */
   function preS2Db(
     build: (
@@ -1241,7 +1233,7 @@ describe("the 2026-08-31..10-02 losses are backfilled without duplicates", () =>
       row("feedback_comment", 5600, fb(11), "2026-09-20T08:00:00.200Z");
       failed(5600, "feedback_comment", "2026-09-20T08:00:10.000Z");
       failed(5600, "feedback_comment", "2026-09-20T08:00:10.100Z");
-      // An S2-era failure names its own signal: it is never a legacy row's.
+      // A failure that names its own signal is never a legacy row's.
       row("feedback_comment", 5700, fb(20), "2026-09-25T08:00:00.000Z");
       failed(5700, "feedback_comment", "2026-09-25T08:00:05.000Z", { signal: 999, attempt: 2 });
     });

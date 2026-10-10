@@ -1,5 +1,5 @@
-// Design tokens (§8, ratified: "muted + one accent", full redesign).
-// The ONLY module where visual decisions live: every renderer styles chrome
+// Design tokens: "muted + one accent".
+// The only module where visual decisions live: every renderer styles chrome
 // through these semantic tokens and helpers — never raw SGR.bold/dim/inverse
 // at call sites. Composes over paint.ts's SGR; layout stays ANSI-transparent
 // (helpers add zero cells beyond their visible glyphs).
@@ -7,11 +7,11 @@
 // Language, picked once:
 //   * accent      — 256-color cyan-teal 73: selection, focus, active tab,
 //                   links, key glyphs. The one non-semantic color.
-//   * muted       — grey 246 for secondary text (replaces decorative dim).
-//   * red/green   — TRUTH ONLY (LIVE badge, CI red, REQUEST_CHANGES/blocked;
+//   * muted       — grey 246 for secondary text (instead of decorative dim).
+//   * red/green   — truth only (LIVE badge, CI red, REQUEST_CHANGES/blocked;
 //                   green for APPROVE/healthy). Yellow = warnings.
 //   * sections    — `▍TITLE` in accent+bold, muted subtitle beside it.
-//   * selection   — the ONE style everywhere: accent background, dark ink
+//   * selection   — one style everywhere: accent background, dark ink
 //                   (inner SGR stripped so the bar reads as one piece;
 //                   OSC-8 links survive).
 import { ESC, SGR, stripAnsi } from "./paint.js";
@@ -28,7 +28,7 @@ const INK_ON_FILL = fg256(235);
 export const ACCENT = fg256(73);
 /** Inverse-selection variant: accent background + dark ink. */
 export const ACCENT_BG = `${bg256(73)}${INK_ON_FILL}`;
-/** Secondary text — replaces most decorative `dim`. */
+/** Secondary text — used instead of decorative `dim`. */
 export const MUTED = fg256(246);
 /** Section titles: accent + bold. */
 export const HEADING = `${ACCENT}${SGR.bold}`;
@@ -67,7 +67,7 @@ export function sectionTitle(title: string, subtitle = ""): string {
 const SGR_RE = /\x1b\[[0-9;]*m/g;
 
 /**
- * The ONE selection style: accent background over the whole line. Inner SGR
+ * The selection style: accent background over the whole line. Inner SGR
  * styling is stripped (a selection bar reads as one piece; per-token colors
  * return when the row is deselected); OSC-8 links are kept clickable.
  * Cell math is untouched: displayWidth(selected(l)) === displayWidth(l).
@@ -100,11 +100,9 @@ export function badge(kind: BadgeKind, text: string): string {
 /**
  * The one top-bar mode chip: LIVE is red truth, DRY-RUN rides the accent.
  *
- * `undefined` means NOT YET KNOWN and must never render as either (,
- * ruling 1). On 2026-08-31 a missing ssh agent key made a LIVE installation
- * paint `DRY-RUN` — purely because the view field initialised to `true` — and
- * the operator reasonably read it as "someone flipped the flag on my live
- * reviewer". The badge is only ever asserted from a heartbeat.
+ * `undefined` means not yet known and must never render as either: a live
+ * install painted `DRY-RUN` from a default reads as "someone flipped the flag
+ * on my live reviewer". The badge is only ever asserted from a heartbeat.
  */
 export function modeBadge(dryRun: boolean | undefined): string {
   if (dryRun === undefined) return badge("warn", "MODE UNKNOWN");

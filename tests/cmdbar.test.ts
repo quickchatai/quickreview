@@ -1,8 +1,8 @@
 // The shared command bar: paint/hit share one layout (round-trip pinned
 // here), globals keep the same x on every tab (the constant-position
 // guarantee), the active nav slot is highlighted, an App-level click on a bar
-// button IS that keypress — and,, the bar WRAPS instead of
-// dropping buttons and paints only the verbs the frame answers to.
+// button IS that keypress — and the bar WRAPS instead of dropping
+// buttons and paints only the verbs the frame answers to.
 import { ACCENT_BG } from "../src/tui/design.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
@@ -157,9 +157,8 @@ describe("the bar wraps instead of dropping buttons (→)", () => {
 
   it("[u unwedge] survives on the board at the shipped companion width — the ratified lever is always on screen", () => {
     // The shipped default gives the companion column half the terminal, so
-    // the board renders at `cols - sidebarWidth(cols) + 1`. Before
-    // the board's row B was silently truncated at that width and `u` was the
-    // button that fell off.
+    // the board renders at `cols - sidebarWidth(cols) + 1`; the bar must wrap
+    // rather than truncate there, or `u` falls off.
     const view: BoardView = {
       health: { kind: "ok", heartbeatAgeS: 1 },
       dryRun: false,
@@ -241,7 +240,7 @@ describe("active-tab highlight", () => {
       const label = NAV.find(([, l]) => l.endsWith(` ${tab}`))![1];
       expect(raw).toContain(`${ACCENT_BG}\x1b[1m[${label}]`);
       expect(raw.split(ACCENT_BG).length).toBe(2); // one selection fill only
-      expect(raw).not.toContain("\x1b[7m"); // no ad-hoc inverse (§8)
+      expect(raw).not.toContain("\x1b[7m"); // no ad-hoc inverse
     }
   });
 });
@@ -284,7 +283,7 @@ describe("App-level bar clicks", () => {
     expect(qx).toBeDefined();
     const running = app.run();
     (input as unknown as EventEmitter).emit("data", Buffer.from(`\x1b[<0;${qx};28M`));
-    // the click becomes a real `q`, and `q` now ASKS. The prompt is
+    // The click becomes a real `q`, and `q` asks. The prompt is
     // the proof the click was routed; `y` is what actually leaves.
     expect(app.view.confirmQuit).toBe(true);
     (input as unknown as EventEmitter).emit("data", Buffer.from("y"));
@@ -482,10 +481,10 @@ describe("clean exit", () => {
 });
 
 describe("the focused companion column is a TERMINAL, not a text box", () => {
-  // The regression this exists to prevent: gave the column a TUI-side
-  // draft line, so pi never saw the keys — no `/` commands, no completion
-  // menu, nothing clickable. Running pi under tmux is pointless if the bytes
-  // stop at the TUI. Root CLAUDE.md carries the rule.
+  // A TUI-side draft line in front of the column would keep the keys from
+  // pi — no `/` commands, no completion menu, nothing clickable. Running pi
+  // under tmux is pointless if the bytes stop at the TUI. Root CLAUDE.md
+  // carries the rule.
   function harness() {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;
     (out as unknown as { columns: number }).columns = 140;
@@ -578,10 +577,9 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
   });
 
   it("the `/` that focuses the column also REACHES pi (it opens pi's menu)", async () => {
-    // Caught live: `/` was consumed as a pure focus key, so pressing it took
-    // the keyboard and pi never saw the slash — the command menu you were
-    // reaching for never opened. Of all keys, this is the one that must
-    // travel.
+    // `/` is not a pure focus key: if it only took the keyboard, pi would
+    // never see the slash and the command menu would never open. Of all keys,
+    // this is the one that must travel.
     const h = harness();
     expect(h.app.sidebar!.focused).toBe(false);
     h.type("/");
@@ -606,11 +604,10 @@ describe("the focused companion column is a TERMINAL, not a text box", () => {
 });
 
 describe("the wheel scrolls the companion column, not the tab behind it", () => {
-  // Reported live: with the companion column focused, wheeling back through
-  // the conversation moved the BOARD's selection instead — and the pi mirror
-  // followed the new selection, so the notch scrolled away the thing being
-  // read. The column is chrome on every tab, so it has to answer the wheel
-  // before the tab dispatch does.
+  // With the companion column focused, the wheel scrolls the column, never
+  // the BOARD's selection — the pi mirror follows the selection, so moving it
+  // would scroll away the thing being read. The column is chrome on every
+  // tab, so it has to answer the wheel before the tab dispatch does.
   const INSTALLED = ["memory", "digest", "tickets", "deploy", "metrics", "feedback"] as const;
   function harness(tab: Tab = "board") {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;
@@ -741,8 +738,8 @@ describe("the wheel scrolls the companion column, not the tab behind it", () => 
 
 describe("drag-to-copy", () => {
   // Turning mouse reporting on takes the terminal's own selection away, so the
-  // TUI owes one back. The owner: "99% I select something to copy it" — release
-  // IS the copy; there is no copy key and no copy mode.
+  // TUI owes one back: release IS the copy; there is no copy key and no copy
+  // mode.
   function harness(cols = 60, rows = 12, withSidebar = false) {
     const out = new EventEmitter() as unknown as NodeJS.WriteStream;
     (out as unknown as { columns: number }).columns = cols;
@@ -892,7 +889,7 @@ describe("drag-to-copy", () => {
   const selOf = (app: App): Sel => (app as unknown as { selection: Sel }).selection;
 
   it("a drag started in the companion column never leaves it", async () => {
-    // Wandering left past the seam used to pull in the tab's border and the
+    // Wandering left past the seam must not pull in the tab's border or the
     // last letters of its rows.
     const h = harness(160, 20, true);
     await settle(); // the first frame

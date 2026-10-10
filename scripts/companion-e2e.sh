@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# companion-e2e.sh — the scripted end-to-end for the local companion
-# (slice C3; testing depth ratified on §5).
+# companion-e2e.sh — the scripted end-to-end for the local companion.
 #
 # What it proves, with a REAL container and REAL files (no vitest mocks):
 #   1. docker/companion builds;
@@ -12,8 +11,8 @@
 #      anywhere — the real notify-send and the real ssh inject are replaced by
 #      fakes, so this script can never message the VM);
 #   5. a canned feed change is classified meaningful, an unchanged board is
-#      not, and the ambient feed never mints a `wake` marker (the
-#      /feed/wake → pi.sendUserMessage path was retired 2026-08-21);
+#      not, and the ambient feed never mints a `wake` marker (the ambient
+#      feed never wakes pi);
 #   6. the daily rollover, driven by QCR_FAKE_TODAY, archives + queues the
 #      day-open message inside that container.
 #

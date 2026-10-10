@@ -1,13 +1,13 @@
-// The S9a find planner, kept VERBATIM as the reference F2's
-// equivalence test compares against: one `/search/find` per distinct
+// The per-row find planner, kept verbatim as the reference the two-find
+// planner's equivalence test compares against: one `/search/find` per distinct
 // plan-row query inside `experiences/` (20 hits each), the main session's
 // cases find first (40), the one addable find last (40), at most 24 finds a
 // round — the rows past the cap left unasked (`find_cap`).
 //
-// F2 replaced it in src/memory/selection.ts with TWO finds a round (the cases,
-// and one lesson find sized to the whole corpus) because on the live VM only
-// 1–9 of a round's 17–24 per-row finds answered inside the 2 s budget. The
-// SELECTION (`selectRound`) did not change: it takes any plan, each row's
+// src/memory/selection.ts plans TWO finds a round instead (the cases, and one
+// lesson find sized to the whole corpus), because per-row finds mostly did not
+// answer inside the 2 s budget. The selection (`selectRound`) is the same for
+// both: it takes any plan, each row's
 // answer by its `rowKey`. So this planner also serves the selectRound unit
 // tests that give each row an answer of its own.
 import { roundContextQuery } from "../../src/memory/context.js";
@@ -24,7 +24,7 @@ export const S9A_MAX_FINDS_PER_ROUND = 24;
 
 const QUERY_MAX_CHARS = 600;
 
-/** S9a's per-row query: the PR title, the shape of the row's files, the lens. */
+/** The per-row query: the PR title, the shape of the row's files, the lens. */
 export function s9aRowQuery(input: { title: string; lens: string; files: readonly string[] }): string {
   const base = roundContextQuery({
     title: input.title,

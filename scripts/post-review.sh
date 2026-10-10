@@ -12,12 +12,13 @@
 # config.toml → the intended mutation is recorded to state/dryrun/ instead of
 # being sent. Live mode authenticates via scripts/mint-token.sh only.
 #
-# All THREE posting-time guards run here, from scripts/guards.sh —
-# the shell mirror of src/guards.ts, which the MutationGate enforces on the
+# Posting-time guards 1, 2, 3 and 5 run here, from scripts/guards.sh — the
+# shell mirror of src/guards.ts, which the MutationGate enforces on the
 # daemon's own route. This is the session's route, so it refuses exactly what
-# the gate refuses: a merged/closed PR, a head already reviewed with nothing
-# new since, and REQUEST_CHANGES over a head a human has already approved
-# (softened to COMMENT, findings intact).
+# the gate refuses: a merged/closed PR, a head that is no longer the one the
+# round reviewed, a head already reviewed with nothing new since, and
+# REQUEST_CHANGES over a head a human has already approved (softened to
+# COMMENT, findings intact).
 #
 # Usage: post-review.sh <pr-number> <REQUEST_CHANGES|COMMENT> <body-file> [comments-json-file]
 #   comments-json-file: JSON array of {path, line, side?, body} inline comments.
@@ -26,8 +27,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides: $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 DRYRUN_DIR="${QCR_DRYRUN_DIR:-$ROOT/state/dryrun}"
@@ -73,9 +74,9 @@ REPO="$(cfg github repo)"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
-# replay guard runs BEFORE posting guards: once this exact round/head
-# has a confirmed receipt, retry is idempotent success even though guard 2 now
-# (correctly) sees an already-reviewed head.
+# The replay guard runs before the posting guards: once this exact round/head
+# has a confirmed receipt, a retry is an idempotent success even though guard 2
+# sees an already-reviewed head.
 POSTING_RECEIPT=""
 POSTING_MARKER=""
 POST_ALREADY_CONFIRMED=0
@@ -108,7 +109,7 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
     skipped)
-      # this exact round was already refused by guard 2 and the
+      # This exact round was already refused by guard 2 and the
       # refusal is recorded. Terminal for the key — nothing was posted and
       # nothing will be; a reply landing since belongs to ping-pong, and the
       # daemon has (or will have) closed the round on the record.
@@ -131,11 +132,9 @@ if [[ -n "$COMMENTS_FILE" ]]; then
   [[ -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
 fi
 
-# ---- the posting-time guards --------------------------------------
-# All three, from the shared mirror of src/guards.ts — this is the session's
-# posting route, so it must refuse exactly what the gate refuses.
+# ---- the posting-time guards --------------------------------------------------
 
-# guard 2's refusal is recorded as a guarded no-op bound to this
+# Guard 2's refusal is recorded as a guarded no-op bound to this
 # round's posting identity, so the daemon can close the round as "nothing to
 # post" instead of reading the missing receipt as a lost POST. Written only for
 # a receipt-keyed round, only when the refused head IS the head the key names,

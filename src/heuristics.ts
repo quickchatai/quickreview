@@ -1,6 +1,6 @@
-// Pure dispatch heuristics ported from the old /auto-review flow:
-// test-file exclusion (the jq filter as TS), the migration gate, lens
-// selection and the pass tier. Consumed by dispatch (B2); unit-tested directly.
+// Pure dispatch heuristics: test-file exclusion, the migration gate, lens
+// selection, sub-lens triggers, sweep / behaviour-delta / baseline grouping
+// and the pass tier. Consumed by dispatch; unit-tested directly.
 
 import type { PrFileEntry } from "./github.js";
 
@@ -15,7 +15,7 @@ export interface PrFile {
   patch?: string;
 }
 
-// Ported test-file jq filter: a file is a test file iff any of these match.
+// A file is a test file iff any of these match.
 const TEST_PATTERNS: RegExp[] = [
   /(^|\/)tests?\//,
   /(^|\/)__tests__\//,
@@ -43,12 +43,9 @@ export function prodStats(files: PrFile[]): ProdStats {
   };
 }
 
-// The escalation-worthiness heuristic (infra paths ∪ prod_lines > 500 ∪
-// prod_files > 15) was DELETED on 2026-08-18 (the owner: "scrap the escalation
-// mechanics entirely"). It scored every PR, drove a prompt block and a Slack
-// flag, and no code ever checked whether the score predicted anything. Nothing
-// replaces it under another name: the tier ladder below now keys on size and
-// the migration gate alone.
+// There is no escalation-worthiness score, and none may be reintroduced under
+// another name (CLAUDE.md rule 10): the tier ladder below keys on size and the
+// migration gate alone.
 
 export function migrationGate(files: PrFile[]): boolean {
   return files.some((f) => /(^|\/)migrations\//.test(f.filename));
@@ -67,9 +64,9 @@ export function passTier(
   return "sol-med";
 }
 
-// ---- pass-intent ------------------------------------------------
+// ---- pass-intent -----------------------------------------------------------
 //
-// The tenth lens: does the PR do what its author said it would? Its intent
+// Does the PR do what its author said it would? Its intent
 // artifact is the PR TITLE + BODY and nothing else (intent-as-artifact — what
 // the author told other humans; the implementing conversation/prompt is
 // rejected as an echo chamber and is never fetched). Selection keys on the
@@ -113,8 +110,7 @@ export function meetsIntentBar(
 
 /**
  * The cost-shaped selection thresholds (`[review]` knobs), so a benchmark arm
- * can test a tighter plan on the same image. Absent ⇒ the compiled defaults —
- * exactly the selection every test and the pre-knob daemon use.
+ * can test a tighter plan on the same image. Absent ⇒ the compiled defaults.
  */
 export interface SelectionTuning {
   /** pass-intent's substance bar (words of author prose). */
@@ -125,21 +121,20 @@ export interface SelectionTuning {
   placementMinNewFileLines?: number;
 }
 
-// ---- placement / simplicity / backcompat ---------------
+// ---- placement / simplicity / backcompat -----------------------------------
 //
-// Three judgment lenses added from the 2026-08-20 team-feedback charting.
-// Selection is deterministic like everything above; the caps (placement and
-// simplicity post at P2 max) are enforced at the validator via PASS_ADDENDA,
-// not here.
+// Three judgment lenses. Selection is deterministic like everything above;
+// the caps (placement and simplicity post at P2 max) are enforced at the
+// validator via PASS_ADDENDA, not here.
 
 export const PLACEMENT_PASS = "pass-placement";
 export const SIMPLICITY_PASS = "pass-simplicity";
 export const BACKCOMPAT_PASS = "pass-backcompat";
 
-/** A public or exported declaration on a removed or changed line (freeze
- * fixes 2): TS/JS `export`, Go exported funcs/types, Rust `pub`, Java/Kotlin/
- * C#/Swift `public`, Python names in `__all__` or a top-level `def`/`class`
- * without a leading underscore. */
+/** A public or exported declaration on a removed or changed line: TS/JS
+ * `export`, Go exported funcs/types, Rust `pub`, Java/Kotlin/C#/Swift `public`,
+ * Python names in `__all__` or a top-level `def`/`class` without a leading
+ * underscore. */
 export const PUBLIC_SIGNATURE_RE =
   /^(?:\s*(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|interface|type|enum)\b|func\s+(?:\([^)]*\)\s*)?[A-Z]\w*\s*\(|type\s+[A-Z]\w*\s|pub(?:\([^)]*\))?\s+(?:async\s+)?(?:fn|struct|enum|trait|type|const|mod)\b|public\s+(?:static\s+)?(?:final\s+)?(?:abstract\s+)?[\w<>[\],\s]+\s+\w+\s*\(|public\s+(?:class|interface|enum|record)\b|__all__\s*=)|(?:def|class)\s+[A-Za-z]\w*)/;
 /** A wire-serialization site on a changed line: field names and order that
@@ -163,7 +158,8 @@ export const PLACEMENT_MIN_PROD_FILES = 8;
 /** …or on a new code file of at least this many added lines. The two
  * placement thresholds and the intent bar above are the `default` review
  * preset's (config.ts REVIEW_PRESETS, held equal by tests/review-levers.test.ts):
- * the lean plan, measured 2026-09-27 to keep recall at ~15% less spend. */
+ * the lean plan, measured on the defect benchmark to keep recall at ~15% less
+ * spend. */
 export const PLACEMENT_MIN_NEW_FILE_LINES = 30;
 
 /** Simplicity fires on diffs big enough to hide complexity — aligned with
@@ -181,7 +177,7 @@ const SIMPLICITY_BRANCH_RE = /^\+[ \t]*[)\]}]*[ \t]*(if|elif|else[ \t]+if|case|w
 const DEPS_MANIFEST_RE =
   /(^|\/)(package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|poetry\.lock|pyproject\.toml|Pipfile(\.lock)?|go\.(mod|sum)|Gemfile(\.lock)?|Cargo\.(toml|lock))$/;
 
-// ---- profile heuristics extension --------------------------------
+// ---- profile heuristics extension -----------------------------------------
 //
 // Lens selection keeps a GENERIC CORE compiled in below; the REPO-SHAPED
 // predicates (framework settings-file globs, management-command dirs, a
@@ -207,12 +203,11 @@ export const EMPTY_HEURISTICS: HeuristicsExtension = { paths: {}, addedLines: {}
 
 /** The lenses a profile may extend: exactly the shape-selected conditionals.
  * Deliberately NOT extendable: `pass-baseline`/`pass-validate` (always in the
- * plan already), `pass-intent` (keyed on the PR body, never the file shape —
- *), `pass-placement`/`pass-simplicity` (computed from code-file
- * status/size signals, not path membership), and `pass-concurrency`/
- * `pass-ask-human` (ADDABLE-ONLY by ratified decision, — a
- * profile path predicate would be exactly the re-added selection those
- * decisions reject). */
+ * plan already), `pass-intent` (keyed on the PR body, never the file shape),
+ * `pass-placement`/`pass-simplicity` (computed from code-file status/size
+ * signals, not path membership), and `pass-concurrency`/`pass-ask-human`
+ * (never selected by path: a race or an unwritten answer has no filename, so a
+ * profile path predicate would be exactly the selection that rule refuses). */
 export const PROFILE_EXTENDABLE_LENSES: readonly string[] = [
   "pass-ui",
   "pass-contracts",
@@ -224,7 +219,7 @@ export const PROFILE_EXTENDABLE_LENSES: readonly string[] = [
   "pass-backcompat",
 ];
 
-// Deterministic lens selection (spec §5): baseline always; conditional lenses
+// Deterministic lens selection: baseline always; conditional lenses
 // from the changed-file shape (path + patch-content signals), each tied to
 // the seeded lens's stated focus; validator always runs last (added by
 // dispatch, never selected here). `ext` is the selected profile's
@@ -235,8 +230,8 @@ export function selectLenses(
   intent?: { body?: string | null },
   ext: HeuristicsExtension = EMPTY_HEURISTICS,
   tuning: SelectionTuning = {},
-  /** Filled with WHY each lens was planned (freeze fixes 2, the owner's
-   * 2026-10-03 planning decision: the plan explains every lens it chose). */
+  /** Filled with why each lens was planned: the plan explains every lens it
+   * chose. */
   reasons?: Map<string, string>,
 ): string[] {
   const lenses = new Set<string>(["pass-baseline"]);
@@ -296,11 +291,10 @@ export function selectLenses(
 
   // Security & tenancy: auth/permission surfaces, secret/crypto-shaped names,
   // env files, dependency manifests. Framework settings-file globs
-  // (settings*.py) come from the profile. A manifest/lockfile change
-  // counts only when it ADDS lines: a deletion-only hunk introduces no
-  // dependency, and on AACR-Bench it fired a sol-high security pass that
-  // returned NONE (immich: a docs lockfile trimmed). A lockfile that adds lines
-  // with no package.json change still fires — that is the poisoning shape.
+  // (settings*.py) come from the profile. A manifest/lockfile change counts
+  // only when it adds lines: a deletion-only hunk introduces no dependency. A
+  // lockfile that adds lines with no package.json change still fires — that is
+  // the poisoning shape.
   if (
     any(/(^|\/)(auth|authn|authz|security|permissions|middleware|throttling)\//) ||
     any(/(secret|token|passw|crypt|oauth|jwt|csrf|cors)/i) ||
@@ -317,8 +311,8 @@ export function selectLenses(
   // Statelessness: in-process state signals in the added lines (module-level
   // mutable collections, lru_cache/threading), or cache/singleton/registry
   // shaped filenames — not every tasks/ touch. The content probes carry
-  // Python spellings but stay COMPILED-IN as multi-language intent (decided
-  //, recorded in docs/profiles.md): they detect real cross-language
+  // Python spellings but stay compiled in as multi-language intent
+  // (docs/profiles.md): they detect real cross-language
   // smells — memoization on mutable state, in-process locks, module-level
   // mutable collections — and a profile may ADD probes for other spellings,
   // never remove these.
@@ -404,11 +398,10 @@ export function selectLenses(
     if (f !== undefined) lastHit = `the diff touches ${f.filename}`;
     return f !== undefined;
   };
-  // Freeze fixes 2 (content, not paths): a changed or removed PUBLIC
-  // signature or a wire-serialization change breaks callers and peers that
-  // were built against the old one, wherever the file lives — a library's
-  // exported API, a mixed-version cluster's wire format (the analysis found
-  // one missed because selection was by path).
+  // Content, not paths: a changed or removed public signature or a
+  // wire-serialization change breaks callers and peers that were built against
+  // the old one, wherever the file lives — a library's exported API, a
+  // mixed-version cluster's wire format.
   const publicSurface = (): boolean => {
     for (const f of code) {
       if (f.patch === undefined) continue;
@@ -444,15 +437,14 @@ export function selectLenses(
   )
     pick(BACKCOMPAT_PASS);
 
-  // NOT selected here, deliberately: `pass-concurrency` and
-  // `pass-ask-human`. Neither has a PATH predicate — a
+  // Not selected here, deliberately: `pass-concurrency` and `pass-ask-human`.
+  // Neither has a path predicate — a
   // read-modify-write race has no filename, and neither does a question whose
   // answer was never written down. pass-ask-human reaches a round through the
   // add protocol only. pass-concurrency also does, unless the diff's CONTENT
   // touches synchronisation or the PR text says it is about a race or a lock:
-  // then SUBLENS_TRIGGERS plans it (owner ruling 2026-10-02, amending
-  // for content). Adding a path predicate for either is a decision, not a
-  // tidy-up.
+  // then SUBLENS_TRIGGERS plans it. Adding a path predicate for either is a
+  // decision, not a tidy-up.
 
   // Intent: keyed on the BODY, not the file shape — the artifact it
   // judges against is the author's own description, so a body below the
@@ -463,12 +455,11 @@ export function selectLenses(
   return [...lenses];
 }
 
-// ---- content-triggered sub-lenses (benchmark 2026-09-26) -------------------
+// ---- content-triggered sub-lenses ------------------------------------------
 //
-// The defect benchmark (bench/aacr/RESULTS.md) traced 48 real defects the
-// review kept missing: 42 were never raised by ANY pass, and the conditional
-// lenses that would have caught several never ran, because the selection
-// above is path-shaped. A sub-lens is a narrow pass whose whole charter is ONE
+// The selection above is path-shaped, so a defect whose lens is chosen by what
+// the diff says, not where it lives, can go unplanned (bench/aacr/RESULTS.md).
+// A sub-lens is a narrow pass whose whole charter is ONE
 // procedure — a table the pass must fill (every consumer of a widened check,
 // every sample file through a round trip, every rollout pairing) — so skipping
 // a row is visible instead of silent. Each is keyed on what the diff or the PR
@@ -478,7 +469,7 @@ export function selectLenses(
 //
 // Triggers are deliberately cheap and a little generous: a sub-lens that runs
 // for nothing returns NONE and costs one small pass; a sub-lens that never
-// runs costs the defect. `SUBLENS_TRIGGERS` is the ONE registry — a new
+// runs costs the defect. `SUBLENS_TRIGGERS` is the one registry — a new
 // sub-lens is an agent file plus one entry here.
 
 export interface SubLensTrigger {
@@ -554,7 +545,7 @@ const LEAK_RE =
 const CLAIM_RE =
   /\b(silenc\w*|suppress\w*|warnings?|C\d{4}|-W[a-z-]+|clippy|eslint|lint|support(s|ed)?\s+(for\s+)?\S+|compatib\w*|prevent\w*|no longer|firmware|only\s+(for|when|if|on|with)|require[sd]?\s+(version|firmware|v?\d))\b/i;
 
-/** A stated behaviour (freeze fixes 2): "outputs the last lines that fit",
+/** A stated behaviour: "outputs the last lines that fit",
  * "keeps only the newest", "returns all …" — a one-line PR body below the
  * intent bar can still make a claim the code contradicts, and the claim check
  * is cheap. */
@@ -566,22 +557,20 @@ const ROLLOUT_TEXT_RE =
 const ROLLOUT_CODE_RE =
   /\b(persistReducer|redux-persist|createMigrate|localStorage|sessionStorage|MAX_[A-Z_]*(ENTRIES|PAGE|ITEMS|SIZE|LEN)\w*|protocol_version|api_version|schema_version|version:\s*\d)\b/;
 
-// ---- the concurrency trigger (owner ruling 2026-10-02) ----------------------
+// ---- the concurrency trigger ----------------------------------------------
 //
-// pass-concurrency was ADDABLE-ONLY: a read-modify-write race has no
-// FILENAME, so no path predicate may plan it. That ruling still stands for
-// paths. The owner's ruling of 2026-10-02 (after the Martian tune20 golden
-// mining: the lens was never added on any of 20 PRs, one of them titled "fix
-// data race", approved with zero findings) amends it for CONTENT: a diff that
+// A read-modify-write race has no filename, so no path predicate may plan
+// pass-concurrency. Content may: left to the add protocol alone, the lens went
+// unplanned even on a PR titled "fix data race". So a diff that
 // touches synchronisation itself — a mutex, an atomic, a thread or goroutine,
 // a channel, a lock held across an await — or a PR whose text says it is about
 // a race, a lock or thread safety, plans the lens through this registry. The
 // add protocol is unchanged for every other PR, and a profile still cannot
-// give the lens a path predicate (profiles.ts PROFILE_EXTENDABLE_LENSES).
+// give the lens a path predicate (PROFILE_EXTENDABLE_LENSES above).
 //
 // The probes are per language, keyed on the file's extension, so a word that
 // is synchronisation in one language (`volatile`, `chan`, `<-`, `lock`) cannot
-// fire on another. They test CHANGED lines (added or removed — dropping a lock
+// fire on another. They test changed lines (added or removed — dropping a lock
 // is as much a concurrency change as adding one) of non-test code files.
 
 /** Per-language synchronisation spellings: [extension test, probe]. */
@@ -619,10 +608,9 @@ const SYNC_PROBES: ReadonlyArray<readonly [RegExp, RegExp]> = [
   // Ruby: Mutex, threads, concurrent-ruby.
   [/\.rb$/i, /\bMutex\.new\b|\bThread\.new\b|\bConcurrent::\w+|\.synchronize\b/],
   // Swift: dispatch queues, locks, actors — and Swift concurrency's isolation
-  // annotations, whose ADDITION or REMOVAL changes which thread a closure may
-  // run on (round 5, REVIEW-MINING.md: dropped @Sendable/@MainActor on
-  // callbacks, an unsafe `nonisolated(unsafe)` and an unisolated `Task {}` went
-  // unplanned on three Swift PRs).
+  // annotations, whose addition or removal changes which thread a closure may
+  // run on (a dropped @Sendable/@MainActor on a callback, `nonisolated(unsafe)`,
+  // an unisolated `Task {}`).
   [
     /\.swift$/i,
     /\bDispatchQueue\b|\bNSLock\b|\bos_unfair_lock\b|\bactor\s+[A-Z]\w*|\bOSAllocatedUnfairLock\b|@Sendable\b|@MainActor\b|\bnonisolated\b|@preconcurrency\b|\bTask(?:\.detached)?\s*(?:\(\s*priority:[^)]*\))?\s*\{/,
@@ -677,8 +665,8 @@ function phraseAt(text: string, at: number): string {
 }
 
 export const SUBLENS_TRIGGERS: readonly SubLensTrigger[] = [
-  // Owner ruling 2026-10-02 (amends for content, see above): first in
-  // the registry so the order matches ALL_PASSES.
+  // The concurrency trigger (see above): first in the registry so the order
+  // matches ALL_PASSES.
   {
     lens: "pass-concurrency",
     family: "pass-statelessness",
@@ -792,30 +780,26 @@ export function selectSubLenses(
   return out;
 }
 
-// ---- the per-file sweep (benchmark 2026-09-26) ------------------------------
+// ---- the per-file sweep ----------------------------------------------------
 //
-// Fifteen of the 48 missed defects were "attention": the pass had the code in
-// front of it and never looked — a misspelled action name quoted twice without
-// being noticed, a Bluetooth ID read in six runs and never checked. The
-// open-code-review baseline catches that class by reviewing one file at a
-// time. The sweep is that shape inside our pipeline: the changed files, cut
-// into a few small groups, one line-by-line pass per group.
+// Some misses are attention: the pass had the code in front of it and never
+// looked (a misspelled name quoted twice, an ID never checked). Reviewing a
+// few files at a time catches that class. The sweep is that shape: the
+// changed files, cut into a few small groups, one line-by-line pass per group.
 
 export const SWEEP_PASS = "pass-sweep";
 
-/** The behaviour-delta lens (agents/pass-behaviour-delta.md, freeze fixes 2,
- * 2026-10-03): base versus head on every modified, rewrapped, replaced or
- * deleted line of non-test code. The pre-freeze miss analysis found the second
- * largest never-raised class here — a safeguard made conditional, a value
- * changed in a new `else`, deleted handling, nil turned into an empty map —
- * and no lens read base and head side by side (the sweep reads added lines
- * only and skips removed files). */
+/** The behaviour-delta lens (agents/pass-behaviour-delta.md): base versus
+ * head on every modified, rewrapped, replaced or deleted line of non-test
+ * code — a safeguard made conditional, a value changed in a new `else`,
+ * deleted handling, nil turned into an empty map. No other lens reads base and
+ * head side by side (the sweep reads added lines only and skips removed
+ * files). */
 export const BEHAVIOUR_DELTA_PASS = "pass-behaviour-delta";
 
-// The owner's 2026-10-03 decision (gap plan): plan behaviour-delta only where
-// base behaviour is AT RISK, not on every modified line. Round 1 planned it on
-// 83 of 94 PRs; it raised 217 findings and posted 3 on its own. A file is at
-// risk when its patch removes or replaces a line that carries behaviour — a
+// Behaviour-delta is planned only where base behaviour is at risk, not on
+// every modified line (planned everywhere, it was nearly all noise). A file is
+// at risk when its patch removes or replaces a line that carries behaviour — a
 // guard or condition, a predicate or comparison, a call, a return / raise /
 // default / error path, an assignment — rather than a comment, an import, a
 // log line or a re-indented copy of itself (a statement re-added at the same
@@ -852,7 +836,7 @@ export function behaviourDeltaRisk(f: PrFile): boolean {
     if (n === "") continue;
     // The same statement re-indented (a rewrap) is judged by the new-branch
     // check below; the same statement at the same indent re-added elsewhere is
-    // a REORDER, which changes behaviour, so it falls through to the risk test.
+    // a reorder, which changes behaviour, so it falls through to the risk test.
     if (addedNorm.has(n) && !addedExact.has(r)) continue;
     if (DELTA_INERT_RE.test(r) || DELTA_LOG_ONLY_RE.test(r)) continue;
     if (DELTA_RISK_RE.test(r)) return true;
@@ -912,18 +896,16 @@ export function behaviourDeltaGroups(
   return { groups, unread };
 }
 
-/**: the tests lens (agents/pass-tests.md). */
+/** The tests lens (agents/pass-tests.md). */
 export const TESTS_PASS = "pass-tests";
 
-// The code-quality lenses (2026-09-27, `[review] quality_lenses`): the review
-// is geared to find defects, and a benchmark built from what reviewers
-// actually write (AACR-Bench: 42% of its references are maintainability) asked
-// whether the other half of a review — will the next person understand and
-// safely change this — is worth a lens of its own. Three lenses, each one
-// question: maintainability (readers and future edits), duplication (the same
-// knowledge written twice), abstraction (boundaries and contracts at the right
-// level). Style is deliberately none of them: every repo has its own, so it
-// has its own lens, planned only where the repo writes its style down.
+// The code-quality lenses (`[review] quality_lenses`): the other half of a
+// review — will the next person understand and safely change this — beside the
+// defect-finding lenses. Three lenses, each one question: maintainability
+// (readers and future edits), duplication (the same knowledge written twice),
+// abstraction (boundaries and contracts at the right level). Style is
+// deliberately none of them: every repo has its own, so it has its own lens,
+// planned only where the repo writes its style down.
 export const MAINTAINABILITY_PASS = "pass-maintainability";
 export const DUPLICATION_PASS = "pass-duplication";
 export const ABSTRACTION_PASS = "pass-abstraction";
@@ -948,8 +930,8 @@ export const STYLE_PASS = "pass-style";
 export const LINT_CONFORMANCE_PASS = "pass-lint-conformance";
 
 /** The quality lenses a change warrants: all of them once its non-test code
- * adds `minAdded` lines — or, on a TEST-ONLY change (freeze fixes 2: a test
- * file is code a reader maintains too), once its test code adds that many —
+ * adds `minAdded` lines — or, on a test-only change (a test file is code a
+ * reader maintains too), once its test code adds that many —
  * none below. */
 export function selectQualityLenses(files: PrFileEntry[], minAdded: number): string[] {
   const code = files.filter((f) => CODE_FILE_RE.test(f.filename));
@@ -978,7 +960,7 @@ export function qualityReason(files: PrFileEntry[], minAdded: number): string {
 const SWEEP_SKIP_RE =
   /((^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock|composer\.lock|Gemfile\.lock)$|\.(min\.js|map|snap|lock|svg|png|jpe?g|gif|ico|pdf|woff2?|ttf|md|rst|txt)$|(^|\/)(vendor|third_party|node_modules|dist|build|generated)\/)/i;
 
-/** Translation catalogs (A3): a data file under a locale /
+/** Translation catalogs: a data file under a locale /
  * translation directory, or a gettext / XLIFF / ARB catalog anywhere. A
  * line-by-line sweep of one is a row spent reading strings: one
  * per-language config change can touch dozens of these at once. The PR's other
@@ -998,8 +980,8 @@ export function isTranslationFile(path: string): boolean {
 const LIGHT_DATA_FILE_RE = /\.(json|jsonc|ya?ml|toml|ini|cfg|conf|properties|xml|csv|tsv|env)$/i;
 
 /**
- * Is `path` a file a sweep row can read at a cheaper tier (H2:
- * `[review] sweep_light_tier`)? Tests, prose and config/data files — the
+ * Is `path` a file a sweep row can read at a cheaper tier
+ * (`[review] sweep_light_tier`)? Tests, prose and config/data files — the
  * rows that hold no production code. A CI workflow (`.github/workflows/`)
  * is not: its steps run.
  */
@@ -1008,7 +990,7 @@ export function isLightSweepFile(path: string): boolean {
   return isTestFile(path) || SWEEP_DOC_RE.test(path) || LIGHT_DATA_FILE_RE.test(path);
 }
 
-/** Prose the sweep reads when the PR also changes code (freeze fixes 2). */
+/** Prose the sweep reads when the PR also changes code. */
 const SWEEP_DOC_RE = /\.(md|mdx|rst|adoc)$/i;
 
 /** Is `path` a file the sweep never reads? Exported for the setup engine's
@@ -1018,19 +1000,16 @@ export function isSweepSkipped(path: string): boolean {
 }
 
 /** A group stays under both caps unless one file alone exceeds them. The
- * first batch capped groups at 3 files and 32 of its 36 groups came out under
- * 60 changed lines — a whole pass for a handful of lines — so the defaults
- * are sized to hold a typical small PR in one or two passes. */
+ * defaults are sized to hold a typical small PR in one or two passes, so no
+ * pass is spent on a handful of lines. */
 export const SWEEP_MAX_FILES_PER_GROUP = 8;
 export const SWEEP_MAX_LINES_PER_GROUP = 500;
 /** A WIDE change — more eligible files than `maxFiles × maxGroups`, so the
  * file cap would leave files unswept — is packed by its changed-line budget
- * instead, at most this many files per group (2026-10-03, freeze analysis:
- * cost tracks passes, r≈0.85–0.9, and Ghost@53b39a0 — 136 sweepable files,
- * 668 changed lines — ran all 6 sweep passes and still left 106 files
- * unswept). Measured on the 435 stored PRs: only the 18 wide ones change
- * (108 → 45 sweep rows, 618 → 5 unswept files); every other plan is
- * identical. 0 turns the rule off. */
+ * instead, at most this many files per group: cost tracks the number of
+ * passes, and a wide, shallow change would otherwise run every sweep pass and
+ * still leave most files unswept. Every non-wide plan is unchanged by it.
+ * 0 turns the rule off. */
 export const SWEEP_WIDE_FILES_PER_GROUP = 40;
 
 /**
@@ -1046,7 +1025,7 @@ export function sweepGroups(
   maxLines: number = SWEEP_MAX_LINES_PER_GROUP,
   wideFiles: number = SWEEP_WIDE_FILES_PER_GROUP,
 ): { groups: string[][]; unswept: string[] } {
-  // Freeze fixes 2: changed prose (docs, READMEs) is swept too when the PR
+  // Changed prose (docs, READMEs) is swept too when the PR
   // also changes code — its commands, API names and examples can go stale with
   // the code — and every group is filled source-first: code, then tests and
   // fixtures, then prose, so a group cap starves the least likely place for a
@@ -1097,8 +1076,8 @@ export function sweepGroups(
   return { groups, unswept };
 }
 
-/** At most this many pass-baseline rows when a very large change splits it
- *: each row is a whole baseline reading, so more rows buy a shorter
+/** At most this many pass-baseline rows when a very large change splits it:
+ * each row is a whole baseline reading, so more rows buy a shorter
  * critical path at the price of more parallel full readings. */
 export const BASELINE_SPLIT_MAX_ROWS = 3;
 
@@ -1117,10 +1096,10 @@ export function baselineSplitLines(files: readonly PrFile[]): number {
 }
 
 /**
- * Split pass-baseline by file group on a VERY large change (,
- * `[review] baseline_split_lines`). pass-baseline is one row and, once the
- * fan-out launches in one turn, the round's critical path: 465–504 s on the
- * largest live PRs against 250–390 s for the rest of the batch.
+ * Split pass-baseline by file group on a very large change
+ * (`[review] baseline_split_lines`). pass-baseline is one row and, once the
+ * fan-out launches in one turn, the round's critical path on the largest
+ * PRs.
  *
  * Over `splitLines` changed lines (`baselineSplitLines`; 0 = never) the
  * change's files — every one the PR does not remove — are cut, in diff order
@@ -1132,7 +1111,7 @@ export function baselineSplitLines(files: readonly PrFile[]): number {
  * the whole change, never buys a row. Each group is where one baseline row
  * STARTS; the row's charter stays the whole PR.
  *
- * Returns `[]` — one ordinary row, exactly as before — at or under the
+ * Returns `[]` — one ordinary row — at or under the
  * threshold, and when the cut leaves fewer than two groups.
  */
 export function baselineGroups(

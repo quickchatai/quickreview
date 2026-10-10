@@ -1,4 +1,4 @@
-// Scan stage 2's RULES (setup & scan spec "Scan stage 2"), pure:
+// Scan stage 2's rules, pure:
 // what a proposed row reads, which tests ride with its code, what it costs,
 // how a proposal is fitted to a budget, and what the lens is told. The run
 // itself is scanrun.ts's — the same hard-stopped, ledger-resumed run stage 1
@@ -170,7 +170,7 @@ export function priceStage2Row(
   if (borrowed)
     return { rate: borrowed, basis: "borrowed", from: lensesOf(deepAt(validator, false)) };
   // Stage 1 at a validator setting: at `[scan]`'s tier and effort, else at
-  // any (the same fallback the extrapolation has always used).
+  // any (the extrapolation's fallback too).
   const stage1At = (v: boolean): ScanRate | null =>
     measuredRate(entries, { lens: SCAN_PASS, tier: cfg.tier, effort: cfg.effort, validator: v }) ??
     rateWhere(entries, (e) => e.lens === SCAN_PASS && e.validator === v);

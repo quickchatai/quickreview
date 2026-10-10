@@ -1,4 +1,4 @@
-// The reconcile poll (spec §3, §3.4) — the correctness backbone.
+// The reconcile poll — the correctness backbone.
 // GitHub never redelivers a failed webhook, so every 5 minutes (and on
 // startup) the daemon rebuilds the truth from the API and forces local state
 // to match. GitHub always wins. Every correction is logged as a
@@ -41,14 +41,12 @@ export interface ReconcileAdapter {
   getPr(n: number): Promise<PrRef>;
   listBotReviewComments(n: number): Promise<number[]>;
   getRequestedReviewers(n: number): Promise<{ users: string[]; teams: string[] }>;
-  /** Checks at a ref — the withheld-approval backstop reads CI
-   * through this. Optional: a stub-wired daemon without it simply has no
-   * backstop, exactly as it had none before the slice existed. */
+  /** Checks at a ref — the withheld-approval backstop reads CI through this.
+   * Optional: a stub-wired daemon without it simply has no backstop. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
   /** The comment-capture sweep's three READ sources. All optional and
-   * all-or-nothing: a stub-wired daemon without them simply has no backstop,
-   * exactly as it had none before the slice existed. Reads only — capture
-   * never writes to GitHub. */
+   * all-or-nothing: a stub-wired daemon without them simply has no backstop.
+   * Reads only — capture never writes to GitHub. */
   listReviewCommentsFull?(n: number): Promise<ReviewCommentFull[]>;
   listIssueComments?(n: number): Promise<IssueCommentFull[]>;
   listReviewsFull?(n: number): Promise<ReviewFull[]>;
@@ -85,30 +83,30 @@ export interface ReconcileDeps {
   /** Registry backfill is an API call per open PR; the daemon runs it every
    * Nth poll. Default true. */
   backfillRegistry?: boolean;
-  /** Backstop for the push trigger (live gap 2026-08-19, PR #5307):
-   * the webhook's `onSynchronize` is the fast path, but a lost/dead webhook
-   * means a post-review push is otherwise never rechecked — the withheld-
-   * approval retry no-ops on a moved head ("a push re-reviews through its own
-   * route") while that route never fires. Same idiom as the sweep:
-   * the daemon wires runRecheck here, never a copy. */
+  /** Backstop for the recheck's push trigger: the webhook's `onSynchronize`
+   * is the fast path, but a lost/dead webhook means a post-review push is
+   * otherwise never rechecked — the withheld-approval retry no-ops on a moved
+   * head ("a push re-reviews through its own route") while that route never
+   * fires. Same idiom as the withheld-approval sweep: the daemon wires
+   * runRecheck here, never a copy. */
   onHeadPush?: (pr: number, head_sha: string) => Promise<void>;
-  /** backstop: the merged-over-block feedback signal for closes the
+  /** Backstop: the merged-over-block feedback signal for closes the
    * webhook missed (GitHub never redelivers). The daemon wires the same
    * engine sink the webhook path uses; dedupe is the store's. */
   onMergedOverBlock?: (pr: number) => Promise<void> | void;
-  /** backstop: capture comments the webhook never saw (GitHub never
+  /** Backstop: capture comments the webhook never saw (GitHub never
    * redelivers, so a comment posted while the daemon was down would otherwise
    * be permanent evidence loss). Default on when the adapter can read;
    * `false` disables it for a poll that must stay cheap. */
   captureComments?: boolean;
-  /** The outcome capture (S6): handed the bot's OWN inline comments
+  /** The outcome capture: handed the bot's OWN inline comments
    * from the comment sweep's existing read (no extra GitHub call), then run
    * as its own bounded step after it. Absent ⇒ no outcome capture. Its
    * failures are its own and never reach `errors`. */
   outcomes?: Pick<OutcomeCapture, "observeBotComments" | "sweep">;
-  /** The undelivered-recheck sweep (#5362 W2). `false` skips it for this pass
-   * — the daemon's boot pass, whose health lifts a deploy drain and which
-   * must not wait on reading session transcripts (boot stall). */
+  /** The undelivered-recheck sweep. `false` skips it for this pass — the
+   * daemon's boot pass, whose health lifts a deploy drain and which must not
+   * wait on reading session transcripts. */
   receiptSweep?: boolean;
   /** How long the sweep may keep STARTING claims in one pass; the rest are
    * carried to the next. Default RECEIPT_SWEEP_BUDGET_MS. */
@@ -133,16 +131,16 @@ export interface ReconcileReport {
   captured_comments: number;
   corrections: number;
   errors: string[];
-  /** The raw-tier sweep's outcome (S3) — present only when the hooks
+  /** The raw-tier sweep's outcome — present only when the hooks
    * manage a raw tier. Deliberately NOT part of `errors`: memory never
    * blocks, and the boot's first healthy pass (which lifts a deploy drain)
    * must not wait on the memory engine. */
   ov_sessions?: OvSessionSweepReport;
-  /** The outcome capture's pass (S6), when it captured anything or
+  /** The outcome capture's pass, when it captured anything or
    * failed. Like `ov_sessions`, deliberately NOT part of `errors`: it is
    * bookkeeping, and the boot's first healthy pass must not wait on it. */
   outcomes?: OutcomeSweepReport;
-  /** The undelivered-recheck sweep's pass (#5362 W2, bounded): claims
+  /** The undelivered-recheck sweep's pass: claims
    * asked, found delivered (recorded, never asked again), released as lost,
    * and carried to the next pass by the budget. Absent when it did not run. */
   receipt_sweep?: { asked: number; delivered: number; released: number; carried: number };
@@ -177,7 +175,7 @@ export function reconcileOrphanedRounds(
   const requeued: number[] = [];
   for (const round of store.runningRounds()) {
     if (live.has(round.pr)) continue;
-    // `orphan_sweep` is the QUIET cause: tmux lives in the container,
+    // `orphan_sweep` is the quiet cause: tmux lives in the container,
     // so a clean redeploy orphans every round in flight by construction. It is
     // counted and grouped like every other cause, and it raises nothing.
     store.markRoundCancelled(
@@ -248,7 +246,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     for (const pr of open.values()) {
       if (isBotAuthor(pr.author, botLogin)) continue;
       const local = store.getPr(pr.number);
-      if (!local) continue; // untriggered PRs are not tracked (no sweeps, spec §8)
+      if (!local) continue; // untriggered PRs are not tracked (no sweeps)
       if (local.head_sha !== pr.head_sha || local.title !== pr.title) {
         const pushed = local.head_sha !== pr.head_sha;
         if (pushed) {
@@ -274,7 +272,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           }
         }
       } else if (deps.onHeadPush) {
-        // Lost-recheck backstop (live: #5290, 2026-08-19): change-detection
+        // Lost-recheck backstop: change-detection
         // fires onHeadPush exactly once, so a recheck that failed to deliver
         // (or died with the process) never retried once the head was tracked.
         // A standing reviewed head that differs from the current head, with
@@ -412,7 +410,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       if (pushHandled) {
         // The targeted APPROVE path already owns this head. A standing label or
         // team request is residue, not a second blank-slate review. A genuinely
-        // new edge still bypasses this branch and keeps's full review.
+        // new edge still bypasses this branch and gets a full review.
         store.logEvent("standing_trigger_suppressed", pr, {
           head_sha: meta.head_sha,
           kinds: group.kinds,
@@ -448,7 +446,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
   });
 
   // Commits outside a round never dispatch a review. A head advance WHILE an
-  // older round owns the PR is different: records durable successor
+  // older round owns the PR is different: it is recorded as durable successor
   // work. Promote obligations whose predecessor became terminal across a
   // crash/restart; queue publication is idempotent and retains the evidence.
   await step("successor-obligations", async () => {
@@ -457,33 +455,22 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   });
 
-  // ---- 2b. stale-trigger residue sweep --------------------------
-  // A settled PR (tracked/awaiting_author, no round running) never
-  // legitimately carries `stale_recheck` or a `trigger_ts`: both are consumed
-  // by dispatch and cleared when a round settles. Residue (#5180: tracked,
-  // stale_recheck=1, trigger_ts from four days earlier, zero rounds running)
-  // misclassifies the NEXT explicit re-review as a staleness round and lets
-  // it jump the FIFO on the ancient timestamp. Swept HERE, after the
-  // triggered-set step, so a PR GitHub still lists as triggered has already
-  // been re-queued and is never touched.
-  // ---- 2d. undelivered recheck-claim sweep (#5362 W2) ---------------------
-  // The worst of the wedge family, because nothing bounded it. `claimRecheck`
-  // is written BEFORE the nudge goes out, `releaseRecheck` fires only on a
-  // synchronous throw (which a bridge-level drop is not), and `rechecks` has
-  // no deadline, no sweep and no expiry. So a dropped nudge left a claim that
-  // suppressed the push-backstop below (`!store.hasRecheck(...)`) forever: a
-  // delta on an APPROVED PR was never audited, nothing anywhere said so, and
-  // the approval stood over code nobody read.
+  // ---- 2b. undelivered recheck-claim sweep ---------------------------------
+  // `claimRecheck` is written BEFORE the nudge goes out, `releaseRecheck`
+  // fires only on a synchronous throw (which a bridge-level drop is not), and
+  // `rechecks` has no deadline or expiry of its own. Without this sweep a
+  // dropped nudge would leave a claim that suppresses the push-backstop above
+  // (`!store.hasRecheck(...)`) forever: a delta on an APPROVED PR would never
+  // be audited, and the approval would stand over code nobody read.
   //
   // The receipt makes it recoverable. A claim past the grace window whose
   // marker never reached the session is released, and the backstop re-asks on
   // the next pass. Every ambiguity is a no-op: only a provable absence counts.
   //
-  // Bounded since the 2026-10-07 boot stall, when this step held the
-  // event loop for 132.7 s: it asks only about claims that can still be lost
-  // nudges (`recheckClaimsAwaitingReceipt` — a real nudge, receipt not yet
-  // found, PR not closed), records a found receipt so it is never asked
-  // again, yields a real event-loop turn between claims, stops starting new
+  // Bounded so it never holds the event loop: it asks only about claims that
+  // can still be lost nudges (`recheckClaimsAwaitingReceipt` — a real nudge,
+  // receipt not yet found, PR not closed), records a found receipt so it is
+  // never asked again, yields a real event-loop turn between claims, stops starting new
   // claims past its time budget (the rest are asked next pass, least
   // recently asked first), and is skipped on the boot's first pass, whose
   // health is what lifts a deploy drain.
@@ -562,6 +549,14 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
       );
   });
 
+  // ---- 2c. stale-trigger residue sweep -------------------------------------
+  // A settled PR (tracked/awaiting_author, no round running) never
+  // legitimately carries `stale_recheck` or a `trigger_ts`: both are consumed
+  // by dispatch and cleared when a round settles. Left behind, they would
+  // misclassify the NEXT explicit re-review as a staleness round and let it
+  // jump the FIFO on an old timestamp. Swept after the triggered-set step, so
+  // a PR GitHub still lists as triggered has already been re-queued and is
+  // never touched.
   await step("stale-trigger-residue", async () => {
     for (const local of store.allPrs()) {
       if (local.state !== "tracked" && local.state !== "awaiting_author") continue;
@@ -598,7 +593,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         { merged: ref.merged, local: local.state },
         report,
       );
-      // same signal the webhook's closed case derives — a merge
+      // Same signal the webhook's closed case derives — a merge
       // landing over a standing REQUEST_CHANGES. Read the state BEFORE
       // applyEvent erases it; per-(pr, day) dedupe absorbs the overlap with
       // a webhook delivery that already fired.
@@ -627,7 +622,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   });
 
-  // ---- 4. withheld-approval backstop ----------------------------
+  // ---- 4. withheld-approval backstop ---------------------------------------
   // cigate.ts promises that a PR whose approval was withheld for red CI is
   // re-queued "by the next completion (or the reconcile poll)". The
   // `ci_completed` webhook is the fast path; this sweep is the backstop for a
@@ -682,10 +677,10 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
-  // ---- 5b. human-comment capture sweep --------------------------
+  // ---- 5b. human-comment capture sweep -------------------------------------
   // The webhook is the fast path and GitHub never redelivers, so a comment
-  // posted while the daemon was down is — under widened capture — permanent
-  // evidence loss rather than a delayed signal. This is the backstop, and it
+  // posted while the daemon was down would otherwise be permanent evidence
+  // loss rather than a delayed signal. This is the backstop, and it
   // is deliberately shaped like every other sweep here: READ-ONLY (three list
   // calls per PR, no mutation anywhere in the path), bounded
   // (COMMENT_SWEEP_MAX_PRS, freshest first, one API page per source), and
@@ -706,8 +701,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     await step("comment-capture", async () => {
       // Recently-closed PRs stay in: closed-sync above marks a
       // closed-during-downtime PR closed in this very pass, and its comments
-      // are what this backstop exists to recover (adversarial finding,
-      // review). `updated_at` is the close instant for a closed row.
+      // are what this backstop exists to recover. `updated_at` is the close
+      // instant for a closed row.
       const nowMs = now().getTime();
       const closedRecently = (updated_at: string): boolean => {
         const t = Date.parse(updated_at);
@@ -730,8 +725,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             report.closed.includes(p.number) ||
             closedRecently(p.updated_at),
         )
-        // Change gating (adversarial finding: ~900 standing reads/h without
-        // it): a PR whose row has not moved since the last successful sweep
+        // Change gating (without it every tracked PR costs three reads every
+        // pass): a PR whose row has not moved since the last successful sweep
         // of it has produced no webhook the sweep could have missed a
         // *newer* version of than last time — skip it. The watermark is the
         // row's own `updated_at` PAIRED with GitHub's `updated_at` for the PR
@@ -739,7 +734,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
         // The remote half is load-bearing: capturing a comment never moves
         // the local row, so a comment whose webhook was lost (the daemon was
         // down, no push, no title change) only shows up as GitHub's
-        // timestamp moving (selfscan finding d02908a3).
+        // timestamp moving.
         .filter((p) => store.lastCommentSweep(p.number) !== sweepMark(p))
         .sort((a, b) =>
           a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : a.number - b.number,
@@ -767,7 +762,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
           report.errors.push(`comment-capture #${n}: ${String(err)}`);
           continue;
         }
-        // the bot's own inline comments in this very read are the
+        // The bot's own inline comments in this very read are the
         // link facts the outcome capture needs (which finding each one
         // carried) — kept here, at no extra API call. Never breaks the sweep.
         if (deps.outcomes) {
@@ -789,16 +784,16 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             via: "reconcile",
           });
         }
-        // ---- the exec boundary's OUTCOME layer -------------------
-        // The bot's OWN reviews, which `isHumanCapture` discards two lines up,
-        // are the one piece of evidence that does not care HOW a write was
-        // made. Four adversarial rounds each found a live way around the
-        // command-string guard; a review here that the daemon has no record of
-        // posting is a violation whichever way it got there — and this costs no
+        // ---- the exec boundary's OUTCOME layer ------------------------------
+        // The bot's OWN reviews, which `isHumanCapture` discards above, are the
+        // one piece of evidence that does not care HOW a write was made. The
+        // command-string guard is pattern-based and not closed; a review here
+        // that the daemon has no record of posting is a violation whichever
+        // way it got there — and this costs no
         // API call, because `listReviewsFull` was already fetched above.
         // Detection only: nothing below mutates GitHub, and nothing here can
-        // withdraw, retract or edit a review (rule 2 — structural, not
-        // prompted; there is no such call in this module or its imports).
+        // withdraw, retract or edit a review (CLAUDE.md rule 2 — structural,
+        // not prompted; there is no such call in this module or its imports).
         try {
           const ungated = auditUngatedReviews(
             reviewsFetched,
@@ -822,8 +817,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
             // An unaccounted APPROVE wakes; anything else stays a durable row.
             // The asymmetry is the blocker bar's: an approval posted outside
             // the gate defeats rule 1, the CI hard-gate and every posting
-            // guard at once, and it is the outcome all four bypasses
-            // were reaching for.
+            // guard at once, and it is the outcome any bypass of the exec
+            // boundary is reaching for.
             if (hasUngatedApproval(ungated))
               store.logAnomaly("ungated_approval", n, null, message, message);
             else store.logAnomaly("ungated_review", n, null, message);
@@ -842,7 +837,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     });
   }
 
-  // ---- outcome capture (S6) -----------------------------------------
+  // ---- outcome capture -------------------------------------------------------
   // What became of every posted finding: link each bot comment to its finding,
   // then decide each finding's fate from the replies, thread decisions, pushes
   // and later rounds already recorded. Local reads only (state.db and the base
@@ -857,7 +852,7 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   }
 
-  // ---- the raw-tier sweep (S3) -------------------------------------
+  // ---- the raw-tier sweep -----------------------------------------------------
   // The `pr-<n>` OpenViking sessions of closed PRs that are still on the
   // server (a delete that failed, a close the daemon never saw) — bounded per
   // pass, every outcome logged by the hook. Run AFTER the closed-sync above,
@@ -872,10 +867,8 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<ReconcileRepor
     }
   }
 
-  // The retired-park migration that used to run here is GONE. It
-  // drained the last five `awaiting_human` rows on the live install on
-  // 2026-08-19T17:04Z and never fired again; the state is no longer a member
-  // of `PrLifecycleState`, so nothing can write one for it to find.
+  // No retired-park migration runs here: `awaiting_human` is not a member of
+  // `PrLifecycleState`, so no row can carry it for a pass to find.
 
   store.logEvent("reconcile_pass", null, {
     open_prs: report.open_prs,

@@ -17,8 +17,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides: $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 DRYRUN_DIR="${QCR_DRYRUN_DIR:-$ROOT/state/dryrun}"

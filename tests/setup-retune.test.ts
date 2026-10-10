@@ -1,5 +1,5 @@
-// The post-scan re-tune and portrait refresh (setup & scan spec
-// "Re-tuning" and "Portrait", user stories 23–24 and 86–87).
+// The post-scan re-tune and portrait refresh (setup & scan spec "Re-tuning"
+// and "Portrait").
 //
 // External behaviour at the seams the spec names:
 //   * the PORTRAIT, through SetupEngine with a temp state home: facts

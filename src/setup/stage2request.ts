@@ -1,13 +1,12 @@
-// Scan stage 2's START CHANNEL: the files through which a stage-2
-// proposal is shown and started from OUTSIDE the companion — the TUI's
-// click. A LEAF: it reaches its siblings by type only, so the TUI (which
-// never imports the setup engine — tests/single-shepherd.test.ts) can read
-// the proposal and ask for its start. The click's whole TUI half lives here
+// Scan stage 2's start channel: the files through which a stage-2 proposal
+// is shown and started from outside the companion — the TUI's click. A leaf:
+// it reaches its siblings by type only, so the TUI (which never imports the
+// setup engine — tests/single-shepherd.test.ts) can read the proposal and
+// ask for its start. The click's whole TUI half lives here
 // (`clickStartStage2`, `stage2ClickOutcome`); the [8] scan tab's plan pane
-// (placed by the prototype: `P`, then ⏎) is its button.
+// (`P`, then ⏎) is its button.
 //
-// Stage 2 starts one of two ways, and neither keeps an approval record (the
-// spec's "no approval record"):
+// Stage 2 starts one of two ways, and neither keeps an approval record:
 //
 //   * the operator's word — the companion calls `scan_stage2_start` with the
 //     proposal's key (and, for a narrowed "do it", the `rows` it may run —
@@ -17,16 +16,16 @@
 //     seconds and starts exactly that proposal, answering in
 //     `STAGE2_RESULT_FILE`.
 //
-// Either way the start QUOTES A KEY, and the engine re-plans before it runs:
+// Either way the start quotes a key, and the engine re-plans before it runs:
 // a proposal that moved since it was shown (a new proposal, a new commit, a
 // price that changed) is refused, so nothing runs that the operator did not
 // see priced. A request is answered once — the result names the request it
 // answered — so a click is never replayed.
 //
-// The click may NARROW the plan (space toggles a row off in the
-// plan pane; the operator's word narrows the same way through
-// `scan_stage2_start`'s `rows`): the request then names the runnable rows the operator kept,
-// and the run is exactly those rows, stopped hard at THEIR total — the sum
+// The click may narrow the plan (space toggles a row off in the plan pane;
+// the operator's word narrows the same way through `scan_stage2_start`'s
+// `rows`): the request then names the runnable rows the operator kept, and
+// the run is exactly those rows, stopped hard at their total — the sum
 // the pane showed. It can only narrow: a row that was not runnable in the
 // proposal (covered, over the budget) can never be named, so nothing runs
 // that was not shown priced and runnable.

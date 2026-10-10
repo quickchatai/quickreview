@@ -1,12 +1,11 @@
-// Deploy-window drain (2026-08-25): a deploy recreates the container, so the
-// operator needs a valve that quiets the board first. While draining:
+// Deploy-window drain: a deploy recreates the container, so the operator
+// needs a valve that quiets the board first. While draining:
 //   * POST /webhook answers 200 and the delivery is DROPPED — not interpreted,
-//     not recorded (the owner chose dropping over recording; the reconcile poll
-//     is the single recovery path) — but COUNTED, so the lift can say how many;
+//     not recorded (the reconcile poll is the single recovery path) — but
+//     COUNTED, so the lift can say how many;
 //   * the dispatch pump starts no rounds; recheck nudges and ping-pong replies
-//     do not fire, and the EOD sweep is DEFERRED until the drain lifts
-//     (S2 — it used to be skipped for the day); in-flight rounds run
-//     to their natural end;
+//     do not fire, and the EOD sweep is DEFERRED until the drain lifts;
+//     in-flight rounds run to their natural end;
 //   * the flag is a persistent DB row (it must survive the restart it exists
 //     for), surfaced in status.json, `qcr status` and the board's top bar;
 //   * the boot's FIRST healthy reconcile pass lifts it (`drain_lifted`); a
@@ -264,13 +263,9 @@ describe("recheck while draining", () => {
     );
     // The drain lifted, so the recheck must get PAST the drain gate. It still
     // no-ops here — this PR carries no approval to re-check — and that is the
-    // point: the reason has to be that one, not "draining".
-    //
-    // The two weaker forms both pass for the wrong reason. Reading `reason`
-    // off the union asserted `undefined !== "draining"` on every non-noop arm;
-    // narrowing it to `null` only MOVED the vacuity, since `null !==
-    // "draining"` is equally trivial. Naming the expected reason is what
-    // actually pins the gate order.
+    // point: the reason has to be that one, not "draining". Asserting only
+    // `reason !== "draining"` would pass vacuously (undefined or null also
+    // differ); naming the expected reason is what pins the gate order.
     expect(after.action).toBe("noop");
     if (after.action !== "noop") throw new Error("unreachable");
     expect(
@@ -318,7 +313,7 @@ describe("recheck while draining", () => {
 // ---- EOD sweep ---------------------------------------------------------------
 
 describe("EOD sweep while draining", () => {
-  // a drain DEFERS the day's sweep (it used to skip it). The
+  // A drain DEFERS the day's sweep rather than skipping it. The
   // deferred day fires on the first poll after the lift; the full contract
   // (persistence across a restart, retries) is in tests/memory-writes.test.ts.
   it("defers the day's fire (onHeld, no inject), re-arms for the next day, and fires the deferred day once the drain lifts", async () => {

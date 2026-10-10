@@ -2,10 +2,10 @@
 // no GitHub calls, no mutations, no gate. `qcr metrics [--pr N] --json` and the
 // TUI metrics tab both render exactly the payloads below.
 //
-// Backfilled rounds (rounds.backfilled = 1, imported from GitHub history by M2)
+// Backfilled rounds (rounds.backfilled = 1, imported from GitHub history)
 // carry timestamps and verdicts but never spend, duration or a deadline. They
-// are therefore INCLUDED in time-to-first-verdict, verdict mix, rounds-until-
-// resolution and size, and EXCLUDED from spend, duration and overruns — every
+// are therefore included in time-to-first-verdict, verdict mix, rounds-until-
+// resolution and size, and excluded from spend, duration and overruns — every
 // `n` reflects actual data points rather than padded zeroes.
 //
 // Ops-day bucketing goes through eod.ts's Intl helpers (DST-correct; never
@@ -13,7 +13,7 @@
 import { zoneDateString } from "./eod.js";
 import { cancelCauseLabel, isLoudCancelCause, type RoundRow, type StateStore } from "./state.js";
 
-// ---- the M1<->M3 contract (verbatim; do not rename or reshape) ------------
+// ---- the payload contract (do not rename or reshape) ----------------------
 
 export interface Dist {
   median: number | null;
@@ -51,7 +51,7 @@ export interface MetricsWindow {
   /** Every event kind the daemon logged in this window, busiest first, cap 12. */
   events_by_kind: { kind: string; count: number }[];
   /**
-   * The `all` window only (§9.4): how many of the rows counted in
+   * The `all` window only: how many of the rows counted in
    * `events_by_kind` were moved out of the live table into the archive
    * databases — counted from the `archived_event_counts` rollup, so the
    * all-time tally stays continuous and is labelled "(incl. N archived)".
@@ -60,10 +60,8 @@ export interface MetricsWindow {
    */
   events_archived?: number;
   /**
-   * Cancelled rounds, GROUPED BY CAUSE — the figure that did not
-   * exist when measured 55 silent cancellations against 5 loud
-   * overdues. `loud` is the subset a human should act on (a round that stopped
-   * dead); the boot-time orphan sweep is counted here and nowhere alarmed.
+   * Cancelled rounds, grouped by cause. `loud` is the subset a human should
+   * act on (a round that stopped dead); the boot-time orphan sweep is counted here and nowhere alarmed.
    */
   cancellations: {
     total: number;
@@ -230,7 +228,7 @@ function readEvents(store: StateStore): ParsedEvent[] {
 }
 
 /** Every event, kind + timestamp only — the aggregate "what happened" list is
- * deliberately NOT restricted to METRIC_EVENT_KINDS: an operator wants to see
+ * deliberately not restricted to METRIC_EVENT_KINDS: an operator wants to see
  * anomalies, injects and command traffic too. */
 function readEventKinds(store: StateStore): Array<{ ts: string; kind: string }> {
   return store.db.prepare("SELECT ts, kind FROM events ORDER BY id").all() as Array<{
@@ -239,8 +237,8 @@ function readEventKinds(store: StateStore): Array<{ ts: string; kind: string }> 
   }>;
 }
 
-/** Event rows the archiver moved out of the live table, per kind (
- * §9.4) — the rollup its delete transaction keeps. [] on a store without it. */
+/** Event rows the archiver moved out of the live table, per kind — the
+ * rollup its delete transaction keeps. [] on a store without it. */
 function readArchivedEventCounts(store: StateStore): Array<{ kind: string; n: number }> {
   if (!tableExists(store, "archived_event_counts")) return [];
   return store.db
@@ -299,7 +297,7 @@ function isBackfilled(r: RoundRow): boolean {
 
 /** Time-to-first-verdict per PR: trigger (or, absent a recorded trigger, the
  * round start) -> the first finished round. The first round is picked from
- * the PR's WHOLE history and only then windowed on its own landing: picking
+ * the PR's whole history and only then windowed on its own landing: picking
  * it from the windowed rounds would report a later round as the "first".
  * Only a `done` round delivered a verdict: a cancelled, overdue or expired
  * round also carries a `finished_at`, but that is when it died, not when the
@@ -380,7 +378,7 @@ export interface WindowInput {
   resolvedPrs: Map<number, number>; // pr -> rounds until resolution
   /** Every event kind/ts (all kinds, not just the metric ones). */
   allEvents?: Array<{ ts: string; kind: string }>;
-  /** Event rows moved to the archive, per kind (§9.4) — added into
+  /** Event rows moved to the archive, per kind — added into
    * the `all` window only. */
   archivedEvents?: Array<{ kind: string; n: number }>;
   /** Inclusive lower bound (ISO) or null for the "all" window. */
@@ -395,7 +393,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
   const { since } = input;
   const rounds = input.rounds.filter((r) => within(roundAnchor(r), since));
   const live = rounds.filter((r) => !isBackfilled(r));
-  // Duration and overrun read `finished_at`, and an EXPIRED round's is the
+  // Duration and overrun read `finished_at`, and an expired round's is the
   // expiry sweep's clock rather than a real end — including them would report
   // day-long "rounds". They stay in the spend and count populations above
   // (expiry is bookkeeping, not a refund) and out of this one.
@@ -631,7 +629,7 @@ export function computeWindow(input: WindowInput): MetricsWindow {
 // ---- daily rows ------------------------------------------------------------
 
 export function dailyRows(rounds: RoundRow[], now: Date, timeZone: string, days = 30): DailyRow[] {
-  // Step CALENDAR dates back from today's zone date: fixed 24h offsets from
+  // Step calendar dates back from today's zone date: fixed 24h offsets from
   // `now` skip or repeat a day around a DST transition.
   const today = new Date(`${zoneDateString(now, timeZone)}T00:00:00.000Z`);
   const wanted: string[] = [];
@@ -715,14 +713,13 @@ export function computeMetrics(store: StateStore, opts: MetricsOptions = {}): Me
   const timeZone = opts.timeZone ?? "UTC";
   const nowIso = now.toISOString();
 
-  // Expired zombie rounds used to be dropped here, before any
-  // aggregate saw them — which silently erased the tokens they really burned
-  // (finding 1). They are now IN, and `computeWindow` excludes them
-  // from the one population they genuinely distort: duration/overrun, whose
-  // `finished_at` is the expiry sweep's clock rather than a real end.
+  // Expired zombie rounds are kept here — dropping them would erase the
+  // tokens they really burned. `computeWindow` excludes them from the one
+  // population they genuinely distort: duration/overrun, whose `finished_at`
+  // is the expiry sweep's clock rather than a real end.
   const rounds = store.allRounds();
   const events = readEvents(store);
-  // The live tally and the archived rollup in ONE read transaction: the
+  // The live tally and the archived rollup in one read transaction: the
   // archiver (another process, for `qcr metrics`) deletes rows and adds them
   // to the rollup in one commit, and two separate snapshots on either side of
   // it would count the moved rows twice.
@@ -789,7 +786,7 @@ export function emptyOps(): OpsInfo {
  * Read the operational facts that do not live in sqlite: the daemon's
  * `status.json` snapshot and the `BUILD_SHA` marker deploy.sh rsyncs into the
  * sandbox root. Both are optional — a missing/corrupt file degrades to the
- * empty value for its fields and NEVER throws (a metrics read must not be able
+ * empty value for its fields and never throws (a metrics read must not be able
  * to fail because the daemon has not written a snapshot yet). Parsing of the
  * marker is deploytab's `parseBuildSha`, injected so this module stays free of
  * the TUI.

@@ -81,7 +81,7 @@ describe("reachability gate", () => {
   });
 
   it("REGRESSION: the blocker bar did not move — known-good blockers still block", () => {
-    // The three cases the retrospective names as must-still-block. All
+    // Three known-good blockers that must still block. All
     // three are `routine`: the triggering state arises in normal operation.
     const knownGood = [
       { name: "cross-tenant IDOR", severity: "P0" as Severity, confidence: 0.9 },
@@ -106,7 +106,7 @@ describe("reachability gate", () => {
 describe("first-party directive gate", () => {
   it("recognizes the reviewed repo's own agent-directive paths", () => {
     for (const p of [
-      ".claude/skills/user-journey-analysis/SKILL.md", // the #5306 false positive
+      ".claude/skills/user-journey-analysis/SKILL.md", // a skill file must not read as injection
       ".claude/settings.json",
       "prompts/round-first.md",
       "CLAUDE.md",
@@ -182,7 +182,7 @@ describe("first-party directive gate", () => {
   });
 
   it("does not soften a surviving malicious injection merely because its path is first-party", () => {
-    // suppresses routine first-party instructions before posting. A
+    // Routine first-party instructions are suppressed before posting. A
     // candidate that still reaches the posting map has proved maliciousness or
     // a concrete untrusted-source path, so path alone cannot soften it.
     const ctx = { kind: "injection", path: ".claude/skills/x/SKILL.md" };
@@ -238,7 +238,7 @@ describe("deriveVerdict", () => {
   });
 });
 
-// ----: the "[ask your human]" grammar ------------------------------
+// ---- the "[ask your human]" grammar --------------------------------------
 //
 // A sibling marker to [check this], never a second spelling of it. The whole
 // design problem this lens solves is ROUTING (stop the reader answering the
@@ -287,11 +287,10 @@ describe("the [ask your human] tag", () => {
   });
 });
 
-// ----: the closed tag grammar ---------------------------------------
+// ---- the closed tag grammar -----------------------------------------------
 //
-// 14.4% of the corpus's findings wore a tag this system does not define. The
-// grammar is what the posting guards, the thread-resolution refusals and every
-// downstream consumer key on, so an invented tag is a finding that silently
+// The grammar is what the posting guards, the thread-resolution refusals and
+// every downstream consumer key on, so an invented tag is a finding that silently
 // escapes its own machinery. It constrains the SPELLING and nothing else.
 
 describe("the closed tag grammar", () => {
@@ -367,7 +366,7 @@ describe("the closed tag grammar", () => {
   });
 });
 
-// ----: the "[deferred]" tag -----------------------------------------
+// ---- the "[deferred]" tag ------------------------------------------------
 //
 // The THIRD marker. Its whole job is routing a decision ("this finding is real
 // and this PR is not where it gets fixed"), so the three markers must stay
@@ -445,11 +444,8 @@ describe("the [deferred] tag", () => {
   });
 });
 
-// the compliance audit's mechanically-checkable item 16 claimed a
-// full (severity × confidence × reachability) matrix already existed; it did
-// not (the contrived and plausible legs were spot checks). This is that
-// matrix, written as GROUND TRUTH rather than derived from the function: a
-// literal row per (severity, reachability) at four confidences. The range is
+// The full (severity × confidence × reachability) matrix, written as GROUND
+// TRUTH rather than derived from the function: a literal row per (severity, reachability) at four confidences. The range is
 // exactly the three tags — there is no drop path — and an absent or garbage
 // reachability reads as routine. MUTATION: any edit to postTag's gate or base
 // mapping fails a named cell.

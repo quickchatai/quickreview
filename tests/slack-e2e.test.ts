@@ -1,6 +1,5 @@
-// The Slack concierge, end to end through the PRODUCTION assembly (
-// S5b). Style model: tests/e2e-dryrun.test.ts — real modules, fake everything
-// at the edges. No live Slack, no tmux, no pi, no real fetch.
+// The Slack concierge, end to end through the PRODUCTION assembly. Style
+// model: tests/e2e-dryrun.test.ts — real modules, fake everything at the edges. No live Slack, no tmux, no pi, no real fetch.
 //
 // The loop under test is the whole feature:
 //
@@ -320,7 +319,7 @@ describe("tier enforcement in the production path", () => {
     expect(runtime.origins.latest()?.tier).toBe("author");
 
     const postsBefore = transport.posts.length;
-    // (corrected): a deferral's ticket is filed by the review session
+    // A deferral's ticket is filed by the review session
     // itself through the legacy command dir, so `file-issue` stays
     // owner-tier on Slack — an author-tier turn is refused outright, with a
     // `tier: ` reason, no GitHub call and no post.
@@ -375,7 +374,7 @@ describe("announcements own the thread", () => {
 
     const pickup = transport.posts.at(-1)!;
     expect(pickup.thread_ts).toBeUndefined(); // root-on-first-event
-    // The WHOLE message, not a substring: a broken round-type label used to
+    // The WHOLE message, not a substring: a broken round-type label would
     // render `· undefined ·` here and still contain "#4242".
     expect(pickup.text).toBe(
       `👀 *<https://github.com/${cfg.github.repo}/pull/${PR}|#${PR} fix(webhooks): stop dropping retries on 5xx>*` +

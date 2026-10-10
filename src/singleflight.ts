@@ -1,5 +1,4 @@
-// One pass at a time, for as long as the pass is alive (boot stall,
-// review fix).
+// One pass at a time, for as long as the pass is alive.
 //
 // The reconcile poll runs ONE pass at a time: a tick that finds a pass running
 // is skipped, an explicit call waits for it. A guard like that must never
@@ -7,14 +6,12 @@
 // a git fetch on a dead connection, a call with no timeout — would otherwise
 // hold it for the rest of the daemon's life, and with it the authoritative
 // reconcile, the push backstop and the sweep that releases a lost nudge's
-// claim (#5362 rule ④: that release comes within a bounded time). Before the
-// guard existed a hung pass took only itself down; the next tick started over.
+// claim, which must happen within a bounded time.
 //
 // So a pass that has run for `overdueMs` is ABANDONED: reported once, no longer
 // waited for, and the next tick (or a waiting call) starts a new pass beside
 // it. If the abandoned pass ever wakes it runs on — two passes then overlap,
-// which is what every pass did before the guard — and when it settles it clears
-// nothing: the guard belongs to the newer pass.
+// as unguarded passes always could — and when it settles it clears nothing: the guard belongs to the newer pass.
 
 export interface SingleFlightDeps {
   /** How long a pass may run before it is abandoned (read at every check). */

@@ -239,7 +239,7 @@ describe("TuiMemoryStore — both user trees", () => {
     expect(MEMORY_USERS).toEqual(["reviewer", "companion"]);
   });
 
-  // the TUI's candidate sweeper and memory tab read BOTH trees
+  // The TUI's candidate sweeper and memory tab read both trees
   // every few minutes with no sweep cache (`cacheTtlMs: 0`). With the
   // incremental sweep a poll of an unchanged store lists and reads nothing.
   it("a repeat read lists both trees but re-reads only what changed", async () => {
@@ -312,7 +312,7 @@ describe("TuiMemoryStore — both user trees", () => {
     const bug = start.find((e) => e.text.includes("guard 2"))!;
     expect((await store.apply({ op: "pin", ...refOf(bug) })).ok).toBe(true);
     let entries = await store.read();
-    // Pin MOVES the entry into the pinned area (S5), in its own tree.
+    // Pin moves the entry into the pinned area, in its own tree.
     const name = bug.id.slice(bug.id.lastIndexOf("/") + 1);
     const pinnedId = `reviewer:preferences/pinned/${name}`;
     expect(entries.some((e) => e.id === bug.id)).toBe(false);
@@ -393,7 +393,7 @@ describe("TuiMemoryStore — both user trees", () => {
   });
 });
 
-// S3 (review): the companion's own recall (the vendored extension)
+// The companion's own recall (the vendored extension)
 // excludes retired entries by a published list, and no daemon sweeps the
 // companion's tree — the TUI's store does, and publishes it into the state
 // home the companion mounts (`MEMORY.retiredFile`, `QCR_OV_RETIRED_FILE`).
@@ -520,11 +520,11 @@ describe("TuiMemoryStore — unreachable is not empty", () => {
   });
 });
 
-// follow-up, 2026-08-21 — the companion wrote nothing for a day
-// because `viking://user/companion` did not exist as a DIRECTORY, so the pi
-// extension's namespace resolver could not see the namespace and fell back to
-// `user/default`. The TUI is where this gets fixed: it is the one surface
-// holding both user keys, and it starts the companion container itself.
+// A namespace whose `viking://user/<name>` does not exist as a directory is
+// invisible to the pi extension's namespace resolver, which then falls back to
+// `user/default` and writes there. The TUI materializes both: it is the one
+// surface holding both user keys, and it starts the companion container
+// itself.
 describe("TuiMemoryStore — materializing both namespaces", () => {
   let server: FakeOpenViking;
   beforeEach(() => {
@@ -534,8 +534,8 @@ describe("TuiMemoryStore — materializing both namespaces", () => {
   it("creates the memory root for EVERY namespace, not just the one it writes to", async () => {
     const store = wire(server);
     expect(await store.ensureNamespaces()).toEqual([]);
-    // The companion's is the one that was missing in the live incident; the
-    // reviewer's has to be covered too, or a fresh server strands the daemon.
+    // Both namespaces must be covered: a missing companion root misroutes its
+    // writes, a missing reviewer root on a fresh server strands the daemon.
     for (const user of MEMORY_USERS) {
       expect(server.dirs.has(`${rootOf(user)}/experiences`)).toBe(true);
     }
@@ -559,7 +559,7 @@ describe("TuiMemoryStore — materializing both namespaces", () => {
 
   it("reports the namespace whose key is missing rather than silently skipping it", async () => {
     // No companion key: the server refuses, and the operator must be told
-    // which namespace is unprepared — this is the state the machine was in.
+    // which namespace is unprepared.
     const store = wire(server, { OPENVIKING_REVIEWER_KEY: KEYS.reviewer });
     const notes = await store.ensureNamespaces();
     expect(notes.join(" ")).toMatch(/companion/);

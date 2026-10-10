@@ -1,4 +1,4 @@
-// Written repo rules (2026-10-03, the Qodo PR-Review-Bench near-miss audit):
+// Written repo rules:
 // pass-style walks every written rule as a checklist, one grouped nit per rule;
 // it is planned on a test-only diff when the repo writes rules; and the
 // validator never kills a finding that cites a written rule for its shape.
@@ -49,7 +49,7 @@ describe("pass-style walks every written rule", () => {
 
 describe("one validator rule for conventions: written rules kept as nits, CI-enforced lint a build defect", () => {
   it("binds pass-validate, in PR and scan builds", () => {
-    // Scan too since 2026-10-03: quality-cap-validate (both modes) defers every
+    // Scan too: quality-cap-validate (both modes) defers every
     // convention candidate to this rule, and stage 2 can plan pass-style.
     expect(ids("pass-validate")).toContain("validate-convention-rule");
     expect(ids("pass-validate", "scan")).toContain("validate-convention-rule");

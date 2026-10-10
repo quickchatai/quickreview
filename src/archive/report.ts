@@ -168,7 +168,7 @@ export function renderArchiveReport(input: {
     if (s.max_sync_span_ms !== null)
       lines.push(`longest synchronous span: ${s.max_sync_span_ms} ms`);
     if (s.freelist_pages !== null) lines.push(`state.db free pages: ${s.freelist_pages}`);
-    // The stores that belong to no PR (S4): each one's last pass, or that it
+    // The stores that belong to no PR: each one's last pass, or that it
     // has not run (plan mode, not wired, or an older daemon).
     for (const [label, st] of [
       ["overseer store", s.stores?.overseer ?? null],

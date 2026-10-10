@@ -1,4 +1,4 @@
-// The optional escalation feature (ratified by the owner 2026-08-31).
+// The optional escalation feature (CLAUDE.md rule 10).
 //
 // OFF BY DEFAULT. With `[escalation] enabled = false` — what every shipped
 // config carries — nothing here runs: no rule is evaluated, no note is
@@ -11,7 +11,7 @@
 //
 // 1. THE REVIEWER STILL DECIDES. Escalation is additive notification beside a
 //    finished verdict; it never defers, never parks, never hands the review
-//    back. Manifesto belief 2 and the decision are untouched.
+//    back (manifesto belief 2; there is no park).
 //
 //    Enforced by SHAPE, not by discipline: nothing in this module's public
 //    surface returns, produces or contains a `Verdict`. `deliverEscalations`
@@ -37,9 +37,8 @@
 //    blank — an escalation with nothing to look at is not an escalation.
 //    (c) EVERY path in a scope must be a file THIS PR ACTUALLY TOUCHES —
 //    including a `decision` scope's optional one — compared exactly against
-//    the diff: without that, `path: "the entire diff"` and `path: "**"` both
-//    passed, which is how a whole-PR escalation was still spellable until the
-//    review found it. (d) the comment body is RENDERED from the scope
+//    the diff, so `path: "the entire diff"` or `path: "**"` cannot spell a
+//    whole-PR escalation. (d) the comment body is RENDERED from the scope
 //    by `renderEscalationComment`, and `decision` is capped to a NAME, not a
 //    paragraph. (e) the belt: all three free-text slots — `question`,
 //    `decision`, and a session's `why` — go through `asksForWholeReview`.
@@ -82,7 +81,7 @@
 //
 // * `comment` (the default): a gated `create_review` with `event: "COMMENT"`
 //   and `reviewPurpose: "escalation"` — the same mechanically-authored gated
-//   comment the migration pre-check already posts. No new mutation
+//   comment the migration pre-check posts. No new mutation
 //   kind, no new posting route, and (like the pre-check) it never claims the
 //   head, because it carries no verdict.
 // * `review_request`: the comment, PLUS the `request_reviewer` gate kind, so
@@ -114,12 +113,12 @@ export type EscalationScope =
 /**
  * Stable identity of a scope, for the dedup ledger.
  *
- * LINE NUMBERS ARE DELIBERATELY NOT IN THE KEY (review). The unit a
+ * Line numbers are deliberately not in the key. The unit a
  * human experiences is "you were pointed at this file" — keying on the line
  * range would make an escalation at lines 12–30 and one at 14–32 two distinct
  * asks producing near-identical notes, which is the nag the ledger exists to
  * prevent. Two genuinely different places in one file cost one escalation
- * between them; `max_per_pr` was going to bound that anyway.
+ * between them; `max_per_pr` bounds that anyway.
  */
 export function scopeKey(scope: EscalationScope): string {
   switch (scope.kind) {
@@ -183,9 +182,9 @@ export function normalizeScope(raw: unknown): EscalationScope | null {
   }
   if (kind === "decision") {
     // Capped and whitespace-collapsed HERE, so `decision` cannot become a
-    // paragraph-length free-text field carrying a whole-review ask — the
-    // review's exploit. `validateEscalationRequest` additionally puts
-    // it through `asksForWholeReview`, exactly like `question`.
+    // paragraph-length free-text field carrying a whole-review ask.
+    // `validateEscalationRequest` additionally puts it through
+    // `asksForWholeReview` (session origin), exactly like `question`.
     const decision = str(r.decision).replace(/\s+/g, " ").slice(0, MAX_ESCALATION_DECISION);
     if (!decision) return null;
     return path ? { kind: "decision", decision, path } : { kind: "decision", decision };
@@ -193,9 +192,7 @@ export function normalizeScope(raw: unknown): EscalationScope | null {
   // Default and by far the common case: a place in the code.
   if (!path) return null;
   const start = num(r.start_line);
-  // An end without a start is meaningless — the old `end ?? start` was dead
-  // code inside a branch that already required `end` (review) and let
-  // a lone `end_line` through to sit in the scope rendering nothing.
+  // An end without a start is meaningless, so a lone `end_line` is dropped.
   const end = start === undefined ? undefined : num(r.end_line);
   return {
     kind: "code",
@@ -248,8 +245,8 @@ export type EscalationValidation =
 /** Longest question we will carry. A paragraph is not a narrow ask. */
 export const MAX_ESCALATION_QUESTION = 400;
 
-/** Longest `decision` name. A decision is a NAME, not an essay — and an
- * uncapped one was the review's route to a whole-review ask. */
+/** Longest `decision` name. A decision is a NAME, not an essay — an uncapped
+ * one would be a route to a whole-review ask. */
 export const MAX_ESCALATION_DECISION = 120;
 
 /**
@@ -261,22 +258,19 @@ export const MAX_ESCALATION_DECISION = 120;
  * free-text slots — `question` and `decision` — and this is what keeps a
  * whole-review ask out of them.
  *
- * The first version missed 7 of 7 natural phrasings the reviewer tried
- * ("Could you cast an eye over all of it?", "Are you happy with everything
- * here?"). The second version caught those and then OVER-blocked: it treated
- * `whole`, `entire`, `everything` as damning on their own, on the reasoning
- * that "nothing narrow needs them" — which is simply false. Those are the
- * standard vocabulary of SCOPE-OF-EFFECT questions, and a scope-of-effect
- * question is the canonical thing this feature exists to ask:
+ * It must catch whole-review phrasings ("Could you cast an eye over all of
+ * it?", "Are you happy with everything here?") without treating `whole`,
+ * `entire`, `everything` as damning on their own. Those are the standard
+ * vocabulary of SCOPE-OF-EFFECT questions, and a scope-of-effect question is
+ * the canonical thing this feature exists to ask:
  *
  *     Does this lock the whole row, or just the counter?
  *     Is the entire cache invalidated here, or only the tenant slice?
  *
- * It refused 9 of 12 natural narrow questions, and a false positive here is a
- * SILENT DROP — `escalation_refused`, no delivery, nobody told. Over-blocking
- * is therefore the more expensive direction, not the safe one: it is the
- * difference between a feature that works when switched on and one that
- * quietly does not.
+ * A false positive here is a SILENT DROP — `escalation_refused`, no delivery,
+ * nobody told. Over-blocking is therefore the more expensive direction, not
+ * the safe one: it is the difference between a feature that works when
+ * switched on and one that quietly does not.
  *
  * So a breadth word only damns when it is talking about THE CHANGE:
  *
@@ -301,8 +295,8 @@ export const MAX_ESCALATION_DECISION = 120;
  * `tests/escalation.test.ts` — the phrasings it must catch, and the narrow
  * questions it must not touch.
  */
-// NB `at all` and `overall` are absent on purpose (re-review): they are
-// pure intensifiers, not breadth — "is this index used at all?" is narrow.
+// NB `at all` and `overall` are absent on purpose: they are pure
+// intensifiers, not breadth — "is this index used at all?" is narrow.
 const BREADTH_RE =
   /\b(?:whole|entire|everything|in general|as a whole|top to bottom|end[- ]to[- ]end|full review|all of (?:it|this|them|these)|it all|(?:second|another|extra|fresh) (?:pair|set) of eyes|review it|look at it)\b/i;
 
@@ -339,22 +333,21 @@ export function validateEscalationRequest(
   /**
    * WHERE THIS CANDIDATE CAME FROM — an argument, never a field on `raw`.
    *
-   * This is a trust boundary, and it was briefly marked in a field the
-   * untrusted side writes (re-review): `origin` was read off the
-   * candidate, and for a session candidate `raw` IS the verdict file's
-   * `escalations` entry, which the model writes. A session could set
-   * `"origin": "rule"` and buy the rule-origin belt exemption on all three
-   * free-text slots — and forge the audit trail besides, since the ledger row
-   * and the rendered comment both name the rule it claimed.
+   * This is a trust boundary. For a session candidate `raw` IS the verdict
+   * file's `escalations` entry, which the model writes, so an `origin` read
+   * off the candidate would let a session set `"origin": "rule"`, buy the
+   * rule-origin belt exemption on all three free-text slots, and forge the
+   * audit trail besides (the ledger row and the rendered comment both name
+   * the rule it claimed).
    *
-   * `verdicts.ts` already builds the two groups separately, so origin is a
-   * property of the CALL SITE. That is what it always meant.
+   * `verdicts.ts` builds the two groups separately, so origin is a property
+   * of the CALL SITE.
    */
   origin: EscalationOrigin,
   /**
-   * The PR's changed files. A `code`/`migration` scope must name one of them:
-   * without this check `path: "the entire diff"` and `path: "**"` both passed,
-   * which is how a whole-PR escalation was still spellable (review).
+   * The PR's changed files. Every path in a scope must name one of them, so
+   * `path: "the entire diff"` or `path: "**"` cannot spell a whole-PR
+   * escalation.
    *
    * REQUIRED IN PRACTICE. `deliverEscalations` always passes it, and when the
    * file listing is unavailable it passes `[]` — so every path-bearing scope
@@ -384,11 +377,10 @@ export function validateEscalationRequest(
   const scope = normalizeScope(r.scope);
   if (!scope) return { ok: false, refusal: "no-scope" };
   // EVERY path in a scope must be a REAL file in this PR's diff — including a
-  // `decision` scope's OPTIONAL path, which the first cut exempted along with
-  // the whole scope kind (re-review, N4): `{kind: "decision", path:
-  // "the entire diff"}` rendered that string and minted a distinct dedup key.
-  // Compared exactly against what GitHub returned — no globbing, no prefix
-  // match, nothing an invented string could satisfy.
+  // `decision` scope's OPTIONAL path, which would otherwise render any string
+  // and mint a distinct dedup key. Compared exactly against what GitHub
+  // returned — no globbing, no prefix match, nothing an invented string could
+  // satisfy.
   const scopePath: string | undefined = scope.path;
   if (scopePath !== undefined && changedPaths !== undefined && !changedPaths.includes(scopePath)) {
     return { ok: false, refusal: "path-not-in-diff" };
@@ -404,9 +396,9 @@ export function validateEscalationRequest(
   // wrote. Rule-origin text is the operator's own config plus our template:
   //
   //   * `why` is rendered verbatim by design; an operator may word their
-  //     reason however they like (re-review, N1 — this slot was
-  //     unbelted entirely, so a narrow question could ride beside a
-  //     "**Why you:** just review the whole thing and sign off").
+  //     reason however they like. (A session's `why` IS belted, or a narrow
+  //     question could ride beside a "**Why you:** just review the whole
+  //     thing and sign off".)
   //   * a rule's `question` and `decision` are composed by `questionForRule`
   //     and `scopeForRule` from the operator's own rule name, label or check
   //     name. Belting those means an operator who names a label
@@ -589,12 +581,11 @@ export function scopeForRule(rule: EscalationRule, facts: EscalationFacts): Esca
  * The question a fired rule asks. Narrow by construction — it names the scope
  * and the rule, and asks for a judgement on that one thing.
  *
- * This wording, and the label decision above, were briefly written DEFENSIVELY
- * to dodge `asksForWholeReview` while that predicate over-blocked. Both are
- * back to their natural phrasing (re-review: needing to dodge the belt
- * was the signal that the belt was wrong, and it has been fixed instead).
- * `tests/escalation.test.ts` pins that every rule-built string passes its own
- * check, so a future reword that would silently drop a fired rule fails loudly.
+ * This wording and the label decision above use natural phrasing; if a rule-
+ * built string ever needs rewording to dodge `asksForWholeReview`, the belt is
+ * wrong, not the string. `tests/escalation.test.ts` pins that every rule-built
+ * string passes its own check, so a reword that would silently drop a fired
+ * rule fails loudly.
  */
 export function questionForRule(rule: EscalationRule, scope: EscalationScope): string {
   return `Your rule "${rule.name}" fires on this change. Is ${renderScope(scope)} right, in your judgement?`;
@@ -612,7 +603,7 @@ export function evaluateEscalationRules(
    * Called when a rule FIRED but its candidate did not survive validation.
    *
    * A deterministic rule that silently produces nothing is the worst failure
-   * this feature has (re-review): the operator configured it, it
+   * this feature has: the operator configured it, it
    * matched, and nobody was told — including the operator. Session-origin
    * candidates already log `escalation_refused` at delivery; this is the same
    * visibility for the half that is refused before delivery is even reached.
@@ -665,10 +656,10 @@ export interface EscalationRenderContext {
    * say what GitHub's queue entry does and does not mean. */
   review_requested?: boolean;
   /**
-   * Did the ROUND'S OWN review actually reach GitHub? From the
-   * posting receipt, not inferred.
+   * Did the ROUND'S OWN review actually reach GitHub? From the posting
+   * receipt, not inferred.
    *
-   * This matters more here than anywhere else (review): the escalation
+   * This matters more here than anywhere else: the escalation
    * note is the one posting exempt from guard 2, so the case where the round's
    * own review was refused is exactly the case where this note still goes out.
    * Telling a named human "the review is posted" when it is not would send
@@ -878,7 +869,7 @@ export async function deliverEscalations(
      * listing could not be read: every path-bearing scope is then refused,
      * which is the safe direction. */
     changed_paths?: readonly string[];
-    /** Did the round's own review reach GitHub (receipt)? Rendered
+    /** Did the round's own review reach GitHub (the posting receipt)? Rendered
      * into the note; see `EscalationRenderContext.review_posted`. */
     review_posted?: boolean;
     /**
@@ -889,7 +880,7 @@ export async function deliverEscalations(
     /**
      * The MODEL's half: raw `escalations` entries out of the verdict file.
      * Never trusted, and — the point of keeping the two apart — never able to
-     * relabel itself into the group above (re-review).
+     * relabel itself into the group above.
      */
     sessionCandidates?: readonly unknown[];
   },
@@ -1007,16 +998,14 @@ export async function deliverEscalations(
       }
     }
 
-    // ---- THE LEDGER RECORDS DELIVERIES, NOT ATTEMPTS (review) ------
+    // ---- THE LEDGER RECORDS DELIVERIES, NOT ATTEMPTS -----------------------
     //
     // In dry-run the gate returns `{executed: false, dryRunFile}` with NO
     // `blocked`, so this point is reached having written a file and touched
-    // nothing on GitHub. Recording that would have been a disaster of exactly
-    // the shape the docs walk a new operator into: enable escalation, run the
-    // documented dry-run bring-up, and `escalations_once` permanently owns
-    // those (pr, target, scope_key) pairs — so when they go live the real
-    // escalation comes back `already-delivered`, or `capped`, forever, fixable
-    // only by hand-editing SQLite.
+    // nothing on GitHub. Recording that would let a dry-run bring-up
+    // permanently own those (pr, target, scope_key) pairs in
+    // `escalations_once` — so on go-live the real escalation would come back
+    // `already-delivered`, or `capped`, forever.
     //
     // So the ledger is keyed on what REACHED GITHUB, the same `result.executed`
     // test `guards.ts after()` uses before it stamps a reviewed head. A dry-run

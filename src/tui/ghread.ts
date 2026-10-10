@@ -1,17 +1,17 @@
 // The companion's read-only reach into GitHub.
 //
 // Setup reads a repo's review history and a scan looks things up, so the
-// companion now holds a GitHub credential — and rule 8 still says it never
-// writes to GitHub. Both hold because of WHAT it holds:
+// companion holds a GitHub credential — and rule 8 still says it never
+// writes to GitHub. Both hold because of what it holds:
 //
-//  * A down-scoped INSTALLATION token, minted HERE, on the host, from the App
+//  * A down-scoped installation token, minted here, on the host, from the App
 //    credential the host already has. The request names the permissions it
 //    wants (`COMPANION_GITHUB_PERMISSIONS`: contents / issues / pull requests,
 //    each `read`) and the one repository, and GitHub signs a token that can
 //    do exactly that. The grant GitHub reports back is checked again before
 //    the token is handed over: anything that is not `read` is refused, so an
 //    App whose permissions changed can never widen what the companion holds.
-//  * It is handed over as an ENV FILE in a directory the companion mounts
+//  * It is handed over as an env file in a directory the companion mounts
 //    read-only (`CONTAINER.githubRead`), never as an argv value and never as
 //    a docker `--env`: the token lives an hour, so the host re-mints it into
 //    the same file before it expires, and a container env var would be
@@ -30,7 +30,7 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "n
 import { join } from "node:path";
 import { mintAppJwt, type FetchFn } from "../githubAuth.js";
 
-/** The ONLY permissions the companion's token is ever minted with. */
+/** The only permissions the companion's token is ever minted with. */
 export const COMPANION_GITHUB_PERMISSIONS: Readonly<Record<string, "read">> = Object.freeze({
   contents: "read",
   issues: "read",
@@ -145,17 +145,14 @@ export async function mintReadOnlyToken(opts: {
 /**
  * What a token may be made of to go into the env file. It is GitHub's token
  * alphabet: an installation token is `ghs_` followed by base64url segments
- * joined by `.` (383 characters as of 2026-10). Nothing else is allowed, so no
+ * joined by `.` (currently 383 characters). Nothing else is allowed, so no
  * whitespace, quote, `$`, backtick, backslash, `#`, glob character or newline
  * can reach the file.
  *
  * `.` and `-` are safe both ways the file is read. When it is `source`d, the
  * value of a `NAME=value` assignment is neither split nor globbed. Docker's
- * env-file format takes the rest of the line literally.
- *
- * The check used to be `[A-Za-z0-9_]`, older than this token format. From
- * 2026-10-02 it refused every real token, so the companion never got one
- * (H4).
+ * env-file format takes the rest of the line literally. `.` and `-` must stay
+ * in the set: without them every real token is refused.
  */
 const TOKEN_VALUE_RE = /^[A-Za-z0-9_.-]+$/;
 

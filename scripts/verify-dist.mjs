@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Does `dist/` actually contain what the build claims to have produced?
 //
-// WHY THIS EXISTS. `tsconfig.json` runs `incremental` (so
+// Why this exists: `tsconfig.json` runs `incremental` (so
 // `npm run dev`'s blocking typecheck is ~1s instead of ~4s) plus
 // `noEmitOnError` (so a failing build cannot re-exec the TUI from a
 // half-written dist). Together they leave one hole: tsc decides what to emit
@@ -18,7 +18,7 @@
 // spot). It is not survivable in `deploy.sh`, which rsyncs `dist/` to the VM:
 // the missing module ships, and the daemon crashes there instead of here.
 //
-// So "the build succeeded" now means "and the output is on disk". Cheap
+// So "the build succeeded" means "and the output is on disk". Cheap
 // (~180 stats), dependency-free, and runs from a bare checkout.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -37,9 +37,9 @@ export function readTsconfig(root = ROOT) {
  * Every `.ts` tsc is asked to compile, as repo-relative POSIX paths.
  *
  * Deliberately derived from tsconfig's own `include`/`exclude` rather than
- * hard-coded: the one file excluded today (`extensions/inline-bash.ts`, loaded
- * from source by pi's jiti) is a rule that has changed before and will again,
- * and a checker that disagrees with the compiler is worse than no checker.
+ * hard-coded: the excluded set (e.g. `extensions/inline-bash.ts`, loaded from
+ * source by pi's jiti) can change, and a checker that disagrees with the
+ * compiler is worse than no checker.
  * `.d.ts` files declare types and emit nothing.
  */
 export function inputFiles(root = ROOT, cfg = readTsconfig(root)) {

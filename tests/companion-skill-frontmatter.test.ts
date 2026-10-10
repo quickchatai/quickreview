@@ -1,12 +1,9 @@
-// H4: every skill the companion registers must parse the way pi
-// parses it.
+// Every skill the companion registers must parse the way pi parses it.
 //
-// From 2026-10-03 to 2026-10-08 the companion had no `replay` skill. Its
-// SKILL.md description was an unquoted YAML scalar containing ": " ("Strictly
-// offline: it never labels a PR…"). pi's `yaml` parse threw "Nested mappings
-// are not allowed in compact mappings at line 2, column 14", pi printed that
-// in its start-up banner, and it skipped the skill. `skill-descriptions.test.ts`
-// read the same line with a regex and passed.
+// An unquoted YAML description containing ": " makes pi's `yaml` parse throw
+// ("Nested mappings are not allowed in compact mappings"); pi prints that in
+// its start-up banner and skips the skill. A regex read of the same line
+// (`skill-descriptions.test.ts`) passes, so only a real parse catches it.
 //
 // This file parses every SKILL.md under every directory the companion
 // entrypoint registers with pi. It uses a real YAML parser
@@ -122,7 +119,7 @@ describe("companion skill front-matter parses the way pi parses it", () => {
 });
 
 describe("the parser catches the defect classes", () => {
-  // The exact front-matter replay shipped with before H4.
+  // A front-matter block with an unquoted ": " in its description.
   const BROKEN_REPLAY =
     "---\nname: replay\ndescription: Re-run a past episode offline. Use when asked whether a tweak would still catch what humans caught. Strictly offline: it never labels a PR, never wakes a session, and never posts anything.\n---\n\n# Replaying\n";
 

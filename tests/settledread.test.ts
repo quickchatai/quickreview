@@ -1,4 +1,4 @@
-// H1a — reading a JSON file another process may still be writing.
+// Reading a JSON file another process may still be writing.
 // Deterministic: a virtual clock, a virtual sleep and a scripted file stand in
 // for the filesystem, so every bound is checked exactly, not by wall time.
 import { describe, expect, it } from "vitest";
@@ -111,11 +111,11 @@ describe("readSettledJson (H1a)", () => {
   });
 
   it("a DAEMON stall across one sleep cannot decide alone: the look right after it is never the last", async () => {
-    // #5885's container: the daemon and the writer share one throttled
-    // cgroup. The watcher sleeps 50 ms and wakes 13.7 s later; the writer,
-    // starved just the same, finishes its bytes a moment AFTER the watcher's
-    // first post-stall look. That look alone sees "unchanged for 13.7 s, mtime
-    // 13.7 s old" — it must not be the one that declares the file corrupt.
+    // The daemon and the writer share one throttled cgroup. The watcher
+    // sleeps 50 ms and wakes 13.7 s later; the writer, starved just the same,
+    // finishes its bytes a moment AFTER the watcher's first post-stall look.
+    // That look alone sees "unchanged for 13.7 s, mtime 13.7 s old" — it must
+    // not be the one that declares the file corrupt.
     const { io } = scripted([
       [0, ""],
       [13_760, WHOLE],

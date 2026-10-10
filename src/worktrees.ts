@@ -1,4 +1,4 @@
-// Worktree manager (spec §4, brief B3 step 1). One base clone of the app repo
+// Worktree manager. One base clone of the app repo
 // plus one worktree per open PR, created at queue time from the PR head ref
 // and refreshed at the start of every round. Worktrees are read-only working
 // copies for the lens passes — nothing here ever commits, pushes or touches a
@@ -46,8 +46,7 @@ export function parseDiffHunks(diff: string): DiffHunk[] {
   return out;
 }
 
-/** How near an anchored line a change must land to count as touching it
- * (S6): a fix rarely edits only the one line a comment points at. */
+/** How near an anchored line a change must land to count as touching it: a fix rarely edits only the one line a comment points at. */
 export const ANCHOR_WINDOW = 3;
 
 /** Does any hunk change the old side within `window` lines of `line`? A null
@@ -101,7 +100,7 @@ export function parseDiffHunksByFile(diff: string): Map<string, DiffHunk[]> {
   return out;
 }
 
-// ---- the PR-owned inter-round delta ------------------------------
+// ---- the PR-owned inter-round delta ----------------------------------------
 
 /** One changed run on the NEW side of a diff: `[start, count]`. `count > 0`
  * is lines `start … start+count-1` at the new head; `count === 0` is a
@@ -431,16 +430,15 @@ export interface PrOwnedDeltaFile {
   /** The file's `-U3` hunk text (GitHub's `patch` shape), "" when none. */
   patch: string;
   /** Replaying the reviewed head onto the new base conflicted here: the
-   * author resolved it, so the file is audited against BOTH parents
-   * (2026-08-19 ruling). Its ranges and patch are the PR's own
+   * author resolved it, so the file is audited against both parents. Its ranges and patch are the PR's own
    * `merge_base..head` hunks — the replayed side holds conflict markers and
    * is never diffed as content. */
   conflict?: true;
   binary?: true;
 }
 
-/** Why the delta could not be computed — the round then runs in full
- * (every unknown is a full round, never a quieter one). */
+/** Why the delta could not be computed — the round then runs in full: every
+ * unknown is a full round, never a quieter one. */
 export type PrOwnedDeltaUnavailable =
   | "no-reviewed-head"
   | "no-merge-base"
@@ -566,7 +564,7 @@ export function findMergeCommit(
 }
 
 /** A later commit on the base branch that changed lines a merged PR had
- * changed (S8, the learner's recall source). */
+ * changed (one of the learner's recall sources). */
 export interface PostMergeTouch {
   commit: string;
   subject: string;
@@ -662,10 +660,10 @@ export function localExcludePath(root: string): string | null {
 }
 
 /**
- * keep the base clone out of `git status` of the checkout it lives
- * in. The clone's name is per-install (`[github] clone_dir`, else the repo's
+ * Keep the base clone out of `git status` of the checkout it lives in. The
+ * clone's name is per-install (`[github] clone_dir`, else the repo's
  * basename), so no tracked `.gitignore` line can name it; the rule goes into
- * the repository's LOCAL `info/exclude` instead — the same line
+ * the repository's local `info/exclude` instead — the same line
  * `scripts/deploy.sh` writes, so either writer finding it is a no-op. Only
  * matters where the sandbox root IS a checkout (`npm run daemon`, the
  * plain-docker bind mount); on the VM there is no `.git` and nothing happens.
@@ -741,12 +739,10 @@ export class WorktreeManager {
    * Fetch the PR head AND the branch it targets, then materialise (or refresh)
    * wt/pr-<n> at the head.
    *
-   * The base fetch is not decoration. Before 2026-08-18 the base clone was
-   * created once and only ever fetched `refs/pull/<n>/head`, so
-   * `origin/master` stayed frozen at clone time — while `pass-data-safety` is
-   * instructed to verify migration numbering and `dependencies` "against
-   * master's current head", a P1 rule. That check was reading a snapshot that
-   * could be weeks old, producing both false P1s and false clears.
+   * The base fetch keeps `origin/<base>` current: lens rules such as
+   * pass-data-safety's migration-numbering check compare against the base
+   * branch's current head, and a base frozen at clone time would give both
+   * false blockers and false clears.
    *
    * Both refspecs go in one `git fetch` so the two sides are as close to
    * simultaneous as git allows.
@@ -775,7 +771,7 @@ export class WorktreeManager {
   }
 
   /**
-   * Materialise wt/pr-<n> at an ALREADY-FETCHED sha, without touching the
+   * Materialise wt/pr-<n> at an already-fetched sha, without touching the
    * network. This is what keeps the round prompt honest: the sha is resolved
    * once, in ensureWorktree, and every later step checks out that exact sha
    * instead of re-fetching and silently landing on a newer head.
@@ -802,10 +798,10 @@ export class WorktreeManager {
    * clone's checkout is not at the base branch — the worktrees are.
    */
   async listMigrationFiles(sha: string): Promise<string[]> {
-    // A sha this reader cannot use THROWS rather than returning []: an empty
+    // A sha this reader cannot use throws rather than returning []: an empty
     // list is indistinguishable from "the base has no migrations", which would
-    // make the pre-check silently find nothing — the one failure mode
-    // hard constraint forbids ("more reliable, never quieter"). The caller
+    // make the pre-check silently find nothing — and the migration pre-check
+    // may get more reliable, never quieter. The caller
     // catches it and logs `migration_precheck_failed`.
     if (!/^[0-9a-f]{7,40}$/i.test(sha))
       throw new Error(`listMigrationFiles: not a commit sha: ${sha}`);
@@ -819,9 +815,9 @@ export class WorktreeManager {
   /**
    * Files whose content in a merge commit differs from git's own auto-merge
    * of that merge's parents — i.e. files a human (or their agent) resolved by
-   * hand (the owner, 2026-08-19: amendment — a CLEAN base merge stays a
-   * trivial no-op, a conflict RESOLUTION is significant and gets reviewed for
-   * the dropped-master-change bug).
+   * hand. A clean base merge stays a trivial no-op for the recheck; a
+   * conflict resolution is significant and gets reviewed for dropped
+   * base-branch changes.
    *
    * `git merge-tree --write-tree` (git ≥ 2.38) recomputes the auto-merge
    * without touching any worktree; on conflicts it exits 1 but still writes
@@ -840,9 +836,8 @@ export class WorktreeManager {
       return { files: [], degraded: true };
     try {
       // A recheck classifies a push minutes after it lands — usually before
-      // any round has fetched the new objects into the base clone, which
-      // degraded EVERY live recheck (2026-08-19 anomaly storm). Fetch on
-      // miss: by sha first (GitHub serves reachable want-shas), then the PR
+      // any round has fetched the new objects into the base clone, so without
+      // a fetch every live recheck would degrade. Fetch on miss: by sha first (GitHub serves reachable want-shas), then the PR
       // ref as the reliable route for PR-branch heads.
       const missing = async () => {
         const out: string[] = [];
@@ -895,7 +890,7 @@ export class WorktreeManager {
   }
 
   /**
-   * The most recent HUMAN author of `paths` in the history reachable from
+   * The most recent human author of `paths` in the history reachable from
    * `sha` (the teammate the first-party-directive escalation comment
    * @-mentions). Read-only git in the base clone; the caller passes the
    * round's merge base so the PR's own commits never elect the PR author.
@@ -944,10 +939,10 @@ export class WorktreeManager {
 
   /**
    * Did the change from `from` to `to` touch `path` within `window` lines of
-   * `line`, on the `from` side (S6, outcome capture: "the code at the
-   * finding's anchor changed")? Read-only git in the base clone, no fetch:
+   * `line`, on the `from` side (outcome capture: "the code at the finding's
+   * anchor changed")? Read-only git in the base clone, no fetch:
    * a commit the clone does not hold makes the answer unknown (`null`), never
-   * a guess — and so does a `path` that `from` does not hold (a LEFT-side
+   * a guess — and so does a `path` that `from` does not hold (a left-side
    * anchor on a file the PR deletes, an imprecise body-only path): an empty
    * diff of a file that is not there proves nothing about an anchor in it.
    * A file `to` deletes is touched. Answers are memoised — commits are
@@ -993,9 +988,8 @@ export class WorktreeManager {
 
   /**
    * Is `sha` a commit that `to` contains and `from` does not — a commit made
-   * after the head a finding was raised at, and part of the PR since (
-   * S6: a human reply citing "Fixed in <sha>" counts only when the sha is
-   * such a commit, so a UUID segment, a colour or the commit that introduced
+   * after the head a finding was raised at, and part of the PR since (a human
+   * reply citing "Fixed in <sha>" counts only when the sha is such a commit, so a UUID segment, a colour or the commit that introduced
    * the behaviour is no fix)? Read-only git in the base clone, no fetch.
    * `null` — unknown — when any of the three is not a commit the clone holds
    * (an abbreviation that is ambiguous included); never a guess. Definite
@@ -1034,14 +1028,13 @@ export class WorktreeManager {
 
   /**
    * The commits that changed, within `windowDays` of PR `pr`'s merge, lines
-   * that PR had changed (S8 — "the bot approved it, and two days
-   * later somebody fixed those very lines" is the recall evidence the learner
-   * mines). Read-only git in the base clone, no fetch: the commit that landed
+   * that PR had changed ("the bot approved it, and two days later somebody
+   * fixed those very lines" is the recall evidence the learner mines). Read-only git in the base clone, no fetch: the commit that landed
    * the PR is found on the base branch's first-parent history by its subject
    * (`findMergeCommit`); the PR's lines are that commit's diff against its
    * first parent; a later first-parent commit touches them when `git blame`
-   * of its PARENT attributes a line it changed to the PR's commit(s). Bounded
-   * (`POST_MERGE_LIMITS` — the OLDEST later commits are read; `truncated`
+   * of its parent attributes a line it changed to the PR's commit(s). Bounded
+   * (`POST_MERGE_LIMITS` — the oldest later commits are read; `truncated`
    * says when a cap cut the scan or a blame could not be read). `tip_at` is
    * the clone's base tip, so the caller can tell a window the clone has not
    * been fetched past. Null — unknown — when the branch is not in the clone
@@ -1262,13 +1255,13 @@ export class WorktreeManager {
   }
 
   /**
-   * The PR-OWNED change between two reviewed heads (follow-up
-   * rounds; `docs/follow-up-rounds.md`): the reviewed head `from` is replayed
+   * The PR-owned change between two reviewed heads (follow-up rounds;
+   * `docs/follow-up-rounds.md`): the reviewed head `from` is replayed
    * onto the content the new head `to` actually builds on (`mergeBase`, the
    * round's own `merge_base`) with `git merge-tree`, and that synthetic tree
    * is diffed against `to`. Base content cancels out — a clean master merge
    * (with or without a merge commit) and a rebase leave only what the author
-   * changed — while a master change the author DROPPED shows as a hunk, and
+   * changed — while a master change the author dropped shows as a hunk, and
    * a replay that conflicts names its paths, scoped whole and tagged for the
    * both-parents audit. Ranges are at `to`'s line numbers, keyed by the new
    * path.
@@ -1281,7 +1274,7 @@ export class WorktreeManager {
    *
    * `baseSha` (the base branch tip the round fetched) makes the base check
    * real: the base content the reviewed head held must still be under
-   * `mergeBase`, else the author rebased onto an OLDER base (or un-merged
+   * `mergeBase`, else the author rebased onto an older base (or un-merged
    * master) and the replay would read base drift as the PR's — `base-rewound`.
    * `fromMergeBase` (the merge base the reviewed round recorded), when known,
    * catches a force-pushed base the same way.
@@ -1315,7 +1308,7 @@ export class WorktreeManager {
         if (!(await this.hasCommit(q.from))) return fail("old-head-missing");
       }
 
-      // 1. The base may only have moved FORWARD between the two reviews.
+      // 1. The base may only have moved forward between the two reviews.
       const anchor =
         q.baseSha && SHA_RE.test(q.baseSha) && (await this.hasCommit(q.baseSha))
           ? q.baseSha
@@ -1469,7 +1462,7 @@ export class WorktreeManager {
     if (existsSync(join(this.basePath, ".git"))) {
       await this.run("git", ["worktree", "prune"], { cwd: this.basePath });
       await this.run("git", ["update-ref", "-d", this.prRef(pr)], { cwd: this.basePath });
-      // the PR's pinned reviewed heads go with it.
+      // The PR's pinned reviewed heads go with it.
       const pinned = await this.reviewedHeadRefs(pr);
       if (pinned.length)
         await this.run("git", ["update-ref", "--stdin"], {
@@ -1491,7 +1484,7 @@ export class WorktreeManager {
   }
 
   /**
-   * Stale-worktree sweep at daemon start (ported preflight): every wt/pr-*
+   * Stale-worktree sweep at daemon start: every wt/pr-*
    * whose PR is no longer open/known gets removed.
    */
   async sweepStale(activePrs: Iterable<number>): Promise<number[]> {

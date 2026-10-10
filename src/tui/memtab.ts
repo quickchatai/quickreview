@@ -5,24 +5,23 @@
 // days. The reading pane on the right shows the selected entry in full, the
 // verbs painted beside it — e edit · p pin/unpin · x retire (twice) — the
 // defect flags the auto-filer works from, and the memory forward's state with
-// the Studio link. Proposals, tickets and the feedback inbox that used to
-// share this tab have their own surfaces now (`[4] tickets`, `[7] feedback`).
+// the Studio link. Proposals, tickets and the feedback inbox have their own
+// surfaces (`[4] tickets`, `[7] feedback`).
 //
-// Pinned means PLACED (S5): an entry is pinned when it sits in
+// Pinned means placed: an entry is pinned when it sits in
 // `preferences/pinned/`, the directory every round's guaranteed head reads,
-// and `p` MOVES the selected entry there and back (the entry's id changes; its
+// and `p` moves the selected entry there and back (the entry's id changes; its
 // old address keeps a retired stub). The id in the reading pane says which
-// area an entry is in; `n` writes the owner's own words into `preferences/`.
+// area an entry is in; `n` writes the operator's own words into `preferences/`.
 //
-// Every memory mutation goes through the ONE MemoryStore seam
+// Every memory mutation goes through the one MemoryStore seam
 // (src/memory/store.ts — addressing and optimistic concurrency are its
 // contract, and the engine behind it is none of this tab's business). A round
-// carries the memory it assembled when it STARTED, so an edit made here
+// carries the memory it assembled when it started, so an edit made here
 // reaches an in-flight round's context only at the next round.
 //
 // When the store does not answer, the timeline is replaced by an explicit
-// failure banner: an empty list must never be mistaken for an empty store
-//.
+// failure banner: an empty list must never be mistaken for an empty store.
 import { pinnedBudget } from "../memory/store.js";
 import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
@@ -65,11 +64,11 @@ import {
 export interface MemoryTabState {
   /** Ordinal into `memoryOrder(...)` — the filtered, day-grouped timeline. */
   sel: number;
-  /** The selected ENTRY's identity, so a reload that reorders the timeline
+  /** The selected entry's identity, so a reload that reorders the timeline
    * re-binds to the same entry and a verb never lands on a neighbour. */
   selKey?: string;
-  /**: active timeline tag filter (companion `memory_filter` verb;
-   * F clears). Render AND verbs derive ordering through it — one list. */
+  /** Active timeline tag filter (companion `memory_filter` verb; F clears).
+   * Render and verbs derive ordering through it — one list. */
   filter?: string | null;
   /** Two-keystroke retire confirmation: the entry key armed by the first x. */
   confirmRetire?: string;
@@ -80,8 +79,7 @@ export function entryKey(e: MemoryEntry): string {
 }
 
 /**
- * The entry a companion `memory_pin` action names (S5, restored by
- * the owner's ruling R7): the TUI's own id
+ * The entry a companion `memory_pin` action names: the TUI's own id
  * (`reviewer:preferences/pinned/x.md`) or the entry's OpenViking URI
  * (`viking://user/reviewer/memories/preferences/pinned/x.md`). Undefined when
  * the read holds no such entry.
@@ -101,10 +99,10 @@ function memoryRefId(ref: string): string {
 }
 
 /**
- * Why a ref that the last read did NOT find may still exist (honest-unknown):
- * the namespace it names — or, when it names none, any namespace — was down,
- * or had entries it listed but could not read. Null when every relevant
- * namespace was read whole, so "no such entry" is a FACT; null too for a
+ * Why a ref that the last read did not find may still exist: the namespace it
+ * names — or, when it names none, any namespace — was down, or had entries it
+ * listed but could not read. Null when every relevant namespace was read
+ * whole, so "no such entry" is a fact; null too for a
  * store that reports no health at all (a test fake).
  */
 export function memoryRefUnread(health: MemoryHealth | undefined, ref: string): string | null {
@@ -118,7 +116,7 @@ export function memoryRefUnread(health: MemoryHealth | undefined, ref: string): 
   return gaps.length === 0 ? null : gaps.join(" · ");
 }
 
-/** THE timeline ordering — render and every verb share it, so x/p/e can
+/** The timeline ordering — render and every verb share it, so x/p/e can
  * never address an entry the filter hides. */
 export function memoryOrder(
   entries: MemoryEntry[],
@@ -128,7 +126,7 @@ export function memoryOrder(
 }
 
 /** The visible one-line form of a timeline entry. The text already leads
- * with its #tags — never re-print them as a prefix (they doubled before). */
+ * with its #tags — never re-print them as a prefix. */
 export function entryLine(e: MemoryEntry, width: number, proposed = false): string {
   const text = sanitizeText(e.text).replace(/\s+/g, " ");
   // ● pinned; ☆ proposed for pinning by setup — the operator's call.
@@ -178,8 +176,8 @@ export function dayJump(ordered: MemoryEntry[], sel: number, dir: 1 | -1): numbe
   return starts[here + dir];
 }
 
-/** Pinned-region budget — the seam's, since setup's pin proposals
- * price against the same one. */
+/** Pinned-region budget — the seam's, since setup's pin proposals price
+ * against the same one. */
 export { pinnedBudget };
 
 /** Every click target on the memory tab. */
@@ -190,7 +188,7 @@ export type MemAction =
  * The two forward rows: state, then the Studio link (clickable) or the reason
  * there is nothing to click.
  *
- * The link is only offered when the forward is UP. Handing the operator a URL
+ * The link is only offered when the forward is up. Handing the operator a URL
  * that cannot connect — and a browser tab that fails — is worse than saying
  * plainly that the forward is down and how to bring it back.
  */
@@ -284,7 +282,7 @@ export function renderMemoryTab(
   const filterOn = st.filter != null && st.filter !== "";
   if (!store.memLoaded) left.push(emptyLine({ kind: "unread", how: "reading the store" }));
   else if (store.memError) {
-    // THE point of this branch: a store we cannot reach must not render as a
+    // The point of this branch: a store we cannot reach must not render as a
     // store with nothing in it. Banner, reason, and the retry key — never a
     // bare "none yet".
     left.push(`${WARN}${STRONG}✖ MEMORY UNREACHABLE${RESET}`);
@@ -425,7 +423,7 @@ export function installMemoryTab(app: App, store: LearningStore): MemoryTabState
     st.sel = Math.max(0, Math.min(i, Math.max(0, list.length - 1)));
     st.selKey = list[st.sel] ? entryKey(list[st.sel]!) : undefined;
   };
-  // Re-bind the selection to the same ENTRY, not the same ordinal — a
+  // Re-bind the selection to the same entry, not the same ordinal — a
   // refresh that reorders the timeline must not silently redirect the next
   // verb keystroke to a different entry.
   store.onLoaded((part) => {

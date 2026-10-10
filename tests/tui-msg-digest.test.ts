@@ -170,7 +170,7 @@ describe("quick-message input box", () => {
     expect(app.view.inputBox).toBeUndefined();
     expect(app.view.noticeLine).toBe("✓ msg pr-5012 delivered");
     streams.type("q");
-    streams.type("y"); //: q asks before it quits
+    streams.type("y"); // q asks before it quits
     await running;
   });
 
@@ -202,7 +202,7 @@ describe("quick-message input box", () => {
     expect(app.view.inputBox?.text).toBe("");
     streams.type(Buffer.from("\x1b"));
     streams.type("q");
-    streams.type("y"); //: q asks before it quits
+    streams.type("y"); // q asks before it quits
     await running;
   });
 });
@@ -250,9 +250,8 @@ describe("digest tab", () => {
     expect(digestKeys({ back: 0, scroll: 0 }).bar).toEqual([]);
   });
 
-  // one full-width column. The AWAITING YOU panel that took ~45% of
-  // this view, its `⏎ attach · w why · m msg` hint and its click zone are gone
-  // with the park they listed — a document is read, not chosen from.
+  // One full-width column, with no awaiting-you panel, attach hint or click
+  // zone — a document is read, not chosen from.
   it("styles headings and renders one full-width column with the yesterday tag", () => {
     expect(stripAnsi(styleDigestLine("# Reviews"))).toBe("Reviews");
     const st: DigestState = {

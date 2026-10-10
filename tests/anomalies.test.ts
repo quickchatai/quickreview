@@ -1,4 +1,4 @@
-// overseer wake policy: severity map + dedup on the logAnomaly
+// Overseer wake policy: severity map + dedup on the logAnomaly
 // funnel, and the daily 09:00 Warsaw heartbeat (fake inject sink, fake clock).
 import { describe, expect, it } from "vitest";
 import {
@@ -72,23 +72,22 @@ describe("WAKE_KINDS — pinned by deep equality", () => {
     );
   });
 
-  // memory was dead for five weeks behind a per-round anomaly that
-  // was never a wake kind. The health monitor's three kinds ARE wakes; the
-  // counted gap row stays quiet; the dead per-round kind is gone.
-  // a curation that did not reach memory wakes — the learner's
-  // two kinds, spelled once in src/learner/learner.ts.
+  // A curation that did not reach memory wakes — the learner's two kinds,
+  // spelled once in src/learner/learner.ts.
   it("the learner's two kinds wake", () => {
     for (const kind of Object.values(LEARNER_WAKE))
       expect(anomalySeverity(kind), kind).toBe("wake");
   });
 
-  // L2: the daemon's own event loop held — spelled once in
+  // The daemon's own event loop held — spelled once in
   // src/eventloop.ts; the watch's cooldown rate-limits it, not the detail.
   it("the event-loop stall wakes, keyed on kind (not detail)", () => {
     expect(anomalySeverity(EVENT_LOOP_WAKE_KIND)).toBe("wake");
     expect(detailKeyedKinds()).not.toContain(EVENT_LOOP_WAKE_KIND);
   });
 
+  // The memory health monitor's kinds are wakes, so an outage reaches a
+  // person; the counted gap row and the per-round degraded kind stay quiet.
   it("the memory health kinds wake; openviking_gap stays quiet", () => {
     for (const kind of Object.values(MEMORY_WAKE)) expect(anomalySeverity(kind), kind).toBe("wake");
     expect(anomalySeverity("openviking_gap")).toBe("quiet");
@@ -120,7 +119,7 @@ describe("anomalySeverity — the map", () => {
     }
   });
 
-  // the two cancellation kinds, and why they sit on opposite sides.
+  // The two cancellation kinds, and why they sit on opposite sides.
   it("a stranded round wakes: nothing else will ever come back for it", () => {
     expect(anomalySeverity("round_stranded")).toBe("wake");
   });
@@ -173,8 +172,8 @@ describe("logAnomaly → wake funnel", () => {
   });
 
   it("memory wakes dedup on what they SAY: a different transition wakes, an identical repeat does not", () => {
-    // the monitor raises a memory wake per TRANSITION; keyed on
-    // kind alone, a second transition inside the window was swallowed.
+    // The monitor raises a memory wake per transition; keyed on kind alone, a
+    // second transition inside the window would be swallowed.
     let nowMs = 1_000_000;
     const { store, injected } = storeWithPolicy({ nowMs: () => nowMs });
     store.logAnomaly("memory_auth_failed", null, null, "daemon auth_failed", "first");
@@ -191,7 +190,7 @@ describe("logAnomaly → wake funnel", () => {
   });
 
   it("the detail-keyed kinds are exactly the memory kinds — pinned", () => {
-    // S2 adds the write backlog: its raiser (the backfill pump) fires
+    // The write backlog is among them: its raiser (the backfill pump) fires
     // on the crossing, every 6 h, and once per tick that gave rows up.
     expect(detailKeyedKinds()).toEqual([
       "eod_curation_missing",
@@ -407,13 +406,10 @@ describe("startHeartbeat — daily fire", () => {
   });
 });
 
-// the exec boundary's two wake tiers, PINNED.
-//
-// The first review of this ticket found that reverting `src/anomalies.ts` alone
-// left the full suite green: the tier was a judgement call with nothing holding
-// it. In a diff whose thesis is "a green suite proves only the assertions that
-// exist", that gap had to close. Both directions are asserted, because the
-// quiet tier is as deliberate as the loud one — an unaccounted non-APPROVE
+// The exec boundary's two wake tiers, pinned: without these assertions,
+// reverting the tiers in `src/anomalies.ts` would leave the suite green. Both
+// directions are asserted, because the quiet tier is as deliberate as the
+// loud one — an unaccounted non-APPROVE
 // review is a durable row, and alarming on it would train the reader to skip
 // the kind that matters.
 describe("exec-boundary anomaly tiers", () => {
@@ -424,7 +420,7 @@ describe("exec-boundary anomaly tiers", () => {
     // Git config rewritten mid-round makes that round's output untrusted:
     // config-supplied shell turns a plain `git diff` into arbitrary execution.
     expect(anomalySeverity("git_config_modified")).toBe("wake");
-    // the boundary's OWN policy surface rewritten mid-round is worse
+    // The boundary's own policy surface rewritten mid-round is worse
     // still — every later round in the container runs under the rewrite.
     expect(anomalySeverity("policy_surface_modified")).toBe("wake");
   });

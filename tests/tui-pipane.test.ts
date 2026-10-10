@@ -1,4 +1,4 @@
-// The board's live pi mirror (2026-08-14 layout rebuild): capture argv,
+// The board's live pi mirror: capture argv,
 // escape-sequence hygiene, and the debounced stale-while-revalidate cache.
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
@@ -173,11 +173,9 @@ describe("keepSgrOnly", () => {
     expect(keepSgrOnly("\x1b[32mok\x1b[0m")).toContain("\x1b[32m");
   });
 
-  // Reported 2026-08-21: the mirror "escaped its container" and coloured the
-  // companion sidebar. A tmux pane row has no reason to end reset — 7 of 23
-  // rows captured from the live pr-5312 session ended with a background or a
-  // foreground still set — and the row does not END at the mirror's edge: the
-  // pane's padding, the board's right border and the column beside it all
+  // A tmux pane row has no reason to end reset — live captures end rows with
+  // a background or a foreground still set — and the row does not END at
+  // the mirror's edge: the pane's padding, the board's right border and the column beside it all
   // follow on the same physical line.
   it("closes a row that ends mid-style, so nothing paints past the mirror", () => {
     // The real shape: a background set, then `39` — foreground-only, which
@@ -465,7 +463,7 @@ describe("App ↔ pi mirror", () => {
     const { app, streams, running } = appWith();
     app.repaint(); // publish the frame the hit test reads
     streams.type(CLICK_IN_PANE);
-    // Structural since 2026-09-02: there is no attach hook to fire at all.
+    // Structural: there is no attach hook to fire at all.
     expect("attach" in app.hooks).toBe(false);
     expect(app.piFocused()).toBe(true);
     expect(app.view.piPr).toBe(5012);
@@ -474,10 +472,9 @@ describe("App ↔ pi mirror", () => {
   });
 
   it("⏎ and 'a' focus the EMBEDDED pane — never the full-screen attach", async () => {
-    // The owner, 2026-08-21: "I dont EVER WANT IT to go into full screen mode …
-    // same goes for the PI on the board view". The pane is the same live
-    // terminal the attach was, bounded to its region — so the full-screen
-    // hook must not fire for a PR row at all.
+    // Nothing goes full-screen, the board's pi included. The pane is the PR
+    // session's live terminal, bounded to its region — so no full-screen hook
+    // may fire for a PR row at all.
     const { app, streams, running } = appWith();
     app.repaint();
     streams.type("\r");
@@ -538,8 +535,8 @@ describe("focused pi pane — keys go to the session", () => {
     h.sendKeys.length = 0;
     h.streams.type("a");
     h.streams.type("\r");
-    // Until both sends land, by deadline: a fixed 60ms sleep around the 30ms
-    // first send was a race the first send lost on a loaded machine.
+    // Until both sends land, by deadline: a fixed sleep around the 30ms first
+    // send races it on a loaded machine.
     const deadline = Date.now() + 4_000;
     while (h.sendKeys.length < 2 && Date.now() < deadline)
       await new Promise((r) => setTimeout(r, 10));

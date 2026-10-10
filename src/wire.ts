@@ -142,16 +142,16 @@ export interface ProductionParts {
   gate: MutationGate;
   adapter: GitHubAdapter;
   sessions: PiSessionManager;
-  /** Late-bound observer for the raw-tier client's requests (S1):
+  /** Late-bound observer for the raw-tier client's requests:
    * buildParts builds that client before the memory health monitor exists,
    * so createProductionDaemon points `sink` at the monitor once it does. */
   memoryRequests?: { sink: ((record: OvRequestRecord) => void) | null };
 }
 
 export function buildParts(root = sandboxRoot(), loaded = loadConfig()): ProductionParts {
-  // the profile's per-lens tuning overlays the parsed config ONCE,
-  // here, so every consumer downstream (the plan, the agents build, the
-  // round row) reads the one resolved `cfg.lenses` — the profile wins over
+  // The profile's per-lens tuning overlays the parsed config once, here, so
+  // every consumer downstream (the plan, the agents build, the round row)
+  // reads the one resolved `cfg.lenses` — the profile wins over
   // config.toml, the preset and the defaults. A malformed `[lenses]` table
   // fails the boot loudly, like every other profile loader.
   // The profile's `[posting]` policy rides the same overlay (src/postingpolicy.ts).
@@ -168,7 +168,7 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   const adapter: GitHubAdapter = new GitHubAdapter(cfg, minter, gate);
   // The PR's raw memory tier: the daemon owns create/delete of the
   // OpenViking session a PR's pi attaches to. Its own client, on the reviewer
-  // USER key — never ADMIN/ROOT. Both directions are total, so a store that is
+  // user key — never ADMIN/ROOT. Both directions are total, so a store that is
   // down or unkeyed costs the raw tier and never a session.
   const memoryRequests: NonNullable<ProductionParts["memoryRequests"]> = { sink: null };
   const ovSessions = openVikingSessionLifecycle(
@@ -178,10 +178,10 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
       user: cfg.openviking.user,
       account: cfg.openviking.account,
       timeoutMs: cfg.openviking.request_timeout_ms,
-      // Counted with the daemon's other requests (S1).
+      // Counted with the daemon's other requests.
       onRequest: (r) => memoryRequests.sink?.(r),
     }),
-    // A delete that fails used to be silent; the lifecycle now says so.
+    // The lifecycle logs a failed delete.
     { log: (msg) => console.log(`[quickreviewd] ${msg}`) },
   );
   const sessions = new PiSessionManager({
@@ -193,9 +193,9 @@ export function buildParts(root = sandboxRoot(), loaded = loadConfig()): Product
   return { cfg, root, minter, gate, adapter, sessions, memoryRequests };
 }
 
-// exit-code checked, cwd mandatory — the first runner returned stdout
-// whatever git's exit and defaulted to the daemon's own cwd (a repo with no
-// remote), so the improvement channel could never push and never said so.
+// Exit-code checked, cwd mandatory: a runner that ignored git's exit or
+// defaulted to the daemon's own cwd (a repo with no remote) would leave the
+// improvement channel unable to push without saying so.
 const gitRun = gitRunner(nodeExec);
 
 /** package.json version for the `daemon.up` line; never worth failing a boot. */
@@ -210,20 +210,20 @@ function packageVersion(root: string): string | undefined {
   }
 }
 
-// ---- the Slack concierge (S5b) ------------------------------------
+// ---- the Slack concierge ---------------------------------------------------
 //
-// Everything Slack is assembled HERE and nowhere else, because this is the one
+// Everything Slack is assembled here and nowhere else, because this is the one
 // module allowed to read the two tokens off disk. Three properties the shape
 // enforces rather than documents:
 //
 //   * `[slack] enabled = false` ⇒ this function returns before it touches a
 //     secret reader, a socket or a clock. Nothing is constructed, so nothing
-//     can post, and the daemon is byte-for-byte its legacy self.
+//     can post.
 //   * A missing token, a malformed [slack] block or an auth.test that cannot
-//     name us is a HARD boot error. A bot that cannot identify itself cannot
+//     name us is a hard boot error. A bot that cannot identify itself cannot
 //     filter its own echoes — running anyway is a loop risk, not a degraded
 //     mode.
-//   * Socket Mode is the ONLY inbound transport. There is no HTTP route here
+//   * Socket Mode is the only inbound transport. There is no HTTP route here
 //     and none in src/webhook.ts (tests/slack-no-route.test.ts makes that
 //     structural).
 
@@ -252,7 +252,7 @@ export interface SlackWiringOptions {
   makeTransport?: (opts: { cfg: Config; botToken: string; appToken: string }) => SlackTransport;
   /**
    * The origin store, when the caller already owns one. `createProductionDaemon`
-   * builds it BEFORE the daemon so daemon-originated overseer wakes can stamp a
+   * builds it before the daemon so daemon-originated overseer wakes can stamp a
    * `local` origin through the very same store the belt reads. Omitted ⇒ built
    * here (tests, and any caller with no wake path of its own).
    */
@@ -322,7 +322,7 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
 
   const transport = (opts.makeTransport ?? defaultTransport)({ cfg, botToken, appToken });
 
-  // Who are we? Resolved ONCE, and required: the router's echo filter is built
+  // Who are we? Resolved once, and required: the router's echo filter is built
   // on this identity, and a bot that cannot recognise its own messages will
   // answer itself forever.
   const identity = await transport.authTest();
@@ -431,12 +431,12 @@ export async function startSlack(opts: SlackWiringOptions): Promise<SlackRuntime
 /**
  * The legacy `commands/` watcher. Two things change when Slack is live, and
  * only those two: `slack_reply` becomes executable from this dir as well, and
- * the BELT gate is installed — when the turn being served was caused by a
+ * the belt gate is installed — when the turn being served was caused by a
  * non-owner Slack message, the legacy dir refuses, so a tier-checked command
  * cannot slip past by being written to the wrong place. Slack off ⇒ no tier
- * gate at all, i.e. exactly the legacy watcher.
+ * gate at all.
  *
- * The gate reads `latestAny()`, NOT `latest()`: the belt must not lift merely
+ * The gate reads `latestAny()`, not `latest()`: the belt must not lift merely
  * because a turn ran past the 15-minute TTL (text in the channel can ask for
  * exactly that — "take your time"). Only a daemon wake, which stamps a `local`
  * origin, supersedes a Slack origin here.
@@ -461,11 +461,11 @@ export function buildLocalCommandWatcher(opts: {
 }
 
 /**
- * The OPERATOR's command watcher: `commands/operator/`, the
- * directory `qcr drain`, the board's `u` and the deploy tab write AS ROOT.
+ * The operator's command watcher: `commands/operator/`, the directory
+ * `qcr drain`, the board's `u` and the deploy tab write as root.
  * Same vocabulary, same handlers; the difference is the issuer the watcher
  * stamps, and only the real process seal decides it. The same local Slack
- * belt as `commands/` is installed, and binds ONLY files the seal does not
+ * belt as `commands/` is installed, and binds only files the seal does not
  * vouch for: the overseer cannot write into a sealed directory, but the
  * parent is the daemon's, so it can make or swap in an unsealed one — and a
  * file there is a session's, so it must be refused exactly where `commands/`
@@ -493,17 +493,21 @@ export function buildOperatorCommandWatcher(opts: {
 }
 
 /**
- * The OTHER half of "who caused this turn": every daemon-originated overseer
+ * The other half of "who caused this turn": every daemon-originated overseer
  * wake stamps a `local` origin before it injects.
  *
  * One wrapper, one seam. The daemon is handed the returned `hooks`, so the EOD
  * sweep, the verdict anomalies, the ping-pong follow-ups and the connections
  * signal all stamp — without any of those modules knowing Slack exists. The
- * Slack router deliberately keeps the UNWRAPPED inject path: its turns must
+ * Slack router deliberately keeps the unwrapped inject path: its turns must
  * stamp a Slack origin.
  *
  * Stamping is best-effort and never blocks a wake; with Slack off nothing is
  * written at all.
+ *
+ * The wrap must forward every optional hook the daemon reads; a hook dropped
+ * here silently disables its consumer in production while unit tests, which
+ * hand the daemon unwrapped hooks, stay green.
  */
 export function daemonOriginWakes(opts: {
   hooks: SessionHooks;
@@ -532,9 +536,8 @@ export function daemonOriginWakes(opts: {
       ...(hooks.compactSession
         ? { compactSession: (pr: number) => hooks.compactSession!(pr) }
         : {}),
-      // Liveness + kill must survive the wrap: dropping sessionAlive here left
-      // the stuck-round detector blind in production (liveness always
-      // unknown ⇒ every stuck round parked). Found 2026-08-19.
+      // Liveness + kill feed the stuck-round detector; without sessionAlive
+      // liveness is always unknown and every stuck round parks.
       ...(hooks.sessionAlive ? { sessionAlive: (pr: number) => hooks.sessionAlive!(pr) } : {}),
       ...(hooks.killSession ? { killSession: (pr: number) => hooks.killSession!(pr) } : {}),
       ...(hooks.sessionActivityAt
@@ -542,8 +545,8 @@ export function daemonOriginWakes(opts: {
         : {}),
       ...(hooks.injectPending ? { injectPending: (pr: number) => hooks.injectPending!(pr) } : {}),
       // Receipt/replay hooks are the command supervisor's positive evidence
-      // and safe recovery path. Dropping them here made production exhaust a
-      // failed ordinary wake at 0/N without attempting same-command replay.
+      // and safe recovery path; without them a failed ordinary wake exhausts
+      // without attempting same-command replay.
       ...(hooks.roundPromptAccepted
         ? {
             roundPromptAccepted: (pr: number, roundNo: number, startedAtMs: number) =>
@@ -565,9 +568,9 @@ export function daemonOriginWakes(opts: {
               hooks.retrySessionCommand!(commandId, reason),
           }
         : {}),
-      // H1b: the same-session redelivery and the bridge's compaction
-      // report. Dropped here, production would fall straight back to killing
-      // a live session whose wake waited behind a compaction (#5362 ③).
+      // Same-session redelivery and the bridge's compaction report; without
+      // them a live session whose wake waited behind a compaction is killed
+      // instead of redelivered to.
       ...(hooks.redeliverSessionCommand
         ? {
             redeliverSessionCommand: (commandId: string, observed: SessionCommandObservation) =>
@@ -577,8 +580,7 @@ export function daemonOriginWakes(opts: {
       ...(hooks.sessionCompaction
         ? { sessionCompaction: (pr: number) => hooks.sessionCompaction!(pr) }
         : {}),
-      // The reconcile pass's raw-tier sweep (S3) — dropped here, the
-      // 79 stale sessions would never be deleted in production.
+      // The reconcile pass's sweep of closed PRs' raw-tier sessions.
       ...(hooks.sweepStaleOvSessions
         ? { sweepStaleOvSessions: () => hooks.sweepStaleOvSessions!() }
         : {}),
@@ -590,23 +592,21 @@ export function daemonOriginWakes(opts: {
 /**
  * Where the passive auth watch looks. PR and overseer sessions are spawned
  * with `--session-dir <root>/<pi.session_dir>/<session>`, so THAT is where
- * their expired-token errors land — watching pi's default store alone left
- * the watch blind to every reviewer session. The default store under the
- * container user's home (the pihome volume) stays covered for anything spawned
- * without an explicit dir.
+ * their expired-token errors land; pi's default store alone would miss every
+ * reviewer session. The default store under the container user's home (the
+ * pihome volume) stays covered for anything spawned without an explicit dir.
  */
 export function piAuthWatchDirs(sessions: Pick<PiSessionManager, "sessionsRoot">): string[] {
-  // pi's default global store under the container user's home (the pihome
-  // volume) — the same dir the archiver's pi-global store moves day-old
-  // files out of (S4): one definition, `piGlobalSessionsDir`.
+  // pi's default global store — the same dir the archiver's pi-global store
+  // moves day-old files out of: one definition, `piGlobalSessionsDir`.
   return [sessions.sessionsRoot(), piGlobalSessionsDir()];
 }
 
 /**
- * Where the `eod-curation-receipt` command lands (S8). With no
- * learner on this daemon (memory switched off) the receipt is REFUSED, with
- * the reason — which is what the sweep prompt's "off" no-packet section
- * (`renderNoPacketSection`, R8) tells the curator: "the daemon would refuse
+ * Where the `eod-curation-receipt` command lands. With no learner on this
+ * daemon (memory switched off) the receipt is refused, with the reason —
+ * which is what the sweep prompt's "off" no-packet section
+ * (`renderNoPacketSection`) tells the curator: "the daemon would refuse
  * one". tests/eod-seed-coherence.test.ts holds the two together.
  */
 export function routeCurationReceipt(
@@ -625,7 +625,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   const { cfg, root, gate, adapter, sessions } = parts;
   const log = (msg: string, extra?: unknown) => console.log(`[quickreviewd] ${msg}`, extra ?? "");
 
-  // The daemon's ONE memory store, built in onStart once secrets are readable.
+  // The daemon's one memory store, built in onStart once secrets are readable.
   // Everything that needs it is late-bound through this holder: the round
   // assembler and the EOD pinned-area watchdog are constructed before it
   // exists, and both degrade to "no memory" rather than to an error.
@@ -645,14 +645,14 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       memoryAssembler ? memoryAssembler.contextBlock(q, o) : Promise.resolve(notBuiltYet),
   };
 
-  // the profile-selected ecosystem seam, loaded ONCE at assembly (a
+  // The profile-selected ecosystem seam, loaded once at assembly (a
   // malformed profile.toml fails the boot loudly). It decides the tier-forcing
   // migration gate, the round pre-check and the prompt's migration-gate prose;
   // "none" (no profile, no file, no key) runs none of that machinery.
   const ecosystem = ecosystemFor(loadProfileEcosystem(root, cfg.review.profile));
   log(`profile ${cfg.review.profile || "(none)"}: ecosystem ${ecosystem.name}`);
 
-  // the identity variable map every prompt render and agent build
+  // The identity variable map every prompt render and agent build
   // resolves {{owner_name}}/{{repo}}/{{bot_login}} against.
   const identity = identityVars(cfg);
   const renderPrompt = (order: RoundOrder, memory: RoundMemory): string =>
@@ -678,54 +678,51 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   let commands: CommandWatcher | null = null;
   let operatorCommands: CommandWatcher | null = null;
   let slack: SlackRuntime | null = null;
-  // built in onStart (it needs the memory store). A signal arriving
-  // in the boot gap between the webhook binding and onStart is LEDGERED
-  // (S2 — it used to be dropped): its row starts `pending`, the
-  // backfill pump writes its memory entry, and the agents rebuild once the
-  // engine exists so a same-day [feedback] comment still reaches the
-  // validator.
+  // The [feedback] engine, built in onStart (it needs the memory store). A
+  // signal arriving in the boot gap between the webhook binding and onStart
+  // is ledgered, never dropped: its row starts `pending`, the backfill pump
+  // writes its memory entry, and the agents rebuild once the engine exists so
+  // a same-day [feedback] comment still reaches the validator.
   let feedback: FeedbackEngine | null = null;
   let feedbackLedgeredEarly = false;
-  // the [feedback] ledger's backfill pump — writes what memory
-  // still owes while memory health reads healthy, and wakes
-  // `memory_write_backlog` when an owed signal ages past the threshold.
+  // The [feedback] ledger's backfill pump — writes what memory still owes
+  // while memory health reads healthy, and wakes `memory_write_backlog` when
+  // an owed signal ages past the threshold.
   let feedbackPump: FeedbackMemoryPump | null = null;
-  // the finding-case writer — one document per posted finding a
-  // human answered or whose fate is known, into reviewer memory's `finding-cases/`,
-  // through the same store; backfills the last 60 days. Writes only while
-  // memory health reads healthy.
+  // The finding-case writer — one document per posted finding a human
+  // answered or whose fate is known, into reviewer memory's `finding-cases/`,
+  // through the same store; backfills `[memory] cases_backfill_days`. Writes
+  // only while memory health reads healthy.
   let caseWriter: CaseWriter | null = null;
-  // F2: is a review round reading memory right now? Dispatch opens a
-  // window around each round's seed (through to its lesson selection), the
-  // selector one around each prefetch, and the case writer starts no batch
-  // while any is open — every case is a ~3.4 s embedding on the one-thread
+  // Is a review round reading memory right now? Dispatch opens a window
+  // around each round's seed (through to its lesson selection), the selector
+  // one around each prefetch, and the case writer starts no batch while any
+  // is open — every case is a multi-second embedding on the one-thread
   // embedder those reads wait on.
   const roundActivity = new RoundMemoryActivity();
-  // the LEARNER — mines the human outcomes into lesson
-  // candidates at EOD − `lessons_mine_lead_min`, hands the EOD sweep its
-  // outcomes packet (`dayContext`), takes the `eod-curation-receipt`, checks
-  // every adoption against memory, and wakes `eod_curation_missing` /
+  // The learner — mines the human outcomes into lesson candidates at
+  // EOD − `lessons_mine_lead_min`, hands the EOD sweep its outcomes packet
+  // (`dayContext`), takes the `eod-curation-receipt`, checks every adoption
+  // against memory, and wakes `eod_curation_missing` /
   // `eod_lessons_not_persisted`. Only where memory is switched on: with it off
   // there is nowhere a lesson could land.
   let learner: Learner | null = null;
-  // the closed-PR ARCHIVER — daemon bookkeeping on its own timer
-  // (never a reconcile step), started beside the case writer and the learner
-  // whatever memory does. It starts no work before the first healthy
-  // reconcile plus `[archive] start_delay_min`, holds while draining, stalled,
-  // starved or short of disk. Every tick plans (status.json `archive` says
-  // what a pass would move); in mode `on` it also restores reopened PRs,
-  // moves the old reader-less event rows and webhook deliveries into
-  // archive/db/ (S2), moves closed PRs' files into archive/pr-<n>/ (S3) and
-  // seals finished months.
+  // The closed-PR archiver — daemon bookkeeping on its own timer (never a
+  // reconcile step), started beside the case writer and the learner whatever
+  // memory does. It starts no work before the first healthy reconcile plus
+  // `[archive] start_delay_min`, and holds while draining, stalled, starved or
+  // short of disk. Every tick plans (status.json `archive` says what a pass
+  // would move); in mode `on` it also restores reopened PRs, moves the old
+  // reader-less event rows and webhook deliveries into archive/db/, moves
+  // closed PRs' files into archive/pr-<n>/ and seals finished months.
   let archiver: Archiver | null = null;
-  // the lesson SHADOW LEDGER — every round's selection through
-  // OpenViking (bounded, `[memory] delivery`), the marks a delivered
-  // dont-raise lesson would have left on its posted findings, and the
-  // operator's kill switch. Built in onStart (it needs the state store); the
-  // selector only where memory is on. Under `shadow` nothing here changes a
-  // prompt; under `on` (S9b) dispatch awaits `select` beside the seed and
-  // renders the round's lessons, and `repoFacts` reaches the recheck nudge
-  // and the ping-pong wake.
+  // The lesson shadow ledger — every round's selection through OpenViking
+  // (bounded, `[memory] delivery`), the marks a delivered dont-raise lesson
+  // would have left on its posted findings, and the operator's kill switch.
+  // Built in onStart (it needs the state store); the selector only where
+  // memory is on. Under `shadow` nothing here changes a prompt; under `on`
+  // dispatch awaits `select` beside the seed and renders the round's lessons,
+  // and `repoFacts` reaches the recheck nudge and the ping-pong wake.
   let lessonLedger: LessonLedger | null = null;
   let lessonSelector: RoundLessonSelector | null = null;
   const lateLessons: RoundLessonHook = {
@@ -741,40 +738,39 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
   /** The status headline, recomputed at most once a minute (the heartbeat
    * runs far more often, and the report reads several tables). */
   let lessonStatusCache: { at: number; value: LessonDeliveryStatus | null } | null = null;
-  // the OpenViking server, supervised as a child of this process.
-  // Started FIRST in onStart so it warms up while the agents build — but never
-  // awaited: there is deliberately NO boot ordering, and rounds run
+  // The OpenViking server, supervised as a child of this process. Started
+  // first in onStart so it warms up while the agents build — but never
+  // awaited: there is deliberately no boot ordering, and rounds run
   // memory-less until `/ready` passes.
   let openviking: OpenVikingSupervisor | null = null;
-  // the local English embedder the server embeds through — a
-  // second supervised child, started first; the server's first start waits
-  // (bounded) for it to serve. Off unless the rendered ov.conf routes to it.
+  // The local English embedder the server embeds through — a second
+  // supervised child, started first; the server's first start waits (bounded)
+  // for it to serve. Off unless the rendered ov.conf routes to it.
   let localEmbedder: LocalEmbedderSupervisor | null = null;
-  // the embedder migration's daemon half — resumes the re-embed of
-  // reviewer memory the entrypoint's `prepare` journalled, once /ready passes.
+  // The embedder migration's daemon half — resumes the re-embed of reviewer
+  // memory the entrypoint's `prepare` journalled, once /ready passes.
   // Timer-armed, never awaited; its block rides inside the heartbeat's
   // `openviking` entry.
   let reembed: ReembedDriver | null = null;
-  // the webhook-URL self-heal. Only ever constructed when [ingress]
-  // shape = "tunnel-file" — a daemon without the tunnel shape configured
-  // never starts the watcher.
+  // The webhook-URL self-heal. Only ever constructed when [ingress]
+  // shape = "tunnel-file".
   let webhookHeal: WebhookHealer | null = null;
-  // reviewer-memory HEALTH — the authenticated probe of each
-  // credential in use, fed by the daemon's own requests and round seeds, and
-  // the one source of the status.json `memory` block every person-facing
-  // surface reads. Built in onStart (it needs the store and the server's
-  // config); until then the block reads `unknown` — never healthy, never off.
+  // Reviewer-memory health — the authenticated probe of each credential in
+  // use, fed by the daemon's own requests and round seeds, and the one source
+  // of the status.json `memory` block every person-facing surface reads.
+  // Built in onStart (it needs the store and the server's config); until then
+  // the block reads `unknown` — never healthy, never off.
   let memoryHealth: MemoryHealthMonitor | null = null;
   /** Why memory is NOT monitored on this daemon; null while still deciding. */
   let memoryUnmonitored: string | null = null;
   if (parts.memoryRequests) parts.memoryRequests.sink = (r) => memoryHealth?.recordRequest(r);
 
-  // The origin store is built HERE, before the daemon, because both halves of
+  // The origin store is built here, before the daemon, because both halves of
   // "who caused this turn" write to it: the router (Slack turns) and every
   // daemon-originated overseer wake below (local turns).
   const origins = new OriginStore(join(root, "state", "slack", "origin"));
 
-  // The daemon sees a WRAPPED SessionHooks (see `daemonOriginWakes`): every
+  // The daemon sees a wrapped SessionHooks (see `daemonOriginWakes`): every
   // autonomous overseer wake stamps a `local` origin, so the legacy-dir belt
   // knows the turn is the daemon's own.
   const { hooks, wake: wakeOverseerAsDaemon } = daemonOriginWakes({
@@ -784,7 +780,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     log,
   });
 
-  // the profile's lens-heuristics extension, loaded ONCE here so a
+  // The profile's lens-heuristics extension, loaded once here so a
   // malformed heuristics.toml fails the assembly loudly (same contract as the
   // addenda pack below) and every dispatch selects with the same predicates.
   const profileHeuristics = loadProfileHeuristics(root, cfg.review.profile);
@@ -810,15 +806,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       timeoutMs: cfg.memory.context_timeout_ms,
       // Every seed, after the round was built, feeds memory health — a seed
       // that timed out reaches no client observer, so this is the only place
-      // it is seen (S1; replaces the per-round anomaly).
+      // it is seen.
       onSeeded: (mem: RoundMemory) =>
         memoryHealth?.recordRoundSeed({
           degraded: mem.degraded,
           ms: mem.ms,
           reasons: mem.gaps.map((g) => `${g.part}: ${g.reason}`),
         }),
-      // the PR session's own recall (vendored PATCH 8) searches
-      // with the round's query and the round's areas, not the round order.
+      // The PR session's own recall (vendored openviking-pi patch 0008)
+      // searches with the round's query and the round's areas, not the round
+      // order.
       publishQuery: (pr: number, query: string) => {
         writeRecallHint(
           sessions.ovRecallHintPath(prSessionName(pr)),
@@ -826,18 +823,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           { log: (msg) => log(msg) },
         );
       },
-      // F2: the round's memory window — the case writer starts no
+      // The round's memory window — the case writer starts no
       // batch from the seed until the lesson selection has taken over.
       activity: roundActivity,
     },
-    // the round's lesson selection (shadow ledger), started by
-    // dispatch and never awaited; and the matcher, told when a round's
-    // findings record lands.
+    // The round's lesson selection (shadow ledger; awaited by dispatch only
+    // under `delivery = "on"`); and the matcher, told when a round's findings
+    // record lands.
     lessons: lateLessons,
     onFindingsRecorded: ({ pr, roundNo }) => {
-      // resolve the bot's own threads of the prior findings this
-      // round verified fixed or obsolete — ping-pong resolves only threads
-      // the author replied in, so a fix pushed without a reply stayed open.
+      // Resolve the bot's own threads of the prior findings this round
+      // verified fixed or obsolete — ping-pong resolves only threads the
+      // author replied in, so a fix pushed without a reply would stay open.
       // Never awaited: GitHub reads and gated writes, each one total.
       void resolveVerifiedPriorThreads(
         {
@@ -857,17 +854,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
     },
     renderRecheckPrompt: renderRecheck,
-    // Conflict resolutions are never trivial (the owner, 2026-08-19): git-level
-    // auto-merge comparison in the base clone names the hand-resolved files.
+    // Conflict resolutions are never trivial: git-level auto-merge comparison
+    // in the base clone names the hand-resolved files.
     resolvedFilesInMerges: (from, to, pr) => sessions.worktrees.resolvedFilesInMerges(from, to, pr),
-    // Outcome capture (S6): did the code at a posted finding's anchor
+    // Outcome capture: did the code at a posted finding's anchor
     // change? Read-only git in the same base clone, no fetch, memoised.
     outcomeGit: sessions.worktrees,
     // One network fetch per round, before the order is built: the PR head and
     // the branch it targets, together. Everything downstream (prompt, session,
     // passes) then works from the shas this returns.
     prepareWorktree: (pr, baseRef) => sessions.worktrees.ensureWorktree(pr, { baseRef }),
-    // follow-up rounds: the PR-owned change since the last reviewed
+    // Follow-up rounds: the PR-owned change since the last reviewed
     // head (the reviewed head replayed onto the round's merge base, read-only
     // git in the base clone), and the pin that keeps a reviewed head
     // replayable after a force-push.
@@ -875,7 +872,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     pinReviewedHead: (pr, sha) => sessions.worktrees.pinReviewedHead(pr, sha),
     // Third-party sources at the PR's locked versions, unpacked into a cache
     // on the state volume for the passes to read (`[review]
-    // dependency_sources`, benchmark 2026-09-26). Download and unpack only;
+    // dependency_sources`). Download and unpack only;
     // total — a dead registry yields an empty note.
     dependencySources: async (worktreePath, files) =>
       renderDependencyNote(
@@ -904,7 +901,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     piSessionsDir: piAuthWatchDirs(sessions),
     // The memory engine's heartbeat block — a cached, synchronous
     // read of the supervisor's last health + /proc sample, plus the reembed
-    // journal (one small synchronous file read per heartbeat).
+    // journal (one small synchronous file read per heartbeat) and the local
+    // embedder's status.
     openvikingStatus: () => {
       const status = openviking?.status();
       if (!status) return status;
@@ -914,20 +912,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         ...(localEmbedder ? { embedder: localEmbedder.status() } : {}),
       };
     },
-    // the archiver's block — a cached synchronous read. Before
+    // The archiver's block — a cached synchronous read. Before
     // onStart builds it the mode is known and nothing else: `unknown`, a
     // null backlog, never 0.
     archiveStatus: () => (archiver ? archiver.status() : pendingArchiveStatus(cfg.archive.mode)),
-    // whether memory WORKS, beside whether the server is up —
-    // and (S2) what memory still owes the [feedback] ledger.
+    // Whether memory works, beside whether the server is up — and what memory
+    // still owes the [feedback] ledger.
     memoryStatus: (): MemoryStatus => {
       const base = memoryHealth
         ? memoryHealth.status()
         : memoryUnmonitored !== null
           ? disabledMemoryStatus(memoryUnmonitored)
           : pendingMemoryStatus();
-      // the finding-case ledger, when a case writer runs (the
-      // block is a fresh object each call). Unread is UNKNOWN (null), never
+      // The finding-case ledger, when a case writer runs (the block is a
+      // fresh object each call). Unread is unknown (null), never
       // "nothing owed".
       if (caseWriter) {
         let cases: CaseWritesStatus | null;
@@ -939,8 +937,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         }
         base.case_writes = cases;
       }
-      // the lesson shadow ledger's headline. Unread is UNKNOWN
-      // (null), never "nothing happened".
+      // The lesson shadow ledger's headline. Unread is unknown (null), never
+      // "nothing happened".
       if (lessonLedger) {
         const nowMs = Date.now();
         if (!lessonStatusCache || nowMs - lessonStatusCache.at >= 60_000) {
@@ -957,8 +955,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         }
         base.lessons = lessonStatusCache.value;
       }
-      // the day's EOD curation and the lessons' balance. Unread is
-      // UNKNOWN (null), never "all well".
+      // The day's EOD curation and the lessons' balance. Unread is unknown
+      // (null), never "all well".
       if (learner) {
         try {
           base.curation = learner.status();
@@ -978,7 +976,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           },
         };
       } catch (err) {
-        // Unread is UNKNOWN, never "nothing owed" (honest-unknown).
+        // Unread is unknown, never "nothing owed".
         log("memory status: could not read the [feedback] memory backlog", err);
         return { ...base, feedback_writes: null };
       }
@@ -987,8 +985,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     // The [feedback] tuning loop.
     onFeedback: async (e: FeedbackEvent) => {
       if (!feedback) {
-        // Before the engine exists the signal is LEDGERED, never dropped
-        // (S2): its row waits `pending` for the backfill pump.
+        // Before the engine exists the signal is ledgered, never dropped: its
+        // row waits `pending` for the backfill pump.
         const res = ledgerFeedbackSignal(daemon.store, e, {
           timezone: cfg.ops.timezone,
           memoryEnabled: cfg.openviking.enabled,
@@ -1004,13 +1002,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     },
 
     async onStart(d) {
-      // OpenViking first and unawaited: the server takes seconds to
-      // become ready, so it starts warming while everything below builds. A
-      // missing binary (any dev PC) is reported once and never retried; a
-      // crash is respawned on a capped backoff ladder, forever.
+      // OpenViking first and unawaited: the server takes seconds to become
+      // ready, so it starts warming while everything below builds. A missing
+      // binary (any dev PC) is reported once and never retried; a crash is
+      // respawned on a capped backoff ladder, forever.
       //
-      // the local English embedder starts before it — the
-      // server's /ready probes it — and the server's FIRST start waits for it
+      // The local English embedder starts before it — the server's /ready
+      // probes it — and the server's first start waits for it
       // to serve, bounded (EMBEDDER_GATE_MAX_WAIT_MS). Neither is awaited here.
       localEmbedder = new LocalEmbedderSupervisor({ cfg: cfg.openviking, repoRoot: root, log });
       localEmbedder.start();
@@ -1067,16 +1065,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // through its "user" scope — the container entrypoint symlinks
       // ~/.pi/agent/agents at it.
       //
-      // the build composes in the SAME-DAY feedback addendum when
-      // today carries [feedback] comments — validator-scoped, demotion-only,
+      // The build composes in the same-day feedback addendum when today
+      // carries [feedback] comments — validator-scoped, demotion-only,
       // regenerated on every ingest and expired on ops-day change (the
-      // hourly tick below), so a mid-day restart picks today's feedback up
-      // and yesterday's never leaks into a new day.
-      // the repo-profile addenda pack, loaded ONCE at assembly so a
+      // 5-minute day check below), so a mid-day restart picks today's
+      // feedback up and yesterday's never leaks into a new day.
+      // The repo-profile addenda pack is loaded once at assembly so a
       // malformed pack fails the boot loudly (never a silent skip) and every
-      // rebuild composes the same bytes. Composition order is fixed here:
-      // built-in generics, then the profile pack, then the same-day feedback
-      // addendum last.
+      // rebuild composes the same bytes. Composition order is fixed in the
+      // `addenda` list below, with the same-day feedback addendum last.
       const profileAddenda = loadProfileAddenda(root, cfg.review.profile);
       if (cfg.review.profile !== "") {
         log(`profile ${cfg.review.profile}: ${profileAddenda.length} addenda loaded`);
@@ -1086,7 +1083,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // The day is marked built only once the build LANDS (dayScopedRebuild):
       // a throw on the day-change tick is retried by the next tick instead of
       // leaving yesterday's feedback addendum in force all day.
-      // S9a/S9b: the lesson ledger holds the operator's kill switch,
+      // The lesson ledger holds the operator's kill switch,
       // which decides (with `[memory] delivery`) whether the validator's
       // lesson addendum is composed — so it exists before the first build.
       lessonLedger = new LessonLedger(d.store);
@@ -1101,9 +1098,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             riskPasses: cfg.models.risk_passes,
             validateTier: cfg.models.validate_tier,
             vars: identity,
-            // ecosystem-gated addenda follow the profile's selection.
+            // Ecosystem-gated addenda follow the profile's selection.
             ecosystem: ecosystem.name,
-            // a lens's profile `effort` rides the per-variant hook;
+            // A lens's profile `effort` rides the per-variant hook;
             // `[models.pass_tiers]` pins move a lens's tier on top of it.
             models: passTierModels(
               cfg.models.pass_tiers,
@@ -1116,11 +1113,11 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
               ...PASS_ADDENDA,
               ...configAddenda(cfg.review),
               ...profileAddenda,
-              // the profile's `emphasis` / `max_severity`, compiled.
+              // The profile's `emphasis` / `max_severity`, compiled.
               ...lensTuningAddenda(cfg.lenses),
               // The profile's `[posting]` policy, compiled for the validator.
               ...postingPolicyAddenda(cfg.posting),
-              // the validator's lesson authority, BESIDE the
+              // The validator's lesson authority, beside the
               // same-day feedback addendum (never in place of it) — only
               // while `[memory] delivery = "on"` and the kill switch is on.
               ...lessonAdd,
@@ -1134,19 +1131,19 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       );
       const rebuildAgents = agentsDay.rebuild;
       rebuildAgents();
-      // Reviewer memory: the ONE daemon-side `MemoryStore`, over the
-      // supervised OpenViking server on loopback. The reviewer USER key is
+      // Reviewer memory: the one daemon-side `MemoryStore`, over the
+      // supervised OpenViking server on loopback. The reviewer user key is
       // read from the secrets mount lazily (`keyFromFile` re-checks on a TTL),
       // so a key that lands after boot is picked up without a restart — and an
-      // ABSENT key degrades exactly like a dead server, which is the correct
+      // absent key degrades exactly like a dead server, which is the correct
       // behaviour on a dev PC. Never an ADMIN or ROOT key.
-      // ONE key source for the client, the health probe and the key-change
-      // watcher (S1): it re-stats the file every TTL and the client
-      // drops its cache on a 401, so a rotated key is re-read — the cache
-      // that held a dead key forever is what kept memory down for a month.
+      // One key source for the client, the health probe and the key-change
+      // watcher: it re-stats the file every TTL and the client drops its
+      // cache on a 401, so a rotated key is re-read rather than a dead one
+      // held forever.
       const reviewerKey = keyFromFile(join(cfg.github.secrets_dir, OV_REVIEWER_KEY_SECRET));
       // The counted `openviking_gap`: every gap counted into the memory
-      // block, and a QUIET anomaly row at most once an hour per op:code that
+      // block, and a quiet anomaly row at most once an hour per op:code that
       // carries the running count (src/openviking/gapsink.ts).
       const countedGap = countedGapSink({
         record: (gap) => memoryHealth?.recordGap(gap),
@@ -1167,7 +1164,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         defaultCategory: cfg.openviking.default_category,
         cacheTtlMs: cfg.openviking.read_cache_ttl_ms,
         log,
-        // the sessions' own recall (vendored PATCH 7) excludes
+        // The sessions' own recall (vendored openviking-pi patch 0007) excludes
         // retired entries by this list, published beside their ovcli.conf
         // whenever the store's sweep sees it change.
         onRetired: (uris) => {
@@ -1203,26 +1200,26 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       memoryAssembler = openVikingContextAssembler({
         client: memoryClient,
         store: memory,
-        // WITHOUT quotas the server balances the block across every scope it
-        // holds and a round gets ~one memory entry beside two built-in scope
-        // blurbs (measured 2026-08-21). The quotas name the corpus;
+        // Without quotas the server balances the block across every scope it
+        // holds and a round gets about one memory entry beside two built-in
+        // scope blurbs. The quotas name the corpus;
         // `context_tokens` stays the budget. See [memory] in config.toml.
         quotas: cfg.memory.context_quotas,
         searchTimeoutMs: cfg.openviking.search_timeout_ms,
         log,
       });
 
-      // the lesson shadow ledger and the round's selection. The
+      // The lesson shadow ledger and the round's selection. The
       // ledger (and so the operator's kill switch) always; the selector only
       // where memory is on — with it off there is nothing to select from.
       // (Built before the first agents build — the kill switch decides the
       // validator's lesson addendum; this keeps that same ledger.)
       lessonLedger = lessonLedger ?? new LessonLedger(d.store);
       if (cfg.openviking.enabled && cfg.memory.delivery !== "off") {
-        // Its OWN client — no health observer, no counted gap — so a find
+        // Its own client — no health observer, no counted gap — so a find
         // the round's budget aborts never reads as memory failing (the
         // health window would otherwise call a slow-but-working server
-        // DEGRADED and pause the case writer, the pump and the learner).
+        // degraded and pause the case writer, the pump and the learner).
         const lessonEngine = openVikingLessonEngine(
           lessonFindClient({
             baseUrl: openVikingBaseUrl(cfg.openviking),
@@ -1239,7 +1236,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           mode: () => cfg.memory.delivery,
           engine: () => lessonEngine,
           budgetMs: cfg.memory.delivery_budget_ms,
-          // F2: the budget follows the mode — `shadow` runs after the
+          // The budget follows the mode — `shadow` runs after the
           // handoff and blocks nothing, so it gets its own, looser one.
           shadowBudgetMs: cfg.memory.shadow_budget_ms,
           activity: roundActivity,
@@ -1263,18 +1260,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           (lessonLedger.lessonsOff() ? "; the operator's kill switch is OFF" : ""),
       );
 
-      // Reviewer-memory health (S1). "Not monitored" is reserved
-      // for memory switched OFF — `[openviking] enabled = false`, which is
-      // what declining memory in onboarding writes. Memory configured ON
-      // whose server cannot run (a binary missing after a rebuild, a venv
-      // path drifted from `[openviking] bin`) IS monitored: its probes go
-      // unreachable and it reads `down` within 10 minutes, because that is an
-      // outage, not a choice — painting it like a deliberate off is the
-      // quiet failure this slice exists to remove.
+      // Reviewer-memory health. "Not monitored" is reserved for memory
+      // switched off — `[openviking] enabled = false`, which is what
+      // declining memory in onboarding writes. Memory configured on whose
+      // server cannot run (a binary missing after a rebuild, a venv path
+      // drifted from `[openviking] bin`) is monitored: its probes go
+      // unreachable and it reads `down` after `[memory] down_after_min`,
+      // because that is an outage, not a choice, and must not be painted
+      // like a deliberate off.
       if (!cfg.openviking.enabled) {
         memoryUnmonitored = "[openviking] enabled = false";
       } else {
-        // A rotated daemon key reaches the SESSIONS too: their ovcli.conf is
+        // A rotated daemon key reaches the sessions too: their ovcli.conf is
         // rewritten the moment the key changes, not at the next session birth.
         const watchKey = keyChangeWatcher(() => {
           const res = sessions.provisionOvCredentials();
@@ -1309,10 +1306,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           },
           wake: (kind, detail, message) => d.store.logAnomaly(kind, null, null, detail, message),
           draining: () => d.store.drainState().draining,
-          // whether memory SERVES search — the server's /ready
-          // (it runs an embedding probe) and the local embedder. The fs/ls
-          // probe needs no embedding, so without this a dead embedder read
-          // healthy while every search failed. Cached, synchronous reads.
+          // Whether memory serves search — the server's /ready (it runs an
+          // embedding probe) and the local embedder. The fs/ls probe needs no
+          // embedding, so without this a dead embedder would read healthy
+          // while every search failed. Cached, synchronous reads.
           serving: () =>
             memoryServing(
               cfg.openviking.embedding_provider,
@@ -1336,7 +1333,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           rewakeMs: Math.max(1, cfg.memory.rewake_h) * 3_600_000,
         });
         // This boot's provisioning report (the entrypoint ran the script
-        // before us): into the block, and ONE wake per report when it says
+        // before us): into the block, and one wake per report when it says
         // anything is wrong — keyed by the report's fingerprint, so a daemon
         // restart inside the same container does not repeat it.
         const prov = readProvisionReport(provisionReportPath(root));
@@ -1344,20 +1341,20 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         raiseProvisionWake(d.store, prov);
         memoryHealth.start();
 
-        // Writes that stick (S2): the backfill pump. It writes owed
-        // [feedback] signals through the SAME `note` op on the same store —
-        // a retry on the one route, never a second channel — only while
-        // health reads healthy, and wakes `memory_write_backlog` past the
-        // threshold. Pre-S2 rows are checked against a COMPLETE sweep first
-        // (an entry whose write timed out may have landed after all).
+        // The backfill pump. It writes owed [feedback] signals through the
+        // same `note` op on the same store — a retry on the one route, never
+        // a second channel — only while health reads healthy, and wakes
+        // `memory_write_backlog` past the threshold. Legacy rows (older than the
+        // store's legacy cutoff, written under random names) are checked against a complete sweep
+        // first (an entry whose write timed out may have landed after all).
         const health = memoryHealth;
         feedbackPump = new FeedbackMemoryPump({
           store: d.store,
           memory,
           healthy: () => health.currentState() === "healthy",
           healthState: () => health.currentState(),
-          // Retired entries count as "landed" (S5): a pre-S2 signal
-          // whose entry was retired since — by the operator, or by the
+          // Retired entries count as "landed": a legacy signal whose entry was
+          // retired since — by the operator, or by the
           // relayout — was written once and must not be written again into
           // events/. (A relayout MOVE leaves the copy live in events/, so it
           // is found among the live entries.)
@@ -1376,14 +1373,15 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         });
         feedbackPump.start();
 
-        // Finding cases (S7): the learner's context. Rendered from
-        // state.db (round_findings, the outcome capture's tables, the human
-        // replies, the feedback ledger) and written through the SAME store's
+        // Finding cases: the learner's context. Rendered from state.db
+        // (round_findings, the outcome capture's tables, the human replies,
+        // the feedback ledger) and written through the same store's
         // `putDocuments` — one batch-write under `finding-cases/` a tick, every case
         // under its own precondition — only while memory reads healthy. Its
         // backfill reads a PR's inline comments through the adapter (a read:
         // never the gate) and runs the outcome capture for PRs nothing
-        // captured. Never in a round's search scope (that is S9).
+        // captured. Never in a round's search scope; only the daemon's lesson
+        // selection reads cases.
         caseWriter = new CaseWriter({
           store: d.store,
           outcomes: d.outcomes,
@@ -1391,13 +1389,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           repo: cfg.github.repo,
           botLogin: cfg.github.bot_login,
           healthy: () => health.currentState() === "healthy",
-          // F2: no case batch starts while a review round reads
-          // memory (its seed, its lesson selection) — and H3: every
-          // batch sent reports its embedding tail there, which a seed that
-          // starts inside it waits out (within its own budget).
+          // No case batch starts while a review round reads memory (its seed,
+          // its lesson selection); every batch sent reports its embedding
+          // tail there, which a seed that starts inside it waits out (within
+          // its own budget).
           rounds: roundActivity,
           embedTailMsPerCase: cfg.memory.case_embed_tail_ms,
-          // H3: while a review round runs or is queued to dispatch,
+          // While a review round runs or is queued to dispatch,
           // the backfill, the late activity and history cases wait.
           reviews: () => reviewsInFlight(d.store),
           read: adapter,
@@ -1407,7 +1405,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         });
         caseWriter.start();
 
-        // The learner (S8): state.db and the base clone's git in,
+        // The learner: state.db and the base clone's git in,
         // candidates and the EOD packet out; it reads the lessons in force
         // through the same store (only while memory reads healthy) and never
         // writes memory — the curator does, with `viking_write`'s typed
@@ -1442,7 +1440,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         starvedRatio: eventLoopPolicy(cfg.daemon).starvedRatio,
         liveSessions: () => sessions.tmux.listSessionsKnown(),
         birthInFlight: (pr) => sessions.birthInFlight(pr),
-        // S4: the stores that belong to no PR. The overseer's birth record
+        // The stores that belong to no PR. The overseer's birth record
         // says which of its files is current (unreadable = unknown = nothing
         // moves); pi's global store lies under the container user's home.
         overseerBornAt: () => sessions.bornAt(OVERSEER_SESSION) ?? null,
@@ -1450,7 +1448,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         log,
       });
       archiver.start();
-      // A reopened PR's archive comes back BEFORE its session is born (§8.3):
+      // A reopened PR's archive comes back before its session is born:
       // both birth paths await this, bounded, and never refuse the birth.
       const archiveRef = archiver;
       sessions.setBeforeBirth((pr) => archiveRef.beforeBirth(pr));
@@ -1477,8 +1475,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         );
       }
 
-      // The overseer must exist from boot — lazily spawning it on the first
-      // anomaly left `tmux attach -t overseer` dead after every restart.
+      // The overseer exists from boot, so `tmux attach -t overseer` works
+      // after every restart rather than only after the first anomaly.
       try {
         await sessions.ensureOverseerSession();
         log("overseer session ready");
@@ -1540,8 +1538,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         flagOwner(message) {
           const flags = join(root, "state", "flags");
           mkdirSync(flags, { recursive: true });
-          // owner.log (pre-rename entries live on in owner-legacy.log,
-          // which nothing writes any more).
+          // owner.log; older entries live on in the legacy owner-legacy.log,
+          // which nothing writes.
           appendFileSync(join(flags, "owner.log"), `${new Date().toISOString()} ${message}\n`);
           d.store.logEvent("flag_owner", null, { message });
           return { ok: true };
@@ -1553,7 +1551,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             gate,
             store: d.store,
             run: gitRun,
-            // The reviewed repo's base clone — the ONE tree with `origin`
+            // The reviewed repo's base clone — the one tree with `origin`
             // pointing at the reviewed repo and the session's branch in it.
             ensureRepoDir: () => sessions.worktrees.ensureBaseClone(),
           });
@@ -1561,23 +1559,18 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         fileIssue(payload) {
           return fileIssue(payload, { cfg, adapter, gate, store: d.store });
         },
-        // Deploy-window drain (2026-08-25). ON = the webhook answers 200 and
-        // drops, the pump starts nothing, recheck/ping-pong/EOD hold —
-        // in-flight rounds finish naturally. OFF is the manual lift; the
-        // automatic one is the next boot's first healthy reconcile pass
-        // (daemon.ts). Never touches GitHub, never goes near the gate.
         retryThreadDecision(commentId) {
           return d.retryThreadDecision(commentId);
         },
-        // the operator's lesson kill switch — reached only for a
-        // command the sealed commands/operator/ channel delivered (commands.ts
-        // refuses every other issuer, twice). State in state.db.
+        // The operator's lesson kill switch — reached only for a command the
+        // sealed commands/operator/ channel delivered (commands.ts refuses
+        // every other issuer, twice). State in state.db.
         lessonSwitch(change, file) {
           if (!lessonLedger)
             return { ok: false, reason: "the lesson ledger is not built on this daemon yet" };
           const r = lessonLedger.apply(change, file);
           lessonStatusCache = null;
-          // the validator's lesson addendum is composed only
+          // The validator's lesson addendum is composed only
           // while the kill switch is on — so flipping it rebuilds the agents,
           // the way a [feedback] comment does for its addendum. Suppressing
           // one lesson needs no rebuild: the selector reads it every round.
@@ -1596,7 +1589,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             ...("uri" in change ? { uri: change.uri } : {}),
           };
         },
-        // the operator's archive verbs — reached only for a
+        // The operator's archive verbs — reached only for a
         // command the sealed commands/operator/ channel delivered (commands.ts
         // refuses every other issuer, twice). Each runs under the archiver's
         // strict mutex and answers within OPERATOR_WAIT_MS; `archiver` is read
@@ -1611,11 +1604,16 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             return { ok: false, reason: "the archiver is not built on this daemon yet" };
           return archiver.operatorRestore(pr);
         },
-        // the EOD curator's receipt for the day's outcomes packet.
+        // The EOD curator's receipt for the day's outcomes packet.
         // `learner` is read at call time, never captured at wiring.
         curationReceipt(receipt) {
           return routeCurationReceipt(learner, receipt);
         },
+        // Deploy-window drain. On = the webhook answers 200 and drops, the
+        // pump starts nothing, recheck/ping-pong/EOD hold — in-flight rounds
+        // finish naturally. Off is the manual lift; the automatic one is the
+        // next boot's first healthy reconcile pass (daemon.ts). Never touches
+        // GitHub, never goes near the gate.
         drain(on, issuer, forMin) {
           return drainLever(leverDeps, on, issuer, forMin, async () => {
             d.wakeThreadDecisions();
@@ -1625,7 +1623,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       };
       // The Slack concierge. Off by default; when on it owns its own
       // tier-checked command dir, the socket, and every unprompted post. It is
-      // started BEFORE the legacy watcher because that watcher borrows two
+      // started before the legacy watcher because that watcher borrows two
       // things from it: the reply handler and the origin lookup.
       slack =
         (await startSlack({
@@ -1658,9 +1656,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       });
       await operatorCommands.start();
 
-      // Webhook-URL self-heal: only under the tunnel-file ingress
-      // shape. The gated PATCH rides the app-self-config class, so it executes
-      // even in dry-run (ratified rule-1 amendment, 2026-08-30) — loudly.
+      // Webhook-URL self-heal: only under the tunnel-file ingress shape. The
+      // gated PATCH rides the app-self-config class, so it executes even in
+      // dry-run (CLAUDE.md rule 1) — loudly.
       if (cfg.ingress.shape === "tunnel-file") {
         webhookHeal = new WebhookHealer({
           hostnameFile: ingressHostnameFile(cfg, root),
@@ -1677,9 +1675,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }
 
       // Daemon-clock EOD ([eod]-timezone wall time; pi schedulers deliberately unused).
-      // Curation must never touch the owner's pinned entries. The
-      // watchdog fingerprints the pinned area around the sweep and raises an
-      // anomaly on any change. It WRAPS the inject rather than hooking inside
+      // Curation must never touch the owner's pinned entries. The watchdog
+      // fingerprints the pinned area around the sweep and raises an anomaly on
+      // any change. It wraps the inject rather than hooking inside
       // the timer, so a broken watchdog can never skip the sweep.
       const sweepSource = memorySweep;
       pinWatch =
@@ -1702,10 +1700,9 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         timeZone: cfg.eod.timezone,
         readPrompt: promptReader(join(root, "prompts", "eod-sweep.md")),
         identity,
-        // the day's cancellation summary rides the sweep prompt so
-        // the digest actually mentions cancellations (grouped, loud first,
-        // "none" explicit).
-        // and the learner's outcomes packet — built here, at the
+        // The day's cancellation summary rides the sweep prompt so the
+        // digest actually mentions cancellations (grouped, loud first, "none"
+        // explicit) — and the learner's outcomes packet, built here, at the
         // fire (a mine first when the day's has not run) — whose pointer the
         // digest carries and whose curation instructions render after the
         // seed. A learner that throws costs the packet, never the sweep.
@@ -1720,18 +1717,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
             return cancelled;
           }
         },
-        // the curator learns the §1 layout here — the
-        // seed is frozen, and even reseeded (R8) names only some areas.
+        // The curator learns the memory layout here — the seed is frozen and
+        // names only some areas.
         ...(cfg.openviking.enabled ? { memoryLayout: MEMORY_LAYOUT_NOTE } : {}),
-        // the reseeded seed starts §1 from "Outcomes to curate"
-        // and closes it with the receipt, so a sweep the packet did not reach
-        // says why in that section instead of dropping it: no learner on this
-        // daemon, or a packet that failed or missed the wait.
+        // The seed starts §1 from "Outcomes to curate" and closes it with the
+        // receipt, so a sweep the packet did not reach says why in that
+        // section instead of dropping it: no learner on this daemon, or a
+        // packet that failed or missed the wait.
         noCuration: (date) => renderNoPacketSection(date, learner ? "unavailable" : "off"),
         // Deploy-window drain: the sweep does not fire into a board being
-        // drained for a deploy — it is DEFERRED (S2; it used to be
-        // skipped for the day): the day is persisted in state.db and fires
-        // once the drain lifts, across a restart too.
+        // drained for a deploy — it is deferred: the day is persisted in
+        // state.db and fires once the drain lifts, across a restart too.
         shouldHold: () => d.store.drainState().draining,
         // One sweep at a time: while the pinned-area watch window of the
         // last sweep is open, the next day (a deferred one above all — they
@@ -1761,7 +1757,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         injectOverseer: pinWatch ? pinWatch.wrapInject(injectEod) : injectEod,
         onFire: (date) => {
           log(`EOD sweep injected for ${date}`);
-          // The receipt for the day's packet is owed from now (S8).
+          // The receipt for the day's packet is owed from now.
           learner?.eodFired(date);
         },
         onError: (err) => log("EOD injection failed (retried with backoff)", err),
@@ -1808,7 +1804,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       }, 3600_000);
       rotation.unref?.();
 
-      // expire a stale same-day feedback addendum promptly on the
+      // Expire a stale same-day feedback addendum promptly on the
       // ops-day change — a 5-minute string compare, so yesterday's items
       // bite at most minutes into a new day, not an hour.
       const dayCheck = setInterval(() => {
@@ -1827,13 +1823,13 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       caseWriter?.stop();
       learner?.stop();
       archiver?.stop();
-      // S9a/F2: the lesson selections in flight. A SHADOW one is cut
-      // now and records nothing (`stop`): its budget — `shadow_budget_ms`, up
-      // to 20 s — does not fit docker's 10 s stop grace beside the server's
-      // own 5 s, and a record cut short by our stop would read as the
-      // engine's. An AWAITED one (`on`) is not cut: it settles within
-      // `delivery_budget_ms` (≤ 2 s); let it record before the server and the
-      // store go. The wait follows THAT budget, never the shadow one.
+      // The lesson selections in flight. A shadow one is cut now and records
+      // nothing (`stop`): its budget — `shadow_budget_ms`, up to 20 s — does
+      // not fit docker's 10 s stop grace beside the server's own 5 s, and a
+      // record cut short by our stop would read as the engine's. An awaited
+      // one (`on`) is not cut: it settles within `delivery_budget_ms`
+      // (≤ 2 s); let it record before the server and the store go. The wait
+      // follows that budget, never the shadow one.
       if (lessonSelector) {
         const selector = lessonSelector;
         lessonSelector = null;
@@ -1883,7 +1879,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     },
   });
 
-  // Posting-time guards live ON the gate, so every posting route in
+  // Posting-time guards live on the gate, so every posting route in
   // the daemon — session review, approval path, migration pre-check comment —
   // passes through them. They need the store, which only exists once the
   // daemon has been built; hence the setter here rather than in buildParts().
@@ -1914,7 +1910,7 @@ async function main(): Promise<void> {
   try {
     await daemon.start();
   } catch (err) {
-    // A failed boot (onStart is fatal — daemon.ts) exits NON-ZERO after an
+    // A failed boot (onStart is fatal — daemon.ts) exits non-zero after an
     // orderly stop, so the container's restart policy retries it rather than
     // leaving a half-assembled daemon serving reviews without its watchers.
     console.error("[quickreviewd] startup failed — exiting", err);

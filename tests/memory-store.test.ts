@@ -1,16 +1,14 @@
-// The ONE memory seam, as vocabulary.
+// The one memory seam, as vocabulary.
 //
-// This file used to exercise the seam against the hand-rolled engine; that
-// engine is gone and the seam's ONE implementation is
-// `OpenVikingStore`, driven end to end in `openviking-store.test.ts` — read
-// that file for the contracts (`read`/`search`/`apply`, refusals-as-answers,
-// a dead server that cannot make a caller throw). Its prompt-injection guard
-// ("untrusted `#pinned` cannot pin") moved there too, so it runs against the
-// implementation that actually ships.
+// The seam's one implementation is `OpenVikingStore`, driven end to end in
+// `openviking-store.test.ts` — read that file for the contracts
+// (`read`/`search`/`apply`, refusals-as-answers, a dead server that cannot
+// make a caller throw) and the prompt-injection guard ("untrusted `#pinned`
+// cannot pin"), which runs against the implementation that ships.
 //
 // What is left here is what belongs to `store.ts` itself: the addressing
 // helper and the shared match predicate every implementation reuses, plus the
-// read-only source over the archived file that the import still needs.
+// read-only source over the archived file that the curated import needs.
 import { describe, expect, it } from "vitest";
 import {
   legacyBlockHash,
@@ -61,8 +59,8 @@ describe("the shared match predicate", () => {
   });
 });
 
-// ---- the archived file, read-only --------------------------------
-// The retired engine's MEMORY.md survives as a SOURCE and nothing else: no
+// ---- the archived file, read-only ------------------------------------------
+// The archived MEMORY.md survives as a SOURCE and nothing else: no
 // `apply`, no transport, no memedit. It exists so the one-time curated import
 // can still see what it is importing, and so the file stays readable as the
 // historical record afterwards.

@@ -1,31 +1,30 @@
-// SetupEngine — the deterministic half of setup & scan (setup & scan
-// spec "Setup & scan engine", seam 3). The onboarding engine's pattern
-// (src/onboard/engine.ts): a state machine with every outside effect behind an
-// injected port, fully drivable from tests, and a thin pi tool belt over it
-// (extensions/setup.ts, loaded by the companion). The companion JUDGES — which
-// units a repo has, what a finding means — and these tools ACT: what they do
-// with its answers is deterministic, validated, and persisted here.
+// SetupEngine — the deterministic half of setup & scan. The onboarding
+// engine's pattern (src/onboard/engine.ts): a state machine with every outside
+// effect behind an injected port, fully drivable from tests, and a thin pi
+// tool belt over it (extensions/setup.ts, loaded by the companion). The
+// companion judges — which units a repo has, what a finding means — and these
+// tools act: what they do with its answers is deterministic, validated, and
+// persisted here.
 //
-// Behaviours so far: the deterministic repo facts and the unit cut
-//, the survey (preview, start, status, stop; the run
-// itself is surveyrun.ts, its rules survey.ts), the review history themes
-// (history.ts), the repo portrait (portrait.ts — facts
-// assembled here, the companion's narrative stored in the config home) and
-// the interview's tuning (tuning.ts — the priority table applied to
-// the repo profile, validated with the daemon's own loaders; pin proposals
-// handed to the operator) and the post-scan re-tune (retune.ts —
-// the same profile path, every change with its reason, logged for the
-// deploy tab). The scan's own records and triage live beside it
-// (scanrun.ts, findings.ts, triage.ts) over the same ports:
-// the tracker sink is trackersink.ts's; the GitHub reader is
-// declared and injected for the slice that first calls it.
+// Behaviours: the deterministic repo facts and the unit cut, the survey
+// (preview, start, status, stop; the run itself is surveyrun.ts, its rules
+// survey.ts), the review history themes (history.ts), the repo portrait
+// (portrait.ts — facts assembled here, the companion's narrative stored in the
+// config home), the interview's tuning (tuning.ts — the priority table
+// applied to the repo profile, validated with the daemon's own loaders; pin
+// proposals handed to the operator) and the post-scan re-tune (retune.ts —
+// the same profile path, every change with its reason, logged for the deploy
+// tab). The scan's own records and triage live beside it (scanrun.ts,
+// findings.ts, triage.ts) over the same ports: the tracker sink is
+// trackersink.ts's. The GitHub reader port is declared and injected, but no
+// engine behaviour calls it yet (the PR replay builds its own reader).
 //
 // Persistence: `<state home>/setup/unit-cut.json`, tmp+rename atomic through
-// the state port. It holds the SAVED cut (the one survey and scan reuse), the
-// PREVIOUS saved cut (so a re-cut can be compared and undone), and at most one
-// DRAFT (the companion's proposal as the operator adjusts it). A saved cut is
+// the state port. It holds the saved cut (the one survey and scan reuse), the
+// previous saved cut (so a re-cut can be compared and undone), and at most one
+// draft (the companion's proposal as the operator adjusts it). A saved cut is
 // never touched by a propose or an adjust — only `save` replaces it. An
-// unreadable file is REPORTED and refuses every write: it may hold the
+// unreadable file is reported and refuses every write: it may hold the
 // operator's saved cut, and silently starting fresh over it would lose that.
 import type { MemoryStore } from "../memory/store.js";
 import { isSweepSkipped } from "../heuristics.js";
@@ -86,7 +85,7 @@ import {
 
 // ---- ports -------------------------------------------------------------------
 
-/** The reviewed checkout, READ-ONLY (the companion mounts it `:ro`). Every
+/** The reviewed checkout, read-only (the companion mounts it `:ro`). Every
  * method is total: an unreadable checkout answers null, never throws. */
 export interface RepoReader {
   /** Where the checkout is, for messages. */
@@ -106,9 +105,9 @@ export interface RepoReader {
   changeCounts?(): Record<string, number> | null;
 }
 
-/** The filesystem rooted at the install's STATE home — PC-only, never shipped.
+/** The filesystem rooted at the install's state home — PC-only, never shipped.
  * Paths are relative to that root; the implementation refuses any that would
- * leave it. The same shape roots the CONFIG home (`SetupPorts.config`). */
+ * leave it. The same shape roots the config home (`SetupPorts.config`). */
 export interface StateFs {
   readonly location: string;
   /** The file's text, or null when it does not exist. Throws only when it
@@ -130,26 +129,26 @@ export interface CaseSpec {
 
 /** How a case ended: the lens's final answer and what it cost (null when
  * the runner could not tell), or why there is none. A failed or aborted case
- * may still have SPENT money: `cost_usd` on a failure is what it spent before
+ * may still have spent money: `cost_usd` on a failure is what it spent before
  * it ended (0 when it never started, null or absent when the runner cannot
- * tell) — a caller holding a budget counts it (review). */
+ * tell) — a caller holding a budget counts it. */
 export type CaseOutcome =
   | {
       ok: true;
       output: string;
       cost_usd: number | null;
       /** The files the case's file-read tool calls opened (`read`, and
-       * `grep` given a `path`), in call order, each RESOLVED to the absolute
+       * `grep` given a `path`), in call order, each resolved to the absolute
        * path the call opened (against the case's working directory, which is
-       * not the scanned tree) — `[]` when it read nothing. ABSENT when the runner cannot tell, which
-       * is unknown, never "read nothing". The scan judges a lens that read
-       * none of its focus files as no reading at all (scan-loop round 7). */
+       * not the scanned tree) — `[]` when it read nothing. Absent when the
+       * runner cannot tell, which is unknown, never "read nothing". The scan
+       * judges a lens that read none of its focus files as no reading at all. */
       reads?: string[];
     }
   | { ok: false; reason: string; cost_usd?: number | null };
 
 /** Runs cases as background subagents (survey, scan). The
- * ENGINE decides what runs when and how many at once; the runner runs one
+ * engine decides what runs when and how many at once; the runner runs one
  * case to its end. Resolves for every outcome — a failed or aborted case is
  * `{ok:false}`, never a rejection. `onCost`, when given, hears the case's
  * running cost each time the runner learns more of it, so a caller with a
@@ -194,7 +193,7 @@ export interface TrackerSink {
 
 export type GitHubRead = { ok: true; data: unknown } | { ok: false; reason: string };
 
-/** GitHub, READ-ONLY: the interface has no method that could write — a GET of
+/** GitHub, read-only: the interface has no method that could write — a GET of
  * a REST path under the API root, and nothing else. */
 export interface GitHubReader {
   get(path: string): Promise<GitHubRead>;
@@ -203,7 +202,7 @@ export interface GitHubReader {
 export interface SetupPorts {
   repo: RepoReader;
   state: StateFs;
-  /** The install's CONFIG home, where the operator-facing results live (the
+  /** The install's config home, where the operator-facing results live (the
    * portrait narrative). Absent or null when this assembly has none
    * — every write there then answers a refusal naming why. In the companion
    * only some of it is mounted: code writes only under a mounted directory
@@ -212,11 +211,11 @@ export interface SetupPorts {
   /** Where the repo profile is read, checked and written: the app
    * checkout (for the generic examples a profile extends) and the install
    * environment whose config home holds `profiles/`. Real paths, because the
-   * check IS the daemon's own loaders, which read disk. Absent or null when
+   * check is the daemon's own loaders, which read disk. Absent or null when
    * this assembly has none — every profile tool then refuses, naming why. */
   profiles?: ProfileHome | null;
   clock: () => Date;
-  /** The ONE memory seam. Null when this assembly has no memory — every
+  /** The one memory seam. Null when this assembly has no memory — every
    * memory write then answers a refusal naming why. */
   memory: MemoryStore | null;
   cases: CaseRunner;
@@ -226,7 +225,8 @@ export interface SetupPorts {
 }
 
 export interface SetupOptions {
-  /** How much one case may read (`[scan]` config will own it). */
+  /** How much one case of the unit view and the survey may read (the scan
+   * sizes its own cases from `[scan]`). */
   caseBudget?: CaseBudget;
   /** Survey cases in flight at once (the companion passes its subagent cap). */
   surveyConcurrency?: number;
@@ -295,7 +295,7 @@ export interface CutStatus {
   /** Why the file or the repo could not be read — the rest is then partial. */
   problems: string[];
   /** The cut file exists but could not be read: `saved`/`draft` are then
-   * UNKNOWN, not absent. */
+   * unknown, not absent. */
   cut_file_unreadable: boolean;
   saved: (CutView & { saved_at: string; head: string | null; files_at_save: number }) | null;
   draft: (CutView & { updated_at: string; source: DraftCut["source"] }) | null;
@@ -405,7 +405,7 @@ export class SetupEngine {
         previous: raw.previous ?? null,
         draft: raw.draft ?? null,
       };
-      // A hand-edited file must be REPORTED, never crash a view: every later
+      // A hand-edited file must be reported, never crash a view: every later
       // reader (assign, splitUnit) takes the shape on trust.
       for (const key of ["saved", "previous", "draft"] as const) {
         const bad = cutShapeError(file[key]);
@@ -482,7 +482,7 @@ export class SetupEngine {
   }
 
   /** The saved cut and the draft, each re-checked against the repo as it is
-   * NOW — so a saved cut the repo has outgrown (a new top-level directory no
+   * now — so a saved cut the repo has outgrown (a new top-level directory no
    * unit claims) shows up here instead of being silently skipped later. */
   status(): CutStatus {
     const { file, error } = this.load();
@@ -526,7 +526,7 @@ export class SetupEngine {
   // -- the three verbs --
 
   /**
-   * Store a proposal as the DRAFT, replacing any earlier draft (never the
+   * Store a proposal as the draft, replacing any earlier draft (never the
    * saved cut). `raw` is the companion's proposal — `{units, ignored?}` — or
    * undefined to take the deterministic candidates as they are (vendored
    * trees ignored). Refused when it is structurally wrong; save-blocking
@@ -593,7 +593,7 @@ export class SetupEngine {
   }
 
   /**
-   * Promote the draft to THE unit cut. Refused unless it is a complete
+   * Promote the draft to the unit cut. Refused unless it is a complete
    * partition of the repo as it is now — every file in exactly one unit or
    * deliberately ignored, no unit left empty. The cut it replaces is kept as
    * `previous`.
@@ -640,7 +640,7 @@ export class SetupEngine {
   }
 
   /**
-   * The saved cut as CASES: every unit's reviewable files (optionally only
+   * The saved cut as cases: every unit's reviewable files (optionally only
    * those `include` keeps — a scan's stage 1 drops tests and migrations),
    * split to fit the case budget, each case under its unit's name. Refused
    * when there is no saved cut: a survey or scan never runs on a guess.
@@ -712,7 +712,7 @@ export class SetupEngine {
 
   // -- the survey (the run itself is surveyrun.ts) --
 
-  /** What a survey reads, over the SAVED cut and the facts as they are now. */
+  /** What a survey reads, over the saved cut and the facts as they are now. */
   private surveyInputs(): SurveyInputs {
     const files = this.files();
     if (files === null) return this.noRepo();
@@ -777,7 +777,7 @@ export class SetupEngine {
   // -- the repo portrait (src/setup/portrait.ts) --
 
   /** The portrait facts as they are now, from what is already on disk: the
-   * repo facts, the SAVED cut (the candidates, flagged, when none is saved),
+   * repo facts, the saved cut (the candidates, flagged, when none is saved),
    * the saved history themes, the last completed survey and what the scans
    * found. */
   private portraitFacts(): { ok: true; facts: PortraitFacts } | Refusal {
@@ -802,7 +802,7 @@ export class SetupEngine {
     const survey = this.surveyRun.status();
     problems.push(...survey.problems);
     const done = survey.last_complete;
-    // what the scans found, from the state home's scan records.
+    // What the scans found, from the state home's scan records.
     const scanned = scanFacts(this.ports.state);
     problems.push(...scanned.problems);
     return {

@@ -1,8 +1,8 @@
-// lesson SELECTION (src/memory/selection.ts): filters on the
-// typed header, a deterministic ranking, caps with every cut listed. Pure.
-// F2 — TWO finds a round (the cases, and one lesson find sized to the
-// corpus), and the proof that over an answer holding the whole corpus the
-// selection equals S9a's per-row one (tests/helpers/s9a-per-row-plan.ts).
+// Lesson selection (src/memory/selection.ts): filters on the typed header, a
+// deterministic ranking, caps with every cut listed. Pure. Also TWO finds a
+// round (the cases, and one lesson find sized to the corpus), and the proof
+// that over an answer holding the whole corpus the selection equals the
+// per-row reference plan's (tests/helpers/s9a-per-row-plan.ts).
 import { describe, expect, it } from "vitest";
 import {
   capSelection,
@@ -444,7 +444,7 @@ describe("planFinds — TWO finds a round (F2)", () => {
     }));
     const plan = planFinds({ title: "Wide", rows: many, prFiles: ["x.py"] });
     expect(plan.finds).toHaveLength(2);
-    // S9a's plan for the same round: 24 finds and 17 rows unasked.
+    // The per-row plan for the same round: 24 finds and 17 rows unasked.
     expect(s9aPlanFinds({ title: "Wide", rows: many, prFiles: ["x.py"] }).finds).toHaveLength(
       S9A_MAX_FINDS_PER_ROUND,
     );
@@ -488,7 +488,7 @@ describe("planFinds — TWO finds a round (F2)", () => {
     expect(lessonFindLimit(34)).toBe(76);
     expect(lessonFindLimit(96)).toBe(200);
     expect(lessonFindLimit(5000)).toBe(200);
-    // Never less than either of S9a's per-find limits, and always room for
+    // Never less than either of the per-row plan's per-find limits, and always room for
     // the whole corpus and its non-file records while under the ceiling.
     for (let n = 0; n <= 96; n++) expect(lessonFindLimit(n)).toBeGreaterThanOrEqual(Math.max(40, n * 2));
     expect(planFinds({ title: "T", rows, prFiles: ["a"] }).finds[1]!.limit).toBe(200);
@@ -508,7 +508,7 @@ function caseText(
   );
 }
 
-// These give each row an answer of ITS OWN, so they plan with S9a's per-row
+// These give each row an answer of ITS OWN, so they plan with the per-row
 // planner: `selectRound` takes any plan (each row's answer by its `rowKey`).
 describe("selectRound", () => {
   const rows: SelectionRow[] = [
@@ -899,7 +899,7 @@ describe("selectRound", () => {
   });
 });
 
-// ---- F2: two finds select what S9a's per-row finds did ---------------------
+// ---- two finds select what the per-row finds did ---------------------
 
 describe("F2 equivalence — over an engine that returns the whole corpus, TWO finds select exactly what S9a's per-row finds did", () => {
   const rows: SelectionRow[] = [
@@ -932,7 +932,7 @@ describe("F2 equivalence — over an engine that returns the whole corpus, TWO f
   }
 
   /** A record without its query — the one field that names the find, not
-   * the selection (S9a's per-row query vs F2's round-level one). */
+   * the selection (the per-row query vs the round-level one). */
   const strip = (sel: RoleSelection[]) => sel.map(({ query: _q, ...r }) => r);
 
   const variants = [

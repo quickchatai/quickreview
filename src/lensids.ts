@@ -1,7 +1,7 @@
-// Canonical lens ids for a recorded finding (S6).
+// Canonical lens ids for a recorded finding.
 //
-// `round_findings.lens` is whatever the session wrote, and on the live store
-// that is 96 spellings for some thirty lenses: `pass-baseline`, but also
+// `round_findings.lens` is whatever the session wrote, which yields many
+// spellings per lens: `pass-baseline`, but also
 // `pass-baseline + pass-sweep (2 lenses)`, `pass-baseline,pass-claims`,
 // `pass-baseline/pass-ui`, `pass-style+pass-baseline` — a finding several
 // lenses converged on — and a few that are no lens at all (`recheck`,

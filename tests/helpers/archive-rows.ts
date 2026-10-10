@@ -1,4 +1,4 @@
-// S2 test helpers: seed `events` and `deliveries` rows at chosen
+// Archive DB-mover test helpers: seed `events` and `deliveries` rows at chosen
 // times, build the archiver's DB side over a temp `archive/db/`, and read an
 // archive month back through its own better-sqlite3 connection.
 import Database from "better-sqlite3";
@@ -10,7 +10,7 @@ import { DbMover, type DbMoverDeps } from "../../src/archive/dbmove.js";
 import { StateStore } from "../../src/state.js";
 
 export const DAY = 86_400_000;
-/** "Now" in every S2 test: 2026-10-21 12:00 UTC. The events cut-off (35 d)
+/** "Now" in every DB-mover test: 2026-10-21 12:00 UTC. The events cut-off (35 d)
  * is 2026-09-16 12:00, the deliveries cut-off (14 d) 2026-10-07 12:00. */
 export const T0 = Date.parse("2026-10-21T12:00:00.000Z");
 export const iso = (ms: number): string => new Date(ms).toISOString();

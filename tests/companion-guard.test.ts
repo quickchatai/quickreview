@@ -1,4 +1,4 @@
-// companion-guard (2026-08-25) — the companion's bright lines as tool_call
+// companion-guard — the companion's bright lines as tool_call
 // vetoes. The interesting property is the NEGATIVE space: rule 6's frozen set
 // is exactly the seed manifest, and the tight bash patterns must not veto the
 // companion's ordinary work (commits, branch switches, stash list).
@@ -61,7 +61,7 @@ describe("bashBlockReason", () => {
     ]) {
       expect(bashBlockReason(cmd), cmd).toMatch(/rule 8/);
     }
-    // The old bright lines are untouched.
+    // The other bright lines still hold.
     expect(bashBlockReason("gh api repos/o/r/pulls")).toMatch(/rule 8/);
     expect(bashBlockReason("git push")).toMatch(/rule 8/);
     expect(bashBlockReason("scripts/deploy.sh sync")).toMatch(/rule 8/);
@@ -171,10 +171,10 @@ describe("frozenPaths + writeBlockReason", () => {
     ).toMatch(/rule 6/);
   });
 
-  // a manifest that names NO files disarms the rule-6 veto for every
-  // seed just as completely as an unparseable one. Classifying it as a good
-  // read of nothing is how the degradation went silent — the warning below is
-  // keyed on the read, so this must be `unreadable`, same as
+  // A manifest that names no files disarms the rule-6 veto for every seed just
+  // as completely as an unparseable one. Classifying it as a good read of
+  // nothing would make the degradation silent — the warning below is keyed on
+  // the read, so this must be `unreadable`, same as
   // CandidateStore.read's "no candidates array".
   it("a manifest that names no files is UNREADABLE, not a good read of nothing", () => {
     const empty = mkdtempSync(join(tmpdir(), "companion-guard-empty-"));
@@ -193,7 +193,7 @@ describe("frozenPaths + writeBlockReason", () => {
     writeFileSync(at, JSON.stringify({ files: null }));
     expect(readSeedManifest(empty).state).toBe("unreadable");
 
-    // TOP-LEVEL non-objects. `null` is the one that bit: it parses, and
+    // Top-level non-objects. `null` is the dangerous one: it parses, and
     // reaching for `.files` on it THROWS out of the pi tool_call handler —
     // no DEGRADED line, no veto, the silent outcome this classification
     // exists to prevent. Every check here must be total on an `unknown`.
@@ -232,11 +232,10 @@ describe("frozenPaths + writeBlockReason", () => {
   });
 });
 
-// ruling on the "judged-lesser" fail-open here: the fail-open itself
-// is CONFIRMED deliberate (see the `frozenPaths` docstring — this guard is
-// belt, tests/seed-integrity.test.ts is the brace, and failing closed would
-// veto every write the companion makes over a fixture problem). What was NOT
-// deliberate is that the degraded set was CACHED for the life of the session.
+// The fail-open on an unreadable manifest is deliberate (see the `frozenPaths`
+// docstring — this guard is belt, tests/seed-integrity.test.ts is the brace,
+// and failing closed would veto every write the companion makes over a fixture
+// problem). The degraded set must never be cached for the life of the session.
 describe("activate — a degraded manifest read is never cached", () => {
   it("retries on the next write, so a transient unreadable manifest costs one tool call", () => {
     const dir = mkdtempSync(join(tmpdir(), "companion-guard-act-"));
@@ -264,9 +263,9 @@ describe("activate — a degraded manifest read is never cached", () => {
       expect(write("tests/fixtures/ratified-divergence.json")?.block).toBe(true);
       expect(errs.filter((e) => e.includes("DEGRADED"))).toHaveLength(1); // said once, not per call
 
-      // The manifest becomes readable. The old code cached the degraded set on
-      // the first write/edit, so this stayed permitted for the whole session —
-      // a rule-6 veto silently switched off by one bad moment.
+      // The manifest becomes readable. Caching the degraded set on the first
+      // write/edit would keep this permitted for the whole session — a rule-6
+      // veto silently switched off by one bad moment.
       writeFileSync(
         join(dir, "tests/fixtures/seed-manifest.json"),
         JSON.stringify({ files: { "agents/pass-baseline.md": "x" } }),
@@ -285,9 +284,8 @@ describe("activate — a degraded manifest read is never cached", () => {
     }
   });
 
-  // regression: an EMPTY manifest disarms the veto for every seed. It
-  // has to be as loud as a torn one — this printed 0 warnings until the read
-  // started classifying it.
+  // An empty manifest disarms the veto for every seed, so it has to be as loud
+  // as a torn one.
   // The same handler, driven over every useless payload shape. The assertion
   // that matters is that NONE of them throws out of `pi.on("tool_call", …)`:
   // what pi's dispatcher does with an exception there is VERIFY-ON-PIN, and a

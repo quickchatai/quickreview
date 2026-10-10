@@ -149,7 +149,7 @@ export interface ArchivePlan {
   same_device: boolean | null;
   /** The plan's longest synchronous span, measured. */
   max_sync_span_ms: number;
-  /** The stores that belong to no PR (S4, §13): what is there and what a
+  /** The stores that belong to no PR (§13): what is there and what a
    * pass would move. `pi_global` is null when the planner was given no store
    * dir. Absent from a plan an older build made. */
   stores?: { overseer: StoreTally; pi_global: StoreTally | null };
@@ -583,7 +583,7 @@ export async function computePlan(deps: PlanDeps): Promise<ArchivePlan> {
     deviceOf(join(root, "archive")),
     deviceOf(stateDir),
   ]);
-  // The stores that belong to no PR (S4): listings and lstats only.
+  // The stores that belong to no PR: listings and lstats only.
   const stores: NonNullable<ArchivePlan["stores"]> = {
     overseer: await measureOverseer({
       root,

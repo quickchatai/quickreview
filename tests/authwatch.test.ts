@@ -1,7 +1,7 @@
 // Passive pi auth-failure detection (src/authwatch.ts) + its surfaces:
-// status.json flag, WAKE-grade anomaly, and the TUI alert bridge. Ratified
-// 2026-08-19 (the owner): NO smoke calls — detection is purely observational
-// over the session JSONLs pi already writes.
+// status.json flag, wake-grade anomaly, and the TUI alert bridge. No smoke
+// calls: detection is purely observational over the session JSONLs pi
+// already writes.
 import {
   mkdirSync,
   mkdtempSync,
@@ -173,7 +173,7 @@ describe("PiAuthWatch", () => {
   });
 });
 
-// S4 (acceptance 6): the archiver unlinks closed PRs' transcripts and
+// The archiver unlinks closed PRs' transcripts and
 // removes their dirs; the per-file offset map must follow the live tree, not
 // keep every file that ever existed.
 describe("the seen map follows the live tree (S4)", () => {

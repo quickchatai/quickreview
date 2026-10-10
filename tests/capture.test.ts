@@ -1,7 +1,7 @@
-// Human-comment capture (deciding).
+// Human-comment capture.
 //
 // The load-bearing test in this file is "routing is unchanged": capture is a
-// SIDE RECORD, and the whole decision rests on it taking nothing away from the
+// SIDE RECORD, and the whole design rests on it taking nothing away from the
 // author-reply path.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -46,7 +46,7 @@ function trackedStore(): StateStore {
   return store;
 }
 
-// ---- payload fixtures (shapes per findings §3.1) -----------------
+// ---- payload fixtures (GitHub webhook payload shapes) ---------------------
 
 const prBody = () => ({
   number: PR,
@@ -321,7 +321,7 @@ describe("captureFromEvent", () => {
 
 // ---- store identity -------------------------------------------------------
 
-// the learner reads a human REQUEST_CHANGES off the captured
+// The learner reads a human REQUEST_CHANGES off the captured
 // review's own state — recorded as a fact, routing untouched.
 describe("a captured review keeps its state (S8)", () => {
   const deps = { botLogin: BOT, isTrackedPr: () => true };
@@ -570,9 +570,9 @@ describe("the reconcile capture sweep (§6)", () => {
   });
 
   it("captures the comment on a PR that closed while the daemon was down", async () => {
-    // Adversarial finding (P1): the closed-sync step marks the PR closed
-    // EARLIER IN THE SAME PASS, so a bare `state !== "closed"` filter skipped
-    // exactly the PR whose comments this backstop exists to recover.
+    // The closed-sync step marks the PR closed EARLIER IN THE SAME PASS, so a
+    // bare `state !== "closed"` filter would skip exactly the PR whose
+    // comments this backstop exists to recover.
     const store = trackedStore();
     const gh = new SweepGitHub();
     gh.open = []; // GitHub no longer lists it open…
@@ -595,8 +595,9 @@ describe("the reconcile capture sweep (§6)", () => {
   });
 
   it("skips the capture reads for a PR unchanged since its last clean sweep", async () => {
-    // Adversarial finding (P2): three reads per PR for 25 PRs on EVERY
-    // reconcile pass was ~900 standing requests an hour with nothing changing.
+    // An unchanged PR is not re-read: three reads per PR for 25 PRs on every
+    // reconcile pass would be ~900 standing requests an hour with nothing
+    // changing.
     // A ticking store clock keeps row timestamps strictly increasing, so two
     // fast passes can never collide on the same millisecond.
     let tick = 0;
@@ -635,10 +636,11 @@ describe("the reconcile capture sweep (§6)", () => {
   });
 
   it("re-sweeps an otherwise unchanged PR when GitHub's own updated_at moved (a comment the webhook lost)", async () => {
-    // Selfscan finding d02908a3: the watermark was the LOCAL row's updated_at,
-    // which capturing a comment never moves — so a human comment posted while
-    // the daemon was down, with no push or title change, was filtered out of
-    // every later pass. GitHub's PR `updated_at` moves on a new comment.
+    // The watermark pairs the local row's `updated_at` with GitHub's PR
+    // `updated_at`. The remote half is load-bearing: capturing a comment never
+    // moves the local row, so without it a human comment posted while the
+    // daemon was down, with no push or title change, would be filtered out of
+    // every later pass. GitHub's `updated_at` moves on a new comment.
     let tick = 0;
     const store = new StateStore(":memory:", () => new Date(1756100000000 + tick++ * 1000));
     store.upsertPr({
@@ -729,10 +731,10 @@ describe("the reconcile capture sweep (§6)", () => {
     store.close();
   });
 
-  // ----: the exec boundary's outcome layer, WIRED ------------------
+  // ---- the exec boundary's outcome layer, wired --------------------------
   // The pure audit is proven in tests/exec-boundary.test.ts. What matters here
   // is that the sweep actually runs it: a layer nobody calls is the failure
-  // mode this whole ticket is about (a pin that silently does nothing).
+  // mode this guards against (a pin that silently does nothing).
   it("flags a bot review at the head that the daemon has no record of posting", async () => {
     const store = trackedStore();
     const gh = new SweepGitHub();

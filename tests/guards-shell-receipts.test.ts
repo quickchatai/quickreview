@@ -1,4 +1,4 @@
-// posting receipts: the deterministic marker, the keyed receipt, and idempotent retries on both posting scripts.
+// Posting receipts: the deterministic marker, the keyed receipt, and idempotent retries on both posting scripts.
 // Part of the guards-shell suite: the real session posting scripts against a
 // loopback GitHub stub, in dry-run. The rig (stub, temp home, state.db, the
 // run/record helpers) and why the suite is split are in

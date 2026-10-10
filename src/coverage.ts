@@ -1,5 +1,5 @@
-// Per-file coverage check (`[review] coverage_check`, 2026-10-03 gap plan
-// item 4): after the planned lenses return, every changed NON-test source file
+// Per-file coverage check (`[review] coverage_check`): after the planned
+// lenses return, every changed NON-test source file
 // that no lens raised a finding on is a file nobody looked at closely enough
 // to say anything — the shape of the high-severity miss where a changed file
 // got no finding from any lens at all. The round then launches pass-sweep
@@ -8,9 +8,9 @@
 // `coverage: no lens addressed <files>`.
 //
 // A file also counts as addressed when a RETURNED pass-sweep row had it in
-// its focus list, NONE answers included: that row read every
-// changed line of the file at the sweep's tier, so a coverage row over it re-read the same
-// lines for nothing (11 of 12 studied live rounds ran one, 7 of them NONE).
+// its focus list, NONE answers included: that row read every changed line
+// of the file at the sweep's tier, so a coverage row over it would re-read
+// the same lines for nothing.
 // The check stays total: a row that failed, errored or was cut short is not
 // "returned" and its focus counts for nothing, so a coverage row fires only
 // for files no returned row read — the files past the per-round sweep cap

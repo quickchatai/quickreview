@@ -8,11 +8,11 @@
 // themes there (`src/setup/history.ts`). The raw comments are colleagues' names
 // and words; the state home is PC-only and never shipped.
 //
-// The OPERATOR starts it — `qcr history pull` on the PC, over the TUI's route
+// The operator starts it — `qcr history pull` on the PC, over the TUI's route
 // (`[tui] target`: ssh to the VM, or local docker). Deliberately not a
 // companion action: the companion holds no VM credentials, and the TUI does
 // not fetch on its behalf (rule 8; `prompts/companion.md` "They read; they
-// never fetch"). It asks the owner to run this, then reads the file.
+// never fetch"). It asks the operator to run this, then reads the file.
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TuiConfig } from "../config.js";

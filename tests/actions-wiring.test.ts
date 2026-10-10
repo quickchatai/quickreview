@@ -1,6 +1,5 @@
-// wiring: the companion action channel driving a REAL App — the
-// buildTuiDriver mapping (docs/tui-actions-wiring.md, applied; re-homed onto
-// the seven surfaces) plus the filter consumption invariant: render
+// The companion action channel driving a REAL App — the buildTuiDriver
+// mapping (docs/tui-actions-wiring.md) plus the filter consumption invariant: render
 // and verb handlers share ONE filtered ordering, so selection movement and
 // x/p/e can never address a hidden row.
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -425,14 +424,15 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(already!.message).toContain("is already pinned");
     expect(unpinned!.ok).toBe(true);
     expect(unpinned!.trace).toMatch(/^companion ▸ memory unpin → /);
-    // The ONLY op this channel ever hands the store is pin or unpin (R7).
+    // The ONLY op this channel ever hands the store is pin or unpin (the
+    // companion boundary, CLAUDE.md rule 8).
     expect(mem.applied.map((o) => o.op)).toEqual(["unpin"]);
   });
 
   // MUTATION: drop `if (!res.ok) throw new Error(res.message)` from the
   // driver's `memoryPin` (src/tui/index.ts) — the store's refusal is written
-  // to the result file as a SUCCESS, its message as the trace (R7: "the
-  // result file carries the store's answer").
+  // to the result file as a SUCCESS, its message as the trace. The result
+  // file must carry the store's answer.
   it("memory_pin carries the store's REFUSAL into a failed result — a stale hash is never reported as done", async () => {
     /** A store that refuses every write, as a moved-under-you entry does. */
     class RefusingMemory extends FakeMemory {

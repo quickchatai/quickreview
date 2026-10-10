@@ -2,9 +2,9 @@
 //
 // The EOD sweep curates the day's learnings into durable memory. One rule
 // bounds it absolutely: **curation never modifies the owner's pinned standing
-// instructions.** Until now that rule lived only in the sweep prompt — an
-// instruction to an LLM, with nothing on the outside able to tell whether it
-// was kept. This module makes it DETECTABLE: fingerprint the pinned area just
+// instructions.** The sweep prompt states that rule, but a prompt is an
+// instruction to an LLM that nothing outside can verify. This module makes it
+// DETECTABLE: fingerprint the pinned area just
 // before the sweep prompt goes in, fingerprint it again once the sweep has had
 // its window, and raise an anomaly on any difference.
 //
@@ -26,12 +26,12 @@
 //
 // One false positive is knowingly accepted: the owner editing pins in the TUI
 // during the sweep window trips the watchdog, because those writes go straight
-// to the store over the operator's own ssh and the daemon never sees them. Subtracting
-// them would need a PC→daemon notification path for a once-in-months event,
+// to the store over the operator's own ssh and the daemon never sees them.
+// Subtracting them would need a PC→daemon notification path for a rare event,
 // and key-confining the pinned area away from the daemon is impossible while
 // the daemon must READ pins for the guaranteed round head. So the detection
 // stays and the anomaly text names BOTH explanations — a human reading it is
-// told, in the alert itself, that it may be his own edit and to check before
+// told, in the alert itself, that it may be their own edit and to check before
 // acting. Silent-but-wrong would be worse than honest-and-occasionally-noisy.
 
 import { createHash } from "node:crypto";
@@ -239,7 +239,7 @@ export interface PinnedSweepSource {
     entries: ReadonlyArray<PinnedEntryView & { pinned: boolean }>;
     unread: readonly string[];
   }>;
-  /** The pinned area alone (`OpenVikingStore.pinnedSweep`, S5) — the
+  /** The pinned area alone (`OpenVikingStore.pinnedSweep`) — the
    * directory the round's head reads. Preferred when present: the watchdog
    * then reads exactly what every round reads, and never the whole store. */
   pinnedSweep?(): Promise<{

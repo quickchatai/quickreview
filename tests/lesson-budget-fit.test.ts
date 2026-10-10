@@ -1,10 +1,6 @@
-// F2 — shadow selection that fits its budget.
-//
-// The live finding (2026-10-07, the first three rounds after the S9 deploy):
-// 17–24 per-row lesson finds, two in flight, 0.35 s median each and 2.5 s at
-// p90 while the case backfill's ~3.4 s embeddings held the one-thread
-// embedder — so only 1–9 answered inside the 2 s budget. The contract's three
-// fixes, one block each:
+// Shadow selection that fits its budget. Per-row lesson finds queue behind
+// the one-thread embedder (which the case writer's embeddings also hold), so
+// most of them miss a 2 s budget. Three properties, one block each:
 //
 //   * TWO finds a round (the cases, and ONE lesson find sized to the corpus),
 //     every per-row decision made locally — the pure equivalence proof is in
@@ -217,7 +213,7 @@ describe("[memory] shadow_budget_ms — the budget follows the mode", () => {
     }
     // The event carries the budget each run had.
     expect(eventsOf(store, "lesson_selection").map((e) => e["budget_ms"])).toEqual([10_000, 2000]);
-    // No shadow budget configured: the delivery budget, as S9a shipped.
+    // No shadow budget configured: the delivery budget.
     const t = manualTimers();
     new RoundLessonSelector({
       ledger,
@@ -301,7 +297,7 @@ describe("two finds a round, through the selector", () => {
     expect(engine.finds[0]!.limit).toBe(40);
     expect(ledger.roundRow(o.round_id)).toMatchObject({ state: "selected", finds: 2, answered: 2 });
 
-    // The reference: S9a's per-row plan over the same whole-corpus engine.
+    // The reference: the per-row plan over the same whole-corpus engine.
     const rows = o.pass_plan.map((p, row) => ({
       row,
       lens: p.lens,

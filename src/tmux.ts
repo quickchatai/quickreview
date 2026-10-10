@@ -1,6 +1,6 @@
 // Process-exec primitive + a thin tmux wrapper (spec §9: tmux lives inside the
-// container; the local build targets the same commands). Every command in B3
-// — git, tmux, pi — goes through the injectable ExecFn so tests can record
+// container; the local build targets the same commands). Every session-manager
+// command — git, tmux, pi — goes through the injectable ExecFn so tests can record
 // invocations instead of spawning anything.
 import { spawn } from "node:child_process";
 
@@ -8,7 +8,7 @@ export interface ExecOpts {
   cwd?: string;
   /** Fully-constructed environment. Callers pass an explicit env — never a
    * spread of process.env — so no personal credential can leak into a
-   * session (B3 hard rule). */
+   * session. */
   env?: NodeJS.ProcessEnv;
   input?: string;
   timeoutMs?: number;

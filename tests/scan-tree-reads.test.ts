@@ -1,4 +1,4 @@
-// scan-loop: a lens's reads land in the scanned tree.
+// A lens's reads land in the scanned tree.
 //
 // The case runner runs every lens in the app root (first-party ground: its
 // `.pi/settings.json` tuning and reviewer context ride that cwd, and a

@@ -1,8 +1,8 @@
-// the shared prompt cache for lens children, and the context pack.
+// The shared prompt cache for lens children, and the context pack.
 //
-// Probe (2026-10-09, the reviewer's own login): pi children under ONE session
-// id read an identical 24k-token prefix from cache (24,320 tokens), under
-// `--no-session` none; simultaneous requests both missed, one 2 s later hit.
+// The provider keys its prompt cache on the session id: pi children under ONE
+// session id read an identical prefix from cache, under `--no-session` none,
+// and simultaneous requests both miss while one sent a moment later hits.
 // These tests pin the three pieces built on that: the glue's spawn rewrite
 // (cache groups, the stagger, the temp session dir, the pack's extension),
 // the child extension's pack-first payload, and the daemon's pack renderer.

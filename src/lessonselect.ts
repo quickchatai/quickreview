@@ -1,4 +1,4 @@
-// The ROUND'S LESSON SELECTION (S9a): one bounded prefetch through
+// The ROUND'S LESSON SELECTION: one bounded prefetch through
 // OpenViking per round, the deterministic selection over what it returned
 // (src/memory/selection.ts), and the record in the shadow ledger
 // (src/lessonledger.ts) — behind `[memory] delivery`.
@@ -15,14 +15,13 @@
 // DELIVERY below.
 //
 // THE PREFETCH. ONE phase per round under a hard budget: the planned finds —
-// TWO since F2, the main session's cases and ONE lesson find whose
+// TWO, the main session's cases and ONE lesson find whose
 // `limit` covers the lesson corpus (sized from the store's own count,
 // `LessonEngine.corpusSize`), which every row, the validator and every
 // addable lens then filter for themselves (src/memory/selection.ts) — go out
 // at most `PREFETCH_MAX_IN_FLIGHT` at a time, across every round the
-// selector runs, and the store's retired list beside them. (S9a asked one
-// find per plan row; on the live VM only 1–9 of a round's 17–24 answered
-// inside 2 s.) Every find embeds its query on that one-thread embedder,
+// selector runs, and the store's retired list beside them. (One find per plan
+// row would not answer inside the budget.) Every find embeds its query on that one-thread embedder,
 // which the round seed, the sessions' 500 ms recall and the /ready probe also
 // wait on. Each find is given what is LEFT of the round's budget as its HTTP
 // deadline, so none outlives the phase. At the deadline whatever arrived is
@@ -31,14 +30,14 @@
 // and is logged. A find that answers after the deadline is ignored, never
 // merged in late.
 //
-// THE BUDGET FOLLOWS THE MODE (F2). Under `on` the round WAITS for the
+// THE BUDGET FOLLOWS THE MODE. Under `on` the round WAITS for the
 // selection (`select`, beside its seed), so it keeps `[memory]
 // delivery_budget_ms` (≤ 2 s), which two finds fit. Under `shadow` nothing
 // waits for it (`start`, after the handoff), so it gets its own, looser
 // `[memory] shadow_budget_ms` (≤ 20 s): a shadow selection that times out
 // records nothing useful, and one that is merely slow delays nobody.
 //
-// THE MEMORY WINDOW (F2). Every prefetch this selector runs opens a window on
+// THE MEMORY WINDOW. Every prefetch this selector runs opens a window on
 // the round-activity tracker (src/memory/roundactivity.ts) for as long as it
 // runs, and so does dispatch around the round's seed: the case writer starts
 // no batch — no ~3.4 s case embedding each — while one is open.
@@ -51,7 +50,7 @@
 //   `suppress-lesson <uri>`      — that URI is never selected.
 // The kill switch lives in state.db (commands/operator/ only).
 //
-// DELIVERY (`[memory] delivery = "on"`, S9b). The round's prompt, its
+// DELIVERY (`[memory] delivery = "on"`). The round's prompt, its
 // task files and its lessons files are rendered FROM the selection, so under
 // `on` dispatch does not `start` it after the handoff: it AWAITS `select`
 // beside the memory seed, under the ≤ 2 s delivery budget, which is inside the
@@ -182,11 +181,11 @@ export async function prefetchLessons(
      * `PREFETCH_MAX_IN_FLIGHT` set when absent. */
     slots?: FindSlots;
     /** No find is sent before this settles (either way) — the round's own
-     * context search under `on` (S9b). The budget's clock is NOT held: a
+     * context search under `on`. The budget's clock is NOT held: a
      * find still waiting here at the deadline is never sent. */
     after?: PromiseLike<unknown>;
     /** Ends the phase the moment it aborts, exactly as the deadline would —
-     * the daemon's shutdown (F2, `RoundLessonSelector.stop`). A
+     * the daemon's shutdown (`RoundLessonSelector.stop`). A
      * signal already aborted sends nothing. */
     signal?: AbortSignal;
   },
@@ -310,7 +309,7 @@ export interface RoundSelectionResult {
   texts: Map<string, string>;
 }
 
-/** A recheck's or an author reply's ask for repo facts (S9b). */
+/** A recheck's or an author reply's ask for repo facts. */
 export interface RepoFactsQuery {
   pr: number;
   title: string;
@@ -328,7 +327,7 @@ export interface RoundLessonHook {
   start(order: RoundOrder, files: ReadonlyArray<{ filename: string }>): void;
   /** True when the round's lessons are DELIVERED (`[memory] delivery =
    * "on"`, read per round): dispatch then awaits `select` beside the memory
-   * seed instead of calling `start`. Absent or false ⇒ the S9a path. */
+   * seed instead of calling `start`. Absent or false ⇒ the `start` path. */
   delivering?(): boolean;
   /** The round's selection, awaited — bounded by the prefetch budget, total
    * (null on any failure: the round renders as if nothing were selected).
@@ -361,10 +360,10 @@ export interface RoundLessonSelectorDeps {
    * round WAITS for (`select`, under `on`) and of the repo facts. */
   budgetMs: number;
   /** `[memory] shadow_budget_ms` (≤ 20000) — the budget of a selection
-   * nothing waits for (`start`, under `shadow`; F2). Absent ⇒
+   * nothing waits for (`start`, under `shadow`). Absent ⇒
    * `budgetMs`. */
   shadowBudgetMs?: number;
-  /** The round-activity tracker (F2): every prefetch opens a window
+  /** The round-activity tracker: every prefetch opens a window
    * for as long as it runs, so the case writer starts no batch in front of
    * it. Absent ⇒ nothing is told. */
   activity?: RoundActivityWindow;
@@ -413,7 +412,7 @@ export class RoundLessonSelector implements RoundLessonHook {
 
   /** The prefetch budget of a run: the round WAITS for it (`select`, under
    * `on`) — `[memory] delivery_budget_ms`; nothing does (`start`, under
-   * `shadow`) — `[memory] shadow_budget_ms` (F2). */
+   * `shadow`) — `[memory] shadow_budget_ms`. */
   budgetFor(awaited: boolean): number {
     return awaited ? this.deps.budgetMs : (this.deps.shadowBudgetMs ?? this.deps.budgetMs);
   }
@@ -437,7 +436,7 @@ export class RoundLessonSelector implements RoundLessonHook {
     }
   }
 
-  /** The engine's count of lesson files (F2's find limit), or null when it
+  /** The engine's count of lesson files (sizes the find limit), or null when it
    * cannot say. Total. */
   private corpusOf(engine: LessonEngine): number | null {
     try {
@@ -449,7 +448,7 @@ export class RoundLessonSelector implements RoundLessonHook {
   }
 
   /**
-   * The daemon is shutting down (wire.ts `onStop`, F2). A SHADOW
+   * The daemon is shutting down (wire.ts `onStop`). A SHADOW
    * selection still in its prefetch ends NOW and records nothing: its budget
    * (`shadow_budget_ms`, up to 20 s) does not fit docker's 10 s stop grace
    * beside the server's own 5 s, and a record cut short by our own stop would
@@ -491,7 +490,7 @@ export class RoundLessonSelector implements RoundLessonHook {
     }
   }
 
-  /** `[memory] delivery = "on"`, read now (S9b). */
+  /** `[memory] delivery = "on"`, read now. */
   delivering(): boolean {
     try {
       return this.deps.mode() === "on";
@@ -501,7 +500,7 @@ export class RoundLessonSelector implements RoundLessonHook {
   }
 
   /**
-   * The round's selection, AWAITED by dispatch under `on` (S9b): the same
+   * The round's selection, AWAITED by dispatch under `on`: the same
    * run `start` makes — the same ledger rows — plus the selected entries'
    * texts. Bounded by the prefetch budget; total — any failure is `null`.
    */
@@ -539,7 +538,7 @@ export class RoundLessonSelector implements RoundLessonHook {
 
   /**
    * The repo-fact lessons for the paths a recheck's delta or an author's
-   * reply touches (S9b), rendered as a section to append to that prompt.
+   * reply touches, rendered as a section to append to that prompt.
    * "" unless `on` with the kill switch on, and on any failure, a timeout or
    * nothing to say — so the prompt is byte-identical. One find, under the
    * round prefetch's budget and slots.
@@ -555,8 +554,8 @@ export class RoundLessonSelector implements RoundLessonHook {
       const engine = this.deps.engine();
       if (!engine) return "";
       const query = repoFactsQuery({ title: q.title, paths });
-      // Its limit covers the lesson corpus like the round's lesson find
-      // (F2): the repo-fact filter is ours, not the engine's similarity.
+      // Its limit covers the lesson corpus like the round's lesson find:
+      // the repo-fact filter is ours, not the engine's similarity.
       const find: PlannedFind = {
         key: `facts\u0000${query}`,
         area: EXPERIENCES_AREA,
@@ -639,17 +638,17 @@ export class RoundLessonSelector implements RoundLessonHook {
 
   /** One round's selection, end to end. Exposed for tests; `start` and
    * `select` are the production entries. `texts`, when given, is filled with
-   * every selected entry's text (S9b's delivery); `after` holds every find
+   * every selected entry's text (for delivery); `after` holds every find
    * until it settles; `awaited` — the round waits for this run (`select`,
    * under `on`): it runs under `[memory] delivery_budget_ms` rather than
-   * `shadow_budget_ms` (F2), and the log says what a timeout cost. */
+   * `shadow_budget_ms`, and the log says what a timeout cost. */
   async run(
     order: RoundOrder,
     prFiles: readonly string[],
     mode: MemoryDelivery,
     opts: { texts?: Map<string, string>; after?: PromiseLike<unknown>; awaited?: boolean } = {},
   ): Promise<RoleSelection[]> {
-    // F2: the selection's memory window opens on the CALL — synchronously, so
+    // The selection's memory window opens on the CALL — synchronously, so
     // `start` returns with it already open and dispatch can close the round's
     // own window behind it with no gap — and closes when the run is done.
     const endWindow = this.openWindow(`lessons #${order.pr}`);
@@ -707,8 +706,8 @@ export class RoundLessonSelector implements RoundLessonHook {
       agent: p.agent,
       ...(p.focus ? { focus: p.focus } : {}),
     }));
-    // The lenses the session may add get a selection too (S9b — their
-    // lessons file), from the round's one lesson find (F2).
+    // The lenses the session may add get a selection too (their lessons
+    // file), from the round's one lesson find.
     const addable = order.addable_lenses ?? [];
     const engine = (() => {
       try {
@@ -717,7 +716,7 @@ export class RoundLessonSelector implements RoundLessonHook {
         return null;
       }
     })();
-    // F2: TWO finds — the cases, and ONE lesson find sized to the corpus.
+    // TWO finds — the cases, and ONE lesson find sized to the corpus.
     const corpus = engine ? this.corpusOf(engine) : null;
     const plan = planFinds({ title: order.title, rows, prFiles, addable, corpus });
     const lessonFind = plan.finds.find((f) => f.key === plan.lessonsKey) ?? null;
@@ -733,7 +732,7 @@ export class RoundLessonSelector implements RoundLessonHook {
     let sent = 0;
     let note: string | null = null;
     let root = "";
-    // F2: the daemon's shutdown cut this (shadow) prefetch short.
+    // The daemon's shutdown cut this (shadow) prefetch short.
     let cutByStop = false;
     if (!engine) {
       const why = "the memory engine is not built yet (daemon starting, or memory switched off)";
@@ -828,7 +827,7 @@ export class RoundLessonSelector implements RoundLessonHook {
       timeouts,
       refused,
       prefetch_ms: ms,
-      // F2: the budget this run had (it follows the mode), and the lesson
+      // The budget this run had (it follows the mode), and the lesson
       // find's limit against the corpus it was sized from (null — unknown).
       budget_ms: budgetMs,
       corpus,

@@ -1,5 +1,5 @@
-// setup-triage — the TRIAGE half of the companion's scan tool belt.
-// Not an extension of its own: extensions/setup.ts registers these beside the
+// setup-triage — the triage half of the companion's scan tool belt. Not an
+// extension of its own: extensions/setup.ts registers these beside the
 // setup_* and scan_* tools. The companion judges — what the operator decided
 // about a finding, which effort its work belongs in, what recurs across the
 // repo — and these tools act; every rule and refusal is ScanTriage's

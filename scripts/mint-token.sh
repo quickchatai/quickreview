@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mint-token.sh — GitHub App installation token for the pi sessions' `gh` prefixing.
 #
-# Shell equivalent of src/githubAuth.ts. Semantics per findings §4.2:
+# Shell equivalent of src/githubAuth.ts:
 #   * RS256 app JWT, iat = now-60s, exp = iat+9min (≤10 min ceiling)
 #   * installation id resolved via GET /app/installations
 #   * POST /app/installations/{id}/access_tokens for the installation token
@@ -19,8 +19,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides — $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 FORCE=0
@@ -58,8 +58,8 @@ cfg_sed() { # crude fallback: first `key = "value"` inside [section]
      | head -n1 | sed 's/[[:space:]]*#.*$//; s/^"//; s/"$//; s/[[:space:]]*$//'
 }
 
-# the install locator decides — the configured [github] secrets_dir
-# when the operator set one, else <config home>/secrets (never the old
+# The install locator decides — the configured [github] secrets_dir when the
+# operator set one, else <config home>/secrets (never the old
 # ~/.config/quickreview-bot). The same answer the daemon's loader reaches.
 SECRETS_DIR="$(qcr_locate_secrets "$(cfg github secrets_dir || true)")" || exit 1
 

@@ -1,12 +1,9 @@
 // The daemon's own event-loop lag, and the container's CPU throttling beside
-// it (L2, after the 2026-10-07 post-drain burst).
+// it.
 //
-// During that burst six drained rounds started together, the 2-CPU container
-// was throttled in 39% of its CFS periods, and the daemon's own `/health` gave
-// no answer for up to ~70 s at a time while status.json lagged minutes. Nothing
-// measured either, so the stall was invisible: every surface a person looks at
-// reads status.json, and status.json is written by the very loop that stalled.
-// This module measures both, and says which one it was:
+// A stalled loop is otherwise invisible: every surface a person looks at reads
+// status.json, and status.json is written by the very loop that stalled. This
+// module measures both, and says which one it was:
 //
 //   event-loop delay — a DRIFT SAMPLER: a timer due every SAMPLE_INTERVAL_MS
 //     whose lateness IS the loop's delay. (`perf_hooks.monitorEventLoopDelay`
@@ -375,7 +372,7 @@ export type CpuThrottleStatus =
     }
   | { state: "unknown"; source: string; reason: string; at: string | null };
 
-/** status.json `daemon` (L2). */
+/** status.json `daemon`. */
 export interface DaemonLoadStatus {
   event_loop: EventLoopStatus;
   cpu: CpuThrottleStatus;
@@ -675,7 +672,7 @@ export class DaemonLoadMonitor {
         // across this stall, the throttle ratio across the whole window, and
         // a throttle lasts only until the next CFS period (~100 ms) — a
         // daemon on CPU for most of a 30 s delay held the loop itself, however
-        // throttled the container was (a post-drain burst: 39%).
+        // throttled the container was.
         const starved = cpu.state === "measured" && cpu.throttled_ratio >= p.starvedRatio;
         const cause: StallCause =
           busyShare !== null && busyShare >= LOOP_BUSY_SHARE

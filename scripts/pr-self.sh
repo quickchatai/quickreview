@@ -2,7 +2,7 @@
 # pr-self.sh — the session's sanctioned READ-ONLY self-verification helper.
 #
 # One entry point for the four questions a review session keeps asking about
-# its own PR (previously ~76 ad-hoc raw reads across sessions):
+# its own PR:
 #   reviews  the bot's posted reviews on this PR (id, state, commit, when)
 #   threads  unresolved review threads with ids   (delegates to pr-threads.sh)
 #   head     the PR's current head sha
@@ -22,8 +22,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides: $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 

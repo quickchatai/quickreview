@@ -106,12 +106,11 @@ describe("HotReloader", () => {
     expect(reexecs).toHaveLength(1);
   });
 
-  //. The reloader used to defer on an `isBusy()` predicate, which the
-  // TUI wired to App.isBusy() — true while the companion column has focus. So
-  // a build landed, the reload was held, and the change you had just asked the
-  // companion for silently never appeared. The owner: "any change made is
-  // reload, I prefer broken in between than not knowing why nothing changed."
-  // There is no condition left to assert, so these pin the ABSENCE of one.
+  // Every build reloads, unconditionally. A busy check would hold the reload
+  // exactly while the companion column has focus — i.e. while the companion
+  // is editing the TUI — so the change would silently never appear; a reload
+  // at an awkward moment is visible and recoverable. These pin the absence of
+  // any condition.
   it("never defers — a reload fires even while a surface owns the keyboard", () => {
     const { reloader, reexecs, w } = build();
     reloader.start();
@@ -179,8 +178,9 @@ describe("resume state", () => {
 
   it("two TUIs on one install reloading together each resume their OWN view", () => {
     // Both watch the same dist/ and fire within ms of each other on one tsc
-    // emit. With one shared file the second write clobbered the first, A's
-    // new process read B's view and deleted it, and B came back on defaults.
+    // emit. With one shared file the second write would clobber the first, A's
+    // new process would read B's view and delete it, and B would come back on
+    // defaults.
     const pathA = resumeStatePath(dir, 1111);
     const pathB = resumeStatePath(dir, 2222);
     expect(pathA).not.toBe(pathB);
@@ -266,13 +266,13 @@ describe("argv plumbing", () => {
   });
 });
 
-// ---- the chain stays two deep (S3) -----------------------------------
+// ---- the chain stays two deep ------------------------------------------------
 //
-// Each reload used to run the new build as a child of the old one and wait,
-// so every generation stayed alive, frozen, under the next: 14 `cli.js tui
-// --resume-state` processes on the owner's PC on 2026-10-06. The first TUI to
-// reload now SUPERVISES — every later build is its child — and a supervised
-// TUI that wants a reload EXITS. Still no condition on when a reload fires.
+// A reload that ran the new build as a child of the old one and waited would
+// keep every generation alive, frozen, under the next. The first TUI to
+// reload supervises — every later build is its child — and a supervised TUI
+// that wants a reload exits. There is still no condition on when a reload
+// fires.
 
 describe("the reload chain stays two processes deep, however many reloads (S3)", () => {
   /** A simulated process tree. Each spawned "TUI" runs `life` — it reloads
@@ -407,7 +407,7 @@ describe("the reload chain stays two processes deep, however many reloads (S3)",
   });
 });
 
-// ---- what makes the unfiltered watch safe --------------------------
+// ---- what makes the unfiltered watch safe -----------------------------------
 //
 // `HotReloader` watches dist/ RECURSIVELY AND UNFILTERED, and the header of
 // reload.ts rests the whole design on one sentence: "a failed `tsc` emits
@@ -447,7 +447,7 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
     }
   });
 
-  // integration review. verify-dist proves dist/ is COMPLETE, never
+  // verify-dist proves dist/ is COMPLETE, never
   // that it is FRESH. The build info sits under node_modules/, which every
   // worktree reaches through a symlink, so a worktree's build rewrites this
   // checkout's: merged here, its sources read as already emitted and an
@@ -492,9 +492,9 @@ describe("the compiler settings the unfiltered dist watch depends on", () => {
   });
 
   it("does not emit JavaScript from a failing build", () => {
-    // Without this tsc emits on error by default: one type error re-emitted 40
-    // files into dist/ when measured it, so the "failed build touches
-    // nothing" guarantee was never actually true.
+    // Without this tsc emits on error by default: one type error re-emits
+    // files into dist/, and the "failed build touches nothing" guarantee
+    // does not hold.
     expect(tsconfig.compilerOptions.noEmitOnError).toBe(true);
   });
 });

@@ -68,11 +68,11 @@ export function buildShaArgv(cfg: TuiConfig): string[] {
   return dockerSh(cfg, `cat '${cfg.remote_sandbox_root}/BUILD_SHA' 2>/dev/null || true`);
 }
 
-/**: the config home the last sync SHIPPED, fingerprinted inside the
+/** The config home the last sync shipped, fingerprinted inside the
  * container by the very script that fingerprints the local one — the
- * container's QCR_CONFIG names the shipped file. A VM that predates
- * has no such script, and then no config home was ever shipped to it: that is
- * a fact read (`none`), not an unanswered read, so it is said as one. */
+ * container's QCR_CONFIG names the shipped file. A VM without that script has
+ * never been shipped a config home: that is a fact read (`none`), not an
+ * unanswered read, so it is said as one. */
 export function configFingerprintArgv(cfg: TuiConfig): string[] {
   const root = cfg.remote_sandbox_root;
   const script = `${root}/scripts/config-fingerprint.sh`;
@@ -101,8 +101,8 @@ export function powerCommand(cfg: TuiConfig, action: "stop" | "start"): string {
   return `${cfg.sudo_docker ? "sudo " : ""}docker ${action} ${cfg.container}`;
 }
 
-/**: the FULL power command, binary first — what hooks.powerRun
- * spawns. ssh mode wraps `powerCommand` as the remote shell line (unchanged);
+/** The full power command, binary first — what hooks.powerRun spawns.
+ * ssh mode wraps `powerCommand` as the remote shell line;
  * local mode runs the same words directly (the command is a fixed
  * space-joined `[sudo] docker <action> <container>`, so the split is exact). */
 export function powerSpawnArgv(cfg: TuiConfig, action: "stop" | "start"): string[] {
@@ -115,7 +115,7 @@ export function powerSpawnArgv(cfg: TuiConfig, action: "stop" | "start"): string
 export const HEAD_ARGV = ["git", "rev-parse", "--short", "HEAD"];
 export const DIRTY_ARGV = ["git", "status", "--porcelain"];
 export const PLAN_ARGV = ["bash", "scripts/deploy.sh", "--dry-run", "sync"];
-/**: the config home a sync WOULD ship, located exactly as deploy.sh
+/** The config home a sync would ship, located exactly as deploy.sh
  * locates it (scripts/install-locator.sh `qcr_shipped_config`). */
 export const CONFIG_FINGERPRINT_ARGV = ["bash", "scripts/config-fingerprint.sh", "--located", "."];
 
@@ -168,24 +168,23 @@ export interface DeployState {
    * `<sha> <iso> <mode>` line (the read succeeded — the content is the
    * problem, and a redeploy rewrites it); `undefined` until fetched, and
    * after a fetch whose ssh or docker read never answered. Three different
-   * facts, three different sentences: an unanswered read says NOTHING about
+   * facts, three different sentences: an unanswered read says nothing about
    * what the VM runs, so it must never render or publish as "no marker" —
    * and a corrupt marker must never be blamed on ssh. */
   deployed?: DeployedMarker | "absent" | "unparseable";
-  /**: the config home this machine would ship, and the one the VM
+  /** The config home this machine would ship, and the one the VM
    * was shipped — each `undefined` until fetched and after a read that never
    * answered. Compared by `configDrift`. */
   configLocal?: ConfigRead;
   configDeployed?: ConfigRead;
-  /**: the setup re-tune log in this machine's state home — which
+  /** The setup re-tune log in this machine's state home — which
    * post-scan re-tune a pending profile change is. `undefined` until fetched. */
   retunes?: RetunesRead;
   /** Local HEAD; `undefined` when `git rev-parse` could not be read. */
   head?: string;
   /** Uncommitted paths, or `undefined` when `git status` could not be read.
-   * NOT an empty array in that case: an unread tree rendered as a
-   * green "clean" is the DRY-RUN-on-a-live-install bug wearing a deploy hat —
-   * it says "nothing to ship" when it does not know. */
+   * Not an empty array in that case: an unread tree rendered as a green
+   * "clean" says "nothing to ship" when it does not know. */
   dirty: string[] | undefined;
   /** `git log --oneline deployed..HEAD`; undefined when the range is unknown. */
   commits?: string[];
@@ -261,8 +260,8 @@ export interface DeployFetcher {
   load(): Promise<Omit<DeployState, "loaded" | "loading" | "scroll">>;
 }
 
-/**: the re-tune log in this machine's state home (the companion
- * writes it through the mounted state home). A read that throws is UNKNOWN. */
+/** The re-tune log in this machine's state home (the companion writes it
+ * through the mounted state home). A read that throws is unknown. */
 export function readRetuneLog(home: string = stateHome()): RetunesRead {
   let text: string | null;
   try {
@@ -360,7 +359,7 @@ export function deployLines(st: DeployState, width: number): string[] {
     lines.push(truncate(`    ${FG.dim}${d}${RESET}`, width));
   if ((st.dirty?.length ?? 0) > 8)
     lines.push(`    ${FG.dim}… ${st.dirty!.length - 8} more${RESET}`);
-  // the config home ships beside the commit, so it has its own line.
+  // The config home ships beside the commit, so it has its own line.
   const drift = configDrift(st.configLocal, st.configDeployed);
   const driftInk =
     drift.kind === "same" ? OK : drift.kind === "changed" || drift.kind === "no-home" ? BAD : WARN;
@@ -370,7 +369,7 @@ export function deployLines(st: DeployState, width: number): string[] {
       width,
     ),
   );
-  // which post-scan re-tune that profile change is, and why.
+  // Which post-scan re-tune that profile change is, and why.
   const retunes = pendingRetunes(st.retunes, drift, dep?.at);
   const retuneInk = retunes.state === "pending" ? BAD : WARN;
   for (const [i, l] of pendingRetuneLines(retunes).entries()) {
@@ -380,7 +379,7 @@ export function deployLines(st: DeployState, width: number): string[] {
   }
   lines.push("");
 
-  // "Up to date, nothing to deploy" is a CLAIM, so it needs every fact — an
+  // "Up to date, nothing to deploy" is a claim, so it needs every fact — an
   // unreadable working tree is not the same as a clean one, and a config home
   // that could not be compared is not the same as one that matches.
   if (dep && st.head && dep.sha === st.head && st.dirty?.length === 0) {
@@ -436,9 +435,9 @@ export function deployLines(st: DeployState, width: number): string[] {
 /**
  * What the deploy tab answers to on this frame. `D` and `S` only while no run
  * is on screen (a press during one is refused, and a refused key is a dead
- * key); `S` only once the container's state has been READ — the unknown
- * state registers no key exactly as it paints no click zone (a
- * stop derived from unread data could stop a live reviewer); `x` while there
+ * key); `S` only once the container's state has been read — the unknown
+ * state registers no key exactly as it paints no click zone (a stop derived
+ * from unread data could stop a live reviewer); `x` while there
  * is a run to abort or a finished log to close.
  */
 export function deployKeys(st: DeployState): LiveKeys {
@@ -511,14 +510,13 @@ export function renderDeployTab(
     const powerKind: RunKind = running === false ? "start" : "stop";
     const powerArmed = st.armedKind === powerKind;
     const dLabel = deployArmed ? " ⚠ CLICK AGAIN TO DEPLOY NOW " : " ▶ DEPLOY TO VM ";
-    // An UNFETCHED (or failed) container status used to fall through to
+    // An unfetched (or failed) container status must not paint
     // "■ STOP VM APP", which asserts the container is up. Say what is true —
     // the state is unknown — and let `r` fetch it.
-    // UNKNOWN is checked FIRST, before armed. It cannot currently be both (an
+    // Unknown is checked first, before armed. It cannot currently be both (an
     // unknown state registers no zone and `pressPower` refuses, so nothing can
     // arm it) — but reading the armed branch first invites the next editor to
-    // conclude the unknown case is merely a label, which is the mistake this
-    // whole guard exists to undo.
+    // conclude the unknown case is merely a label.
     const pLabel =
       running === undefined
         ? " ▮ VM APP STATE UNKNOWN "
@@ -950,7 +948,7 @@ export function installDeployHooks(
           return;
         }
         if (result.issuer === "session") {
-          // the daemon found commands/operator/ unsealed and bounded
+          // The daemon found commands/operator/ unsealed and bounded
           // this drain like a session's — it can lapse mid-sync. A deploy never
           // rides a drain that may lift itself; the receipt says when it does.
           failDrain(
@@ -1057,7 +1055,7 @@ export function installDeployHooks(
   if (savedCeremony) void load().then(() => observeDrain(app));
   chainOnPoll(app, observeDrain);
 
-  // One press = arm; a second press of the SAME button inside the confirm
+  // One press = arm; a second press of the same button inside the confirm
   // window starts the drain ceremony (deploy) or the power process.
   const press = (theApp: App, kind: RunKind): void => {
     if (st.run?.running) return;
@@ -1087,17 +1085,14 @@ export function installDeployHooks(
   };
 
   /**
-   * The power button's action follows the container's OBSERVED state:
-   * definitely up → stop, definitely stopped → start, and NOT YET READ →
+   * The power button's action follows the container's observed state:
+   * definitely up → stop, definitely stopped → start, and not yet read →
    * nothing at all.
    *
-   * That last case used to fold into "stop", rationalised as "a stop of a
-   * stopped container is a no-op" — which is true of a stopped container and
-   * false of the only case that matters. Unknown is not stopped: if the
-   * reviewer is up and `docker ps` merely has not been read, that press stops
-   * a live container on data nobody fetched. lengthened the unfetched
-   * window by design (the tab's load now runs behind the first frame), so this
-   * is reachable from the moment the TUI opens.
+   * Unknown is not stopped: if the reviewer is up and `docker ps` merely has
+   * not been read, a "stop" press would stop a live container on data nobody
+   * fetched. The tab's load runs behind the first frame, so the unread window
+   * is open from the moment the TUI opens.
    */
   const powerKind = (): RunKind | undefined =>
     st.containerStatus === undefined
@@ -1214,7 +1209,7 @@ export function installDeployHooks(
         theApp.repaint();
         return true;
       default:
-        // A key that just disarmed is CONSUMED — it must not also fall
+        // A key that just disarmed is consumed — it must not also fall
         // through and seed the companion column (or act on the board).
         return disarmed; // otherwise tabs/quit/help fall through to the app
     }

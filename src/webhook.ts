@@ -1,4 +1,4 @@
-// GitHub App webhook receiver (spec §3, §3).
+// GitHub App webhook receiver.
 //
 // Contract: verify `X-Hub-Signature-256` in constant time over the RAW body,
 // dedupe on `X-GitHub-Delivery`, persist the event, answer 200 within GitHub's
@@ -57,7 +57,7 @@ export type Interpretation =
       via: "thread_reply";
       scope: "review_comment";
       /** The file the replied thread sits on (the review comment's `path`),
-       * when GitHub sent one — the repo facts' touched path (S9b).
+       * when GitHub sent one — the repo facts' touched path.
        * Never part of the wake's own text. */
       path?: string;
     }
@@ -75,8 +75,8 @@ export type Interpretation =
       comment_id: number;
       scope: "review_comment" | "issue_comment";
     }
-  /** The [feedback] tuning loop — META-signal about the review
-   * itself, deliberately diverted BEFORE author_reply so it never reaches
+  /** The [feedback] tuning loop — meta-signal about the review itself,
+   * deliberately diverted before author_reply so it never reaches
    * ping-pong, never wakes the PR session, and never stamps the new-evidence
    * mark (`noteAuthorReply`) that would unlock a re-review. */
   | {
@@ -156,7 +156,7 @@ export function interpretEvent(
     case "issue_comment":
       return interpretIssueComment(action, payload, deps);
     case "pull_request_review":
-      // interpreted in feedback.ts — the vocabulary GitHub uses for
+      // Interpreted in feedback.ts — the vocabulary GitHub uses for
       // this event is exactly what the no-review-retraction structural guard
       // greps this module for, and feedback.ts can hold no mutation path.
       return interpretReviewEvent(action, payload, { botLogin: deps.botLogin });
@@ -179,7 +179,7 @@ function interpretPullRequest(
   const pr = payload?.pull_request;
   if (!pr) return { kind: "ignored", reason: "pull_request payload without pull_request" };
   const meta = prMeta(pr);
-  // Bot-authored PRs never enter the queue (spec §3): the app cannot review
+  // Bot-authored PRs never enter the queue: the app cannot review
   // its own improvement PRs.
   if (isBotUser(pr.user, deps.botLogin))
     return { kind: "ignored", reason: "bot-authored PR", pr: meta.number };
@@ -204,7 +204,7 @@ function interpretPullRequest(
       return { kind: "synchronize", pr: meta.number, meta };
     case "closed":
       return { kind: "closed", pr: meta.number, merged: Boolean(pr.merged), meta };
-    // a HUMAN removing the trigger is "take the bot off this PR" —
+    // A human removing the trigger is "take the bot off this PR" —
     // a behavioral feedback signal. The daemon consumes triggers itself
     // (label removal / team-request deletion through the gate), so a bot
     // sender is mechanics, never feedback.
@@ -244,11 +244,11 @@ function interpretReviewComment(
 ): Interpretation {
   const comment = payload?.comment;
   const pr: number = payload?.pull_request?.number ?? 0;
-  // a HUMAN deleting one of the bot's comments is a behavioral
+  // A human deleting one of the bot's comments is a behavioral
   // feedback signal (the bot never deletes its own comments — it has no
   // deletion path at all).
   if (action === "deleted") {
-    // Only a HUMAN deleting our comment is a signal — another bot (merge
+    // Only a human deleting our comment is a signal — another bot (merge
     // queue, housekeeping app) tidying up is mechanics.
     if (comment?.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
       return { kind: "bot_comment_deleted", pr, comment_id: comment.id };
@@ -259,7 +259,7 @@ function interpretReviewComment(
   if (!comment) return { kind: "ignored", reason: "review comment payload without comment" };
 
   // The bot's own comments echo back as deliveries: registry backfill, never a
-  // reply (loop risk — §3.2).
+  // reply (loop risk).
   if (comment.user?.login === deps.botLogin)
     return { kind: "bot_comment", pr, comment_id: comment.id, scope: "review_comment" };
   if (comment.user?.type === "Bot") return { kind: "ignored", reason: "other-bot comment", pr };
@@ -268,7 +268,7 @@ function interpretReviewComment(
 
   const inReplyTo: number | null =
     typeof comment.in_reply_to_id === "number" ? comment.in_reply_to_id : null;
-  // [feedback]-prefixed comments divert HERE, before the
+  // [feedback]-prefixed comments divert here, before the
   // author_reply interpretation — they are meta-signal about the review
   // itself and must never enter ping-pong or count as new author evidence.
   if (isFeedbackBody(comment.body))
@@ -341,7 +341,7 @@ function interpretIssueComment(
   const comment = payload?.comment;
   const pr: number = issue.number ?? 0;
   if (!comment) return { kind: "ignored", reason: "issue comment payload without comment", pr };
-  // symmetric with the inline route — a human deleting the bot's
+  // Symmetric with the inline route — a human deleting the bot's
   // top-level comment is the same bluntest-possible noise verdict.
   if (action === "deleted") {
     if (comment.user?.login === deps.botLogin && !isBotUser(payload?.sender, deps.botLogin))
@@ -357,7 +357,7 @@ function interpretIssueComment(
   if (payload?.sender?.login === deps.botLogin)
     return { kind: "ignored", reason: "sender is the bot", pr };
 
-  // the one exception to the rule below — a [feedback]-prefixed
+  // The one exception to the rule below — a [feedback]-prefixed
   // top-level comment is captured for the tuning loop (and still never
   // routed anywhere near the round).
   if (isFeedbackBody(comment.body))
@@ -427,8 +427,7 @@ const MAX_BODY = 10 * 1024 * 1024;
 // their size. Each row's header values are capped, and at most
 // REJECTION_ROWS_PER_WINDOW rows are written per window; the rest are counted
 // and the next window's first row carries that count as `suppressed_before`,
-// so the audit trail stays honest without growing with the flood (selfscan
-// 4c15a23f).
+// so the audit trail stays honest without growing with the flood.
 const REJECTION_WINDOW_MS = 60_000;
 const REJECTION_ROWS_PER_WINDOW = 10;
 const REJECTION_HEADER_CAP = 128;
@@ -504,12 +503,12 @@ export function handleDelivery(
   const event = headers.event;
   if (!guid || !event) return { status: 400, reason: "missing-headers" };
 
-  // Deploy-window drain (2026-08-25): while draining, every authentic
-  // delivery is answered 200 and DROPPED — not interpreted, not recorded.
-  // The owner chose dropping over recording: GitHub never auto-retries either
-  // way, and the reconcile poll is the single recovery path once the drain
-  // lifts. Counted so the lift log line can say how many the poll has to make
-  // up. GET /health is untouched (it never reaches this function).
+  // Deploy-window drain: while draining, every authentic delivery is
+  // answered 200 and dropped — not interpreted, not recorded. GitHub never
+  // auto-retries either way, and the reconcile poll is the single recovery
+  // path once the drain lifts. Counted so the lift log line can say how many
+  // the poll has to make up. GET /health is untouched (it never reaches this
+  // function).
   const drain = deps.store.drainState();
   if (drain.draining) {
     const dropped = deps.store.countDrainedDelivery();
@@ -525,7 +524,7 @@ export function handleDelivery(
   }
   const action: string | null = typeof payload?.action === "string" ? payload.action : null;
 
-  // Redelivery reuses the guid — dedupe on it (§3.4).
+  // Redelivery reuses the guid — dedupe on it.
   if (!deps.store.recordDelivery(guid, event, action)) {
     log("webhook: duplicate delivery", { guid, event, action });
     return { status: 200, reason: "duplicate" };
@@ -559,7 +558,7 @@ export function handleDelivery(
     botCommentPr: (id) => deps.store.botCommentPr(id),
     blockedPrAuthor: (pr) => blockedPrAuthor(deps.store, pr),
   });
-  // the capture SIDE RECORD, taken beside the interpretation and
+  // The capture side record, taken beside the interpretation and
   // never instead of it. `interpretation` above is already decided and is not
   // read here — capture cannot divert a comment, cannot suppress one, and
   // cannot classify one. It also must not be able to break the receiver: a
@@ -732,7 +731,7 @@ export async function applyInterpretation(
       await deps.onSynchronize?.(i);
       return;
     case "closed": {
-      // capture the pre-close state — after applyEventFor it is
+      // Capture the pre-close state — after applyEventFor it is
       // gone. awaiting_author means a REQUEST_CHANGES stood at close.
       const priorState = store.getPr(i.pr)?.state;
       applyEventFor(store, i.pr, { type: "closed" }, i.meta, opts);
@@ -755,7 +754,7 @@ export async function applyInterpretation(
     case "bot_comment":
       store.registerBotComment(i.comment_id, i.pr, i.scope);
       return;
-    // pure tuning-loop signals — no state-machine event, no session
+    // Pure tuning-loop signals — no state-machine event, no session
     // wake, no reviewed_heads mark. The engine (wired by the daemon) owns
     // dedupe, the memory entry, and the same-day addendum rebuild.
     case "feedback_comment":

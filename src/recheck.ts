@@ -1,24 +1,21 @@
 // Post-approval delta recheck.
 //
-// The gap this closes: once a PR is approved nothing looks at it again. The
-// predecessor system's staleness gate caught 13 genuine post-approval
-// regressions (a regex reorder, a string-truncation rewrite, a classification
-// branch) — and cost 2.56M output tokens, 19% of all output, because its
-// predicate was `committedDate > submittedAt` with no notion of what changed.
-// So this is NOT that gate rebuilt: the delta is classified first, and the
-// standing verdict is UPHELD BY DEFAULT.
+// Once a PR is approved, a later change can still regress it. A staleness
+// check that re-reviews on every commit after the approval spends most of its
+// output concluding nothing changed, so the delta is classified first, and
+// the standing verdict is UPHELD BY DEFAULT.
 //
 // Shape of the mechanism:
 //
 //   trigger ──► planRecheck() ──► no-op (uphold, nothing posted, nothing spent)
 //                             └─► one nudge to the PR's OWN sticky session
 //
-// Four triggers, all decided (the owner, 2026-08-18): a push after an approve,
-// CI completing at the head, the base branch advancing, and an author reply.
-// The author reply is deliberately a no-op HERE: `src/pingpong.ts` already owns
-// that path (≤3 exchanges, reply + optional thread resolve) and a second reply
-// handler is exactly the duplication the ticket forbids. With no code delta
-// there is nothing to recheck; the value is the reply, which is already owned.
+// Four triggers: a push after an approve, CI completing at the head, the base
+// branch advancing, and an author reply. The author reply is deliberately a
+// no-op HERE: `src/pingpong.ts` already owns that path (≤3 exchanges, reply +
+// optional thread resolve) and a second reply handler would duplicate it.
+// With no code delta there is nothing to recheck; the value is the reply,
+// which is already owned.
 //
 // Invariants this module keeps structurally, not by prompting:
 //
@@ -26,14 +23,13 @@
 //     standing verdict is APPROVE, and the decision file accepts exactly two
 //     outcomes: `uphold` and `request_changes`. Anything else — including a
 //     literal "APPROVE" or "NEEDS_HUMAN" — is coerced to `uphold` and logged.
-//     The path can therefore never re-approve (138 repeat approvals / 1.86M
-//     output tokens in the old system) and never park.
+//     The path can therefore never re-approve and never park.
 //  2. **A trivial or empty delta costs one classification and a no-op.** That
 //     is what makes the broad trigger set affordable. A base advance touching
 //     no PR-owned file is the loudest instance and resolves to `empty-delta`.
 //  3. **An unchanged head with no new evidence is a no-op** — the same rule
-//     installed on the gate (`guards.hasNewEvidence`), read here off
-//     the same single `reviewed_heads` mark. There is no second copy.
+//     the gate's guard applies (`guards.hasNewEvidence`), read here off the
+//     same single `reviewed_heads` mark. There is no second copy.
 //  4. **Single shepherd.** The recheck is a nudge to the PR's existing `pr-<n>`
 //     session — no new session, no lens fan-out, no round. It goes through
 //     `wakeOrHold`, so a nudge arriving mid-round is held and flushed at round
@@ -256,8 +252,7 @@ export interface ClassifyOpts {
   /** Files hand-resolved inside a merge commit (their content differs from
    * git's own auto-merge of the parents). A clean base merge is trivial; a
    * conflict RESOLUTION is a human/agent decision and classifies significant
-   * even outside prFiles — the dropped-master-change bug lives exactly there
-   * (the owner, 2026-08-19). */
+   * even outside prFiles: a resolution can silently drop the base's change. */
   resolvedFiles?: ReadonlySet<string>;
 }
 
@@ -390,7 +385,7 @@ export type NoopReason =
   | "already-rechecked"
   | "no-delta-source"
   | "delivery-failed"
-  /** Deploy-window drain (2026-08-25): no nudge is generated while draining. */
+  /** Deploy-window drain: no nudge is generated while draining. */
   | "draining";
 
 export interface RecheckPlanInput {
@@ -413,7 +408,7 @@ export type RecheckPlan =
   | { action: "recheck"; class: DeltaClass; evidence: string; classification: DeltaClassification };
 
 /** CI conclusions that carry no bad news. Anything else at an approved head is
- * new evidence in the sense: something the standing review did not see. */
+ * new evidence (guard 2's sense): something the standing review did not see. */
 const CI_BENIGN = new Set(["success", "neutral", "skipped", "cancelled", "stale"]);
 
 export function ciIsAdverse(conclusion: string | null | undefined): boolean {
@@ -421,15 +416,10 @@ export function ciIsAdverse(conclusion: string | null | undefined): boolean {
   return !CI_BENIGN.has(conclusion.toLowerCase());
 }
 
-/**
- * The whole decision, pure. Order matters: the cheap structural refusals come
- * before anything that would cost a classification, and the classification
- * comes before anything that would cost a session turn.
- */
-/** Move a withheld-approval mark to a newer head after an uphold (the owner,
- * 2026-08-19). This is NOT a re-approve — the approval was never posted; the
- * retry still demands green CI at the new head before anything posts.
- * No mark, or a mark already at this head, is a silent no-op. */
+/** Move a withheld-approval mark to a newer head after an uphold. This is NOT
+ * a re-approve — the approval was never posted; the CI-gate retry still
+ * demands green CI at the new head before anything posts. No mark, or a mark
+ * already at this head, is a silent no-op. */
 export function carryWithheldMark(
   store: StateStore,
   pr: number,
@@ -439,12 +429,12 @@ export function carryWithheldMark(
 ): void {
   const withheld = store.approvalWithheld(pr);
   if (!withheld || withheld.head_sha === newHead) return;
-  // Only ever carry TO the PR's current head (selfscan 3ed511f1). Overlapping
-  // rechecks finish in any order: an older push's handler finishing after the
-  // newer one's would otherwise carry the mark BACK, and the ci_completed
-  // retry at the real head then no-ops on "head-moved" with the push
-  // backstop already claimed — stranded. Read and write are one synchronous
-  // stretch, so nothing can interleave between them.
+  // Only ever carry TO the PR's current head. Overlapping rechecks finish in
+  // any order: an older push's handler finishing after the newer one's would
+  // otherwise carry the mark BACK, and the ci_completed retry at the real head
+  // then no-ops on "head-moved" with the push backstop already claimed —
+  // stranded. Read and write are one synchronous stretch, so nothing can
+  // interleave between them.
   const current = store.getPr(pr)?.head_sha;
   if (current && current !== newHead) {
     store.logEvent("approval_withheld_carry_stale", pr, {
@@ -458,8 +448,8 @@ export function carryWithheldMark(
     );
     return;
   }
-  // the classifier verdict that caused the withhold rides along with
-  // the mark — the carried head has no fresher CI read to offer, and the
+  // The classifier verdict that caused the withhold rides along with the
+  // mark — the carried head has no fresher CI read to offer, and the CI-gate
   // retry re-classifies at release time anyway.
   store.recordApprovalWithheld(pr, {
     head_sha: newHead,
@@ -472,6 +462,11 @@ export function carryWithheldMark(
   );
 }
 
+/**
+ * The whole decision, pure. Order matters: the cheap structural refusals come
+ * before anything that would cost a classification, and the classification
+ * comes before anything that would cost a session turn.
+ */
 export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   const noop = (reason: NoopReason, classification?: DeltaClassification): RecheckPlan => ({
     action: "noop",
@@ -481,8 +476,8 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   });
 
   // The author-reply trigger is owned end to end by src/pingpong.ts. Nothing
-  // to recheck without a code delta, and a second reply handler is the failure
-  // mode the ticket names.
+  // to recheck without a code delta, and a second reply handler would
+  // duplicate it.
   if (input.trigger === "author_reply") return noop("pingpong-owns-reply");
 
   // Only a standing APPROVE can be moved by this path, and only downwards.
@@ -491,7 +486,7 @@ export function planRecheck(input: RecheckPlanInput): RecheckPlan {
   if (normalizeVerdict(input.standing) !== "APPROVE") return noop("no-standing-approval");
 
   const adverseCi = input.trigger === "ci" && ciIsAdverse(input.ci?.conclusion);
-  // The rule, read off the same mark: same head, nothing new ⇒ nothing
+  // Guard 2's rule, read off the same mark: same head, nothing new ⇒ nothing
   // to do. A base advance is exempt because its delta is on the base side, and
   // an adverse CI conclusion IS the new evidence.
   if (input.trigger !== "base_advance" && input.head_sha === input.last_reviewed_sha && !adverseCi)
@@ -536,7 +531,7 @@ export interface RecheckOrder {
   evidence: string;
   files: FileClass[];
   /** Files hand-resolved inside merge commits of this delta — the session
-   * must audit each against BOTH merge parents (the owner, 2026-08-19). */
+   * must audit each against BOTH merge parents. */
   resolved_files: string[];
   /** Relative name of the decision file the session must write. */
   decision_file: string;
@@ -592,14 +587,14 @@ export interface RecheckDeps {
   cfg: Config;
   store: StateStore;
   /** Partial: a daemon wired without the compare read simply never rechecks
-   * (logged), exactly as it behaved before this slice existed. */
+   * (logged). */
   adapter: Partial<RecheckAdapter>;
   /** SessionHooks.inject — the nudge goes to the PR's existing session. */
   inject: (pr: number, message: string) => Promise<void>;
   renderPrompt?: (order: RecheckOrder) => string;
   /**
-   * The repo-fact lessons for the delta's files (S9b, src/
-   * lessonselect.ts `repoFacts`), rendered as a section APPENDED to the
+   * The repo-fact lessons for the delta's files (src/lessonselect.ts
+   * `repoFacts`), rendered as a section APPENDED to the
    * nudge — "" unless `[memory] delivery = "on"`, so the nudge is otherwise
    * byte-identical. Bounded by the lesson prefetch's budget; a throw or a
    * rejection is "" (the nudge goes out without it).
@@ -614,7 +609,7 @@ export interface RecheckDeps {
   worktreeFor?: (pr: number) => string;
   /** Hand-resolved merge files between two shas (WorktreeManager
    * .resolvedFilesInMerges, wired by the daemon). Absent ⇒ merges classify by
-   * the ownership rule alone, as before the 2026-08-19 amendment. */
+   * the ownership rule alone. */
   resolvedFilesInMerges?: (
     from: string,
     to: string,
@@ -641,7 +636,7 @@ export type RecheckOutcome = RecheckPlan & {
 
 /**
  * The files the PR owns for delta classification: what it owns at the current
- * head PLUS what it owned at the REVIEWED head (selfscan 8dd186e2). A push that
+ * head PLUS what it owned at the REVIEWED head. A push that
  * restores a reviewed file to its base content drops it from the current diff,
  * yet that is the PR undoing its own reviewed change, not a base merge. The
  * second read happens only when a delta file falls outside today's ownership:
@@ -690,7 +685,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return plan;
   };
 
-  // Deploy-window drain (2026-08-25): generate no recheck nudge at all —
+  // Deploy-window drain: generate no recheck nudge at all —
   // prefer not creating work over hold-then-flush, because the session the
   // nudge would wake is about to be killed by the deploy. The reconcile
   // push-backstop re-raises the trigger after the lift.
@@ -729,8 +724,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
         ? await deps.adapter.compareFiles(req.base.before, req.base.after)
         : await deps.adapter.compareFiles(lastReviewed, head);
     prFiles = ownershipSet(await deps.adapter.listPrFiles(req.pr));
-    // Ownership is the union of the reviewed head's and the current head's
-    // (selfscan 8dd186e2) — see reviewedOwnership. A base advance leaves the
+    // Ownership is the union of the reviewed head's and the current head's —
+    // see reviewedOwnership. A base advance leaves the
     // head where it was reviewed, so there is nothing to revert. A truncated
     // listing leaves ownership unknown (undefined): every delta file is then
     // significant.
@@ -741,8 +736,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     // poll and the next trigger both come round again.
     log(`recheck: #${req.pr} delta read failed`, err);
     store.logEvent("recheck_delta_failed", req.pr, { trigger: req.trigger, error: String(err) });
-    // Durable anomaly row. QUIET class: DB-only, reviewed
-    // at the daily heartbeat — the reconcile poll retries this on its own.
+    // Durable anomaly row, quiet class: DB-only, reviewed at the daily
+    // heartbeat — the reconcile poll retries this on its own.
     store.logAnomaly(
       "recheck_delta_failed",
       req.pr,
@@ -752,9 +747,9 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     return done({ action: "noop", reason: "no-delta-source", class: "empty" });
   }
 
-  // Conflict resolutions are never trivial (the owner, 2026-08-19): ask git
-  // which files in this delta's merges were hand-resolved. Degraded/unknown
-  // keeps prior behaviour but is LOGGED — never silently quieter.
+  // Conflict resolutions are never trivial: ask git which files in this
+  // delta's merges were hand-resolved. Degraded/unknown classifies merges by
+  // the ownership rule alone, but is LOGGED — never silently quieter.
   let resolvedFiles: string[] = [];
   if (deps.resolvedFilesInMerges) {
     const from = req.trigger === "base_advance" && req.base ? req.base.before : lastReviewed;
@@ -763,8 +758,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     resolvedFiles = res.files;
     if (res.degraded) {
       store.logEvent("recheck_merge_verify_degraded", req.pr, { from, to });
-      // Durable anomaly record — degraded is "never silently
-      // quieter" (the owner, 2026-08-19), and now also never unqueryable.
+      // Durable anomaly record: a degraded check is never silently quieter,
+      // and never unqueryable.
       store.logAnomaly(
         "recheck_merge_verify_degraded",
         req.pr,
@@ -784,12 +779,12 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     resolvedFiles,
     ...(req.ci ? { ci: req.ci } : {}),
   });
-  // Carry-forward (the owner, 2026-08-19): a withheld approval whose head moved
-  // used to be stranded — the mark stayed pinned to the old sha, the retry
-  // no-op'd on "head-moved" forever, and the recheck can never approve. When
-  // the delta itself upholds (empty/trivial), the never-posted approval moves
-  // with the head, so green CI at the NEW head releases it. A significant
-  // delta carries only after the session's explicit uphold (watcher below).
+  // Carry-forward: a withheld approval pinned to an old sha would be stranded
+  // — the retry no-ops on "head-moved", and the recheck can never approve.
+  // When the delta itself upholds (empty/trivial), the never-posted approval
+  // moves with the head, so green CI at the NEW head releases it. A
+  // significant delta carries only after the session's explicit uphold
+  // (watcher below).
   if (plan.action === "noop") {
     if (
       (plan.reason === "empty-delta" || plan.reason === "trivial-delta") &&
@@ -800,7 +795,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
       // reconcile backstop (below in reconcile.ts) never re-classifies the
       // same question every sweep. No wake goes out, so no receipt token can
       // ever exist for it: `nudge: false` keeps the undelivered sweep from
-      // reading its absence as a lost nudge and releasing it (#5841).
+      // reading its absence as a lost nudge and releasing it.
       store.claimRecheck(req.pr, recheckFingerprint(req, head), {
         head_sha: head,
         trigger: req.trigger,
@@ -812,8 +807,8 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   }
 
   // The runaway guard: one nudge per (trigger, head, evidence). Without it a
-  // reconcile replay or a redelivered webhook re-asks the same question, which
-  // is how the old staleness gate burned 19% of all output.
+  // reconcile replay or a redelivered webhook re-asks the same question and
+  // pays for it every time.
   const fingerprint = recheckFingerprint(req, head);
   if (
     !store.claimRecheck(req.pr, fingerprint, {
@@ -844,7 +839,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     issued_at: now().toISOString(),
   };
   const render = deps.renderPrompt ?? defaultRecheckPrompt;
-  // the repo facts for the files the session must review
+  // The repo facts for the files the session must review
   // (the significant ones; every delta file when none is) — "" unless
   // lessons are delivered. Bounded and total: never a reason to hold or lose
   // the nudge.
@@ -867,17 +862,17 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
     }
     if (typeof facts !== "string") facts = "";
   }
-  // S4: mid-round nudges are held and flushed at round end — the PR's one main
+  // Mid-round nudges are held and flushed at round end — the PR's one main
   // pi is never given two instructions at once.
   let delivered: "injected" | "held";
   try {
     delivered = await wakeOrHold(
       { store, inject: deps.inject, log },
       req.pr,
-      // The receipt token (#5362 W2). A recheck claim is written BEFORE the
-      // nudge goes out and released only on a synchronous throw — which a
-      // bridge-level drop is not — so without a receipt an undelivered nudge
-      // left a claim that suppressed the reconcile backstop permanently.
+      // The receipt token. A recheck claim is written BEFORE the nudge goes
+      // out and released only on a synchronous throw — which a bridge-level
+      // drop is not — so the receipt is what lets the reconcile sweep release
+      // the claim of a nudge that never arrived.
       stampPrompt(
         facts ? `${render(order).replace(/\s+$/, "")}${facts}` : render(order),
         recheckPromptMarker(req.pr, fingerprint),
@@ -887,7 +882,7 @@ export async function runRecheck(deps: RecheckDeps, req: RecheckRequest): Promis
   } catch (err) {
     // A claim must not outlive a nudge that never reached the session — the
     // fingerprint would otherwise dedupe every retry and the delta is never
-    // audited (live on #5290: boot-order inject failure).
+    // audited.
     store.releaseRecheck(req.pr, fingerprint);
     store.logEvent("recheck_delivery_failed", req.pr, {
       trigger: req.trigger,
@@ -1033,27 +1028,26 @@ export interface RecheckWatcherDeps {
   cfg: Config;
   store: StateStore;
   verdictDir: string;
-  /** Ledger freshness enforcement, run after an uphold — the
-   * session just examined a significant delta, so its ledger should name the
-   * upheld head. Optional: absent (stubs, tests) ⇒ no check, exactly the
-   * legacy behaviour. Best-effort — never allowed to disturb the
-   * decision (the caller wraps it). */
+  /** Ledger freshness enforcement, run after an uphold — the session just
+   * examined a significant delta, so its ledger should name the upheld head.
+   * Optional: absent (stubs, tests) ⇒ no check. Best-effort — never allowed
+   * to disturb the decision (the caller wraps it). */
   checkLedger?: (pr: number, headSha: string) => Promise<void>;
   /**
-   * Where the session writes reasoning records — `<root>/state/
-   * findings`. A recheck that MOVES the verdict posts real findings, and
-   * "how often the review backs down" counts those too, so its
-   * record is parsed into the same rows.
+   * Where the session writes reasoning records — `<root>/state/findings`. A
+   * recheck that MOVES the verdict posts real findings, and "how often the
+   * review backs down" counts those too, so its record is parsed into the
+   * same rows.
    *
    * Deliberately weaker than the round path: read-if-present, never a nudge
    * and never an anomaly. A recheck has no round row and no deadline
-   * underneath it, so a claim-then-nudge here would be the unbounded pattern
-   * #5362 W4 warned about. Absent ⇒ nothing happens, exactly as before.
+   * underneath it, so a claim-then-nudge here would have nothing to bound it.
+   * Absent ⇒ nothing happens.
    */
   findingsDir?: string;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Partial-write tolerance (H1a, `src/settledread.ts`) — fs.watch
+  /** Partial-write tolerance (`src/settledread.ts`) — fs.watch
    * fires on creation, before the session's write completes; the same race,
    * and the same reader, as the VerdictWatcher's. `{ windowMs: 0 }` makes one
    * read decide (tests). */
@@ -1068,7 +1062,7 @@ export interface RecheckWatcherDeps {
  *
  * Neither outcome moves the reviewed-head mark. The mark records what was
  * really REVIEWED and posted; an upheld recheck posted nothing, and stamping
- * it would make's no-new-evidence guard swallow a genuine review
+ * it would make the no-new-evidence guard swallow a genuine review
  * re-request at that head. The recheck's own runaway guard is the `rechecks`
  * claim table instead.
  */
@@ -1096,7 +1090,7 @@ export class RecheckWatcher {
   }
 
   /** One PR's decisions in name order, different PRs side by side: a file
-   * still being written is waited out for seconds (H1a) and must not
+   * still being written is waited out for seconds and must not
    * hold another PR's decision behind it. */
   async sweep(): Promise<string[]> {
     if (!existsSync(this.deps.verdictDir)) return [];
@@ -1181,11 +1175,9 @@ export class RecheckWatcher {
       if (!existsSync(path)) return false;
       const pr = Number(match[1]);
       // fs.watch fires the moment the file appears, often before the
-      // session's write completes — an eager single read ate valid uphold
-      // decisions as "unparseable" (live on #5315, 2026-08-19), and three
-      // quick re-reads were not enough on a starved container either (#5885,
-      // H1a). An unparseable file is waited out while it is still
-      // moving; one that parses is judged at once.
+      // session's write completes, so a single eager read would discard valid
+      // decisions as "unparseable". An unparseable file is waited out while
+      // it is still moving; one that parses is judged at once.
       const read = await readSettledJson(path, resolvePartialWritePolicy(this.deps.partialWrite));
       if (read.kind === "missing") return false;
       const reads = read.reads;
@@ -1196,7 +1188,7 @@ export class RecheckWatcher {
       if (!parsed.ok || !parsed.decision) {
         // Malformed is the safe direction here — the standing verdict simply
         // stays standing. No park, no anomaly round, nothing posted. But say
-        // so out loud: the silent branch hid the partial-read race for hours.
+        // so out loud: a silent drop would hide a partial-read race.
         this.deps.store.logEvent("recheck_decision_malformed", pr, {
           file: name,
           error: parsed.error ?? "unknown",
@@ -1249,7 +1241,7 @@ export class RecheckWatcher {
       }
       if (d.outcome === "uphold") {
         // Session-examined significant delta, verdict upheld: the withheld
-        // approval (if any) follows the head (the owner, 2026-08-19).
+        // approval (if any) follows the head.
         carryWithheldMark(this.deps.store, pr, d.head_sha, "recheck-uphold", (m) =>
           this.deps.log?.(m),
         );

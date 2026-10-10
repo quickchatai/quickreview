@@ -1,7 +1,7 @@
-// Disk-logging SessionHooks stub. B3 owns the real tmux/pi session manager;
-// until it lands the daemon runs end-to-end against this: every round order,
-// injection and archive request is written under state/ where the tests and
-// the dry-run acceptance run can read it back.
+// Disk-logging SessionHooks stub: the daemon's default when no real session
+// manager (sessions.ts) is wired in, used by tests and CLI operations. Every
+// round order, injection and archive request is written under state/ where
+// the caller can read it back.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RoundOrder, SessionHooks } from "./types.js";

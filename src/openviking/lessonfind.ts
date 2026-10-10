@@ -1,23 +1,23 @@
-// `LessonEngine` over OpenViking (S9a): the round's lesson prefetch
+// `LessonEngine` over OpenViking: the round's lesson prefetch
 // (src/lessonselect.ts) asks the server through this, and through nothing
 // else.
 //
 // Each find is ONE `POST /api/v1/search/find` with `target_uri` set to the
-// area — `memories/experiences` for the round's one lesson find (F2;
-// its `limit` sized from the store's count of the area, `corpusSize`),
-// `memories/finding-cases` for the main session — so the server ranks INSIDE
-// the area instead of across
-// the tree (vendored patch 0011 sends a session's scoped search the same
-// way). No `session_id` rides the body, so the server runs no query
-// expansion, and the route has no rewrite stage: the selection is a pure
+// area — `memories/experiences` for the round's one lesson find (its `limit`
+// sized from the store's count of the area, `corpusSize`),
+// `memories/finding-cases` for the main session — so the server ranks inside
+// the area instead of across the tree (vendored patch 0011 sends a session's
+// scoped search the same way). No `session_id` rides the body, so the server
+// runs no query expansion, and the route has no rewrite stage: the selection is a pure
 // function of the round order and the store, like every other read on the
 // round path. The retired list is the store's last completed sweep — it
 // never waits for a sweep inside the round's budget once one has completed.
 //
-// ITS OWN CLIENT (`lessonFindClient`). The prefetch's finds run under the
-// round's hard budget (≤ 2 s) where every other memory read gets the client's
-// 10 s — so on a server that is merely slow (the one-thread embedder busy
-// with case writes) they are aborted at the deadline by design. Those aborts
+// Its own client (`lessonFindClient`). The prefetch's finds run under the
+// round's hard budget (`[memory] shadow_budget_ms`, or `delivery_budget_ms`,
+// at most 2 s, when the round waits), not the client's own 10 s timeout — so
+// on a server that is merely slow (the one-thread embedder busy with case
+// writes) they are aborted at the deadline by design. Those aborts
 // are the shadow ledger's business (recorded on the round, logged once by the
 // selector), never the memory-health monitor's: through the daemon's shared
 // client each one would be a `failed`/`transport` request in the health window
@@ -56,7 +56,7 @@ export function openVikingLessonEngine(
   store: Pick<OpenVikingStore, "retiredUris"> & Partial<Pick<OpenVikingStore, "areaSize">>,
 ): LessonEngine {
   return {
-    // F2: the lesson find's limit is sized from the store's own count
+    // The lesson find's limit is sized from the store's own count
     // of the area (its last sweep — no request, no wait); a store that cannot
     // count says unknown, and the find asks for the ceiling.
     corpusSize: (area) => {

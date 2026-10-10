@@ -1,14 +1,10 @@
-// The archived pi-memory file, READ ONLY — all that survives of the retired
-// hand-rolled engine.
-//
-// The engine itself is gone: no `memedit.mjs`, no `PiMemoryStore`, no ssh or
-// child-process transport, no write path of any kind. What remains is the
-// ability to READ the MEMORY.md the old engine left behind, because the
-// one-time curated import (`import.ts`) has to see it — and, after
-// the cutover, that file is the historical record, archived in place at 0444.
+// The archived pi-memory file (MEMORY.md), READ ONLY. It exists so the
+// one-time curated import (`import.ts`) can see it; the file itself is the
+// historical record, archived in place at 0444. There is no write path of any
+// kind here.
 //
 // This is deliberately NOT a `MemoryStore`. It is a `MemorySource`: `read()`
-// and nothing else. The seam has exactly ONE implementation now
+// and nothing else. The seam has exactly ONE implementation
 // (`src/openviking/store.ts`), and adding a second — even a read-only one —
 // would reopen the question of which engine a caller is talking to.
 //
@@ -32,8 +28,8 @@ export function legacyMemoryPath(): string {
 
 const HEADER_RE = /^<!--\s*(?:(?:last updated:|HANDOFF)\s+)?(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*-->\s*$/;
 
-/** sha1-12 of a block's exact text. The old engine's concurrency token; here
- * it only fills `MemoryEntry.hash` so a source entry is a well-formed entry. */
+/** sha1-12 of a block's exact text. It only fills `MemoryEntry.hash` so a
+ * source entry is a well-formed entry. */
 export function legacyBlockHash(text: string): string {
   return createHash("sha1").update(text, "utf8").digest("hex").slice(0, 12);
 }

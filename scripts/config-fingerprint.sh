@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# config-fingerprint.sh — the fingerprint of the config home a deploy ships
-#, for the deploy tab's "profile changed, not deployed".
+# config-fingerprint.sh — the fingerprint of the config home a deploy ships,
+# for the deploy tab's "profile changed, not deployed".
 #
 #   scripts/config-fingerprint.sh --located <checkout-root>
 #

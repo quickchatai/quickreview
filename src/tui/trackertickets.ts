@@ -54,7 +54,7 @@ export function orderTrackerTickets(tickets: TrackerTicket[]): TrackerTicket[] {
   });
 }
 
-/**: the effort is CONFIG (`[sink] tickets_effort`, falling back to
+/** The effort is CONFIG (`[sink] tickets_effort`, falling back to
  * the filer's `effort`), never a literal — index.ts wires both arguments. */
 export function readEffortTickets(root: string, effort: string): TrackerTicket[] {
   // A tracker root or effort that is not there is a read that FAILED (a

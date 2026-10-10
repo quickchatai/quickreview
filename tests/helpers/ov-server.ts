@@ -1,5 +1,5 @@
 // A small in-memory OpenViking for suites that drive the real
-// `OpenVikingStore` + `OpenVikingClient` (S7). The batch-write rules
+// `OpenVikingStore` + `OpenVikingClient`. The batch-write rules
 // are 0.4.15's (storage/content_write.py), as `tests/memory-layout.test.ts`
 // pins them: a root must be an existing directory INSIDE a memory area, every
 // target sits under it, every precondition is checked before the first write

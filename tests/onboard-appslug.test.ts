@@ -1,4 +1,4 @@
-// obligation ①: the App's REAL slug reconciled into config.toml.
+// The App's real slug, reconciled into config.toml.
 //
 // config_fill runs before the App exists, asks for a slug, and DERIVES
 // [github] bot_login from it. GitHub then makes the name globally unique (and

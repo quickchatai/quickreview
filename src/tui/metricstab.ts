@@ -1,17 +1,15 @@
-// `[6] metrics` — the aggregate dashboard: a Pulse-style stat
-// strip for the selected window, then width-adaptive cards over the
-// MetricsPayload `qcr metrics --json` produces, plus a per-PR timeline
-// drill-down from `qcr metrics --pr <n> --json`.
+// `[6] metrics` — the aggregate dashboard: a Pulse-style stat strip for the
+// selected window, then width-adaptive cards over the MetricsPayload
+// `qcr metrics --json` produces, plus a per-PR timeline drill-down from
+// `qcr metrics --pr <n> --json`.
 //
-// Presentation rules (2026-08-14 design review — "single row would work much
-// better"): a distribution is ONE chart row of per-bucket glyph columns with a
-// dim boundary row under it and its stats inline in the title, so a card is at
-// most title+chart+labels; bar lists keep one thin `█` bar per entity on a dim
-// `░` track with the value outside the bar in normal ink; text is never set
-// inside a filled block; every card owns a FIXED accent hue (five in rotation,
-// never adjacent) while entity bars keep their semantic colors; cards are
-// packed into 1/2/3 columns balanced by real rendered height, and a tall
-// terminal grows ACTIVITY into stacked multi-row column charts.
+// Presentation rules: a distribution is a small column chart (block glyphs on
+// a dim baseline, then dim rows of counts and bucket labels) with its stats
+// inline in the title; bar lists keep one `█` bar per entity with the value
+// at its end in normal ink; text is never set inside a filled block; every
+// card mark rides the one accent while entity bars keep their semantic
+// colors; cards stack in a single column, and a tall terminal grows ACTIVITY
+// into a stacked multi-row column chart.
 //
 // Read-only like every other tab: the only VM touch is the two qcr reads
 // through the shared ssh runner, cached stale-while-revalidate.
@@ -28,12 +26,8 @@ import type { App } from "./app.js";
 import { barHeight, paintCmdBar, type BarButton, type LiveKeys } from "./cmdbar.js";
 import { HEAD_ARGV, logArgv, type LocalRunner } from "./deploytab.js";
 import { keyChar, type BoardKey } from "./keys.js";
-// `MUTED` is LOAD-BEARING as of — it paints the TIME IN STATE card's
-// retired-state rows (see that card below). It was an unused import for a
-// while and reads like one at a glance, so: removing it is a compile error,
-// not a cleanup. Flagged here because the unused-symbol sweep
-// removed it independently, and a merge of the two auto-applies cleanly into
-// `TS2304: Cannot find name 'MUTED'` — a semantic conflict git cannot see.
+// `MUTED` is used (it paints the TIME IN STATE card's retired-state rows),
+// though it is easy to mistake for an unused import.
 import {
   ACCENT,
   ACCENT_BG,
@@ -57,10 +51,9 @@ import { FG, RESET, fmtAge, stateColor, verdictColor } from "./theme.js";
 
 const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
 
-/** Card accents — §8 ("muted + one accent") retired the five-hue
- * rotation: every card mark rides the ONE accent; red/green/state colors
- * remain only where they carry truth (verdicts, states, failures). The keys
- * survive so card definitions stay diff-stable. */
+/** Card accents — every card mark rides the one accent; red/green/state
+ * colors remain only where they carry truth (verdicts, states, failures).
+ * The hue keys are kept so card definitions stay diff-stable. */
 export const ACCENTS = {
   cyan: ACCENT,
   blue: ACCENT,
@@ -114,10 +107,10 @@ function labelWidth(width: number): number {
 }
 
 /**
- * `label ███░░░░      value` in exactly `width` cells. The bar is THIN — it
- * never eats more than 60% of the row — the unfilled remainder is a dim `░`
- * track so a bar end is readable, and the value sits outside the bar in
- * normal ink. `max <= 0` renders an empty track: a zero row is still a row.
+ * `label ███████ value` in exactly `width` cells. The bar scales across the
+ * room the label and value leave, and the value sits at its end, outside the
+ * bar, in normal ink. A zero value (or `max <= 0`) renders a dim `·`: a zero
+ * row is still a row.
  */
 export function hbar(
   label: string,
@@ -134,7 +127,7 @@ export function hbar(
   const avail = w - lw - 3 - vw; // gutters + one cell of right margin
   if (avail < 3) return fit(`${label} ${vt}`, w);
   // The bar scales across the whole row and the value rides at its end —
-  // no cap, no track run-out to the far margin (the owner, 2026-08-14).
+  // no cap, no track run-out to the far margin.
   const filled =
     max > 0 ? Math.min(avail, Math.max(value > 0 ? 1 : 0, Math.round((value / max) * avail))) : 0;
   const bar = filled > 0 ? `${color ?? ""}${"█".repeat(filled)}${color ? RESET : ""}` : dim("·");
@@ -148,17 +141,17 @@ export function distStats(dist: Dist, fmt: (v: number) => string = String): stri
 }
 
 /**
- * A whole distribution in TWO rows: one chart row of per-bucket glyph columns
- * (2–3 cells each, scaled to the max count, in the card's accent; an empty
- * bucket is a single dim `·`), and one dim row of bucket boundaries under it.
- * Stats live in the card title — see `distStats`.
+ * A whole distribution as a small column chart: four rows of per-bucket block
+ * columns scaled to the max count, in the card's accent, on a dim baseline,
+ * then a dim row of per-bucket counts (`·` for an empty bucket) and a dim row
+ * of bucket labels. Stats live in the card title — see `distStats`.
  */
 export function histogramLines(dist: Dist, width: number, color: string = FG.accent): string[] {
   if (dist.n === 0 || dist.histogram.length === 0) return []; // the title already reads "no data yet"
   const w = Math.max(4, Math.floor(width));
   const buckets = dist.histogram;
-  // Slots widen with the terminal (up to 12 cells) and the bars get real
-  // height — a small column chart, not a row of nubs (the owner, 2026-08-14).
+  // Slots widen with the terminal (up to 18 cells) and the bars get real
+  // height — a small column chart, not a row of nubs.
   // Buckets spread across the full width with a 2-space gap and sit on a dim
   // baseline, so the shape reads as one chart instead of floating strips.
   const slot = Math.max(3, Math.min(18, Math.floor((w + 2) / buckets.length)));
@@ -330,10 +323,9 @@ export function localHeadProbe(local: LocalRunner): LocalHeadProbe {
 export type MetricsWindowKey = "d7" | "d30" | "all";
 
 /**
- * The window switcher. Hotkeys are LETTERS — week / month / all — because the
- * digits `1`…`8` open the eight surfaces on every tab: the old `7`
- * for the 7-day window would have been a tab digit that did something else on
- * exactly one tab, which is the hidden-mode class the layout removed.
+ * The window switcher. Hotkeys are letters — week / month / all — because the
+ * digits `1`…`8` open the eight surfaces on every tab: a digit that did
+ * something else on exactly one tab would be a hidden mode.
  */
 export const WINDOW_LABELS: Array<{ key: MetricsWindowKey; label: string; hotkey: string }> = [
   { key: "d7", label: "7d", hotkey: "w" },
@@ -361,8 +353,8 @@ export interface MetricsView {
 
 // ---- cards ------------------------------------------------------------------
 
-/** Card title: the one section language; the accent param is retired
- * (§8 — one accent) but kept for signature stability. */
+/** Card title: the one section language; the accent param is unused (one
+ * accent) but kept for signature stability. */
 function section(title: string, subtitle: string, _accent: string = ACCENT): string {
   return sectionTitle(title, subtitle);
 }
@@ -371,7 +363,7 @@ export interface MetricsCard {
   title: string;
   /** Stats/meaning, rendered dim on the title row — the card's whole legend. */
   subtitle: string;
-  /** Fixed hue for this card's marks (never cycled, never reused adjacently). */
+  /** Accent for this card's marks (every `ACCENTS` key is the one accent). */
   accent: string;
   body: (width: number) => string[];
 }
@@ -407,7 +399,7 @@ function barsFromRecord(
 export const HEARTBEAT_STALE_S = 300;
 
 /**
- * The OPERATIONS card body: how the daemon is running (mode, heartbeat,
+ * The operations card body: how the daemon is running (mode, heartbeat,
  * concurrency), which commit it is running (BUILD_SHA marker) with an accented
  * "deploy needed" when the operator's checkout has moved past it, and the
  * window's aggregate event traffic as a thin bar list.
@@ -468,7 +460,7 @@ export function opsLines(
     for (const k of kinds.slice(0, 8))
       lines.push(hbar(k.kind, k.count, max, width, String(k.count), ACCENTS.magenta));
     if (kinds.length > 8) lines.push(dim(`…+${kinds.length - 8} more kinds`));
-    // §9.4: the all-time window counts rows the archiver moved out
+    // The all-time window counts rows the archiver moved out
     // of the live table too — say so, so the tally is never read as live.
     if (win.events_archived)
       lines.push(dim(`(incl. ${win.events_archived} archived row(s) — moved to archive/db)`));
@@ -477,15 +469,13 @@ export function opsLines(
 }
 
 /**
- * The CANCELLED ROUNDS card.
+ * The cancelled rounds card.
  *
- * A cancelled round used to leave no trace anywhere a human looks — 55 of them
- * since the cutover against 5 loud `overdue`s. The card exists to invert that,
- * and it groups by cause because an ungrouped total is worse than nothing
- * here: most cancellation is the boot orphan sweep after a redeploy (a
- * container restart orphans every in-flight round by construction), and that
- * bar stays in normal ink no matter how tall it gets. Only a round that
- * STOPPED DEAD is marked.
+ * It makes cancelled rounds visible, grouped by cause because an ungrouped
+ * total would mislead: most cancellation is the boot orphan sweep after a
+ * redeploy (a container restart orphans every in-flight round by
+ * construction), and that bar stays in normal ink no matter how tall it gets.
+ * Only a round that stopped dead is marked.
  */
 export function cancellationLines(win: MetricsWindow, width: number): string[] {
   const c = win.cancellations;
@@ -596,14 +586,11 @@ export function metricsCards(
         ),
     },
     {
-      // HISTORY, not current state: these buckets come from the
+      // History, not current state: these buckets come from the
       // `pr_transition` event log, so they can name a state the daemon has
-      // since retired. Such a row is MARKED `†`, carries its
-      // retirement date in the value column, and is painted MUTED — a
-      // deliberate choice, not the accident of a lookup miss. It used to be
-      // magenta purely because the park's state owned a colour, and when that
-      // colour was renamed to the verdict it belongs to, the row silently
-      // degraded to ordinary text and read like any other state.
+      // since retired. Such a row is marked `†`, carries its retirement date
+      // in the value column, and is painted MUTED on purpose, so it never
+      // reads like a current state.
       title: "TIME IN STATE",
       subtitle: `median dwell per state · ${RETIRED_STATE_MARK} = retired state, history only`,
       accent: ACCENTS.magenta,
@@ -693,13 +680,13 @@ export function metricsCards(
   ];
 }
 
-/** Always a single column — one card under the other (the owner, 2026-08-14). */
+/** Always a single column — one card under the other. */
 export function columnWidths(cols: number): number[] {
   return [cols - 2];
 }
 
 /**
- * Balance the cards across columns by their ACTUAL rendered height
+ * Balance the cards across columns by their actual rendered height
  * (longest-first bin packing, then original order restored inside each
  * column) so no column strands a screenful of dead rows.
  */
@@ -751,9 +738,9 @@ export function statStrip(win: MetricsWindow, width: number): string {
     `${FG.dim}rounds${RESET} ${STRONG}${h.rounds}${DRESET}`,
     `${FG.accent}$${h.spend_usd.toFixed(2)}${RESET}`,
     `${h.overruns > 0 ? WARN : FG.dim}overruns ${h.overruns}${RESET}`,
-    // the loud cancellations only — a round that stopped dead. The
-    // benign redeploy orphan sweep is in the card below, never in the strip:
-    // a tile that lights up after every deploy is a tile nobody reads.
+    // The loud cancellations only — a round that stopped dead. The benign
+    // redeploy orphan sweep is in the card below, never in the strip: a tile
+    // that lights up after every deploy is a tile nobody reads.
     // `undefined` means an older daemon does not report the field at all —
     // "?" not "0": a zero here reads as "nothing stopped dead".
     win.cancellations === undefined
@@ -850,12 +837,11 @@ export function timelineLines(tl: TimelinePayload, width: number, now: Date): st
 
 /**
  * What the metrics tab answers to on this frame: the `# <pr>` box owns the
- * digits while it is open (`1`…`7` decode as tab switches, and `keyChar`
+ * digits while it is open (`1`…`8` decode as tab switches, and `keyChar`
  * folds them back — without registering them here `#5265` would lose its 5
  * to the companion column); a drill-down answers to Esc; the dashboard to
- * the window hotkeys and `#`. ⏎ is offered ONLY inside the box: the dashboard
- * used to drill into the board's selected PR on a bare ⏎ that no bar or help
- * text ever named (a key that acts must be painted).
+ * the window hotkeys and `#`. ⏎ is offered only inside the box: a key that
+ * acts must be painted, and the dashboard paints no ⏎.
  */
 export function metricsKeys(view: MetricsView): LiveKeys {
   if (view.prEntry !== undefined) {

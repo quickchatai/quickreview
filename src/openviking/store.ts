@@ -1,13 +1,11 @@
-// `MemoryStore` over OpenViking — the engine swap behind the
-// seam. Nothing above this file learns that memory is now an HTTP server: the
-// TUI's verbs, the [feedback] sink and the companion feed keep addressing
-// entries by `(id, ts, block)` + an expected hash, exactly as they did against
-// MEMORY.md.
+// `MemoryStore` over OpenViking — the engine behind the memory seam. Nothing
+// above this file learns that memory is an HTTP server: the TUI's verbs, the
+// [feedback] sink and the companion feed address entries by
+// `(id, ts, block)` + an expected hash.
 //
-// THE SHAPE CHANGE, stated plainly: pi-memory kept every entry in ONE markdown
-// file, so an entry's address was its position inside that file. OpenViking
-// keeps one FILE PER ENTRY under `viking://user/<user>/memories/<category>/`,
-// so the address is the file. The seam's vocabulary survives the change:
+// OpenViking keeps one file per entry under
+// `viking://user/<user>/memories/<area>/`, so the address is the file. The
+// seam's vocabulary maps onto it:
 //
 //   id     `<category>/<stamp>-<suffix>.md` — the path under the memories
 //          root, extension included, so `id → uri` is exact rather than
@@ -18,7 +16,7 @@
 //   hash   `sha256:<hex>` of the stored bytes — the exact token batch-write's
 //          `replace_if_hash` precondition wants.
 //
-// WHY `content/read` IS A SAFE HASH SOURCE HERE, given the `MEMORY_FIELDS`
+// Why `content/read` is a safe hash source here, given the `MEMORY_FIELDS`
 // footgun: it is safe *because* of the rule above it, not despite it. Bare
 // `content/write` appends a footer that `content/read` strips, which makes
 // read → sha256 → write 409 forever; files written by `content/batch-write`
@@ -28,19 +26,20 @@
 // server holds. If that ever stops being true the symptom is a 409 on a fresh
 // read, which surfaces as an ordinary refusal, never as a lost update.
 //
-// TAGS COME IN TWO FLAVOURS AND THIS MODULE OWNS NEITHER VOCABULARY.
+// Tags come in two flavours, and this module owns neither vocabulary.
 //
-//   * `#hash-tags` are the seam's own convention: `#pinned` is a pin,
+//   * `#hash-tags` are the seam's own convention: `#pinned` rides an entry
+//     the pin verb moved (pinning itself is placement — see the layout),
 //     `#manual` marks the owner's own words, `#retired` is a retirement (and
 //     retired entries are filtered out of `read()`, which is what makes retire
 //     behave like retire). They are PREPENDED to the entry text, exactly as
 //     `src/memory/import.ts` and the [feedback] writer already spell them, so
 //     an entry means the same thing whichever store holds it.
-//   * `k=v` EVENT TAGS are the vocabulary (`kind=`, `pr=`, `day=`,
-//     `signal=`) that the curator filters on and the auto-filer queries. They
+//   * `k=v` event tags (`kind=`, `pr=`, `day=`, `signal=`) are the vocabulary
+//     that the curator filters on and the auto-filer queries. They
 //     ride the entry header too, and they are what this store mirrors onto
-//     OpenViking's NATIVE retrieval tag list. The parser is
-//     `parseEventTags` from `src/feedback.ts` — imported, never re-implemented:
+//     OpenViking's native retrieval tag list. The parser is
+//     `parseEventTags` from `src/memory/eventtags.ts` — imported, never re-implemented:
 //     it scans the HEADER only, so an untrusted PR body quoted later in the
 //     entry cannot mint itself a tag, and a second parser here would be free
 //     to disagree about exactly that.
@@ -50,7 +49,7 @@
 // metadata footer is precisely what the server reserves for its own extractor
 // and strips on read.
 //
-// THE LAYOUT (S5, the §1 areas — src/memory/layout.ts). An id
+// The layout (the areas of src/memory/layout.ts). An id
 // is `<area>/<file>`, an area one or two segments (`experiences`, `events`,
 // `preferences`, `preferences/pinned`), so the tree is listed THREE levels
 // deep. An entry is PINNED by placement — it sits in `preferences/pinned/` —
@@ -109,8 +108,7 @@ const TAG_TOKEN_RE = /(^|\s)#([\w-]+)/g;
 const LINK_RE = /\[\[([^\]]+)\]\]/g;
 
 /** An id is a relative path of one to three safe segments ending in a text
- * extension — `<file>`, `<area>/<file>` or `preferences/pinned/<file>` (the
- * §1 layout, S5). Anything else is refused rather than turned
+ * extension — `<file>`, `<area>/<file>` or `preferences/pinned/<file>`. Anything else is refused rather than turned
  * into a URI: an id ultimately comes back from a caller that got it from us,
  * and `..` in a path we interpolate is exactly the mistake worth making
  * structurally impossible. */
@@ -167,8 +165,7 @@ export function tagsOf(text: string): string[] {
  *
  * A tag goes at the FRONT, not into a footer line — that is where
  * `src/memory/import.ts` puts `#manual`/`#pinned`, where the [feedback] writer
- * puts `#feedback` and its `k=v` run, and where `parseEventTags` looks. It is
- * also what "pin = tag + top placement" means once entries are files.
+ * puts `#feedback` and its `k=v` run, and where `parseEventTags` looks.
  */
 export function renderEntryBody(text: string, addTags: readonly string[] = []): string {
   const trimmed = text.trim();
@@ -219,12 +216,11 @@ export function entryFrom(id: string, text: string, modTime: string): MemoryEntr
     text: trimmed,
     tags,
     links: [...trimmed.matchAll(LINK_RE)].map((m) => m[1]!),
-    // PLACEMENT, never text (S5): a pinned entry rides the guaranteed
+    // Placement, never text: a pinned entry rides the guaranteed
     // head of every round prompt, and that head reads `preferences/pinned/`
     // alone. An address is chosen by whoever writes the file (a `note` names
     // its area, or its own header-only `#pinned` does — `areaForNewEntry`), so
-    // text QUOTED inside an entry can never pin it. (Before S5 this was the
-    // header-only `#pinned` tag on an entry anywhere in the store.)
+    // text quoted inside an entry can never pin it.
     pinned: isPinnedId(id),
     // The hash is over the STORED bytes, not the trimmed text — it is a
     // precondition token for the server, not a digest of what we display.
@@ -255,13 +251,13 @@ export interface MemorySweep {
   /** The RETIRED entries the sweep read and kept out of `entries` (a
    * retirement and a move's `#moved` stub alike), oldest first. A timeline
    * never shows them; a caller that must know an entry once EXISTED does —
-   * the [feedback] backfill, before it writes a signal again (S5: a
-   * signal whose old entry was retired is not owed twice), and the relayout,
+   * the [feedback] backfill, before it writes a signal again (a signal
+   * whose old entry was retired is not owed twice), and the relayout,
    * which must neither move a retired entry nor write over a stub. */
   retired: MemoryEntry[];
 }
 
-/** The pinned area alone (S5): what the round's guaranteed head and
+/** The pinned area alone: what the round's guaranteed head and
  * the EOD pinned-area watchdog read. `unread` as in `MemorySweep`; an absent
  * pinned directory is known-empty, not unread. */
 export interface PinnedSweep {
@@ -269,7 +265,7 @@ export interface PinnedSweep {
   unread: string[];
 }
 
-/** One move or in-place rewrite for `OpenVikingStore.relocate` (S5). */
+/** One move or in-place rewrite for `OpenVikingStore.relocate`. */
 export interface RelocateItem {
   /** The entry as the plan read it. */
   id: string;
@@ -311,7 +307,7 @@ interface SweepRun {
 }
 
 /**
- * What one sweep cost (S3): how many files the listing named, how many
+ * What one sweep cost: how many files the listing named, how many
  * were READ, how many were answered from the per-file cache because their
  * size and modification time had not moved, and whether this was a periodic
  * FULL refresh (every file read). Observability and tests; never a decision.
@@ -355,11 +351,10 @@ export interface OpenVikingStoreOptions {
    * head EVERY round — without a cache that is the memory engine's largest
    * recurring cost, and CPU is the resource to watch on the 2-core quota. */
   cacheTtlMs?: number;
-  /** How often a sweep re-reads EVERY file (S3). In between, a sweep
-   * still lists every category but reads only the files whose size or
-   * modification time moved since this store last read them — the TUI's
-   * candidate sweeper, the companion and the daemon each re-read all ~176
-   * files every few minutes before (about 716 reads per 10 min). The full
+  /** How often a sweep re-reads every file. In between, a sweep still lists
+   * every category but reads only the files whose size or modification time
+   * moved since this store last read them, so the TUI, the companion and the
+   * daemon do not each re-read the whole store every few minutes. The full
    * refresh is the belt for a change the listing did not show. `0` makes
    * every sweep full. */
   fullRefreshMs?: number;
@@ -398,7 +393,7 @@ export class OpenVikingStore implements MemoryStore {
   private readonly cacheTtlMs: number;
   private readonly fullRefreshMs: number;
   private readonly onRetired: ((uris: readonly string[]) => void) | undefined;
-  /** The per-file cache behind the incremental sweep (S3), keyed by
+  /** The per-file cache behind the incremental sweep, keyed by
    * entry id. Survives `invalidate()` on purpose: invalidating means "list
    * again", and the listing says which files moved. */
   private known = new Map<string, KnownFile>();
@@ -413,15 +408,15 @@ export class OpenVikingStore implements MemoryStore {
    * record of that file is never adopted. */
   private forgotten = new Map<string, number>();
   private stats: SweepStats | null = null;
-  /** Files LISTED directly in each area by the last adopted sweep (
-   * F2, `areaSize`) — a count of the listing, so a file that failed to read
+  /** Files listed directly in each area by the last adopted sweep
+   * (`areaSize`) — a count of the listing, so a file that failed to read
    * still counts; an area whose listing failed keeps its last count (or is
    * `unknown` without one). Null until a sweep was adopted. */
   private listedByArea: { counts: Map<string, number>; unknown: Set<string> } | null = null;
 
   private cache: { at: number; run: SweepRun } | null = null;
   private inFlight: { gen: number; run: Promise<SweepRun> } | null = null;
-  /** The pinned area's own cache (S5) — same TTL and generation
+  /** The pinned area's own cache — same TTL and generation
    * rules as the sweep's. */
   private pinnedCache: { at: number; gen: number; sweep: PinnedSweep } | null = null;
   private pinnedInFlight: { gen: number; run: Promise<PinnedSweep> } | null = null;
@@ -475,7 +470,7 @@ export class OpenVikingStore implements MemoryStore {
   /**
    * How many files the last adopted sweep LISTED directly in `<root>/<area>/`
    * — retired ones and unread ones included, because the engine indexes them
-   * all (F2: what sizes the lesson find's `limit`). Synchronous, no
+   * all (it sizes the lesson find's `limit`). Synchronous, no
    * I/O, never starts or waits for a sweep (the round prefetch's
    * `retiredUris()` keeps the sweep fresh). Null before any sweep was
    * adopted, and for an area whose listing failed with no earlier count;
@@ -499,7 +494,7 @@ export class OpenVikingStore implements MemoryStore {
   /** Drop the sweep cache. Called after every successful write so a caller
    * that writes and immediately re-reads sees its own edit. The next sweep
    * LISTS again and re-reads every file whose size or modification time moved
-   * (S3) — the per-file cache is not dropped, because the listing is
+   * — the per-file cache is not dropped, because the listing is
    * what says which files changed; a write through THIS store also forgets
    * the file it wrote, so even a same-size edit inside one clock tick is read. */
   invalidate(): void {
@@ -521,9 +516,8 @@ export class OpenVikingStore implements MemoryStore {
    * To that resolver a namespace nobody has written to yet is not an empty
    * namespace — it is an absent one. It silently falls back to `user/default`,
    * whose `memories/` tree does not exist either, and every write is then
-   * refused. That is exactly what happened on 2026-08-21: the companion had
-   * been unable to write a single memory, and the error it surfaced ("access
-   * denied") named neither the namespace nor the missing directory.
+   * refused — with an error ("access denied") that names neither the
+   * namespace nor the missing directory.
    *
    * So the root is created EAGERLY for each namespace, before the companion
    * container starts and its extension caches that resolution. Idempotent
@@ -589,12 +583,10 @@ export class OpenVikingStore implements MemoryStore {
 
   /**
    * Start a sweep for the NEXT caller when the last one is older than the
-   * cache TTL — never awaited, never thrown (S5). Until S5 the
-   * round's pinned head swept the whole store every round, and that sweep is
-   * what kept the retired list (this store's exclusions, and the file the
-   * sessions' recall reads) fresh; the head now reads the pinned directory
-   * alone, so the round's context search refreshes the list itself, at the
-   * same cadence, off its critical path.
+   * cache TTL — never awaited, never thrown. The round's pinned head reads
+   * the pinned directory alone, so it is the round's context search that
+   * keeps the retired list (this store's exclusions, and the file the
+   * sessions' recall reads) fresh, through this, off its critical path.
    */
   private refreshInBackground(): void {
     if (this.inFlight && this.inFlight.gen === this.generation) return;
@@ -618,7 +610,7 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /**
-   * One sweep, INCREMENTAL since S3: every category is listed, and a
+   * One sweep, incremental: every category is listed, and a
    * file is read only when its listed size or modification time differs from
    * the read this store already holds (or it has none, or the listing carries
    * no modTime) — except on a periodic FULL refresh (`fullRefreshMs`), which
@@ -773,11 +765,11 @@ export class OpenVikingStore implements MemoryStore {
 
   /**
    * The memory tree, three levels deep: `<root>/<area>/<file>`,
-   * `<root>/<area>/<sub>/<file>` (the §1 `preferences/pinned/`,
-   * S5 — it was two levels before the layout was built) plus any file sitting
-   * directly in the root — every area but the ones `SWEEP_EXCLUDED_AREAS`
-   * names (`finding-cases/`, the daemon's derived documents: S7, written by
-   * `putDocuments`, read through the server's search alone). A bounded depth is the whole convention — a
+   * `<root>/<area>/<sub>/<file>` (`preferences/pinned/`) plus any file
+   * sitting directly in the root — every area but the ones
+   * `SWEEP_EXCLUDED_AREAS` names (`finding-cases/`, the daemon's derived
+   * documents, written by `putDocuments` and read through the server's search
+   * alone). A bounded depth is the whole convention — a
    * recursive walk against a store this system fully owns would only ever be
    * finding files it did not write.
    *
@@ -806,7 +798,7 @@ export class OpenVikingStore implements MemoryStore {
     for (const row of top.result) {
       if (row.isDir) {
         // `finding-cases/` is the daemon's derived documents, not curated memory
-        // (S7, `SWEEP_EXCLUDED_AREAS`): never listed here.
+        // (`SWEEP_EXCLUDED_AREAS`): never listed here.
         if (!row.name.startsWith(".") && !SWEEP_EXCLUDED_AREAS.includes(row.name))
           dirs.push(row.name);
       } else if (isTextFile(row.name)) {
@@ -838,7 +830,7 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /**
-   * The PINNED area and nothing else (S5): one listing of
+   * The pinned area and nothing else: one listing of
    * `preferences/pinned/` and a read of every file in it — never the rest of
    * the store, never a file from the incremental cache (the head is exact:
    * every byte read now). Cached for `cacheTtlMs` like a sweep, and dropped by
@@ -933,8 +925,7 @@ export class OpenVikingStore implements MemoryStore {
    */
   async apply(op: MemoryOp): Promise<MemoryWriteResult> {
     try {
-      // The owner's own words are standing instructions: `preferences/`
-      // (§1; S5 — they used to land among the lessons).
+      // The owner's own words are standing instructions: `preferences/`.
       if (op.op === "add")
         return await this.create(renderEntryBody(op.text, [MANUAL_TAG]), PREFERENCES_AREA);
       if (op.op === "note") {
@@ -977,7 +968,7 @@ export class OpenVikingStore implements MemoryStore {
           message: "refused: the entry changed since you read it — re-read it and retry",
         };
       }
-      // Pin and unpin MOVE the entry (S5): into the pinned area, and
+      // Pin and unpin move the entry: into the pinned area, and
       // back to where it came from. On an entry already where the verb would
       // put it, they only fix its tag in place.
       if (op.op === "pin" && !isPinnedId(op.id)) {
@@ -1022,7 +1013,7 @@ export class OpenVikingStore implements MemoryStore {
   private rewrite(op: MemoryOp, text: string): string | null {
     switch (op.op) {
       case "edit":
-        // Verbatim, exactly like pi-memory's edit: the caller supplies the
+        // Verbatim: the caller supplies the
         // whole block, tags included, and gets what it wrote.
         return renderEntryBody(op.text);
       case "pin":
@@ -1042,7 +1033,7 @@ export class OpenVikingStore implements MemoryStore {
    * retried under a fresh name — two writers in the same second is ordinary,
    * losing one of their entries is not.
    *
-   * A NAMED create (S2, `note` with `name`) is never renamed: the
+   * A named create (`note` with `name`) is never renamed: the
    * address IS the writer's idempotency key. The server answers a replay of
    * the same bytes `unchanged` (landed — a plain success), and a 409 there
    * means the address already holds other bytes, which is KEPT and reported
@@ -1150,7 +1141,7 @@ export class OpenVikingStore implements MemoryStore {
   }
 
   /**
-   * Move one entry (S5): create `to` holding `body`, then replace
+   * Move one entry: create `to` holding `body`, then replace
    * `from` — still the bytes hashed `expect`, or nothing happens — with the
    * `#moved` stub. Two batch-writes, each under its own directory: the server
    * locks the root it writes under, and that root must be a directory inside
@@ -1362,7 +1353,7 @@ export class OpenVikingStore implements MemoryStore {
 
   /**
    * Many moves and in-place rewrites at once — the relayout's executor
-   * (S5, `qcr memory relayout --apply`), and nothing else's.
+   * (`qcr memory relayout --apply`), and nothing else's.
    *
    * Every write is a batch-write with a precondition, ONE per directory root
    * (chunked at the server's 256 operations): first every new copy
@@ -1557,8 +1548,7 @@ export class OpenVikingStore implements MemoryStore {
 
   /**
    * Many named DOCUMENTS, each created or replaced under its own
-   * precondition (S7 — the daemon's finding cases; the seam's
-   * `putDocuments`). ONE batch-write per area directory (chunked at the
+   * precondition (the daemon's finding cases; the seam's `putDocuments`). ONE batch-write per area directory (chunked at the
    * server's 256), so writing twenty cases is one write, never twenty.
    *
    * A batch is all-or-nothing at its preconditions (the server checks every
@@ -1797,7 +1787,7 @@ export class OpenVikingStore implements MemoryStore {
    * Mirror the entry's EVENT TAGS onto OpenViking's native retrieval tag list,
    * so a `tags`-filtered search finds it server-side.
    *
-   * The vocabulary and the extraction are `src/feedback.ts`'s
+   * The vocabulary and the extraction are `src/memory/eventtags.ts`'s
    * (`parseEventTags` — header-only, so quoted human text cannot mint a tag);
    * this store only carries them across. BEST-EFFORT by contract: the tags are
    * already inside the bytes just committed and every reader re-parses them
@@ -1823,8 +1813,7 @@ export class OpenVikingStore implements MemoryStore {
  * server answered and refused — any 4xx: a precondition (checked before the
  * first write), a busy lock, a missing root, a bad request, auth. No answer
  * at all (status 0: a timeout, a lost connection) and a 5xx prove nothing:
- * the batch may have committed after its answer was lost (S5 — the
- * S2 failure class, "a write that committed but timed out"). */
+ * the batch may have committed after its answer was lost. */
 export function provenUnwritten(res: {
   status: number;
   conflict: boolean;

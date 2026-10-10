@@ -1,7 +1,7 @@
-// Near-duplicate collapse in the scan findings store (scan-loop). Stage 2 of
-// the self-scan reported the same defect twice — from two rows of one lens,
-// or from two lenses — under different fingerprints, because the fingerprint
-// hashes the anchored code and the lens. The store now collapses a fresh
+// Near-duplicate collapse in the scan findings store. A scan can report the
+// same defect twice — from two rows of one lens, or from two lenses — under
+// different fingerprints, because the fingerprint hashes the anchored code
+// and the lens. The store collapses a fresh
 // finding into a stored one when both are the same file, the same kind, near
 // ranges and highly similar claims: one finding, the highest severity, every
 // lens that raised it, the absorbed fingerprints kept as aliases so exact
@@ -45,7 +45,7 @@ function reported(fp: string, over: Partial<ReportedFinding> = {}): ReportedFind
   };
 }
 
-// The two real pairs selfscan stage 2 emitted in src/commands.ts.
+// Two real near-duplicate pairs a stage-2 scan emitted in src/commands.ts.
 const A932 = reported("aa".repeat(32), {
   start: 932,
   end: 932,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# smoke-companion.sh — the manual checklist for the local companion
-# (slice C3). `npm run smoke:companion`.
+# smoke-companion.sh — the manual checklist for the local companion.
+# `npm run smoke:companion`.
 #
 # Unlike scripts/companion-e2e.sh (throwaway container, fake sinks, proves the
 # plumbing) this walks the REAL companion the way `qcr tui` does it:
@@ -8,7 +8,8 @@
 #   1. the image builds / is present
 #   2. qcr companion up → status running → adopt is idempotent
 #   3. pi auth persisted on the pihome volume (SKIPPED until /login has run)
-#   4. the container can read the VM over ssh (agent + ~/.ssh mounts)
+#   4. the container holds no VM credential (ssh to the VM fails) and
+#      reaches OpenViking through the memory forward instead
 #   5. an overseer inject lands in the daemon's inject dir — DRY BY DEFAULT:
 #      prints the exact command; only --live actually writes to the VM
 #   6. daily rollover on a faked date (QCR_FAKE_TODAY) against the real
@@ -91,9 +92,9 @@ else
 fi
 
 # --- 4. no ssh from inside the container; memory reachable instead -----------
-# REMOVED the companion's ~/.ssh mount and agent socket: it holds no VM
-# credential. So ssh working in here is now a FAILURE, not a pass, and the
-# container's window onto the VM is the OpenViking forward.
+# The companion has no ~/.ssh mount and no agent socket: it holds no VM
+# credential. So ssh working in here is a FAILURE, and the container's window
+# onto the VM is the OpenViking forward.
 step "companion holds no VM credential"
 if docker exec "$CONTAINER" ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" true >"$WORK/ssh.log" 2>&1; then
   fail "ssh $SSH_HOST works inside the container — the credential boundary (rule 8) has regressed"

@@ -82,7 +82,7 @@ describe("severity → tag mapping (spec §5)", () => {
   });
 });
 
-// an ask-your-human question leads with its own marker, before the
+// An ask-your-human question leads with its own marker, before the
 // ordinary posting tag — the first line is what routes the comment to a person
 // via the implementer, and the reviewed repo's directives key on it.
 describe("the [ask your human] marker on an inline comment", () => {
@@ -170,7 +170,7 @@ describe("assembleReview", () => {
     expect(body.indexOf("### Nits")).toBeLessThan(body.indexOf("### Questions"));
     expect(body).toContain("`app/x.py:2`");
     expect(body.trimEnd().endsWith(reviewFooter())).toBe(true);
-    // no configured login degrades to the role, never a personal name.
+    // No configured login degrades to the role, never a personal name.
     expect(reviewFooter()).toContain("`the review bot`");
     expect(reviewFooter("example-review[bot]")).toContain("`example-review[bot]`");
     expect(body).not.toContain("owner_legacy");
@@ -260,11 +260,10 @@ describe("assembleReview", () => {
     expect(body).toContain("unclear ordering");
   });
 
-  // carried-over findings are POINTED AT, never restated. The old
-  // "Previously deferred, unchanged" section re-narrated each one into the body
-  // where the author pays for it, while the ledger and the finding's own live
-  // thread already carry that state — 14.2% of the corpus's findings were this
-  // shape. Nothing is dropped: the threads are untouched.
+  // Carried-over findings are POINTED AT, never restated: re-narrating each
+  // one into the body makes the author pay for it again, while the ledger and
+  // the finding's own live thread already carry that state. Nothing is
+  // dropped: the threads are untouched.
   it("points at carried-over findings in one line, and restates none of them", () => {
     const review = assembleReview({
       pr: 4,
@@ -303,7 +302,7 @@ describe("assembleReview", () => {
   });
 });
 
-// ----: the deferral marker ------------------------------------------
+// ---- the deferral marker ---------------------------------------------------
 describe("the [deferred] marker", () => {
   it("leads the comment, before the posting tag", () => {
     const body = inlineBody(
@@ -335,7 +334,7 @@ describe("the [deferred] marker", () => {
   });
 });
 
-// ----: the closed tag grammar --------------------------------------
+// ---- the closed tag grammar ------------------------------------------------
 //
 // An invented tag is not a style problem: the tag is what the posting guards,
 // resolveOwnReviewThread's refusals and every downstream consumer key on, so a

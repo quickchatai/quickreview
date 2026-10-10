@@ -21,16 +21,16 @@
 //     only keys whose value actually changes are edited. A re-run with every
 //     answer kept produces a byte-identical file and does not touch the disk.
 //
-// RULE 1 (dry_run is the owner's flag alone) is structural here, not prompted:
+// Rule 1 (dry_run is the owner's flag alone) is structural here, not prompted:
 // no question and no derivable targets `dry_run`, `assertNoDryRunEdit` refuses
 // any edit that names it however it is spelled, and the fresh-fill path ships
 // whatever the template ships (true). An existing config's flag — flipped or
-// not — is carried through untouched; this step cannot move it in EITHER
-// direction. The explicit, offered go-live flip is, and its own act.
+// not — is carried through untouched; this step cannot move it in either
+// direction. The explicit, offered go-live flip belongs to golive.ts alone.
 //
-// SECRETS ARE NOT COLLECTED HERE and their validators are not duplicated:
+// Secrets are not collected here and their validators are not duplicated:
 // `deploy/collect-secrets.sh` owns pasted-secret prompting and validation, and
-//'s manifest exchange writes the App credentials straight into the
+// the GitHub App step's manifest exchange writes the App credentials straight into the
 // secrets dir. This step only reports which of that wizard's required files
 // exist yet, reading the `deploy_shape` marker the wizard itself writes.
 //
@@ -53,9 +53,9 @@ import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../en
 
 export const CONFIG_FILL_STEP_ID = "config_fill";
 
-/** The choice keys this step reads and writes live in ONE place for the whole
- * wizard (src/onboard/choices.ts) — re-exported here because this
- * step was their first home and half the wizard imports them from it. */
+/** The choice keys this step reads and writes live in one place for the whole
+ * wizard (src/onboard/choices.ts) — re-exported here because half the wizard
+ * imports them from this module. */
 export { CHOICE_KEYS };
 
 // ---- comment-preserving TOML patch ------------------------------------------
@@ -654,8 +654,7 @@ export function templatePathFor(root: string): string {
   return join(root, "config.example.toml");
 }
 
-/** Empty = the install locator's answer: `<config home>/secrets`,
- * else the legacy dir while it still holds the secrets. */
+/** Empty = the install locator's answer: `<config home>/secrets`. */
 export const DEFAULT_SECRETS_DIR = "";
 
 /** The secret files `deploy/collect-secrets.sh` requires, by deployment shape.
@@ -888,8 +887,8 @@ function recordChoices(
   ctx.recordChoice(CHOICE_KEYS.dryRun, parsed.dry_run);
   // The label NAMES this installation triggers on, straight off the file the
   // daemon itself reads — so the App step creates the labels this config
-  // means rather than the shipped defaults (the App step read this
-  // key and nothing wrote it, so a customised label name was silently lost).
+  // means rather than the shipped defaults (a customised label name would
+  // otherwise be lost).
   ctx.recordChoice(CHOICE_KEYS.labels, {
     trigger: parsed.github.trigger_label,
     in_progress: parsed.github.in_progress_label,
@@ -1166,7 +1165,7 @@ export function configFillStep(): OnboardingStep {
         );
       }
       // dry_run is REPORTED, never judged: true is the shipped posture and
-      // false is the owner's own ratified flip (rule 1). Neither is red.
+      // false is the owner's own flip (rule 1). Neither is red.
       checks.push({
         name: "dry_run",
         ok: true,

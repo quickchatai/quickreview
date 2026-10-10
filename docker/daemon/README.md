@@ -54,9 +54,9 @@ symlink migration, which the double mount deliberately skips.
   - `openai_embeddings_api_key` — optional, and only under the hosted-embeddings
     opt-in (`config.toml [openviking] embedding_provider = "openai"`, carried
     into the container as `QCR_OPENVIKING_EMBEDDING_*` in the project `.env`).
-    By default the memory engine embeds LOCALLY inside the container and
-    nothing but the model call leaves the machine (;
-    [docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
+    By default the memory engine embeds locally inside the container and
+    nothing but the model call leaves the machine
+    ([docs/memory-embeddings.md](../../docs/memory-embeddings.md)).
   - `openviking_root_key`, `openviking_reviewer_key` — optional; without the
     root key the memory engine degrades loudly to `auth_mode=dev` (no
     per-user confinement) rather than blocking the boot.
@@ -71,8 +71,8 @@ symlink migration, which the double mount deliberately skips.
 The container publishes exactly one port: the webhook port, `8787`, bound to
 `127.0.0.1` by default (`QCR_WEBHOOK_BIND` / `QCR_WEBHOOK_PORT` to change).
 **Any HTTPS proxy or tunnel that forwards your webhook hostname to that port
-works** — the GitHub App just needs a reachable HTTPS webhook URL. Since
-the compose file carries the three tunnel shapes as optional sidecars,
+works** — the GitHub App just needs a reachable HTTPS webhook URL. The
+compose file carries the three tunnel shapes as optional sidecars,
 each behind its own profile, and the onboarding wizard's ingress step picks one
 for you (it writes `COMPOSE_PROFILES` into the project `.env` and the matching
 `[ingress]` block into `config.toml`). **With no profile selected you get the
@@ -89,8 +89,8 @@ The rotating hostname is safe because the daemon fixes itself: the sidecar
 writes its assigned **bare hostname** to `/ingress/hostname` on the shared
 `qcr-ingress` volume, which the daemon sees at
 `/opt/quickreview/state/ingress/hostname` — the default `[ingress] hostname_file`
-— and re-points the GitHub App's own webhook URL when it changes (,
-`src/webhookheal.ts`; the one mutation class that executes even in dry-run).
+— and re-points the GitHub App's own webhook URL when it changes
+(`src/webhookheal.ts`; the one mutation class that executes even in dry-run).
 A sidecar restart is therefore a non-event: a new name is written, the daemon
 follows it, and the reconcile poll covers the seconds in between.
 
@@ -136,7 +136,7 @@ The image versions are ARG defaults in the `Dockerfile`:
 | `PI_VERSION` / `PI_NPM_PACKAGE` | `config.toml [pi]` = `group_vars pi_version`/`pi_npm_package` |
 | `OPENVIKING_VERSION` | `config.toml [openviking] version` = `group_vars openviking_version` |
 | `LLAMA_CPP_PYTHON_VERSION` | same triple mirror (undeclared-but-required embedder dep) |
-| `LOCAL_EMBEDDER_MODEL` / `_DIR` / `_URL` / `_SHA256` | the local English embedder's model file (S4): `config.toml [openviking] local_embedder_file`/`_url`/`_sha256` = `group_vars openviking_local_embedder_*`; downloaded at build time and refused unless its sha256 matches |
+| `LOCAL_EMBEDDER_MODEL` / `_DIR` / `_URL` / `_SHA256` | the local English embedder's model file: `config.toml [openviking] local_embedder_file`/`_url`/`_sha256` = `group_vars openviking_local_embedder_*`; downloaded at build time and refused unless its sha256 matches |
 | `TMUX_VERSION`, `NODE_MAJOR`, `OPENVIKING_VENV`, `WEBHOOK_PORT` | `group_vars` |
 
 `tests/docker-daemon.test.ts` fails the moment a default drifts from
@@ -158,8 +158,8 @@ Runtime knobs (OpenViking port/workers/auth mode/key file names/…) are
 - The no-stall trust layers ride the image/entrypoint: `defaultProjectTrust =
   "always"` and a pre-seeded `trust.json` for `/opt/quickreview` (the third
   layer, `--approve`, is on every pi spawn in `src/sessions.ts`).
-- Subagents are pi's own first-party extension inside the pinned pi package
-  — both images only verify the shipped example exists; the fan-out
+- Subagents are pi's own first-party extension inside the pinned pi package —
+  both images only verify the shipped example exists; the fan-out
   cap rides `config.toml [pi] subagent_max_concurrency`, not an image file.
 - The one intentional difference: versions arrive as build ARGs instead of
   Jinja variables, and runtime knobs as env vars instead of template

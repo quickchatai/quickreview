@@ -23,9 +23,7 @@ from this recipe.
 > …)` takes instead of `memState`; and the `changes` tab is the CHANGED pane of
 > `[7] feedback`. `docs/tui.md` is the current vocabulary.
 
-> **Added 2026-10-07 (S5), withdrawn by the integration review the
-> same morning, restored by the owner's ruling R7 (S8b — root
-> CLAUDE.md rule 8's fourth amendment).** `memory_pin` — `{"entry": "<TUI id
+> **Added 2026-10-07 (root CLAUDE.md rule 8's fourth amendment).** `memory_pin` — `{"entry": "<TUI id
 > or viking:// URI>", "pin": true|false}` — pins or unpins one EXISTING memory
 > entry, and is the channel's one memory verb and its one ASYNCHRONOUS verb:
 > `TuiDriver.memoryPin` returns a promise (a fresh read through the TUI's
@@ -42,8 +40,8 @@ from this recipe.
 `src/tui/actions.ts` and `src/tui/filters.ts` are self-contained; nothing
 imports them yet. This document is the exact insertion recipe. All edits are
 in `src/tui/index.ts` plus one-line consumption changes in `board.ts` /
-`app.ts` / `memtab.ts`. Instant execution (no confirm gate) is the ratified
-decision — do not add one while wiring.
+`app.ts` / `memtab.ts`. Instant execution (no confirm gate) is deliberate —
+do not add one while wiring.
 
 ## 1. Where the watcher lives: `src/tui/index.ts`, the `if (companionUp)` block
 

@@ -1,7 +1,7 @@
-// boot provisioning for `auth_mode: "api_key"`.
+// Boot provisioning for `auth_mode: "api_key"`.
 //
-// Three properties are pinned here, and each is an acceptance criterion of the
-// ticket rather than an implementation detail:
+// Three properties are pinned here, and each is a contract rather than an
+// implementation detail:
 //
 //   1. IDEMPOTENCE. Re-running creates nothing and rotates nothing. A user that
 //      is already there is left exactly as it is; an unreadable listing creates
@@ -26,7 +26,7 @@ import {
 import { StateStore, type AnomalyRecord } from "../src/state.js";
 // A plain-JS script, deliberately dependency-free so the container entrypoint
 // can run it before any TypeScript build exists. `tsconfig.tests.json` sets
-// `allowJs`, so tsc now INFERS its exported shapes and this import needs no
+// `allowJs`, so tsc infers its exported shapes and this import needs no
 // suppression — which is what makes the call sites below checked.
 import * as prov from "../scripts/openviking-provision.mjs";
 
@@ -344,11 +344,11 @@ describe("the temporary provisioning server", () => {
   });
 });
 
-// S4 (review) — the local embedder may not cost the boot a minute,
+// The local embedder may not cost the boot a minute,
 // and may not take the users and keys down with it.
 describe("the provisioning embedder: a dead one ends the wait, and never blocks provisioning", () => {
-  // What a REAL 0.4.15 answered on /ready with its embedder unreachable
-  // (scratch venv, 2026-10-07): 503 after ~9.5 s, everything ok but embedding.
+  // What a real 0.4.15 answers on /ready with its embedder unreachable:
+  // 503 after ~9.5 s, everything ok but embedding.
   const DEAD_EMBEDDER_READY = {
     status: "not_ready",
     checks: {
@@ -543,11 +543,10 @@ describe("the provisioning embedder: a dead one ends the wait, and never blocks 
 });
 
 describe("stopServerChild — the boot can never hang on the temporary server", () => {
-  // Adversarial finding (P2): the child was only ever sent SIGTERM and never
-  // unref'd, so a server that trapped SIGTERM kept the node event loop alive
-  // forever — and the entrypoint's `|| true` never fired because node never
-  // exited. The stop is now SIGTERM → bounded grace → SIGKILL, with the child
-  // unref'd so even that cannot keep the loop alive.
+  // A server that traps SIGTERM must not keep the node event loop alive (the
+  // entrypoint's `|| true` only fires once node exits). The stop is SIGTERM →
+  // bounded grace → SIGKILL, with the child unref'd so even that cannot keep
+  // the loop alive.
   interface FakeChild {
     kills: string[];
     unrefs: number;
@@ -610,7 +609,7 @@ describe("stopServerChild — the boot can never hang on the temporary server", 
     expect(mainBody).toContain("stopServerChild(child)");
   });
 
-  // under the local English embedder the server's /ready probes
+  // Under the local English embedder the server's /ready probes
   // the loopback service, so the provisioning step runs it FIRST, for the same
   // foreground step, and stops it on every exit path — after the server.
   it("main() starts the local embedder before its server and stops it on every exit path, after the server", () => {
@@ -668,8 +667,8 @@ describe("cli surface", () => {
   });
 });
 
-// the boot log reached nobody, so the run now leaves a REPORT the
-// daemon reads at boot (status.json `memory.provision`, and a
+// The boot log reaches nobody, so the run leaves a report the daemon reads at
+// boot (status.json `memory.provision`, and a
 // `memory_provision_failed` wake on a failure or a recreated user).
 describe("the provisioning report", () => {
   const listing = (users: string[]) => ({
@@ -893,7 +892,7 @@ describe("the daemon's reading of the report (src/openviking/provisionreport.ts)
   });
 });
 
-// The boot step itself — where a report BECOMES a wake (S1). Driven
+// The boot step itself — where a report becomes a wake. Driven
 // against a real StateStore with its anomaly sink attached, which is exactly
 // the funnel wire.ts hands it: a row in the anomaly table, and the signal the
 // overseer's wake policy reads.

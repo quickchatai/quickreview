@@ -1,10 +1,9 @@
-// The loosened-test hint (the owner's 2026-10-03 decision, gap plan): a
-// deterministic scan of the diff of TEST files for assertions the PR weakens.
-// The prompt-only rule (`tests-loosened-is-behaviour`) fired once in 556
-// round-1 comments and a previously found "tests weakened to a vacuous >= 1"
-// defect was lost, so the hits are now computed here and handed to pass-tests
-// as concrete candidates (dispatch.ts: the row's reason names each site). The
-// lens decides whether a weakening hides a behaviour change; this only points.
+// The loosened-test hint: a deterministic scan of the diff of TEST files for
+// assertions the PR weakens. A prompt-only rule (`tests-loosened-is-behaviour`)
+// rarely fires on its own, so the hits are computed here and handed to
+// pass-tests as concrete candidates (dispatch.ts: the row's reason names each
+// site). The lens decides whether a weakening hides a behaviour change; this
+// only points.
 // Pure, no I/O; reads only the patches the PR files carry.
 
 import { isTestFile, type PrFile } from "./heuristics.js";

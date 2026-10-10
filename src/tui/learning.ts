@@ -1,13 +1,13 @@
 // What the reviewer learned, loaded once and read by four surfaces.
 //
-// split the old `[2]` tab into `memory`, `digest`, `tickets` and
-// `feedback`. The DATA behind them did not split the same way: the memory
-// entries feed the memory timeline AND the feedback inbox (a signal is a
-// `#feedback` entry), the tracker tickets feed their own tab AND the
-// feedback tab's FILED summary, and the loaders carry discipline no tab should
+// The surfaces are `memory`, `digest`, `tickets` and `feedback`, but the data
+// behind them does not split the same way: the memory entries feed the memory
+// timeline and the feedback inbox (a signal is a `#feedback` entry), the
+// tracker tickets feed their own tab and the feedback tab's FILED summary,
+// and the loaders carry discipline no tab should
 // re-implement — in-flight guards, the forward-before-store ordering, the
 // defect auto-filer that runs off a fresh read, the honest-unknown states.
-// So the loaders live here, ONCE, and the tabs are renderers plus verbs over
+// So the loaders live here, once, and the tabs are renderers plus verbs over
 // this store. `installLearningTabs` wires the four together.
 //
 // Every read here is total and three-state where it can fail:
@@ -53,14 +53,13 @@ import {
 } from "./feedbacktab.js";
 
 /**
- * The tracker projection, as a fact about the READ rather than a list.
+ * The tracker projection, as a fact about the read rather than a list.
  *
  * `unread` is the normal state at startup: the scan is a filesystem walk and
- * runs behind the first frame. `unconfigured` is a system with no
- * tracker at all (`[sink] kind = "none"`) — not an empty tracker.
- * `unreadable` is a scan that threw; it must not latch as "read, empty", which
- * is how a missing directory once became a confident "0 tickets" that never
- * retried.
+ * runs behind the first frame. `unconfigured` is a system with no tracker at
+ * all (`[sink] kind = "none"`) — not an empty tracker. `unreadable` is a scan
+ * that threw; it must not latch as "read, empty", or a missing directory
+ * becomes a confident "0 tickets" that never retries.
  */
 export type TicketsRead =
   | { kind: "unread" }
@@ -77,7 +76,7 @@ export interface LearningDeps {
   fetchProposals?: (app: App) => Promise<ProposalsFetch>;
   accept?: (app: App, slug: string) => Promise<{ ok: boolean; message: string }>;
   reject?: (app: App, slug: string, reason: string) => Promise<{ ok: boolean; message: string }>;
-  /**: the configured issue sink the defect auto-filer writes through
+  /** The configured issue sink the defect auto-filer writes through
    * (wayfinder tracker, gated github command channel, or none). Absent ⇒
    * auto-filing is off, exactly like kind "none". */
   sink?: IssueSink;
@@ -85,10 +84,9 @@ export interface LearningDeps {
    * feedback tab lists the issues this reviewer actually files. Absent = the
    * shipped default. */
   issueLabel?: string;
-  /** Read-only tracker-ticket projection for the configured effort (:
-   * the effort is config, not a literal — index.ts wires this from
-   * `ticketProjection`). Absent ⇒ no tracker is configured, and the tickets
-   * tab says so rather than showing an empty list. */
+  /** Read-only tracker-ticket projection for the configured effort (index.ts
+   * wires this from `ticketProjection`). Absent ⇒ no tracker is configured,
+   * and the tickets tab says so rather than showing an empty list. */
   readTickets?: () => TrackerTicket[];
   /** The effort the projection reads — for the tickets tab's title only. */
   ticketsEffort?: string;
@@ -97,17 +95,17 @@ export interface LearningDeps {
   changes: ChangeRegisterSource;
   gitRun?: AcceptDeps["git"]["run"];
   /** The canonical repo root the accept path applies/ratifies/commits in —
-   * NOT process.cwd(): `qcr` runs from anywhere. */
+   * not process.cwd(): `qcr` runs from anywhere. */
   repoRoot?: string;
-  /** The live config.toml the install locator resolved — where an
-   * accepted CONFIG proposal lands. Absent = `<repoRoot>/config.toml`. */
+  /** The live config.toml the install locator resolved — where an accepted
+   * config proposal lands. Absent = `<repoRoot>/config.toml`. */
   configPath?: string;
-  /**: the TUI-owned memory forward. Structural on purpose — tests
+  /** The TUI-owned memory forward. Structural on purpose — tests
    * hand in a stub and never spawn ssh. Absent = the memory tab paints
    * "starting…" and offers no Studio link, which is the honest state for a
    * TUI that was built without one. */
   forward?: { view(): ForwardStatus; ensure(): Promise<ForwardStatus> };
-  /**: the entries setup's companion proposed to pin
+  /** The entries setup's companion proposed to pin
    * (`<state home>/setup/pin-proposals.json`) — re-read with memory. Absent =
    * no proposals channel; the memory tab marks nothing. */
   readPinProposals?: () => PinProposalsRead;
@@ -129,7 +127,7 @@ export class LearningStore {
   // ---- memory --------------------------------------------------------------
   entries: MemoryEntry[] = [];
   memLoaded = false;
-  /** Set when NO memory namespace answered — the tab paints an explicit
+  /** Set when no memory namespace answered — the tab paints an explicit
    * failure banner instead of an empty timeline. */
   memError?: string;
   /** Set when memory answered but partially: one of the two user trees is
@@ -138,14 +136,14 @@ export class LearningStore {
   /** One-line status of the last verb (also mirrored to app.notice). */
   status?: string;
   filedTotal = 0;
-  /**: where the memory forward stands — read from the forward at
-   * every paint, never kept from the last memory reload: an OWNED forward's
-   * row carries its relay counts, which move between reloads (F1).
-   * No forward = undefined, which the tab paints as "starting…". */
+  /** Where the memory forward stands — read from the forward at every paint,
+   * never kept from the last memory reload: an owned forward's row carries
+   * its relay counts, which move between reloads. No forward = undefined,
+   * which the tab paints as "starting…". */
   get forward(): ForwardStatus | undefined {
     return this.deps.forward?.view();
   }
-  /**: entry key (memtab `entryKey`) → why setup proposes pinning it.
+  /** Entry key (memtab `entryKey`) → why setup proposes pinning it.
    * Only proposals whose entry still holds the proposed content count. */
   pinProposals = new Map<string, string>();
   /** Set when the proposals file exists and cannot be read. */
@@ -156,15 +154,15 @@ export class LearningStore {
 
   // ---- proposals + bot PRs ---------------------------------------------------
   proposals: RubricProposal[] = [];
-  /** `undefined` = the gh read was skipped or failed, NOT "no bot PRs"
-   *: the fetch needs `view.repo`, which is not always set. */
+  /** `undefined` = the gh read was skipped or failed, not "no bot PRs": the
+   * fetch needs `view.repo`, which is not always set. */
   improvements: ImprovementItem[] | undefined;
   /** The gh lists that failed while `improvements` holds the other one: a
    * partial read, and the pane says which half it could not see. */
   improvementsFailed: Array<"pr" | "issue"> = [];
   propLoaded = false;
   /** Whether the last proposals load ran with `view.repo` known. `false` means
-   * the gh half was SKIPPED and is worth exactly one retry once it arrives. */
+   * the gh half was skipped and is worth exactly one retry once it arrives. */
   improvementsTriedWithRepo?: boolean;
 
   // ---- digest ----------------------------------------------------------------
@@ -235,7 +233,7 @@ export class LearningStore {
   }
 
   /** Transport first, then the store. Every path that reads memory goes
-   * through THIS — a read that skips the forward reports "unreachable" for a
+   * through this — a read that skips the forward reports "unreachable" for a
    * transport nobody tried to start. */
   private async loadMemoryPart(): Promise<void> {
     if (this.deps.forward) {
@@ -246,7 +244,7 @@ export class LearningStore {
     this.entries = await this.memory.read();
     this.memLoaded = true;
     this.loadPinProposals();
-    // Reachability is a property of the READ, not of the result: an empty
+    // Reachability is a property of the read, not of the result: an empty
     // array from a dead store and an empty array from an empty store are the
     // same array. The store says which one it was.
     const health = storeHealth(this.memory);
@@ -285,7 +283,7 @@ export class LearningStore {
     try {
       this.tickets = { kind: "read", tickets: read() };
     } catch (err) {
-      // A FAILED read is not an empty tracker: say so, and let the
+      // A failed read is not an empty tracker: say so, and let the
       // next `r` try again instead of latching a confident zero.
       this.tickets = {
         kind: "unreadable",
@@ -300,7 +298,7 @@ export class LearningStore {
 
   // ---- proposals -----------------------------------------------------------
 
-  /** Load proposals if never read — and re-attempt ONCE when the repo turns
+  /** Load proposals if never read — and re-attempt once when the repo turns
    * up after a load that could not use it. Bounded on purpose:
    * `improvementsTriedWithRepo` latches on the attempt, not on its result, so
    * a failing gh read costs one retry and then waits for `r`. */
@@ -317,10 +315,10 @@ export class LearningStore {
   }
 
   private async loadProposals(): Promise<void> {
-    // Remember whether the gh read was even POSSIBLE at the time: it needs
-    // `view.repo`, which arrives with the first snapshot — and
-    // instant first frame makes opening the tab before that snapshot the
-    // normal case, which used to park the pane on "not read" all session.
+    // Remember whether the gh read was even possible at the time: it needs
+    // `view.repo`, which arrives with the first snapshot — and the instant
+    // first frame makes opening the tab before that snapshot the normal case,
+    // which would otherwise park the pane on "not read" all session.
     const hadRepo = (this.app.view.repo ?? "") !== "";
     const { proposals, improvements, improvementsFailed } = await (
       this.deps.fetchProposals ?? this.defaultFetchProposals
@@ -334,8 +332,8 @@ export class LearningStore {
   }
 
   private readonly defaultFetchProposals = async (app: App): Promise<ProposalsFetch> => {
-    // Proposals are LOCAL (producer change: the companion's `land`
-    // skill writes state/rubric/ in this repo — no ssh, no VM path).
+    // Proposals are local: the companion's `land` skill writes state/rubric/
+    // in this repo — no ssh, no VM path.
     const root = this.deps.repoRoot ?? process.cwd();
     const proposals: RubricProposal[] = listRubricProposals(root).map((slug) => ({
       slug,
@@ -344,7 +342,7 @@ export class LearningStore {
         .filter((l) => l.trim().length > 0)
         .slice(0, 3),
     }));
-    // A skipped or failed gh read stays UNDEFINED — "we did not ask" and
+    // A skipped or failed gh read stays undefined — "we did not ask" and
     // "there are none" are different answers.
     const repo = app.view.repo ?? "";
     let improvements: ImprovementItem[] | undefined;
@@ -358,7 +356,7 @@ export class LearningStore {
         },
       );
       if (res.ok) {
-        // gh fails PER LIST inside a successful shell: both failing is an
+        // gh fails per list inside a successful shell: both failing is an
         // unread pane, one failing is a partial read that says so.
         const read = parseImprovements(res.stdout);
         if (read.failed.length < 2) {
@@ -386,8 +384,8 @@ export class LearningStore {
   private async loadDigest(): Promise<void> {
     const listed = await this.digestFetcher.list();
     if (listed === undefined) {
-      // The ls itself failed — the difference between "no digest has been
-      // written" and "I could not look" is the whole.
+      // The ls itself failed — "no digest has been written" and "I could not
+      // look" must never look alike.
       this.digest.listError = "the digest directory could not be listed over ssh";
       this.digest.files = undefined;
     } else {
@@ -407,7 +405,7 @@ export class LearningStore {
     const seq = ++this.digestReadSeq;
     this.digest.contentError = undefined;
     const content = file ? await this.digestFetcher.read(file) : undefined;
-    // Paging does not cancel a read in flight: only the LATEST read may land,
+    // Paging does not cancel a read in flight: only the latest read may land,
     // or a slow read lands under another heading — or, paged away and back,
     // a stale failure overwrites the fresh text of the same day.
     if (seq !== this.digestReadSeq || currentDigestFile(this.digest) !== file) return;
@@ -450,7 +448,7 @@ export class LearningStore {
   }
 
   /** One accept at a time: each is several awaited git subprocesses in the
-   * ONE shared checkout, and two interleaved would commit each other's
+   * one shared checkout, and two interleaved would commit each other's
    * staged files. A second request while one runs is refused, not queued —
    * the operator presses A again once the first has answered. */
   private accepting = false;
@@ -516,7 +514,7 @@ export interface LearningTabs {
   feedback: FeedbackTabState;
 }
 
-/** Install `memory`, `digest`, `tickets` and `feedback` over ONE store. */
+/** Install `memory`, `digest`, `tickets` and `feedback` over one store. */
 export function installLearningTabs(app: App, deps: LearningDeps): LearningTabs {
   const store = new LearningStore(app, deps);
   installDigestTab(app, store); // the digest's state IS the store's `digest`

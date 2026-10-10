@@ -1,5 +1,5 @@
-// Author objections in the PR conversation. No fabricated inline
-// root: the PR's one main session judges; the daemon posts a claimed answer.
+// Author objections in the PR conversation. No fabricated inline root: the
+// PR's one main session judges; the daemon posts a claimed answer.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { GateResult } from "./gate.js";
@@ -311,9 +311,9 @@ export class PrConversation {
       this.readDecisions();
       // Recovery is separate from capture. Only verified-author untagged
       // comments after a blocking review and within 24h may become new work.
-      // Closed rows first: `blockedPrAuthor` answers undefined for them anyway,
-      // and re-reading all ~750 PRs every 10 s was ~20 ms of the loop
-      // (boot stall).
+      // Closed rows are filtered first: `blockedPrAuthor` answers undefined for
+      // them anyway, and re-reading every closed PR's row and reviewed-head
+      // mark on each 10 s sweep is synchronous loop time spent for nothing.
       const eligible = this.deps.store
         .allPrs()
         .filter((p) => p.state !== "closed" && blockedPrAuthor(this.deps.store, p.number))

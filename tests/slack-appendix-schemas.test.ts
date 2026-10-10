@@ -1,10 +1,8 @@
-// drift correction, kept honest in both directions.
+// The appendix's command schemas, kept honest in both directions.
 //
-// The seeded overseer prompt used to advertise command schemas that
-// `validateCommand` rejects; the 2026-10-03 reseed (owner ratified) corrected
-// them, and the appendix's drift-corrections section went with it. This test
-// pins the appendix to the CODE: field lists are derived by probing the real `validateCommand`
-// (never by reading the appendix or the seed), then compared set-for-set.
+// This test pins the appendix to the CODE: field lists are derived by probing
+// the real `validateCommand` (never by reading the appendix or the seed), then
+// compared set-for-set.
 //
 // It fails if either side drifts: a new/renamed field in src/commands.ts that
 // the appendix doesn't document, or an appendix entry the validator won't take.
@@ -122,7 +120,7 @@ describe("slack overseer appendix — corrected command schemas", () => {
     }
   });
 
-  // ---- the two drifts, pinned from both ends ------------------------
+  // ---- the two schema drifts, pinned from both ends ------------------------
 
   it("the safety valve takes 'message', not the seeded 'reason' — under both spellings", () => {
     expect(acceptedFields("flag-owner")).toEqual(["message"]);
@@ -133,7 +131,7 @@ describe("slack overseer appendix — corrected command schemas", () => {
       reason: "unknown field(s): reason",
     });
     // The appendix teaches only the current name (the code still accepts the
-    // legacy one); the seed's schema was corrected by the 2026-10-03 reseed.
+    // legacy one), and the seed documents the validator's schema.
     expect(documented.get("flag-owner")).toEqual(["message"]);
     expect(appendix).not.toContain("flag-owner-legacy");
     const seed = readFileSync(join(repoRoot, "prompts/overseer-system.md"), "utf8");
@@ -283,11 +281,10 @@ describe("slack overseer appendix — the origin header", () => {
   });
 
   it("documents only tiers the router can actually inject", () => {
-    // A user-less event is dropped before injection (G3), so `ignored` never
+    // A user-less event is dropped before injection, so `ignored` never
     // reaches the model and must not be advertised as a tier it might see.
-    // the router now injects `owner` where the appendix's frozen
-    // prose still spells the top tier `owner_legacy`; the prose catches up in the
-    // reseed. `system` is daemon-stamped only (OriginStore.writeLocal)
+    // The router injects `owner` for the top tier, never the legacy
+    // `owner_legacy` spelling. `system` is daemon-stamped only (OriginStore.writeLocal)
     // and never injectable, so it must not appear either.
     const tierRow = appendix.split("\n").find((l) => l.trim().startsWith("| tier |"));
     expect(tierRow).toBeDefined();

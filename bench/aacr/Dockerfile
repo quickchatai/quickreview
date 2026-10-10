@@ -100,7 +100,7 @@ COPY --from=build /src/dist ./dist
 # the public tree, so it is not copied.
 COPY package.json config.toml AGENTS.md ./
 # That config.toml is the one bench.sh baked in (QCR_BENCH_CONFIG, else the
-# operator's own via the install locator,, else config.example.toml).
+# operator's own via the install locator, else config.example.toml).
 # Named explicitly so the locator inside the image takes it as given.
 ENV QCR_CONFIG=/opt/quickreview/sandbox/config.toml
 # …and the reviewer context stub the VM entrypoint installs at boot
@@ -246,8 +246,8 @@ RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
     && ! test -e scripts && ! command -v gh
 ENV OCR_NO_UPDATE=1 QCR_OCR_VERSION=${OCR_VERSION}
 
-# ---- claude: Claude Code as a BENCHMARKED REVIEWER --------------------------------
-# The project's ONE sanctioned place to run Claude Code (2026-09-28): `claude`
+# ---- claude: Claude Code as a benchmarked reviewer --------------------------------
+# The project's one sanctioned place to run Claude Code (CLAUDE.md rule 5): `claude`
 # exists in this target only and runs only inside its hardened review container
 # (bench.sh --arm claude) — never on the host. Built on `runtime`, so the scorer,
 # the dataset, pi and the judge shim are the ones every other arm is scored with.
@@ -293,7 +293,7 @@ ENV QCR_CLAUDE_VERSION=${CLAUDE_CODE_VERSION}
 # its own venv; its dependencies resolve from PyPI under pr-agent's own pins
 # (litellm==1.101.0 and most others are exact), and the resolved set is frozen
 # into /opt/pragent-venv/freeze.txt for the record. The run is
-# bench/aacr/pragent_driver.py → pr_agent.cli (review, improve) on the local git
+# bench/aacr/pragent_driver.py → pr_agent.cli (describe, review, improve) on the local git
 # provider; the model through the loopback Codex bridge.
 # To bump: `curl -s https://pypi.org/pypi/pr-agent/<v>/json` → the wheel's
 # `digests.sha256`, set both ARGs (or pass QCR_BENCH_PRAGENT_VERSION +
@@ -314,7 +314,7 @@ RUN python3 -c 'import sys; assert sys.version_info >= (3, 12), sys.version' \
     && test "$(/opt/pragent-venv/bin/python -c 'import importlib.metadata as m; print(m.version("pr-agent"))')" = "${PRAGENT_VERSION}" \
     && rm -rf /tmp/pa /root/.cache
 COPY bench/aacr/codex_bridge.py bench/aacr/pragent_driver.py /opt/quickreview/bench/
-# The driver end to end — PR-Agent's CLI, both commands, the bench provider —
+# The driver end to end — PR-Agent's CLI, all three commands, the bench provider —
 # against an in-process stub endpoint on a scratch repo (no network).
 RUN python3 /opt/quickreview/bench/codex_bridge.py --self-test \
     && HOME=/tmp/pa-home LITELLM_LOCAL_MODEL_COST_MAP=True \

@@ -1,11 +1,10 @@
-// SGR mouse support (grill decision 2026-08-14: full pointer navigation).
+// SGR mouse support: full pointer navigation.
 // The terminal reports \x1b[<b;x;yM (press) / m (release); we decode presses,
 // wheel steps, and hit-test them against the zones the renderer declared.
 // ?1002h is BUTTON-EVENT tracking: motion reports while a button is held.
 // Without it the terminal reports presses only, so there is no drag to follow
-// — and an app that turns mouse reporting on has TAKEN the terminal's own
-// selection away. Offering nothing in its place is what made text
-// unselectable everywhere in the TUI.
+// — and an app that turns mouse reporting on has taken the terminal's own
+// selection away, so the TUI's drag-to-copy depends on it.
 export const MOUSE_ON = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 export const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
 
@@ -48,7 +47,7 @@ export function extractMouseEvents(buf: Buffer): { events: MouseEvent[]; rest: B
  * A fast drag floods stdin, and a chunk boundary can fall inside a report.
  * Decoded per chunk, the head (`\x1b[<32;4`) matches nothing and the tail
  * (`5;12M`) is plain text — so the drag loses a point, and when the companion
- * column or the pi pane holds the keyboard those bytes are TYPED INTO PI.
+ * column or the pi pane holds the keyboard those bytes are typed into pi.
  * Only an unfinished `\x1b[<…` is held back: a bare ESC at the end of a
  * chunk is the Esc key and must go through now.
  */

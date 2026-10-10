@@ -6,8 +6,8 @@
 #   writes state/pr-<n>-round-<k>-review.md and state/pr-<n>-round-<k>-comments.json
 #
 # It posts nothing and reaches nothing outside state/: the session then posts
-# those two files through post-review.sh / approve-pr.sh exactly as before, so
-# every posting-time guard still applies.
+# those two files through post-review.sh / approve-pr.sh, so every posting-time
+# guard still applies.
 #
 # Usage: render-review.sh <pr-number> <round-number>
 set -euo pipefail

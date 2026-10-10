@@ -1,4 +1,4 @@
-// An in-memory `TranscriptFs` (H2) for the transcript index's tests:
+// An in-memory `TranscriptFs` for the transcript index's tests:
 // a flat path → content map with directories implied by prefixes, mutable
 // between calls (append, replace, chmod-like failures), and a log of every
 // open and read so a test can say what was — and was not — read.

@@ -1,7 +1,6 @@
-// L2 — the daemon reports its event-loop lag. On 2026-10-07 the
-// daemon's own /health went unanswered for ~70 s at a time while the 2-CPU
-// container was throttled in 39% of its CFS periods, and nothing measured
-// either. These pin the watch (src/eventloop.ts) on a fake clock, a fake
+// The daemon reports its event-loop lag and the container's CPU throttling,
+// so a /health that goes unanswered for tens of seconds is measured and its
+// cause named. These pin the watch (src/eventloop.ts) on a fake clock, a fake
 // sampler and a fake cpu.stat reader; the thresholds and the cooldown; the
 // cause it names; the status.json block through a real (stub-wired) daemon;
 // and every surface a person reads — `qcr status`, the TUI board's top bar and
@@ -533,7 +532,7 @@ describe("the watch: figures, state, thresholds", () => {
     r.monitor.start();
     steady(r, 30 * S);
     r.advance(70 * S);
-    r.sample(70_000); // the 2026-10-07 shape: /health unanswered ~70 s
+    r.sample(70_000); // /health unanswered ~70 s
     const st = r.monitor.evaluate();
     expect(st.event_loop.state).toBe("stalled");
     expect(st.event_loop.stall?.trigger).toBe("max");

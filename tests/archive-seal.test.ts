@@ -1,4 +1,4 @@
-// SEALING an archive month (docs/archiving.md §9.5): only once
+// Sealing an archive month (docs/archiving.md §9.5): only once
 // both cut-offs and both movers' frontiers are past the month's end plus a
 // day and both watermarks have reached the file's last id; the gzip round
 // trip is verified (length and sha256) before the SQLite file is unlinked; the

@@ -21,7 +21,7 @@ const cp = (s: string): number => s.codePointAt(0)!;
 describe("cellWidth — the table the screen is laid out by", () => {
   it("counts the board's own East-Asian-Wide chips as two cells", () => {
     // ⛔ (pipeline failed / draining) and ⏳ (deploy drain) are painted by the
-    // TUI itself; counted as one, every cell right of them sat a column off.
+    // TUI itself; counted as one, every cell right of them would sit a column off.
     expect(cellWidth(cp("⛔"))).toBe(2);
     expect(cellWidth(cp("⏳"))).toBe(2);
   });
@@ -124,8 +124,8 @@ describe("the companion's paste buffers reach the host clipboard (pi /copy)", ()
     `pi output\n${bufs.map((b) => `${BUFFER_TAG}${b}\n`).join("")}`;
 
   it("tags the listing in plain ASCII — tmux -F prints anything else as `_`", () => {
-    // Found live: a `␞` marker came back as `_qcr-buffer_` through docker
-    // exec (no UTF-8 locale), never matched, and no copy ever arrived.
+    // Through docker exec (no UTF-8 locale) a non-ASCII marker such as `␞`
+    // comes back as `_`, never matches, and no copy ever arrives.
     expect(BUFFER_TAG).toMatch(/^[\x20-\x7e]+$/);
   });
 

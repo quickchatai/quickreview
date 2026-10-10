@@ -1,6 +1,5 @@
-// Inline-comment anchor validation (ported discipline, §3: "each
-// claimed range must lie completely within one changed-line run in one hunk on
-// the exact claimed path and side").
+// Inline-comment anchor validation: each claimed range must lie completely
+// within one changed-line run in one hunk on the exact claimed path and side.
 //
 // GitHub rejects the *whole* review call when a single inline comment fails to
 // anchor, so every comment is validated here first and anything invalid is

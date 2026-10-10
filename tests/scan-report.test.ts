@@ -1,5 +1,5 @@
-// The scan report's read side and its stop channel (,
-// src/setup/scanreport.ts): what the TUI's `[8] scan` tab reads out of the
+// The scan report's read side and its stop channel
+// (src/setup/scanreport.ts): what the TUI's `[8] scan` tab reads out of the
 // state home, and the stop it asks the companion for. Driven the engine way —
 // a real ScanRunner over fakes, the state home a temp dir — and asserted on
 // what the engine and the leaf WRITE and RETURN.

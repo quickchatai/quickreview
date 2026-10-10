@@ -1,8 +1,8 @@
 // The per-file temp root (tests/helpers/temp-root.ts, installed for every
 // file by tests/helpers/install-env.ts). Tests call mkdtempSync(tmpdir()) in
-// hundreds of places, and many never remove what they make — every full run
-// used to leave thousands of qcr-precheck-*, qcr-cand-*, qcr-esc-gate-* (and
-// two dozen other prefixes) behind in /tmp. Pointing TMPDIR at one root per
+// hundreds of places, and many never remove what they make, which would leave
+// thousands of qcr-precheck-*, qcr-cand-*, qcr-esc-gate-* (and two dozen other
+// prefixes) behind in /tmp on every full run. Pointing TMPDIR at one root per
 // file, removed in afterAll, makes every such dir — and every mktemp a
 // spawned script makes — go away with the file, whether or not the test
 // cleaned up after itself.

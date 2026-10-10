@@ -1,5 +1,4 @@
-// tests/profile-lens-tuning.test.ts — `[lenses.<pass>]` in profile.toml
-//.
+// tests/profile-lens-tuning.test.ts — `[lenses.<pass>]` in profile.toml.
 //
 // Every case resolves a profile the way production does — wire.ts's
 // `buildParts` overlays `loadProfileLensTuning` on the parsed config with
@@ -36,7 +35,7 @@ const fixture: Config = parseConfig(
   readFileSync(resolve(sandbox, "tests/fixtures/config.toml"), "utf8"),
 );
 // The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
-// sol-high, owner decision 2026-10-03) are cleared here: these tests exercise the
+// sol-high) are cleared here: these tests exercise the
 // UNPINNED tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
 fixture.models.pass_tiers = {};
 

@@ -1,12 +1,11 @@
-// Connection triage (ruling 4) — the TUI does the ssh diagnosis so
-// the operator does not have to.
+// Connection triage — the TUI does the ssh diagnosis so the operator does not
+// have to.
 //
-// Three failure classes are routinely confused, and the 2026-08-31 incident was
-// the first of them read as the third: a key that was simply not in the agent
-// looked, on the board, like a dead daemon with no PRs. Each class gets its own
-// CAUSE sentence and its own EXACT remedy command, and the TUI never runs the
-// remedy itself — the owner declined self-healing at: the TUI reports,
-// the operator acts, and `s` re-runs the check.
+// Three failure classes are routinely confused: a key that is simply not in
+// the agent looks, on the board, like a dead daemon with no PRs. Each class
+// gets its own CAUSE sentence and its own EXACT remedy command, and the TUI
+// never runs the remedy itself — there is deliberately no self-healing: the
+// TUI reports, the operator acts, and `s` re-runs the check.
 //
 // Everything here is probe-in / diagnosis-out. `classifyConnection` is PURE and
 // carries all the judgment; `triageConnection` only collects the probes. Every
@@ -97,8 +96,8 @@ const AUTH_PATTERNS = [
 /**
  * Refusals a key CANNOT fix: an interactive second factor, an account
  * restriction. Answering one of these with `ssh-add` is a confidently wrong
- * remedy, which is the exact failure mode ruling 4 exists to remove — so this
- * is checked FIRST, and it reports rather than guessing.
+ * remedy, which is the failure mode triage exists to prevent — so this is
+ * checked FIRST, and it reports rather than guessing.
  */
 const INTERACTIVE_AUTH_PATTERNS = [
   /keyboard-interactive/i,
@@ -155,9 +154,9 @@ export function agentHoldsIdentity(p: ConnectionProbes): "yes" | "no" | "unknown
     return p.agent.identities.some((l) => l.includes(p.identityFingerprint!)) ? "yes" : "no";
   // No fingerprint to match on (no readable `.pub`): ssh-add prints the key's
   // path as the comment for most keys, so a name match is still evidence.
-  // Anything else is UNKNOWN, never "yes" — an agent holding somebody else's
-  // key used to be reported as holding this one, which turns a diagnosis into
-  // a guess and hands the operator a remedy that cannot work.
+  // Anything else is UNKNOWN, never "yes" — reading an agent holding somebody
+  // else's key as holding this one turns a diagnosis into a guess and hands
+  // the operator a remedy that cannot work.
   if (p.identity) {
     const base = p.identity.split("/").pop() ?? p.identity;
     if (p.agent.identities.some((l) => l.includes(base))) return "yes";
@@ -180,7 +179,7 @@ export function sshAddRemedy(p: ConnectionProbes): string {
  * socket (ssh falls back to a direct connection when the mux socket is dead,
  * so a socket on disk is not by itself the fault), a mux complaint outranks a
  * generic network error, and an agent holding NOTHING is read as the key case
- * even when ssh was vague — that combination is the 2026-08-31 incident.
+ * even when ssh was vague — that combination is a key missing from the agent.
  */
 export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
   if (p.masterAlive) {
@@ -212,8 +211,7 @@ export function classifyConnection(p: ConnectionProbes): ConnectionDiagnosis {
 
   if (interactiveOnly) {
     // Says exactly what it knows and no more: an `ssh-add` here would be a
-    // confidently wrong remedy, which is the failure mode this ticket exists
-    // to remove.
+    // confidently wrong remedy.
     return {
       kind: "unknown",
       cause: `${p.host} refused the non-interactive probe with something a key cannot fix — ${evidence || "an interactive authentication step"}`,
@@ -330,9 +328,9 @@ export const realProbeRunner: ProbeRunner = (cmd, argv, timeoutMs) =>
  * Modern OpenSSH already expands ControlPath in `ssh -G` output, so on most
  * configs this is a pass-through; the token handling earns its keep on older
  * ssh and on a config read some other way. `%C` (a hash of the connection
- * parameters) is NOT reproducible here — but returning "" for it used to
- * DEMOTE a wedged master to `unknown`, because `controlSocketExists` then went
- * false. It now falls back to the socket's DIRECTORY: if that exists we still
+ * parameters) is NOT reproducible here, and returning "" for it would demote a
+ * wedged master to `unknown` (`controlSocketExists` would go false). So it
+ * falls back to the socket's DIRECTORY: if that exists we still
  * know multiplexing is configured, `mux` stderr still classifies, and the
  * remedy (`ssh -O exit <host>`, which needs no path) is unchanged.
  */
@@ -426,11 +424,11 @@ const CONNECT_TIMEOUT_MS = 12_000;
  * that matters — it must neither CHANGE anything nor weaken anything.
  *
  * `StrictHostKeyChecking=yes` is doing both jobs. It is read-only: `yes` never
- * writes `known_hosts`, where `accept-new` (the first spelling here) PERSISTS
- * a new host key as a side effect of asking a diagnostic question, and `no`
- * (the second) both accepts an unverified key and, historically, appends it —
- * `no` was only harmless while paired with `UserKnownHostsFile=/dev/null`, a
- * pairing one edit away from silently writing again. And it keeps VERIFYING
+ * writes `known_hosts`, where `accept-new` PERSISTS a new host key as a side
+ * effect of asking a diagnostic question, and `no` both accepts an unverified
+ * key and may append it — harmless only while paired with
+ * `UserKnownHostsFile=/dev/null`, a pairing one edit away from silently
+ * writing again. And it keeps VERIFYING
  * against the operator's real file, so the probe cannot quietly succeed
  * against a host whose key changed. A key that is unknown or does not match
  * fails with "Host key verification failed", which the classifier reads and
@@ -451,7 +449,7 @@ export function batchProbeArgv(host: string): string[] {
 }
 
 /**
- * Collect the probes and classify. One probe per class, as accepted:
+ * Collect the probes and classify. One probe per class:
  * `ssh -G` (what key and socket ssh would use — no network), `ssh -O check`
  * (is the master alive), `ssh-add -l` (what the agent holds), and, only when
  * the master is down, ONE bounded BatchMode connection.

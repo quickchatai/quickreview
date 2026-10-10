@@ -345,7 +345,7 @@ export function diffLines(beforeText, afterText, context = 2) {
   return lines.join("\n");
 }
 
-/** The §5 manifest, public or private variant. */
+/** The Slack app manifest, public or private variant. */
 export function manifestYaml(kind = "public") {
   const priv = kind === "private";
   return `_metadata:
@@ -460,9 +460,9 @@ async function main() {
 
   const FORCE = flag("--force");
   const VERIFY = !flag("--no-verify");
-  // the default is the install locator's answer ($QCR_CONFIG, the
-  // install's config home, then the checkout's legacy file) — asked of its
-  // shell mirror, so this script builds no config path of its own.
+  // The default is the install locator's answer ($QCR_CONFIG, else the
+  // install's config home) — asked of its shell mirror, so this script builds
+  // no config path of its own.
   const CONFIG_PATH = resolve(
     valueOf("--config", "") ||
       execFileSync(
@@ -562,9 +562,9 @@ async function main() {
     bad(`no config.toml at ${CONFIG_PATH} — pass --config <path>`);
     process.exit(1);
   }
-  // --secrets-dir, then $QC_SECRETS_DIR, else the install locator's
-  // answer (its shell mirror, as for the config above): the configured
-  // [github] secrets_dir, else <config home>/secrets, else the legacy dir.
+  // --secrets-dir, then $QC_SECRETS_DIR, else the install locator's answer
+  // (its shell mirror, as for the config above): the configured
+  // [github] secrets_dir, else <config home>/secrets.
   const SECRETS_DIR = resolve(
     expandHome(
       valueOf("--secrets-dir", "") ||

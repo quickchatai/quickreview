@@ -1,4 +1,4 @@
-// A bounded wait (H2). A round end waits for its transcripts and its
+// A bounded wait. A round end waits for its transcripts and its
 // integrity re-hash, and a dispatch for its integrity baseline, at most so
 // long — then goes on without the answer. A filesystem read that never
 // returns must cost a bounded wait and an honest "unknown", never a verdict

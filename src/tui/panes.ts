@@ -2,7 +2,7 @@
 // tickets, feedback): a selectable list on the left at 38% of the width, a
 // reading pane on the right built from rows whose clickable chunks carry an
 // action. Pure geometry + zone bookkeeping; the surfaces decide what the rows
-// say. Lifted out of the old memtab so the three cannot drift apart.
+// say. Shared so the three cannot drift apart.
 import { MUTED, RESET } from "./design.js";
 import { type Frame, displayWidth, stripAnsi } from "./paint.js";
 

@@ -450,8 +450,8 @@ describe("the two sides resolve the way the daemon resolves a profile", () => {
   });
 
   it("an earlier write by id unwinds every LATER write too — a file only a later write changed reads as before", () => {
-    // Review fix: restoring only the named write's files left a style guide
-    // a LATER write redrafted at its current text on the "old" side.
+    // Restoring only the named write's files would leave a style guide a
+    // LATER write redrafted at its current text on the "old" side.
     now = new Date(now.getTime() + 60_000);
     const w = (over: Record<string, Priority>, guide?: string): ApplyResult => {
       now = new Date(now.getTime() + 60_000);
@@ -602,8 +602,8 @@ describe("replay: cost first, subagents, side by side", () => {
   });
 
   it("a background failure aborts every case still in flight — none goes on spending past the run", async () => {
-    // Review fix: one lane's store failure rejected the drive while the other
-    // lane's case kept running, unaborted, after the run had settled.
+    // One lane's store failure rejects the drive; the other lane's case must
+    // not keep running, unaborted, after the run has settled.
     const real = stateHomeFs(stateRoot());
     let failing = false;
     const state = {

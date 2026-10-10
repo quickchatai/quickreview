@@ -23,15 +23,15 @@
 //     position and fingerprint (the old fingerprint kept as an alias) — and
 //     every old finding it did not pair is `fixed`. Nothing is ever fixed on
 //     a guess, and nothing waits on the companion that an exact rule settles.
-//   * A DISMISSAL IS STICKY (scan-loop). The operator's triage is never
+//   * A DISMISSAL IS STICKY. The operator's triage is never
 //     overwritten by a scan: a dismissed finding every rule above would fix
 //     stays `dismissed`, stamped `unreported` (the run and sha) for audit, and
 //     is out of play until a scan reports it again — which clears the stamp
 //     and keeps the dismissal (no scan reopens it; the operator's promote is
 //     the only way out). One settle, `settleUnreported`, serves every path.
-//     A store written before this, with a finding fixed FROM dismissed, reads
-//     back as dismissed (scanreport.ts `parseFindingsFile`).
-//   * `fixed` NEEDS CHANGED CONTENT (scan-loop). Only a re-read of OTHER
+//     A legacy store's finding fixed FROM dismissed reads back as dismissed
+//     (scanreport.ts `parseFindingsFile`).
+//   * `fixed` NEEDS CHANGED CONTENT. Only a re-read of OTHER
 //     content can settle a finding fixed. A later reading of the SAME content
 //     it was last seen at that does not report it again (a narrower stage-2
 //     row, a re-run — model variance) leaves it open and stamps
@@ -45,8 +45,8 @@
 //     doubted is stored with its `doubt` (word and reason) and shown as such;
 //     a finding no validator looked at is `validated: false`. Neither is
 //     dropped.
-//   * EVERY JUDGED FINDING HAS A VALIDITY TIER (owner ruling 2026-09-30: the scan
-//     validator is the skeptic). `confirmed` — the skeptic traced a concrete
+//   * EVERY JUDGED FINDING HAS A VALIDITY TIER (the scan validator is the
+//     skeptic). `confirmed` — the skeptic traced a concrete
 //     scenario (kept in `scenario`); `likely` — a real mechanism whose
 //     reachability it could not trace all the way; `doubtful` — refuted,
 //     class-matched, or anything it would have killed, carried in `doubt`
@@ -67,7 +67,7 @@
 //     and, once a re-scan found it fixed, when that ticket was closed. The
 //     ticket record is what makes a finding never filed twice: it survives a
 //     match (the new fingerprint inherits it), a fix and a return.
-//   * NEAR-DUPLICATES COLLAPSE (scan-loop). The fingerprint hashes the lens
+//   * NEAR-DUPLICATES COLLAPSE. The fingerprint hashes the lens
 //     and the anchored code, so one defect raised by two lenses — or by two
 //     rows of one lens anchored a few lines apart — arrives under two
 //     fingerprints. A fresh finding (no exact or alias match) that is the
@@ -127,8 +127,8 @@ export interface ScanFinding {
   fingerprint: string;
   unit: string;
   path: string;
-  /** The file's content hash at the last sighting (absent on findings
-   * stored before). */
+  /** The file's content hash at the last sighting (absent on legacy
+   * findings). */
   blob?: string | null;
   /** The anchored lines at the last sighting (1-based, inclusive). */
   start: number;
@@ -138,7 +138,7 @@ export interface ScanFinding {
   severity: ScanSeverity;
   confidence: number | null;
   /** The lens's reachability (null: it wrote none, read as routine). Absent
-   * on findings stored before the scan-loop quality pass. */
+   * on legacy findings. */
   reachability?: Reachability | null;
   /** What the lens said before the reachability cap lowered `severity`. */
   capped_from?: ScanSeverity | null;
@@ -197,7 +197,7 @@ export interface ScanFinding {
   /** Where it was filed when promoted. */
   ticket?: FindingTicket | null;
   /** It resembles (`nearDuplicate`) a finding the operator DISMISSED: that
-   * finding and its dismissal's reason (scan-loop). A flag only — it stays
+   * finding and its dismissal's reason. A flag only — it stays
    * `new` for the operator to triage; read through `dismissedLookalike`.
    * Absent or null: it resembles none. */
   resembles_dismissed?: ResemblesDismissed | null;
@@ -264,10 +264,10 @@ export type ReportedFinding = Omit<
   | "resembles_dismissed"
 >;
 
-// ---- near-duplicate collapse ----------------------------------------------------------
+// ---- near-duplicate collapse ----
 
 /** How far apart (lines between the two ranges) two sightings of one defect
- * may be anchored — selfscan stage 2 put one pair 81 lines apart. */
+ * may be anchored — one real pair sat 81 lines apart. */
 export const NEAR_LINES = 100;
 /** The stemmed-token Jaccard two claims must reach to be one defect. */
 export const CLAIM_SIMILARITY = 0.4;
@@ -586,9 +586,9 @@ function mightBe(o: ScanFinding, n: ScanFinding): boolean {
 }
 
 /** The state a `fixed` finding takes when a scan reports it again: promoted
- * stays promoted while its ticket is still open (nothing closed it
- * yet); anything else, including a promoted one whose ticket was closed, is
- * `new` again — the ticket record stays, so a re-promote never files twice.
+ * stays promoted while its ticket is still open (nothing closed it yet);
+ * anything else, including a promoted one whose ticket was closed, is `new`
+ * again — the ticket record stays, so a re-promote never files twice.
  * (A dismissed finding is never fixed at all — `settleUnreported`.) */
 function returnedState(f: ScanFinding): FindingState {
   if (f.fixed?.from === "promoted" && f.ticket && !f.ticket.closed) return "promoted";
@@ -603,8 +603,8 @@ const settled = (f: ScanFinding): boolean =>
 /**
  * Settle a finding a re-scan no longer reports — the ONE place every path
  * (reconcile, a report that shrinks the question, the companion's match)
- * settles one. A DISMISSED finding stays dismissed (scan-loop: a re-scan
- * never overwrites the operator's triage), stamped `unreported` for audit;
+ * settles one. A DISMISSED finding stays dismissed (a re-scan never
+ * overwrites the operator's triage), stamped `unreported` for audit;
  * any other becomes `fixed` (a promoted one's ticket then closes).
  * `null` when there was nothing to settle.
  */
@@ -923,7 +923,7 @@ export class FindingsStore {
         );
       });
       if (!reread) {
-        // Only OTHER content can have fixed it (scan-loop): a later reading of
+        // Only OTHER content can have fixed it: a later reading of
         // the content it was last seen at, over its lines, that did not
         // report it again is not a fix — it stays open, stamped, once per
         // reading. A dismissed one is already triaged: nothing to stamp or

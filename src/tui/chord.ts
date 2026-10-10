@@ -1,7 +1,5 @@
-// The TUI's one hard-kill chord. (The Ctrl-q detach scanner that used to live
-// here went with the full-screen attach, 2026-09-02: the TUI no longer owns a
-// pty to detach from. Ctrl-q still releases an embedded surface's focus —
-// pipane.ts PANE_ESCAPE — but that is a single byte, not a chord.)
+// The TUI's one hard-kill chord. (Ctrl-q, which releases an embedded
+// surface's focus — pipane.ts PANE_ESCAPE — is a single byte, not a chord.)
 export const CTRL_C = 0x03;
 export const KILL_WINDOW_MS = 1200;
 

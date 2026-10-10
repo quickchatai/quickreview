@@ -1,4 +1,4 @@
-// S4 (the owner's ruling R5) — the local English embedder service,
+// The local English embedder service,
 // scripts/openviking-embedder.py, RUN: a real python process on a loopback
 // port, with a fake `llama_cpp` module on its path in place of the pinned
 // llama-cpp-python (no model, no network). What is pinned:
@@ -266,7 +266,7 @@ describe("refusals — it never serves an unpinned model, or beyond loopback", (
     expect(runToExit(["--port", "0"]).code).toBe(2);
   });
 
-  // Review (S4): the ranges the daemon and the config already bound.
+  // The ranges the daemon and the config already bound.
   it("threads outside 1..16 and a query budget outside 1..context", () => {
     for (const t of ["0", "17"]) {
       const r = runToExit([...base(), "--threads", t]);
@@ -281,7 +281,7 @@ describe("refusals — it never serves an unpinned model, or beyond loopback", (
   });
 });
 
-// Review (S4): the checks that stop a wrong-shaped vector reaching the
+// The checks that stop a wrong-shaped vector reaching the
 // 384-dim collection. Each is reached by the start-up self-check, so a file
 // that would answer wrongly never serves at all.
 describe("model-shape self-checks — a wrong-shaped vector never serves", () => {
@@ -456,7 +456,7 @@ describe("serving the OpenAI embeddings contract", () => {
     expect((await post(server.base, { model: m, input: "x" }, "/v1/other")).status).toBe(404);
   });
 
-  // Review (S4): the request bounds.
+  // The request bounds.
   it("more than 64 inputs in one request is refused", async () => {
     const r = await post(server.base, {
       model: LOCAL_EMBEDDING.model,
@@ -590,10 +590,10 @@ describe("one argv for the boot scripts and the daemon", () => {
     );
   });
 
-  // Found while proving the review fixes against a real 0.4.15: both boot
-  // children are unref'd, and so was the stop's grace timer — node exited
-  // while awaiting the SERVER's stop, so the embedder's SIGTERM was never sent
-  // and the boot left an unsupervised embedder on the daemon's port.
+  // Both boot children are unref'd. If the stop's grace timer were unref'd
+  // too, node would exit while awaiting the server's stop, the embedder's
+  // SIGTERM would never be sent, and the boot would leave an unsupervised
+  // embedder on the daemon's port.
   it("sequential stops of two unref'd children both run — node does not exit mid-stop", () => {
     const script = join(dir, "two-stops.mjs");
     writeFileSync(

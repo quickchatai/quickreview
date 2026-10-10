@@ -1,14 +1,14 @@
-// Defect-flag auto-filer (FT-0129 §9): defect-tagged memory entries become
-// issue-tracker tickets automatically. Runs PC-SIDE in the TUI (the tracker
-// is a local directory on the operator's machine — the VM cannot reach it)
-// and writes as tracker actor `qcr-tui`. Disabled entirely when no tracker
-// dir is configured.
+// Defect-flag auto-filer: defect-tagged memory entries become issue-tracker
+// tickets automatically. Runs PC-side in the TUI (the tracker is a local
+// directory on the operator's machine — the VM cannot reach it) and writes as
+// tracker actor `qcr-tui`. Disabled entirely when no tracker dir is
+// configured.
 //
-// DEDUP IS A TAG (FT-0164). Filing stamps `filed=FT-NNNN` into the entry's own
+// Dedup is a tag. Filing stamps `filed=FT-NNNN` into the entry's own
 // header `k=v` run — the vocabulary of `src/memory/eventtags.ts`, mirrored onto
 // OpenViking's native retrieval tags by the store — so "already filed" is a
 // property of the memory the filer reads, not of a ledger it keeps on the side.
-// The `Memory-key:` line stamped into each ticket stays as the BACKSTOP: the
+// The `Memory-key:` line stamped into each ticket is the backstop: the
 // tag write is a store mutation and can be refused (stale hash, store down),
 // and a refused stamp must not produce a duplicate ticket on the next tick.
 // Both keys are stable across pin and across the stamp itself — `memoryKey`
@@ -88,7 +88,7 @@ export interface TrackerPaths {
   /** The tracker root (the local issue tracker's root directory). */
   root: string;
   effort: string; // "review-sandbox"
-  parent: string; // map id, "FT-0026"
+  parent: string; // the effort's map id, "FT-NNNN"
 }
 
 /** Keys already present in the effort's tickets — the dedup set. */

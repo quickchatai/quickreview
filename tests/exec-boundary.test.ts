@@ -1,17 +1,16 @@
-// the exec boundary as a WHOLE, tested the way its bypasses were
-// actually found: as a corpus of chains PROVEN to execute, replayed against
-// every layer, and against the COMPILED artifact rather than the source.
+// The exec boundary as a whole, tested as a corpus of chains proven to
+// execute, replayed against every layer, and against the compiled artifact
+// rather than the source.
 //
-// Two disciplines from are load-bearing here and neither is decoration:
+// Two disciplines are load-bearing here:
 //
-//   · **The corpus is the regression suite.** Four adversarial rounds each
-//     found a live bypass that a green unit suite did not. Round 3 added the
-//     compiled-artifact probe because tests assert the source and the container
-//     runs the build — that is the gap that hid rounds two and three.
-//   · **A layer must catch these WITHOUT having been told about them.** The
+//   · **The corpus is the regression suite.** Each entry is a bypass that a
+//     green unit suite did not catch. The compiled-artifact probe exists
+//     because tests assert the source while the container runs the build.
+//   · **A layer must catch these without having been told about them.** The
 //     ungated-review audit below is never given a command string at all; it is
-//     shown the OUTCOME each chain was reaching for and asked whether the
-//     daemon has a record of it. That is the property this ticket exists for.
+//     shown the outcome each chain was reaching for and asked whether the
+//     daemon has a record of it.
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -56,10 +55,9 @@ import { sessionGitConfigPins } from "../src/sessions.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
 /**
- * Every chain verified as EXECUTING or POSTING, plus the fifth this
- * ticket found. `via` names the boundary each one has to cross — which is the
- * point: they do not all cross the same one, and a single-boundary defence is
- * what four rounds kept re-proving inadequate.
+ * Every chain verified as executing or posting. `via` names the boundary each
+ * one has to cross — they do not all cross the same one, which is why a
+ * single-boundary defence is inadequate.
  */
 const CORPUS = [
   {
@@ -118,8 +116,8 @@ const CORPUS = [
     outcome: null,
     note: "write diff.external into the repo's own config, then run a PLAIN `git diff` — no suspicious token in any command",
   },
-  // Round 6 — the first adversarial review. Five write primitives,
-  // every one already on the guard's own read-only ALLOWLIST, each verified to
+  // Round 6. Five write primitives, every one on the guard's own read-only
+  // allowlist at the time, each verified to
   // write `<clone>/.git/config` AND to make a subsequent plain
   // `git diff <base> <head>` execute, with the config-scope pin in force.
   {
@@ -129,12 +127,11 @@ const CORPUS = [
     outcome: null,
     note: "awk's no-space redirect form; the SPACED form blocked only by accident",
   },
-  // Round 7 — the second adversarial review. Every awk body rule keyed on a
-  // quote, `$` or `(` after the operator, so a BARE IDENTIFIER holding the
-  // command or the filename matched none of them. The first is the severe one:
-  // arbitrary execution with no config file touched, which means layer 4 has
-  // nothing to compare and the outcome layer has no review to see. awk is off
-  // ALLOWED as a result, so all three are refused on the program token now.
+  // Round 7. An awk body rule keyed on a quote, `$` or `(` after the operator
+  // misses a bare identifier holding the command or the filename. The first is
+  // the severe one: arbitrary execution with no config file touched, so layer
+  // 4 has nothing to compare and the outcome layer has no review to see. awk
+  // is not in ALLOWED, so all three are refused on the program token.
   {
     round: 7,
     via: "bash",
@@ -184,9 +181,8 @@ const CORPUS = [
     outcome: null,
     note: "sort writes an arbitrary path",
   },
-  // …and the direct-exec half found alongside them, which is not a git-config
-  // bypass at all: arbitrary execution straight through the program allowlist,
-  // making the no-exec policy false on its own terms.
+  // …and the direct-exec half, which is not a git-config bypass at all:
+  // arbitrary execution straight through the program allowlist.
   {
     round: 6,
     via: "bash",
@@ -208,10 +204,9 @@ const CORPUS = [
     outcome: null,
     note: "find -exec — ran the command",
   },
-  // Round 8 —. The exec boundary protected git's configuration and not
-  // its OWN. Four doors onto this system's policy surface (config.toml, the
-  // sanctioned scripts, the compiled guard), each `allowed: true` on source AND
-  // compiled `dist/` before this ticket, each found by EXECUTION.
+  // Round 8. The exec boundary protects this system's own policy surface, not
+  // only git's configuration: config.toml, the sanctioned scripts and the
+  // compiled guard, each door verified by execution.
   {
     round: 8,
     via: "bash",
@@ -289,10 +284,9 @@ const CORPUS = [
     outcome: null,
     note: "the BUILT validator body pi loads next round",
   },
-  // Round 8, second pass — found while closing the doors above, by running
-  // each redirection spelling bash has against a real file. The scan knew `>`
-  // and `>>`; every one of these wrote its target, and every one was a bypass
-  // of the git-config veto on master as well.
+  // Round 8, second pass: every redirection spelling bash has, run against a
+  // real file. Each of these writes its target, so a scan that knows only `>`
+  // and `>>` misses them — on the git-config veto as well.
   {
     round: 8,
     via: "bash",
@@ -363,12 +357,11 @@ const CORPUS = [
     outcome: null,
     note: "env -S splits a second command line out of one word",
   },
-  // Round 9 — the pi 0.99.1 bump. pi's PROJECT dir `.pi/` is loaded into every
-  // session and pass started in the sandbox root, and every project is trusted
-  // (the no-stall decision). 0.99 made it worse: `.pi/mcp.json` launches
-  // server processes, and a `+builtin:mcp` in `.pi/settings.json` overrides
-  // the global `-builtin:mcp` (src/pibuiltins.ts). `.pi/` was never on the
-  // policy surface.
+  // Round 9. pi's project dir `.pi/` is loaded into every session and pass
+  // started in the sandbox root, and every project is trusted (the no-stall
+  // decision). `.pi/mcp.json` launches server processes, and a `+builtin:mcp`
+  // in `.pi/settings.json` overrides the global `-builtin:mcp`
+  // (src/pibuiltins.ts), so `.pi/` is policy surface.
   {
     round: 9,
     via: "bash",
@@ -404,12 +397,11 @@ const CORPUS = [
     outcome: null,
     note: "the write-tool half of the extension door",
   },
-  // Round 10 — (noted by the context-engine integration review, closed
-  // in S8b). The daemon publishes a PR session's memory SCOPE into its pi home
+  // Round 10. The daemon publishes a PR session's memory scope into its pi home
   // — the recall hint (`recall-hints/<session>.json`: the only areas its recall
   // and memory tools may read) and the retired list — and the vendored
   // extension takes the hint's areas as given (`toolScopeAreas`, asserted
-  // below by running it). Neither file was protected, so one write widened the
+  // below by running it). An unprotected write to either file would widen the
   // session's own memory reach to the finding cases and feedback events no
   // review round may read, until the next round's hint.
   {
@@ -433,10 +425,9 @@ const CORPUS = [
     outcome: null,
     note: "the write-tool half of the recall-hint door",
   },
-  // …and the S8b review's falsification of G6 as first written: spellings
-  // that NAME the file and still walked past a literal-name check, each
-  // VERIFIED writing the real file (a scratch dir; git 2.55). With no layer 4
-  // behind the memory scope, the guard is all there is.
+  // …and spellings that name the file yet walk past a literal-name check,
+  // each verified writing the real file (a scratch dir; git 2.55). With no
+  // layer 4 behind the memory scope, the guard is all there is.
   {
     round: 10,
     via: "bash",
@@ -490,10 +481,10 @@ const CORPUS = [
 ] as const;
 
 /**
- * The SIXTH primitive, kept out of CORPUS on purpose and asserted separately.
+ * A primitive kept out of CORPUS on purpose and asserted separately.
  *
- * `T=.git/config; cat payload >> $T` writes the config exactly like the four
- * above, and NO scan over a command string can ever see it: `T=` is not a
+ * `T=.git/config; cat payload >> $T` writes the config exactly like the
+ * entries above, and no scan over a command string can ever see it: `T=` is not a
  * config-injecting variable and the redirection target is `$T`. It is the case
  * that settles the design argument — a write veto that reads command strings
  * inherits the blindness of the command guard it was built to compensate for.
@@ -505,9 +496,8 @@ const INDIRECTION_CHAIN = "T=.git/config; cat payload >> $T";
 const POLICY_INDIRECTION_CHAIN = "T=config.toml; cat payload > $T";
 
 describe("— the four proven bypasses, replayed against the COMPILED guard", () => {
-  // The container runs `dist/`, not `extensions/*.ts`. Rounds two and three
-  // both shipped a source fix whose compiled form was never exercised; this is
-  // the check that closes that gap. `npm run build` first — when dist is
+  // The container runs `dist/`, not `extensions/*.ts`, so a source fix must be
+  // exercised in its compiled form. `npm run build` first — when dist is
   // absent the probe says so loudly instead of passing vacuously.
   const distPath = resolve(process.cwd(), "dist/extensions/bash-guard.js");
   const require_ = createRequire(import.meta.url);
@@ -554,9 +544,9 @@ describe("— the four proven bypasses, replayed against the COMPILED guard", ()
 describe("— the layer that was NOT told about them", () => {
   // The ungated-review audit never sees a command. It is handed what GitHub
   // reports and what the daemon recorded, and asked whether they agree. Every
-  // chain in the corpus whose OUTCOME is a review — which is what bypasses 1,
-  // 2 and 3 existed to produce, and what the arbitrary-execution ones grant the
-  // ability to produce — lands here regardless of the mechanism that made it.
+  // chain in the corpus whose outcome is a review — directly, or through the
+  // arbitrary execution it grants — lands here regardless of the mechanism
+  // that made it.
   const HEAD = "abc1234def5678";
   const bot = { botLogin: "quickreview-bot[bot]", appSlug: "quickreview" };
   const review = (over: Partial<AuditedReview>): AuditedReview => ({
@@ -611,9 +601,9 @@ describe("— the layer that was NOT told about them", () => {
   });
 
   it("a posting marker the daemon never issued is not a trace — the format is public", () => {
-    // Selfscan 6475bc58: the marker used to be matched on its PREFIX alone, so
-    // an out-of-gate APPROVE that typed `<!-- qcr-post:x -->` into its body
-    // read as sanctioned and no ungated_approval fired.
+    // A marker matched on its prefix alone would let an out-of-gate APPROVE
+    // that typed `<!-- qcr-post:x -->` into its body read as sanctioned, and
+    // no ungated_approval would fire.
     const forged = auditUngatedReviews(
       [review({ body: "LGTM <!-- qcr-post:x -->" })],
       HEAD,
@@ -724,8 +714,8 @@ describe("— the layer that was NOT told about them", () => {
   });
 
   it("the migration excuse covers ONE comment, not every comment forever", () => {
-    // Mutation-verification caught this: with a single COMMENT in the fixture,
-    // an excuse bounded to 1 and an excuse bounded to 99 are indistinguishable.
+    // With a single COMMENT in the fixture, an excuse bounded to 1 and an
+    // excuse bounded to 99 are indistinguishable, so this case uses two.
     // `migrationPrecheck` is `lastEventAt(…) !== undefined` with no time bound,
     // so an unbounded excuse permanently blinds the audit to every COMMENT on
     // any PR that has ever had a migration comment — a detection weakening
@@ -740,8 +730,8 @@ describe("— the layer that was NOT told about them", () => {
   });
 
   it("a REQUEST_CHANGES mark does not vouch for an APPROVE at the same head", () => {
-    // The specific hole a looser rule would leave: bypass 1's whole point is
-    // an approval, and a round that legitimately posted REQUEST_CHANGES at this
+    // The specific hole a looser rule would leave: a config-injection bypass
+    // aims at an approval, and a round that legitimately posted REQUEST_CHANGES at this
     // head would otherwise account for it.
     const found = auditUngatedReviews(
       [review({ state: "APPROVED" })],
@@ -805,7 +795,7 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     expect(kindOf(writeLine("/opt/quickreview/reviewed-repo/.git/config"))).toBe(
       "git_config_surface_write",
     );
-    // this system's own policy surface, and the laundered relocation.
+    // This system's own policy surface, and the laundered relocation.
     expect(kindOf(bashLine("cat /tmp/evil > config.toml"))).toBe("policy_surface_write");
     expect(kindOf(bashLine("printf 'x' > scripts/post-review.sh"))).toBe("policy_surface_write");
     expect(kindOf(writeLine("dist/extensions/bash-guard.js"))).toBe("policy_surface_write");
@@ -834,7 +824,7 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
     expect(kindOf(bashLine(`cat /tmp/evil > con"fig".toml`))).toBe("policy_surface_write");
     expect(kindOf(bashLine("cat p >&.git/config"))).toBe("git_config_surface_write");
     expect(kindOf(writeLine("state/agents/pass-validate.md"))).toBe("policy_surface_write");
-    // the memory-scope files a session's own recall reads.
+    // The memory-scope files a session's own recall reads.
     expect(kindOf(bashLine("printf x > ~/.openviking/recall-hints/pr-5.json"))).toBe(
       "memory_scope_write",
     );
@@ -905,7 +895,7 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "cat .git/HEAD",
       `GH_TOKEN="$(scripts/mint-token.sh)" scripts/pr-context.sh 5197`,
       "scripts/post-review.sh 5249 REQUEST_CHANGES body.md comments.json",
-      // reading the policy surface is the job; only writing it is not.
+      // Reading the policy surface is the job; only writing it is not.
       "cat config.toml",
       "rg -n dry_run config.toml scripts/",
       "sed -n '1,40p' scripts/guards.sh",
@@ -913,11 +903,11 @@ describe("— the post-hoc audit is no longer blind to the corpus", () => {
       "head -20 dist/extensions/bash-guard.js",
       "bash -c 'git status'",
       "printf '%s' x > /tmp/body.md",
-      // reading the memory scope is fine; only writing it is not.
+      // Reading the memory scope is fine; only writing it is not.
       "cat ~/.openviking/recall-hints/pr-5.json",
       "rg -n retired-uris src/",
       // …and a NAME that merely contains the words is not the file — the
-      // guard allows these, so the audit must not flag them (S8b review).
+      // guard allows these, so the audit must not flag them.
       "printf x > docs/recall-hints.md",
       "printf x > /tmp/recall-hints-notes.txt",
       "echo x > /tmp/retired-uris.json.bak",
@@ -977,7 +967,7 @@ describe("— the write class that no command string can show (round 2)", () => 
     expect(gitConfigChangeMessage(42, changes)).toContain("/clone/.git/config");
   });
 
-  // the same check, one level out — the policy surface. A fake
+  // The same check, one level out — the policy surface. A fake
   // sandbox whose directories hold files; `readDir` lists them, `readFile`
   // reads them, and nothing here is a command string.
   const policyFs = (disk: Map<string, string>) => ({
@@ -1059,10 +1049,10 @@ describe("— the write class that no command string can show (round 2)", () => 
     expect(splitIntegrityChanges(created, "/sb").policy.map((c) => c.path)).toEqual(["/sb/.pi"]);
   });
 
-  // follow-up: the LIVE config is found by the install locator, not at
+  // The live config is found by the install locator, not at
   // `<sandbox>/config.toml` — on the VM it is the shipped config home named by
-  // QCR_CONFIG, whose basename is the operator's choice. Layer 4 must
-  // watch THAT file, and the profiles the loader reads beside it.
+  // QCR_CONFIG, whose basename is the operator's choice. Layer 4 must watch
+  // that file, and the profiles the loader reads beside it.
   // MUTATION: make `locatedPolicyWatchPaths` return [] — every case goes red.
   describe("…and the LOCATED config, wherever the install locator finds it", () => {
     const vmEnv = { QCR_CONFIG: "/opt/quickreview/config-home/acme.toml", HOME: "/home/q" };
@@ -1163,8 +1153,8 @@ describe("— the write class that no command string can show (round 2)", () => 
     });
 
     it("a watch set that GREW between baseline and re-check is drift, not a change", async () => {
-      // A round dispatched under the legacy watch set (no located config)
-      // and judged after a deploy that added it must stay silent — deploy.sh
+      // A round dispatched under a watch set without the located config and
+      // judged after a deploy that added it must stay silent — deploy.sh
       // only WARNS on an undrained deploy, so rounds do straddle one.
       // MUTATION: drop the both-sides-watched skip in `integrityChanges` — red.
       const disk = vmDisk();
@@ -1242,8 +1232,8 @@ describe("— the write class that no command string can show (round 2)", () => 
       expect(isPolicySurface(`/sb/${dir}/anything`), dir).toBe(true);
       expect(checkWritePath(`${dir}/anything`).allowed, dir).toBe(false);
     }
-    // …and the set is the one the ticket named, so a silent widening or
-    // narrowing of the policy surface is a diff in this file.
+    // …and the set is pinned here, so a silent widening or narrowing of the
+    // policy surface is a diff in this file.
     expect([...POLICY_SURFACE_FILES]).toEqual([
       "config.toml",
       "AGENTS.override.md",
@@ -1263,7 +1253,7 @@ describe("— the write class that no command string can show (round 2)", () => 
     ]);
   });
 
-  // S8b. The memory-scope files are refused at the write boundary
+  // The memory-scope files are refused at the write boundary
   // through the same predicate, but layer 4 does NOT watch them: the daemon
   // rewrites a session's recall hint at every round's dispatch, so a
   // round-boundary hash would report its own work (the `state/agents/**`
@@ -1311,7 +1301,7 @@ describe("— the write class that no command string can show (round 2)", () => 
     expect(paths).toContain("/wt/pr-42/.git"); // the gitdir POINTER
     expect(paths).toContain("/clone/.git/worktrees/pr-42/config.worktree");
     // The admin dir's commondir pointer relocates the shared config and hooks
-    // (selfscan 4e2fd68c) — watched exactly as the `.git` pointer is.
+    // — watched exactly as the `.git` pointer is.
     expect(paths).toContain("/clone/.git/worktrees/pr-42/commondir");
     // Deliberately NOT the whole worktrees dir: other PRs' rounds add and
     // prune siblings concurrently, and every one would be a false alarm.
@@ -1342,8 +1332,8 @@ describe("— the write class that no command string can show (round 2)", () => 
   });
 
   it("an unreadable path is recorded as unreadable, never folded into absent", async () => {
-    // Selfscan 8aeea355: every error used to read as "absent", so the header's
-    // "unreadable is recorded distinctly" was only true of the docstring.
+    // Only a missing path (ENOENT, ENOTDIR) is "absent"; any other error is
+    // recorded as unreadable with its code.
     const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     const missing = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     const fs = {
@@ -1362,14 +1352,13 @@ describe("— the write class that no command string can show (round 2)", () => 
   });
 });
 
-// H2: the round-end re-hash walks the whole policy surface — dist/,
-// scripts/, extensions/, the seeds, ~14 MB — and ran synchronously inside the
-// 16.8 s loop stall of 2026-10-08 08:51Z. It is async now, a loop turn after
-// every file, and its value must not move by a bit: a baseline taken before a
-// deploy is compared with a re-check taken after it.
+// The round-end re-hash walks the whole policy surface — dist/, scripts/,
+// extensions/, the seeds, ~14 MB — so it is async, yielding a loop turn after
+// every file, and its value must equal the synchronous hash bit for bit: a
+// baseline taken before a deploy is compared with a re-check taken after it.
 describe("H2 — the integrity fingerprint, off the event loop", () => {
-  // The pre-H2 hash, verbatim (src/execboundary.ts at 75c9aa50), over the
-  // synchronous fs it ran on.
+  // The synchronous reference hash, verbatim (src/execboundary.ts at
+  // 75c9aa50), over a synchronous fs.
   const oldErrno = (err: unknown): string | undefined => {
     const code = (err as { code?: unknown } | null)?.code;
     return typeof code === "string" ? code : undefined;
@@ -1513,8 +1502,8 @@ describe("— the audit no longer fires on the reads that ARE the job", () => {
     });
 
   it("a pattern in an argument to a reader is not a command", () => {
-    // Every one of these fired before the audit became per-segment and
-    // program-aware. Reviewing a PR that touches a Dockerfile, a workflow or a
+    // The audit is per-segment and program-aware, so none of these fire.
+    // Reviewing a PR that touches a Dockerfile, a workflow or a
     // deploy script means grepping for exactly these tokens, so this is the
     // normal case, not an edge case.
     for (const cmd of [
@@ -1550,14 +1539,13 @@ describe("— the audit no longer fires on the reads that ARE the job", () => {
     expect(kindOf("sed -n 'w .git/config' payload")).toBe("reader_write_or_exec");
     expect(kindOf("sort -o .git/config payload")).toBe("reader_write_or_exec");
     expect(kindOf(`find . -maxdepth 0 -fprintf .git/config "x"`)).toBe("reader_write_or_exec");
-    // awk is off the allowlist entirely now, so it audits as what it is.
+    // awk is off the allowlist entirely, so it audits as what it is.
     expect(kindOf(`awk 'BEGIN{c="sh"; print "id" | c}'`)).toBe("interpreter");
     expect(kindOf("awk -F: '{print $1}' /etc/passwd")).toBe("interpreter");
     expect(kindOf("find . -maxdepth 0 -exec /tmp/pwn.sh ;")).toBe("reader_write_or_exec");
     // `xargs` RUNS what follows it, so the audit resolves through it rather
-    // than classifying the segment as the reader `xargs` and skipping it. The
-    // guard already recursed; the audit did not, so this chain was blocked and
-    // silent. Found by running the corpus against the build.
+    // than classifying the segment as the reader `xargs` and skipping it, as
+    // the guard does.
     expect(kindOf("git diff --name-only | xargs awk '{print}'")).toBe("interpreter");
     expect(kindOf("echo f | xargs sed -i 's/a/b/'")).toBe("reader_write_or_exec");
     expect(kindOf("git diff --name-only | xargs grep -n TODO")).toBeUndefined();
@@ -1579,9 +1567,8 @@ describe("— the config-scope pin, as the daemon builds it", () => {
     });
     // NOT /dev/null: the container's entrypoint writes a `credential.helper`
     // into the global config and `fetch` is deliberately an allowed read verb.
-    // Pointing the global scope at /dev/null would have silently broken every
-    // session-side fetch on a private repo — a regression that looks like a
-    // hardening.
+    // Pointing the global scope at /dev/null would silently break every
+    // session-side fetch on a private repo.
     expect(pins.GIT_CONFIG_GLOBAL).not.toBe("/dev/null");
   });
 });

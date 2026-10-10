@@ -1,4 +1,4 @@
-// archive eligibility, docs/archiving.md §7.1: ONE function, and
+// Archive eligibility, docs/archiving.md §7.1: ONE function, and
 // every clause of it, each alone. A PR is eligible only when ALL hold; each
 // row below breaks exactly one and must come back with exactly its reason.
 import { describe, expect, it } from "vitest";

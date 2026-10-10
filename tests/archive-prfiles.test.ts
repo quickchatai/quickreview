@@ -1,4 +1,4 @@
-// per-PR file archiving (docs/archiving.md §7) over a real temp
+// Per-PR file archiving (docs/archiving.md §7) over a real temp
 // root, through the real archiver in mode `on`:
 //
 //   (1) the happy path: three transcripts become gzips whose bytes and mtimes

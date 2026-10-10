@@ -1,39 +1,30 @@
-// The onboarding CHOICE VOCABULARY — one declaration of every key the steps
+// The onboarding choice vocabulary — one declaration of every key the steps
 // hand each other, and of every value vocabulary both sides of a handoff must
 // agree on.
 //
-// Why this file exists: each onboarding slice was built and tested against its
-// own fake choices, so every per-step suite stayed green while the COMPOSED
-// flow was broken. The GitHub App step read the reviewed repo under a key no
-// step ever wrote ("github_repo" vs the interview's "reviewed_repo"), and a
-// real run stopped dead at step five of sixteen. Two more of the same family
-// rode with it: the interview read the ingress choice under "ingress" while the
-// ingress step recorded "ingress_choice", and read the auth route as
-// "auth_route" with values "oauth" | "api_key" while the LLM step recorded
-// "llm_auth_route" with values "oauth" | "api" — writer and reader disagreeing
-// on both the name AND the vocabulary.
-//
-// Two rules keep that from coming back, and `tests/onboard-choices.test.ts`
+// Why this file exists: each step is tested against its own fake choices, so
+// every per-step suite can stay green while the composed flow is broken — a
+// reader looking under a key no step writes, or testing for a value the writer
+// never records. Two rules prevent that, and `tests/onboard-choices.test.ts`
 // enforces both:
 //
-//   1. NO STEP CARRIES ITS OWN STRING LITERAL for a shared key. Every read and
+//   1. No step carries its own string literal for a shared key. Every read and
 //      every write names `CHOICE_KEYS.x`; a step's exported `*_CHOICE_KEY`
 //      constants are aliases of these, kept only so existing call sites and
 //      tests read naturally. A typo is then a compile error, not a silent miss.
-//   2. EVERY DECLARED KEY HAS A WRITER. `CHOICE_WRITERS` names the step(s) that
+//   2. Every declared key has a writer. `CHOICE_WRITERS` names the step(s) that
 //      record each key, and the test proves each named step really does — so a
-//      key that only ever gets READ (which is exactly what the App step's
-//      "github_repo" was) cannot survive review.
+//      key that only ever gets read cannot survive review.
 //
-// A key PRIVATE to one step — the go-live decision, the bring-up timestamp, the
+// A key private to one step — the go-live decision, the bring-up timestamp, the
 // vm-deploy record, the model prefix, the memory key-file path — stays a local
-// constant in that step. This file is about the HANDOFFS.
+// constant in that step. This file is about the handoffs.
 //
 // Nothing here imports a step (the steps import this), so there is no cycle and
 // no ordering hazard.
 
 // ---- value vocabularies ------------------------------------------------------
-// Declared ONCE and imported by both sides of the handoff, so a mismatch is a
+// Declared once and imported by both sides of the handoff, so a mismatch is a
 // type error rather than a conditional that never fires.
 
 /** Where the reviewer runs. Absent ⇒ "local" (see `topologyOf`). */
@@ -43,7 +34,7 @@ export type Topology = "local" | "vm";
  * names in `INGRESS_OPTIONS` and in docs/onboarding.md. */
 export type IngressChoice = "quick" | "ngrok" | "named" | "polling";
 
-/** The LLM auth route. "api" is the API-key route — NOT "api_key": the value
+/** The LLM auth route. "api" is the API-key route — not "api_key": the value
  * the LLM step writes is the value every reader must test for. */
 export type AuthRoute = "oauth" | "api";
 
@@ -54,7 +45,7 @@ export type MemoryChoice = "configure" | "declined";
 
 /**
  * Every choice key handed from one step to another, with the step that writes
- * it and the step(s) that read it. The comment on each is the CONTRACT: change
+ * it and the step(s) that read it. The comment on each is the contract: change
  * the value here and every side moves together.
  */
 export const CHOICE_KEYS = {
@@ -73,7 +64,7 @@ export const CHOICE_KEYS = {
   authRoute: "llm_auth_route",
 
   /** "owner/name" of the reviewed repo. Written by the interview; read by the
-   * GitHub App step and the proof round. THE key was filed for. */
+   * GitHub App step and the proof round. */
   repo: "reviewed_repo",
   /** The operator's local checkout of the reviewed repo. */
   repoDir: "reviewed_repo_dir",
@@ -90,12 +81,12 @@ export const CHOICE_KEYS = {
   configPath: "config_path",
   /** What `dry_run` the written config carries (informational for go-live). */
   dryRun: "config_dry_run",
-  /** The three label NAMES the config carries, so the App step creates the
+  /** The three label names the config carries, so the App step creates the
    * labels this installation actually triggers on rather than the defaults. */
   labels: "github_labels",
 
   /** The App slug. Written by the interview (the operator's answer), then
-   * CORRECTED by the App step and the slug reconcile from GitHub itself. */
+   * corrected by the App step and the slug reconcile from GitHub itself. */
   appSlug: "github_app_slug",
   /** `<slug>[bot]` — how the daemon recognises its own reviews. */
   botLogin: "github_bot_login",
@@ -131,7 +122,7 @@ export type ChoiceName = keyof typeof CHOICE_KEYS;
 export type ChoiceKey = (typeof CHOICE_KEYS)[ChoiceName];
 
 /**
- * Which STEP records each key. Pinned against the sources by
+ * Which step records each key. Pinned against the sources by
  * `tests/onboard-choices.test.ts`: every name here must be written by every
  * step id listed, and no shared key may be left with no writer at all.
  */
@@ -165,15 +156,15 @@ export const CHOICE_WRITERS: Record<ChoiceName, readonly string[]> = {
 };
 
 /**
- * Keys deliberately PRIVATE to one step: the step records them for its own
+ * Keys deliberately private to one step: the step records them for its own
  * later verify() and nothing else ever reads them, so they stay a local literal
  * in that file rather than joining the shared vocabulary above.
  *
- * This is a CLOSED list, and `tests/onboard-choices.test.ts` holds it shut: a
+ * This is a closed list, and `tests/onboard-choices.test.ts` holds it shut: a
  * literal-keyed choice constant in a step must appear here (naming the one step
  * that owns it) and must be referenced by no other step. To hand a value to
  * another step you therefore have to declare it in `CHOICE_KEYS`, where the
- * writer check applies — which is exactly the discipline "github_repo" escaped.
+ * writer check applies.
  */
 export const PRIVATE_CHOICE_KEYS: Readonly<Record<string, string>> = {
   llm_model_prefix: "llm_auth",

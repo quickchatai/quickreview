@@ -628,7 +628,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
     expect(orders).toHaveLength(1);
   });
 
-  // ----: the mark is read through the ONE standing-review interpretation
+  // ---- the mark is read through the one standing-review interpretation
 
   const skipEvent = (pr: number): Record<string, unknown> => {
     const rows = store.db
@@ -838,7 +838,7 @@ describe("dispatch — a tick with no new evidence starts no round", () => {
   );
 });
 
-// ---- guard 5: head drift ---------------------------------
+// ---- guard 5: head drift ---------------------------------------------------
 
 describe("guard 5 — the head the review is about must still be the live head", () => {
   it("refuses a review whose commit_id is no longer the PR's head", async () => {

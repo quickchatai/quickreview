@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// OpenViking embedder migration — the re-embed path behind
-// "the local embedder ships as the default".
+// OpenViking embedder migration — the re-embed path that lets an existing
+// store move to a different embedder.
 //
-// WHY THIS EXISTS
+// Why this exists
 // ---------------
-// The shipped embedder moved from a hosted model (text-embedding-3-small,
-// 1536 dims) to the server's own local dense embedder (bge-small-zh-v1.5-f16,
-// 512 dims), so nothing but the model call leaves the machine — and
-// then (S4) to the local ENGLISH embedder, bge-small-en-v1.5-f16 at
+// The shipped default is the local ENGLISH embedder, bge-small-en-v1.5-f16 at
 // 384 dims, served on loopback by scripts/openviking-embedder.py and reached
 // through the engine's OpenAI-compatible client (provider "openai", a loopback
-// `api_base`). Every such change is the same migration: a store that was
-// embedded under the old embedder holds vectors the new one cannot read — and
-// OpenViking 0.4.15 REFUSES TO START on such a store:
+// `api_base`), so nothing but the model call leaves the machine. A store may
+// have been embedded under another embedder (a hosted model such as
+// text-embedding-3-small at 1536 dims, or the server's built-in
+// bge-small-zh-v1.5-f16 at 512 dims). Every embedder change is the same
+// migration: a store embedded under the old embedder holds vectors the new one
+// cannot read — and OpenViking 0.4.15 REFUSES TO START on such a store:
 //
 //     EmbeddingRebuildRequiredError: Existing collection embedding dimension
 //     (1536) does not match current configuration (512). Vectors are
 //     incompatible; rebuild is required.
 //
-// (verified against a running 0.4.15, 2026-09-02, on a throwaway copy). There
+// (verified against a running 0.4.15 on a throwaway copy). There
 // is no server-side rebuild: the vector collection has to be RESET while the
 // server is down, and the vectors rebuilt afterwards through the maintenance
 // API `POST /api/v1/content/reindex` (mode `vectors_only`, non-destructive,
@@ -103,8 +103,8 @@ export const META_MARKER = "\n\n[openviking.embedding]\n";
 
 /** The server's BUILT-IN local dense embedder — the only local model 0.4.15
  * ships a spec for, and what the server runs when ov.conf names no embedder at
- * all. Every store embedded between S4 was built under
- * it; `configuredEmbedder` answers it for an ov.conf without an `embedding`
+ * all. A store built before the local English embedder may carry it;
+ * `configuredEmbedder` answers it for an ov.conf without an `embedding`
  * section, because that is what such a server really runs. */
 export const SERVER_DEFAULT_EMBEDDER = Object.freeze({
   provider: "local",
@@ -112,7 +112,7 @@ export const SERVER_DEFAULT_EMBEDDER = Object.freeze({
   dimension: 512,
 });
 
-/** The local ENGLISH embedder (S4) as the engine records it — the
+/** The local ENGLISH embedder as the engine records it — the
  * engine's OpenAI-compatible provider pointed at the loopback service. The
  * record the shipped default writes into a collection. Mirrors
  * `LOCAL_EMBEDDING` in src/config.ts (tests/openviking-reembed.test.ts). */
@@ -490,7 +490,7 @@ export async function prepare({
 /**
  * The USER key as a Bearer, plus the identity header — and deliberately NOT
  * `X-OpenViking-Actor-Peer`, which every other call here carries. VERIFIED
- * LIVE (0.4.15, 2026-09-02): with an actor-peer header set, the reindex
+ * LIVE (0.4.15): with an actor-peer header set, the reindex
  * route's authorisation treats a namespace-level URI as one that "may include
  * hidden actor peers" and answers 403 "USER can only reindex their own user
  * namespace" — for the namespace that key does own. Without it the same key
@@ -787,7 +787,7 @@ export function parseArgs(argv, env = process.env) {
     deadlineMs: Number(flags.get("deadline-ms") ?? DEFAULTS.deadlineMs),
     strict: flags.has("strict"),
     // `rehearse` only: the local embedder to run beside the temporary server
-    // (S4) — a spec, `null`, or an error string.
+    // — a spec, `null`, or an error string.
     embedder: embedderSpecFromFlags(flags),
   };
 }
@@ -872,7 +872,7 @@ export async function main(argv, { env = process.env, log = (line) => console.lo
         log("openviking-reembed: rehearse needs --bin <openviking-server>");
         return 1;
       }
-      // an ov.conf on the local English embedder needs it running
+      // An ov.conf on the local English embedder needs it running
       // — the server's /ready probes it, and the reindex is nothing but
       // embedding calls. Same flags as boot provisioning (--embedder-*),
       // checked BEFORE anything on disk moves.

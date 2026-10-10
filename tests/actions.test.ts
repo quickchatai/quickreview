@@ -1,4 +1,4 @@
-// the companion → TUI action channel: strict schema parse, instant
+// The companion → TUI action channel: strict schema parse, instant
 // execution against the TuiDriver seam, archive-before-execute idempotency,
 // result files, bounded housekeeping.
 import {
@@ -188,8 +188,8 @@ describe("parseTuiAction — refusals, never a throw", () => {
   });
 
   it("switch_tab refuses unknown tabs (incl. the retired 'changes' and 'companion')", () => {
-    // `changes` was tab [5] until folded the register into `feedback`;
-    // under the hard-cut policy it is refused, not aliased.
+    // The changes register lives in the `feedback` tab; `changes` is refused,
+    // not aliased.
     for (const tab of ["changes", "companion", "Board", "", 5, undefined]) {
       expect(err({ verb: "switch_tab", params: { tab } })).toContain("switch_tab");
     }

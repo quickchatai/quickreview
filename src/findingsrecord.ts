@@ -1,27 +1,23 @@
-// The durable reasoning record (deciding).
+// The durable reasoning record.
 //
 // WHAT THIS IS. `rounds.lenses` records the PLAN and `rounds.executed_passes`
-// records COUNTS — three findings were killed on #5359 r1 and the database
-// cannot say which, nor why. The kill log existed in 82 rounds of 105 with no
-// schema and no reader; the raise-side candidates file existed in 3 of 105.
-// The reasoning evaporated, and's adjudication doctrine,
-// "how often the review backs down" metric and's per-round volume
-// survey all need it. The owner chose the reopened findings telemetry under that
-// name: a schema'd file the session writes, parsed by the daemon
-// into queryable rows.
+// records COUNTS — neither says which candidate findings were killed, nor why.
+// Adjudication, the "how often the review backs down" metric and per-round
+// volume all need that reasoning, so the session writes a schema'd file and
+// the daemon parses it into queryable rows.
 //
-// THE SHAPE IS THE LEDGER PATTERN, DELIBERATELY. A prompt mandate
-// alone does not stick (3 of 105). So the daemon parses the file after the
-// round and, on missing/unparseable, emits a queryable anomaly plus EXACTLY
-// ONE re-nudge through `wakeOrHold` telling the session to write only that
-// record. The once-mark is persisted BEFORE the inject, so even a crashed
-// inject can never become a nudge loop.
+// THE SHAPE IS THE LEDGER PATTERN, DELIBERATELY. A prompt mandate alone does
+// not stick. So the daemon parses the file after the round and, on
+// missing/unparseable, emits a queryable anomaly plus EXACTLY ONE re-nudge
+// through `wakeOrHold` telling the session to write only that record. The
+// once-mark is persisted BEFORE the inject, so even a crashed inject can never
+// become a nudge loop.
 //
 // A ROUND IS NEVER HELD OPEN FOR IT. This is a record, not a gate: the verdict
 // has already been applied, the round row is already finished and the PR has
 // already transitioned by the time any of this runs. A record that never
 // arrives costs one anomaly row and one nudge, and nothing else — least of all
-// a wedged PR (rule 9; the map has spent enough on wedges).
+// a wedged PR (rule 9).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findingRecordKey } from "./findingkey.js";
@@ -35,11 +31,11 @@ import { wakeOrHold } from "./wakes.js";
  * countable if the disposition is.
  *
  * - `posted` — it survived validation and went out on the PR (the RAISE side,
- *   the half at 3 of 105 and the half adjudication actually needs).
+ *   the half adjudication actually needs).
  * - `killed` / `downgraded` — the validator vetoed or moved it.
  * - `doubted` — the validator could not stand behind the CLAIM (`DOUBT_WORDS`:
- *   refuted, unverifiable, bad anchor).: a validity veto is a mark,
- *   not a deletion — kept here as "may not be valid", never posted on the PR,
+ *   refuted, unverifiable, bad anchor). A validity veto is a mark, not a
+ *   deletion — kept here as "may not be valid", never posted on the PR,
  *   shown in the TUI for the operator to judge.
  * - `merged` / `folded` — merge-stage attrition: the same defect
  *   collapsed into another finding, or a different defect carried as a
@@ -50,9 +46,9 @@ import { wakeOrHold } from "./wakes.js";
  *   from `WITHHOLD_WORDS`: `over-budget`, `nits-off`, …) — kept, never posted.
  * - `conceded` — REFUTED AND CONCEDED: previously posted, the author refuted
  *   it and the reviewer accepted the refutation. This is the state that lets a
- *   later round tell "escalating an open finding" (legitimate — the owner,
- *   2026-08-19: blocking late beats never) from "resurrecting a settled one"
- *   (not legitimate). Nothing else in the system records it.
+ *   later round tell "escalating an open finding" (legitimate — blocking late
+ *   beats never) from "resurrecting a settled one" (not legitimate). Nothing
+ *   else in the system records it.
  */
 export type FindingDisposition =
   | "posted"
@@ -129,10 +125,9 @@ function normalizeAxis(raw: unknown): FindingAxis {
 /**
  * The closed kill/downgrade vocabulary (`agents/pass-validate.md` plus the
  * `kill-vocabulary` addendum in `src/include.ts`). Recorded here for QUERIES
- * and for a parse note — never as a validator: recorded that the
- * vocabulary already grew once (`feedback-shape`, from the day
- * addendum) and will grow again, so an unknown word is noted, kept verbatim,
- * and never a reason to refuse the record.
+ * and for a parse note — never as a validator: the vocabulary grows with the
+ * addenda, so an unknown word is noted, kept verbatim, and never a reason to
+ * refuse the record.
  */
 export const KILL_WORDS: readonly string[] = [
   "refuted",
@@ -142,10 +137,10 @@ export const KILL_WORDS: readonly string[] = [
   "out-of-scope",
   "nit-out-of-delta",
   "below-bar",
-  // two of the three unreasoned shapes are kills.
+  // Two of the three unreasoned shapes are kills.
   "nit-no-request",
   "self-narration",
-  // 2026-09-27 — style from any lens but pass-style (the repo's own guide).
+  // Style from any lens but pass-style (the repo's own guide).
   "style-not-in-guide",
 ];
 
@@ -154,7 +149,7 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   "intent-over-cap",
   "design-over-cap",
   "style-over-cap",
-  // a profile's `[lenses.<pass>] max_severity` ceiling
+  // A profile's `[lenses.<pass>] max_severity` ceiling
   // (src/lenstuning.ts PROFILE_CAP_WORD).
   "profile-over-cap",
   "inflated",
@@ -162,16 +157,16 @@ export const DOWNGRADE_WORDS: readonly string[] = [
   "overreachable",
   "understated-reach",
   "feedback-shape",
-  // a curated dont-raise lesson's demotion (src/include.ts
+  // A curated dont-raise lesson's demotion (src/include.ts
   // LESSON_VALIDATE_ADDENDUM), composed only while lessons are delivered.
   "lesson-shape",
-  // the third shape is a correction, not a kill: the tag is put back
+  // The third unreasoned shape is a correction, not a kill: the tag is put back
   // inside the closed grammar and the finding survives.
   "tag-outside-grammar",
-  // Benchmark 2026-09-26: the mechanism is real, the claimed consequence was
-  // wrong — posted with the true consequence instead of killed.
+  // The mechanism is real, the claimed consequence was wrong — posted with
+  // the true consequence instead of killed.
   "restated",
-  // 2026-10-02 (validate-external-semantics): a claim resting on an external
+  // (validate-external-semantics) A claim resting on an external
   // tool's or library's behaviour that no read could settle — kept as a
   // question naming the assumption, never doubted away.
   "external-assumption",
@@ -218,9 +213,8 @@ export interface FindingsRecordEntry {
    * finding (a concession, an escalation). Null = raised this round. */
   raised_in_round: number | null;
   thread_id: number | null;
-  /** The posted comment's one-line title, as the session wrote it (
-   * S6: kept, where it used to be dropped). Null when the entry has none —
-   * never derived from the reason. */
+  /** The posted comment's one-line title, as the session wrote it. Null when
+   * the entry has none — never derived from the reason. */
   title: string | null;
 }
 
@@ -236,7 +230,7 @@ export interface FindingsRecordFile {
    * this is the session's, and the two disagreeing is itself a signal. */
   comments_posted: number | null;
   findings: FindingsRecordEntry[];
-  /**: the statuses this round reported for PRIOR findings (the
+  /** The statuses this round reported for PRIOR findings (the
    * daemon-rendered list's refs). Empty when the record carries none. */
   prior: PriorStatusEntry[];
 }
@@ -369,10 +363,11 @@ export type FindingsRecordStatus =
   "ok" | "missing" | "unparseable" | "wrong_round" | "no_findings_array";
 
 /**
- * What the round's POSTED output looked like against the three rules
- * — and against: a doubted finding is never posted.
+ * What the round's POSTED output looked like against the output rules — a tag
+ * inside the closed grammar, a nit that names a request, a doubted finding
+ * never posted — plus a count of findings restated from earlier rounds.
  *
- * This is measurement over the record already collects — there is no
+ * This is measurement over the record already collected — there is no
  * second table and no new mandate beyond one field (`request`) on nit entries.
  * Each list holds the offending entries' keys, so a query can go straight back
  * to the row.
@@ -388,18 +383,17 @@ export interface RecordConformance {
    * keyed on the real tag — `resolveOwnReviewThread`'s refusals included. */
   ungrammatical_tags: string[];
   /** Posted as a nit while naming no request. A nit that asks for nothing is a
-   * remark, not a finding — 63.7% of them, at 449 characters each. */
+   * remark, not a finding. */
   nits_without_request: string[];
   /** Doubted AND carrying a `posted_as` — a finding the validator could not
-   * stand behind that the session says it posted anyway (a doubt is
-   * never posted on the PR). */
+   * stand behind that the session says it posted anyway (a doubt is never
+   * posted on the PR). */
   doubted_posted: string[];
   /**
    * Posted this round while first raised in an earlier one. NOT automatically
-   * a defect: a severity escalation across rounds is ratified behaviour
-   * (the owner, 2026-08-19 — blocking late beats never). It IS the population
-   * that the 14.2% bookkeeping share comes out of, so it is counted rather
-   * than judged, and never killed on this signal alone.
+   * a defect: a severity escalation across rounds is legitimate (blocking
+   * late beats never). It is also where restated bookkeeping comes from, so
+   * it is counted rather than judged, and never killed on this signal alone.
    */
   restated: string[];
 }
@@ -418,7 +412,8 @@ export interface ParsedFindingsRecord {
   /** Shortfalls that did NOT reject the record (entries missing a lens, an
    * unknown vocabulary word, …). A note, never a rejection. */
   note?: string;
-  /** The audit over the posted entries. Present whenever `record` is. */
+  /** The output-rule audit over the posted entries. Present whenever `record`
+   * is. */
   conformance?: RecordConformance;
 }
 
@@ -447,7 +442,7 @@ function prose(val: unknown): string | null {
 /**
  * Parse and normalize one record file's already-JSON-decoded content.
  *
- * Tolerant in exactly the direction: digit-string numbers coerce,
+ * Tolerant like the verdict parser: digit-string numbers coerce,
  * `candidates` is accepted for `findings`, `name` for `lens`, and an entry the
  * parser cannot fully understand is kept with nulls plus a note rather than
  * dropped. The ONLY rejections are structural — not an object, the wrong
@@ -499,7 +494,7 @@ export function parseFindingsRecord(
     const word = str(e.word) ?? str(e.reason_word) ?? null;
     const written = normalizeDisposition(e.disposition);
     if (written === "unknown") unknownDisposition++;
-    // a validity veto recorded as a kill is still a doubt.
+    // A validity veto recorded as a kill is still a doubt.
     const disposition: FindingDisposition =
       written === "killed" && word !== null && DOUBT_WORDS.includes(word.trim().toLowerCase())
         ? "doubted"
@@ -512,7 +507,7 @@ export function parseFindingsRecord(
       const r = num(e.raised_in_round);
       return r === null ? null : Math.trunc(r);
     })();
-    // audit — posted entries only: the three defects are about what
+    // Output-rule audit — posted entries only: the three defects are about what
     // reaches the author, and a killed candidate reached nobody.
     if (disposition === "posted") {
       const postedAs = str(e.posted_as);
@@ -522,7 +517,7 @@ export function parseFindingsRecord(
         .replace(/^\[|\]$/g, "")
         .trim()
         .toLowerCase();
-      // `request` is the one new field asks a lens for: the concrete
+      // `request` is the field the nit rule asks a lens for: the concrete
       // change the nit asks for. Its ABSENCE is the defect — a nit that names
       // no change is a remark. Alternate spellings are accepted, as everywhere
       // else in this parser.
@@ -647,12 +642,12 @@ export interface FindingsCheckDeps {
   /** Where the record lives — daemon.ts passes `<root>/state/findings`. */
   findingsDir: string;
   /** SessionHooks.inject — rides wakeOrHold, so a check that somehow lands
-   * mid-round holds rather than interleaving (rule 9 S4). */
+   * mid-round holds rather than interleaving (rule 9). */
   inject: (pr: number, message: string) => Promise<void>;
   log?: (msg: string, extra?: unknown) => void;
   /**
-   * Told every time a round's findings record LANDS in `round_findings`
-   * (S9a): the lesson shadow ledger marks the round's posted
+   * Told every time a round's findings record LANDS in `round_findings`: the
+   * lesson shadow ledger marks the round's posted
    * findings a selected dont-raise lesson would have touched
    * (src/lessonshadow.ts). Runs after `findings_recorded`; must not throw —
    * a throw is logged and swallowed, the record stands either way.
@@ -703,7 +698,7 @@ export async function enforceFindingsRecord(
     );
     if (parsed.record.comments_posted !== null && roundId !== null)
       store.recordRoundComments(roundId, parsed.record.comments_posted);
-    // the statuses this round reported for prior findings. Stored
+    // The statuses this round reported for prior findings. Stored
     // beside the listing the daemon made at order build; the next round's
     // list drops what a later report resolved.
     const priorReported =
@@ -728,7 +723,7 @@ export async function enforceFindingsRecord(
     } catch (err) {
       log?.(`findings: #${pr} round ${roundNo} onRecorded hook threw (ignored)`, err);
     }
-    // the round's posted output against the three rules. A quiet
+    // The round's posted output against the three output rules. A quiet
     // anomaly (anomalies.ts wakes nobody for this kind) — a durable, queryable
     // row is the point, and no round is ever held open for it.
     const c = parsed.conformance;

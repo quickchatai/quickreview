@@ -1,7 +1,7 @@
-// The owner's 2026-10-03 grilling decisions (gap plan): a no-budget line for
-// every lens, a narrowed behaviour-delta trigger, a deterministic
-// loosened-assertion hint for pass-tests, the repeated-copy design finding and
-// the regression-test request. PR builds only; no benchmark names in prompts.
+// Review-quality addenda: a no-budget line for every lens, a narrowed
+// behaviour-delta trigger, a deterministic loosened-assertion hint for
+// pass-tests, the repeated-copy design finding and the regression-test
+// request. PR builds only; no benchmark names in prompts.
 import { describe, expect, it } from "vitest";
 import { addendaForPass, PASS_ADDENDA } from "../src/include.js";
 

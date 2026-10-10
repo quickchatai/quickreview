@@ -1,18 +1,11 @@
 // Red CI hard-gates APPROVE.
 //
-// The rule the predecessor system never wrote down: its rubric said a completed
-// failing check was a blocker, yet 11 approvals landed over `conclusion:
-// failure`, each arguing the case in prose — infra outage, all jobs cancelled
-// or skipped, "master is broken anyway". One of them approved over a genuinely
-// red required check. Defensible one at a time; the problem is that the rule
-// they applied existed nowhere, so the verdict depended on which reviewer ran.
-//
-// The rule now (the owner, 2026-08-18): **no green CI at this head ⇒ APPROVE is
-// unavailable, regardless of findings.** Infra problems block as well — an
-// accepted tradeoff, deliberately simpler and stricter than a three-case
-// attributable/unreadable/master-breakage judgment, which was rejected as too
-// much judgment where a rule is wanted. The code is still reviewed and the
-// findings still posted; only the *verdict* is gated.
+// The rule: no green CI at this head ⇒ APPROVE is unavailable, regardless of
+// findings. Infra problems block as well — deliberately simpler and stricter
+// than judging whether a failure is attributable to the PR, because a rule
+// that is argued case by case in prose makes the verdict depend on which
+// reviewer ran. The code is still reviewed and the findings still posted;
+// only the verdict is gated.
 //
 // Where the rule lives:
 //
@@ -56,8 +49,8 @@ export interface CheckSummary {
   /** `success` | `failure` | `cancelled` | `timed_out` | `skipped` | … */
   conclusion: string | null;
   /** When the run started — the recency key for latest-run-per-name
-   * (the owner, 2026-08-19). Set on check-runs (nullable in GitHub's schema)
-   * and NEVER on commit statuses: the adapter does not carry a time for
+   * among check-runs. Set on check-runs (nullable in GitHub's schema)
+   * and never on commit statuses: the adapter does not carry a time for
    * them, and `latestRunPerName` does not collapse them at all. */
   started_at?: string | null;
 }
@@ -67,7 +60,7 @@ export interface CheckSummary {
  *
  *  - `green`   every check completed and at least one really succeeded
  *  - `red`     something completed badly — failure, cancelled, timed out,
- *              action_required, stale. **No special-casing**: an infra
+ *              action_required, stale. No special-casing: an infra
  *              cancellation blocks exactly like a failing test.
  *  - `pending` a check is still queued or running — not green *yet*
  *  - `none`    no check reported at this head at all
@@ -82,11 +75,10 @@ const INERT_CONCLUSIONS = new Set(["skipped", "neutral"]);
 const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
 
 /**
- * Only the MOST RECENT run of each check name counts (the owner, 2026-08-19).
- * GitHub auto-cancels superseded workflow runs, leaving permanent
- * `completed/cancelled` husks beside the run that actually finished — under
- * the original any-run rule every such head classified red forever and no
- * withheld approval could ever release.
+ * Only the most recent run of each check name counts. GitHub auto-cancels
+ * superseded workflow runs, leaving permanent `completed/cancelled` husks
+ * beside the run that actually finished; counting every run would classify
+ * such a head red forever and no withheld approval could ever release.
  *
  * The rule, exactly, keyed on `source`:
  *
@@ -102,20 +94,13 @@ const UNFINISHED = new Set(["queued", "in_progress", "waiting", "pending", "requ
  *    already dedupes per context, and a status under the same context as a
  *    check-run is a second check, not a superseded run.
  *
- * Why the kind and not the timestamp decides: the adapter sets `started_at`
- * on every check-run and on no status, so the original `?? ""` default let a
- * failing status lose a name collision to a passing check-run and the head
- * read green — "Red CI hard-gates APPROVE" defeated by an ordinary
- * configuration. The first fix keyed on the timestamp instead and left the
- * inverse hole: an UNTIMESTAMPED check-run (queued, or failed with a null
- * start) was collapsed with a same-named status by list position, and since
- * the adapter lists statuses after check-runs the status always won — red or
- * pending read green. `scripts/guards.sh` never grouped statuses with
- * check-runs at all; this is that rule, so the two copies are identical
- * rather than claimed identical. `scripts/pr-checks.sh` reads check-runs AND
- * commit statuses (until then it read check-runs only and called a
- * head green that both guards called red) and applies both clauses. Keep the
- * three in step.
+ * Why the kind and not the timestamp decides: collapsing a status with a
+ * same-named check-run lets one hide the other. A failing status could lose
+ * to a passing check-run, or an untimestamped check-run (queued, or failed
+ * with a null start) could lose to a passing status listed after it — either
+ * way red or pending reads green. `scripts/guards.sh` applies this same rule,
+ * and `scripts/pr-checks.sh` reads check-runs and commit statuses and applies
+ * both clauses. Keep the three in step (`tests/fences-cigate.test.ts`).
  */
 export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[] {
   interface Kept {
@@ -148,10 +133,8 @@ export function latestRunPerName(checks: readonly CheckSummary[]): CheckSummary[
  * mirror answer from this table, so "green" means the same thing on every
  * posting route.
  *
- * A suite whose every check is skipped or neutral is **not** green: that is
- * precisely the "all jobs cancelled or skipped" shape the retro found being
- * argued into an approval. It reports `red`, because there is no evidence this
- * PR's code passed anything.
+ * A suite whose every check is skipped or neutral is not green: it reports
+ * `red`, because there is no evidence this PR's code passed anything.
  */
 export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
   const checks = latestRunPerName(allChecks);
@@ -179,12 +162,11 @@ export function classifyCi(allChecks: readonly CheckSummary[]): CiState {
 /**
  * Does this CI state make APPROVE unavailable?
  *
- * `none` blocks only when `noChecksIsRed` says so (the owner, 2026-08-19): in a
- * repo that normally runs CI, a head with zero check-runs — a conflicted PR,
- * or CI that has not started — carries no execution evidence, so approval
- * waits for checks to appear and pass. The flag stays off by default so a
- * repo with no CI at all is never permanently wedged (the original
- * exemption); the original deployment turns it on in its config.
+ * `none` blocks only when `noChecksIsRed` says so: in a repo that normally
+ * runs CI, a head with zero check-runs — a conflicted PR, or CI that has not
+ * started — carries no execution evidence, so approval waits for checks to
+ * appear and pass. The flag is off by default so a repo with no CI at all is
+ * never permanently wedged.
  */
 export function ciBlocksApproval(state: CiState, opts: { noChecksIsRed?: boolean } = {}): boolean {
   if (state === "none") return opts.noChecksIsRed === true;

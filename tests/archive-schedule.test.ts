@@ -1,4 +1,4 @@
-// the archiver's runtime (docs/archiving.md §10) with a fake
+// The archiver's runtime (docs/archiving.md §10) with a fake
 // clock and a fake schedule: never before the first healthy reconcile plus
 // the start delay; held — with no inventory work at all — while draining,
 // stalled, CPU-starved or short of disk (or not knowing the disk); mode off

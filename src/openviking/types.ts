@@ -76,7 +76,7 @@ export interface ReembedStatus extends Omit<ReembedJournalStatus, "state"> {
    * the ov.conf the entrypoint rendered — reported, never corrected here.
    * Both sides are spelled as ov.conf spells them (`ovConfEmbedder`): under
    * `local` that is the engine's OpenAI-compatible provider and the loopback
-   * `api_base` of the local embedder (S4). */
+   * `api_base` of the local embedder. */
   config_drift?: {
     config_toml: Embedder & { api_base?: string };
     ov_conf: Embedder & { api_base?: string };
@@ -84,7 +84,7 @@ export interface ReembedStatus extends Omit<ReembedJournalStatus, "state"> {
 }
 
 /**
- * The `embedder` block inside `openviking` (S4): the local English
+ * The `embedder` block inside `openviking`: the local English
  * embedder the daemon supervises beside the server. `off` = not the embedder
  * in use (a hosted opt-in, or an ov.conf that does not route to it — `reason`
  * says which); `unavailable` = a file it needs is missing (reported once, never
@@ -142,20 +142,20 @@ export interface OpenVikingStatus {
   last_exit?: { code: number | null; signal: string | null; at: string };
   /** Last spawn/probe failure, human-readable. */
   last_error?: string;
-  /** Resident set size of the server process (the 397 MiB idle / 456 MiB warm
-   * measurement). Monitoring only — the owner ratified NO RSS watchdog and NO
-   * auto-restart on a memory budget; do not add one. */
+  /** Resident set size of the server process (measured ~400 MiB idle, ~460 MiB
+   * warm). Monitoring only — there is no RSS watchdog and no auto-restart on a
+   * memory budget; do not add one. */
   rss_bytes?: number;
   /** Percent of one core since the previous sample. CPU is the cost to watch
    * (~1.63 core-seconds per ~500 B write on the 2-core quota). */
   cpu_pct?: number;
   /** ISO instant of the last health poll. */
   checked_at?: string;
-  /** The server's first start is held for this (S4: the local
-   * embedder its `/ready` probes), bounded. Absent once it started. */
+  /** The server's first start is held for this (the local embedder its
+   * `/ready` probes), bounded. Absent once it started. */
   waiting_for?: string;
   /** The embedder migration. Absent when no driver runs. */
   reembed?: ReembedStatus;
-  /** The local English embedder (S4). Absent when no supervisor runs. */
+  /** The local English embedder. Absent when no supervisor runs. */
   embedder?: LocalEmbedderStatus;
 }

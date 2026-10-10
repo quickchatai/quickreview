@@ -467,9 +467,9 @@ describe("content read before, superseded, then back: read again (selfscan def42
 });
 
 describe("a delta covers every file changed OR with no complete reading at its content (self-scan round 7)", () => {
-  // src/eodpinwatch.ts had never been read (unreadable until the NUL-as-text
-  // fix) and its content had not changed since the baseline, so the delta
-  // left it out as "unchanged" — a file no lens had ever read.
+  // A file never read to completion is owed a reading even when its content
+  // has not changed since the baseline; leaving it out as "unchanged" would
+  // leave a file no lens has ever read.
   const T: Record<string, string> = {
     "a/read.py": lines(10, "r"),
     "a/never.py": lines(10, "n"),
@@ -530,7 +530,7 @@ describe("a delta covers every file changed OR with no complete reading at its c
     const withNul = { ...TREE, "tools/x.py": `${lines(15, "tool")}\0tail\n` };
     const src = fakeSource({ [SHA1]: withNul, [SHA3]: withNul });
     // At SHA1 the tree could not read tools/x.py (binary); at SHA3 — the same
-    // blob — the NUL-as-text fix reads it.
+    // blob — it reads as text.
     const binaryAt1: ScanSource = {
       ...src,
       open: (sha, keep) => {
@@ -631,7 +631,7 @@ describe("the findings store's lifecycle", () => {
     raw.findings.find((f) => f.fingerprint === "fb")!.state = "dismissed";
     writeFileSync(file, JSON.stringify(raw));
     // Both files gone at s2: the untriaged one fixed, the dismissed one kept
-    // dismissed and stamped (scan-loop: a scan never overwrites a dismissal).
+    // dismissed and stamped (a scan never overwrites a dismissal).
     expect(
       st.reconcile({ rows: [], tree: new Set(), run: S("r2", "s2", "2026-09-29T11:00:00Z") }),
     ).toEqual({ fixed: 1, pending: 0, not_reproduced: 0, dismissed_unreported: 1 });

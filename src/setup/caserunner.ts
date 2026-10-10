@@ -1,13 +1,13 @@
-// The case runner: SetupEngine's `CaseRunner` port, for real —
-// one case as one background pi subagent inside the COMPANION container.
+// The case runner: SetupEngine's `CaseRunner` port, for real — one case as
+// one background pi subagent inside the companion container.
 //
 // This is the only file under src/setup/ that spawns pi, and it is kept apart
-// on purpose: the single-shepherd fence (tests/single-shepherd.test.ts S2)
+// on purpose: the single-shepherd fence (tests/single-shepherd.test.ts)
 // allows it by path, like the companion's own argv and the bench runner. It
 // is not a daemon module — nothing the daemon loads imports src/setup/ (that
-// fence checks it too) — and what it spawns is a LEAF: `-p --no-session
-// --no-extensions`, read-only tools, no memory, no fan-out (root rule 9 is
-// unchanged: no new session kind, nothing on the VM).
+// fence checks it too) — and what it spawns is a leaf: `-p --no-session
+// --no-extensions`, read-only tools, no memory, no fan-out (root rule 9: no
+// new session kind, nothing on the VM).
 import { spawn as nodeSpawn } from "node:child_process";
 import {
   existsSync,
@@ -112,12 +112,11 @@ export function isPiCliEntry(script: string): boolean {
   }
 }
 
-/** How to start pi. When the running process IS pi (argv[1] is verifiably
+/** How to start pi. When the running process is pi (argv[1] is verifiably
  * pi's CLI entry — the native subagent extension's rule) it reuses that
  * script under the running runtime; any other host — a node driver, a test,
- * the TUI — gets `pi` on the PATH. The old rule reused argv[1] whenever the
- * file merely existed, so every non-pi host spawned ITSELF for every scan
- * case. A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
+ * the TUI — gets `pi` on the PATH, so a non-pi host never spawns itself.
+ * A bun-compiled pi (`/$bunfs/…`) also falls back to the PATH.
  * VERIFY-ON-PIN (0.87.1, re-read at 0.99.1 and 1.0.0 — bin still dist/bundle/cli.js): pi's entry is a `bin` of its package, run by node. */
 export function piInvocation(
   host: { argv1: string | undefined; execPath: string } = {
@@ -132,7 +131,7 @@ export function piInvocation(
   return { command: "pi", prefix: [] };
 }
 
-/** The tools whose `path` argument names content the model READ. `find` and
+/** The tools whose `path` argument names content the model read. `find` and
  * `ls` list names and read no content, so they are not reads. */
 export const FILE_READ_TOOLS: readonly string[] = ["read", "grep"];
 
@@ -153,11 +152,11 @@ export function readPathOf(event: {
 
 /** The file a read of `raw` opened, for a child running in `cwd` — pi's own
  * resolution (`resolveToCwd`): one leading `@` stripped, `~` expanded, a
- * relative path taken against the CHILD's cwd, `.`/`..` collapsed. The scan
+ * relative path taken against the child's cwd, `.`/`..` collapsed. The scan
  * judges what the lens opened, not how it spelled it: the child runs in the
  * app root, not the scanned tree, so a relative `api/x.py` opened the app
  * root's copy — another repository, or this checkout at HEAD — and must not
- * pass for a read of the tree (scan-loop).
+ * pass for a read of the tree.
  * VERIFY-ON-PIN (read from 0.99.1's dist/core/tools/path-utils.js
  * `resolveToCwd` → utils/paths `resolvePath` with `stripAtPrefix` and
  * `normalizeUnicodeSpaces`, `file://` URLs included): the macOS
@@ -182,20 +181,20 @@ export function resolvedReadPath(raw: string, cwd: string, home: string = homedi
 }
 
 /**
- * Runs a case as ONE background pi subagent, the way pi's own subagent
+ * Runs a case as one background pi subagent, the way pi's own subagent
  * extension runs a child: `pi --mode json -p --no-session` with the agent's
  * model, its tools and its body as the appended system prompt, the task as
  * the message — plus `--no-extensions` (a leaf loads nothing, so it can
  * neither fan out nor reach memory) and `--approve` (the no-stall rule: a
  * child never waits on a trust modal). The child runs in `cwd`, first-party
- * ground, NEVER in the reviewed checkout, whose `.pi/` config must not load
+ * ground, never in the reviewed checkout, whose `.pi/` config must not load
  * (extensions/subagents.ts reason 3); it reads the checkout by absolute path.
  *
  * The answer is the last assistant message's text; the cost is pi's own
  * per-message accounting summed (null when it reported none); `reads` is
  * every path its `read`/`grep` calls named (`readPathOf`), resolved to the
  * file that call opened (`resolvedReadPath`, against `cwd`) — the scan's
- * evidence that the lens opened ITS files at all. The task string names
+ * evidence that the lens opened its files at all. The task string names
  * every file by its absolute tree path for the same reason. An abort kills
  * the child (TERM, then KILL). Every outcome resolves.
  *

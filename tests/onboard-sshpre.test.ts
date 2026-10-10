@@ -1,4 +1,4 @@
-// the ssh preflight, and above all the passphrase trap.
+// The ssh preflight, and above all the passphrase trap.
 //
 // The failure this exists to prevent is specific: a passphrase-protected key
 // with no agent does not fail, it PROMPTS, and a prompt inside a wizard is an

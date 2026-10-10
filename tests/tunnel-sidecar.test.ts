@@ -1,12 +1,12 @@
-// the webhook-ingress tunnel sidecar: the wrapper's hostname
-// capture and file contract, and the compose/image topology it rides.
+// The webhook-ingress tunnel sidecar: the wrapper's hostname capture and file
+// contract, and the compose/image topology it rides.
 //
-// NO TEST OPENS A TUNNEL. The client is a fake spawn returning canned vendor
+// No test opens a tunnel. The client is a fake spawn returning canned vendor
 // output; the hostname file is a temp dir. The load-bearing assertion is the
-// contract itself: what this wrapper WRITES is exactly what's watcher
-// READS — proven twice over, by holding the two hostname regexes to the same
-// characters and by driving a real WebhookHealer over a file this wrapper
-// wrote.
+// contract itself: what this wrapper writes is exactly what the webhook
+// self-heal's watcher reads — proven twice over, by holding the two hostname
+// regexes to the same characters and by driving a real WebhookHealer over a
+// file this wrapper wrote.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import {

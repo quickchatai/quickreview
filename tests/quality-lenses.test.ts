@@ -1,4 +1,4 @@
-// The code-quality lenses (2026-09-27): maintainability, duplication and
+// The code-quality lenses: maintainability, duplication and
 // abstraction on every PR that adds real code; style ONLY where the repo
 // writes its style guide down — and style from any other lens is killed.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -37,7 +37,7 @@ describe("the quality lenses", () => {
     for (const l of QUALITY_PASSES) expect(big).toContain(l);
     const small = lenses(baseCfg, [file("src/a.ts", QUALITY_MIN_ADDED_LINES - 1)]);
     for (const l of QUALITY_PASSES) expect(small).not.toContain(l);
-    // Freeze fixes 2: a test-only change is code a reader maintains too.
+    // A test-only change is code a reader maintains too.
     const testsOnly = lenses(baseCfg, [file("tests/a.test.ts", 200)]);
     for (const l of QUALITY_PASSES) expect(testsOnly).toContain(l);
     const smallTests = lenses(baseCfg, [file("tests/a.test.ts", QUALITY_MIN_ADDED_LINES - 1)]);

@@ -1,4 +1,4 @@
-// Round-5 review calibrations (2026-10-03), mined from the stored reviews of
+// Round-5 review calibrations, mined from the stored reviews of
 // two external runs — SWE-PRBench eval100 and Qodo PR-Review-Bench pr100 —
 // with no new run (bench/aacr/ext/REVIEW-MINING.md). Each fix names a general
 // class with evidence on several PRs; none encodes a benchmark's comments.
@@ -36,7 +36,7 @@ const text = (id: string) => PASS_ADDENDA.find((a) => a.id === id)!.text;
 describe("a written rule raised by any lens is judged as style, not killed for its lens", () => {
   it("the validator keeps a rule-quoting convention finding as a nit and still kills unwritten taste", () => {
     const t = text("quality-cap-validate");
-    // quality-cap no longer restates the style kill: it defers, once, to the convention rule.
+    // quality-cap does not restate the style kill: it defers, once, to the convention rule.
     expect(t).toMatch(/judged only under \*One rule for conventions\*/);
     expect(t).not.toMatch(/`pass-style` findings are `nit`, always/);
     const c = text("validate-convention-rule");
@@ -69,7 +69,7 @@ describe("reordered-statements (pass-baseline, pass-sweep)", () => {
   });
 });
 
-// Round 6 (REVIEW-MINING.md §7), mined from the Qodo run with no new run.
+// Round-6 calibrations (REVIEW-MINING.md §7), mined from the Qodo run with no new run.
 describe("anchor-at-cause (every lens + the validator's re-anchor)", () => {
   const ids = (p: string, mode: "pr" | "scan") =>
     addendaForPass(p, PASS_ADDENDA, "django", mode).map((a) => a.id);

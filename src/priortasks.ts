@@ -1,9 +1,8 @@
-// Prior findings in the lens task files (A6).
+// Prior findings in the lens task files.
 //
-// A follow-up round's session used to assign every listed prior finding to a
-// lens by hand and write it out again in `launch_plan`'s `extra`. The daemon
-// now makes that assignment (the template's own rule) and each task file
-// carries its row's findings, with the one-line answer the session records.
+// The daemon assigns every listed prior finding of a follow-up round to a
+// plan row (the template's own rule), and each task file carries its row's
+// findings, with the one-line `PRIOR` answer the lens writes back.
 //
 // A LEAF: types and the data fence only. `passtasks.ts` imports it, and
 // `priorfindings.ts` reaches `passtasks.ts` back through the findings record,
@@ -25,8 +24,7 @@ function rowHolding(
 
 /**
  * Assign every listed prior finding to the plan row that owns it — the
- * daemon's half of step 1, which the session did by hand (and wrote out again
- * in `launch_plan`'s `extra`) every follow-up round. The rule is the
+ * daemon's half of step 1 of a follow-up round. The rule is the
  * template's own: the lens that raised it when that lens is planned, else
  * `pass-baseline`, which a follow-up plan always carries for exactly this.
  * A lens planned as several rows (the sweep, behaviour-delta, a split
@@ -34,7 +32,7 @@ function rowHolding(
  * behaviour-delta finding whose file no row holds falls to pass-baseline,
  * and a split baseline's goes to its first row. Every finding lands on
  * exactly one row; a plan with no discovery row to hold one leaves it out
- * (the session then assigns it, as before). Pure.
+ * (the session then assigns it). Pure.
  *
  * `deltaPaths` marks a finding whose file has no change since the last
  * review: still verified, but the lens is told so — its question is whether

@@ -1,12 +1,12 @@
-// the regression replay and its `qcr regression` entrypoint.
+// The regression replay and its `qcr regression` entrypoint.
 //
 // The whole mechanism runs here against a fake `ReplayIo`: no git, no tmux, no
 // pi, no network, and no reviewed code is executed (scoping rule 2). Five
 // properties are pinned because they are the safety argument, not the code:
 //
-//   1. the replay module holds NO mutation surface and never labels a PR — the
-//      route (label it, let the daemon dispatch) is a posting path and
-//      is not how this harness works;
+//   1. the replay module holds NO mutation surface and never labels a PR —
+//      the cutover harness's route (label it, let the daemon dispatch) is a
+//      posting path and is not how this harness works;
 //   2. `assertReplaySafe`'s three refusals bind per case, not only per run;
 //   3. a scratch root that could collide with the daemon's worktrees is
 //      refused;
@@ -198,7 +198,7 @@ describe("a replay is not a posting path", () => {
     ]) {
       expect(code, `${banned} must not appear in the replay`).not.toContain(banned);
     }
-    // The harness's mechanism, named so the ban is greppable.
+    // The cutover harness's mechanism, named so the ban is greppable.
     expect(code).not.toMatch(/trigger_label|dispatchOnce|applyInterpretation/);
   });
 
@@ -349,9 +349,8 @@ describe("one case, end to end", () => {
   });
 
   it("tears down even when the order-file write throws after the tree exists", async () => {
-    // Adversarial finding (P2): a throw between prepareTree's success and the
-    // old try/finally (which began only at the session spawn) skipped teardown
-    // and leaked a registered scratch worktree.
+    // A throw between prepareTree's success and the session spawn must still
+    // run teardown, or a registered scratch worktree leaks.
     const io = fakeIo();
     io.writeFile = (p: string) => {
       if (p.endsWith("order.md")) throw new Error("disk full");

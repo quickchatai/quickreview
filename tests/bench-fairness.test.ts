@@ -1,9 +1,8 @@
-// The fairness re-runs' plumbing (fairness audit, the owner 2026-09-30): the
-// equal-inputs switch (the PR title/body handed to each third-party CLI arm the
-// way that tool takes review context), pi-review's /rv panel, and OpenCode on
-// its own ChatGPT provider. Every new knob is OFF by default, and off means the
-// published invocation byte for byte — that is pinned here as much as the new
-// shapes are.
+// The fairness re-runs' plumbing: the equal-inputs switch (the PR title/body
+// handed to each third-party CLI arm the way that tool takes review context),
+// pi-review's /rv panel, and OpenCode on its own ChatGPT provider. Every new
+// knob is OFF by default, and off means the published invocation byte for
+// byte — that is pinned here as much as the new shapes are.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -27,7 +27,7 @@ GitHub's [manifest flow](https://docs.github.com/en/apps/sharing-github-apps/reg
 creates the App from a JSON blob and hands back the App ID, private key and
 webhook secret in one exchange.
 
-> **`qcr onboard` does all of this for you**. The wizard's GitHub App
+> **`qcr onboard` does all of this for you.** The wizard's GitHub App
 > step serves the page below on your own machine, submits *this* manifest file
 > (never a copy), receives the code on a loopback callback, exchanges it, and
 > writes `app_id` / `app.pem` / `webhook_secret` into the secrets dir with the

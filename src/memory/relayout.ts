@@ -1,5 +1,5 @@
-// The relayout (S5): sort a store that grew flat into the §1
-// areas (src/memory/layout.ts), once, on the operator's word.
+// The relayout: sort a store that grew flat into the layout's areas
+// (src/memory/layout.ts), once, on the operator's word.
 //
 // `qcr memory relayout --plan` prints where every entry goes — or that it is
 // retired, or that it stays — and `--apply` carries the plan out
@@ -15,10 +15,11 @@
 //     instructions are off-limits to every automatic edit, this one included
 //     (the EOD watchdog would rightly call a change there an anomaly).
 //   * A RETIRED entry (a retirement or a move's `#moved` stub) is skipped.
-//   * The ONE-OFF CURATION retires, in place, what the 2026-10-06 audit found
-//     to be noise or wrong: confinement probes, `needs-attention` feedback
-//     reviews a later adjudication of the same episode superseded, and the
-//     adjudications the curation table names (contradicts them).
+//   * The ONE-OFF CURATION retires, in place, entries known to be noise or
+//     wrong: confinement probes, `needs-attention` feedback reviews a later
+//     adjudication of the same episode superseded, and the adjudications the
+//     curation table names (the concrete-injection-evidence rule contradicts
+//     them).
 //   * `#pinned` in an entry's HEADER → `preferences/pinned/`; `#manual`
 //     (or `source=manual`) → `preferences/`.
 //   * The feedback family (`#feedback`, `#feedback-review`, `#adjudication`,
@@ -42,7 +43,7 @@
 // tolerant on purpose, but never inside a fenced block (a quoted reply's
 // `#bug` line is somebody else's text), it only ever moves an entry OUT of
 // the round's search scope, never into a more trusted place, and it never
-// mints a `kind=bug` header (integration review).
+// mints a `kind=bug` header.
 //
 // NEVER A DELETE. A move is a new copy plus a `#retired #moved` stub at the
 // old address; a retirement is the `#retired` tag. Every write is a
@@ -97,7 +98,7 @@ export interface RelayoutPlan {
 }
 
 /**
- * The one-off curation table (S5): entries that are wrong, not merely
+ * The one-off curation table: entries that are wrong, not merely
  * misplaced, and are retired in place. Matched on the entry's HEADER tags
  * only — a `#hash` tag plus `k=v` values — never on prose.
  */

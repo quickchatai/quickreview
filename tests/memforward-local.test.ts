@@ -1,5 +1,5 @@
-// the memory forward's local mode. The ONE relay implementation
-// (scripts/companion-memory-forward.mjs) gains a `--local` transport: a plain
+// The memory forward's local mode. The ONE relay implementation
+// (scripts/companion-memory-forward.mjs) has a `--local` transport: a plain
 // local `docker exec` into the daemon container's netns instead of the ssh
 // hop. Everything around the transport — the listener contract, adopt-or-bind
 // from the TUI, stop-only-what-we-started, the confinement verify — must be
@@ -137,8 +137,8 @@ describe("the listener contract is transport-independent", () => {
     );
     expect(back).toBe("HTTP/1.1 200 OK\n");
     client.destroy();
-    // Until the teardown lands, by deadline: a fixed 20ms sleep lost the race
-    // to the socket close on a loaded machine.
+    // Until the teardown lands, by deadline: a fixed sleep races the socket
+    // close on a loaded machine.
     const deadline = Date.now() + 4_000;
     while (!relay.killed && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
     expect(relay.killed).toBe(true);

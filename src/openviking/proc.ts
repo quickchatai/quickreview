@@ -1,12 +1,12 @@
 // RSS + CPU sampling for the supervised OpenViking process.
 //
-// CPU is the cost to watch, not RAM: the spike measured 397 MiB idle / 456 MiB
-// warm against an 8 GiB container, but ~1.63 core-seconds per ~500 B write on
-// a 2-core quota. So the heartbeat carries both, and CPU is a RATE — which
+// CPU is the cost to watch, not RAM: the server measured about 400 MiB idle /
+// 460 MiB warm against an 8 GiB container, but ~1.6 core-seconds per ~500 B
+// write on a 2-core quota. So the heartbeat carries both, and CPU is a RATE — which
 // needs two samples, hence the small stateful sampler rather than a pure read.
 //
-// Monitoring only. The owner ratified this WITHOUT an RSS watchdog and without
-// auto-restart on a memory budget; do not add one under another name.
+// Monitoring only: there is deliberately no RSS watchdog and no auto-restart
+// on a memory budget; do not add one under another name.
 import { readFileSync } from "node:fs";
 import type { ProcSample } from "./types.js";
 
@@ -24,8 +24,8 @@ export interface ProcStat {
 /**
  * Parse `/proc/<pid>/stat`.
  *
- * Field 2 (`comm`) is the executable name in parentheses and MAY CONTAIN
- * SPACES AND PARENTHESES, which is why this splits after the LAST `)` instead
+ * Field 2 (`comm`) is the executable name in parentheses and may contain
+ * spaces and parentheses, which is why this splits after the LAST `)` instead
  * of tokenising the whole line — the classic way this parse goes wrong.
  * Fields are 1-based per proc(5): 14 utime, 15 stime, 24 rss (pages).
  */

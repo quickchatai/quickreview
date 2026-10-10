@@ -8,18 +8,18 @@
 //
 // Three properties this shape enforces rather than documents:
 //
-//   * NO BOOT ORDERING. `start()` never waits for the server to become ready;
+//   * No boot ordering. `start()` never waits for the server to become ready;
 //     the daemon comes up regardless and rounds run memory-less until `/ready`
 //     passes. Nothing in this module can delay or block a review round.
-//   * NEVER GIVES UP. A crash schedules a respawn on a capped backoff ladder,
+//   * Never gives up. A crash schedules a respawn on a capped backoff ladder,
 //     forever. An engine that stays down is worse than a slow retry, and every
 //     memory call site already degrades.
-//   * NEVER THROWS AT THE HEARTBEAT. `status()` is synchronous, reads only
+//   * Never throws at the heartbeat. `status()` is synchronous, reads only
 //     cached samples, and returns a minimal block on any internal error — the
 //     status writer must not be able to fail on the memory engine.
 //
-// Monitoring only: the owner ratified RSS/CPU in the heartbeat WITHOUT an RSS
-// watchdog and without auto-restart on a memory budget. Do not add one.
+// Monitoring only: RSS/CPU ride the heartbeat, with no RSS watchdog and no
+// auto-restart on a memory budget. Do not add one.
 import { existsSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
 import { openVikingBaseUrl, type OpenVikingConfig } from "../config.js";
@@ -66,7 +66,7 @@ export interface SupervisorDeps {
    * (the daemon materializes the memory root here). A throw is logged and
    * swallowed: a callback cannot take the health loop down. */
   onReady?: () => void;
-  /** S4: a precondition for the FIRST spawn — the local embedder the
+  /** A precondition for the first spawn — the local embedder the
    * server's `/ready` probes. Polled every `pollMs` until `open()` holds or
    * `maxWaitMs` has passed; past the bound the server starts anyway, said
    * loudly (searches fail until the embedder serves — memory is degraded,
@@ -164,7 +164,7 @@ export class OpenVikingSupervisor {
     }
   }
 
-  /** S4: poll the start gate on the timer seam; spawn once it opens or
+  /** Poll the start gate on the timer seam; spawn once it opens or
    * its bound passes. */
   private waitForGate(): void {
     const gate = this.startGate;

@@ -116,7 +116,7 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
   });
 
   it("the prefix list is config — a configured value replaces it, .env stays unconditional", () => {
-    // Custom list: migrations/ no longer denied, db/ is.
+    // Custom list: migrations/ not denied, db/ is.
     const caps = { ...cfg.caps, improvement_pr_deny_prefixes: ["db/"] };
     expect(checkDiffstat(parseNumstat(numstat([[1, 0, "migrations/0001.sql"]])), caps).ok).toBe(
       true,
@@ -149,9 +149,9 @@ describe("parseNumstat / deniedPath / checkDiffstat", () => {
     expect(checkDiffstat(parseNumstat("-\t-\tx.png"), cfg.caps).reason).toContain("binary");
   });
 
-  // `files > undefined` is false, so a cap that never arrived PASSED.
-  // The type says number; the config cast used to let undefined through. The
-  // check refuses on anything it cannot compare against, before any pass.
+  // `files > undefined` is false, so a cap that never arrived would pass. The
+  // type says number, but a config cast can let undefined through. The check
+  // refuses on anything it cannot compare against, before any pass.
   it.each([
     ["improvement_pr_max_files", undefined],
     ["improvement_pr_max_files", Number.NaN],
@@ -188,10 +188,10 @@ describe("rate caps from StateStore.filedSince", () => {
     },
   );
 
-  // (MC-16): the day caps count the OPERATIONS day (`[ops] timezone`,
-  //) — the day every other boundary in the system uses — not the UTC
-  // one. Europe/Warsaw is UTC+2 in August, so 22:00Z is already tomorrow there.
-  // MUTATION: compute the window from getUTC* again — both directions fail.
+  // The day caps count the operations day (`[ops] timezone`) — the day every
+  // other boundary in the system uses — not the UTC one. Europe/Warsaw is
+  // UTC+2 in August, so 22:00Z is already tomorrow there.
+  // MUTATION: compute the window from getUTC* — both directions fail.
   it("counts the day caps on the operations day, never the UTC day (MC-16)", () => {
     const tz = "Europe/Warsaw";
     // Filed 23:30 Warsaw on the 13th; asked 00:30 Warsaw on the 14th — the
@@ -229,10 +229,9 @@ describe("rate caps from StateStore.filedSince", () => {
     store.close();
   });
 
-  // review round 1: `day >= undefined` is false, so a rate cap that
-  // never arrived was UNCAPPED — the same fail-open checkDiffstat carried, on
-  // the same caps object, with the same startup-parser as the only belt. The
-  // rate checks refuse on a cap they cannot compare against, even at zero
+  // `day >= undefined` is false, so a rate cap that never arrived would be
+  // uncapped — the same fail-open as checkDiffstat's, on the same caps object.
+  // The rate checks refuse on a cap they cannot compare against, even at zero
   // filings, whoever built the caps.
   it.each([
     ["improvement_pr_per_day", undefined],
@@ -303,12 +302,11 @@ describe("issue dedup — normalized-token Jaccard", () => {
 });
 
 /**
- * The reviewed repo's base clone — the ONE working tree every git step must
- * run in. A fixed fake path: these cases never touch a filesystem
- * repo, they assert that every invocation NAMES this tree. For the channel's
- * whole life the runner here discarded its `cwd` argument, and the daemon
- * passed none — so git ran in the sandbox's own checkout, which has no
- * remote, and the suite stayed green over a push that could never succeed.
+ * The reviewed repo's base clone — the one working tree every git step must
+ * run in. A fixed fake path: these cases never touch a filesystem repo, they
+ * assert that every invocation names this tree. A runner that dropped its
+ * `cwd` would run git in the sandbox's own checkout, which has no remote, so
+ * the push could never succeed.
  */
 const REPO_DIR = "/srv/sandbox/example-app";
 /** The commit the fake clone reports the prepared branch at. */
@@ -407,7 +405,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     const push = intents()[0];
     expect(push.method).toBe("git");
     expect(push.body.target).toBe("bot/improve-clarify-retry");
-    // base = the fixture's [github] base_branch — no more hardcoded master.
+    // base = the fixture's [github] base_branch, never a hardcoded master.
     expect(intents()[1].body).toMatchObject({
       head: "bot/improve-clarify-retry",
       base: cfg.github.base_branch,
@@ -417,11 +415,11 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(intents()[2].body.labels).toEqual([cfg.github.improvement_label]);
 
     expect(store.filedSince("improvement_pr", "1970-01-01T00:00:00.000Z")).toBe(1);
-    // The channel reads refs and pushes: no `worktree add`, no `checkout` —
-    // the scratch worktree of the first shape served no step and a leftover
-    // one wedged every later filing.
+    // The channel reads refs and pushes: no `worktree add`, no `checkout` — a
+    // scratch worktree serves no step, and a leftover one would wedge every
+    // later filing.
     expect(calls.map((c) => c[0])).toEqual(["fetch", "for-each-ref", "diff"]);
-    // every one of those ran in the reviewed clone — no exceptions.
+    // Every one of those ran in the reviewed clone — no exceptions.
     expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR]);
     // The push intent names the branch as the LOCAL ref it is pushed from.
     expect(push.path).toBe(`git push origin ${TIP}:refs/heads/bot/improve-clarify-retry`);
@@ -677,7 +675,7 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  // a deferral's ticket rides THIS path — no second writer, no new
+  // A deferral's ticket rides this path — no second writer, no new
   // mutation kind, every existing cap intact. What is new is that a refusal is
   // LOUD: a deferral whose ticket was silently refused is a deferral that
   // became free again, which is the failure the whole mechanism prevents.
@@ -733,14 +731,12 @@ describe("fileImprovementPr / fileIssue (dry-run)", () => {
 });
 
 /**
- * / MC-07 — the improvement-branch push is gated in LIVE mode too.
+ * The improvement-branch push is gated in live mode too.
  *
- * The whole suite above runs in dry-run, which is exactly why the bypass
- * survived: `fileImprovementPr` called `gate.execute(pushIntent)` when
- * `isDryRun` was true and shelled straight to `git push` otherwise. The one
- * mode in which the push is real was the one mode with no kind check, no guard
- * and no `after` hook — the mutation path around the gate that rule 1 forbids.
- * These cases run the gate LIVE.
+ * The suite above runs in dry-run, so it cannot tell a gated push from one
+ * that shells straight to `git push` when live — a live push with no kind
+ * check, no guard and no `after` hook would be the mutation path around the
+ * gate that CLAUDE.md rule 1 forbids. These cases run the gate live.
  */
 describe("fileImprovementPr — the push goes through the gate in live mode", () => {
   let dir: string;
@@ -808,13 +804,13 @@ describe("fileImprovementPr — the push goes through the gate in live mode", ()
     );
 
     expect(out).toMatchObject({ ok: true, pushed: true, dry_run: false });
-    // The bypass this pins: before `push_branch` never reached the gate
-    // in live mode, so this list began at `create_pull`.
+    // The bypass this pins: a live push that skips the gate leaves
+    // `push_branch` out of this list, which would begin at `create_pull`.
     expect(seen).toEqual(["push_branch", "create_pull", "add_label"]);
     const push = calls.find((c) => c[0] === "push");
     expect(push).toEqual(["push", "origin", `${TIP}:refs/heads/bot/improve-clarify-retry`]);
-    // the push, like every other step, runs where `origin` IS the
-    // reviewed repo. Before, it ran with no cwd at all.
+    // The push, like every other step, runs where `origin` is the reviewed
+    // repo.
     expect(cwds).toEqual([REPO_DIR, REPO_DIR, REPO_DIR, REPO_DIR]);
     expect(
       store.eventsOn(new Date().toISOString().slice(0, 10)).some((e) => e.kind === "branch_pushed"),

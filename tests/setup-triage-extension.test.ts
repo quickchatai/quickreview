@@ -1,5 +1,5 @@
-// extensions/setup-triage.ts — the triage tools of the companion's scan belt
-// (FT-0463), over a ScanTriage with an in-memory memory, a fake tracker sink
+// extensions/setup-triage.ts — the triage tools of the companion's scan belt,
+// over a ScanTriage with an in-memory memory, a fake tracker sink
 // and a temp state home: what each tool SAYS for a dismissal, a promotion
 // (filed, and back onto an existing ticket), a close, the scan memory and a
 // refusal — and scan_match closing the ticket of the promoted finding its

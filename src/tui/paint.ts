@@ -1,5 +1,5 @@
-// The thin ANSI layer (§4 verdict: no TUI framework — a few hundred
-// lines of cursor-addressed painting). Pure string builders throughout; the
+// The thin ANSI layer: no TUI framework, a few hundred lines of
+// cursor-addressed painting. Pure string builders throughout; the
 // only side effect lives in flush().
 import { cellWidth } from "./cellwidth.js";
 
@@ -12,17 +12,16 @@ export const SGR_RESET = `${ESC}0m`;
  * Does `line` end with any styling still switched on?
  *
  * Needed because a line that ends mid-style keeps painting: `Frame.render`
- * closes each row at its END, which stops styling leaking DOWNWARD, but
- * nothing stops it leaking RIGHTWARD — the row's padding, its border, and any
+ * closes each row at its end, which stops styling leaking downward, but
+ * nothing stops it leaking rightward — the row's padding, its border, and any
  * column composed beside it all inherit the open attribute.
  *
- * Foreign terminal output is where this bites. A tmux pane row has no reason to
- * end reset; measured on the live pr-5312 mirror, 7 of 23 captured rows ended
+ * Foreign terminal output is where this bites: a tmux pane row often ends
  * with a background or foreground still set. `ESC[39m` is the trap — it looks
- * like a reset and only restores the default FOREGROUND.
+ * like a reset and only restores the default foreground.
  *
  * Tracked rather than pattern-matched, so a row that legitimately ends clean
- * stays BYTE-IDENTICAL and the frame gains no escapes it does not need.
+ * stays byte-identical and the frame gains no escapes it does not need.
  * Ambiguity resolves toward "open": a redundant reset is invisible, a missing
  * one colours the neighbouring pane.
  */
@@ -43,7 +42,7 @@ export function sgrOpenAtEnd(line: string): boolean {
         bg = false;
         attrs = 0;
       } else if (n === 38 || n === 48) {
-        // Extended colour: the remaining codes in THIS sequence are its
+        // Extended colour: the remaining codes in this sequence are its
         // arguments, not attributes. Stopping here can leave a trailing `39`
         // unread, which only ever over-estimates "open" — the safe direction.
         if (n === 38) fg = true;
@@ -237,7 +236,7 @@ export class Frame {
 
   render(): string {
     // Home, then per-line erase — full repaint without scrollback pollution.
-    // Every row is ADDRESSED (CUP), not reached by flowing from the one above:
+    // Every row is addressed (CUP), not reached by flowing from the one above:
     // a row the terminal measures wider than we did (a glyph the width table
     // got wrong) can then cost only its own last cells — it can never push the
     // rows below it down, or scroll the screen and put every row one off the
@@ -252,12 +251,12 @@ export class Frame {
   }
 }
 
-/** Append a right-hand column to a frame (sidebar composition).
+/** Append a right-hand column to a frame (the companion sidebar composition).
  *
- * Returns a NEW `Frame` of `inner.cols + width` columns and `inner.rows` rows;
+ * Returns a new `Frame` of `inner.cols + width` columns and `inner.rows` rows;
  * `inner` is not mutated. Row `r` is `inner.lines[r]` concatenated with
  * `column[r]`. `zones` and `meta` are carried over unchanged: the column is
- * appended to the RIGHT of existing content, so no existing coordinate moves
+ * appended to the right of existing content, so no existing coordinate moves
  * (the inner tab must therefore have been rendered at the reduced width).
  *
  * Total by construction — a caller's bug can never break the frame's
@@ -278,7 +277,7 @@ export function composeColumn(
   const w = Math.max(0, Math.floor(width));
   // Both halves draw a border at the seam, so a naive concatenation paints a
   // doubled wall (`││`, and `┐┬` at the corners). Joining drops the inner
-  // frame's LAST cell and lets the column's own left border be the shared
+  // frame's last cell and lets the column's own left border be the shared
   // divider — which is why the column carries `┬`/`┴` corners.
   const trim = (line: string): string =>
     joinSeam && SEAM_GLYPHS.has(line.slice(-1)) ? line.slice(0, -1) : line;
@@ -293,7 +292,7 @@ export function composeColumn(
     }
     const cell = column[r];
     const right = cell === undefined ? blank : displayWidth(cell) === w ? cell : fit(cell, w);
-    // Close the left half at the SEAM. The column is a different surface and
+    // Close the left half at the seam. The column is a different surface and
     // starts from default, always — otherwise a row that ends mid-style (an
     // embedded pi mirror does) paints the whole column in it. `closeSgr` is a
     // no-op on the rows that already end clean, which is nearly all of them.
@@ -316,7 +315,7 @@ export function composeColumn(
  * The result has the same display width as `line` when the overlay fits.
  */
 /**
- * The PLAIN text occupying display columns `[from, to)` of `line`.
+ * The plain text occupying display columns `[from, to)` of `line`.
  *
  * Not `stripAnsi(line).slice(from, to)`: that indexes by code unit, and one
  * double-width character makes every later index disagree with the column the
@@ -378,13 +377,12 @@ export function spliceDisplay(line: string, at: number, overlay: string): string
     }
     const ch = String.fromCodePoint(line.codePointAt(i)!);
     const w = displayWidth(ch);
-    // A DOUBLE-WIDTH character can straddle either edge of the span: half of
+    // A double-width character can straddle either edge of the span: half of
     // it covered, half still visible. Emitting the whole glyph would make the
-    // row one cell wider than it was — and a row wider than the frame WRAPS,
-    // which pushes every row below it sideways and shreds the layout (the
-    // 2026-08-21 screenshot). Replace each straddling glyph with spaces for
-    // exactly the cells that remain visible, which is what terminals do with
-    // their own selections.
+    // row one cell wider than it was — and a row wider than the frame wraps,
+    // which pushes every row below it sideways and shreds the layout. Replace
+    // each straddling glyph with spaces for exactly the cells that remain
+    // visible, which is what terminals do with their own selections.
     const overlaps = col < end && col + w > at;
     if (overlaps) {
       if (col < at) out += " ".repeat(at - col); // left sliver stays visible
@@ -431,9 +429,8 @@ export function accentFrameRect(
     let activeSgr = "";
     let col = 0;
     let i = 0;
-    // ONE pass per row. The first implementation called spliceDisplay once
-    // per horizontal-rule cell, making every repaint quadratic in terminal
-    // width and timing out the metrics interaction tests.
+    // One pass per row: calling spliceDisplay once per horizontal-rule cell
+    // would make every repaint quadratic in terminal width.
     while (i < line.length) {
       const seq = /^\x1b\[[0-9;:?]*[A-Za-z]/.exec(line.slice(i))?.[0];
       if (seq !== undefined) {
@@ -453,7 +450,7 @@ export function accentFrameRect(
   }
 }
 
-// `?7l` turns autowrap OFF for the TUI's lifetime (see Frame.render) and
+// `?7l` turns autowrap off for the TUI's lifetime (see Frame.render) and
 // `?7h` gives it back: the shell behind the alt screen expects wrapping.
 export const ALT_SCREEN_ON = `${ESC}?1049h${ESC}?25l${ESC}?7l`;
 export const ALT_SCREEN_OFF = `${ESC}?7h${ESC}?25h${ESC}?1049l`;
@@ -474,7 +471,7 @@ const VERTICAL_EDGE = new Set(["│", "┃", "║", "├", "┤", "┼", "┬", 
 /**
  * A copied rectangle of plain rows, made into text you would paste.
  *
- * What a block of SCREEN looks like is not what its text is: rows padded to
+ * What a block of screen looks like is not what its text is: rows padded to
  * the pane width, the pane's border caught at either edge, and the indent the
  * pane draws its content at (pi pads every line by its output margin). So, in
  * order: an edge column that is a border glyph on every row goes; trailing
@@ -485,7 +482,7 @@ const VERTICAL_EDGE = new Set(["│", "┃", "║", "├", "┤", "┼", "┬", 
 export function cleanCopiedBlock(rows: string[]): string {
   let r = rows.map((l) => [...l]);
   const filled = (): string[][] => r.filter((l) => l.some((c) => c.trim() !== ""));
-  // An edge column that is a border glyph on EVERY non-blank row is chrome.
+  // An edge column that is a border glyph on every non-blank row is chrome.
   // Requiring all rows keeps a `│` that is genuinely part of one line's text.
   if (filled().length > 0 && filled().every((l) => VERTICAL_EDGE.has(l[0] ?? ""))) {
     r = r.map((l) => l.slice(1));

@@ -4,9 +4,9 @@
 // prettier — and no rule plugins beyond them. Formatting is Prettier's job
 // and ESLint has no opinion about it (ESLint 10 ships no formatting rules at
 // all, so the two cannot conflict and eslint-config-prettier is not needed).
-// What ESLint is here for is the class of defect this codebase's own history
-// shows it hits: promises that were never awaited, and unions that grew a
-// member while a switch did not.
+// What ESLint is here for is the class of defect this codebase is prone to:
+// promises that were never awaited, and unions that grew a member while a
+// switch did not.
 
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
@@ -102,7 +102,7 @@ export default tseslint.config(
       // that shape deliberately (TUI key handlers that act on a few keys and
       // ignore the rest; MemoryStore.rewrite defaulting to null). Without the
       // option a switch with a default still reports, so the rule would fire
-      // on 16 sites that are all correct and hide the ones that are not. With
+      // on correct sites and hide the ones that are not. With
       // it, what remains is a switch that covers PART of a union and has NO
       // default — which is the actual defect: a new union member falls
       // through to nothing, silently.
@@ -138,7 +138,7 @@ export default tseslint.config(
       // Boundary code — webhook payloads, GitHub REST/GraphQL responses,
       // verdict JSON written by a model, pi's ambient extension API — is
       // typed `any` at the seam on purpose and narrowed immediately after.
-      // These four rules fire on that narrowing, not on the unsafety: the
+      // These rules fire on that narrowing, not on the unsafety: the
       // check that matters (does the narrowed value get used as its narrowed
       // type) is tsc's, and tsc runs strict.
       "@typescript-eslint/no-unsafe-assignment": "off",
@@ -150,8 +150,8 @@ export default tseslint.config(
       // Almost every `async` in this tree exists to SATISFY AN ASYNC SEAM,
       // not to await something: SessionHooks, MemoryStore, DockerRunner, the
       // GitHub adapter and the reconcile adapter are all async interfaces,
-      // and their implementations and (955 of the 999 hits) their test
-      // doubles are written `async () => []`. Dropping `async` there is not a
+      // and their implementations and (most of all) their test doubles are
+      // written `async () => []`. Dropping `async` there is not a
       // cleanup — it changes the return type from `Promise<T>` to `T` and
       // stops the value satisfying the interface. The rule is asking for a
       // change we are not allowed to make, on a shape that is correct.
@@ -177,7 +177,7 @@ export default tseslint.config(
       // alive.call(hooks, pr)` (src/verdicts.ts, src/reconcile.ts,
       // extensions/onboarding.ts). That IS the binding the rule asks for, but
       // the rule reports at the EXTRACTION and cannot see the `.call` that
-      // follows, so all three hits are the correct pattern being flagged.
+      // follows, so every hit is the correct pattern being flagged.
       "@typescript-eslint/unbound-method": "off",
 
       // Fires on `TimerHandle | null` and `unknown | undefined`, where the
@@ -187,7 +187,7 @@ export default tseslint.config(
       // compiler; load-bearing to a reader.
       "@typescript-eslint/no-redundant-type-constituents": "off",
 
-      // Every one of the 25 hits is the same deliberate shape, and it is this
+      // Every hit is the same deliberate shape, and it is this
       // system's core discipline written as code: declare with the FAILURE
       // default, overwrite on success, restore the default on throw —
       //     let ref: PrRef | null = null;

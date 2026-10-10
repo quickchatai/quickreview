@@ -1,39 +1,37 @@
-// The learner's MINER (S8): deterministic, daemon-side, no model in
-// the loop — every human outcome the daemon already records becomes a
-// CANDIDATE lesson for the EOD curator to adopt or decline.
+// The learner's MINER: deterministic, daemon-side, no model in the loop —
+// every human outcome the daemon already records becomes a CANDIDATE lesson
+// for the EOD curator to adopt or decline.
 //
-// WHY. Nothing fed learning mechanically: the curator re-mined raw files every
-// evening (and for 30 days persisted nothing), and 96% of the lessons it did
-// write said "don't raise X" — every human-verdict source it read was
-// suppression-shaped, and nothing read the misses. The miner reads both
-// halves, from state.db and the base clone's git, and writes nothing a round
-// or the bench sees.
+// It reads both halves of the evidence — what humans pushed back on
+// (suppression-shaped) and what the reviewer missed (recall-shaped) — from
+// state.db and the base clone's git, and writes nothing a round or the bench
+// sees.
 //
 // THE SOURCES, each a draft with a deterministic `ref` (the dedup key — a
 // re-mine of the same event is the same row):
 //
-//   human fates (S6, src/outcomes.ts)  one per finding CHAIN whose fate is
+//   human fates (src/outcomes.ts)      one per finding CHAIN whose fate is
 //       `refuted_conceded` (a human argued and the bot conceded — dont-raise)
 //       or `upheld_after_reply` (a human pushed back and the bot held —
 //       either way). The chain's ROOT (its first posting) names the candidate,
-//       so a reposting never mints a second one. S6 re-decides fates and may
-//       join a posting to an earlier chain later, so every mine re-reads the
-//       undecided fate candidates (`reviewFateCandidates`): a changed fate
-//       revises one in place, and one whose fate is no longer a candidate's
-//       or whose root changed is WITHDRAWN (recorded, never deleted).
-//       `fixed` and `open_at_close`
+//       so a reposting never mints a second one. The outcome capture
+//       re-decides fates and may join a posting to an earlier chain later, so
+//       every mine re-reads the undecided fate candidates
+//       (`reviewFateCandidates`): a changed fate revises one in place, and one
+//       whose fate is no longer a candidate's or whose root changed is
+//       WITHDRAWN (recorded, never deleted). `fixed` and `open_at_close`
 //       are not candidates on their own: they are the COUNTERWEIGHT each
 //       cluster shows (`fixed_90d`, `ignored_90d`), so a dont-raise lesson is
 //       never written over a class humans usually fix.
-//   the feedback ledger      one per `feedback_signals` row: a
+//   the feedback ledger                one per `feedback_signals` row: a
 //       `[feedback]` comment and a deleted bot comment carry the finding they
 //       answered (dont-raise); a set-aside review, a merge over a block and a
 //       withdrawn trigger are WHOLE-REVIEW signals (`review.*` classes),
 //       counted per review and never smeared over a lens.
 //   tagged pr_comments                 a `[feedback]` comment a drain dropped
 //       (the reconcile sweep keeps its text in `pr_comments` with `tagged = 1`
-//       but deliberately never a ledger row) — the same ref as the
-//       ledger's, so one comment is one candidate whichever route saw it.
+//       but deliberately never a ledger row) — the same ref as the ledger's,
+//       so one comment is one candidate whichever route saw it.
 //   recall (look-for)                  a human REQUEST_CHANGES review, or a
 //       human root inline comment, on a PR whose standing bot verdict before
 //       it was APPROVE (not the PR's author; a recheck's flip to
@@ -48,29 +46,28 @@
 //       covers the new head) or flips it (and the approval ends).
 //   recheck (look-for)                 a post-approval recheck's APPROVE →
 //       REQUEST_CHANGES REVERSAL (`recheck_request_changes`) — the REVIEWER's
-//       own conclusion, never a person's, a source only by the owner's ruling
-//       R6 (2026-10-07, "Yes, as candidates"), which amends "learned only
-//       from people" (MANIFESTO.md) for this one source and only as a
-//       candidate the curator decides. The integration review withdrew it
-//       first, on the live store's evidence: 37 of a first packet's 40 offers
-//       were flips, 21 of the 48 flip events reversed no approval at all, and
-//       every human-sourced candidate queued behind them. So, three gates
-//       (`mineRecheckFlips`): it counts only when the bot's standing verdict
-//       just BEFORE the event was APPROVE (`verdictAt`, the event itself
-//       excluded — a second decision file at the same head finds the first
-//       flip standing); there is ONE candidate per (PR, head) (a duplicate
-//       wake mints nothing); and the packet labels the quote as the
-//       reviewer's own re-check conclusion (`quoteAuthor`) and offers these
-//       only after every human-sourced and digest candidate — and its
-//       clusters after every other cluster — in classes of their own
-//       (`recheck.<top directory>`, `recheckClass`) that no human source can
-//       produce, so a reversal never joins or counts toward a human class's
-//       recurrence and coverage, and unrelated reversals are not one bucket.
+//       own conclusion, never a person's: the one exception to "learned only
+//       from people" (MANIFESTO.md), and only as a candidate the curator
+//       decides. Unfiltered, flips crowd the packet (most offers were flips,
+//       many reversing no approval at all, and human-sourced candidates queued
+//       behind them). So, three gates (`mineRecheckFlips`): it counts only
+//       when the bot's standing verdict just BEFORE the event was APPROVE
+//       (`verdictAt`, the event itself excluded — a second decision file at
+//       the same head finds the first flip standing); there is ONE candidate
+//       per (PR, head) (a duplicate wake mints nothing); and the packet labels
+//       the quote as the reviewer's own re-check conclusion (`quoteAuthor`)
+//       and offers these only after every human-sourced and digest candidate
+//       — and its clusters after every other cluster — in classes of their
+//       own (`recheck.<top directory>`, `recheckClass`) that no human source
+//       can produce, so a reversal never joins or counts toward a human
+//       class's recurrence and coverage, and unrelated reversals are not one
+//       bucket.
 //   digest-backfill                    the "Learnings" bullets of the digests
-//       written while memory refused every write (2026-08-31..10-02 by
-//       default) — candidates, never lessons directly. The bullets are the
-//       OVERSEER's words (the review system's own), and the packet labels
-//       them so (`quoteAuthor`), never as a person's.
+//       written while memory refused every write (the window is
+//       `lessons_digest_backfill_from`..`_to`) — candidates, never lessons
+//       directly. The bullets are the OVERSEER's words (the review system's
+//       own), and the packet labels them so (`quoteAuthor`), never as a
+//       person's.
 //
 // CLASSES. Every candidate has a class slug the packet clusters by and a
 // lesson names to cover it: a finding's `<lens>.<kind>` (`baseline.authz`), a
@@ -93,7 +90,7 @@ import type { StateStore } from "../state.js";
 import type { PostMergeScan } from "../worktrees.js";
 
 /** Where a candidate came from. `recheck` is the one source that is the
- * REVIEWER's own conclusion (owner ruling R6) — every other is a person's
+ * REVIEWER's own conclusion — every other is a person's
  * outcome, or (`digest-backfill`) the overseer's lost digest bullets. */
 export type CandidateSource =
   "fate" | "feedback" | "tagged-comment" | "recall" | "recheck" | "digest-backfill";
@@ -116,7 +113,7 @@ export type CandidateKind =
 /** Whose words a candidate's `quote` is: a person's (a reply, a comment, a
  * commit subject), the review system's own (a digest bullet the overseer
  * wrote), or the REVIEWER's own re-check conclusion (its reason for
- * reversing its own approval — R6). The packet labels them — the curator
+ * reversing its own approval). The packet labels them — the curator
  * must never read the bot's own conclusion as a human's evidence. */
 export function quoteAuthor(kind: CandidateKind): "person" | "review-system" | "reviewer-recheck" {
   if (kind === "digest_learning") return "review-system";
@@ -188,7 +185,7 @@ export function missedClass(path: string | null | undefined): string {
   return safeClass(`missed.${top || "root"}`, "missed.review");
 }
 
-/** A recheck REVERSAL's class (owner ruling R6): `recheck.<top directory>` of
+/** A recheck REVERSAL's class: `recheck.<top directory>` of
  * the first anchor its findings record names (`recheck.root` for a file at
  * the root, `recheck.review` with no record). The `recheck.` first segment is
  * reserved to this source — `missedClass` writes `missed.`, a finding's and a
@@ -233,7 +230,7 @@ function tableExists(store: StateStore, name: string): boolean {
   );
 }
 
-/** A finding's canonical lens ids: S6's `lens_ids` column, else parsed from
+/** A finding's canonical lens ids: the outcome capture's `lens_ids` column, else parsed from
  * the raw `lens` (a row the boot has not filled yet). */
 export function lensIdsOf(
   raw: string | null | undefined,
@@ -275,7 +272,7 @@ function findingRow(
     .get(pr, roundNo, key) as FindingFacts | undefined;
 }
 
-/** The finding a bot comment carried (S6's link), when known. */
+/** The finding a bot comment carried (the outcome capture's link), when known. */
 function findingOfComment(
   store: StateStore,
   pr: number,
@@ -292,7 +289,7 @@ function findingOfComment(
 
 /** A PR-chosen file path in a daemon-written line: one line, no control
  * byte, no backtick, code-quoted — it sits OUTSIDE the data fences, so a
- * crafted file name must not read as prose (integration review). */
+ * crafted file name must not read as prose. */
 export function pathText(path: string): string {
   return `\`${oneLine(path, 200).replace(/`/g, "'")}\``;
 }
@@ -326,7 +323,7 @@ function prAuthor(store: StateStore, pr: number): string | null {
  * and a PR merged after one was not bot-approved at the merge.
  *
  * `beforeEventId` reads the verdict standing just BEFORE one event of the
- * events table (R6: a recheck flip is judged by what stood before IT — the
+ * events table (a recheck flip is judged by what stood before IT — the
  * flip itself, and anything logged after it in the same millisecond, never
  * count). */
 export function verdictAt(
@@ -351,7 +348,7 @@ export function verdictAt(
   return row?.verdict ?? null;
 }
 
-// ---- 1. human fates (S6) -------------------------------------------------------
+// ---- 1. human fates -------------------------------------------------------------
 
 const CANDIDATE_FATES = ["refuted_conceded", "upheld_after_reply"] as const;
 
@@ -368,8 +365,8 @@ interface OutcomeRow {
   fate_changed_at: string;
 }
 
-/** The chain roots of a PR's outcomes and the fate each chain reads (S6
- * carries a reposted finding: `carried_to` = `<round>:<key>` on the earlier
+/** The chain roots of a PR's outcomes and the fate each chain reads (the
+ * outcome capture carries a reposted finding: `carried_to` = `<round>:<key>` on the earlier
  * row). */
 export function chainRoots(
   rows: readonly OutcomeRow[],
@@ -430,9 +427,9 @@ function chainHasHumanReply(rows: readonly OutcomeRow[], root: OutcomeRow): bool
 /**
  * What the fate says happened, in words the record supports. A refutation
  * with no human reply on the chain is the REVIEWER's own concession on
- * re-check (S6's `conceded_unchanged`), never "a human refuted it"; an
+ * re-check (basis `conceded_unchanged`), never "a human refuted it"; an
  * upheld fate is a human reply the bot kept standing — the record shows a
- * reply, not that it was pushback (live: 42 of 91 quoted "Fixed…"/"Done").
+ * reply, not that it was pushback (many such replies say "Fixed"/"Done").
  */
 export function fateSummary(fate: string, humanReplied: boolean): string {
   if (fate === "refuted_conceded")
@@ -507,13 +504,13 @@ export function mineFates(store: StateStore, sinceIso: string): CandidateDraft[]
   return out;
 }
 
-/** What a fate candidate minted earlier reads NOW: S6 re-decides a fate on
+/** What a fate candidate minted earlier reads NOW: the outcome capture re-decides a fate on
  * every capture (the latest decisive evidence wins) and a posting may join an
  * earlier chain later, so a candidate is never written once and trusted. */
 export type FateReview = { kind: "current"; draft: CandidateDraft } | { kind: "gone"; why: string };
 
 /**
- * Re-read each fate candidate against S6's outcomes as they stand: `current`
+ * Re-read each fate candidate against the outcomes as they stand: `current`
  * (its chain still has this root and a candidate fate — the draft as it
  * would be minted today, the horizon not applied) or `gone` (the fate is no
  * longer a candidate fate, the posting joined an earlier chain, or its row is
@@ -822,7 +819,7 @@ export function mineHumanRecall(
   return out;
 }
 
-// ---- 3b. recheck reversals: the REVIEWER's own conclusion (owner ruling R6) ----
+// ---- 3b. recheck reversals: the REVIEWER's own conclusion ----------------------
 
 /** A recheck head as the recheck's own key (`recheck:<head12>:` in
  * src/recheck.ts): the first 12 hex characters, lowercased — so a full sha
@@ -862,10 +859,9 @@ function recheckFindings(
 }
 
 /**
- * R6 (the owner, 2026-10-07, "Yes, as candidates"): a post-approval recheck's
- * APPROVE → REQUEST_CHANGES REVERSAL is a look-for CANDIDATE — the reviewer's
- * own conclusion, so never a lesson on its own and never a person's evidence.
- * The gates the integration review asked for if it ever came back:
+ * A post-approval recheck's APPROVE → REQUEST_CHANGES REVERSAL is a look-for
+ * CANDIDATE — the reviewer's own conclusion, so never a lesson on its own and
+ * never a person's evidence. Three gates:
  *   * the bot's standing verdict just BEFORE the event was APPROVE
  *     (`verdictAt`, the event itself excluded): a decision "reversing" a
  *     verdict that already stood at REQUEST_CHANGES — a second decision file,
@@ -945,9 +941,8 @@ export interface RecallGit {
 /** How many merged PRs one scan pass reads with git, how long it may take,
  * how often an in-window PR is re-read, and how often an unknown answer is
  * retried before the PR is given up on. The learner runs a pass on EVERY
- * 5-minute tick (`prsPerTick`) as well as in the day's mine (`prsPerMine`):
- * ten a day could not keep up with ~8 bot-approved merges a day plus a
- * first-deploy backlog of hundreds (integration review). */
+ * 5-minute tick (`prsPerTick`) as well as in the day's mine (`prsPerMine`),
+ * so it keeps up with the day's bot-approved merges and drains a backlog. */
 export const RECALL_SCAN_LIMITS = Object.freeze({
   prsPerMine: 10,
   prsPerTick: 3,

@@ -1,6 +1,6 @@
-// Archive eligibility (docs/archiving.md §7.1) — ONE function,
-// `prEligibility`, the rule every archive pass and (S3) the synchronous
-// re-check right before an unlink apply. A PR's files may leave the live tree
+// Archive eligibility (docs/archiving.md §7.1) — one function,
+// `prEligibility`, the rule every archive pass and the synchronous re-check
+// right before an unlink apply. A PR's files may leave the live tree
 // only when EVERY clause holds:
 //
 //   - pr_state says `closed` (a PR with no registry row is unknown, never
@@ -14,8 +14,8 @@
 //   - no `rounds` row is running (or overdue — not terminal either);
 //   - no `session_commands` row is pending or running;
 //   - no `review_failures` row owes work (`work_owed = 1`) — clearing that on
-//     a closed PR is the owner's `resolve-terminal-failure`, never ours
-//     (spec §0);
+//     a closed PR is the owner's `resolve-terminal-failure`, never the
+//     archiver's (docs/archiving.md §0);
 //   - no wake is held for it;
 //   - no top-level `inject/pr-<n>/*.md` whose command row is non-terminal or
 //     missing (an undelivered wake a reborn session would receive; a dir we
@@ -67,7 +67,7 @@ export interface Eligibility {
    * from. */
   since: string | null;
   /** The top-level inject files whose command row is terminal (acked,
-   * cancelled or failed) — leftovers, archived as `stale_inject` (S3). */
+   * cancelled or failed) — leftovers, archived as `stale_inject`. */
   stale_injects: string[];
 }
 

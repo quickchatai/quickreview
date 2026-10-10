@@ -1,6 +1,6 @@
-// slice D — follow-up rounds at dispatch (docs/follow-up-rounds.md):
+// Follow-up rounds at dispatch (docs/follow-up-rounds.md):
 // the delta scope is chosen for a later round with a reviewed head and a
-// computable delta; every doubt falls back to today's full re-review with a
+// computable delta; every doubt falls back to the full re-review with a
 // `followup_full_round {reason}` event; the pre-approval sweep is owed only
 // while the standing verdict is not APPROVE and no full look happened since
 // round 1; the first round is untouched; every per-PR fact keeps the WHOLE
@@ -329,7 +329,7 @@ describe("follow-up rounds: every doubt is a full round", () => {
     await dispatchOnce(d);
     expect(orders).toHaveLength(1);
     const order = orders[0]!;
-    // Today's full re-review: no follow-up fields, the full plan.
+    // The full re-review: no follow-up fields, the full plan.
     expect(order.scope).toBeUndefined();
     expect(order.delta).toBeUndefined();
     expect(order.prior_findings_note).toBeUndefined();

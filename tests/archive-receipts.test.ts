@@ -1,6 +1,7 @@
-// ARCHIVED IS NEVER ABSENT (docs/archiving.md §8.1, #5362 rule
-// ①). A PR is archived, then reopened, and its reborn session writes a fresh
-// JSONL that does not hold a pre-close wake's marker. The receipt for that
+// Archived is never absent (docs/archiving.md §8.1; a delivered prompt is a
+// receipt, and an unreadable receipt is unknown, never loss). A PR is
+// archived, then reopened, and its reborn session writes a fresh JSONL that
+// does not hold a pre-close wake's marker. The receipt for that
 // wake must read UNKNOWN — never false — so reconcile's claim sweep keeps the
 // claim; after the restore the marker is found in the restored file; and a
 // wake sent after the reopen is answered from the live files as before.

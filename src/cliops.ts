@@ -1,4 +1,4 @@
-// qcr checklist / qcr compare — production wiring of B6's harnesses. Local
+// qcr checklist / qcr compare — production wiring of the cutover harnesses. Local
 // runs exercise the offline halves; the live halves (tunnel, real searches,
 // live rounds) light up on the VM where the daemon and pi are running.
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -280,9 +280,8 @@ export async function cmdCompare(prs: number[], parts?: ProductionParts): Promis
     // Deliberately NOT set. `qcr compare` is collect-only: the records on disk
     // were produced by some earlier daemon round through a gate this process
     // never held, so there is nothing here to observe. Reporting this process's
-    // own gate would be a fabricated attestation about someone else's run — the
-    // exact dishonesty the unconditional "dry_run stayed true" sentence was.
-    // The reports will say the dry-run claim is UNVERIFIED, which is the truth.
+    // own gate would be a fabricated attestation about someone else's run.
+    // The reports say the dry-run claim is UNVERIFIED, which is the truth.
     // observeDryRun: …
     outDir: join(root, "reports"),
   };

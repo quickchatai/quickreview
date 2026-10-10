@@ -1,6 +1,6 @@
-// setup-replay — the PR REPLAY half of the companion's setup tool belt
-//. Not an extension of its own: extensions/setup.ts (the ONE setup
-// & scan extension) registers these beside the setup_* and scan_* tools. The
+// setup-replay — the PR replay half of the companion's setup tool belt. Not
+// an extension of its own: extensions/setup.ts (the one setup & scan
+// extension) registers these beside the setup_* and scan_* tools. The
 // companion judges — which recent PRs show the tuning best, what the
 // difference means — and these tools act: every number, refusal and record
 // is ReplayRunner's.

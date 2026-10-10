@@ -1,4 +1,4 @@
-// `qcr install migrate` across filesystems (selfscan config-cli): a checkout
+// `qcr install migrate` across filesystems: a checkout
 // and the config home on different mounts make renameSync throw EXDEV, and the
 // profile move falls back to copy-then-remove. A relative symlink INSIDE the
 // profile must keep pointing inside the copy — cpSync's default rewrites it to

@@ -1,7 +1,7 @@
 // Host-side clipboard sink for OSC 52 payloads. Forwarding the escape to the
 // real terminal only works where the emulator implements OSC 52 — Konsole and
 // stock VTE ignore it, so a tmux mouse-drag copy (set-clipboard on) or pi's
-// /copy reached the operator's screen and evaporated. The sink decodes the
+// /copy would reach the operator's screen and evaporate. The sink decodes the
 // payload and writes it into the system clipboard through the first CLI that
 // works; on a bare KDE box that is klipper's D-Bus method (no extra package).
 import { spawn } from "node:child_process";

@@ -1,11 +1,11 @@
 // `npm run smoke:session` — the scripted manual smoke for the daemon↔pi
-// boundary (brief B3 step 7). It spawns a REAL tmux + pi session, injects a
+// boundary. It spawns a REAL tmux + pi session, injects a
 // hello prompt through the inject-bridge, and greps the session JSONL for the
 // agreed marker in the reply.
 //
 // pi is not installed on the build machine: this script is expected to bail
 // with a clear message here and to be run inside the VM container, where the
-// pinned pi lives. It is the only place in B3 that touches real processes.
+// pinned pi lives.
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -1,9 +1,8 @@
 // The PR lifecycle state machine (spec §3 "Daemon", §4 "PR sessions").
 //
-// ASSUMPTION:'s transition table is cited by the spec but the ticket
-// body was not available to this build session; the table below is derived
-// from spec §3/§4/§8 and the B2 brief, and is the authoritative version until
-// is reconciled against it. Every row is unit-tested.
+// The transition table below is derived from spec §3/§4/§8 and is the
+// authoritative version until it is read back against the transition table
+// the spec cites. Every row is unit-tested.
 //
 // States (state.ts `PrLifecycleState`):
 //   tracked         known, no work owed — includes "reviewed & approved"
@@ -12,12 +11,9 @@
 //   awaiting_author REQUEST_CHANGES posted; the author owes a push/reply
 //   closed          merged or closed; session archived, worktree dropped
 //
-// There is no "awaiting human" state. The park was retired on 2026-08-19
-// (the review is never handed to a human — the AI decides on the
-// merits and keeps driving, attaching a "for a human to double-check" list
-// where it is unsure), the reconcile migration drained the last legacy rows
-// the same day, and removed the enum member, its glyph, its metric and
-// its panel. NOTHING here can produce it.
+// There is no "awaiting human" state: the review is never handed to a human —
+// the AI decides on the merits and keeps driving, attaching a "for a human to
+// double-check" list where it is unsure. Nothing here can produce such a state.
 // `stale_recheck` remains as legacy state for old rows/rounds; ordinary pushes
 // never set it or queue work. Only an explicit review re-request starts a round.
 // `stale_recheck` + `trigger_ts` are cleared on dispatch AND on verdict/
@@ -51,7 +47,7 @@
 // ⁴ a blown/malformed round returns the PR to the state its STANDING verdict
 //   implies (REQUEST_CHANGES ⇒ awaiting_author, anything else ⇒ tracked),
 //   carried on the event by the caller. No park: the AI keeps driving; the
-//   anomaly + self-requeue cap are the safety net (the owner, 2026-08-19).
+//   anomaly + self-requeue cap are the safety net.
 //
 // The never-retract-an-approval invariant is structural: no event and no
 // transition in this module touches an existing review (spec §8).
@@ -84,7 +80,7 @@ export type SmEvent =
   | { type: "author_reply" }
   | { type: "synchronize" }
   /** Someone asked for a person on this PR (author ping-pong `human_requested`).
-   * Noted for the record only — the AI keeps driving (the owner, 2026-08-19):
+   * Noted for the record only — the AI keeps driving:
    * never a handover, never a park, no GitHub reviewer requested. */
   | { type: "human_requested" }
   | { type: "closed" }
@@ -115,7 +111,7 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
       return "reviewing";
 
     case "verdict":
-      // NEEDS_HUMAN is retired as an outcome (the owner, 2026-08-19): a legacy
+      // NEEDS_HUMAN is not an outcome; a legacy
       // session emitting it posted its review without an approval — the PR
       // stays in normal flow and the AI keeps driving. Never a park.
       if (event.verdict === "NEEDS_HUMAN") return "tracked";
@@ -139,7 +135,7 @@ export function transition(current: PrLifecycleState, event: SmEvent): PrLifecyc
   }
 }
 
-/** Bot-authored PRs never enter the machine (spec §3, §2). */
+/** Bot-authored PRs never enter the machine (spec §3). */
 export function isBotAuthor(author: string, botLogin: string): boolean {
   return author === botLogin || author.endsWith("[bot]");
 }
@@ -223,9 +219,9 @@ export function applyEvent(
   if (event.type === "author_reply" && base === "queued") provenance = "human";
   // Cleared with the trigger it described. `dispatched` is the usual path;
   // `verdict`/`round_overdue` cover the settlements that never dispatched —
-  // the no-new-evidence skip — which otherwise left a
-  // "human" residue on an awaiting_author row for's exact-head
-  // retirement to misread as a fresh ask (same rule as trigger_ts).
+  // the no-new-evidence skip — which would otherwise leave a "human" residue
+  // on an awaiting_author row for the exact-head retirement to misread as a
+  // fresh ask (same rule as trigger_ts).
   if (event.type === "dispatched" || event.type === "verdict" || event.type === "round_overdue")
     provenance = null;
 

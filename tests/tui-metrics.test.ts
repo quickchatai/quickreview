@@ -115,8 +115,8 @@ const fullWindow = {
     { kind: "head_push", count: 12 },
     { kind: "round_finished", count: 9 },
   ],
-  // the shape measured: mostly redeploy orphans, one round
-  // that genuinely stopped dead.
+  // A realistic shape: mostly redeploy orphans, one round that genuinely
+  // stopped dead.
   cancellations: {
     total: 9,
     loud: 2,
@@ -378,10 +378,10 @@ describe("metrics dashboard", () => {
     expect(text).toContain("rounds 21");
     expect(text).toContain("$31.50");
     expect(text).toContain("overruns 2");
-    // the always-zero "awaiting you" tile is gone with the park.
+    // There is no "awaiting you" tile: no PR state parks awaiting a human.
     expect(text).not.toContain("awaiting you");
     expect(text).not.toContain("⚑");
-    // the strip carries the LOUD count only. Six redeploy orphans do
+    // The strip carries the loud count only. Six redeploy orphans do
     // not light a tile — a tile that lights after every deploy is unreadable.
     expect(text).toContain("stopped 2");
   });
@@ -425,9 +425,8 @@ describe("metrics dashboard", () => {
       const legacy = { ...fullWindow } as Record<string, unknown>;
       delete legacy.cancellations;
       expect(() => card(legacy).body(50)).not.toThrow();
-      // this used to assert `stopped 0`, which is the honest-unknown
-      // bug in miniature — a field an older daemon does not report at all,
-      // rendered as a measured zero ("nothing stopped dead").
+      // Honest unknown: a field an older daemon does not report at all must
+      // not render as a measured zero ("nothing stopped dead").
       const strip = stripAnsi(statStrip(legacy as never, 200));
       expect(strip).toContain("stopped ?");
       expect(strip).not.toContain("stopped 0");
@@ -524,13 +523,9 @@ describe("metrics dashboard", () => {
       const cards = metricsCards(fullWindow as never, daily, rows - 5);
       const packed = packColumns(cards, widths);
       expect(packed).toHaveLength(1);
-      // every card is present, in order, in the single stack
+      // Every card is present, in order, in the single stack.
       const stack = packed[0]!.join("\n");
       for (const c of cards) expect(stack).toContain(c.title.split(" ")[0]!);
-      // (A third `targetRows` argument used to be passed here to assert that
-      // "slack spreading never shrinks the stack". `packColumns` never read
-      // that parameter, so the two calls were identical and the `>=` held
-      // trivially. Parameter and assertion both deleted —.)
     }
   });
 

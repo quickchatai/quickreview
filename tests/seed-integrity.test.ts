@@ -1,17 +1,16 @@
 // CLAUDE.md hard rule 6 made structural.
 //
 // `prompts/` + `agents/` seeded content is canonical — byte-identical to the
-// in-repo seeds/ copies (lineage) — and must never be rewritten
-// in-tree. Per-pass model
-// overrides go through `config.toml [models.passes]`, applied at agent build
-// time by `src/include.ts`, never by editing the seed.
+// in-repo seeds/ copies — and must never be rewritten in-tree. Per-pass model
+// overrides go through the repo profile's `[lenses.<pass>]` `effort` /
+// `min_tier`, applied at agent build and plan time, and pass behaviour changes
+// through the `PASS_ADDENDA` registry — never by editing the seed.
 //
 // Two layers:
 //   1. Hermetic: sha256 of every seeded file against a checked-in manifest.
 //   2. Provenance: byte-for-byte comparison against the in-repo canonical
-//      copies under seeds/ (previously the external assets
-//      dir, present only on the original machine). Runs unconditionally, on
-//      any machine, with no environment variable.
+//      copies under seeds/. Runs unconditionally, on any machine, with no
+//      environment variable.
 // Plus a guard that the files we DO own never sneak into the manifest.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -40,18 +39,18 @@ const RULE_6 =
   "tests/fixtures/seed-manifest.json in the same commit.";
 
 /**
- * Seeds that have RATIFIED divergence from the original lineage.
+ * Seeds that have ratified divergence from the original seeded lineage.
  *
  * Rule 6 freezes the seeds against *unilateral* rewriting, not against the
  * owner. A file listed here was re-seeded on the owner's explicit order; it
- * stays pinned by the manifest (so any FURTHER drift is still caught), and
- * the entry records the departure from the original lineage. Since
- * the provenance baseline is the in-repo seeds/ copy — refreshed by every
- * ratified reseed — so the registry no longer exempts anything from the
- * byte-identity comparison below; it is the lineage record.
+ * stays pinned by the manifest (so any further drift is still caught), and
+ * the entry records the departure from the original lineage. The provenance
+ * baseline is the in-repo seeds/ copy — refreshed by every ratified reseed —
+ * so the registry exempts nothing from the byte-identity comparison below; it
+ * is the lineage record.
  *
- * The registry lives in tests/fixtures/ratified-divergence.json:
- * each entry is a seeded path with its ratification notes. Two writers only —
+ * The registry lives in tests/fixtures/ratified-divergence.json: each entry
+ * is a seeded path with its ratification notes. Two writers only —
  * a human recording a ratified reseed, and the TUI's rubric-accept path
  * (the owner's accept click IS the ratification; the TUI appends the entry,
  * refreshes seeds/, re-pins the manifest hash, and commits). Adding an entry
@@ -67,20 +66,18 @@ const RATIFIED_DIVERGENCE = new Set<string>(Object.keys(divergence.files));
 
 /** Files that are OURS to edit — they must never be frozen by the manifest. */
 const NON_SEEDED = [
-  // agents/pass-intent.md is OURS: created after the seeding,
-  // never part of the frozen set — it must not be pinned by the manifest.
+  // Post-seed lenses and templates: created after the seeding, never part of
+  // the frozen set, so they must not be pinned by the manifest.
   "agents/pass-intent.md",
-  // The judgment lenses (2026-08-20 review-tuning): same
-  // post-seed provenance as pass-intent, ours to edit, never in the manifest.
+  // The judgment lenses.
   "agents/pass-placement.md",
   "agents/pass-simplicity.md",
   "agents/pass-backcompat.md",
-  // the on-demand concurrency lens — post-seed, ours, addable-only.
+  // The on-demand concurrency lens (addable-only).
   "agents/pass-concurrency.md",
-  // the ask-your-human lens — post-seed, ours, addable-only.
+  // The ask-your-human lens (addable-only).
   "agents/pass-ask-human.md",
-  // Benchmark 2026-09-26: the per-file sweep and the six content-triggered
-  // sub-lenses — post-seed, ours.
+  // The per-file sweep and the content-triggered sub-lenses.
   "agents/pass-sweep.md",
   "agents/pass-widened.md",
   "agents/pass-roundtrip.md",
@@ -88,31 +85,31 @@ const NON_SEEDED = [
   "agents/pass-bounds.md",
   "agents/pass-claims.md",
   "agents/pass-rollout.md",
-  // Freeze fixes 2: the behaviour-delta lens — post-seed, ours.
+  // The behaviour-delta and lint-conformance lenses.
   "agents/pass-behaviour-delta.md",
   "agents/pass-lint-conformance.md",
-  // the tests lens — post-seed, ours.
+  // The tests lens and the code-quality lenses.
   "agents/pass-tests.md",
   "agents/pass-maintainability.md",
   "agents/pass-duplication.md",
   "agents/pass-abstraction.md",
   "agents/pass-style.md",
   "agents/pass-consistency.md",
-  // scan stage 1's lens — post-seed, ours, built only into the
-  // companion's scan build (agents/scan/, never a PR round's).
+  // Scan stage 1's lens, built only into the companion's scan build
+  // (agents/scan/, never a PR round's).
   "agents/scan/pass-scan.md",
   "prompts/round-first.md",
   "prompts/round-re-review.md",
-  // the follow-up round template — post-seed, ours.
+  // The follow-up round template.
   "prompts/round-follow-up.md",
   "prompts/round-staleness.md",
   "prompts/round-recheck.md",
   "prompts/companion.md",
   "prompts/companion-day-open.md",
-  // the first-run greeting + calibration interview — post-seed, ours.
+  // The first-run greeting + calibration interview.
   "prompts/companion-first-run.md",
   "prompts/slack-overseer-appendix.md",
-  // the onboarding wizard's system prompt — post-seed, ours to edit.
+  // The onboarding wizard's system prompt.
   "prompts/onboarding.md",
 ] as const;
 
@@ -177,8 +174,8 @@ describe("seed integrity (hard rule 6)", () => {
         `${rel} has no ratification note — who ratified it, when?`,
       ).toBeGreaterThan(0);
       for (const note of notes) {
-        // new notes are role-worded ("owner"); the personal spelling
-        // on the legacy notes is history and must keep validating.
+        // Notes are role-worded ("owner"); the personal spelling on older
+        // notes must keep validating.
         expect(
           note,
           `${rel}: ratification note must carry a date and a ratifier ('owner'; 'the owner' grandfathered)`,
@@ -188,9 +185,7 @@ describe("seed integrity (hard rule 6)", () => {
   });
 
   it("the non-seeded prompts actually exist (guards a rename going unnoticed)", () => {
-    // slack-overseer-appendix.md and round-recheck.md were created
-    // by later slices; the other round/companion templates predate them. All
-    // are ours — this only catches silent deletion.
+    // All of these are ours — this only catches silent deletion.
     for (const rel of NON_SEEDED) {
       expect(existsSync(join(repoRoot, rel)), `${rel} vanished from the tree`).toBe(true);
     }
@@ -199,19 +194,16 @@ describe("seed integrity (hard rule 6)", () => {
 
 // ---- provenance layer: byte-identity vs the in-repo canonical copies --------
 //
-// the canonical seed copies live in seeds/ (same relative layout as
-// the tree), so this layer runs unconditionally on every machine — no
-// environment variable, no external checkout. Until it compared
-// against the assets dir in the issue tracker, which only the
-// original machine had; seeds/ carries that lineage forward in-repo.
+// The canonical seed copies live in seeds/ (same relative layout as the
+// tree), so this layer runs unconditionally on every machine — no environment
+// variable, no external checkout.
 //
-// The RATIFIED_DIVERGENCE interaction, deliberately: the divergence-exempt
-// files (conversation-system, overseer-system, eod-sweep) diverge from the
-// ORIGINAL assets, but seeds/ was copied from the CURRENT tree —
-// whose shas the manifest already pins — so byte-identity vs seeds/ holds for
-// ALL 13 files and nothing is filtered out here. The registry keeps meaning
-// "diverged from the original lineage" (each entry says who ratified the
-// reseed and when); it no longer exempts anything from this comparison.
+// The RATIFIED_DIVERGENCE interaction, deliberately: the registered files
+// diverge from the original seeding, but seeds/ holds the current ratified
+// copies — whose shas the manifest already pins — so byte-identity vs seeds/
+// holds for every seeded file and nothing is filtered out here. The registry
+// means "diverged from the original lineage" (each entry says who ratified
+// the reseed and when); it exempts nothing from this comparison.
 // A future ratified reseed — a human recording one, or the TUI's
 // rubric-accept path (`recordRatification`) — refreshes the seeds/ copy AND
 // re-pins the manifest sha in the same commit.

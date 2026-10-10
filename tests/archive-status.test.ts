@@ -573,8 +573,8 @@ describe("qcr archive status", () => {
     expect(parseArchiveArgs(["status", "--plan"])).toEqual({ verb: "status", plan: true });
     expect(() => parseArchiveArgs([])).toThrow(ARCHIVE_USAGE);
     expect(() => parseArchiveArgs(["status", "--pln"])).toThrow(ARCHIVE_USAGE);
-    // S4's verbs are parsed in tests/archive-operator.test.ts; a stray token
-    // after one is refused all the same.
+    // The operator verbs are parsed in tests/archive-operator.test.ts; a
+    // stray token after one is refused all the same.
     expect(() => parseArchiveArgs(["run", "now"])).toThrow(ARCHIVE_USAGE);
   });
 

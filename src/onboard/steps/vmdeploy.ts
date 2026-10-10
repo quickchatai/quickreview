@@ -16,8 +16,8 @@
 //   * `sandbox_src` actually wired, or the rsync silently no-ops;
 //   * ansible-playbook on this machine and an inventory to run against;
 //   * the drain advisory — a WARNING when rounds are still running, because
-//     recreating the container orphans them (WARN by the owner's own choice,
-//     never a refusal, and the wizard neither hides it nor upgrades it);
+//     recreating the container orphans them (deliberately a warning, never a
+//     refusal, and the wizard neither hides it nor upgrades it);
 //   * the playbook's own preflights on the box (the webhook port free, the
 //     minimum free disk);
 //   * the post-deploy checks over ssh, which the script runs itself and fails
@@ -49,8 +49,8 @@ export const VM_DEPLOY_CHOICE_KEY = "vm_deployed";
 export interface VmDeployRecord {
   mode: DeployMode;
   at: string;
-  /** The ssh alias it deployed to. `null` on a record written before deploys
-   * were scoped to a host — never trusted as "this host was deployed". */
+  /** The ssh alias it deployed to. `null` on a record that names no host —
+   * never trusted as "this host was deployed". */
   host: string | null;
 }
 

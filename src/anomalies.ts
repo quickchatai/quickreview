@@ -1,18 +1,13 @@
-// Overseer wake policy — which anomalies WAKE the overseer, and the
-// daily heartbeat that wakes it even when nothing does.
+// Overseer wake policy — which anomalies WAKE the overseer, and the daily
+// heartbeat that wakes it even when nothing does.
 //
-// Background (2026-08-19 audit §5): anomaly EVENTS land durably in the DB
-// (`store.logAnomaly`), but before this slice each call site decided
-// ad hoc whether to also write an overseer inject — and most never did, so the
-// overseer produced zero transcripts all day. Decision (the owner, 2026-08-19):
-// heartbeat + severe classes.
-//
-// Shape: `store.logAnomaly` stays the ONE durable funnel; it now forwards each
-// record to an optional sink (`StateStore.setAnomalySink`), and the sink built
-// here applies the severity map + dedup and writes the overseer inject for
-// WAKE classes. Call sites keep their bespoke wake text by passing it as
-// `injectMessage` — they no longer inject themselves, so policy and dedup live
-// in exactly one place.
+// Anomaly EVENTS land durably in the DB through `store.logAnomaly`, the ONE
+// durable funnel. It forwards each record to an optional sink
+// (`StateStore.setAnomalySink`), and the sink built here applies the severity
+// map + dedup and writes the overseer inject for WAKE classes. Call sites keep
+// their bespoke wake text by passing it as `injectMessage` — they never inject
+// themselves, so policy and dedup live in exactly one place. Severe classes
+// wake at once; everything else waits for the daily heartbeat.
 //
 // Single-shepherd (rule 9): this module only writes inject files through
 // SessionHooks.injectOverseer — it never schedules an agent and never touches
@@ -30,7 +25,7 @@ import type { AnomalyRecord } from "./state.js";
 export type AnomalySeverity = "wake" | "quiet";
 
 /**
- * The severity map (the owner, 2026-08-19). WAKE = the overseer sees an
+ * The severity map. WAKE = the overseer sees an
  * inject immediately; QUIET = DB-only, reviewed at the daily heartbeat.
  *
  *   wake:  malformed / overdue verdicts, plan≠executed passes, degraded
@@ -50,35 +45,35 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   "overdue",
   "pass_plan_mismatch",
   "migration_precheck_degraded",
-  // the same check, quieter the other way — collisions found, but
+  // The same check, quieter the other way — collisions found, but
   // the GitHub COMMENT withheld because the event log holds a collision-
   // comment row it cannot read. Nothing self-heals: every later collision
-  // comment on that PR stays withheld until a human repairs the row, so it is
+  // comment on that PR stays withheld until a person repairs the row, so it is
   // human-attention grade — and it fires at most once per PR by construction
   // (`StateStore.anomalyRaised` gates it in dispatch), so it cannot spam.
   "migration_collision_comment_withheld",
-  // x: a ledger still stale AFTER its one re-nudge — the
+  // A ledger still stale AFTER its one re-nudge — the
   // session ignored the nudge, a human-attention grade. First-detection
   // "ledger_stale" stays quiet: the nudge is the response.
   "ledger_stale_unresolved",
-  //, the same shape one tier down: a findings record still absent
+  // The same shape one tier down: a findings record still absent
   // AFTER its one re-nudge — the session ignored the nudge, which is
   // human-attention grade. First detection ("findings_record_missing") stays
   // quiet: the nudge IS the response, and a wake there would double every
   // missing record into overseer traffic.
   "findings_record_unresolved",
-  // 2026-08-19 (the owner): pi sessions failing API calls with token-expired
-  // errors — every round in flight is doomed until a human re-logins, so this
+  // pi sessions failing API calls with token-expired errors — every round in
+  // flight is doomed until someone logs in again, so this
   // is human-attention grade. Detected passively (src/authwatch.ts), never by
   // a smoke call.
   "pi_auth_expired",
-  // the EOD curator may have edited the owner's pinned standing
+  // The EOD curator may have edited the owner's pinned standing
   // instructions — the one thing curation must never touch. Human-attention
   // grade by the same logic as pi_auth_expired. The watchdog's own degraded
   // kind (`eod_pinned_watchdog_degraded`) is deliberately left unlisted: "could
   // not check" is heartbeat-tier, "may have been rewritten" is not.
   "eod_pinned_area_modified",
-  // a bot-authored APPROVE on GitHub at the current head that the
+  // A bot-authored APPROVE on GitHub at the current head that the
   // daemon has no record of posting. Human-attention grade by construction —
   // either something wrote to GitHub outside the ONE mutation gate (rule 1,
   // the CI hard-gate and every posting guard bypassed at once), or the local
@@ -86,32 +81,30 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // The quieter sibling `ungated_review` (non-APPROVE) stays unlisted: it is a
   // durable row and a report line, not a wake.
   "ungated_approval",
-  // git's configuration changed DURING a round. Nothing the daemon
+  // Git's configuration changed DURING a round. Nothing the daemon
   // does rewrites those files mid-round, so this is a session write, and
   // config-supplied shell turns a plain `git diff` into arbitrary execution —
   // which makes this round's entire output untrusted. Human-attention grade,
   // and it cannot fire routinely: the baseline is taken from the same paths by
   // the same helper that re-checks them.
   "git_config_modified",
-  // the same check over this system's OWN policy surface —
+  // The same check over this system's OWN policy surface —
   // config.toml, the sanctioned scripts, the compiled guard, the seeds. A
   // change here is worse than the git one: it does not merely taint this
   // round, it rewrites the boundary every LATER round in the container runs
   // under. Human-attention grade; cannot fire routinely for the same reason.
   "policy_surface_modified",
-  // a round that blew its deadline and is being buried rather than
+  // A round that blew its deadline and is being buried rather than
   // rescued — nothing will ever come back for it, and the PR it belonged to
   // may never have been reviewed at all. Fires at most once per round, by
   // construction (the sweep terminalizes what it reports), so it can wake.
   "round_stranded",
-  // automatic recovery is exhausted and review work remains owed.
+  // Automatic recovery is exhausted and review work remains owed.
   // Stable incident state suppresses duplicates; this wake is the first loud
   // transition, while status/TUI/Slack heartbeat keep it persistently visible.
   "review_failed_loud",
-  // reviewer memory, from src/memory/health.ts. Memory was dead
-  // for five weeks (2026-09-03..10-02) behind an unlisted, per-round
-  // `round_memory_degraded` that never woke anyone. These three are raised
-  // by the health monitor on TRANSITIONS (and every 6 h while an outage
+  // Reviewer memory, from src/memory/health.ts. These three are raised by
+  // the health monitor on TRANSITIONS (and every 6 h while an outage
   // lasts), never per round, so they cannot spam:
   //   memory_auth_failed — a credential in use is refused, or there is none;
   //                        never graced, never deferred by a drain;
@@ -120,48 +113,43 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   //   memory_provision_failed — the boot's provisioning report says a user
   //                        could not be ensured, the reviewer key does not
   //                        authenticate, or a user was (re)created.
-  // The overseer is NOT the person this is for (it already knew for 33
-  // days): the same facts ride status.json `memory`, which the TUI turns into
-  // a board banner, a desktop notification and a tracker ticket.
+  // The overseer is NOT the main audience: the same facts ride status.json
+  // `memory`, which the TUI turns into a board banner, a desktop notification
+  // and a tracker ticket.
   "memory_auth_failed",
   "memory_down",
   "memory_provision_failed",
-  // writes that stick. `memory_write_backlog` — a [feedback]
-  // signal ledgered but still not in reviewer memory 2 h later (the backfill
-  // pump writes owed rows only while memory is healthy), or rows the pump
-  // gave up on. Raised by the pump on the crossing and every 6 h while it
-  // lasts, never per row. Before this, 36 of 39 signals' memory writes failed
-  // and each one was a log line.
+  // `memory_write_backlog` — a [feedback] signal ledgered but still not in
+  // reviewer memory 2 h later (the backfill pump writes owed rows only while
+  // memory is healthy), or rows the pump gave up on. Raised by the pump on the crossing and every 6 h while it
+  // lasts, never per row.
   "memory_write_backlog",
-  // the EOD sweep's inject failed four times (one try and three
-  // backed-off retries). The day's curation did not happen; before this it
-  // was one "EOD injection failed" log line.
+  // The EOD sweep's inject failed four times (one try and three backed-off
+  // retries): the day's curation did not happen.
   "eod_inject_failed",
-  // S8 (the learner, src/learner/learner.ts): the curation of a day's
+  // The learner (src/learner/learner.ts): the curation of a day's
   // outcomes packet did not reach memory. `eod_curation_missing` — the sweep
   // was delivered, its packet offered candidates, and no
   // `eod-curation-receipt` came within `[memory] lessons_receipt_wait_min`;
   // `eod_lessons_not_persisted` — the curator reported a lesson write refused,
-  // or claimed an adoption no lesson in memory cites. For 30 days (09-03..
-  // 10-02) the curator persisted nothing and only its digests said so. Each
-  // is raised once per day (the refused/missing list wakes again only when it
-  // names something new), and both also ride status.json `memory.curation` —
+  // or claimed an adoption no lesson in memory cites. Each is raised once per
+  // day (the refused/missing list wakes again only when it names something
+  // new), and both also ride status.json `memory.curation` —
   // the board banner, the desktop notification, `qcr status` and one tracker
   // ticket per incident — until something makes the failure good.
   "eod_curation_missing",
   "eod_lessons_not_persisted",
-  // L2 (src/eventloop.ts): the daemon's OWN event loop was held — one
+  // src/eventloop.ts: the daemon's OWN event loop was held — one
   // delay of `[daemon] event_loop_stall_max_s` (10 s) or more, or a p99 of
   // `event_loop_stall_p99_s` (2 s) over a full window. While it is held no
-  // webhook, /health, verdict or status write runs; on 2026-10-07 /health went
-  // unanswered for ~70 s at a time and nothing measured it. The detail names
+  // webhook, /health, verdict or status write runs. The detail names
   // the cause, each from its own evidence, the stall's own first: the loop
   // itself blocked (the daemon on CPU across the stall), CPU starved (the
   // cgroup's throttling), or unknown (neither — host contention or a
   // blocking wait). Raised by the watch at most once per
   // `event_loop_wake_cooldown_min` (60), so it cannot spam.
   "daemon_event_loop_stalled",
-  // S3 (src/archive/archiver.ts), added deliberately:
+  // The archiver (src/archive/archiver.ts):
   //   archive_disk_low       — free space on the archive or state mount is
   //                            below `[archive] disk_headroom_gb` (plus the
   //                            next file's size); the archiver starts no file.
@@ -171,8 +159,8 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   //   archive_restore_failed — a reopened PR's archived transcripts or
   //                            payloads could not be restored (a corrupt or
   //                            missing archive record, or no room on the live
-  //                            mount). Its session is
-  //                            born anyway and the receipt guard keeps the
+  //                            mount). Its session is born anyway and the
+  //                            receipt guard keeps the
   //                            archived window UNKNOWN (never absent), so the
   //                            PR's pre-close recheck claims stay standing
   //                            until a person looks. Once per incident per PR.
@@ -180,11 +168,11 @@ const WAKE_KINDS: ReadonlySet<string> = new Set([
   // (a status counter; a source that fails to verify is simply kept).
   "archive_disk_low",
   "archive_restore_failed",
-  // H1b (src/wakes.ts): the held-wake cap evicted an author reply or
+  // src/wakes.ts: the held-wake cap evicted an author reply or
   // an operator-recovered obligation. The store never selects either for
   // eviction, so this cannot fire routinely — it is the loud half of that
   // guarantee: a dropped reply's ping-pong claim refuses every redelivery, so
-  // nobody would ever answer it (76 went unanswered that way, 10-05..10-08).
+  // nobody would ever answer it.
   "author_reply_wake_dropped",
 ]);
 
@@ -195,18 +183,17 @@ export function wakeKinds(): string[] {
 }
 
 /**
- * Two cancellation kinds are DELIBERATELY unlisted above, for
- * opposite reasons — the pair is the whole shape of the ticket:
+ * Two cancellation kinds are DELIBERATELY unlisted above, for opposite
+ * reasons:
  *
  *   `round_stopped_dead` — human-attention grade, but its wake already exists:
  *     the self-requeue path writes its own bespoke overseer inject beside the
  *     anomaly row. Listing it here would inject the same event twice.
  *   the orphan sweep — no anomaly row at ALL, by design. tmux lives in the
- *     container, so a clean redeploy orphans every in-flight round; it was 70%
- *     of the 55 cancellations measured. Alarming on it would train
- *     everyone to ignore cancellation, which is exactly the inversion that
- *     ticket found (the rare `overdue` was loud, the common `cancelled` was
- *     silent). It is counted, grouped and rendered — never alarmed on.
+ *     container, so a clean redeploy orphans every in-flight round, and it is
+ *     the most common cancellation. Alarming on it would train everyone to
+ *     ignore cancellation while the rare, serious kinds need attention. It is
+ *     counted, grouped and rendered — never alarmed on.
  */
 
 export function anomalySeverity(kind: string): AnomalySeverity {
@@ -220,11 +207,11 @@ export const ANOMALY_DEDUP_WINDOW_MS = 10 * 60_000;
 /**
  * Kinds whose RAISER already rate-limits them to transitions, so the generic
  * dedup keys on what the wake SAYS (kind + pr + detail) rather than on kind +
- * pr alone (S1). The memory health monitor raises `memory_auth_failed`
+ * pr alone. The memory health monitor raises `memory_auth_failed`
  * on each transition (a new credential failing, a relapse) and every 6 h; the
  * boot raises `memory_provision_failed` once per report. Keyed on kind alone,
  * a SECOND transition inside 10 minutes — the sessions' credential failing
- * after the daemon's — was swallowed until the 6 h re-wake. Keyed on the
+ * after the daemon's — would be swallowed until the 6 h re-wake. Keyed on the
  * detail, a different transition always reaches the overseer, while an
  * identical repeat (a credential flapping between refused and accepted) is
  * still held back by the window. Pinned by deep equality in
@@ -234,11 +221,11 @@ const DETAIL_KEYED_KINDS: ReadonlySet<string> = new Set([
   "memory_auth_failed",
   "memory_down",
   "memory_provision_failed",
-  // the pump raises it on the backlog crossing (every 6 h while
+  // The pump raises it on the backlog crossing (every 6 h while
   // it lasts) and once per tick that gave rows up — a give-up minutes after a
   // backlog wake is a different fact and must still reach the overseer.
   "memory_write_backlog",
-  // raised once per DAY by the learner; deferred days fire back
+  // Raised once per DAY by the learner; deferred days fire back
   // to back after a drain, so two days' wakes can land minutes apart.
   "eod_curation_missing",
   "eod_lessons_not_persisted",

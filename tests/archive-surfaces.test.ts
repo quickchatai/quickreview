@@ -1,6 +1,5 @@
-// what a PERSON sees of the archiver (docs/archiving.md §11; the
-// 2026-10-08 integration review): beside the `qcr status` line, the TUI
-// board's top-bar banner and the companion's view. A reopened PR whose
+// What a person sees of the archiver (docs/archiving.md §11): beside the
+// `qcr status` line, the TUI board's top-bar banner and the companion's view. A reopened PR whose
 // archived files no tick or birth will restore (mode not `on`) keeps its
 // receipts UNKNOWN and its pre-close recheck claims standing — that must be
 // on a surface, not only in a SQL count. Every reader is total over parsed

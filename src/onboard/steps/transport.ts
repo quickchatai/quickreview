@@ -1,27 +1,24 @@
-// The stack transport — THE ONE DECISION POINT for "where does this
-// system actually run?".
+// The stack transport — THE ONE DECISION POINT for "where does this system
+// actually run?".
 //
-// built bring-up, layered verification, the proof round and the go-live
-// flip against `docker compose` on this machine. adds a VM/server over
-// ssh, and the temptation is to write those four steps again with `ssh` in
-// front of every command. That is the thing this file exists to prevent.
-//
-// Instead, exactly one function decides — `stackTransportFor(ctx)` — and every
-// step asks IT for the four things it actually needs from the host: are the
+// Bring-up, layered verification, the proof round and the go-live flip run
+// either against `docker compose` on this machine or against a VM/server over
+// ssh. They are written once, not twice with `ssh` in front of every command:
+// exactly one function decides — `stackTransportFor(ctx)` — and every step
+// asks IT for the four things it actually needs from the host: are the
 // containers up, run this argv in the daemon, does health answer, restart so
-// the daemon re-reads its config. This is the same discipline used for
-// the TUI (`runnerFor(cfg)` in src/tui/remote.ts: one interface, two
-// implementations, one place that picks, every caller untouched). The steps
-// keep their logic, their check names, their fix text and their tests; what
-// changes underneath them is the transport.
+// the daemon re-reads its config. The TUI follows the same discipline
+// (`runnerFor(cfg)` in src/tui/remote.ts: one interface, two implementations,
+// one place that picks). The steps keep their logic, their check names, their
+// fix text and their tests; what changes underneath them is the transport.
 //
 // Two implementations, and they are NOT symmetrical, because the two topologies
 // genuinely are not:
 //
 //   * compose — `docker compose …` here. Health is a plain fetch to the
 //     published loopback port; a restart is `docker compose restart daemon`.
-//     Byte-for-byte the behaviour: this transport delegates to the
-//     existing helpers in compose.ts rather than re-deriving them.
+//     This transport delegates to the helpers in compose.ts rather than
+//     re-deriving them.
 //   * ssh — `ssh <alias> sudo docker …` there, with BatchMode on every hop (see
 //     ssh.ts: a prompt is a hang, and a hang is the failure mode of this whole
 //     route). Health is curl ON the box against its loopback publish, because

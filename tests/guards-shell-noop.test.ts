@@ -14,11 +14,10 @@ const s = useGuardsShellRig();
 const { run, dryrunRecords, bodyFile } = s;
 
 /**
- * guard 2 leaves EVIDENCE. #5409 round 18: the refusal was correct
- * and the review work was healthy, but the refusal left no receipt, so the
- * daemon read the missing receipt as a lost POST and opened a FAILED_LOUD
- * incident. The shell now writes an identity-bound `skipped` record before it
- * exits, and only under the same conditions the daemon later checks.
+ * Guard 2 leaves evidence. A refusal with no receipt would read to the daemon
+ * as a lost POST and open a FAILED_LOUD incident, so the shell writes an
+ * identity-bound `skipped` record before it exits, and only under the same
+ * conditions the daemon later checks.
  */
 describe("scripts/post-review.sh — guard 2 records a guarded no-op", () => {
   const receiptPath = (round: number) => join(s.dir, "receipts", `pr-5180-round-${round}.json`);

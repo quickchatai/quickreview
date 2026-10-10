@@ -1,12 +1,11 @@
-// The EOD curation receipt (S8) — the schema of the
+// The EOD curation receipt — the schema of the
 // `eod-curation-receipt` overseer command, as a leaf so the command whitelist
 // (src/commands.ts) can validate it without loading the learner.
 //
-// WHY A RECEIPT. For 30 days (2026-09-03..10-02) the EOD curator "wrote" its
-// lessons into a memory that refused every write, and said so only in digests
-// nobody read: 0 lessons persisted, nothing alerted. The receipt makes the
-// curator's work a fact the daemon can check: per candidate it was handed, the
-// curator says `adopted` (and wrote a typed lesson citing it), `declined` (with
+// WHY A RECEIPT. A curator can believe it wrote lessons into a memory that
+// refused every write, and a digest line saying so alerts nobody. The receipt
+// makes the curator's work a fact the daemon can check: per candidate it was
+// handed, the curator says `adopted` (and wrote a typed lesson citing it), `declined` (with
 // a reason) or `refused` (the write failed — with the error). The daemon then
 // VERIFIES every adoption against memory (a lesson header citing the
 // candidate), wakes `eod_lessons_not_persisted` for a refused or missing

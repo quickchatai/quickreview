@@ -10,6 +10,10 @@
 // does. It reads nothing and writes nothing: pure in, pure out. A subagent
 // child loads no argv extension, so a lens can never call it (rule 9).
 //
+// The same extension registers `coverage_gaps` (src/coverage.ts): after the
+// lenses return, the eligible changed files nothing addressed or swept,
+// packed into pass-sweep rows.
+//
 // VERIFY-ON-PIN: registerTool's definition shape and execute's positional
 // signature, as extensions/pi-api.d.ts records them.
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
@@ -108,8 +112,8 @@ export const CLUSTER_TOOL: PiToolDefinition = {
 };
 
 /** Read `eligible` (the order's coverage files), `addressed` (paths) and
- * the optional `swept` (paths a returned sweep row had in focus —;
- * absent reads as none, so an older caller is the old check). */
+ * the optional `swept` (paths a returned sweep row had in focus; absent reads
+ * as none). */
 export function readCoverageArgs(params: Record<string, unknown>): {
   eligible: CoverageFile[];
   addressed: string[];

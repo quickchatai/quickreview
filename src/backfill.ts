@@ -1,11 +1,11 @@
-// The one-shot pre-daemon history importer (M2 /).
+// The one-shot pre-daemon history importer.
 //
 // READ-ONLY against GitHub: two issue searches to enumerate the PR set, then
 // one GraphQL query per PR (reviews by the bot identity + the timeline items
 // triggers are reconstructed from). Nothing here mutates GitHub, so the
-// MutationGate is deliberately not involved — see §4.
+// MutationGate is deliberately not involved.
 //
-// What lands in sqlite (§2): one `rounds` row per historical bot
+// What lands in sqlite: one `rounds` row per historical bot
 // review with `backfilled = 1` / `round_type = 'backfill'`, plus one
 // `backfill_pr_meta` row per PR. No `pr_state` rows (they would flood the board
 // and status.json) and no `events` rows (they would bury the TUI event strip

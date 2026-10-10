@@ -1,8 +1,8 @@
-// The OVERSEER store (S4, docs/archiving.md §5, §7.5): the
-// overseer's transcripts that are no longer current, out of
+// The OVERSEER store (docs/archiving.md §5, §7.5): the overseer's
+// transcripts that are no longer current, out of
 // `<[pi] session_dir>/overseer/` into `archive/overseer/transcripts/`, and
-// the legacy uncompressed `archive/overseer/<date>/session.jsonl` copies
-// (written by every rotation before S4) removed once proven duplicates.
+// the legacy uncompressed `archive/overseer/<date>/session.jsonl` rotation
+// copies removed once proven duplicates.
 //
 //   - The CURRENT file is never archived. A file leaves only when its mtime
 //     predates the current birth (`born_at` of the overseer's birth record)
@@ -11,7 +11,7 @@
 //     each overseer birth starts a fresh one. A birth that cannot be read is
 //     UNKNOWN: nothing moves (`birth_unknown`), never a guess.
 //   - Each archived file is named by its own source name, so two rotations
-//     on one day can no longer overwrite each other's record.
+//     on one day never overwrite each other's record.
 //   - A legacy copy is compared with the transcript its `meta.json` names
 //     (`session_file`, by path under this root, else by file name) once that
 //     transcript is archived: equal, or a byte-prefix (the copy was taken
@@ -51,7 +51,7 @@ export const OVERSEER_STORE = "overseer";
 export const CURRENT_SLACK_MS = 60_000;
 
 /** A rotation's record dir: `YYYY-MM-DD`, or `YYYY-MM-DD-<k>` for a second
- * rotation the same day (since S4). */
+ * rotation the same day. */
 export const ROTATION_DIR = /^\d{4}-\d{2}-\d{2}(?:-\d+)?$/;
 
 export interface OverseerPassDeps extends Omit<StorePassDeps, "dir" | "subject" | "liveOf"> {

@@ -1,8 +1,8 @@
 // `launch_plan`, the one-turn discovery launch made structural.
 //
-// In 6 of 12 studied live rounds the main session launched lenses one per
-// turn or launched pass-baseline alone and waited. `launch_plan` (in the
-// subagents glue) launches every discovery task file of the round in ONE
+// Left to itself the main session may launch lenses one per turn, or launch
+// pass-baseline alone and wait. `launch_plan` (in the subagents glue)
+// launches every discovery task file of the round in one
 // call through the subagent tool's own wrapped execute. These tests pin, over
 // a fake native execute: every discovery row in one execute call, the
 // validator never, the path confinement (sanctioned task dirs only, symlinks

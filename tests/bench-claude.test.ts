@@ -1,6 +1,6 @@
 // The Claude Code arm of the AACR benchmark (src/bench/claudecode.ts,
 // bench/aacr/claude_driver.py, `bench.sh --arm claude`). Root CLAUDE.md rule 5
-// forbids spawning `claude`, with ONE ratified exception (2026-09-28):
+// forbids spawning `claude`, with one exception:
 // Claude Code as a BENCHMARKED REVIEWER inside the locked-down bench/aacr
 // sandbox only. What is pinned here:
 //   1. the argv the harness's reviewers/claude.py runs, checked flag for flag
@@ -61,7 +61,7 @@ const HEAD = "966c3f22d034c230a14bb21b02627ef6d00eec68";
 const REPO = "/work/repo/immich-app__immich";
 
 // The argv the PINNED harness runner (aacr-bench 68a5697, reviewers/claude.py
-// run_claude_review) produced inside qcr-bench-claude on 2026-09-28, recorded
+// run_claude_review) produced inside qcr-bench-claude, recorded
 // by claude_driver.py from CompletedProcess.args.
 const SYSTEM_PROMPT =
   "STRUCTURED OUTPUT REQUIREMENT (highest priority):\nYou have an MCP tool named `mcp__findings__report`. The moment you confirm any individual code-review finding, immediately call this tool once for that single finding — do not wait until the end or batch them into one final message.\nThe tool is already bound to the instance under review, so you do NOT pass any instance id. For every call provide ONLY the finding itself:\n  - file: path relative to the repository root\n  - line: the 1-based line number, or omit it if not applicable\n  - summary: a concise description of the issue\n  - failure_scenario: a concrete failure scenario plus the suggested fix\nCall the tool exactly once per finding, in addition to whatever you normally print. Any finding not sent through this tool will be lost.";
@@ -1131,7 +1131,7 @@ function repoFiles(): string[] {
   };
   for (const d of ["src", "scripts", "tests", "bench", "extensions", "docker", "deploy", "bin"])
     if (existsSync(join(ROOT, d))) walk(join(ROOT, d));
-  // config.example.toml is the tracked config (untracked the live config.toml).
+  // config.example.toml is the tracked config; the live config.toml is untracked.
   for (const f of ["package.json", "config.example.toml"]) out.push(join(ROOT, f));
   return out.map((p) => relative(ROOT, p));
 }

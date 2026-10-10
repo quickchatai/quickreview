@@ -1,5 +1,5 @@
 // The event kinds the archiver may move out of the live `events` table
-// (docs/archiving.md §9.1): a CLOSED set of the eight reader-less,
+// (docs/archiving.md §9.1): a closed set of the eight reader-less,
 // high-volume kinds. Every other kind stays live — the fact kinds the outcome
 // capture, the learner and the per-PR gates re-read (`pr_closed`,
 // `verdict_applied`, `head_push`, `anomaly`, …), the register kinds whose

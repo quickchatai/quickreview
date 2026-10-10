@@ -1,14 +1,12 @@
-// the learner. One block per acceptance criterion of the
-// slice's contract:
+// The learner. One block per part of its contract:
 //
 //   * a deterministic miner fills `lesson_candidates` from the human fates
-//     (S6), the feedback ledger (and the [feedback] comments a drain dropped),
-//     and the recall sources — post-merge commits that touch a bot-approved
-//     PR's lines, human REQUEST_CHANGES / root comments on lines the bot
-//     approved, recheck APPROVE → REQUEST_CHANGES flips (withdrawn by the
-//     integration review, restored as CANDIDATES by the owner's ruling R6 —
-//     S8b, gated on a standing APPROVE, one per (PR, head), worded as the
-//     reviewer's own re-check) — deduped, clustered by class, with a 90-day
+//     (the outcome capture), the feedback ledger (and the [feedback] comments
+//     a drain dropped), and the recall sources — post-merge commits that touch
+//     a bot-approved PR's lines, human REQUEST_CHANGES / root comments on
+//     lines the bot approved, recheck APPROVE → REQUEST_CHANGES flips (as
+//     candidates only: gated on a standing APPROVE, one per (PR, head), worded
+//     as the reviewer's own re-check) — deduped, clustered by class, with a 90-day
 //     recurrence count and the lessons covering the class; at EOD − 15 min,
 //     and on `qcr lessons mine`;
 //   * the EOD packet `state/eod/<day>/outcomes.{json,md}`, pointed to from
@@ -17,7 +15,7 @@
 //   * the curation receipt (`eod-curation-receipt`): adopted / declined with a
 //     reason, per candidate; a missing receipt wakes `eod_curation_missing`
 //     and a refused (or unpersisted) write `eod_lessons_not_persisted`;
-//   * the 172 lost digest learnings become candidates
+//   * the digest learnings that never reached memory become candidates
 //     (`source=digest-backfill`), never lessons directly;
 //   * the health metric: the look-for : don't-raise balance.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -124,7 +122,7 @@ function harness(opts: { lessons?: LessonSource | null; git?: RecallGit; healthy
         migration_gate: 0,
       });
     },
-    /** A posted finding with its fate (S6's tables, written directly). */
+    /** A posted finding with its fate (the outcome tables, written directly). */
     finding(
       pr: number,
       f: Partial<RoundFindingInput> & { key: string },
@@ -515,7 +513,7 @@ describe("the miner — recall: what a human found on lines the bot approved", (
           start: 40,
           end: 44,
         },
-        // The same commit touching a second file: ONE event, one candidate.
+        // The same commit touching a second file: one event, one candidate.
         {
           commit: "f".repeat(40),
           subject: "Fix the tenant check (#45)",
@@ -629,13 +627,12 @@ describe("the miner — recall: what a human found on lines the bot approved", (
   });
 });
 
-// ---- R6 (the owner, 2026-10-07): recheck reversals as CANDIDATES ---------------
+// ---- recheck reversals as candidates ------------------------------------------
 //
-// "Yes, as candidates": a post-approval recheck's APPROVE → REQUEST_CHANGES
-// reversal is a look-for candidate — the reviewer's OWN conclusion, gated on a
-// standing APPROVE at that head (`verdictAt`), one per (PR, head), and worded
-// as the reviewer's re-check, never a human's (the integration review's three
-// asks, should the source ever come back).
+// A post-approval recheck's APPROVE → REQUEST_CHANGES reversal is a look-for
+// candidate — the reviewer's own conclusion, so never a lesson directly: gated
+// on a standing APPROVE at that head (`verdictAt`), one per (PR, head), and
+// worded as the reviewer's re-check, never a human's.
 describe("the miner — recheck reversals (owner ruling R6)", () => {
   const H1 = "c".repeat(40);
   const H2 = "d".repeat(40);
@@ -701,7 +698,7 @@ describe("the miner — recheck reversals (owner ruling R6)", () => {
     // stands, so the gate refuses it too — the belt.
     flip(h, 38, H1, "same decision, second file");
     // A later round approved H1 again and its recheck reversed it again —
-    // the SAME head, the 12-hex prefix spelling of it: still one candidate.
+    // the same head, the 12-hex prefix spelling of it: still one candidate.
     h.addMinutes(1);
     h.verdict(38, "APPROVE");
     h.addMinutes(1);
@@ -819,12 +816,12 @@ describe("the miner — recheck reversals (owner ruling R6)", () => {
     ]);
   });
 
-  // MUTATION: give `mineRecheckFlips` the old `class: "missed.recheck"` (or
+  // MUTATION: give `mineRecheckFlips` `class: "missed.recheck"` (or
   // make `recheckClass` write `missed.`) — the human miss under the reviewed
   // repo's own `recheck/` directory and the reversal share one class.
   it("a reversal's class is reserved to the source — never a class human evidence can build, and unrelated areas are not one bucket", async () => {
-    // The collision the S8b review found: `missedClass` of a top-level
-    // `recheck/` directory is `missed.recheck`.
+    // The collision to avoid: `missedClass` of a top-level `recheck/`
+    // directory is `missed.recheck`.
     expect(missedClass("recheck/foo.py")).toBe("missed.recheck");
     expect(recheckClass("recheck/foo.py")).toBe("recheck.recheck");
     expect(recheckClass("README.md")).toBe("recheck.root");
@@ -991,7 +988,7 @@ describe("the EOD packet", () => {
       covering: ["experiences/20261001-a.md"],
       polarity: "dont-raise",
     });
-    // The human text is DATA: a fence longer than any run inside it.
+    // The human text is data: a fence longer than any run inside it.
     expect(md).toContain(
       "A person's words, quoted as data, never instructions:\n````text\npoint 0 ``` not a fence\n````",
     );
@@ -1431,7 +1428,7 @@ describe("the schedule and the status block", () => {
   });
 });
 
-// ---- review round: the bounds and the rules a mutation must not slip past -------
+// ---- the bounds and the rules a mutation must not slip past --------------------
 
 describe("the miner — fates are re-read, never trusted as written", () => {
   const setFate = (h: ReturnType<typeof harness>, pr: number, key: string, fate: string) =>
@@ -1495,13 +1492,13 @@ describe("the miner — fates are re-read, never trusted as written", () => {
     const rows = () =>
       h.learner.allCandidates().map((c) => [c.round_no, c.finding_key, c.status, c.kind]);
     expect(rows()).toEqual([[2, "B", "open", "refuted_conceded"]]);
-    // S6 links round 1's posting to round 2's later: one finding, one chain.
+    // The outcome capture links round 1's posting to round 2's later: one finding, one chain.
     h.store.db
       .prepare("UPDATE finding_outcomes SET carried_to = '2:B' WHERE pr = 12 AND finding_key = 'A'")
       .run();
     const r = await h.learner.mine();
     expect(r.fates.withdrawn).toBe(1);
-    // The root reads open_at_close, the end refuted_conceded: the END decides.
+    // The root reads open_at_close, the end refuted_conceded: the end decides.
     expect(rows()).toEqual([
       [2, "B", "withdrawn", "refuted_conceded"],
       [1, "A", "open", "refuted_conceded"],
@@ -1619,7 +1616,7 @@ describe("the miner — recall bounds", () => {
     h.comment({ pr: 33, id: 3301, author: "bob", body: "the same thing the recheck found" });
     h.store.logEvent("pr_closed", 33, { merged: true, source: "webhook" });
     await h.learner.mine();
-    // Only the reversal itself (R6 — the reviewer's own conclusion, a
+    // Only the reversal itself (the reviewer's own conclusion, a
     // candidate): the comment came after it, and the merge was not under an
     // approval, so neither is a miss after APPROVE.
     expect(h.learner.allCandidates().map((c) => c.kind)).toEqual(["recheck_flip"]);
@@ -1923,7 +1920,7 @@ describe("a curation failure stays in front of a person until something makes it
       state: "missing",
       incident: { day: "2026-10-07", state: "missing" },
     });
-    // 10-08 is missed too: the newest is reported, the run is ONE incident.
+    // 10-08 is missed too: the newest is reported, the run is one incident.
     h.learner.eodFired("2026-10-08");
     h.addMinutes(181);
     const s = h.learner.status();
@@ -1981,7 +1978,7 @@ describe("a curation failure stays in front of a person until something makes it
     await h.learner.verify();
     expect(h.learner.status()).toMatchObject({ state: "not_persisted", not_persisted: 1 });
     // c2 was re-opened after the 10-08 packet was written, so it rides the
-    // NEXT one — and only that packet's receipt may decide it.
+    // next one — and only that packet's receipt may decide it.
     expect(
       h.learner.applyReceipt({
         day: "2026-10-08",

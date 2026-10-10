@@ -1,6 +1,6 @@
-// the ratified §1 layout and a real pinned head.
+// The memory layout and a real pinned head.
 //
-// What is pinned here, one block per acceptance criterion of the slice:
+// What is pinned here, one block per contract:
 //
 //   * THE LAYOUT VOCABULARY (src/memory/layout.ts): areas, address arithmetic
 //     and the header edits a move makes — both header parsers see exactly
@@ -10,14 +10,14 @@
 //     the old address — two batch-writes, each under its own area directory,
 //     never a delete, never two live copies.
 //   * THE PINNED HEAD reads `preferences/pinned/` and nothing else — exact,
-//     never a full sweep; empty is an answer, an unreadable pinned
-//     file is not.
+//     never a full sweep; empty is an answer, an unreadable pinned file is
+//     not.
 //   * THE ROUND CONTEXT BLOCK searches `experiences/` only, whatever
 //     config.toml says, and drops anything from elsewhere.
 //   * THE RELAYOUT: a plan over a scrubbed fixture shaped like the 176 live
-//     entries (every class the 2026-10-06 audit counted), its one-off
-//     curation, idempotent `--apply` with one batch-write per root, a refusal
-//     over a partial read, and the [feedback] backfill's duplicate check
+//     entries (one per class of live entry), its one-off curation,
+//     idempotent `--apply` with one batch-write per root, a refusal over a
+//     partial read, and the [feedback] backfill's duplicate check
 //     seeing retired legacy entries.
 //   * The curator learns the layout from the daemon-rendered EOD prompt; the
 //     relayout never runs automatically.
@@ -336,7 +336,7 @@ function seed(server: OvServer, files: ReadonlyArray<readonly [string, string]>)
     server.files.set(`${ROOT}/${id}`, text.endsWith("\n") ? text : `${text}\n`);
 }
 
-// ---- the fixture: one entry per class the 2026-10-06 audit counted ---------
+// ---- the fixture: one entry per class of live entry -------------------------
 //
 // Scrubbed and synthetic: the SHAPES of the live entries (their headers, tag
 // lines, titles), never their content or anyone's handle.
@@ -1074,10 +1074,9 @@ describe("the round context block searches experiences/ only", () => {
   });
 
   it("keeps the retired list fresh on its own — the head no longer sweeps the store", async () => {
-    // Until S5 the head's whole-store sweep refreshed the retired list every
-    // round (and with it the file the sessions' recall excludes by). The head
-    // now reads one directory, so the context search refreshes the list in the
-    // background, for the next round.
+    // The head reads one directory and never sweeps the store, so the context
+    // search refreshes the retired list (and with it the file the sessions'
+    // recall excludes by) in the background, for the next round.
     const server = new OvServer();
     seed(server, [
       ["experiences/20260901T000000-a.md", "#refuted lesson a"],
@@ -1360,7 +1359,7 @@ describe("qcr memory relayout --apply", () => {
     expect(live).toContain("preferences/20260820T100001-manual.md");
     for (const [id] of CURATED) expect(live).not.toContain(id);
     expect(live.filter((id) => id.startsWith("experiences/"))).toHaveLength(LESSONS.length);
-    // The head now carries the owner's pinned instruction.
+    // The head now carries the operator's pinned instruction.
     const { client } = wire(server);
     await expect(new OpenVikingContextAssembler({ client, store }).pinnedHead()).resolves.toEqual({
       status: "read",
@@ -1539,7 +1538,7 @@ describe("qcr memory relayout --apply", () => {
   });
 });
 
-// ---- the [feedback] backfill vs retired legacy entries (carried from S2) ----
+// ---- the [feedback] backfill vs retired legacy entries ----------------------
 
 describe("the feedback backfill's duplicate check sees retired and moved legacy entries", () => {
   const row: FeedbackSignalRow = {
@@ -1622,7 +1621,7 @@ describe("the EOD curator learns the layout from the daemon-rendered prompt", ()
     const wire = readFileSync(join(ROOT_DIR, "src", "wire.ts"), "utf8");
     expect(wire).toMatch(/memoryLayout: MEMORY_LAYOUT_NOTE/);
     const eod = readFileSync(join(ROOT_DIR, "src", "eod.ts"), "utf8");
-    // the learner's curation section rides beside it.
+    // The learner's curation section rides beside it.
     expect(eod).toMatch(
       /renderEodPrompt\(\s*deps\.readPrompt\(\),\s*date,\s*context\.lines,\s*deps\.identity,\s*deps\.memoryLayout,\s*context\.curation,\s*\)/,
     );

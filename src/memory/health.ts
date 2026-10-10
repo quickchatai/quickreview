@@ -1,12 +1,7 @@
-// Reviewer-memory health (S1) — the state machine that makes a memory
-// outage reach a PERSON.
-//
-// From 2026-09-03 to 2026-10-02 every round got `UNAUTHENTICATED: Invalid API
-// Key` on both memory reads and nothing was written, and nothing alerted: the
-// health probes were unauthenticated (the server WAS up), the per-round
-// `round_memory_degraded` anomaly was not a wake kind, and the overseer — the
-// only party ever told — wrote it into 33 daily digests nobody reads. This
-// module replaces "memory degraded, logged" with a state a person sees:
+// Reviewer-memory health — the state machine that makes a memory outage reach
+// a PERSON. An unauthenticated health check reads a server that refuses every
+// key as up, and a logged-only degradation reaches nobody, so this module
+// keeps a state a person sees:
 //
 //   unknown  — nothing has been measured yet (boot, or the server still
 //              warming inside the boot grace). NEVER painted healthy.
@@ -16,7 +11,7 @@
 //              requests failed. Visible, not woken.
 //   down     — no authenticated answer for `downAfterMs` (10 min), counted
 //              from boot when there never was one — OR memory answers but has
-//              not SERVED search for as long (S4: a dead embedder).
+//              not SERVED search for as long (e.g. a dead embedder).
 //              Wakes `memory_down` — but a drain (a deploy window) defers that
 //              wake until it lifts.
 //   auth_failed — a credential in use is refused (401/403, "Invalid API
@@ -27,10 +22,10 @@
 // Three inputs drive it: an AUTHENTICATED probe of each credential in use (the
 // daemon's key file and the `ovcli.conf` the sessions are handed — judged
 // separately, because they can fail on different days) every `intervalMs`, the
-// outcomes of the daemon's own requests and round seeds, and (S4)
-// whether the engine SERVES: the probe is an `fs/ls`, which needs no
-// embedding, so it kept answering while a dead embedder failed every search
-// and left every new entry unvectorized. The engine's own supervision answers
+// outcomes of the daemon's own requests and round seeds, and whether the
+// engine SERVES: the probe is an `fs/ls`, which needs no embedding, so it
+// keeps answering while a dead embedder fails every search and leaves every
+// new entry unvectorized. The engine's own supervision answers
 // that (`serving`, read on every evaluation). It is engine-
 // agnostic: the probes are injected functions (`src/openviking/probe.ts` is the
 // one that speaks HTTP), the wake is an injected sink (wire.ts routes it
@@ -68,7 +63,7 @@ export interface ProbeAnswer {
 }
 
 /** Can the engine SERVE memory beyond authenticating a key — search, and
- * vectorizing what is written (S4)? Read from the engine's own
+ * vectorizing what is written? Read from the engine's own
  * supervision (wire.ts: the server's `/ready`, which runs an embedding probe,
  * and the local embedder's state):
  *   `ok: true`  — serving;
@@ -187,29 +182,29 @@ export interface MemoryStatus {
   provision: ProvisionSummary | null;
   /** Why `enabled` is false. */
   disabled_reason?: string;
-  /** S4: whether memory SERVES search and vectorizing — `null` while
+  /** Whether memory SERVES search and vectorizing — `null` while
    * the daemon does not measure it; absent on a daemon that predates it. */
   serving?: ServingStatus | null;
   /** Why `state` is `down` — no authenticated answer, or memory answers but
    * does not serve. Present only while `down`. */
   down_cause?: "unanswered" | "not_serving";
-  /** What memory still owes the [feedback] ledger (S2) — read from
+  /** What memory still owes the [feedback] ledger — read from
    * state.db by the heartbeat; null when that read failed (UNKNOWN, never
    * "nothing owed"); absent on a daemon that predates it. */
   feedback_writes?: FeedbackWritesStatus | null;
-  /** The finding-case ledger (S7, src/cases.ts) — what the daemon
+  /** The finding-case ledger (src/cases.ts) — what the daemon
    * owes `finding-cases/`, has written, and why not. null when the ledger could not
    * be read (UNKNOWN, never "nothing owed"); absent when no case writer runs
    * (memory switched off) and on a daemon that predates it. */
   case_writes?: CaseWritesStatus | null;
-  /** The learner (S8, src/learner/): the latest EOD day's curation —
+  /** The learner (src/learner/): the latest EOD day's curation —
    * its outcomes packet, the receipt, the adoptions memory holds — and the
    * look-for : don't-raise balance of the lessons in force. `missing` and
    * `not_persisted` are WOKEN states the board paints loud. null when the
    * daemon could not read its ledger (UNKNOWN); absent when no learner runs
    * and on a daemon that predates it. */
   curation?: CurationStatus | null;
-  /** The lesson shadow ledger (S9a, src/lessonshadow.ts): the
+  /** The lesson shadow ledger (src/lessonshadow.ts): the
    * `[memory] delivery` switch, the operator's kill switch, and the last
    * seven days of shadow marks joined with what humans did — the
    * headline the owner reads before switching delivery on. null when the
@@ -218,7 +213,7 @@ export interface MemoryStatus {
   lessons?: LessonDeliveryStatus | null;
 }
 
-/** The finding-case ledger as the status block carries it (S7). A
+/** The finding-case ledger as the status block carries it. A
  * case is derived data — state.db keeps everything it says — so nothing here
  * wakes anyone; it is what `qcr status --json` and the companion can read. */
 export interface CaseWritesStatus {
@@ -270,7 +265,7 @@ export function feedbackWritesPhrase(
   return `; ${parts.join(", ")}`;
 }
 
-/** The three memory kinds `src/anomalies.ts` lists as WAKE (S1). */
+/** The three memory kinds `src/anomalies.ts` lists as WAKE. */
 export const MEMORY_WAKE = Object.freeze({
   auth: "memory_auth_failed",
   down: "memory_down",
@@ -297,7 +292,7 @@ export interface MemoryHealthDeps {
   wake: (kind: string, detail: string, message: string) => void;
   /** The deploy-window drain. Defers `memory_down` — never an auth wake. */
   draining?: () => boolean;
-  /** S4: does the engine SERVE (search, vectorizing)? Read on every
+  /** Does the engine SERVE (search, vectorizing)? Read on every
    * evaluation — a cached, synchronous read of the supervisors. Must not
    * throw (a throw reads as `ok: null`). Absent ⇒ not measured: the block
    * says `serving: null` and only the probe decides. */
@@ -356,7 +351,7 @@ export function credentialPhrase(c: CredentialStatus | null): string {
 }
 
 /** `; NOT SERVING search since … — <reason>` while memory answers but does
- * not serve (S4), else "". */
+ * not serve, else "". */
 export function servingPhrase(s: ServingStatus | null | undefined): string {
   // A not-serving run stands until a measured `ok: true` ends it.
   if (!s || (s.ok !== false && s.since === null)) return "";
@@ -449,7 +444,7 @@ export class MemoryHealthMonitor {
   private lastAuthSignature = "";
   private lastDownWakeAt: number | null = null;
   private downDeferredLogged = false;
-  /** S4: the latest serving answer, and when this not-serving run
+  /** The latest serving answer, and when this not-serving run
    * began — cleared only by a measured `ok: true`. */
   private servingOk: boolean | null = null;
   private servingReason: string | undefined;
@@ -683,7 +678,7 @@ export class MemoryHealthMonitor {
       return "degraded";
     }
     if (t - this.lastOkAt >= this.downAfterMs) return "down";
-    // an engine that authenticates but cannot search is not
+    // An engine that authenticates but cannot search is not
     // healthy — degraded at once, down (and woken) once it lasts as long as
     // an unanswered one would.
     if (this.notServingSince !== null) {
@@ -775,8 +770,8 @@ export class MemoryHealthMonitor {
     // construction (it needs a fresh authenticated answer); `degraded` is one
     // only with an authenticated answer since the incident began. A daemon
     // that restarts inside an outage passes through `degraded` with NO answer
-    // when its boot grace ends — closing there gave the same outage a new start
-    // at 10 min, a fresh wake, and the TUI a second ticket (and a daemon
+    // when its boot grace ends — closing there would give the same outage a
+    // new start, a fresh wake, and the TUI a second ticket (and a daemon
     // restarted more often than the ticket age would never get one at all).
     // `unknown` decides nothing either: a boot inside an incident keeps it on
     // file.
@@ -849,7 +844,7 @@ export class MemoryHealthMonitor {
     this.lastDownWakeAt = t;
     this.downDeferredLogged = false;
     if (this.downCause(t) === "not_serving") {
-      // it authenticates — the fs/ls probe answers — but nothing
+      // It authenticates — the fs/ls probe answers — but nothing
       // is searchable. Name the engine's own reason (the embedder, /ready).
       const notServingFor = fmtDuration(t - (this.notServingSince ?? t));
       const reason = this.servingReason ?? "memory does not serve search";

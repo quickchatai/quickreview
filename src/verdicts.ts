@@ -1,4 +1,4 @@
-// Verdict watcher (spec §3 "Verdict handling"). The PR session writes
+// Verdict watcher. The PR session writes
 // verdict/pr-<n>-round-<k>.json at round end; the daemon owns everything that
 // touches GitHub from there: labels off/on, the escalation review request
 // (redundancy-skipped inside the adapter), the round record, the state
@@ -8,7 +8,7 @@
 // verdict file, and a round that blows its deadline. Both mark the round and
 // inject the overseer. There is no path here that touches an existing review:
 // the invariant against retracting an approval is structural, not prompted
-// (spec §3, §8).
+// (CLAUDE.md rule 2).
 import { sweepStatusOf, type SweepStatus } from "./sweepstatus.js";
 
 export { sweepStatusOf, type SweepStatus };
@@ -94,11 +94,11 @@ import {
   type PartialWritePolicy,
 } from "./settledread.js";
 
-/** Self-requeue mode → the cancellation cause it records. Two modes
- * mean the same thing to a human — the round stopped dead with no verdict,
- * whether its session had died or was alive and wedged — and that is the ONE
- * loud cause; the rest are the machinery working (a moved head, a delivery
- * fault, a round redone because it executed no passes). */
+/** Self-requeue mode → the cancellation cause it records. Two modes mean the
+ * same thing to a human — the round stopped dead with no verdict, whether its
+ * session had died or was alive and wedged — and that is the one loud cause;
+ * the rest are the machinery working (a moved head, a delivery fault, a round
+ * redone because it executed no passes). */
 type SelfRequeueMode =
   | "dead"
   | "alive_stuck"
@@ -109,9 +109,9 @@ type SelfRequeueMode =
   | "infrastructure_settled";
 
 /**
- * How long a round end waits for its transcripts (H2). The reads are
+ * How long a round end waits for its transcripts. The reads are
  * async and chunked, so the event loop is free throughout; this bound is for a
- * read that never returns at all. Past it the usage is recorded UNKNOWN, the
+ * read that never returns at all. Past it the usage is recorded unknown, the
  * audit incomplete, and the round end goes on — a verdict is never held
  * behind its own accounting.
  */
@@ -122,15 +122,15 @@ const UNREADABLE_LISTED = 10;
 
 /**
  * How old an owed measurement's window may be and still be re-read after a
- * restart (integration review). Past it the window is not read at
- * all and the usage is recorded UNKNOWN: the pi-global archiver moves store
+ * restart. Past it the window is not read at all and the usage is recorded
+ * unknown: the pi-global archiver moves store
  * files a day old, and a re-read that silently missed one would record a
  * partial sum as the round's cost. A restart is minutes; this is generous.
  */
 export const OWED_MEASUREMENT_RESUME_MAX_MS = 12 * 3_600_000;
 
 /**
- * A staged verdict or recheck outcome (`verdict/<name>.tmp`, H1a)
+ * A staged verdict or recheck outcome (`verdict/<name>.tmp`)
  * that was never committed is removed once it is this old. A session stages
  * and commits within one turn of a round that lasts at most its deadline, so
  * a day-old staging file belongs to a session that died between the two.
@@ -143,10 +143,10 @@ export const STAGED_FILE_MAX_AGE_MS = 24 * 3_600_000;
 const STAGED_FILE_RE = /^pr-(\d+)-(?:round-\d+|recheck-[0-9a-f]{7,40})\.json\.tmp$/i;
 
 /**
- * Where a round end's measurement runs (integration review).
- * `inline`: awaited before the round end returns, as H2 shipped it — the
- * verdict sweep's paths, and the anomaly path, whose overseer inject carries
- * the violations the measurement finds. `background`: handed off once the
+ * Where a round end's measurement runs.
+ * `inline`: awaited before the round end returns — the verdict sweep's
+ * paths, and the anomaly path, whose overseer inject carries the violations
+ * the measurement finds. `background`: handed off once the
  * round end's durable rows have landed — the round-stage supervisor's paths
  * (its scan is serialized and health-leased, so one PR's accounting must not
  * hold every other PR's stage checks) and the deadline tick's settlements.
@@ -207,7 +207,7 @@ export interface VerdictAdapter {
   requestEscalationReview?(n: number, logins: string[]): Promise<GateResult>;
   /** Checks at a head (read-only, cigate's classifier input). Optional: with
    * it, a session-route withheld approval records WHICH CI state caused the
-   * withhold; without it the mark stores null, as it always did. */
+   * withhold; without it the mark stores null. */
   listChecks?(ref: string): Promise<CheckSummary[]>;
   /** Read-only reconciliation for an ambiguous post-success/local-crash
    * window. Exact marker + bot identity + head are required. */
@@ -232,14 +232,12 @@ export interface VerdictDeps {
   /** Directory the sessions write into (sandbox `verdict/`). */
   verdictDir: string;
   /** Settle time between requesting the round-end compaction and the
-   * ledger check, so ledger-pin's mirror has landed first. (Before
-   * H1b the compaction was a typed `/compact` and a nudge sent into it
-   * was lost with the aborted turn — live 2026-08-19, #5290 round 7; the
-   * inject bridge now holds every wake until the compaction ends.)
-   * 0 ⇒ inline (tests). Default 90s. */
+   * ledger check, so ledger-pin's mirror has landed first. (The inject bridge
+   * holds every wake until the compaction ends.) 0 ⇒ inline (tests).
+   * Default 90s. */
   ledgerCheckDelayMs?: number;
-  /** Slack announcer (S4). Optional: absent ⇒ no Slack, exactly as
-   * every existing caller and test sees it. Never allowed to throw in here. */
+  /** Slack announcer. Optional: absent ⇒ no Slack. Never allowed to throw in
+   * here. */
   announce?: VerdictAnnouncer;
   /** Sandbox root — anchors the default pi-session dir. */
   root?: string;
@@ -254,19 +252,19 @@ export interface VerdictDeps {
     globalStoreDir?: string | null;
     /** Per-model pricing; defaults to config `[models.pricing]`. */
     pricing?: Record<string, ModelPricing>;
-    /** The transcript reader (H2). Default: one per watcher, so its
+    /** The transcript reader. Default: one per watcher, so its
      * per-file offsets and parsed lines live as long as the daemon. */
     transcripts?: TranscriptIndex;
     /** How long a round end waits for its transcripts before it records the
-     * usage as unknown and moves on (H2). Default USAGE_BUDGET_MS. */
+     * usage as unknown and moves on. Default USAGE_BUDGET_MS. */
     budgetMs?: number;
   };
   /** The round-end integrity re-hash. Default
    * `fingerprintRoundIntegrity` over the real disk — the same call dispatch's
    * baseline makes. Injected by a test that needs a read that never returns. */
   integrityFingerprint?: (opts: RoundIntegrityOpts) => Promise<IntegrityFingerprint>;
-  /** How long the re-hash may take before the round is left unchecked
-   * (H2). Default INTEGRITY_BUDGET_MS. */
+  /** How long the re-hash may take before the round is left unchecked.
+   * Default INTEGRITY_BUDGET_MS. */
   integrityBudgetMs?: number;
   /** Where a PR's mirrored ledger snapshot lives. Defaults to
    * `<root>/state/ledgers/pr-<n>.md` — sessions.ts ledgerPath's shape. */
@@ -277,18 +275,17 @@ export interface VerdictDeps {
    *
    * Opt-in rather than defaulted off `root`, in the same shape as every other
    * additive round-end check here: absent ⇒ the record is neither parsed nor
-   * enforced, which is exactly the legacy behaviour a stub-wired daemon
-   * and every older test sees. Production has ONE assembly site (daemon.ts)
-   * and it passes the dir.
+   * enforced (a stub-wired daemon and tests that do not need it). Production
+   * has one assembly site (daemon.ts) and it passes the dir.
    */
   findingsDir?: string;
-  /** Told when a round's findings record lands (S9a — the lesson
-   * shadow ledger's matcher). Absent ⇒ nothing is told. Must not throw. */
+  /** Told when a round's findings record lands (the lesson shadow ledger's
+   * matcher). Absent ⇒ nothing is told. Must not throw. */
   onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
-  /** Partial-write tolerance (H1a, `src/settledread.ts`): how long an
-   * UNPARSEABLE verdict file is treated as still being written before it is
+  /** Partial-write tolerance (`src/settledread.ts`): how long an
+   * unparseable verdict file is treated as still being written before it is
    * called malformed. Defaults to DEFAULT_PARTIAL_WRITE_POLICY; a test that
    * wants one read to decide passes `{ windowMs: 0 }`. */
   partialWrite?: Partial<PartialWritePolicy>;
@@ -304,10 +301,10 @@ export type InfrastructureStage =
   | "running_hard_bound";
 
 /** Every path that may close a round from its posting receipt rather than
- * from a verdict file (guarded no-op, H1a's posted review). */
+ * from a verdict file (a guard-2 no-op, or a review already posted). */
 type ReceiptSettleVia = "verdict" | "deadline" | "malformed_verdict" | InfrastructureStage;
 
-/** The merits decision a posting receipt proves (H1a). */
+/** The merits decision a posting receipt proves. */
 export interface ReceiptDecision {
   verdict: "APPROVE" | "REQUEST_CHANGES";
   /** The session asked for a COMMENT: the round templates' withheld-approval
@@ -316,10 +313,10 @@ export interface ReceiptDecision {
 }
 
 /**
- * The merits decision a CONFIRMED posting receipt proves (H1a), or null
+ * The merits decision a confirmed posting receipt proves, or null
  * when it proves only that something was posted.
  *
- * The receipt records what the session ASKED the posting script for
+ * The receipt records what the session asked the posting script for
  * (`intended_event`) beside what the guards let through (`actual_event`), and
  * the scripts' shapes are fixed: `approve-pr.sh` only ever records
  * APPROVE→APPROVE, and `post-review.sh` takes REQUEST_CHANGES or COMMENT, with
@@ -332,7 +329,7 @@ export interface ReceiptDecision {
  *   - a COMMENT the session asked for is, by the round templates' own contract,
  *     the withheld-approval shape and nothing else: "red CI and no blockers ⇒
  *     post the full review as a COMMENT … write `"verdict": "APPROVE"` with
- *     `"approval_withheld": true`" (step 5's ratified CI gate). Mechanical
+ *     `"approval_withheld": true`" (step 5's CI gate). Mechanical
  *     comments (the migration pre-check, an escalation) go through the daemon's
  *     gate and never write a session receipt, and a softened REQUEST_CHANGES
  *     says so in `intended_event`. Settling it as APPROVE + withheld records
@@ -341,11 +338,11 @@ export interface ReceiptDecision {
  *     anything by itself.
  *
  * Not decided — null — is everything else: a receipt the marker reconcile
- * SYNTHESISED from GitHub (`reconciled`: its `intended_event` is only the
+ * synthesised from GitHub (`reconciled`: its `intended_event` is only the
  * posted event, so a COMMENT there may be a softened REQUEST_CHANGES), and any
  * pairing no posting script writes. Those keep the loud paths.
  *
- * This is the RECEIPT's reading. The reviewed-head mark's `posted_event`
+ * This is the receipt's reading. The reviewed-head mark's `posted_event`
  * COMMENT carries no `intended_event` and stays never-guessed
  * (standing-review.ts rule 4).
  */
@@ -366,8 +363,8 @@ export function decidedVerdictFromReceipt(receipt: PostingReceipt): ReceiptDecis
   return null;
 }
 
-/** The planned lens set the round-end findings check stamps against
- *: the round's plan, plus the sweep's lenses when the sweep RAN —
+/** The planned lens set the round-end findings check stamps against:
+ * the round's plan, plus the sweep's lenses when the sweep RAN —
  * their findings are planned work, never `unplanned`. */
 export function tailPlannedLenses(
   round: Pick<RoundRow, "lenses" | "sweep_plan">,
@@ -389,8 +386,8 @@ export function tailPlannedLenses(
   }
 }
 
-/** One stage's executed passes held against its plan (split per
- * follow-up stage). Pure. */
+/** One stage's executed passes held against its plan — the round's main
+ * plan, or a follow-up round's pre-approval sweep. Pure. */
 interface PlanComparison {
   planned: string[];
   executed: string[];
@@ -447,7 +444,8 @@ function comparePlan(
       }
     }
   } else {
-    // In-flight/pre-migration rows retain's name-only behavior.
+    // Rows with no structured plan (in flight across a migration) compare
+    // by lens name only.
     if (checkMissing) out.missing = out.planned.filter((lens) => !executed.includes(lens));
     out.unknownAdditions = [...new Set(executed.filter((lens) => !out.planned.includes(lens)))];
   }
@@ -460,8 +458,8 @@ export interface ParsedVerdict {
   ok: boolean;
   verdict?: VerdictFile;
   error?: string;
-  /** Why the `passes` telemetry ended up unknown/reduced — a note
-   * for the log, NEVER a rejection reason. Absent when passes were clean. */
+  /** Why the `passes` telemetry ended up unknown/reduced — a note for the
+   * log, never a rejection reason. Absent when passes were clean. */
   passes_note?: string;
 }
 
@@ -469,7 +467,7 @@ export interface ParsedVerdict {
  * Tolerant normalization of the executed-pass telemetry. LLM-written
  * files: digit-string counts coerce, `lens` is accepted for `name`,
  * `candidates`/`candidate_findings` for `findings`. Anything unusable —
- * a non-array, an entry with no name — degrades to UNKNOWN (undefined) or is
+ * a non-array, an entry with no name — degrades to unknown (undefined) or is
  * dropped with a note; nothing here can fail the verdict.
  */
 export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; note?: string } {
@@ -510,7 +508,7 @@ export function normalizePasses(raw: unknown): { passes?: VerdictPassEntry[]; no
       merged: count(e.merged),
       folded: count(e.folded),
     });
-    // which stage of a follow-up round launched the pass. Additive
+    // Which stage of a follow-up round launched the pass. Additive
     // and tolerant — absent stays absent (a delta-stage pass, or a round that
     // is not a follow-up), an unusable spelling is dropped with a note; the
     // entry itself always survives.
@@ -538,8 +536,8 @@ function normalizePassPhase(raw: unknown): "delta" | "sweep" | null {
   return null;
 }
 
-/** The verdict's top-level `sweep`: `ran` | `not_owed` |
- * `not_reached`, case forgiven and `-`/space read as `_`; anything else is
+/** The verdict's top-level `sweep`: `ran` | `not_owed` | `not_reached` |
+ * `skipped`, case forgiven and `-`/space read as `_`; anything else is
  * unusable (null). */
 export function normalizeSweepClaim(
   raw: unknown,
@@ -569,7 +567,7 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   const v = raw as Record<string, unknown>;
   const bad = (m: string): ParsedVerdict => ({ ok: false, error: m });
   // LLM-written files: coerce unambiguous digit-strings ("5263" → 5263) before
-  // shape-checking — the first live rounds tripped exactly this.
+  // shape-checking.
   for (const k of ["pr", "round_no"] as const) {
     const val = v[k];
     if (typeof val === "string" && /^\d+$/.test(val)) v[k] = Number(val);
@@ -577,8 +575,8 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (typeof v.pr !== "number" || !Number.isInteger(v.pr)) return bad("pr must be an integer");
   if (typeof v.round_no !== "number" || !Number.isInteger(v.round_no))
     return bad("round_no must be an integer");
-  // Guard-5 landing (follow-up): `outcome: "head_moved"` (or,
-  // belt-and-braces, verdict spelled HEAD_MOVED) is a verdict-less round
+  // Guard-5 landing: `outcome: "head_moved"` (or, belt-and-braces, verdict
+  // spelled HEAD_MOVED) is a verdict-less round
   // ending — the PR advanced mid-round and the guard refused the stale post.
   // Only pr/round_no/head_sha/finished_at are required; the daemon cancels
   // the round and self-requeues instead of applying a verdict.
@@ -621,22 +619,21 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
   if (v.summary !== undefined && typeof v.summary !== "string")
     return bad("summary must be a string");
   if (typeof v.summary === "string") v.summary = v.summary.trim().slice(0, 800);
-  // Executed-pass telemetry: tolerant by design — old-prompt
-  // sessions omit it and malformed shapes degrade to unknown, never to a
-  // rejected verdict.
+  // Executed-pass telemetry: tolerant by design — a session may omit it and
+  // malformed shapes degrade to unknown, never to a rejected verdict.
   const norm = normalizePasses(v.passes);
   if (norm.passes) v.passes = norm.passes;
   else delete v.passes;
-  // Session-judgement escalations: the SAME tolerant discipline, for
+  // Session-judgement escalations: the same tolerant discipline, for
   // the same reason and one stronger one — escalation is notification beside a
   // verdict, so a malformed `escalations` array must never be able to reject
   // the verdict it rides on. Unreadable ⇒ dropped with a note.
   const esc = normalizeSessionEscalations(v.escalations);
   if (esc.entries.length > 0) v.escalations = esc.entries;
   else delete v.escalations;
-  // a follow-up round's pre-approval sweep claim — the same tolerant
+  // A follow-up round's pre-approval sweep claim — the same tolerant
   // discipline: an unusable claim is dropped with a note (the daemon then
-  // records the sweep UNKNOWN), never a rejected verdict.
+  // records the sweep unknown), never a rejected verdict.
   let sweepNote: string | undefined;
   if (v.sweep !== undefined) {
     const claim = normalizeSweepClaim(v.sweep);
@@ -646,7 +643,7 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
       delete v.sweep;
     }
   }
-  // the optional rows' extent — the same tolerant discipline.
+  // The optional rows' extent — the same tolerant discipline.
   let extentNote: string | undefined;
   if (v.extent !== undefined) {
     const extent = normalizeExtentClaim(v.extent);
@@ -667,11 +664,11 @@ export function validateVerdict(raw: unknown): ParsedVerdict {
 }
 
 /**
- * How much of a PR's self-requeue budget is gone (cap). A row whose
- * head cannot be read still records a requeue that happened, so it counts —
- * the budget can be tightened by a corrupt payload, never widened by one
- *. Exhausting it this way ends in FAILED_LOUD and `u`, which is the
- * recoverable direction; the other direction is a loop past the cap.
+ * How much of a PR's self-requeue budget is gone. A row whose head cannot be
+ * read still records a requeue that happened, so it counts — the budget can
+ * be tightened by a corrupt payload, never widened by one. Exhausting it this
+ * way ends in FAILED_LOUD and `u`, which is the recoverable direction; the
+ * other direction is a loop past the cap.
  */
 function selfRequeuesSpent(spend: SelfRequeueSpend): number {
   return spend.at_head + spend.unattributed;
@@ -686,22 +683,20 @@ export class VerdictWatcher {
    * violations alone never create inject spam. */
   private readonly execViolations = new Map<number, string[]>();
   /** Waits logged once per round per process, not once per supervisor scan
-   * or deadline tick (H1a and its integration review): the
-   * posted-tail wait at a stage limit (`stage:<id>`) and at the deadline
-   * (`deadline:<id>`), and an ambiguous POST a stage limit is waiting out
-   * (`ambiguous:<id>`). */
+   * or deadline tick: the posted-tail wait at a stage limit (`stage:<id>`)
+   * and at the deadline (`deadline:<id>`), and an ambiguous POST a stage limit
+   * is waiting out (`ambiguous:<id>`). */
   private readonly loggedOnce = new Set<string>();
-  /** Rounds whose owed measurement THIS process is running or about to run —
+  /** Rounds whose owed measurement this process is running or about to run —
    * the boot resume never measures one of them a second time. */
   private readonly measuring = new Set<number>();
   /** Measurements handed to the background (`MeasureMode`), until they end. */
   private readonly background = new Set<Promise<void>>();
   /** The once-per-watcher resume of measurements an earlier process owed. */
   private owedResumed = false;
-  /** `checkDeadlines` never overlaps itself (integration review). */
+  /** `checkDeadlines` never overlaps itself. */
   private deadlinesInFlight = false;
-  /** Round transcripts, read off the event loop and kept by offset (
-   * H2). */
+  /** Round transcripts, read off the event loop and kept by offset. */
   private readonly transcripts: TranscriptIndex;
 
   constructor(private readonly deps: VerdictDeps) {
@@ -745,10 +740,10 @@ export class VerdictWatcher {
 
   /** Process every verdict file sitting in the directory.
    *
-   * One PR's files in name order; different PRs side by side (H1a). A
-   * file still being written is now waited out for seconds, and a sweep that
-   * walked every file in one line would hold every other PR's verdict behind
-   * it — the fs.watch path already handles PRs concurrently. */
+   * One PR's files in name order; different PRs side by side. A file still
+   * being written is waited out for seconds, so a sweep that walked every file
+   * in one line would hold every other PR's verdict behind it — the fs.watch
+   * path handles PRs concurrently too. */
   async sweep(): Promise<string[]> {
     if (!existsSync(this.deps.verdictDir)) return [];
     const byPr = new Map<string, string[]>();
@@ -785,8 +780,8 @@ export class VerdictWatcher {
   }
 
   /**
-   * Remove staging files (`verdict/<name>.tmp`) that were never committed
-   * (integration review). Nothing reads them — the watchers' names end
+   * Remove staging files (`verdict/<name>.tmp`) that were never committed.
+   * Nothing reads them — the watchers' names end
    * in `.json` — so one left by a session that died between its write and
    * `scripts/commit-verdict.sh` would sit in verdict/ forever. Only the two
    * staging shapes, only once a day old, and never a directory.
@@ -860,13 +855,12 @@ export class VerdictWatcher {
       const path = join(this.deps.verdictDir, name);
       if (!existsSync(path)) return false;
 
-      // Partial writes (H1a, #5885): an UNPARSEABLE file is waited
-      // out while its bytes are still moving — by its mtime or between our
-      // own looks — and declared only once it has sat still, or after a hard
-      // window. The session writes in place (open O_TRUNC, then the bytes),
-      // and on a CPU-starved container the gap between the two outlived the
-      // 120 ms this loop used to allow. A file that PARSES is complete; its
-      // shape is judged at once, exactly as before.
+      // Partial writes: an unparseable file is waited out while its bytes
+      // are still moving — by its mtime or between our own looks — and
+      // declared only once it has sat still, or after a hard window. A session
+      // may write in place (open O_TRUNC, then the bytes), and on a
+      // CPU-starved container the gap between the two can be long. A file
+      // that parses is complete; its shape is judged at once.
       const read = await readSettledJson(path, resolvePartialWritePolicy(this.deps.partialWrite));
       if (read.kind === "missing") return false;
       if (read.reads > 1) {
@@ -900,11 +894,11 @@ export class VerdictWatcher {
         this.archive(name);
         return true;
       }
-      // The payload must be the file's own round (selfscan 4866a7cc) — the
-      // same binding RecheckDecisionWatcher enforces on its filenames. A
-      // payload naming another PR or round would otherwise act on that other
-      // lifecycle while this round never gets its verdict; it is this round's
-      // malformed verdict instead.
+      // The payload must be the file's own round — the same binding
+      // RecheckDecisionWatcher enforces on its filenames. A payload naming
+      // another PR or round would otherwise act on that other lifecycle while
+      // this round never gets its verdict; it is this round's malformed verdict
+      // instead.
       if (parsed.verdict.pr !== pr || parsed.verdict.round_no !== roundNo) {
         await this.handleMalformed(
           pr,
@@ -926,25 +920,22 @@ export class VerdictWatcher {
   }
 
   /**
-   * A verdict file that cannot be applied (H1a). Before this was one
-   * line — the anomaly path, FAILED_LOUD — and it never asked whether the
-   * round's review had already reached GitHub. #5885 round 2 had: its APPROVE
-   * was posted and its receipt confirmed 30 s before the watcher misread the
-   * half-written file, and the PR then sat held for ten hours over "no review
-   * was produced".
+   * A verdict file that cannot be applied. Before failing loud it asks
+   * whether the round's review already reached GitHub — a posted review is
+   * the evidence, and failing it would hold a PR over "no review was
+   * produced".
    *
-   *   - The round's verdict already SETTLED (a replay of a done round, or a
+   *   - The round's verdict already settled (a replay of a done round, or a
    *     round guard 2 already closed): inert, like any replay.
    *   - A receipt settlement a restart interrupted (the round is done but its
    *     apply never reached `verdict_settled`): resumed, never failed.
-   *   - Running, with a CONFIRMED receipt that proves the decision
+   *   - Running, with a confirmed receipt that proves the decision
    *     (`decidedVerdictFromReceipt`): settled from the receipt — the posted
    *     review is the evidence. No FAILED_LOUD, no self-requeue, so no second
    *     posting.
-   *   - Running, refused by guard 2 (a `skipped` record): the no-op.
+   *   - Running, refused by guard 2 (a `skipped` record): the guarded no-op.
    *   - Anything else — no receipt, an ambiguous or undecidable one, a legacy
-   *     round: the malformed anomaly exactly as before. A missing receipt still
-   *     fails loud.
+   *     round: the malformed anomaly. A missing receipt still fails loud.
    */
   private async handleMalformed(
     pr: number,
@@ -1008,7 +999,7 @@ export class VerdictWatcher {
   /**
    * Hold the round's verdict-file slot — the one `handleFile` holds while it
    * reads, waits out a partial write and applies — for a settlement that does
-   * not come from the file (H1a). A receipt settlement and a verdict
+   * not come from the file. A receipt settlement and a verdict
    * landing in the same moment can then never both apply. Busy ⇒ undefined:
    * the caller's next tick decides again.
    */
@@ -1032,23 +1023,23 @@ export class VerdictWatcher {
   }
 
   /**
-   * Close a running round from its CONFIRMED posting receipt (H1a):
+   * Close a running round from its confirmed posting receipt:
    * the review is on GitHub and the verdict file is malformed, never came, or
    * did not come within the posted-tail grace. Never posts anything — the
    * whole point is that the review already went out once.
    *
    * Only for a receipt that proves the decision (`decidedVerdictFromReceipt`);
    * an undecidable one stays on the caller's loud path. The round is applied
-   * exactly as its verdict file would have been — the ONE `apply` path, with
+   * exactly as its verdict file would have been — the one `apply` path, with
    * the posting already proven — so the labels, the transition, the
    * reviewed-head mark, the withheld-approval mark, the successor settlement,
    * the usage, the ledger and findings-record checks and the held wakes all
    * happen as usual. Its summary says where the verdict came from; its
    * executed-pass telemetry is honestly unknown.
    *
-   * The claim has two halves. A FRESH read of the round, followed with no await
+   * The claim has two halves. A fresh read of the round, followed with no await
    * between by `apply`'s own read: a round the operator cancelled, a newer
-   * round superseded, or another path settled while the CALLER awaited GitHub
+   * round superseded, or another path settled while the caller awaited GitHub
    * is never applied over. And `apply`'s `finishRound` is a compare-and-set on
    * the status that read saw: one that changed while `apply` itself awaited
    * the label calls is not applied over either — the apply stops there
@@ -1122,7 +1113,7 @@ export class VerdictWatcher {
     return "applied";
   }
 
-  /** The receipt settlement this round STARTED (its `verdict_settled_from_receipt`
+  /** The receipt settlement this round started (its `verdict_settled_from_receipt`
    * event, with the verdict it was applying), if any. */
   private receiptSettlementStarted(
     round: RoundRow,
@@ -1153,10 +1144,10 @@ export class VerdictWatcher {
   }
 
   /**
-   * Finish a receipt settlement a restart cut short (H1a). `apply`
-   * finishes the round row BEFORE its last durable steps (the transition, the
-   * marks, the successor) and records `verdict_settled` only after them; a
-   * verdict FILE survives a restart in that window and resumes the apply, but
+   * Finish a receipt settlement a restart cut short. `apply` finishes the
+   * round row before its last durable steps (the transition, the marks, the
+   * successor) and records `verdict_settled` only after them; a verdict file
+   * survives a restart in that window and resumes the apply, but
    * a receipt settlement has no file — and on the malformed path the file it
    * does have is the broken one, which would turn a posted review into
    * FAILED_LOUD. So the settlement's own event carries the verdict it applies,
@@ -1185,7 +1176,7 @@ export class VerdictWatcher {
   }
 
   /**
-   * The sweep's half of the resume: receipt settlements with NO verdict file
+   * The sweep's half of the resume: receipt settlements with no verdict file
    * (the deadline and stage-limit paths) that a restart cut short. Bounded to
    * the last two days of settlements — a restart is minutes, and a done round
    * older than that is not touched on the strength of an old event.
@@ -1228,12 +1219,12 @@ export class VerdictWatcher {
     kind: "legacy" | "confirmed" | "waiting" | "failed" | "skipped";
     detail?: string;
     receipt?: PostingReceipt;
-    /**: the guarded no-op record, when `kind` is `skipped`. */
+    /** The guarded no-op record, when `kind` is `skipped`. */
     noop?: GuardedNoopReceipt;
-    /** Why `failed` (integration review), for the one caller that
-     * may otherwise requeue — a stage limit:
+    /** Why `failed`, for the one caller that may otherwise requeue — a
+     * stage limit:
      *   - `unconfirmed`: nothing says a review went out — no receipt, or a
-     *     `prepared` one whose marker reconcile READ GitHub and found nothing
+     *     `prepared` one whose marker reconcile read GitHub and found nothing
      *     (or a dry run, which never posts). Requeueing cannot post twice.
      *   - `ambiguous`: a `prepared` receipt for exactly this round whose POST
      *     may have landed, and the marker reconcile did not complete (the
@@ -1254,8 +1245,8 @@ export class VerdictWatcher {
       receipt.pr === round.pr &&
       receipt.round_no === round.round_no &&
       receipt.head_sha.toLowerCase() === expectedHead.toLowerCase();
-    // the shell recorded a guard-2 refusal for this exact identity.
-    // It is answered only AFTER the live marker reconcile below has had its
+    // The shell recorded a guard-2 refusal for this exact identity.
+    // It is answered only after the live marker reconcile below has had its
     // say: the record claims no POST was attempted, and a bot review carrying
     // this round's marker at this head would prove it wrong — GitHub's truth
     // wins over the file, exactly as it wins over a missing file.
@@ -1317,9 +1308,9 @@ export class VerdictWatcher {
     // The POST may have reached GitHub before the shell could persist its
     // response. Reconcile by the inert marker; never retry a mutation on an
     // ambiguous transport outcome.
-    // Whether GitHub was actually READ for the marker: a prepared receipt
-    // past its grace is "not posted" only when it was (integration
-    // review) — a read that threw, or no way to read, leaves it unknown.
+    // Whether GitHub was actually read for the marker: a prepared receipt
+    // past its grace is "not posted" only when it was — a read that threw, or
+    // no way to read, leaves it unknown.
     let reconciled = false;
     if (!this.deps.cfg.dry_run && this.deps.adapter.listReviewsFull) {
       try {
@@ -1443,7 +1434,7 @@ export class VerdictWatcher {
   }
 
   /**
-   * posting guard 2 refused this round's review — the head was
+   * Posting guard 2 refused this round's review — the head was
    * already reviewed and no author reply had landed since — and the shell
    * recorded that refusal as an identity-bound no-op before exiting. This is
    * successful terminal bookkeeping, not a verdict and not a failure:
@@ -1451,15 +1442,15 @@ export class VerdictWatcher {
    *   - the round closes as `cancelled` with cause `no_new_evidence` — never
    *     `done` with the verdict the session wrote, because that verdict was
    *     never posted, and never `infrastructure_failure`, because nothing
-   *     failed (#5409 round 18 opened a FAILED_LOUD incident for exactly this);
-   *   - the PR returns to the state its STANDING review put it in, read off
+   *     failed;
+   *   - the PR returns to the state its standing review put it in, read off
    *     the live mark through the one standing-review interpretation; the
    *     mark itself, GitHub, the withheld-approval mark and any successor or
    *     held wake are left exactly as they were;
    *   - no `review_failures` row, no retry budget, no Slack FAILED_LOUD, no
    *     replacement round, no escalation.
    *
-   * Consumed once: the claim is a FRESH read of the round row followed
+   * Consumed once: the claim is a fresh read of the round row followed
    * synchronously by the cancel — no await between them, so the deadline
    * sweep and the verdict sweep (separate timers, each of which may have
    * awaited a GitHub read in `postingProof`) cannot both win. The loser sees
@@ -1515,11 +1506,11 @@ export class VerdictWatcher {
       "no_new_evidence",
     );
     // ---- claimed; everything below may await ---------------------------------
-    // The round ran a full review and burned its tokens: measured
-    // like every other terminal path, never hidden behind a benign cause. Its
-    // window closes HERE, and the measurement is owed from here, durably; the
-    // reads (async since H2 — seconds, at most the usage budget) run
-    // LAST, after the restored lifecycle and the held-wake flush, so they
+    // The round ran a full review and burned its tokens: measured like every
+    // other terminal path, never hidden behind a benign cause. Its window
+    // closes here, and the measurement is owed from here, durably; the reads
+    // (async — seconds, at most the usage budget) run last, after the
+    // restored lifecycle and the held-wake flush, so they
     // never widen the window before either: a restart cannot strand the PR in
     // `reviewing`, and no round dispatched while they run can receive this
     // round's held wakes. A restart while they run resumes them.
@@ -1599,14 +1590,14 @@ export class VerdictWatcher {
       `posting receipt failure — ${detail}`,
       "infrastructure_failure",
     );
-    // this round ran a full review and burned its tokens — the
-    // receipt is what failed, not the work. It stays in `SUM(est_usd) FROM
-    // rounds` like every other row, so it must be measured here too. Its
-    // window closes now and no successor is running, so nothing double-counts.
-    // H2: the reads (async) run LAST, after the FAILED_LOUD incident
-    // and its anomaly — a restart while they run must not leave a cancelled
-    // round with no loud failure behind it — and are owed durably
-    // from here, so a restart while they run resumes them.
+    // This round ran a full review and burned its tokens — the receipt is
+    // what failed, not the work. It stays in `SUM(est_usd) FROM rounds` like
+    // every other row, so it must be measured here too. Its window closes now
+    // and no successor is running, so nothing double-counts. The reads
+    // (async) run last, after the FAILED_LOUD incident and its anomaly — a
+    // restart while they run must not leave a cancelled round with no loud
+    // failure behind it — and are owed durably from here, so a restart while
+    // they run resumes them.
     const owed = this.oweMeasurement(round);
     await this.safe(
       () => adapter.removeLabel(round.pr, cfg.github.in_progress_label),
@@ -1645,8 +1636,8 @@ export class VerdictWatcher {
 
   /** The handoff: posting receipt, labels, round record, transition.
    *
-   * `proven` (H1a): the caller already holds this round's CONFIRMED
-   * posting receipt and built `v` from it (`settleFromReceipt`, or the resume
+   * `proven`: the caller already holds this round's confirmed posting
+   * receipt and built `v` from it (`settleFromReceipt`, or the resume
    * of one a restart cut short). The receipt is not proven a second time — a
    * second marker reconcile could fail on a transient GitHub read and turn a
    * posted review into a loud failure — and the durable events say where the
@@ -1658,21 +1649,20 @@ export class VerdictWatcher {
   ): Promise<"applied" | "waiting" | "failed"> {
     const { cfg, store, adapter } = this.deps;
     const round = this.runningRound(v.pr, v.round_no);
-    // The status this apply claims the round in (integration review):
-    // `finishRound` below lands only while the row still has it, so an operator
-    // cancel or another terminal path that lands while this awaits GitHub is
-    // never overwritten.
+    // The status this apply claims the round in: `finishRound` below lands
+    // only while the row still has it, so an operator cancel or another
+    // terminal path that lands while this awaits GitHub is never overwritten.
     const claimedStatus = round?.status;
     // A receipt settlement from the deadline tick or the round-stage supervisor
     // hands its measurement to the background; a verdict file's is awaited.
     const measure: MeasureMode = proven ? measureModeFor(proven.via) : "inline";
 
-    // Guard-5 landing (follow-up): the session was refused at
-    // posting time because the PR advanced mid-round, and said so explicitly
-    // instead of idling to deadline expiry. Mapped exactly like the
-    // needs_human_incomplete redo: immediate cancel + capped self-requeue
-    // (SAME per-head counter, keyed on the FRESH head the PR row now
-    // carries) — and the session is NOT killed: it is healthy, it did the
+    // Guard-5 landing: the session was refused at posting time because the
+    // PR advanced mid-round, and said so explicitly instead of idling to
+    // deadline expiry. Mapped exactly like the needs_human_incomplete redo:
+    // immediate cancel + capped self-requeue (the same per-head counter,
+    // keyed on the fresh head the PR row now carries) — and the session is
+    // not killed: it is healthy, it did the
     // right thing. No verdict applies, no label lands, no reviewed-head mark
     // is stamped (nothing was reviewed-and-decided at the live head). Past
     // the cap (or with no running round) the anomaly path terminalizes —
@@ -1703,13 +1693,12 @@ export class VerdictWatcher {
       return "applied";
     }
 
-    // NEEDS_HUMAN discipline (2026-08-19, the owner): a park hands a FINISHED
-    // review to a person for the final call — it is never an escape hatch for
-    // an unfinished one. A NEEDS_HUMAN with no executed-pass evidence (#5303:
-    // "the configured passes were unavailable") did not do the review; redo it
-    // through the capped self-requeue instead of parking. Past the cap (or
-    // with no running round to cancel) the normal park below stands — the cap
-    // guarantees this can never loop. No reviewed-head mark is recorded on
+    // NEEDS_HUMAN is never an escape hatch for an unfinished review. One with
+    // no executed-pass evidence (e.g. "the configured passes were
+    // unavailable") did not do the review; redo it through the capped
+    // self-requeue. Past the cap (or with no running round to cancel) the
+    // verdict applies below like any other — the cap guarantees this can
+    // never loop. No reviewed-head mark is recorded on
     // this path, so the redo round can dispatch and post at the same head.
     if (
       v.verdict === "NEEDS_HUMAN" &&
@@ -1735,19 +1724,19 @@ export class VerdictWatcher {
       }
     }
 
-    // A round already DONE has had its verdict applied (selfscan 152c429f):
-    // this file is a replay — an archive that failed and left it in verdict/,
+    // A round already done has had its verdict applied: this file is a
+    // replay — an archive that failed and left it in verdict/,
     // or a session re-emitting an old round's file. Applying it again would
     // re-run every side effect below and stamp the old head over a newer
     // reviewed-head mark. Inert, exactly like the guarded-noop replay.
     //
-    // "Done" alone is not proof: finishRound runs BEFORE the rest of the
+    // "Done" alone is not proof: finishRound runs before the rest of the
     // apply (the transition, the reviewed-head and withheld marks, the
     // successor), across several awaits. A daemon killed in that window leaves
     // a done round with the file still in verdict/, and resuming it is the only
     // way the rest ever lands. So the replay is inert only once the apply
-    // recorded that it SETTLED (`verdict_settled`, written after the last
-    // durable step); a done round without it resumes as before.
+    // recorded that it settled (`verdict_settled`, written after the last
+    // durable step); a done round without it resumes.
     if (
       round &&
       round.round_no === v.round_no &&
@@ -1774,7 +1763,7 @@ export class VerdictWatcher {
         return "waiting";
       }
       if (proof.kind === "skipped") {
-        // guard 2 refused the post. The verdict in this file was never
+        // Guard 2 refused the post. The verdict in this file was never
         // published and is never applied — no label, no transition from it, no
         // reviewed-head mark, no escalation. The file is archived by the caller.
         return (await this.settleGuardedNoop(round, proof.noop!, "verdict", v)) === "failed"
@@ -1800,7 +1789,7 @@ export class VerdictWatcher {
 
     // spend_usd from the file is fiction (template echo) — never stored; the
     // measured figures land via recordRoundUsage below.
-    // Captured BEFORE applyEvent: the transition context writes the verdict's
+    // Captured before applyEvent: the transition context writes the verdict's
     // (possibly stale) head back onto pr_state, which would mask a mid-round
     // advance (see the chain below).
     const headBeforeApply = store.getPr(v.pr)?.head_sha ?? null;
@@ -1838,11 +1827,11 @@ export class VerdictWatcher {
         reason: "verdict-observed-head-advance",
       });
     }
-    // Executed-pass telemetry: persist what actually ran beside the
-    // plan, and flag plan≠executed. Best-effort side channel — nothing in it
-    // may disturb the verdict.
-    // a follow-up round's pre-approval sweep — what became of it,
-    // read from the claim AND the executed telemetry — before the pass
+    // Executed-pass telemetry: persist what actually ran beside the plan, and
+    // flag plan≠executed. Best-effort side channel — nothing in it may disturb
+    // the verdict.
+    // A follow-up round's pre-approval sweep — what became of it, read from
+    // the claim and the executed telemetry — before the pass
     // telemetry, which compares the sweep's passes only when it ran.
     const sweepStatus = round ? this.recordSweepTelemetry(v, round, proven !== undefined) : null;
     if (round) await this.recordPassTelemetry(v, round, sweepStatus);
@@ -1868,9 +1857,9 @@ export class VerdictWatcher {
           }
         : {}),
     });
-    // The reviewed-head mark: this head has now been reviewed and
-    // decided. Read by the no-new-evidence guard at dispatch and at posting
-    // time, and by the post-approval delta recheck.
+    // The reviewed-head mark: this head has now been reviewed and decided.
+    // Read by the no-new-evidence guard at dispatch and at posting time, and
+    // by the post-approval delta recheck.
     if (v.head_sha)
       store.recordReviewedHead(v.pr, {
         head_sha: v.head_sha,
@@ -1887,10 +1876,10 @@ export class VerdictWatcher {
     // Anything else clears it: the verdict here supersedes whatever earlier
     // round withheld an approval.
     if (v.head_sha && v.approval_withheld && v.verdict === "APPROVE") {
-      // the mark carries the classifier verdict that caused the
-      // withhold (red/pending/none). The session route cannot say which it
-      // was, so the daemon re-reads the checks; an unreadable CI stores null
-      // exactly as before — the mark itself never depends on the read.
+      // The mark carries the classifier verdict that caused the withhold
+      // (red/pending/none). The session route cannot say which it was, so the
+      // daemon re-reads the checks; an unreadable CI stores null — the mark
+      // itself never depends on the read.
       let ci: string | null = null;
       if (this.deps.adapter.listChecks) {
         try {
@@ -1908,7 +1897,7 @@ export class VerdictWatcher {
     } else {
       store.clearApprovalWithheld(v.pr);
     }
-    // Slack (S4), in-thread and never broadcast. duration_s is computed
+    // Slack, in-thread and never broadcast. duration_s is computed
     // inside finishRound, so it is read back off the row rather than recomputed.
     const finished = round ? store.roundsFor(v.pr).find((r) => r.id === round.id) : undefined;
     await this.announceSafe((a) =>
@@ -1920,7 +1909,7 @@ export class VerdictWatcher {
         duration_s: finished?.duration_s ?? null,
       }),
     );
-    // a head that advanced while this round ran was recorded as a
+    // A head that advanced while this round ran was recorded as a
     // durable successor obligation before terminalization. An old-head verdict
     // can never erase it; a verdict covering the owed head settles it. Queue
     // publication and obligation retention are owned by StateStore.
@@ -1940,21 +1929,21 @@ export class VerdictWatcher {
     // Every durable step of the apply has landed: from here a replay of this
     // file is inert (the done-round guard above reads this).
     //
-    // The round's usage window closes HERE, as it always has, and its
-    // measurement is OWED from here — in the same synchronous turn as
-    // `verdict_settled`, so no restart can land between the two. Its reads
-    // (async since H2 — seconds, at most the usage budget) run at the
-    // very END of the apply, after the compaction request and the held-wake
-    // flush: a round dispatched while they run must never receive this round's
-    // held wakes (rule 9), and nothing in between reads the tokens. A restart
-    // while they run leaves the row owed, and the next start measures it.
+    // The round's usage window closes here, and its measurement is owed from
+    // here — in the same synchronous turn as `verdict_settled`, so no restart
+    // can land between the two. Its reads (async — seconds, at most the usage
+    // budget) run at the very end of the apply, after the compaction request
+    // and the held-wake flush: a round dispatched while they run must never
+    // receive this round's held wakes (rule 9), and nothing in between reads
+    // the tokens. A restart while they run leaves the row owed, and the next
+    // start measures it.
     let owed: OwedMeasurement | undefined;
     if (round) {
       store.logEvent("verdict_settled", v.pr, { round_id: round.id, round_no: v.round_no });
       owed = this.oweMeasurement(round);
     }
-    // Escalation — OFF unless the operator switched it on, and it
-    // runs HERE, after the verdict has been applied, the label moved and the
+    // Escalation — off unless the operator switched it on, and it runs here,
+    // after the verdict has been applied, the label moved and the
     // PR transitioned. That ordering is the invariant, not a convenience: an
     // escalation is additive notification beside a decided review, so it can
     // neither withhold, defer nor replace one. `deliverEscalations` returns a
@@ -1963,29 +1952,28 @@ export class VerdictWatcher {
     // line on an already-applied verdict.
     await this.safe(() => this.deliverEscalations(v), `escalations pr-${v.pr}`);
     // Round is over: compact the sticky conversation. Cache re-reads of the
-    // ever-growing prefix were 41% of measured cost; the continuity that
-    // matters (SETTLED digest, ledger) survives compaction by design: ledger-pin
-    // pins the ledger into pi's summary and the next round order re-hands the
-    // mirrored copy. H1b: this only REQUESTS it — the
-    // session's inject bridge runs it once nothing is in flight and delivers
+    // ever-growing prefix are a large share of measured cost; the continuity
+    // that matters (SETTLED digest, ledger) survives compaction by design:
+    // ledger-pin pins the ledger into pi's summary and the next round order
+    // re-hands the mirrored copy. This only requests it — the session's
+    // inject bridge runs it once nothing is in flight and delivers
     // no wake (the ones flushed below included) until it has ended, so a
     // compaction can neither abort a wake nor refuse one.
     await this.safe(
       () => this.deps.hooks.compactSession?.(v.pr) ?? Promise.resolve(),
       `compact pr-${v.pr}`,
     );
-    // Ledger freshness: AFTER compaction, so ledger-pin's mirror has
-    // had its chance — and DELAYED, because the compaction is only requested:
-    // it is still running when apply continues (live 2026-08-19, #5290 round
-    // 7, when a nudge typed into that window was lost with the aborted turn).
-    // Best-effort fire-and-forget — nothing here may disturb the verdict.
+    // Ledger freshness: after compaction, so ledger-pin's mirror has had its
+    // chance — and delayed, because the compaction is only requested: it is
+    // still running when apply continues. Best-effort fire-and-forget —
+    // nothing here may disturb the verdict.
     //
-    // The reasoning-record check rides the SAME settle window, for the
-    // same reason: it may nudge, and a nudge typed into a compacting pane is
-    // lost. It runs after the ledger check and is likewise fire-and-forget —
-    // by the time either runs the verdict is applied, the round row is
-    // finished and the PR has transitioned, so a record that never arrives
-    // costs one anomaly row and one nudge and CANNOT hold the round open.
+    // The reasoning-record check rides the same settle window, for the same
+    // reason: it may nudge. It runs after the ledger check and is likewise
+    // fire-and-forget — by the time either runs the verdict is applied, the
+    // round row is finished and the PR has transitioned, so a record that
+    // never arrives costs one anomaly row and one nudge and cannot hold the
+    // round open.
     await this.scheduleRoundTail(
       v.pr,
       v.round_no,
@@ -2002,8 +1990,8 @@ export class VerdictWatcher {
     return "applied";
   }
 
-  /** The round-end ledger and findings-record checks,
-   * after the settle delay — shared by a verdict and a receipt settlement. */
+  /** The round-end ledger and findings-record checks, after the settle
+   * delay — shared by a verdict and a receipt settlement. */
   private async scheduleRoundTail(
     pr: number,
     roundNo: number,
@@ -2030,11 +2018,11 @@ export class VerdictWatcher {
     }
   }
 
-  // ---- escalation (off by default) -----------------------------
+  // ---- escalation (off by default) ---------------------------------------
 
   /**
    * Assemble the round's facts, evaluate the operator's deterministic rules,
-   * add whatever the session asked for, and hand the lot to the ONE delivery
+   * add whatever the session asked for, and hand the lot to the one delivery
    * path.
    *
    * Everything here is a no-op when `[escalation] enabled = false`: the first
@@ -2060,13 +2048,13 @@ export class VerdictWatcher {
       failing_checks: await this.escalationFailingChecks(v.pr, v.head_sha),
     };
 
-    // THE TWO GROUPS STAY SEPARATE. They are separate here because they have
-    // different trust: the first is the operator's configured rules, the
-    // second is whatever the model wrote in its verdict file. Flattening them
-    // into one list and re-deriving trust from a field INSIDE the payload is
-    // what let a session relabel itself `origin: "rule"` (re-review).
+    // The two groups stay separate because they have different trust: the
+    // first is the operator's configured rules, the second is whatever the
+    // model wrote in its verdict file. Flattening them into one list and
+    // re-deriving trust from a field inside the payload would let a session
+    // relabel itself `origin: "rule"`.
     //
-    // A rule that FIRED but produced nothing deliverable is logged, never
+    // A rule that fired but produced nothing deliverable is logged, never
     // silent: the operator configured it, it matched, and they would otherwise
     // have no way to see why nobody was told.
     const ruleRequests = evaluateEscalationRules(cfg, facts, (rule, refusal) => {
@@ -2099,12 +2087,12 @@ export class VerdictWatcher {
         verdict: v.verdict,
         head_sha: v.head_sha,
         round_no: v.round_no,
-        // The path-in-diff check's input (review). An unreadable
+        // The path-in-diff check's input. An unreadable
         // listing is `[]`, which refuses every path-bearing scope rather than
         // waving it through — the safe direction, same as every other fact.
         changed_paths: facts.changed_paths,
-        // Whether the ROUND'S OWN review actually reached GitHub, from the
-        // receipt. The note must not claim a posting that a guard
+        // Whether the round's own review actually reached GitHub, from the
+        // posting receipt. The note must not claim a posting that a guard
         // refused — and the escalation note is precisely the one that still
         // goes out in that case.
         review_posted: this.roundReviewConfirmed(v.pr, v.round_no, v.head_sha),
@@ -2115,7 +2103,7 @@ export class VerdictWatcher {
   }
 
   /**
-   * Did the round's own review CONFIRM as posted (receipt)? Read-only,
+   * Did the round's own review confirm as posted (posting receipt)? Read-only,
    * total: an unreadable or absent receipt is `false`, and the note then says
    * "decided" without claiming "posted".
    */
@@ -2151,10 +2139,10 @@ export class VerdictWatcher {
   }
 
   /**
-   * The findings the round POSTED, from the reasoning record. Absent
-   * or unreadable ⇒ severity-keyed rules simply do not fire.
+   * The findings the round posted, from the reasoning record. Absent or
+   * unreadable ⇒ severity-keyed rules simply do not fire.
    *
-   * That silence is LOGGED when it matters (review, F4): a `needed`
+   * That silence is logged when it matters: a `needed`
    * caller — one whose config actually has a `min_severity` rule — gets an
    * `escalation_findings_unavailable` event, so a severity rule that never
    * fires is visible in the event log instead of being invisible. Without a
@@ -2194,7 +2182,7 @@ export class VerdictWatcher {
       .map((f) => ({ severity: String(f.severity), path: f.path, title: f.reason }));
   }
 
-  /** Check names whose LATEST run at the head is not a success — the same
+  /** Check names whose latest run at the head is not a success — the same
    * latest-run-per-name rule the CI gate uses, so an auto-cancelled
    * superseded run cannot escalate to a person forever. */
   private async escalationFailingChecks(pr: number, head: string): Promise<string[]> {
@@ -2215,7 +2203,7 @@ export class VerdictWatcher {
     }
   }
 
-  // ---- ledger freshness ---------------------------------------
+  // ---- ledger freshness ------------------------------------------------
 
   private ledgerPathFor(pr: number): string {
     const custom = this.deps.ledgerPathFor;
@@ -2239,10 +2227,10 @@ export class VerdictWatcher {
     );
   }
 
-  // ---- the durable reasoning record ---------------------------
+  // ---- the durable reasoning record ------------------------------------
 
   /** Parse `state/findings/pr-<n>-round-<k>.json` into rows. Missing or
-   * unparseable ⇒ anomaly + exactly ONE re-nudge, never a held-open round. */
+   * unparseable ⇒ anomaly + exactly one re-nudge, never a held-open round. */
   private async checkFindingsRecord(
     pr: number,
     roundNo: number,
@@ -2264,12 +2252,12 @@ export class VerdictWatcher {
     );
   }
 
-  // ---- follow-up sweep telemetry ------------------------------
+  // ---- follow-up sweep telemetry ---------------------------------------
 
   /**
    * Record what became of a follow-up round's pre-approval sweep
    * (`rounds.sweep_status`) and return it; null on a round that is not a
-   * follow-up (nothing written). `ran` needs BOTH the session's claim and
+   * follow-up (nothing written). `ran` needs both the session's claim and
    * sweep-phase passes in its executed telemetry — a claim with no telemetry
    * behind it is `unknown`, as is a verdict settled from the posting receipt
    * (no telemetry at all): an unknown sweep never counts as a full look, so
@@ -2310,7 +2298,7 @@ export class VerdictWatcher {
         ...(v.sweep_reason ? { reason: v.sweep_reason.slice(0, 500) } : {}),
       });
       if (note) this.log(`verdicts: #${v.pr} round ${v.round_no} sweep ${status}: ${note}`);
-      // what the session did with the optional rows, and why.
+      // What the session did with the optional rows, and why.
       if (v.extent !== undefined)
         store.logEvent("followup_extent_decided", v.pr, {
           round_id: round.id,
@@ -2318,8 +2306,8 @@ export class VerdictWatcher {
           extent: v.extent,
           ...(v.extent_reason ? { reason: v.extent_reason.slice(0, 500) } : {}),
         });
-      // A sweep the session decided to skip is a decision, not an
-      // anomaly: only an owed sweep left un-run WITHOUT one is.
+      // A sweep the session decided to skip is a decision, not an anomaly:
+      // only an owed sweep left un-run without one is.
       if (v.verdict === "APPROVE" && owed && status !== "ran" && status !== "skipped") {
         store.logAnomaly(
           "followup_sweep_skipped",
@@ -2337,12 +2325,12 @@ export class VerdictWatcher {
     }
   }
 
-  // ---- executed-pass telemetry --------------------------------
+  // ---- executed-pass telemetry -----------------------------------------
 
   /**
    * Persist the verdict's executed-pass report and compare it with the plan
-   * (`rounds.lenses`). Missing telemetry ⇒ logged as UNKNOWN; plan≠executed ⇒
-   * logged anomaly + overseer inject. NEVER blocks the verdict — everything
+   * (`rounds.lenses`). Missing telemetry ⇒ logged as unknown; plan≠executed ⇒
+   * logged anomaly + overseer inject. Never blocks the verdict — everything
    * here is wrapped, and the verdict was already applied by the caller.
    */
   private async recordPassTelemetry(
@@ -2353,8 +2341,8 @@ export class VerdictWatcher {
     const { store } = this.deps;
     try {
       if (!v.passes) {
-        // Old-prompt session (or the session reported nothing usable): the
-        // record stays NULL = unknown, distinct from [] = "ran zero passes".
+        // The session reported nothing usable: the record stays NULL =
+        // unknown, distinct from [] = "ran zero passes".
         store.logEvent("verdict_passes_unknown", v.pr, {
           round_id: round.id,
           round_no: v.round_no,
@@ -2371,11 +2359,11 @@ export class VerdictWatcher {
       const addable = round.addable_passes
         ? (JSON.parse(round.addable_passes) as Array<{ lens: string; tier: string }>)
         : null;
-      // a follow-up round runs two stages. The delta stage's passes
-      // (phase "delta", or none) answer to `pass_plan`; the sweep's (phase
-      // "sweep") to `sweep_plan` — and a sweep lens is MISSING only when the
-      // sweep ran, so a round that decided before the sweep raises nothing.
-      // Every other round compares every pass against its plan, as before.
+      // A follow-up round runs two stages. The delta stage's passes (phase
+      // "delta", or none) answer to `pass_plan`; the sweep's (phase "sweep")
+      // to `sweep_plan` — and a sweep lens is missing only when the sweep ran,
+      // so a round that decided before the sweep raises nothing. Every other
+      // round compares every pass against its plan.
       const followUp = round.scope === "delta";
       const deltaPasses = followUp ? v.passes.filter((p) => p.phase !== "sweep") : v.passes;
       const sweepPasses = followUp ? v.passes.filter((p) => p.phase === "sweep") : [];
@@ -2468,7 +2456,7 @@ export class VerdictWatcher {
     }
   }
 
-  // ---- measured usage -----------------------------------------
+  // ---- measured usage --------------------------------------------------
 
   private sessionDirFor(pr: number): string {
     const custom = this.deps.usage?.sessionDirFor;
@@ -2486,29 +2474,28 @@ export class VerdictWatcher {
   }
 
   /**
-   * did git's configuration change while this round ran? And, since
-   *, did this system's OWN policy surface (config.toml, scripts/,
-   * dist/, extensions/, the seeds)?
+   * Did git's configuration change while this round ran? And did this
+   * system's own policy surface (config.toml, scripts/, dist/, extensions/,
+   * the seeds)?
    *
    * The write veto in the bash guard reads command strings, and five write
    * primitives on the guard's own read-only allowlist go straight past it —
-   * `T=.git/config; cat p >> $T` cannot EVER be seen by a token scan, because
+   * `T=.git/config; cat p >> $T` can never be seen by a token scan, because
    * the target is a variable. This check does not look at commands at all: the
    * fingerprint was taken when `dispatch` prepared the worktree, and any
    * difference now is a write the daemon did not make. The two families raise
-   * DIFFERENT anomalies, because they mean different things: a git change
+   * different anomalies, because they mean different things: a git change
    * taints this round; a policy change rewrites the boundary every later round
    * in the container runs under.
    *
    * Runs inside `measureUsage`, which is deliberately the one place that fires
-   * on BOTH the verdict path and the anomaly/overdue path — a round that ends
+   * on both the verdict path and the anomaly/overdue path — a round that ends
    * badly is exactly when this most wants checking.
    *
    * Never throws and never fails a round: an unavailable fingerprint at either
-   * end leaves the round unchecked, which is the legacy behaviour, and a
-   * NULL baseline is never read as "changed" (the same rule the receipt scan
-   * had to learn: unknown is not evidence of loss). The re-hash is async with a
-   * loop turn after every file (H2) — it walks dist/, scripts/ and the
+   * end leaves the round unchecked, and a NULL baseline is never read as
+   * "changed" (unknown is not evidence of loss). The re-hash is async with a
+   * loop turn after every file — it walks dist/, scripts/ and the
    * rest of the policy surface — and bounded by `integrityBudgetMs`: a read
    * that never returns leaves the round unchecked (`round_integrity_unchecked`),
    * never a round end that does not finish.
@@ -2565,12 +2552,12 @@ export class VerdictWatcher {
    * estimate USD from config pricing, and store both. Also the post-hoc
    * exec-policy audit. Best-effort: no failure here disturbs the verdict.
    *
-   * H2: the transcripts are read ONCE, async and chunked, through the
-   * watcher's `TranscriptIndex` (each file resumed from where the last round
-   * end left it; a session file older than the round not read at all), and
-   * the integrity re-hash is async too — the 16.8 s loop stall of 2026-10-08
-   * 08:51Z was these three reads done synchronously. An in-scope transcript
-   * that cannot be read, or a read past `budgetMs`, leaves the usage UNKNOWN
+   * The transcripts are read once, async and chunked, through the watcher's
+   * `TranscriptIndex` (each file resumed from where the last round end left
+   * it; a session file older than the round not read at all), and the
+   * integrity re-hash is async too, so neither stalls the event loop. An
+   * in-scope transcript that cannot be read, or a read past `budgetMs`,
+   * leaves the usage unknown
    * (nothing recorded — the columns stay NULL, never a partial sum) with a
    * `round_usage_unknown` event, and the audit reports what it did read. */
   private async measureUsage(
@@ -2634,9 +2621,7 @@ export class VerdictWatcher {
         );
       }
 
-      // classified, so the durable event says WHICH policy was
-      // crossed. Until then the audit matched interpreters only, and none of
-      // the four chains proved would have produced a single line here.
+      // Classified, so the durable event says which policy was crossed.
       if (integrity === "check") await this.checkRoundIntegrity(pr, roundId);
       else this.integrityInterrupted(pr, roundId);
 
@@ -2656,17 +2641,16 @@ export class VerdictWatcher {
   }
 
   /**
-   * A round end fixes its usage window and OWES the measurement (
-   * integration review). Before this the obligation lived only in the awaiting
-   * code: a restart while the reads ran — they can take minutes, and a deploy's
-   * drain sees `running_rounds == 0` the moment the round row is terminal —
-   * left the round with NULL tokens and no `round_usage_unknown`, which reads
-   * as "never measured" rather than "unknown". Now `rounds.usage_owed_to`
-   * carries the window's end from the same synchronous turn as the round end's
-   * terminal write until the measurement has finished, whatever it found, and
-   * the next start resumes what is still owed (`resumeOwedMeasurements`).
-   * Best-effort on the durable half: a write that fails is logged, and the
-   * measurement still runs in this process.
+   * A round end fixes its usage window and owes the measurement. The reads
+   * can take minutes, and a deploy's drain sees `running_rounds == 0` the
+   * moment the round row is terminal, so the obligation must be durable: a
+   * restart mid-read would otherwise leave NULL tokens with no
+   * `round_usage_unknown`, reading as "never measured" rather than "unknown".
+   * `rounds.usage_owed_to` carries the window's end from the same synchronous
+   * turn as the round end's terminal write until the measurement has
+   * finished, whatever it found, and the next start resumes what is still owed
+   * (`resumeOwedMeasurements`). Best-effort on the durable half: a write that
+   * fails is logged, and the measurement still runs in this process.
    */
   private oweMeasurement(
     round: Pick<RoundRow, "id" | "pr" | "round_no" | "started_at">,
@@ -2731,11 +2715,11 @@ export class VerdictWatcher {
   }
 
   /**
-   * Measurements an earlier process owed and did not finish (
-   * integration review) — a restart, usually a deploy, cut them short. Once
+   * Measurements an earlier process owed and did not finish — a restart,
+   * usually a deploy, cut them short. Once
    * per watcher, from its first sweep; this process's own are in `measuring`.
    *
-   * Each is measured again over its STORED window, in the background: the
+   * Each is measured again over its stored window, in the background: the
    * transcripts are append-only and the window's end is fixed, so the answer
    * is the one the interrupted read would have given. The integrity re-check
    * is not re-run — a deploy rewrites dist/ and scripts/, the policy surface,
@@ -2744,7 +2728,7 @@ export class VerdictWatcher {
    * A window older than `OWED_MEASUREMENT_RESUME_MAX_MS` is not re-read at
    * all — the pi-global archiver may have moved its store files since, and a
    * partial sum must never read as the round's cost — so its usage, if it was
-   * not recorded before the restart, is recorded UNKNOWN.
+   * not recorded before the restart, is recorded unknown.
    */
   private resumeOwedMeasurements(): void {
     if (this.owedResumed) return;
@@ -2827,8 +2811,8 @@ export class VerdictWatcher {
   }
 
   /** Malformed verdict or blown deadline: overseer anomaly, round marked, and
-   * the PR returned to its standing-verdict state (the owner, 2026-08-19: no
-   * park — the AI keeps driving). Never an approve path: "tracked" here means
+   * the PR returned to its standing-verdict state (no park — the AI keeps
+   * driving). Never an approve path: "tracked" here means
    * "no work owed", not approved. */
   private async handleAnomaly(
     pr: number,
@@ -2841,26 +2825,23 @@ export class VerdictWatcher {
     let owed: OwedMeasurement | null = null;
     if (round && round.status === "running") {
       store.markRoundOverdue(round.id);
-      // measure the round's tokens on this path too, not only on the
-      // verdict path. `measureUsage` had exactly one call site, so an overdue
-      // or malformed round carried NULL cost forever and contributed exactly
-      // zero to every aggregate that faithfully includes it — `markRoundOverdue`
-      // deliberately keeps the row in spend ("hiding tokens this round really
-      // burned") and the stranded-round operator message says "Its spend still
-      // counts." Neither was true until this call existed. The window ends now,
-      // which is the `finished_at` markRoundOverdue just stamped. H2:
-      // the reads are async now (seconds, at most the usage budget), so they
-      // run below, AFTER the transition and the FAILED_LOUD incident — a
-      // restart while they run must never leave an overdue round under a PR
-      // still `reviewing` with nothing owed — and BEFORE the anomaly, whose
-      // overseer inject still carries the violations they find. Owed durably
-      // from here (integration review); awaited on every path, the
-      // deadline tick's included, because that inject reads what it finds.
+      // Measure the round's tokens on this path too, not only on the verdict
+      // path: `markRoundOverdue` deliberately keeps the row in spend, and the
+      // stranded-round operator message says "Its spend still counts." — an
+      // unmeasured overdue or malformed round would contribute zero to every
+      // aggregate. The window ends now, which is the `finished_at`
+      // markRoundOverdue just stamped. The reads are async (seconds, at most
+      // the usage budget), so they run below, after the transition and the
+      // FAILED_LOUD incident — a restart while they run must never leave an
+      // overdue round under a PR still `reviewing` with nothing owed — and
+      // before the anomaly, whose overseer inject carries the violations they
+      // find. Owed durably from here; awaited on every path, the deadline
+      // tick's included, because that inject reads what it finds.
       owed = this.oweMeasurement(round);
     }
 
     // The in-progress label must not stick, but the "Automatic Review" label is
-    // deliberately NOT applied — no review was soundly produced.
+    // deliberately not applied — no review was soundly produced.
     await this.safe(
       () => adapter.removeLabel(pr, cfg.github.in_progress_label),
       `remove ${cfg.github.in_progress_label} on #${pr}`,
@@ -2897,8 +2878,8 @@ export class VerdictWatcher {
     // violations by themselves never trigger an inject (no spam).
     const pendingViolations = this.execViolations.get(pr);
     this.execViolations.delete(pr);
-    // The durable anomaly record — and,, the ONE wake
-    // funnel: both kinds here are WAKE classes, so the store's sink writes the
+    // The durable anomaly record — and the one wake funnel: both kinds here
+    // are WAKE classes, so the store's sink writes the
     // overseer inject (dedup'd per kind+pr) from the message passed along.
     store.logAnomaly(
       kind,
@@ -2932,8 +2913,8 @@ export class VerdictWatcher {
   }
 
   /**
-   * Deadline-time recovery for a round whose prompt provably never arrived
-   * (#5362): re-deliver the order and give the round a fresh deadline.
+   * Deadline-time recovery for a round whose prompt provably never arrived:
+   * re-deliver the order and give the round a fresh deadline.
    *
    * The extension is what makes this a recovery rather than a formality — a
    * round already past its deadline would otherwise be re-judged on the very
@@ -2975,12 +2956,12 @@ export class VerdictWatcher {
   }
 
   /**
-   * Deliver wakes that are held with no round left to flush them (#5362 W3).
+   * Deliver wakes that are held with no round left to flush them.
    *
    * `flushWakes` runs from exactly two places — a verdict landing and the
    * anomaly path — on the assumption that every round ends through one of
    * them. Three cancellations do not: `superseded`, a startup orphan that is
-   * NOT requeued (the requeue needs `state === "reviewing"` and no later
+   * not requeued (the requeue needs `state === "reviewing"` and no later
    * round), and a self-requeue whose successor is cancelled the same way. The
    * wakes held while such a round was in flight — author replies included —
    * then sit in `pending_wakes` with nothing to flush them, and that table has
@@ -3023,12 +3004,11 @@ export class VerdictWatcher {
   }
 
   /**
-   * Stuck-round triage: is this overdue round one the daemon should
-   * requeue itself? "Stuck" is overdue (the caller already established that)
-   * AND session dead AND no verdict file on disk.
-   * - no `sessionAlive` hook, a hook error, or a live session ⇒ `not_stuck`:
-   *   the legacy anomaly park stands (a live-but-slow session is a
-   *   judgment call for a human, not a respawn).
+   * Stuck-round triage: is this overdue round one the daemon should requeue
+   * itself? "Stuck" is overdue (the caller already established that) and
+   * session dead (or live with a kill hook) and no verdict file on disk.
+   * - no `sessionAlive` hook or a hook error ⇒ `not_stuck`: the anomaly path
+   *   stands.
    * - session dead but the round's verdict file is sitting unconsumed ⇒
    *   `verdict_pending`: the sweep will consume it — neither a requeue nor an
    *   anomaly may race a real verdict (the restart-orphan/self-requeue
@@ -3048,12 +3028,10 @@ export class VerdictWatcher {
     if (existsSync(join(this.deps.verdictDir, `pr-${round.pr}-round-${round.round_no}.json`)))
       return "verdict_pending";
     if (dead) return "dead";
-    // A LIVE session that never received the order is not wedged — it is idle,
-    // waiting for work that was thrown away in transit (#5362, where the
-    // session sat at "I'm ready to finish once the daemon dispatches the fresh
-    // review round" for the whole deadline). Killing it destroys a healthy
-    // conversation to fix a file that failed to arrive, so the receipt is
-    // checked BEFORE `alive_stuck` is concluded.
+    // A live session that never received the order is not wedged — it is
+    // idle, waiting for work that was lost in transit. Killing it destroys a
+    // healthy conversation to fix a file that failed to arrive, so the receipt
+    // is checked before `alive_stuck` is concluded.
     if (round.prompt_marker && this.deps.hooks.roundPromptAccepted) {
       try {
         const startedMs = Date.parse(round.started_at);
@@ -3067,17 +3045,17 @@ export class VerdictWatcher {
           : null;
         if (accepted === false) return "never_delivered";
       } catch {
-        // Unreadable evidence falls through to the pre-existing judgement.
+        // Unreadable evidence falls through to the judgement below.
       }
     }
-    // Live but past the deadline with nothing on disk (2026-08-19, the owner:
-    // recover, don't park): the session is killed and the round requeued
-    // through the same capped path. Without a kill hook the pre-existing park
-    // stands — never inject a fresh round into a wedged live session.
+    // Live but past the deadline with nothing on disk: recover, don't park —
+    // the session is killed and the round requeued through the same capped
+    // path. Without a kill hook the anomaly path stands — never inject a
+    // fresh round into a wedged live session.
     return this.deps.hooks.killSession ? "alive_stuck" : "not_stuck";
   }
 
-  /**: feed command-stage infrastructure failures into the SAME
+  /** Feed command-stage infrastructure failures into the same
    * capped cancellation→queue lifecycle as overdue/dead rounds. There is no
    * merits verdict and no GitHub mutation. A transient inability to stop an
    * active session is retryable; budget exhaustion is distinct durable fact. */
@@ -3150,11 +3128,11 @@ export class VerdictWatcher {
           ? "exhausted"
           : "requeued";
       }
-      // The round's window closes NOW, and its measurement is owed from now;
+      // The round's window closes now, and its measurement is owed from now;
       // it runs after the incident's durable rows, so no await sits between
-      // the terminal CAS and them (H2 — the measurement reads its
-      // transcripts async), and in the background: this is the round-stage
-      // supervisor's serialized scan (integration review).
+      // the terminal CAS and them (the measurement reads its transcripts
+      // async), and in the background: this is the round-stage supervisor's
+      // serialized scan.
       const owed = this.oweMeasurement(round);
       this.deps.store.logEvent("self_requeue_cap_exhausted", pr, {
         round_id: round.id,
@@ -3203,18 +3181,16 @@ export class VerdictWatcher {
   }
 
   /**
-   * Every stage limit asks the posting receipt first (H1a, #5850
-   * round 5). The limits are wall-clock bounds on a session that is supposed
-   * to be reviewing; once its review is CONFIRMED on GitHub, it is not — it is
-   * writing its ledger, its findings record and its verdict file, and on a
-   * CPU-starved container that tail outlived the 5-minute finalize grace by
-   * the time it took to get killed. The round was then cancelled "before any
-   * merits verdict", requeued, and the next round posted a second
-   * REQUEST_CHANGES on the same head.
+   * Every stage limit asks the posting receipt first. The limits are
+   * wall-clock bounds on a session that is supposed to be reviewing; once its
+   * review is confirmed on GitHub, it is not — it is writing its ledger, its
+   * findings record and its verdict file, and on a CPU-starved container that
+   * tail can outlive the finalize grace. Cancelling and requeueing it then
+   * would post a second review on the same head.
    *
-   * So, for a round whose review is on GitHub (or was refused by guard 2,
+   * So, for a round whose review is on GitHub (or was refused by guard 2 —
    * equally final):
-   *   - a parent that has SETTLED will write nothing more: settle now;
+   *   - a parent that has settled will write nothing more: settle now;
    *   - otherwise the tail gets `[daemon] round_posted_tail_grace_min` from the
    *     posting — `posted_wait`: nothing is cancelled, killed or requeued, and
    *     a verdict file that lands in that window is applied by the sweep as
@@ -3236,8 +3212,8 @@ export class VerdictWatcher {
    * `VERDICT_SWEEP_S`.
    *
    * Returns null for everything else — no receipt, an unreadable or
-   * mismatched one, a legacy round — and the caller's pre-existing path runs
-   * exactly as before: unknown is not evidence of a posting.
+   * mismatched one, a legacy round — and the caller's own path runs:
+   * unknown is not evidence of a posting.
    */
   private async receiptAwareStage(
     round: RoundRow,
@@ -3268,7 +3244,7 @@ export class VerdictWatcher {
           // The verdict may have landed while this awaited GitHub: it wins.
           if (this.verdictFilePresent(round.pr, round.round_no)) return "retryable";
           if (proof.kind === "skipped") {
-            // refused by guard 2 and no verdict file. The round is over
+            // Refused by guard 2 and no verdict file. The round is over
             // and nothing is owed; the delivered command stays as it is.
             return (await this.settleGuardedNoop(round, proof.noop!, stage)) === "failed"
               ? "failed_loud"
@@ -3300,9 +3276,8 @@ export class VerdictWatcher {
       return settled ?? "retryable";
     }
     if (stage === "settled_without_verdict") {
-      // Unchanged: the parent stopped, so an ambiguous receipt
-      // gets its grace and then fails loud — never a requeue that could post
-      // a second time.
+      // The parent stopped, so an ambiguous receipt gets its grace and then
+      // fails loud — never a requeue that could post a second time.
       if (proof.kind === "waiting") return "retryable";
       if (proof.kind === "failed") {
         await this.failPostingProof(
@@ -3327,12 +3302,11 @@ export class VerdictWatcher {
     if (proof.kind === "failed" && proof.failure === "ambiguous") {
       // A POST for exactly this round may have landed — its receipt is still
       // `prepared` past its grace — and GitHub could not be read for its
-      // marker (integration review). A requeue here is how #5850
-      // posted twice; so is failing loud, whose `u` reruns a round that
-      // cannot see the posting either. So the limit waits for a read that can
-      // decide: the next check finds the marker (and settles from it) or
-      // finds none (and requeues as before). Bounded by the round deadline,
-      // where the same evidence fails loud.
+      // marker. A requeue here could post twice; so could failing loud, whose
+      // `u` reruns a round that cannot see the posting either. So the limit
+      // waits for a read that can decide: the next check finds the marker (and
+      // settles from it) or finds none (and requeues). Bounded by the round
+      // deadline, where the same evidence fails loud.
       if (!this.loggedOnce.has(`ambiguous:${round.id}`)) {
         this.loggedOnce.add(`ambiguous:${round.id}`);
         store.logEvent("round_stage_posting_ambiguous", round.pr, {
@@ -3362,7 +3336,7 @@ export class VerdictWatcher {
       return "failed_loud";
     }
     // Nothing says a review went out (no receipt, or GitHub read and no
-    // marker): the caller's pre-existing path.
+    // marker): the caller's own path.
     return null;
   }
 
@@ -3374,13 +3348,12 @@ export class VerdictWatcher {
   }
 
   /**
-   * Inside the posted-tail grace (H1a): the round's review is on
-   * GitHub (or guard 2 refused it), and the session is still writing
-   * its ledger, findings record and verdict file — not wedged. True while
-   * `now` is before the posting + `[daemon] round_posted_tail_grace_min`,
-   * logged once per round and limit. Shared by the stage limits and — since
-   * the integration review — the round deadline, which used to settle such a
-   * round at once and so let the supervisor kill the session mid-tail.
+   * Inside the posted-tail grace: the round's review is on GitHub (or guard
+   * 2 refused it), and the session is still writing its ledger, findings
+   * record and verdict file — not wedged. True while `now` is before the
+   * posting + `[daemon] round_posted_tail_grace_min`, logged once per round
+   * and limit. Shared by the stage limits and the round deadline, so neither
+   * settles a round (and lets the supervisor kill the session) mid-tail.
    */
   private inPostedTailGrace(
     round: RoundRow,
@@ -3430,19 +3403,6 @@ export class VerdictWatcher {
     );
   }
 
-  /**
-   * Self-requeue a stuck round. Returns true when the round was
-   * handled here (cancelled + PR re-queued for a fresh dispatch through the
-   * NORMAL pump — same move as the overseer's rerun-round and the startup
-   * orphan requeue); false when the per-head cap is exhausted and the caller
-   * must terminalize through the anomaly park instead.
-   *
-   * Session-side only by construction: no label, no review, no gate call —
-   * dry-run and live behave identically. The cancelled round keeps a NULL
-   * verdict, so `priorRoundCount`/review_no never age (a failed round must
-   * not age the PR). Held wakes stay held: the requeued round is about to
-   * dispatch, and its own round-end paths flush them (S4).
-   */
   /** Only exact command-correlated pre-fanout failures get a changed-behavior
    * successor instruction. The retry epoch follows an automatic predecessor;
    * ordinary fresh work naturally starts again at epoch zero. */
@@ -3461,6 +3421,19 @@ export class VerdictWatcher {
     };
   }
 
+  /**
+   * Self-requeue a stuck round. Returns true when the round was handled here
+   * (cancelled + PR re-queued for a fresh dispatch through the normal pump —
+   * same move as the overseer's rerun-round and the startup orphan requeue);
+   * false when the per-head cap is exhausted (or the old session could not be
+   * stopped) and the caller must take the anomaly path instead.
+   *
+   * Session-side only by construction: no label, no review, no gate call —
+   * dry-run and live behave identically. The cancelled round keeps a NULL
+   * verdict, so `priorRoundCount`/review_no never age (a failed round must
+   * not age the PR). Held wakes stay held: the requeued round is about to
+   * dispatch, and its own round-end paths flush them (S4).
+   */
   private async selfRequeue(
     round: RoundRow,
     mode: SelfRequeueMode = "dead",
@@ -3560,25 +3533,22 @@ export class VerdictWatcher {
         : {}),
     });
     if (!publication) return false;
-    // a cancelled round burned real tokens and stays in every spend
-    // aggregate (`SUM(est_usd) FROM rounds` has no status filter), so it must be
-    // measured before its successor starts. The window ends here and the
-    // successor's begins later, so the two never overlap. H2: the
-    // window's end is fixed HERE, and the measurement owed from here; the
-    // reads (async now) run after this requeue's durable rows below, so a
+    // A cancelled round burned real tokens and stays in every spend aggregate
+    // (`SUM(est_usd) FROM rounds` has no status filter), so it must be
+    // measured. The window's end is fixed here, and the measurement owed from
+    // here; the successor's window begins later, so the two never overlap.
+    // The reads (async) run after this requeue's durable rows below, so a
     // successor dispatched while they run never sees the cancel without its
-    // `round_self_requeued` row — and the fixed end keeps its lines out of
-    // this round's window. From the deadline tick and the round-stage
-    // supervisor they run in the background (integration review).
+    // `round_self_requeued` row. From the deadline tick and the round-stage
+    // supervisor they run in the background.
     const owed = this.oweMeasurement(round);
     if (isLoudCancelCause(cause)) {
-      // the durable twin of the inject below. A round that stopped
-      // dead inside its deadline window is the residual real defect
-      // isolated (17 of 55 cancellations) — the redeploy orphan sweep, which
-      // is 70% of the volume, writes NOTHING here. `round_stopped_dead` is
-      // deliberately absent from anomalies.ts WAKE_KINDS: the bespoke
-      // SELF-REQUEUE inject a few lines down IS this record's wake, and
-      // listing it there would inject the same event twice.
+      // The durable twin of the inject below. A round that stopped dead
+      // inside its deadline window is a real defect; the redeploy orphan
+      // sweep writes nothing here. `round_stopped_dead` is deliberately absent
+      // from anomalies.ts WAKE_KINDS: the bespoke SELF-REQUEUE inject a few
+      // lines down is this record's wake, and listing it there would inject
+      // the same event twice.
       store.logAnomaly(
         "round_stopped_dead",
         round.pr,
@@ -3624,29 +3594,23 @@ export class VerdictWatcher {
   }
 
   /**
-   * Recover a round whose prompt never reached its session (rebuilt
-   * around a receipt after #5362).
+   * Recover a round whose prompt never reached its session.
    *
-   * The original net inferred loss from a JSONL mtime and fired ZERO times in
-   * the eight days it was live, for two independent reasons:
-   *   - it refused to act once the head had spent a self-requeue, and a
-   *     `head_moved` requeue spends one FOUR SECONDS before dispatching the
-   *     round most likely to be lost;
-   *   - it required "no activity since the round started" — but a prompt is
-   *     dropped precisely BECAUSE the agent is busy, and a busy agent always
-   *     has activity after round start. The net was blind to its own case.
+   * Loss is judged from the receipt, never inferred from activity: a prompt
+   * is dropped precisely because the agent is busy, and a busy agent always
+   * has activity after round start. `roundPromptAccepted` is a fact (the
+   * dispatched receipt token, echoed into the session JSONL only when pi
+   * accepted the message), so `false` means the prompt is not there. It does
+   * not depend on the head's self-requeue budget either: a `head_moved`
+   * requeue spends one seconds before dispatching the round most likely to be
+   * lost.
    *
-   * Both are gone. `roundPromptAccepted` is a FACT (the dispatched receipt
-   * token, echoed into the session JSONL only when pi accepted the message),
-   * so no budget-based guessing is needed to keep it honest: `false` means the
-   * prompt is not there.
-   *
-   * Recovery is cheap first. A missing prompt is a DELIVERY fault, so the
+   * Recovery is cheap first. A missing prompt is a delivery fault, so the
    * remedy is to deliver it again — same round, same session, same
    * conversation — and only a redelivery that also fails to land escalates to
-   * the expensive path (a cancelled round, and for a live session a kill).
-   * Killing a healthy session because a file did not arrive was the old
-   * behaviour and cost four live conversations.
+   * the expensive path (a cancelled round, and for a live session a kill):
+   * killing a healthy session because a file did not arrive destroys a live
+   * conversation.
    */
   private async maybeRequeueLostPrompt(round: RoundRow, nowMs: number): Promise<void> {
     const { cfg, store } = this.deps;
@@ -3686,7 +3650,7 @@ export class VerdictWatcher {
       return;
     }
     // Two consecutive observations before acting. The receipt is a fact, but
-    // the WINDOW around it is not: a prompt delivered a moment ago may not yet
+    // the window around it is not: a prompt delivered a moment ago may not yet
     // be flushed to the JSONL, and re-sending a round the session has already
     // started is worse than waiting one more tick.
     if (!round.silent_since) {
@@ -3738,12 +3702,11 @@ export class VerdictWatcher {
   /** Deadline sweep — a running round past `deadline_at` is an anomaly.
    * A superseded round (a newer round exists on the same PR) is cancelled
    * silently instead: its PR state, labels and reviewer requests belong to
-   * the newer round, and yanking them here corrupted live reviews.
-   * an overdue round with no verdict whose session is DEAD is
-   * self-requeued (capped per head) instead of parked — a stuck round no
-   * longer waits for a deploy restart.
+   * the newer round, and yanking them here would corrupt live reviews.
+   * An overdue round with no verdict whose session is dead (or alive and
+   * wedged) is self-requeued, capped per head.
    *
-   * Never overlaps itself (integration review): a tick still running
+   * Never overlaps itself: a tick still running
    * — it awaits GitHub reads and, on the anomaly path, the round's measurement
    * — makes the next one a no-op, as the verdict sweep's per-file guards do
    * for it. */
@@ -3764,15 +3727,11 @@ export class VerdictWatcher {
     await this.flushStrandedWakes();
     for (const round of store.runningRounds()) {
       if (Date.parse(round.deadline_at) > nowMs) {
-        // lost-prompt net, well before the deadline: the round's
-        // inject was consumed (nothing pending, so the bridge is not merely
-        // retrying), no verdict is on disk, and the session's newest JSONL
-        // predates the round — the prompt never became a turn. Requeued
-        // through the SAME capped path, at most once per head here
-        // (deadline-time recovery keeps the rest of the budget). Sessions
-        // that were mid-recheck when the round arrived stay covered by the
-        // deadline path: their JSONL moved after round start, and guessing
-        // on an ambiguous signal would cancel live rounds.
+        // Lost-prompt net, well before the deadline: the round's inject was
+        // consumed (nothing pending, so the bridge is not merely retrying),
+        // no verdict is on disk, and the session's JSONL carries no receipt
+        // for the prompt. Redelivered first, then requeued through the same
+        // capped path (`maybeRequeueLostPrompt`).
         await this.maybeRequeueLostPrompt(round, nowMs);
         continue;
       }
@@ -3808,12 +3767,12 @@ export class VerdictWatcher {
       ) {
         const proof = await this.postingProof(round);
         if (proof.kind === "waiting") continue;
-        // integration review: the deadline honours the posted-tail
-        // grace the stage limits give. Settling here, minutes after the post,
-        // ended the round under a session still writing its tail — and the
-        // supervisor's terminal-round path then killed it, the session's own
-        // summary and pass telemetry lost with it. Past the grace it settles as
-        // before; a verdict file that lands within it is the sweep's.
+        // The deadline honours the posted-tail grace the stage limits give:
+        // settling minutes after the post would end the round under a session
+        // still writing its tail, and the supervisor's terminal-round path
+        // would then kill it, losing its summary and pass telemetry. Past the
+        // grace it settles; a verdict file that lands within it is the
+        // sweep's.
         if (
           (proof.kind === "skipped" || proof.kind === "confirmed") &&
           this.inPostedTailGrace(
@@ -3825,16 +3784,15 @@ export class VerdictWatcher {
         )
           continue;
         if (proof.kind === "skipped") {
-          // refused by guard 2, no verdict file by the deadline. Not
+          // Refused by guard 2, no verdict file by the deadline. Not
           // stuck, not failed — settled, and a late verdict file replays inertly.
           await this.settleGuardedNoop(round, proof.noop!, "deadline");
           continue;
         }
         if (proof.kind === "confirmed" && proof.receipt) {
-          // H1a: the review is on GitHub; the missing verdict file is
-          // settled from the receipt, never re-run (a rerun would post a
-          // second review). A receipt that does not say what was decided
-          // keeps the loud path it always had.
+          // The review is on GitHub; the missing verdict file is settled from
+          // the receipt, never re-run (a rerun would post a second review). A
+          // receipt that does not say what was decided keeps the loud path.
           const receipt = proof.receipt;
           const decision = decidedVerdictFromReceipt(receipt);
           if (!decision) {
@@ -3881,7 +3839,7 @@ export class VerdictWatcher {
         continue;
       }
       // A live session that provably never got the order: deliver it again
-      // rather than kill a healthy conversation (#5362). Only when redelivery
+      // rather than kill a healthy conversation. Only when redelivery
       // is spent or impossible does this fall through to the expensive path.
       if (stuck === "never_delivered" && (await this.recoverNeverDelivered(round))) continue;
       const expensive = stuck === "dead" || stuck === "alive_stuck" || stuck === "never_delivered";

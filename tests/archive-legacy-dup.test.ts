@@ -1,4 +1,4 @@
-// the legacy `archive/pr-<n>/session.jsonl` copies (docs/
+// The legacy `archive/pr-<n>/session.jsonl` copies (docs/
 // archiving.md §7.5, acceptance 7). `archiveSession` copied the newest JSONL
 // there at close — before the tmux kill, so it can be a strict byte-prefix of
 // the transcript. Once that transcript is archived and verified, a copy equal

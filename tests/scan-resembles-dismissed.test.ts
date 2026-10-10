@@ -1,12 +1,11 @@
-// A NEW FINDING THAT RESEMBLES A DISMISSED ONE SAYS SO (scan-loop). Round 7
-// of the self-scan re-raised a finding the operator had just dismissed
-// (memory-openviking store.ts, all-tags-removed sync, 7ff2ed7f) under a new
-// fingerprint because its wording shifted: exact matching missed it and the
-// near-duplicate fold only joins findings the same run sighted, never a
-// dismissed one from an earlier run. The store now runs the dedup's own
+// A new finding that resembles a dismissed one says so. A finding the
+// operator dismissed can come back under a new fingerprint when its wording
+// shifts: exact matching misses it, and the near-duplicate fold only joins
+// findings the same run sighted, never a dismissed one from an earlier run.
+// So the store runs the dedup's own
 // resemblance test (`nearDuplicate`: same file, same kind, near lines,
 // similar claim) against every DISMISSED finding when it stores a new one,
-// and flags a hit `resembles_dismissed: {fingerprint, reason}`. FLAG ONLY —
+// and flags a hit `resembles_dismissed: {fingerprint, reason}`. Flag only —
 // the new finding stays `new` (auto-dismissing it is a policy call nobody
 // has made) and the dismissed one is not touched. Driven at the
 // FindingsStore seam through the real rooted state port on a temp dir.

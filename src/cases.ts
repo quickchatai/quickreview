@@ -1,21 +1,23 @@
-// Finding CASES (S7): the knowledge outside the code, into the engine.
+// Finding cases: the knowledge outside the code, into the memory engine.
 //
 // WHAT. For every finding the reviewer POSTED that drew a human response or
 // reached a fate (any fate but `unknown`, which is the PR still being open),
 // the daemon keeps ONE case document in reviewer memory's
-// `finding-cases/` area (the §1 layout, src/memory/layout.ts): a header the
+// `finding-cases/` area (src/memory/layout.ts): a header the
 // learner can filter on — PR, rounds, lens ids, kind, severity, path and line
 // range, fate, dates, thread URL — and a body with the finding's claim and the
 // human replies in its thread, quoted as DATA and attributed by ROLE (the
 // PR's author / another reviewer), never by name. It is the context the
-// learner (S8) and the EOD curator read lessons out of; the companion searches
-// it too. No review round reads it: the round's context block searches
+// learner and the EOD curator read lessons out of; the companion searches
+// it too. No review round searches it: the round's context block searches
 // `experiences/` only (`ROUND_SEARCH_AREAS`), and a PR session's recall
 // (vendored patch 0008) and its memory tools (patch 0009) stay inside the
-// same areas, until S9 decides how lessons and cases are delivered.
+// same areas. Only the daemon's lesson selection finds cases, and only under
+// `[memory] delivery = "on"` are the selected ones quoted, as data, into the
+// main session's prompt.
 //
 // FROM WHAT. Only what the daemon already holds, read-only: `round_findings`
-// (the claim), the outcome capture's tables (src/outcomes.ts, S6 — the link
+// (the claim), the outcome capture's tables (src/outcomes.ts — the link
 // to the posted comment, the fate, the whole-review signals), `pr_comments`
 // (the human replies, by `in_reply_to_id`/`thread_id`) and `feedback_signals`
 // (a human deleting the bot's comment). A case is a pure render of those
@@ -76,35 +78,34 @@
 //      and marked done as `unread` — re-queued at the next start and daily,
 //      like a given-up case.
 //   4. WRITE — up to `batch` owed cases (2), oldest owed first, one
-//      batch-write — and never STARTED while a review round is reading memory
-//      (F2, `rounds`): every case is embedded on the server's one
+//      batch-write — and never started while a review round is reading memory
+//      (`rounds`): every case is embedded on the server's one
 //      local-embedder thread (~3.4 s each on the live VM), the thread a
 //      round's seed and lesson finds wait on, so the write waits for the
 //      rounds (at most `yieldWaitMs`) and gives the tick up past that — or
 //      when memory health no longer reads healthy after the wait. A batch it
 //      sends is reported to the same tracker (`embeddingSent`) with its
-//      EMBEDDING TAIL — `embedTailMsPerCase` a case, counted from the write's
+//      embedding tail — `embedTailMsPerCase` a case, counted from the write's
 //      return, since the server embeds a written batch after it answers — so
 //      a round seed that starts inside it waits for it, within its own
-//      budget (H3).
-// Steps 2–4 run ONLY while memory health (S1) reads `healthy`: a write into
+//      budget.
+// Steps 2–4 run only while memory health reads `healthy`: a write into
 // memory that is down is just another failure, and a backfill feeding a
 // queue nobody can drain is just load. A case is derived data — state.db
 // keeps everything it says — so a case memory refuses is retried (and given
 // up on after `maxAttempts`, then re-queued at the next start and daily),
 // never a wake.
 //
-// HISTORY WAITS FOR QUIET (H3). While any review round is running or
+// HISTORY WAITS FOR QUIET. While any review round is running or
 // queued to dispatch (`reviews`), steps 2 and 3 do not run and step 4 writes
 // LIVE cases only: each owed case remembers which step made it owed
 // (`origin`), and live is `sync` — step 1, the outcome capture having
 // re-captured its PR because something moved. Everything else — what the
 // backfill or the late activity owes, and a case owed before the column
-// existed (origin unknown) — waits until no round is in flight. On
-// 2026-10-08 the batches that put three round seeds behind their embeddings
-// were all backfill (one of them for a PR still open, which is why "live"
-// is the step, not the PR's state); a window that opens at the seed could
-// not stop a batch sent a few seconds before it. Nothing is lost: the cases
+// existed (origin unknown) — waits until no round is in flight. "Live" is
+// the step, not the PR's state: a backfill case of a PR still open is
+// history too. A memory-activity window that opens at a round's seed cannot
+// stop a batch sent a few seconds before it; this hold can. Nothing is lost: the cases
 // stay owed, and the steps resume the first tick no round is in flight. An
 // answer `reviews` cannot give is UNKNOWN and holds the history the same way
 // — never read as "none in flight".
@@ -135,7 +136,7 @@ export const CASE_KIND = "case";
 export const CASE_WITHDRAWN = "withdrawn";
 
 /** The fates a finding REACHES — every fate but `unknown`, which is the PR
- * still being open (S6). `open_at_close` is one: the PR closed with the
+ * still being open. `open_at_close` is one: the PR closed with the
  * finding unanswered and no evidence either way, which is what became of it
  * all the same ("ignored, then merged"). A finding whose fate is still
  * `unknown` gets a case only once a human answers it. */
@@ -159,19 +160,16 @@ export const PROBE_EXPECT = `sha256:${"0".repeat(64)}`;
 
 export const CASE_DEFAULTS = Object.freeze({
   intervalMs: 120_000,
-  /** Cases written per tick — ONE batch-write. Paced by EMBEDDING cost, not
+  /** Cases written per tick — ONE batch-write. Paced by embedding cost, not
    * by request count: every case is embedded in full on the server's one
-   * local-embedder thread (S4), and a review round's memory seed and lesson
+   * local-embedder thread, and a review round's memory seed and lesson
    * finds, a PR session's 500 ms recall and the supervisor's `/ready` probe
-   * wait on that same thread. The integration review cut twenty to five
-   * (0.5–0.75 s a case on a quiet machine); on the live VM's throttled two
-   * CPUs a case measured ~3.4 s (2026-10-07), so five held the embedder
-   * ~17 s and the first rounds after the S9 deploy got 1–9 of their lesson
-   * finds inside 2 s. Two hold it ~7 s — and no batch STARTS while a round
-   * reads memory (`rounds`, F2). */
+   * wait on that same thread. On the live VM's throttled two CPUs a case
+   * costs ~3.4 s, so two hold the embedder ~7 s — and no batch starts while
+   * a round reads memory (`rounds`). */
   batch: 2,
   /** How long a tick's write waits for the rounds reading memory to finish
-   * before it gives the tick up (F2): longer than a round's seed, its
+   * before it gives the tick up: longer than a round's seed, its
    * handoff and its shadow selection together (≤ 3 s + a few s + ≤ 20 s). */
   yieldWaitMs: 30_000,
   backfillDays: 60,
@@ -195,8 +193,8 @@ export const CASE_DEFAULTS = Object.freeze({
   backfillRetryMs: 30 * 60_000,
   /** PRs outside the capture window caught up per tick (step 2). */
   latePrsPerTick: 5,
-  /** The EMBEDDING TAIL a written case is estimated to cost after the write
-   * returns (H3): ~3.4 s a case on the live VM, 8–29 s a call under
+  /** The embedding tail a written case is estimated to cost after the write
+   * returns: ~3.4 s a case on the live VM, 8–29 s a call under
    * CPU throttling. `[memory] case_embed_tail_ms`; 0 turns the tail off. */
   embedTailMsPerCase: 4000,
 });
@@ -289,11 +287,11 @@ export interface FindingCaseRow {
   owed_since: string | null;
   written_at: string | null;
   updated_at: string;
-  /** The step that last made it owed (H3); null = before the column. */
+  /** The step that last made it owed; null = owed before the column existed. */
   origin: CaseOrigin | null;
 }
 
-/** Which step of the tick made a case owed (H3): `sync` (step 1 —
+/** Which step of the tick made a case owed: `sync` (step 1 —
  * the outcome capture re-captured its PR) is LIVE; `late` (step 2) and
  * `backfill` (step 3) are HISTORY, written only while no review round is in
  * flight. */
@@ -330,7 +328,7 @@ export function caseDigest(text: string): string {
 
 /** A header value: no whitespace (the tag grammar's one rule) and no
  * control byte — a PR author names its files, and git allows an ESC or a
- * BEL in a file name; neither may reach memory raw (integration review). */
+ * BEL in a file name; neither may reach memory raw. */
 export function tagValue(v: string): string {
   return v
     .trim()
@@ -672,8 +670,8 @@ export function renderCase(c: CaseFacts): string {
       .map((m) => `; posted again in ${postingLine(m)}`)
       .join("")}.`,
   );
-  // A row recorded before S6 carries no title: the posted comment's first
-  // line (its tags and title, as S6 kept it) stands in for one.
+  // A row recorded without a title: the posted comment's first line (its
+  // tags and title, as the outcome capture kept it) stands in for one.
   const title = r.title && r.title.trim() !== "" ? r.title : (root.comment?.head ?? null);
   const claim = [title, r.reason].filter((x): x is string => !!x && x.trim() !== "").join("\n\n");
   if (claim) {
@@ -786,17 +784,17 @@ export interface CaseTick {
   /** Memory was not healthy: nothing was backfilled or written. */
   held: boolean;
   /** A review round was still reading memory when the tick's wait for it
-   * ran out (F2): no batch started; the next tick tries again. */
+   * ran out: no batch started; the next tick tries again. */
   yielded: boolean;
   /** A review round was running or queued to dispatch, or that could not be
-   * read (H3): the late activity and backfill steps did not run, and
+   * read: the late activity and backfill steps did not run, and
    * only LIVE cases (owed by the sync step) could be written. */
   reviewsActive: boolean;
   /** Cases owed after the tick. */
   owed: number;
 }
 
-/** Review rounds in flight (H3) — `reviewsInFlight` in
+/** Review rounds in flight — `reviewsInFlight` in
  * src/dispatch.ts: running, and queued for the pump to dispatch. */
 export interface CaseReviewActivity {
   running: number;
@@ -813,15 +811,15 @@ export interface CaseWriterDeps {
   /** `owner/repo` — the thread URLs. */
   repo: string;
   botLogin: string;
-  /** Backfill and write ONLY while this is true — memory health (S1). */
+  /** Backfill and write only while this is true — memory health. */
   healthy: () => boolean;
-  /** Is a review round reading memory? (F2, src/memory/
-   * roundactivity.ts.) No batch STARTS while one is: the write waits for
+  /** Is a review round reading memory? (src/memory/roundactivity.ts.)
+   * No batch starts while one is: the write waits for
    * them, at most `yieldWaitMs`, then gives the tick up. Absent ⇒ never
    * held. */
   rounds?: RoundActivityGate;
   yieldWaitMs?: number;
-  /** Review rounds running or queued to dispatch (H3). While any is,
+  /** Review rounds running or queued to dispatch. While any is,
    * the late-activity and backfill steps wait, and the write takes LIVE
    * cases only. Absent ⇒ never held. Must not throw; an answer it cannot
    * give — a throw, or counts that are not numbers — is UNKNOWN, logged, and
@@ -916,8 +914,8 @@ export class CaseWriter {
       embedTailMsPerCase: finiteAtLeast0(deps.embedTailMsPerCase, d.embedTailMsPerCase),
     };
     this.store.db.exec(SCHEMA);
-    // H3: a ledger from before the origin column gains it; its owed
-    // rows read as history (NULL) until a step owes them again.
+    // A ledger from before the origin column gains it; its owed rows read as
+    // history (NULL) until a step owes them again.
     const cols = this.store.db.prepare("PRAGMA table_info(finding_cases)").all() as Array<{
       name: string;
     }>;
@@ -999,7 +997,7 @@ export class CaseWriter {
     if (!healthy) out.held = true;
     else {
       this.requeueGivenUp();
-      // H3: history waits while a review round is in flight.
+      // History waits while a review round is in flight.
       if (!this.reviewsActive(out)) {
         await this.catchUpLate(out);
         await this.backfill(out);
@@ -1017,9 +1015,9 @@ export class CaseWriter {
         conflicts: out.conflicts,
         blocked: out.blocked,
         failed: out.failed,
-        // F2: a review round kept reading memory past the wait.
+        // A review round kept reading memory past the wait.
         yielded: out.yielded,
-        // H3: only live cases could be written this tick.
+        // Only live cases could be written this tick.
         reviews_active: out.reviewsActive,
         owed: out.owed,
       });
@@ -1027,7 +1025,7 @@ export class CaseWriter {
   }
 
   /**
-   * Is a review round running or queued to dispatch (H3)? Asked at
+   * Is a review round running or queued to dispatch? Asked at
    * the tick's start, before every late or backfill PR and right before the
    * write picks its rows (with nothing awaited between that and the send).
    * An answer the predicate cannot give is UNKNOWN and holds the history
@@ -1085,9 +1083,9 @@ export class CaseWriter {
     return n;
   }
 
-  /** `syncCaptured` as the tick runs it: one PR per event-loop turn. Fifty
-   * PRs rendered and diffed back to back were one ~60 ms span on a desktop
-   * core, more on the VM's (boot stall). Same rows, same order. */
+  /** `syncCaptured` as the tick runs it: one PR per event-loop turn, because
+   * fifty PRs rendered and diffed back to back block the loop for ~60 ms or
+   * more. Same rows, same order. */
   async syncCapturedPaced(): Promise<number> {
     let n = 0;
     for (const r of this.capturedToSync()) {
@@ -1435,13 +1433,13 @@ export class CaseWriter {
       }
       return;
     }
-    // F2: no batch STARTS while a review round reads memory — every
+    // No batch starts while a review round reads memory — every
     // case is a ~3.4 s embedding on the one-thread embedder the round's seed
     // and lesson finds wait on. Wait for the rounds first (bounded), THEN
     // pick the rows and send them with no await in between, so nothing a
     // round opened during the wait is overtaken.
     if (!this.hasOwed()) return;
-    // H3: nothing but history owed while a round is in flight —
+    // Nothing but history owed while a round is in flight —
     // nothing to send, so nothing to wait for.
     if (this.reviewsActive(out) && this.liveOwedRows().length === 0) return;
     const waited = this.roundsBusy();
@@ -1466,7 +1464,7 @@ export class CaseWriter {
       );
       return;
     }
-    // H3: with a review round in flight, LIVE cases only — asked
+    // With a review round in flight, live cases only — asked
     // here, synchronously before the send, so a round queued during the
     // backfill's reads still holds the history back.
     const rows = this.reviewsActive(out) ? this.liveOwedRows() : this.owedRows();
@@ -1482,7 +1480,7 @@ export class CaseWriter {
     }));
     let results: DocumentPutResult[];
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // H3: tell the tracker a batch is out; when it settles, how long
+    // Tell the tracker a batch is out; when it settles, how long
     // the server is estimated to go on embedding it.
     const settleTail = this.embeddingSent();
     try {
@@ -1621,7 +1619,7 @@ export class CaseWriter {
     })();
   }
 
-  /** Memory health (S1) right now. Total: a throw reads not healthy. */
+  /** Memory health right now. Total: a throw reads not healthy. */
   private healthyNow(): boolean {
     try {
       return this.deps.healthy() === true;
@@ -1630,7 +1628,7 @@ export class CaseWriter {
     }
   }
 
-  /** Is a review round reading memory right now? (F2.) Total: a
+  /** Is a review round reading memory right now? Total: a
    * gate that throws holds nothing. */
   private roundsBusy(): boolean {
     const gate = this.deps.rounds;
@@ -1673,7 +1671,7 @@ export class CaseWriter {
       .all(this.cfg.batch) as FindingCaseRow[];
   }
 
-  /** The next batch while a review round is in flight (H3): the
+  /** The next batch while a review round is in flight: the
    * oldest owed LIVE cases — owed by step 1 (`origin = 'sync'`). */
   private liveOwedRows(): FindingCaseRow[] {
     return this.store.db
@@ -1683,7 +1681,7 @@ export class CaseWriter {
       .all(this.cfg.batch) as FindingCaseRow[];
   }
 
-  /** Tell the round-activity tracker a batch is out (H3); the
+  /** Tell the round-activity tracker a batch is out; the
    * returned function settles it with its tail. Total: a tracker without the
    * method, or one that throws, holds nothing. */
   private embeddingSent(): (tailMs: number) => void {

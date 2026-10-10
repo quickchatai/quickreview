@@ -1,9 +1,7 @@
-// The TUI's eight surfaces (built; `scan`), in the order their digit
-// keys reach them. One vocabulary, applied everywhere: the identifier here IS
-// the label on the nav bar, the word in the help overlay, the tab name the
-// companion's `switch_tab` verb accepts, and the heading in docs/tui.md. The
-// old `[2]` tab was called `digest` in code, "memory & learning" on screen and
-// `memory` on the action channel; that drift is what this module ends.
+// The TUI's eight surfaces, in the order their digit keys reach them. One
+// vocabulary, applied everywhere: the identifier here IS the label on the nav
+// bar, the word in the help overlay, the tab name the companion's `switch_tab`
+// verb accepts, and the heading in docs/tui.md.
 //
 //   board     what the reviewer is doing right now, PR by PR
 //   memory    the reviewer's durable store — the timeline, day by day

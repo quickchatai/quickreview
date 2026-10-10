@@ -1,4 +1,4 @@
-// The embedder migration's DAEMON half: re-embed reviewer memory
+// The embedder migration's daemon half: re-embed reviewer memory
 // after the boot's `prepare` step reset the vector collection.
 //
 // ONE IMPLEMENTATION, NOT A SECOND ONE. `scripts/openviking-reembed.mjs` owns
@@ -206,7 +206,7 @@ export class ReembedDriver {
   /** config.toml's declared embedder against the one ov.conf actually runs.
    * Both sides are spelled the way ov.conf spells them (`ovConfEmbedder`):
    * `local` is the engine's OpenAI-compatible provider at the local
-   * embedder's loopback `api_base` (S4), so the `api_base` is part of
+   * embedder's loopback `api_base`, so the `api_base` is part of
    * the comparison — the record alone cannot tell the loopback service from a
    * hosted model of the same name. */
   private checkDrift(): void {

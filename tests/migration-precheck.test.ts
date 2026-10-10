@@ -317,8 +317,8 @@ describe("migration collision pre-check", () => {
   );
 
   it("suppresses the repost however many events sit in between", () => {
-    // Regression guard: the dedupe used to read the newest 10 events only, so
-    // a PR with a busier log quietly started reposting the same comment.
+    // The dedupe reads the whole log for the PR, not a recent window — a
+    // bounded window lets a busy PR repost the same comment.
     store.logEvent("migration_collision_comment", 51, { fingerprint: "fp-old" });
     for (let i = 0; i < 40; i++)
       store.logEvent("migration_collision_comment", 51, { fingerprint: `fp-${i}` });
@@ -327,7 +327,7 @@ describe("migration collision pre-check", () => {
     expect(store.migrationCollisionCommented(52, "fp-old")).toBe("not_commented"); // scoped per PR
   });
 
-  // the third answer. `unknown` is a comment row this code cannot
+  // The third answer. `unknown` is a comment row this code cannot
   // read: a comment WAS posted, at a fingerprint nobody can recover, so "never
   // commented" is not a claim the log supports.
   it("an unreadable comment row answers UNKNOWN — neither 'commented' nor 'never commented'", () => {
@@ -618,7 +618,7 @@ describe("migration collision pre-check", () => {
     },
   );
 
-  // acceptance: "more reliable, never quieter". The three degraded
+  // "More reliable, never quieter": the three degraded
   // paths must each leave SOMEBODY holding the collision class — the gate note
   // when detection ran, the session itself when it did not.
   it(
@@ -652,7 +652,7 @@ describe("migration collision pre-check", () => {
       // The collisions were computed and logged — they are not thrown away with
       // the failed COMMENT: the session's gate note still carries them. And it
       // does NOT claim the remedy was posted: nobody told the author, so the
-      // session carries it this round (selfscan-2, "never quieter").
+      // session carries it this round ("never quieter").
       expect(orders[0]?.migration_collisions).toHaveLength(1);
       expect(orders[0]?.migration_collisions_undelivered).toBe(true);
       expect(prompts[0]).not.toContain("ALREADY HANDLED, DO NOT RAISE IT");
@@ -673,8 +673,8 @@ describe("migration collision pre-check", () => {
       adapter.files = [file("backend/chat/migrations/0042_x.py")];
       const prompts: string[] = [];
       const overseer: string[] = [];
-      // Mirror daemon.ts's wiring: the degraded pre-check wake now flows
-      // through the store's anomaly sink rather than a call-site inject.
+      // Mirror daemon.ts's wiring: the degraded pre-check wake flows through
+      // the store's anomaly sink rather than a call-site inject.
       const policy = new AnomalyWakePolicy({
         injectOverseer: async (m) => {
           overseer.push(m);
@@ -710,7 +710,7 @@ describe("migration collision pre-check", () => {
       );
       // The degraded case is an overseer anomaly, on the existing inject channel.
       expect(overseer.join("\n")).toContain("migration-precheck");
-      // and a durable, queryable anomaly record beside the wake.
+      // And a durable, queryable anomaly record beside the wake.
       const anomalies = store.anomalies();
       expect(anomalies).toHaveLength(1);
       expect(anomalies[0]).toMatchObject({
@@ -762,8 +762,8 @@ describe("migration collision pre-check", () => {
       adapter.files = [file("backend/chat/views.py", "modified")];
       const prompts: string[] = [];
       const overseer: string[] = [];
-      // Mirror daemon.ts's wiring: the degraded pre-check wake now flows
-      // through the store's anomaly sink rather than a call-site inject.
+      // Mirror daemon.ts's wiring: the degraded pre-check wake flows through
+      // the store's anomaly sink rather than a call-site inject.
       const policy = new AnomalyWakePolicy({
         injectOverseer: async (m) => {
           overseer.push(m);

@@ -1,4 +1,4 @@
-// the dispatch levers are bounded for a SESSION and untouched for
+// The dispatch levers are bounded for a SESSION and untouched for
 // the OPERATOR, and the two are told apart structurally.
 //
 //   * A session-issued drain / pause-pr ALWAYS carries an expiry and ALWAYS
@@ -949,7 +949,7 @@ describe("CommandWatcher over commands/operator/", () => {
     writeFileSync(join(opDir(), "d4.json"), JSON.stringify({ command: "drain", on: true }));
     await swept;
     w.stop();
-    // MUTATION: decide the issuer before the read (the old order) — this fails.
+    // MUTATION: decide the issuer before the read — this fails.
     expect(issuers).toContain("session");
     expect(issuers).not.toContain("operator");
   });

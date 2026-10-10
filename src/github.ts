@@ -28,9 +28,9 @@ export interface PrRef {
   /** The branch the PR targets (`base.ref`) — what the review compares against
    * and the branch the worktree keeps fresh each round. */
   base_ref: string;
-  /** The PR description: pass-intent's whole intent artifact and
-   * the substance-bar input. Optional so long-standing PrRef fakes stay
-   * valid; the real adapter always sets it ("" when GitHub returns null). */
+  /** The PR description: pass-intent's whole intent artifact and the
+   * substance-bar input. Optional so test fakes of PrRef stay valid; the real
+   * adapter always sets it ("" when GitHub returns null). */
   body?: string;
   updated_at: string;
   state: "open" | "closed";
@@ -73,7 +73,7 @@ export interface ReviewFull {
   id: number;
   user: string;
   /** GitHub's account type ("User" | "Bot") — the human/bot discriminator the
-   * capture sweep filters on. Optional: older callers never read it. */
+   * feedback capture sweep filters on. Optional: not every caller reads it. */
   user_type?: string;
   state: string;
   body: string;
@@ -93,10 +93,10 @@ export interface ReviewCommentFull {
   in_reply_to_id: number | null;
   /** When GitHub authored it. Optional for the same reason. */
   created_at?: string | null;
-  /** The line in the commit the comment was POSTED on. `line` follows the
+  /** The line in the commit the comment was posted on. `line` follows the
    * diff as the branch moves (and goes null once outdated); this does not, so
-   * it is what the outcome capture matches a finding's anchor by (
-   * S6). Optional: older callers never read it. */
+   * it is what the outcome capture matches a finding's anchor by. Optional:
+   * not every caller reads it. */
   original_line?: number | null;
 }
 
@@ -115,8 +115,8 @@ function toReviewCommentFull(c: any): ReviewCommentFull {
   };
 }
 
-/** One top-level PR conversation comment (the issues API). Read-only, added
- * for the capture sweep. */
+/** One top-level PR conversation comment (the issues API). Read-only; read by
+ * the feedback capture sweep. */
 export interface IssueCommentFull {
   id: number;
   user: string;
@@ -337,8 +337,8 @@ export class GitHubAdapter {
   }
 
   /** The mutation executor the gate runs when it decides a mutation is real —
-   * every kind in live mode, and the app-self-config class in
-   * dry-run too. The gate, never a call site, makes that decision. */
+   * every kind in live mode, and the app-self-config class in dry-run too.
+   * The gate, never a call site, makes that decision. */
   executeMutation = async (intent: MutationIntent): Promise<unknown> => {
     if (intent.method === "git")
       throw new Error("git pushes are executed by the caller, not the REST executor");
@@ -353,7 +353,7 @@ export class GitHubAdapter {
       }
       return this.graphql(body.query, body.variables as Record<string, unknown>);
     }
-    // App-self-config intents address the App's OWN configuration:
+    // App-self-config intents address the App's own configuration:
     // GitHub authenticates those routes with the App JWT, not an installation
     // token — the same auth split request() already carries for the
     // /app/hook/deliveries read.
@@ -388,7 +388,7 @@ export class GitHubAdapter {
     return { rows, truncated: true };
   }
 
-  /** Paginated issue search — read-only, used by the history importer (M2).
+  /** Paginated issue search — read-only, used by the history importer.
    * Stops on a short page or after `maxPages` (search caps at 1,000 hits). */
   async searchIssuesPaged(q: string, maxPages = 10): Promise<SearchIssueItem[]> {
     const out: SearchIssueItem[] = [];
@@ -405,8 +405,8 @@ export class GitHubAdapter {
   }
 
   /** One read-only GraphQL query per PR: the reviews `author` submitted plus
-   * the timeline items the backfill importer reconstructs triggers from
-   * (§1.1). Returns null when the PR is gone. */
+   * the timeline items the backfill importer reconstructs triggers from.
+   * Returns null when the PR is gone. */
   async prReviewHistory(n: number, author: string): Promise<PrReviewHistory | null> {
     const data = await this.graphql<{ repository?: { pullRequest?: RawPrHistory | null } | null }>(
       `query ($owner: String!, $repo: String!, $number: Int!, $author: String!) {
@@ -480,8 +480,8 @@ export class GitHubAdapter {
     };
   }
 
-  /** One read-only GraphQL query per PR for the review history digest
-   *: EVERY author's reviews, each with its inline comments, and the
+  /** One read-only GraphQL query per PR for the review history digest:
+   * every author's reviews, each with its inline comments, and the
    * author's type so the digest can keep people and drop Apps. Returns null
    * when the PR is gone. */
   async prReviews(n: number): Promise<PrReviews | null> {
@@ -575,7 +575,7 @@ export class GitHubAdapter {
   }
 
   /** PRs carrying the trigger label. Bot-authored PRs are excluded — the app
-   * can never approve its own PRs (§2). */
+   * can never approve its own PRs. */
   async searchLabelTriggered(): Promise<SearchIssueItem[]> {
     const q = `repo:${this.cfg.github.repo} is:open is:pr label:"${this.cfg.github.trigger_label}" -author:app/${this.cfg.github.app_slug}`;
     return this.searchIssues(q);
@@ -586,10 +586,6 @@ export class GitHubAdapter {
     const q = `repo:${this.cfg.github.repo} is:open is:pr team-review-requested:${this.cfg.github.review_team} -author:app/${this.cfg.github.app_slug}`;
     return this.searchIssues(q);
   }
-
-  // searchAwaitingEscalationReviewer() was removed on 2026-08-18 with the rest
-  // of the escalation mechanics: nothing requests a reviewer any more, so
-  // scanning for one told the reconcile pass nothing it owns.
 
   // ---- authoritative per-PR reads ----------------------------------------
 
@@ -654,7 +650,7 @@ export class GitHubAdapter {
     }
   }
 
-  /** Read-only conversation surface for the TUI detail pane (QOL):
+  /** Read-only conversation surface for the TUI detail pane:
    * PR description, labels, and the newest issue comments, oldest-first.
    *
    * The per-issue comments endpoint ignores `sort`/`direction` (those belong
@@ -826,8 +822,8 @@ export class GitHubAdapter {
     }));
   }
 
-  /** Top-level PR conversation comments — read-only, the sweep's
-   * third source (the issues API is where GitHub keeps them). */
+  /** Top-level PR conversation comments — read-only, the feedback capture
+   * sweep's third source (the issues API is where GitHub keeps them). */
   async listIssueComments(n: number): Promise<IssueCommentFull[]> {
     const { rows: res, truncated } = await this.pagedArray<any>(
       `/repos/${this.owner}/${this.repo}/issues/${n}/comments?per_page=100`,
@@ -872,11 +868,11 @@ export class GitHubAdapter {
     return res.filter((c) => c.user?.login === this.cfg.github.bot_login).map((c) => c.id);
   }
 
-  // ---- staleness scan (GraphQL, ported query) ----------------------------
+  // ---- staleness scan (GraphQL) -------------------------------------------
 
-  /** Open PRs whose latest bot APPROVED review no longer matches the head.
-   * Ported from the old flow: `first: 100`, `UPDATED_AT DESC`, review author
-   * the configured `[github] bot_login`. */
+  /** Open PRs whose latest bot APPROVED review no longer matches the head:
+   * `first: 100`, `UPDATED_AT DESC`, review author the configured
+   * `[github] bot_login`. */
   async stalenessScan(): Promise<StalePr[]> {
     const q = `repo:${this.cfg.github.repo} is:pr is:open sort:updated-desc`;
     const data = await this.graphql<{
@@ -930,7 +926,7 @@ export class GitHubAdapter {
     return this.request("GET", `/app/hook/deliveries?per_page=${perPage}`, undefined, "jwt");
   }
 
-  // ---- the App's own webhook configuration ---------------------
+  // ---- the App's own webhook configuration -------------------------------
 
   /** The App's own webhook config — the self-heal's read-back source. Direct
    * JWT read, like the deliveries listing above. */
@@ -950,8 +946,8 @@ export class GitHubAdapter {
 
   /**
    * Re-point the App's OWN webhook URL (`PATCH /app/hook/config`, JWT-authed).
-   * The one member of the app-self-config gate class (ratified rule-1
-   * amendment, the owner, 2026-08-30): it touches only the App's own
+   * The one member of the app-self-config gate class (CLAUDE.md rule 1): it
+   * touches only the App's own
    * configuration, never the reviewed repo, and the gate executes it for real
    * even in dry-run — loudly logged, with the note naming old and new URL.
    */
@@ -989,9 +985,8 @@ export class GitHubAdapter {
       });
     } catch (err) {
       // Removing an already-absent label is the outcome we wanted — GitHub's
-      // 404 ("Label does not exist") is idempotent success, not an error.
-      // Recurring live noise: a label consumed by an earlier failed-dispatch
-      // cycle 404s on the retry (#5309/#5314, 2026-08-19).
+      // 404 ("Label does not exist") is idempotent success, not an error —
+      // e.g. a label consumed by an earlier failed-dispatch cycle.
       if (String(err).includes("404"))
         return { executed: false, response: { already_absent: label } };
       throw err;
@@ -1017,12 +1012,11 @@ export class GitHubAdapter {
   }
 
   /**
-   * Put ONE named person in this PR's review-requested queue — the second
-   * delivery shape of the optional escalation feature (the ratified
-   * rule-10 amendment of 2026-08-31). Removed on 2026-08-18 with the old
-   * escalation mechanics; back as an ordinary gated mutation.
+   * Put named people in this PR's review-requested queue — the second
+   * delivery shape of the optional escalation feature (CLAUDE.md rule 10), an
+   * ordinary gated mutation.
    *
-   * Three things this is NOT, and none of them changed:
+   * Three things this is not:
    *   * It is not a way to hand the review back. `src/escalation.ts` calls it
    *     only after the round's verdict has been decided and applied, and only
    *     alongside a comment that names the ONE thing being asked about —
@@ -1175,28 +1169,28 @@ export class GitHubAdapter {
         `refusing to resolve thread ${rootCommentId} on #${n}: root author is ${found.author || "unknown"}`,
       );
     }
-    // addendum (the owner, 2026-08-19): a "[check this]" thread exists to
-    // force a human's eyes before merge (repo rule: every conversation must be
-    // resolved). The reviewer NEVER resolves one — author or another human only.
+    // A "[check this]" thread exists to force a human's eyes before merge (repo
+    // rule: every conversation must be resolved). The reviewer never resolves
+    // one — the author or another human only.
     if (CHECK_THIS_RE.test(found.body)) return { skipped: "check-this-human-only" };
-    // (the owner, deferral economics): a "[deferred]" thread says this
-    // finding is real and this PR is not where it gets fixed. If the author
-    // ignores the drafted ticket, the reviewer must not be able to tidy the
-    // thread away — that would make a deferral free again, which is the exact
-    // thing this mechanism exists to stop. So it takes the same structural
-    // refusal as "[check this]", and the repo's merge rule (every conversation
-    // resolved) puts a person in front of it. Distinct marker, distinct reason
-    // string: the two are never conflated, here or anywhere.
+    // A "[deferred]" thread says this finding is real and this PR is not where
+    // it gets fixed. If the author ignores the drafted ticket, the reviewer
+    // must not be able to tidy the thread away — that would make a deferral
+    // free again, which is the exact thing this mechanism exists to stop. So it
+    // takes the same structural refusal as "[check this]", and the repo's merge
+    // rule (every conversation resolved) puts a person in front of it. Distinct
+    // marker, distinct reason string: the two are never conflated, here or
+    // anywhere.
     if (DEFERRED_RE.test(found.body)) return { skipped: "deferred-human-only" };
-    // an "[ask your human]" thread is deliberately NOT refused here.
-    // It is the sibling marker, not a second spelling of the one above: it
-    // addresses the PR author's AI implementer ("do not answer this yourself —
-    // ask a person and bring the answer back"), so what a human owes the thread
-    // is the ANSWER, not the resolution. The owner rejected borrowing the
-    // human-only machinery for it (§5: it "forces a person into every
-    // thread"), and the ordinary path already lands in the right place — the
-    // only caller is ping-pong, so the bot resolves such a thread only after
-    // the author replied and the session judged the reply settles it. Rule 2 is
+    // An "[ask your human]" thread is deliberately not refused here. It is the
+    // sibling marker, not a second spelling of the one above: it addresses the
+    // PR author's AI implementer ("do not answer this yourself — ask a person
+    // and bring the answer back"), so what a human owes the thread is the
+    // answer, not the resolution. Making it human-only would force a person
+    // into every such thread, and the ordinary path already lands in the right
+    // place — the only caller is ping-pong, so the bot resolves such a thread
+    // only after the author replied and the session judged the reply settles
+    // it. Rule 2 is
     // unaffected: this resolves the bot's OWN finding thread and never
     // dismisses or edits any review, anyone's.
     if (found.isResolved) return { skipped: "already-resolved" };

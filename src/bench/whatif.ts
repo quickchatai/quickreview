@@ -16,7 +16,7 @@
 // gets its lens's own claim text back), and composes the scorer's input for
 // four variants:
 //
-//   posted          exactly today's results/all (the control)
+//   posted          exactly the run's own results/all (the control)
 //   posted+killed   + every candidate the validator KILLED
 //   posted+merged   + every MERGED / FOLDED candidate, as its own comment
 //   all-candidates  every raw lens candidate (validator excluded), deduped
@@ -500,7 +500,7 @@ export type WhatifVariant = (typeof WHATIF_VARIANTS)[number];
 /** Which record dispositions each posted+ variant adds. */
 export const ADDED_DISPOSITIONS: Record<WhatifVariant, readonly string[]> = {
   posted: [],
-  // a doubted finding is a validator veto kept as a mark.
+  // A doubted finding is a validator veto kept as a mark.
   "posted+killed": ["killed", "doubted"],
   "posted+merged": ["merged", "folded"],
   "all-candidates": [],

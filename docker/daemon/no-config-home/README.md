@@ -5,7 +5,7 @@ The default source of the daemon container's read-only `config-home` mount
 compose run by hand, before the onboarding bring-up step has written one.
 
 It deliberately holds no `config.toml`. The container reads no other config —
-the sandbox's own `config.toml` stopped being a fallback with — so a
+the checkout's own `config.toml` is never a fallback — so a
 stack started on this default fails its boot naming the missing file, which
 is the honest answer: set `QCR_CONFIG_HOME` in `.env` (or run the wizard's
 bring-up step). Defaulting to `~/.config/qcr/default` instead would have Docker

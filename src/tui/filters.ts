@@ -71,9 +71,9 @@ export function applyMemoryFilter<T extends Pick<MemoryEntry, "tags">>(
   return entries.filter((e) => e.tags.some((t) => normTag(t) === want));
 }
 
-/** The board's ONE filtered ordering — render, selection movement and the
+/** The board's one filtered ordering — render, selection movement and the
  * companion driver all derive rows from here, so a verb can never address a
- * row the filter hid (the wiring invariant). */
+ * row the filter hid. */
 export function visiblePrs(view: {
   snapshot?: { prs: SnapshotPr[] };
   boardFilter?: BoardFilter | null;

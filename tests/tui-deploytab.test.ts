@@ -127,10 +127,10 @@ describe("RealDeployFetcher", () => {
     expect(localCalls.some((c) => c.includes("log"))).toBe(false);
   });
 
-  // `cat … || true` swallows a missing marker into empty output, so
-  // an ok/empty answer is a VM with no marker; a failed exec is a VM we could
-  // not ask. The two used to collapse into one `undefined`, which the tab AND
-  // the companion feed both read as "no marker".
+  // `cat … || true` swallows a missing marker into empty output, so an
+  // ok/empty answer is a VM with no marker; a failed exec is a VM we could not
+  // ask. The two stay apart: neither the tab nor the companion feed may read
+  // an unasked VM as "no marker".
   it("an ssh that never answered is NOT a VM with no marker", async () => {
     const { f, localCalls } = fetcherWith(fail("ssh: connect timed out"), {
       [HEAD_ARGV.join(" ")]: ok("bbb2222\n"),

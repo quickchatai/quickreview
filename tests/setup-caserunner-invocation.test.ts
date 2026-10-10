@@ -1,9 +1,8 @@
 // piInvocation (src/setup/caserunner.ts) — how the case runner starts pi.
-// A live smoke scan found every case spawning the HOST script instead of pi:
-// the old rule reused `process.argv[1]` whenever that file existed, which is
-// true of any node host (a driver script, vitest, the TUI). argv[1] may now be
-// reused only when it is verifiably pi's own CLI entry — a `bin` of the pi
-// package — and everything else resolves to `pi` on the PATH.
+// `process.argv[1]` exists under any node host (a driver script, vitest, the
+// TUI), so reusing it blindly would spawn the host script instead of pi.
+// argv[1] is reused only when it is verifiably pi's own CLI entry — a `bin` of
+// the pi package — and everything else resolves to `pi` on the PATH.
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

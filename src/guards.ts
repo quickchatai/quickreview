@@ -1,49 +1,42 @@
-// Posting-time guards. Three refusals the predecessor system lacked,
-// each with a documented incident, all of them at the one moment that matters:
+// Posting-time guards, all applied at the one moment that matters:
 // immediately before a review reaches GitHub.
 //
-//   1. Never re-block a head a human already approved. PR 5180 went
-//      human-APPROVED and then took EIGHT bot CHANGES_REQUESTED reviews the
-//      next day on the same head, each saying "no new findings". A non-author
-//      human approval at the head under review downgrades the bot to a
-//      COMMENT: it still reports everything it found, it just stops holding
-//      the gate against a person who has already looked.
-//   2. No-op when there is no new evidence. 16% of the old bot's reviews
-//      (71/444) re-reviewed a commit it had already reviewed. The mark lives in
+//   1. Never re-block a head a human already approved. A non-author human
+//      approval at the head under review downgrades a REQUEST_CHANGES to a
+//      COMMENT: the bot still reports everything it found, it just stops
+//      holding the gate against a person who has already looked.
+//   2. No-op when there is no new evidence. The mark lives in
 //      `reviewed_heads` (state.ts): same head AND no author reply since ⇒ post
 //      nothing. The same mark is what the post-approval delta recheck reads.
-//   3. Re-check merged/closed state immediately before posting. Four sampled
-//      reviews landed at or after the merge — one approved 13 seconds after it.
-//   5. The live head must be the head the round actually reviewed
-//     . #5270 round 7 validated one head, the PR advanced
-//      immediately before posting, and the shell route re-read the CURRENT
-//      head and posted the stale review against it (recurred on #4844). On
-//      the gate route the intent's commit_id IS the reviewed head, so a
-//      mismatch with the guard-3 live read refuses; on the shell route the
-//      session exports QCR_EXPECTED_HEAD (cited by its round prompt) and
-//      guards.sh refuses the same way — a missing expectation only warns,
-//      so sessions on older prompts are never wedged.
-//   4. No green CI at this head ⇒ APPROVE is unavailable. The old
-//      bot improvised this rule eleven times, each approval arguing in prose
-//      that the red run did not count. The review still posts — as a COMMENT
-//      with the approval withheld and a plain note saying so — and the PR is
-//      re-queued when CI goes green. The classifier lives in cigate.ts, which
-//      the shell mirror answers from too.
+//   3. Re-check merged/closed state immediately before posting, so no review
+//      lands at or after a merge.
+//   5. The live head must be the head the round actually reviewed, so a push
+//      landing between a round's validation and its posting step never gets
+//      the stale review posted against it. On the gate route the intent's
+//      commit_id is the reviewed head, so a mismatch with the guard-3 live
+//      read refuses; on the shell route the session passes QCR_EXPECTED_HEAD
+//      (cited by its round prompt) and guards.sh refuses the same way — a
+//      missing expectation only warns there, so a session whose prompt does
+//      not set it is never wedged.
+//   4. No green CI at this head ⇒ APPROVE is unavailable. The review still
+//      posts — as a COMMENT with the approval withheld and a plain note saying
+//      so — and the PR is re-queued when CI goes green. The classifier lives
+//      in cigate.ts, which the shell mirror answers from too.
 //
-// All three are installed on the ONE MutationGate (gate.ts `MutationGuard`),
+// All of them are installed on the one MutationGate (gate.ts `MutationGuard`),
 // not on a call site, so no posting route in the daemon can reach GitHub
 // around them. The sessions post through the shell instead
 // (scripts/post-review.sh, approve-pr.sh, reply-thread.sh), which does not go
-// through the gate — `scripts/guards.sh` is the mirror for that route and it
-// carries ALL THREE, together with the reviewed-head stamp that the gate's
-// after-step makes on its own route. The two halves are deliberately kept
-// behaviourally identical: tests/guards.test.ts drives the real gate and
-// tests/guards-shell-*.test.ts runs the real scripts, over the same cases.
-// Guard coverage per shell route: post-review.sh 1+2+3 (it hard-rejects
-// APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4 — guards 1
-// and 2 do not apply to it (an approval is not softened for a human approval,
-// and gating it on evidence would strand the wake triggers this script
-// clears), but guard 4 is exactly about approvals, so it does — and
+// through the gate — `scripts/guards.sh` is the mirror for that route,
+// together with the reviewed-head stamp that the gate's after-step makes on
+// its own route. The two halves are kept behaviourally identical:
+// tests/guards.test.ts drives the real gate and tests/guards-shell-*.test.ts
+// runs the real scripts, over the same cases.
+// Guard coverage per shell route: post-review.sh 1+2+3+5 (it hard-rejects
+// APPROVE, so guard 4 has nothing to say there), approve-pr.sh 3+4+5 — guards
+// 1 and 2 do not apply to it (an approval is not softened for a human
+// approval, and gating it on evidence would strand the wake triggers this
+// script clears), but guard 4 is exactly about approvals, so it does — and
 // reply-thread.sh 3. On the shell route guard 4 REFUSES rather than softens:
 // approve-pr.sh can only approve, so the session posts its COMMENT through
 // post-review.sh instead, which is what the round template tells it to do.
@@ -177,11 +170,11 @@ export function downgradeForHumanApproval(
  */
 export function hasNewEvidence(mark: ReviewedHeadRow | undefined, headSha: string): boolean {
   if (!mark || !headSha) return true;
-  // A NEEDS_HUMAN/ESCALATE mark is an UNDECIDED review (legacy vocabulary,
-  // retired 2026-08-19): it must never suppress a re-run or a posting — a
-  // re-triggered PR with only an undecided mark deserves a full round. Read
-  // through the ONE standing-review interpretation, so this guard
-  // and dispatch's skip can never disagree about what the mark says.
+  // A NEEDS_HUMAN/ESCALATE mark (legacy vocabulary) is an undecided review:
+  // it must never suppress a re-run or a posting — a re-triggered PR with only
+  // an undecided mark deserves a full round. Read through the one
+  // standing-review interpretation, so this guard and dispatch's skip can
+  // never disagree about what the mark says.
   if (standingReview(mark).kind === "undecided") return true;
   if (mark.head_sha !== headSha) return true;
   // `>=`, not `>`: a reply stamped in the same millisecond as the review is
@@ -248,9 +241,9 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
         try {
           ref = await deps.adapter.getPr(pr);
         } catch (err) {
-          // Fail closed: an unverifiable PR state is exactly the case the four
-          // post-merge reviews came from. The session retries; reconcile
-          // re-derives the truth.
+          // Fail closed: an unverifiable PR state is exactly when a post-merge
+          // review could land. The session retries; reconcile re-derives the
+          // truth.
           return refuse(intent, pr, "pr-unreadable", { error: String(err) });
         }
         if (ref.merged) return refuse(intent, pr, "pr-merged");
@@ -263,9 +256,9 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
       const head = body.commit_id || ref?.head_sha || "";
 
       // --- guard 5: the head the review is about must still BE the head ---
-      // (#5270 round 7, recurred on #4844): a push landing
-      // between a round's validation and its posting step otherwise lands the
-      // stale review against the new head. Fires only where the data exists —
+      // A push landing between a round's validation and its posting step
+      // would otherwise land the stale review against the new head. Fires
+      // only where the data exists —
       // an intent without a commit_id carries no expectation, and without the
       // guard-3 read there is no live head to compare against. Shas compare
       // case-insensitively, matching the shell twin (guards.sh uses
@@ -285,17 +278,16 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
 
       // --- guard 2: has anything happened since the last review? ---
       //
-      // The escalation note is exempt, and ONLY it. Guard 2 exists to
-      // stop the bot RE-REVIEWING a head it already reviewed (71 of 444 in the
-      // predecessor). An escalation note is not a review of the head: it
-      // carries no verdict, claims no head (see `after` below), and by design
-      // lands right after the round's own review — i.e. always at a head the
-      // mark has just been stamped on, so guard 2 would suppress every one of
-      // them. Its duplicate-suppression is strictly narrower than guard 2's:
-      // the `escalations` ledger refuses the same person + the same thing on
-      // the same PR forever, and `[escalation] max_per_pr` caps the rest.
-      // Every other guard still binds it — merged/closed (3) and head drift
-      // (5) both ran above, unconditionally.
+      // The escalation note is exempt, and only it. Guard 2 exists to stop the
+      // bot re-reviewing a head it already reviewed. An escalation note is not
+      // a review of the head: it carries no verdict, claims no head (see
+      // `after` below), and by design lands right after the round's own review
+      // — i.e. always at a head the mark has just been stamped on, so guard 2
+      // would suppress every one of them. Its duplicate-suppression is strictly
+      // narrower than guard 2's: the `escalations` ledger refuses the same
+      // person + the same thing on the same PR forever, and `[escalation]
+      // max_per_pr` caps the rest. Every other guard still binds it —
+      // merged/closed (3) and head drift (5) both ran above, unconditionally.
       const mechanical = intent.reviewPurpose === "escalation";
       if (
         deps.guards.skip_unchanged_head &&
@@ -318,8 +310,8 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
             botLogin: deps.botLogin,
           });
         } catch (err) {
-          // A failed read must not block a review — the worst case here is the
-          // pre-guard behaviour, not a post-merge or duplicate review.
+          // A failed read must not block a review — the worst case here is an
+          // unsoftened review, not a post-merge or duplicate one.
           log(`guard: review listing failed on #${pr}`, err);
         }
         if (approver) {
@@ -363,8 +355,8 @@ export function makePostingGuard(deps: GuardDeps): MutationGuard {
 
     after(intent: MutationIntent, result: GateResult) {
       // The mark is stamped only for a substantive review that really reached
-      // GitHub. A mechanically-authored COMMENT — the migration pre-check
-      //, the escalation note — is deterministic mechanics,
+      // GitHub. A mechanically-authored COMMENT — the migration pre-check,
+      // the escalation note — is deterministic mechanics,
       // not the round's verdict; letting one claim the head makes guard 2
       // suppress the substantive review that follows. Keyed on the PRESENCE of
       // a `reviewPurpose` rather than on each spelling, so a future purpose

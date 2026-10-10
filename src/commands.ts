@@ -6,7 +6,7 @@
 // Envelope: {"command": "<name>", ...payload}. Schemas are hand-rolled and
 // STRICT — unknown fields are a rejection, not a warning.
 //
-// TWO ISSUERS, decided by DIRECTORY. The same vocabulary is served
+// Two issuers, decided by directory. The same vocabulary is served
 // from the daemon-owned `commands/` (and `commands/slack/`), where every
 // writer is a pi SESSION, and from `commands/operator/`, which the operator's
 // tools (`qcr drain`, the board's `u`, the deploy tab) create and write as
@@ -72,19 +72,19 @@ export const COMMAND_WHITELIST: readonly CommandName[] = [
 ] as const;
 
 /**
- * The OPERATOR'S commands: the lesson kill switch (S9a) and the
- * archiver's two verbs (S4 — `archive-run`, one immediate bounded
- * archiver tick, and `archive-restore`, one PR's archive back to its live
- * paths, both run under the archiver's strict mutex). They are not
- * in `COMMAND_WHITELIST` — the vocabulary a session (the overseer, the EOD
- * curator, a Slack turn) may write — and they validate ONLY for a file the
- * watcher found in the root-sealed `commands/operator/` directory (,
- * `operatorSealVerdict`). A session's command file cannot spell them: in the
- * session directories, and in an UNSEALED operator directory (served as a
- * session's), they are refused at validation, and `executeCommand` refuses
- * them again for any issuer but the operator. Their state lives in state.db
- * (src/lessonledger.ts), never as a memory tag anyone holding a key could
- * write.
+ * The operator's commands: the lesson kill switch and the archiver's two
+ * verbs (`archive-run`, one immediate bounded archiver tick, and
+ * `archive-restore`, one PR's archive back to its live paths, both run under
+ * the archiver's strict mutex). They are not in `COMMAND_WHITELIST` — the
+ * vocabulary a session (the overseer, the EOD curator, a Slack turn) may
+ * write — and they validate only for a file the watcher found in the
+ * root-sealed `commands/operator/` directory (`operatorSealVerdict`). A
+ * session's command file cannot spell them: in the session directories, and
+ * in an UNSEALED operator directory (served as a session's), they are refused
+ * at validation, and `executeCommand` refuses
+ * them again for any issuer but the operator. The kill switch's state lives
+ * in state.db (src/lessonledger.ts), never as a memory tag anyone holding a
+ * key could write.
  */
 export type OperatorCommandName =
   | "lessons-off"
@@ -114,13 +114,12 @@ function isOperatorCommand(name: string): name is OperatorCommandName {
 }
 
 /**
- * Retired command spellings, folded to their current name at validate time
- * — the codebase's ESCALATE→NEEDS_HUMAN pattern: ACCEPTED on input
- * (frozen prompts and live overseers still emit them, until the
- * reseed and beyond), never emitted by us — the parsed `Command`, the result
- * file and the event ledger all carry the current name. Pinned by
- * tests/legacy-acceptance.test.ts; an entry here is a permanent belt, not a
- * cleanup candidate.
+ * Retired command spellings, folded to their current name at validate time —
+ * the codebase's ESCALATE→NEEDS_HUMAN pattern: accepted on input (sessions on
+ * older prompts may still emit them), never emitted by us — the parsed
+ * `Command`, the result file and the event ledger all carry the current name.
+ * Pinned by tests/legacy-acceptance.test.ts; an entry here is a permanent
+ * belt, not a cleanup candidate.
  */
 const LEGACY_COMMAND_NAMES: Readonly<Record<string, CommandName>> = {
   "flag-owner-legacy": "flag-owner",
@@ -147,30 +146,29 @@ export type Command =
   | ({ command: "file-improvement-pr" } & ImprovementPayload)
   | ({ command: "file-issue" } & IssuePayload)
   | { command: "slack_reply"; thread: string; text: string }
-  /** Deploy-window drain (2026-08-25): the valve the TUI unwedge precedent
-   * carries — a hard webhook stop + dispatch/recheck/ping-pong/EOD hold while
-   * in-flight rounds finish naturally. `for_min` as on `pause-pr`;
+  /** Deploy-window drain: a hard webhook stop + dispatch/recheck/ping-pong/EOD
+   * hold while in-flight rounds finish naturally. `for_min` as on `pause-pr`;
    * only meaningful with `on: true`. */
   | { command: "drain"; on: boolean; for_min?: number }
   | { command: "retry-thread-decision"; comment_id: number }
-  /** S8: the EOD curator's answer to the day's outcomes packet — per
+  /** The EOD curator's answer to the day's outcomes packet — per
    * candidate, adopted / declined (with a reason) / refused (the write
    * failed). Schema in src/learner/receipt.ts. */
   | ({ command: "eod-curation-receipt" } & CurationReceipt)
-  /** S9a — the OPERATOR's lesson kill switch (`OPERATOR_COMMANDS`):
+  /** The operator's lesson kill switch (`OPERATOR_COMMANDS`):
    * never valid in a session's file. */
   | { command: "lessons-off" }
   | { command: "lessons-on" }
   | { command: "suppress-lesson"; uri: string }
   | { command: "unsuppress-lesson"; uri: string }
-  /** S4 — the OPERATOR's archive verbs (`OPERATOR_COMMANDS`): never
+  /** The operator's archive verbs (`OPERATOR_COMMANDS`): never
    * valid in a session's file. */
   | { command: "archive-run" }
   | { command: "archive-restore"; pr: number };
 
-/** Who a command directory's writer is. Decided by WHICH DIRECTORY a
- * file arrived in and whether the operator seal held — never by a field in
- * the file. `session` is the default everywhere: it is the bounded side. */
+/** Who a command directory's writer is. Decided by which directory a file
+ * arrived in and whether the operator seal held — never by a field in the
+ * file. `session` is the default everywhere: it is the bounded side. */
 export type CommandIssuer = LeverIssuer;
 
 /** Context a command file carries with it (its own name, for idempotence,
@@ -208,18 +206,18 @@ export interface CommandDeps {
     forMin: number | undefined,
   ): Promise<FileOutcome | void> | FileOutcome | void;
   retryThreadDecision?(commentId: number): Promise<FileOutcome | void> | FileOutcome | void;
-  /** S8: the learner's receipt handler. Optional like `drain`: a
+  /** The learner's receipt handler. Optional like `drain`: a
    * daemon wired without the learner rejects the command with a reason. */
   curationReceipt?(receipt: CurationReceipt): Promise<FileOutcome | void> | FileOutcome | void;
-  /** S9a: the operator's lesson kill switch (state.db). Reached only
-   * for an OPERATOR-issued command; optional like `drain`. */
+  /** The operator's lesson kill switch (state.db). Reached only for an
+   * operator-issued command; optional like `drain`. */
   lessonSwitch?(
     change: LessonSwitchChange,
     file: string,
   ): Promise<FileOutcome | void> | FileOutcome | void;
-  /** S4: the operator's archive verbs — one immediate bounded tick
-   * of the archiver, and the restore of one PR's archive to its live paths.
-   * Reached only for an OPERATOR-issued command; optional like `drain`. */
+  /** The operator's archive verbs — one immediate bounded tick of the
+   * archiver, and the restore of one PR's archive to its live paths. Reached
+   * only for an operator-issued command; optional like `drain`. */
   archiveRun?(file: string): Promise<FileOutcome | void> | FileOutcome | void;
   archiveRestore?(pr: number, file: string): Promise<FileOutcome | void> | FileOutcome | void;
   /** Optional: absent when Slack is disabled, in which case `slack_reply` is
@@ -233,7 +231,7 @@ export interface CommandDeps {
 
 export type ValidationResult = { ok: true; command: Command } | { ok: false; reason: string };
 
-// ---- hand-rolled schema validation ----------------------------------------
+// ---- hand-rolled schema validation ----
 
 function fieldError(obj: Record<string, unknown>, allowed: string[]): string | null {
   const unknown = Object.keys(obj).filter((k) => k !== "command" && !allowed.includes(k));
@@ -299,11 +297,10 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
   // files) never sees the retired spelling.
   const canonical = LEGACY_COMMAND_NAMES[name] ?? name;
   if (!(COMMAND_WHITELIST as readonly string[]).includes(canonical)) {
-    // Retired commands get their own reason: the ratified 2026-08-18 reseed
-    // took the command out of `prompts/overseer-system.md`, but a session
-    // spawned on an older prompt can still emit it and should learn WHY, not
-    // just "unknown". The hint is read by a model, so it must not describe
-    // the retired NEEDS_HUMAN park either (MC-48).
+    // A retired command gets its own reason: a session spawned on an older
+    // prompt can still emit it and should learn why, not just "unknown". The
+    // hint is read by a model, so it must not describe a NEEDS_HUMAN park
+    // either — no such park exists.
     if (name === "mark-escalation-worthy") {
       return {
         ok: false,
@@ -432,12 +429,12 @@ export function validateCommand(raw: unknown, opts: ValidateOptions = {}): Valid
       };
     }
     case "file-issue": {
-      // `pr` is OPTIONAL provenance — the PR a deferral's ticket was
-      // filed from. The review session files the ticket ITSELF, in the round
-      // that deferred; `pr` attributes the filing — and a cap refusal, which
-      // then leaves a `deferral_ticket_refused` anomaly — to that PR, so the
-      // refusal is visible where the deferral happened. It grants no rights
-      // and lifts no cap. Absent, the command behaves exactly as it always has.
+      // `pr` is optional provenance — the PR a deferral's ticket was filed
+      // from. The review session files the ticket itself, in the round that
+      // deferred; `pr` attributes the filing — and a cap refusal, which then
+      // leaves a `deferral_ticket_refused` anomaly — to that PR, so the refusal
+      // is visible where the deferral happened. It grants no rights and lifts
+      // no cap.
       const err = fieldError(obj, ["title", "body", "pr"]);
       if (err) return { ok: false, reason: err };
       for (const f of ["title", "body"]) {
@@ -554,7 +551,7 @@ function validateOperatorCommand(
   }
 }
 
-// ---- tier enforcement (S3) ----------------------------------------
+// ---- tier enforcement ----
 
 /**
  * Commands a Slack turn may run, by tier. The table is data on purpose: adding
@@ -564,12 +561,12 @@ function validateOperatorCommand(
  * `authorized_prs` (recomputed by the router from `pr_state.author`, NEVER read
  * out of the inject body).
  *
- * `owner` carries exactly the rights the retired `owner_legacy` tier had (
- * renamed the column; legacy persisted records fold to it on read). `system`
- * is the daemon's own unattended turns (`OriginStore.writeLocal`): it is
- * `true` on every row because a daemon turn with NO origin record already runs
- * unrestricted — `authorizeCommand(_, null)` ⇒ ok, and that null-origin rule
- * is unchanged. The column is the stamped, auditable form of that same
+ * `owner` is the owner's tier (legacy persisted records with the retired tier
+ * spelling fold to it on read). `system` is the daemon's own unattended
+ * turns (`OriginStore.writeLocal`): it is `true` on every row because a
+ * daemon turn with NO origin record already runs unrestricted —
+ * `authorizeCommand(_, null)` ⇒ ok, and that null-origin rule is unchanged.
+ * The column is the stamped, auditable form of that same
  * standing authority; it never widens anything, and a Slack turn can never
  * reach it (`computeTier` never returns `system`).
  *
@@ -592,23 +589,20 @@ const TIER_TABLE: Record<
   "resolve-terminal-failure": { anyone: false, author: false, owner: true, system: true },
   // improvements.ts caps still apply ON TOP — a tier never lifts a cap.
   "file-improvement-pr": { anyone: false, author: false, owner: true, system: true },
-  // (corrected by the owner): the review SESSION files a deferral's
-  // ticket itself, in the round that deferred — there is no author
-  // confirmation step. The session's command files land in the legacy
-  // `commands/` dir with no Slack origin, which already runs at full
-  // (system-column) autonomy, so the deferral path needs no widening here at
-  // all. The brief `author: "own"` widening (built for the retired
-  // confirm-then-file design) is reverted: on Slack, `file-issue` is the
-  // owner's alone again. The day cap, the dedup and the gate all still apply
-  // downstream — a tier never lifts a cap.
+  // The review session files a deferral's ticket itself, in the round that
+  // deferred — there is no author confirmation step. Its command files land
+  // in the `commands/` dir with no Slack origin, which already runs at full
+  // (system-column) autonomy, so the deferral path needs no widening here. On
+  // Slack, `file-issue` is the owner's alone. The day cap, the dedup and the
+  // gate all still apply downstream — a tier never lifts a cap.
   "file-issue": { anyone: false, author: false, owner: true, system: true },
   // Not user-tiered: gated by channel binding, thread, caps, cooldown, length.
   slack_reply: { anyone: true, author: true, owner: true, system: true },
-  // Deploy-window drain: an OPERATOR lever (same standing as restart-session)
+  // Deploy-window drain: an operator lever (same standing as restart-session)
   // — it stops the whole board, so it is never author-reachable.
   drain: { anyone: false, author: false, owner: true, system: true },
   "retry-thread-decision": { anyone: false, author: false, owner: true, system: true },
-  // the EOD curator's receipt — a daemon (system) turn's, or the
+  // The EOD curator's receipt — a daemon (system) turn's, or the
   // owner's; never a Slack author's or anyone's.
   "eod-curation-receipt": { anyone: false, author: false, owner: true, system: true },
 };
@@ -627,7 +621,7 @@ export type AuthorizationResult = { ok: true } | { ok: false; reason: string };
  *
  * `origin === null` means "no Slack turn is live" — the command came from the
  * daemon itself (EOD sweep, anomaly wake) or from the owner at the tmux pane,
- * and keeps today's full autonomy (the same rights the `system` tier stamps
+ * and keeps full autonomy (the same rights the `system` tier stamps
  * explicitly). A caller that must fail closed (the Slack command directory)
  * checks for a missing origin BEFORE calling this.
  *
@@ -805,21 +799,21 @@ export async function executeCommand(
   }
 }
 
-// ---- the watcher -----------------------------------------------------------
+// ---- the watcher ----
 
 /**
  * Which command directory this watcher serves, and how to find the live Slack
- * origin (ratified D5(c) — TWO directories, one gate).
+ * origin — two directories, one gate.
  *
- *   `local`  — the legacy `commands/` dir. Behaves exactly as it always has, so
- *              EOD sweeps, anomaly wakes and the owner at the tmux pane lose no
- *              autonomy. The one BELT: when the turn being served was CAUSED by
- *              a non-owner Slack message, this dir refuses — the overseer
+ *   `local`  — the `commands/` dir. Untiered, so EOD sweeps, anomaly wakes and
+ *              the owner at the tmux pane keep full autonomy. The one BELT:
+ *              when the turn being served was CAUSED by a non-owner Slack
+ *              message, this dir refuses — the overseer
  *              wrote to the wrong place mid-turn, and a tier-checked command
  *              must not slip past by choosing a filename.
  *   `slack`  — the tier-checked `commands/slack/` dir. No live origin ⇒ DENY.
  *
- * Omit the gate entirely and the watcher behaves as it did before.
+ * Omit the gate entirely and the directory is served with no tier check.
  */
 export interface CommandTierGate {
   dir: "local" | "slack";
@@ -837,7 +831,7 @@ export interface CommandTierGate {
   currentOrigin(): OriginRecord | null;
 }
 
-// ---- the operator seal -------------------------------------------
+// ---- the operator seal ----
 
 /** What a path IS, as `lstat` sees it — a symlink is reported as itself,
  * never as what it points at. */
@@ -928,15 +922,14 @@ export function operatorSealVerdict(seal: OperatorSeal, dir: string, file: strin
 }
 
 /**
- * The identity of one VERSION of an operator command file — the key the
- * handled-ledger is written under (review round 1). The operator's
- * directory is not the daemon's to archive from, so "handled" has to be
- * remembered; remembering the NAME alone would make every re-used name a
- * one-shot (the documented manual fallback re-used one, and its second write
- * was silently ignored). Inode + mtime + size change on every rewrite that
- * matters — the operator's tools land files by tmp+mv, a new inode each time
- * — and stay put across the sweeps that re-see an unchanged file. `null`
- * when the file is gone.
+ * The identity of one version of an operator command file — the key the
+ * handled-ledger is written under. The operator's directory is not the
+ * daemon's to archive from, so "handled" has to be remembered; remembering the
+ * name alone would make every re-used name a one-shot, silently ignoring a
+ * second write under the same name. Inode + mtime + size change on every
+ * rewrite that matters — the operator's tools land files by tmp+mv, a new
+ * inode each time — and stay put across the sweeps that re-see an unchanged
+ * file. `null` when the file is gone.
  */
 export function operatorCommandVersion(path: string): string | null {
   try {
@@ -970,10 +963,10 @@ export interface CommandWatcherOptions {
   /** The directory served. Session dirs: results land in <dir>/results and
    * handled files move to <dir>/processed. */
   dir: string;
-  /** Tier enforcement for this directory. Absent ⇒ legacy behaviour. */
+  /** Tier enforcement for this directory. Absent ⇒ no tier check. */
   tier?: CommandTierGate;
   /**
-   * Serve `dir` as the OPERATOR's directory. The watcher then never
+   * Serve `dir` as the operator's directory. The watcher then never
    * creates it (a daemon-made directory would carry the daemon's uid and be
    * no seal), never renames out of it (it cannot), records handled files in
    * the store instead, stamps `issuer: "operator"` only on files the seal
@@ -1041,9 +1034,9 @@ export class CommandWatcher {
     // Watch FIRST, then sweep on the same queue the watch feeds: the sweep
     // snapshots the directory and then awaits each handler, so a file a live
     // session writes after the snapshot must already have a watcher to see
-    // it — attaching after the sweep left that file unserved until a restart
-    // (a session dir has no periodic sweep). A file seen by both is handled
-    // once: the second visit finds it archived.
+    // it — a session dir has no periodic sweep, so a file missed here would
+    // wait for a restart. A file seen by both is handled once: the second
+    // visit finds it archived.
     if (!this.opts.operator) this.attachDirWatch();
     const initial = this.queue.then(() => this.sweep());
     this.queue = initial.catch((err) => this.log(`[commands] sweep failed: ${String(err)}`));
@@ -1303,11 +1296,11 @@ export class CommandWatcher {
       const auth = authorizeCommand(command, origin);
       return auth.ok ? null : auth.reason;
     }
-    // Legacy dir: only the belt applies. It fires on CAUSE, not on recency —
+    // Local dir: only the belt applies. It fires on CAUSE, not on recency —
     // a daemon-caused turn (`source: "local"`) always passes, and a Slack-caused
     // one from a non-owner user always refuses, however old the record is.
-    // (`parseOriginRecord` folds the retired "owner_legacy" spelling to "owner", so
-    // this comparison only ever sees the current vocabulary; a Slack origin can
+    // (`parseOriginRecord` folds the retired tier spelling to "owner", so this
+    // comparison only ever sees the current vocabulary; a Slack origin can
     // never be "system" — only `writeLocal` stamps that, with source "local".)
     if (origin && origin.source === "slack" && origin.tier !== "owner") {
       return (

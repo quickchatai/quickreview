@@ -48,7 +48,7 @@ set -euo pipefail
 ROOT=/opt/quickreview/sandbox
 CLI=(node "$ROOT/dist/src/bench/cli.js")
 SETS=/opt/quickreview/bench/sets
-# private replay sets (recorded rounds of a private repo) are never
+# Private replay sets (recorded rounds of a private repo) are never
 # baked into the image: bench.sh mounts QCR_BENCH_PRIVATE_SETS here, read-only,
 # when it is set. A name in the image's sets wins.
 PRIVATE_SETS=/opt/quickreview/bench/private-sets

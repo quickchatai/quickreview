@@ -1,34 +1,16 @@
-// audit assertion #10: the retired-state sweep over `src/`.
+// The retired-state sweep over `src/`.
 //
-// The audit proposed `expect(grepProduction("awaiting_human")).toEqual(
-// [reconcileMigrationPath])` — the park is retired, nothing
-// transitions into `awaiting_human`, and reconcile's migration of legacy rows
-// is meant to be its one remaining reader.
+// There is no park: nothing transitions into `awaiting_human`. The mentions
+// that remain are tombstones — a comment recording what went and why, and the
+// `RETIRED_STATES` marker that keeps a legacy row from an older daemon
+// rendering blank — so nothing is left that a reader could mistake for a live
+// park.
 //
-// It was not. Thirty-one mentions survived across eleven modules: a metrics
-// count that is structurally always zero and reported as a measurement, a
-// digest panel that renders permanently empty, a Slack cause that TELLS an
-// operator a PR is parked, a theme colour, two config knobs. That is
-// MC-11/12/13 and [A1]/[B1]-[B4]/[D1]-[D3], and removing them was
-// LANDED. Three mentions remain and all three are TOMBSTONES: two
-// comments recording what went and why, and the `RETIRED_STATES` marker that
-// keeps a legacy row from an older daemon rendering blank. Not the audit's
-// proposed end state (that was reconcile's migration, itself now gone), but
-// the same thing it was after: nothing left that a reader could mistake for a
-// live park.
-//
-// So this fence does not assert the end state — it PINS THE CURRENT SURFACE by
-// exact count, per file. Which makes it two useful things at once:
-//
-//   * a ratchet: a new `awaiting_human` reader anywhere fails here;
-//   * and's checklist, which went red the moment that ticket landed
-//     and named, file by file, exactly what was left. Landing order was
-//     → →, so it was red BY DESIGN on that merge and
-//     the numbers were edited down as the surfaces went. The ratchet is what
-//     the record is for now.
+// The fence pins the current surface by exact count, per file: a ratchet, so
+// a new `awaiting_human` reader anywhere fails here.
 //
 // [T3] in tests/fences.test.ts covers the union member itself; this covers the
-// readers, which is where the findings actually live.
+// readers.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -48,11 +30,10 @@ function tsFiles(dir: string): string[] {
 describe("[#10] the retired park's readers are counted, not assumed gone", () => {
   /**
    * file → mentions, and what they are. Counts include comments deliberately:
-   * a comment that describes the park as live is MC-43-class stale prose and
-   * was part of what removed, so hiding it would have understated the
-   * job. Both survivors are the other kind — a tombstone, which says the
-   * park is GONE. Keeping them counted is the point: a tombstone that quietly
-   * turns back into live prose is caught here.
+   * a comment that describes the park as live is stale prose. Both survivors
+   * are the other kind — a tombstone, which says the park is gone. Keeping
+   * them counted is the point: a tombstone that quietly turns back into live
+   * prose is caught here.
    *
    * MUTATION: add one `awaiting_human` reference to any listed file, or to a
    * file not listed — either fails, naming the file and both counts.

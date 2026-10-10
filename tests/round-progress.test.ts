@@ -137,9 +137,9 @@ describe("round progress extension", () => {
     }
   });
 
-  // the round templates carry the round number as an env prefix on
-  // the posting call (`export` is refused by the exec policy); an order from
-  // an older template still carries the `export` line. Both are read.
+  // The round templates carry the round number as an env prefix on the
+  // posting call (`export` is refused by the exec policy); an order from an
+  // older template still carries the `export` line. Both are read.
   it.each([
     [
       "the env-prefix posting call",
@@ -365,7 +365,7 @@ describe("round progress extension", () => {
   });
 });
 
-// a `launch_plan` call names task DIRECTORIES, not agents. The
+// A `launch_plan` call names task directories, not agents. The
 // pre-fanout stall clock must still see the fan-out begin at tool START, from
 // the same plan the tool computes; a refused plan starts nothing.
 describe("round progress — launch_plan", () => {

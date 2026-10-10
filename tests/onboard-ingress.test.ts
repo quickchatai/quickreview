@@ -1,4 +1,4 @@
-// the wizard's ingress step: four shapes offered with their real
+// The wizard's ingress step: four shapes offered with their real
 // trade-offs, each configuring [ingress] (and the compose profile) correctly,
 // resumable, and verified against the RUNNING shape rather than the record.
 //

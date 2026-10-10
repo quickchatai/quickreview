@@ -312,11 +312,10 @@ describe("recording at round start", () => {
     },
   );
 
-  // the git-config baseline. Mutation-verification caught that
-  // nothing covered THIS half: every other test injects the baseline straight
-  // into the round row, so deleting dispatch's call left the suite green while
-  // the integrity check silently never ran for any real round. A layer nobody
-  // calls is precisely the failure mode this ticket is about.
+  // The git-config baseline is taken by dispatch itself. Every other test
+  // injects the baseline straight into the round row, so without this one,
+  // deleting dispatch's call would leave the suite green while the integrity
+  // check never ran for any real round.
   it(
     "takes the git-config fingerprint when the round starts",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -341,7 +340,7 @@ describe("recording at round start", () => {
       const watched = Object.keys(fp!.files ?? {});
       expect(watched.some((p) => p.endsWith("/.git/config"))).toBe(true);
       expect(watched.some((p) => p.endsWith("/pihome/.gitconfig"))).toBe(true);
-      // and this system's OWN policy surface under the sandbox root —
+      // …and this system's own policy surface under the sandbox root —
       // the guards' config, the sanctioned scripts and the compiled guard.
       expect(watched.some((p) => p.endsWith("/config.toml"))).toBe(true);
       expect(watched.some((p) => p.endsWith("/scripts"))).toBe(true);
@@ -349,8 +348,8 @@ describe("recording at round start", () => {
     },
   );
 
-  // H2 (review): the baseline went async, and it is awaited inside the
-  // ONE serialized dispatch pump. A read that never returns must cost a
+  // The baseline is async and awaited inside the one serialized dispatch
+  // pump. A read that never returns must cost a
   // bounded wait and an UNCHECKED round (no baseline — never judged), not
   // every later PR undispatched.
   // MUTATION: await the fingerprint without `withinBudget` in dispatch.ts —
@@ -389,7 +388,7 @@ describe("recording at round start", () => {
     });
   });
 
-  // the audit trail — which tier held the veto in this round.
+  // The audit trail — which tier held the veto in this round.
   it(
     "records the validator's tier on the round row and the dispatch event",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -417,7 +416,7 @@ describe("recording at round start", () => {
     },
   );
 
-  // a round whose profile switched the validator off had no
+  // A round whose profile switched the validator off has no
   // validator, so the round row must not claim one ran at the configured tier.
   // MUTATION: restore `?? cfg.models.validate_tier` on dispatch's validateTier
   // and this fails.
@@ -472,10 +471,9 @@ describe("recording at round start", () => {
     "a failed (cancelled, verdict-less) round does not age the PR — next round is still 'first' with review_no 1",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      // Live 2026-08-18, #5313: two rounds died before posting anything and the
-      // PR was dispatched as "round 3 (re-review)" with the nit cap active,
-      // despite zero posted reviews. Failed rounds advance round_no (the audit
-      // sequence) but must not advance the review age.
+      // Rounds that die before posting anything must not make the next one a
+      // "re-review" with the nit cap active. Failed rounds advance round_no
+      // (the audit sequence) but must not advance the review age.
       queue(31, "2026-08-13T09:00:00Z");
       const { hooks, orders } = recordingHooks();
       await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
@@ -508,7 +506,7 @@ describe("buildPassPlan", () => {
         .map((p) => p.tier);
     expect(new Set(def(alone.pass_plan))).toEqual(new Set(["terra-med"]));
     expect(new Set(def(tiered.pass_plan))).toEqual(new Set(["sol-med"]));
-    // Absent ⇒ exactly the legacy plan.
+    // No tierFiles ⇒ exactly the plan built from the selection's files alone.
     expect(buildPassPlan(baseCfg, small, undefined, undefined, undefined, [], [], {})).toEqual(
       alone,
     );
@@ -581,9 +579,9 @@ describe("buildPassPlan", () => {
     expect(solValidate[solValidate.length - 1]!.raisable_to).toEqual([]);
   });
 
-  //, amended by — the validator's veto is now a MARK (the
-  // finding is kept as `doubted`, never deleted), so the per-round raise to
-  // the hottest lens is gone: it runs at its own configured tier.
+  // The validator's veto is a mark (the finding is kept as `doubted`, never
+  // deleted), so the validator is never raised to the hottest lens: it runs
+  // at its own configured tier.
   it("runs pass-validate at its own tier, never raised to a lens's", () => {
     // A risk lens (sol-high) alongside a terra-med validator.
     const risky = buildPassPlan(planCfg, [file("auth/permissions.py", 10, 2)]).pass_plan;
@@ -662,8 +660,8 @@ describe("buildPassPlan", () => {
     expect(addable_lenses).not.toContain("pass-validate");
   });
 
-  // the concurrency lens is ADDABLE-ONLY: a read-modify-write race
-  // has no filename (the 29 corpus findings span eight unrelated modules), so
+  // The concurrency lens is addable-only: a read-modify-write race has no
+  // filename (such findings span unrelated modules), so
   // no path predicate may plan it. It reaches a round only through the add
   // protocol, when the session names the read-then-write it suspects.
   describe("pass-concurrency", () => {
@@ -711,11 +709,11 @@ describe("buildPassPlan", () => {
     });
   });
 
-  // the ask-your-human lens is ADDABLE-ONLY too: no path predicate
+  // The ask-your-human lens is addable-only too: no path predicate
   // finds "code whose intent was never written down", and whether the answer
   // is in the repo at all is only visible once the diff has been read.
   describe("pass-ask-human", () => {
-    // Clears the default preset's 60-word substance bar (2026-09-27).
+    // Clears the default preset's 60-word substance bar.
     const body =
       "This PR introduces a token-bucket rate limiter for the public API. " +
       "Requests over the limit receive a 429 with a Retry-After header, and " +
@@ -761,7 +759,7 @@ describe("buildPassPlan", () => {
   // pass-intent: selected on the PR body's substance, priced at the
   // cheapest tier whatever the round's default, raisable like any other lens.
   describe("pass-intent", () => {
-    // Clears the default preset's 60-word substance bar (2026-09-27).
+    // Clears the default preset's 60-word substance bar.
     const body =
       "This PR introduces a token-bucket rate limiter for the public API. " +
       "Requests over the limit receive a 429 with a Retry-After header, and " +
@@ -798,7 +796,7 @@ describe("buildPassPlan", () => {
     });
   });
 
-  // the judgment lenses ride the default tier ladder and stay
+  // The judgment lenses ride the default tier ladder and stay
   // raisable, exactly like any non-risk lens; pin the plan entries so a
   // future tier change cannot ship silently.
   describe("judgment lenses", () => {
@@ -821,7 +819,7 @@ describe("buildPassPlan", () => {
     });
 
     it("plans placement at terra-med on a small new-file diff", () => {
-      // 40 lines: over the default preset's 30-line new-file floor (2026-09-27).
+      // 40 lines: over the default preset's 30-line new-file floor.
       const added = { ...file("src/tools/new_helper.py", 40, 0), status: "added" };
       const { pass_plan } = buildPassPlan(planCfg, [added]);
       expect(pass_plan.find((p) => p.lens === "pass-placement")).toMatchObject({
@@ -1007,7 +1005,7 @@ describe("dispatchOnce", () => {
       expect(order!.lenses).toContain("pass-contracts");
       expect(order!.lenses[order!.lenses.length - 1]).toBe("pass-validate");
       expect(order!.migration_gate).toBe(true);
-      // The escalation heuristic is gone: an infra-shaped diff carries no flag.
+      // No escalation heuristic: an infra-shaped diff carries no flag.
       expect((order as unknown as Record<string, unknown>).escalation_worthy).toBeUndefined();
       expect((order as unknown as Record<string, unknown>).escalation_reasons).toBeUndefined();
       // pass_plan mirrors lenses in order (a lens with several rows — the sweep,
@@ -1028,8 +1026,8 @@ describe("dispatchOnce", () => {
     const [order] = await dispatchOnce({ cfg: baseCfg, store, adapter, hooks });
     expect(order!.migration_gate).toBe(false);
     expect(order!.lenses).toEqual(["pass-baseline", "pass-validate"]);
-    // Shipped default (owner decision 2026-10-03, DEFAULT_PASS_TIERS): baseline is
-    // pinned at sol-high on every PR, so it is not raisable.
+    // Shipped default (DEFAULT_PASS_TIERS): baseline is pinned at sol-high on
+    // every PR, so it is not raisable.
     expect(order!.pass_plan[0]).toMatchObject({
       lens: "pass-baseline",
       agent: "pass-baseline--sol-high",
@@ -1038,7 +1036,7 @@ describe("dispatchOnce", () => {
     });
   });
 
-  // ---- worktree facts in the order (2026-08-18) ---------------------------
+  // ---- worktree facts in the order -----------------------------------------
 
   it(
     "carries the prepared tree's base facts into the order",
@@ -1182,7 +1180,7 @@ describe("dispatchOnce", () => {
     },
   );
 
-  // (MC-18): the ledger carry re-hands the PR's ledger on the order and
+  // The ledger carry re-hands the PR's ledger on the order and
   // supplies the settled digest; an explicit settledDigest still wins.
   it(
     "carries the PR's ledger and takes the settled digest from it",
@@ -1213,7 +1211,7 @@ describe("dispatchOnce", () => {
       expect(asked.sort()).toEqual([34, 35]);
       expect(by.get(34)!.ledger_carry).toEqual(carry);
       expect(by.get(34)!.settled_digest).toBe("- T1: conceded");
-      // No ledger ⇒ no field at all (the order renders exactly as before).
+      // No ledger ⇒ no field at all (the order renders as it would without a carry).
       expect("ledger_carry" in by.get(35)!).toBe(false);
       expect(by.get(35)!.settled_digest).toBe("");
     },
@@ -1237,7 +1235,7 @@ describe("dispatchOnce", () => {
     },
   );
 
-  // the nit treadmill's stopping rule must reach the passes through
+  // The nit treadmill's stopping rule must reach the passes through
   // their task strings, and passes are blank slates — so the dispatched round
   // prompt itself must carry the verbatim NIT SCOPE block from round 3 onward,
   // rendered through the REAL shipped templates.
@@ -1587,8 +1585,8 @@ describe("system re-trigger short-circuit", () => {
     store.recordReviewedHead(pr, { head_sha: head, verdict, round_no: 1 });
   }
 
-  /** skip_unchanged_head OFF so the daemon skip cannot mask the
-   * short-circuit under test. */
+  /** skip_unchanged_head OFF so the daemon's unchanged-head skip cannot mask
+   * the short-circuit under test. */
   const cfg: Config = { ...baseCfg, guards: { ...baseCfg.guards, skip_unchanged_head: false } };
 
   function shortCircuitEvents(
@@ -1658,7 +1656,7 @@ describe("system re-trigger short-circuit", () => {
     },
   );
 
-  // Selfscan 5bd5d43c / a78c7cba: a compare GitHub truncated at 300 files,
+  // A compare GitHub truncated at 300 files,
   // or a PR file list cut at its cap, is not evidence of "base-merge only".
   it(
     "a truncated compare or PR file list never short-circuits the round",
@@ -1688,9 +1686,9 @@ describe("system re-trigger short-circuit", () => {
     },
   );
 
-  // Selfscan 8dd186e2 (the dispatch copy): a push restoring a reviewed file
-  // to its base content drops it from the CURRENT diff; ownership read only
-  // there called the reversion a base merge and skipped the round.
+  // A push restoring a reviewed file to its base content drops it from the
+  // current diff; ownership read only there would call the reversion a base
+  // merge and skip the round.
   it(
     "a push reverting a reviewed file is never a base-merge short-circuit",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -1793,7 +1791,7 @@ describe("system re-trigger short-circuit", () => {
       expect(shortCircuitEvents(49)).toMatchObject([
         { reason: "empty-delta", standing_verdict: "REQUEST_CHANGES" },
       ]);
-      // The rechecks table is the APPROVE path's guard — untouched here.
+      // The rechecks table is the post-approval recheck's guard — untouched here.
       expect(store.rechecksFor(49)).toEqual([]);
     },
   );
@@ -1810,7 +1808,7 @@ describe("system re-trigger short-circuit", () => {
       expect(await dispatchOnce({ cfg: baseCfg, store, adapter, hooks })).toEqual([]);
       expect(store.approvalWithheld(50)).toMatchObject({ head_sha: NEW });
       // The push question is answered without a wake: claimed un-nudged, so
-      // the undelivered sweep never releases it (boot stall).
+      // the undelivered sweep never releases it.
       expect(store.rechecksFor(50)).toMatchObject([
         { fingerprint: recheckFingerprint({ trigger: "push" }, NEW), nudged: 0 },
       ]);
@@ -1930,7 +1928,7 @@ describe("system re-trigger short-circuit", () => {
   );
 });
 
-// round-memory seeding at dispatch: the pinned head and ONE budgeted
+// Round-memory seeding at dispatch: the pinned head and ONE budgeted
 // context block reach the prompt, the call happens exactly once per round, and
 // a memory outage can neither block nor delay a review.
 describe("round-memory seeding", () => {
@@ -2074,12 +2072,11 @@ describe("round-memory seeding", () => {
       expect(store.getPr(73)!.state).toBe("reviewing");
       // Logged AND handed to memory health: the gap is never silent. The
       // timeout never reached any client observer — the seed callback is the
-      // only place the monitor sees it (S1).
+      // only place the monitor sees it.
       expect(memoryEvents(73)).toMatchObject([{ degraded: true }]);
       expect(seeded).toHaveLength(1);
       expect(seeded[0]).toMatchObject({ degraded: true });
-      // No per-round anomaly any more: it was never a wake kind, so it told
-      // nobody; the health monitor owns telling a person.
+      // No per-round anomaly: the health monitor owns telling a person.
       expect(anomalies(73)).toEqual([]);
     },
   );
@@ -2104,7 +2101,7 @@ describe("round-memory seeding", () => {
     },
   );
 
-  // the path every adopter takes first: a healthy store with nothing
+  // The path every adopter takes first: a healthy store with nothing
   // pinned yet. The round is seeded normally, told memory had nothing to add,
   // and the operator hears nothing — EMPTY IS NOT DEGRADED.
   it(
@@ -2140,11 +2137,11 @@ describe("round-memory seeding", () => {
     },
   );
 
-  // review: EMPTY IS NOT DEGRADED made one state silent that used to be
-  // loud — a store that answered "nothing pinned" on an install whose previous
-  // round carried standing instructions (a container recreated without its
-  // volume). The transition itself gets ONE anomaly; a fresh install never
-  // sees it, and it never repeats.
+  // Empty is not degraded, but one empty state must still be loud: a store
+  // that answers "nothing pinned" on an install whose previous round carried
+  // standing instructions (a container recreated without its volume). The
+  // transition itself gets one anomaly; a fresh install never sees it, and it
+  // never repeats.
   it(
     "populated → empty with the store readable raises pinned_head_emptied exactly once",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -2207,7 +2204,7 @@ describe("round-memory seeding", () => {
         new Assembler(unreadable("connect ECONNREFUSED"), read("")),
       );
       // The unreadable round is recorded (and told to memory health), but
-      // raises no per-round anomaly (S1).
+      // raises no per-round anomaly.
       expect(memoryEvents(84)).toMatchObject([{ degraded: true, head_state: "unread" }]);
       expect(anomalies(84)).toEqual([]);
       await run(85, "2026-08-20T09:20:00Z", new Assembler(read(""), read("")));
@@ -2261,7 +2258,7 @@ describe("round-memory seeding", () => {
         { part: "head", reason: expect.stringContaining("ECONNREFUSED") },
       ]);
       // The operator hears it from the health monitor on a TRANSITION, not
-      // from dispatch once per round (S1).
+      // from dispatch once per round.
       expect(anomalies(79)).toEqual([]);
       expect(injected).toEqual([]);
     },
@@ -2373,7 +2370,7 @@ describe("round-memory seeding", () => {
       expect(memoryEvents(75)).toHaveLength(1);
       expect(memoryEvents(76)).toHaveLength(1);
       // Every round reaches memory health; the bounding of the ALERT is the
-      // monitor's (transition + every 6 h), not dispatch's (S1).
+      // monitor's (transition + every 6 h), not dispatch's.
       expect(seeded.map((m) => m.degraded)).toEqual([true, true]);
       expect(
         store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'anomaly'").get(),
@@ -2409,7 +2406,7 @@ describe("round-memory seeding", () => {
   );
 });
 
-// ---- selfscan-2: dispatch decides on a snapshot the webhook can move --------
+// ---- dispatch decides on a snapshot the webhook can move --------------------
 
 describe("a newer push/re-request during trigger consumption is never settled away", () => {
   /** An adapter whose team-request DELETE lets a webhook land first: the

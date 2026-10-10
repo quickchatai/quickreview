@@ -3,10 +3,10 @@
 // checker + status.json writer.
 //
 // Everything that touches GitHub goes through the MutationGate, which in
-// dry-run (the default until the cutover) records the intended call to
-// state/dryrun/ instead of executing it. The session manager is behind
-// SessionHooks: `createDaemon({ hooks })` swaps B3's real implementation in for
-// the disk-logging stub without touching this file.
+// dry-run records the intended call to state/dryrun/ instead of executing it.
+// The session manager is behind SessionHooks: `createDaemon({ hooks })` swaps
+// the real implementation in for the disk-logging stub without touching this
+// file.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AnomalyWakePolicy } from "./anomalies.js";
@@ -68,8 +68,7 @@ import { wakeOrHold } from "./wakes.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
 
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
-// seam, not a requirement — a daemon wired without them simply never rechecks,
-// which is exactly how every legacy caller and test behaves.
+// seam, not a requirement — a daemon wired without them simply never rechecks.
 export type DaemonAdapter = DispatchAdapter &
   ReconcileAdapter &
   VerdictAdapter &
@@ -84,24 +83,24 @@ export interface DaemonDeps {
   adapter?: DaemonAdapter;
   hooks?: SessionHooks;
   webhookSecret?: string;
-  /** B4's prompt renderer; default is the round order as JSON. The second
+  /** The round prompt renderer; default is the round order as JSON. The second
    * argument is the round's assembled memory seed — MEMORY_LESS
    * when nothing is wired or the store was unreachable. */
   renderPrompt?: (
     order: import("./types.js").RoundOrder,
     memory: import("./memory/context.js").RoundMemory,
   ) => string;
-  /** The pinned head + budgeted context block seeded into each round prompt
-   *. Absent ⇒ rounds render memory-less, which is a supported
+  /** The pinned head + budgeted context block seeded into each round prompt.
+   * Absent ⇒ rounds render memory-less, which is a supported
    * state, not a failure. */
   memory?: import("./memory/context.js").RoundMemorySeed;
-  /** The round's lesson selection (S9a, src/lessonselect.ts) —
-   * started per round by dispatch, never awaited; under `[memory] delivery =
-   * "on"` (S9b) awaited beside the seed, and its `repoFacts` reach the
+  /** The round's lesson selection (src/lessonselect.ts) — started per round
+   * by dispatch, never awaited; under `[memory] delivery = "on"` awaited
+   * beside the seed, and its `repoFacts` reach the
    * recheck nudge and the ping-pong wake. Absent ⇒ nothing runs. */
   lessons?: import("./lessonselect.js").RoundLessonHook;
-  /** Told when a round's findings record lands (S9a — the lesson
-   * shadow ledger's matcher). */
+  /** Told when a round's findings record lands (the lesson shadow ledger's
+   * matcher). */
   onFindingsRecorded?: (target: { pr: number; roundNo: number; roundId: number | null }) => void;
   /** Renderer for the recheck nudge (prompts/round-recheck.md); default JSON. */
   renderRecheckPrompt?: (order: RecheckOrder) => string;
@@ -109,13 +108,13 @@ export interface DaemonDeps {
    * extra per-lens selection predicates, loaded once at assembly by wire.ts.
    * Absent ⇒ dispatch selects with the compiled-in generic core alone. */
   heuristics?: import("./heuristics.js").HeuristicsExtension;
-  /** The outcome capture's git read (S6): did the code at a posted
+  /** The outcome capture's git read: did the code at a posted
    * finding's anchor change between two commits? wire.ts passes the
    * WorktreeManager (read-only git in the base clone). Absent ⇒ every such
    * question is unknown, and only the evidence that needs no git decides. */
   outcomeGit?: AnchorGit;
-  /** Hand-resolved merge files between two shas (the owner, 2026-08-19 —
-   * conflict resolutions are never trivial). wire.ts passes the
+  /** Hand-resolved merge files between two shas (conflict resolutions are
+   * never trivial). wire.ts passes the
    * WorktreeManager's git-level auto-merge comparison. */
   resolvedFilesInMerges?: (
     from: string,
@@ -129,14 +128,14 @@ export interface DaemonDeps {
     pr: number,
     baseRef: string,
   ) => Promise<{ head_sha: string; base_ref: string; base_sha: string; merge_base: string }>;
-  /** The PR-owned change between two reviewed heads (follow-up
-   * rounds) — wire.ts passes `WorktreeManager.prOwnedDelta`. Absent ⇒ every
+  /** The PR-owned change between two reviewed heads (follow-up rounds) —
+   * wire.ts passes `WorktreeManager.prOwnedDelta`. Absent ⇒ every
    * later round is a full re-review. */
   prOwnedDelta?: import("./dispatch.js").DispatchDeps["prOwnedDelta"];
   /** Pin a reviewed head against gc — `WorktreeManager.pinReviewedHead`. */
   pinReviewedHead?: (pr: number, sha: string) => Promise<boolean>;
-  /** Base-branch migration paths at a sha, for the collision pre-check
-   *. Absent ⇒ no git: the pre-check is skipped and logged. */
+  /** Base-branch migration paths at a sha, for the collision pre-check.
+   * Absent ⇒ no git: the pre-check is skipped and logged. */
   listBaseMigrations?: (baseSha: string) => Promise<string[]>;
   /** Unpack the third-party sources a PR touches and return the round's note
    * (src/depsources.ts; `[review] dependency_sources`). Absent ⇒ no note. */
@@ -144,12 +143,12 @@ export interface DaemonDeps {
     worktreePath: string,
     files: import("./github.js").PrFileEntry[],
   ) => Promise<string>;
-  /** The profile-selected ecosystem seam, handed through to
-   * dispatch. Absent ⇒ dispatch's own default (Django, the pre-seam
-   * behavior); wire.ts always passes the profile's selection. */
+  /** The profile-selected ecosystem seam, handed through to dispatch.
+   * Absent ⇒ dispatch's own default (Django); wire.ts always passes the
+   * profile's selection. */
   ecosystem?: import("./ecosystem.js").Ecosystem;
-  /** Most recent human author of paths at a sha (the escalation
-   * mention pick). Absent ⇒ no git: the config fallback mention is used. */
+  /** Most recent human author of paths at a sha (the escalation mention
+   * pick). Absent ⇒ no git: the config fallback mention is used. */
   directiveAuthor?: (
     sha: string,
     paths: string[],
@@ -159,14 +158,14 @@ export interface DaemonDeps {
   now?: () => Date;
   /** Skip binding the HTTP port (tests). */
   listen?: boolean;
-  /** Latest digest headline for status.json (B5's digest module). */
+  /** Latest digest headline for status.json (src/digest.ts). */
   digestHeadline?: () => string | undefined;
   /** pi's session-JSONL root(s) for the passive auth-failure watch
    * (src/authwatch.ts) — production passes `piAuthWatchDirs` (wire.ts).
    * Absent (tests, stubs) ⇒ the watch never runs. */
   piSessionsDir?: string | readonly string[];
   /**
-   * The supervised OpenViking server's heartbeat block. A CACHED,
+   * The supervised OpenViking server's heartbeat block. A cached,
    * synchronous read — wire.ts hands the supervisor's `status()` here. Absent
    * (tests, stub daemons) ⇒ status.json simply carries no `openviking` key,
    * and a throwing implementation is swallowed: the heartbeat must never fail
@@ -174,21 +173,21 @@ export interface DaemonDeps {
    */
   openvikingStatus?: () => import("./openviking/types.js").OpenVikingStatus | undefined;
   /**
-   * Reviewer-memory health (S1) — the `memory` block of status.json,
-   * BESIDE `openviking`: wire.ts hands the health monitor's synchronous
+   * Reviewer-memory health — the `memory` block of status.json, beside
+   * `openviking`: wire.ts hands the health monitor's synchronous
    * `status()`. Absent ⇒ no `memory` key (readers say "not reported"); a
    * throwing implementation is swallowed like the openviking read.
    */
   memoryStatus?: () => import("./memory/health.js").MemoryStatus | undefined;
   /**
-   * The closed-PR archiver's block (src/archive/status.ts) — a
-   * CACHED, synchronous read: wire.ts hands the archiver's `status()`.
+   * The closed-PR archiver's block (src/archive/status.ts) — a cached,
+   * synchronous read: wire.ts hands the archiver's `status()`.
    * Absent ⇒ no `archive` key (readers say "not reported"); a throwing
    * implementation is swallowed like the other blocks.
    */
   archiveStatus?: () => import("./archive/status.js").ArchiveStatus | undefined;
   /**
-   * Seams of the daemon's event-loop watch (L2, src/eventloop.ts):
+   * Seams of the daemon's event-loop watch (src/eventloop.ts):
    * the sampler, the cpu.stat reader, the clock and the evaluation timer.
    * Absent ⇒ the real drift sampler and /sys/fs/cgroup/cpu.stat. The watch
    * itself is always built — it is the daemon measuring itself, not a feature.
@@ -206,11 +205,10 @@ export interface DaemonDeps {
     >
   >;
   /**
-   * Slack announcer (S5b), resolved LAZILY: wire.ts builds the Slack
+   * Slack announcer, resolved lazily: wire.ts builds the Slack
    * subsystem in `onStart`, i.e. after the store exists and after this deps
    * object was assembled, so the seam is a getter rather than a value. Absent
-   * ⇒ no announcer is ever passed to dispatch or the verdict watcher and the
-   * daemon behaves exactly as it did before Slack.
+   * ⇒ no announcer is ever passed to dispatch or the verdict watcher.
    */
   announce?: () => (DispatchAnnouncer & VerdictAnnouncer) | undefined;
   /** The [feedback] tuning-loop sink — wire.ts hands the
@@ -239,7 +237,8 @@ export interface Daemon {
   stop(): Promise<void>;
   reconcile(): Promise<void>;
   pump(): Promise<void>;
-  /** Deterministic tick: claim due debt, then hand it to the one pump. */
+  /** Deterministic review-failure retry tick: claim due debt, then hand it to
+   * the one pump. */
   retryDueReviewFailures(): Promise<number>;
   /** Public deterministic scan seam; the periodic loop calls the same object. */
   scanRoundStages(): Promise<void>;
@@ -247,14 +246,14 @@ export interface Daemon {
   retryThreadDecision(commentId: number): { ok: boolean; reason?: string; file?: string };
   readonly store: StateStore;
   readonly cfg: Config;
-  /** The outcome capture (S6) the reconcile pass drives — handed to
-   * the finding-case writer (S7, wire.ts), which reads its tables and
+  /** The outcome capture the reconcile pass drives — handed to the
+   * finding-case writer (wire.ts), which reads its tables and
    * runs its capture for the PRs its backfill covers. */
   readonly outcomes: OutcomeCapture;
-  /** The daemon's event-loop watch (L2) — its status() is
+  /** The daemon's event-loop watch — its status() is
    * status.json `daemon`. */
   readonly load: DaemonLoadMonitor;
-  /** When the first reconcile pass that completed HEALTHILY (no step error)
+  /** When the first reconcile pass that completed healthily (no step error)
    * ended; null before one has. The archiver starts no work before
    * it plus its own delay — never on the boot pass. */
   firstHealthyReconcileAt(): Date | null;
@@ -277,7 +276,7 @@ function buildGitHubAdapter(cfg: Config, stateDir: string): GitHubAdapter {
 }
 
 /** A wake with its repo facts appended — the wake itself, byte for byte,
- * when there are none (S9b). */
+ * when there are none. */
 export function withRepoFacts(wake: string, facts: string): string {
   return facts ? `${wake.replace(/\s+$/, "")}${facts}` : wake;
 }
@@ -290,7 +289,7 @@ export interface AuthorReplyDeps {
   /** The sandbox root: the wake names the PR's worktree under it. */
   root: string;
   log: (msg: string, extra?: unknown) => void;
-  /** S9b: the repo-fact lessons for the replied thread's file,
+  /** The repo-fact lessons for the replied thread's file,
    * rendered — "" unless `[memory] delivery = "on"`. Must not reject (the
    * daemon's `repoFactsFor` is total). Absent ⇒ none asked. */
   repoFacts?: (q: RepoFactsQuery) => Promise<string>;
@@ -309,7 +308,7 @@ export async function serveAuthorReply(
   const { store, pingpong, log } = deps;
   if (reply.in_reply_to_id === null) return;
   // Deploy-window drain: no ping-pong wake while draining — and the
-  // claim is deliberately NOT taken, so a redelivery after the lift
+  // claim is deliberately not taken, so a redelivery after the lift
   // can still service the reply. Belt-and-braces in practice: while
   // draining the webhook drops the delivery before it reaches here.
   if (store.drainState().draining) {
@@ -323,12 +322,12 @@ export async function serveAuthorReply(
     body: reply.body,
     author: reply.author,
   };
-  // the repo facts for the replied thread's file — ""
-  // unless `[memory] delivery = "on"`, so the wake is otherwise
-  // byte-identical. The path rides the interpretation only, never
-  // the event: the wake's own text does not change. Read BEFORE the
-  // claim, so the claim is still followed at once by its wake — a
-  // claimed message has no sweep to recover it (#5362 ④).
+  // The repo facts for the replied thread's file — "" unless
+  // `[memory] delivery = "on"`, so the wake is otherwise byte-identical.
+  // The path rides the interpretation only, never the event: the wake's
+  // own text does not change. Read before the claim, so the claim is
+  // still followed at once by its wake — a claimed message has no sweep
+  // to recover it.
   let facts = "";
   if (deps.repoFacts && reply.path) {
     const before = store.getPr(reply.pr);
@@ -349,8 +348,8 @@ export async function serveAuthorReply(
   }
   if (!pingpong.claimAuthorMessage(event)) return;
   const row = store.getPr(reply.pr);
-  // S4: the PR's one main pi never gets a second instruction while its
-  // round is in flight — the wake is held and flushed at round end.
+  // The PR's one main pi never gets a second instruction while its round
+  // is in flight — the wake is held and flushed at round end (rule 9).
   const disposition = await wakeOrHold(
     { store, inject: deps.inject, log },
     reply.pr,
@@ -367,7 +366,7 @@ export async function serveAuthorReply(
     ),
     "author_reply",
     // The message is already claimed: a failed injection must hold
-    // the wake, or no redelivery can ever answer it (selfscan 0df49200).
+    // the wake, or no redelivery can ever answer it.
     { holdOnFailure: true },
   );
   if (disposition === "held")
@@ -391,7 +390,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       cfg.daemon.follow_up_sweep_extra_min ?? DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN,
   };
 
-  // Overseer wake policy: every logAnomaly flows through the ONE
+  // Overseer wake policy: every logAnomaly flows through the one
   // severity map + dedup; WAKE classes write an overseer inject, QUIET classes
   // stay DB-only. Wired here so stub-wired daemons behave identically.
   const wakePolicy = new AnomalyWakePolicy({ injectOverseer: (m) => hooks.injectOverseer(m), log });
@@ -399,8 +398,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const gh: DaemonAdapter = deps.adapter ?? buildGitHubAdapter(cfg, stateDir);
 
-  // L2: the daemon measures its own event loop and the container's
-  // CPU throttling. A stall wakes through the ONE anomaly funnel (WAKE kind
+  // The daemon measures its own event loop and the container's CPU
+  // throttling. A stall wakes through the one anomaly funnel (WAKE kind
   // `daemon_event_loop_stalled`), rate-limited by the watch's cooldown.
   const load = new DaemonLoadMonitor({
     policy: eventLoopPolicy(cfg.daemon),
@@ -434,7 +433,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.now ? { now: deps.now } : {}),
     // The durable reasoning record — same dir the round prompts pin.
     findingsDir: join(root, "state", "findings"),
-    // the lesson shadow ledger marks the round's posted findings.
+    // The lesson shadow ledger marks the round's posted findings.
     ...(deps.onFindingsRecorded ? { onFindingsRecorded: deps.onFindingsRecorded } : {}),
     log,
   });
@@ -477,21 +476,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       cfg.github.bot_login === `${cfg.github.app_slug}[bot]` ? cfg.github.app_slug : undefined,
     // The author asked for a person on a review thread.
     //
-    // There is no park to put them in: retired it, so the state event
-    // is a deliberate no-op (`statemachine.ts`: "noted, never a handover — AI
-    // keeps working") and no reviewer is ever nominated on GitHub (rule 10).
-    // But before that was ALL that happened — `transition` returned
-    // `current`, so not even a `pr_transition` row was written, and the only
-    // trace of an author-facing request was one boolean inside a
-    // `pingpong_decision_applied` payload that nothing reads. The comment here
-    // said "Park the PR locally", which had not been true.
-    //
-    // Decision: the signal is RECORDED, durably and visibly, and it
-    // is never a handover. `logAnomaly` is the one durable funnel; the kind is
-    // deliberately unlisted in `anomalies.ts` WAKE_KINDS, so it is quiet-tier —
-    // it lands in the DB, surfaces in the operator views and in the overseer's
-    // daily heartbeat, and never injects. An author asking for a person is
-    // worth a human's eyes; it is not a review that ran unsoundly NOW.
+    // There is no park to put them in: the state event is a deliberate no-op
+    // (`statemachine.ts`: "noted, never a handover — AI keeps working") and no
+    // reviewer is ever nominated on GitHub (rule 10). The signal is recorded,
+    // durably and visibly, and it is never a handover. `logAnomaly` is the one
+    // durable funnel; the kind is deliberately unlisted in `anomalies.ts`
+    // WAKE_KINDS, so it is quiet-tier — it lands in the DB, surfaces in the
+    // operator views and in the overseer's daily heartbeat, and never injects.
+    // An author asking for a person is worth a human's eyes; it is not a
+    // review that ran unsoundly now.
     onHumanRequested: async (decision) => {
       applyEvent(
         store,
@@ -513,7 +506,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     },
   });
 
-  // the repo-fact lessons a recheck nudge and a ping-pong wake
+  // The repo-fact lessons a recheck nudge and a ping-pong wake
   // carry for the paths they touch. Total — the hook is bounded by the lesson
   // prefetch's budget, and a throw is "" — so neither wake is ever held or
   // lost for it.
@@ -537,7 +530,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     inject: (pr, message) => hooks.inject(pr, message),
     ...(deps.renderRecheckPrompt ? { renderPrompt: deps.renderRecheckPrompt } : {}),
     ...(deps.resolvedFilesInMerges ? { resolvedFilesInMerges: deps.resolvedFilesInMerges } : {}),
-    // the repo facts for the delta's files — "" unless
+    // The repo facts for the delta's files — "" unless
     // `[memory] delivery = "on"`, so the nudge is otherwise byte-identical.
     ...(deps.lessons?.repoFacts
       ? { repoFacts: (q: Parameters<NonNullable<RecheckDeps["repoFacts"]>>[0]) => repoFactsFor(q) }
@@ -601,8 +594,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         onClosed: async (pr) => {
           await hooks.archiveAndClose(pr);
         },
-        // A push after an approve — the case that caught 13 real post-approval
-        // regressions in the predecessor system.
+        // A push after an approve: the recheck audits the new delta.
         onSynchronize: async (sync) => {
           await guard(`recheck #${sync.pr}`, () =>
             runRecheck(recheckDeps, { pr: sync.pr, trigger: "push", head_sha: sync.meta.head_sha }),
@@ -618,7 +610,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
                 ci: { conclusion: ci.conclusion },
               }),
             );
-            // the other side of the same event. A PR whose approval
+            // The other side of the same event. A PR whose approval
             // was withheld for red CI is re-queued the moment CI goes green at
             // that head — without this the gate turns every infra flake into a
             // permanently stuck PR.
@@ -641,7 +633,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             }),
           );
         },
-        // forward tuning-loop signals to the engine. A review set
+        // Forward tuning-loop signals to the engine. A review set
         // aside right after a head push is GitHub's own stale-review sweep,
         // classified here (the store holds the push clock), not a human verdict.
         onFeedbackSignal: async (e) => {
@@ -672,16 +664,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     }
   };
 
-  // Deploy-window drain auto-lift (2026-08-25): only the boot's FIRST
-  // reconcile pass may lift the drain, and only when it completed HEALTHILY —
-  // reconcileOnce resolved AND its per-step `report.errors` is empty. A
-  // failed first pass leaves the drain standing for the rest of this boot (a
-  // broken deploy must not resume work blind); clearing it then takes an
-  // explicit `drain off`. Consequence the owner accepted: in a multi-deploy
-  // window each healthy boot lifts the drain, so the operator re-drains
-  // before each step.
-  // Outcome capture (S6): what became of every posted finding. It
-  // reads only (state.db, the base clone) and rides the reconcile pass.
+  // Outcome capture: what became of every posted finding. It reads only
+  // (state.db, the base clone) and rides the reconcile pass.
   const outcomes = new OutcomeCapture({
     store,
     botLogin: cfg.github.bot_login,
@@ -692,19 +676,24 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   let firstReconcileSeen = false;
   let firstHealthyReconcileAt: Date | null = null;
-  // ONE reconcile pass at a time (boot stall). The poll was
-  // `every(poll_interval_s, () => void reconcile())` with nothing in between,
-  // so a pass that ran past the interval overlapped the next one — three
-  // passes ended within 21 s at 13:55 on 2026-10-07 — and every overlap paid
-  // every step again. A tick that finds a pass running is skipped; an
-  // explicit call waits for it and then runs its own pass.
+  // Deploy-window drain auto-lift: only the boot's first reconcile pass may
+  // lift the drain, and only when it completed healthily — reconcileOnce
+  // resolved and its per-step `report.errors` is empty. A failed first pass
+  // leaves the drain standing for the rest of this boot (a broken deploy must
+  // not resume work blind); clearing it then takes an explicit `drain off`.
+  // In a multi-deploy window each healthy boot lifts the drain, so the
+  // operator re-drains before each step.
   //
-  // The guard is BOUNDED (review fix): it covers reconcileOnce and the drain
-  // lift only — the conversation sweep and the dispatch pump run after it is
-  // released, each behind its own lock — and a pass still running after
+  // One reconcile pass at a time: an overlapping pass would pay every step
+  // again. A tick that finds a pass running is skipped; an explicit call
+  // waits for it and then runs its own pass.
+  //
+  // The guard is bounded: it covers reconcileOnce and the drain lift only —
+  // the conversation sweep and the dispatch pump run after it is released,
+  // each behind its own lock — and a pass still running after
   // RECONCILE_OVERDUE_INTERVALS poll intervals is abandoned, so one hung await
   // can never stop every later pass (and with them the backstop and the
-  // undelivered-recheck sweep, #5362 rule ④).
+  // undelivered-recheck sweep).
   const reconcileFlight = new SingleFlight({
     overdueMs: () => RECONCILE_OVERDUE_INTERVALS * cfg.daemon.poll_interval_s * 1000,
     onOverdue: (ageMs) => {
@@ -734,7 +723,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     void reconcile();
   };
   /** The guarded part of a pass; true when it completed (the follow-ups run
-   * only then, as they did when they sat at the end of this body). */
+   * only then). */
   const reconcilePass = async (): Promise<boolean> => {
     const bootFirstPass = !firstReconcileSeen;
     firstReconcileSeen = true;
@@ -746,15 +735,15 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         adapter: gh,
         hooks,
         log,
-        // push-trigger backstop: same runRecheck the webhook's
-        // onSynchronize calls — a dead/lost webhook no longer means a
-        // post-review push goes unexamined (live gap 2026-08-19, #5307).
+        // Push-trigger backstop: same runRecheck the webhook's onSynchronize
+        // calls, so a dead/lost webhook never leaves a post-review push
+        // unexamined.
         onHeadPush: async (pr, head_sha) => {
           await guard(`recheck #${pr}`, () =>
             runRecheck(recheckDeps, { pr, trigger: "push", head_sha }),
           );
         },
-        // backstop: merged-over-block for closes the webhook missed.
+        // Feedback backstop: merged-over-block for closes the webhook missed.
         onMergedOverBlock: async (pr) => {
           await guard(`feedback #${pr}`, async () =>
             deps.onFeedback?.({ kind: "merged_over_block", pr }),
@@ -763,7 +752,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         outcomes,
         // The boot's first pass lifts a deploy drain; the undelivered-recheck
         // sweep reads session transcripts and is not needed for that, so it
-        // starts on the next pass (boot stall).
+        // starts on the next pass to keep the boot pass short.
         receiptSweep: !bootFirstPass,
       });
       log(
@@ -790,8 +779,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
 
   const pump = async (): Promise<void> => {
     await guard("dispatch", async () => {
-      // Session levers that lapsed since the last tick leave the ledger here
-      //; the readers below already treat them as gone.
+      // Session levers that lapsed since the last tick leave the ledger here;
+      // the readers below already treat them as gone.
       sweepExpiredLevers(store, (line) => log(line));
       const orders = await dispatchOnce({
         cfg,
@@ -805,7 +794,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         ...(deps.lessons ? { lessons: deps.lessons } : {}),
         ...(deps.ecosystem ? { ecosystem: deps.ecosystem } : {}),
         ...(deps.heuristics ? { heuristics: deps.heuristics } : {}),
-        // (MC-18): every round order re-hands the PR's ledger, read
+        // Every round order re-hands the PR's ledger, read
         // from ledger-pin's mirror — the same file the freshness check reads.
         // Total: no file, an unreadable one or another PR's ⇒ no carry.
         ledgerCarry: (n) => readLedgerCarry(join(root, "state", "ledgers", `pr-${n}.md`), n),
@@ -829,8 +818,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   };
 
   const retryDueReviewFailures = async (): Promise<number> => {
-    // This transition only republishes ordinary queued debt; the ONE dispatch
-    // pump below remains the sole round and Pi-command creator.
+    // This transition only republishes ordinary queued debt; the one dispatch
+    // pump below remains the sole round and pi-command creator.
     const automaticRetries = store.activateDueReviewFailureRetries(store.currentTimeIso());
     if (automaticRetries.length > 0) {
       for (const retry of automaticRetries) {
@@ -843,8 +832,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     return automaticRetries.length;
   };
 
-  // Passive pi auth-failure watch (the owner, 2026-08-19): no smoke calls, just
-  // the session JSONLs pi already writes. A detection is a WAKE-grade anomaly
+  // Passive pi auth-failure watch: no smoke calls, just the session JSONLs pi
+  // already writes. A detection is a wake-grade anomaly
   // (10-min dedup via the sink) and a status.json flag the TUI alerts on.
   const piAuthWatch = deps.piSessionsDir ? new PiAuthWatch(deps.piSessionsDir) : undefined;
   const authWatchTick = (): void => {
@@ -963,7 +952,7 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         });
         // Loopback by default; in the container the daemon must bind 0.0.0.0
         // (docker's published port targets the container's eth0, and the
-        // host-side binding is already 127.0.0.1-only — spec §9).
+        // host-side binding is already 127.0.0.1-only).
         const bindHost = process.env.QC_BIND_HOST ?? "127.0.0.1";
         await new Promise<void>((resolve) => server!.listen(cfg.server.port, bindHost, resolve));
         log(`webhook listening on ${bindHost}:${cfg.server.port}/webhook`);
@@ -983,23 +972,22 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
           writeStatus();
         }
       });
-      // onStart BEFORE the first reconcile: the sweep can nudge a recheck at a
+      // onStart before the first reconcile: the sweep can nudge a recheck at a
       // dead session immediately (boot after a deploy restart), and the
-      // respawn path needs the title resolver wired in onStart. Live failure
-      // 2026-08-19: "no live session pr-5290" thrown by the boot sweep.
+      // respawn path needs the title resolver wired in onStart.
       //
-      // FATAL, not guarded: onStart assembles the command watchers, the EOD
+      // Fatal, not guarded: onStart assembles the command watchers, the EOD
       // timer and the Slack concierge, and refuses loudly on what must not
       // run half-built (Slack auth.test, a malformed profile pack). Swallowing
-      // the throw left a daemon that reviewed PRs while serving no overseer or
-      // operator command and running no sweep, with one log line to say so.
-      // The caller (wire.ts main) stops and exits non-zero; the container
-      // restart is the retry.
+      // the throw would leave a daemon that reviews PRs while serving no
+      // overseer or operator command and running no sweep. The caller
+      // (wire.ts main) stops and exits non-zero; the container restart is the
+      // retry.
       if (deps.onStart) {
         // A real event-loop turn between the first status write and the
         // assembly: each is tens of ms of synchronous work, and back to back
-        // (with any of onStart's calls answering without real I/O) they were
-        // one span of the boot (boot stall).
+        // (with any of onStart's calls answering without real I/O) they would
+        // be one uninterrupted span of the boot.
         await yieldToLoop();
         try {
           await deps.onStart(this);
@@ -1037,8 +1025,8 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
         });
         void guard("deadline check", async () => {
           await verdicts.checkDeadlines();
-          // a safe pre-fanout exhaustion is a circuit breaker, not an
-          // inert operator park.
+          // A safe pre-fanout exhaustion is a circuit breaker, not an inert
+          // operator park.
           await retryDueReviewFailures();
           // Zombie-round expiry: rounds stuck `overdue` past the
           // horizon whose PR has since verdicted/closed become terminal
@@ -1048,13 +1036,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
             if (expired.length > 0)
               log(`expired ${expired.length} zombie round(s): ids ${expired.join(",")}`);
           }
-          // Stranded rounds: the ones the sweep above deliberately
-          // leaves — overdue, but the PR is still open and still undecided, so
-          // "a rerun could service it". Nothing ever does; found one
-          // sitting untouched since the cutover, ten days and invisible. Past a
-          // week that is not pending rescue, it is abandoned: terminalize it and
-          // SAY SO. One anomaly per round, once, because the row stops being
-          // overdue the moment it is reported.
+          // Stranded rounds: the ones the sweep above deliberately leaves —
+          // overdue, but the PR is still open and still undecided, so "a rerun
+          // could service it". Nothing reruns an overdue round on its own, so
+          // past a week it is abandoned: terminalize it and say so. One anomaly
+          // per round, once, because the row stops being overdue the moment it
+          // is reported.
           for (const r of store.expireStrandedRounds()) {
             store.logAnomaly(
               "round_stranded",
@@ -1097,16 +1084,9 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
   };
 }
 
-// NO SECOND ENTRYPOINT HERE, deliberately (MC-09).
-//
-// `daemon.ts` used to end with `main()` plus
-// `if (process.argv[1]?.endsWith("daemon.js")) void main();`. Nothing ever
-// launched it — not package.json, not a script, not the image — and if
-// anything had, it would have built a REAL MutationGate against the real
-// config and never called `setGuard`/`setLog`: a daemon with no posting
-// guards and no CI gate, one `node dist/src/daemon.js` away.
-//
-// `src/wire.ts` is the production assembly and the only entrypoint that
-// builds a live gate; it installs the guards before it starts. This module
-// stays the stub-wired, test-friendly core it is documented as.
+// No process entrypoint here, deliberately. An entrypoint in this module
+// would build a real MutationGate against the real config without installing
+// the posting guards or the CI gate. `src/wire.ts` is the production assembly
+// and the only entrypoint that builds a live gate; it installs the guards
+// before it starts. This module stays the stub-wired, test-friendly core.
 // Pinned by `tests/fences-gate.test.ts`.

@@ -10,7 +10,7 @@
 //     claimed-done step against reality — the file is never trusted alone);
 //   - finish_and_exit: re-runs the FULL verification; anything red comes back
 //     as the tool result (no exit, ever, while red); all green marks the
-//     checklist complete, writes the first-run marker
+//     checklist complete, writes the companion's first-run marker
 //     (state/companion/first-run.json), and triggers pi's deferred shutdown —
 //     the `qcr onboard` process then opens the TUI.
 //
@@ -65,9 +65,8 @@ export function realAdapters(root: string): OnboardAdapters {
       nodeVersion: process.version,
       uid: typeof process.getuid === "function" ? process.getuid() : null,
     },
-    // the install locator decides which config.toml the wizard
-    // edits — $QCR_CONFIG, else the install's config home, else (logged) the
-    // checkout's legacy file. A fresh install writes into the config home.
+    // The install locator decides which config.toml the wizard edits —
+    // $QCR_CONFIG, else the install's config home (never the checkout's).
     paths: { stateDir: join(root, "state"), configPath: locateConfig().path },
     log: (line) => console.error(line),
   };
@@ -120,8 +119,8 @@ export function toolDefinitions(
       "Safe to re-run; a failed run leaves the step pending.",
     promptSnippet: `Run the ${step.id} onboarding step`,
     // A step that needs the operator's answer declares its own schema; the
-    // params land on the step as ctx.input (ingress choice is the
-    // first). Everything else takes no input at all.
+    // params land on the step as ctx.input (the ingress choice is one).
+    // Everything else takes no input at all.
     parameters: step.parameters ?? NO_PARAMS,
     execute: async (_id, params) => {
       const result = await engine.runStep(step.id, params ?? {});

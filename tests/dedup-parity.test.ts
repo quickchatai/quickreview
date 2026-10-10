@@ -1,11 +1,11 @@
 // The duplicate merge runs on the code path BOTH routes execute
-// (docs/duplicate-merge.md, decision 12: the bench matches a live round 1).
+// (docs/duplicate-merge.md, decision 12: the bench must match a live round 1).
 // Given the same findings record and the same config, the live render route
 // (scripts/render-review.sh → src/reviewrendercli.ts renderRound) and the
 // bench route (src/bench/runner.ts renderBenchOutputs) post the same set, write
 // the same body and record the same dispositions.
 //
-// ONE difference is the live route's alone (S6): each inline comment
+// One difference is the live route's alone: each inline comment
 // it renders ends with the hidden `<!-- qcr:f=<round>:<key> -->` marker that
 // links the posted comment back to its finding. The bench never carries it,
 // so `bothRoutes` checks the marker and STRIPS it before the comparison — what
@@ -153,7 +153,7 @@ describe("live render route ≡ bench render route", () => {
   });
 });
 
-// The profile's `[posting]` cut moved into the same render step
+// The profile's `[posting]` cut runs in the same render step
 // (applyPostingPolicyToRecord), so the live shell route enforces it too.
 describe("the [posting] cut on both render routes", () => {
   const policy = {

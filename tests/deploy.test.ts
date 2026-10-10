@@ -30,17 +30,17 @@ interface OvPins {
   version?: string;
   llama?: string;
   extension?: string;
-  /** — the auth posture is mirrored exactly like the pins. */
+  /** The auth posture is mirrored exactly like the pins. */
   auth?: string;
   rootKeyFile?: string;
   reviewerKeyFile?: string;
   users?: string;
-  /** — the embedder, mirrored against the EFFECTIVE ansible value. */
+  /** The embedder, mirrored against the effective ansible value. */
   embedProvider?: string;
   embedModel?: string;
   embedDimension?: string;
   embedKeyFile?: string;
-  /** S4: the local embedder's model-file pin and service knobs. */
+  /** The local embedder's model-file pin and service knobs. */
   localEmbedder?: LocalEmbedderPin;
   /** Raw `[openviking]` lines for config.toml only — a partial pin block. */
   configLines?: string[];
@@ -171,13 +171,12 @@ function makeScratch(opts: {
   inventory?: string;
   /** A `[github]` table appended to config.toml (the clone name). */
   github?: { repo?: string; cloneDir?: string; secretsDir?: string };
-  /** `[review] profile` in config.toml (must ride the checkout). */
+  /** `[review] profile` in config.toml. */
   profile?: string;
   /** Tracked files to commit with the scratch tree, path → contents. */
   tracked?: Record<string, string>;
-  /** Where the live config.toml lives: the install's config home
-   * (the default — what a deploy ships), or stranded in the checkout (never
-   * read). */
+  /** Where the live config.toml lives: the install's config home (the
+   * default — what a deploy ships), or stranded in the checkout (never read). */
   configAt?: "home" | "checkout";
   /** Files in the config home, path relative to it → contents. */
   homeFiles?: Record<string, string>;
@@ -371,7 +370,7 @@ describe("deploy.sh --dry-run", () => {
   });
 });
 
-// ---- the config home ships ----------------------------------------
+// ---- the config home ships ---------------------------------------------------
 // sync|rebuild deliver the install's config home — the located config and the
 // profiles/ beside it — to the VM by a playbook task of its own; the container
 // reads it through QCR_CONFIG. The pin/drift preflight reads that same config.
@@ -425,7 +424,7 @@ describe("deploy.sh — the config home ships", () => {
 
   it("REFUSES a missing home: a config that lives only in the checkout is never read or shipped", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1", configAt: "checkout" });
-    // the checkout's config.toml is not a fallback for ANY mode —
+    // The checkout's config.toml is not a fallback for any mode —
     // the located config (the empty home's) is missing, and migrate is named.
     for (const mode of ["sync", "rebuild", "verify"]) {
       const r = run(env, ["--dry-run", mode]);
@@ -731,7 +730,7 @@ describe("scripts/config-fingerprint.sh", () => {
   });
 });
 
-// ---- the memory-engine pins --------------------------------------
+// ---- the memory-engine pins ------------------------------------------------
 // The pi pin never floats; neither does OpenViking's. Three pins, two mirrors:
 // server version and llama-cpp-python against the ansible group_vars (which
 // the Dockerfile venv layer interpolates, so agreeing there means agreeing in
@@ -817,10 +816,10 @@ describe("deploy.sh — OpenViking pin drift", () => {
     );
   });
 
-  // the auth posture is a mirror too, and for the sharper reason:
-  // the entrypoint renders group_vars, so a config.toml saying "api_key" over a
-  // group_vars saying "dev" ships a server with NO per-user confinement while
-  // every doc claims otherwise. That is what shipped for a week.
+  // The auth posture is a mirror too, and for the sharper reason: the
+  // entrypoint renders group_vars, so a config.toml saying "api_key" over a
+  // group_vars saying "dev" ships a server with no per-user confinement while
+  // every doc claims otherwise.
   describe("auth-mode drift", () => {
     const AUTH: OvPins = {
       ...OV,
@@ -967,10 +966,9 @@ describe("deploy.sh — OpenViking pin drift", () => {
     });
 
     it("reads the RETIRED local spelling as the parser does: the live config.toml needs no edit (integration review)", () => {
-      // The previous release REQUIRED bge-small-zh-v1.5-f16/512 under local
-      // and refuses the new spelling, so editing config.toml before a deploy
-      // (or forgetting to revert it on a rollback) broke one release or the
-      // other. The parser maps it; the preflight must agree.
+      // The parser maps the retired bge-small-zh-v1.5-f16/512 spelling under
+      // local, so a config.toml still carrying it deploys without an edit (and
+      // survives a rollback); the preflight must agree.
       for (const embedDimension of ["512", undefined]) {
         env = makeScratch({
           configPi: "0.84.4",
@@ -1017,7 +1015,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
     });
   });
 
-  // the local English embedder's model file is a pin like the
+  // The local English embedder's model file is a pin like the
   // server version: config.toml == group_vars (== the image layer, which
   // interpolates group_vars). Port and threads ride the same check.
   describe("local embedder pin drift (S4)", () => {
@@ -1083,7 +1081,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
       expect(r.stderr).toContain("has no local embedder model file pin");
     });
 
-    // Review (S4): the stand-down keys on NONE of the five being named — a
+    // The stand-down keys on none of the five being named — a
     // config.toml that names some is checked key by key, never skipped.
     it("a partial block is checked: a port-only config.toml that drifts REFUSES as the drift it is", () => {
       env = makeScratch({
@@ -1138,7 +1136,7 @@ describe("deploy.sh — OpenViking pin drift", () => {
   });
 });
 
-// ---- drain advisory (2026-08-25) — WARN only, never a refusal ---------------
+// ---- drain advisory — WARN only, never a refusal ----------------------------
 //
 // The heartbeat read is seamed through QC_STATUS_JSON_CMD so no test ever
 // opens an ssh connection. Every case runs --dry-run: the advisory fires
@@ -1179,7 +1177,7 @@ describe("deploy.sh drain advisory", () => {
     env = makeScratch({ configPi: "0.84.1", groupVarsPi: "0.84.1" });
     const cmd = status(env, JSON.stringify({ running_rounds: 3, dry_run: false }));
     const res = runMerged(env, [], { QC_STATUS_JSON_CMD: cmd });
-    expect(res.code).toBe(0); // WARN only — the owner chose warn over refusal
+    expect(res.code).toBe(0); // WARN only, never a refusal
     expect(res.out).toContain("WARNING — deploying UNDRAINED while 3 round(s) are running");
     expect(res.out).toContain("qcr drain on");
   });
@@ -1209,13 +1207,12 @@ describe("deploy.sh drain advisory", () => {
   });
 });
 
-// ---- the base clone, for ANY repo name ---------------------------
+// ---- the base clone, for any repo name ------------------------------------
 // The VM's base clone lives inside the rsync --delete target, and it survives
-// a sync only because the playbook excludes it BY NAME. That name used to be
-// one install's literal repo name, so any other reviewed repo had its clone
-// wiped on every sync; and the tracked `.gitignore` line of that literal left
-// any other clone reading as a dirty tree, which this script refuses. Both
-// now follow the configured clone name.
+// a sync only because the playbook excludes it by name. That exclude, and the
+// dirty-tree check's ignore, follow the configured clone name: a literal repo
+// name would wipe any other reviewed repo's clone on every sync and leave it
+// reading as a dirty tree, which this script refuses.
 describe("deploy.sh — base clone name", () => {
   const ACME = { repo: "acme/acme-api" };
 
@@ -1267,7 +1264,7 @@ describe("deploy.sh — base clone name", () => {
     const home = join(h.XDG_CONFIG_HOME, "qcr", "default", "secrets");
     expect(extraVars(r.stdout).secrets_src).toBe(home);
     expect(r.stdout).toContain(`secrets      ${home}`);
-    // the old dir holding them changes nothing — it is never shipped.
+    // The legacy dir holding them changes nothing — it is never shipped.
     const legacy = join(h.HOME, ".config", "quickreview-bot");
     mkdirSync(legacy, { recursive: true });
     writeFileSync(join(legacy, "app_id"), "1\n");
@@ -1460,9 +1457,9 @@ describe("deploy.sh — base clone name", () => {
   });
 });
 
-// 2026-10-03: a sync shipped code whose entrypoint half was baked into an old
-// image, the daemon crash-looped, and the post-deploy check still said ok —
-// it read the OLD daemon's status.json. Three guards came out of it.
+// A sync can ship code whose entrypoint half is baked into an older image; the
+// post-deploy check must then not read the previous daemon's status.json as
+// healthy. These cases pin the guards against that.
 describe("deploy — the 2026-10-03 stale-image outage", () => {
   const checker = join(root, "scripts", "heartbeat-fresh.mjs");
   const STARTED = "2026-10-03T09:55:40.000000000Z";
@@ -1486,8 +1483,8 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
   });
 
   it("heartbeat-fresh: the OLD daemon's last write — after the deploy began, before this boot — is stale", () => {
-    // The incident: deploy started 09:55:05, the old daemon wrote 09:55:31,
-    // the container was recreated after that and never wrote again.
+    // Deploy starts 09:55:05, the old daemon writes 09:55:31, the container
+    // is recreated after that and never writes again.
     const r = judge(`${STARTED}\n${NOW}\n${status("2026-10-03T09:55:31.228Z")}`);
     expect(r.code).toBe(1);
     expect(r.out).toContain("predates the container start");
@@ -1586,9 +1583,9 @@ describe("deploy — the 2026-10-03 stale-image outage", () => {
   });
 });
 
-// 2026-10-05: the recursive chown handed commands/operator/ to the container
-// user on every deploy, so a pending operator drain was served as a session's
-// and the boot never lifted it.
+// A recursive chown of the sandbox would hand commands/operator/ to the
+// container user, so a pending operator drain would be served as a session's
+// and the boot would never lift it.
 describe("deploy — the operator channel's seal survives the sandbox chown", () => {
   const playbook = () => readFileSync(join(root, "deploy", "ansible", "playbook.yml"), "utf8");
 

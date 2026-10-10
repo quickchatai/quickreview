@@ -1,5 +1,4 @@
-// tests/style-guide-sources.test.ts — where the style lens's guide comes from
-//.
+// tests/style-guide-sources.test.ts — where the style lens's guide comes from.
 //
 // Two sources, one rule: the repo's own written guide — now including the
 // style rules it wrote for its agents (AGENTS.md, CLAUDE.md,
@@ -98,7 +97,7 @@ describe("findStyleGuide reads the style rules a repo wrote for its agents", () 
   });
 
   it("written rules count whatever the heading: a `# Compliance Rules` AGENTS.md is a guide", () => {
-    // The shape of all eight Qodo PR-Review-Bench repos' AGENTS.md (2026-10-03):
+    // The shape of all eight Qodo PR-Review-Bench repos' AGENTS.md:
     // numbered `##` rules under one `# Compliance Rules` title.
     const body = Array.from(
       { length: 4 },

@@ -281,8 +281,8 @@ describe("durable PR-session command slot", () => {
   it("never evicts an operator-recovered payload when later wakes fill the cap", () => {
     const store = open();
     store.createSessionCommand({ ...input("cmd-wake"), kind: "wake", round_no: null });
-    // Ordinary (evictable) wakes: since H1b an author reply is never
-    // evicted, so the filler must be a wake the cap may drop.
+    // Ordinary (evictable) wakes: an author reply is never evicted, so the
+    // filler must be a wake the cap may drop.
     for (let i = 0; i < 5; i++) store.holdWake(5408, `later-${i}`, "ledger_stale");
 
     store.cancelBlockingSessionCommandsForOperator(
@@ -380,7 +380,7 @@ describe("durable PR-session command slot", () => {
   });
 });
 
-// H1b (#5362 ③): the same-session redelivery CAS.
+// The same-session redelivery CAS.
 describe("requeueSessionCommandForRedelivery", () => {
   const stores: StateStore[] = [];
   afterEach(() => {
@@ -474,7 +474,7 @@ describe("requeueSessionCommandForRedelivery", () => {
     ).toBe(false);
   });
 
-  // H1b review: the CAS is on the row the supervisor found DUE. A
+  // The CAS is on the row the supervisor found DUE. A
   // bridge that re-reserved it since moved `attempt` and `next_check_at`; one
   // that only rescheduled it moved `next_check_at`. Neither is stale.
   it("refuses a row whose lease moved since the supervisor's due read, attempt unchanged or not", () => {
@@ -505,7 +505,7 @@ describe("requeueSessionCommandForRedelivery", () => {
   });
 });
 
-// H1b review: the same-session redelivery budget belongs to one
+// The same-session redelivery budget belongs to one
 // session generation (or one delivery lifecycle). A replay into a fresh
 // session — or a terminal command handed back — starts it again, so that
 // conversation's first missed start is redelivered, not killed.

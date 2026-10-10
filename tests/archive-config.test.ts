@@ -95,8 +95,8 @@ describe("config.example.toml", () => {
   });
 
   it("what `on` does is said as it is built: it removes closed PRs' files from the live tree (never the S2-era 'only planned')", () => {
-    // The operator reads this at the moment of the flip (integration review,
-    // 2026-10-08): the comment above [archive] and the ArchiveConfig doc.
+    // The operator reads these at the moment of the flip: the comment above
+    // [archive] and the ArchiveConfig doc.
     const text = readFileSync(EXAMPLE, "utf8");
     const comment = text.slice(text.indexOf("# Archiving ("), text.indexOf("\n[archive]\n"));
     const doc = readFileSync(join(process.cwd(), "src", "config.ts"), "utf8");

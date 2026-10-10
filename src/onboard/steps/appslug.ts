@@ -1,37 +1,38 @@
-// App-slug reconciliation (inherited obligation ① from the ticket's
-// note) — the one defect in the onboarding order that nothing else catches.
+// App-slug reconciliation — the one defect in the onboarding order that
+// nothing else catches.
 //
-// THE PROBLEM. config_fill (order 35) runs BEFORE the App exists, because the
+// The problem: config_fill (order 35) runs before the App exists, because the
 // App step reads the reviewed repo config_fill records. So config_fill asks the
-// operator for the App slug up front and DERIVES `[github] bot_login` from it
-// (`<slug>[bot]`, the derivable). The App's REAL slug is only known
+// operator for the App slug up front and derives `[github] bot_login` from it
+// (`<slug>[bot]`). The App's real slug is only known
 // after creation: GitHub suffixes the name for global uniqueness, and the
 // operator can edit it on GitHub's own creation page — and can rename the App
 // at any time afterwards, which moves the slug again.
 //
-// WHY IT MATTERS, in one line: `bot_login` is how the daemon recognises ITS OWN
+// Why it matters: `bot_login` is how the daemon recognises its own
 // reviews and comments. Get it wrong and posting-guard ① reads the bot's own
 // review as a non-author human approval, the ping-pong path mistakes its own
 // comments for the author's, and the backfill identity (which cascades off
 // [github]) imports someone else's history. Nothing else in the system checks
 // it: every one of those paths is happy with a login that simply never matches.
 //
-// THE FIX. After the App exists, ask the App itself (`GET /app` with the App
+// The fix: after the App exists, ask the App itself (`GET /app` with the App
 // JWT — the App's own identity, no installation token, no personal credential)
 // and reconcile the answer against config.toml, correcting `[github] app_slug`
 // and `[github] bot_login` when they disagree. The live answer wins over both
 // the file and the checklist's recorded choice: a rename after creation is
 // exactly the case a record cannot see.
 //
-// This runs BEFORE bring-up (order 65) because the daemon reads config.toml
-// once, at boot — and if the stack is somehow already running when a correction
+// This runs (order 65) before bring-up (order 70) because the daemon reads
+// config.toml once, at boot — and if the stack is somehow already running when a correction
 // lands, the step restarts it rather than leaving a live daemon on a stale
 // login.
 //
-// Rule 1 is structural here as it is in config_fill: every edit this step makes
-// goes through `assertNoDryRunEdit`, which refuses an edit naming `dry_run`
-// however it is spelled. The ONLY file in this slice that writes that flag is
-// golive.ts, and only on an explicit confirmation after a completed proof.
+// The dry-run flag is out of reach here as it is in config_fill (CLAUDE.md
+// rule 1): every edit this step makes goes through `assertNoDryRunEdit`, which
+// refuses an edit naming `dry_run` however it is spelled. The only onboarding
+// step that writes that flag is golive.ts, and only on an explicit
+// confirmation after a completed proof.
 import { mintAppJwt } from "../../githubAuth.js";
 import type { CheckResult, OnboardingStep, StepContext, StepReport } from "../engine.js";
 import {
@@ -214,7 +215,7 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     ctx.recordChoice(CHOICE_KEYS.appSlug, identity.slug);
     ctx.recordChoice(CHOICE_KEYS.botLogin, botLoginFor(identity.slug));
 
-    // A correction only reaches a RUNNING daemon through a restart: the config
+    // A correction only reaches a running daemon through a restart: the config
     // loader runs once, at boot.
     if (write && edits.length > 0) {
       // Whichever host the daemon lives on: `docker compose restart` here, the
@@ -253,7 +254,7 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
       return reconcile(ctx, true);
     },
     async verify(ctx): Promise<StepReport> {
-      // verify NEVER writes: a disagreement is red here and fixed by a run.
+      // verify never writes: a disagreement is red here and fixed by a run.
       return reconcile(ctx, false);
     },
   };

@@ -90,7 +90,7 @@ describe("rounds", () => {
     expect(Date.parse(r1.deadline_at) - Date.parse(r1.started_at)).toBe(45 * 60_000);
   });
 
-  // which tier held the veto, so a later audit can attribute kills.
+  // Which tier held the veto, so a later audit can attribute kills.
   it("records the validator's tier at start, and lets a late stamp fill it in", () => {
     const id = store.startRound(7, "initial", ["pass-baseline"], 45, { validate_tier: "sol-high" });
     expect(store.roundsFor(7)[0]!.validate_tier).toBe("sol-high");
@@ -170,7 +170,7 @@ describe("rounds", () => {
     expect(store.totalSpend()).toBeCloseTo(1.25 + 0.1, 6);
   });
 
-  // executed-pass telemetry, stored beside (never instead of) the plan.
+  // Executed-pass telemetry, stored beside (never instead of) the plan.
   it("records executed passes per round, distinct from planned lenses; null/unparseable read as unknown", () => {
     const id = store.startRound(7, "initial", ["pass-baseline", "pass-validate"], 45);
     expect(store.executedPasses(id)).toBeNull(); // unknown until the verdict reports
@@ -313,10 +313,9 @@ describe("zombie-round expiry + spend fold", () => {
     expect(store.expireOverdueRounds(24)).toEqual([]); // idempotent
   });
 
-  // reverses half of the rule: an expired round is still
-  // dropped from the round COUNTS (an abandoned row is not a review), but its
-  // spend is real money and is counted. Excluding it did not remove noise —
-  // it erased cost the reviewer actually incurred (finding 1).
+  // An expired round is dropped from the round COUNTS (an abandoned row is not
+  // a review), but its spend is real money and is counted: excluding it would
+  // erase cost the reviewer actually incurred.
   it("expired rounds keep their spend but not their place in the counts", () => {
     store.upsertPr(prRow(30, { state: "closed" }));
     const zombie = seedOverdue(store, 30, 1, T0.toISOString());
@@ -342,7 +341,7 @@ describe("zombie-round expiry + spend fold", () => {
     try {
       const path = join(dir, "state.db");
       const first = new StateStore(path, now);
-      // A pre-measurement row as the old daemon wrote it: spend_usd only.
+      // A legacy pre-measurement row: spend_usd only.
       first.db
         .prepare(
           `INSERT INTO rounds (pr, round_no, round_type, lenses, verdict, spend_usd, started_at, deadline_at, finished_at, status)
@@ -542,14 +541,12 @@ describe("status.json", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cancellation is visible, GROUPED BY CAUSE.
+// Cancellation is visible, GROUPED BY CAUSE.
 //
-// measured 55 cancelled rounds since the 2026-08-14 cutover that
-// nothing anywhere read back, against 5 `overdue` rounds that each raised an
-// alarm: the loud signal was the rare one. The fix is not "alarm on
-// cancellation" — 70% of that volume is the boot orphan sweep, which a clean
-// redeploy causes by construction — it is to record WHY, and to separate the
-// benign from the real.
+// Cancelled rounds far outnumber overdue ones, and most cancellations are the
+// boot orphan sweep, which a clean redeploy causes by construction. So the
+// answer is not "alarm on cancellation": each cancellation records WHY, and
+// the benign causes are kept apart from the real ones.
 // ---------------------------------------------------------------------------
 
 describe("cancellation causes", () => {
@@ -590,8 +587,8 @@ describe("cancellation causes", () => {
     startCancelled(14, "superseded");
 
     expect(store.cancellationsByCause()).toEqual([
-      // The ONE loud cause sorts first even though it is the rarest — that
-      // ordering is the inversion found, undone.
+      // The one loud cause sorts first even though it is the rarest, so the
+      // rare real signal is not buried under the benign volume.
       { cause: "deadline_overrun", count: 1, loud: true },
       { cause: "orphan_sweep", count: 3, loud: false },
       { cause: "superseded", count: 1, loud: false },
@@ -623,8 +620,8 @@ describe("cancellation causes", () => {
     try {
       const path = join(dir, "state.db");
       const first = new StateStore(path, now);
-      // Legacy rows: the prose each call site used to write, and nothing
-      // else. Inserted straight so the column is genuinely NULL.
+      // Legacy rows: only the prose each call site writes, no cause.
+      // Inserted straight so the column is genuinely NULL.
       const legacy = [
         ["orphaned — tmux session lost across a restart", "orphan_sweep"],
         ["superseded — round 2 outlived by a newer round", "superseded"],
@@ -686,8 +683,8 @@ describe("stranded rounds", () => {
   };
 
   it("finds the round the zombie sweep deliberately refuses to bury", () => {
-    // The live case: pr 4662 round 2, overdue since the cutover, PR still open
-    // and undecided — so `expireOverdueRounds` skips it forever.
+    // A round overdue for days on a PR still open and undecided — so
+    // `expireOverdueRounds` skips it forever.
     store.upsertPr(prRow(4662));
     seedStranded(4662, "2026-08-14T12:00:00.000Z");
     clock = new Date("2026-08-24T12:00:00.000Z");
@@ -720,7 +717,7 @@ describe("stranded rounds", () => {
     expect(store.eventsOn("2026-08-24").filter((e) => e.kind === "rounds_stranded")).toHaveLength(
       1,
     );
-    // Burying the row must not erase what it cost (finding 1).
+    // Burying the row must not erase what it cost.
     expect(store.totalSpend()).toBeCloseTo(1.25, 6);
     // And it reports once: it is no longer overdue.
     expect(store.expireStrandedRounds()).toEqual([]);
@@ -1100,7 +1097,7 @@ describe("durable FAILED_LOUD review obligations", () => {
       const roundId = store.startRound(pr, "re-review", ["pass-data-safety"], 75);
       store.stampPostingKey(roundId, `v1:${pr}:1:head-${pr}`);
       if (preflight === "unknown") {
-        // Rows created by a legacy daemon migrate to unknown and remain
+        // Legacy rows with no preflight state migrate to unknown and remain
         // operator-owned because their preflight publication cannot be proven.
         store.db
           .prepare("UPDATE rounds SET preflight_posting_state='unknown' WHERE id=?")
@@ -1821,7 +1818,7 @@ describe("priorRoundCount semantics (finding 3)", () => {
     store.upsertPr(prRow(50));
     const one = store.startRound(50, "first", [], 45);
     store.markRoundCancelled(one, "orphaned — tmux session lost across a restart", "orphan_sweep");
-    // A failed round must not age the PR (ratified, §2.1 / #5313) — so
+    // A failed round must not age the PR — so
     // the SECOND round is still typed "first" and the nit cap stays off.
     expect(store.priorRoundCount(50)).toBe(0);
 

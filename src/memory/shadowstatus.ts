@@ -1,12 +1,12 @@
-// The lesson-delivery status block (S9a) — `memory.lessons` in
+// The lesson-delivery status block — `memory.lessons` in
 // status.json, and its clause in `qcr status`.
 //
-// A LEAF on purpose, like src/learner/status.ts: src/memory/health.ts (and
+// A leaf on purpose, like src/learner/status.ts: src/memory/health.ts (and
 // through it the TUI and the CLI) reads this shape and renders its phrase,
 // and must not load the ledger (which holds the state database) to do it.
 import type { MemoryDelivery } from "../config.js";
 
-/** One match tier's share of the headline (R9): the distinct
+/** One match tier's share of the headline: the distinct
  * findings counted on that tier, and what humans then did with them. */
 export interface LessonTierCounts {
   marks: number;
@@ -15,13 +15,13 @@ export interface LessonTierCounts {
   unknown: number;
 }
 
-/** The headline the owner reads before switching `[memory] delivery` to
+/** The headline the operator reads before switching `[memory] delivery` to
  * `on`: the switch, the operator's kill switch, and the last `window_days`
  * of the shadow ledger. */
 export interface LessonDeliveryStatus {
   /** `[memory] delivery` as configured. */
   delivery: MemoryDelivery;
-  /** Whether lessons actually reach a prompt (S9b): `[memory]
+  /** Whether lessons actually reach a prompt: `[memory]
    * delivery = "on"`, the operator's kill switch on, and a selector built
    * (memory switched on). False under `shadow`. */
   delivering: boolean;
@@ -37,19 +37,20 @@ export interface LessonDeliveryStatus {
   /** Rounds whose finds memory refused (or memory not built yet). */
   unreadable: number;
   /** Posted findings a selected dont-raise lesson would have touched — on its
-   * lens and path, the lens-level matching of the owner's ruling R9. Only
-   * the `class` tier of them is what the validator would be licensed to
-   * demote (`tiers`); from a daemon that predates R9 they are all that. */
+   * lens and path (lens-level matching). Only the `class` tier of them is
+   * what the validator would be licensed to demote (`tiers`); from a daemon
+   * that predates lens-level matching they are all that. */
   marks: number;
-  /** …of which humans then FIXED (the lesson would have hidden a real
+  /** …of which humans then fixed (the lesson would have hidden a real
    * finding), refuted or set aside (it would have helped), or unknown yet. */
   harm: number;
   help: number;
   unknown: number;
-  /** The same findings by match tier (R9), each on its strongest:
+  /** The same findings by match tier, each on its strongest:
    * `class` — a lesson's class matched too (what the validator's license
    * needs); `lens` — lens and path alone. They add up to the totals above.
-   * Absent from a daemon that predates R9 — UNKNOWN, never zero. */
+   * Absent from a daemon that predates lens-level matching — unknown, never
+   * zero. */
   tiers?: { class: LessonTierCounts; lens: LessonTierCounts };
   as_of: string;
 }
@@ -69,10 +70,10 @@ export function lessonHeadline(s: LessonDeliveryStatus | null): string {
       : "shadow";
   const time = s.timeouts > 0 ? `, ${s.timeouts} prefetch timeouts` : "";
   const unread = s.unreadable > 0 ? `, ${s.unreadable} unreadable` : "";
-  // Since R9 the total holds lens-tier findings too, which the validator's
-  // license never reaches — so it is "marked", and "would-demote" belongs to
-  // the class tier on the tier line. A daemon that predates R9 marked on the
-  // class alone: its total IS what the license would demote.
+  // The total holds lens-tier findings too, which the validator's license
+  // never reaches — so it is "marked", and "would-demote" belongs to the
+  // class tier on the tier line. A daemon without tiers marked on the class
+  // alone: its total is what the license would demote.
   const label = s.tiers === undefined ? "would-demote" : "marked";
   return (
     `lessons ${mode} ${s.window_days}d: ${s.rounds} rounds${time}${unread}, ` +
@@ -85,12 +86,12 @@ function tierPhrase(name: string, label: string, t: LessonTierCounts): string {
 }
 
 /**
- * The marked findings split by match tier (R9) — the second line the
+ * The marked findings split by match tier — the second line the
  * TUI's feedback tab paints, and the tail of the `qcr status` clause. The
  * class tier is the would-demote one (what the validator's `lesson-shape`
  * license reaches); the lens tier is evidence only. Null where the headline
  * counts nothing (no status, delivery off, the kill switch off); UNKNOWN from
- * a daemon that predates R9 — a missing split is never painted as an empty
+ * a daemon without tiers — a missing split is never painted as an empty
  * one.
  */
 export function lessonTierLine(s: LessonDeliveryStatus | null): string | null {

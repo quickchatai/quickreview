@@ -1,4 +1,4 @@
-// qcr compare — the rubric machinery against fixtures. No GitHub, no
+// qcr compare — the cutover rubric machinery against fixtures. No GitHub, no
 // dispatch: the dry-run round and every read are injected, reports land in a
 // temp dir.
 import { afterEach, describe, expect, it } from "vitest";
@@ -217,7 +217,7 @@ describe("(b) invariant scan", () => {
 
   it("keeps the allowlist in step with the gate's kinds", () => {
     expect(ALLOWED_MUTATION_KINDS).toContain("create_review");
-    // an escalation review request is a legitimate intent again.
+    // An escalation review request is a legitimate intent.
     expect(ALLOWED_MUTATION_KINDS).toContain("request_reviewer");
     expect(ALLOWED_MUTATION_KINDS).toHaveLength(10);
   });
@@ -383,9 +383,9 @@ describe("report rendering", () => {
     expect(r.markdown).toContain("**Mechanical gates (a)–(d): PASS.**");
   });
 
-  // part A. The old report ended on the unconditional sentence
-  // "dry_run stayed true — nothing was posted" with no check behind it. The
-  // string must not come back, in any form, unless something observed it.
+  // The report never claims "dry_run stayed true — nothing was posted"
+  // unconditionally: that sentence appears, in any form, only when something
+  // observed it.
   it("never asserts dry-run it did not observe", () => {
     const r = comparePr(input); // no `dryRun` observation at all
     expect(r.dryRun.substantiated).toBe(false);

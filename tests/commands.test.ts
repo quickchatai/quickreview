@@ -78,7 +78,7 @@ describe("validateCommand — whitelist", () => {
     expect(COMMAND_WHITELIST).toHaveLength(12);
   });
 
-  // the EOD curator's receipt — strict like every command, with
+  // The EOD curator's receipt — strict like every command, with
   // the schema of src/learner/receipt.ts (pinned there in tests/learner.test.ts).
   it("eod-curation-receipt: strict at the top level and inside every decision", () => {
     expect(
@@ -217,12 +217,12 @@ describe("validateCommand — whitelist", () => {
     // the rejection must say WHY, not just "unknown".
     const retired = validateCommand({ command: "mark-escalation-worthy", pr: 1, reason: "x" });
     // Narrow before reading `reason` — it lives only on the refusal arm, and
-    // reading it off the union asserted against `undefined`.
+    // reading it off the union would assert against `undefined`.
     if (retired.ok) throw new Error("mark-escalation-worthy must be refused");
     expect(retired.reason).toMatch(/RETIRED on 2026-08-18/);
-    // The hint is read by a model. It used to say "a PR only stops for a
-    // person when a round returns NEEDS_HUMAN" — the park retired
-    // (MC-48). MUTATION: restore that sentence — both fail.
+    // The hint is read by a model, so it must not describe the retired park
+    // (a PR stopping for a person on NEEDS_HUMAN). MUTATION: put that
+    // sentence back — both fail.
     expect(retired.reason).not.toMatch(/NEEDS_HUMAN|\bpark/);
     expect(retired.reason).toMatch(/decides APPROVE or REQUEST_CHANGES on the merits/);
     expect(validateCommand([{ command: "rerun-round", pr: 1 }]).ok).toBe(false);
@@ -495,7 +495,7 @@ describe("CommandWatcher", () => {
     expect(deps.rerunRound).toHaveBeenCalledTimes(1);
   });
 
-  // ---- tier enforcement (S3) --------------------------------------
+  // ---- tier enforcement ----------------------------------------------------
 
   const origin = (over: Partial<OriginRecord> = {}): OriginRecord => ({
     source: "slack",
@@ -611,13 +611,11 @@ describe("CommandWatcher", () => {
     }
   });
 
-  // (corrected by the owner): a deferral's ticket is filed by the REVIEW
-  // SESSION itself, in the round that deferred — through the legacy commands/
-  // dir, where a daemon-side turn already runs at full autonomy (the
-  // "legacy commands/ keeps full autonomy" test below is that path). So the
-  // brief `author: "own"` widening is reverted: on Slack, `file-issue` stays
-  // owner-only, and naming your own PR buys nothing — `pr` is provenance,
-  // never a right.
+  // A deferral's ticket is filed by the review session itself, in the round
+  // that deferred — through the legacy commands/ dir, where a daemon-side turn
+  // already runs at full autonomy (the "legacy commands/ keeps full autonomy"
+  // test below is that path). So on Slack `file-issue` stays owner-only, and
+  // naming your own PR buys nothing — `pr` is provenance, never a right.
   it("tier author cannot file an issue — not even naming their own PR", async () => {
     const alice = origin({ tier: "author", authorized_prs: [1234] });
     for (const cmd of [

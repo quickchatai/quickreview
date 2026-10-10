@@ -1,4 +1,4 @@
-// the GitHub App manifest ↔ code coherence test.
+// The GitHub App manifest ↔ code coherence test.
 //
 // deploy/github-app-manifest.json is what a new operator registers their App
 // from, so it must never drift from what the code actually needs. Same
@@ -37,8 +37,8 @@ const manifest = JSON.parse(
 };
 const webhookSrc = readFileSync(resolve(root, "src/webhook.ts"), "utf8");
 // The TRACKED config.example.toml (full-validation-clean per the
-// publishability lint). The operator's LIVE config.toml left the checkout
-// with `qcr install migrate` and is never read by a test.
+// publishability lint). The operator's live config.toml lives in the
+// install's config home and is never read by a test.
 const cfg = parseConfig(readFileSync(resolve(root, "config.example.toml"), "utf8"));
 
 /** The events src/webhook.ts actually accepts: the `case "<event>"` labels of
@@ -68,17 +68,16 @@ const EVENT_PERMISSION: Record<string, string> = {
  * GraphQL paths; push_branch is the improvements git push, rule 4's one
  * sanctioned branch family). A new MutationKind fails to compile until it is
  * added here — which is the point. The app-self-config class is
- * excluded BY TYPE: those routes are authed by the App JWT and address the
+ * excluded by type: those routes are authed by the App JWT and address the
  * App's own configuration, so no installation permission grants them; a new
  * kind still has to be classified one way or the other to compile. */
 const KIND_WRITE_PERMISSION: Record<Exclude<MutationKind, AppSelfConfigKind>, string> = {
   add_label: "issues", // POST /issues/{n}/labels
   remove_label: "issues", // DELETE /issues/{n}/labels/{label}
   delete_team_review_request: "pull_requests", // DELETE /pulls/{n}/requested_reviewers
-  //, and the answer to "does escalation need a wider App permission?":
-  // no. This is a POST on the SAME route the DELETE above already uses, and
-  // both are Pull requests: write — which the manifest grants for create_review
-  // anyway. Adding the feature widened no permission.
+  // Escalation needs no wider App permission: this is a POST on the same
+  // route the DELETE above uses, and both are Pull requests: write — which the
+  // manifest grants for create_review anyway.
   request_reviewer: "pull_requests", // POST /pulls/{n}/requested_reviewers
   create_review: "pull_requests", // POST /pulls/{n}/reviews
   create_review_comment_reply: "pull_requests", // POST /pulls/{n}/comments/{id}/replies

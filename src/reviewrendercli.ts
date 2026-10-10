@@ -9,11 +9,11 @@
 // The render step is `renderPostedReview` with `postedRenderOptions(cfg)` —
 // the same two calls the bench runner makes (src/bench/runner.ts
 // renderBenchOutputs), pinned equal by tests/dedup-parity.test.ts. One thing
-// is this route's alone (S6): every inline comment carries the hidden
+// is this route's alone: every inline comment carries the hidden
 // `<!-- qcr:f=<round>:<finding key> -->` marker, which is how the daemon links
 // a posted comment back to its `round_findings` row. The bench never asks for
-// it, so its outputs stay byte-identical (the parity test strips the marker
-// and compares the rest).
+// it, so its outputs carry no marker (the parity test strips the marker and
+// compares the rest).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, REVIEW_DEFAULTS } from "./config.js";

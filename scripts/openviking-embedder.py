@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The local English embedder (S4, the owner's ruling R5).
+"""The local English embedder.
 
-An OpenAI-compatible ``POST /v1/embeddings`` on LOOPBACK, serving one pinned
+An OpenAI-compatible ``POST /v1/embeddings`` on loopback, serving one pinned
 GGUF through the pinned llama-cpp-python in the OpenViking venv. OpenViking's
 ov.conf points its ``openai`` provider at it (``api_base`` on 127.0.0.1), which
-maps to the server's ASYNC embedder: a search no longer runs a model on the
-server's one event loop, so it no longer stalls every other request. Nothing
+maps to the server's async embedder: a search does not run a model on the
+server's one event loop, so it does not stall every other request. Nothing
 leaves the machine: the model file is baked into the image at build
 time, verified by sha256 there and again here, and this process binds
 loopback only.
@@ -16,7 +16,7 @@ prefixes every English query with a hard-wired Chinese instruction, and runs
 synchronously on the event loop. docs/memory-embeddings.md has the evaluation
 behind the model choice.
 
-The model table below is CODE, not a knob: a model's query/document prefixes
+The model table below is code, not a knob: a model's query/document prefixes
 and its context are part of what its vectors mean, so adding one is a reviewed
 change (and a ``rebuild`` for the file). ``--describe`` prints the table; the
 TypeScript side (``LOCAL_EMBEDDING`` in src/config.ts) is held to it by
@@ -61,7 +61,7 @@ MODELS = {
     },
 }
 
-# A query is cut to this many tokens: ~90 ms on ONE thread for the model above
+# A query is cut to this many tokens: ~90 ms on one thread for the model above
 # (measured, docs/memory-embeddings.md). A round's context query is ~35 tokens;
 # only a session's whole-prompt recall query ever reaches the cap.
 QUERY_MAX_TOKENS = 128
@@ -251,7 +251,7 @@ def make_handler(model, describe):
                 self.close_connection = True
                 self.send_error_json(413, f"the body must be at most {MAX_BODY_BYTES} bytes", "invalid_request_error")
                 return
-            # Read the body BEFORE any answer: on a kept-alive connection an
+            # Read the body before any answer: on a kept-alive connection an
             # unread body would be parsed as the next request.
             body = self.rfile.read(length)
             if path not in ("/v1/embeddings", "/embeddings"):

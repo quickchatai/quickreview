@@ -1,5 +1,5 @@
-// The companion's skills are selected from their `description:` line ALONE
-// (§4). pi puts all of them in the prompt permanently and picks one; no
+// The companion's skills are selected from their `description:` line alone.
+// pi puts all of them in the prompt permanently and picks one; no
 // name is typed, no router is consulted. So the descriptions are the routing
 // table, and a wrong-skill misfire is the likeliest first failure of the whole
 // set — the thing this file exists to catch.
@@ -12,7 +12,7 @@
 // description that survives it has margin, and it is deterministic, so a
 // regression is a red test rather than a bad afternoon in the column.
 //
-// THE DELIBERATE MISFIRE CASE (the one this file was written around):
+// THE DELIBERATE MISFIRE CASE:
 //
 //   "he approved it — go ahead and commit the rubric change we just agreed"
 //
@@ -45,9 +45,8 @@ interface Skill {
   body: string;
 }
 
-/** The values pi reads, through a real YAML parser (H4). This was a
- * regex over the raw line, and it passed a `replay` description that pi could
- * not parse and so never loaded. */
+/** The values pi reads, through a real YAML parser — a regex over the raw
+ * line would pass a description pi cannot parse and so never loads. */
 function parseSkill(dir: string): Skill {
   const raw = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf8");
   let fm: ReturnType<typeof parseSkillFrontmatter>;

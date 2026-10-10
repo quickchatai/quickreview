@@ -203,7 +203,7 @@ repoints a compose `.env` `QCR_SECRETS_DIR` that still names it — recreate the
 stack afterwards).
 Overridable with `QCR_SECRETS_DIR` (compose) / `QC_SECRETS_DIR` (the wizards);
 mounted read-only into the daemon container at `/opt/quickreview/secrets`. The
-companion's `openviking-keys.env` is kept OUT of it, in
+companion's `openviking-keys.env` is kept out of it, in
 `~/.config/qcr-operator/<install>/` — the one credential no container mounts.
 
 | File | Purpose | Required |
@@ -346,7 +346,11 @@ deliberate act after a pin bump); `verify` runs the post-deploy checks only.
   else group var), because that is what the boot will render and an embedder
   disagreement is a vector-store reset rather than a version bump; and the
   local English embedder's model-file pin (file, URL, sha256) with its port
-  and threads (S4);
+  and threads;
+- the live config found through the install locator — a config that lives
+  only in the checkout, or a `[review] profile` (or any base it extends) found
+  neither in the config home nor among the checkout's generic examples, is
+  refused;
 - `sandbox_src` actually wired in `group_vars`, or the rsync task silently
   no-ops;
 - `ansible-playbook` on this machine and an inventory to run against.
@@ -489,7 +493,13 @@ cheap.
 | `tui [pr]` | the operator board (`src/tui/`) |
 | `companion <up\|down\|status\|rebuild>` | the local companion container lifecycle |
 | `memory reembed [--user <name>…]` | re-embed a memory namespace after an embedder change |
-| `memory relayout [--plan\|--apply] [--user <name>]` | sort a namespace into the §1 layout — print the plan, or carry it out (S5; operator-run, idempotent, never a delete) |
+| `memory relayout [--plan\|--apply] [--user <name>]` | sort a namespace into the memory layout — print the plan, or carry it out (operator-run, idempotent, never a delete) |
+| `install <where\|migrate>` | show where the install's config, state and secrets live (and anything stranded in old locations), or move the old locations' files into the install's homes |
+| `setup [validate [<profile>] \| commit]` | ask the companion to run setup; validate a repo profile; commit the profile changes setup asked for |
+| `history <digest\|pull>` | read the repo's review history through the App (read-only), or pull it into the state home for setup |
+| `outcomes [--days <n>] [--capture]` | the per-lens fate table of posted findings |
+| `lessons …` | mine lesson candidates, the shadow report, and the operator's lesson kill switch |
+| `archive <status\|run\|restore\|extract>` | the closed-PR archiver: status and plan, one tick, restore a PR, extract a PR's archive to a directory |
 | `backfill [--dry-run] [--limit <n>]` | import review history into the state store (read-only against GitHub) |
 | `checklist` | the cutover checklist harness (`src/checklist.ts`) |
 | `compare <pr…>` | dry-run review comparison (`src/compare.ts`) |
@@ -547,7 +557,9 @@ declared exclusion list. Three pieces, one source of truth:
   the private checkout. `--skip-verify` exists only for the shell-level tests.
 
   The script performs no remote operation of any kind. Creating the public
-  repository and pushing are the owner's acts.
+  repository and pushing are the owner's acts. `--profile internal`
+  (`publish-manifest.internal.json`) assembles the internal snapshot from the
+  same mechanism with its own manifest.
 
 ## Invariants to preserve
 

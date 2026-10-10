@@ -21,8 +21,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides: $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 
@@ -96,10 +96,8 @@ print(len(rows))' "$RUNS" "$OUT")"
 done
 
 # The COMMIT STATUSES at the head, every page, as listChecks and guards.sh read
-# them (MC-51). Until this the script read check-runs only, so a
-# failing status (a deploy preview, an external CI that reports through the
-# status API) printed CLASSIFIED: green while guard 4 — on both routes — said
-# red, and the Decide step chose an approval the guard then refused. A status
+# them, so a failing status (a deploy preview, an external CI that reports
+# through the status API) classifies red here exactly as guard 4 does. A status
 # is its own check: never collapsed with a check-run of its context, nor with
 # another status (the src/cigate.ts latestRunPerName rule).
 echo '{"statuses": []}' >"$STATUSES"
@@ -119,9 +117,9 @@ python3 - "$RUNS" "$FAILING" "$STATUSES" <<'PY'
 import json, re, sys
 runs = json.load(open(sys.argv[1])).get("check_runs", [])
 statuses = json.load(open(sys.argv[3])).get("statuses", [])
-# Latest-run-per-name (the owner, 2026-08-19; mirrors src/cigate.ts
-# latestRunPerName, rule stated exactly there): GitHub auto-cancels
-# superseded runs — only the most recent run of each check name counts.
+# Latest-run-per-name (mirrors src/cigate.ts latestRunPerName, where the rule
+# is stated exactly): GitHub auto-cancels superseded runs, so only the most
+# recent run of each check name counts.
 # Recency collapses ONLY runs that carry a started_at (latest wins, an equal
 # start resolves to the later list position); a run WITHOUT one never competes
 # with a timestamped one — it is kept beside it and counts on its own, the last

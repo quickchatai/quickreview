@@ -118,25 +118,25 @@ describe("the closed mutation vocabulary", () => {
         "delete_team_review_request",
         "push_branch",
         "remove_label",
-        // Reviewer nomination, back on 2026-08-31 as the optional escalation
-        // feature's second delivery shape (ratified rule-10
-        // amendment). ORDINARY in every respect — see the describe below.
+        // Reviewer nomination: the optional escalation feature's second
+        // delivery shape (CLAUDE.md rule 10). An ordinary kind in every
+        // respect — see the describe below.
         "request_reviewer",
         // Bot-owned inline threads may be resolved after a checked author
         // response; this does not alter or dismiss a review verdict.
         "resolve_own_review_thread",
-        // The one review-verdict-mutating kind, ratified by the owner 2026-08-13:
-        // the bot superseding ITS OWN stale non-APPROVED review. No kind
+        // The one review-verdict-mutating kind (CLAUDE.md rule 2):
+        // the bot superseding its own stale non-APPROVED review. No kind
         // for dismissing approvals or another identity's review exists.
         "supersede_own_review",
-        // The one app-self-config kind (ratified rule-1 amendment, 2026-08-30):
-        // the App re-pointing ITS OWN webhook URL. Never touches the repo.
+        // The one app-self-config kind (CLAUDE.md rule 1):
+        // the App re-pointing its own webhook URL. Never touches the repo.
         "update_own_webhook_url",
       ].sort(),
     );
-    // Rule 2, untouched by and pinned here where it is easiest to
-    // read: no kind dismisses a review or an approval. `supersede_own_review`
-    // is the ONE review-verdict-mutating kind and the adapter owner-guards it.
+    // Rule 2, pinned here where it is easiest to read: no kind dismisses a
+    // review or an approval. `supersede_own_review`
+    // is the one review-verdict-mutating kind and the adapter owner-guards it.
     for (const gone of ["dismiss_review", "delete_review", "update_review", "dismiss_approval"]) {
       expect(MUTATION_KINDS).not.toContain(gone);
     }
@@ -159,11 +159,9 @@ describe("the closed mutation vocabulary", () => {
   });
 
   it("rejects an unknown kind at runtime, recording nothing", async () => {
-    // NB the constructor call: this test used to pass an OBJECT to a
-    // positional constructor (found it), so `dryrunDir` was
-    // `undefined` and the "recording nothing" assertion held because the
-    // gate could not have written anywhere in the first place. Positional and
-    // real now — the refusal is what stops the write.
+    // The constructor is positional and given a real dryrun dir, so the
+    // "recording nothing" assertion proves the refusal stopped the write
+    // rather than the gate having nowhere to write.
     const dir = mkdtempSync(join(tmpdir(), "qcr-gate-kind-"));
     const executor = vi.fn(async () => ({}));
     const gate = new MutationGate(true, dir, executor);
@@ -183,11 +181,11 @@ describe("the closed mutation vocabulary", () => {
 });
 
 /**
- * reviewer nomination is back, and back as an ORDINARY kind.
+ * Reviewer nomination is an ordinary kind.
  *
  * The whole point of these assertions is that there is nothing to say about
- * `request_reviewer` beyond "it behaves like `add_label`". The two ratified
- * dry-run exceptions did NOT widen to take it in, and the sweep in the
+ * `request_reviewer` beyond "it behaves like `add_label`". The two
+ * dry-run exceptions did not widen to take it in, and the sweep in the
  * app-self-config describe below (every kind but one is suppressed in dry-run)
  * covers it automatically because it walks MUTATION_KINDS.
  */
@@ -303,8 +301,8 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
   };
 
   it("is a CLOSED SET containing exactly update_own_webhook_url — adding a second kind fails here", () => {
-    // Mirrors the forceLive pin: widening the class is the owner's ratification,
-    // never an edit that survives CI. Deep equality, not containment.
+    // Mirrors the forceLive pin: widening the class is a CLAUDE.md rule 1
+    // change, never an edit that survives CI. Deep equality, not containment.
     expect([...APP_SELF_CONFIG_KINDS]).toEqual(["update_own_webhook_url"]);
   });
 
@@ -407,7 +405,7 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
       ).rejects.toThrow(/unknown mutation kind/);
     }
     expect(existsSync(join(dir, "dryrun"))).toBe(false);
-    // added `request_reviewer` as an ORDINARY kind: it is real, and it
+    // `request_reviewer` is an ordinary kind: it is real, and it
     // is not in the class that executes in dry-run.
     expect(MUTATION_KINDS).toContain("request_reviewer");
     expect(APP_SELF_CONFIG_KINDS as readonly string[]).not.toContain("request_reviewer");
@@ -415,15 +413,12 @@ describe("the app-self-config gate class (ratified rule-1 amendment, 2026-08-30)
 });
 
 /**
- * / MC-07 — the gate genuinely mediates `method: "git"` pushes.
+ * The gate genuinely mediates `method: "git"` pushes.
  *
- * `src/gate.ts`'s header has always claimed it covers "REST, GraphQL or git
- * push". It did not: `GitHubAdapter.executeMutation` throws on `method: "git"`,
- * so `src/improvements.ts` consulted the gate ONLY when `isDryRun` was true and
- * shelled straight to `git push` otherwise — the one mode in which the push was
- * real was the one mode the gate never saw. The honest shape chosen (rather
- * than softening the header) is a caller-supplied performer that the GATE, not
- * the call site, decides whether to run.
+ * `GitHubAdapter.executeMutation` throws on `method: "git"`, so a push rides a
+ * caller-supplied performer that the gate, not the call site, decides whether
+ * to run: live mode runs it, dry-run records it instead, and a guard can
+ * refuse it — so no live push goes around the gate.
  */
 describe("MutationGate — git pushes", () => {
   const push: MutationIntent = {
@@ -490,10 +485,10 @@ describe("MutationGate — git pushes", () => {
 
   it("a guard cannot rewrite a git intent into something else and still get the performer run", async () => {
     // The entry checks run BEFORE the guard, and a guard may return a rewritten
-    // `decision.intent` (guard 1 does exactly that). Since the rewrite
+    // `decision.intent` (guard 1 does exactly that). Any other rewrite
     // is refused at the seam itself — a guard may change only body and note —
     // so the performer is never turned loose on a mutation nobody approved as
-    // a push (see the describe below for the whole contract).
+    // a push (see the guard-rewrite describe below for the whole contract).
     const perform = vi.fn(async () => ({ pushed: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), async () => ({}));
     gate.setGuard({
@@ -537,37 +532,29 @@ describe("MutationGate — git pushes", () => {
 });
 
 /**
- * a guard may soften a mutation, never change which one it is.
+ * A guard may soften a mutation, never change which one it is.
  *
- * Found by the audit re-verification, BY EXECUTION: `execute()` ran
- * the kind list, the forceLive check and the performer checks on the caller's
- * intent, then let a guard hand back a rewritten one, then re-checked only
- * `reviewPurpose` and the performer's method/kind on what came back. Three
- * hostile rewrites therefore went through — a dismissal kind EXECUTED; a
- * rewrite into `update_own_webhook_url` EXECUTED FOR REAL in dry-run; a
- * `forceLive` added to a `create_review` EXECUTED LIVE in dry-run. Latent (the
- * shipped guards rewrite `body` and `note` only), but rule 2 is meant to be
- * structural and dry-run is the one belt an operator has during bring-up.
+ * A guard that could rewrite the intent it returns could turn a review into a
+ * dismissal kind, into `update_own_webhook_url` (which executes for real in
+ * dry-run), or add `forceLive` to a `create_review`. The shipped guards rewrite
+ * `body` and `note` only, but rule 2 is meant to be structural and dry-run is
+ * the one belt an operator has during bring-up.
  *
  * Two independent belts close it, and the tests below tell them apart:
- * `GUARD_REWRITABLE_FIELDS` (a guard may change ONLY body and note — the
+ * `GUARD_REWRITABLE_FIELDS` (a guard may change only body and note — the
  * method/path/pr cases are caught by nothing else) and re-admission of the
- * post-guard intent in full. Each case below drives a HOSTILE guard through
- * the real gate, and each was verified by mutation — removing the post-guard
- * `guardRewriteCheck` + `admit` pair in `src/gate.ts` turns every one red.
+ * post-guard intent in full. Each case below drives a hostile guard through
+ * the real gate; removing the post-guard `guardRewriteCheck` + `admit` pair in
+ * `src/gate.ts` turns every one red.
  *
- * Round-1 review of the fix found the belts guarded only what a guard
- * RETURNED: the guard was handed the admitted object by reference, so
- * `intent.kind = "dismiss_review"; return {}` — and `return { intent }` with
- * the same mutated reference, which compared an object with itself — still
- * executed through the compiled gate. The gate now hands the guard a FROZEN
- * snapshot and copies what comes back before comparing; the "in place" and
- * "read once" cases below pin that, and removing the `Object.freeze` / the
- * spread copy in `execute` turns them red. The re-review of that fix found the
- * snapshot's `body` was still the caller's object by reference, so a getter
- * inside a returned body answered the reviewPurpose check with COMMENT and the
- * executor with APPROVE; `snapshot` now clones the body too, and the two
- * "body" cases below go red without the clone.
+ * The guard is handed a frozen snapshot, and what it returns is copied before
+ * comparing, so neither an in-place edit (`intent.kind = …; return {}`) nor
+ * returning the same mutated reference slips past; the "in place" and
+ * "read once" cases pin that, and removing the `Object.freeze` / the spread
+ * copy in `execute` turns them red. `snapshot` also clones the body, so a
+ * getter inside a returned body cannot answer the reviewPurpose check with
+ * COMMENT and the executor with APPROVE; the two "body" cases go red without
+ * the clone.
  */
 describe("a guard may rewrite only body and note", () => {
   const review: MutationIntent = {
@@ -592,7 +579,7 @@ describe("a guard may rewrite only body and note", () => {
   });
 
   it("① kind → dismiss_review in LIVE mode is refused, and the executor never sees it", async () => {
-    // Rule 2: no dismissal kind exists. Before this rewrite executed.
+    // Rule 2: no dismissal kind exists, and a guard cannot rewrite into one.
     const executor = vi.fn(async () => ({ dismissed: true }));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard(
@@ -693,11 +680,11 @@ describe("a guard may rewrite only body and note", () => {
     });
   });
 
-  /** The IN-PLACE shapes (review round 1): a guard that edits the object it
-   * was handed instead of returning a new one — then says "no opinion", or
-   * returns that same object. Both executed the edit through the compiled
-   * gate before the snapshot: `return {}` skipped both post-guard checks, and
-   * the same-reference return compared the object with itself. */
+  /** The in-place shapes: a guard that edits the object it was handed
+   * instead of returning a new one — then says "no opinion", or returns that
+   * same object. Without the frozen snapshot, `return {}` would skip both
+   * post-guard checks, and the same-reference return would compare the object
+   * with itself. */
   const inPlace = (edit: (i: Record<string, unknown>) => void, returnSame: boolean) => ({
     before: async (i: MutationIntent) => {
       edit(i as unknown as Record<string, unknown>);
@@ -796,10 +783,9 @@ describe("a guard may rewrite only body and note", () => {
   });
 
   it("…and so is the returned BODY: a getter inside it cannot say COMMENT to the reviewPurpose check and APPROVE to the executor", async () => {
-    // Re-review of round 1: the body was copied by reference, so this shape
-    // executed a purposed APPROVE — an approval exempt from guard 2 that never
-    // claims the head. Without the body clone in `snapshot` the executor sees
-    // APPROVE here.
+    // With the body copied by reference, this shape would execute a purposed
+    // APPROVE — an approval exempt from guard 2 that never claims the head.
+    // Without the body clone in `snapshot` the executor sees APPROVE here.
     const purposed: MutationIntent = {
       ...review,
       reviewPurpose: "escalation",
@@ -850,9 +836,9 @@ describe("a guard may rewrite only body and note", () => {
   });
 
   it("the comparison is SameValue: a field the guard never touched is not blamed on it, NaN included", async () => {
-    // `!==` reads NaN as changed and refused an honest no-op guard with
-    // '"pr" … (null → null)'. No live path produces a NaN pr; the primitive is
-    // simply the right one for "did the guard change this".
+    // `!==` would read NaN as changed and refuse an honest no-op guard with
+    // '"pr" … (null → null)'. No live path produces a NaN pr; `Object.is` is
+    // simply the right primitive for "did the guard change this".
     const executor = vi.fn(async (_i: MutationIntent) => ({}));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     gate.setGuard({ before: async () => ({}) });
@@ -873,14 +859,12 @@ describe("a guard may rewrite only body and note", () => {
     nothingHappened(executor);
   });
 
-  /** Round-2 review: admission ran on the caller's RAW object, and the
-   * snapshot the guards and the executor got was a SECOND read of it. With no
-   * guard installed nothing re-admitted that snapshot, so a getter on `kind`
-   * that said `create_review` to `admit()` and `dismiss_review` to the spread
-   * executed a dismissal through the compiled gate; one on `forceLive` saying
-   * `false` then `true` executed for real in dry-run. Same class as
-   * itself, one step earlier. The snapshot is now taken FIRST and admitted;
-   * swapping the two lines back in `execute` turns both cases red. */
+  /** The snapshot is taken first and that snapshot is admitted, so the
+   * caller's object is read once. Admitting the raw object and snapshotting it
+   * afterwards would let a getter on `kind` say `create_review` to `admit()`
+   * and `dismiss_review` to the spread, or one on `forceLive` say `false` then
+   * `true` and execute for real in dry-run. Swapping the two lines in
+   * `execute` turns both cases red. */
   const readOnce = (over: Record<string, [first: unknown, then: unknown]>): MutationIntent => {
     const shifty: Record<string, unknown> = { ...review };
     for (const [field, [first, then]] of Object.entries(over)) {
@@ -914,9 +898,9 @@ describe("a guard may rewrite only body and note", () => {
   });
 
   it("a symbol-keyed field a guard adds is refused like any other: the walk covers every own key the spread copies", async () => {
-    // `Object.keys` saw string keys only, while `snapshot`'s spread carries own
-    // enumerable symbol keys onto the executed object; the walk is
-    // `Reflect.ownKeys` now, and reverting it lets this ride through.
+    // `snapshot`'s spread carries own enumerable symbol keys onto the executed
+    // object, so the walk uses `Reflect.ownKeys`; `Object.keys` (string keys
+    // only) would let this ride through.
     const executor = vi.fn(async () => ({}));
     const gate = new MutationGate(false, join(dir, "dryrun"), executor);
     const tag = Symbol("x");
@@ -952,10 +936,9 @@ describe("a guard may rewrite only body and note", () => {
   });
 
   it("the type is honest about the frozen object: every field is readonly, so a guard that assigns instead of returning does not compile — and would not run", async () => {
-    // Round-2 review: `body` and `note` — the two fields a guard is invited to
-    // touch — were the only ones still assignable in the type, so a first-party
-    // guard writing `intent.note = …` compiled and died inside the guard with
-    // a bare TypeError. The `@ts-expect-error`s below are the fence
+    // Every field of the intent a guard receives is readonly in the type, so a
+    // first-party guard writing `intent.note = …` fails to compile instead of
+    // dying inside the guard with a bare TypeError. The `@ts-expect-error`s below are the fence
     // (`npm run typecheck:tests` fails if any of the three assignments
     // compiles); the runtime half shows what such a guard gets.
     const assigning = {

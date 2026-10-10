@@ -8,30 +8,26 @@
 // the two leaves a row that is fully substantive — a REQUEST_CHANGES review
 // stands on GitHub — with a null `verdict`.
 //
-// PR #5409 round 18 (2026-09-01) is what happens when consumers disagree about
-// that row. Posting guard 2 read it as "reviewed" (it keys on head + reply
-// only) while dispatch read `verdict` alone, saw null, and allocated a full
-// round whose review the guard then correctly refused. 29 minutes and $1.92 of
-// healthy lens work, zero comments posted, and a FAILED_LOUD incident for an
-// outcome that was never a failure.
+// Consumers must not disagree about that row: posting guard 2 reads it as
+// "reviewed" (it keys on head + reply only), so a reader that looked at
+// `verdict` alone would allocate a full round whose review the guard then
+// refuses — paid lens work, nothing posted, and a spurious failure.
 //
-// So: every lifecycle consumer — dispatch's no-new-evidence skip and system
+// So every lifecycle consumer — dispatch's no-new-evidence skip and system
 // re-trigger classifier, the delta recheck's standing-approval test, the
-// reconcile backstops, the anomaly return-state, and's exact-head
+// reconcile backstops, the anomaly return-state, and the exact-head
 // retirement — reads the mark through `standingReview`/`standingVerdict`
 // below and nowhere else. `tests/standing-review.test.ts` pins that
 // structurally: a raw `.verdict` read on a mark outside this module fails.
 //
 // The rules, in order:
-//   1. A decided `verdict` wins. Normalized, so the retired `ESCALATE`
+//   1. A decided `verdict` wins. Normalized, so the legacy `ESCALATE`
 //      spelling folds to NEEDS_HUMAN exactly as everywhere else.
-//   2. NEEDS_HUMAN/ESCALATE is UNDECIDED: it never counts as a
-//      standing verdict and never suppresses a re-run or a posting. The
-//      carve-out `hasNewEvidence` has carried since 2026-08-19 is preserved
-//      byte-for-byte in meaning.
+//   2. NEEDS_HUMAN/ESCALATE is UNDECIDED: it never counts as a standing
+//      verdict and never suppresses a re-run or a posting (the same carve-out
+//      `hasNewEvidence` applies).
 //   3. With no decided verdict, `posted_event` APPROVE / REQUEST_CHANGES is
-//      the same substantive review before enrichment — the shape
-//      recovery already recognized and dispatch did not.
+//      the same substantive review before enrichment.
 //   4. `posted_event` COMMENT alone proves that SOMETHING was posted and
 //      nothing about what was decided: an approval withheld for red CI, a
 //      REQUEST_CHANGES softened by guard 1, or a legacy mechanical comment

@@ -1,13 +1,14 @@
-// The re-tune log: every post-scan re-tune the companion WROTE,
-// with what changed and why — `<state home>/setup/retunes.json`, PC-only.
+// The re-tune log: every post-scan re-tune the companion wrote, with what
+// changed and why — `<state home>/setup/retunes.json`, PC-only.
 // The companion reports from the record retune.ts writes; the TUI's deploy
 // tab reads it to say WHICH re-tune a "profile changed, not deployed" is
 // (src/tui/confighome.ts `pendingRetunes`), because a re-tune reaches PR
 // reviews only on the operator's deploy.
 //
-// A LEAF of src/setup/ (the S2 fence in tests/single-shepherd.test.ts): the
-// TUI imports it, so it reaches its siblings by type only and carries no
-// port, no clock and no disk — the caller reads the file.
+// A leaf of src/setup/ (the "no daemon module invokes pi" fence in
+// tests/single-shepherd.test.ts): the TUI imports it, so it reaches its
+// siblings by type only and carries no port, no clock and no disk — the
+// caller reads the file.
 
 export const RETUNES_FILE = "setup/retunes.json";
 export const RETUNES_VERSION = 1;

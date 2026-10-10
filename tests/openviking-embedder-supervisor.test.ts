@@ -1,4 +1,4 @@
-// the local English embedder under the daemon, and the server's
+// The local English embedder under the daemon, and the server's
 // start gate on it. No process, socket or clock: the spawn, fetch, ov.conf and
 // timer seams carry everything.
 //
@@ -197,7 +197,7 @@ describe("when the daemon runs the local embedder", () => {
     );
   });
 
-  // Review (S4): a port mismatch is not "an image that needs a rebuild".
+  // A port mismatch is not "an image that needs a rebuild".
   it("tells a port mismatch, an ov.conf that predates it and another embedder apart — each with its own fix", () => {
     const mismatch =
       localEmbedderOffReason(cfg({ local_embedder_port: 1999 }), RENDERED_LOCAL) ?? "";
@@ -493,7 +493,7 @@ describe("the heartbeat", () => {
   });
 });
 
-// Review (S4): memory health's fs/ls probe needs no embedding, so it is this
+// Memory health's fs/ls probe needs no embedding, so it is this
 // reading of the two supervisors that tells a person search is down.
 describe("memoryServing — does memory serve search?", () => {
   const server = (over: Partial<OpenVikingStatus> = {}): OpenVikingStatus => ({

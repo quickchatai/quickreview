@@ -1,5 +1,5 @@
-// The owner-approved review calibrations of 2026-10-02 (after the Martian
-// tune20 golden mining, bench/aacr/ext/martian-tuning/GOLDEN-MINING.md §5).
+// The review calibrations from the Martian tune20 golden mining
+// (bench/aacr/ext/martian-tuning/GOLDEN-MINING.md §5).
 // Each rides the addendum registry (rule 6: seeds untouched), binds exactly the
 // pass it names, and composes into PR builds only — a scan build is unchanged.
 import { describe, expect, it } from "vitest";
@@ -87,7 +87,7 @@ describe("validator calibrations (pass-validate)", () => {
     expect(body).toContain("*Third-party sources* block");
     expect(body).toContain("is a question, never a doubt");
     expect(body).toContain("`external-assumption`");
-    // Self-review fix (2026-10-03): the question is a P3 demotion; a missing
+    // The question is a P3 demotion; a missing
     // source never moves reachability (step 4 of the same rule).
     expect(body).toContain("demote it to `P3` with the downgrade word `external-assumption`");
     expect(body).toContain("its reachability stays how often the path runs");

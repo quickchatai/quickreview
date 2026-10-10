@@ -9,13 +9,13 @@
 //
 // Exactly TWO implementations, both here:
 //
-//   * `DJANGO_ECOSYSTEM` — today's behavior, byte-for-byte: the
-//     collision pre-check (detection at the pinned base sha, remedy posted as
-//     a gated COMMENT, degraded-is-never-quieter), the `migrations/` tier
-//     gate, the MIGRATION GATE prompt prose that used to live in
-//     src/templates.ts, and the round templates' "add on a missing
-//     migration" rule (it names Django model fields). The detection/rendering pure functions stay in
-//     src/migrations.ts — this object is the seam over them, not a rewrite.
+//   * `DJANGO_ECOSYSTEM` — the migration collision pre-check (detection at
+//     the pinned base sha, remedy posted as a gated COMMENT,
+//     degraded-is-never-quieter), the `migrations/` tier gate, the MIGRATION
+//     GATE prompt prose, and the round templates' "add on a missing
+//     migration" rule (it names Django model fields). The detection/rendering
+//     pure functions live in src/migrations.ts — this object is the seam over
+//     them.
 //   * `NONE_ECOSYSTEM` — the clean CONFIGURED-OFF state, first-class and
 //     distinct from degradation: no pre-check runs (`{ status: "off" }` — an
 //     answer, not an error), no degraded path, no gate note, no anomaly, no
@@ -28,10 +28,9 @@
 //     input — a check that could not run is `{ status: "degraded" }`
 //     (refusal-as-answer), an ecosystem with no check is `{ status: "off" }`;
 //     only a broken caller contract could throw, and the Django
-//     implementation swallows even its own I/O failures into events, exactly
-//     as the legacy dispatch function did.
+//     implementation swallows even its own I/O failures into events.
 //   * "off" and "degraded" are DIFFERENT arms of the outcome union, never one
-//     boolean. Degraded is the ratified never-quieter path (gate note +
+//     boolean. Degraded is the never-quieter path (gate note +
 //     overseer anomaly + un-muzzled pass-data-safety); off is silence by
 //     configuration, and conflating them would either spam a non-Django repo
 //     with degradation noise or mute a Django repo's real degradation.
@@ -68,8 +67,8 @@ export interface EcosystemRound {
  * dispatch's own gated COMMENT route) — the seam adds no mutation path. */
 export interface EcosystemPreCheckIo {
   logEvent(kind: string, pr: number | null, payload?: unknown): void;
-  /** Has this exact (head, collision set) already been commented? (
-   * staleness-round dedupe — suppress the repost, never the check.) `unknown`
+  /** Has this exact (head, collision set) already been commented?
+   * (Staleness-round dedupe — suppress the repost, never the check.) `unknown`
    * — a comment row the ledger cannot read — also suppresses the post: a
    * duplicate on the reviewed repo is the mutation this read exists to
    * prevent, and an unreadable row cannot rule it out. */
@@ -96,13 +95,13 @@ export interface EcosystemPreCheckIo {
  *                     empty, and already delivered as a COMMENT when not).
  *                     `comment_withheld` marks the one checked round whose
  *                     COMMENT was deliberately NOT posted: the ledger holds a
- *                     comment row it cannot read. The caller owes
- *                     the operator an anomaly for it — a withheld comment is
- *                     quieter than a posted one, and the ratified bar is
- *                     "more reliable, never quieter".
+ *                     comment row it cannot read. The caller owes the
+ *                     operator an anomaly for it — a withheld comment is
+ *                     quieter than a posted one, and the bar is "more
+ *                     reliable, never quieter".
  *   * `"degraded"`  — the check EXISTS but could not run this round (no base
  *                     reader, no base sha, or the base read threw) while the
- *                     PR touches migrations. The ratified never-quieter path:
+ *                     PR touches migrations. The never-quieter path:
  *                     the caller raises the overseer anomaly and the round
  *                     prompt un-muzzles the lens.
  */
@@ -137,7 +136,7 @@ export interface Ecosystem {
    * The round's pre-check, run by dispatch after the worktree is prepared and
    * BEFORE the session hears about the round. Total: resolves with an outcome
    * for every input, never throws — a failure inside is an event plus a
-   * degraded/checked outcome, exactly the legacy contract.
+   * degraded/checked outcome.
    */
   preCheck(io: EcosystemPreCheckIo, round: EcosystemRound): Promise<EcosystemPreCheckOutcome>;
   /** The round prompt's entire `{{migration_gate_note}}` text. `none` renders
@@ -151,17 +150,16 @@ export interface Ecosystem {
   readonly missingMigrationNote: string;
 }
 
-// ---- Django prose (moved byte-for-byte from src/templates.ts) -----
+// ---- Django prose -----------------------------------------------------------
 
-// The migration gate survived the escalation scrap (the owner, 2026-08-18) as a
-// data-safety signal: it still forces the sol-med tier and still tells the
-// session the DDL must be judged. Only the "escalate unless…" framing is gone.
+// The migration gate is a data-safety signal: it forces the sol-med tier and
+// tells the session the DDL must be judged. It never escalates.
 const GATE_ON =
   "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";
 const GATE_OFF = "no migration gate on this round";
 
-//'s missing-migration add trigger, moved byte-for-byte out of the three
-// round templates: it is a Django rule, so a `none` round omits it.
+// The missing-migration add trigger for the three round templates: it is a
+// Django rule, so a `none` round omits it.
 const MISSING_MIGRATION_NOTE =
   "\n**Add on a missing migration.** If the diff changes a Django model's fields — a\n" +
   "field added, removed or altered, or a changed `db_index`/`unique`/`choices`/\n" +
@@ -174,15 +172,15 @@ const MISSING_MIGRATION_NOTE =
   "needs to run.\n";
 
 /**
- * The GATE NOTES paragraph that carries's pre-check result to the
- * session (rendered inside `migration_gate_note`, which all three round
+ * The GATE NOTES paragraph that carries the migration pre-check result to
+ * the session (rendered inside `migration_gate_note`, which all three round
  * templates already print — no seed and no template edit needed).
  *
  * The daemon detected these collisions itself, before this round was ordered,
  * and already posted the remedy as a COMMENT. Without this paragraph the
  * session would re-derive the same fact from the diff and raise it as a
- * blocker, which is exactly what the ticket exists to stop: the finding is
- * correct, the verdict was wrong. So the note is imperative — the collision is
+ * blocker — the finding would be correct and the verdict wrong. So the note
+ * is imperative — the collision is
  * settled mechanics, it is not a finding, and it never moves the verdict.
  *
  * Every filename-derived field is the PR author's (a migration name is
@@ -254,8 +252,8 @@ export function renderMigrationCollisionsNote(
 }
 
 /**
- * The GATE NOTES paragraph for a DEGRADED pre-check ("more reliable,
- * never quieter"). When the daemon could not run the collision check at all —
+ * The GATE NOTES paragraph for a DEGRADED pre-check ("more reliable, never
+ * quieter"). When the daemon could not run the collision check at all —
  * no base reader, no base sha, or the base read failed — the class must not
  * fall between two stools: the daemon caught nothing AND the pass-data-safety
  * addendum (src/include.ts) muzzles the lens. This note is the key that
@@ -283,9 +281,7 @@ export function renderMigrationPrecheckDegradedNote(): string {
 // ---- the two implementations ----------------------------------------------
 
 /**
- * Django: today's pre-check, behavior-identical (moved behind the
- * seam by — the body below is dispatch.ts's `migrationPreCheck`
- * verbatim, with its DispatchDeps slice renamed to the seam's `io`).
+ * Django: the migration-number collision pre-check.
  *
  * A PR migration sitting on a number the base branch already took is
  * deterministic, has exactly one remedy and carries no design content — so the
@@ -296,7 +292,7 @@ export function renderMigrationPrecheckDegradedNote(): string {
  *
  * Every failure here is logged and swallowed: a round must never be lost to
  * the pre-check. A degraded check must never be quieter than no check at all
- * (acceptance: "more reliable, never quieter"): the caller renders an
+ * ("more reliable, never quieter"): the caller renders an
  * explicit "the pre-check did not run — check collisions yourself" note into
  * the round prompt, which is what conditionally un-muzzles pass-data-safety's
  * withdrawn finding class for exactly that round (see src/include.ts,

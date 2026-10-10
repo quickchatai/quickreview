@@ -10,19 +10,20 @@
 //   (a) no denylisted private token in any published text file (case-
 //       insensitive), with two sanctioned exemption channels: the manifest's
 //       `pending_reseed` section (frozen seed files whose de-identification
-//       is the owner-ratified reseed) and the in-file ALLOWLIST below
-//       (each entry names the file, the tokens, and the reason);
-//       — and, since 2026-09-03, a third: the manifest's `profile`. The
+//       is the owner-ratified de-identification reseed) and the in-file
+//       ALLOWLIST below (each entry names the file, the tokens, and the
+//       reason); and a third: the manifest's `profile`. The
 //       INTERNAL profile (the company-private snapshot) replaces the token
 //       scan with (a-internal); the public profile is untouched;
 //   (b) LICENSE and THIRD-PARTY-NOTICES.md exist and are non-trivial;
 //   (c) config.example.toml exists and passes full config validation (the
-//       suite in tests/config.test.ts owns the deeper assertions);
+//       example-config suite in tests/config.test.ts owns the deeper
+//       assertions);
 //   (d) no tracked file under the runtime state directories except .gitkeep
 //       markers and memory/README.md;
 //   (e) a NEGATIVE control: the same scanner, fed a planted token at a path
 //       nothing exempts, reports the violation — the lint demonstrably bites;
-//   (f): no published Markdown file links to a path the snapshot does
+//   (f) no published Markdown file links to a path the snapshot does
 //       not ship — an excluded path (a lab notebook, a moved artefact, a
 //       private doc) or one that was never tracked (tests/helpers/
 //       published-links.ts), with its own negative control.
@@ -39,7 +40,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ---------------------------------------------------------------------------
 // The manifest — exclusions (never published) and pending_reseed (published,
-// but token-exempt until the reseed lands).
+// but token-exempt until the de-identification reseed lands).
 // ---------------------------------------------------------------------------
 
 interface ManifestEntry {
@@ -48,7 +49,7 @@ interface ManifestEntry {
 }
 interface PublishManifest {
   exclude: ManifestEntry[];
-  /** Dies with the reseed; the assembled tree may lack it. */
+  /** Optional: gone once the de-identification reseed lands; an assembled tree may lack it. */
   pending_reseed?: ManifestEntry[];
   /** Absent = "public". See PROFILE below. */
   profile?: string;
@@ -63,13 +64,13 @@ const manifest = JSON.parse(
 const pendingReseed = manifest.pending_reseed ?? [];
 
 // ---------------------------------------------------------------------------
-// The PROFILE (owner ruling, 2026-09-03) — the ONE documented mechanism by
+// The PROFILE — the ONE documented mechanism by
 // which the private-token denylist may be relaxed, and it is read off the
 // APPLIED manifest rather than inferred from anything.
 //
-//   public   (a manifest with no `profile` field, i.e. every tree assembled
-//            before this existed, and publish-manifest.json forever) — the
-//            denylist scan below runs over the whole tree. Unchanged.
+//   public   (a manifest with no `profile` field, including
+//            publish-manifest.json itself) — the denylist scan below runs
+//            over the whole tree.
 //   internal — the company-private snapshot (publish-manifest.internal.json,
 //            applied by `scripts/publish-snapshot.sh --profile internal`).
 //            That tree deliberately ships the private profile pack, the
@@ -182,8 +183,8 @@ const ALLOWLIST: AllowlistEntry[] = [
       "fork file recorded verbatim by patch 0005; editing it would drift the file from its recorded patch",
   },
 
-  // -- The papers' author line (C5;: both papers ship
-  //    as .tex + PDF under the author's name and affiliation).
+  // -- The papers' author line (both papers ship as .tex + PDF under the
+  //    author's name and affiliation).
   {
     path: "bench/aacr/paper/benchmark.tex",
     tokens: ["owner_legacy", "quickchat"],
@@ -222,24 +223,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     tokens: ["owner_legacy"],
     reason:
       "legacy origin records live on in the legacy owner-legacy.log audit file — read forever, written never",
-  },
-  {
-    path: "src/slack/origin.ts",
-    tokens: ["owner_legacy"],
-    reason:
-      "parseOriginRecord folds the retired 'owner_legacy' tier spelling in persisted records",
-  },
-  {
-    path: "src/slack/router.ts",
-    tokens: ["owner_legacy"],
-    reason:
-      "documents/handles the retired 'owner_legacy' tier spelling in persisted rows and pasted-table injection defense",
-  },
-  {
-    path: "src/regression.ts",
-    tokens: ["owner_legacy"],
-    reason:
-      "Recommendation value renamed from 'ask-owner-legacy'; the comment documents the fold lineage",
   },
   {
     path: "config.example.toml",
@@ -291,8 +274,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
 
   // -- Grandfathered ratification grammar: the verifying regexes accept the
-  //    historical personal spelling so old fences/notes need no rewrite
-  //   ; history is never rewritten.
+  //    historical personal spelling so old fences/notes need no rewrite;
+  //    history is never rewritten.
   {
     path: "tests/invariant-fences.test.ts",
     tokens: ["owner_legacy"],
@@ -308,12 +291,6 @@ const ALLOWLIST: AllowlistEntry[] = [
     path: "tests/proposals.test.ts",
     tokens: ["owner_legacy"],
     reason: "rubric-accept fence/divergence grammar tests exercise the grandfathered spelling",
-  },
-  {
-    path: "src/tui/proposals.ts",
-    tokens: ["owner_legacy"],
-    reason:
-      "fence-guard grammar accepts the grandfathered spelling; historical divergence notes stay valid",
   },
   {
     path: "tests/fixtures/ratified-divergence.json",
@@ -345,9 +322,9 @@ const ALLOWLIST: AllowlistEntry[] = [
       "pins the shipped reviewed_repo_dir default and that a container still carrying the retired /example-app mount drifts",
   },
 
-  // src/pingpong.ts held the last one ("tell them <owner> will be requested").
-  // removed the sentence outright: it promised a handover had
-  // retired, so the private name went with the false promise.
+  // -- Files that must spell a token: negative assertions name what they look
+  //    for, the exclusion record names what it excludes, and a live default
+  //    stays put.
   {
     path: "tests/posting.test.ts",
     tokens: ["owner_legacy"],
@@ -377,8 +354,8 @@ const ALLOWLIST: AllowlistEntry[] = [
   },
 
   // -- Tests exercising the private quickchat profile pack (excluded from the
-  //    snapshot alongside profiles/quickchat/; drops or guards these
-  //    blocks when assembling the public tree).
+  //    snapshot alongside profiles/quickchat/; the assembly drops or guards
+  //    these blocks when assembling the public tree).
   {
     path: "tests/profiles.test.ts",
     tokens: ["quickchat", "owner_legacy", "mhale", "gfrost"],
@@ -523,11 +500,10 @@ const BINARY_EXTENSIONS = new Set([
 function isBinary(path: string, buf: Buffer): boolean {
   const dot = path.lastIndexOf(".");
   if (dot >= 0 && BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase())) return true;
-  // NOT git's bare "any NUL is binary" probe: that exempted src/eodpinwatch.ts
-  // (one literal NUL in a template literal) from the token sweep, and seven
-  // "the owner" lines reached a public candidate unscanned (,
-  // 2026-10-05). The shared sniff needs corroboration before it calls a
-  // NUL-bearing file binary — the same answer the scan gives.
+  // NOT git's bare "any NUL is binary" probe: one literal NUL in a template
+  // literal would exempt a whole source file from the token sweep. The shared
+  // sniff needs corroboration before it calls a NUL-bearing file binary — the
+  // same answer the scan gives.
   return isBinaryContent(buf, path);
 }
 
@@ -563,8 +539,8 @@ describe("publish-manifest.json", () => {
   });
 
   it("every pending_reseed entry cites — the section dies with that reseed", () => {
-    // The section is OPTIONAL: it is deleted when the reseed lands,
-    // and the assembled public tree may carry a manifest without it
+    // The section is OPTIONAL: it is deleted when the reseed lands, and the
+    // assembled public tree may carry a manifest without it
     // (then the token scan bites on prompts//agents//seeds/ too — the point).
     for (const entry of pendingReseed) {
       expect(entry.reason, entry.path).toContain("");
@@ -573,9 +549,9 @@ describe("publish-manifest.json", () => {
 
   it("directory entries end with '/' and match at least one tracked file (or are known-untracked belts)", () => {
     const tracked = trackedFiles();
-    // config, profiles and the retro/audit/research corpora moved to
-    // the install's config and state homes — their entries stay as belts, so
-    // a checkout that still strands one (un-migrated) never ships it.
+    // Config, profiles and the retro/audit/research corpora live in the
+    // install's config and state homes — their entries stay as belts, so a
+    // checkout that still strands one (un-migrated) never ships it.
     const KNOWN_UNTRACKED = new Set([
       "deploy/ansible/inventory.ini",
       ".claude/worktrees/",
@@ -665,7 +641,7 @@ describe("publishability lint", () => {
 
   it("(b) LICENSE exists and is a real license", () => {
     const license = readFileSync(join(repoRoot, "LICENSE"), "utf8");
-    // MIT (the owner's recorded choice,, 2026-08-30) is ~1.1KB —
+    // MIT is ~1.1KB —
     // the floor guards against an empty/placeholder file, not a long text.
     expect(license.length).toBeGreaterThan(900);
     expect(license).toContain("MIT License");
@@ -678,11 +654,10 @@ describe("publishability lint", () => {
     for (const component of ["openviking-pi", "inline-bash", ".claude/skills"]) {
       expect(notices, `notices must cover ${component}`).toContain(component);
     }
-    // the unlicensed third-party pi-subagents extension is REMOVED
-    // — subagents are pi's own first-party extension inside the pinned pi
+    // Subagents are pi's own first-party extension inside the pinned pi
     // package, loaded from the install path, so nothing is vendored or
-    // redistributed. The tree must stay clean of the old copy (re-vendoring
-    // it would resurrect the licensing problem), and the notices must
+    // redistributed. The tree must carry no copy of the unlicensed
+    // third-party pi-subagents extension, and the notices must
     // still explain where subagents come from so a license audit finds the
     // answer rather than a gap.
     expect(notices).toMatch(/first-party.{0,200}subagent|subagent.{0,200}first-party/is);
@@ -693,7 +668,7 @@ describe("publishability lint", () => {
     const examplePath = join(repoRoot, "config.example.toml");
     expect(existsSync(examplePath)).toBe(true);
     expect(() => loadConfig(examplePath)).not.toThrow();
-    // Safe-defaults spot check; the suite in tests/config.test.ts
+    // Safe-defaults spot check; tests/config.test.ts
     // owns the deeper example-config assertions.
     expect(loadConfig(examplePath).dry_run).toBe(true);
   });
@@ -729,15 +704,15 @@ describe("publishability lint", () => {
     expect(planted[0]!.line).toBe(1);
 
     // A source file with one stray NUL is still TEXT to the sweep — never
-    // exempted as binary (the src/eodpinwatch.ts escape).
+    // exempted as binary.
     const nulSource = Buffer.from("// for the owner\nconst k = `${a}\0${b}`;\n");
     expect(isBinary("src/planted-control.ts", nulSource)).toBe(false);
     expect(isBinary("docs/media/planted.gif", nulSource)).toBe(true);
 
     // …while the exemption channels behave as declared. The exclude/
-    // pending_reseed probes are conditional: the assembled tree
-    // carries an EMPTY exclude (exclusions applied at assembly), and the
-    // pending_reseed section DIED with the reseed — a planted token
+    // pending_reseed probes are conditional: an assembled tree carries an
+    // EMPTY exclude (exclusions applied at assembly), and the pending_reseed
+    // section is gone once the reseed has landed — a planted token
     // under prompts/ is now CAUGHT; the frozen appendix's legacy spellings
     // are carried by the reasoned ALLOWLIST instead.
     const retroPlant = scanFiles([{ path: "docs/retro/planted.md", text: "the owner" }]);

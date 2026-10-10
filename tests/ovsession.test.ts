@@ -1,9 +1,9 @@
-// the PR session's OpenViking identity and its raw-notes session.
+// The PR session's OpenViking identity and its raw-notes session.
 //
 // No server, no HTTP, no pi: the lifecycle runs against a fake `OvSessionApi`,
 // and the two-tier proof runs the REAL `OpenVikingClient` against a fake fetch
-// that models the server's verified behaviour: a session is a
-// tree of its own, and the search corpus is the MEMORIES tree only.
+// that models the server's verified behaviour: a session is a tree of its own,
+// and the search corpus is the memories tree only.
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -224,7 +224,7 @@ describe("session environment", () => {
 // ---- the two tiers, against a fake server ---------------------------------
 
 /**
- * A fake OpenViking modelling the two facts this ticket rests on (both
+ * A fake OpenViking modelling the two facts the two-tier design rests on (both
  * verified against a running v0.4.15):
  *
  *   * a session is a tree of its own — session content is written and read
@@ -390,7 +390,7 @@ describe("the pi HOME layout", () => {
   });
 });
 
-// the sessions' credential is JUDGED (read back and probed), not
+// The sessions' credential is judged (read back and probed), not
 // assumed to equal the daemon's; and a key change reaches the sessions.
 describe("readOvcliKey — what the sessions are actually handed", () => {
   it("reads the key writeOvcliConf wrote", () => {
@@ -442,7 +442,7 @@ describe("keyChangeWatcher — a rotated daemon key reaches the sessions", () =>
   });
 });
 
-// ---- S3: the retired list and the stale-session sweep --------------
+// ---- the retired list and the stale-session sweep -------------------------
 
 describe("the retired-URIs file (S3)", () => {
   it("lives beside ovcli.conf and round-trips into what the extension's recall reads", () => {
@@ -497,7 +497,7 @@ describe("the retired-URIs file (S3)", () => {
   });
 });
 
-// ---- S5: the PR session's recall hint ---------------------------------
+// ---- the PR session's recall hint ------------------------------------------
 
 describe("the recall hint (S5)", () => {
   it("lives beside ovcli.conf, one file per PR session, and round-trips into what the extension reads", () => {

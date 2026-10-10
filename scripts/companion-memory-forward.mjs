@@ -4,8 +4,8 @@
 // WHY THIS EXISTS
 // ---------------
 // The local pi companion must read and write memory that lives on the VM,
-// while holding NO VM credential (root CLAUDE.md rule 8). So the ssh runs
-// HERE, on the owner's PC, as a systemd --user service he owns:
+// while holding no VM credential (root CLAUDE.md rule 8). So the ssh runs
+// here, on the operator's PC, as a systemd --user service the operator owns:
 //
 //     companion container ──▶ 198.51.100.1:1933      (docker bridge `qcr-memory`)
 //                              │  this process, on the host
@@ -23,20 +23,20 @@
 //     `docker exec` inside the container's netns, so no port is opened on the
 //     VM, on the VM's docker bridge, or anywhere reachable from the network.
 //
-// It is deliberately NOT part of the TUI: `qcr tui` starting and stopping is
+// It is deliberately not part of the TUI: `qcr tui` starting and stopping is
 // not an event memory should notice. systemd owns the process (Restart=always,
 // enabled at login, `loginctl enable-linger` for boot), so the companion keeps
 // its memory while the TUI is closed — which is most of the day.
 //
 // LOCAL MODE. On a one-machine (laptop) topology the daemon
-// container runs on THIS host, so `--local` (or QCR_MEMORY_LOCAL=1, or an
+// container runs on this host, so `--local` (or QCR_MEMORY_LOCAL=1, or an
 // explicit empty --ssh-host) replaces the ssh hop with a plain local
 // `docker exec` into the same container netns. Everything else — the
 // `qcr-memory` bridge + loopback binds, the listener contract, `verify`,
-// adopt-or-bind from the TUI — is identical: this file stays the ONE relay
+// adopt-or-bind from the TUI — is identical: this file stays the one relay
 // implementation for both topologies.
 //
-// RELAY CAP (F1). Every relay is one ssh session on the forward's one
+// RELAY CAP. Every relay is one ssh session on the forward's one
 // shared connection, and sshd refuses sessions past its MaxSessions (10) —
 // each refused relay then quietly opens a full ssh login of its own. So at
 // most `--max-relays` (6) relays are open at once; a request beyond that
@@ -74,7 +74,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(HERE, "..");
 
 // ---- defaults ---------------------------------------------------------------
-// These MIRROR src/tui/companion.ts MEMORY.* — the forward and the container
+// These mirror src/tui/companion.ts MEMORY.* — the forward and the container
 // must agree on network, subnet and port or the companion talks to nothing.
 // tests/companion-memory.test.ts fails on drift.
 
@@ -89,7 +89,7 @@ export const DEFAULTS = {
   remotePort: 1933,
   sudo: true,
   unit: "qcr-memory-forward",
-  // F1 — the relay cap. Every relay is one ssh SESSION on the
+  // The relay cap. Every relay is one ssh session on the
   // forward's one shared connection, and sshd refuses the session past its
   // `MaxSessions` (10 on the VM, the OpenSSH default). 6 leaves room for
   // relays still closing and for anything else that shares the ControlPath.
@@ -101,25 +101,23 @@ export const DEFAULTS = {
 };
 
 /** OpenSSH's default sshd `MaxSessions`: session channels per connection.
- * Verified on the VM (`sshd -T | grep maxsessions` → 10, 2026-10-07). */
+ * The VM runs it (`sshd -T | grep maxsessions` → 10). */
 export const SSHD_DEFAULT_MAX_SESSIONS = 10;
 
 /**
- * The forward's OWN ssh control socket (F1). Its relays multiplex
+ * The forward's own ssh control socket. Its relays multiplex
  * over one master connection, and every relay is a session on it; a path of
  * its own keeps the operator's interactive ssh — whose `~/.ssh/config`
  * ControlPath is a different file — off that connection's session budget.
  * `%C` (a hash of the local host, remote host, port and user) keeps the path
- * short enough for a unix socket. Until F1 the default was
- * `~/.ssh/cm-%r@%h:%p`: already separate from the VM config's
- * `~/.ssh/sockets/…`, but the stock example name a config might share.
+ * short enough for a unix socket, and a name no stock ssh config shares.
  */
 export function defaultControlPath(home = homedir()) {
   return join(home, ".ssh", "qcr-memfwd-%C");
 }
 
 /**
- * The keys file (0600, two USER keys) — the install locator's rule
+ * The keys file (0600, two user keys) — the install locator's rule
  * (`locateKeysFile` in src/install.ts), the same path
  * src/tui/companion.ts reads: `QCR_OPENVIKING_KEYS`, else the operator home
  * `$XDG_CONFIG_HOME/qcr-operator/<install>/` (the old
@@ -175,9 +173,9 @@ export function relayArgv(cfg) {
     "ServerAliveCountMax=3",
     // A shared control connection turns a per-request ssh handshake into a
     // channel open on an existing socket. Without it every HTTP connection
-    // would pay a full login. Each relay is one SESSION on that connection,
+    // would pay a full login. Each relay is one session on that connection,
     // and sshd caps sessions per connection (`MaxSessions`) — which is what
-    // `createForwarder`'s relay cap stays under (F1).
+    // `createForwarder`'s relay cap stays under.
     "-o",
     "ControlMaster=auto",
     "-o",
@@ -190,17 +188,15 @@ export function relayArgv(cfg) {
   ];
 }
 
-// ---- repeat-failure collapse --------------------------------------
+// ---- repeat-failure collapse -------------------------------------------------
 
 /**
- * The likely CAUSE of a relay failure, in the operator's terms, with the exact
- * command that fixes it. `ssh` exiting 255 with nothing else to say is the
- * symptom the journal used to be full of; this is the sentence that was
- * missing beside it.
+ * The likely cause of a relay failure, in the operator's terms, with the exact
+ * command that fixes it — the sentence a bare `ssh` exit 255 never says.
  */
 export function relayFailureCause(cfg, text, deps = {}) {
   const s = String(text ?? "");
-  // The docker check comes FIRST and is not interchangeable with the ssh one:
+  // The docker check comes first and is not interchangeable with the ssh one:
   // "permission denied while trying to connect to the Docker daemon" also
   // matches /permission denied/, and answering it with `ssh-add` would send the
   // operator hunting for a key problem that does not exist.
@@ -210,9 +206,9 @@ export function relayFailureCause(cfg, text, deps = {}) {
     )
   ) {
     // …and the docker in question is the VM's, not this laptop's: the relay is
-    // `ssh <host> sudo docker exec …`. A local `systemctl status docker` was a
-    // remedy pointed at the wrong machine (review). With `sudo docker`
-    // the usual fault is the sudo/group grant, not the unit being down.
+    // `ssh <host> sudo docker exec …`, so a local `systemctl status docker`
+    // would point at the wrong machine. With `sudo docker` the usual fault is
+    // the sudo/group grant, not the unit being down.
     const where = cfg.local ? "the local docker daemon" : `docker ON ${cfg.sshHost}`;
     return {
       key: "docker",
@@ -221,9 +217,9 @@ export function relayFailureCause(cfg, text, deps = {}) {
     };
   }
   if (/permission denied|publickey|too many authentication failures|agent refused/i.test(s)) {
-    // The KEY, derived the same way `src/tui/sshtriage.ts` derives it — from
-    // `ssh -G <host>`, never guessed. A hard-coded path is precisely the
-    // "confidently wrong exact command" ruling 4 exists to prevent.
+    // The key, derived the same way `src/tui/sshtriage.ts` derives it — from
+    // `ssh -G <host>`, never guessed: a hard-coded path would make the remedy
+    // a confidently wrong exact command.
     const key = cfg.identity ?? sshIdentityFor(cfg, deps);
     return {
       key: "auth",
@@ -243,12 +239,12 @@ export function relayFailureCause(cfg, text, deps = {}) {
     };
   }
   // There is deliberately no cause for sshd refusing a session past its
-  // MaxSessions (F1 review): the mux client does not fail on that —
+  // MaxSessions: the mux client does not fail on that —
   // it gives up on the shared connection and opens a full ssh login of its
   // own, and under `-q` it says neither. Nothing reaches stderr to match; the
   // relay cap is what keeps relays inside the shared connection.
   if (/control socket|mux_client|multiplexing/i.test(s)) {
-    // The forward's master lives at ITS OWN ControlPath, so a bare
+    // The forward's master lives at its own ControlPath, so a bare
     // `ssh -O exit <host>` would address the operator's master (the one in
     // ~/.ssh/config) and leave the wedged one standing.
     return {
@@ -304,21 +300,21 @@ export function sshIdentityFor(cfg, deps = {}) {
 export const FAILURE_REPEAT_MS = 60_000;
 
 /**
- * Collapses a repeating relay failure into ONE actionable line, rate-limited,
+ * Collapses a repeating relay failure into one actionable line, rate-limited,
  * and says so out loud when it recovers.
  *
- * Every HTTP connection the companion or the TUI makes spawns its own relay, so
- * a missing agent key produced thousands of `relay #N exited 255` lines — a
- * symptom, repeated, with no cause and no remedy. One line per cause per
- * window, a count of what was suppressed, and a `recovered` line that proves
- * the self-healing actually happened: nothing here needs a restart, the next
+ * Every HTTP connection the companion or the TUI makes can spawn a relay, so
+ * one missing agent key would otherwise print thousands of `relay #N exited
+ * 255` lines — a symptom, repeated, with no cause and no remedy. One line per
+ * cause per window, a count of what was suppressed, and a `recovered` line
+ * that proves the self-healing actually happened: nothing here needs a restart, the next
  * successful relay clears the state on its own.
  *
  * @param {{ log?: (line: string) => void, now?: () => number, windowMs?: number }} [opts]
  *   `log` is declared here rather than defaulted on purpose: it has no
  *   sensible default (a collapser that swallows its own output is worse than
  *   one that throws), but without the annotation TypeScript infers the option
- *   bag from the DEFAULTED keys only and `tsconfig.tests.json` then rejects
+ *   bag from the defaulted keys only and `tsconfig.tests.json` then rejects
  *   every caller that passes it.
  */
 export function createFailureCollapser({
@@ -328,10 +324,10 @@ export function createFailureCollapser({
 } = {}) {
   let key = null;
   let lastAt = 0;
-  // Suppressed since the LAST PRINTED line, and suppressed since the last
-  // recovery. Two counters because they answer different questions, and
-  // collapsing them into one is how the old version came to say "0 suppressed"
-  // after hiding six failures: a cause change reset the only counter it had.
+  // Suppressed since the last printed line, and suppressed since the last
+  // recovery. Two counters because they answer different questions: with one,
+  // a cause change would reset it and a recovery could report "0 suppressed"
+  // after hiding several failures.
   let suppressedSincePrint = 0;
   let suppressedTotal = 0;
   let total = 0;
@@ -379,8 +375,8 @@ export function createFailureCollapser({
 // ---- the forwarder ----------------------------------------------------------
 
 /**
- * Local relay argv (`--local`): the SAME stdio↔TCP bridge, reached by
- * a plain `docker exec` on THIS machine — the daemon container runs here, so
+ * Local relay argv (`--local`): the same stdio↔TCP bridge, reached by
+ * a plain `docker exec` on this machine — the daemon container runs here, so
  * there is no ssh hop. The bridge program rides as a real argv element (no
  * shell re-parse, so no quote wrapper); `--no-sudo` drops the sudo prefix.
  */
@@ -397,7 +393,7 @@ export function localRelayArgv(cfg) {
   ];
 }
 
-/** The FULL relay command, binary first — the transport decision in one place.
+/** The full relay command, binary first — the transport decision in one place.
  * Pure; tests assert both shapes. */
 export function relaySpawnCommand(cfg) {
   return cfg.local ? localRelayArgv(cfg) : ["ssh", ...relayArgv(cfg)];
@@ -409,22 +405,20 @@ export function realRelaySpawner(cfg) {
   return () => spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
 }
 
-// ---- the relay cap (F1) ---------------------------------------------
+// ---- the relay cap ----------------------------------------------------------
 //
-// THE DEFECT (2026-10-07). Every accepted TCP connection got its own relay —
-// one `ssh … docker exec …` — and every relay is one SESSION on the forward's
-// one shared ssh connection. sshd allows `MaxSessions` (10) of those per
-// connection and refuses the rest. A refused relay does not stop there: the
-// mux client gives up on the shared connection and opens a full ssh login of
-// its own through the bastion, saying nothing under `-q`. On the VM those
-// extra logins failed (2026-08-26, docs/memory-forward-connection-research.md:
-// 16 concurrent probes, exactly 10 answered, ssh exiting 255), so a burst —
-// the store's 8-way read sweep (`qcr memory relayout`) beside the TUI's polls
-// and the companion — had its extra connections closed under it, and the
-// callers saw `fetch failed`.
+// WHY. Every relay — one `ssh … docker exec …` — is one session on the
+// forward's one shared ssh connection. sshd allows `MaxSessions` (10) of
+// those per connection and refuses the rest. A refused relay does not stop
+// there: the mux client gives up on the shared connection and opens a full
+// ssh login of its own through the bastion, saying nothing under `-q`, and on
+// the VM those extra logins fail (docs/memory-forward-connection-research.md).
+// Uncapped, a burst — the store's 8-way read sweep beside the TUI's polls and
+// the companion — has its extra connections closed under it, and the callers
+// see `fetch failed`.
 //
 // THE CAP. At most `maxRelays` relays are open at once, counted from spawn to
-// the child's EXIT (a killed relay still holds its session until ssh is gone).
+// the child's exit (a killed relay still holds its session until ssh is gone).
 // A connection that has a request to send and no relay waits in a FIFO queue
 // (`queueMax` deep); a request that waits `queueTimeoutMs` — or arrives at a
 // full queue — gets an HTTP 503 in OpenViking's own error envelope and a clean
@@ -433,16 +427,15 @@ export function realRelaySpawner(cfg) {
 // WHY A QUEUE ALONE IS NOT ENOUGH. Every client here keeps its connections
 // alive between requests (undici, browsers). A connection holding a relay and
 // looping on it never closes, so a queue that only advanced on a close would
-// starve whoever waited behind a busy sweep. So a relay YIELDS: when its
-// connection is BETWEEN requests and somebody is waiting, the relay is
+// starve whoever waited behind a busy sweep. So a relay yields: when its
+// connection is between requests and somebody is waiting, the relay is
 // stopped and its slot goes to the head of the queue; the connection itself
 // stays open, and its next request waits its turn for a new relay. "Between
 // requests" is read off the bytes by `createExchangeTracker` — a whole
 // request, then a whole Content-Length response, and nothing since — never
 // guessed from a quiet line. A connection that is not plain request/response
 // HTTP/1.1 (a websocket, a chunked or close-delimited body, a pipelined
-// request) is never stopped: it keeps its relay to the end, as every
-// connection did before F1.
+// request) is never stopped: it keeps its relay to the end.
 //
 // A relay that yields has served its connection for `minLeaseMs` (so a hot
 // loop pays one relay start per second, not one per request), or has been
@@ -700,11 +693,11 @@ export function createForwarder(cfg, opts = {}) {
   const t = { ...RELAY_TIMINGS, ...(opts.timings ?? {}) };
   const servers = [];
   // Every accepted connection not yet closed. Tracked so close() can tear
-  // them down: `server.close()` only stops ACCEPTING, and each relay is an ssh
+  // them down: `server.close()` only stops accepting, and each relay is an ssh
   // + a remote docker exec, so a caller that stops the forwarder and keeps
   // running would strand one process trio per open connection. That caller
   // exists — the TUI owns a forward for as long as it is up
-  // (src/tui/memforward.ts) — where before only systemd did.
+  // (src/tui/memforward.ts).
   const conns = new Set();
   /** Connections with a request waiting for a relay, oldest first. */
   let queue = [];
@@ -727,7 +720,7 @@ export function createForwarder(cfg, opts = {}) {
     peakQueued: 0,
   };
 
-  // one actionable line per cause, not one symptom line per relay.
+  // One actionable line per cause, not one symptom line per relay.
   const collapser =
     opts.collapser ?? createFailureCollapser({ log, ...(opts.now ? { now: opts.now } : {}) });
 
@@ -899,7 +892,7 @@ export function createForwarder(cfg, opts = {}) {
     startTicker();
   }
 
-  /** A connection that just lost its relay BETWEEN requests reads again. A
+  /** A connection that just lost its relay between requests reads again. A
    * pause the old relay's full stdin set would otherwise stand for good: its
    * lift is that child's 'drain', which never comes from a child that is gone,
    * so the next request would be neither read nor queued. The hold limit's
@@ -1033,9 +1026,9 @@ export function createForwarder(cfg, opts = {}) {
 
   const onRelayData = (conn, lease, chunk) => {
     if (conn.closed || conn.lease !== lease) return; // a stopped relay's late bytes go nowhere
-    // The first byte back from the container IS the proof that the whole chain
+    // The first byte back from the container is the proof that the whole chain
     // works, so it is what clears a collapsed failure — self-recovery with no
-    // restart, which is the half asked for beyond the rate limit.
+    // restart.
     if (!lease.moved) {
       lease.moved = true;
       collapser.ok();
@@ -1181,8 +1174,8 @@ export function createForwarder(cfg, opts = {}) {
     });
     socket.on("error", () => closeConn(conn));
     socket.on("close", () => closeConn(conn));
-    // A free slot is taken at once, as every connection did before the cap;
-    // with none free, nothing is owed until the client actually asks.
+    // A free slot is taken at once; with none free, nothing is owed until the
+    // client actually asks.
     if (queue.length === 0 && open < limits.maxRelays) grant(conn);
     else scheduleStats();
   };
@@ -1241,7 +1234,7 @@ export function createForwarder(cfg, opts = {}) {
     },
     /** Connections holding a relay — the test's handle on the teardown above. */
     liveRelays: () => [...conns].filter((c) => c.lease).length,
-    /** The cap, the queue and what they have done (F1). */
+    /** The cap, the queue and what they have done. */
     stats,
     /** Bound ports (the test asks for the ephemeral one). */
     addresses: () => servers.map((s) => s.address()).filter(Boolean),
@@ -1249,7 +1242,7 @@ export function createForwarder(cfg, opts = {}) {
 }
 
 /**
- * Where the running forward writes its live counts for `status` (F1):
+ * Where the running forward writes its live counts for `status`:
  * `$XDG_RUNTIME_DIR/qcr-memory-forward-<port>.json` — the same directory the
  * systemd unit's `%t` names, so the CLI and the unit agree. No runtime dir, no
  * file: `status` then says the counts are unknown rather than guessing.
@@ -1364,11 +1357,11 @@ export function unitText(cfg, env = process.env) {
     cfg.gateway,
     ...(cfg.sudo ? [] : ["--no-sudo"]),
     ...(cfg.identity ? ["--identity", cfg.identity] : []),
-    // F1: the cap and the control socket ride the unit only when they
+    // The cap and the control socket ride the unit only when they
     // differ from the defaults, so a later default reaches an installed unit.
     ...unitLimitArgs(cfg),
   ].join(" ");
-  // name the transport truthfully — a local unit that claimed to
+  // Name the transport truthfully — a local unit that claimed to
   // forward "OpenViking on my-vm" is the line an operator reads first in
   // `systemctl --user status` when the laptop route misbehaves.
   const where = cfg.local ? "local docker" : cfg.sshHost;
@@ -1415,14 +1408,14 @@ export function unitPath(cfg, home = homedir()) {
 
 // ---- the confinement proof --------------------------------------------------
 //
-// The reverse direction is the property that makes two USER keys safe: the
+// The reverse direction is the property that makes two user keys safe: the
 // reviewer key (which every automated review session holds) must be unable to
 // read or write companion memory. Server-side confinement was verified against
 // a running 0.4.15 server; this turns it into something re-runnable on demand.
 //
-// The REQUEST SHAPES below are the adjustable part — src/memory is
+// The request shapes below are the adjustable part — src/memory is
 // the authority for what OpenViking's read/write endpoints look like. The
-// VERDICT logic (what each status code proves) is what the unit test pins, and
+// verdict logic (what each status code proves) is what the unit test pins, and
 // anything that is neither reach nor refusal is reported "inconclusive", never
 // as a pass.
 
@@ -1430,11 +1423,11 @@ export const PATHS = {
   /** A directory listing at the user root: exists for every user, and needs no
    * knowledge of which memory "space" that user happens to have. */
   read: (env = process.env) => (env.QCR_OV_READ_PATH ?? "/api/v1/fs/ls").trim(),
-  // `{user}` is substituted with the namespace being probed. VERIFIED LIVE
-  // (2026-08-25, api_key mode): the server derives identity from the KEY and
-  // confines by URI — `X-OpenViking-User` does NOT select the namespace, so a
-  // bare `viking://user/` read answered 200 for every key and the cross-cells
-  // could never fail. The namespace must live in the URI.
+  // `{user}` is substituted with the namespace being probed. Verified live in
+  // api_key mode: the server derives identity from the key and confines by
+  // URI — `X-OpenViking-User` does not select the namespace, so a bare
+  // `viking://user/` read answers 200 for every key and the cross-cells could
+  // never fail. The namespace must live in the URI.
   readUri: (env = process.env, user = "") =>
     (env.QCR_OV_READ_URI ?? "viking://user/{user}/").trim().replaceAll("{user}", user),
   /** The ONE durable write path (see the vendored client's PATCH 4 note). */
@@ -1654,8 +1647,8 @@ export function parseArgs(argv, env = process.env) {
     else flags.set(name, "true");
   }
   const num = (k, d) => (flags.has(k) ? Number(flags.get(k)) : d);
-  // F1: a positive whole number from a flag, else the env, else the
-  // default. A bad value REFUSES rather than falling back: a cap silently
+  // A positive whole number from a flag, else the env, else the
+  // default. A bad value refuses rather than falling back: a cap silently
   // replaced by something else is the defect this exists to prevent.
   const count = (flag, envName, d) => {
     const fromEnv = (env[envName] ?? "").trim();
@@ -1670,8 +1663,8 @@ export function parseArgs(argv, env = process.env) {
   const gateway = flags.get("gateway") ?? env.QCR_MEMORY_GATEWAY ?? DEFAULTS.gateway;
   const port = num("port", Number(env.QCR_MEMORY_PORT ?? DEFAULTS.port));
   const sshHost = flags.get("ssh-host") ?? env.QCR_SSH_HOST ?? DEFAULTS.sshHost;
-  // one-machine topology — the relay is a plain local `docker exec`,
-  // no ssh hop. `--local` (or QCR_MEMORY_LOCAL=1) selects it; an EXPLICIT
+  // One-machine topology — the relay is a plain local `docker exec`,
+  // no ssh hop. `--local` (or QCR_MEMORY_LOCAL=1) selects it; an explicit
   // empty --ssh-host means the same thing (there is no host to ssh to).
   const local =
     flags.has("local") ||
@@ -1696,7 +1689,7 @@ export function parseArgs(argv, env = process.env) {
     sudo: !flags.has("no-sudo"),
     identity: flags.get("identity"),
     controlPath: flags.get("control-path") ?? defaultControlPath(),
-    // F1 — one parser, so the systemd unit and the TUI (which runs
+    // One parser, so the systemd unit and the TUI (which runs
     // this same parseArgs) carry the same cap.
     maxRelays: count("max-relays", "QCR_MEMORY_MAX_RELAYS", DEFAULTS.maxRelays),
     queueMax: count("queue-max", "QCR_MEMORY_QUEUE_MAX", DEFAULTS.queueMax),
@@ -1798,7 +1791,7 @@ async function status(cfg) {
     `docker network ${cfg.network}: ${net.status === 0 ? `gateway ${net.stdout.trim()}` : "absent"}`,
   );
   console.log(`endpoint for the container: http://${cfg.gateway}:${cfg.port}`);
-  // F1: the cap, and the running forward's own live counts.
+  // The cap, and the running forward's own live counts.
   for (const line of describeForwardStats(cfg, readForwardStats(cfg.statsFile))) console.log(line);
   for (const probe of ["/health", "/ready"]) {
     try {

@@ -1,5 +1,5 @@
 // SQLite state store (state/state.db) + the atomic status.json snapshot.
-// Tables: pr_state, rounds, bot_comments (registry), deliveries
+// Core tables: pr_state, rounds, bot_comments (registry), deliveries
 // (webhook dedupe), events (append log).
 import Database from "better-sqlite3";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -23,17 +23,15 @@ import { standingVerdict as standingReviewVerdict } from "./standing-review.js";
 import { canonicalLensIds } from "./lensids.js";
 
 /** The lifecycle states a PR can occupy. There is no "awaiting human" member:
- * the park was retired on 2026-08-19 (the review is never handed to
- * a human) and its last legacy rows were drained by the reconcile migration on
- * the same day, so nothing can produce or hold that state any more.
- * Adding one back would need the owner, not a commit. */
+ * the review is never handed to a human, so nothing produces or holds such a
+ * state (CLAUDE.md rule 10). */
 export type PrLifecycleState = "tracked" | "queued" | "reviewing" | "awaiting_author" | "closed";
 
 /** Who asked for the queued round. `human` = a fresh label add, a
  * fresh team re-review request, an overseer/manual trigger, or an author reply
  * landing while queued — a person acted and expects a full round. `system` = a
  * push/CI/staleness re-trigger at an existing trigger state — the dispatcher
- * may consult the delta classifier and short-circuit an empty/trivial
+ * may consult the recheck's delta classifier and short-circuit an empty/trivial
  * delta. Null (legacy rows, direct requeues) is treated as human: the safe
  * default is a full round. */
 export type TriggerProvenance = "human" | "system";
@@ -74,7 +72,7 @@ export interface ReviewFailureRow {
   detail: string;
   attempts: number;
   retry_cap: number;
-  /** circuit-breaker generation. Zero is the first delayed retry
+  /** Circuit-breaker generation. Zero is the first delayed retry
    * after the ordinary per-head fast retries are spent. */
   retry_epoch: number;
   next_retry_at: string | null;
@@ -156,9 +154,9 @@ export interface RoundRow {
   round_type: string;
   lenses: string;
   verdict: string | null;
-  /** LEGACY: the old self-reported spend column. No longer written —
-   * boot folds surviving values into est_usd and every consumer reads est_usd.
-   * Kept in the DDL because a live DB cannot drop it without a table rebuild. */
+  /** Legacy self-reported spend column. Never written — boot folds surviving
+   * values into est_usd and every consumer reads est_usd. Kept in the DDL
+   * because a live DB cannot drop it without a table rebuild. */
   spend_usd: number | null;
   duration_s: number | null;
   /** Session-written 3-4 sentence round summary (verdict file `summary`). */
@@ -177,7 +175,7 @@ export interface RoundRow {
   /** GitHub review databaseId — the backfill idempotence key. */
   gh_review_id: number | null;
   gh_commit_id: string | null;
-  /** deterministic shell-post identity and confirmed outcome. Null key
+  /** Deterministic shell-post identity and confirmed outcome. Null key
    * means a legacy round whose verdict cannot be receipt-gated. */
   posting_key: string | null;
   posted_event: string | null;
@@ -185,17 +183,17 @@ export interface RoundRow {
   /** The trigger instant this round answered, copied off pr_state at start so
    * time-to-first-verdict survives the `trigger_ts = null` reset at dispatch. */
   trigger_ts: string | null;
-  // ---- measured usage (from pi session JSONLs, not self-reported) --
+  // ---- measured usage (from pi session JSONLs, not self-reported) ----
   tokens_in: number | null;
   /** Output tokens including reasoning tokens. */
   tokens_out: number | null;
   tokens_cache_read: number | null;
   /** Daemon-side USD estimate (config pricing); null when a model is unpriced. */
   est_usd: number | null;
-  /** The tier `pass-validate` ran at this round — recorded so a
-   * later audit can tell which tier killed which finding. Null on rounds
-   * started before the column existed (and on backfilled history), and on a
-   * round whose profile switched the validator off. */
+  /** The tier `pass-validate` ran at this round — recorded so a later audit
+   * can tell which tier judged which finding. Null on rounds started before
+   * the column existed (and on backfilled history), and on a round whose
+   * profile switched the validator off. */
   validate_tier: string | null;
   /** Executed-pass telemetry: JSON array of VerdictPassEntry — the
    * passes the session ACTUALLY ran, as reported in the verdict file. Distinct
@@ -205,7 +203,7 @@ export interface RoundRow {
   /** Exact dispatch-time policy for classifying reasoned added passes. */
   pass_plan: string | null;
   addable_passes: string | null;
-  /** hardening: when the lost-prompt net FIRST observed this round
+  /** When the lost-prompt net first observed this round
    * fully silent (prompt consumed, session alive, no JSONL activity). The net
    * fires only on the SECOND consecutive silent sweep; any non-silent
    * observation clears the mark. Same persistence idiom as the
@@ -213,13 +211,13 @@ export interface RoundRow {
    * restart cannot forget it — but round-scoped, so it lives on the round
    * row rather than in a per-PR table. Null = never seen silent. */
   silent_since: string | null;
-  /** The receipt token stamped into this round's wake file (#5362), echoed
+  /** The receipt token stamped into this round's wake file, echoed
    * back by pi into the session JSONL when — and only when — the prompt is
    * ACCEPTED. Null means the round was dispatched by a build that stamped no
    * marker, so its delivery is UNKNOWABLE rather than unconfirmed: readers
    * must fall back to the older inference instead of concluding "lost". */
   prompt_marker: string | null;
-  /** How many times this round's prompt has been re-delivered (#5362). Cheap
+  /** How many times this round's prompt has been re-delivered. Cheap
    * recovery (rewrite the wake file, same round and session), bounded on its
    * own rather than out of the `max_self_requeues` budget. */
   redeliveries: number;
@@ -227,18 +225,18 @@ export interface RoundRow {
    * as the session reports it in its findings record. Null = unknown (no
    * record, or a record that omitted the count) — never confused with 0. */
   comments_posted: number | null;
-  /** WHY this round was cancelled — null on every round that was
-   * not cancelled, and on legacy cancellations the boot migration could
-   * not classify from their prose summary. The prose stays in `summary`; this
+  /** Why this round was cancelled — null on every round that was not
+   * cancelled, and on older cancellations the boot migration could not
+   * classify from their prose summary. The prose stays in `summary`; this
    * is the machine-readable half every aggregate groups by. */
   cancel_cause: string | null;
-  /** bracket around dispatch-time migration-precheck posting. Existing
+  /** Bracket around dispatch-time migration-precheck posting. Existing
    * rounds migrate as unknown (never auto-replayed); new rounds start none and
    * move through ambiguous before the gated call resolves. */
   preflight_posting_state: "unknown" | "none" | "ambiguous" | "executed" | "dryrun" | "refused";
   /** First exact planned discovery execution observed by the daemon. */
   fanout_started_at: string | null;
-  /** integration review: the end of this round's usage window while
+  /** The end of this round's usage window while
    * its round-end measurement (usage, the exec-policy audit, the integrity
    * re-check) is OWED — stamped synchronously when the round end fixes the
    * window, cleared when the measurement has finished, whatever it found.
@@ -272,26 +270,19 @@ export interface RoundRow {
 }
 
 /**
- * The reasons a round can be cancelled.
- *
- * Cancellation used to be prose only: `summary` carried a sentence and nothing
- * anywhere read it back. The diagnosis had to reconstruct the split by
- * grepping that prose — 55 cancellations since the cutover, 70% of them the
- * benign boot-time orphan sweep, and NOTHING consumed the signal while the
- * rare `overdue` (5 occurrences) raised an alarm. The loud signal was the rare
- * one. These are the causes; `LOUD_CANCEL_CAUSES` is which of them deserve a
- * human's attention.
+ * The reasons a round can be cancelled — the machine-readable half every
+ * aggregate groups by (the prose stays in `summary`). `LOUD_CANCEL_CAUSES` is
+ * which of them deserve a human's attention.
  */
 export type CancelCause =
   /** Boot-time orphan sweep: tmux lives in the container, so a restart orphans
    * every in-flight round BY CONSTRUCTION. A redeploy artefact, never a defect. */
   | "orphan_sweep"
-  /** The round stopped dead inside its deadline window with no verdict. The
-   * real defect (Q5: against completed rounds of 0.6–23.4 minutes, a
-   * 75-minute overrun is never a slow round). */
+  /** The round stopped dead inside its deadline window with no verdict. A
+   * real defect: a deadline overrun is never just a slow round. */
   | "deadline_overrun"
   /** The round's prompt never reached the session and redelivery could not
-   * repair it (#5362) — a delivery fault, not a review fault. */
+   * repair it — a delivery fault, not a review fault. */
   | "lost_prompt"
   /** The PR advanced mid-round; the session correctly posted nothing and the
    * round was redispatched against the fresh head. Benign. */
@@ -302,19 +293,18 @@ export type CancelCause =
   /** The daemon→Pi parent failed a finite start/finish stage before a merits
    * verdict existed. Loud: infrastructure failed, review still owed. */
   | "infrastructure_failure"
-  /** A newer round on the same PR outlived this one. The benign explanation
-   * the diagnosis refuted as the DOMINANT one: 6.5%, not the story. */
+  /** A newer round on the same PR outlived this one. Benign. */
   | "superseded"
   /** An operator unwedge lever (`rerun-round` / `restart-session`). */
   | "operator"
   /** Posting guard 2 refused the round's review because the head was already
-   * reviewed with no author reply since (#5409 round 18). The review
+   * reviewed with no author reply since. The review
    * work was healthy and the refusal was correct; nothing reached GitHub and
    * the prior standing review stands. Benign by definition — dispatch should
    * have skipped the round, and the durable event says which half did. */
   | "no_new_evidence"
-  /** Legacy prose the migration could not classify. Never inferred as
-   * benign: unknown is unknown. */
+  /** Older cancellation prose the migration could not classify. Never
+   * inferred as benign: unknown is unknown. */
   | "unknown";
 
 export const CANCEL_CAUSES: readonly CancelCause[] = [
@@ -331,13 +321,12 @@ export const CANCEL_CAUSES: readonly CancelCause[] = [
 ];
 
 /**
- * The causes that deserve a human (and the whole point of the ticket).
+ * The causes that deserve a human.
  *
- * `orphan_sweep` is deliberately NOT here: it is what a clean redeploy does to
- * every round in flight, it fired 38 times in eight days of heavy building, and
- * alarming on it would train everyone to ignore cancellation entirely — the
- * exact inversion found. `head_moved` and `superseded` are the system
- * working. What is left is a round that stopped dead: that gets an anomaly row.
+ * `orphan_sweep` is deliberately not here: it is what a clean redeploy does to
+ * every round in flight, and alarming on it would train everyone to ignore
+ * cancellation entirely. `head_moved` and `superseded` are the system working.
+ * What is left is a round that stopped dead: that gets an anomaly row.
  */
 export const LOUD_CANCEL_CAUSES: ReadonlySet<CancelCause> = new Set<CancelCause>([
   "deadline_overrun",
@@ -402,10 +391,10 @@ export interface RoundFindingRow {
   raised_in_round: number | null;
   thread_id: number | null;
   recorded_at: string;
-  /** The posted comment's title as the record wrote it (S6); null
+  /** The posted comment's title as the record wrote it; null
    * when the record carries none. */
   title: string | null;
-  /** Canonical lens ids, a JSON array (`src/lensids.ts`, S6). Null
+  /** Canonical lens ids, a JSON array (`src/lensids.ts`). Null
    * only on a row the boot migration has not reached yet. */
   lens_ids: string | null;
 }
@@ -467,29 +456,27 @@ export interface BackfillPrMetaRow {
   imported_at: string;
 }
 
-// ---- Slack concierge rows ---------------------------------------
+// ---- Slack concierge rows ---------------------------------------------------
 // Slack `ts` values are TEXT ALWAYS ("1755431234.001900"): they are opaque
 // message ids whose precision a float would destroy.
 
 /** Who a Slack message came from, in rights terms (resolved by the router).
- *
- * split the old personal top tier into two ROLES so the audit trail
- * names which kind of authority acted:
- *   `owner`  — the configured owner (`[owner] slack_id`): the full
- *              personal command rights the retired `owner_legacy` tier carried.
+ * The top tier is two roles, so the audit trail names which kind of authority
+ * acted:
+ *   `owner`  — the configured owner (`[owner] slack_id`): full personal
+ *              command rights.
  *   `system` — the daemon's own unattended turns (EOD sweep, anomaly wake,
  *              connections signal), stamped only by `OriginStore.writeLocal`;
  *              `computeTier` never returns it for a Slack user.
- * The retired spelling `"owner_legacy"` is ACCEPTED on input and folded to `owner`
- * by `foldSlackTier` — the ESCALATE→NEEDS_HUMAN pattern: accepted on read,
- * never emitted. */
+ * A retired legacy spelling is accepted on input and folded to `owner` by
+ * `foldSlackTier` — accepted on read, never emitted. */
 export type SlackTier = "anyone" | "author" | "owner" | "system" | "ignored";
 
 /**
  * Parse a persisted tier string into the current vocabulary. The retired
- * `"owner_legacy"` spelling (legacy origin records and slack_events rows still
+ * legacy top-tier spelling (older origin records and slack_events rows still
  * on disk) folds to `"owner"`; anything else unknown is `null` — an unknown
- * tier grants nothing. EVERY read path of a persisted tier goes through this
+ * tier grants nothing. Every read path of a persisted tier goes through this
  * fold (origin records via `parseOriginRecord`, slack_events rows via
  * `StateStore.slackEvent`). Pinned by tests/legacy-acceptance.test.ts — a
  * permanent belt, not a cleanup candidate.
@@ -568,7 +555,7 @@ export interface SlackCooldownRow {
   bypassed: number;
 }
 
-/** Deploy-window drain state (2026-08-25) — one persistent row. Read back
+/** Deploy-window drain state — one persistent row. Read back
  * through `drainState()` it is already folded against the hold's expiry: a
  * lapsed session drain reads `draining: false`. The union makes
  * the holder part of what "draining" means: there is no draining state
@@ -1119,16 +1106,6 @@ CREATE TABLE IF NOT EXISTS archived_event_counts (
 );
 `;
 
-/**
- * The reviewed-head mark: the last head this system actually
- * reviewed on a PR, what it decided there, and the newest author reply seen
- * since. One row per PR — the mark is a *position*, not a history; the rounds
- * table keeps the history.
- *
- * Two readers: the no-new-evidence guard (posting time and dispatch time) and
- * the post-approval delta recheck that follows, which needs exactly
- * `head_sha` to diff the current head against.
- */
 /** One row of the [feedback] tuning-loop ledger. */
 export interface FeedbackSignalRow {
   id: number;
@@ -1144,23 +1121,23 @@ export interface FeedbackSignalRow {
   /** Ops-day token (YYYY-MM-DD, [ops] timezone) — the same-day addendum's key. */
   day: string;
   created_at: string;
-  /** The signal's reviewer-memory entry (S2): `pending` — owed, the
-   * backfill pump writes it; `written` — in memory (`memory_uri` names it,
-   * or NULL for a pre-S2 entry written under an unrecorded name); `failed` —
-   * memory refused it `FEEDBACK_MEMORY_MAX_ATTEMPTS` times and the pump gave
-   * up, loudly; `skipped` — memory is switched off. NULL only before the boot
-   * migration has classified a pre-S2 row. */
+  /** The signal's reviewer-memory entry: `pending` — owed, the backfill pump
+   * writes it; `written` — in memory (`memory_uri` names it, or NULL for an
+   * older entry written under an unrecorded name); `failed` — memory refused
+   * it `FEEDBACK_MEMORY_MAX_ATTEMPTS` times and the pump gave up, loudly;
+   * `skipped` — memory is switched off. NULL only before the boot migration
+   * has classified an older row. */
   memory_state: FeedbackMemoryState | null;
   memory_attempts: number;
   memory_last_error: string | null;
   memory_uri: string | null;
   /** Since when memory has owed this row: its insert, the migration that
-   * classified a pre-S2 row owed, or the re-queue of a row given up on. NULL
+   * classified an older row owed, or the re-queue of a row given up on. NULL
    * for a row that was never owed (written at once, skipped). */
   memory_owed_since: string | null;
 }
 
-/** Where a feedback signal's memory entry stands (S2). */
+/** Where a feedback signal's memory entry stands. */
 export type FeedbackMemoryState = "pending" | "written" | "failed" | "skipped";
 
 /** The feedback ledger's memory backlog, for the backlog wake and the
@@ -1176,7 +1153,7 @@ export interface FeedbackMemoryBacklog {
 }
 
 /** What `recordFeedbackSignal` takes: the ledger row's natural fields, plus
- * the memory state it starts in (S2; `pending` by default) and an
+ * the memory state it starts in (`pending` by default) and an
  * optional note for `memory_last_error` (why a row starts `skipped`). */
 export interface FeedbackSignalInput {
   kind: string;
@@ -1210,11 +1187,22 @@ export interface PrCommentRow {
   created_at: string | null;
   captured_at: string;
   captured_via: string;
-  /** A captured review's own state (S8), lowercased; null for a
+  /** A captured review's own state, lowercased; null for a
    * comment, and for a review captured before the column existed. */
   review_state?: string | null;
 }
 
+/**
+ * The reviewed-head mark: the last head this system actually reviewed on a
+ * PR, what it decided there, and the newest author reply seen since. One row
+ * per PR — the mark is a *position*, not a history; the rounds table keeps the
+ * history.
+ *
+ * Two readers: the no-new-evidence guard (posting time and dispatch time) and
+ * the post-approval delta recheck, which needs exactly `head_sha` to diff the
+ * current head against. Lifecycle consumers read it only through
+ * `standing-review.ts`.
+ */
 export interface ReviewedHeadRow {
   pr: number;
   head_sha: string;
@@ -1255,9 +1243,9 @@ export interface AnomalyRecord {
 }
 
 /**
- * What the event log says about one migration-collision COMMENT (
- * dedupe, three-state read). `unknown` is not "no": it is a log with a
- * comment row this code cannot read, and the caller treats it as "do not post".
+ * What the event log says about one migration-collision COMMENT (the dedupe's
+ * three-state read). `unknown` is not "no": it is a log with a comment row
+ * this code cannot read, and the caller treats it as "do not post".
  */
 export type CollisionCommentRecord = "commented" | "not_commented" | "unknown";
 
@@ -1320,7 +1308,7 @@ export interface SessionCommandRow {
   /** Consecutive supervisor observations where JSONL/liveness evidence was
    * unavailable. Reset on retry; bounded so unknown cannot buy silence. */
   unknown_checks: number;
-  /** H1b: same-session redeliveries (#5362 ③) — the row handed back
+  /** Same-session redeliveries — the row handed back
    * to `pending` with its file rewritten, the session left alive. Bounded by
    * `[daemon] max_prompt_redeliveries` before any kill-and-replay. */
   redeliveries: number;
@@ -1353,7 +1341,7 @@ export interface CreateSessionCommand {
   next_check_at: string;
 }
 
-/** A wake held while its PR's round was in flight (single-shepherd S4). */
+/** A wake held while its PR's round was in flight (single-shepherd invariant). */
 export interface PendingWakeRow {
   id: number;
   pr: number;
@@ -1367,35 +1355,35 @@ export interface PendingWakeRow {
 
 /** Per-PR ceiling on held ORDINARY wakes. Ordinary wakes yield rows when
  * pressure exceeds this cap — push recheck nudges first, oldest first (the
- * reconcile backstop asks them again), then the rest oldest first (
- * H1b). Operator-recovered and actively leased rows are protected: preserving
+ * reconcile backstop asks them again), then the rest oldest first.
+ * Operator-recovered and actively leased rows are protected: preserving
  * owed work wins over the numeric ceiling. Author replies are outside the cap
  * altogether (`AUTHOR_REPLY_WAKE_REASON`): never evicted and never counted. */
 export const MAX_HELD_WAKES = 5;
 
-/** H1b review: the one held-wake reason a sweep raises again — the
+/** The one held-wake reason a sweep raises again — the
  * reconcile push backstop (`reconcile.ts`) re-asks an APPROVE-standing PR's
  * delta at its current head whenever that push question is unclaimed. A
  * `recheck:ci` or `recheck:base_advance` nudge has no such sweep: once
  * evicted, only an identical webhook can ask it again. */
 export const RECHECK_WITH_BACKSTOP_WAKE_REASON = "recheck:push";
 
-/** H1b: the held-wake reason of an author reply in a bot thread. Each
- * one is a CLAIMED obligation (`pingpong_handled` refuses every redelivery,
- * and the reconcile comment sweep only captures), so an evicted reply was
- * never answered: 76 replies went that way between 2026-10-05 and 10-08. A
- * burst is delivered as one coalesced run, so they cost the session one turn,
- * not one each — the cap has nothing to save by dropping them. */
+/** The held-wake reason of an author reply in a bot thread. Each one is a
+ * claimed obligation (`pingpong_handled` refuses every redelivery, and the
+ * reconcile comment sweep only captures), so an evicted reply would never be
+ * answered. A burst is delivered as one coalesced run, so they cost the
+ * session one turn, not one each — the cap has nothing to save by dropping
+ * them. */
 export const AUTHOR_REPLY_WAKE_REASON = "author_reply";
 
-/** One held wake the per-PR cap removed (H1b). */
+/** One held wake the per-PR cap removed. */
 export interface EvictedWake {
   id: number;
   reason: string;
   /** The recheck claim this eviction released — the fingerprint — so the
-   * next identical trigger may ask the question again (#5362 ④: a claim is
-   * released on a PROVABLE non-delivery, and a nudge evicted from the held
-   * queue was never sent). Null otherwise. */
+   * next identical trigger may ask the question again (a claim is released
+   * on a provable non-delivery, and a nudge evicted from the held queue was
+   * never sent). Null otherwise. */
   released_recheck: string | null;
   /** True only for a push recheck, which the reconcile backstop re-raises
    * (`RECHECK_WITH_BACKSTOP_WAKE_REASON`); a released ci/base-advance claim
@@ -1408,8 +1396,7 @@ export interface EvictedWake {
  *
  * Deliberately far wider than `expire_overdue_after_h` (24h by config): that
  * sweep buries rounds whose PR has moved on, this one is about rounds nothing
- * will ever come back for. Seven days is "a week went by and nobody noticed",
- * which is precisely what happened to pr 4662 round 2.
+ * will ever come back for. Seven days is "a week went by and nobody noticed".
  */
 export const STRANDED_ROUND_HORIZON_H = 168;
 
@@ -1423,7 +1410,7 @@ export interface RoundStartMeta {
   validate_tier?: string | null;
   pass_plan?: PassPlanEntry[];
   addable_passes?: Array<{ lens: string; tier: string }>;
-  /** follow-up rounds (see RoundRow). */
+  /** Follow-up round columns (see RoundRow). */
   head_sha?: string | null;
   merge_base?: string | null;
   scope?: "full" | "delta" | null;
@@ -1477,7 +1464,7 @@ export class StateStore {
     } catch {
       /* column already present */
     }
-    // Metrics + backfill columns. Each ALTER is independent so a
+    // Additive columns. Each ALTER is independent so a
     // partially-migrated store converges; re-running is a no-op.
     for (const ddl of [
       "ALTER TABLE rounds ADD COLUMN additions INTEGER",
@@ -1490,12 +1477,12 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN posted_event TEXT",
       "ALTER TABLE rounds ADD COLUMN posted_at TEXT",
       "ALTER TABLE rounds ADD COLUMN trigger_ts TEXT",
-      // the integrity fingerprint taken when this round's worktree
-      // was prepared, re-checked when the round is measured. JSON
-      // {digest, files} — the files map is kept so the anomaly can name WHICH
-      // path moved rather than only that something did. Since the
-      // same row also carries this system's own policy surface (config.toml,
-      // scripts/, dist/, …); the column keeps its name.
+      // The integrity fingerprint taken when this round's worktree was
+      // prepared, re-checked when the round is measured. JSON
+      // {digest, files} — the files map is kept so the anomaly can name which
+      // path moved rather than only that something did. It covers git's
+      // configuration surface and this system's own policy surface
+      // (config.toml, scripts/, dist/, …) despite the column's name.
       "ALTER TABLE rounds ADD COLUMN git_config_fingerprint TEXT",
       "ALTER TABLE bot_comments ADD COLUMN round_no INTEGER",
       // Measured usage — nullable, additive.
@@ -1503,22 +1490,21 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN tokens_out INTEGER",
       "ALTER TABLE rounds ADD COLUMN tokens_cache_read INTEGER",
       "ALTER TABLE rounds ADD COLUMN est_usd REAL",
-      // Slack concierge — cooldown fold/bypass memory, additive so a
-      // store created by an earlier slice converges.
+      // Slack concierge — cooldown fold/bypass memory.
       "ALTER TABLE slack_cooldowns ADD COLUMN fold_count INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE slack_cooldowns ADD COLUMN bypassed INTEGER NOT NULL DEFAULT 0",
       // The validator's tier for the round — nullable, additive.
       "ALTER TABLE rounds ADD COLUMN validate_tier TEXT",
       // Executed-pass telemetry — JSON array, nullable, additive.
       "ALTER TABLE rounds ADD COLUMN executed_passes TEXT",
-      // immutable dispatched policy for sanctioned added passes.
+      // Immutable dispatched policy for sanctioned added passes.
       "ALTER TABLE rounds ADD COLUMN pass_plan TEXT",
       "ALTER TABLE rounds ADD COLUMN addable_passes TEXT",
       // Trigger provenance — "human" | "system", nullable, additive.
       // Null = legacy/unknown, which dispatch treats as human (full round).
       "ALTER TABLE pr_state ADD COLUMN trigger_provenance TEXT",
       // Lever holds: who holds the drain / a pause and until when.
-      // Nullable, additive. A legacy row that is draining or paused
+      // Nullable, additive. A row with no issuer that is draining or paused
       // reads as an OPERATOR hold with no expiry — the only shape it could
       // have been, and the fail-safe one: nothing lapses that nobody bounded.
       "ALTER TABLE drain_state ADD COLUMN issued_by TEXT",
@@ -1527,16 +1513,16 @@ export class StateStore {
       "ALTER TABLE pr_state ADD COLUMN pause_expires_at TEXT",
       "ALTER TABLE pr_state ADD COLUMN pause_reason TEXT",
       "ALTER TABLE pr_state ADD COLUMN pause_since TEXT",
-      // hardening: first-seen-silent mark for the lost-prompt net —
+      // First-seen-silent mark for the lost-prompt net —
       // nullable, additive.
       "ALTER TABLE rounds ADD COLUMN silent_since TEXT",
-      // The prompt receipt token stamped into this round's wake file (#5362) —
+      // The prompt receipt token stamped into this round's wake file —
       // nullable, additive. NULL means the round was dispatched by a build
       // that did not stamp one, so its delivery CANNOT be verified and every
       // reader must fall back to the older inference. Never backfill it: a
       // fabricated token would assert a receipt nobody ever saw.
       "ALTER TABLE rounds ADD COLUMN prompt_marker TEXT",
-      // How many times this round's prompt has been re-delivered (#5362).
+      // How many times this round's prompt has been re-delivered.
       // Redelivery is cheap and does NOT spend the self-requeue budget, so it
       // needs its own bound.
       "ALTER TABLE rounds ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
@@ -1550,14 +1536,14 @@ export class StateStore {
       // Null on every non-cancelled round; the boot migration classifies the
       // historical cancellations from their prose summary once.
       "ALTER TABLE rounds ADD COLUMN cancel_cause TEXT",
-      // old rows are deliberately unknown; only rounds created by a
+      // Old rows are deliberately unknown; only rounds created by a
       // build that brackets the preflight posting call can enter auto-retry.
       "ALTER TABLE rounds ADD COLUMN preflight_posting_state TEXT NOT NULL DEFAULT 'unknown'",
       "ALTER TABLE rounds ADD COLUMN fanout_started_at TEXT",
-      // integration review: an owed round-end measurement survives a
+      // An owed round-end measurement survives a
       // restart (the window's end, NULL once measured). Nullable, additive.
       "ALTER TABLE rounds ADD COLUMN usage_owed_to TEXT",
-      // follow-up rounds — nullable, additive. NULL scope on a
+      // Follow-up rounds — nullable, additive. NULL scope on a
       // non-first round = a legacy full re-review.
       "ALTER TABLE rounds ADD COLUMN head_sha TEXT",
       "ALTER TABLE rounds ADD COLUMN scope TEXT",
@@ -1568,25 +1554,25 @@ export class StateStore {
       "ALTER TABLE rounds ADD COLUMN sweep_plan TEXT",
       "ALTER TABLE rounds ADD COLUMN sweep_status TEXT",
       "ALTER TABLE rounds ADD COLUMN merge_base TEXT",
-      // held wakes are leased and acked only after delivery.
+      // Held wakes are leased and acked only after delivery.
       "ALTER TABLE pending_wakes ADD COLUMN claim_token TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN claimed_at TEXT",
       "ALTER TABLE pending_wakes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
-      // one finite ambiguity allowance per command attempt.
+      // One finite ambiguity allowance per command attempt.
       "ALTER TABLE session_commands ADD COLUMN unknown_checks INTEGER NOT NULL DEFAULT 0",
-      // automatic same-command replay attempts are durable even when
+      // Automatic same-command replay attempts are durable even when
       // rebirth fails before a new bridge can reserve the command.
       "ALTER TABLE session_commands ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0",
-      // H1b (#5362 ③): same-session REDELIVERIES of a command whose
+      // Same-session redeliveries of a command whose
       // start lease ran out on a live, ready bridge — bounded on their own,
       // before any kill-and-replay recovery is spent.
       "ALTER TABLE session_commands ADD COLUMN redeliveries INTEGER NOT NULL DEFAULT 0",
-      // durable circuit-breaker generation and due time. Nullable due
+      // Durable circuit-breaker generation and due time. Nullable due
       // means this failure remains in the operator-owned classes.
       "ALTER TABLE review_failures ADD COLUMN retry_epoch INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE review_failures ADD COLUMN next_retry_at TEXT",
-      // the feedback ledger tracks its own memory write, so a
-      // signal memory did not take is OWED, not lost. `memory_state` is
+      // The feedback ledger tracks its own memory write, so a
+      // signal memory did not take is owed, not lost. `memory_state` is
       // nullable on purpose: NULL means "a row from before this column", and
       // the boot's data migration classifies those once
       // (`classifyLegacyFeedbackMemory`). Every row written since carries a
@@ -1595,12 +1581,12 @@ export class StateStore {
       "ALTER TABLE feedback_signals ADD COLUMN memory_attempts INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE feedback_signals ADD COLUMN memory_last_error TEXT",
       "ALTER TABLE feedback_signals ADD COLUMN memory_uri TEXT",
-      // …and since when it has been OWED: the insert for a new row, the
-      // migration's instant for a pre-S2 row, the re-queue's for a row given
-      // up on and queued again. The backlog wake measures from it — a
-      // September signal queued today has waited minutes, not weeks.
+      // …and since when it has been owed: the insert for a new row, the
+      // migration's instant for an older row, the re-queue's for a row given
+      // up on and queued again. The backlog wake measures from it — an old
+      // signal queued today has waited minutes, not weeks.
       "ALTER TABLE feedback_signals ADD COLUMN memory_owed_since TEXT",
-      // S6 (outcome capture): the posted comment's one-line title as
+      // Outcome capture: the posted comment's one-line title as
       // the session wrote it (null when the record carries none — it is never
       // invented), and the canonical lens ids parsed from the free-text
       // `lens` (src/lensids.ts; JSON array, `[]` = raised outside any known
@@ -1608,7 +1594,7 @@ export class StateStore {
       // recorded before the column (`fillLensIds`).
       "ALTER TABLE round_findings ADD COLUMN title TEXT",
       "ALTER TABLE round_findings ADD COLUMN lens_ids TEXT",
-      // S8 (the learner): the state a captured REVIEW was submitted
+      // The learner: the state a captured REVIEW was submitted
       // with (`approved` | `changes_requested` | `commented`, GitHub's own
       // word, lowercased). Nullable: inline and top-level comments have none,
       // and a review captured before the column is unknown — the miner then
@@ -1627,16 +1613,14 @@ export class StateStore {
   }
 
   /**
-   * boot stall (2026-10-07): the undelivered-recheck sweep re-proved
-   * every claim's receipt on every pass, forever — 2,548 claims, 1,217 already
-   * delivered, ~23 GB of transcripts decoded per pass. Three columns make the
-   * sweep incremental:
+   * Three columns make the undelivered-recheck sweep incremental, so it never
+   * re-proves every claim's receipt on every pass:
    *   - `nudged` — 0 for a claim no wake was ever sent for (a trivial-delta
    *     no-op, `noop:*`, or a dispatch short-circuit). Such a claim carries no
    *     receipt token by construction, so the sweep must never read it: it
-   *     released them as "undelivered" the moment the session wrote anything,
-   *     and the push backstop then re-asked a question already answered
-   *     (#5841: 20 such releases in one pass on 2026-10-07 15:33).
+   *     would release it as "undelivered" the moment the session wrote
+   *     anything, and the push backstop would re-ask a question already
+   *     answered.
    *   - `receipt_at` — when the sweep found the claim's token: a delivered
    *     nudge is a fact, recorded once and never re-read.
    *   - `receipt_checked_at` — when the sweep last asked about a claim still
@@ -1711,15 +1695,14 @@ export class StateStore {
    * 1. Spend fold: `spend_usd` is retired — `est_usd` is the ONE spend field.
    *    Legacy self-reported figures with no measured value fold into est_usd
    *    so history keeps its cost; re-running matches nothing.
-   * 2. Zombie expiry: the Aug 13–14 shakeout left rounds stuck `overdue`
-   *    forever, polluting aggregates. Rounds from before 2026-08-15 whose PR
+   * 2. Zombie expiry: rounds stuck `overdue` from before 2026-08-15 whose PR
    *    has since verdicted (a round of the same or higher number delivered a
-   *    verdict) or closed move to terminal `expired`. Rounds a rerun could
-   *    still service (open PR, nothing decided since) are left alone — live
-   *    rerun of a stuck round is's job, never this one's.
-   * 3. Cancel-cause backfill: every cancellation before this slice
-   *    recorded its reason as PROSE in `summary` and nothing read it back.
-   *    The prose is stable (each cancelling call site writes one fixed
+   *    verdict) or closed move to terminal `expired`, so they stop polluting
+   *    aggregates. Rounds a rerun could still service (open PR, nothing
+   *    decided since) are left alone — rerunning a stuck round is the
+   *    self-requeue's job, never this one's.
+   * 3. Cancel-cause backfill: older cancellations recorded their reason only
+   *    as prose in `summary`. The prose is stable (each cancelling call site writes one fixed
    *    phrasing), so it classifies exactly once here into `cancel_cause`.
    *    Anything that does not match stays `unknown` — never guessed benign.
    */
@@ -1749,7 +1732,7 @@ export class StateStore {
   }
 
   /**
-   * canonical lens ids for every recorded finding that has none
+   * Canonical lens ids for every recorded finding that has none
    * yet — the rows recorded before the column existed. Parsed from the raw
    * `lens` by the one parser the recorder uses, so the two never disagree.
    * Idempotent: only NULL rows are touched, and a parsed row is never NULL
@@ -1767,14 +1750,13 @@ export class StateStore {
   }
 
   /**
-   * S2 backfill classification: a feedback row from before the
-   * memory columns has no memory state. Its write was attempted once, at
-   * ingest, and a failure left exactly one trace — a
-   * `feedback_memory_write_failed` event for that PR and kind, logged right
-   * after the row. Each such event marks the row it followed (same PR and
-   * kind, the newest created at or before the event that no earlier event
-   * already claimed) `pending`, with the event's error, so the pump writes it
-   * — 2026-08-31..10-02 lost 36 of 39. One row per event, never two events
+   * Backfill classification: a feedback row from before the memory columns
+   * has no memory state. Its write was attempted once, at ingest, and a
+   * failure left exactly one trace — a `feedback_memory_write_failed` event
+   * for that PR and kind, logged right after the row. Each such event marks
+   * the row it followed (same PR and kind, the newest created at or before the
+   * event that no earlier event already claimed) `pending`, with the event's
+   * error, so the pump writes it. One row per event, never two events
    * on one row: two [feedback] comments from one review submission are
    * interpreted concurrently, so both rows can precede both failure events,
    * and the old payload names no signal — matching each event to a DISTINCT
@@ -1810,7 +1792,7 @@ export class StateStore {
           error?: unknown;
           signal?: unknown;
         };
-        // An S2-era failure names its signal, whose row already has a state.
+        // A newer failure names its signal, whose row already has a state.
         if (typeof p.signal === "number") continue;
         kind = typeof p.kind === "string" ? p.kind : "";
         error = typeof p.error === "string" ? p.error : "";
@@ -1846,7 +1828,7 @@ export class StateStore {
     });
   }
 
-  /** backfill: read the historical cancellation prose into
+  /** Backfill: read the historical cancellation prose into
    * `cancel_cause`. Idempotent (only NULL causes are touched) and additive —
    * it never rewrites `summary`, which stays the human record. */
   private classifyLegacyCancellations(): void {
@@ -1897,12 +1879,12 @@ export class StateStore {
   }
 
   /**
-   * The ONE reading of a PR's pause: `paused` is 1 only while the
+   * The one reading of a PR's pause: `paused` is 1 only while the
    * hold is in force. A lapsed session pause therefore stops binding at its
    * expiry whether or not the sweep has run yet, at every reader — dispatch,
    * reconcile, the successor promotion and the snapshot all come through
-   * here. A legacy pause (no issuer recorded) is the operator's: it
-   * predates any session bound and never lapses on its own.
+   * here. A pause with no issuer recorded is the operator's: it predates any
+   * session bound and never lapses on its own.
    */
   private withLivePause(row: PrStateRow): PrStateRow {
     if (!row.paused) return row;
@@ -1962,8 +1944,8 @@ export class StateStore {
   /** `paused` is deliberately not part of the upsert: it is owned by
    * `pausePr`/`resumePr` (and the expiry sweep) so state transitions can never
    * clobber a standing pause.
-   * `trigger_provenance` is optional for callers that predate it —
-   * absent means null, i.e. the full-round default. */
+   * `trigger_provenance` is optional — absent means null, i.e. the
+   * full-round default. */
   upsertPr(
     row: Omit<
       PrStateRow,
@@ -2056,8 +2038,8 @@ export class StateStore {
         meta.addable_passes ? JSON.stringify(meta.addable_passes) : null,
       );
     const id = Number(info.lastInsertRowid);
-    // the follow-up columns ride the same meta, written only when
-    // given so a round started without them stays exactly as before.
+    // The follow-up columns ride the same meta, written only when
+    // given, so a round started without them keeps them NULL.
     this.setRoundMeta(id, {
       ...(meta.head_sha !== undefined ? { head_sha: meta.head_sha } : {}),
       ...(meta.merge_base !== undefined ? { merge_base: meta.merge_base } : {}),
@@ -2205,17 +2187,15 @@ export class StateStore {
   /** Rounds that actually DELIVERED a verdict for a PR — backfilled history
    * and dead rounds (cancelled/orphaned/overdue: verdict NULL) excluded.
    * Dispatch's first-review-vs-re-review choice and the nit-cap "review age"
-   * key on this (§2.1; live 2026-08-18: #5313's two failed rounds
-   * aged it to a "round 3 re-review" with the nit cap active despite zero
-   * posted reviews — a failed round must not age the PR).
+   * key on this: a failed round must not age the PR.
    *
-   * **Read the name carefully (finding 3).** This is not "how
-   * many rounds has this PR had"; it is "how many rounds DELIVERED a verdict".
-   * A PR whose first round is cancelled therefore produces a SECOND round
-   * still typed `"first"`, and the `first` / `re-review` split in `round_type`
-   * really means *has this PR ever been successfully reviewed*. That is the
-   * ratified behaviour and stays (a failed round must not age the PR, nor
-   * switch the nit cap on for a review the author never saw) — but any
+   * **Read the name carefully.** This is not "how many rounds has this PR
+   * had"; it is "how many rounds DELIVERED a verdict". A PR whose first round
+   * is cancelled therefore produces a SECOND round still typed `"first"`, and
+   * the `first` / `re-review` split in `round_type` really means *has this PR
+   * ever been successfully reviewed*. That is intended (a failed round must
+   * not age the PR, nor switch the nit cap on for a review the author never
+   * saw) — but any
    * measurement that reads `round_type` as "round ordinal" is reading it
    * wrong, and `rounds.round_no` is the ordinal it wants. Pinned by
    * tests/state.test.ts. */
@@ -2264,14 +2244,14 @@ export class StateStore {
   }
 
   /** `estUsd` is a caller-supplied initial estimate; it lands in `est_usd` (the
-   * ONE spend field) only when no measured figure exists yet —
+   * one spend field) only when no measured figure exists yet —
    * recordRoundUsage's measurement always supersedes it. The retired
    * `spend_usd` column is never written.
    *
-   * `expectedStatus` makes it a claim (integration review): the row is
+   * `expectedStatus` makes it a claim: the row is
    * finished only while its status is still the one the caller read before
    * it awaited anything, and the return says whether it was. Without it the
-   * write is unconditional, as it always was. */
+   * write is unconditional. */
   finishRound(
     id: number,
     verdict: string,
@@ -2293,8 +2273,8 @@ export class StateStore {
     return result.changes > 0;
   }
 
-  /** A round end fixed its usage window and owes the measurement (
-   * integration review). Synchronous, so it lands in the same turn as the
+  /** A round end fixed its usage window and owes the measurement.
+   * Synchronous, so it lands in the same turn as the
    * round end's terminal write. */
   oweRoundMeasurement(id: number, measuredTo: string): void {
     this.db.prepare("UPDATE rounds SET usage_owed_to = ? WHERE id = ?").run(measuredTo, id);
@@ -2356,7 +2336,7 @@ export class StateStore {
     }
   }
 
-  // ---- the durable reasoning record ----------------------------
+  // ---- the durable reasoning record ---------------------------------------
 
   /** The per-round comment count: how many inline comments the round posted,
    * as the session reported it. Idempotent overwrite. */
@@ -2477,8 +2457,8 @@ export class StateStore {
    * The refuted-and-conceded set for a PR: findings a previous round posted,
    * the author refuted, and the reviewer accepted the refutation on. This is
    * what lets a later round tell "escalating an OPEN finding" — legitimate,
-   * and deliberately so (the owner, 2026-08-19: blocking late beats never) —
-   * from "resurrecting a SETTLED one", which is not.
+   * and deliberately so: blocking late beats never — from "resurrecting a
+   * SETTLED one", which is not.
    */
   concededFindings(pr: number): RoundFindingRow[] {
     return this.db
@@ -2488,7 +2468,7 @@ export class StateStore {
       .all(pr) as RoundFindingRow[];
   }
 
-  // ---- prior-finding checks -------------------------------------
+  // ---- prior-finding checks -----------------------------------------------
 
   /** Record the prior findings a follow-up round was HANDED: one row per
    * listed finding. Idempotent — a re-listing refreshes the head, blocking
@@ -2554,10 +2534,9 @@ export class StateStore {
   }
 
   /**
-   * The once-per-round findings-record re-nudge mark — the
-   * ledger idiom exactly: events-table backed, so no new DDL and boot-safe on
-   * the live DB by construction. Scanned with no recency window; the cap is
-   * per round, not per recent history.
+   * The once-per-round findings-record re-nudge mark — events-table backed,
+   * so no new DDL and boot-safe on the live DB by construction. Scanned with
+   * no recency window; the cap is per round, not per recent history.
    */
   recordFindingsNudge(pr: number, key: string, extra?: Record<string, unknown>): void {
     this.logEvent("findings_record_nudged", pr, { key, ...(extra ?? {}) });
@@ -2586,12 +2565,11 @@ export class StateStore {
   }
 
   markRoundOverdue(id: number): void {
-    // Stamp `finished_at` (#5362 W8). An overdue round is terminal — nothing
-    // reruns it, `expireOverdueRounds` only reaches it once the PR has closed
-    // or verdicted on a later round, and a PR whose ONLY round blew its
-    // deadline satisfies neither. Leaving `finished_at` NULL therefore left a
-    // row whose "duration" grew forever: #4662 round 2 read as a 10,197-minute
-    // round, seven days after it was judged. The status is deliberately NOT
+    // Stamp `finished_at`. An overdue round is terminal — nothing reruns it,
+    // `expireOverdueRounds` only reaches it once the PR has closed or
+    // verdicted on a later round, and a PR whose ONLY round blew its deadline
+    // satisfies neither. A NULL `finished_at` would leave a row whose
+    // "duration" grows forever. The status is deliberately NOT
     // changed to `expired` here — that would drop the round from spend and
     // every other aggregate, hiding tokens this round really burned.
     this.db
@@ -2606,7 +2584,7 @@ export class StateStore {
    * Unlike overdue it carries no anomaly semantics and touches no PR state.
    *
    * `cause` is the machine-readable half of `reason`: cancellation
-   * is grouped by it everywhere it is now surfaced, and a caller that omits it
+   * is grouped by it everywhere it is surfaced, and a caller that omits it
    * lands in `unknown` rather than being silently folded into a benign bucket.
    * Every live call site passes one — the default exists for tests and for
    * paths added later, and `unknown` showing up in the tallies is itself the
@@ -2620,8 +2598,7 @@ export class StateStore {
   }
 
   /**
-   * Cancellations grouped by cause — the query the diagnosis had to
-   * reconstruct by grepping prose. `since` is an inclusive ISO lower bound on
+   * Cancellations grouped by cause. `since` is an inclusive ISO lower bound on
    * `started_at`; null is all of history. Ordered loud-first, then by count,
    * so the surface that renders it does not have to know the policy.
    */
@@ -2653,7 +2630,7 @@ export class StateStore {
       .all(...causes, since, since) as RoundRow[];
   }
 
-  /** hardening: stamp the first sweep that saw this round fully
+  /** Stamp the first sweep that saw this round fully
    * silent. Idempotent — the first observation wins, so two sweeps' spacing
    * is real elapsed time, never a same-tick double-write. */
   markRoundSilent(id: number): void {
@@ -2671,17 +2648,14 @@ export class StateStore {
   }
 
   /**
-   * Cancel every running round on a PR and return their ids (#5362 W4).
+   * Cancel every running round on a PR and return their ids.
    *
    * The operator's two unwedge levers — `rerun-round` and `restart-session` —
    * both set the PR back to `queued` and pump, but the pump skips a PR whose
    * round is still `running` ("one PR = one worktree = at most one round"), so
-   * neither could clear a phantom round: the state flipped, nothing
-   * dispatched, and the PR sat queued behind a round that would never end.
-   * The anomaly message told the overseer to run `rerun-round` for exactly the
-   * case `rerun-round` could not fix.
+   * without this a phantom round would keep the PR queued forever.
    *
-   * Cancelling is the missing half. It never touches GitHub and never posts:
+   * Cancelling never touches GitHub and never posts:
    * the round keeps a NULL verdict, so `priorRoundCount`/review_no do not age
    * (a failed round must not age the PR), which is the same discipline the
    * self-requeue path follows.
@@ -2701,7 +2675,7 @@ export class StateStore {
     return rows.map((r) => r.id);
   }
 
-  /** Push a running round's deadline out from NOW (#5362). Used only when the
+  /** Push a running round's deadline out from NOW. Used only when the
    * round has not started — its prompt never reached the session — so none of
    * the elapsed time was review time and the full window is owed again. */
   extendRoundDeadline(id: number, minutes: number): void {
@@ -2711,7 +2685,7 @@ export class StateStore {
       .run(deadline, id);
   }
 
-  /** Record the receipt token stamped into this round's wake file (#5362).
+  /** Record the receipt token stamped into this round's wake file.
    * Written at dispatch, read by the prompt-receipt check. A round with a NULL
    * marker was dispatched by a build that stamped none — its delivery cannot
    * be verified, and readers must say "unknown" rather than "not delivered". */
@@ -2719,8 +2693,8 @@ export class StateStore {
     this.db.prepare("UPDATE rounds SET prompt_marker = ? WHERE id = ?").run(marker, id);
   }
 
-  /** Count one re-delivery of a round's prompt and return the new total
-   * (#5362). Redelivery is the cheap recovery — rewrite the wake file, same
+  /** Count one re-delivery of a round's prompt and return the new total.
+   * Redelivery is the cheap recovery — rewrite the wake file, same
    * round, same session, same conversation — so it is bounded separately from
    * `max_self_requeues`, which is the expensive one (a fresh round, and for a
    * live-but-wedged session a kill). */
@@ -2731,7 +2705,7 @@ export class StateStore {
     return row?.redeliveries ?? 0;
   }
 
-  /** PRs holding wakes with no round running (#5362 W3). `flushHeldWakes` is
+  /** PRs holding wakes with no round running. `flushHeldWakes` is
    * driven only by the verdict and anomaly paths, so a round cancelled as
    * superseded, orphaned-without-requeue, or self-requeued into a chain that
    * never verdicts leaves its held wakes — author replies included — in this
@@ -2770,7 +2744,8 @@ export class StateStore {
       .all() as RoundRow[];
   }
 
-  /** True while this PR has a round in flight — the S4 test before any wake. */
+  /** True while this PR has a round in flight — the single-shepherd test
+   * before any wake. */
   hasRunningRound(pr: number): boolean {
     const row = this.db
       .prepare("SELECT COUNT(*) AS c FROM rounds WHERE pr = ? AND status = 'running'")
@@ -2778,7 +2753,7 @@ export class StateStore {
     return row.c > 0;
   }
 
-  // ---- durable PR-session command slot ------------------------
+  // ---- durable PR-session command slot ------------------------------------
 
   createSessionCommand(input: CreateSessionCommand): SessionCommandRow {
     const ts = this.ts();
@@ -2919,8 +2894,8 @@ export class StateStore {
   /**
    * A closed PR owes its session nothing more: terminalize every outstanding
    * ordinary (non-round) command so the bounded recovery sweep can never
-   * replay one into a respawned pr-<n> after the close hook killed it
-   * (selfscan 666a2356). Round commands keep their own lifecycle — recovery
+   * replay one into a respawned pr-<n> after the close hook killed it.
+   * Round commands keep their own lifecycle — recovery
    * already refuses one whose round is no longer running. A failed command
    * that already carries owed operator debt is left alone: it is never
    * replayed (dueSessionCommands excludes it) and `u` resolves that debt
@@ -3197,14 +3172,13 @@ export class StateStore {
   }
 
   /**
-   * #5362 ③ / H1b: hand a command that never started back to
-   * `pending` for a REDELIVERY into the same live session — same id, path and
-   * bytes, no kill. A CAS on the row the SUPERVISOR found due — its attempt,
-   * redelivery count and `next_check_at` — so a bridge that reserved the
-   * command after that due check (a new attempt, a fresh lease) wins, and a
-   * submission pi may still be preflighting is never handed back as stale
-   * (H1b review). Never for a started command: that one was
-   * delivered.
+   * Hand a command that never started back to `pending` for a REDELIVERY
+   * into the same live session — same id, path and bytes, no kill. A CAS on
+   * the row the SUPERVISOR found due — its attempt, redelivery count and
+   * `next_check_at` — so a bridge that reserved the command after that due
+   * check (a new attempt, a fresh lease) wins, and a submission pi may still
+   * be preflighting is never handed back as stale. Never for a started
+   * command: that one was delivered.
    */
   requeueSessionCommandForRedelivery(
     id: string,
@@ -3243,8 +3217,8 @@ export class StateStore {
    * absent. A round may only replay before correlated acceptance; ordinary
    * wakes may replay after acceptance because the old consumer is fenced and
    * the same row still owns the immutable payload. The replay lands in a NEW
-   * session generation, so its same-session redelivery budget starts again
-   * (H1b review): otherwise the fresh conversation's first missed
+   * session generation, so its same-session redelivery budget starts again:
+   * otherwise the fresh conversation's first missed
    * start would skip redelivery and kill it too. Bounded all the same — every
    * replay spends one `recovery_attempts`. */
   retrySessionCommandAfterFence(id: string, expectedAttempt: number, nextCheckAt: string): boolean {
@@ -3288,7 +3262,7 @@ export class StateStore {
 
   /** A terminal command handed back for a fresh delivery (`redeliverRound`,
    * bounded by the round's own `redeliveries`): a new delivery lifecycle, so
-   * the same-session redelivery budget starts again (H1b review). */
+   * the same-session redelivery budget starts again. */
   retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
     const ts = this.ts();
     return (
@@ -3349,11 +3323,11 @@ export class StateStore {
       .run(name, at, error);
   }
 
-  // ---- held wakes (single-shepherd S4) -----------------------------------
+  // ---- held wakes (single-shepherd invariant) -----------------------------
 
   /** Enforce the ordinary wake budget without ever deleting an obligation
    * restored by operator recovery, leased to an in-flight delivery, or owed
-   * to an author (H1b). Operator-recovered and leased rows consume
+   * to an author. Operator-recovered and leased rows consume
    * capacity first; if they alone meet or exceed the cap, all survive and new
    * ordinary wakes are dropped. Author replies neither count nor go. What
    * goes, goes in this order: push recheck nudges, oldest first — the only
@@ -3427,7 +3401,7 @@ export class StateStore {
   }
 
   /** `holdWake`, answering with what the cap evicted and which recheck claims
-   * the eviction released (H1b). */
+   * the eviction released. */
   holdWakeEvicting(
     pr: number,
     payload: string,
@@ -3573,15 +3547,12 @@ export class StateStore {
   }
 
   /**
-   * est_usd is the ONE spend field (legacy spend_usd folded into it
-   * at boot).
+   * est_usd is the one spend field (legacy spend_usd is folded into it at
+   * boot).
    *
-   * **Expired rounds ARE counted** (finding 1, fixed).
-   * They used to be filtered out here and in every other spend aggregate, on
-   * the reasoning that a zombie row should not pollute the numbers —
-   * but a round that blew its deadline still ran the passes and still burned
-   * the tokens, so excluding it did not remove noise, it ERASED REAL COST.
-   * Expiry is a bookkeeping status, not a refund. Round *counts* and duration
+   * **Expired rounds ARE counted**: a round that blew its deadline still ran
+   * the passes and still burned the tokens, so excluding it would erase real
+   * cost. Expiry is a bookkeeping status, not a refund. Round *counts* and duration
    * statistics still exclude them (see metrics.ts): those are the figures an
    * abandoned row genuinely distorts.
    */
@@ -3596,8 +3567,8 @@ export class StateStore {
    * stuck `overdue` past `horizonHours` (measured from its deadline) whose PR
    * has since verdicted (same-or-higher round number delivered a verdict) or
    * closed. Deliberately narrower than "any old overdue round": a round a
-   * rerun could still service (open PR, nothing decided since) is
-   * to rescue, never this sweep's to bury. Returns the expired round ids.
+   * rerun could still service (open PR, nothing decided since) is the
+   * self-requeue's to rescue, never this sweep's to bury. Returns the expired round ids.
    */
   expireOverdueRounds(horizonHours: number): number[] {
     const cutoff = new Date(this.now().getTime() - horizonHours * 3_600_000).toISOString();
@@ -3631,12 +3602,11 @@ export class StateStore {
    * and still undecided might yet be rescued by a rerun, and burying it would
    * hide a PR that was never reviewed. But nothing ever reruns an overdue
    * round automatically — `markRoundOverdue` is terminal — so in practice such
-   * a row just SITS there. found exactly one, stranded since the
-   * 2026-08-14 cutover: pr 4662 round 2, ten days overdue, invisible.
+   * a row just sits there, invisible.
    *
    * A round past this far wider horizon is not "pending rescue", it is
    * stranded, and the answer is to say so out loud (the caller raises the
-   * anomaly) rather than to keep quietly not-deciding. `sinceHours` is
+   * anomaly) rather than to keep quietly not-deciding. `horizonHours` is
    * measured from the deadline.
    */
   strandedOverdueRounds(horizonHours: number = STRANDED_ROUND_HORIZON_H): RoundRow[] {
@@ -3649,10 +3619,10 @@ export class StateStore {
   }
 
   /**
-   * Terminalize the stranded rounds above. Returns the rows as they
-   * were, so the caller can name each one in its anomaly — after this they are
-   * `expired`, which since no longer erases their spend, so nothing is
-   * lost by closing the row. The PR is NOT requeued and GitHub is not touched:
+   * Terminalize the stranded rounds above. Returns the rows as they were, so
+   * the caller can name each one in its anomaly — after this they are
+   * `expired`, which does not erase their spend, so nothing is lost by
+   * closing the row. The PR is NOT requeued and GitHub is not touched:
    * deciding to redo a ten-day-old review is a human's call, and this sweep's
    * whole job is to make sure a human is told.
    */
@@ -3686,10 +3656,9 @@ export class StateStore {
     return new Set(rows.map((r) => r.id));
   }
 
-  /**: stash the round-start integrity fingerprint (git's config and,
-   *, the policy surface). Best-effort by design — a store that
-   * cannot record it yields a round with no check, which is the legacy
-   * behaviour, never a failed round. */
+  /** Stash the round-start integrity fingerprint (git's config and the
+   * policy surface). Best-effort by design — a store that cannot record it
+   * yields a round with no check, never a failed round. */
   recordRoundGitConfig(roundId: number, fingerprint: unknown): void {
     this.db
       .prepare("UPDATE rounds SET git_config_fingerprint = ? WHERE id = ?")
@@ -3803,14 +3772,11 @@ export class StateStore {
    * came out of — the only defensible attribution for comments discovered
    * after the fact.
    *
-   * that fallback used to consider ONLY daemon-run rounds
-   * (`backfilled = 0`) and gave up at null otherwise, which is why the column
-   * was populated on 2 rows of 275 — the live write sites are the reconcile
-   * registry backfill and the webhook, neither of which passes a round, and a
-   * PR whose only rounds came from the history import matched nothing.
-   * The ladder now falls through to a backfilled round before it gives up: an
-   * imported round is a worse attribution than a live one and a far better one
-   * than null. A RUNNING round wins over both — a comment arriving while a
+   * The live write sites (the reconcile registry backfill and the webhook)
+   * pass no round, so the fallback ladder is what attributes most comments.
+   * It falls through to a backfilled round before it gives up: an imported
+   * round is a worse attribution than a live one and a far better one than
+   * null. A RUNNING round wins over both — a comment arriving while a
    * round is in flight came out of that round, not the one before it.
    */
   registerBotComment(
@@ -3848,11 +3814,8 @@ export class StateStore {
     return this.botCommentPr(commentId) !== undefined;
   }
 
-  /** The round a registered bot comment was attributed to, when it was
-   * (S6: the outcome linker's fallback when the comment's review id
-   * names no round). */
-  /** When a registered bot comment was posted (S6: the posting time
-   * of a comment the linker knows only from a reply or a record). */
+  /** When a registered bot comment was posted (the outcome linker's posting
+   * time for a comment it knows only from a reply or a record). */
   botCommentPostedAt(commentId: number): string | null {
     const row = this.db
       .prepare("SELECT posted_at FROM bot_comments WHERE comment_id = ?")
@@ -3860,6 +3823,8 @@ export class StateStore {
     return row?.posted_at ?? null;
   }
 
+  /** The round a registered bot comment was attributed to, when it was (the
+   * outcome linker's fallback when the comment's review id names no round). */
   botCommentRound(commentId: number): number | null {
     const row = this.db
       .prepare("SELECT round_no FROM bot_comments WHERE comment_id = ?")
@@ -3867,7 +3832,7 @@ export class StateStore {
     return row?.round_no ?? null;
   }
 
-  // ---- reviewed-head mark (guard 2; reuses it) -----------
+  // ---- reviewed-head mark (guard 2; the delta recheck reuses it) ----------
 
   /**
    * Stamp the head this system reviewed. Moving to a NEW head replaces the
@@ -3971,7 +3936,7 @@ export class StateStore {
       .run(at, pr, at);
   }
 
-  // ---- withheld approvals -------------------------------------
+  // ---- withheld approvals -----------------------------------------------
 
   /**
    * Mark that an approval was withheld at `head_sha` because CI was not green.
@@ -4008,7 +3973,7 @@ export class StateStore {
     this.db.prepare("DELETE FROM approval_withheld WHERE pr = ?").run(pr);
   }
 
-  // ---- durable FAILED_LOUD review debt -----------------------
+  // ---- durable FAILED_LOUD review debt ---------------------------------
 
   openReviewFailure(pr: number): ReviewFailureRow | undefined;
   openReviewFailure(input: {
@@ -4049,7 +4014,7 @@ export class StateStore {
       ? `review-failure:${arg.command_id}`
       : `review-failure:pr-${arg.pr}-round-${arg.round_no ?? "unknown"}`;
 
-    //'s automatic class is deliberately proven here, not selected by
+    // The automatic-retry class is deliberately proven here, not selected by
     // an untrusted field. The exact command must own the exact now-terminal
     // round, and the supervisor stage must be before the first lens. Every
     // other class — especially posting ambiguity — stays operator-owned.
@@ -4411,7 +4376,7 @@ export class StateStore {
   }
 
   /**
-   * circuit-breaker sweep. The whole due transition is one SQLite
+   * Circuit-breaker sweep. The whole due transition is one SQLite
    * transaction: exact debt + failed predecessor command are terminalized,
    * the recovery instruction is bound to the next round number, and ordinary
    * queued work is published. The caller may then invoke the normal dispatch
@@ -4436,8 +4401,8 @@ export class StateStore {
 
     for (const candidate of due) {
       // A reconciled/webhook `closed` row is already terminal GitHub truth.
-      // Reuse the exact transaction rather than scheduling pointless
-      // review work; contradictory ownership/wakes make it refuse and retain
+      // Reuse the exact terminal-resolution transaction rather than scheduling
+      // pointless review work; contradictory ownership/wakes make it refuse and retain
       // the finite retry below.
       const before = this.db
         .prepare("SELECT * FROM review_failures WHERE incident_id=?")
@@ -4614,7 +4579,7 @@ export class StateStore {
         // The pause test must be the one `getPr` answered above
         // (`withLivePause`): a session pause past its expiry no longer binds
         // even while the column still reads 1 because the lever sweep has
-        // not run yet. Reading the raw column here lost the CAS and threw.
+        // not run yet. Reading the raw column alone would lose the CAS and throw.
         const prChanged = this.db
           .prepare(
             `UPDATE pr_state
@@ -5143,7 +5108,7 @@ export class StateStore {
     return recovered;
   }
 
-  // ---- durable fresh-head successor --------------------------
+  // ---- durable fresh-head successor ------------------------------------
 
   successorFor(pr: number): SuccessorObligationRow | undefined {
     return this.db.prepare("SELECT * FROM successor_obligations WHERE pr = ?").get(pr) as
@@ -5244,7 +5209,7 @@ export class StateStore {
     return changed;
   }
 
-  // ---- trigger-level observations ----------------------------
+  // ---- trigger-level observations --------------------------------------
 
   triggerLevel(pr: number, kind: "label" | "team_request"): boolean | undefined {
     const row = this.db
@@ -5262,7 +5227,7 @@ export class StateStore {
       .run(pr, kind, present ? 1 : 0, this.ts());
   }
 
-  // ---- post-approval delta rechecks ---------------------------
+  // ---- post-approval delta rechecks -------------------------------------
 
   /**
    * Claim one recheck nudge. Returns false when this PR has already been
@@ -5310,8 +5275,8 @@ export class StateStore {
   }
 
   /** Release a claimed recheck whose delivery failed — the claim must not
-   * outlive a nudge that never reached the session (live: #5290 boot-order
-   * inject failure burned the head's only recheck, 2026-08-19). */
+   * outlive a nudge that never reached the session, or the head's only
+   * recheck is spent on nothing. */
   releaseRecheck(pr: number, fingerprint: string): void {
     this.db.prepare("DELETE FROM rechecks WHERE pr = ? AND fingerprint = ?").run(pr, fingerprint);
   }
@@ -5328,12 +5293,12 @@ export class StateStore {
     );
   }
 
-  /** The recheck claims the undelivered-nudge sweep must still ask about
-   * (#5362 W2): a claim whose nudge never landed suppresses the reconcile
+  /** The recheck claims the undelivered-nudge sweep must still ask about:
+   * a claim whose nudge never landed suppresses the reconcile
    * push-backstop forever, and unlike a round there is no deadline underneath
    * a recheck to catch that.
    *
-   * Only claims that can still be that (boot stall): older than
+   * Only claims that can still be that: older than
    * `olderThanIso` (the grace), a real nudge (`nudged` — a no-op claim never
    * carried a token), whose receipt has not already been found (`receipt_at`
    * — a delivered nudge stays delivered), on a PR that is not closed (the
@@ -5397,7 +5362,7 @@ export class StateStore {
     return info.changes === 1;
   }
 
-  // ---- feedback signals ----------------------------------------
+  // ---- feedback signals ---------------------------------------------------
 
   /** Record one feedback signal; false when its natural key already exists
    * (webhook redelivery, reconcile overlap). */
@@ -5406,8 +5371,8 @@ export class StateStore {
   }
 
   /** Record one feedback signal and return its row, or null when its natural
-   * key already exists. A new row starts `pending` in memory (S2)
-   * unless the caller says memory is off (`skipped`). */
+   * key already exists. A new row starts `pending` in memory unless the
+   * caller says memory is off (`skipped`). */
   recordFeedbackSignalRow(sig: FeedbackSignalInput): FeedbackSignalRow | null {
     const memoryState: FeedbackMemoryState = sig.memory_state ?? "pending";
     const now = this.ts();
@@ -5444,7 +5409,7 @@ export class StateStore {
     return row ?? null;
   }
 
-  /** The rows memory still owes, oldest first (S2's backfill pump);
+  /** The rows memory still owes, oldest first (the backfill pump's queue);
    * with `createdSince`, only rows created at or after it. */
   pendingFeedbackMemory(limit: number, createdSince?: string): FeedbackSignalRow[] {
     return this.db
@@ -5486,7 +5451,7 @@ export class StateStore {
     return info.changes > 0;
   }
 
-  /** What memory still owes the feedback ledger (S2). */
+  /** What memory still owes the feedback ledger. */
   feedbackMemoryBacklog(): FeedbackMemoryBacklog {
     const counts = this.db
       .prepare(
@@ -5510,7 +5475,7 @@ export class StateStore {
   }
 
   /**
-   * Put every row the pump gave up on back in the queue (S2):
+   * Put every row the pump gave up on back in the queue:
    * `failed` → `pending`, its attempts reset and its owed-since set to now,
    * its last error kept. `failed` means "memory refused it N times while it
    * read healthy" — a cause a deploy or an operator can fix — so it is never
@@ -5560,7 +5525,7 @@ export class StateStore {
     );
   }
 
-  /** When the boot migration classified the pre-S2 feedback rows, or null
+  /** When the boot migration classified the legacy feedback rows, or null
    * if it never had any to classify. A pending row created before it may
    * have landed in memory under an unrecorded name; the pump checks. */
   feedbackLegacyCutoff(): string | null {
@@ -5578,8 +5543,8 @@ export class StateStore {
       .all(day) as FeedbackSignalRow[];
   }
 
-  /** Every feedback signal on one PR, oldest first (S6: the
-   * review-level outcomes are read from here). */
+  /** Every feedback signal on one PR, oldest first (the outcome capture
+   * reads review-level outcomes from here). */
   feedbackSignalsFor(pr: number): FeedbackSignalRow[] {
     return this.db
       .prepare("SELECT * FROM feedback_signals WHERE pr = ? ORDER BY id")
@@ -5594,7 +5559,7 @@ export class StateStore {
       .all(since) as FeedbackSignalRow[];
   }
 
-  // ---- captured human comments ---------------------------------
+  // ---- captured human comments --------------------------------------------
 
   /** Record one captured comment; false when GitHub's own identity
    * `(source, comment_id)` is already on file — which is what makes the
@@ -5646,7 +5611,7 @@ export class StateStore {
         c.captured_via ?? "webhook",
         reviewState,
       );
-    // A review captured before S8 has no state; the sweep that sees
+    // A review captured before the column existed has no state; the sweep that sees
     // it again fills it in (once — a recorded state is never rewritten).
     if (info.changes === 0 && reviewState !== null)
       this.db
@@ -5683,8 +5648,7 @@ export class StateStore {
   }
 
   /** The watermark this PR was last cleanly swept at, when any — reconcile's
-   * pairing of the pr_state `updated_at` with GitHub's (selfscan
-   * d02908a3); opaque here. */
+   * pairing of the pr_state `updated_at` with GitHub's; opaque here. */
   lastCommentSweep(pr: number): string | undefined {
     const row = this.db
       .prepare(
@@ -5714,8 +5678,8 @@ export class StateStore {
   /**
    * The most recent `round_memory_seeded` row whose pinned head was READ
    * (`head_state` populated or empty) — the baseline dispatch compares a
-   * newly-empty head against (review: populated → empty across a
-   * restart is otherwise silent). Rows written before `head_state` existed
+   * newly-empty head against (populated → empty across a restart is
+   * otherwise silent). Rows written before `head_state` existed
    * are not candidates, so a deploy never fires the transition by itself.
    */
   lastReadPinnedHead(): { pr: number | null; ts: string; head_chars: number } | null {
@@ -5740,28 +5704,14 @@ export class StateStore {
       .run(this.ts(), kind, pr, payload === undefined ? null : JSON.stringify(payload));
   }
 
-  /**
-   * The durable anomaly record. Every call-site that raises an
-   * overseer anomaly (malformed verdict, blown deadline, degraded migration
-   * pre-check, degraded recheck merge-verify, …) writes ONE queryable
-   * `anomaly` event here. Kept in the events table (kind = 'anomaly'), so
-   * it needs no new DDL and is boot-safe on the live DB by construction.
-   *
-   * this is also the ONE funnel to the overseer wake — the record is
-   * forwarded to the optional sink (the daemon wires `AnomalyWakePolicy`),
-   * which applies the severity map + dedup and injects for WAKE classes only.
-   * `injectMessage` is the call site's richer wake text; it is NOT persisted
-   * (the `detail` field is the audit trail). No sink (bare store, tests, CLI)
-   * ⇒ the row is written and nothing wakes, exactly as before.
-   */
-  // ---- deploy-window drain (2026-08-25) ----------------------------------
+  // ---- deploy-window drain -----------------------------------------------
 
   /**
    * The drain flag + its drop counter, folded against the hold's expiry: a
    * session drain past its `expires_at` reads `draining: false` here, at
    * every reader, whether or not the sweep has retired the row yet. A missing
-   * row means "not draining"; a draining row with no issuer recorded predates
-   * and is the operator's (no expiry).
+   * row means "not draining"; a draining row with no issuer recorded is the
+   * operator's (no expiry).
    */
   drainState(): DrainState {
     const row = this.db
@@ -5912,8 +5862,8 @@ export class StateStore {
     return row.used;
   }
 
-  /** Has this VERSION of an operator command file already been executed
-   *? `version` is `operatorCommandVersion`'s key. */
+  /** Has this VERSION of an operator command file already been executed?
+   * `version` is `operatorCommandVersion`'s key. */
   operatorCommandHandled(version: string): boolean {
     return (
       this.db.prepare("SELECT 1 FROM operator_commands WHERE version = ?").get(version) !==
@@ -5939,6 +5889,20 @@ export class StateStore {
     return this.drainState().drained_deliveries;
   }
 
+  /**
+   * The durable anomaly record. Every call-site that raises an overseer
+   * anomaly (malformed verdict, blown deadline, degraded migration pre-check,
+   * degraded recheck merge-verify, …) writes ONE queryable `anomaly` event
+   * here. Kept in the events table (kind = 'anomaly'), so it needs no new DDL
+   * and is boot-safe on the live DB by construction.
+   *
+   * This is also the one funnel to the overseer wake — the record is
+   * forwarded to the optional sink (the daemon wires `AnomalyWakePolicy`),
+   * which applies the severity map + dedup and injects for WAKE classes only.
+   * `injectMessage` is the call site's richer wake text; it is NOT persisted
+   * (the `detail` field is the audit trail). No sink (bare store, tests, CLI)
+   * ⇒ the row is written and nothing wakes.
+   */
   logAnomaly(
     kind: string,
     pr: number | null,
@@ -5977,7 +5941,7 @@ export class StateStore {
     return rows.some((r) => readStringField(r.payload, "kind") === kind);
   }
 
-  /** Recorded anomalies, newest last. The query the inject files never allowed. */
+  /** Recorded anomalies, newest last. */
   anomalies(limit = 100): AnomalyRecord[] {
     const rows = this.db
       .prepare(
@@ -6006,7 +5970,7 @@ export class StateStore {
     });
   }
 
-  // ---- memory incident (S1) ---------------------------------------
+  // ---- memory incident ----------------------------------------------------
 
   /** The memory incident the health monitor last recorded as OPEN, or null
    * when the last record closed it (or none exists). Events-table backed, so
@@ -6053,7 +6017,7 @@ export class StateStore {
     }
   }
 
-  // ---- deferred EOD sweeps (S2) -----------------------------------
+  // ---- deferred EOD sweeps ------------------------------------------------
 
   /** The ops days whose EOD sweep a drain held back and that have not fired
    * yet, oldest first. Events-table backed (last record wins), so a deferred
@@ -6070,7 +6034,7 @@ export class StateStore {
     this.logEvent("eod_deferred", null, { dates: [...new Set(dates)].sort() });
   }
 
-  // ---- overseer heartbeat --------------------------------------
+  // ---- overseer heartbeat -----------------------------------------------
 
   /** Record that the daily heartbeat fired for `date` (local "YYYY-MM-DD"). */
   recordHeartbeat(date: string): void {
@@ -6095,9 +6059,9 @@ export class StateStore {
   }
 
   /**
-   * The once-per-round ledger re-nudge mark. Kept in the events
-   * table (kind = 'ledger_stale_nudged'), same move as the anomaly
-   * record: no new DDL, boot-safe on the live DB by construction. The key is
+   * The once-per-round ledger re-nudge mark. Kept in the events table
+   * (kind = 'ledger_stale_nudged'), like the anomaly record: no new DDL,
+   * boot-safe on the live DB by construction. The key is
    * `round-<no>` on the round-end path and `head-<sha>` on the round-less
    * recheck path; a scan with no recency window — the cap is per round, not
    * per recent history.
@@ -6123,7 +6087,7 @@ export class StateStore {
 
   /**
    * What the event log says about the migration-collision COMMENT with this
-   * fingerprint on this PR (dedupe). Scans every such event for the
+   * fingerprint on this PR (the collision comment's dedupe). Scans every such event for the
    * PR — no recency window, because a PR that accumulates rounds must not
    * start re-posting the same comment once the newest N events are other
    * collisions.
@@ -6149,7 +6113,7 @@ export class StateStore {
       if (stamped === undefined) unreadable = true;
       else if (stamped === fingerprint) {
         // Live, a row stamped `executed: false` is a dry-run record of the
-        // would-be comment (or a pre-fix guard refusal): nothing reached
+        // would-be comment (or a guard refusal): nothing reached
         // GitHub, so it cannot suppress the real post. A row with no
         // `executed` field predates the stamp and still counts.
         if (opts.live && readBooleanField(r.payload, "executed") === false) continue;
@@ -6161,7 +6125,7 @@ export class StateStore {
 
   /**
    * Self-requeues spent in the current failed-stage GENERATION at a head
-   * (cap accounting), split into the ones `round_self_requeued`
+   * (the self-requeue cap's accounting), split into the ones `round_self_requeued`
    * stamped with THIS head and the ones whose payload cannot be read at all.
    * A new head resets the budget naturally; an exact planned fanout (or a
    * completed verdict that was too fast for the supervisor tick to observe) at
@@ -6229,7 +6193,7 @@ export class StateStore {
 
   /** Every event of the given kinds for one PR, oldest first, its payload
    * decoded (an undecodable payload reads as `{}`) — the outcome capture's
-   * read of the ping-pong decisions, resolves, pushes and closes (S6). */
+   * read of the ping-pong decisions, resolves, pushes and closes. */
   prEvents(
     pr: number,
     kinds: readonly string[],
@@ -6282,14 +6246,14 @@ export class StateStore {
     ).c;
   }
 
-  // ---- escalations (empty unless the feature is switched on) -----
+  // ---- escalations (empty unless the feature is switched on) --------------
 
   /** Has this exact person already been pointed at this exact thing on this
    * PR? The dedup that makes an escalation a one-time notification rather
    * than a per-round nag. `key` is `"<target>|<scopeKey>"`, split on the
    * FIRST `|` only: a target is a login and cannot hold one, but a scope key
    * embeds a path or decision name that can (JS `split("|", 2)` truncates the
-   * rest instead of keeping it — selfscan 1deeb309). */
+   * rest instead of keeping it). */
   escalationDelivered(pr: number, key: string): boolean {
     const bar = key.indexOf("|");
     const target = bar < 0 ? key : key.slice(0, bar);
@@ -6431,9 +6395,9 @@ export class StateStore {
     const row = this.db.prepare("SELECT * FROM slack_events WHERE event_id = ?").get(eventId) as
       SlackEventRow | undefined;
     if (!row) return undefined;
-    // Rows written before carry the retired "owner_legacy" tier spelling;
-    // fold on read (accepted on input, never emitted). An unrecognisable value
-    // is returned as-is — this is a ledger read, not a rights grant.
+    // Older rows carry the retired legacy tier spelling; fold on read
+    // (accepted on input, never emitted). An unrecognisable value is returned
+    // as-is — this is a ledger read, not a rights grant.
     const folded = foldSlackTier(row.tier);
     return folded !== null && folded !== row.tier ? { ...row, tier: folded } : row;
   }
@@ -6606,7 +6570,7 @@ export interface RoundStageBounds {
   first_pass_max_min: number;
   passes_max_min: number;
   running_max_min: number;
-  /**: added to the passes limit and the hard cap of a round whose
+  /** Added to the passes limit and the hard cap of a round whose
    * pre-approval sweep is owed — the supervisor's own reading. */
   follow_up_sweep_extra_min?: number;
 }
@@ -6644,7 +6608,7 @@ export interface StatusSnapshot {
             running_hard_bound: string;
           };
         };
-        /** canonical failure obligation. Presence overrides
+        /** Canonical failure obligation. Presence overrides
          * ordinary lifecycle; `retry_wait` carries its finite automatic exit,
          * while `operator_unwedge` keeps `u` as the required action. */
         review_failure?: Pick<
@@ -6686,7 +6650,7 @@ export interface StatusSnapshot {
    * version (drift-checked against the pin), RSS and CPU. Absent in snapshots
    * from a daemon with no supervisor wired — readers must default. */
   openviking?: OpenVikingStatus;
-  /** Reviewer-memory HEALTH (S1, src/memory/health.ts) — beside the
+  /** Reviewer-memory HEALTH (src/memory/health.ts) — beside the
    * unauthenticated `openviking` block, never instead of it: whether memory
    * actually works with the credentials in use, judged by an authenticated
    * probe per credential and by the daemon's own requests. What a person
@@ -6694,7 +6658,7 @@ export interface StatusSnapshot {
    * status`, the companion's view) is read from here. Absent in snapshots
    * from an older daemon — readers say "not reported", never "healthy". */
   memory?: MemoryStatus;
-  /** The daemon's own load (L2, src/eventloop.ts): `event_loop` — its
+  /** The daemon's own load (src/eventloop.ts): `event_loop` — its
    * event-loop delay, p50/p99/max over the last window, the longest stall
    * since start and when, and whether that is a stall (with the cause its
    * evidence names: the cgroup's throttling, the daemon's own CPU time across
@@ -6708,7 +6672,7 @@ export interface StatusSnapshot {
    * plan completes, never 0) and what it moved. Absent in snapshots from an
    * older daemon — readers (`readArchiveStatus`) say "not reported". */
   archive?: ArchiveStatus;
-  /** Deploy-window drain (2026-08-25): present (and true) only while
+  /** Deploy-window drain: present (and true) only while
    * draining, beside the count of webhook deliveries dropped so far and when
    * the drain was engaged. Absent in older snapshots — readers default to
    * "not draining". */
@@ -6722,7 +6686,7 @@ export interface StatusSnapshot {
   /** Terminal FAILED_LOUD obligations are visible during drain but do not
    * count as live rounds; operator recovery remains dormant until drain lifts. */
   drain_failed_loud?: number;
-  /** local correctness supervisor. A fresh process heartbeat with a
+  /** Local correctness supervisor. A fresh process heartbeat with a
    * stale/failed scan is pipeline-unhealthy, not healthy. */
   round_stage_supervisor?: {
     healthy: boolean;
@@ -6732,7 +6696,7 @@ export interface StatusSnapshot {
     last_error_at: string | null;
     last_error: string | null;
   };
-  /** separates process liveness from review-pipeline health. Cause
+  /** Review-pipeline health, separate from process liveness. Cause
    * keys are stable alert/dedupe identities, never prose or timestamps. */
   pipeline?: {
     healthy: boolean;
@@ -6766,7 +6730,7 @@ export interface StatusSnapshot {
   /** Provider/auth health is a sibling of pipeline and OpenViking health;
    * never let one domain impersonate another. */
   provider?: { healthy: boolean; detail?: string; last_at?: string };
-  /** watcher-global breaker and durable backlog health. */
+  /** Thread-decision watcher: global breaker and durable backlog health. */
   thread_decisions?: {
     breaker_state: "closed" | "open" | "half_open";
     open_until?: string;
@@ -6786,11 +6750,10 @@ export function writeStatusJson(stateDir: string, snapshot: StatusSnapshot): voi
 }
 
 /**
- * The status snapshot's `pipeline` block alone — what `GET /health` serves.
- * `/health` used to build the WHOLE snapshot (every PR, every round, two
- * correlated scans) on each probe just to read this block back out, so the
- * probe that measures a stalled loop paid ~100 ms of the loop itself
- * (boot stall). Absent exactly when the snapshot would omit it.
+ * The status snapshot's `pipeline` block alone — what `GET /health` serves,
+ * without building the whole snapshot (every PR, every round) on each probe,
+ * so the probe that measures a stalled loop does not itself stall it. Absent
+ * exactly when the snapshot would omit it.
  */
 export function buildPipelineStatus(
   store: StateStore,
@@ -6883,7 +6846,7 @@ function pipelineFrom(
 /**
  * The heartbeat's per-PR round count and latest verdict — every 30 s over the
  * whole `rounds` table, closed-PR history included, which stays live
- * (§4). Exported so the index that keeps it a walk of
+ * (docs/archiving.md §4). Exported so the index that keeps it a walk of
  * `rounds_pr_round` rather than a scan per PR is pinned against THIS text
  * (tests/archive-schema.test.ts).
  */
@@ -6908,8 +6871,8 @@ export function buildStatusSnapshot(
   const at = now();
   const today = at.toISOString().slice(0, 10);
   const drain = store.drainState();
-  // Expired zombie rounds stay out of the per-PR round COUNTS —
-  // but they DO count in every spend aggregate (below).
+  // Expired zombie rounds stay out of the per-PR round COUNTS — but they DO
+  // count in every spend aggregate (below).
   const roundStats = store.db.prepare(ROUND_STATS_SQL).all() as Array<{
     pr: number;
     c: number;
@@ -7015,8 +6978,8 @@ export function buildStatusSnapshot(
     running_rounds: store.runningRounds().length,
     ...(maxConcurrentRounds !== undefined ? { max_concurrent_rounds: maxConcurrentRounds } : {}),
     total_spend_usd: store.totalSpend(),
-    // Expired rounds COUNT (reversing): a round that blew its
-    // deadline still burned its tokens — same rule as totalSpend/cli/metrics.
+    // Expired rounds COUNT: a round that blew its deadline still burned its
+    // tokens — same rule as totalSpend/cli/metrics.
     today_spend_usd: store.roundsOn(today).reduce((n, r) => n + (r.est_usd ?? 0), 0),
     ...(digestHeadline ? { digest_headline: digestHeadline } : {}),
     ...(piAuth

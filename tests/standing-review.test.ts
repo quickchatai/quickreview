@@ -1,12 +1,12 @@
-// the ONE reading of a reviewed-head mark.
+// The one reading of a reviewed-head mark.
 //
-// PR #5409 round 18 (2026-09-01): the shell had stamped `posted_event =
-// REQUEST_CHANGES` at the head, the watcher never enriched `verdict`, and
-// dispatch — reading `verdict` alone — saw nothing standing and paid $1.92 for a
-// round whose review posting guard 2 (which reads head + reply only) then
-// refused. Two readers of one row, two answers. The first half of this file
-// pins the interpretation; the second half pins that nothing else reads the
-// row's verdict directly, so the split cannot silently return.
+// The shell can stamp `posted_event = REQUEST_CHANGES` at the head without the
+// watcher ever enriching `verdict`; a reader of `verdict` alone then sees
+// nothing standing and dispatches a paid round whose posting guard 2 (which
+// reads head + reply only) refuses. Two readers of one row must not give two
+// answers. The first half of this file pins the interpretation; the second
+// half pins that nothing else reads the row's verdict directly, so the split
+// cannot silently return.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";

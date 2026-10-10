@@ -1,6 +1,6 @@
-// the main session sizes a follow-up round (the owner, 2026-10-09:
-// "the 150 line is a bit arbitrary … trust that model if the whole sweep is
-// needed"). Under `[review] follow_up_extent = "session"` every follow-up
+// The main session sizes a follow-up round: a fixed line threshold is
+// arbitrary, so the model decides whether the whole sweep is needed.
+// Under `[review] follow_up_extent = "session"` every follow-up
 // round plans the lean core and offers the full plan's sweep rows and
 // quality/style lenses as OPTIONAL rows; an owed pre-approval sweep is the
 // session's call, recorded `skipped` with a reason. `"rules"` keeps the fixed

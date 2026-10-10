@@ -1,13 +1,10 @@
-// Live pi pane (the board's lower region). The 2026-08-14 grill verdict: the
-// EVENTS strip was wasted space and the half-empty bottom of the board should
-// show what the selected PR's pi session is doing *right now*.
+// Live pi pane (the board's lower region): what the selected PR's pi session
+// is doing right now.
 //
-// Since the 2026-08-14 "integral part, not a window" pass it is not a
-// photograph either: the pane is an embedded terminal. Output comes from
+// The pane is an embedded terminal. Output comes from
 // `tmux capture-pane -e -p -J` inside the container (poll tick, ~400ms while
 // focused, ~300ms after the selection moves); input goes back the other way as
-// `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`). The full-screen
-// AttachScreen still exists — it is just no longer the only way to type.
+// `tmux send-keys` (see `keysToTmux` + `sendKeysArgv`).
 import type { TuiConfig } from "../config.js";
 import { closeSgr } from "./paint.js";
 import { captureArgv, type SshRunner } from "./remote.js";
@@ -28,12 +25,10 @@ export function keepSgrOnly(line: string): string {
     .replace(SEQ, (m) => (/^\x1b\[[0-9;:]*m$/.test(m) ? m : ""))
     .replace(/\t/g, "  ")
     .replace(/[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]/g, ""); // C0/C1 minus ESC (0x1b)
-  // Close the row. A tmux pane row has no reason to end reset — 7 of 23 rows
-  // of the live pr-5312 mirror ended with a background or foreground still
-  // set — and an open attribute does not stop at the mirror's edge: it paints
-  // the pane's padding, the board's right border and the companion column
-  // beside it. That is the mirror "escaping" its box and colouring the sidebar
-  // (reported 2026-08-21). `truncate` already closes the lines it CUTS; this
+  // Close the row. A tmux pane row often ends with a background or foreground
+  // still set, and an open attribute does not stop at the mirror's edge: it
+  // paints the pane's padding, the board's right border and the companion
+  // column beside it. `truncate` already closes the lines it cuts; this
   // covers every line that fits, which is most of them.
   return closeSgr(kept);
 }
@@ -75,7 +70,7 @@ export class PiMirror {
   private timer: NodeJS.Timeout | undefined;
   /** The board's painted mirror rectangle, fed in by `App.repaint`. Undefined
    * until the board has been painted once — the first capture then rides the
-   * session's own size, exactly as it did before, rather than guessing one. */
+   * session's own size rather than guessing one. */
   private paneSize: { cols: number; rows: number } | undefined;
 
   constructor(
@@ -102,7 +97,7 @@ export class PiMirror {
   /**
    * Receive the board's real painted mirror rectangle (`piPaneSize`).
    *
-   * Pure state, deliberately: the next `fetch` folds `resize-window` into the
+   * Pure state: the next `fetch` folds `resize-window` into the
    * capture it was going to make anyway, so a terminal resize costs no extra
    * round trip and the two can never race. A degenerate rectangle (the pane
    * squeezed to nothing) is ignored rather than sent — tmux would refuse it,
@@ -230,17 +225,15 @@ const SEQUENCES: Array<[string, string]> = [
 ];
 
 /**
- * The board's Ctrl-q — the chord that hands focus back to the list. It is the
- * one byte that never reaches the session, so the operator can always get out
- * (mirrors AttachScreen's detach chord; see chord.ts CTRL_Q).
+ * The board's Ctrl-q — the byte that hands focus back to the list. It is the
+ * one byte that never reaches the session, so the operator can always get out.
  */
 export const PANE_ESCAPE = 0x11;
 
-// The rule both embedded surfaces share (root CLAUDE.md): while
-// focused, a pi pane forwards EVERY byte except this one. `/` commands,
-// completion, history and Ctrl-C are pi's — a TUI-side input box in front of
-// them is the regression, not the feature. Same chord in `sidebar.ts`, so
-// there is one way out of every embedded surface.
+// The rule both embedded surfaces share (root CLAUDE.md): while focused, a pi
+// pane forwards every byte except this one. `/` commands, completion, history
+// and Ctrl-C are pi's — never put a TUI-side input box in front of them. Same
+// byte in `sidebar.ts`, so there is one way out of every embedded surface.
 
 /**
  * One raw stdin chunk → the `tmux send-keys` argument groups that reproduce it
@@ -324,7 +317,7 @@ export function keysToTmux(buf: Buffer): string[][] {
 }
 
 /** Capture text → sanitized lines, trailing blanks trimmed, bounded. The
- * bound is MAX_LINES ABOVE the parked window: a capture scrolled `offset`
+ * bound is MAX_LINES above the parked window: a capture scrolled `offset`
  * lines back keeps those `offset` lines too, or the window the renderer cuts
  * at `length - offset` would fall off the front and paint blank. */
 export function splitCapture(stdout: string, offset = 0): string[] {

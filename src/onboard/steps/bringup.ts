@@ -4,30 +4,30 @@
 // Three things this step owes the operator, and each one is a design decision
 // rather than a detail:
 //
-//   1. THE UID. Preflight captured it; the image build takes it as
+//   1. The uid. Preflight captured it; the image build takes it as
 //      `REVIEW_UID` so the container user owns the bind-mounted checkout. The
 //      engine's ProcessRunner takes no environment, and compose reads the
 //      project `.env` for exactly this kind of value — so the uid is written
 //      there (`QCR_UID`), which also means the operator's own later
 //      `docker compose up` behaves identically to the wizard's. Same reason the
 //      chosen ingress profile is written there by the ingress step; this step
-//      re-asserts it and ALSO passes `--profile` explicitly, so what comes up
+//      re-asserts it and also passes `--profile` explicitly, so what comes up
 //      is visible in the command rather than inferred from a file.
 //
-//   2. AN HONEST WARNING, BEFORE THE WAIT. The first build compiles
+//   2. An honest warning, before the wait. The first build compiles
 //      llama-cpp-python from source (the memory engine's local embedder — not
 //      optional: without it the OpenViking image cannot boot at all). That is
 //      tens of minutes on a laptop, and a wizard that goes silent for half an
-//      hour reads as broken. The warning is emitted BEFORE the build starts,
+//      hour reads as broken. The warning is emitted before the build starts,
 //      never after, and the test pins that ordering.
 //
-//   3. PROGRESS, NOT SILENCE. Build output is streamed line by line through
+//   3. Progress, not silence. Build output is streamed line by line through
 //      the engine's log adapter (see compose.ts's StreamRunner and why the
 //      short-command ProcessRunner cannot do this job), with an elapsed-time
 //      marker every few lines so a long quiet stretch inside Docker still
 //      looks alive.
 //
-// What this step does NOT do: verify the system works. Container state, the
+// What this step does not do: verify the system works. Container state, the
 // health endpoint and webhook ping delivery are the verify_stack step's job —
 // layered, each with its own fix. Bring-up's own success bar is "the compose
 // command succeeded and the daemon container is running".
@@ -61,7 +61,7 @@ export const BRINGUP_STEP_ID = "bringup";
 export const BROUGHT_UP_CHOICE_KEY = "stack_brought_up_at";
 
 /**
- * The warning, in the operator's words, emitted BEFORE the build begins.
+ * The warning, in the operator's words, emitted before the build begins.
  * Exported so the test can assert both its content and its ordering.
  */
 export const FIRST_BUILD_WARNING = [
@@ -81,9 +81,9 @@ export interface BringUpStepOptions {
   progressEvery?: number;
 }
 
-/** What the compose file mounts as the container's config home:
- * the directory of the config the locator found, whatever it is — the
- * container reads no other (there is no checkout fallback left). */
+/** What the compose file mounts as the container's config home: the
+ * directory of the config the locator found, whatever it is — the container
+ * reads no other (there is no checkout fallback). */
 export function configMountOf(configPath: string): { dir: string; name: string } {
   const located = resolve(configPath);
   return { dir: dirname(located), name: basename(located) };
@@ -152,7 +152,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
 
       // The two host dirs the compose file bind-mounts from .env values.
       // Compose interpolates `$VAR` in an unquoted .env value, so a path
-      // carrying a `$` would mount a DIFFERENT directory than this one
+      // carrying a `$` would mount a different directory than this one
       // (`/srv/$TEAM` → `/srv/` with TEAM unset) — refused before anything
       // is created or written.
       const mount = configMountOf(ctx.adapters.paths.configPath);
@@ -178,25 +178,25 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
       const profile = option ? option.profile : (readEnvKey(envText, "COMPOSE_PROFILES") ?? "");
       let next = setEnvKey(envText, "QCR_UID", String(uid));
       next = setEnvKey(next, "COMPOSE_PROFILES", profile);
-      // the embedder config.toml declares, carried into the .env the
-      // compose file passes to the container — the ONE place the boot reads
+      // The embedder config.toml declares, carried into the .env the
+      // compose file passes to the container — the one place the boot reads
       // it from on this route. config.toml is the truth; this is its mirror,
       // re-asserted on every bring-up so the two cannot drift apart.
       const configText = readFileSync(ctx.adapters.paths.configPath, "utf8");
       const embedder = declaredEmbedderOf(configText);
       for (const [key, value] of embedderEnvEntries(embedder)) next = setEnvKey(next, key, value);
-      // and the local embedder's port and threads — the daemon
+      // And the local embedder's port and threads — the daemon
       // reads them from config.toml, the boot renders ov.conf from these.
       for (const [key, value] of localEmbedderEnvEntries(configText))
         next = setEnvKey(next, key, value);
-      // the directory the compose file mounts read-only as the
+      // The directory the compose file mounts read-only as the
       // container's config home — the one holding the config the install
       // locator found — the only config the container reads. Created here so
       // Docker never creates it, owned by root.
       mkdirSync(mount.dir, { recursive: true, mode: 0o700 });
       next = setEnvKey(next, "QCR_CONFIG_HOME", mount.dir);
       next = setEnvKey(next, "QCR_CONFIG_NAME", mount.name);
-      // the secrets dir the compose file mounts read-only at
+      // The secrets dir the compose file mounts read-only at
       // /opt/quickreview/secrets — the install locator's answer, the same one
       // the daemon's loader reaches (the compose default is only the default
       // install's, for a stack started by hand before this step ran). Created here
@@ -214,7 +214,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
           `, and the memory embedder ${describeEmbedder(embedder)} from config.toml${embedder.provider === "local" ? " (local: no memory text leaves this machine)" : ""}`,
       });
 
-      // The warning goes out BEFORE the long wait, never after it.
+      // The warning goes out before the long wait, never after it.
       for (const line of FIRST_BUILD_WARNING.split("\n")) log(ctx, line);
       checks.push({ name: "first-build", ok: true, detail: FIRST_BUILD_WARNING });
 
@@ -257,7 +257,7 @@ export function bringUpStep(opts: BringUpStepOptions = {}): OnboardingStep {
     },
 
     async verify(ctx): Promise<StepReport> {
-      // Re-running as verification NEVER builds: it asks what is running.
+      // Re-running as verification never builds: it asks what is running.
       const root = rootOf(ctx.adapters);
       const checks = containerStateCheck(
         await composePs(ctx.adapters.runner, root),

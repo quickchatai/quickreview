@@ -1,30 +1,29 @@
-// Rubric proposals — the PROPOSED pane of the `[7] feedback` tab (§7/§8).
+// Rubric proposals — the PROPOSED pane of the `[7] feedback` tab.
 //
 // Three proposal kinds surface here:
-//   * Rubric proposals — authored by the COMPANION's `land` skill as
-//     `state/rubric/<slug>/` dirs in the LOCAL canonical repo (the checkout
+//   * Rubric proposals — authored by the companion's `land` skill as
+//     `state/rubric/<slug>/` dirs in the local canonical repo (the checkout
 //     this TUI runs in; the companion sees the same tree mounted rw at
-//     /workspace). Each dir carries PROPOSAL.md + changes.patch. The old
-//     producer — the EOD curator drafting dirs on the VM — is retired
-//     (it flags candidates in the digest and authors nothing), so
+//     /workspace). Each dir carries PROPOSAL.md + changes.patch. The EOD
+//     curator only flags candidates in the digest and authors nothing, so
 //     everything here is local fs: no ssh, no VM path. Accept/reject verdicts
 //     are the owner's, delivered as TUI keystrokes.
 //   * Bot-filed improvement PRs (`bot/improve-*`) and issues (`bot-filed`
-//     label) on the reviewed repo — status via a live in-container `gh` READ
+//     label) on the reviewed repo — status via a live in-container `gh` read
 //     (reads are direct per the gate rules; the mint-token credential).
 //
-// ACCEPT = merge + auto-ratify (ratified decision): the click IS the
-// ratification. The patch is applied to the canonical repo, the seed manifest
-// hash is re-pinned, the ratification is appended to
-// tests/fixtures/ratified-divergence.json, and the lot is committed. The
-// proposal dir is then removed. REJECT removes the dir and records a
-// #rejected-proposal memory entry so the same change is never re-proposed.
+// Accept = merge + auto-ratify: the click is the ratification. The patch is
+// applied to the canonical repo, the seed manifest hash is re-pinned, the
+// ratification is appended to tests/fixtures/ratified-divergence.json, and
+// the lot is committed. The proposal dir is then removed. Reject removes the
+// dir and records a #rejected-proposal memory entry so the same change is
+// never re-proposed.
 //
-// adds a second accepted kind alongside rubric proposals: CONFIG
+// A second accepted kind sits alongside rubric proposals: config
 // proposals — same dirs, same surface, but changes.patch targets config.toml
 // (exactly that one file). Accept = apply + local commit (no ratification
 // bookkeeping: config is not a seed); the structural guard is that a config
-// patch may NEVER touch `dry_run` (`configPatchViolation` — rule 1).
+// patch may never touch `dry_run` (`configPatchViolation` — rule 1).
 //
 // Containment (the patch is LLM output; these are the walls):
 //   * targets — agents// prompts/ only (rubric) or config.toml alone
@@ -33,14 +32,14 @@
 //   * RATIFIED fences — a patch may neither edit lines inside a
 //     `<!-- RATIFIED … -->` fence nor add a fence marker of its own
 //     (`patchFenceViolation`). Rule 6's ratified passages are the owner's; the
-//     accept click ratifies the proposal's OWN diff, never a fence rewrite
+//     accept click ratifies the proposal's own diff, never a fence rewrite
 //     smuggled inside it.
 //   * text only — binary, mode-change and non-100644 file sections are
 //     refused (`patchShapeViolation`), and a seed is never deleted or
 //     renamed away (`patchRemovals`);
-//   * the POST-IMAGE — git applies the patch to a throwaway copy first and
+//   * the post-image — git applies the patch to a throwaway copy first and
 //     the result is judged (`postImageViolation`): every fence byte-identical,
-//     and a config patch leaves the PARSED root `dry_run` unchanged, git
+//     and a config patch leaves the parsed root `dry_run` unchanged, git
 //     writes no path beyond the vetted targets (its -p1 strip), and a target
 //     that changed after the shadow copy is refused before the real apply. The
 //     header-coordinate checks are the fast refusal; this is the proof,
@@ -79,7 +78,7 @@ export function validSlug(slug: string): boolean {
 
 // ---- the local proposal store: state/rubric/<slug>/ -----------------------
 
-/** Where proposals live: the LOCAL repo's state dir — the same path the
+/** Where proposals live: the local repo's state dir — the same path the
  * companion writes under /workspace. Never a VM path. */
 export function rubricDir(repoRoot: string): string {
   return join(repoRoot, "state", "rubric");
@@ -110,14 +109,14 @@ export function readRubricFile(
   }
 }
 
-/** The ONLY dir mutation this module performs — removing a decided proposal
+/** The only dir mutation this module performs — removing a decided proposal
  * dir. Slug-validated, path fixed under state/rubric. */
 export function removeRubricDir(repoRoot: string, slug: string): void {
   if (!validSlug(slug)) throw new Error(`bad rubric slug '${slug}'`);
   rmSync(join(rubricDir(repoRoot), slug), { recursive: true, force: true });
 }
 
-// ---- improvement PRs/issues: still a remote gh READ -----------------------
+// ---- improvement PRs/issues: a remote gh read ------------------------------
 
 function dockerSh(cfg: TuiConfig, script: string): string[] {
   return [
@@ -136,7 +135,7 @@ function dockerSh(cfg: TuiConfig, script: string): string[] {
 export const IMPROVEMENTS_FAILED = "QCR_GH_READ_FAILED";
 
 /** Bot-filed improvement PRs + issues, one in-container gh read. A failing gh
- * call is caught PER LIST (a missing label must not blank the other list),
+ * call is caught per list (a missing label must not blank the other list),
  * but it prints the failure sentinel, never `[]`: "could not ask" is not
  * "there are none".
  *
@@ -160,7 +159,7 @@ export function improvementsArgv(
 
 export interface ImprovementsRead {
   items: ImprovementItem[];
-  /** The lists that could not be read — their absence from `items` is NOT
+  /** The lists that could not be read — their absence from `items` is not
    * an empty list. */
   failed: Array<"pr" | "issue">;
 }
@@ -195,8 +194,8 @@ export interface LocalGit {
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
 }
 
-/** EVERY path a rubric patch touches — both diff sides, rename/copy headers
- * AND the `diff --git` headers, so a deletion (`+++ /dev/null` with a `---`
+/** Every path a rubric patch touches — both diff sides, rename/copy headers
+ * and the `diff --git` headers, so a deletion (`+++ /dev/null` with a `---`
  * victim), a rename, or a section git applies with no ---/+++ lines at all
  * (a binary patch, a mode change) cannot smuggle a target past the
  * allowlist. A `diff --git` header this cannot split cleanly contributes its
@@ -219,7 +218,7 @@ export function patchTargets(patch: string): string[] {
 }
 
 /**
- * A proposal is a TEXT edit: every guard below reads hunks. A section git
+ * A proposal is a text edit: every guard below reads hunks. A section git
  * applies without one — a binary patch, a mode change, a new file that is a
  * symlink or executable — is invisible to the fence and dry_run checks, so
  * it is refused outright. Returns the refusal message, or null when clean.
@@ -237,7 +236,7 @@ export function patchShapeViolation(patch: string): string | null {
   return null;
 }
 
-/** Paths a patch REMOVES — deletions (`+++ /dev/null`, `deleted file mode`)
+/** Paths a patch removes — deletions (`+++ /dev/null`, `deleted file mode`)
  * and rename sources. */
 export function patchRemovals(patch: string): string[] {
   const out = new Set<string>();
@@ -275,11 +274,11 @@ export function targetsAllowed(files: string[]): boolean {
 
 // ---- proposal kinds: rubric (agents//prompts/) vs config (config.toml) ----
 //
-// the first-run interview distills calibration answers into CONFIG
+// The first-run interview distills calibration answers into config
 // proposals — same state/rubric/<slug>/ dirs, same accept/reject surface,
 // but the patch targets config.toml. The two kinds never mix in one patch:
 // a config proposal is exactly one file, config.toml, so the rubric
-// containment above stays byte-identical for rubric patches.
+// containment above applies unchanged to rubric patches.
 
 export type ProposalKind = "rubric" | "config";
 
@@ -291,14 +290,14 @@ export function proposalKind(files: string[]): ProposalKind | null {
 }
 
 /** Matches `dry_run` as a whole word — assignments, inline tables, whatever
- * shape a patch smuggles it in. A comment merely MENTIONING dry_run also
+ * shape a patch smuggles it in. A comment merely mentioning dry_run also
  * trips this; that false positive is safe (the operator edits config by
  * hand), the false negative is not. */
 const DRY_RUN_TOKEN = /(^|[^0-9A-Za-z_])dry_run([^0-9A-Za-z_]|$)/;
 
 /**
  * Rule 1's structural half of the config-proposal path: a changes.patch may
- * NEVER touch `dry_run` — the flag is the owner's alone, and a proposal that
+ * never touch `dry_run` — the flag is the owner's alone, and a proposal that
  * adds, removes or rewrites any line carrying it is refused before git ever
  * sees it. Returns the refusal message, or null when clean.
  */
@@ -326,8 +325,8 @@ export function configPatchViolation(patch: string): string | null {
 const FENCE_OPEN = /<!--\s*RATIFIED\b/;
 const FENCE_CLOSE = /<!--\s*\/RATIFIED\b/;
 
-/** 1-based inclusive line ranges of `<!-- RATIFIED … -->` fences, MARKERS
- * INCLUDED (deleting a marker is as forbidden as editing the text it pins).
+/** 1-based inclusive line ranges of `<!-- RATIFIED … -->` fences, markers
+ * included (deleting a marker is as forbidden as editing the text it pins).
  * An unterminated fence protects to end-of-file rather than nothing. */
 export function fenceRanges(content: string): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number }> = [];
@@ -346,7 +345,7 @@ export function fenceRanges(content: string): Array<{ start: number; end: number
   return out;
 }
 
-/** The TEXT of each fence, markers included, in order — the invariant a
+/** The text of each fence, markers included, in order — the invariant a
  * post-image must preserve byte for byte. */
 export function fenceBlocks(content: string): string[] {
   const lines = content.split("\n");
@@ -355,11 +354,11 @@ export function fenceBlocks(content: string): string[] {
 
 /**
  * The post-image half of rule 6 (and rule 1 for config): `patchFenceViolation`
- * reads the hunk HEADERS, but git places a hunk by its context and will
+ * reads the hunk headers, but git places a hunk by its context and will
  * relocate one whose header lies (or is merely stale) — onto a fence. So the
- * patch is also applied, by git itself, to a SHADOW copy of its targets, and
+ * patch is also applied, by git itself, to a shadow copy of its targets, and
  * the result is judged: every fence must survive byte for byte, and a config
- * patch must leave the PARSED root `dry_run` exactly as it was (a quoted or
+ * patch must leave the parsed root `dry_run` exactly as it was (a quoted or
  * escaped key, or an edit that moves the assignment into a table, changes
  * what the daemon loads without any changed line saying `dry_run`).
  * Returns the refusal message, or null when clean.
@@ -401,7 +400,7 @@ export function postImageViolation(
 /**
  * What a fence-source read of a patch target found. `absent` (the patch
  * creates the file, so it has no fences yet) and `unreadable` (it exists and
- * we could not see it) are SEPARATE answers on purpose — see
+ * we could not see it) are separate answers on purpose — see
  * `patchFenceViolation`.
  */
 export type FenceSource =
@@ -429,14 +428,12 @@ export function fenceSourceFrom(repoRoot: string, rel: string): FenceSource {
  * lines inside a RATIFIED fence — or that carries a fence marker on an added
  * line (minting/moving a fence) — is refused before git ever sees it.
  *
- * `readFile` resolves a target's CURRENT content. It has three answers and
+ * `readFile` resolves a target's current content. It has three answers and
  * they are not interchangeable: `absent` is a file the patch creates, which
  * genuinely has no fences; `unreadable` is a file whose fences we could not
- * look at, and that is a REFUSAL. This guard fails CLOSED — the old
- * `catch → null` made EACCES/EISDIR indistinguishable from ENOENT, so one
- * unreadable target let a patch reaching inside an owner-fenced region be
- * accepted, applied and committed: a rule-6 bright-line bypass with a local
- * commit behind it.
+ * look at, and that is a refusal. This guard fails closed: reading
+ * EACCES/EISDIR as absence would let a patch reaching inside an owner-fenced
+ * region be accepted, applied and committed — a rule-6 bypass.
  *
  * Returns the refusal message, or null when clean.
  */
@@ -500,9 +497,9 @@ export function patchFenceViolation(
  * (tests/seed-integrity.test.ts) compares against, so an accepted reseed must
  * refresh the copy alongside the manifest sha — the canonical bytes track the
  * ratified content, while the divergence registry (not seeds/) records the
- * departure from the original lineage. The note is role-worded
- * ("owner": the accept click is the owner's ratification); legacy notes
- * say "the owner" and stay valid — history is never rewritten. */
+ * departure from the original seed lineage. The note is role-worded
+ * ("owner": the accept click is the owner's ratification); older notes that
+ * name a person stay valid — history is never rewritten. */
 export function recordRatification(
   repoRoot: string,
   files: string[],
@@ -548,10 +545,10 @@ export interface AcceptDeps {
 }
 
 /**
- * Where a config proposal lands. The patch always names
- * `config.toml`; the live file may be the checkout's (apply + commit, as
- * before) or the install's config home's — outside this repo, so `git apply`
- * is pointed at its directory and nothing is committed. A `$QCR_CONFIG` file
+ * Where a config proposal lands. The patch always names `config.toml`; the
+ * live file may be the checkout's (apply + commit) or the install's config
+ * home's — outside this repo, so `git apply` is pointed at its directory and
+ * nothing is committed. A `$QCR_CONFIG` file
  * under another name cannot take a `config.toml` patch: refused, never
  * applied to a file the daemon does not read.
  */
@@ -587,8 +584,7 @@ export async function acceptProposal(
   if (shape !== null) return { ok: false, message: shape };
   if (kind === "rubric") {
     // A seed cannot be deleted or renamed away: ratification re-pins the
-    // file's bytes, and there are none to pin (it used to throw mid-accept,
-    // leaving the deletion uncommitted in the shared checkout).
+    // file's bytes, and there are none to pin.
     let seeded: Record<string, string>;
     try {
       seeded = (
@@ -728,7 +724,7 @@ export async function acceptProposal(
       kind === "config"
         ? `config: accept '${slug}' — applied by the owner via TUI`
         : `rubric: accept '${slug}' — ratified by the owner via TUI`;
-    // The press of A IS the ratification, so the commit carries the
+    // The press of A is the ratification, so the commit carries the
     // change register's key — without it the accept never shows in
     // [7] feedback's CHANGED pane and cannot be reverted from there.
     const trailer = `${TRAILER_RATIFIED}: owner TUI accept of '${slug}' (${deps.today()})`;
@@ -796,7 +792,7 @@ async function shadowApply(
       };
     }
     // Every path git wrote must be one we vetted. `patchTargets` reads the
-    // names as SPELLED; git strips one component (-p1) from them, so an
+    // names as spelled; git strips one component (-p1) from them, so an
     // unprefixed `+++ prompts/src/tui/x.ts` passes the allowlist as
     // prompts/… and lands as src/tui/x.ts. The shadow holds nothing but the
     // vetted targets, so anything else in it is git's placement, refused.

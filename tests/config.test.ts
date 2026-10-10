@@ -16,8 +16,8 @@ import {
 } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// the suite parses the NEUTRAL FIXTURE, never the operator's live
-// config (that lives in the install's config home now, out of reach).
+// The suite parses the neutral fixture, never the operator's live config
+// (that lives in the install's config home, out of reach).
 const configPath = resolve(root, "tests/fixtures/config.toml");
 
 describe("expandHome", () => {
@@ -36,8 +36,8 @@ describe("parseConfig", () => {
     expect(cfg.github.app_slug).toBe("example-review");
     expect(cfg.github.bot_login).toBe("example-review[bot]");
     expect(cfg.github.review_team).toBe("example-org/review");
-    // escalation_reviewer was removed on 2026-08-18: the daemon never
-    // nominates a reviewer, so there is no reviewer to name.
+    // There is no escalation_reviewer key: the daemon never nominates a
+    // reviewer through it, so there is no reviewer to name.
     expect((cfg.github as unknown as Record<string, unknown>).escalation_reviewer).toBeUndefined();
     expect(cfg.server.port).toBe(8787);
     expect(cfg.daemon.poll_interval_s).toBeGreaterThan(0);
@@ -120,7 +120,7 @@ describe("parseConfig", () => {
   });
 });
 
-// ---- [ops] timezone — the operations-day knob --------------------
+// ---- [ops] timezone — the operations-day knob ------------------------------
 describe("[ops] timezone", () => {
   const shipped = readFileSync(configPath, "utf8");
   // The fixture's [ops] block, for surgical splicing below.
@@ -245,8 +245,8 @@ describe("[caps] improvement_pr_deny_prefixes", () => {
   });
 });
 
-// the section used to be spread through an `as` cast, so a missing
-// or garbage cap parsed fine and reached `checkDiffstat` as undefined.
+// Every cap is validated when parsed: spreading the section through an `as`
+// cast would let a missing or garbage cap reach `checkDiffstat` as undefined.
 describe("[caps] every numeric cap is checked at parse time", () => {
   const base = readFileSync(configPath, "utf8");
   const ok = {
@@ -322,8 +322,7 @@ describe("[models] tiered pass scheme", () => {
       "sol-high": "openai-codex/gpt-5.6-sol:high",
     });
     expect(cfg.models.risk_passes).toEqual(["pass-security", "pass-prod-risk", "pass-data-safety"]);
-    // the validator's floor is pinned at the top tier — it vetoes
-    // sol-high findings, so it may never run below them.
+    // The fixture runs the validator at the top tier.
     expect(cfg.models.validate_tier).toBe("sol-high");
     expect(cfg.models.small_diff_lines).toBe(150);
   });
@@ -417,14 +416,11 @@ describe("loadConfig", () => {
   });
 });
 
-// ---- the tracked configs — both parse and validate ------
+// ---- the tracked configs — both parse and validate --------------------------
 //
-// This block used to read the LIVE config.toml and pin its production
-// invariants (parses, dry_run = false, the deployment's explicit base branch /
-// clone / denylist). `qcr install migrate` moved that file into the install's
-// config home, where no test can — or may — read it, so the block
-// skipped on every run. What a tracked file can carry is asserted here; what
-// only the live file can carry is the operator's: deploy.sh's preflight reads
+// The live config.toml lives in the install's config home, where no test can —
+// or may — read it. What a tracked file can carry is asserted here; what only
+// the live file can carry is the operator's: deploy.sh's preflight reads
 // it through the install locator (its pin checks refuse on drift, and its plan
 // SHOWS the dry_run flag it ships — never changes it, rule 1).
 describe("the tracked configs (fixture + example)", () => {
@@ -439,7 +435,7 @@ describe("the tracked configs (fixture + example)", () => {
   });
 });
 
-// ---- config.example.toml — the new-operator template ------------
+// ---- config.example.toml — the new-operator template ----------------------
 describe("config.example.toml", () => {
   const examplePath = resolve(root, "config.example.toml");
 

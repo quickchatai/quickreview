@@ -1,8 +1,7 @@
-// Round usage and the exec-policy audit, measured through
-// the transcript index since H2 — these are the pre-H2
-// `measureRoundUsage` / `collectWindowLines` cases, unchanged in what they
-// expect. The index's own contract (equivalence with the old reads, the loop
-// turns, the offsets, unknown) is tests/transcriptindex.test.ts.
+// Round usage and the exec-policy audit, measured through the transcript
+// index: the `measureRoundUsage` / `collectWindowLines` cases. The index's own
+// contract (equivalence with a direct read, the loop turns, the offsets,
+// unknown) is tests/transcriptindex.test.ts.
 import { describe, expect, it } from "vitest";
 import { TranscriptIndex, type TranscriptMeasureOpts } from "../src/transcriptindex.js";
 import { auditExecViolations, estimateUsd, type RoundUsage } from "../src/usage.js";

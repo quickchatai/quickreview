@@ -1,7 +1,7 @@
 // GitHub App authentication: RS256 app JWTs and cached installation tokens.
-// Semantics ported from mint-token.sh per findings §4.2: iat −60s,
-// exp +9 min, cache keyed by installation off `expires_at` with a ~5 min
-// proactive refresh window, single-flight refresh, one re-mint on 401.
+// Same semantics as scripts/mint-token.sh: iat −60s, exp +9 min, cache keyed
+// by installation off `expires_at` with a ~5 min proactive refresh window,
+// single-flight refresh, one re-mint on 401.
 // The app PEM is the only credential anywhere — no personal token code path.
 import { createSign } from "node:crypto";
 import { readFileSync } from "node:fs";

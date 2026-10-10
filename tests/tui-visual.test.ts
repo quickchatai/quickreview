@@ -1,4 +1,4 @@
-// The 2026-08-14 usability batch: semantic theme, mouse decode + zones,
+// Board usability: semantic theme, mouse decode + zones,
 // rich PR rows, legend, section titles, GitHub links, detail enrichment.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -110,7 +110,7 @@ describe("theme", () => {
   it("legend covers every glyph", () => {
     const plain = stripAnsi(legendLine());
     for (const g of ["▶", "●", "✎", "·", "↻"]) expect(plain).toContain(g);
-    // no ⚑ — the park it stood for cannot exist.
+    // No ⚑ glyph: the park it stood for does not exist.
     expect(plain).not.toContain("⚑");
   });
 });
@@ -122,8 +122,8 @@ describe("mouse decode", () => {
     expect(events).toEqual([
       { kind: "click", x: 12, y: 5 },
       { kind: "wheel-up", x: 3, y: 4 },
-      // release is reported now — it is what ends a selection and
-      // triggers the copy. It used to be parsed and thrown away.
+      // Release is reported: it is what ends a selection and triggers the
+      // copy.
       { kind: "release", x: 12, y: 5 },
     ]);
     expect(rest.toString()).toBe("abcd");

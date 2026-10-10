@@ -1,8 +1,8 @@
-// setup — the companion's setup & scan tool belt (setup & scan spec
-// "Setup & scan engine"). The ONE companion extension that exposes the
-// SetupEngine as pi tools: the companion judges, these tools act. Loaded per
-// spawn by the companion's piArgv (src/tui/companion.ts), never registered
-// globally, never on the VM (rule 9 is unchanged: no new session kind).
+// setup — the companion's setup & scan tool belt. The one companion
+// extension that exposes the SetupEngine as pi tools: the companion judges,
+// these tools act. Loaded per spawn by the companion's piArgv
+// (src/tui/companion.ts), never registered globally, never on the VM (no new
+// session kind — the single-shepherd invariant, CLAUDE.md rule 9).
 //
 // Tools:
 //   - setup_repo_facts: the deterministic facts (stack, frameworks, CI,
@@ -14,16 +14,16 @@
 //     state home — refused until it is a complete partition of the repo;
 //   - setup_review_history / _themes: read the review history
 //     digest the TUI pulled into the state home, page by page, and save the
-//     THEMES condensed from it — the only part that goes on to reviewer
+//     themes condensed from it — the only part that goes on to reviewer
 //     memory (`#history`) and the portrait. A theme quoting a raw comment or
 //     naming its author is refused;
 //   - setup_survey_preview / _start / _status / _stop: the survey
 //     over the saved cut, behind a cost preview whose key the start must
 //     quote; it runs as background `pass-survey` subagents so the companion
-//     keeps talking, and writes unpinned `#survey` notes into the REVIEWER's
+//     keeps talking, and writes unpinned `#survey` notes into the reviewer's
 //     memory, superseding the previous survey's;
-//   - setup_portrait_assemble / setup_portrait / setup_portrait_narrative
-//    : the repo portrait — deterministic facts assembled into the
+//   - setup_portrait_assemble / setup_portrait / setup_portrait_narrative:
+//     the repo portrait — deterministic facts assembled into the
 //     state home, the companion's narrative of them stored in the config home
 //     against the facts' key, each keeping the version it replaced for a diff.
 //   - setup_interview / setup_profile / setup_profile_apply /
@@ -33,15 +33,16 @@
 //     profile — previewed with a diff, written only once validated by the
 //     daemon's own loaders, a commit asked of the operator's machine; the same
 //     check for a direct edit; and the memory entries proposed for pinning,
-//     which the OPERATOR pins in the TUI (no tool here pins).
-// the PR replay's (extensions/setup-replay.ts): setup_replay_preview /
-// _start / _status / _stop — one or two recent PRs reviewed with the old and
-// the new profile, the cost stated first, the two reviews side by side;
-// and the scan's (extensions/setup-scan.ts): scan_preview / _start /
-// _status / _stop and scan_findings; stage 2's scan_suggestions /
-// scan_stage2_propose / scan_stage2_start, and the watcher that answers the
-// TUI's stage-2 start click; triage's (extensions/setup-triage.ts):
-// scan_dismiss / scan_promote / scan_close_fixed / scan_memory.
+//     which the operator pins in the TUI (no tool here pins).
+// Registered beside them: the PR replay's (extensions/setup-replay.ts):
+// setup_replay_preview / _start / _status / _stop — one or two recent PRs
+// reviewed with the old and the new profile, the cost stated first, the two
+// reviews side by side; the scan's (extensions/setup-scan.ts): scan_preview /
+// _start / _status / _stop, scan_findings and scan_matches / scan_match;
+// stage 2's scan_suggestions / scan_stage2_propose / scan_stage2_start, and
+// the watcher that answers the TUI's stage-2 start click and scan stop; and
+// triage's (extensions/setup-triage.ts): scan_dismiss / scan_promote /
+// scan_close_fixed / scan_memory.
 //
 // Convention (onboarding.ts, tui-view.ts): degrade, never wedge — a pi
 // without registerTool registers nothing and says so, and every tool answers
@@ -463,7 +464,7 @@ export function renderPortrait(v: PortraitView): string {
   return out.join("\n\n");
 }
 
-// ---- the interview's tuning --------------------------------------------
+// ---- the interview's tuning ------------------------------------------------------
 
 const settingsText = (s: Record<string, unknown>): string => {
   const parts = TABLE_KEYS.filter((k) => s[k] !== undefined).map(
@@ -579,7 +580,7 @@ export function renderApply(r: ApplyResult): string {
         'PR reviews change only when the owner deploys — the deploy tab says "profile changed, not deployed" until then.',
     );
   }
-  // the replay's default "old" side is this record — say when it
+  // The replay's default "old" side is this record — say when it
   // could not be kept, never leave the companion to find out at preview.
   if (r.baseline !== null) {
     out.push(
@@ -1271,7 +1272,7 @@ export const COMPANION_AGENTS_DIR = fileURLToPath(
  * companion) — where the generic profiles a repo profile extends live. */
 export const APP_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-/** The ports the engine and the scan triage share: the REVIEWER's memory
+/** The ports the engine and the scan triage share: the reviewer's memory
  * and the tracker sink — the issue tracker mounted at QCR_TRACKER_DIR
  * (`/tracker`), or one markdown file per promoted finding in the state home
  * when there is none. */
@@ -1297,7 +1298,7 @@ export function buildEngine(
     {
       repo: checkoutReader(env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO),
       state: stateHomeFs(stateHome(env)),
-      // The CONFIG home, for the portrait narrative. In the
+      // The config home, for the portrait narrative. In the
       // companion only `profiles/` and `portrait/` of it are mounted
       // read-write, and the narrative is written under `portrait/` alone.
       config: configHomeFs(configHome(env)),
@@ -1306,8 +1307,8 @@ export function buildEngine(
       // config home's `profiles/` — the one part of it mounted read-write.
       profiles: { root: env.QCR_ROOT?.trim() || APP_ROOT, env },
       clock: () => new Date(),
-      // The REVIEWER's memory (survey notes and's review history
-      // themes are for PR rounds), or null — the survey then refuses to start
+      // The reviewer's memory (survey notes and review-history themes are
+      // for PR rounds), or null — the survey then refuses to start
       // and a themes save says memory was not written.
       memory: shared.memory,
       // Background pi subagents, run from the companion's own cwd (first-party
@@ -1346,7 +1347,7 @@ const activate = (pi: Pi): void => {
     return;
   }
   for (const def of toolDefinitions(engine)) pi.registerTool(def);
-  // the scan tools, over the same engine's saved unit cut.
+  // The scan tools, over the same engine's saved unit cut.
   const { scan, findings, settingsOf, triage } = buildScan(
     engine,
     process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
@@ -1360,18 +1361,18 @@ const activate = (pi: Pi): void => {
     triage ? () => triage.closeFixed() : null,
   ))
     pi.registerTool(def);
-  // triage — dismiss, promote, close fixed, scan memory.
+  // Triage — dismiss, promote, close fixed, scan memory.
   if (triage) for (const def of triageToolDefinitions(triage)) pi.registerTool(def);
-  // the PR replay — old vs new profile, cost first.
+  // The PR replay — old vs new profile, cost first.
   const replay = buildReplay(
     process.env.QCR_REVIEWED_REPO?.trim() || DEFAULT_REVIEWED_REPO,
     process.env,
     resolveMaxConcurrency(),
   );
   for (const def of replayToolDefinitions(replay)) pi.registerTool(def);
-  // the TUI's stage-2 start click and its scan stop, answered while the companion's
-  // session runs (the inject-bridge's lifecycle: start on session_start, stop
-  // on session_shutdown).
+  // The TUI's stage-2 start click and its scan stop, answered while the
+  // companion's session runs (the inject-bridge's lifecycle: start on
+  // session_start, stop on session_shutdown).
   let unwatch: (() => void) | null = null;
   // VERIFY-ON-PIN: "session_start" / "session_shutdown" event names (as inject-bridge).
   pi.on("session_start", () => {

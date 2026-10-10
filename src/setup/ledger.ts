@@ -1,4 +1,4 @@
-// The COVERAGE LEDGER (spec "Ledger", item 5): what the
+// The COVERAGE LEDGER (spec "Ledger"): what the
 // scan has read — one row per file + content hash + lens, with the tier,
 // effort, validator setting, scan sha and cost it was read at. Two jobs:
 //
@@ -256,7 +256,7 @@ export function rateWhere(
   return { usd_per_kline: (cost / lines) * 1000, cases: cases.size, lines, cost_usd: cost };
 }
 
-// ---- the delta's basis --------------------------------------------------
+// ---- the delta's basis ----
 
 /** Each path's NEWEST content hash read by `lens` — the reading findings
  * are settled against. A path whose content is not that one has CHANGED

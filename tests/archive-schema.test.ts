@@ -1,8 +1,7 @@
-// the schema (docs/archiving.md §8.1, §9.2, §9.4, §9.7): the
-// archive tables and `bot_comments_pr` exist after construction (on a fresh
-// database and on one that predates them), `rounds_pr_round` — added by the
-// boot-stall fix — is declared exactly once, and the heartbeat's
-// round-stats query is an index walk, structurally (the query plan, not a
+// The schema (docs/archiving.md §8.1, §9.2, §9.4, §9.7): the archive tables
+// and `bot_comments_pr` exist after construction (on a fresh database and on
+// one that predates them), `rounds_pr_round` is declared exactly once, and
+// the heartbeat's round-stats query is an index walk, structurally (the query plan, not a
 // clock).
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

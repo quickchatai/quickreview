@@ -170,8 +170,9 @@ describe("tiersForPass", () => {
     ]);
   });
 
-  // validate_tier is a FLOOR — dispatch raises the validator to the
-  // round's highest lens tier, so every tier at or above it must be buildable.
+  // validate_tier is a floor — a profile's `min_tier` for pass-validate can
+  // raise the validator above it (dispatch never raises it to match a lens),
+  // so every tier at or above it must be buildable.
   it("validate builds every tier at or above its floor", () => {
     expect(tiersForPass(VALIDATE_PASS, risk, "terra-med")).toEqual([
       "terra-med",
@@ -236,7 +237,7 @@ describe("buildAgents", () => {
     expect(alpha).toContain("thinking: medium\n");
     const high = readFileSync(join(out, "pass-alpha--sol-high.md"), "utf8");
     expect(high).toContain("name: pass-alpha--sol-high\n");
-    // the model field carries the WHOLE spec — the native subagent
+    // The model field carries the whole spec — the native subagent
     // extension reads only `model:`, and pi's --model accepts the :thinking
     // suffix. The separate thinking field stays as human documentation.
     expect(high).toContain("model: openai-codex/gpt-6.1-sol:high\n");
@@ -351,8 +352,8 @@ describe("buildAgents", () => {
     );
   });
 
-  // the validator's variants must go through exactly the same tier
-  // and override machinery the lens passes do; this path had no test.
+  // The validator's variants must go through exactly the same tier and
+  // override machinery the lens passes do.
   it("applies tier specs and per-variant overrides to the validator too", () => {
     writeFileSync(
       join(root, "agents", "pass-validate.md"),
@@ -515,23 +516,21 @@ describe("the real seeded content", () => {
     const out = mkdtempSync(join(tmpdir(), "qcr-agents-build-"));
     try {
       const built = buildAgents(join(sandbox, "agents"), out, { root: sandbox });
-      // 18 raisable passes × 3 tiers (pass-intent; pass-placement /
-      // pass-simplicity / pass-backcompat; pass-concurrency
-      //; pass-ask-human; pass-sweep and the six sub-lenses,
-      // benchmark 2026-09-26) + 3 risk passes × 1 + validate × 1 (its shipped
-      // floor is the top tier) = 58, + pass-tests × 3 = 61,
+      // 18 raisable passes × 3 tiers (among them pass-intent, pass-placement,
+      // pass-simplicity, pass-backcompat, pass-concurrency, pass-ask-human,
+      // pass-sweep and the six sub-lenses) + 3 risk passes × 1 + validate × 1
+      // (its shipped floor is the top tier) = 58, + pass-tests × 3 = 61,
       // + the code-quality lenses (maintainability, duplication, abstraction)
-      // and pass-style × 3 (2026-09-27) = 73, + pass-consistency × 3 = 76,
-      // + pass-behaviour-delta × 3 (freeze fixes 2, 2026-10-03) = 79,
-      // + pass-lint-conformance × 3 = 82.
+      // and pass-style × 3 = 73, + pass-consistency × 3 = 76,
+      // + pass-behaviour-delta × 3 = 79, + pass-lint-conformance × 3 = 82.
       expect(built).toHaveLength(82);
       for (const b of built) {
         const text = readFileSync(b.output, "utf8");
         // No lens file names a model: the built variant carries exactly the
-        // configured tier's spec (2026-09-26 reseed dropped the stale headers).
+        // configured tier's spec.
         expect(text).toMatch(/\nmodel: openai-codex\/gpt-6\.1-sol:(medium|high)\n/);
         expect(text).not.toContain("{{include:");
-        // identity variables resolve at build time — leaves must see
+        // Identity variables resolve at build time — leaves must see
         // plain text, and no unexpanded {{…}} of any kind may reach a session.
         expect(text).not.toContain("{{");
         expect(text).toContain("You are a **blank-slate review pass**"); // from pass-common.md
@@ -572,7 +571,7 @@ describe("stale definition sweep", () => {
   });
 });
 
-// ----: the composed, lens-keyed addendum registry -------------------
+// ---- the composed, lens-keyed addendum registry ----------------------------
 
 describe("addendum registry", () => {
   it("scopes: all binds everything, lenses excludes only the validator, a list is exact", () => {
@@ -587,7 +586,7 @@ describe("addendum registry", () => {
   it("composes in registry order, deterministically", () => {
     const ids = addendaForPass("pass-baseline").map((a) => a.id);
     expect(ids).toEqual(
-      // a `mode: "scan"` entry composes only in the scan build.
+      // A `mode: "scan"` entry composes only in the scan build.
       PASS_ADDENDA.filter(
         (a) => addendumApplies(a.scope, "pass-baseline") && addendumInMode(a, "pr"),
       ).map((a) => a.id),
@@ -604,9 +603,9 @@ describe("addendum registry", () => {
     expect(new Set(PASS_ADDENDA.map((a) => a.id)).size).toBe(PASS_ADDENDA.length);
   });
 
-  // the daemon posts the renumber as a COMMENT, so the lens must stop
-  // ALSO raising it as a P1 — otherwise the merge gate is still consumed and
-  // the author still owes a re-review round, which is the whole complaint.
+  // The daemon posts the renumber as a COMMENT, so the lens must not also
+  // raise it as a P1 — otherwise the merge gate is still consumed and the
+  // author still owes a re-review round.
   // agents/pass-data-safety.md is a frozen seed (rule 6), so the withdrawal is
   // delivered here, appended to the built body.
   it("withdraws the base-branch migration-numbering P1 from pass-data-safety only", () => {
@@ -626,7 +625,7 @@ describe("addendum registry", () => {
     expect(addendaForPass("pass-data-safety").map((a) => a.id)).toContain("migration-numbering");
   });
 
-  // follow-up: the withdrawal must not outlive the check it relies on.
+  // The withdrawal must not outlive the check it relies on.
   // A degraded round (pre-check skipped or failed) renders "the migration
   // pre-check did not run" into the GATE NOTES (src/templates.ts), and the
   // addendum must hand the class back to the lens for exactly that round.
@@ -643,8 +642,8 @@ describe("addendum registry", () => {
     );
   });
 
-  // the nit treadmill — each re-review minted fresh nits on code
-  // already reviewed and the push re-armed the trigger. The pass halves of the
+  // The nit treadmill: without a stopping rule each re-review mints fresh nits
+  // on code already reviewed and the push re-arms the trigger. The pass halves of the
   // stopping rule ride the registry; the round-side half is the NIT SCOPE
   // block the session copies into every task string (src/templates.ts).
   it("arms the nit-scope stopping rule for lenses and its enforcement for the validator", () => {
@@ -667,9 +666,9 @@ describe("addendum registry", () => {
     expect(renderNitScopeNote(3)).toContain("NIT SCOPE: this is review 3");
   });
 
-  // first-night audit F6 — the validator killed a one-grep-verifiable
-  // finding as "unverifiable" and a degraded stand-in SURVIVE'd everything
-  // without hunting counterevidence. Kill reasons feed the EOD critic, so the
+  // A free-form kill vocabulary lets the validator kill a one-grep-verifiable
+  // finding as "unverifiable", or survive everything without hunting
+  // counterevidence. Kill reasons feed the EOD critic, so the
   // vocabulary is closed, validator-only, and rides the registry.
   it("binds the closed kill/downgrade vocabulary to the validator and only the validator", () => {
     const validate = composeAddendum(VALIDATE_PASS);
@@ -712,7 +711,7 @@ describe("addendum registry", () => {
     );
   });
 
-  // merge-not-drop. The session's step-3 merge now emits MERGED/FOLDED
+  // Merge-not-drop. The session's step-3 merge emits MERGED/FOLDED
   // disposition lines; the validator echoes them into its kill log (the
   // telemetry feed), audits wrong merges/folds, and never treats a shared
   // anchor as a duplicate kill.
@@ -782,7 +781,7 @@ describe("the built pass contract (rules)", () => {
   it("every finding-producing pass is told to emit the reachability field", () => {
     for (const [name, text] of bodies) {
       if (name.startsWith(`${VALIDATE_PASS}--`)) continue;
-      // The field rides the shared schema (pass-common, 2026-10-03 reseed);
+      // The field rides the shared schema (pass-common);
       // the addendum carries its meaning.
       expect(text).toContain("reachability: routine|plausible|contrived");
       expect(text).toContain("`contrived` never blocks at any severity");
@@ -799,8 +798,8 @@ describe("the built pass contract (rules)", () => {
     expect(text).toContain("do not let a `routine` P0/P1 be talked down");
   });
 
-  // the closed kill vocabulary must reach EVERY built validator
-  // variant (the floor fans out to every tier at or above it) and no
+  // The closed kill vocabulary must reach every built validator variant (the
+  // floor fans out to every tier at or above it) and no
   // lens variant.
   it("ships the closed kill vocabulary in every built validator variant and no lens", () => {
     const header = "## Kill and downgrade reasons — a closed vocabulary (sandbox rule)";
@@ -828,7 +827,7 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
-  // the P2 cap on the placement and simplicity lenses binds at
+  // The P2 cap on the placement and simplicity lenses binds at
   // the validator, like intent's cap (the lens text is advice; the veto is
   // where a cap is real).
   it("caps placement/simplicity at P2 in every validator variant and no lens", () => {
@@ -842,7 +841,7 @@ describe("the built pass contract (rules)", () => {
     // The downgrade word joins the CLOSED vocabulary, so the EOD critic's
     // diet stays labeled.
     expect(validator).toContain("`design-over-cap`, `inflated`");
-    // The ratified beyond-the-diff licence must survive the validator's
+    // The beyond-the-diff licence must survive the validator's
     // out-of-scope kill definition.
     expect(validator).toContain(
       "**Beyond-the-diff simplicity findings are in scope by ratification.**",
@@ -850,7 +849,7 @@ describe("the built pass contract (rules)", () => {
     expect(validator).toContain("Never kill such a candidate as `out-of-scope`");
   });
 
-  // blocker-class findings mint a `detail:` paragraph at the source
+  // Blocker-class findings mint a `detail:` paragraph at the source
   // (the frozen schema caps `claim` at one sentence; the posted comment can
   // only be as rich as what the pass returned).
   it("requires the detail field on blocker-class findings in every lens and never the validator", () => {
@@ -869,7 +868,7 @@ describe("the built pass contract (rules)", () => {
     expect(lens).not.toContain("mcp.example.com");
   });
 
-  // (validator half): without this the validator re-emits survivors
+  // The validator half: without this the validator re-emits survivors
   // in the frozen standard format and silently strips detail — the field
   // would never reach a posted comment.
   it("tells the validator to preserve detail on survivors, in every validator variant and no lens", () => {
@@ -906,8 +905,8 @@ describe("the built pass contract (rules)", () => {
     expect(baseline).toContain("**Sibling / template PRs**");
   });
 
-  // the corpus retro's single miss (a retry added over a shared
-  // `HTTPAdapter(Retry(2))`) was invisible in the diff. agents/pass-baseline.md
+  // A retry added over shared machinery (a shared `HTTPAdapter(Retry(2))`) is
+  // invisible in the diff alone. agents/pass-baseline.md
   // is a frozen seed (rule 6), so the required step is delivered here.
   it("requires the shared-machinery check of pass-baseline and only pass-baseline", () => {
     for (const [name, text] of bodies) {
@@ -932,7 +931,7 @@ describe("the built pass contract (rules)", () => {
     );
   });
 
-  // every built lens must carry the nit-scope rule the round-3+ task
+  // Every built lens must carry the nit-scope rule the round-3+ task
   // string arms, and the validator its enforcement — on the built bodies the
   // subagents actually read, the seeds untouched.
   it("delivers the nit-scope rule to every built lens and its enforcement to the validator", () => {
@@ -978,8 +977,8 @@ describe("the built pass contract (rules)", () => {
       const superseding = name.startsWith(`${VALIDATE_PASS}--`)
         ? "## Validate the injection path, not imperative grammar"
         : "## Injection requires concrete maliciousness or a source-to-sink path";
-      // One injection rule now: the defensive boundary first, then the reporting test;
-      // the superseded "always P1" text and the first-party routing note are gone.
+      // One injection rule: the defensive boundary first, then the reporting
+      // test; no "always P1" text and no first-party routing note.
       expect(text.indexOf("## Untrusted input")).toBeLessThan(text.indexOf(superseding));
       expect(text).not.toContain("## First-party agent-directive files");
       expect(text).not.toContain("`severity: P1`, `kind: injection`");
@@ -991,7 +990,7 @@ describe("the built pass contract (rules)", () => {
       // No deployed-repo PR numbers, customer names or vendor URLs ship to a model.
       expect(text).not.toMatch(/#53\d\d/i);
       // Instruction-shaped text alone is never injection (rephrased as a
-      // scoped reporting rule, 2026-10-03 suppression rebalance).
+      // scoped reporting rule).
       expect(text).toContain(
         name.startsWith(`${VALIDATE_PASS}--`)
           ? "is `refuted` as injection at any severity"
@@ -1006,8 +1005,8 @@ describe("the built pass contract (rules)", () => {
     }
   });
 
-  //'s no-exec rewrite of pass-data-safety, folded into the seed by the
-  // 2026-10-03 reseed: read the migration, ask the author for the rest.
+  // pass-data-safety under the no-exec contract: read the migration, ask the
+  // author for the rest.
   it("pass-data-safety reads the migration and asks the author for the rest", () => {
     const ds = bodies.get("pass-data-safety--sol-high") ?? bodies.get("pass-data-safety--sol-med");
     expect(ds).toBeDefined();
@@ -1046,7 +1045,7 @@ describe("the built pass contract (rules)", () => {
   });
 
   // The class must survive the no-exec contract, not be dropped by it: test
-  // vacuity is read, never run (folded into the seed 2026-10-03, R2).
+  // vacuity is read, never run.
   it("pass-baseline judges test vacuity by reading, never by running", () => {
     for (const text of bodies.values())
       expect(text).not.toContain("## Baseline: test vacuity is a STATIC read");
@@ -1060,9 +1059,7 @@ describe("the built pass contract (rules)", () => {
   });
 
   it("no built pass instructs an execution outside the allowlist", () => {
-    // The exec-demanding phrasings that survive in a seed must each be
-    // withdrawn by a later addendum section in the SAME built body.
-    // The exec-demanding seed phrasings were reseeded away (2026-10-03).
+    // No built body carries an exec-demanding phrasing.
     for (const text of everyBody()) {
       for (const phrase of [
         "judge by the real DDL",
@@ -1071,8 +1068,8 @@ describe("the built pass contract (rules)", () => {
         "materialize a sample",
       ])
         expect(text).not.toContain(phrase);
-      // The policy itself is unchanged and still names the allowlist — pinned
-      // on the rendered constant, never on a prefix of the list.
+      // The policy names the allowlist — pinned on the rendered constant, never
+      // on a prefix of the list.
       expect(text).toContain(`Allowed commands: ${ALLOWED_COMMANDS_CLAUSE}.`);
       expect(text).toContain("never re-run or trigger anything");
     }
@@ -1081,7 +1078,7 @@ describe("the built pass contract (rules)", () => {
   it("delivers all of it without touching a single seed", () => {
     const agentFiles = [
       ...readdirSync(join(sandbox, "agents")).filter((f) => f.endsWith(".md")),
-      // the scan-only lens sits one level down.
+      // The scan-only lens sits one level down.
       ...readdirSync(join(sandbox, "agents", "scan")).map((f) => join("scan", f)),
     ];
     for (const f of agentFiles) {
@@ -1089,7 +1086,7 @@ describe("the built pass contract (rules)", () => {
       expect(seed).not.toContain("(sandbox rule)");
       expect(seed).not.toContain("reachability: routine");
     }
-    // The shared schema names the field (2026-10-03 reseed); its RULES stay in
+    // The shared schema names the field; its RULES stay in
     // the addendum.
     const common = readFileSync(join(sandbox, "prompts", "pass-common.md"), "utf8");
     expect(common).toContain("reachability: routine|plausible|contrived");
@@ -1098,11 +1095,10 @@ describe("the built pass contract (rules)", () => {
   });
 });
 
-// ---- pass-intent --------------------------------------------------
+// ---- pass-intent ----------------------------------------------------------
 //
-// The tenth lens. Its definition file is OURS (created after the
-// seeding, deliberately absent from the seed manifest), so its rules live in
-// the definition itself; only the validator-side severity cap rides the
+// Its definition file is ours (created after the seeding, deliberately absent
+// from the seed manifest), so its rules live in the definition itself; only the validator-side severity cap rides the
 // addendum registry.
 describe("pass-intent", () => {
   const sandbox = join(import.meta.dirname, "..");
@@ -1185,7 +1181,7 @@ describe("pass-intent", () => {
   });
 });
 
-// the ask-your-human lens: questions whose answer is NOT in the
+// The ask-your-human lens: questions whose answer is NOT in the
 // repo, addressed to the PR author's AI implementer. Full severity WITH a
 // condition (a blocker must name the failure under the bad answer), its own
 // tag, and a trigger contract scoped to this lens alone.
@@ -1348,7 +1344,7 @@ describe("pass-concurrency", () => {
     expect(text).toContain("## Every finding has four parts");
     expect(text).toContain("**The name** — what races");
     expect(text).toContain("**The walkthrough** — the interleaving, step by step");
-    // The corpus archetype is the standard for the walk (§db-race).
+    // The corpus archetype is the standard for the walk.
     expect(text).toContain("Process A — get conversation from db");
     expect(text).toContain("**The risk assessment** — how often this can actually happen");
     expect(text).toContain("**The proposed lock**");
@@ -1419,7 +1415,7 @@ describe("pass-concurrency", () => {
   });
 });
 
-// ----: the memory-tool allowlist and its contract ------------------
+// ---- the memory-tool allowlist and its contract ---------------------------
 
 describe("applyMemoryTools", () => {
   it("appends exactly the two read-only tools", () => {
@@ -1470,8 +1466,8 @@ describe("the memory addendum", () => {
 });
 
 // The quickchat pack, as its frozen fixture copy (tests/fixtures/profiles/
-// quickchat — moved the live pack to the install's config home). The
-// fixture is dropped from the assembled snapshots, where these pins
+// quickchat; the live pack lives in the install's config home). The fixture is
+// dropped from the assembled publication snapshots, where these pins
 // self-skip; in the source tree a missing fixture throws instead.
 const corpusSandbox = join(import.meta.dirname, "..");
 const HAS_QC_PACK = stageFixtureProfile(corpusSandbox, "quickchat");
@@ -1646,11 +1642,10 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain("look the convention up in memory");
     });
 
-    // ----: cut output that carries no reasoning ----------------------
+    // ---- cut output that carries no reasoning --------------------------------
     //
-    // The governing principle is the owner's (2026-08-24): reading volume was
-    // DECLINED as a target — "we should not sacrifice the reasoning of why for
-    // the problem we point out". Only unreasoned volume is on the table, so every
+    // Reading volume is not a target: the reasoning of why a problem matters is
+    // never sacrificed. Only unreasoned volume is on the table, so every
     // one of these assertions also pins the protection of the reasoning.
 
     it("a nit must name the change it asks for, and the WHY is explicitly protected", () => {
@@ -1701,7 +1696,7 @@ describe.skipIf(!HAS_QC_PACK)(
       expect(text).toContain("`tag-outside-grammar`");
       // The tag defect is a CORRECTION, not a kill: the finding survives.
       expect(text).toContain("is CORRECTED to the posting map's tag");
-      // The three new words are also listed in the closed-vocabulary entry, so
+      // The three words are also listed in the closed-vocabulary entry, so
       // the validator never has to reach outside it.
       expect(text).toContain("a nit-class candidate that asks for no change");
       // The bar, and the reasoning, are both explicitly out of reach.
@@ -1720,9 +1715,10 @@ describe.skipIf(!HAS_QC_PACK)(
     it("the registry stays byte-stable: unique ids, the quickchat pack at the composed tail", () => {
       expect(new Set(REGISTRY.map((a) => a.id)).size).toBe(REGISTRY.length);
       const ids = PASS_ADDENDA.map((a) => a.id);
-      // the six house rules left the compiled-in registry; the one
-      // generic corpus rule (diff-leftovers) stays, ahead of the
-      // tail, preserving the generic build's byte order.
+      // The six house rules live in the quickchat pack, not the compiled-in
+      // registry; the one generic corpus rule (diff-leftovers) stays in the
+      // registry, ahead of the unreasoned-output and injection-evidence tail,
+      // preserving the generic build's byte order.
       for (const [id] of SCOPED) {
         if (id === "diff-leftovers") expect(ids).toContain(id);
         else expect(ids, id).not.toContain(id);
@@ -1736,17 +1732,18 @@ describe.skipIf(!HAS_QC_PACK)(
         "unreasoned-output-validate",
         "concrete-injection-evidence",
         "concrete-injection-evidence-validate",
-        // and scan-loop: composed only in the companion's scan build
+        // Composed only in the companion's scan build
         // (`mode: "scan"`), so a PR build's bytes are unchanged by either
         // (tests/scan-precision.test.ts proves it byte for byte).
         "scan-precision",
-        // Owner ruling 2026-09-30: the scan validator is the skeptic — scan mode only.
+        // The scan validator is the skeptic — scan mode only.
         "scan-skeptic-validate",
         "scan-mode-anchor",
       ]);
       // The quickchat pack composes AFTER every generic entry, in filename
-      // order — which the numeric prefixes pin to the old declaration order.
-      //'s three stack rules (moved out of the reseeded seeds) follow.
+      // order — which the numeric prefixes pin to a fixed declaration order.
+      // The three stack rules (which the stack-neutral seeds do not carry)
+      // follow.
       const packIds = REGISTRY.slice(PASS_ADDENDA.length).map((a) => a.id);
       expect(packIds).toEqual([
         ...SCOPED.map(([id]) => id).filter((id) => id !== "diff-leftovers"),

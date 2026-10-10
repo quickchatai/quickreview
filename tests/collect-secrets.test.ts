@@ -1,4 +1,4 @@
-// the shape-aware secrets wizard, run for real (guards-shell style:
+// The shape-aware secrets wizard, run for real (guards-shell style:
 // the actual bash script, a temp secrets dir, piped stdin, nothing touched
 // outside the temp dir). The contract under test:
 //

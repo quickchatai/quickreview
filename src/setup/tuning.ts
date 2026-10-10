@@ -257,7 +257,7 @@ export interface ApplyResult {
   /** The profile the live config names ("" = none), for the "not in use" note. */
   config_names: string | null;
   commit: { id: string } | null;
-  /**: the profile as it was before this write, recorded for the PR
+  /** The profile as it was before this write, recorded for the PR
    * replay under the commit id — or why it could not be (the write still
    * landed; only the replay's default "old" side is missing). Null when
    * nothing was written. */
@@ -439,7 +439,7 @@ export function profileApply(
   if (write) {
     const now = deps.clock();
     if (!unchanged) {
-      // what the write is about to replace, kept for the replay's
+      // What the write is about to replace, kept for the replay's
       // "old" side — BEFORE the files change, so a crash in between leaves a
       // baseline of the profile still on disk, never a missing one.
       const id = commitId(now, profile, (candidate) => {

@@ -94,12 +94,13 @@ describe("posting receipt identity", () => {
   });
 });
 
-// ----: the guarded no-op record --------------------------------------
+// ---- the guarded no-op record ------------------------------------------------
 
 const NOOP_HEAD = "a746573675f8eae0f13e69ad83006190aa8436e4";
 const NOOP_KEY = roundPostingKey(5409, 18, NOOP_HEAD);
 
-/** The record post-review.sh wrote for #5409 round 18, had shipped. */
+/** The `skipped` record post-review.sh writes when guard 2 refuses a posting
+ * (a real PR's round as the fixture). */
 const noop = (
   over: Record<string, unknown> = {},
   mark: Record<string, unknown> = {},

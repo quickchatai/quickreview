@@ -1,6 +1,5 @@
-// The post-scan RE-TUNE (setup & scan spec "Re-tuning", user
-// stories 86–87): after a scan the companion applies profile changes itself
-// and reports what changed and why. It changes the profile through the SAME
+// The post-scan re-tune: after a scan the companion applies profile changes
+// itself and reports what changed and why. It changes the profile through the SAME
 // tool the interview does (tuning.ts `profileApply` — the priority table,
 // the companion's emphasis, a drafted style guide; staged, checked with the
 // daemon's own loaders, written into the config home, a commit asked for),

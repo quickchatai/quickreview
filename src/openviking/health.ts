@@ -1,6 +1,6 @@
 // OpenViking health probing.
 //
-// THE HEALTH GATE IS `/ready`, NEVER `openviking-server doctor`. `doctor` makes
+// The health gate is `/ready`, never `openviking-server doctor`. `doctor` makes
 // live provider calls and exits 1 whenever no `vlm` is configured — which is
 // our normal, deliberate state (memories are authored, never extracted). It
 // would report a permanently sick server.

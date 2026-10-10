@@ -1,4 +1,4 @@
-// `slack_reply` — the overseer's ONLY way to speak in Slack (S3).
+// `slack_reply` — the overseer's only way to speak in Slack.
 //
 // The session never holds a Slack token and never names a channel: it writes a
 // command file with a thread ts and some text, and this executor decides

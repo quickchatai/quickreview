@@ -1,10 +1,10 @@
-// FT-0345 — the pluggable issue sink, exercised at the seam with fakes for
+// The pluggable issue sink, exercised at the seam with fakes for
 // all three kinds. No live GitHub anywhere:
 //   * wayfinder — against a temp tracker dir, exactly as the auto-filer tests
 //     do (byte-compatible ticket format is autofile.test.ts's job; here the
 //     adapter's report/stamp contract is pinned);
 //   * github    — a fake ssh runner captures the command file, which must
-//     validate against the daemon's OWN schema (src/commands.ts), and the
+//     validate against the daemon's own schema (src/commands.ts), and the
 //     daemon's answer (queued result JSON) decides filed/refused/stamp;
 //   * none      — inert.
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -163,7 +163,7 @@ describe("github sink", () => {
     expect(String(payload["title"])).not.toContain("#bug"); // tags are not title material
     expect(String(payload["body"])).toContain(`Memory-key: ${memoryKey(entry())}`);
     expect(String(payload["body"])).toContain("lingering stale_recheck");
-    // tmp+mv into the OPERATOR command dir (FT-0395) — the unwedge write
+    // tmp+mv into the operator command dir — the unwedge write
     // idiom: this is the TUI filing on the operator's behalf, not a session.
     const script = write.argv[write.argv.length - 1]!;
     expect(script).toContain("cd -P '/opt/quickreview/sandbox/commands/operator'");

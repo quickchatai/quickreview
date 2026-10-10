@@ -1,5 +1,5 @@
-// The scan's SOURCE port, for real: the reviewed checkout, READ-
-// ONLY, as trees at a chosen sha.
+// The scan's source port: the reviewed checkout, read-only, as trees at a
+// chosen sha.
 //
 // "Scan my local checkout at a sha I choose" means the tree AT THAT SHA, not
 // whatever the working copy holds: the file list and every content hash come

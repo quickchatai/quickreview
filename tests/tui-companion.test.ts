@@ -49,7 +49,7 @@ const CFG: CompanionConfig = resolveCompanionPaths(
     repo_dir: "/host/review-sandbox",
     tracker_dir: "/host/tracker",
     tracker_docs_dir: "/host/tracker-docs",
-    // a path that does not exist on any machine running this suite —
+    // A path that does not exist on any machine running this suite —
     // so the default lifecycle() (real fs) is the MISSING-checkout case, and
     // the present case is opted into explicitly via withRepo().
     reviewed_repo_dir: "/host/example-app",
@@ -60,10 +60,10 @@ const CFG: CompanionConfig = resolveCompanionPaths(
   root,
 );
 
-/**: the lifecycle's install env — so the config/state home mounts are
+/** The lifecycle's install env — so the config/state home mounts are
  * derived from a HOME no machine has, never the operator's own. */
 const HOST_ENV = { HOME: "/host/home" };
-/** The host side of the mounts under HOST_ENV. */
+/** The host side of the install-home mounts under HOST_ENV. */
 const HOMES = {
   profiles: "/host/home/.config/qcr/default/profiles",
   portrait: "/host/home/.config/qcr/default/portrait",
@@ -158,7 +158,7 @@ describe("companion config", () => {
   it("honors an explicit [companion] override", () => {
     const base = readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8");
     // Inject into the [companion] table itself — appended bare keys would join
-    // whatever table happens to be last in config.toml ([backfill]).
+    // whatever table happens to be last in config.toml.
     const withOverrides = base.replace(
       "[companion]",
       `[companion]\ncontainer_name = "other"\nenabled = false\ncooldown_min = 5`,
@@ -177,22 +177,22 @@ describe("CompanionLifecycle argv", () => {
     const argv = lc.runArgv();
     expect(argv.slice(0, 4)).toEqual(["run", "--detach", "--name", "qcr-companion"]);
     const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
-    // the ~/.ssh mount is gone for good — the companion's reach into
-    // the VM is OpenViking memory over a HOST-owned forward, nothing else.
+    // No ~/.ssh mount: the companion's reach into the VM is OpenViking memory
+    // over a HOST-owned forward, nothing else.
     expect(mounts).toEqual([
       `companion-pihome:${CONTAINER.piHome}`,
       `/host/review-sandbox:${CONTAINER.workspace}:rw`,
       `/host/tracker:${CONTAINER.tracker}:rw`,
-      // the tracker's protocol doc lives OUTSIDE tracker_dir, so it
+      // The tracker's protocol doc lives OUTSIDE tracker_dir, so it
       // needs its own mount — read-only, because the companion follows the
       // protocol and never rewrites it.
       `${CFG.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`,
-      // the finished-round evidence store, read-only. The TUI holds
+      // The finished-round evidence store, read-only. The TUI holds
       // the VM access and writes it; the companion only reads.
       `${CFG.evidence_dir}:${CONTAINER.evidence}:ro`,
       `/host/feed:${CONTAINER.feed}:rw`,
       `/host/alerts:${CONTAINER.alerts}:rw`,
-      // the config home's profiles/ (rw — setup writes the profile),
+      // The config home's profiles/ (rw — setup writes the profile),
       // its portrait/ (rw — the portrait narrative), the config
       // mirror (ro), the state home (rw — survey and scan state) and the
       // read-only token dir.
@@ -236,37 +236,37 @@ describe("CompanionLifecycle argv", () => {
     const pi = argv.slice(argv.indexOf("pi"));
     expect(pi).toEqual([
       "pi",
-      // Rule 7 / pr-5334: the companion never blocks on pi's "Trust project
-      // folder?" modal either. This is the same flag sessions.ts passes, and
-      // its absence here is why the companion prompted on every start.
+      // The companion never blocks on pi's "Trust project folder?" modal
+      // either. This is the same flag sessions.ts passes; without it the
+      // companion prompts on every start.
       "--approve",
       // Ambient feed changes stay in /feed and never become synthetic turns.
       "--extension",
       `${CONTAINER.workspace}/extensions/muted-theme.ts`,
       "--theme",
       `${CONTAINER.workspace}/extensions/muted-theme.json`,
-      // the inject bridge delivers the day-open message.
+      // The inject bridge delivers the day-open message.
       "--extension",
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
-      // the read-only tui_* tools over what the TUI published to
+      // The read-only tui_* tools over what the TUI published to
       // /feed. Reads only — it cannot fetch (see extensions/tui-view.ts).
       "--extension",
       `${CONTAINER.workspace}/extensions/tui-view.ts`,
-      // the first-party subagents glue over pi's OWN subagent
+      // The first-party subagents glue over pi's OWN subagent
       // extension. Unconditional like every other repo extension — a failed
       // native import inside it degrades to "no subagent tool", never a pi
       // that won't start.
       "--extension",
       `${CONTAINER.workspace}/extensions/subagents.ts`,
-      // 2026-08-25: the bright-line vetoes — frozen seeds, no-GitHub,
+      // The bright-line vetoes — frozen seeds, no-GitHub,
       // no-discard (extensions/companion-guard.ts). Unconditional: it rides
       // the same mount as every other repo extension.
       "--extension",
       `${CONTAINER.workspace}/extensions/companion-guard.ts`,
-      // the setup & scan tool belt over the SetupEngine.
+      // The setup & scan tool belt over the SetupEngine.
       "--extension",
       `${CONTAINER.workspace}/extensions/setup.ts`,
-      // 2026-08-25: `!{cmd}` inline expansion, vendored from pi's examples.
+      // `!{cmd}` inline expansion, vendored from pi's examples.
       "--extension",
       `${CONTAINER.workspace}/extensions/inline-bash.ts`,
       "--model",
@@ -319,12 +319,12 @@ describe("the reviewed repo, read-only", () => {
     [CONTAINER.workspace]: "/host/review-sandbox",
     [CONTAINER.tracker]: "/host/tracker",
     [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
-    // read-only evidence store — part of the expected mount set, so a
+    // Read-only evidence store — part of the expected mount set, so a
     // container created before it drifts and is recreated.
     [CONTAINER.evidence]: CFG.evidence_dir,
     [CONTAINER.feed]: "/host/feed",
     [CONTAINER.alerts]: "/host/alerts",
-    // the install homes and the token dir.
+    // The install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
     [CONTAINER.portrait]: HOMES.portrait,
     [CONTAINER.configLive]: HOMES.configMirror,
@@ -333,7 +333,7 @@ describe("the reviewed repo, read-only", () => {
   };
 
   it("mounts the reviewed repo READ-ONLY at a generic path when the checkout is there", () => {
-    expect(CONTAINER.reviewedRepo).toBe("/reviewed-repo"); //: no repo's name
+    expect(CONTAINER.reviewedRepo).toBe("/reviewed-repo"); // generic: no repo's name
     const argv = withRepo([]).lc.runArgv();
     const mounts = argv.filter((_, i) => argv[i - 1] === "--volume");
     expect(mounts).toContain(`/host/example-app:${CONTAINER.reviewedRepo}:ro`);
@@ -366,9 +366,9 @@ describe("the reviewed repo, read-only", () => {
   });
 
   it("recreates a container created BEFORE the mount existed", async () => {
-    // Bind mounts freeze at creation, so the container the owner is already
-    // running carries the old set; `docker start` would silently resurrect a
-    // companion that cannot read the reviewed code at all.
+    // Bind mounts freeze at creation, so an already-created container carries
+    // the old set; `docker start` would silently resurrect a companion that
+    // cannot read the reviewed code at all.
     const { lc, calls } = withRepo([
       inspectWith(true, BASE),
       okFor("rm"),
@@ -431,7 +431,7 @@ describe("the reviewed repo, read-only", () => {
     expect(cfg.reviewed_repo_dir.startsWith("/")).toBe(true);
     expect(cfg.reviewed_repo_dir.endsWith("/qc")).toBe(true);
     // The config documents it as a commented default, like every other knob
-    // (asserted on the fixture, which mirrors the shipped config's shape —
+    // (asserted on the fixture, which mirrors the shipped config's shape and
     // keeps operator edits to the live file out of the suite).
     expect(readFileSync(resolve(root, "tests/fixtures/config.toml"), "utf8")).toContain(
       "# reviewed_repo_dir =",
@@ -445,7 +445,7 @@ describe("the reviewed repo, read-only", () => {
     // An invented empty dir reads as "the code says nothing" — worse than a
     // plainly absent mount. Never mkdir it.
     expect(entrypoint).not.toMatch(/mkdir[^\n]*\/reviewed-repo/);
-    // the old repo-named path is gone from the image's boot text.
+    // No repo-named path in the image's boot text.
     expect(entrypoint).not.toContain("/example-app");
   });
 
@@ -492,12 +492,12 @@ describe("mount drift", () => {
     [CONTAINER.workspace]: "/host/review-sandbox",
     [CONTAINER.tracker]: "/host/tracker",
     [CONTAINER.trackerDocs]: CFG.tracker_docs_dir,
-    // read-only evidence store — part of the expected mount set, so a
+    // Read-only evidence store — part of the expected mount set, so a
     // container created before it drifts and is recreated.
     [CONTAINER.evidence]: CFG.evidence_dir,
     [CONTAINER.feed]: "/host/feed",
     [CONTAINER.alerts]: "/host/alerts",
-    // the install homes and the token dir.
+    // The install homes and the token dir.
     [`${CONTAINER.profiles}`]: HOMES.profiles,
     [CONTAINER.portrait]: HOMES.portrait,
     [CONTAINER.configLive]: HOMES.configMirror,
@@ -526,9 +526,9 @@ describe("mount drift", () => {
   });
 
   it("recreates a container carrying a STALE mount — the legacy ssh case", async () => {
-    // The live container on the owner's PC predates and still has
-    // ~/.ssh + an agent socket bound in. `docker start` would resurrect that
-    // boundary breach silently; rule 8 is meant to be structural.
+    // A container created with ~/.ssh + an agent socket bound in must be
+    // recreated: `docker start` would resurrect that boundary breach silently,
+    // and rule 8 is meant to be structural.
     const { lc, calls } = lifecycle([
       inspectWith(false, {
         ...CURRENT,
@@ -561,10 +561,10 @@ describe("mount drift", () => {
   it("compares a NAMED VOLUME by name, not by its _data path", async () => {
     // Docker reports a volume's Source as /var/lib/docker/volumes/<name>/_data
     // (or the daemon's data-root), which never equals the NAME the run argv
-    // asks for. Comparing Source made drift fire on EVERY start: the container
-    // was recreated each time, and the docker exec that followed raced the
-    // fresh container ("is not running") and reported the companion down —
-    // which is why the sidebar kept vanishing on startup.
+    // asks for. Comparing Source would make drift fire on EVERY start: the
+    // container would be recreated each time, and the docker exec that follows
+    // would race the fresh container ("is not running") and report the
+    // companion down.
     const asDockerReports = (running: boolean) => (argv: string[]) =>
       argv[0] !== "inspect"
         ? undefined
@@ -612,9 +612,9 @@ describe("mount drift", () => {
   describe("pinned DNS (network roaming, 2026-08-28)", () => {
     // Docker's embedded DNS forwards to the upstream the HOST had at
     // container creation. That upstream is network-specific, so the first
-    // wifi change after a long-lived start killed every lookup in the
-    // container (pi: "Error: fetch failed" ×N — up 17h).
-    // Pinning public resolvers makes the container network-agnostic.
+    // network change after a long-lived start kills every lookup in the
+    // container (pi: "Error: fetch failed"). Pinning public resolvers makes
+    // the container network-agnostic.
     it("runs the container with public DNS pinned", () => {
       const argv = lifecycle([]).lc.runArgv();
       for (const ip of PUBLIC_DNS) {
@@ -627,8 +627,8 @@ describe("mount drift", () => {
     it("asks a SEPARATE inspect for the created DNS — never folded into status()", async () => {
       // On docker 29, `.HostConfig` in the same template as the mounts'
       // `{{if .Name}}` drops execution to the raw JSON map, where a bind
-      // mount has no "Name" key and the whole inspect errors (verified live
-      // 2026-08-28). Two calls, each with a format that works.
+      // mount has no "Name" key and the whole inspect errors. Two calls, each
+      // with a format that works.
       const { lc, calls } = lifecycle([inspectWith(true, CURRENT, ["9.9.9.9"])]);
       expect(await lc.createdDns()).toEqual(["9.9.9.9"]);
       const fmt = String(calls.find((c) => c[0] === "inspect")![2]);
@@ -637,8 +637,8 @@ describe("mount drift", () => {
     });
 
     it("recreates a container created BEFORE the pin — DNS-less, mounts fine", async () => {
-      // The live pre-pin container: mounts all current, HostConfig.Dns empty.
-      // `docker start` would resurrect the wifi-change failure silently.
+      // A pre-pin container: mounts all current, HostConfig.Dns empty.
+      // `docker start` would resurrect the network-change failure silently.
       const { lc, calls } = lifecycle([
         inspectWith(true, CURRENT, []),
         okFor("rm"),
@@ -695,8 +695,8 @@ describe("CompanionLifecycle state machine", () => {
   });
 
   it("recreates an unstartable container (stale bind mounts after a reboot)", async () => {
-    // Live incident 2026-08-14: the ssh-agent socket path is random per boot;
-    // after a crash `docker start` fails forever on the recorded mount.
+    // The ssh-agent socket path is random per boot; after a crash
+    // `docker start` would fail forever on the recorded mount.
     const { lc, calls } = lifecycle([
       inspect(false),
       (argv) =>
@@ -893,15 +893,14 @@ describe("companion image", () => {
     expect(dockerfile).toContain(`PI_PACKAGE=${pkg.pi.package}`);
   });
 
-  // the retired engine must not creep back. pi-memory and qmd were
-  // the hand-rolled memory engine's two npm dependencies; both went with it.
-  // Re-installing either would put a SECOND memory engine in the companion:
+  // No second memory engine in the companion: pi-memory and qmd are not
+  // installed. Installing either would put a SECOND memory engine there:
   // one writing a local MEMORY.md nobody reads, and one hooking
   // `session_before_compact`, which extensions/ledger-pin.ts must own alone.
   it("installs NO memory extension — memory is OpenViking over the host forward", () => {
     expect(pkg.pi.extensions?.["pi-memory"]).toBeUndefined();
-    // Mechanism, not mention: the historical note explaining WHY they are gone
-    // is allowed to name them; an install layer is not.
+    // Mechanism, not mention: a comment explaining why they are absent may
+    // name them; an install layer may not.
     const installs = dockerfile.split("\n").filter((l) => /^\s*(RUN|&&)\s+npm install/.test(l));
     expect(installs.join("\n")).not.toMatch(/pi-memory|qmd/i);
     expect(dockerfile).not.toMatch(/^ARG (PI_MEMORY_SPEC|QMD_SPEC)=/m);
@@ -912,8 +911,7 @@ describe("companion image", () => {
 
   // Rule 7: the reviewer never blocks on interactive pi input — and neither
   // does the companion. All three layers, or the "Trust project folder?" modal
-  // comes back the moment one regresses. The companion shipped with only the
-  // settings layer and prompted on every start until 2026-08-21.
+  // comes back the moment one regresses.
   it("carries all three trust layers, and pre-trusts /workspace not /opt/quickreview", () => {
     // ② the settings belt
     expect(entrypoint).toContain('cfg.defaultProjectTrust = "always"');
@@ -931,21 +929,21 @@ describe("companion image", () => {
     ).toContain("--approve");
   });
 
-  // the image's HOME and the code's mount destination are ONE fact
-  // split across two files. They drifted for a week — `USER companion` resolved
-  // through uid 1000 back to node:22's own user, so $HOME was /home/node while
-  // the volume was mounted at /home/companion/.pi, and pi's OAuth token lived
-  // on the writable layer where a recreate destroyed it.
+  // The image's HOME and the code's mount destination are ONE fact split
+  // across two files. If they drift — `USER companion` resolving through uid
+  // 1000 back to node:22's own user puts $HOME at /home/node while the volume
+  // sits at /home/companion/.pi — pi's OAuth token lands on the writable
+  // layer, where a recreate destroys it.
   it("mounts the pihome volume at the HOME pi actually uses", () => {
-    // The explicit ENV is the whole fix — without it docker picks the wrong
+    // The explicit ENV is what holds it — without it docker picks the wrong
     // passwd entry for the duplicated uid.
     expect(dockerfile).toMatch(/^ENV HOME=\/home\/companion$/m);
     expect(CONTAINER.home).toBe("/home/companion");
     // …and the volume must sit INSIDE that home, or auth.json misses it again.
     expect(CONTAINER.piHome.startsWith(`${CONTAINER.home}/`)).toBe(true);
     expect(dockerfile).toContain(`VOLUME ["${CONTAINER.piHome}"]`);
-    // The session dir the spawn names must be on the volume too — that is the
-    // only reason the conversation survived when the token did not.
+    // The session dir the spawn names must be on the volume too, so the
+    // conversation survives a recreate.
     const pi = new CompanionLifecycle(CFG, async () => OK, {}, noDirs, {
       exists: () => false,
       read: () => undefined,
@@ -958,11 +956,11 @@ describe("companion image", () => {
     expect(entrypoint).toContain("NOT a mount point");
   });
 
-  // 2026-08-21: the vendored mattpocock set is REGISTERED, not just readable.
-  // `.claude/skills` is not one of pi's own lookup paths, so without the
-  // settings `skills` array the 25 skills were plain files the system prompt
-  // had to name one at a time — no descriptions in context, no invocation,
-  // no progressive disclosure.
+  // The vendored skill set is REGISTERED, not just readable. `.claude/skills`
+  // is not one of pi's own lookup paths, so without the settings `skills`
+  // array the skills are plain files the system prompt has to name one at a
+  // time — no descriptions in context, no invocation, no progressive
+  // disclosure.
   it("registers the vendored skill set with pi, guarded on the dir existing", () => {
     expect(entrypoint).toContain('const skillsDir = "/workspace/.claude/skills"');
     expect(entrypoint).toMatch(/if \(!Array\.isArray\(cfg\.skills\)\) cfg\.skills = \[\]/);
@@ -972,8 +970,8 @@ describe("companion image", () => {
     // Dedupe — the volume carries settings.json across every restart.
     expect(entrypoint).toMatch(/cfg\.skills\.includes\(skillsDir\)/);
     // `/skill:<name>` from pi's own input line: the companion column is a
-    // terminal, so the owner's `/` commands land in pi. Unconditional, because
-    // seed-only-if-absent is how keys stopped landing once pi wrote settings.
+    // terminal, so the operator's `/` commands land in pi. Unconditional,
+    // because seed-only-if-absent stops landing keys once pi writes settings.
     expect(entrypoint).toContain("cfg.enableSkillCommands = true");
     const guard = entrypoint.indexOf("const skillsDir");
     expect(guard).toBeGreaterThan(0);
@@ -995,7 +993,7 @@ describe("companion image", () => {
     );
   });
 
-  // our OWN skills are a SECOND registered directory. `.claude/skills`
+  // Our OWN skills are a SECOND registered directory. `.claude/skills`
   // is a pinned vendored copy re-copied wholesale on an upstream bump, so a
   // companion skill we author cannot live there.
   it("registers our own skills tree as a second entry, guarded independently", () => {
@@ -1024,7 +1022,7 @@ describe("companion image", () => {
     const skill = resolve(dir, "adjudicate/SKILL.md");
     expect(existsSync(skill)).toBe(true);
     const body = readFileSync(skill, "utf8");
-    // pi selects a skill from its description alone (§4).
+    // pi selects a skill from its description alone.
     expect(body).toMatch(/^---\nname: adjudicate\ndescription: .+/);
     // The doctrine's load-bearing rules, pinned so a rewrite cannot quietly
     // drop one. Prose is hard-wrapped, so match on a flattened copy
@@ -1035,7 +1033,7 @@ describe("companion image", () => {
     expect(flat).toMatch(/never a confidence number/i);
     expect(flat).toMatch(/counter-case is mandatory/i);
     expect(flat).toMatch(/#adjudication/);
-    // the ratifying turn, and that it dies with the session.
+    // The ratifying turn, and that it dies with the session.
     expect(flat).toMatch(/void at session end/i);
   });
 
@@ -1055,7 +1053,7 @@ describe("companion image", () => {
   it("registers no memory extension in the entrypoint either", () => {
     expect(entrypoint).not.toMatch(/require\.resolve\("pi-memory"/);
     expect(entrypoint).not.toMatch(/extensions\.push/);
-    // The VM image dropped the same registration in the same slice.
+    // The VM image carries no such registration either.
     const vmEntrypoint = readFileSync(
       resolve(root, "deploy/ansible/templates/entrypoint.sh.j2"),
       "utf8",
@@ -1073,8 +1071,8 @@ describe("companion image", () => {
   });
 
   it("takes its uid from the host user — bind mounts are written, not just read", () => {
-    // the first real container run failed "Permission denied" writing
-    // /alerts because the image baked uid 1001.
+    // An image that bakes a fixed uid (e.g. 1001) fails "Permission denied"
+    // writing /alerts.
     expect(dockerfile).toContain("ARG COMPANION_UID=");
     expect(dockerfile).toMatch(/useradd .*--non-unique --uid \$\{COMPANION_UID\} companion/);
   });
@@ -1094,28 +1092,27 @@ describe("companion image", () => {
     expect(entrypoint).not.toContain("exec pi");
   });
 
-  // PID 1 has NO default signal dispositions, so `exec sleep infinity`
-  // ignored SIGTERM outright and every `docker stop` burned its full 10s
-  // timeout before SIGKILL — measured at 10.1s. The TUI runs that stop after
-  // restoring the terminal, so it read as a hung shell on every quit.
+  // PID 1 has NO default signal dispositions, so `exec sleep infinity` would
+  // ignore SIGTERM outright and every `docker stop` would burn its full 10s
+  // timeout before SIGKILL. The TUI runs that stop after restoring the
+  // terminal, so it would read as a hung shell on every quit.
   it("gives PID 1 a SIGTERM handler, so `docker stop` is immediate", () => {
     expect(entrypoint).toMatch(/trap term TERM INT/);
     expect(entrypoint).toMatch(/sleep infinity &/);
     // `exec sleep` is the regression: it makes sleep PID 1, and sleep installs
     // no handler, so the signal is ignored rather than defaulted. Mechanism,
-    // not mention — the comment explaining WHY it is gone names it, and must
-    // be allowed to; a command line reintroducing it must not.
+    // not mention — a comment explaining why it is avoided may name it; a
+    // command line using it may not.
     const commands = entrypoint.split("\n").filter((l) => !/^\s*#/.test(l));
     expect(commands.join("\n")).not.toContain("exec sleep");
   });
 });
 
-// subagents in the companion — pi's OWN first-party subagent
-// extension, loaded from the INSTALLED pinned package by the first-party glue
-// extensions/subagents.ts. Nothing is vendored (the unlicensed third-party
-// pi-subagents copy is deleted — re-vendoring it would resurrect
-// licensing problem), so there is no commit mirror left to drift: the pi
-// version pin covers the extension. The companion agent set rides
+// Subagents in the companion — pi's OWN first-party subagent extension,
+// loaded from the INSTALLED pinned package by the first-party glue
+// extensions/subagents.ts. Nothing is vendored (a third-party pi-subagents
+// copy is unlicensed and must not be re-vendored), so there is no commit
+// mirror to drift: the pi version pin covers the extension. The companion agent set rides
 // docker/companion/agents/, discovered through the native "user" scope via
 // the entrypoint's ~/.pi/agent/agents symlink.
 describe("native subagents (companion)", () => {
@@ -1139,7 +1136,7 @@ describe("native subagents (companion)", () => {
     const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
     expect(/^pi_subagents_commit:/m.test(groupVars)).toBe(false);
     expect(/^pi_subagents_repo:/m.test(groupVars)).toBe(false);
-    // And the build no longer needs the legacy-scope exclusion.
+    // And the build carries no exclusion for a vendored copy.
     expect(readFileSync(resolve(root, "tsconfig.json"), "utf8")).not.toContain(
       "extensions/vendor/pi-subagents",
     );
@@ -1157,7 +1154,7 @@ describe("native subagents (companion)", () => {
       expect(body).toMatch(new RegExp(`^name: ${file.replace(/\.md$/, "")}$`, "m"));
       expect(body).toMatch(/^description: .+$/m);
       // ChatGPT OAuth is the only credential in the container: an anthropic/
-      // model or a web tool would be's dead weight all over again.
+      // model or a web tool would be dead weight that can never run.
       // The :thinking suffix rides the model field — the native extension
       // reads no `thinking:` frontmatter (pi --model accepts the suffix).
       expect(body).toMatch(/^model: openai-codex\/[^\s:]+:(off|minimal|low|medium|high)$/m);
@@ -1278,7 +1275,7 @@ describe("the install's homes and the read-only GitHub token", () => {
     const argv = withFiles([]).lc.spawnArgv();
     expect(argv).toContain(`QCR_CONFIG_HOME=${CONTAINER.configHome}`);
     expect(argv).toContain(`QCR_STATE_HOME=${CONTAINER.stateHome}`);
-    // the setup tools read the reviewed checkout where it is mounted.
+    // The setup tools read the reviewed checkout where it is mounted.
     expect(argv).toContain(`QCR_REVIEWED_REPO=${CONTAINER.reviewedRepo}`);
     // The seam: code run in the container resolves the MOUNTED homes, with
     // the container user's own HOME beside them.
@@ -1311,8 +1308,8 @@ describe("the install's homes and the read-only GitHub token", () => {
   });
 
   it("mount drift covers them: a container from before is recreated", async () => {
-    // The legacy container: the old repo-named reviewed-repo mount, and
-    // none of the homes.
+    // A container with the old repo-named reviewed-repo mount, and none of
+    // the homes.
     const OLD: Record<string, string> = {
       [CONTAINER.piHome]: "companion-pihome",
       [CONTAINER.workspace]: "/host/review-sandbox",
@@ -1368,8 +1365,8 @@ describe("the install's homes and the read-only GitHub token", () => {
     const without = withFiles([]).lc.expectedMounts();
     const withCfg = withFiles([HOMES.configFile]).lc.expectedMounts();
     expect([...withCfg.entries()]).toEqual([...without.entries()]);
-    // …and a container from the first cut, with the file bind,
-    // drifts and is recreated onto the mirror.
+    // …and a container with a config file bind drifts and is recreated onto
+    // the mirror.
     const { lc } = withFiles([HOMES.configFile]);
     const old = new Map(lc.expectedMounts());
     old.delete(CONTAINER.configLive);

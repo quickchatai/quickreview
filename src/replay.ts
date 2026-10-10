@@ -1,5 +1,4 @@
-// The regression REPLAY (missing half) and the `qcr regression`
-// entrypoint.
+// The regression REPLAY and the `qcr regression` entrypoint.
 //
 // `src/regression.ts` is the instrument: it selects cases, scores them and
 // writes the investigation. It deliberately has ZERO imports — it cannot reach
@@ -10,7 +9,7 @@
 //
 // ---- WHY A REPLAY IS NOT A POSTING PATH -------------------------------------
 //
-// The obvious way to make the reviewer look at an old PR is the route:
+// The obvious way to make the reviewer look at an old PR is the `qcr compare` route:
 // label it and let the live daemon dispatch a round. That route ends at
 // `createReview` through the MutationGate — it is the production posting path,
 // and pointing it at 40 merged PRs would post 40 reviews to real authors on
@@ -190,7 +189,7 @@ function num(v: unknown): number | undefined {
 /**
  * Parse what the session wrote into the shape the scorer reads.
  *
- * Tolerant in the direction (a bare array is accepted, digit strings
+ * Tolerant the way verdict parsing is (a bare array is accepted, digit strings
  * coerce, an unknown extra key is ignored) and silent about entries it cannot
  * use — but never inventive: an entry with no path or no text is dropped
  * rather than guessed at, because a fabricated sandbox finding would score as
@@ -314,7 +313,7 @@ export class ScratchReplay {
     assertScratchIsolation(opts.scratchRoot, opts.sandboxRoot);
     this.o = {
       ...opts,
-      // both derive from [github] — the clone dir from the repo slug
+      // Both derive from [github] — the clone dir from the repo slug
       // (githubCloneDir), the branch from base_branch — so the replay reads
       // the same clone worktrees.ts maintains, whatever the repo is called.
       baseClone: opts.baseClone ?? join(opts.sandboxRoot, githubCloneDir(opts.cfg.github)),

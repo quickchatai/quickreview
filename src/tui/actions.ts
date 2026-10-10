@@ -1,4 +1,4 @@
-// Companion → TUI action channel (the "REAL actions" slice).
+// Companion → TUI action channel.
 //
 // The companion (a local pi in a docker container, no VM credentials, no
 // keyboard) drives the operator's TUI by dropping request files into
@@ -6,29 +6,25 @@
 // directory on its poll cadence, validates each request against a strict
 // schema, and executes it against the `TuiDriver` the wiring supplies.
 //
-// RATIFIED (the owner): actions execute INSTANTLY — there is no
-// confirm gate. The owner accepted the risk explicitly: everything a request
-// can do is something his own keyboard can do on the TUI (tab switches,
-// selections, filters, quick-messages, the deploy-tab buttons), the request
-// files are on his own machine, and the executed trace lands on the notice
-// line, so a surprising action is visible the moment it happens. Do not add
-// a confirmation step here.
+// Actions execute instantly — there is no confirm gate, by design: everything
+// a request can do is something the operator's own keyboard can do on the TUI
+// (tab switches, selections, filters, quick-messages, the deploy-tab buttons),
+// the request files are on the operator's own machine, and the executed trace
+// lands on the notice line, so a surprising action is visible the moment it
+// happens. Do not add a confirmation step here.
 //
-// ONE memory verb, and only one (`memory_pin`, the owner's ruling R7 on
-//, 2026-10-07 — a dated amendment to root CLAUDE.md rule 8): the
-// companion may PIN or UNPIN an EXISTING entry, and the TUI performs it
+// One memory verb, and only one (`memory_pin`, root CLAUDE.md rule 8): the
+// companion may pin or unpin an EXISTING entry, and the TUI performs it
 // through its one `MemoryStore` — the same copy-then-stub move as the memory
 // tab's `p`, against the entry as a fresh read finds it, and the result file
 // carries the store's answer. Nothing else about memory rides this channel:
-// the companion writes its own entries with its own keys (rule 8's
-// amendment), and the request-file write channel that amendment retired
-// stays retired for every other write.
+// the companion writes its own entries with its own keys, and no other
+// memory write may be requested through a file.
 //
-// Idempotency (the archive-before-execute pattern the retired memory-edit
-// request channel also used): a request is
-// archived to `.done/` BEFORE it is executed — a crash mid-execute must not
-// re-run it on the next sweep (msg_session/overseer_inject would double-send,
-// deploy_tab would double-arm). A crash after archive but before execute
+// Idempotency (archive before execute): a request is archived to `.done/`
+// BEFORE it is executed — a crash mid-execute must not re-run it on the next
+// sweep (msg_session/overseer_inject would double-send, deploy_tab would
+// double-arm). A crash after archive but before execute
 // loses one request; the companion sees the missing result and re-requests —
 // the safer failure. Results are written to `<name>.result.json` beside the
 // request; malformed/unknown requests produce a refused result, never a
@@ -62,11 +58,10 @@ export interface TuiDriver {
   digestDay(date: string): void;
   /** The memory tab: `tag` filters the timeline, `day` jumps to that day's entries. */
   memoryView(opts: { day?: string; tag?: string }): void;
-  /** Pin or unpin one EXISTING memory entry (S5; restored by the
-   * owner's ruling R7) through the TUI's ONE `MemoryStore` — the same verb
-   * as the memory tab's `p`: the entry MOVES into `preferences/pinned/` (the
-   * round's guaranteed head) or back out. `entry` is the TUI's id
-   * (`reviewer:experiences/x.md`) or the entry's
+  /** Pin or unpin one EXISTING memory entry through the TUI's ONE
+   * `MemoryStore` — the same verb as the memory tab's `p`: the entry MOVES
+   * into `preferences/pinned/` (the round's guaranteed head) or back out.
+   * `entry` is the TUI's id (`reviewer:experiences/x.md`) or the entry's
    * `viking://user/<user>/memories/…` URI. Resolves with the store's message;
    * REJECTS on a refusal, so the result file says it failed. Pin and unpin
    * ONLY — the driver has no other memory method. */
@@ -101,7 +96,7 @@ const DEPLOY_ACTIONS = new Set(["deploy", "stop", "start", "abort"]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** The only params `memory_pin` takes. Anything else is REFUSED, not
  * ignored: a request that reads like an edit (`text`, `op`, `content`) must
- * fail loudly rather than quietly pin (R7 — pin and unpin only). */
+ * fail loudly rather than quietly pin (pin and unpin only). */
 const MEMORY_PIN_PARAMS = new Set(["entry", "pin"]);
 /** The daemon's lifecycle state strings — the only values a board state
  * filter can name (a typo would silently filter the board to nothing). */
@@ -281,7 +276,7 @@ export function parseTuiAction(
 
 /** Run one parsed action against the driver; returns the one-line human trace
  * for the notice line. The driver's methods are the whole side-effect surface.
- * The one memory write (`memory_pin`, R7 — pin/unpin of an existing entry) is
+ * The one memory write (`memory_pin` — pin/unpin of an existing entry) is
  * asynchronous and resolves once the store has answered; every other verb is
  * synchronous. */
 export function executeTuiAction(a: TuiAction, driver: TuiDriver): string | Promise<string> {
@@ -347,8 +342,7 @@ export interface ProcessedAction {
   trace?: string;
 }
 
-/** Result files older than this are swept; `.done/` keeps the newest N.
- * (Bounded the same way the retired memory-request sweep was.) */
+/** Result files older than this are swept; `.done/` keeps the newest N. */
 const RESULT_TTL_MS = 24 * 3600 * 1000;
 const DONE_KEEP = 200;
 

@@ -1,4 +1,4 @@
-// `qcr archive extract <pr> --to <dir>` (S4, docs/archiving.md §11,
+// `qcr archive extract <pr> --to <dir>` (docs/archiving.md §11,
 // §15): one PR's archive decompressed into a scratch directory, every byte
 // verified against the sha256 its manifest records. Read-only over the
 // archive, and never into a live tree.

@@ -1,19 +1,18 @@
-// The shared command bar at the foot of EVERY tab. Pure layout, no I/O.
+// The shared command bar at the foot of every tab. Pure layout, no I/O.
 //
 // Row A is identical everywhere: the eight nav slots, then the globals
 // right-justified so their x-positions depend only on the terminal width,
-// never on the tab. The rows after it carry the current tab's LIVE commands.
+// never on the tab. The rows after it carry the current tab's live commands.
 //
-// Two rules, both decided by the owner (→):
+// Two rules:
 //
-//   * THE BAR WRAPS. It used to drop overflowing buttons in silence, and at
-//     the shipped companion width the board lost `[u unwedge]` — the ratified
-//     unwedge lever — from its bar. Nothing is dropped now: a slot that would
-//     run off the row starts a new one, and `barHeight` tells each renderer
-//     how many rows the bar took so the body can give them up.
+//   * The bar wraps. Nothing is dropped (a dropped button can be the unwedge
+//     lever): a slot that would run off the row starts a new one, and
+//     `barHeight` tells each renderer how many rows the bar took so the body
+//     can give them up.
 //
-//   * THE BAR IS STATE-DERIVED. A tab paints the buttons it answers to RIGHT
-//     NOW (`LiveKeys`, supplied by the tab's hooks), and `registeredKeys` is
+//   * The bar is state-derived. A tab paints the buttons it answers to right
+//     now (`LiveKeys`, supplied by the tab's hooks), and `registeredKeys` is
 //     computed from the same list — so painted ⇔ registered ⇔ answers. A
 //     registered key is denied to the companion column (App routes every
 //     other printable there), which is why a dead registration is not inert:
@@ -21,7 +20,7 @@
 //     tab draws from; docs/tui.md is pinned to it and the fences check that
 //     every live bar is a subset of it.
 //
-// paintCmdBar and barHitKey share the ONE layout() computation, so render and
+// paintCmdBar and barHitKey share the one layout() computation, so render and
 // hit-test cannot drift.
 import { button } from "./design.js";
 import { type Frame, displayWidth } from "./paint.js";
@@ -32,7 +31,7 @@ export interface BarButton {
   label: string;
 }
 
-/** What a tab answers to on THIS frame: the row-B buttons it paints on the
+/** What a tab answers to on this frame: the row-B buttons it paints on the
  * bar, and the printable keys it paints beside their object instead (an
  * `[e edit]` next to the entry it edits, a `y` on an armed confirmation). */
 export interface LiveKeys {
@@ -61,7 +60,7 @@ const GLOBALS: readonly BarButton[] = [
 export const GLOBAL_KEYS: readonly string[] = ["q", "r", "s", "?", "j", "k", ...TABS.map(tabDigit)];
 
 /**
- * Every row-B button a tab can EVER paint — its vocabulary, with the canonical
+ * Every row-B button a tab can ever paint — its vocabulary, with the canonical
  * label. A live bar picks from this set (labels may say more: `p unpin`,
  * `x close log`); the keys may not go outside it. This is the table
  * docs/tui.md documents and the help overlay is checked against.
@@ -127,7 +126,7 @@ export const TAB_VOCABULARY: Readonly<Record<Tab, readonly BarButton[]>> = {
 };
 
 /**
- * Every printable a tab can ever paint BESIDE its object rather than on the
+ * Every printable a tab can ever paint beside its object rather than on the
  * bar — the `inline` half of a `LiveKeys`, as a universe. `boardKeys` offers
  * `a` (⏎'s twin) only with a PR selected and `F` only with a filter to clear;
  * memory paints `e p x` next to the selected entry; the feedback tab's `y`
@@ -146,7 +145,7 @@ export const TAB_INLINE_KEYS: Readonly<Record<Tab, readonly string[]>> = {
 };
 
 /**
- * Every printable the active tab answers to right now. Anything OUTSIDE this
+ * Every printable the active tab answers to right now. Anything outside this
  * set starts companion-column input instead of dying on the tab.
  */
 export function registeredKeys(live: LiveKeys): Set<string> {

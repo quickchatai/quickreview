@@ -1,21 +1,19 @@
-// Committing setup's profile writes when the config home is a git repo
-// (setup & scan spec "profile … commit if the config home is a git
-// repo", user story 94).
+// Committing setup's profile writes when the config home is a git repo.
 //
-// WHY A REQUEST AND NOT A COMMIT. Setup's tools run in the companion
+// Why a request and not a commit. Setup's tools run in the companion
 // container, which mounts only `profiles/` and `portrait/` of the config home
-// — never the home whole, because it holds `secrets/` (root rule 8, third
-// amendment) — so the home's `.git` is out of its reach by design. A profile
-// write therefore leaves a REQUEST in the state home
+// — never the home whole, because it holds `secrets/` (root rule 8) — so the
+// home's `.git` is out of its reach by design. A profile write therefore
+// leaves a request in the state home
 // (`setup/commits/<id>.request.json`: the paths it wrote and a message), and
 // the operator's own machine carries it out: the TUI on its config-mirror
 // timer, and `qcr setup commit`. The answer lands beside it
 // (`<id>.result.json`), where the companion's `setup_profile` reads it.
 //
-// WHAT IT WILL COMMIT, AND WHERE. Only paths under `profiles/` — the request
+// What it will commit, and where. Only paths under `profiles/` — the request
 // is data the container wrote, so a path is checked before git ever sees it
 // (no `..`, no absolute path, nothing else in the home) — and only in a config
-// home that is its OWN repository: a home that merely sits inside a bigger
+// home that is its own repository: a home that merely sits inside a bigger
 // one (a dotfiles repo over `~/.config`) is reported, not committed into.
 // `git commit -- <paths>` takes those paths alone, so nothing else staged in
 // the home — least of all `secrets/` — rides along. Not a repo is an ordinary
@@ -65,8 +63,8 @@ export const resultFile = (id: string): string => `${COMMITS_DIR}/${id}.result.j
 /** A commit id: a plain, sortable token (it names two files and a replay
  * baseline). Millisecond resolution, and `taken` — does a request or result
  * already carry this id? — moves a same-instant write to `_2`, `_3`, … so two
- * writes never share one id (a shared id replaced the first write's baseline
- * and let the second be skipped as already answered). */
+ * writes never share one id (a shared id would replace the first write's
+ * baseline and let the second be skipped as already answered). */
 export function commitId(
   now: Date,
   profile: string,

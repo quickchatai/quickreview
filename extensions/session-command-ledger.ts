@@ -242,8 +242,8 @@ export class SessionCommandLedger {
     });
   }
 
-  /** #5362 ③ / H1b: has the daemon handed this command back for
-   * REDELIVERY — the row `pending` again, unowned and never started? The
+  /** Has the daemon handed this command back for redelivery — the row
+   * `pending` again, unowned and never started? The
    * bridge that submitted it reads this to drop a barrier pi never acted on.
    * Total: an unreadable row is "no". */
   redeliveryRequested(id: string): boolean {

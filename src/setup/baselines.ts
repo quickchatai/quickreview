@@ -1,4 +1,4 @@
-// Profile BASELINES: the repo profile as it stood before each write
+// Profile baselines: the repo profile as it stood before each write
 // setup made, so the PR replay can review with the old profile beside the new.
 //
 // A write edits the install's own profile in place (tuning.ts
@@ -13,7 +13,7 @@
 // of both sides.
 //
 // `<state home>/setup/profile-baselines.json`, newest last, the last
-// `BASELINES_KEPT` kept. An unreadable file is REPORTED and never
+// `BASELINES_KEPT` kept. An unreadable file is reported and never
 // overwritten: it is history the operator may want.
 import type { StateFs } from "./engine.js";
 

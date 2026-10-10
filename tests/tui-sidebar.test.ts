@@ -54,7 +54,7 @@ describe("sidebarWidth", () => {
     expect(defaultSidebarWidth(200)).toBe(100);
     expect(sidebarWidth(200)).toBe(100);
     expect(sidebarWidth(160)).toBe(WIDE);
-    // 2026-09-02: the signature takes no `available`/`collapsed` at all. The
+    // The signature takes no `available`/`collapsed` at all. The
     // column is layout; what the companion is doing changes its contents.
     expect(sidebarWidth(200, {})).toBe(100);
   });
@@ -63,7 +63,7 @@ describe("sidebarWidth", () => {
     const both = SIDEBAR_MIN_INNER_COLS + SIDEBAR_MIN_WIDTH;
     expect(sidebarWidth(both)).toBe(SIDEBAR_MIN_WIDTH);
     expect(sidebarWidth(both - 1)).toBe(SIDEBAR_MIN_WIDTH);
-    expect(sidebarWidth(39)).toBe(SIDEBAR_MIN_WIDTH); // used to hide below 40
+    expect(sidebarWidth(39)).toBe(SIDEBAR_MIN_WIDTH); // never hidden, however narrow
     expect(sidebarWidth(10)).toBe(SIDEBAR_MIN_WIDTH);
   });
 
@@ -215,7 +215,7 @@ describe("sidebarHit", () => {
   it("routes clicks inside the expanded column and ignores the tab side", () => {
     expect(sidebarHit(cols - WIDE, 10, cols, rows, WIDE)).toBeUndefined();
     expect(sidebarHit(cols + 1, 10, cols, rows, WIDE)).toBeUndefined();
-    expect(sidebarHit(cols - WIDE + 1, 1, cols, rows, WIDE)).toBeUndefined(); // top border: chrome (was the collapse affordance)
+    expect(sidebarHit(cols - WIDE + 1, 1, cols, rows, WIDE)).toBeUndefined(); // top border: chrome
     expect(sidebarHit(cols, 2, cols, rows, WIDE)).toBe("header");
     expect(sidebarHit(cols, 3, cols, rows, WIDE)).toBe("header");
     expect(sidebarHit(cols, 10, cols, rows, WIDE)).toBe("mirror");

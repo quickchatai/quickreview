@@ -1,4 +1,4 @@
-// The install locator — the ONE module that decides where an
+// The install locator — the one module that decides where an
 // install's own data lives. Every reader of the live config goes through it:
 // the config loader, the onboarding wizard (via its adapters), the bench, the
 // TUI, the daemon's session env, and — through `scripts/install-locator.sh`,
@@ -13,24 +13,24 @@
 //
 // `<install>` is `$QCR_INSTALL`, default `default` — one name per install, so
 // one PC can hold more than one. `$QCR_CONFIG` overrides the config FILE
-// outright (not the home). The checkout's own `config.toml` is NOT read
-// (contracted the expand step's fallback away): a checkout that still
-// holds one is STRANDED — `strandedCheckoutConfig` names it so a not-found can
-// point at `qcr install migrate`, which is the only thing that ever opens it.
+// outright (not the home). The checkout's own `config.toml` is not read: a
+// checkout that still holds one is stranded — `strandedCheckoutConfig` names
+// it so a not-found can point at `qcr install migrate`, which is the only
+// thing that ever opens it.
 //
 // A session must never move any of this: `QCR_CONFIG=` and `QCR_INSTALL=` are
 // both in the bash guard's POLICY_RELOCATING_ENV, and `HOME=` /
-// `XDG_CONFIG_HOME=` were already refused there. The daemon hands each session
-// the path IT resolved as `QCR_CONFIG` (sessions.ts), so the posting scripts
+// `XDG_CONFIG_HOME=` are refused there too. The daemon hands each session
+// the path it resolved as `QCR_CONFIG` (sessions.ts), so the posting scripts
 // read exactly the daemon's config rather than re-deriving one.
 //
 // Repo profiles live in the config home too: `<home>/profiles/<name>/`
 // first, then — when `$QCR_CONFIG` names a file — `profiles/` beside that file
 // (what makes the compose route work: it mounts the located config's directory,
 // profiles and all, and names the config inside the mount), then the checkout's
-// `profiles/` — for the generic EXAMPLES (`EXAMPLE_PROFILES`) only. Any other
-// profile left there is stranded, never read, and `qcr install
-// migrate` moves it.
+// `profiles/` — for the generic examples (`EXAMPLE_PROFILES`) only. Any other
+// profile left there is stranded, never read, and `qcr install migrate`
+// moves it.
 //
 // Pure where it can be: `locateConfig` takes the env and an `exists` probe, so
 // the tests drive it with temp XDG homes and never touch the operator's own.
@@ -60,7 +60,7 @@ export interface InstallEnv {
   QCR_CONFIG?: string;
   /** A whole-home override (absolute paths only): the companion
    * container sets these to its `/qcr-config` and `/qcr-state` mounts, so the
-   * locator in there resolves the SAME homes the host mounted, not the
+   * locator in there resolves the same homes the host mounted, not the
    * container user's own `~/.config` / `~/.local/state`. Unset on a normal
    * host, where the XDG derivation below is the answer. */
   QCR_CONFIG_HOME?: string;
@@ -80,7 +80,7 @@ export interface InstallEnv {
 export const DEFAULT_INSTALL = "default";
 export const CONFIG_FILE = "config.toml";
 
-/** A single path segment an install (or, later, a profile) may be named by.
+/** A single path segment an install or a profile may be named by.
  * No separators, no leading dot, so `..` and `a/../../b` are unspellable. */
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -136,7 +136,7 @@ export function stateHome(env: InstallEnv = process.env): string {
 
 /**
  * Where the live config came from:
- *   override — `$QCR_CONFIG`, taken as given (a missing file is the READER's
+ *   override — `$QCR_CONFIG`, taken as given (a missing file is the reader's
  *              error, never a reason to look elsewhere)
  *   home     — the install's config home, whether or not the file exists yet
  *              (that is where a new config is written, and a missing one is
@@ -164,7 +164,7 @@ export function locateConfig(opts: LocateOptions = {}): LocatedConfig {
 }
 
 /**
- * The checkout's own `config.toml` when it is still there and is NOT the
+ * The checkout's own `config.toml` when it is still there and is not the
  * located config — i.e. an install that has not run `qcr install migrate`.
  * Nothing reads it; this only lets a not-found name the way out.
  * Null when `$QCR_CONFIG` names that very file (the operator's choice).
@@ -194,7 +194,7 @@ export function missingConfigMessage(located: LocatedConfig, stranded: string | 
 
 // ---- qcr install migrate ----------------------------------------------------
 
-/** Whether two existing paths are the SAME file or directory (dev + inode, so
+/** Whether two existing paths are the same file or directory (dev + inode, so
  * a symlink or a config home that IS the checkout both count). A migrate whose
  * source is its destination has nothing to move — and must never "deduplicate"
  * the only copy by deleting it. */
@@ -216,7 +216,7 @@ export type MigrateOutcome =
   | { kind: "already"; to: string }
   /** Both hold one and they are byte-identical: the checkout copy is removed. */
   | { kind: "deduplicated"; from: string; to: string }
-  /** Both hold one and they DIFFER: nothing is touched, the operator decides. */
+  /** Both hold one and they differ: nothing is touched, the operator decides. */
   | { kind: "conflict"; from: string; to: string }
   /** Neither exists: there is nothing to move (run the onboarding wizard). */
   | { kind: "nothing"; to: string }
@@ -316,12 +316,12 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
   }
 }
 
-// ---- repo profiles -------------------------------------------------
+// ---- repo profiles -----------------------------------------------------------
 
 /** The directory, in every home, that holds one subdirectory per profile. */
 export const PROFILES_DIR = "profiles";
 
-/** The directory in the config home that holds the repo portrait's NARRATIVE
+/** The directory in the config home that holds the repo portrait's narrative
  * — the companion's reading of the portrait facts, and the one it replaced
  * (`src/setup/portrait.ts`). Config, not state: it is the operator's
  * to read and keep (a config home that is a git repo versions it). Never
@@ -329,12 +329,12 @@ export const PROFILES_DIR = "profiles";
 export const PORTRAIT_DIR = "portrait";
 
 /**
- * The checkout's GENERIC profiles — the ones that belong to the app, not to
- * any install: the examples, and `default`, the shipped behaviour
- * every generated profile extends. They are the ONLY profiles the lookup reads
+ * The checkout's generic profiles — the ones that belong to the app, not to
+ * any install: the examples, and `default`, the shipped behaviour every
+ * generated profile extends. They are the only profiles the lookup reads
  * from the checkout. Any other directory under the checkout's `profiles/` is
- * an install's own profile stranded in its old place: never read,
- * and `qcr install migrate` moves it into the config home. A new example is
+ * an install's own profile stranded in its old place: never read, and
+ * `qcr install migrate` moves it into the config home. A new example is
  * registered here (a test holds the checkout to it, and the shell mirror's
  * `QCR_EXAMPLE_PROFILES` to this list).
  */
@@ -350,12 +350,12 @@ export const EXAMPLE_PROFILES: readonly string[] = [
 export type ProfileSource = "home" | "override" | "checkout";
 
 /**
- * Where a profile is looked up, in order, deduplicated (the FIRST place a
+ * Where a profile is looked up, in order, deduplicated (the first place a
  * directory is reached by names its source):
  *   1. the install's config home — `<home>/profiles/`
  *   2. `profiles/` beside `$QCR_CONFIG`, when it is set (the compose route's
  *      mounted config home; the VM's shipped one; the bench image's)
- *   3. the checkout's `profiles/` — the generic examples ONLY
+ *   3. the checkout's `profiles/` — the generic examples only
  */
 function profileSearchPlaces(opts: {
   root: string;
@@ -417,7 +417,7 @@ export function locateProfile(opts: {
  * The checkout's `profiles/<name>` when it is an install's own profile left
  * there (not a generic example) — stranded, never read. Only for a
  * not-found to name `qcr install migrate`; null when there is none, or when
- * `profiles/` beside `$QCR_CONFIG` IS the checkout's (then it was read).
+ * `profiles/` beside `$QCR_CONFIG` is the checkout's (then it was read).
  */
 export function strandedCheckoutProfile(opts: {
   root: string;
@@ -453,7 +453,7 @@ export type ProfileMigrateOutcome =
   | { kind: "moved"; name: string; from: string; to: string }
   | { kind: "deduplicated"; name: string; from: string; to: string }
   | { kind: "conflict"; name: string; from: string; to: string }
-  /** The home's entry IS the checkout's (a symlink to it, or the reverse):
+  /** The home's entry is the checkout's (a symlink to it, or the reverse):
    * one copy, already read from the home — nothing moved, nothing removed. */
   | { kind: "aliased"; name: string; from: string; to: string }
   /** `$QCR_CONFIG` is set: nothing moves (see migrateProfiles). */
@@ -490,10 +490,10 @@ function sameTree(a: string, b: string): boolean {
  * config home's — every directory there except the generic `EXAMPLE_PROFILES`.
  * Same discipline as the config move: idempotent (a second run finds nothing
  * left to move), an identical copy already in the home just drops the
- * checkout's, and a DIFFERING one is a conflict that touches nothing.
+ * checkout's, and a differing one is a conflict that touches nothing.
  *
- * While `$QCR_CONFIG` is set NOTHING moves, exactly like the config half: the
- * compose route mounts the directory holding THAT file (bring-up's
+ * While `$QCR_CONFIG` is set nothing moves, exactly like the config half: the
+ * compose route mounts the directory holding that file (bring-up's
  * `configMountOf`), not the config home, so a profile moved into the home
  * would vanish from the container and fail the daemon's boot. The operator
  * who named the config also decides where its profiles sit (beside it is on
@@ -521,7 +521,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   if (override !== "") {
     return names.map((name) => ({ kind: "override", name, path: resolve(override) }));
   }
-  // Linked profiles resolve BEFORE anything moves, and move LAST: a link to a
+  // Linked profiles resolve before anything moves, and move last: a link to a
   // sibling in the checkout (`house -> house-real`) must follow that sibling
   // into the home, not point at the spot it was just moved out of.
   const realBase = realpathSync(fromBase);
@@ -572,7 +572,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
       // verbatimSymlinks: a relative link inside the profile keeps pointing
-      // inside the COPY, not back into the source tree removed next.
+      // inside the copy, not back into the source tree removed next.
       cpSync(from, to, { recursive: true, verbatimSymlinks: true });
       rmSync(from, { recursive: true });
     }
@@ -628,20 +628,19 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
   return { code, lines };
 }
 
-// ---- secrets ------------------------------------------------------
+// ---- secrets ----------------------------------------------------------------
 //
 // The install's secrets live in `<config home>/secrets/` — one install, one
-// directory. The old `~/.config/quickreview-bot/` is never read (
-// contracted the expand step's fallback away); only `qcr install migrate`
-// opens it, to move what it still holds into the home.
+// directory. The legacy `~/.config/quickreview-bot/` is never read; only
+// `qcr install migrate` opens it, to move what it still holds into the home.
 //
-// `[github] secrets_dir` still names the dir outright when the operator set
-// one. Empty — or the old default spelling every config shipped with before
-// the config home — means "the locator decides", so a config that never
-// touched the key reads the home, never the old dir it happens to spell.
+// `[github] secrets_dir` names the dir outright when the operator set one.
+// Empty — or the legacy default spelling — means "the locator decides", so a
+// config that never touched the key reads the home, never the legacy dir it
+// happens to spell.
 //
-// The companion's OpenViking key file is the ONE credential deliberately kept
-// OUT of the config home: that home is mounted into the reviewer container on
+// The companion's OpenViking key file is the one credential deliberately kept
+// out of the config home: that home is mounted into the reviewer container on
 // the compose route and shipped to the VM, and the file
 // holds the companion key review sessions must never read (rule 8). It lives
 // in a sibling tree, `$XDG_CONFIG_HOME/qcr-operator/<install>/`, that nothing
@@ -649,7 +648,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
 
 export const SECRETS_SUBDIR = "secrets";
 export const KEYS_FILE = "openviking-keys.env";
-/** The spelling every config.toml shipped with before the config home. */
+/** The legacy default spelling of `secrets_dir`. */
 export const LEGACY_SECRETS_SPELLING = "~/.config/quickreview-bot";
 
 function homeOf(env: InstallEnv): string {
@@ -666,15 +665,15 @@ export function secretsHome(env: InstallEnv = process.env): string {
   return join(configHome(env), SECRETS_SUBDIR);
 }
 
-/** The pre-config-home secrets dir, `$HOME/.config/quickreview-bot` (never XDG:
- * it was always spelled `~/.config/…`). Nothing reads it but migrate. */
+/** The legacy secrets dir, `$HOME/.config/quickreview-bot` (never XDG: it is
+ * spelled `~/.config/…`). Nothing reads it but migrate. */
 export function legacySecretsDir(env: InstallEnv = process.env): string {
   return join(homeOf(env), ".config", "quickreview-bot");
 }
 
-/** Is a configured `secrets_dir` just the old shipped default? Then it names
+/** Is a configured `secrets_dir` just the legacy default? Then it names
  * no choice the operator made, and the locator decides — the home, never the
- * old dir itself. */
+ * legacy dir itself. */
 export function isLegacySecretsSpelling(value: string, env: InstallEnv = process.env): boolean {
   const v = value.trim().replace(/\/+$/, "");
   return v === LEGACY_SECRETS_SPELLING || expandHomeIn(v, env) === legacySecretsDir(env);
@@ -685,7 +684,7 @@ export function isLegacySecretsSpelling(value: string, env: InstallEnv = process
  *   mount      — `$QCR_SECRETS_MOUNT`: inside a daemon container the mount is
  *                the only place the secrets are, whatever the shared config
  *                names (that is a host path)
- *   configured — `[github] secrets_dir`, set to something other than the old
+ *   configured — `[github] secrets_dir`, set to something other than the legacy
  *                default: the operator named it, it is taken as given
  *   override   — the caller's env override (`$QC_SECRETS_DIR`, the wizards')
  *   home       — `<config home>/secrets`, whether or not it exists yet (that
@@ -721,7 +720,7 @@ export function locateSecrets(opts: LocateSecretsOptions = {}): LocatedSecrets {
   return { path: home, source: "home", home };
 }
 
-/** The old secrets dir when it still holds anything — an install that has
+/** The legacy secrets dir when it still holds anything — an install that has
  * not run `qcr install migrate`. Never read; only named, so a missing
  * credential can point at the way out. Null when it is gone or empty. */
 export function strandedLegacySecrets(env: InstallEnv = process.env): string | null {
@@ -750,14 +749,14 @@ export function operatorStateHome(env: InstallEnv = process.env): string {
   );
 }
 
-/** Where the host writes the companion's down-scoped, READ-ONLY GitHub token
+/** Where the host writes the companion's down-scoped, read-only GitHub token
  * as an env file (`src/tui/ghread.ts`). Mounted read-only into the
  * companion, and only this directory — never the secrets it was minted from. */
 export function companionGithubDir(env: InstallEnv = process.env): string {
   return join(operatorStateHome(env), "companion-github");
 }
 
-/** Where the host keeps the companion's read-only MIRROR of the live config
+/** Where the host keeps the companion's read-only mirror of the live config
  * (`CompanionLifecycle.syncConfigMirror`): a copy refreshed while the
  * TUI runs, mounted as a directory so a rename-replaced config.toml is seen.
  * config.toml holds no secret values (secrets are files under `secrets/`). */
@@ -775,10 +774,10 @@ export interface LocatedKeysFile {
 }
 
 /**
- * The companion's OpenViking key file (two USER keys, handed to the companion
+ * The companion's OpenViking key file (two user keys, handed to the companion
  * container by `--env-file`, so no value ever reaches an argv):
  * `$QCR_OPENVIKING_KEYS` as given, else the operator home's file — whether or
- * not it exists yet. The old `~/.config/quickreview-bot/` copy is never read.
+ * not it exists yet. The legacy `~/.config/quickreview-bot/` copy is never read.
  */
 export function locateKeysFile(
   opts: { env?: InstallEnv & { QCR_OPENVIKING_KEYS?: string } } = {},
@@ -792,14 +791,14 @@ export function locateKeysFile(
 
 // ---- qcr install migrate: the secrets half ----------------------------------
 //
-// The one place the old dir is opened — to empty it into the homes.
+// The one place the legacy dir is opened — to empty it into the homes.
 
 export type SecretFileOutcome =
   /** Moved, mode bits intact (0600 stays 0600). */
   | "moved"
   /** The destination already held the same bytes: the legacy copy is removed. */
   | "deduplicated"
-  /** The destination holds DIFFERENT bytes: both are left for the operator. */
+  /** The destination holds different bytes: both are left for the operator. */
   | "conflict"
   /** Not moved on purpose (`why` says which rule). */
   | "skipped";
@@ -916,7 +915,7 @@ export function migrateSecrets(
 }
 
 /** What the secrets half of `qcr install migrate` prints, and its exit code.
- * Names only — a secret's VALUE never reaches a line. */
+ * Names only — a secret's value never reaches a line. */
 export function secretsMigrateReport(m: SecretsMigration): { code: number; lines: string[] } {
   if (m.kind === "nothing")
     return {
@@ -963,7 +962,7 @@ export function secretsMigrateReport(m: SecretsMigration): { code: number; lines
 // ---- qcr install migrate: the compose route's .env --------------------------
 //
 // The wizard's bring-up writes the secrets dir the compose stack mounts into
-// `<root>/.env` as `QCR_SECRETS_DIR` — the locator's answer AT THAT TIME,
+// `<root>/.env` as `QCR_SECRETS_DIR` — the locator's answer at that time,
 // which on an un-migrated machine is the legacy dir. Once migrate has moved
 // the secrets, that line would mount a dir that is gone (Docker then creates
 // it empty, as root) or half-emptied by a conflict: the daemon would boot with
@@ -995,7 +994,7 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
   if (!existsSync(to)) return { kind: "none" };
   // Repoint only onto a home that holds everything the mounted dir still
   // does, byte for byte — never swap a working mount for an empty, partial or
-  // DIFFERENT one (a conflict migrate refused leaves the running copy in the
+  // different one (a conflict migrate refused leaves the running copy in the
   // legacy dir and another in the home). The key file is exempt: it goes to
   // the operator home, never into the mount.
   const legacyDir = legacySecretsDir(env);
@@ -1022,8 +1021,8 @@ export function repointComposeSecrets(opts: { root: string; env?: InstallEnv }):
 }
 
 /** Whether the home's entry can stand in for the mounted one: two regular
- * files must hold identical bytes; two non-files (migrate skips those) pass as
- * before; a file against a non-file, or anything unreadable, does not. */
+ * files must hold identical bytes; two non-files (migrate skips those) pass;
+ * a file against a non-file, or anything unreadable, does not. */
 function sameBytes(a: string, b: string): boolean {
   try {
     const aFile = statSync(a).isFile();

@@ -1,6 +1,6 @@
-// The escalation onboarding step's config surgery: a re-run
-// rewrites only the rules the interview owns and never eats a hand-written
-// rule — whatever valid TOML spelling that rule's header uses.
+// The escalation onboarding step's config surgery: a re-run rewrites only
+// the rules the interview owns and never eats a hand-written rule — whatever
+// valid TOML spelling that rule's header uses.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";

@@ -6,7 +6,7 @@
 // path, an env var or a second inventory: it writes the file the manual route
 // already reads, in the shape the example documents.
 //
-// ONE THING HERE IS NOT OBVIOUS, and it is deliberate. The ingress choice has
+// One thing here is not obvious, and it is deliberate. The ingress choice has
 // to reach the playbook as `cloudflared_enabled`, and the tracked
 // `group_vars/all.yml` sets it to true. We do NOT edit that file: it is
 // committed, and editing it would dirty the working tree — which is precisely
@@ -19,7 +19,7 @@
 // The step also pins the operator TUI to this machine: `[tui] target = "ssh"`
 // (the shipped default, asserted rather than assumed) and `[tui] ssh_host` =
 // the recorded alias. The TUI's native ssh mode is what this topology uses;
-//'s local runner belongs to the other one.
+// its local mode (`target = "local"`) belongs to the this-computer route.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -63,7 +63,7 @@ export interface InventoryFacts {
   pythonInterpreter: string;
   /** false ⇒ the playbook installs no cloudflared and depends on no token. */
   cloudflaredEnabled: boolean;
-  /**: the embedder config.toml declares. A hosted opt-in rides the
+  /** The embedder config.toml declares. A hosted opt-in rides the
    * host line as host vars (the tracked group_vars say local); the local
    * default writes nothing. */
   embedder: DeclaredEmbedder;
@@ -228,7 +228,7 @@ function tuiChecks(adapters: OnboardAdapters, alias: string, write: boolean): Ch
       },
     ];
   }
-  // Rule 1, structurally: the ONLY file in the wizard that may write `dry_run`
+  // Rule 1, structurally: the only file in the wizard that may write `dry_run`
   // is golive.ts, on an explicit confirmation after a proven round. Every
   // other config edit — this one included — is asserted clean first.
   const edits: TomlEdit[] = [

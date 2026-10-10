@@ -6,14 +6,14 @@
 // Why it lives daemon-side rather than in a lens: a leaf-node collision with
 // the base branch is deterministic, machine-checkable without an LLM, has
 // exactly one remedy (renumber + repoint `dependencies`) and carries no design
-// content. Raised as a blocker it consumed the merge gate and cost the author a
-// full re-review round for a mechanical rename — ~15% of all blockers. Nothing
+// content. Raised as a blocker it would consume the merge gate and cost the
+// author a full re-review round for a mechanical rename. Nothing
 // else in the pipeline catches it (GitHub reports MERGEABLE because the
 // filenames differ, and CI is green), so the check does not get quieter here:
 // it runs every round, deterministically, and is delivered as a COMMENT.
 //
-// This is NOT a trivial-delta classifier (owns that) — detection and
-// comment text only.
+// This is not a trivial-delta classifier (src/recheck.ts owns that) —
+// detection and comment text only.
 
 import { codePath, flatControls } from "./codespan.js";
 
@@ -57,8 +57,8 @@ export interface MigrationCollision {
   dependency_name: string;
   /** The exact `dependencies` entry to write. */
   dependency: string;
-  /** Why this entry exists. Absent (orders built before's follow-up
-   * detection) reads as "base-collision". */
+  /** Why this entry exists. Absent (orders built before follow-up detection
+   * existed) reads as "base-collision". */
   kind?: "base-collision" | "renamed-dependency";
   /** Follow-ups only: the old (pre-renumber) name this file's `dependencies`
    * still reference. */
@@ -66,7 +66,7 @@ export interface MigrationCollision {
   /** Follow-ups only: false when the file keeps its number and only its
    * `dependencies` entry moves. */
   renumber?: boolean;
-  /** Follow-ups only, and only when the renamed dependency lives in ANOTHER
+  /** Follow-ups only, and only when the renamed dependency lives in another
    * app: that app's label, which the stale tuple names. Absent ⇒ `app_label`. */
   dependency_app_label?: string;
 }
@@ -128,8 +128,8 @@ function referencesAppMigration(
 /** Same-app follow-up match. A same-app dependency is an `(app_label, name)`
  * tuple, but the label is inferred from the directory and Django's label can
  * differ, and a tuple split across diff lines carries a `+` between its halves
- * — so a bare quoted `name` still counts (the check never gets quieter than
- * the name-only match it replaced), EXCEPT an occurrence that is the second
+ * — so a bare quoted `name` still counts (the check must never get quieter
+ * than a name-only match), except an occurrence that is the second
  * half of a tuple naming another app this PR or the base branch holds: that
  * one is that app's identically named migration. */
 function referencesOwnMigration(
@@ -154,7 +154,7 @@ function referencesOwnMigration(
  * Migration numbers this PR claims that the base branch already occupies.
  *
  * A collision is "same app, same number, different file" — a PR file that
- * merely EDITS a migration already on the base (same path) is not one. Deleted
+ * merely edits a migration already on the base (same path) is not one. Deleted
  * PR files are ignored. Collisions are returned in path order per app, and the
  * assigned target numbers form a chain: the first renumbered migration in an
  * app depends on the base branch's leaf, each later one on its predecessor.
@@ -162,7 +162,7 @@ function referencesOwnMigration(
 export function detectMigrationCollisions(input: CollisionInput): MigrationCollision[] {
   const baseByApp = new Map<string, Map<number, MigrationRef>>();
   // Every base migration path. Django names a migration by app + full name, so
-  // a merged graph can legitimately hold 0042_a AND 0042_b; a PR editing
+  // a merged graph can legitimately hold 0042_a and 0042_b; a PR editing
   // either one edits an existing file and collides with nothing.
   const basePaths = new Set<string>();
   for (const path of input.baseFiles) {
@@ -171,7 +171,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     basePaths.add(ref.path);
     const byNumber = baseByApp.get(ref.app) ?? new Map<number, MigrationRef>();
     // Two base migrations on one number (branched history + a merge
-    // migration): the higher path is the occupant a NEW file is told about.
+    // migration): the higher path is the occupant a new file is told about.
     const prev = byNumber.get(ref.number);
     if (!prev || prev.path < ref.path) byNumber.set(ref.number, ref);
     baseByApp.set(ref.app, byNumber);
@@ -245,7 +245,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
       });
       renamed.set(`${ref.digits}_${ref.name}`, { name: target.name, number: targetNumber });
       // Two colliding migrations in one app renumber into a chain: the second
-      // depends on the first's NEW name, not on the base leaf.
+      // depends on the first's new name, not on the base leaf.
       dependencyName = target.name;
     }
 
@@ -253,7 +253,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     // `dependencies` reference a migration the remedy just renamed. Its
     // dependency entry must move to the new name — and if its own number now
     // sits at or below its renumbered dependency, it must renumber too (which
-    // may cascade onto migrations depending on IT, hence the loop in number
+    // may cascade onto migrations depending on it, hence the loop in number
     // order and the `renamed` map growing as it goes).
     for (const { ref, patch } of ordered) {
       if (collidingPaths.has(ref.path)) continue;
@@ -298,7 +298,7 @@ export function detectMigrationCollisions(input: CollisionInput): MigrationColli
     renamedByApp.set(app, { app_label: colliding[0]!.ref.app_label, renamed });
   }
 
-  // Cross-app follow-ups: a PR migration in ANOTHER app whose `dependencies`
+  // Cross-app follow-ups: a PR migration in another app whose `dependencies`
   // name a migration the remedy renames. Numbers are per app, so it never
   // renumbers — only its dependency tuple moves.
   if (renamedByApp.size > 0) {
@@ -352,7 +352,7 @@ export interface CollisionCommentInput {
 }
 
 /**
- * The COMMENT body. It states the exact target number and the exact
+ * The comment body. It states the exact target number and the exact
  * `dependencies` value, and says in plain words that this is mechanics — no
  * blocker, no verdict consumed, no re-review round owed. Filename-derived
  * fields are the PR author's and render through `codePath` (see

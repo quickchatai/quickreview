@@ -16,7 +16,7 @@ What it writes (no model call, nothing uploaded; the run dirs are only read):
                          reviews, defect_verdicts, comment_verdicts,
                          aacr_matches), and the Martian and Qodo benchmarks'
                          goldens, reviews and verdicts.
-  figures/, keys/, reports/   the generated artefacts moved out of git:
+  figures/, keys/, reports/   the generated artefacts kept out of git:
                          the charts (the earlier study's re-drawn under the
                          public name), the rendered keys and FULL-BENCHMARK.
   README.md (the card, from hf/card.md), LICENSE (Apache-2.0), NOTICE,
@@ -65,7 +65,7 @@ SELFCONS = "wpself-gpt-6-sol-high"  # the primary judge re-run (no key-version p
 JUDGE_LABELS = {PRIMARY: "gpt-6-sol-high", SECOND: "claude-opus-5-5", SELFCONS: "gpt-6-sol-high-repeat"}
 
 # ---------------------------------------------------------------------------
-# The scrub (spellings shared with the run archive). Order
+# The scrub (spellings shared with the run archive, export_runs.py). Order
 # matters: the longer spellings first. One name, one placeholder, everywhere.
 # ---------------------------------------------------------------------------
 
@@ -703,7 +703,7 @@ class Exporter:
         self.tables["qodo_reviews"], self.tables["qodo_verdicts"] = reviews, verdicts
 
 
-# SPDX per reviewed repo (findings §3). Code excerpts in `defects`
+# SPDX per reviewed repo. Code excerpts in `defects`
 # (evidence, sites) stay under these licences.
 _L = {
     "Apache-2.0": "ClickHouse/ClickHouse alibaba/spring-ai-alibaba cline/cline dbeaver/dbeaver gofr-dev/gofr "

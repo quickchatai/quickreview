@@ -1,6 +1,6 @@
-// (docs/follow-up-rounds.md): the follow-up round template and its
-// three daemon-rendered blocks. Round 1 and the full re-review must render
-// exactly as before whatever follow-up fields an order carries; the follow-up
+// The follow-up round template (docs/follow-up-rounds.md) and its
+// three daemon-rendered blocks. Round 1 and the full re-review render
+// byte-identically whatever follow-up fields an order carries; the follow-up
 // template must render completely, with or without them.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -204,7 +204,7 @@ describe("round-follow-up.md renders completely", () => {
   it("the validator sees new candidates only, and every prior finding has an owner", () => {
     const flat = tpl.replace(/\s+/g, " ");
     expect(flat).toContain("this round's NEW candidates + the SETTLED list");
-    // step 1's assignment sentence is rendered — the session's own
+    // Step 1's assignment sentence is rendered — the session's own
     // assignment when the daemon made none, a check of the daemon's otherwise.
     expect(flat).toContain("{{prior_assign_note}}");
     const own = renderPriorAssignNote({}).replace(/\s+/g, " ");

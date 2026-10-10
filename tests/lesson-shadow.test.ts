@@ -1,4 +1,4 @@
-// the delivery switch, the bounded prefetch, the operator's kill
+// The delivery switch, the bounded prefetch, the operator's kill
 // switch, the shadow ledger and its report. Every I/O is faked: the engine is
 // an object, the clock is driven by hand, the state database is in memory.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -280,8 +280,8 @@ describe("prefetchLessons — ONE bounded phase", () => {
   });
 });
 
-/** Six distinct finds, the cases find first — more than a round plans since
- * F2 (two), but the prefetch takes any list (and the selector's
+/** Six distinct finds, the cases find first — more than a round plans
+ * (two), but the prefetch takes any list (and the selector's
  * slots are shared across rounds), so its bounds are pinned on six. */
 const sixFinds: PlannedFind[] = Array.from({ length: 6 }, (_, i) => ({
   key: `k${i}`,
@@ -494,7 +494,7 @@ describe("RoundLessonSelector", () => {
       s.start(order({ round_id: mode === "on" ? 8 : 7 }), [{ filename: "docs/guide.md" }]);
       await s.idle();
       const row = ledger.roundRow(mode === "on" ? 8 : 7)!;
-      // F2: TWO finds — the cases and the round's one lesson find.
+      // TWO finds — the cases and the round's one lesson find.
       expect(row).toMatchObject({
         mode,
         state: "selected",
@@ -674,7 +674,7 @@ describe("the budget and its timeout never delay a round (fake clock)", () => {
         adapter: new MiniAdapter(),
         hooks,
         lessons: selector,
-        // The integrity baseline reads real files (async since H2),
+        // The integrity baseline reads real files (async),
         // which a fake clock with no timer advanced cannot wait on.
         integrityFingerprint: async () => ({ digest: "fake-clock", files: {} }),
       });
@@ -1176,7 +1176,7 @@ function selections(): RoleSelection[] {
       agent: "a",
       lessons: [
         sl(L1, "dont-raise", "baseline.scope", ["pass-baseline"], ["docs/**"]),
-        // No class, no paths=, two lenses: neither tier can check it (R9) —
+        // No class, no paths=, two lenses: neither tier can check it —
         // tests/lesson-shadow-tiers.test.ts has the lens-tier cases.
         sl(L2, "dont-raise", null, ["pass-baseline", "pass-security"], []),
         sl(L3, "look-for", "missed.backend", ["pass-baseline"], []),
@@ -1236,7 +1236,7 @@ describe("matchShadow — lens, class and path, deterministically", () => {
     }));
     const marks = matchShadow(selections(), rows);
     // f3 (backend/, outside docs/**), f4 (killed) and f9 (pass-ui) are never
-    // marked; f10's class differs, so it is marked on the LENS tier (R9).
+    // marked; f10's class differs, so it is marked on the LENS tier.
     expect(
       marks.map((m) => `${m.finding_key}→${m.lesson_uri.slice(EXP.length + 1)}:${m.match}`),
     ).toEqual([
@@ -1449,7 +1449,7 @@ describe("the shadow report over a fixture joined with fates", () => {
       upheld: 1, // f7: upheld beats the whole-review signal
       ignored: 0,
       unknown: 0,
-      exempt_p0: 1, // f6 is P0 — fixed, but R2 never demotes a P0
+      exempt_p0: 1, // f6 is P0 — fixed, but a P0 is never demoted
     });
     // Every lesson here that marks does so on its class: the lens tier is empty.
     expect(r.marks_by_tier).toEqual({ class: 7, lens: 0 });
@@ -1513,7 +1513,7 @@ describe("the shadow report over a fixture joined with fates", () => {
 
   it("a finding posted again is ONE finding (its carried_to chain), and a set-aside counts only for its own round", () => {
     seed();
-    // Round 2 of PR 100: f1 posted AGAIN (S6 carries round 1's row to it), and
+    // Round 2 of PR 100: f1 posted AGAIN (the outcome capture carries round 1's row to it), and
     // a new finding g1 whose fate is unknown — round 2 was NOT set aside.
     ledger.recordRound(
       {
@@ -1887,7 +1887,7 @@ describe("/search/find — the client and the engine adapter", () => {
       reason: expect.stringContaining("UNAVAILABLE"),
     });
     expect(await engine.retiredUris()).toEqual([`${EXP}/z.md`]);
-    // F2: the corpus size is the STORE's count of the area (its last
+    // The corpus size is the STORE's count of the area (its last
     // sweep, no request); a store that cannot count — or throws — is unknown.
     expect(engine.corpusSize?.("experiences")).toBeNull();
     const counted = openVikingLessonEngine(client, {

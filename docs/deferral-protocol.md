@@ -1,6 +1,6 @@
 # Deferrals cost a ticket — the `[deferred]` protocol
 
-**Decision (the owner, and its amendment).** *"Next iteration"* was never
+**Why.** *"Next iteration"* was never
 the author proving a finding wrong. It was a **cost decision**: right finding,
 real fix, not worth an hour then. That cost has collapsed, because an AI
 implementer has the time. So a deferral stops being free.
@@ -8,20 +8,18 @@ implementer has the time. So a deferral stops being free.
 **No ticket, no deferral.** The reviewer neither holds the block nor silently
 concedes: **it files the issue itself, in the same round that deferred** —
 through the daemon's existing capped issue path. There is no author-confirmation
-step (the owner's correction of the first build: *"bot should just create issue,
-with proper context on what was deferred from where by whom etc … and github
-token is then open to comments and pickable by human"*). The filed issue is an
-ordinary GitHub issue: commentable, correctable, pickable by any human.
+step: the bot creates the issue, with full context on what was deferred, from
+where and by whom. The filed issue is an ordinary GitHub issue: commentable,
+correctable, pickable by any human.
 
 **Nothing here forces a fix or blocks a merge.** A deferral only stops being
-free. The falsifier the owner named: if the backlog becomes noise nobody works,
-this was wrong.
+free. The falsifier: if the backlog becomes noise nobody works, this was
+wrong.
 
 ## The three markers, and why there are three
 
 A marker that means three things routes nothing — the same argument that gave
-`[ask your human]` its own tag on instead of a second meaning for
-`[check this]`. Each of the three has exactly one meaning, one addressee and one
+`[ask your human]` its own tag instead of a second meaning for `[check this]`. Each of the three has exactly one meaning, one addressee and one
 resolution rule.
 
 | marker | means | addressee | who may resolve the thread |
@@ -105,14 +103,13 @@ it is visible in the TUI and queryable afterwards.
 ### How the session reaches the capped path (no tier widening)
 
 `file-issue` is `author: false` in `src/commands.ts`'s `TIER_TABLE` — on Slack
-it is the owner's tier only, exactly as before. The review session does
+it is the owner's tier only. The review session does
 not need a widening: its command files land in the daemon's legacy `commands/`
 directory with **no Slack origin**, and a turn with no origin runs at full
 tier-M autonomy already (the same footing as the EOD sweep, which files issues
-through this exact path today). The first build of briefly widened the
-row to `author: "own"` for an author-confirmation step; the owner corrected the
-intent — the session files the ticket itself — and the widening is reverted.
-The optional `pr` field survives as pure provenance: it attributes the filing,
+through this exact path). The row is deliberately not widened to
+`author: "own"`: there is no author-confirmation step, because the session files
+the ticket itself. The optional `pr` field is pure provenance: it attributes the filing,
 and any refusal, to the PR the deferral was raised on. Every cap is downstream
 of the tier and none of them moved — a tier never lifts a cap.
 

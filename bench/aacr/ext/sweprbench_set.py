@@ -42,7 +42,7 @@ PIN = {
     "file": "dataset/prs.jsonl",
     "sha256": "a58e1f713533f6bc260a93f6e234b85acd16a77f55a756893694b96495eb43cd",
 }
-# The 10-PR smoke (DECISIONS: all from eval_100, two per difficulty-ish, five languages).
+# The 10-PR smoke (all from eval_100, two per difficulty-ish, five languages).
 SMOKE10 = [
     "coreos-assembler__4386", "stylelint__8953", "vitest__9152", "nessie__11676", "mycli__1517",
     "falcon__2572", "pip__13482", "pipecat__3328", "espnet__6356", "litgpt__2188",

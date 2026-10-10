@@ -1,30 +1,30 @@
-// The change register (FT-0234) — every feedback-derived change this loop has
+// The change register — every feedback-derived change this loop has
 // produced, newest first, with a one-key revert behind it.
 //
-// WHY IT EXISTS. Per-change ceremony is deliberately light: the owner approves the
-// IDEA in a ratifying turn, not the diff (FT-0196). The risk that buys is DRIFT
+// Why it exists. Per-change ceremony is deliberately light: the owner approves
+// the idea in a ratifying turn, not the diff. The risk that buys is drift
 // — no single change looks like lowering the bar, ten might — so the guard is
 // that the whole set is readable at once, and that any one of them comes back
 // out with one key. Without this list that light approval is unprotected.
 //
-// HOW A CHANGE IS IDENTIFIED: the commit trailers the `land` skill already
+// How a change is identified: the commit trailers the `land` skill already
 // promises (skills/companion/land/SKILL.md), and no new competing set:
 //
 //     Feedback-PR: 5270            ← omitted when the change came from no episode
-//     Adjudication: FT-0231        ← omitted likewise
-//     Ratified-in-session: <session id, and his approving words>
+//     Adjudication: FT-NNNN        ← omitted likewise
+//     Ratified-in-session: <session id, and the owner's approving words>
 //
-// `Ratified-in-session:` is the one trailer that is NEVER omitted, so it — and
+// `Ratified-in-session:` is the one trailer that is never omitted, so it — and
 // only it — is the register's key. A commit carrying it is a change this loop
 // produced; a commit without it is not, however it is worded. That keeps the
 // register honest in both directions: nothing lands unlisted without also
-// skipping the ratifying turn, which is the void-the-widening offence.
+// skipping the ratifying turn, which is itself forbidden.
 //
-// Trailers are read from the LAST paragraph of the message only, the same
+// Trailers are read from the last paragraph of the message only, the same
 // header-only discipline `src/memory/eventtags.ts` uses: a quoted line in a
 // commit body must never be able to mint a register entry.
 //
-// REVERTS ARE READ BACK OUT OF GIT, not out of this file. `git revert` writes
+// Reverts are read back out of git, not out of this file. `git revert` writes
 // "This reverts commit <sha>." into the message it makes, so a reverted entry
 // stays marked after any restart, on any checkout, even if this file is deleted
 // — the durability of record lives in the repository, and the JSON is a cache
@@ -53,8 +53,8 @@ export const CHANGE_LOG_FORMAT = `%H${FS}%aI${FS}%an${FS}%s${FS}%B${RS}`;
 
 /**
  * How many commits back a scan looks. A bound rather than a full-history walk:
- * the register is about this loop's output, and the loop started in 2026-08.
- * Entries already in the file are NEVER dropped for falling off this window —
+ * the register is about this loop's output, which is recent history.
+ * Entries already in the file are never dropped for falling off this window —
  * `mergeRegister` only ever adds — so raising or lowering it cannot lose a row.
  */
 export const SCAN_LIMIT = 500;
@@ -101,7 +101,7 @@ export function parseGitLog(stdout: string): ChangeCommit[] {
 }
 
 /**
- * The message's trailer block: `Key: value` lines in the LAST paragraph only.
+ * The message's trailer block: `Key: value` lines in the last paragraph only.
  * A paragraph that is not entirely trailer-shaped yields nothing — that is what
  * stops a body's closing prose line from being read as a trailer.
  */
@@ -174,7 +174,7 @@ export function revertsIn(commits: ChangeCommit[]): RevertIndex {
   for (const c of commits) {
     const target = revertedSha(c.body);
     if (!target) continue;
-    // Newest first, so the FIRST revert seen for a target is the latest one.
+    // Newest first, so the first revert seen for a target is the latest one.
     if (!reverts.has(target)) reverts.set(target, { by: shortSha(c.sha), at: c.at });
   }
   return reverts;
@@ -217,11 +217,11 @@ export function buildEntries(commits: ChangeCommit[], now: string): ChangeEntry[
  * Two rules, both load-bearing:
  *  · `first_seen` is never rewritten — the register is a record, not a mirror.
  *  · An entry the scan no longer reaches (older than `SCAN_LIMIT`, or a
- *    checkout that does not carry it) is KEPT. Nothing here removes a row; a
+ *    checkout that does not carry it) is kept. Nothing here removes a row; a
  *    list that quietly forgets a change is worse than no list, because the
  *    whole point is reading the drift in one place.
  *
- * A kept row is not frozen, though: a revert the scan DID reach (`reverts`)
+ * A kept row is not frozen, though: a revert the scan did reach (`reverts`)
  * marks it, because the target of a recent revert may itself be older than the
  * window — and a row still offered for revert after it was reverted is a lie.
  */
@@ -248,9 +248,9 @@ export function mergeRegister(
 export const REGISTER_FILE = "change-register.json";
 
 /**
- * What a read of the register file found (FT-0397; the `CandidateStore.read`
- * shape from FT-0387). `absent` is a state dir with no register yet — the
- * first scan writes one. `unreadable` is a register that EXISTS and cannot
+ * What a read of the register file found (the `CandidateStore.read` shape).
+ * `absent` is a state dir with no register yet — the first scan writes one.
+ * `unreadable` is a register that exists and cannot
  * be read: a torn write, a hand edit, a full disk. The two must never fold:
  * a scan merged onto an "empty" baseline and saved would rewrite
  * `first_seen` on every row and drop every row the scan no longer reaches —
@@ -277,8 +277,7 @@ export class ChangeRegisterStore {
 
   /** Never a throw — and never a collapse of "cannot read" into "no changes";
    * there is deliberately no `load()` returning `ChangeRegister | undefined`
-   * beside this (FT-0397: that accessor is what the next merge-and-save
-   * reaches for). */
+   * beside this (that accessor is what a merge-and-save reaches for). */
   read(): RegisterRead {
     let raw: string;
     try {
@@ -313,7 +312,7 @@ export class ChangeRegisterStore {
  * is the file on disk: it exists and cannot be read, so nothing is scanned
  * and nothing is saved over it. `scan_failed` is git: the stored register
  * stands, but whether it is current is unknown. The tab renders each as its
- * own sentence — neither is "no changes yet" (FT-0397).
+ * own sentence — neither is "no changes yet".
  */
 export type ChangeLogProblem =
   { kind: "register_unreadable"; reason: string } | { kind: "scan_failed"; reason: string };
@@ -324,18 +323,17 @@ export interface RevertResult {
 }
 
 /**
- * The register's one write, and the third user-initiated write in the whole TUI
- * (after `msg.ts`'s inject files and `unwedge.ts`'s command file).
+ * The register's one write.
  *
  * Bounds, all structural:
- *  · It runs `git revert` in the LOCAL sandbox checkout and nothing else. No
- *    push (this repo has no remote), no GitHub call, nothing near the
+ *  · It runs `git revert` in the local sandbox checkout and nothing else. No
+ *    push, no GitHub call, nothing near the
  *    `MutationGate` — a revert here is a local commit and a rebuild, exactly
  *    what the companion's own landing path is.
  *  · It refuses on a dirty tree. Root rule 11: the checkout is shared and a
  *    dirty tree is almost certainly the companion's in-flight work, which is
  *    never ours to stash, reset or commit around. `git revert` would refuse
- *    anyway — refusing FIRST is how the operator gets told why.
+ *    anyway — refusing first is how the operator gets told why.
  *  · A conflicted revert is aborted, not left half-applied in the tree the
  *    companion is working in.
  *  · Only a sha the register lists can be reverted — this is not a general
@@ -347,7 +345,7 @@ export class ChangeLog {
     private readonly local: LocalRunner,
     private readonly now: () => Date = () => new Date(),
   ) {
-    // The persisted register IS the first paint: the tab has content before
+    // The persisted register is the first paint: the tab has content before
     // git has been asked anything, which is what "survives a restart" means
     // in practice on a cold start.
     this.adopt(store.read());
@@ -357,7 +355,7 @@ export class ChangeLog {
   register: ChangeRegister | undefined;
 
   /** Why `register` cannot currently be trusted as the whole story — for the
-   * tab to SAY. `undefined` means the last read and scan both succeeded. */
+   * tab to say. `undefined` means the last read and scan both succeeded. */
   problem: ChangeLogProblem | undefined;
 
   private busy = false;
@@ -377,11 +375,11 @@ export class ChangeLog {
    * Re-scan git and fold the result into the stored register. Resolves to the
    * problem that stopped it, or `undefined` when `register` is fresh.
    *
-   * The baseline is read FIRST and an unreadable one stands the scan down
+   * The baseline is read first and an unreadable one stands the scan down
    * entirely — no git, no merge, no save. `mergeRegister` keeps every row the
    * scan no longer reaches and never rewrites `first_seen`; both promises are
    * only as good as the baseline they merge onto, and a torn file merged as
-   * "no previous entries" and saved would falsify both at once (FT-0397).
+   * "no previous entries" and saved would falsify both at once.
    */
   async refresh(): Promise<ChangeLogProblem | undefined> {
     if (this.busy) return this.problem;

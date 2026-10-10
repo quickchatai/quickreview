@@ -2,14 +2,14 @@
 //
 //   1. the case-set contract: only AACR-Bench v1.0, validated shapes, no dupes;
 //   2. the git → file-list parse the lens heuristics consume (real statuses,
-//      renames, binaries — the replay seam stamped everything `modified`);
+//      renames, binaries — never every file stamped `modified`);
 //   3. the offline override: every GitHub-bound step replaced, every
 //      review-quality step kept, the output files named;
 //   4. the conversion to the scorer's shape — above all that a failed case
 //      still produces a file (the scorer silently drops a missing one);
-//   5. that every lens the bench PLANS is an agent the bench BUILDS — the
-//      exact defect that left `qcr regression` unrunnable (bare lens names vs
-//      `<lens>--<tier>` agents);
+//   5. that every lens the bench PLANS is an agent the bench BUILDS (a bare
+//      lens name with no `<lens>--<tier>` agent leaves `qcr regression`
+//      unrunnable);
 //   6. the sandbox's structural promises: src/bench imports no mutation code,
 //      the image carries no scripts/ and no gh;
 //   7. the open-code-review baseline arm: OCR run flag-for-flag as the
@@ -574,7 +574,7 @@ describe("what the session wrote → what the scorer reads", () => {
   });
 
   it("the plan's usage window running out is its own kind, not a short rate limit", () => {
-    // The exact text pi 0.99.1 recorded for openai-codex when the plan window ran out (2026-09-29).
+    // The exact text pi 0.99.1 records for openai-codex when the plan window runs out.
     const err = (ts: number, errorMessage: string) =>
       JSON.stringify({
         type: "message_end",
@@ -620,8 +620,8 @@ describe("what the session wrote → what the scorer reads", () => {
 
 describe("the round the bench runs is the production round", () => {
   // The bench reads the install locator's config (inside the image: the copy
-  // bench.sh baked, named by QCR_CONFIG).: the checkout's own
-  // config.toml is never read, so the test names a production-shaped one.
+  // bench.sh baked, named by QCR_CONFIG). The checkout's own config.toml is
+  // never read, so the test names a production-shaped one.
   const LIVE = join(ROOT, "tests", "fixtures", "config.toml");
   const savedConfig = process.env.QCR_CONFIG;
   process.env.QCR_CONFIG = LIVE;
@@ -1283,9 +1283,9 @@ describe("consistency in the benchmark", () => {
   });
 });
 
-// A comment the session anchored on a DELETED line used to be dropped from
-// every head-side scorer's input (results/all excluded it). It is moved to the
-// head side of its own hunk instead; a deleted file gets a file-level anchor.
+// A comment the session anchored on a deleted line would be dropped from every
+// head-side scorer's input (results/all excludes it), so it is moved to the
+// head side of its own hunk; a deleted file gets a file-level anchor.
 describe("reanchorLeftLine / reanchorLeftComments", () => {
   const patch = [
     "@@ -10,6 +10,5 @@ fn",

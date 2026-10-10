@@ -1,10 +1,9 @@
-// the seven surfaces (ratified layout; the eighth,
-// `scan`), and the fences that keep them honest:
+// The eight TUI surfaces and the fences that keep them honest:
 //
 //   * eight named tabs, one vocabulary, each reachable by its digit — and the
-//     retired names (`changes`, the `digest` tab id for tab [2]) refused;
-//   * no hidden mode: the `v` toggle, the full-screen detail page and the
-//     `changes` tab are GONE from the source, not merely unreachable;
+//     names `changes` and `digest` (as tab [2]'s id) refused;
+//   * no hidden mode: no `v` toggle, full-screen detail page or `changes` tab
+//     exists in the source, not merely unreachable;
 //   * the key law — what a surface paints is what it registers, and every
 //     printable it does not register reaches the companion column untouched;
 //   * the board's verbs are the board's: off it they do nothing, and with a
@@ -177,7 +176,7 @@ describe("no hidden mode survives", () => {
     for (const [name, text] of tuiSources()) {
       expect(text, `${name} still carries the detail page`).not.toMatch(/detailFull/);
       expect(text, `${name} still branches on a \`v\` key`).not.toMatch(/ch === "v"|"v", label/);
-      // A tab-shaped use of the retired name: a comparison, a union member, a
+      // A tab-shaped use of the refused name: a comparison, a union member, a
       // switch case or a record key. (`state/changes` — the register's DIR —
       // is a path segment, not a tab, and stays.)
       expect(text, `${name} still knows a "changes" tab`).not.toMatch(

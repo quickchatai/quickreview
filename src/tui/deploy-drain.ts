@@ -14,7 +14,7 @@ export interface DrainCommandOutcome {
   running_rounds?: number;
   dropped_deliveries?: number;
   /** Who the daemon recorded as holding the drain. `session` from
-   * an operator client means the operator channel was NOT sealed (the
+   * an operator client means the operator channel was not sealed (the
    * directory was writable by the daemon's uid) and the drain was bounded
    * like a session's — the caller must say so, never read it as the deploy
    * drain it asked for. */

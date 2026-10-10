@@ -1,22 +1,19 @@
-// the install locator never reads an install's own profile from the
+// The install locator never reads an install's own profile from the
 // checkout, and every test file runs against an EMPTY temp config home
-// (tests/helpers/install-env.ts). `qcr install migrate` then moved the
-// deployment's own pack out of the checkout altogether,
-// so the pins that bind that exact pack — the byte-equivalence proof,
-// the heuristics equivalence, the stack-rule proof, the
-// deployed composition, the built-variant fence — had nothing to read and
-// self-skipped everywhere: silently, forever.
-//
-// They now read a TRACKED, frozen copy under tests/fixtures/profiles/ — the
+// (tests/helpers/install-env.ts), and the deployment's own pack lives in the
+// install's config home, not the checkout. So the pins that bind that exact
+// pack — the addenda byte-equivalence proof, the heuristics equivalence, the
+// stack-rule proof, the deployed composition, the built-variant fence — read a
+// tracked, frozen copy under tests/fixtures/profiles/ — the
 // exact bytes the pins were written against — staged into this test file's
 // temp config home, the place the locator really reads, so they run through
 // the real lookup. The operator's live pack lives in the install's config
 // home and may move on; the fixture does not.
 //
-// A fixture pack is absent in exactly one place: an assembled
+// A fixture pack is absent in exactly one place: an assembled publication
 // snapshot, whose manifests drop it (the pack's content never travels). There
 // the pins self-skip. In the SOURCE tree a missing fixture is a loud failure,
-// never a skip — that silent skip is the thing this file exists to end.
+// never a skip: a silent skip would leave those pins binding nothing.
 //
 // Idempotent; it refuses to write anywhere but the temp home the setup file
 // installed, so it can never touch the developer's own config home.

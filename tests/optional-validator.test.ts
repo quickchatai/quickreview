@@ -1,5 +1,5 @@
 // tests/optional-validator.test.ts — the optional validator; a veto becomes a
-// mark (amending).
+// mark.
 //
 // Three halves, each asserted where production meets it:
 //   * the PLAN — a profile may switch `pass-validate` off (`buildPassPlan` /

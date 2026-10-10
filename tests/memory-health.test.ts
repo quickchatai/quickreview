@@ -1,8 +1,8 @@
-// reviewer-memory health: the state machine that makes a memory
+// Reviewer-memory health: the state machine that makes a memory
 // outage reach a person. Fake probes, fake clock, fake wake sink, fake
 // incident store; no I/O.
 //
-// The acceptance criteria of the slice, pinned here:
+// Pinned here:
 //   * state is `unknown` before the first probe;
 //   * a 401 wakes on the first probe (and from a real request);
 //   * a dead transport raises `memory_down` at 10 min;
@@ -51,7 +51,7 @@ function harness(
     sessions?: ProbeAnswer;
     draining?: boolean;
     stored?: MemoryIncident | null;
-    /** S4: the engine's serving answer; absent ⇒ not wired. */
+    /** The engine's serving answer; absent ⇒ not wired. */
     serving?: ServingAnswer;
   } = {},
 ) {
@@ -567,9 +567,9 @@ describe("memory health — the daemon's own requests and round seeds", () => {
   });
 });
 
-// S4 (review): the fs/ls probe needs no embedding, so it kept
-// answering while a dead local embedder failed every search. What the engine's
-// own supervision says about SERVING now reaches a person the same way.
+// The fs/ls probe needs no embedding, so it keeps answering while a dead local
+// embedder fails every search. What the engine's own supervision says about
+// SERVING reaches a person the same way.
 describe("memory health — memory that answers but cannot search", () => {
   const EMBEDDER_GONE: ServingAnswer = {
     ok: false,

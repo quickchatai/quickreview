@@ -29,9 +29,8 @@ export const DEFAULT_INTERVAL_S = 60;
 export const DEFAULT_TIMEOUT_MS = 4000;
 
 /** A deploy recreates the VM container and restarts the host forward, so the
- * memory chain is EXPECTED down for a few minutes — long enough that the
- * 3×60s threshold fired on every single deploy (the owner, 2026-08-27: "on
- * EVERY deploy"). deploy.sh stamps this marker into the alerts dir (a live
+ * memory chain is EXPECTED down for a few minutes — longer than the 3×60s
+ * threshold. deploy.sh stamps this marker into the alerts dir (a live
  * bind mount, so it appears here instantly) when its disruptive phase starts
  * and deletes it once the chain answers again; while the marker's mtime is
  * younger than the grace, a "down" transition is HELD rather than announced.

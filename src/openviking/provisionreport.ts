@@ -1,14 +1,14 @@
-// The boot provisioning report, read by the daemon (S1).
+// The boot provisioning report, read by the daemon.
 //
-// `scripts/openviking-provision.mjs` runs in the entrypoint BEFORE the daemon
-// exists, and until it said what it found only in the boot log: a
-// reviewer key that does not authenticate, a user it could not create, a user
-// it had to CREATE (which means the server lost it — the key the server minted
-// for the new user is discarded, by design, so every distributed copy of the
-// old key is now wrong). Nobody reads a boot log. The script now writes
+// `scripts/openviking-provision.mjs` runs in the entrypoint before the daemon
+// exists. What it finds — a reviewer key that does not authenticate, a user it
+// could not create, a user it had to CREATE (which means the server lost it —
+// the key the server minted for the new user is discarded, by design, so every
+// distributed copy of the old key is now wrong) — must reach a person, and
+// nobody reads a boot log. So the script writes
 // `state/openviking/provision.json`; the daemon reads it once at boot, puts it
 // in status.json `memory.provision`, and wakes `memory_provision_failed` when
-// it says anything is wrong. The "never mint, never rotate" rule is unchanged:
+// it says anything is wrong. The "never mint, never rotate" rule holds:
 // a recreated user is SURFACED, loudly, never repaired here.
 //
 // The report carries no key — the script never writes one anywhere.

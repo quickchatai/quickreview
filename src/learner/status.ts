@@ -1,4 +1,4 @@
-// The learner's status block (S8) — `memory.curation` in status.json.
+// The learner's status block — `memory.curation` in status.json.
 //
 // A LEAF on purpose: src/memory/health.ts (and through it the TUI and the
 // CLI) reads this shape and renders its phrase, and must not load the learner

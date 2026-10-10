@@ -1,10 +1,10 @@
-// The real ports behind SetupEngine (the case runner is its own
-// file, caserunner.ts). Assembled by the companion's
-// setup extension (extensions/setup.ts) inside the companion container, where
-// the reviewed checkout is mounted read-only, the state home read-write and
-// the config home in part (`profiles/`, `portrait/`)
-// (root CLAUDE.md rule 8, third amendment). Tests use fakes and temp dirs;
-// these are the only implementations that touch a real disk or network.
+// The real ports behind SetupEngine (the case runner is its own file,
+// caserunner.ts). Assembled by the companion's setup extension
+// (extensions/setup.ts) inside the companion container, where the reviewed
+// checkout is mounted read-only, the state home read-write and the config
+// home in part (`profiles/`, `portrait/`) (root CLAUDE.md rule 8). Tests use
+// fakes and temp dirs; these are the only implementations that touch a real
+// disk or network.
 //
 // Every port is total at its edge, like the engine above it: a missing
 // checkout lists null, a missing token file answers a refusal, and nothing
@@ -190,8 +190,8 @@ const TOKEN_VAR = "QCR_GITHUB_READ_TOKEN";
 const EXPIRES_VAR = "QCR_GITHUB_READ_EXPIRES_AT";
 
 /**
- * GitHub through the companion's read-only token file (,
- * `src/tui/ghread.ts` writes it host-side). GET only — the method is not a
+ * GitHub through the companion's read-only token file (`src/tui/ghread.ts`
+ * writes it host-side). GET only — the method is not a
  * parameter anywhere on this path — and only API-relative paths, so a model-
  * supplied string can neither pick a verb nor aim the token at another host.
  * The file is re-read on every call: the host re-mints it in place.
@@ -256,8 +256,8 @@ export function tokenFileGitHubReader(opts: {
   };
 }
 
-/** A port whose slice has not landed yet: every call is an honest refusal
- * naming the ticket that wires it, never a silent no-op that reads as done. */
+/** A port that is not wired: every call is an honest refusal naming what
+ * wires it, never a silent no-op that reads as done. */
 export function notYetTrackerSink(ticket: string): TrackerSink {
   const reason = `the tracker sink is not wired yet (${ticket})`;
   return {
@@ -269,7 +269,7 @@ export function notYetTrackerSink(ticket: string): TrackerSink {
 
 /**
  * Reviewer memory, from the companion's environment: the endpoint
- * its spawn is given (`OPENVIKING_URL`) and the REVIEWER user key its
+ * its spawn is given (`OPENVIKING_URL`) and the reviewer user key its
  * `--env-file` carries — what setup writes is for the reviewer to read, and
  * the server confines that key to the reviewer's tree — never the
  * companion's own key (survey notes and history themes are for PR rounds),

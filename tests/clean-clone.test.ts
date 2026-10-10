@@ -1,4 +1,4 @@
-// the clean-clone check: nothing this repo ships may resolve against
+// The clean-clone check: nothing this repo ships may resolve against
 // a `dist/` artifact whose SOURCE no longer exists.
 //
 // `npm run build` compiles into `dist/` without removing what is no longer
@@ -7,13 +7,8 @@
 // and anything importing that path keeps "working" on the machine that once
 // built it while failing on any fresh `git clone`.
 //
-// That is not hypothetical. `scripts/companion-e2e.sh` imported
-// `dist/extensions/companion-wake.js` for ten days after the source was deleted
-// on 2026-08-21; `npm run e2e:companion` is an advertised command, so a
-// stranger's first run of it failed. `scripts/build-regression-set.mjs` pointed
-// at `dist/regression.js`, a path the compiler has never emitted (the outDir is
-// the repo root, so it is `dist/src/regression.js`), and its graceful fallback
-// told the operator to run a build that could not fix it.
+// It also catches a reference to a path the compiler never emits (the layout
+// is `dist/src/<file>.js`, not `dist/<file>.js`), which no build can fix.
 //
 // The check therefore resolves every `dist/…` reference back to its SOURCE,
 // never to `dist/` itself: asserting against `dist/` would inherit exactly the
@@ -66,7 +61,7 @@ function surfaces(): string[] {
 describe("clean-clone check — no dist/ reference outlives its source", () => {
   it("finds the references at all, so a broken regex cannot make this vacuous", () => {
     const found = surfaces().flatMap((f) => readFileSync(f, "utf8").match(DIST_REF) ?? []);
-    // The audit's own caveat: a green suite proves the assertions that exist
+    // A green suite proves the assertions that exist
     // pass, not that they assert what their names suggest. If the scan ever
     // stops finding references, this test is checking nothing.
     expect(found.length).toBeGreaterThan(5);

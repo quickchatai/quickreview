@@ -1,4 +1,4 @@
-// The LESSON LEDGER (S9a): what every round's lesson selection was,
+// The LESSON LEDGER: what every round's lesson selection was,
 // which posted findings a delivered dont-raise lesson WOULD have touched, and
 // the operator's kill switch — all on the state database, none of it in
 // memory.
@@ -12,9 +12,9 @@
 //   `timeout`, `unreadable`, `lessons_off`). A round the switch is `off` for
 //   has no row at all: `off` runs nothing.
 // - `lesson_selections` — per round, one row per ROLE: every discovery plan
-//   row, the validator, every lens the session may add (S9b, `addable`, its
-//   row the lens's index in `addable_lenses`), the main session's cases. The lessons (or cases) it
-//   would carry with every field the matcher and the report need, the cuts
+//   row, the validator, every lens the session may add (`addable`, its row
+//   the lens's index in `addable_lenses`), the main session's cases. The
+//   lessons (or cases) it would carry with every field the matcher and the report need, the cuts
 //   (each with why), the drop counts per filter, the query, and whether its
 //   find timed out. The contract's "round, row, lesson URIs, cases, cuts,
 //   prefetch ms, timeouts" — the round-level facts live on `lesson_rounds`.
@@ -22,14 +22,13 @@
 //   lesson whose lens and path precondition the finding meets, the TIER it
 //   matched on (`match`: `class` — the lesson's class matched the finding's
 //   too, what the validator's `lesson-shape` license needs; `lens` — lens and
-//   path alone, the owner's ruling R9), and why (src/lessonshadow.ts
-//   `matchShadow`). Re-recording a round's findings replaces its marks. A
-//   ledger from before R9 (no `match` column, `lesson_class` NOT NULL) is
-//   migrated ONCE (`migrateMarkTiers`): every existing row kept as `class` —
-//   the only tier that matcher had — and each recorded round's R9 marks
-//   added where it holds none for that (finding, lesson) — its lens-tier
-//   marks — so a report window never reads the lens tier as zero for rounds
-//   it was never measured on.
+//   path alone), and why (src/lessonshadow.ts `matchShadow`). Re-recording a
+//   round's findings replaces its marks. A ledger without tiers (no `match`
+//   column, `lesson_class` NOT NULL) is migrated ONCE (`migrateMarkTiers`):
+//   every existing row kept as `class` — the only tier that matcher had — and
+//   each recorded round's tiered marks added where it holds none for that
+//   (finding, lesson) — its lens-tier marks — so a report window never reads
+//   the lens tier as zero for rounds it was never measured on.
 // - `lesson_switch` / `lesson_suppressions` — THE OPERATOR'S KILL SWITCH.
 //   `lessons-off` / `lessons-on` and `suppress-lesson <uri>` /
 //   `unsuppress-lesson <uri>` arrive ONLY through the root-sealed
@@ -50,8 +49,8 @@ import type {
 } from "./memory/selection.js";
 import type { StateStore } from "./state.js";
 
-// The marks table, shared by the schema and the R9 migration that rebuilds a
-// pre-R9 one (SQLite cannot drop a NOT NULL in place).
+// The marks table, shared by the schema and the tier migration that rebuilds
+// an untiered one (SQLite cannot drop a NOT NULL in place).
 const MARKS_TABLE_COLUMNS_SQL = `(
   pr INTEGER NOT NULL,
   round_no INTEGER NOT NULL,
@@ -182,10 +181,9 @@ export interface StoredSelection {
 }
 
 /**
- * Which tier a shadow mark matched on (R9). `class` is the STRONGER:
- * the lesson's lens, class and path preconditions all held — exactly what
- * the validator's `lesson-shape` license (R2, the `lesson-validate` addendum)
- * needs. `lens`: the lens and path preconditions held and the class did not
+ * Which tier a shadow mark matched on. `class` is the STRONGER: the lesson's
+ * lens, class and path preconditions all held — exactly what the validator's
+ * `lesson-shape` license (the `lesson-validate` addendum) needs. `lens`: the lens and path preconditions held and the class did not
  * (or the lesson names none) — lens-level matching, evidence only.
  */
 export type ShadowMatchTier = "class" | "lens";
@@ -260,7 +258,7 @@ export class LessonLedger {
     return this.now().toISOString();
   }
 
-  /** The marks table has the R9 shape (a `match` column). */
+  /** The marks table has the tiered shape (a `match` column). */
   private marksHaveTiers(): boolean {
     return (
       this.store.db.prepare("PRAGMA table_info(lesson_shadow_marks)").all() as Array<{
@@ -270,13 +268,12 @@ export class LessonLedger {
   }
 
   /**
-   * R9, once per database: a marks table from before lens-level
-   * matching has no `match` column and a NOT NULL `lesson_class` (a lens-tier
+   * Once per database: a marks table from before lens-level matching has no `match` column and a NOT NULL `lesson_class` (a lens-tier
    * mark of a lesson with no class has none to store). Rebuild it in place —
    * every existing row copied as `class`, the only tier the strict matcher
    * had — and then ADD each recorded round's lens-tier marks beside them
    * (`backfillLensTier`), so the report and the headline never read the lens
-   * tier of a pre-R9 round as zero. Existing rows are never touched: the
+   * tier of an untiered round as zero. Existing rows are never touched: the
    * backfill inserts only (finding, lesson) pairs the table does not hold. One
    * IMMEDIATE transaction, the shape checked again inside it — the daemon and
    * `qcr lessons shadow-report` both open this database, and the second one
@@ -319,7 +316,7 @@ export class LessonLedger {
   }
 
   /**
-   * The marks every recorded round has under R9 — INSERTED where the round
+   * The tiered marks every recorded round has — INSERTED where the round
    * holds no mark for that (finding, lesson), never replacing one: in
    * practice its lens-tier marks, since the strict matcher already wrote its
    * class-tier ones (a round it never marked gets both). Each round is
@@ -540,8 +537,8 @@ export class LessonLedger {
   /**
    * Drop one round's record — its `lesson_rounds` row, its selections and
    * any marks stamped with it — because dispatch DISCARDED the round before
-   * its handoff (S9b: under `on` the selection runs before the
-   * handoff, and a failed handoff deletes the provisional round). Without
+   * its handoff (under `on` the selection runs before the handoff, and a
+   * failed handoff deletes the provisional round). Without
    * this the report and the status headline would count an attempt that
    * never ran: round totals, timeouts, each lesson's selected rounds. Round
    * ids are never reused, so the retry records under its own id.

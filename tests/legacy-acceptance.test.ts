@@ -1,19 +1,19 @@
-// legacy-acceptance belts — PERMANENT, not cleanup candidates.
+// Legacy-acceptance belts — permanent, not cleanup candidates.
 //
 // The tier split (owner_legacy → owner + system) and the command rename
 // (flag-owner-legacy → flag-owner) follow the codebase's established pattern for
 // retired spellings (ESCALATE → NEEDS_HUMAN in normalizeVerdict): the old
-// string is ACCEPTED ON INPUT FOREVER and folded to the current vocabulary at
-// parse time, and the new spelling is the only one ever EMITTED. Live state
+// string is accepted on input forever and folded to the current vocabulary at
+// parse time, and the new spelling is the only one ever emitted. Live state
 // makes the input side non-negotiable: origin records written before the
 // rename sit on disk, slack_events rows sit in state.db, and frozen prompts
-// (rule 6 — the reseed is the owner's to ratify, on his timeline) plus
-// long-lived overseer sessions keep emitting `flag-owner-legacy`.
+// (rule 6 — a correcting reseed is the owner's to ratify) plus long-lived
+// overseer sessions keep emitting `flag-owner-legacy`.
 //
 // Every fold lives here, in one file, so a "dead code" sweep cannot remove
 // one silently: deleting a fold breaks this file by name, and this header is
 // the explanation the deleter must argue with. If you are here to clean up —
-// don't. Removing an entry needs proof that no legacy state and no
+// don't. Removing an entry needs proof that no pre-rename state and no
 // old-prompt session can still reach the daemon, which in practice means
 // the owner's explicit call, recorded in the tracker.
 //
@@ -23,7 +23,7 @@
 //      StateStore.slackEvent in src/state.ts)
 //   2. command name "flag-owner-legacy" → "flag-owner" (LEGACY_COMMAND_NAMES,
 //      validateCommand in src/commands.ts)
-// NOT a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
+// Not a fold: regression.ts's Recommendation "ask-owner-legacy" → "ask-owner" —
 // that value is produced and rendered only, never parsed back, so there is no
 // input side to keep.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -85,7 +85,7 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
       );
       const origins = new OriginStore(dir);
       // The audit view reads it in the new vocabulary. (A record read off disk
-      // is never AUTHORITY — only the records this process wrote are — so the
+      // is never authority — only the records this process wrote are — so the
       // fold is pinned here, on the read path that still consumes old files.)
       expect(origins.onDisk()[0]).toMatchObject({ tier: "owner", source: "local" });
       expect(origins.latest()).toBeNull();
@@ -111,8 +111,8 @@ describe("tier fold: 'owner_legacy' → 'owner'", () => {
   it("a legacy slack_events row reads back as tier 'owner'", () => {
     const store = new StateStore(":memory:");
     try {
-      // Simulate a row the old daemon wrote — raw SQL, exactly what is live in
-      // state.db on the VM today.
+      // Simulate a row written before the rename — raw SQL, the shape such
+      // rows have in a live state.db.
       store.db
         .prepare(
           `INSERT INTO slack_events (event_id, channel, ts, thread_ts, slack_user, tier, disposition, received_at, injected_at)
@@ -206,7 +206,7 @@ describe("command fold: 'flag-owner-legacy' → 'flag-owner'", () => {
         parseRetryMs: 1,
       }).sweep();
       expect(flagOwner).toHaveBeenCalledWith("hi");
-      // Everything we EMIT — the result file and the event ledger — carries
+      // Everything we emit — the result file and the event ledger — carries
       // the current name; the legacy spelling exists only on the input side.
       const result = JSON.parse(
         readFileSync(join(cmdDir, "results", "old-session.result.json"), "utf8"),

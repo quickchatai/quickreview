@@ -1,9 +1,9 @@
 // qcr tui — the app loop: terminal setup/teardown, poller wiring, key
 // routing, repaint. Screens and logic are pure modules; this file owns the
-// side effects. Slice: board + detail + events; quick-message and
+// side effects. The board, detail and events live here; quick-message and
 // the tabs plug in via AppHooks.
 //
-// ONE LAYOUT (the owner, 2026-09-02): the tab on the left, the companion
+// ONE LAYOUT (root CLAUDE.md): the tab on the left, the companion
 // column on the right, on every frame. Nothing here may take the whole
 // terminal, fold the column away or paint without it — see `sidebarWidth`
 // and `repaint`, and tests/tui-fixed-layout.test.ts.
@@ -64,8 +64,7 @@ export type { Tab } from "./tabs.js";
  */
 export interface TabHooks {
   /** The tab's frame at the INNER width — the companion column composes
-   * beside it; a bare, sidebar-less string is not a type a tab can
-   * return (2026-09-02). */
+   * beside it; a bare, sidebar-less string is not a type a tab can return. */
   screen: (app: App, cols: number, rows: number) => Frame;
   /** Key handling; true when the tab consumed the key. */
   key: (app: App, key: BoardKey) => boolean;
@@ -86,30 +85,29 @@ export interface AppHooks {
   /** The seven installed surfaces, by tab. The board is not here: the App owns
    * its render, its keys and its `boardKeys` (src/tui/board.ts). */
   tabs: Partial<Record<Exclude<Tab, "board">, TabHooks>>;
-  // There is deliberately NO `attach` hook. The full-screen attach
-  // (overseer, main session, PR session) was retired 2026-09-02 on the
-  // owner's order: the TUI has ONE layout — tab on the left, companion column
-  // on the right — and nothing may take the whole terminal. The board's pi
+  // There is deliberately NO `attach` hook: the TUI has ONE layout — tab on
+  // the left, companion column on the right — and nothing may take the whole
+  // terminal (root CLAUDE.md). The board's pi
   // pane and the companion column are the only terminals, both embedded.
-  /**: open the quick-message box for the given session. */
+  /** Open the quick-message box for the given session. */
   message?: (session: string, app: App) => void;
-  /**: deliver a submitted quick-message (inject write + confirmation). */
+  /** Deliver a submitted quick-message (inject write + confirmation). */
   sendMessage?: (session: string, text: string, app: App) => void;
-  /** #5362: cancel the PR's running round and re-queue it, via the daemon's
+  /** Cancel the PR's running round and re-queue it, via the daemon's
    * `commands/` dir. The board's one write action beyond wakes — see
    * src/tui/unwedge.ts for why it exists and what bounds it. */
   unwedge?: (pr: number, app: App) => void;
-  /**: the board's `I` — ask the companion to run its setup skill
+  /** The board's `I` — ask the companion to run its setup skill
    * (an inject into its own column, src/tui/setupentry.ts) and focus it. */
   setup?: (app: App) => void;
   /** Open a URL in the user's browser (default: xdg-open, detached). */
   openUrl?: (url: string) => void;
   /** First-launch marker (read, write). Default: state/tui-help-shown. */
   helpSeen?: { get(): boolean; set(): void };
-  /**: called after every poll and every events refresh — the ambient
+  /** Called after every poll and every events refresh — the ambient
    * feed writer hangs off this (daemon-owned cadence). */
   onPoll?: (app: App) => void;
-  /**: the companion was asked for while its startup is down — re-run
+  /** The companion was asked for while its startup is down — re-run
    * that startup (build/up/rollover/spawn) and focus the column on success. */
   companionEnsure?: (app: App) => Promise<void>;
   /** Start ./scripts/deploy.sh sync after the deploy tab has engaged the
@@ -138,18 +136,16 @@ export interface AppHooks {
 const END_KEYS = new Set(["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"]);
 
 /**
- * Decoded verbs the BOARD owns. `handleInput` refuses them off the board
- * — see the comment at the guard.
+ * Decoded verbs the BOARD owns. `handleInput` refuses them off the board —
+ * see the comment at the guard.
  *
  * The membership test is "is this key advertised by the board's command bar"
  * (`boardKeys`, src/tui/board.ts), NOT "does it read the selection". Most
  * members happen to read it, but the reason they are here is that they are
  * the board's bar, they are unregistered elsewhere, and the board is where an
  * operator looks for them. Getting that reason wrong is how the next verb
- * ends up in or out by accident — `events` and `unwedge` were missing until
- *, so `u` from another tab could unwedge a PR nobody was looking at.
- * (`overseer`/`main-session` left with the full-screen attach, 2026-09-02;
- * `detail` with the full-screen detail page,.)
+ * ends up in or out by accident — a missing `unwedge` would let `u` from
+ * another tab unwedge a PR nobody was looking at.
  */
 const BOARD_ONLY_VERBS: ReadonlySet<string> = new Set([
   "attach",
@@ -171,9 +167,8 @@ function placeholderFrame(cols: number, rows: number, notice: string): Frame {
 export class App {
   readonly view: BoardView = {
     health: { kind: "unreachable", sinceS: Number.POSITIVE_INFINITY },
-    // UNKNOWN until a heartbeat proves one (ruling 1). This field used
-    // to initialise to `true`, which is how a LIVE installation painted a
-    // DRY-RUN badge on 2026-08-31 while the daemon was healthy the whole time.
+    // UNKNOWN until a heartbeat proves one: a default of `true` would paint a
+    // DRY-RUN badge on a live installation.
     dryRun: undefined,
     events: [],
     selected: 0,
@@ -183,7 +178,7 @@ export class App {
   };
   tab: Tab = "board";
   readonly hooks: AppHooks;
-  /**: the companion sidebar — a right-hand column on every tab.
+  /** The companion sidebar — a right-hand column on every tab.
    * Wired by index.ts; absent in bare test harnesses (no column painted). */
   sidebar?: CompanionSidebar;
   readonly poller: Poller;
@@ -349,17 +344,14 @@ export class App {
 
   async run(initialSelection?: number): Promise<void> {
     if (initialSelection !== undefined) this.selectedPr = initialSelection;
-    // From here the TUI owns the screen, and this is now the FIRST thing that
-    // happens (ruling 2): nothing external — no docker call, no
-    // network call, no filesystem walk — runs before this paint.
+    // From here the TUI owns the screen, and this is the FIRST thing that
+    // happens: nothing external — no docker call, no network call, no
+    // filesystem walk — runs before this paint.
     //
-    //'s objection is answered rather than side-stepped. Painting used
-    // to be pushed to the end because `app.sidebar` was wired after the
-    // companion container started, so an early frame showed a different layout
-    // that then jumped. But the objection was about GEOMETRY, not data: the
-    // column's width is a function of the terminal alone (`sidebarWidth`),
-    // the sidebar is wired before this call, and the container merely fills a
-    // column that is already the right size. Everything slow streams in behind
+    // The first frame is already the final layout: the column's width is a
+    // function of the terminal alone (`sidebarWidth`), the sidebar is wired
+    // before this call, and the container merely fills a column that is
+    // already the right size. Everything slow streams in behind
     // this frame and reports into that column (src/tui/startup.ts).
     this.started = true;
     this.out.write(ALT_SCREEN_ON + CLEAR + MOUSE_ON);
@@ -578,7 +570,8 @@ export class App {
     }
   }
 
-  /** overrides this to splice quick-message pending/delivered rows. */
+  /** Override point to splice extra rows (e.g. quick-message pending/delivered)
+   * into the events strip; the base passes lines through. */
   protected mergeNotices(lines: EventLine[]): EventLine[] {
     return lines;
   }
@@ -683,8 +676,8 @@ export class App {
     this.view.noticeLine = text;
     // Before the TUI owns the screen, a notice is startup progress and prints
     // as a plain line — the companion can take minutes to build, and silence
-    // there looks like a hang. Painting a frame instead (what this used to do)
-    // is what produced the startup flash. The alt screen hides these the
+    // there looks like a hang, and painting a frame this early would flash.
+    // The alt screen hides these the
     // moment run() begins, so they never linger.
     if (!this.started) {
       this.out.write(`${text}\n`);
@@ -825,8 +818,8 @@ export class App {
     }
     const cols = this.out.columns ?? 80;
     // The sidebar's left seam is the ONE drag surface that is chrome rather
-    // than selectable content. Everywhere else still owns drag and
-    // release for rectangular copy.
+    // than selectable content. Everywhere else drag and release belong to the
+    // rectangular copy.
     if (this.sidebar && ev.kind === "click") {
       const width = this.sidebarWidth(cols);
       if (sidebarResizeHit(ev.x, cols, width)) {
@@ -942,9 +935,9 @@ export class App {
     // The wheel belongs to the companion column before any tab sees it. The
     // column is chrome on EVERY tab, so a wheel notch that the tab dispatch
     // below answers is a notch stolen from the surface the operator is
-    // actually reading: the reported bug was scrolling the conversation while
-    // the column had focus and watching the board's selection walk instead —
-    // which then dragged the pi mirror away from the PR being read.
+    // actually reading: scrolling the conversation while the column has focus
+    // must never walk the board's selection (and drag the pi mirror away from
+    // the PR being read).
     //
     // Two ways it belongs here, and they compose: the pointer is over the
     // column (focused or not — the same rule the pi pane already has), or the
@@ -1017,9 +1010,7 @@ export class App {
       case "select-pr": {
         if (this.selectedPr === action.pr) {
           // Second click on the selected row = go to its pi, the same thing
-          // ⏎ does. This used to open the full-screen attach (the
-          // grill decision) — the last mouse path to it, retired 2026-09-02.
-          // If the pane WAS focused, the click above already handed the
+          // ⏎ does. If the pane WAS focused, the click above already handed the
           // keyboard back, and that is the whole meaning of it.
           if (paneWasFocused) return;
           this.focusPiPane();
@@ -1098,7 +1089,7 @@ export class App {
     // A focused sidebar owns the keyboard, exactly as the pi pane does above:
     // the companion is a live terminal, so j/k/1-8/? are just text to it.
     // Ctrl-q releases — the same chord, so there is ONE way out of every
-    // embedded surface — and Esc drops the draft.
+    // embedded surface; Esc belongs to pi.
     if (this.sidebar?.focused) {
       this.handleSidebarKey(buf);
       return;
@@ -1114,10 +1105,8 @@ export class App {
       this.repaint();
       return;
     }
-    // (`\` used to collapse the column to a three-cell spine. Retired
-    // 2026-09-02: the column is always at its full width — the operator's
-    // layout never changes shape — so `\` is plain text for pi like any
-    // other unclaimed printable.)
+    // `\` is plain text for pi like any other unclaimed printable: the column
+    // is always at its full width and the layout never changes shape.
     // The installed surface gets first crack at every key — including the
     // nav digits, which the metrics tab reads as TEXT inside its `# <pr> ⏎`
     // box (`keyChar` maps a tab kind back to its digit). Outside that box no
@@ -1142,13 +1131,12 @@ export class App {
       return;
     }
 
-    // the verbs below belong to the BOARD's command bar, so they only
-    // answer on the board. They used to run from any tab whose handler let
-    // them through: pressing `a` on the memory tab focused the board's pi pane
-    // behind your back, and `u` would have unwedged a PR nobody was looking
-    // at. A verb with no meaning on the current surface must do nothing; the
-    // printable spellings are unregistered off the board, so they reach the
-    // companion column instead of dying here. The one exception is a live
+    // The verbs below belong to the BOARD's command bar, so they only answer
+    // on the board: off it, `a` would focus the board's pi pane behind your
+    // back, and `u` would unwedge a PR nobody was looking at. A verb with no
+    // meaning on the current surface must do nothing; the printable
+    // spellings are unregistered off the board, so they reach the companion
+    // column instead of dying here. The one exception is a live
     // alert, which owns ⏎ from wherever you are.
     if (
       this.tab !== "board" &&
@@ -1215,13 +1203,9 @@ export class App {
           this.openCompanion();
           return;
         }
-        // ⏎ on a PR row focuses the board's EMBEDDED pane. Nothing
-        // may take the whole TUI (the owner, 2026-08-21: "I dont EVER WANT IT
-        // to go into full screen mode … same goes for the PI on the board
-        // view"; reaffirmed 2026-09-02 when the last full-screen paths — the
-        // overseer/main attach and the no-PR fallback here — were removed).
-        // With no PR selected there is nothing to focus, and nothing else to
-        // open.
+        // ⏎ on a PR row focuses the board's EMBEDDED pane. Nothing may take
+        // the whole TUI (root CLAUDE.md, the fixed layout). With no PR
+        // selected there is nothing to focus, and nothing else to open.
         if (this.selectedPr !== undefined) {
           this.focusPiPane();
           this.repaint();
@@ -1239,7 +1223,7 @@ export class App {
         break;
       }
       case "unwedge": {
-        // #5362: cancel the selected PR's running round and re-queue it. Safe
+        // Cancel the selected PR's running round and re-queue it. Safe
         // and recoverable by construction — the round re-dispatches through
         // the normal pump, nothing is posted and no GitHub state is touched —
         // so it acts immediately and reports through the events strip, the
@@ -1275,10 +1259,9 @@ export class App {
    * Go to the companion (the sidebar's rows, the alert badge, an alert-armed
    * ⏎). Following an alert clears its focus — it has been acted on.
    *
-   * retired the full-screen path this used to take: the companion is
-   * always on screen, at full width, so "open" means take the keyboard.
-   * Nothing in the TUI covers the whole terminal (the owner, 2026-08-21:
-   * never full-screen, ever; 2026-09-02: and never collapsed either).
+   * The companion is always on screen, at full width, so "open" means take
+   * the keyboard. Nothing in the TUI covers the whole terminal, and the
+   * column never collapses.
    */
   openCompanion(): void {
     this.view.alertFocus = false;
@@ -1310,9 +1293,9 @@ export class App {
    * completion menu, history, multi-line editing, Ctrl-C to interrupt a turn
    * are all pi's, and they only work if pi actually receives the bytes.
    *
-   * DO NOT reintroduce a TUI-side draft line here. It was built once
-   * and it broke exactly this: a second, worse input box in front of
-   * the real one, with no `/` commands and nothing clickable. The rule is in
+   * DO NOT reintroduce a TUI-side draft line here: it would be a second, worse
+   * input box in front of the real one, with no `/` commands and nothing
+   * clickable. The rule is in
    * root CLAUDE.md; `tests/tui-sidebar.test.ts` pins it.
    *
    * Ctrl-q is the ONE byte that never travels — the same release chord the pi
@@ -1397,9 +1380,8 @@ export class App {
    * Width the companion column takes on THIS paint.
    *
    * A pure function of the terminal width and the operator's seam drag —
-   * never of config, docker or the container's state (ruling 2, made
-   * absolute 2026-09-02): the column is part of the layout whenever a sidebar
-   * exists at all, so the first frame is the final shape and nothing that
+   * never of config, docker or the container's state: the column is part of
+   * the layout whenever a sidebar exists at all, so the first frame is the final shape and nothing that
    * happens later can move it. `0` only for a harness that built no sidebar.
    */
   sidebarWidth(cols: number): number {
@@ -1430,11 +1412,11 @@ export class App {
   /** Set by run(): the TUI owns the screen and may paint. */
   private started = false;
 
-  // ---- mouse selection → clipboard --------------------------------
+  // ---- mouse selection → clipboard -----------------------------------------
   //
   // Turning mouse reporting on takes the terminal's own selection away, so the
-  // TUI owes one back. The owner, 2026-08-21: "99% I select something to copy
-  // it" — so there is no copy key and no copy mode. Release IS the copy.
+  // TUI owes one back. A selection is almost always made to copy it, so there
+  // is no copy key and no copy mode: release IS the copy.
   //
   // RECTANGULAR, not linear. The screen is columns side by side — list next to
   // detail next to the companion — and a linear selection across a row would
@@ -1450,9 +1432,9 @@ export class App {
    * The screen as it was when the drag began, held until release.
    *
    * The mirrors refresh under the pointer several times a second while pi
-   * streams: without the freeze the text scrolled out from under a
-   * half-finished drag, and release copied whatever had arrived in its place
-   * rather than what the operator had highlighted.
+   * streams: without the freeze the text would scroll out from under a
+   * half-finished drag, and release would copy whatever had arrived in its
+   * place rather than what the operator had highlighted.
    */
   private selFrame: Frame | undefined;
   /** The pane the drag started in (1-based, inclusive); the block never leaves it. */
@@ -1521,15 +1503,14 @@ export class App {
   }
 
   /**
-   * the WHOLE last painted frame as plain text: exactly what is on
+   * The WHOLE last painted frame as plain text: exactly what is on
    * screen, ANSI stripped, trailing blank rows dropped. Same source as
    * `selectedText()` (the last painted frame), for the same reason: what the
-   * companion is shown must be what the owner is looking at, not a re-render of
+   * companion is shown must be what the operator is looking at, not a re-render of
    * the model behind it.
    *
-   * `undefined` when there is no composed frame — a string-rendering tab, or
-   * the app is suspended/stopped. Never a fetch: this is a getter over state
-   * already painted.
+   * `undefined` before the first frame is painted. Never a fetch: this is a
+   * getter over state already painted.
    */
   screenText(): string | undefined {
     const frame = this.lastFrame;
@@ -1540,7 +1521,7 @@ export class App {
   }
 
   /**
-   * called at the end of every repaint, so the published view tracks
+   * Called at the end of every repaint, so the published view tracks
    * keystrokes and not just the 3 s poll. Installed by index.ts; the callee
    * throttles. It must never repaint (that would recurse) and never throw.
    */

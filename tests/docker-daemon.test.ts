@@ -1,8 +1,8 @@
-// the plain Docker path (docker/daemon/ + docker-compose.yml) and
-// the Ansible decoupling that came with it.
+// The plain Docker path (docker/daemon/ + docker-compose.yml) and its
+// decoupling from Ansible.
 //
 // The plain Dockerfile carries the pins as ARG defaults instead of Jinja
-// variables, which makes it a NEW mirror surface: this file holds those
+// variables, which makes it a mirror surface of its own: this file holds those
 // defaults against config.toml and the ansible group_vars the same way
 // tests/openviking.test.ts holds the templated image, so a bump that misses
 // one spelling refuses here. It also pins the entrypoint invariants shared
@@ -24,9 +24,9 @@ import {
 } from "../src/config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// The TRACKED config.example.toml (the rule-7 pin spelling every tree
-// carries). The operator's LIVE config.toml left the checkout with `qcr
-// install migrate`; its pins are held by scripts/deploy.sh's
+// The tracked config.example.toml (the rule-7 pin spelling every tree
+// carries). The operator's live config.toml lives in the install's config
+// home, not the checkout; its pins are held by scripts/deploy.sh's
 // preflight, which reads it through the install locator and refuses on drift.
 const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
 const groupVars = readFileSync(resolve(root, "deploy/ansible/group_vars/all.yml"), "utf8");
@@ -62,11 +62,11 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(cfg.openviking.bin).toBe(`${arg("OPENVIKING_VENV")}/bin/openviking-server`);
   });
 
-  // the third-party pi-subagents clone layer is RETIRED — subagents
-  // are pi's own first-party extension inside the pinned pi package. The
-  // image must verify the shipped example exists (a pi release that dropped
-  // it would otherwise fail silently at session time) and must never grow the
-  // clone back (that would resurrect the unlicensed dependency).
+  // Subagents are pi's own first-party extension inside the pinned pi
+  // package, not a third-party clone layer. The image must verify the shipped
+  // example exists (a pi release that dropped it would otherwise fail
+  // silently at session time) and must never carry a third-party clone (an
+  // unlicensed dependency).
   it("verifies pi ships the native subagent example; no third-party clone layer", () => {
     expect(dockerfile).toContain("examples/extensions/subagent/index.ts");
     expect(dockerfile).not.toContain("pi_subagents");
@@ -94,7 +94,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(dockerfile).not.toMatch(/pi-coding-agent@\d/);
   });
 
-  // the local English embedder's model file — a fourth spelling of
+  // The local English embedder's model file — a fourth spelling of
   // the pin config.toml and group_vars carry.
   it("the local embedder's model pin: ARG defaults == config.toml == group_vars", () => {
     const ov = cfg.openviking;
@@ -126,7 +126,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
     expect(nonArg).not.toContain("huggingface.co");
   });
 
-  // Review (S4): the compose boot renders from the image's pin, not from the
+  // The compose boot renders from the image's pin, not from the
   // entrypoint's literal defaults — the image exports its ARGs to it.
   it("the image tells its entrypoint which model file it carries", () => {
     for (const [env, argName] of [
@@ -156,7 +156,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
   it("carries no baked subagent concurrency file — the cap rides config.toml", () => {
     expect(dockerfile).not.toContain("maxConcurrency");
     expect(playbook).not.toContain("maxConcurrency");
-    // The knob that replaced it, mirrored here so it cannot silently vanish.
+    // The config knob that carries the cap, mirrored here so it cannot silently vanish.
     expect(cfg.pi.subagent_max_concurrency).toBe(12);
   });
 
@@ -189,7 +189,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(def("QUEUE_CONCURRENCY")).toBe(String(cfg.openviking.queue_concurrency));
     expect(def("AUTH_MODE")).toBe(cfg.openviking.auth_mode);
     expect(def("AUTH_MODE")).toBe("api_key");
-    // the embedder defaults are the SHIPPED default (local), which
+    // The embedder defaults are the shipped default (local), which
     // every mirror carries; the live config may opt into a hosted provider.
     expect(def("EMBEDDING_PROVIDER")).toBe("local");
     expect(def("EMBEDDING_PROVIDER")).toBe(OPENVIKING_DEFAULTS.embedding_provider);
@@ -197,7 +197,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(def("EMBEDDING_DIMENSION")).toBe(String(OPENVIKING_DEFAULTS.embedding_dimension));
     expect(def("EMBEDDING_KEY_FILE")).toBe(OPENVIKING_DEFAULTS.embedding_key_file);
     expect(def("EMBEDDING_KEY_FILE")).toBe(gv("openviking_embedding_key_file"));
-    // the local embedder's knobs default to the pin.
+    // The local embedder's knobs default to the pin.
     expect(def("LOCAL_EMBEDDER_MODEL")).toBe(LOCAL_EMBEDDING.model);
     expect(def("LOCAL_EMBEDDER_DIMENSION")).toBe(String(LOCAL_EMBEDDING.dimension));
     expect(`${def("LOCAL_EMBEDDER_DIR")}/${def("LOCAL_EMBEDDER_MODEL")}.gguf`).toBe(
@@ -219,8 +219,8 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(render).toContain('host: "127.0.0.1"');
     expect(render).not.toMatch(/\bvlm\b\s*:/);
     expect(render).toContain("extraction_enabled: false");
-    // The mode comes from the env knob — a literal "dev" in the config line is
-    // exactly the drift that shipped no-confinement for a week.
+    // The mode comes from the env knob — a literal "dev" in the config line
+    // would ship a server with no per-user confinement.
     expect(render).toContain("auth_mode: process.env.QCR_OV_AUTH_MODE");
     expect(render).not.toContain('auth_mode: "dev",');
   });
@@ -250,7 +250,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
       entrypoint.lastIndexOf("OV_CONF_RENDER"),
     );
     expect(render).toContain("provider: process.env.QCR_OV_EMBEDDING_PROVIDER");
-    // the ONE literal "openai" is the local embedder's WIRE
+    // The one literal "openai" is the local embedder's wire
     // provider, inside the `local` branch, beside the loopback api_base.
     expect(render.match(/provider: "openai"/g)).toHaveLength(1);
     expect(render).toMatch(
@@ -277,8 +277,8 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   it("registers ONLY bash-guard globally, hard-failing when it is missing", () => {
     expect(entrypoint).toContain("/opt/quickreview/sandbox/extensions/bash-guard.ts");
     expect(entrypoint).toContain("FATAL: pi extension missing");
-    // pi-memory stays retired — no global memory extension. And
-    // no global subagents entry either — subagent children load
+    // No global memory extension, and no global subagents entry either —
+    // subagent children load
     // exactly this list, so a globally-registered subagents glue would hand
     // every LEAF the subagent tool (nested fan-out, rule 9 broken). The
     // `wanted` registration list carries exactly the one path above.
@@ -287,7 +287,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
     expect(paths).toEqual(["/opt/quickreview/sandbox/extensions/bash-guard.ts"]);
   });
 
-  // the native "user" discovery scope reads ~/.pi/agent/agents; the
+  // The native "user" discovery scope reads ~/.pi/agent/agents; the
   // boot links it at the daemon-built lens passes — symlink-or-absent only,
   // never clobbering a real directory.
   it("links the pi user agents dir at the built state/agents", () => {
@@ -297,7 +297,7 @@ describe("plain entrypoint — same invariants as the templated boot", () => {
   });
 });
 
-// the sovereignty claim, checked by EXECUTION: the render heredoc is
+// The sovereignty claim, checked by execution: the render heredoc is
 // lifted out of the plain entrypoint and run with node, driven by the same env
 // knobs the shell sets, against a temp secrets dir.
 describe("the rendered ov.conf (executed)", () => {
@@ -379,8 +379,8 @@ describe("the rendered ov.conf (executed)", () => {
     }).toEqual(ovConfEmbedder(cfg.openviking));
   });
 
-  // a project .env the bring-up step wrote under the previous
-  // release carries the retired built-in model. Under local the pin decides.
+  // A project .env the bring-up step wrote earlier may carry the retired
+  // built-in model. Under local the pin decides.
   it("a stale .env model under local is ignored — the pinned model renders, and it says so", () => {
     const conf = render(
       {
@@ -456,7 +456,7 @@ describe("docker-compose topology", () => {
     );
   });
 
-  // S4 (review): the daemon reads the local embedder's port and
+  // The daemon reads the local embedder's port and
   // threads from config.toml; the boot renders ov.conf's api_base from these.
   // The bring-up step mirrors the one into the other — compose must pass them.
   it("passes the local embedder's port and threads through, defaulting to config.toml's", () => {
@@ -488,21 +488,14 @@ describe("docker-compose topology", () => {
     expect(compose).toContain(
       "${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro",
     );
-    expect(compose).not.toContain("quickreview-bot"); //: the old dir is never mounted
+    expect(compose).not.toContain("quickreview-bot"); // the legacy dir is never mounted
     expect(compose).toContain("qcr-pihome:/home/review/.pi");
     expect(compose).toContain("./:/opt/quickreview/sandbox");
   });
 
-  // the sandbox is a bind mount of the OPERATOR'S checkout, and
-  // <root>/state holds host-side files the TUI and the onboarding wizard read
-  // directly (the checklist, the companion's rollover/alert state, the
-  // first-run marker). The entrypoint used to delete that directory and leave
-  // a symlink to a path that exists only inside the container. Both volumes
-  // are therefore mounted at BOTH spellings, and the entrypoint detects the
-  // double mount by inode instead of running its destructive migration.
-  // the config the install locator found on the host reaches the
-  // container read-only; the entrypoint names it only when it is there, so a
-  // legacy checkout config (empty home mounted) still boots.
+  // The config the install locator found on the host reaches the container
+  // read-only, and the entrypoint always names the config in it: a checkout
+  // config is never a fallback, so an empty mount fails the boot.
   it("mounts the install's config home read-only and ALWAYS names the config in it", () => {
     expect(compose).toContain(
       "${QCR_CONFIG_HOME:-./docker/daemon/no-config-home}:/opt/quickreview/config-home:ro",
@@ -524,6 +517,13 @@ describe("docker-compose topology", () => {
     );
   });
 
+  // The sandbox is a bind mount of the operator's checkout, and <root>/state
+  // holds host-side files the TUI and the onboarding wizard read directly
+  // (the checklist, the companion's rollover/alert state, the first-run
+  // marker). Replacing that directory with a symlink to a container-only path
+  // would break them, so both volumes are mounted at both spellings, and the
+  // entrypoint detects the double mount by inode instead of running its
+  // destructive migration.
   it("the state and ingress volumes are mounted at both the absolute and the sandbox path", () => {
     expect(compose).toContain("qcr-state:/opt/quickreview/state");
     expect(compose).toContain("qcr-state:/opt/quickreview/sandbox/state");
@@ -608,7 +608,7 @@ describe("ansible decoupling", () => {
   });
 });
 
-// both entrypoints point the install locator's secrets home at the
+// Both entrypoints point the install locator's secrets home at the
 // read-only secrets mount, so the in-container loader (an empty or
 // legacy-default `secrets_dir`) resolves to the mount through the HOME rule,
 // not the legacy fallback. The real lines, run in a real bash, temp HOME only.
@@ -656,7 +656,7 @@ describe("entrypoint secrets link", () => {
         });
         expect(located.source).toBe("home");
         expect(readFileSync(join(located.path, "app_id"), "utf8")).toBe("1\n");
-        // the old compatibility link is gone — nothing reads that dir.
+        // No compatibility link to the legacy dir — nothing reads it.
         expect(existsSync(join(home, ".config", "quickreview-bot"))).toBe(false);
         expect(text).not.toContain('quickreview-bot"');
       } finally {

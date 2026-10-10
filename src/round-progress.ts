@@ -47,7 +47,7 @@ export interface RoundProgressSnapshot {
    * this prevents a neighboring accepted run from impersonating this round. */
   round_no?: number;
   head_sha?: string;
-  /** named parent milestones. `preparing_at` is stamped with exact
+  /** Named parent milestones. `preparing_at` is stamped with exact
    * command acceptance; `fanout_started_at` is the first subagent execution.
    * `first_lens_started_at` remains the backwards-compatible spelling. */
   preparing_at?: string;

@@ -1,5 +1,5 @@
-// Defect auto-filer (FT-0129 §9, re-pointed at OpenViking by FT-0164) against
-// a temp tracker: id claim via exclusive create, the two dedup guards (the
+// Defect auto-filer (reads reviewer memory in OpenViking) against a temp
+// tracker: id claim via exclusive create, the two dedup guards (the
 // entry's own `filed=` tag and the ticket-side Memory-key stamp), actor
 // qcr-tui, never-throws contract.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";

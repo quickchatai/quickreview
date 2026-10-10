@@ -1,13 +1,12 @@
-// H1b, end to end: the daemon's session manager and command
+// End to end: the daemon's session manager and command
 // supervisor, the REAL inject bridge, one SQLite file between them, and a fake
 // pi that refuses a prompt during compaction exactly as pi 1.0.0 does
 // (tests/helpers/fake-pi-session.ts). tmux is a recording fake: a kill or a
 // respawn of the live session would show up in its calls.
 //
-// The incident (#5849, 2026-10-08 08:51–08:54Z): round 5's verdict landed, the
-// daemon typed `/compact` and flushed a held wake 18 s later; pi refused the
-// wake mid-compaction, nothing retried it, the 120 s start lease ran out and
-// recovery killed the live session and started a new conversation.
+// The failure this guards against: a held wake flushed into a session that is
+// compacting is refused by pi; if nothing retries it, the start lease runs out
+// and recovery kills the live session, losing the conversation.
 //
 // Acceptance pinned here:
 //   1. a wake flushed while the bridge reports compacting starts after the

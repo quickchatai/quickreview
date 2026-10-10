@@ -1,5 +1,4 @@
-// What the scan adds to the repo portrait (setup & scan spec
-// "Portrait", user stories 23–24): after a scan, the portrait's facts carry
+// What the scan adds to the repo portrait: after a scan, the portrait's facts carry
 // what it FOUND — the last finished scan, the findings by unit and state, and
 // the per-unit hotspots the companion wrote to scan memory — so a later
 // re-tune (retune.ts) and the narrative both read the scan, not only the repo.

@@ -1,14 +1,13 @@
-// inject-bridge consume/defer semantics. Three live losses (#5317
-// round 2, #5257 round 8, #5362 round 2) shared one mechanism: a round prompt
-// handed to a session that was still streaming was silently dropped, and the
-// round then sat "running" until its deadline.
+// inject-bridge consume/defer semantics. A round prompt handed to a session
+// that is still streaming must never be silently dropped; a dropped prompt
+// leaves the round "running" until its deadline.
 //
 // The contract under test, in three layers — each covering a different half:
 //   1. a file remains pending after fire-and-forget submission and is consumed
 //      only when the run-start message correlates its injected marker;
 //   2. while that run is active no successor submits, and only a deferred
-//      `agent_settled` drain may advance the queue (#5362: `turn_end` is an
-//      INNER-loop event and clearing on it re-opens every tool-call gap);
+//      `agent_settled` drain may advance the queue (`turn_end` is an
+//      inner-loop event and clearing on it re-opens every tool-call gap);
 //   3. every send still carries `deliverAs: "followUp"` as a belt, while a
 //      missing start acknowledgement expires loudly and preserves the file.
 import { createHash } from "node:crypto";
@@ -25,7 +24,7 @@ import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 let dir: string;
 let handlers: Map<string, Array<(...args: unknown[]) => unknown>>;
 let sends: Array<{ content: string; options?: { deliverAs?: string } }>;
-// Production Pi 0.84.1 declares the extension-facing submission as `void`.
+// Pi declares the extension-facing submission as `void`.
 // The internal Promise is intentionally unavailable to extensions, so this
 // fake must never offer tests stronger serialization than production has.
 let sendImpl: (content: string) => void;
@@ -1029,12 +1028,11 @@ describe("inject-bridge — durable command ownership", () => {
 
 describe("inject-bridge — the busy span is the agent RUN, not one turn (#5362)", () => {
   it("turn_end does NOT clear busy — a wake landing between tool calls stays held", async () => {
-    // THE #5362 REGRESSION. pi fires turn_start/turn_end once per assistant
-    // turn INSIDE a run (turnIndex++ per turn, reset at agent_start), so
-    // clearing `busy` on turn_end declared the session idle in the gap between
-    // every tool call while the run was still streaming. #5362's round-2 order
-    // landed in one of those gaps, 6.5s before the session finished, and pi
-    // threw it away ("Agent is already processing") without the bridge ever
+    // pi fires turn_start/turn_end once per assistant turn inside a run
+    // (turnIndex++ per turn, reset at agent_start), so clearing `busy` on
+    // turn_end would declare the session idle in the gap between tool calls
+    // while the run is still streaming. An order landing in that gap is
+    // refused by pi ("Agent is already processing") without the bridge
     // learning. Only agent_settled may clear the flag.
     activate(fakePi());
     fire("session_start");
@@ -1068,7 +1066,7 @@ describe("inject-bridge — the busy span is the agent RUN, not one turn (#5362)
   });
 
   it("agent_end is not a settle — pi still runs retries/compaction after it", async () => {
-    // agent_settled is documented as "after an agent run has FULLY SETTLED and
+    // agent_settled is documented as "after an agent run has fully settled and
     // no automatic retry, compaction, or queued continuation will run". Taking
     // agent_end as the clear would re-open a narrower version of the same
     // window, so it must not be wired as one.

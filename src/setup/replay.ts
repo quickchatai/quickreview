@@ -238,8 +238,7 @@ export function measuredRates(
  * both sides ⇒ the same case, run once. The task is part of it, so a change
  * to the task's wording changes every key: a preview stored before such a
  * change no longer matches, `start` refuses it and asks for a fresh preview,
- * and each case runs once more under the new wording (scan-loop: the
- * absolute-worktree-path tasks did exactly that). */
+ * and each case runs once more under the new wording. */
 export function caseKey(agentText: string, prompt: string): string {
   return createHash("sha256")
     .update(agentText)
@@ -268,8 +267,8 @@ function clip(text: string, max: number): string {
  * first-party `.pi/settings.json` and reviewer context ride it; a reviewed
  * tree's `.pi/` must never load into a leaf), NOT the PR's worktree — so a
  * relative path opens the APP's file: on a replay of another repository's
- * PR, the reviewer's own repository (scan-loop; the scan's TREE_PATHS_NOTE
- * is the same fix). Every task says so and names each file's absolute path. */
+ * PR, the reviewer's own repository (the scan's TREE_PATHS_NOTE guards the
+ * same trap). Every task says so and names each file's absolute path. */
 export const WORKTREE_PATHS_NOTE =
   "Your working directory is NOT the worktree: a relative path opens some other checkout's file. Open every file — changed files, callers, tests — by its absolute path under the worktree (each changed file below says where). Paths in your answer are relative to the worktree.";
 

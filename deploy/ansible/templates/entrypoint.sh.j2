@@ -14,11 +14,11 @@ if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
 fi
 [[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
 
-# The code resolves secrets through the install locator: an empty
-# (or old-default) config.toml [github].secrets_dir means
+# The code resolves secrets through the install locator: an empty (or
+# old-default) config.toml [github].secrets_dir means
 # <config home>/secrets, i.e. ${XDG_CONFIG_HOME:-~/.config}/qcr/<install>/secrets
-# — point that at the read-only secrets mount. (The old ~/.config/quickreview-bot
-# link is gone with the contract step,: nothing reads that dir.)
+# — point that at the read-only secrets mount. Nothing reads
+# ~/.config/quickreview-bot, so it gets no link.
 XDG_BASE="${XDG_CONFIG_HOME:-}"
 [[ "$XDG_BASE" == /* ]] || XDG_BASE="$HOME/.config"
 SECRETS_HOME="$XDG_BASE/qcr/${QCR_INSTALL:-default}/secrets"
@@ -29,7 +29,7 @@ mkdir -p "$(dirname "$SECRETS_HOME")"
 # it spawns and mint-token.sh alike (they all inherit this).
 export QCR_SECRETS_MOUNT="$SECRETS"
 
-# OpenAI auth for pi — native, two routes (findings):
+# OpenAI auth for pi — native, two routes:
 #   1. API key: exported here so the tmux server and every pi process inherit it.
 #   2. ChatGPT-subscription OAuth: run `/login` once in any pi session; tokens
 #      persist in /home/review/.pi/agent/auth.json (a mounted volume) and take
@@ -44,10 +44,10 @@ fi
 # configuration and provisions its users; it never leaves a server RUNNING
 # (the provisioning step below starts one in the FOREGROUND and stops it again,
 # so the container still ends up with a single supervised process tree — the
-# long-lived server is the daemon's child, as before) and it
-# NEVER runs the server's own setup wizard (the `init` subcommand): that wizard
-# is interactive, and an interactive prompt in this container is exactly the
-# class of stall that wedged pr-5334. ov.conf is templated below instead.
+# long-lived server is the daemon's child) and it NEVER runs the server's own
+# setup wizard (the `init` subcommand): that wizard is interactive, and an
+# interactive prompt in this container stalls the boot. ov.conf is templated
+# below instead.
 #
 # ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
 # and ov.conf all survive an image rebuild.
@@ -75,26 +75,26 @@ fi
 #     vlm configured. The daemon polls /ready.)
 #   * auth_mode comes from `openviking_auth_mode` (mirrored with config.toml
 #     [openviking] auth_mode), and the deployed value is "api_key".
-#     Loopback-only was NEVER the whole story: every review session runs INSIDE
+#     Loopback-only is NOT enough: every review session runs INSIDE
 #     this container, so "nobody can reach the port" does not stop a review
 #     session from reading companion memory. Only the server's per-USER-key
 #     confinement does, and that confinement exists only in api_key mode —
 #     which is why the root key is read from the read-only secrets mount here
-#     and never written as a literal. Proven live 2026-08-20: under "dev" a
-#     reviewer-scoped search returned viking://user/default content.
+#     and never written as a literal. Under "dev" a reviewer-scoped search
+#     returns viking://user/default content.
 #   * workers/queue_workers — and embedding.max_concurrent, on the same knob
-#     (S3) — are cut for the 2-CPU cap: CPU is the measured cost
+#     — are cut for the 2-CPU cap: CPU is the measured cost
 #     (~1.63 core-seconds per ~500 B write), not RAM.
-#   * retrieval.enable_intent = false (S3): no model-based query
+#   * retrieval.enable_intent = false: no model-based query
 #     planning on a session search — there is no model for it.
 #   * The EMBEDDER is a knob, never a literal: `openviking_embedding_*`
-#     (group_vars, host-var override). The shipped default is LOCAL — since
-#     S4 the local ENGLISH embedder, served on loopback in this
+#     (group_vars, host-var override). The shipped default is LOCAL — the
+#     local ENGLISH embedder, served on loopback in this
 #     container by scripts/openviking-embedder.py from the GGUF the image pins
 #     (`openviking_local_embedder_*`), and reached through the engine's
 #     OpenAI-COMPATIBLE async client (provider "openai", api_base
 #     127.0.0.1:{{ openviking_local_embedder_port }}, no key). No memory text
-#     leaves this machine, and a search no longer runs a model on the server's
+#     leaves this machine, and a search does not run a model on the server's
 #     event loop. A hosted provider is an explicit opt-in and reads ITS OWN
 #     credential file — never pi's `openai_api_key`, so the two are set
 #     independently.
@@ -245,7 +245,7 @@ fi
 # script's own exit-0 discipline are belt and braces — an unprovisioned memory
 # engine degrades, it never stops the reviewer coming up.
 #
-# Under the LOCAL embedder (S4) the server's /ready probes the
+# Under the LOCAL embedder the server's /ready probes the
 # loopback embedding service, so provisioning runs that too — first, for the
 # same foreground step, stopped with the server. The daemon supervises the
 # long-lived pair from config.toml's mirror of these values.
@@ -393,7 +393,7 @@ try {
 PI_EXT_MERGE
 
 # Private-repo git auth (reviewed-repo clone + per-PR fetches): the app
-# installation token over HTTPS — never a personal credential (§2).
+# installation token over HTTPS — never a personal credential (CLAUDE.md rule 3).
 git config --global credential.helper \
   "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"
 
@@ -408,10 +408,10 @@ if [[ ! -d dist || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   echo "$current" > "$marker"
 fi
 
-# Reviewer context (the owner, 2026-09-26): pi loads the FIRST of
-# AGENTS.override.md / AGENTS.md / CLAUDE.md from the cwd into every session
-# and every lens pass, and they all run here — so without this the 14.5 KB
-# contributor guide rode every turn (~11% of a review's input). The stub says
+# Reviewer context: pi loads the FIRST of AGENTS.override.md / AGENTS.md /
+# CLAUDE.md from the cwd into every session and every lens pass, and they all
+# run here — so without this stub the 14.5 KB contributor guide would ride
+# every turn (~11% of a review's input). The stub says
 # where the guide is for the overseer and EOD sessions. Written at boot because
 # this tree is an rsync --delete mirror (the playbook excludes the anchored
 # /AGENTS.override.md so a sync never removes it); sessions cannot rewrite it

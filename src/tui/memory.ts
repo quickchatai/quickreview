@@ -1,32 +1,31 @@
-// The memory tab's store — the TUI's view of memory, running
-// on OpenViking.
+// The memory tab's store — the TUI's view of memory, on OpenViking.
 //
-// The store itself lives behind the ONE seam (`src/memory/store.ts`)
-// and its OpenViking implementation in `src/openviking/store.ts`. What stays
-// here is what only the TUI cares about — how the timeline is ORDERED, which
-// entries the defect auto-filer picks up, and the factory that hands the tab a
-// store wired to BOTH of the owner's user keys.
+// The store itself lives behind the one seam (`src/memory/store.ts`) and its
+// OpenViking implementation in `src/openviking/store.ts`. What stays here is
+// what only the TUI cares about — how the timeline is ordered, which entries
+// the defect auto-filer picks up, and the factory that hands the tab a store
+// wired to both of the operator's user keys.
 //
-// HOW THE TAB REACHES THE VM'S OPENVIKING. It does not ssh, and it does not
+// How the tab reaches the VM's OpenViking. It does not ssh, and it does not
 // invent a transport: it speaks plain HTTP to the loopback listener of the
 // companion memory forward (`scripts/companion-memory-forward.mjs` — run by
-// the TUI itself, or by the systemd --user unit when one is
-// installed, which the TUI then adopts; `docs/companion-memory-access.md`).
-// That process binds BOTH the `qcr-memory` bridge gateway (for the companion
+// the TUI itself, or by the systemd --user unit when one is installed, which
+// the TUI then adopts; `docs/companion-memory-access.md`).
+// That process binds both the `qcr-memory` bridge gateway (for the companion
 // container) and `127.0.0.1` (for anything on the PC — us), and relays each
 // connection over ssh into `docker exec … node` inside the quickreview
 // container, whose stdio is piped to OpenViking's own loopback :1933. So the
 // daemon's port is still published nowhere, and the TUI holds no second copy
 // of the ssh/docker knowledge. If the forward is not running the tab is
-// UNREACHABLE, loudly — see `MemoryHealth` below, and the MEMORY STORE row
+// unreachable, loudly — see `MemoryHealth` below, and the MEMORY STORE row
 // the tab paints (`src/tui/memforward.ts`).
 //
-// BOTH KEYS, NEVER AN ADMIN KEY. The owner's surfaces hold two OpenViking USER
-// keys — `reviewer` (what the daemon and every review session hold; the server
-// confines it to `user/reviewer/`) and `companion`. The tab builds ONE client
-// per user and merges their timelines, which is what makes companion memory
-// visible and editable from here while automated review sessions still cannot
-// see it. An ADMIN or ROOT key must never appear: verified against 0.4.15, it
+// Both keys, never an admin key. The operator's surfaces hold two OpenViking
+// user keys — `reviewer` (what the daemon and every review session hold; the
+// server confines it to `user/reviewer/`) and `companion`. The tab builds one
+// client per user and merges their timelines, which is what makes companion
+// memory visible and editable from here while automated review sessions still
+// cannot see it. An ADMIN or ROOT key must never appear: verified against 0.4.15, it
 // grants no cross-user data access at all *and* can list every user key in
 // plaintext.
 //
@@ -71,9 +70,9 @@ export const MEMORY_USERS = ["reviewer", "companion"] as const;
 export type MemoryUser = (typeof MEMORY_USERS)[number];
 
 /**
- * Which env name in the keys file carries each user's USER key, most specific
+ * Which env name in the keys file carries each user's user key, most specific
  * first. `OPENVIKING_API_KEY` is the companion extension's own identity, so it
- * is the companion's fallback spelling and NEVER the reviewer's — a mix-up
+ * is the companion's fallback spelling and never the reviewer's — a mix-up
  * there would silently address the wrong tree.
  *
  * There is deliberately no ADMIN/ROOT entry in this table.
@@ -100,21 +99,21 @@ export function timelineOrder(entries: MemoryEntry[]): MemoryEntry[] {
 export const DEFECT_TAG = "bug";
 
 /**
- * Is this entry an operational defect? BY TAG, in both spellings the memory
+ * Is this entry an operational defect? By tag, in both spellings the memory
  * vocabulary allows: the `#bug` hash tag (what the import and the overseer
  * write) and the `kind=bug` event tag (`src/memory/eventtags.ts`, the k=v run
  * OpenViking also mirrors onto its native retrieval tags). Never by prose —
  * an entry that merely mentions a bug is not a defect flag.
  */
 export function isDefect(e: MemoryEntry): boolean {
-  // Header-only (`parseHashTags`), NOT `e.tags`: the store's tag list is a
+  // Header-only (`parseHashTags`), not `e.tags`: the store's tag list is a
   // full-text scan, so a `#bug` quoted inside a feedback comment would
   // otherwise authorize an automatic filing.
   if (parseHashTags(e.text).includes(DEFECT_TAG)) return true;
   return parseEventTags(e.text)["kind"] === DEFECT_TAG;
 }
 
-/** Operational-defect entries — the auto-filer's input (§9). */
+/** Operational-defect entries — the auto-filer's input. */
 export function defectEntries(entries: MemoryEntry[]): MemoryEntry[] {
   return entries.filter(isDefect);
 }
@@ -155,7 +154,7 @@ export interface NamespaceHealth {
 /**
  * What the tab paints instead of an empty list.
  *
- * `error` is the hard state: NO namespace answered, so an empty timeline means
+ * `error` is the hard state: no namespace answered, so an empty timeline means
  * "we cannot see memory", not "there is no memory". Those two must never look
  * alike — an empty tab reads as a healthy tab with nothing in it, which is
  * exactly the failure this field exists to prevent.
@@ -165,7 +164,7 @@ export interface MemoryHealth {
   namespaces: NamespaceHealth[];
   /** Set iff every namespace is down. */
   error?: string;
-  /** Set when SOME namespace is down, or entries were unreadable. */
+  /** Set when some namespace is down, or entries were unreadable. */
   warning?: string;
 }
 
@@ -184,7 +183,7 @@ export function storeHealth(store: MemoryStore): MemoryHealth | undefined {
 // ---- keys --------------------------------------------------------------------
 
 /** Parse a docker `--env-file`-shaped keys file. Values are returned to the
- * caller and NEVER logged, printed or put on an argv. */
+ * caller and never logged, printed or put on an argv. */
 export function parseKeysEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split("\n")) {
@@ -204,7 +203,7 @@ export function parseKeysEnv(text: string): Record<string, string> {
 }
 
 /**
- * Read the two USER keys out of the keys file, re-reading at most every
+ * Read the two user keys out of the keys file, re-reading at most every
  * `ttlMs` — a keys file provisioned after the TUI started is picked up without
  * a restart, and a missing one does not stat the disk per request.
  */
@@ -249,15 +248,15 @@ interface Namespace {
   user: MemoryUser;
   store: MemoryStore;
   gaps: OvGap[];
-  /** Calls currently collecting into `gaps`. The tab's load and the companion
-   * feed write can both be in flight, and the underlying store COALESCES their
+  /** Calls currently collecting into `gaps`. Several callers' reads can be in
+   * flight at once, and the underlying store coalesces their
    * sweeps — so the gap buffer is cleared only by the first arrival, and every
    * caller reads the whole sweep's gaps rather than the tail after its own
    * reset. */
   busy: number;
   health: NamespaceHealth;
   /** The key this namespace's client would send, read the same lazy way.
-   * The client reports `no_key` only ONCE per lifetime, while every sweep
+   * The client reports `no_key` only once per lifetime, while every sweep
    * clears `gaps` — so without this a second read of a keyless namespace
    * would settle as a healthy empty store. Absent for injected fakes. */
   apiKey?: () => string | null;
@@ -275,13 +274,13 @@ export interface TuiMemoryOptions {
   now?: () => Date;
   /** Per-request deadline. The forward adds an ssh hop, so it is generous. */
   timeoutMs?: number;
-  /** NEVER console.log from here — the TUI owns the alt screen. */
+  /** Never console.log from here — the TUI owns the alt screen. */
   log?: (msg: string, extra?: unknown) => void;
   /** Namespaces to build. Tests inject fakes; production passes nothing. */
   namespaces?: Array<{ user: MemoryUser; store: MemoryStore }>;
   /** Where an unaddressed write (`add`/`note`) lands. */
   writeUser?: MemoryUser;
-  /** Where to publish a namespace's RETIRED URIs (S3), by user: the
+  /** Where to publish a namespace's retired URIs, by user: the
    * companion's own recall (the vendored extension, `QCR_OV_RETIRED_FILE`)
    * excludes them, and no daemon sweeps the companion's tree — this store
    * does. Read back as the store's seed, lazily (never before the first
@@ -304,19 +303,20 @@ function userKey(user: MemoryUser, key: (name: string) => string | null): () => 
 }
 
 /**
- * The store the TUI runs against: BOTH user trees, merged into one timeline,
+ * The store the TUI runs against: both user trees, merged into one timeline,
  * with every entry id prefixed by the user it came from so a verb lands where
  * the operator was looking.
  *
- * The per-user `OpenVikingStore`s are built with NO sweep cache on purpose.
+ * The per-user `OpenVikingStore`s are built with no sweep cache on purpose.
  * `read()` on this class is the tab's load path (tab open, `r`, after a verb,
- * and the ~60s companion feed write) — not a per-poll cost — and a cached
+ * a companion pin action, and the candidate sweeper's adjudication read at
+ * most every 5 minutes) — not a per-poll cost — and a cached
  * sweep would leave `health()` reporting the outcome of a request that did not
  * happen. Freshness and honesty are worth more here than the round path's
  * amortization, which has its own store.
  */
 export class TuiMemoryStore implements HealthyMemoryStore {
-  /** The TUI's own requests, per `user/op` (S1): the server logs no
+  /** The TUI's own requests, per `user/op`: the server logs no
    * caller, so load is attributed from the client side — the daemon counts
    * its own in status.json, the TUI its own here (published in view.json). */
   private readonly counts: Record<string, RequestCounter> = {};
@@ -397,7 +397,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     return Object.fromEntries(Object.entries(this.counts).map(([k, c]) => [k, { ...c }]));
   }
 
-  /** Every entry BOTH trees hold, ids namespaced, oldest first. */
+  /** Every entry both trees hold, ids namespaced, oldest first. */
   async read(): Promise<MemoryEntry[]> {
     const out: MemoryEntry[] = [];
     await Promise.all(
@@ -425,14 +425,14 @@ export class TuiMemoryStore implements HealthyMemoryStore {
   }
 
   /**
-   * Materialize EVERY namespace this store holds keys for, so each is visible
+   * Materialize every namespace this store holds keys for, so each is visible
    * to a writer that discovers namespaces by listing (the companion's pi
    * extension does — see `OpenVikingStore.ensureWritable`).
    *
    * The TUI is the right caller: it is the one surface holding both user keys,
    * and it starts the companion container itself, so it can guarantee the
    * ordering the extension's cached namespace resolution depends on. Returns
-   * operator-facing notes for the namespaces that could NOT be prepared —
+   * operator-facing notes for the namespaces that could not be prepared —
    * never throws, and a failure is degraded memory, never a reason to hold the
    * companion back.
    */
@@ -463,7 +463,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
    * Route one mutation to the tree that owns the entry.
    *
    * Unaddressed writes (`add`, `note`) land in the reviewer tree: a note
-   * the owner types here is an instruction to the review system, and the EOD
+   * the operator types here is an instruction to the review system, and the EOD
    * curator and every round's pinned head read reviewer memory.
    */
   async apply(op: MemoryOp): Promise<MemoryWriteResult> {
@@ -502,7 +502,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     return res;
   }
 
-  /** A keyless namespace is down on EVERY sweep, not only the one that
+  /** A keyless namespace is down on every sweep, not only the one that
    * happened to receive the client's once-only `no_key` gap. */
   private noteMissingKey(n: Namespace, op: string): void {
     if (!n.apiKey || n.apiKey()) return;
@@ -530,7 +530,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
     };
   }
 
-  /** A gap, as a sentence that tells the operator what to DO about it. */
+  /** A gap, as a sentence that tells the operator what to do about it. */
   private describe(user: MemoryUser, gap: OvGap): string {
     if (gap.code === "no_key") {
       return `no ${USER_KEY_ENV[user][0]} in ${this.keysFile} (see docs/companion-memory-access.md)`;
@@ -545,27 +545,26 @@ export class TuiMemoryStore implements HealthyMemoryStore {
   }
 
   /**
-   * examined the asymmetry here — `error` iff EVERY namespace is down,
-   * so a PARTIAL outage sets only `warning` — and **kept it deliberately**.
-   * The ruling, recorded because everything else of this shape in the repo is
-   * now a defect:
+   * The asymmetry here is deliberate — `error` iff every namespace is down, so
+   * a partial outage sets only `warning` — although elsewhere in the repo this
+   * shape would be a defect:
    *
-   *  * The RENDER half is already honest. `memtab.ts` paints
+   *  * The render half is honest. `memtab.ts` paints
    *    "⚠ memory degraded" plus the per-namespace sentence, so a half-visible
    *    timeline never reads as a complete one. Nothing claims "there is
    *    nothing" from a namespace that did not answer.
-   *  * The ACTION half — `deps.sink.file(...)` runs while `error` is unset —
-   *    UNDER-files and cannot mis-file. The sink is per-entry and deduped on
+   *  * The action half — `deps.sink.file(...)` runs while `error` is unset —
+   *    under-files and cannot mis-file. The sink is per-entry and deduped on
    *    `Memory-key`; an entry from the down namespace is simply never seen, so
    *    it is filed by the next healthy sweep. No wrong ticket, no write over a
    *    partial view, nothing lost.
    *  * Promoting a partial outage to `error` would stop auto-filing every
-   *    VISIBLE `#bug` because an unrelated namespace is down — turning a
+   *    visible `#bug` because an unrelated namespace is down — turning a
    *    partial degradation into a total one, which is strictly worse for the
    *    only thing the field gates.
    *
    * The one thing that would make this a defect is a future consumer that
-   * treats `ok`/absent-`error` as "this list is complete" and WRITES from it.
+   * treats `ok`/absent-`error` as "this list is complete" and writes from it.
    * There is none today (the auto-filer is the sole action gated on `error`);
    * if you add one, gate it on `warning` too.
    */
@@ -595,7 +594,7 @@ export class TuiMemoryStore implements HealthyMemoryStore {
 }
 
 /** The store the TUI runs against: memory on the VM, over the memory forward,
- * with both of the owner's user keys. */
+ * with both of the operator's user keys. */
 export function tuiMemoryStore(opts: TuiMemoryOptions = {}): TuiMemoryStore {
   return new TuiMemoryStore(opts);
 }

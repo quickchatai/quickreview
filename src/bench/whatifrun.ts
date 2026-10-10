@@ -65,7 +65,7 @@ export interface WhatifCaseSummary {
   };
   /** Comments in the run's own results/all file (the control). */
   posted: number;
-  /** Whether today's collectComments() over the copied case files rebuilds
+  /** Whether the current collectComments() over the copied case files rebuilds
    * exactly those comments — null when the case files are not there. */
   posted_rebuilds: boolean | null;
   variants: Record<
@@ -134,7 +134,7 @@ export function buildWhatifCase(
     };
   }
 
-  // Does today's reader still rebuild the control from the case files? If
+  // Does the current reader still rebuild the control from the case files? If
   // not, the control is still the run's own file — but the report says so.
   let rebuilds: boolean | null = null;
   if (existsSync(join(caseDir, "comments.json"))) {

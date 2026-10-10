@@ -1,5 +1,5 @@
-// the archivable event kinds are a CLOSED set pinned against
-// every events read site in src/ (docs/archiving.md §9.1, invariant 7).
+// The archivable event kinds are a closed set pinned against every events
+// read site in src/ (docs/archiving.md §9.1, invariant 7).
 //
 // The archiver moves `ARCHIVE_EVENT_KINDS` rows older than
 // `events_after_days` out of the live `events` table. A kind some code reads
@@ -24,8 +24,8 @@
 //     list, each one bounded in a way the archive cannot reach.
 //
 // Every kind found must be outside the set, and a kind the fence cannot see
-// (an unresolvable argument) fails it too. Mutation-verified: a read of
-// `recheck_noop` added in any of these shapes fails the fence.
+// (an unresolvable argument) fails it too. The mutation tests below add a
+// read of `recheck_noop` in each of these shapes and require the fence to fail.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";

@@ -2,11 +2,10 @@
 //
 // Every coordinate the TUI derives (fit/truncate, the companion column's seam,
 // the mouse selection's highlight and copy) assumes this agrees with the
-// terminal. A hand-picked range list did not: `⛔`/`⏳` (the board's own
-// chips) and the emoji an LLM writes (`✅ ❌ ⚡ ⭐`) are East-Asian-Wide, so the
-// terminal drew them two cells wide while the frame counted one — every cell
-// to their right, the companion column's included, sat one column off the
-// pointer, and the row overflowed the screen.
+// terminal. `⛔`/`⏳` (the board's own chips) and the emoji an LLM writes
+// (`✅ ❌ ⚡ ⭐`) are East-Asian-Wide: a glyph counted one cell that the
+// terminal draws as two shifts every cell to its right off the pointer and
+// overflows the row.
 //
 // Generated from Unicode 16.0 (Python `unicodedata`): WIDE is East Asian Width
 // W or F; ZERO is general category Mn, Me or Cf (combining marks, ZWJ,

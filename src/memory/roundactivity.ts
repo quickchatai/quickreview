@@ -1,15 +1,14 @@
-// ROUND MEMORY ACTIVITY (F2): is a review round reading memory right
-// now? The one question the case writer asks before it starts a batch.
+// ROUND MEMORY ACTIVITY: is a review round reading memory right now? The one
+// question the case writer asks before it starts a batch.
 //
 // WHY. Every memory read a round makes — its seed's context search, its
 // lesson selection's two finds — embeds a query on the server's local
 // embedder, which serializes on ONE lock. Every finding case the case writer
-// stores is embedded on that same lock, and on the live VM's throttled two
-// CPUs one case costs about 3.4 s there. A batch of cases started just before
-// a round's reads puts the round behind every one of them: on 2026-10-07 the
-// first rounds after the S9 deploy got 1–9 of their 17–24 lesson finds
-// inside the 2 s budget while the case backfill held the embedder. So a case
-// batch never STARTS while a round's memory window is open (src/cases.ts).
+// stores is embedded on that same lock, and on the VM's throttled two CPUs
+// one case costs about 3.4 s there. A batch of cases started just before a
+// round's reads puts the round behind every one of them, past its lesson
+// budget. So a case batch never STARTS while a round's memory window is open
+// (src/cases.ts).
 // It cannot stop a batch already running: what bounds that is the batch's
 // size.
 //
@@ -20,16 +19,15 @@
 // the selector opens its own for every prefetch it runs (src/lessonselect.ts).
 // Windows nest and overlap freely; memory is BUSY while any is open.
 //
-// THE EMBEDDING TAIL (H3). A window stops the case writer STARTING a
+// THE EMBEDDING TAIL. A window stops the case writer STARTING a
 // batch; it cannot help a round whose seed arrives just AFTER a batch was
 // sent. OpenViking embeds a written batch asynchronously — the write
 // returns, the embeddings run on — so the one-thread embedder is still busy
-// for seconds (about 4 s a case on the live VM, 8–29 s under CPU throttling)
-// when the seed's query arrives, and the query queues behind them. On
-// 2026-10-08 three of fifteen seeds ran memory-less that way, 1–3 s after a
-// case batch. So the writer tells this tracker when it SENDS a batch and,
-// when the write settles, how long the embeddings are estimated to run on
-// (`embeddingSent`); a seed asks `whenEmbedderQuiet` and waits — at most
+// for seconds (about 4 s a case on the VM, 8–29 s under CPU throttling)
+// when the seed's query arrives, and the query queues behind them — long
+// enough to run a seed memory-less. So the writer tells this tracker when it
+// SENDS a batch and, when the write settles, how long the embeddings are
+// estimated to run on (`embeddingSent`); a seed asks `whenEmbedderQuiet` and waits — at most
 // what its own budget allows, never longer — so its search starts
 // uncontested. The estimate is only an estimate: a seed that waited the
 // whole tail may still meet a slow embedder, and a seed whose budget cannot
@@ -49,7 +47,7 @@ export interface RoundActivityGate {
    * `false` when `timeoutMs` passes first. Never rejects. The caller must
    * re-check `busy()` after it resolves: a new window may open in between. */
   whenIdle(timeoutMs: number): Promise<boolean>;
-  /** The case writer SENT a batch (H3): the embedder is busy from now
+  /** The case writer SENT a batch: the embedder is busy from now
    * until the returned `settled` is called, and for `tailMs` after that —
    * the server embeds a written batch after the write returns. `settled` is
    * idempotent. Optional: a gate without it tracks no tail. */
@@ -62,7 +60,7 @@ export interface RoundActivityWindow {
   begin(label?: string): () => void;
   /** Resolves with the milliseconds it waited, the moment no case batch is
    * out and no embedding tail runs (at once, with 0, when none does), or
-   * when `maxWaitMs` passes first (H3). Never rejects. Optional: a
+   * when `maxWaitMs` passes first. Never rejects. Optional: a
    * tracker without it never holds a seed. */
   whenEmbedderQuiet?(maxWaitMs: number): Promise<number>;
 }
@@ -144,7 +142,7 @@ export class RoundMemoryActivity implements RoundActivityGate, RoundActivityWind
     });
   }
 
-  // ---- the embedding tail (H3) --------------------------------------------------
+  // ---- the embedding tail ---------------------------------------------------
 
   embeddingSent(): (tailMs: number) => void {
     this.batchesOut += 1;

@@ -37,8 +37,7 @@ def set_label(work: Path, set_name: str | None = None) -> str:
     """The case set a scoring dir belongs to: the set ext.sh scored it on when
     it says so (a derived set such as `dedup5-swepr` names no benchmark set in
     its run name), else from the run name
-    (`ext-r5-sweprbench-eval100.sweprbench` -> `eval100`); the table used to
-    say "smoke" for every run."""
+    (`ext-r5-sweprbench-eval100.sweprbench` -> `eval100`)."""
     if set_name:
         return set_name.removeprefix("sweprbench-")
     m = re.search(r"sweprbench-([\w-]+?)(?:\.sweprbench)?(?:-MOCK)?$", work.name)

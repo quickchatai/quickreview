@@ -1,4 +1,4 @@
-// the disk guard (docs/archiving.md §7.7, acceptance 8). Before
+// The disk guard (docs/archiving.md §7.7, acceptance 8). Before
 // each file, statfs on both mounts: the archive mount needs the file's size
 // plus `disk_headroom_gb`, the state mount the headroom. Short of it, NO file
 // is started (`held_reason: disk_low`) and the `archive_disk_low` WAKE fires

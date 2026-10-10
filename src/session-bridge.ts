@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 export type SessionBridgeStage = "starting" | "ready" | "failed" | "closed";
 
 /**
- * What the inject bridge knows about pi's compaction (H1b), published
+ * What the inject bridge knows about pi's compaction, published
  * beside its `ready` stage. A compaction holds the session's one mailbox: pi
  * refuses every prompt while one runs ("Cannot submit a prompt while
  * compaction is in progress"), so the bridge delivers nothing until it ends,
@@ -42,17 +42,17 @@ export interface SessionBridgeState {
   updated_at: string;
   failed_stage?: string;
   detail?: string;
-  /** Absent on a bridge from before H1b: compaction unknown. */
+  /** Absent on an older bridge that does not report compaction: unknown. */
   compaction?: SessionBridgeCompaction;
 }
 
 /**
- * The daemon's round-end compaction request (H1b), written atomically
- * into the session's inject dir. The bridge — the session's one mailbox
- * consumer — runs it through pi's own `ctx.compact()` only while nothing is in
- * flight, and delivers no wake until it ends. Before H1b the daemon typed
- * `/compact` into the pane, which aborted whatever turn was running and left
- * any wake submitted during the compaction refused by pi and never retried.
+ * The daemon's round-end compaction request, written atomically into the
+ * session's inject dir. The bridge — the session's one mailbox consumer — runs
+ * it through pi's own `ctx.compact()` only while nothing is in flight, and
+ * delivers no wake until it ends. It is a request rather than `/compact` typed
+ * into the pane because that aborts whatever turn is running, and pi refuses
+ * any wake submitted during the compaction.
  * A dot-name that is not `*.md`, so no wake reader ever takes it for a wake.
  */
 export const COMPACTION_REQUEST_FILE = ".compact-request.json";

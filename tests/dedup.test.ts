@@ -166,9 +166,9 @@ describe("postCheckRecord — one root cause posted twice becomes one comment", 
     };
     expect(postCheckRecord(r).merges).toEqual([]);
   });
-  // 2026-10-03 regression (fv1): with bare identifiers recognised, the
-  // post-check fused defects the validator had judged in ONE group and kept
-  // apart (17 merges over the round-1 runs, two medium defects hidden).
+  // With bare identifiers recognised, the post-check must not fuse defects
+  // the validator judged in one group and kept apart — that merge hides
+  // distinct defects.
   const pair = (ga?: string, gb?: string) => ({
     findings: [
       {

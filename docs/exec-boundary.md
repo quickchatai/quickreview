@@ -14,7 +14,7 @@ disproved by someone running a command. Assume this one can be too, and try.
 `checkProtectedWrites` vet **write targets**. The command guard was hardened over
 seven adversarial review rounds, and every round but the last looked complete to
 its author and passed a green suite while a live bypass stood; an eighth
- then showed the boundary had never protected its OWN configuration —
+then showed the boundary had never protected its OWN configuration —
 and, while that was being closed, that the redirection scan knew two of bash's
 seven output-redirection spellings:
 
@@ -102,18 +102,16 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    environment. The global/XDG search path is never consulted.
 2. **Command guard** — `checkBashCommand`, `extensions/bash-guard.ts`. Program
    allowlist; `gh` and `git` by read-verb allowlist; the config-injection and
-   config-relocation option and env families; and — since round 6 —
-   `checkReaderModes`, which gates the write and exec modes of the three
+   config-relocation option and env families; and `checkReaderModes`, which gates the write and exec modes of the three
    programs allowlisted for *reading*: `sed -i` and its `w`/`r`/`e` script
    commands (including a script glued to `-e`/`--expression`),
    `sort -o`/`--compress-program`, and `find -exec`/`-delete`/`-fprintf` and
-   kin. `awk` used to be a fourth and is now off the allowlist entirely. git's
-   read verbs have two such modes of their own, refused since the S8b
-   review: the diff options' `--output=<file>` (`git log`/`show`/`diff` WRITE
+   kin. `awk` is off the allowlist entirely. git's read verbs have two such
+   modes of their own, both refused: the diff options' `--output=<file>` (`git log`/`show`/`diff` WRITE
    their output there — a committed blob or a `--format=format:` string makes
    the bytes anything) and `git grep`'s `-O<cmd>`/`--open-files-in-pager`
    (which RUNS `<cmd>`), and every git option is judged as git receives it,
-   inner quotes removed (`--up"load"-pack=` was allowed until then). This is
+   inner quotes removed (so `--up"load"-pack=` is `--upload-pack=`). This is
    the pattern-based layer and it stays pattern-based: its job is to narrow the
    surface and to stop a caller *lifting* layer 1, both of which are
    command-shaped acts.
@@ -123,26 +121,26 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    boundaries cannot drift. Every output-redirection spelling bash has
    (`>`, `>>`, `&>`, `&>>`, `>&f`, `{v}>`, `<>`, `>|`, fd-prefixed) is folded
    onto `>`/`>>` first (`normalizeRedirections`), and a target is judged by the
-   name bash would OPEN — quotes and backslashes inside the word removed. Since
-   the S8b review it is also judged over the redirections bash would
+   name bash would OPEN — quotes and backslashes inside the word removed. It
+   is also judged over the redirections bash would
    actually PERFORM (`redirectTargets`, which reads quotes): an operator glued
    to the word before it (`printf x>config.toml`, which no whitespace token
    showed), `$'…'`/`$"…"` names, and a target bash EXPANDS — a pathname
    pattern (`> config.tom?`, `> retired-uri[s].json`) or a one-element
    sequence brace (`> recall-hint{s..s}/…`) is judged by every protected name
    it can expand onto (`protectedPatternHit`), while a `>` inside a quoted grep
-   pattern stays text. It refuses three closed, documented sets:
+   pattern stays text to this scan (the whitespace scan still reads a spaced one
+   as an operator — see "What is NOT guaranteed"). It refuses three closed, documented sets:
    - **git's configuration surface** (`isGitConfigSurface`): anything
      inside a `.git` directory, `.gitconfig`, `<any>/git/config`,
      `.gitattributes` — git's own config locations, not attacks.
    - **this system's own policy surface** (`isPolicySurface`):
      `config.toml`, `scripts/**`, `dist/**`, `extensions/**`, the frozen
      seeds `prompts/**` / `agents/**` / `seeds/**` (the built `state/agents/**`
-     pass bodies included), and pi's project dir `.pi/**` (pi 0.99 bump). These are the files that decide what every layer
-     here DOES; the boundary protected git's configuration and, until,
-     not its own. See "The policy surface" below.
+     pass bodies included), and pi's project dir `.pi/**`. These are the files that decide what every
+     layer here DOES. See "The policy surface" below.
    - **the memory-scope files a session's own recall reads**
-     (`isMemoryScopeSurface`, S8b): `recall-hints/**` (the daemon's
+     (`isMemoryScopeSurface`): `recall-hints/**` (the daemon's
      per-session recall hint — the only memory areas the session's recall and
      memory tools may reach) and `retired-uris.json` (the retired entries its
      recall excludes), both in the session's pi home. See "The memory scope"
@@ -156,8 +154,7 @@ keeps `rg`, `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`,
    `policy_surface_modified` **wake**. Directories are hashed recursively by
    CONTENT (a rewritten `scripts/guards.sh` keeps the listing identical). It
    enumerates no write primitive, so variable indirection is irrelevant to it.
-   Both hashes are async, with an event-loop turn after every file (
-   H2); the value is the synchronous one, byte for byte, so a baseline taken
+   Both hashes are async, with an event-loop turn after every file; the value is the synchronous one, byte for byte, so a baseline taken
    before a deploy still compares with a re-check after it. Each is bounded by
    `INTEGRITY_BUDGET_MS` (60 s): a read that never returns leaves the round
    UNCHECKED — no baseline, or no verdict on the re-hash — with a
@@ -189,7 +186,7 @@ the guard the container actually runs, so overwriting it disables the boundary
 for every later round in that container. `scripts/guards.sh` and
 `scripts/approve-pr.sh` were equally writable.
 
-Two more doors of the same class were verified by the review:
+Two more doors of the same class were verified by review:
 
 ```
 bash -c 'scripts/pr-self.sh ; QCR_CONFIG=/tmp/x.toml scripts/approve-pr.sh 5 b.md'
@@ -200,7 +197,7 @@ The first launders a refused command behind a sanctioned one: `checkProgram`
 vetted `bash` by its first bare token and the splitter treated `;` inside single
 quotes as literal, so everything after the separator was never seen. The second
 is `QCR_POSTING_RECEIPT_DIR`, left out of `POLICY_RELOCATING_ENV` as "an
-argument"; the ruling is that it names a DIRECTORY like `QCR_DRYRUN_DIR`,
+argument"; but it names a DIRECTORY like `QCR_DRYRUN_DIR`,
 the daemon never sets it (it relies on the scripts' default
 `state/posting-receipts`, which `verdicts.ts` reads), and it relocates the
 record that settles a round — so it is a relocator and it is refused.
@@ -208,8 +205,7 @@ record that settles a round — so it is a relocator and it is refused.
 **Then the fix was probed the way the finding was made**, by running each form
 bash offers against a real file, and the first cut of it fell eleven ways. The
 redirection scan knew `>` and `>>`; bash has five more spellings that write a
-named file, and all five walked past the git-config veto on master as
-well:
+named file, and all five walked past the git-config veto as well:
 
 ```
 cat /tmp/evil &>config.toml        cat /tmp/evil {v}>config.toml     cat /tmp/evil >| config.toml
@@ -239,8 +235,8 @@ until runtime, was re-parsed as the empty string and allowed.
   channel what it is refused through another, and the integrity check cannot
   watch a different set than the veto refuses. It is git's own list one level
   out: the files that configure US, closed and listed here.
-- **`.pi/` joined the set at the pi 0.99.1 bump.** It is pi's PROJECT
-  resource dir — `settings.json`, `extensions/`, and since 0.99 `mcp.json` —
+- **`.pi/` is in the set.** It is pi's PROJECT resource dir — `settings.json`,
+  `extensions/` and `mcp.json` —
   and every project is trusted (`defaultProjectTrust = "always"`), so a file
   planted there loads into every later session and pass in that root: an
   extension is code, an `mcp.json` launches server processes that never pass
@@ -279,12 +275,12 @@ until runtime, was re-parsed as the empty string and allowed.
   receipt-dir relocation (`QCR_POSTING_RECEIPT_DIR`) — and a rewrite
   that reaches it anyway is a `policy_surface_modified` wake at round end.
 - **Layer 4 watches the policy surface.** The same fingerprint dispatch takes
-  and verdicts re-checks now hashes `config.toml` and the seven directories,
+  and verdicts re-checks hashes `config.toml` and the seven directories,
   recursively by content, so `T=config.toml; cat p > $T` — the one spelling no
   string scan can see — is a wake, exactly as its `.git/config` twin is.
-  Since the install locator the live config is not necessarily
-  `<sandbox>/config.toml`: layer 4 also watches the LOCATED config
-  (`$QCR_CONFIG` — on the VM the shipped, read-only config home, —
+  The live config is not necessarily `<sandbox>/config.toml` (the install
+  locator decides): layer 4 also watches the LOCATED config
+  (`$QCR_CONFIG` — on the VM the shipped, read-only config home —
   else `<config home>/config.toml`) and the profile dirs the loader reads from
   the homes (`<config home>/profiles`, and `profiles/` beside `$QCR_CONFIG`),
   through `locatedPolicyWatchPaths`. Not `secrets/` or `portrait/`.
@@ -292,21 +288,21 @@ until runtime, was re-parsed as the empty string and allowed.
   rebuilds it mid-round on feedback ingest and the day change, and a check that
   fires on the daemon's own work gets switched off.
 
-The post-hoc audit (`src/usage.ts`) gained the matching telemetry kinds —
+The post-hoc audit (`src/usage.ts`) has the matching telemetry kinds —
 `policy_surface_write` (a redirection, `sed -i` or write-tool target on the
 policy surface, dequoted, every spelling) and `policy_relocation` (a `QCR_*`
 relocator, at the top level or inside a `bash -c` payload) — so a write that
-somehow gets past the guard is at least *seen*, never silent. (S8b
-added `memory_scope_write` the same way, for the memory-scope files below.)
+somehow gets past the guard is at least *seen*, never silent; and
+`memory_scope_write` the same way, for the memory-scope files below.
 
 Layers 1 and 3 make the git-config-executes-shell family *impossible* at all
 three of git's config scopes for the write paths they can see; layer 4 catches
 the ones they cannot see, which is every one that goes through a variable or a
 program body. Layer 5 notices the terminal harm whatever caused it. Layer 2
-remains an enumeration, and that is now acceptable, because it is no longer the
+remains an enumeration, and that is acceptable, because it is not the
 only thing standing between a session and an ungated approval.
 
-## The memory scope — a session cannot widen its own recall (S8b)
+## The memory scope — a session cannot widen its own recall
 
 The daemon publishes two files into a PR session's pi home, beside its
 `ovcli.conf` (`src/memory/ovsession.ts`), and the vendored OpenViking
@@ -318,13 +314,12 @@ areas a round may read, `experiences/` alone; vendored patches 0008, 0009 and
 (`.openviking/retired-uris.json` — entries the recall excludes). The extension
 takes the hint's areas as given (`toolScopeAreas`, run against a tampered file
 in `tests/exec-boundary.test.ts`), so one write of
-`{"areas":["finding-cases","events"]}` widened the session's own memory reach
-to the finding cases and feedback events no review round may read, until the
-daemon wrote the hint again at the next round; an emptied retired list brought
-retired entries back into every recall. Neither was on the protected list —
-the integration review noted it.
+`{"areas":["finding-cases","events"]}` would widen the session's own memory
+reach to the finding cases and feedback events no review round may read, until
+the daemon wrote the hint again at the next round; an emptied retired list
+would bring retired entries back into every recall.
 
-They join the write veto as a third set, `MEMORY_SCOPE_SURFACE`, through the
+So they are in the write veto as a third set, `MEMORY_SCOPE_SURFACE`, through the
 same predicate (`isProtectedWriteTarget`) both channels read, every
 redirection spelling and `sed -i` included, with their own refusal
 (`memory-scope file`). Matched as a SHAPE — the distinctive name under any
@@ -336,7 +331,7 @@ is deliberate: the daemon rewrites the hint at every round's dispatch, so a
 round-boundary hash would report its own work (the `state/agents/**`
 reasoning) — the write veto is the protection these files have.
 
-That made the veto's REACH the whole of the protection, and the S8b review
+That makes the veto's REACH the whole of the protection, and review
 falsified G6 as first written with four spellings that each name a file and
 each overwrote the real one in a scratch dir: a pathname pattern in the
 redirection target (`> recall-hint?/pr-1.json`, `> retired-uri[s].json`,
@@ -349,7 +344,7 @@ review). All four are closed for all three protected sets — the quote-aware
 redirection scan and its pattern judgement in layer 3, `--output` in layer 2 —
 and sit in round 10 of the corpus, replayed against the compiled guard; the
 audit sees each (`memory_scope_write`, or `reader_write_or_exec` for a git
-write mode onto no protected path), and its memory-scope shapes are now the
+write mode onto no protected path), and its memory-scope shapes are the
 guard's own (`recall-hints/…` or the dir, `retired-uris.json` and its
 `.tmp-<pid>`; a `docs/recall-hints.md` or `retired-uris.json.bak` is neither,
 in both). Closing `--output` turned up `git grep -O<cmd>`, which RUNS `<cmd>`:
@@ -360,9 +355,9 @@ arbitrary execution through a read verb, closed in the same change.
 **G1 — the set of files git reads configuration from is fixed at spawn, small,
 and named.** For a review session it is the pinned global file plus the
 repository's own config and hooks; the search path that would find others never
-runs. This is a claim about the READ side only — it deliberately no longer
-claims those files cannot be written, because an earlier draft of this document
-did claim that and the reviewer disproved it five ways in ten minutes. Writes
+runs. This is a claim about the READ side only — it deliberately does not
+claim those files cannot be written; that claim was disproved five ways in ten
+minutes. Writes
 are handled by G4. *Falsify it by* naming a config or hook location git reads
 that is neither pinned away nor in `gitConfigWatchPaths`.
 
@@ -373,7 +368,7 @@ that consults them never runs. *Falsify it by* executing a payload from
 
 **G3 — an approval the daemon did not make is visible within one reconcile
 poll.** A bot-authored `APPROVED` review at a PR's current head with no local
-trace (an posting marker carrying a key the daemon issued for that PR at
+trace (a posting marker carrying a key the daemon issued for that PR at
 that head, `rounds.gh_review_id`, the `reviewed_heads` mark,
 or a migration-precheck event) raises an `ungated_approval` anomaly.
 *Falsify it by* posting a bot review at the current head that acquires one of
@@ -390,7 +385,7 @@ one of those files mid-round and getting a clean round, or by naming a config
 location git reads that `gitConfigWatchPaths` omits.
 
 **G5 — a review session cannot write this system's own policy surface through
-either write channel, in any spelling the guard can see**. No
+either write channel, in any spelling the guard can see.** No
 `write`/`edit` tool call, no shell redirection in any of bash's spellings
 (`>`, `>>`, `&>`, `&>>`, `>&f`, `{v}>`, `<>`, `>|`, fd-prefixed, the target
 quoted or backslash-escaped) and no `sed -i` can land on `config.toml`,
@@ -407,8 +402,8 @@ the write tool, a redirection, or a `bash -c` payload — and getting an
 `policy_surface_modified` wake at round end.
 
 **G6 — a review session cannot write the memory-scope files its own recall
-reads through either write channel, in any spelling that names them**
-(S8b): no `write`/`edit` tool call, redirection (glued or spaced,
+reads through either write channel, in any spelling that names them**:
+no `write`/`edit` tool call, redirection (glued or spaced,
 quoted or not, `$'…'`), redirection target bash expands (a pathname pattern,
 a sequence brace) or `sed -i` lands on a `recall-hints/…` path or a
 `retired-uris.json`, and no git read verb writes one through `--output`.
@@ -425,7 +420,7 @@ compiled `dist/` guard.
   `T=.git/config; cat p >> $T` is invisible to it *by construction*, and so is
   a write hidden inside a quoted `sed` program the reader-mode rules do not
   recognise. This is not a gap awaiting more spellings; it is the reason
-  layer 4 exists. Adding spellings here is the mistake made four times.
+  layer 4 exists. Adding spellings here is the mistake rounds 1–4 made.
 - **The reader-mode rules are pattern-based too**, and their `sed` script
   parsing is approximate: a `w` flag on a non-`/` delimiter (`sed 's|a|b|w f'`)
   is not recognised — VERIFIED writing. It is left in place deliberately: it
@@ -443,15 +438,14 @@ compiled `dist/` guard.
   daemon. Nothing here revokes filesystem permission; every layer above is a
   refusal or a detection.
 - **The App's credentials are readable by the session.** Same uid, so
-  nothing revokes the read. Since (2026-10-05) `checkSecretPaths`
-  refuses the obvious SPELLINGS — a command or a file-tool path that names
+  nothing revokes the read. `checkSecretPaths` refuses the obvious SPELLINGS — a command or a file-tool path that names
   `app.pem`, `webhook_secret`, `tunnel_token`, the OpenAI/Slack key files or a
   secrets dir, including globs, quoting and `../secrets` from the sandbox root
   — but it is a belt: `d=/opt/quickreview/sec; cat ${d}rets/app_id` and
   `grep -r 'PRIVATE KEY' /opt/quickreview` still read them. A review body
   posted through the sanctioned scripts is a channel to GitHub, so a session
-  past its instructions can publish what it reads. What IS refused (,
-  found by execution) is moving the scripts' host: `GITHUB_API=` as a command
+  past its instructions can publish what it reads. What IS refused (found by
+  execution) is moving the scripts' host: `GITHUB_API=` as a command
   prefix pointed `mint-token.sh` — and with it the App's signed JWT — at any
   host the session named, the one outbound channel this policy otherwise
   leaves closed. The floor for the read is the same as for G5: a uid split or a
@@ -551,7 +545,7 @@ compiled `dist/` guard.
   while `rg -n '>config.toml' docs/` — the quote glued to the `>` — is not
   seen. That asymmetry is an accident of tokenisation, not a design; the
   refusal is a false one on a read, loud and recoverable, the same trade
-  made for `.git/config`, and it is preferred to a quote-aware scan
+  the git-config veto makes for `.git/config`, and it is preferred to a quote-aware scan
   that would have to be a real tokeniser to be right.
 - **`QCR_POSTING_RECEIPT_DIR` is refused as a relocator** alongside `QCR_CONFIG`,
   `QCR_STATE_DB` and `QCR_DRYRUN_DIR`. The per-call `QCR_*` arguments the daemon

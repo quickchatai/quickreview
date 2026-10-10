@@ -1,16 +1,16 @@
-// Deterministic repo facts (setup & scan spec "Survey"): what a repo
-// says about itself in files, read without a model — the stack, frameworks, CI
-// checks, linters and formatters, the design docs and style guides, the agent-
-// directive files, and a stack-aware first guess at the unit cut. Free facts
-// must not cost model time, and the survey lens and the portrait
-// start from these rather than rediscovering them.
+// Deterministic repo facts: what a repo says about itself in files, read
+// without a model — the stack, frameworks, CI checks, linters and formatters,
+// the design docs and style guides, the agent-directive files, and a
+// stack-aware first guess at the unit cut. Free facts must not cost model
+// time, and the survey lens and the portrait start from these rather than
+// rediscovering them.
 //
 // Pure: a listing of repo-relative paths plus a reader that answers null for
 // anything it cannot read. Nothing here touches a filesystem, so the engine's
 // repo port decides what "the repo" is (git-tracked files of the reviewed
 // checkout, in production) and tests hand over a map.
 //
-// Every detection is EVIDENCE-carrying: each fact names the file that proves
+// Every detection is evidence-carrying: each fact names the file that proves
 // it, so the operator can check the facts and the companion can cite them.
 // Nothing is inferred from absence — a repo with no CI config has `ci: []`,
 // which says "no config file found", not "no CI".

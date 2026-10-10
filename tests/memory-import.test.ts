@@ -1,12 +1,12 @@
-// the curated-memory import, exercised end to end over the seam:
+// The curated-memory import, exercised end to end over the seam:
 // an archived memory file read by the SOURCE reader, a fake destination store, no
 // subprocess, no ssh, no filesystem except the injected archive seam.
 //
-// What is pinned here is the ticket's spec: what crosses (pinned standing
-// instructions, curated learnings, open bug/feedback threads), what
-// deliberately does not (raw daily working notes), that re-running does not
-// duplicate, and — because the owner ratified a best-effort import with NO gate
-// — that the log names every skipped entry and every failed write.
+// Pinned here: what crosses (pinned standing instructions, curated learnings,
+// open bug/feedback threads), what deliberately does not (raw daily working
+// notes), that re-running does not duplicate, and — because the import is
+// best-effort with NO gate — that the log names every skipped entry and every
+// failed write.
 import { describe, expect, it } from "vitest";
 import {
   archiveReadOnly,
@@ -518,8 +518,8 @@ describe("archiveReadOnly", () => {
 });
 
 // The destination is deliberately typed as the seam, never a concrete engine:
-// this is the property that let the import be written before OpenViking's
-// store existed. If someone narrows it, this stops compiling.
+// the import depends on nothing engine-specific. If someone narrows it, this
+// stops compiling.
 describe("the seam", () => {
   it("takes any MemoryStore as its destination", () => {
     const dest: MemoryStore = recordingMemoryStore();

@@ -1,9 +1,7 @@
-// Stage 1's case ORDER prioritises coverage (scan-loop). The hard stop
-// (ratified, unchanged) ends a run whose actuals outrun its estimate before
-// the plan's tail; with cases in a fixed unit order that tail was the SAME
-// cases every round (self-scan rounds 2 and 3 both cut onboard-core,
-// onboard-steps, bench-harness ×2, bench-arms). Now a case holding a file
-// the ledger never read — or whose newest reading was cut short — runs
+// Stage 1's case order prioritises coverage. The hard stop ends a run whose
+// actuals outrun its estimate before the plan's tail; with cases in a fixed
+// unit order that tail would be the same cases every run. So a case holding
+// a file the ledger never read — or whose newest reading was cut short — runs
 // first, then cases of changed files, then the rest; a tier keeps the plan's
 // own order. Asserted at the planner (planStage1) and at the run
 // (ScanRunner, every port faked): repeated capped runs converge to full
@@ -146,7 +144,7 @@ const NEW = ["u4", "u5", "u6"];
 let CUT = cutOf([...OLD, ...NEW]);
 
 /** Round `r`'s tree: u1-u3 always, their content new every round; u4-u6
- * (sat LAST in the cut, like the self-scan's starved tail) from round 1. */
+ * (last in the cut, the tail a fixed order would starve) from round 1. */
 function treeAt(r: number): Record<string, string> {
   const out: Record<string, string> = {};
   for (const u of OLD) out[`${u}/m.py`] = lines(10, `${u}_r${r}`);

@@ -2,7 +2,7 @@
 # Interactive wizard: collect the quickreview secrets into the install's secrets
 # dir — $QC_SECRETS_DIR, else the install locator's answer:
 # <config home>/secrets (~/.config/qcr/<install>/secrets). An old
-# ~/.config/quickreview-bot/ is never read (`qcr install migrate`).
+# ~/.config/quickreview-bot/ is never read (`qcr install migrate` moves it).
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
 #
@@ -207,7 +207,7 @@ if want openai_api_key; then
   prompt_hidden openai_api_key "the OpenAI API key" v_openai
 fi
 
-# the HOSTED embeddings credential, its OWN file. The shipped
+# The HOSTED embeddings credential, its OWN file. The shipped
 # default embeds memory locally (nothing but the model call leaves), so this
 # is needed ONLY by an operator who set config.toml [openviking]
 # embedding_provider = "openai". Kept separate from pi's key on purpose: either
@@ -218,7 +218,7 @@ if want openai_embeddings_api_key; then
   prompt_hidden openai_embeddings_api_key "the OpenAI key for embeddings" v_openai
 fi
 
-# the memory engine's identity. Two files, and only two: the SERVER's
+# The memory engine's identity. Two files, and only two: the SERVER's
 # own root key (ov.conf needs it to run in api_key mode; boot provisioning uses
 # it to create users) and the REVIEWER user key (the one client credential this
 # container may hold). The COMPANION key never belongs on this machine: review

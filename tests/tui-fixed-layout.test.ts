@@ -1,15 +1,15 @@
-// The TUI has ONE layout (the owner, 2026-09-02): the tab on the left, the
-// companion column on the right, on every frame, in every configuration.
-// Nothing takes the whole terminal, nothing folds the column away, no config
-// removes it. Three things were removed that day and this file is the fence
-// that keeps them out: the full-screen attach (overseer / main / PR), the
-// collapsed spine (`\`, the border click, the narrow-terminal auto-spine) and
-// the no-column configuration (`--no-companion`, `[companion] enabled=false`).
+// The TUI has one layout (CLAUDE.md, ratified design decisions): the tab on
+// the left, the companion column on the right, on every frame, in every
+// configuration. Nothing takes the whole
+// terminal, nothing folds the column away, no config removes it. This file is
+// the fence that keeps three shapes out: the full-screen attach (overseer /
+// main / PR), the collapsed spine (`\`, the border click, the narrow-terminal
+// auto-spine) and the no-column configuration (`--no-companion`,
+// `[companion] enabled=false`).
 //
 // The assertions are STRUCTURAL where they can be — a module that does not
 // exist, a hook that has no name, a state field that is not on the class —
-// because a prompt-level "please don't" is exactly what let `o`/`M` keep the
-// takeover alive for two weeks after ruled it out.
+// because a prompt-level "please don't" does not keep a removed path out.
 import { EventEmitter } from "node:events";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -75,14 +75,14 @@ describe("① no full-screen attach exists", () => {
   it("App has no attach hook to install, and the board's key map has no verb that reaches one", () => {
     const { app } = bareApp();
     expect("attach" in app.hooks).toBe(false);
-    // `o` and `M` were the overseer / main-session attach verbs.
+    // `o` and `M` are the keys an overseer / main-session attach would bind.
     expect(decodeKey(Buffer.from("o"))).toEqual({ kind: "char", ch: "o" });
     expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "char", ch: "M" });
     const boardBar = TAB_VOCABULARY.board.map((b) => b.key);
     expect(boardBar).not.toContain("o");
     expect(boardBar).not.toContain("M");
     // Unregistered means the board hands them to the companion column — which
-    // is where the owner wants overseer questions to go.
+    // is where overseer questions go.
     expect(app.registeredKeys().has("o")).toBe(false);
     expect(app.registeredKeys().has("M")).toBe(false);
   });
@@ -106,9 +106,9 @@ describe("① no full-screen attach exists", () => {
   });
 
   it("the ONE remaining borrower of the real terminal is the `s` passphrase prompt", () => {
-    // `suspend()` hands the terminal out. The attach used to be a caller; now
-    // only index.ts's onRealTerminal (the GCP key prompt, which is ssh's own
-    // UI and paints no TUI surface) may call it.
+    // `suspend()` hands the terminal out. Only index.ts's onRealTerminal (the
+    // GCP key prompt, which is ssh's own UI and paints no TUI surface) may
+    // call it.
     const callers = tuiSources()
       .filter(([name, text]) => name !== "app.ts" && /\bsuspend\(\)/.test(text))
       .map(([n]) => n);

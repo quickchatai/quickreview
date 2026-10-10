@@ -1,4 +1,4 @@
-// The TRACKER SINK (FT-0463; setup & scan spec "Findings"): where a promoted
+// The TRACKER SINK (setup & scan spec "Findings"): where a promoted
 // scan finding goes, and how its ticket is closed when a re-scan finds it
 // fixed. Two implementations of the engine's `TrackerSink` port:
 //
@@ -7,7 +7,7 @@
 //     protocol (`/tracker-docs/issue-tracker.md`): a new id by exclusive
 //     create of `.ids/<NNNN>`, the ticket file created exclusively, and every
 //     rewrite of an existing ticket under the edit lock `.locks/FT-<id>`. Its
-//     rights are rule 8's third amendment: FILE a ticket in any effort, CLOSE
+//     rights are bounded by CLAUDE.md rule 8: FILE a ticket in any effort, CLOSE
 //     only a ticket it filed (`Created: … by companion`) — never one somebody
 //     has claimed, never anyone else's.
 //   * MARKDOWN FILES (`markdownFindingSink`), one per finding under

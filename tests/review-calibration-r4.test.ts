@@ -1,5 +1,5 @@
-// Round-4 review calibrations (2026-10-02), from the classes the round-3
-// default still missed on the Martian tune20 set
+// Round-4 review calibrations, from the classes the round-3 default missed on
+// the Martian tune20 set
 // (bench/aacr/ext/martian-tuning/ROUND4-GAPS.md). Each rides the addendum
 // registry (rule 6: seeds untouched), binds exactly the passes it names, and
 // composes into PR builds only — a scan build is unchanged.

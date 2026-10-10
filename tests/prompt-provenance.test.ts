@@ -1,8 +1,8 @@
-// Prompt cleanup (2026-10-03): what reaches a model carries no
+// What reaches a model carries no
 // provenance — no reviewed-repo PR numbers, no tracker ids, no dated asides,
 // no owner's or teammate's name. Scanned on the BUILT lens bodies and the
 // RENDERED round orders (what the model sees), never on the sources, whose
-// fence markers and code comments may keep their history.
+// fence markers and code comments are not model-facing.
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -64,7 +64,7 @@ const FILES = [
 ] as unknown as PrFileEntry[];
 
 describe("no provenance reaches a model", () => {
-  // Mutation: put a "" back into a lens heading outside its fence, or
+  // Mutation: put a tracker id back into a lens heading outside its fence, or
   // stop stripping the RATIFIED marker lines in buildAgents → this fails.
   it("built lens bodies", { timeout: HEAVY_TIMEOUT_MS }, () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-provenance-"));
@@ -82,7 +82,7 @@ describe("no provenance reaches a model", () => {
     }
   });
 
-  // Mutation: put "survives" back in renderDirectiveEscalationNote, or
+  // Mutation: put a tracker id back in renderDirectiveEscalationNote, or
   // a dated aside back into a round template outside its fence → this fails.
   it(
     "rendered round orders, with and without first-party directives",
@@ -118,7 +118,7 @@ describe("no provenance reaches a model", () => {
     },
   );
 
-  // the follow-up template, with every block it renders filled in.
+  // The follow-up template, with every block it renders filled in.
   // Mutation: put a ticket id into the step-4b prose or renderDeltaNote → fails.
   it(
     "the follow-up round order, every follow-up block filled",

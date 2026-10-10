@@ -1,22 +1,22 @@
 // The escalation interview — the step that turns the optional,
-// off-by-default escalation feature on, and the ONLY place a new operator is
+// off-by-default escalation feature on, and the only place a new operator is
 // asked about it.
 //
-// WHY IT IS A STEP AND NOT A CONFIG COMMENT. The feature needs two answers the
+// Why it is a step and not a config comment: the feature needs two answers the
 // system must never guess: WHAT warrants a person's attention, and WHOM. A
 // half-answer is worse than no answer — escalation switched on with nobody to
 // escalate to is a feature that silently does nothing — so this step cannot
 // finish in that state and neither can a hand-edited config: `parseEscalation`
-// in src/config.ts REFUSES TO LOAD one. Two doors, one lock.
+// in src/config.ts refuses to load one. Two doors, one lock.
 //
-// WHAT IT TEACHES, because the wording is the feature. Escalation here is not
+// What it teaches, because the wording is the feature: escalation here is not
 // "ask someone to review this". The reviewer still decides, always, on the
 // merits — the escalation is a note that goes out beside the verdict pointing
 // one named person at one named thing. The step says that in the operator's
 // language before it asks anything, because an operator who thinks they are
 // configuring "send hard PRs to a human" has configured the wrong feature.
 //
-// SCOPE OF THE INTERVIEW. It captures ONE set of triggers — the common case,
+// Scope of the interview: it captures one set of triggers — the common case,
 // and the one worth an interview — written as one rule PER TARGET, because
 // `EscalationRule.to` names a single person by design. Teams that want
 // different triggers for different people write more `[[escalation.rules]]`
@@ -36,11 +36,10 @@ export const ESCALATION_STEP_ID = "escalation";
  * `onboarding:<login>`. A re-run rewrites every rule whose name starts with
  * this prefix and leaves hand-written siblings completely alone.
  *
- * ONE RULE PER TARGET, not one rule pointing at the first login (
- * review). `EscalationRule.to` is a single person by design — an escalation
- * names ONE person to ask — so an operator answering `targets: "alice, bob"`
- * used to get a rule reaching alice alone, silently. Now they get two rules
- * and the confirmation says so.
+ * One rule per target, never one rule pointing at the first login:
+ * `EscalationRule.to` is a single person by design — an escalation names one
+ * person to ask — so an operator answering `targets: "alice, bob"` gets two
+ * rules, and the confirmation says so.
  */
 export const INTERVIEW_RULE_PREFIX = "onboarding";
 
@@ -189,8 +188,8 @@ export function foreignRuleTargets(foreign: readonly string[]): string[] {
 
 /** The per-PR delivery cap this step writes: one delivery for every rule that
  * can fire on the same PR (each interview rule, each hand rule) plus one spare
- * for a session escalation — never below the shipped default of 2. A flat 2
- * with three interview targets meant the third was always refused as capped. */
+ * for a session escalation — never below the shipped default of 2, so no
+ * interview target is ever refused as capped. */
 export function interviewMaxPerPr(a: EscalationAnswers, foreign: readonly string[]): number {
   const rules = (a.enabled ? a.targets.length : 0) + foreign.length;
   return Math.max(2, rules + 1);

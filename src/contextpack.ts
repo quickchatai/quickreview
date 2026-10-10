@@ -1,9 +1,8 @@
 // The round's CONTEXT PACK (`[review] context_pack = "pack-first"`).
 //
 // Every lens of a round reads the same diff and, mostly, the same few changed
-// files — and each one reads them as fresh, UNCACHED tool output. In 12 live
-// rounds (2026-10-09) uncached input was 71–81% of every child's cost; one
-// file was read 78 times in one round. The model provider caches a request's
+// files — and each one would read them as fresh, UNCACHED tool output, which
+// dominates a child's cost. The model provider caches a request's
 // PREFIX, so the fix is to put that shared text in every child's prompt in
 // identical bytes, ahead of anything lens-specific: the first child pays for
 // it once and every later child reads it from the cache.

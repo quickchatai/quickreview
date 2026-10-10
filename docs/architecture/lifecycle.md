@@ -167,9 +167,9 @@ cannot stall the daemon (failures land in `report.errors`):
    (§6).
 8. **bot-comment registry backfill** and **human-comment capture sweep** —
    bounded to `COMMENT_SWEEP_MAX_PRS` (25) PRs per pass, freshest first. The
-   sweep's read also carries the bot's OWN inline comments; it hands them to
-   the outcome capture instead of discarding them (S6).
-9. **outcome capture** (`src/outcomes.ts`, S6) — links each posted
+   sweep's read also carries the bot's own inline comments; it hands them to
+   the outcome capture instead of discarding them.
+9. **outcome capture** (`src/outcomes.ts`) — links each posted
    comment to its finding and records each posted finding's fate (fixed,
    refuted and conceded, upheld after a reply, open at close, unknown) from
    state.db and the base clone's git alone. Open PRs and PRs closed in the last
@@ -266,16 +266,19 @@ through the round's add protocol once it has read the diff.
 (`[models] risk_passes`) are pinned at the top tier; `pass-intent` starts at the
 cheapest; everything else takes `passTier()` (small quiet diffs start low, a
 migration or a diff at/over `small_diff_lines` starts higher) and may be raised
-by the session. `pass-validate` always runs last, at `validatorTier()` — the
-configured `validate_tier` is a **floor**, raised to the highest lens tier in
-the round, because a cheaper model must never veto a more expensive one's
-finding. Lenses not planned are offered as `addable_lenses`.
+by the session. `pass-validate` runs last, at `validatorTier()` — the
+configured `validate_tier` under the profile's `min_tier` for it, never raised
+to match a lens. A validity veto is kept as a `doubted` finding (never posted,
+listed in the TUI) rather than deleted, so a cheaper validator cannot make a
+stronger lens's finding vanish. A profile may switch the validator off
+(`[lenses.pass-validate] enabled = false`). Lenses not planned are offered as
+`addable_lenses`.
 
-The plan's rows are listed in **launch order, slowest first** (`slowestFirst`,
-). The session launches a turn's rows in table order and the subagent
-glue runs them under a process-wide cap (`[pi] subagent_max_concurrency`) in
-that order, so a 15–27 row plan runs in waves, and a slow row listed late
-started in the last wave and set the round's critical path. The order:
+The plan's rows are listed in **launch order, slowest first** (`slowestFirst`).
+The session launches a turn's rows in table order and the subagent glue runs
+them under a process-wide cap (`[pi] subagent_max_concurrency`) in that order,
+so a large plan runs in waves, and a slow row listed late would start in the
+last wave and set the round's critical path. The order:
 `pass-baseline`; then by tier, highest first; within a tier the risk passes,
 the focused rows (`pass-behaviour-delta`, then `pass-sweep`) by the changed
 lines their focus covers, larger first, every other lens, and the cheap
@@ -287,11 +290,10 @@ the task files' numbering, the order's `lenses`, lesson rows, the recorded
 `pass-data-safety` row is ordered the same way. The cap itself is not touched
 by this.
 
-On a **very large change** `pass-baseline` is split by file group (,
-`[review] baseline_split_lines`, default 2000; 0 = never). Once the fan-out
-launches in one turn, the lone baseline row is the round's critical path: on
-the 2026-10-09 live study it ran 465–504 s on the largest PRs against
-250–390 s for the rest of the batch. Over the threshold — measured by
+On a **very large change** `pass-baseline` is split by file group
+(`[review] baseline_split_lines`, default 2000; 0 = never). Once the fan-out
+launches in one turn, the lone baseline row is the round's critical path on
+the largest PRs. Over the threshold — measured by
 `baselineSplitLines`, the sweep's sizing (prose half; lockfiles, generated,
 vendored and binary files nothing) — `baselineGroups` (heuristics.ts) cuts the
 files the PR keeps, in diff order, into `ceil(lines / threshold)` groups, at
@@ -309,7 +311,7 @@ check's `swept` list. The note also settles prior findings: one that falls to
 else the first baseline row in the table. At or under the threshold the plan
 is byte-identical to the unsplit plan (`tests/baseline-split.test.ts`). The
 cost is one more whole baseline reading per extra row, paid only on the
-largest PRs; at 2000 only the 2,600–3,000-line PRs of the study split.
+largest PRs.
 
 ### The round order and its receipt
 
@@ -335,8 +337,8 @@ The session writes `verdict/pr-<n>-round-<k>.json` (the directory is
 everything that touches GitHub from there. The round templates tell the
 session never to write that name in place: it stages the complete JSON at
 `verdict/<name>.tmp` and publishes it with `scripts/commit-verdict.sh`, which
-checks it is one whole JSON object and renames it onto the name in one step
-(H1a, #5885). The watcher never reads a `.tmp`. Under `[review]
+checks it is one whole JSON object and renames it onto the name in one step.
+The watcher never reads a `.tmp`. Under `[review]
 render_outputs` the session need not retype the verdict at all: its findings
 record already carries `verdict`, `head_sha` and `summary` for the renderer,
 the render note asks it to add `passes` (and `approval_withheld`, `sweep`,
@@ -344,14 +346,13 @@ the render note asks it to add `passes` (and `approval_withheld`, `sweep`,
 `scripts/commit-verdict.sh --from-record pr-<n>-round-<k>.json` builds the
 verdict from exactly those fields, stamps `finished_at`, stages it and
 publishes it the same way — refusing, with nothing published, when the record
-lacks a field or names another round. The verdict's shape and
-everything downstream of it are unchanged; a `head_moved` outcome and a
-recheck's are still staged by hand.
+lacks a field or names another round. The verdict's shape and everything
+downstream of it are the same either way; a `head_moved` outcome and a
+recheck's are staged by hand.
 
 The posting calls the templates give are whole commands in env-prefix form,
-`QCR_EXPECTED_HEAD=<head> QCR_ROUND_NO=<k> scripts/approve-pr.sh …` — the exec
-policy refuses `export`, which the templates used to spell out and which cost a
-refused turn in most live rounds. The templates also list the
+`QCR_EXPECTED_HEAD=<head> QCR_ROUND_NO=<k> scripts/approve-pr.sh …`, because
+the exec policy refuses `export`. The templates also list the
 commands the policy always refuses, each held to the real guard by
 `tests/templates.test.ts`.
 
@@ -363,11 +364,9 @@ rather than rejecting the verdict they ride on. An UNPARSEABLE file is treated
 as still being written while its bytes are moving — by its mtime, or between the
 watcher's own looks — and is re-read with backoff (`src/settledread.ts`): it is
 called malformed only once it has sat unchanged for 3 s across several looks,
-or after a 30 s hard window. A file that parses is complete and its shape is
-judged at once. (#5885: the session's in-place write left the file empty for
-longer than the old 3 × 40 ms tolerance on a CPU-starved container, and a valid
-APPROVE was read as "Unexpected end of JSON input".) The recheck outcome file
-is read the same way.
+or after a 30 s hard window, so a slow write on a CPU-starved container is
+never misread as a malformed verdict. A file that parses is complete and its
+shape is judged at once. The recheck outcome file is read the same way.
 
 `apply()` then, in order: checks the posting receipt, moves the labels, finishes
 the round row, records executed-pass telemetry, applies the `verdict` event,
@@ -410,7 +409,7 @@ Malformed files and rounds that blow `[daemon] round_deadline_min` route to
 `handleAnomaly()`: the round is marked, the overseer is injected, and the PR
 returns to its standing state. **There is no anomaly path that approves.**
 
-**Except when the review is already on GitHub** (H1a). A malformed
+**Except when the review is already on GitHub.** A malformed
 verdict file, a round that reaches its deadline with no verdict file, and a
 session that settles without writing one are first checked against the round's
 posting receipt. A CONFIRMED receipt that proves the decision settles the round
@@ -425,9 +424,9 @@ same `apply()` as a verdict file, its summary saying where the verdict came
 from; no FAILED_LOUD is opened and nothing is re-run, because a rerun would post
 a second review. A receipt that does not prove the decision — one the daemon
 only reconciled from GitHub's marker (its `intended_event` is just the posted
-event), or a pairing no posting script writes — keeps the loud path it always
-had, as does a missing or ambiguous receipt. A guard-2 `skipped` record settles
-as the no-op. A verdict file that lands after any of these settlements
+event), or a pairing no posting script writes — keeps the loud path, as does
+a missing or ambiguous receipt. A guard-2 `skipped` record settles as the
+terminal no-new-evidence no-op. A verdict file that lands after any of these settlements
 replays inertly, and a settlement a restart cut short (the round finished, the
 rest of the apply not) is resumed from its own `verdict_settled_from_receipt`
 event, which carries the verdict it was applying — by the malformed file still
@@ -561,10 +560,10 @@ obligation in one run (at most `MAX_AUTHOR_REPLIES_PER_DELIVERY`, 10, per run;
 a longer backlog goes in several). Nothing is dropped silently: the per-PR cap
 (`MAX_HELD_WAKES`, 5) bounds the ORDINARY wakes and logs what it evicts
 (`wake_dropped` names the evicted reasons), and a failed delivery releases the
-whole oldest unit and stops so later messages never overtake it. Since
-H1b the cap **never evicts an author reply** — its comment is claimed before it
-is held and nothing raises a claimed comment again, so 76 evicted replies went
-unanswered between 10-05 and 10-08 — nor an operator-recovered or leased row;
+whole oldest unit and stops so later messages never overtake it. The cap
+**never evicts an author reply** — its comment is claimed before it is held
+and nothing raises a claimed comment again, so an evicted reply would go
+unanswered for good — nor an operator-recovered or leased row;
 author replies are not counted against it either. Push recheck nudges go
 first (oldest first) — the one class a sweep re-raises: the reconcile push
 backstop asks the question again once the claim is released; then every other
@@ -585,7 +584,7 @@ separately by `[daemon] max_prompt_redeliveries`, because re-sending the exact
 bytes to a live session is far cheaper than cancelling a round. A live session
 with no order is idle, not wedged — killing it is not the recovery.
 
-**A stage limit asks the posting receipt first** (H1a, #5850 round 5).
+**A stage limit asks the posting receipt first.**
 The round-stage supervisor's limits (`src/session-command-supervisor.ts`:
 command start, first pass, passes, parent finalize, the running hard bound)
 are wall-clock bounds on a session that is supposed to be reviewing. Once the
@@ -610,7 +609,7 @@ evidence fails loud. Evidence of a posting that contradicts the round
 file already on disk defers any limit to the sweep, receipt or none (the
 session has finished; the sweep consumes the file within its partial-write
 window). With no receipt, or a `prepared` one whose marker GitHub was read for
-and does not hold, and no file, the old path runs: cancel, kill, capped
+and does not hold, and no file, the ordinary path runs: cancel, kill, capped
 self-requeue.
 
 ## 9. Escalation (optional, off by default)

@@ -10,7 +10,7 @@
 //     showed under a key; `start` re-plans from the stored request and is
 //     refused unless the key still matches — so what runs is what the
 //     operator saw priced, and a profile, PR or price that moved since sends
-//     him back to a preview.
+//     the operator back to a preview.
 //   * HARD STOP. The run's cap is `REPLAY_CAP_FACTOR` × the estimate, stated
 //     beside it. A case starts only while what is spent plus what is in
 //     flight fits; the moment spending reaches the cap — read live from the

@@ -1,17 +1,15 @@
-// Unwedge (#5362) — the operator's one-key recovery for a PR whose round is
+// Unwedge — the operator's one-key recovery for a PR whose round is
 // stuck, driven from the board instead of from the overseer's pane.
 //
 // WHY THIS IS A WRITE CHANNEL AT ALL. The board is otherwise read-only over
 // ssh, and that property is worth keeping; this is a deliberate, narrow
-// exception ratified by the owner on 2026-08-21 after #5362 sat wedged for its
-// full 75-minute deadline with no way to clear it. The lever that was supposed
-// to exist — `rerun-round` — did not work (it never cancelled the round row,
-// so the pump skipped the PR), and the only way to reach it was to type into
-// the overseer's pi and hope. An unwedge lever that depends on an LLM turn
-// fails exactly when things are already stuck.
+// exception (root CLAUDE.md, "The operator can always unwedge from the
+// board"). The alternative — typing into the overseer's pi — makes the lever
+// depend on an LLM turn, which fails exactly when things are already stuck.
 //
-// WHAT IT IS NOT. It writes ONE validated command file into the daemon's
-// existing `commands/` dir and then reads the result the daemon writes back.
+// WHAT IT IS NOT. It writes ONE validated command file into the root-owned
+// operator directory under the daemon's existing `commands/` dir
+// (`operatorCommandDirFor`) and then reads the result the daemon writes back.
 // It does not touch GitHub, does not go near the MutationGate, and cannot
 // invent a command: the payload is built here from a fixed shape, and
 // `src/commands.ts` re-validates it against the same strict schema and the

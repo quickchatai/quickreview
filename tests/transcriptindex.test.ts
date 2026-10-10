@@ -1,13 +1,12 @@
-// The transcript index (H2, the 2026-10-08 health check). Until this
-// slice every round end read every top-level .jsonl of the PR's pi session dir
-// with `readFileSync` and JSON-parsed every line, twice (usage, then the
-// exec-policy audit), on the daemon's own thread — the 16.8 s loop stall of
-// 08:51:31Z. These pin the slice's contract:
+// The transcript index: a round end reads the PR's pi session transcripts
+// once, asynchronously and in chunks, for both the usage measurement and the
+// exec-policy audit, so the daemon's event loop is never held by a
+// synchronous whole-directory read. These pin its contract:
 //
-//   1. the answers are the old ones EXACTLY — usage, cost (to the last float
+//   1. the answers are the oracle's exactly — usage, cost (to the last float
 //      bit), per-model attribution and the classified audit — over multi-file
 //      dirs, the global store, any chunk size, and a file appended between
-//      calls; the oracle below IS the old code, byte for byte;
+//      calls;
 //   2. a 50 MB session dir is read as many event-loop turns, never more than
 //      one chunk parsed between two turns;
 //   3. a session file whose mtime predates the round is not read, and a file
@@ -40,10 +39,10 @@ import { auditExecViolationDetails, type ExecViolation, type RoundUsage } from "
 import { MemoryTranscriptFs } from "./helpers/memory-transcript-fs.js";
 import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 
-// ---- the oracle: the pre-H2 measurement, verbatim -------------------------
-// `src/usage.ts` at 75c9aa50 (sumFile, jsonlFilesUnder, measureRoundUsage,
-// collectWindowLines), over the real filesystem, synchronously — exactly what
-// the daemon ran. Only its `defaultFs` is inlined; nothing else is changed.
+// ---- the oracle: the synchronous reference measurement ---------------------
+// The synchronous whole-file measurement (sumFile, jsonlFilesUnder,
+// measureRoundUsage, collectWindowLines) over the real filesystem. The index
+// must reproduce its answers exactly. Only its `defaultFs` is inlined.
 
 interface OldJsonlRecord {
   type?: unknown;
@@ -157,8 +156,8 @@ function oldMeasureRoundUsage(opts: TranscriptMeasureOpts): RoundUsage {
     cost_usd: null,
     models: {},
     passes_included: false,
-    // child usage from subagent tool results is new; no fixture here
-    // carries one, so the old answer has none.
+    // Child usage from subagent tool results is not modelled by the oracle; no
+    // fixture here carries one.
     children_included: false,
   };
   const start = oldParseTs(opts.startedAt);
@@ -240,8 +239,8 @@ function oldCollectWindowLines(opts: TranscriptMeasureOpts): string[] {
   return out;
 }
 
-/** What the daemon recorded before H2: the usage, and the audit over the
- * collected window lines. */
+/** The oracle's answer: the usage, and the audit over the collected window
+ * lines. */
 function oldMeasure(opts: TranscriptMeasureOpts): {
   usage: RoundUsage;
   violations: ExecViolation[];
@@ -308,7 +307,7 @@ const user = (ts: string): string =>
   });
 
 /** A session file covering before, inside and after the window, with every
- * shape the old reader had a rule for. Costs are floats whose sum depends on
+ * shape the oracle has a rule for. Costs are floats whose sum depends on
  * the order they are added in. */
 function sessionLines(tag: string): string[] {
   return [
@@ -391,7 +390,7 @@ async function measured(idx: TranscriptIndex, opts: TranscriptMeasureOpts) {
   return { usage: m.usage, violations: m.violations };
 }
 
-// ---- 1. the old answers, exactly --------------------------------------------
+// ---- 1. the oracle's answers, exactly --------------------------------------------
 
 describe("the answers are the pre-H2 answers, exactly", () => {
   it(
@@ -763,10 +762,10 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     expect(m.usage).toMatchObject({ tokens_in: 0, tokens_out: 0, passes_included: false });
   });
 
-  // The review of H2: the daemon's own pi-global archiver gzips and
-  // UNLINKS store files a day old while this walk awaits between its listing
-  // and each stat — files that can never be inside a round's window. Gone is
-  // absent, as a missing dir is; the old synchronous walk skipped them too.
+  // The daemon's own pi-global archiver gzips and unlinks store files a day
+  // old while this walk awaits between its listing and each stat — files that
+  // can never be inside a round's window. Gone is absent, as a missing dir is;
+  // the synchronous oracle skips them too.
   // MUTATION: push ENOENT from `statListed` (or from `readListed`) into
   // `unreadable` — red.
   it("a listed file gone before its stat or its open is absent, not unknown", async () => {
@@ -812,10 +811,10 @@ describe("an unreadable transcript makes the usage UNKNOWN", () => {
     });
   });
 
-  // A `.jsonl` that is not a regular file holds no transcript: the old reader
-  // skipped it (readFileSync failed with EISDIR, or the store walk did), and a
-  // FIFO would block a read forever. Absent — exactly the old answer — in the
-  // session dir and in the store; a dangling link likewise.
+  // A `.jsonl` that is not a regular file holds no transcript: the oracle
+  // skips it (readFileSync fails with EISDIR, or the store walk does), and a
+  // FIFO would block a read forever. Absent — exactly the oracle's answer — in
+  // the session dir and in the store; a dangling link likewise.
   // MUTATION: in `statListed`, report a non-file as unreadable — red.
   it("a `.jsonl` that is not a regular file, or a dangling link, is the old answer: skipped", async () => {
     const sessionDir = join(root, "s");

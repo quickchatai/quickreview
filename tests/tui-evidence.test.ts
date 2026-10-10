@@ -1,7 +1,7 @@
-// finished-round evidence copied down to a local store the companion
-// reads. The invariants under test are the ones the ticket is made of: copy on
-// completion (not on demand), never copy the same round twice, never let a
-// wedged ssh become the TUI's problem, and grant the companion nothing.
+// Finished-round evidence copied down to a local store the companion reads.
+// The invariants under test: copy on completion (not on demand), never copy
+// the same round twice, never let a wedged ssh become the TUI's problem, and
+// grant the companion nothing.
 import {
   existsSync,
   mkdirSync,
@@ -156,7 +156,7 @@ describe("evidence argv", () => {
     expect(files.map((f) => f.role)).toEqual(["transcript", "verdict"]);
   });
 
-  // `[]` is reserved for a payload that SAID there are no rounds.
+  // `[]` is reserved for a payload that said there are no rounds.
   it("readWhyRounds: a payload without a round list is undefined — never []", () => {
     expect(readWhyRounds(JSON.stringify({ rounds: [] }))).toEqual([]);
     expect(readWhyRounds(JSON.stringify({ rounds: [round(2), round(1, "running")] }))).toEqual([
@@ -276,9 +276,9 @@ describe("EvidenceCopier", () => {
     // No throw, no rejection: the poll loop never learns anything went wrong.
   });
 
-  // `rounds ?? []` read a degraded answer (valid JSON, no round list)
-  // as "nothing to copy", and the sweep then retired the PR's signature: a
-  // transient failure became a round that was never copied and never retried.
+  // A degraded answer (valid JSON, no round list) is not "nothing to copy":
+  // reading it so would retire the PR's signature, turning a transient failure
+  // into a round that is never copied and never retried.
   it("a `why` answer with no round list is unreadable, not empty — the PR is retried, not retired", async () => {
     const inner = fakeVm([round(1)]);
     const degraded = { on: true };
@@ -311,9 +311,9 @@ describe("EvidenceCopier", () => {
   });
 
   it("a permanently failing PR does not starve the others", async () => {
-    // Adversarial finding (P1): the old sweep broke unconditionally after the
-    // first changed PR even when its reconcile FAILED — and a failure does not
-    // retire the signature, so that PR was picked first every tick, forever.
+    // A failure does not retire the signature, so a sweep that stopped after
+    // the first changed PR even when its reconcile failed would pick that PR
+    // first every tick, forever.
     const { ssh } = fakeVm([round(1)], {
       fail: (s) => s.includes("head -c") && s.includes("pr-1/"),
     });
@@ -343,9 +343,9 @@ describe("EvidenceCopier", () => {
   });
 
   it("a backfilled round gets its verdict only — never today's ledger/prompt/transcript", async () => {
-    // Adversarial finding (P2): ledger, prompt and the newest transcript are
-    // the PR's CURRENT files. A backlog sweep that stamped them into an old
-    // round's dir would fabricate that round's adjudication evidence.
+    // Ledger, prompt and the newest transcript are the PR's CURRENT files. A
+    // backlog sweep that stamped them into an old round's dir would fabricate
+    // that round's adjudication evidence.
     const { ssh } = fakeVm([round(1)]); // finished 09:00…
     const c = copier(ssh, [], () => new Date("2026-08-25T10:00:00Z")); // …first seen 10:00
     await c.sweep(snapshot([{ number: 5306, rounds: 1 }]));
@@ -433,8 +433,8 @@ describe("the store's home", () => {
   it("is gitignored wherever it is put", () => {
     // Kept indefinitely and unbounded: private-repo transcripts must never be
     // one `git add -A` away from a commit.
-    // Root-anchored: the bare `evidence/` spelling also ignored
-    // skills/companion/evidence/ and silently dropped that skill from a commit.
+    // Root-anchored: a bare `evidence/` would also ignore
+    // skills/companion/evidence/ and silently drop that skill from a commit.
     expect(readFileSync(join(repoRoot, ".gitignore"), "utf8")).toMatch(/^\/evidence\/$/m);
   });
 
@@ -479,13 +479,12 @@ describe("large and awkward payloads", () => {
   });
 });
 
-// ---- L1: the sweep keeps its progress, and its pace -----------------
+// ---- the sweep keeps its progress, and its pace -----------------------------
 //
-// The 2026-10-07 post-drain burst: the sweep's signature map lived only in
-// memory, so every TUI re-exec (every local `dist/` rebuild, every deploy)
-// re-ran `qcr why <n> --json` for all ~400 PRs, one every 2–3 s for ~20 min —
-// about 40% of one container CPU while six drained rounds fought for the
-// other 160%.
+// The sweep's signature map is persisted: held only in memory, every TUI
+// re-exec (every local `dist/` rebuild, every deploy) would re-run
+// `qcr why <n> --json` for every PR, one every few seconds for many minutes —
+// a steady CPU cost on the container exactly when drained rounds resume.
 
 /** A clock the test moves by hand, starting BEFORE the fixture rounds'
  * finished_at (09:00) and the snapshot's heartbeat (10:00), as the copier
@@ -1130,8 +1129,8 @@ describe("L1 — a round that finished during a hold is a backfill", () => {
   });
 
   it("copies its verdict only once the hold lifts; a round finishing after that is copied whole", async () => {
-    // The 2026-10-07 shape: rounds finish during a drain, and the moment it
-    // lifts new rounds start — so the PR's ledger, prompt and transcript are
+    // Rounds finish during a drain, and the moment it lifts new rounds
+    // start — so the PR's ledger, prompt and transcript are
     // already the next round's by the time the held rounds are copied.
     const clock = handClock("2026-08-25T10:00:00Z");
     const rounds: WhyRound[] = [];
@@ -1199,8 +1198,8 @@ describe("L1 — a round that finished during a hold is a backfill", () => {
   });
 });
 
-// the archive fallback (docs/archiving.md §4, §14). A round
-// copied after its PR's files were archived finds them in archive/pr-<n>/:
+// The archive fallback (docs/archiving.md §4, §14). A round copied after its
+// PR's files were archived finds them in archive/pr-<n>/:
 //   (5) with the live transcript missing and the archive .gz present, the
 //       transcript role resolves to the archive and the manifest records it;
 //       a role found only inside a bundle is recorded as `archived` with its

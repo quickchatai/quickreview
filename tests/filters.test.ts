@@ -1,4 +1,4 @@
-// pure filter helpers for the board and the memory timeline.
+// Pure filter helpers for the board and the memory timeline.
 import { describe, expect, it } from "vitest";
 import {
   applyBoardFilter,
@@ -10,9 +10,9 @@ import {
 import type { PrLifecycleState } from "../src/state.js";
 
 // Typed against the real lifecycle union, not `string`: an untyped literal
-// widens to `string`, which does NOT satisfy `applyBoardFilter`'s constraint —
-// so inference fell back to the constraint and `.number` vanished from the
-// element type. The suite compiled only because tests/ was unchecked.
+// widens to `string`, which does not satisfy `applyBoardFilter`'s constraint —
+// so inference falls back to the constraint and `.number` vanishes from the
+// element type.
 const prs: Array<{ number: number; state: PrLifecycleState; author?: string }> = [
   { number: 1, state: "reviewing", author: "JAdamska" },
   { number: 2, state: "queued", author: "mnovak" },

@@ -1,12 +1,11 @@
-// The improvement channel END TO END against REAL git — beside
-// worktrees.test.ts, one of the two tests whose THING UNDER TEST is where git
-// runs (others merely init a scratch repo for a script). For the channel's whole
-// life every git step ran with no cwd, in the daemon's own checkout — a repo
-// with no remote — so the push could never succeed; a fake runner that
-// discarded its cwd kept the suite green over it. Reading the guard cannot
-// review that claim; only running the pipeline against a repo with a remote
-// can. No network: a bare repo in a temp dir is the "GitHub" end, cloned over
-// a file path, and the production runner (`gitRunner(nodeExec)`, the exact
+// The improvement channel end to end against real git — beside
+// worktrees.test.ts, one of the tests whose thing under test is where git
+// runs (others merely init a scratch repo for a script). Every git step must
+// run in the reviewed clone, whose `origin` is the reviewed repo; a step run
+// in the daemon's own checkout (no remote) could never push, and a fake runner
+// that discards its cwd cannot catch that. Only running the pipeline against a
+// repo with a remote can. No network: a bare repo in a temp dir is the
+// "GitHub" end, cloned over a file path, and the production runner (`gitRunner(nodeExec)`, the exact
 // function wire.ts installs) drives every step.
 import { execFileSync } from "node:child_process";
 import {
@@ -199,12 +198,9 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
   });
 
   it("filings never wedge each other: a second filing succeeds after a first, and neither leaves a checkout behind", async () => {
-    // The first shape materialised the branch into a scratch worktree at a
-    // fixed path and removed it in a `finally`. A daemon killed in between
-    // left a populated directory that `worktree add --force` does not clear,
-    // so every later filing failed on "already exists" until an operator
-    // deleted it by hand. No step ever needed the checkout; now there is none
-    // to leak.
+    // No step materialises a checkout: a scratch worktree left behind by a
+    // daemon killed mid-filing is a populated directory `worktree add --force`
+    // does not clear, which would fail every later filing on "already exists".
     const dryrun = join(tmp, "state", "dryrun");
     const gate = new MutationGate(true, dryrun, async () => {
       throw new Error("executor must not run in dry-run");
@@ -534,8 +530,8 @@ describe("improvement channel end to end — real git, a repo with a remote", ()
   });
 
   it("an option-shaped branch name never reaches git: refused before the first git call, the clone and the remote untouched", async () => {
-    // `git worktree add … --quiet` used to ACCEPT this (a detached worktree
-    // at HEAD) and only the diff refused it, by accident of argument order.
+    // git itself may accept an option-shaped name (`git worktree add … --quiet`
+    // makes a detached worktree at HEAD), so the channel refuses it up front.
     const dryrun = join(tmp, "state", "dryrun");
     const gate = new MutationGate(true, dryrun, async () => {
       throw new Error("executor must not run in dry-run");

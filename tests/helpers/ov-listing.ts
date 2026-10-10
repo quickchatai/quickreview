@@ -1,4 +1,4 @@
-// What a fake OpenViking's `fs/ls` should say about a file (S3).
+// What a fake OpenViking's `fs/ls` should say about a file.
 //
 // The store's sweep is incremental: it re-reads a file only when the listing's
 // size or modification time moved. A real server bumps a file's mtime on every

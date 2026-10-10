@@ -1,4 +1,4 @@
-// Slice C2: ambient feed writer, alert pipeline, companion surfaces.
+// Ambient feed writer, alert pipeline, companion surfaces.
 // I/O is a temp dir per test; nothing spawns docker, notify-send, ssh or pi.
 import { FG } from "../src/tui/theme.js";
 import { EventEmitter } from "node:events";
@@ -189,7 +189,7 @@ describe("FeedWriter", () => {
 
   it("stores state changes and events without ever creating a chat wake", () => {
     const w = new FeedWriter(dir);
-    // Remove a marker left by the retired implementation; start() must clean it.
+    // A stale `wake` marker from an older writer; start() must clean it.
     writeFileSync(join(dir, "wake"), "legacy");
     w.write(snap(), [], "ok");
     w.write(
@@ -322,9 +322,9 @@ describe("AlertPolicy", () => {
     expect(p.decide(rec("alert"))).toMatchObject({ action: "fold" });
   });
 
-  // the boundary is the configured ops timezone, not UTC —
-  // with Europe/Warsaw, 21:50Z in summer is 23:50 local, 22:05Z is already
-  // the next day. The TUI threads the zone from config.
+  // The boundary is the configured ops timezone, not UTC — with
+  // Europe/Warsaw, 21:50Z in summer is 23:50 local, 22:05Z is already the
+  // next day. The TUI threads the zone from config.
   it("forgets its daily memory across the configured zone's day boundary", () => {
     let t = new Date("2026-08-14T21:50:00Z");
     const p = new AlertPolicy(120, () => t, undefined, "Europe/Warsaw");
@@ -623,7 +623,7 @@ describe("companion tab", () => {
       s.input,
     );
     const lifecycle = new CompanionLifecycle(CFG, noDocker, {});
-    // the companion IS the sidebar column — there is no pty to spawn
+    // The companion is the sidebar column — there is no pty to spawn
     // and no screen to take over, so the harness wires the column instead.
     app.sidebar = new CompanionSidebar(CFG, noDocker, { available: () => available });
     installCompanionTabHooks(app, {
@@ -640,8 +640,8 @@ describe("companion tab", () => {
     const h = harness();
     h.app.openCompanion();
     await Promise.resolve();
-    expect(h.app.tab).toBe("board"); //: the companion is not a tab
-    // nor is it a screen. Asking for the companion focuses the
+    expect(h.app.tab).toBe("board"); // the companion is not a tab
+    // Nor is it a screen. Asking for the companion focuses the
     // column that is already painted; nothing is spawned, nothing suspends.
     expect(h.app.sidebar?.focused).toBe(true);
     expect(h.app.isBusy()).toBe(true); // focused input owns the keyboard
@@ -656,8 +656,8 @@ describe("companion tab", () => {
     h.s.type("c");
     expect(h.app.tab).toBe("board");
     // `c` opens no tab — it is an unregistered printable, so it hands the
-    // keyboard to the companion column and the character goes to PI (:
-    // there is no TUI-side draft for it to land in).
+    // keyboard to the companion column and the character goes to pi (there
+    // is no TUI-side draft for it to land in).
     expect(h.app.sidebar?.focused).toBe(true);
     expect("input" in (h.app.sidebar as unknown as Record<string, unknown>)).toBe(false);
     await h.close();

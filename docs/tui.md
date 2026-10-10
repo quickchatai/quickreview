@@ -24,9 +24,9 @@ pinned against — `tests/tui-surfaces.test.ts` fails when they disagree.
 | 7 | **feedback** | the tuning loop on one surface — signal → adjudication → proposal → change → revert |
 | 8 | **scan** | the whole-repo scan's report — findings by unit, triage, the stage 2 plan for approval, the run and its stop |
 
-`digest` and `tickets` are the two the owner reaches for least; if eight reads
-too wide in practice, the recorded collapse is to fold them back into `memory`
-as named sections.
+`digest` and `tickets` are the least-used surfaces; if eight reads too wide in
+practice, the planned collapse is to fold them back into `memory` as named
+sections.
 
 ## Keys
 
@@ -76,7 +76,7 @@ overlay and setup are about the whole repo.
 ### memory
 
 The timeline lists every area of the store but `finding-cases/`: the daemon's
-finding cases (S7) are derived from state.db, number in the
+finding cases are derived from state.db, number in the
 hundreds, and are rewritten by the daemon alone, so the store's sweep never
 lists them. Search them through the companion or OpenViking Studio (`W`).
 
@@ -84,7 +84,7 @@ lists them. Search them through the companion or OpenViking Studio (`W`).
 | --- | --- |
 | `[` / `]` | jump to the older / newer day |
 | `e` | edit the selected entry |
-| `p` | pin or unpin it: the entry MOVES into `preferences/pinned/` — the directory every round's head reads — and back out (pinned entries float to the top; S5) |
+| `p` | pin or unpin it: the entry MOVES into `preferences/pinned/` — the directory every round's head reads — and back out (pinned entries float to the top) |
 | `x` | retire it — twice, the first press arms |
 | `n` | a new `#manual` entry — the owner's own words, in `preferences/` (pin it to reach every round) |
 | `W` | open OpenViking Studio through the memory forward |
@@ -131,18 +131,18 @@ deploy time or the log could not be read.
 ### feedback
 
 Under the loop, a LESSONS line: the lesson shadow ledger's 7-day headline
-from status.json `memory.lessons` (S9a) — the `[memory] delivery`
+from status.json `memory.lessons` — the `[memory] delivery`
 switch, the operator's kill switch, and the posted findings a selected
 dont-raise lesson marked, split into what humans then fixed (harm), refuted
 or set aside (help) and still unknown — and, on a second line, the same
-split by match tier (R9): `class` (the lesson's class matched the
+split by match tier: `class` (the lesson's class matched the
 finding's too — the would-demote tier, what the validator's license
 reaches) and `lens` (lens and path alone — evidence only), each finding on
 its strongest. It is the evidence to read before switching
 delivery on; `qcr lessons shadow-report` has it per lesson, per lens and per
 tier. Honest-unknown: no status yet, a daemon that reports no memory or no
 lesson block, and a ledger the daemon could not read each say so — never a
-zero; a daemon that predates R9 reports no tiers, and the second line says
+zero; a daemon that reports no tiers gets a second line that says
 "by tier: UNKNOWN".
 
 | key | does |
@@ -221,8 +221,7 @@ filters the memory timeline by tag and jumps to a day, `memory_filter` sets
 or clears the tag filter, and `memory_pin` pins or unpins one EXISTING entry
 through the TUI's memory store — the same move as `p`, answered in the result
 file (a refusal is a failed result). It is the channel's only memory verb and
-does nothing but pin and unpin: the owner's ruling R7 (2026-10-07)
-amended rule 8 for exactly this, after the integration review had withdrawn
-the verb as the retired companion-asks-the-TUI-to-write channel. Every other
-memory write is the companion's own. The vocabulary there is this
+does nothing but pin and unpin (root CLAUDE.md rule 8): pinning is a move the
+TUI's store makes, and the companion's own keys have no such verb. Every
+other memory write is the companion's own. The vocabulary there is this
 vocabulary.

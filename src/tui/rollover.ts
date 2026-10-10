@@ -1,7 +1,7 @@
-// Daily rollover (build slice C3) — a fresh companion conversation
-// per ops day, with the five carry items handed over as the first message.
+// Daily rollover — a fresh companion conversation per ops day, with the five
+// carry items handed over as the first message.
 //
-// Ratified: rollover fires on the FIRST TUI start of a new day
+// Rollover fires on the first TUI start of a new day
 // (ops timezone), never mid-use; the sequence is the rotateOverseer pattern from
 // src/sessions.ts — archive the run date-stamped, kill the tmux session,
 // respawn — and the opening context carries: yesterday's EOD digest, the
@@ -13,11 +13,11 @@
 // volume is only reachable via `docker exec`); everything the host owns is a
 // plain path, so the tests need neither docker nor pi.
 //
-// The day-open text is delivered as an INJECT FILE, not a pi CLI flag:
+// The day-open text is delivered as an inject file, not a pi CLI flag:
 // `extensions/inject-bridge.ts` drains its directory on `session_start`
 // (VERIFY-ON-PIN: the drain-then-watch behaviour depends only on our own code,
 // but `pi.sendUserMessage` and the `session_start` event name are pi's), so
-// writing the file BEFORE spawning pi is race-free. The alternative — a pi CLI
+// writing the file before spawning pi is race-free. The alternative — a pi CLI
 // initial-message flag — is undocumented for 0.84.1; if one turns up it is a
 // drop-in replacement for writeDayOpen().
 import { stripModelDocs } from "../promptdoc.js";
@@ -38,7 +38,7 @@ import { CONTAINER, type DockerResult, type DockerRunner } from "./companion.js"
 
 /** What a lookup of the previous conversation found. `none` (the volume holds
  * no conversation) and `unreadable` (the exec never answered) are separate
- * answers —. */
+ * answers. */
 export type SessionFileLookup =
   { state: "found"; file: string } | { state: "none" } | { state: "unreadable"; reason: string };
 
@@ -80,7 +80,7 @@ export interface RolloverState {
 }
 
 /** What a read of the rollover state found. `absent` is a fresh installation;
- * `unreadable` is one whose day we cannot know —. */
+ * `unreadable` is one whose day we cannot know. */
 export type RolloverStateRead =
   | { state: "state"; value: RolloverState }
   | { state: "absent" }
@@ -88,17 +88,16 @@ export type RolloverStateRead =
 
 /**
  * The rollover state, with "there is no state" and "the state is unreadable"
- * kept APART.
+ * kept apart.
  *
- * This is the read that GATES the two inside the rollover itself, so
- * collapsing it defeats them: an unparseable `rollover.json` used to look
- * exactly like a fresh installation, `decideRollover` said `first-run`, and
- * the run recorded today's date and touched nothing — no docker call, no
- * deferral, and the retry the other two fixes build is never reached. Worse,
+ * This is the read that gates the rollover itself, so collapsing it defeats
+ * it: an unparseable `rollover.json` read as absent would look exactly like a
+ * fresh installation, `decideRollover` would say `first-run`, and the run
+ * would record today's date over it and never retry. Worse,
  * `interviewDue(marker, undefined)` is true, so a torn state file could
  * re-fire the first-run interview at a months-old install.
  *
- * A structurally invalid payload (no usable `last_open_date`) is UNREADABLE,
+ * A structurally invalid payload (no usable `last_open_date`) is unreadable,
  * not absent — the file is there, we simply cannot understand it.
  */
 export function readRolloverStateFile(path: string): RolloverStateRead {
@@ -138,8 +137,8 @@ export function readRolloverStateFile(path: string): RolloverStateRead {
   };
 }
 
-/** Absent OR unreadable ⇒ undefined. For read-back and display only: anything
- * that DECIDES from the state must use `readRolloverStateFile` — see there. */
+/** Absent or unreadable ⇒ undefined. For read-back and display only: anything
+ * that decides from the state must use `readRolloverStateFile` — see there. */
 export function readRolloverState(path: string): RolloverState | undefined {
   const r = readRolloverStateFile(path);
   return r.state === "state" ? r.value : undefined;
@@ -153,8 +152,8 @@ export function writeRolloverState(path: string, state: RolloverState): void {
 }
 
 /**
- * Today's calendar date in the operations timezone (`cfg.ops.timezone`,
- *; the TUI threads it through — the UTC default only covers callers
+ * Today's calendar date in the operations timezone (`cfg.ops.timezone`;
+ * the TUI threads it through — the UTC default only covers callers
  * with no config in hand). `QCR_FAKE_TODAY=YYYY-MM-DD` overrides it — the
  * only way to exercise a rollover without waiting for midnight (the smoke
  * script uses exactly this).
@@ -174,7 +173,7 @@ export type RolloverVerdict =
   | { kind: "first-run"; today: string }
   | { kind: "same-day"; today: string }
   | { kind: "rollover"; today: string; previous: string }
-  /** The state file exists and could not be read, so we do not KNOW which of
+  /** The state file exists and could not be read, so we do not know which of
    * the three this is. Nothing is decided, nothing is recorded. */
   | { kind: "unknown"; today: string; reason: string };
 
@@ -182,7 +181,7 @@ export type RolloverVerdict =
  * Pure decision: string compare is correct for ISO dates, and a clock that
  * went backwards (previous > today) is treated as same-day, never a rotate.
  *
- * It takes the READ, not a `RolloverState | undefined`, on purpose: handed the
+ * It takes the read, not a `RolloverState | undefined`, on purpose: handed the
  * collapsed value it cannot tell a fresh installation from a torn state file,
  * and those two want opposite behaviour (record today vs. touch nothing).
  */
@@ -307,7 +306,7 @@ export function compactConversation(
 }
 
 /** The raw last few turns, verbatim-ish and bounded — the carry item that is
- * deliberately NOT summarised. */
+ * deliberately not summarised. */
 export function conversationTail(turns: Turn[], budget: number = TAIL_MAX_CHARS): string {
   if (turns.length === 0) return "";
   return renderTurns(turns.slice(-6), budget);
@@ -438,7 +437,7 @@ export function dayOpenFileName(date: string): string {
   return `${date}-day-open.md`;
 }
 
-// ---- first-run interview ------------------------------------------
+// ---- first-run interview ----------------------------------------------------
 
 /** The onboarding wizard's marker contract: `state/companion/
  * first-run.json` with a `completed_at` ISO stamp, written when onboarding
@@ -461,7 +460,7 @@ export function readFirstRunMarker(path: string): FirstRunMarker | undefined {
  * Should the first-run interview fire on this start? Pure decision:
  *
  *   * a delivered interview never fires again (the state records it);
- *   * no rollover state has EVER existed ⇒ first run, interview due — the
+ *   * no rollover state has ever existed ⇒ first run, interview due — the
  *     fallback that makes the feature work before/without the wizard;
  *   * otherwise the wizard's marker decides — its presence on an installation
  *     whose state carries no interview means onboarding finished and the
@@ -522,7 +521,7 @@ export interface RolloverOptions {
    * first-run interview machinery is off entirely — back-compat for callers
    * that only want the daily rollover. */
   firstRunTemplatePath?: string;
-  /** Host path of the wizard's marker (`state/companion/
+  /** Host path of the onboarding wizard's marker (`state/companion/
    * first-run.json`). Absent/missing file is fine — the no-state-ever
    * fallback still detects a fresh installation. */
   firstRunMarkerPath?: string;
@@ -547,14 +546,14 @@ export interface RolloverReport {
   /** The rendered interview text. */
   interview?: string;
   /** Set when the verdict was `rollover` but the container could not be read,
-   * so the day was deliberately NOT recorded and nothing was killed or
+   * so the day was deliberately not recorded and nothing was killed or
    * queued. The next start retries the whole sequence. */
   deferred?: string;
 }
 
 /**
- * The rollover itself. Call it after the container is up and BEFORE spawnPi /
- * attach; it returns a report and, on a rollover, leaves the tmux session
+ * The rollover itself. Call it after the container is up and before
+ * spawnPi; it returns a report and, on a rollover, leaves the tmux session
  * killed so the caller's spawnPi() births a fresh conversation that opens on
  * the day-open message.
  */
@@ -589,13 +588,12 @@ export class CompanionRollover {
   /**
    * The newest conversation file on the pihome volume.
    *
-   * THREE answers, never two: `found`, `none` (the exec ran and the
-   * volume holds no conversation) and `unreadable` (the exec itself failed —
-   * `companion.ts` records that an exec immediately after a container recreate
-   * loses exactly this race). The old `""`-on-failure folded the third into
-   * the second, and the rollover then archived nothing, compacted zero turns
-   * and handed the companion "nothing happened yesterday" as its opening
-   * context — before recording the day so it never retried.
+   * Three answers, never two: `found`, `none` (the exec ran and the volume
+   * holds no conversation) and `unreadable` (the exec itself failed — an exec
+   * immediately after a container recreate can lose that race, see
+   * `companion.ts`). Folding the third into the second would archive nothing,
+   * compact zero turns and hand the companion "nothing happened yesterday" as
+   * its opening context, then record the day so it never retried.
    */
   async newestSessionFile(): Promise<SessionFileLookup> {
     const res = await this.docker([
@@ -645,8 +643,8 @@ export class CompanionRollover {
   }
 
   /** Stop the old session. No session (or no tmux server) to kill is the
-   * state we want, so it counts as `killed`; any OTHER failure is `failed` —
-   * the session may still be live, and `spawnPi` would adopt it (
+   * state we want, so it counts as `killed`; any other failure is `failed` —
+   * the session may still be live, and `spawnPi` would adopt it (the
    * loss-vs-absence rule, applied to the kill). */
   async killSession(): Promise<{ state: "killed" } | { state: "failed"; reason: string }> {
     const res = await this.docker([
@@ -701,8 +699,8 @@ export class CompanionRollover {
     });
   }
 
-  /** `prior` is the state `run()` already read, PASSED IN rather than re-read
-   *: a second read could come back unreadable, and a collapsed
+  /** `prior` is the state `run()` already read, passed in rather than re-read:
+   * a second read could come back unreadable, and a collapsed
    * `undefined` here silently drops `first_run_interviewed` — the exact
    * re-arming the comment below exists to prevent. */
   private record(
@@ -721,7 +719,7 @@ export class CompanionRollover {
         : {}),
     };
     writeRolloverState(this.opts.statePath, written);
-    // Returned so `maybeInterview` can add its mark to the row we KNOW we
+    // Returned so `maybeInterview` can add its mark to the row we know we
     // wrote, instead of re-reading the file it was just handed.
     return written;
   }
@@ -739,7 +737,7 @@ export class CompanionRollover {
   /**
    * Deliver the first-run interview if it is due — at most once per
    * installation, recorded in the rollover state. `prior` is the state as it
-   * stood BEFORE this run touched it (the no-state-ever fallback must see the
+   * stood before this run touched it (the no-state-ever fallback must see the
    * original absence, not the row `record()` just created). `current` is the
    * row as it now stands — what `record()` just wrote, or `prior` when this
    * run wrote nothing. Nothing here ever blocks a start: a missing/broken
@@ -767,13 +765,11 @@ export class CompanionRollover {
     steps.push(`queued first-run interview → ${interviewFile}`);
     // Mark it delivered so it fires exactly once; later starts run the normal
     // day-open. An abandoned interview resumes in conversation, never here.
-    // `current`, never a re-read. The old line was
-    // `readRolloverState(path) ?? { last_open_date: today, … }` — the same
-    // collapse `run()` now refuses one function up, with a fabricating
-    // fallback behind it: an unreadable file stamped `last_open_date: today`
-    // over a day we could not see and dropped `last_archive`. `current` is
-    // undefined ONLY when the state was genuinely absent and this run wrote
-    // nothing, in which case today IS the row's true date.
+    // `current`, never a re-read: a re-read that came back unreadable would
+    // collapse to a fabricated row — `last_open_date: today` stamped over a
+    // day we could not see, `last_archive` dropped. `current` is undefined
+    // only when the state was genuinely absent and this run wrote nothing, in
+    // which case today is the row's true date.
     const state: RolloverState = current ?? {
       last_open_date: today,
       updated_at: this.now().toISOString(),
@@ -802,10 +798,9 @@ export class CompanionRollover {
     let dayOpenFile: string | undefined;
     let dayOpen: string | undefined;
 
-    // an unreadable state file gates everything below it. It used to
-    // read as `first-run`, which recorded today's date over it and made ALL of
-    // this unreachable — no docker call, no deferral, and the retry the two
-    // fixes below build never happens. We return BEFORE `maybeInterview` too:
+    // An unreadable state file gates everything below it: read as `first-run`
+    // it would record today's date over it and the rollover would never
+    // retry. We return before `maybeInterview` too:
     // `interviewDue(marker, undefined)` is true, so continuing could re-fire
     // the first-run interview at an install that had it months ago.
     if (verdict.kind === "unknown") {
@@ -819,8 +814,8 @@ export class CompanionRollover {
       steps.push(`first run — companion day set to ${today}`);
     } else if (verdict.kind === "rollover") {
       const lookup = await this.newestSessionFile();
-      // a lost exec is not an empty volume. Standing down leaves the
-      // day UNRECORDED, so the next start runs the whole rollover again; the
+      // A lost exec is not an empty volume. Standing down leaves the
+      // day unrecorded, so the next start runs the whole rollover again; the
       // cost is one more day on yesterday's conversation, against handing the
       // companion a fabricated "nothing happened yesterday" that can never be
       // retried. The deferral is loud in the step log and the caller notices.
@@ -832,7 +827,7 @@ export class CompanionRollover {
       const file = lookup.state === "found" ? lookup.file : "";
       steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
       archivedTo = await this.archive(file, verdict.previous);
-      // A failed copy is NOT a deferral: the conversation is still on the
+      // A failed copy is not a deferral: the conversation is still on the
       // volume and the day-open below is still assembled from the real turns,
       // so nothing fabricated is published. It is only the dated archive that
       // is missing — and going quiet about that is how it would stay missing.

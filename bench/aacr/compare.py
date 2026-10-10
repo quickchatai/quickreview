@@ -83,7 +83,7 @@ def cases_for(spec):
     return out
 
 
-# The SLIM re-score bundle (C10, built by the run-archive export;
+# The slim re-score bundle (built by the run-archive export;
 # bench/aacr/README.md "Reproduce"): the run dirs without the multi-GB
 # pi-events.jsonl transcripts. The export writes each case's price, exactly as
 # this function computes it from the FULL case dir, into the slim

@@ -9,7 +9,7 @@
 RUNS_ROOT is the directory that holds `runs/` (the qcr-bench-runs dir). The
 input is read only. Nothing is uploaded and no model is called.
 
-What ships (the run-data policy, fleet): every run under `runs/`,
+What ships (the run-data policy): every run under `runs/`,
 `analysis/`, `whatif/`, `logs/`, `ext-images/`, and the answer key from the
 `*-code` dirs. What never ships: `notes/` (private; the walk refuses to enter
 it), `ext-cache/`, `ext-data/`, `scratch-archive/` (third-party data,
@@ -25,11 +25,11 @@ nothing else in it changes:
 
   * `example-review[bot]` (and the bare app slug `example-review`) -> `<review-bot>`,
     then `the owner` (any case) -> `<owner>`;
-  * `quickreviewd` -> `quickreview` (the product's old name);
+  * `quickreviewd` -> `quickreview` (the product's internal name);
   * host paths: `/home/user/qcr-bench-runs` -> `<runs>`,
     `/home/user/src/quickreview` -> `<repo>`, any other
     `/home/user` -> `<home>`, the docker volume `companion-pihome` -> `<pi-login-volume>`
-    (the same spellings as the Hugging Face dataset export);
+    (the same spellings as the Hugging Face dataset export, hf_export.py);
   * encrypted reasoning blobs are blanked, the record kept: the value of every
     `encrypted_content` (OpenAI), every base64 `thinkingSignature` and
     `signature` (Anthropic) becomes the empty string.
@@ -39,7 +39,7 @@ the largest any stock zstd decoder accepts without flags), each closed before
 it passes --cap (default 1.9 GiB; see the archive README for why), with a
 manifest (sha256 per volume, per-file counts, per-rule counts).
 
-The slim bundle (C10) holds only what compare.py, charts.py,
+The slim bundle holds only what compare.py, charts.py,
 final/score.sh and the ext scorers read, minus `pi-events.jsonl`: each case's
 `case-summary.json` gains `bench_cost_usd` (compare.py's own per-case figure,
 computed here from the full case dir) and `bench_cost_source`.
@@ -72,7 +72,7 @@ NEVER = ("notes", "ext-cache", "ext-data", "scratch-archive")
 # runs whose reviewed code is QuickReview's own private repository (the
 # self-review set): its source, infrastructure names and handles are not
 # public and cannot be refetched from a public repo@commit, so the run is
-# withheld until the owner rules otherwise
+# withheld
 PRIVATE_RUNS = ("pc1-self-review-pc1",)
 MARTIAN_SRC = "https://github.com/withmartian/code-review-benchmark/blob/e616e84/offline/results/benchmark_data.json"
 QODO_VENDORS = {"qodo-exhaustive", "qodo-precise", "augment", "copilot", "cursor", "greptile", "codex", "coderabbit", "sentry"}

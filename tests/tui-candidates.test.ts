@@ -1,6 +1,6 @@
-// The durable candidate list (deciding).
+// The durable candidate list.
 //
-// Four properties are pinned here because each one is a decision the owner made
+// Four properties are pinned here because each one is a deliberate decision
 // against a rejected alternative, not an accident of implementation:
 //
 //   1. the list DOES NOT EXPIRE — no TTL, no rolling window, no cap;
@@ -35,9 +35,10 @@ import {
   type RoundFact,
 } from "../src/tui/candidates.js";
 
-/** Test-side read-back. Deliberately NOT a `load()` on the store: production
- * has no collapsing accessor any more, and reviving one for convenience is
- * how the merge-then-save reached for it in the first place. */
+/** Test-side read-back. Deliberately not a `load()` on the store: production
+ * has no accessor that collapses "absent" and "unreadable" into one
+ * `undefined`, and adding one for convenience invites a merge-then-save that
+ * reads a torn file as empty. */
 function listIn(store: CandidateStore): CandidateList | undefined {
   const r = store.read();
   return r.state === "list" ? r.list : undefined;
@@ -85,7 +86,7 @@ describe("the good path and its one carve-out", () => {
   });
 
   it("a block the author ACCEPTED AND FIXED never appears as a candidate", () => {
-    // The owner was explicit: this is the review working, not a deviation.
+    // This is the review working, not a deviation.
     // Block → fix → approve must produce nothing in ANY family.
     const f = facts({
       pr: 5001,
@@ -293,8 +294,8 @@ describe("durability — the list does not expire", () => {
     expect(listIn(new CandidateStore(dir))).toBeUndefined();
   });
 
-  // `load()` collapses two facts into one `undefined`, which is why
-  // anything that MERGES or SAVES must go through `read()` instead.
+  // A collapsing accessor would fold these two facts into one `undefined`,
+  // which is why anything that merges or saves goes through `read()`.
   it("read() keeps 'no file yet' and 'exists but unreadable' apart", () => {
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     mkdirSync(dir, { recursive: true });
@@ -509,9 +510,9 @@ describe("the sweep and the empty answer", () => {
   });
 
   it("an unchanged snapshot costs the poll nothing: no per-round reads, no rewrite", async () => {
-    // Adversarial finding (P2): the sweep re-read every manifest for every PR
-    // and rewrote candidates.json on every 3-second poll, unconditionally —
-    // unbounded sync fs work on the paint process.
+    // The sweep runs on every 3-second poll in the paint process, so an
+    // unconditional re-read of every manifest and rewrite of candidates.json
+    // would be unbounded sync fs work there.
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     writeManifest(dir, 5249, 1, "done", "REQUEST_CHANGES");
     const store = new CandidateStore(dir);
@@ -561,7 +562,7 @@ describe("the sweep and the empty answer", () => {
   });
 
   it("a backlog draining without a signature move is still picked up", async () => {
-    // The copier lands ROUNDS_PER_SWEEP rounds per tick with no
+    // The evidence copier lands ROUNDS_PER_SWEEP rounds per tick with no
     // snapshot change — a signature-only cache would freeze the shortfall.
     const dir = mkdtempSync(join(tmpdir(), "qcr-cand-"));
     writeManifest(dir, 5180, 1, "done", "REQUEST_CHANGES");
@@ -630,10 +631,10 @@ describe("the sweep and the empty answer", () => {
     expect(sweeper.running).toBe(false);
   });
 
-  // the data-loss defect. `(lastList ?? store.load())?.candidates ?? []`
-  // read a torn file as "no candidates", merged from that empty baseline (so
-  // every candidate whose PR has left the snapshot was dropped) and then SAVED
-  // the truncation over the history the feature IS.
+  // Reading a torn file as "no candidates" and merging from that empty
+  // baseline would drop every candidate whose PR has left the snapshot, and
+  // the save would then write the truncation over the history the list exists
+  // to keep.
   describe("an unreadable candidates.json is never read as an empty one", () => {
     const TORN =
       '{\n  "version": 1,\n  "updated_at": "2026-08-25T09:00:00Z",\n  "candidates": [\n    { "key": "no-verdict:pr-42"';

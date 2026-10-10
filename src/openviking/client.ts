@@ -1,4 +1,4 @@
-// The OpenViking HTTP client — the ONE place in the daemon that
+// The OpenViking HTTP client — the one place in the daemon that
 // knows OpenViking speaks HTTP on loopback :1933.
 //
 // Everything above this file (the `MemoryStore` seam, the round's
@@ -25,7 +25,7 @@
 //      directory was locked by another writer" (`details.conflict_type =
 //      "path_busy"`: batch-write's root lock is a zero-timeout try-lock), and
 //      that one is NOT a refusal — nothing was checked. It is told apart by
-//      `details.conflict_type` alone and retried here (S2).
+//      `details.conflict_type` alone and retried here.
 //   3. SEARCH IS `POST /api/v1/search/search` with `mode: "context"`, and the
 //      determinism knobs are pinned OFF here rather than left to the caller:
 //      `rewrite` and `query_expansion` both invoke a server-side LLM, and the
@@ -80,13 +80,13 @@ export interface OvGap {
  * that is not a gap: a 409 means the optimistic-concurrency precondition did
  * its job. Callers surface it to an operator; nothing alerts on it.
  *
- * `busy` is the OTHER 409 (S2), and it is never a `conflict`. The
+ * `busy` is the other 409, and it is never a `conflict`. The
  * server takes a zero-timeout try-lock on a batch-write's root directory, and
  * a second writer into the same directory gets `409 CONFLICT` with
  * `details.conflict_type = "path_busy"` and `retryable: true` — nothing was
  * checked and nothing was written. Reading that as "the precondition refused"
- * is what dropped 6 of 8 EOD writes on 2026-10-05: the caller was told to
- * re-read a file nobody had touched. The client retries a busy answer itself
+ * would send the caller to re-read a file nobody had touched and drop its
+ * write. The client retries a busy answer itself
  * (bounded, jittered — see `BUSY_RETRY_DEFAULTS`); one that is still busy
  * when the budget runs out comes back `busy: true, conflict: false`, an
  * ordinary failure.
@@ -121,8 +121,8 @@ export function ovFailed(status: number, code: string, message: string, busy = f
 export const BUSY_CONFLICT_TYPE = "path_busy";
 
 /**
- * Is this error envelope the server's "directory busy, try again" answer
- * (S2)? Keyed on `details.conflict_type`, never on the message text
+ * Is this error envelope the server's "directory busy, try again" answer?
+ * Keyed on `details.conflict_type`, never on the message text
  * and never on the status alone: a hash-precondition 409 carries the same
  * status and code, and it must stay a refusal.
  */
@@ -177,13 +177,13 @@ const AUTH_CODES = new Set([
 ]);
 
 /**
- * Is this answer an authentication failure (S1)?
+ * Is this answer an authentication failure?
  *
  * A 401/403, an auth error code, or the message the 0.4.15 server actually
  * sends on a bad key ("Invalid API Key"), which it has been seen to wrap in an
- * HTTP-200 error envelope. Five weeks of rounds read that answer as "memory
- * unavailable" and nobody was told; this predicate is what lets every reader
- * call it what it is. `no_key` (nothing to send at all) is NOT this — callers
+ * HTTP-200 error envelope. Read as plain "memory unavailable", a refused key
+ * goes unreported; this predicate is what lets every reader call it what it
+ * is. `no_key` (nothing to send at all) is NOT this — callers
  * that care treat it alongside, by code.
  */
 export function isAuthFailure(status: number, code: string, message = ""): boolean {
@@ -193,7 +193,7 @@ export function isAuthFailure(status: number, code: string, message = ""): boole
 }
 
 /**
- * Is this answer a NOT_FOUND (S1)? The server authenticates a key
+ * Is this answer a NOT_FOUND? The server authenticates a key
  * before it resolves a path, so a NOT_FOUND is an authenticated ANSWER — the
  * path is not there — never an outage. The store already reads it as "absent,
  * known-empty" and ovsession's delete as the desired end state; the probe and
@@ -203,7 +203,7 @@ export function isNotFound(status: number, code: string): boolean {
   return status === 404 || code === "NOT_FOUND";
 }
 
-/** One request, as the client's observer sees it (S1): what was
+/** One request, as the client's observer sees it: what was
  * asked, how it ended, how long it took. Never the key, never a header, never
  * a body — it is a counter's input, not a log line. */
 export interface OvRequestRecord {
@@ -384,7 +384,7 @@ export function buildContextSearchBody(
   return body;
 }
 
-/** Options of a `/search/find` (S9a). */
+/** Options of a `/search/find`. */
 export interface FindOptions {
   /** The area(s) searched — one directory URI, or a list (the server takes
    * one; vendored patch 0011 sends a list the same way). */
@@ -460,14 +460,14 @@ export interface OpenVikingClientOptions {
   /** Called for every gap, so the daemon can raise an overseer anomaly. Must
    * not throw; a throwing sink is swallowed rather than escaping a call. */
   onGap?: (gap: OvGap) => void;
-  /** Called once per request with its outcome (S1) — successes too,
+  /** Called once per request with its outcome — successes too,
    * which `onGap` never sees. The daemon counts its own requests per
    * operation and feeds the memory health monitor from here; the TUI counts
    * its own. Must not throw; a throwing observer is swallowed. */
   onRequest?: (record: OvRequestRecord) => void;
   /** Millisecond clock for `OvRequestRecord.ms`. Tests inject one. */
   clock?: () => number;
-  /** The busy-retry bound (S2) — `BUSY_RETRY_DEFAULTS` when absent. */
+  /** The busy-retry bound — `BUSY_RETRY_DEFAULTS` when absent. */
   busyRetry?: BusyRetryOptions;
   /** The wait between busy retries. Tests inject an instant one. */
   sleep?: (ms: number) => Promise<void>;
@@ -488,13 +488,12 @@ export interface KeyFileSource {
  * re-checking at most every `ttlMs`.
  *
  * A secret that lands after boot is picked up without a restart, and a missing
- * one does not stat the disk per request. Since S1 a FOUND key is no
- * longer remembered forever: every `ttlMs` the file is re-stat'ed, and a file
- * whose identity (inode, size or mtime) changed is re-read — so a rotated key
- * reaches the daemon within one TTL, and a removed one stops being sent. A 401
- * from the server calls `invalidate()` (see `OpenVikingClient`), which makes
- * the very next request re-read the file. The cache that held a dead key for
- * the life of the process is what kept memory down from 2026-09-03 to 10-02.
+ * one does not stat the disk per request. A found key is not remembered
+ * forever: every `ttlMs` the file is re-stat'ed, and a file whose identity
+ * (inode, size or mtime) changed is re-read — so a rotated key reaches the
+ * daemon within one TTL, and a removed one stops being sent. A 401 from the
+ * server calls `invalidate()` (see `OpenVikingClient`), which makes the very
+ * next request re-read the file.
  */
 export function keyFromFile(
   path: string,
@@ -784,7 +783,7 @@ export class OpenVikingClient {
       const message = this.redact(
         typeof body.error?.message === "string" ? body.error.message : `HTTP ${res.status}`,
       );
-      // The directory lock was held (S2): nothing was checked or
+      // The directory lock was held: nothing was checked or
       // written. `request()` retries it — not observed or reported here.
       if (isBusyConflict(res.status, body.error)) {
         return { res: ovFailed(res.status, code, message, true), ms };
@@ -810,7 +809,7 @@ export class OpenVikingClient {
       });
       // The key we sent was refused: drop the source's cache so the NEXT
       // request reads the file again — a rotated key must not wait out a TTL
-      // behind a 401 (S1). Last, deliberately: `report()` reads the
+      // behind a 401. Last, deliberately: `report()` reads the
       // key to redact with, and a read after the drop would re-cache the very
       // key that was just refused for another full TTL.
       if (auth) this.invalidateKey?.();
@@ -904,17 +903,12 @@ export class OpenVikingClient {
   }
 
   /**
-   * The retrieval tag list search's `tags` filter reads. BEST-EFFORT by
-   * contract: the tags are already inside the written body (`Tags: #a #b`),
-   * which is what `content/read` returns and what the store parses, so a
-   * failure here narrows retrieval — it never loses the memory or its tags.
-   */
-  /**
    * Create a directory (and its parents). A fresh server has ONLY
    * `viking://user/default`, so the first write into `user/<us>/memories/<cat>`
    * 404s on the missing root — nothing else provisions the tree, and making
    * boot order responsible for it would put a network call in front of the
-   * daemon. The store calls this lazily, on exactly that failure.
+   * daemon. The store calls this lazily on that failure, and eagerly from
+   * `ensureWritable`.
    */
   async mkdir(uri: string, parents = true): Promise<boolean> {
     const res = await this.request<unknown>("mkdir", "/api/v1/fs/mkdir", {
@@ -928,6 +922,12 @@ export class OpenVikingClient {
     return res.ok || res.conflict;
   }
 
+  /**
+   * Set the retrieval tag list that search's `tags` filter reads. Best-effort
+   * by contract: the tags are already in the written body's header, which is
+   * what `content/read` returns and what the store parses, so a failure here
+   * narrows retrieval — it never loses the memory or its tags.
+   */
   async setTags(
     uri: string,
     tags: string[],
@@ -988,11 +988,11 @@ export class OpenVikingClient {
   }
 
   /**
-   * A plain vector search INSIDE one or more areas (`POST /api/v1/search/find`,
-   * S9a): the hits the server ranks by similarity under `target_uri`,
+   * A plain vector search inside one or more areas (`POST /api/v1/search/find`):
+   * the hits the server ranks by similarity under `target_uri`,
    * never a global top K filtered afterwards. The memories bucket only; each
    * hit's text is its abstract (the stored content itself in a deployment
-   * without a VLM — §3.3), else its overview.
+   * without a VLM), else its overview.
    *
    * Deterministic by construction: no `session_id` is sent, so the server
    * runs no query expansion (that stage keys on a session), and there is no
@@ -1036,7 +1036,7 @@ export class OpenVikingClient {
   }
 
   /**
-   * The ids of every session the key can see (S3) — what the
+   * The ids of every session the key can see — what the
    * stale-session sweep lists. The server swallows its OWN listing failures
    * into an empty list (`session_service.py` `sessions()`), so `[]` means "none
    * listed", never proof that none exist.

@@ -1,5 +1,4 @@
-// A bench case's inputs belong to THIS case and THIS attempt (selfscan2
-// bench-harness):
+// A bench case's inputs belong to THIS case and THIS attempt:
 //
 //   1. a cached prefetch store is reused only when it was fetched for the
 //      exact base the case names — not merely one with the same merge-base
@@ -134,8 +133,8 @@ describe("prefetch cache admission", () => {
   });
 
   it("does NOT reuse a store fetched for another base with the same merge-base", async () => {
-    // Before the fix this returned the cached meta — base_commit B1 for a case
-    // that names B2 — and the tree cited the wrong origin/<base_ref>.
+    // Reusing the cached meta here would give base_commit B1 for a case that
+    // names B2, and the tree would cite the wrong origin/<base_ref>.
     const c = mkCase(B2);
     let got: PrefetchMeta | undefined;
     try {

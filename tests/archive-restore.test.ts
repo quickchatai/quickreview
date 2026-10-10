@@ -1,4 +1,4 @@
-// RESTORE (docs/archiving.md §8.2–§8.4):
+// Restore (docs/archiving.md §8.2–§8.4):
 //
 //   (6) a slow restore makes a birth await it; a failing restore raises the
 //       `archive_restore_failed` wake, the birth goes ahead and the receipt

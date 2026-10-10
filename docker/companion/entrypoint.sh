@@ -9,13 +9,13 @@ set -euo pipefail
 PI_HOME_DIR="${HOME}/.pi"
 mkdir -p "$PI_HOME_DIR/agent" /workspace /tracker /feed /alerts 2>/dev/null || true
 
-# Durability guard. pi writes its OAuth token, settings and trust
-# store under $HOME/.pi. If that is NOT the mounted volume, every one of them
-# lives on the container's writable layer and dies with the next recreate — the
-# login silently stops persisting, and nobody finds out until they are asked to
-# log in again. That is exactly what a uid collision did here for a week.
-# Loud, never fatal: a companion that starts is worth more than one that is
-# right, and the operator can see this line.
+# Durability guard. pi writes its OAuth token, settings and trust store under
+# $HOME/.pi. If that is NOT the mounted volume (a uid collision moving $HOME is
+# enough), every one of them lives on the container's writable layer and dies
+# with the next recreate — the login silently stops persisting, and nobody
+# finds out until they are asked to log in again. Loud, never fatal: a
+# companion that starts is worth more than one that is right, and the operator
+# can see this line.
 # /proc/mounts, not `mountpoint`: util-linux is not guaranteed in the base
 # image, and a guard that reports a false alarm when its own tool is missing
 # teaches you to ignore it.
@@ -28,9 +28,8 @@ else
   echo "pi home on the volume: $PI_HOME_DIR (OAuth + conversation are durable)"
 fi
 
-# Reviewed-repo mount. The reviewed repo's source arrives READ-ONLY
-# at /reviewed-repo (a generic path since — it used to be named after
-# one repo) so the companion can read the code a review is about. It is
+# Reviewed-repo mount. The reviewed repo's source arrives READ-ONLY at
+# /reviewed-repo so the companion can read the code a review is about. It is
 # conditional by design (src/tui/companion.ts runArgv): a host without the
 # checkout gets no mount, and that must leave the companion under-equipped
 # rather than unable to start — same degrade discipline as the skills dir and
@@ -96,12 +95,12 @@ TMUXCONF
 # writable layer, NOT the pihome volume, so it is rewritten every start rather
 # than seeded once. Author, not committer-of-record for anyone else: the name
 # says plainly which hands made the commit.
-# `|| true` on every one: `set -e` is on, and a git that exits
-# non-zero here would take the CONTAINER down at boot. That is not theoretical
-# — mounting a git WORKTREE at /workspace does it, because its `.git` is a file
-# pointing at a path that does not exist inside the container, and git fails
-# while discovering the repo. An unusable git identity degrades the companion's
-# committing; it must never stop the companion from starting.
+# `|| true` on every one: `set -e` is on, and a git that exits non-zero here
+# would take the CONTAINER down at boot — mounting a git WORKTREE at /workspace
+# does it, because its `.git` is a file pointing at a path that does not exist
+# inside the container, and git fails while discovering the repo. An unusable
+# git identity degrades the companion's committing; it must never stop the
+# companion from starting.
 git config --global user.name "QCR Companion" || true
 git config --global user.email "companion@quickchat.ai" || true
 # The repo is bind-mounted from the host and owned by the same uid, so
@@ -113,14 +112,14 @@ git config --global --add safe.directory /workspace || true
 # pi settings. ~/.pi lives on a named volume; the merge below preserves every
 # existing key (hand edits win, append-only extensions).
 #
-# NO MEMORY EXTENSION IS REGISTERED HERE. pi-memory retired with the
-# hand-rolled engine; the companion's memory is OpenViking on the VM, and its
-# vendored+patched extension is passed per spawn with `--extension` by
-# src/tui/companion.ts — a per-spawn flag, not a global registration.
+# No memory extension is registered here. The companion's memory is
+# OpenViking on the VM, and its vendored+patched extension is passed per spawn
+# with `--extension` by src/tui/companion.ts — a per-spawn flag, not a global
+# registration.
 SETTINGS="$PI_HOME_DIR/agent/settings.json"
 mkdir -p "$PI_HOME_DIR/agent"
-# Idempotent MERGE (mirrors the VM entrypoint): seed-only-if-absent silently
-# skipped keys forever once pi itself had written settings.json.
+# Idempotent MERGE (mirrors the VM entrypoint): seeding only when the file is
+# absent would skip every key once pi itself had written settings.json.
 node <<'PI_EXT_MERGE'
 const fs = require("fs");
 const path = process.env.HOME + "/.pi/agent/settings.json";
@@ -244,7 +243,7 @@ PI_EXT_MERGE
 # var. OPENAI_API_KEY is honored when the caller passes one.
 # Provider prefix under OAuth is `openai-codex/`, not `openai/`.
 
-# memory health watcher: probes OpenViking through the host-owned
+# Memory health watcher: probes OpenViking through the host-owned
 # forward and drops an alert file into /alerts when it stops answering (and a
 # notice when it comes back). Backgrounded and non-fatal by construction — an
 # unwired or unreachable memory path degrades the companion, it never wedges
@@ -262,16 +261,12 @@ tmux start-server
 
 # Stay alive, and DIE PROMPTLY when asked.
 #
-# This used to `exec sleep infinity`, on the theory that PID 1 would handle
-# SIGTERM without a forwarding shim. It does not: PID 1 has no default signal
-# dispositions, so a signal with no explicit handler is ignored outright.
-# `docker stop` therefore waited its full 10s timeout and then SIGKILLed —
-# measured at 10.1s, every single quit. The TUI runs that stop AFTER restoring
-# the terminal, so those 10 seconds were a dead terminal: the board gone, the
-# shell prompt not yet back, nothing responding.
-#
-# A trap gives PID 1 the handler it never had. `sleep &` + `wait` rather than
-# `exec`, because a foreground child would block the trap until it returned.
+# PID 1 has no default signal dispositions, so a signal with no explicit
+# handler is ignored outright and `docker stop` would wait its full 10 s
+# timeout before SIGKILL — after the TUI has already restored the terminal,
+# leaving it dead for those 10 s. A trap gives PID 1 the handler it lacks.
+# `sleep &` + `wait` rather than `exec`, because a foreground child would
+# block the trap until it returned.
 term() {
   kill "$child" 2>/dev/null || true
   exit 0
@@ -280,8 +275,8 @@ trap term TERM INT
 sleep infinity &
 child=$!
 # `|| true`: a signal makes `wait` return 128+N, and under `set -e` that status
-# would end the script before the trap's own `exit 0` — the container then
-# recorded "Exited (128)" on every clean stop, which reads like a crash in
-# `docker ps -a` and is the first thing anyone debugging this would chase.
+# would end the script before the trap's own `exit 0`, and the container would
+# record "Exited (128)" on every clean stop, which reads like a crash in
+# `docker ps -a`.
 wait "$child" || true
 exit 0

@@ -1,4 +1,4 @@
-// `qcr metrics` across a move (docs/archiving.md §9.4): the
+// `qcr metrics` across an archive move (docs/archiving.md §9.4): the
 // `all` window adds the `archived_event_counts` rollup back, so its totals
 // are identical before and after the reader-less rows leave the live table,
 // and labels them "(incl. N archived)"; d7 and d30 never see an archived row

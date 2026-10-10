@@ -1,4 +1,4 @@
-// The closed-PR ARCHIVER (docs/archiving.md §10) — daemon
+// The closed-PR archiver (docs/archiving.md §10) — daemon
 // bookkeeping on its own timer. It never spawns pi, injects, wakes or kills a
 // session, and makes no GitHub call (root rule 9; it is not a session kind).
 //
@@ -31,18 +31,18 @@
 //   2. RESTORES (§8.3) of every PR the registry no longer calls closed whose
 //      row is not `restored` — never held by a drain;
 //   3. the holds;
-//   4. the DB PHASE (src/archive/dbmove.ts, S2): the reader-less event rows
+//   4. the DB PHASE (src/archive/dbmove.ts): the reader-less event rows
 //      and old webhook deliveries into `archive/db/`;
 //   5. the plan;
-//   6. the FILE PHASE (S3): the plan's eligible PRs, oldest close first, each
+//   6. the FILE PHASE: the plan's eligible PRs, oldest close first, each
 //      through `prarchive.ts` — at most `max_prs_per_tick`, no new file after
 //      `tick_budget_s`, the disk checked before every file (§7.7);
-//   7. the STORES that belong to no PR (S4): the overseer's non-current
+//   7. the STORES that belong to no PR: the overseer's non-current
 //      transcripts (`overseer.ts`) and pi's global session store
 //      (`piglobal.ts`), under the same budget, holds and disk checks;
 //   8. SEALING finished months (src/archive/seal.ts).
 //
-// The operator's two verbs (S4, `archive-run` and `archive-restore`, valid
+// The operator's two verbs (`archive-run` and `archive-restore`, valid
 // only from the root-sealed `commands/operator/`) reach `operatorRun` — one
 // immediate tick, a fresh plan, every hold still binding — and
 // `operatorRestore` — one PR's archive back to its live paths, the mutex
@@ -284,10 +284,10 @@ export interface ArchiverDeps {
   birthInFlight?: (pr: number) => boolean;
   statfs?: (path: string) => Promise<StatfsLike>;
   /** When the overseer session was born (its birth record); null = unknown —
-   * the overseer store then moves nothing. Absent = no overseer pass (S4). */
+   * the overseer store then moves nothing. Absent = no overseer pass. */
   overseerBornAt?: () => Date | null;
   /** pi's global session store (`~/.pi/agent/sessions`). Absent = no
-   * pi-global pass (S4). */
+   * pi-global pass. */
   piGlobalDir?: string;
   /** How long `beforeBirth` waits for a restore (default RESTORE_WAIT_MS). */
   restoreWaitMs?: number;
@@ -359,7 +359,7 @@ export class Archiver {
    * caught-up archiver does not write a line a minute forever; work done, or a
    * changed outcome or hold, always logs. */
   private lastTickLine = new Map<string, string>();
-  /** The file phase (S3). */
+  /** The file phase's last run. */
   private files: ArchiveFilesStatus | null = null;
   /** Crash recovery (§7.6) has run once this start. */
   private filesRecovered = false;
@@ -389,7 +389,7 @@ export class Archiver {
    * largest file that did not fit in it). */
   private diskIncident: { since: number; raisedAt: number; need: number } | null = null;
   private birthsUnknownLogged = false;
-  /** The stores' last passes (S4). */
+  /** The stores' last passes. */
   private readonly stores: {
     overseer: ArchiveStoreStatus | null;
     pi_global: ArchiveStoreStatus | null;
@@ -567,7 +567,7 @@ export class Archiver {
         if (files.failure) failure = files.failure;
         else if (files.hold) return this.hold(files.hold);
         if (this.mutex.priorityWaiting()) return this.yieldToRestore(at, planned);
-        // The stores that belong to no PR (S4): after the PRs (§10).
+        // The stores that belong to no PR: after the PRs (§10).
         if (failure === null) {
           const hold = await this.storesPhase(at);
           if (hold) return this.hold(hold);
@@ -607,7 +607,7 @@ export class Archiver {
     return { state: "idle", held_reason: null, planned };
   }
 
-  // ---- the operator's verbs (S4, §11) -------------------------------------
+  // ---- the operator's verbs (§11) ------------------------------------------
 
   /** Is the strict mutex held right now (a tick, or a restore)? */
   busy(): boolean {
@@ -1251,7 +1251,7 @@ export class Archiver {
   }
 
   /**
-   * The stores that belong to no PR (S4, §5): the overseer's non-current
+   * The stores that belong to no PR (§5): the overseer's non-current
    * transcripts, then pi's global store — each only when wired, under the
    * tick's budget, holds and disk checks. Returns the hold that stopped it,
    * or null. One store's I/O failure is that store's (`failed`, retried next
@@ -1636,8 +1636,8 @@ export class Archiver {
     if (!low) {
       // An incident ends only at a reading with room for what raised it. A
       // reading that tested less — the tick's headroom-only check, or a
-      // smaller file — says nothing about the file that did not fit; ending
-      // the incident on it re-raised the wake on every tick.
+      // smaller file — says nothing about the file that did not fit, and
+      // ending the incident on it would re-raise the wake every tick.
       if (this.diskIncident && r.archiveFree >= this.diskIncident.need) {
         this.log("archive: free disk is back above the headroom");
         this.diskIncident = null;

@@ -1,4 +1,4 @@
-// LLM auth — the wizard's credential choice (spec "LLM auth").
+// LLM auth — the wizard's credential choice.
 // Both routes are first-class and the trade is stated honestly:
 //
 //   OAuth (a ChatGPT subscription) — the shipped default. pi's tokens live in
@@ -7,7 +7,7 @@
 //     costs up to THREE separate browser logins: this wizard's own pi session,
 //     the daemon container, and the companion container. Each container login
 //     must land on that container's named pi-home volume or a recreate
-//     silently costs it (the hazard) — this step verifies exactly that,
+//     silently costs it — this step verifies exactly that,
 //     per surface, at the moment the surface exists.
 //   API key — one paste covers all three immediately (the entrypoints export
 //     the secrets-dir file as OPENAI_API_KEY for every pi process), and every
@@ -338,10 +338,10 @@ export interface LoginProbe {
 /**
  * Did a pi OAuth login actually land on this container's PERSISTENT pi home?
  *
- * The question is deliberately asked about the MOUNT, not about `$HOME`: the
- * failure was a container whose HOME had drifted off the mounted
- * volume, so pi wrote a perfectly good auth.json into the writable layer and
- * every rebuild silently cost the login. Testing `<mount destination>/agent/
+ * The question is deliberately asked about the MOUNT, not about `$HOME`: a
+ * container whose HOME has drifted off the mounted volume has pi write a
+ * perfectly good auth.json into the writable layer, and every rebuild
+ * silently costs the login. Testing `<mount destination>/agent/
  * auth.json` proves the token is on the volume, which is the only claim worth
  * making. Never throws, never prompts: an undetectable docker is a note.
  */

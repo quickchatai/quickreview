@@ -1,11 +1,11 @@
-// The operator's lesson KILL SWITCH client (S9a) — `qcr lessons
+// The operator's lesson kill switch client — `qcr lessons
 // off|on|suppress|unsuppress`.
 //
 // The same narrow channel as the board's `u` and the deploy drain
-// (src/tui/unwedge.ts, src/tui/deploy-drain.ts): ONE command file written AS
-// ROOT into the root-sealed `commands/operator/` (`docker exec -u 0`, payload
+// (src/tui/unwedge.ts, src/tui/deploy-drain.ts): one command file written as
+// root into the root-sealed `commands/operator/` (`docker exec -u 0`, payload
 // on stdin, tmp+mv), then the daemon's own result file read back as the
-// receipt. The four commands validate ONLY from that sealed directory
+// receipt. The four commands validate only from that sealed directory
 // (src/commands.ts `OPERATOR_COMMANDS`): a file the daemon finds unsealed is
 // served as a session's and refused, and the result says so — this client
 // never infers acceptance from a successful write.
@@ -28,7 +28,7 @@ export interface LessonSwitchOutcome {
   lessons_off?: boolean;
   suppressed?: number;
   /** Who the daemon decided the writer was. `session` means the operator
-   * directory was NOT sealed and the command was refused. */
+   * directory was not sealed and the command was refused. */
   issuer?: "operator" | "session";
 }
 

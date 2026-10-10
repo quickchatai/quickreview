@@ -3,12 +3,12 @@
 //
 // Why this exists: a PR worktree (`wt/pr-<n>`) is a bare checkout — no
 // node_modules, no venv — because the reviewer never installs or runs
-// anything (scoping rule 2). That left every pass guessing what a library
-// actually does: which encoding names `jschardet` returns, which encodings
-// `iconv-lite` accepts, what a default is, when a call throws. On the
-// benchmark, 11 of 48 missed defects needed exactly that knowledge and had no
-// way to get it. This module closes the gap WITHOUT crossing the no-exec
-// line: the daemon calls it while preparing the worktree, it downloads the
+// anything (scoping rule 2). Without library sources every pass would guess
+// what a library actually does: which encoding names `jschardet` returns,
+// which encodings `iconv-lite` accepts, what a default is, when a call throws
+// — knowledge a whole class of defects turns on. This module closes the gap
+// WITHOUT crossing the no-exec line: the daemon calls it while preparing
+// the worktree, it downloads the
 // SOURCE of the packages this PR actually touches, at the versions the PR's
 // lockfiles pin, and the round prompt lists where they landed so a pass can
 // read — and cite — the real code instead of its memory of it.
@@ -2169,8 +2169,8 @@ function paxRecords(data: Buffer): Map<string, string> {
     const sp = data.indexOf(0x20, i);
     if (sp < 0) break;
     // `<len> <key>=<value>\n`: the length counts its own digits, the space and
-    // the newline, so a shorter one is malformed. Accepting it let a run of
-    // zeroes "advance" one byte per record, re-scanning the rest each time.
+    // the newline, so a shorter one is malformed. Accepting it would let a run
+    // of zeroes "advance" one byte per record, re-scanning the rest each time.
     if (sp - i > 20 || !/^\d+$/.test(data.subarray(i, sp).toString("latin1"))) break;
     const len = parseInt(data.subarray(i, sp).toString("latin1"), 10);
     if (!Number.isFinite(len) || len < sp - i + 2 || i + len > data.length) break;
@@ -2518,7 +2518,8 @@ const SAFE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/;
 
 /** `<root>/<eco>/<name, scope slash → +>@<version>`, or null when either part is unsafe as a path.
  * `+` is in neither npm's nor PyPI's name alphabet, so the mapping is
- * one-to-one (`__` was not: `@a/b__c` and `@a__b/c` shared a directory). */
+ * one-to-one (a `__` separator would not be: `@a/b__c` and `@a__b/c` would
+ * share a directory). */
 function cacheDirFor(
   root: string,
   eco: DepEcosystem,

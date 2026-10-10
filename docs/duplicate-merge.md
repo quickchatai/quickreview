@@ -1,11 +1,10 @@
 # Duplicate merge: one comment per root cause
 
-Ratified by the owner on 2026-10-03, after a design grilling session. Built behind
-`[review] dedup_merge` (on by default).
+Built behind `[review] dedup_merge` (on by default).
 
 ## Why
 
-The 2026-10-03 mining of two external runs (a benchmark working note, not in the public repo; its runs are in the published run archive)
+Mining two external benchmark runs (a working note, not in the public repo; its runs are in the published run archive)
 found two separate costs that both get called "duplicates":
 
 1. **Duplicates that get posted.** About 10–11% of what we post repeats an issue
@@ -65,8 +64,8 @@ lives where both routes run the same code:
   - the record marks it `merged` with `word: post-check`.
 
   `tests/dedup-parity.test.ts` pins that both routes produce the same posted set
-  from the same findings record. The one difference is the live route's alone
-  (S6): each inline comment it renders ends with a hidden
+  from the same findings record. The one difference is the live route's alone:
+  each inline comment it renders ends with a hidden
   `<!-- qcr:f=<round>:<finding key> -->` marker that links the posted comment
   to its finding. The parity test checks the marker and strips it before the
   comparison, and the bench never carries one.
@@ -114,7 +113,7 @@ sign-off per lens.
 
 ## How it is measured
 
-There is one run, approved by the owner, of 20 PRs. The selection and the
+There is one measurement run, of 20 PRs. The selection and the
 commands are in the run's working note (a benchmark working note, not in the public repo; its runs are in the published run archive). Compared against the stored
 baseline runs on the same PRs:
 

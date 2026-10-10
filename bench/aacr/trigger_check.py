@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check a narrowed planning trigger against stored runs before shipping it.
 
-The owner's 2026-10-03 planning decision: no lens is removed or disabled; a
+The planning rule: no lens is removed or disabled; a
 trigger may be NARROWED only where the evidence shows the lens planned with
 nothing to do, and never below the cases behind its stored unique real
 findings. This tool is that check, from stored data only (no review, no judge):

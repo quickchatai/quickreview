@@ -1,5 +1,4 @@
-// Proposals module (§7/§8; producer moved to the companion after
-// retired the EOD curator's authoring): LOCAL state/rubric/ dir
+// Proposals module (the companion is the producer): LOCAL state/rubric/ dir
 // list/read/remove, gh parsing, patch vetting incl. the RATIFIED-fence
 // refusal, and accept = merge + auto-ratify against a temp repo-root with a
 // fake git.
@@ -270,7 +269,7 @@ describe("patch vetting — RATIFIED fences (rule 6, structural)", () => {
     );
   });
 
-  // the guard fails CLOSED. It refuses at the `--- ` line, before it
+  // The guard fails CLOSED. It refuses at the `--- ` line, before it
   // has looked at a single hunk, because it cannot know what it would be
   // touching — and it refuses even for a patch that would have been clean.
   it("refuses on an unreadable target, whatever the hunks do", () => {
@@ -336,7 +335,7 @@ describe("recordRatification", () => {
     );
     expect(manifest.files["agents/pass-baseline.md"]).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.files["agents/pass-baseline.md"]).not.toBe("oldhash");
-    // the in-repo canonical copy tracks the ratified content, so the
+    // The in-repo canonical copy tracks the ratified content, so the
     // provenance suite stays green after an accept.
     expect(readFileSync(join(root, "seeds/agents/pass-baseline.md"), "utf8")).toBe(
       "patched body\n",
@@ -344,8 +343,8 @@ describe("recordRatification", () => {
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
     );
-    // grandfathering: new notes say "owner", legacy notes say
-    // "the owner" — the verifying grammar accepts both, so old history validates.
+    // New notes say "owner", older notes carry the owner's name — the
+    // verifying grammar accepts both, so existing history validates.
     expect(div.files["agents/pass-baseline.md"][0]).toMatch(
       /^2026-08-20 (?:the owner|owner): rubric proposal 'fix-mergebase'/,
     );
@@ -411,7 +410,7 @@ describe("acceptProposal (local dirs, fake git)", () => {
     ]);
     // The refreshed canonical copy rides the same commit as the reseed.
     expect(gitCalls[4]).toContain("seeds/agents/pass-baseline.md");
-    // role wording, old spelling grandfathered (history never rewrites).
+    // Role wording, with the older spelling still accepted (history never rewrites).
     expect(gitCalls[5]!.join(" ")).toMatch(/ratified by (?:the owner|the owner) via TUI/);
     const div = JSON.parse(
       readFileSync(join(root, "tests/fixtures/ratified-divergence.json"), "utf8"),
@@ -476,14 +475,13 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(gitCalls).toHaveLength(0);
   });
 
-  // the guard used to `catch → null`, making EACCES/EISDIR
-  // indistinguishable from ENOENT, and `null` reads as "no fences". So ONE
-  // unreadable target let a patch reaching inside an owner-fenced region be
-  // accepted, applied and committed — a rule-6 bright-line bypass with a local
-  // commit behind it. It fails CLOSED now.
+  // An unreadable target is not an absent one: `null` reads as "no fences", so
+  // folding EACCES/EISDIR into ENOENT would let a patch reaching inside an
+  // owner-fenced region be accepted, applied and committed — a rule-6
+  // bright-line bypass. The guard fails CLOSED.
   it("refuses when a fence target cannot be READ — an unreadable file is not an unfenced one", async () => {
     // A directory where the file should be: readFileSync raises EISDIR, which
-    // the old catch-all folded into "this file does not exist yet".
+    // must not read as "this file does not exist yet".
     mkdirSync(join(root, "prompts/round-first.md"), { recursive: true });
     propose(
       "fence-ride-unreadable",
@@ -569,7 +567,7 @@ describe("acceptProposal (local dirs, fake git)", () => {
     expect(existsSync(join(root, "state/rubric/calibrate-mention"))).toBe(false);
   });
 
-  // the live config lives in the install's config home, outside the
+  // The live config lives in the install's config home, outside the
   // checkout — the accept applies to THAT file and commits nothing (the home
   // is not this repo). A QCR_CONFIG file not named config.toml cannot take a
   // `config.toml` patch, so it is refused rather than applied somewhere else.
@@ -711,10 +709,10 @@ describe("acceptProposal (local dirs, fake git)", () => {
   });
 });
 
-// ---- selfscan2 (tui-learning): the accept path against a REAL git checkout.
+// ---- The accept path against a REAL git checkout.
 // The fake-git suite above cannot see what `git apply` actually does — where
 // it relocates a hunk, which sections it honours, what `git commit` sweeps
-// up — and every defect below lived exactly there. A scratch repo in a temp
+// up — and every case below lives exactly there. A scratch repo in a temp
 // dir, no network, no remote.
 describe("acceptProposal against a real scratch checkout (selfscan2)", () => {
   let root: string;

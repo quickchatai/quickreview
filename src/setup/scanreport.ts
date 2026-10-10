@@ -1,6 +1,6 @@
-// The SCAN REPORT's read side and its stop channel: what the TUI's
-// `[8] scan` tab reads out of the state home, and the one file through which
-// it asks the companion to stop a running scan. A LEAF like stage2request.ts:
+// The scan report's read side and its stop channel: what the TUI's `[8] scan`
+// tab reads out of the state home, and the one file through which it asks
+// the companion to stop a running scan. A leaf like stage2request.ts:
 // it reaches its siblings by type only, so the TUI (which never imports the
 // setup engine — tests/single-shepherd.test.ts) can read the run record and
 // the findings store without carrying the case runner along.
@@ -9,7 +9,7 @@
 // their parsers, so the engine and the TUI can never read them differently):
 // `scan/run.json` (scanrun.ts — the current run and a short history) and
 // `scan/findings.json` (findings.ts — every finding with its state). Each is
-// read TOTALLY and one of three facts: absent (no scan has written it),
+// read totally and is one of three facts: absent (no scan has written it),
 // read, or unreadable with the reason — never an empty list standing in for
 // a file that could not be read (the honest-unknown rule).
 //
@@ -35,7 +35,7 @@ export const FINDINGS_VERSION = 1;
 export const SCAN_STOP_FILE = "scan/stop.json";
 export const SCAN_STOP_RESULT_FILE = "scan/stop-result.json";
 
-// ---- validity tiers (owner ruling 2026-09-30: the scan validator is the skeptic) -----
+// ---- validity tiers (the scan validator is the skeptic) -----------------
 
 /** The skeptic's tier for a stored scan finding: `confirmed` (it traced a
  * concrete scenario), `likely` (a real mechanism, reachability not fully
@@ -125,11 +125,11 @@ export function parseFindingsFile(text: string): FindingsFile {
 
 /** A `resembles_dismissed` flag is written when a finding is stored; the
  * dismissal it names can change after that — re-dismissed with another
- * reason, promoted (the operator changed his mind), or folded into a fresh
+ * reason, promoted (the operator changed their mind), or folded into a fresh
  * finding by a match answer. Every reader goes through this parse, so the
  * flag is re-read against the store here: it names the finding that now
  * carries that fingerprint (itself, or the one it became an alias of) and
- * that finding's CURRENT reason while it is still dismissed, and it is
+ * that finding's current reason while it is still dismissed, and it is
  * dropped otherwise — a stale "looks like a finding you dismissed" never
  * reaches the operator. */
 function currentLookalikes(findings: ScanFinding[]): ScanFinding[] {
@@ -152,10 +152,10 @@ function currentLookalikes(findings: ScanFinding[]): ScanFinding[] {
   });
 }
 
-/** A finding a store written before the dismissal was sticky (scan-loop)
- * had flipped from `dismissed` to `fixed`: it reads back as the dismissal it
- * is, its fix kept as the `unreported` audit stamp (findings.ts). Every
- * other finding is returned as it is. */
+/** A legacy store may hold a dismissed finding recorded as `fixed` with
+ * `fixed.from = "dismissed"`: it reads back as the dismissal it is, its fix
+ * kept as the `unreported` audit stamp (findings.ts). Every other finding is
+ * returned as it is. */
 function stickyDismissal(f: ScanFinding): ScanFinding {
   if (f.state !== "fixed" || f.fixed?.from !== "dismissed") return f;
   const { run, sha, at } = f.fixed;

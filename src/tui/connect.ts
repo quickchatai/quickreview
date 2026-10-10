@@ -2,16 +2,13 @@
 // is passphrase-protected, and every TUI ssh runs BatchMode (fail-fast, no
 // prompts). The passphrase therefore gets entered exactly once, here, on the
 // operator's real terminal: `ssh <host> true` births the ControlMaster socket
-// the ssh config then shares for 4h (ControlPersist), and every poll/attach/
-// digest ssh rides it.
+// the ssh config then shares for 4h (ControlPersist), and every poll/digest
+// ssh rides it.
 //
-// SINCE THIS IS ONLY REACHED FROM THE BOARD (key s). It used to run
-// on the startup path before the alt screen, which made a network call — and,
-// on a bad day, an interactive prompt — the thing standing between the
-// operator and the first frame. The contract (ruling 2) is that
-// nothing external gates that frame, so startup runs the NON-interactive
-// triage in `sshtriage.ts` instead and reports the cause and the exact
-// remedy; pressing `s` is the operator asking for this prompt.
+// This is only reached from the board (key s), never from the startup path:
+// nothing external may gate the first frame, so startup runs the
+// non-interactive triage in `sshtriage.ts` instead and reports the cause and
+// the exact remedy; pressing `s` is the operator asking for this prompt.
 import { spawnSync } from "node:child_process";
 import type { TuiConfig } from "../config.js";
 import { transportOf } from "./remote.js";
@@ -50,7 +47,7 @@ export function ensureSshMaster(
   ssh: SyncSsh = realSyncSsh,
   say: (line: string) => void = console.log,
 ): ConnectResult {
-  // the laptop topology has no ssh anywhere. Guarded HERE (not only
+  // The laptop topology has no ssh anywhere. Guarded here (not only
   // at the call sites) so the board's `s` reconnect hook and any future caller
   // inherit the guarantee: in local mode this function spawns nothing.
   if (transportOf(cfg) === "local") return { kind: "local" };

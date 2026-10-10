@@ -1,27 +1,26 @@
-// The ONE memory seam.
+// The one memory seam.
 //
 // Everything in this codebase that reads or writes reviewer memory talks to
 // `MemoryStore` — the daemon's [feedback] sink, the TUI's management verbs,
-// the EOD curator. No caller knows how memory is stored. Since the
-// seam has exactly ONE implementation, `OpenVikingStore`
-// (`src/openviking/store.ts`); the hand-rolled markdown engine it replaced is
-// gone, and the only thing left of it is a read-only `MemorySource` over the
-// archived file (`legacy-file.ts`), kept solely so the one-time import can
-// still see what it is importing.
+// the EOD curator. No caller knows how memory is stored. The seam has exactly
+// one implementation, `OpenVikingStore` (`src/openviking/store.ts`); the only
+// other reader is a read-only `MemorySource` over the archived legacy file
+// (`legacy-file.ts`), kept solely so the one-time import can see what it is
+// importing.
 //
-// Nothing in THIS file may know about HTTP, OpenViking, or any file format.
+// Nothing in this file may know about HTTP, OpenViking, or any file format.
 // It is the vocabulary — entries, ops, results — and only that.
 //
 // Shape notes (deliberate, they are what keeps the seam swappable):
 //
 //   * Async everywhere. The engine is an HTTP server on loopback and the
 //     TUI's path is a forwarded round trip; a sync signature would be a lie.
-//   * ONE write method taking a discriminated op, not six verb methods. Every
+//   * One write method taking a discriminated op, not six verb methods. Every
 //     writer funnels through a single serialized mutation path (one
 //     `content/batch-write` endpoint), so a single `apply` is the honest
 //     shape — and adding an op is a union arm, not an interface break for
 //     every fake in the test suite.
-//   * Writes RESOLVE with a result, they do not reject. A refusal ("stale
+//   * Writes resolve with a result, they do not reject. A refusal ("stale
 //     view", "no such batch") is an ordinary answer callers render to the
 //     operator; only a broken transport throws. Callers must never have to
 //     tell those two apart to decide whether the memory changed.
@@ -47,9 +46,9 @@ export interface MemoryEntry {
   tags: string[];
   /** `[[link]]` tokens found in the text. */
   links: string[];
-  /** In the guaranteed head: since S5 a matter of PLACEMENT — the
-   * entry sits in the pinned area of the §1 layout
-   * (src/memory/layout.ts) — never of a tag quoted in its text. */
+  /** In the guaranteed head: a matter of placement — the entry sits in the
+   * pinned area of the memory layout (src/memory/layout.ts) — never of a tag
+   * quoted in its text. */
   pinned: boolean;
   /** Content hash as the STORE computes it — the optimistic-concurrency
    * token an addressed op carries back. Callers copy it, never compute it
@@ -57,9 +56,9 @@ export interface MemoryEntry {
   hash: string;
 }
 
-/** Pinned-region budget: only the first ~1,991 chars / 75 lines of
- * the injection head survive truncation — past this, pins are warned about
- * (the TUI's memory tab; setup's pin proposals). */
+/** Pinned-region budget: only the first ~1,991 chars / 75 lines of the
+ * injection head survive truncation — past this, pins are warned about (the
+ * TUI's memory tab; setup's pin proposals). */
 export const PINNED_BUDGET_CHARS = 1900;
 
 /** What the pinned entries among `entries` take of that head. */
@@ -92,8 +91,8 @@ export function refOf(e: MemoryEntry): MemoryRef {
  * stored verbatim. Collapsing them would let the daemon's `#feedback` lines
  * masquerade as the operator's own words.
  *
- * A `note` may carry a deterministic ADDRESS (S2): `name` (a plain
- * file stem) and `category` (the area it belongs in — the §1 layout:
+ * A `note` may carry a deterministic address: `name` (a plain
+ * file stem) and `category` (the area it belongs in — the memory layout:
  * `events` for signals, `experiences` for lessons). That is the shape an
  * idempotent writer needs: the note is created at exactly that address or
  * not at all, so a replay of a write that landed but whose answer was lost
@@ -105,8 +104,8 @@ export function refOf(e: MemoryEntry): MemoryRef {
  * `#manual` → the owner's preferences, src/memory/layout.ts
  * `areaForNewEntry`), else the store's default area.
  *
- * `pin` and `unpin` MOVE an entry into and out of the pinned area (
- * S5): its id changes, and its old address keeps a retired stub. `retire`
+ * `pin` and `unpin` move an entry into and out of the pinned area: its id
+ * changes, and its old address keeps a retired stub. `retire`
  * and `edit` rewrite it in place. `add` is the owner's own words and lands in
  * the preferences area.
  */
@@ -132,9 +131,9 @@ export interface MemoryWriteResult {
 }
 
 /**
- * One named DOCUMENT a deterministic writer keeps in memory (S7 —
- * the daemon's finding cases). Unlike a `note`, a document is the writer's to
- * REWRITE: it is created when the writer never wrote it (`expect: null`) and
+ * One named document a deterministic writer keeps in memory (the daemon's
+ * finding cases). Unlike a `note`, a document is the writer's to rewrite: it
+ * is created when the writer never wrote it (`expect: null`) and
  * replaced only under the hash of the bytes the writer last wrote there, so
  * an entry somebody else put at the address, or changed since, is never
  * overwritten — it comes back as a `conflict` naming what is there.
@@ -184,7 +183,7 @@ export interface MemorySearchOptions {
  * The READ half of the seam, on its own.
  *
  * Split out for the one caller that legitimately has no engine behind it: the
- * import's SOURCE is the archived markdown file, which can be read and
+ * one-time import's source is the archived markdown file, which can be read and
  * can never be written. Narrowing the source to this interface is what lets
  * "the seam has exactly one `MemoryStore` implementation" stay literally true.
  */
@@ -201,22 +200,22 @@ export interface MemoryStore extends MemorySource {
   /**
    * Make this store ready to be written into, before anything writes.
    *
-   * OPTIONAL, and most implementations should omit it: a store that is always
+   * Optional, and most implementations should omit it: a store that is always
    * writable has nothing to do here. It exists for engines where a namespace
-   * has to be MATERIALIZED before it is addressable — see the OpenViking
+   * has to be materialized before it is addressable — see the OpenViking
    * implementation, where a namespace nobody has written to yet is not merely
    * empty but invisible, and a second writer silently retargets somewhere else.
    *
    * Resolves with a refusal rather than throwing, like `apply`.
    */
   ensureWritable?(): Promise<MemoryWriteResult>;
-  /** OPTIONAL: an entry id as the engine addresses it (the `uri` a write
-   * result carries) — so a caller that FOUND an entry by reading can record
-   * the same address one it WROTE would have. */
+  /** Optional: an entry id as the engine addresses it (the `uri` a write
+   * result carries) — so a caller that found an entry by reading can record
+   * the same address one it wrote would have. */
   uriOf?(id: string): string;
   /**
-   * OPTIONAL (S7): create or replace many named documents at once —
-   * ONE write per area (the engine's batch root), every document under its
+   * Optional: create or replace many named documents at once —
+   * one write per area (the engine's batch root), every document under its
    * own precondition (`DocumentPut.expect`). Resolves with one result per
    * document, in the order given; never throws. A store without it cannot
    * hold documents, and their writer says so rather than falling back to

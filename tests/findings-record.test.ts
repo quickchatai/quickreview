@@ -1,4 +1,4 @@
-// The durable reasoning record (deciding): every verdicted
+// The durable reasoning record: every verdicted
 // round leaves `state/findings/pr-<n>-round-<k>.json` saying which lens raised
 // each candidate, what severity/confidence/reachability it carried, whether the
 // validator killed it and why — and whether a finding was refuted-and-conceded.
@@ -181,7 +181,7 @@ describe("parseFindingsRecord", () => {
   });
 
   it("a word outside the closed vocabulary is noted, kept verbatim, never a rejection", () => {
-    // the vocabulary already grew once (feedback-shape) and will again.
+    // The vocabulary grows (feedback-shape was added later), so unknown words must parse.
     const parsed = parseFindingsRecord(
       {
         pr: 7,
@@ -207,8 +207,8 @@ describe("parseFindingsRecord", () => {
     expect(normalizeDisposition(undefined)).toBe("unknown");
   });
 
-  // the title is KEPT (it used to be dropped — the outcome linker
-  // matches a hand-written comment's title line against it), and every entry's
+  // The title is kept (the outcome linker matches a hand-written comment's
+  // title line against it), and every entry's
   // key follows the one rule the live render route stamps into its marker.
   it("keeps a posted entry's title, on one line and capped, and never invents one", () => {
     const parsed = parseFindingsRecord(
@@ -718,8 +718,8 @@ describe("per-round comment attribution", () => {
   });
 
   it("a PR whose only rounds are BACKFILLED history still gets an attribution", () => {
-    // This is the 273-of-275 case: the old fallback looked only at
-    // `backfilled = 0` rounds and gave up at null.
+    // Backfilled rounds count too: looking only at `backfilled = 0` rounds
+    // would leave most historical PRs unattributed.
     store.insertBackfilledRound({
       pr: 43,
       round_no: 1,
@@ -757,10 +757,10 @@ describe("per-round comment attribution", () => {
   });
 });
 
-// ----: the conformance audit ----------------------------------------
+// ---- the conformance audit -------------------------------------------------
 //
 // Two of the three unreasoned shapes are cheaply detectable from the record
-// already collects — no second table, and one new field (`request`) on
+// itself — no second table, and one field (`request`) on
 // nit entries. The audit is measurement, never a gate: the round is finished by
 // the time it runs, and nothing here can hold a PR open.
 
@@ -821,7 +821,7 @@ describe("conformance audit", () => {
     ]);
     expect(c.restated).toEqual(["f1"]);
     // …and it is NOT a conformance failure: a later round may legitimately
-    // raise an OPEN finding's severity (the owner, 2026-08-19).
+    // raise an OPEN finding's severity.
     expect(isConformant(c)).toBe(true);
   });
 
@@ -873,7 +873,7 @@ describe("conformance audit", () => {
   });
 });
 
-// ----: the top-level `prior` array -----------------------------------
+// ---- the top-level `prior` array -------------------------------------------
 
 describe("the prior-finding statuses", () => {
   it("an absent `prior` is an empty list, not a note", () => {

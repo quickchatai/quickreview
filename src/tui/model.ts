@@ -1,6 +1,6 @@
 // Pure view-model logic for qcr tui — everything here is deterministic and
 // unit-tested: state→glyph mapping, board sort order, event-line formatting,
-// selection movement. The mockups are the contract.
+// selection movement.
 import type { PrLifecycleState, StatusSnapshot } from "../state.js";
 
 export type SnapshotPr = StatusSnapshot["prs"][number];
@@ -20,20 +20,19 @@ export function glyphFor(pr: Pick<SnapshotPr, "state" | "stale_recheck">): strin
 }
 
 /**
- * States the daemon USED to write, and the date it stopped.
+ * States the event log can still carry but the daemon no longer writes, each
+ * with the date it stopped.
  *
- * A key here is NOT a `PrLifecycleState`: nothing can produce it and no LIVE
- * surface renders it. It exists for exactly one reader — the metrics tab's
+ * A key here is not a `PrLifecycleState`: nothing can produce it and no live
+ * surface renders it. It exists for one reader — the metrics tab's
  * `TIME IN STATE` card, which is derived from the `pr_transition` event log
- * and therefore keeps reporting real dwell for states the machine has since
- * retired (75 such rows on the live install, and they are true history:
- * deleting them would be falsifying the record, not retiring a state).
+ * and so keeps reporting real dwell for retired states (true history, never
+ * deleted).
  *
  * Without this, a retired state renders in that card as a bare label
- * indistinguishable from a current one — which is how could otherwise
- * claim "no surface renders a retired state" while one still did.
- * `tests/park-retired.test.ts` pins both halves: a key here must be absent
- * from the union and from `STATE_GLYPHS`, and must render marked.
+ * indistinguishable from a current one. `tests/park-retired.test.ts` pins
+ * both halves: a key here must be absent from the union and from
+ * `STATE_GLYPHS`, and must render marked.
  */
 export const RETIRED_STATES: Record<string, string> = {
   awaiting_human: "retired 2026-08-19",
@@ -42,7 +41,7 @@ export const RETIRED_STATES: Record<string, string> = {
 /**
  * The mark a retired state carries in a historical series.
  *
- * A PREFIX, deliberately: the metrics bar fits its label into ~16 cells, so a
+ * A prefix, deliberately: the metrics bar fits its label into ~16 cells, so a
  * `(retired …)` suffix is the first thing truncation eats — a marker that
  * disappears at the widths people actually run is not a marker. The date rides
  * the bar's value column, where there is room, and the card's subtitle
@@ -62,7 +61,7 @@ export function historicalStateLabel(state: string): string {
 
 const SORT_ORDER: PrLifecycleState[] = ["reviewing", "queued", "awaiting_author", "tracked"];
 
-/** Board order: lifecycle groups per the mockup, stable by PR number within
+/** Board order: lifecycle groups, stable by PR number within
  * a group; closed PRs are dropped entirely. */
 export function sortPrs(prs: SnapshotPr[]): SnapshotPr[] {
   const rank = (s: string): number => {

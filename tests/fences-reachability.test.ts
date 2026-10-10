@@ -1,21 +1,14 @@
 // [T8] — no production-dead module hides behind its own tests.
 //
-// The inventory's [T8] proposed "no exported symbol may be referenced only by
-// its own tests, with an explicit, reasoned allowlist — which is where
-// posting.ts would sit until [F1] is settled, making the debt visible instead
-// of silent". Deliberately narrowed here to MODULES rather than symbols: at
-// symbol granularity the allowlist would run to hundreds of entries (pure
-// helpers legitimately exercised only through their own unit tests), and an
-// allowlist nobody reads is the "teaches the reader to skim" failure this
-// ticket exists to avoid. At module granularity the set is three, and every
-// one of them is worth knowing about.
+// Checked at module rather than symbol granularity: at symbol granularity the
+// allowlist would run to hundreds of entries (pure helpers legitimately
+// exercised only through their own unit tests), and an allowlist nobody reads
+// teaches the reader to skim. At module granularity the set is small, and
+// every entry is worth knowing about.
 //
-// REACHABILITY from the real entrypoints, not "somebody imports it" — for the
+// Reachability from the real entrypoints, not "somebody imports it" — for the
 // same reason [T3] uses a BFS: a dead module imported by another dead module
-// looks alive. The naive version of this check reported four orphans and
-// missed the shape entirely; the transitive one reports three and correctly
-// clears `src/anchors.ts`, which the naive read would have implicated purely
-// because its only importer is dead.
+// looks alive, and a module whose only importer is dead is itself dead.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,12 +19,10 @@ const ROOT = join(import.meta.dirname, "..");
 /**
  * Comments removed before the import scan.
  *
- * Without this the fence read a COMMENTED-OUT import as a live edge, and a
- * planted orphan plus one commented-out import line in `wire.ts` passed
- * clean. That is the single most likely artefact of the "remove, relocate,
- * repair" work this whole effort consists of — someone comments an import
- * while cutting a module and the fence that exists to notice says nothing.
- * Every other fence file on this branch strips comments; this one did not.
+ * Without this the fence would read a commented-out import as a live edge,
+ * and a planted orphan plus one commented-out import line in `wire.ts`
+ * would pass clean — the likeliest artefact of someone commenting an import
+ * while cutting a module.
  */
 function stripComments(text: string): string {
   return text
@@ -54,7 +45,7 @@ function tsFiles(dir: string): string[] {
 
 describe("[T8] every src/ module is reachable from a real entrypoint", () => {
   /**
-   * The three modules nothing in production can reach, each with what it is
+   * The modules nothing in production can reach, each with what it is
    * and who drives it. Set equality both ways: a new orphan fails, and a
    * module that stops being an orphan fails too, so an entry cannot outlive
    * its reason.

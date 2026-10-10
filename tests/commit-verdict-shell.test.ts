@@ -1,4 +1,4 @@
-// scripts/commit-verdict.sh (H1a, #5885) — the sessions' one way to
+// scripts/commit-verdict.sh — the sessions' one way to
 // publish a verdict or recheck-outcome file. Run for real from a scratch root
 // (a copy of the script in <root>/scripts/, so its own location decides where
 // verdict/ is — no env override exists to point it elsewhere).
@@ -261,8 +261,8 @@ describe("commit-verdict.sh", () => {
         extent_reason: "adds the requested assertion only",
         escalations: [{ question: "q" }],
       });
-      // The daemon reads the decisions and their reasons off the verdict
-      //: a projection that dropped them lost both events live.
+      // The daemon reads the decisions and their reasons off the verdict, so
+      // a projection that dropped them would lose both events.
       const parsed = validateVerdict(v);
       expect(parsed.ok && parsed.verdict).toMatchObject({
         sweep: "skipped",

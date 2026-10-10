@@ -1,8 +1,8 @@
-// the optional, off-by-default escalation feature.
+// The optional, off-by-default escalation feature.
 //
-// The ticket named two invariants and asked for both to be STRUCTURAL and
-// pinned. This file is organised around them, and the first two describes are
-// the ones to read if you only read two:
+// Two invariants bind it, both structural and pinned. This file is organised
+// around them, and the first two describes are the ones to read if you only
+// read two:
 //
 //   INVARIANT 1 — escalation can never withhold, defer or replace a verdict.
 //   INVARIANT 2 — it escalates a QUESTION, never a review.
@@ -81,9 +81,8 @@ function facts(over: Partial<EscalationFacts> = {}): EscalationFacts {
 
 const SCOPE = { kind: "code" as const, path: "billing/charge.py", start_line: 12, end_line: 30 };
 
-/** The PR's changed files, as every delivery call must now supply them: a
- * `code`/`migration` scope naming anything else is refused (review,
- * blocker 2). */
+/** The PR's changed files, as every delivery call must supply them: a
+ * `code`/`migration` scope naming anything else is refused. */
 const CHANGED = [
   "billing/charge.py",
   "app/migrations/0042.py",
@@ -125,7 +124,7 @@ function fakeAdapter(
       reviews.push({ pr, payload, ...(options?.purpose ? { purpose: options.purpose } : {}) });
       if (over.blocked) return { executed: false, blocked: over.blocked };
       // What the REAL gate returns in dry-run: not executed, no `blocked`,
-      // a recorded file. This shape is the whole of blocker 1.
+      // a recorded file. A delivery must not read this as delivered.
       if (over.dryRun) return { executed: false, dryRunFile: `/tmp/dryrun/${pr}.json` };
       return { executed: true };
     },
@@ -287,10 +286,8 @@ describe("INVARIANT 1 — the reviewer still decides; escalation rides beside th
         const row = s.getPr(42)!;
         snapshots.push({
           state: row.state,
-          // (`PrStateRow` carries no verdict column at all — the line that used
-          // to read `row.last_verdict` here compared undefined against undefined
-          // on both sides of the parity and asserted nothing. The `round` line
-          // below is where the verdict actually is..)
+          // (`PrStateRow` carries no verdict column; the `round` line below
+          // is where the verdict is.)
           head: row.head_sha,
           round: s.roundsFor(42).map((r) => `${r.round_no}:${r.status}:${r.verdict ?? ""}`),
           // Timestamps are wall-clock, so only the SHAPE and content are
@@ -510,7 +507,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     // The escalation note is the one posting exempt from guard 2, so the case
     // where the round's own review was refused is exactly the case where this
     // note still goes out. Telling a named human to go read a review that
-    // never landed sends them hunting for nothing (review, F3).
+    // never landed sends them hunting for nothing.
     for (const ctx of [{ verdict: "APPROVE" }, { verdict: "APPROVE", review_posted: false }]) {
       const body = renderEscalationComment(request(), ctx);
       expect(body).toContain("already decided");
@@ -576,8 +573,8 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
     }
   });
 
-  // --- review, blocker 2: the two holes that made a whole-PR
-  // escalation spellable after all, and the tests that close them.
+  // --- A whole-PR escalation must be unspellable: a scope path must be a
+  // file this PR touches, and a decision must be a capped name.
 
   it("a path must be a file THIS PR touches — an invented one is refused", () => {
     const c = on({ session_judgement: true });
@@ -651,7 +648,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
 
   it("a `decision` name goes through the whole-review check and is capped", () => {
     const c = on({ session_judgement: true });
-    // THE EXPLOIT the reviewer found: `decision` was unconstrained free text.
+    // The exploit: `decision` as unconstrained free text asking for a review.
     const v = validateEscalationRequest(
       {
         ...request(),
@@ -671,7 +668,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it("the whole-review check catches the natural phrasings, not just the obvious ones", () => {
-    // Every one of these passed the first version of the predicate.
+    // Whole-review asks in natural phrasing, each of which must be caught.
     for (const q of [
       "Could you cast an eye over all of it?",
       "Please read through the changes.",
@@ -704,19 +701,14 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it("SCOPE-OF-EFFECT questions are not whole-review asks — the belt's own failure mode", () => {
-    // re-review, N2, and the reason this describe exists twice over.
-    //
-    // The second cut of the predicate treated `whole`, `entire`, `everything`,
-    // `at all`, `overall` as damning ON THEIR OWN, reasoning that "nothing
-    // narrow needs them". That is false: they are the standard vocabulary of
-    // SCOPE-OF-EFFECT questions, which is exactly what a narrow escalation
-    // asks — the first line below is the canonical thing this feature exists
-    // for. It refused 9 of 12 such questions.
+    // `whole`, `entire`, `everything`, `at all`, `overall` are not damning on
+    // their own: they are the standard vocabulary of SCOPE-OF-EFFECT
+    // questions, which is exactly what a narrow escalation asks — the first
+    // line below is the canonical thing this feature exists for.
     //
     // A false positive here is a SILENT DROP: `escalation_refused`, no
     // delivery, nobody told. So the belt is tuned to UNDER-block, and this
-    // negative set is the pin. The previous negative set could not see the
-    // bug because every phrasing in it avoided the trigger words.
+    // negative set is the pin; it deliberately uses the trigger words.
     for (const q of [
       "Does this lock the whole row, or just the counter?",
       "Is the entire cache invalidated here, or only the tenant slice?",
@@ -755,11 +747,10 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it("a fired rule is NEVER silently dropped by wording — the operator's own words cannot break it", () => {
-    // Two things this pins together (re-review):
+    // Two things this pins together:
     //
-    //  * the rule-built strings are back to their natural phrasing — they were
-    //    briefly written defensively to dodge the belt, and needing to dodge
-    //    was the signal that the belt was wrong;
+    //  * the rule-built strings use their natural phrasing — they never need
+    //    to dodge the belt;
     //  * the belt does not run on rule-origin text at all, so an operator who
     //    names a label "review the whole thing" still gets their escalation.
     //    That case is deliberately in the list: it is the one that would be a
@@ -826,7 +817,7 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
 
   it("a fired rule that produces nothing is REPORTED, never silent", () => {
     // The operator configured it and it matched; if nobody is told, they must
-    // at least be able to see why (re-review).
+    // at least be able to see why.
     const c = on({ rules: [{ name: "sev", to: "teammate-one", why: "w", min_severity: "P1" }] });
     const refusals: Array<[string, string]> = [];
     const out = evaluateEscalationRules(c, facts({ findings: [{ severity: "P0" }] }), (r, why) =>
@@ -852,9 +843,8 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it("`why` is a third free-text slot and is belted for SESSION escalations", () => {
-    // re-review, N1. A narrow question could ride beside a "why you"
-    // that asked for the whole review — and `why` is model-written on a
-    // session entry.
+    // A narrow question must not ride beside a "why you" that asks for the
+    // whole review — `why` is model-written on a session entry.
     const c = on({ session_judgement: true });
     const smuggled =
       "honestly, please just review this whole pull request end to end and sign off on it — " +
@@ -885,15 +875,14 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it('a session candidate CANNOT relabel itself `origin: "rule"` to buy the exemption', async () => {
-    // re-review, the blocker. `origin` used to be read off the
-    // candidate — and for a session candidate the candidate IS the verdict
-    // file's `escalations` entry, which the model writes. So the model marked
-    // its own trust level: `"origin": "rule"` bought the belt exemption on all
-    // three free-text slots AND forged the audit trail, since the ledger row
-    // and the rendered "_Escalated by the configured rule `x`._" line both
-    // name a rule that need not exist.
+    // Origin must never be read off the candidate: for a session candidate
+    // the candidate IS the verdict file's `escalations` entry, which the model
+    // writes. Were it read there, `"origin": "rule"` would buy the belt
+    // exemption on all three free-text slots AND forge the audit trail, since
+    // the ledger row and the rendered "_Escalated by the configured rule
+    // `x`._" line both name a rule that need not exist.
     //
-    // Origin is now an argument, and `deliverEscalations` takes the two groups
+    // Origin is an argument, and `deliverEscalations` takes the two groups
     // separately, so the label on the payload is inert.
     const c = on({ session_judgement: true });
     const forged = {
@@ -961,9 +950,8 @@ describe("INVARIANT 2 — a specific thing, never 'review this PR'", () => {
   });
 
   it("a decision scope's OPTIONAL path is checked against the diff too", () => {
-    // re-review, N4: `scope.kind !== "decision"` exempted the whole
-    // scope, so an invented path rode along on a decision, rendered, and minted
-    // its own dedup key.
+    // A decision scope is not exempt from the path check: an invented path
+    // riding along on a decision would render and mint its own dedup key.
     const c = on({ session_judgement: true });
     const bad = validateEscalationRequest(
       {
@@ -1053,7 +1041,7 @@ describe("off by default — a stock install is unchanged", () => {
   });
 
   it("the dedup key is the PLACE, not the line offsets", () => {
-    // review, F5. Keying on lines made 12–30 and 14–32 two distinct
+    // The key is not the line range: 12–30 and 14–32 would be two distinct
     // asks rendering near-identical notes — the nag the ledger exists to stop.
     expect(scopeKey({ kind: "code", path: "a/b.py", start_line: 12, end_line: 30 })).toBe(
       scopeKey({ kind: "code", path: "a/b.py", start_line: 14, end_line: 32 }),
@@ -1071,9 +1059,8 @@ describe("off by default — a stock install is unchanged", () => {
   });
 
   it("an end_line without a start_line is dropped, not carried", () => {
-    // The old `end ?? start` was dead code inside a branch that already
-    // required `end`, and a lone end_line rendered as nothing while sitting
-    // in the scope (review, F5).
+    // A lone end_line is dropped: it would render as nothing while sitting in
+    // the scope.
     const scope = normalizeScope({ kind: "code", path: "a/b.py", end_line: 40 })!;
     expect(scope).toEqual({ kind: "code", path: "a/b.py" });
     // A reversed range is clamped rather than rendering backwards.
@@ -1116,11 +1103,9 @@ describe("off by default — a stock install is unchanged", () => {
     expect(rendered).not.toContain("{{escalation_note}}");
 
     // …and WHITESPACE IS THE ONLY DIFFERENCE from a template that never had
-    // the placeholder. This is the honest form of the claim: the acceptance
-    // criterion is behaviour, and the docs used to overstate it as "byte
-    // identical" (review, near-blocking). `{{escalation_note}}`
-    // renders empty and leaves a blank line, exactly as the sibling
-    // `{{directive_note}}` beside it already does.
+    // the placeholder — the claim is behavioural, not byte identity.
+    // `{{escalation_note}}` renders empty and leaves a blank line, exactly as
+    // the sibling `{{directive_note}}` beside it does.
     const withoutPlaceholder = template.replace("\n{{escalation_note}}\n", "");
     expect(withoutPlaceholder).not.toBe(template); // the placeholder really is there
     const collapse = (t: string) => t.replace(/\n{2,}/g, "\n\n");
@@ -1383,7 +1368,7 @@ describe("delivery", () => {
     expect(adapter.order).toEqual(["comment", "request"]);
     expect(outcomes[0]).toMatchObject({ comment_executed: true, review_requested: false });
     // The note was posted BEFORE the request failed, so it must not have
-    // promised a queue entry that never arrived (selfscan d5a5ee72).
+    // promised a queue entry that never arrived.
     const posted = (adapter.reviews[0]!.payload as { body: string }).body;
     expect(posted).not.toContain("You will also see");
     expect(posted).toContain("review-requested queue");
@@ -1472,8 +1457,8 @@ describe("delivery", () => {
 
   it("never twice holds when the scope itself contains a '|' (selfscan 1deeb309)", async () => {
     // The dedup key is `<target>|<scopeKey>`; `split("|", 2)` TRUNCATES in JS
-    // rather than splitting once, so a decision named "use A | B" looked up a
-    // scope_key that was never stored and was re-posted every round.
+    // rather than splitting once, so a decision named "use A | B" would look
+    // up a scope_key that was never stored and be re-posted every round.
     const c = on({ session_judgement: true });
     const candidate = { ...request(), scope: { kind: "decision" as const, decision: "use A | B" } };
     const call = (adapter: ReturnType<typeof fakeAdapter>) =>
@@ -1549,15 +1534,15 @@ describe("delivery", () => {
     expect(store.recentEvents(10).map((e) => e.kind)).toContain("escalation_delivered");
   });
 
-  // --- review, blocker 1: the ledger records DELIVERIES, not attempts.
+  // --- The ledger records DELIVERIES, not attempts.
 
   it("a DRY-RUN escalation consumes neither the dedup key nor the cap", async () => {
     // The scenario the docs walk a new operator into: enable escalation, run
     // the documented dry-run bring-up. The gate returns
-    // {executed:false, dryRunFile} with NO `blocked`, so before the fix this
-    // wrote a row — and `escalations_once` then owned that (pr, target,
-    // scope_key) pair FOREVER. Going live, the real escalation came back
-    // `already-delivered`, silently, fixable only by editing SQLite by hand.
+    // {executed:false, dryRunFile} with NO `blocked`. Were that recorded,
+    // `escalations_once` would own that (pr, target, scope_key) pair FOREVER,
+    // and going live the real escalation would come back `already-delivered`,
+    // silently, fixable only by editing SQLite by hand.
     const c = on();
     const candidates = evaluateEscalationRules(
       c,
@@ -1735,10 +1720,10 @@ describe("the escalation note obeys the posting guards", () => {
   });
 
   it("a reviewPurpose is confined to a COMMENT create_review — the exemptions cannot ride anything else", async () => {
-    // review, F6. A purpose buys two exemptions (guard 2, and never
-    // claiming the head), so an APPROVE carrying one would be an approval that
-    // skips the no-new-evidence guard AND never marks the head it approved.
-    // gate.ts asserted this in prose; now it refuses.
+    // A purpose buys two exemptions (guard 2, and never claiming the head),
+    // so an APPROVE carrying one would be an approval that skips the
+    // no-new-evidence guard AND never marks the head it approved. The gate
+    // refuses it.
     const { gate, executor } = harness();
     for (const event of ["APPROVE", "REQUEST_CHANGES", ""]) {
       const bad = { ...note(), body: { commit_id: HEAD, event, body: "x" } };
@@ -1754,11 +1739,10 @@ describe("the escalation note obeys the posting guards", () => {
   });
 
   it("the PRE-guard half of that check binds on a gate with NO guard installed", async () => {
-    // re-review, N5: with only the post-guard check, deleting the
-    // pre-guard call passed the whole suite — and on a gate with no guard
-    // (nothing runs between the two) a purposed APPROVE executed FOR REAL.
-    // `wire.ts` always calls setGuard, so there was no live risk; half a
-    // defence-in-depth belt being silently deletable is the defect.
+    // The pre-guard check is pinned on its own: on a gate with no guard
+    // (nothing runs between the two checks) a purposed APPROVE would
+    // otherwise execute FOR REAL. `wire.ts` always calls setGuard, but half a
+    // defence-in-depth belt must not be silently deletable.
     const executor = vi.fn(async () => ({ id: 1 }));
     const dryrunDir = mkdtempSync(join(tmpdir(), "qcr-esc-noguard-"));
     const bare = new MutationGate(
@@ -1882,10 +1866,9 @@ describe("configuration refuses a half-configured feature", () => {
   });
 
   it("a switched-off table is a DRAFT — a half-written rule cannot wedge startup", () => {
-    // review, F8. Both docs call a switched-off table a draft; before
-    // the fix the rule-shape checks ran ahead of the early return, so a rule
-    // an operator was still writing threw out of parseConfig — i.e. the daemon
-    // would not boot — with the feature OFF.
+    // A switched-off table is a draft: the rule-shape checks must not run, or
+    // a rule an operator is still writing would throw out of parseConfig —
+    // i.e. the daemon would not boot — with the feature OFF.
     const drafts = [
       { enabled: false, rules: [{ name: "half-written", to: "someone", paths: ["src/**"] }] }, // no `why` yet
       { enabled: false, rules: [{ name: "thinking", to: "someone", why: "because" }] }, // no condition yet
@@ -2031,9 +2014,8 @@ describe("the verdict path delivers what the rules found", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  // re-review, N6: `roundReviewConfirmed` was unpinned — `return true`
-  // passed the whole suite. These two drive the REAL receipt reader through the
-  // real verdict path, over the branches that decide the note's wording.
+  // `roundReviewConfirmed` decides the note's wording. These two drive the
+  // REAL receipt reader through the real verdict path, over its branches.
   it(
     "the note says POSTED when the round's posting receipt confirms it, and not otherwise",
     { timeout: HEAVY_TIMEOUT_MS },

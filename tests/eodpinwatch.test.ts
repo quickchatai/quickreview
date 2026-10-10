@@ -348,9 +348,9 @@ describe("degradation is 'could not check', never 'changed'", () => {
   });
 
   it("a store sweep that could not read everything degrades — never a removal, never 'unchanged'", async () => {
-    // The production reader: `read()` folds a dead server into `[]`, which the
-    // watchdog took as a real, empty pinned area — every pin "removed" when
-    // only the after-read failed, "unchanged" when both did.
+    // The production reader: `read()` folds a dead server into `[]`, which
+    // must not be taken as a real, empty pinned area — that would report every
+    // pin "removed" when only the after-read failed, "unchanged" when both did.
     const pinned = { ...entry("b1", 0, "h1"), pinned: true };
     const dead = { entries: [], unread: ["ls viking://memories: ECONNREFUSED 127.0.0.1:1933"] };
     for (const sweeps of [

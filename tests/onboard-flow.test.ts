@@ -1,15 +1,14 @@
-// the COMPOSED onboarding flow: the REAL registered steps, driven
+// The COMPOSED onboarding flow: the REAL registered steps, driven
 // through the REAL engine in registered order, with every side effect faked.
 //
-// This is the test that was missing. Twelve slices each green in isolation
-// composed into a wizard that stopped at step five of sixteen, because every
-// per-step suite injected the choices its step read instead of letting an
-// earlier step record them. So nothing here seeds a choice: each handoff is
-// asserted on the value the PREVIOUS step actually wrote.
+// Per-step suites inject the choices their step reads instead of letting an
+// earlier step record them, so each stays green even when the composed wizard
+// would stop at a key nothing writes. So nothing here seeds a choice: each
+// handoff is asserted on the value the PREVIOUS step actually wrote.
 //
 // The five handoffs it pins, one assertion each:
 //   * the reviewed repo the interview records reaches the GitHub App step
-//     (the defect: it read a key nothing wrote);
+//     (under the key the interview actually writes);
 //   * the App slug GitHub itself reports reaches the slug reconciliation;
 //   * the topology reaches the transport selection (compose here, ssh there);
 //   * the ingress choice reaches the config fill AND the tunnel profile;
@@ -265,7 +264,7 @@ function ctxOverChoices(engine: OnboardingEngine): StepContext {
 const LAPTOP_INPUTS: Inputs = {
   topology: { choice: "local" },
   ingress: { choice: "named", hostname: HOSTNAME },
-  // the escalation step ASKS, and refuses to guess — with no answer
+  // The escalation step ASKS, and refuses to guess — with no answer
   // it returns its teach-and-offer refusal and the composed flow goes red.
   // "no" is the answer most teams give and the shipped default.
   escalation: { enable: "no" },
@@ -300,10 +299,10 @@ describe("the registered steps hand their choices to each other", () => {
     },
   );
 
-  // ---, and it is the lesson applied: the escalation step
-  // reads `CHOICE_KEYS.configPath`, which only `config_fill` writes. A
-  // per-step suite with a seeded choice would pass either way; this drives the
-  // real registry with NOTHING seeded, so a key nobody writes is a red step.
+  // --- The escalation step reads `CHOICE_KEYS.configPath`, which only
+  // `config_fill` writes. A per-step suite with a seeded choice would pass
+  // either way; this drives the real registry with NOTHING seeded, so a key
+  // nobody writes is a red step.
   it("HANDOFF 6 — the config path the interview records reaches the escalation step", async () => {
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const d = await drive(engine, LAPTOP_INPUTS_ESCALATION, ESCALATION_STEP_ID, SKIP);
@@ -322,9 +321,9 @@ describe("the registered steps hand their choices to each other", () => {
   });
 
   it("HANDOFF 6d — two targets means TWO rules, not a rule reaching the first one", async () => {
-    // review, spec gap: an operator answering "alice, bob" used to get
-    // a rule pointing at alice alone, silently. `EscalationRule.to` is one
-    // person by design, so the interview writes one rule per target.
+    // An operator answering "alice, bob" must not get a rule pointing at alice
+    // alone, silently. `EscalationRule.to` is one person by design, so the
+    // interview writes one rule per target.
     const engine = new OnboardingEngine(defaultSteps(), adapters());
     const inputs: Inputs = {
       ...LAPTOP_INPUTS,
@@ -381,8 +380,8 @@ describe("the registered steps hand their choices to each other", () => {
       // Written by the interview…
       expect(engine.choices()[CHOICE_KEYS.repo]).toBe(REPO);
       // …and READ by the App step: it verified the installation on that owner
-      // and created the labels on that repository. Before this step
-      // refused here, because it read a key nothing wrote.
+      // and created the labels on that repository. Reading a key nothing
+      // wrote would make it refuse here.
       expect(d.results.get(GITHUB_APP_STEP_ID)!.ok).toBe(true);
       expect(detail(d, GITHUB_APP_STEP_ID, "installation")).toContain("acme");
       expect(calls).toContain(`POST /repos/${REPO}/labels`);
@@ -442,9 +441,8 @@ describe("the registered steps hand their choices to each other", () => {
     expect(engine.choices()[CHOICE_KEYS.webhookUrl]).toBe(`https://${HOSTNAME}/webhook`);
 
     // The interview's conditional question follows the SAME vocabulary: before
-    // the ingress step it does not apply; after it, it does. It used to test
-    // for "named-tunnel", a value nothing could ever record, so the question
-    // never fired at all.
+    // the ingress step it does not apply; after it, it does. A spelling the
+    // ingress step never records would mean the question never fires.
     const webhookQuestion = QUESTIONS.find((q) => q.id === "webhook_hostname")!;
     expect(questionAsked(webhookQuestion, {})).toBe(false);
     expect(questionAsked(webhookQuestion, engine.choices())).toBe(true);
@@ -491,8 +489,7 @@ describe("the registered steps hand their choices to each other", () => {
     expect(engine.choices()[CHOICE_KEYS.authRoute]).toBe("api");
     // The rewrite the route drives: pi's direct-API provider prefix.
     expect(readFileSync(join(root, "config.toml"), "utf8")).toContain('"openai/');
-    // And the reader that used to test for "auth_route" / "api_key" and so
-    // never said anything at all.
+    // And the shape line reads the same route vocabulary the step records.
     expect(detail(d, "config_fill", "shape")).toContain("auth route api");
   });
 });

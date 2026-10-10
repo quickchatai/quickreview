@@ -2,15 +2,14 @@
 
 The memory engine (OpenViking) turns every memory entry, and every search
 query, into a vector. **Where that happens is a sovereignty question**, and
-since the shipped answer is: **locally**, inside the daemon container.
-No key, no account, and no memory text ever leaves the machine — nothing but
-the model call does.
+the shipped answer is: **locally**, inside the daemon container. No key, no
+account, and no memory text ever leaves the machine — nothing but the model
+call does.
 
-Since S4 (the owner's ruling R5, 2026-10-06) "locally" means **the
-local English embedder**: a small English embedding model
-(`bge-small-en-v1.5`, 384 dimensions) served on loopback by
-`scripts/openviking-embedder.py`. It replaced the engine's own built-in local
-model, which was Chinese-first and ran on the server's only event loop.
+"Locally" means **the local English embedder**: a small English embedding
+model (`bge-small-en-v1.5`, 384 dimensions) served on loopback by
+`scripts/openviking-embedder.py`, instead of the engine's own built-in local
+model, which is Chinese-first and runs on the server's only event loop.
 
 This page is the operator's reference for the embedder. It covers the knob,
 the local embedder and its pin, the hosted opt-in and its separate
@@ -48,15 +47,16 @@ The refusal matters. If `config.toml` says `openai` and the boot renders
 wrong embedder on the next start.
 
 Under `local`, the model and the dimension belong to the local embedder. The
-config loader refuses any other values, with one exception: the previous
-release REQUIRED `bge-small-zh-v1.5-f16` / `512`, so a config that still says
-that loads as the local English embedder rather than stopping the daemon.
+config loader refuses any other values, with one exception: a config that
+still spells the engine's built-in model (`bge-small-zh-v1.5-f16` / `512`,
+which earlier releases required) loads as the local English embedder rather
+than stopping the daemon (`RETIRED_LOCAL_EMBEDDING` in `src/config.ts`).
 Under `local` the boot renders the pinned model whatever the generic knobs
 say, and logs a line when they disagree. Under `openai`, name the hosted model
 and its dimension (`text-embedding-3-small` / `1536` are the defaults the
 wizard writes).
 
-## The local English embedder (S4)
+## The local English embedder
 
 ### What runs
 
@@ -96,8 +96,8 @@ and the only URL in ov.conf is loopback. That provider is the engine's
 model on the server's event loop. 0.4.15's own `local` provider had three
 faults: one model only (`bge-small-zh-v1.5`, Chinese-first), a Chinese query
 instruction hard-wired onto every English query, and a synchronous embed on
-the one event loop. Through that last fault a single search stalled every
-other request (search p50 22 s, max 155 s, before this change).
+the one event loop. Through that last fault a single search stalls every
+other request (measured on the live store: search p50 22 s, max 155 s).
 
 ### Who runs it
 
@@ -109,8 +109,8 @@ other request (search p50 22 s, max 155 s, before this change).
   The daemon starts the embedder **only when it is the embedder in use**:
   `config.toml` says `local` AND the rendered ov.conf's `api_base` is this
   config's loopback URL. Otherwise nothing is spawned, and the heartbeat says
-  why: a hosted opt-in, or an ov.conf from an image that predates this (that
-  case asks for `scripts/deploy.sh rebuild`). A missing interpreter, script or
+  why: a hosted opt-in, or an ov.conf from an image that predates the local
+  embedder (that case asks for `scripts/deploy.sh rebuild`). A missing interpreter, script or
   model file is reported once and never retried, like the server's binary on
   a dev PC.
 - **Boot provisioning** (`scripts/openviking-provision.mjs`, `--embedder-*`
@@ -145,9 +145,9 @@ server's own `/ready` then goes false (it probes the embedder), so
 
 ### When it fails, a person hears it
 
-Memory health's authenticated probe (S1) is an `fs/ls`, and that call
-needs no embedding. So on its own, the probe kept reading memory as healthy
-while a dead embedder failed every search. Memory health therefore also reads
+Memory health's authenticated probe is an `fs/ls`, and that call needs no
+embedding, so on its own the probe would read memory as healthy while a dead
+embedder failed every search. Memory health therefore also reads
 whether memory **serves**: `memoryServing` in `src/openviking/embedder.ts`,
 from the two supervisors' cached statuses.
 
@@ -159,7 +159,7 @@ from the two supervisors' cached statuses.
     refuses.
 - **Unknown:** a server that does not answer at all. The authenticated probe
   judges that case.
-- **Serving:** anything else. An ov.conf that predates this image, where the
+- **Serving:** anything else. An ov.conf from an older image, where the
   engine still embeds itself, serves as long as `/ready` passes.
 
 Memory that answers but does not serve reads **degraded** at once. After
@@ -191,14 +191,13 @@ each checked:
 | the image | a layer in `Dockerfile.j2` (interpolating the group_vars) and in `docker/daemon/Dockerfile` (its `LOCAL_EMBEDDER_*` ARG defaults) |
 
 The model layer downloads the file **at build time** and fails the build
-unless `sha256sum -c` passes, so a running container never fetches a model.
-(The engine's built-in local provider downloaded its model at first start.)
+unless `sha256sum -c` passes, so a running container never fetches a model
+(the engine's built-in local provider downloads its model at first start).
 The URL names a Hugging Face commit, never a branch. `tests/openviking.test.ts`
 and `tests/docker-daemon.test.ts` refuse drift between the mirrors, and so
 does the `scripts/deploy.sh` preflight, which also names the pin in its plan.
-**Changing the pin needs `scripts/deploy.sh rebuild`**, and so does the first
-deploy of this change: the playbook's stale-image guard refuses a `sync` whose
-Dockerfile or entrypoint changed. The model's name and dimension also live in
+**Changing the pin needs `scripts/deploy.sh rebuild`**: the playbook's
+stale-image guard refuses a `sync` whose Dockerfile or entrypoint changed. The model's name and dimension also live in
 code (`LOCAL_EMBEDDING` in `src/config.ts`, the service's model table, the
 re-embed script's `LOCAL_EMBEDDER`), and `tests/openviking-embedder.test.ts`
 holds them together.
@@ -218,7 +217,7 @@ The model was chosen by a small offline retrieval evaluation on 2026-10-07.
 
 | model (GGUF) | dims | size | MRR@10 | R@1 | R@5 | nDCG@10 | AUC¹ | round query, 1 thread² |
 |---|---|---|---|---|---|---|---|---|
-| bge-small-zh-v1.5-f16 (the engine's built-in, until now) | 512 | 48 MB | 0.34 | 0.23 | 0.39 | 0.35 | 0.84 | 21 ms |
+| bge-small-zh-v1.5-f16 (the engine's built-in) | 512 | 48 MB | 0.34 | 0.23 | 0.39 | 0.35 | 0.84 | 21 ms |
 | **bge-small-en-v1.5-f16 (chosen)** | 384 | 67 MB | **0.56** | 0.40 | **0.77** | 0.61 | **0.93** | **24 ms** |
 | bge-small-en-v1.5-f16, no query instruction | 384 | 67 MB | 0.48 | 0.37 | 0.67 | 0.52 | 0.89 | 20 ms |
 | bge-small-en-v1.5-q8_0 | 384 | 37 MB | 0.57 | 0.40 | 0.76 | 0.62 | 0.93 | 32 ms |
@@ -229,9 +228,8 @@ The model was chosen by a small offline retrieval evaluation on 2026-10-07.
 separation the old model lacked (its scores sat in a flat 0.48–0.66 band).
 ² p50 over the 30 round queries, three times each, warm, on ONE thread with
 the 512-token context the service runs (a round query is 26–54 tokens with
-its prefix). Every model in this column was measured in ONE run of one
-harness. The first draft of this table mixed two runs, and the review caught
-it. Single runs on this shared machine vary by about a third, so read the
+its prefix). Every model in this column was measured in one run of one
+harness. Single runs on this shared machine vary by about a third, so read the
 column as tiers: the small models take 20–30 ms, and bge-base and nomic take
 about five times that. For the chosen model, a query cut to 128 tokens (the
 cap) took about 90 ms in that run, and a 512-token one took 520–750 ms across
@@ -279,9 +277,9 @@ The credential is `<secrets dir>/openai_embeddings_api_key` (the
 `embedding_key_file` knob), collected by `bash deploy/collect-secrets.sh` at
 its own prompt, 0600, and copied to the VM by the playbook if present.
 **`openai_api_key` is pi's model credential and is never read for
-embeddings.** They used to be the same file, which meant the advice "leave the
-embeddings key unset" also unset pi's credential on the API-key route; now
-either can exist without the other.
+embeddings.** Keeping them in separate files means either can exist without
+the other: leaving the embeddings key unset never unsets pi's credential on
+the API-key route.
 
 The onboarding wizard's embeddings step (order 38) writes the opt-in and
 stays red until that file exists — and never accepts the value through the
@@ -300,8 +298,7 @@ does not match current configuration (384). Vectors are incompatible;
 rebuild is required.
 ```
 
-The owner ruled: **re-embed, never pin the old setting and never
-wipe**. `scripts/openviking-reembed.mjs` is the whole migration, in two halves
+The rule: **re-embed, never pin the old setting and never wipe**. `scripts/openviking-reembed.mjs` is the whole migration, in two halves
 that the code — not an operator — sequences:
 
 1. **`prepare` — disk, server down.** The container entrypoint runs it right
@@ -321,8 +318,8 @@ that the code — not an operator — sequences:
    as `operator`. It refuses — never guesses — when the metadata is unreadable,
    when a server is answering on the port, when the journal is unreadable, or
    when a reset for this same embedder already happened and the collection
-   still disagrees (a loop guard; a journal from an EARLIER migration, such as
-, does not trip it).
+   still disagrees (a loop guard; a journal from an earlier migration to a
+   different embedder does not trip it).
 2. **`resume` — HTTP, server up.** The daemon (`src/openviking/reembed.ts`)
    runs it once `/ready` passes, with the **reviewer user key** — the same key
    every review session holds, which the server confines to
@@ -393,7 +390,7 @@ Until you do, companion memory is browsable (the TUI lists entries from the
 files) but not searchable by similarity — nothing is lost, and nothing is
 silently wrong: the heartbeat says so.
 
-## Moving an install to the local English embedder (S4) — what to run
+## Moving an install to the local English embedder — what to run
 
 This covers every install that ran the engine's built-in local model, the
 live one included. Nothing is run on the store by hand: the migration is the
@@ -405,7 +402,7 @@ boot. In order:
    the daemon's parser and the deploy preflight read the old spelling as
    `bge-small-en-v1.5-f16` / 384 (the preflight says so in one note line), so
    the same file loads on both releases and a rollback of the code never
-   strands the config (integration review). Optionally copy the five
+   strands the config. Optionally copy the five
    `local_embedder_*` keys from `config.example.toml` — the previous release
    ignores unknown keys — so the preflight verifies the model-file pin rather
    than noting that the code defaults apply. Spell the new model only once the
@@ -451,7 +448,8 @@ boot. In order:
 
    The manual rename route (stop; move the new `context` aside; move the
    NEWEST `context.pre-reembed-<ts>` back to `context` — the volume may also
-   hold an older one, which is not it; delete `reembed.json`;
+   hold an older one from an earlier migration, which is not it; delete
+   `reembed.json`;
    start) restores only the vectors of records that existed at the deploy's
    reset. Everything written since — curator lessons, `events/` entries, the
    relayout's moves, the finding cases — then has NO vectors under the
@@ -468,7 +466,8 @@ Memory keeps working on the old model, and the heartbeat carries
 
 ## An existing install that used the hosted embedder — what to run
 
-This covers any adopter who deployed before and still runs hosted.
+This covers any install that still runs the hosted embedder (the default
+before local was).
 In order:
 
 1. **Decide.** Local is the default and needs nothing written. To keep
@@ -570,7 +569,8 @@ This path was proven twice against a real 0.4.15:
   - the HTTP half over a fake fetch: Bearer user key, no actor-peer header,
     accepted → polled, 401/403/409/dead server/error envelope/deadline;
   - `resume` journal in → journal out, `settle`, the CLI;
-  - the move from 512 to 384 with an journal on record, and
+  - the move from 512 to 384 with an earlier migration's journal on record,
+    and
     `rehearse`'s embedder flags.
 - `tests/openviking-reembed-driver.test.ts` — the daemon half:
   - it waits for `/ready`, runs one at a time, and reads the reviewer key

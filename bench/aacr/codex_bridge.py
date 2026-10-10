@@ -49,7 +49,7 @@ Headers mirror pi 0.87.1's Codex SSE transport (Authorization,
 chatgpt-account-id, originator: pi, OpenAI-Beta: responses=experimental,
 accept: text/event-stream) with this bridge's own User-Agent.
 
-The API-KEY route (QCR_BENCH_AUTH=api-key, src/bench/auth.ts): no
+The API-key route (QCR_BENCH_AUTH=api-key, src/bench/auth.ts): no
 login is read at all. The bridge forwards the same streamed Responses request
 to the PUBLIC API (https://api.openai.com/v1/responses) with
 `Authorization: Bearer $OPENAI_API_KEY` — the key from the container's

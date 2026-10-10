@@ -1,8 +1,8 @@
-// The regression case set — real past human review findings a
-// proposed change to the reviewer is tried against before it lands.
+// The regression case set — real past human review findings a proposed change
+// to the reviewer is tried against before it lands.
 //
-// Three things about this module are load-bearing, and each of them is a
-// ratified decision rather than an implementation choice:
+// Three things about this module are load-bearing design decisions rather than
+// implementation choices:
 //
 //  1. **Selection is by SUBSTANCE, not by verdict.** The obvious pool is the
 //     354 human CHANGES_REQUESTED reviews, but blocking measures the REVIEWER,
@@ -13,12 +13,12 @@
 //     NEVER reads `state` — the field is carried through only so the report can
 //     print it, and `tests/regression.test.ts` pins that by re-running the
 //     selection with every verdict flipped and demanding an identical result.
-//     The filter is the substance ladder (L0–L4), reproduced verbatim
-//     below so the instrument can be judged rather than trusted.
+//     The filter is the substance ladder (L0–L4), reproduced verbatim below so
+//     the instrument can be judged rather than trusted.
 //
 //  2. **A failure is an INVESTIGATION, not a veto and not a bug.** The reviewer
 //     legitimately differs from a human: much of what humans raise is out of
-//     its remit by ratified design (style lint owns, naming preference, "as we
+//     its remit by design (style lint owns, naming preference, "as we
 //     discussed"), and some human findings were argued down and merged anyway.
 //     Every finding therefore carries an EXPECTATION label, `runRegression`
 //     never returns a blocking verdict, and `renderInvestigation` ends in a
@@ -34,17 +34,18 @@
 //     dry-run, and it refuses to replay an open PR at all. Nothing in this file
 //     imports the daemon, `wire.ts`, or a GitHub adapter; the replay is
 //     injected, and a replay that routes through the live daemon is a posting
-//     path (that is how the harness works, and it is not how this one
-//     does). Pinned structurally by `tests/regression.test.ts`.
+//     path (that is how the cutover compare harness works, and it is not how
+//     this one does). Pinned structurally by `tests/regression.test.ts`.
 //
 // Scoping rule 2 holds throughout: this reads code, review text and CI results
 // off disk. It never executes reviewed code.
 
 // ---- the substance ladder ----------------------------------------------------
 //
-// Verbatim from's `substance.mjs` (`export/substance.md` publishes the
-// same regexes and the measured distribution). Reproduced rather than imported
-// because the tracker asset is evidence, not a dependency — but it must stay
+// Verbatim from the review-corpus study's `substance.mjs` (its
+// `export/substance.md` publishes the same regexes and the measured
+// distribution). Reproduced rather than imported because that asset is
+// evidence, not a dependency — but it must stay
 // byte-equivalent in behaviour, and any change to it changes what "substance"
 // means for every case in the set.
 
@@ -63,7 +64,7 @@ export const CONTEXT =
 
 /** The old `/auto-review` loop posted under a personal account and used this
  * grammar. In 1,387 PRs it fires on exactly one login in one date range and on
- * zero humans (`contamination.md`). A row it matches is the sandbox's
+ * zero humans. A row it matches is the sandbox's
  * own output — scoring against it would be scoring the reviewer against itself. */
 export const BOT_TAG = /^\s*\[(blocker|question|nit|check this|note)\b/i;
 
@@ -79,7 +80,7 @@ export const OFF_PR =
 
 /** Nothing at or after this instant is human ground truth: 335 findings from
  * 2026-05-20 are the old loop's own output, and ~835 from 2026-03-01 are
- * suspected AI-assisted and cannot be separated (report §0). */
+ * suspected AI-assisted and cannot be separated. */
 export const CONTAMINATION_CUTOFF = "2026-03-01T00:00:00Z";
 
 export interface Substance {
@@ -153,7 +154,7 @@ export const QUALIFYING_RUNG = 3;
 export type Expectation =
   /** The reviewer is supposed to reach this. A miss is worth a look. */
   | "expected-catch"
-  /** Ratified design puts this outside the reviewer's remit (style lint owns,
+  /** The reviewer's design puts this outside its remit (style lint owns,
    * naming preference, product opinion). A miss is CORRECT. */
   | "out-of-remit"
   /** The human was argued down, or the thread merged unresolved. Raising it is
@@ -394,9 +395,9 @@ export interface SandboxFinding {
 
 /** Theme words for matching. Deliberately NOT `compare.ts themeWords`: that one
  * strips backticked spans, and a human finding is often MOSTLY a backticked
- * identifier — stripping it removes the only alignable signal (
- * test-set-notes). Its STOPWORDS list also eats `add`/`use`/`make`/`need`,
- * which is most of a short human imperative. Here backticks are unwrapped and
+ * identifier — stripping it removes the only alignable signal. Its STOPWORDS
+ * list also eats `add`/`use`/`make`/`need`, which is most of a short human
+ * imperative. Here backticks are unwrapped and
  * only true function words are dropped. */
 const FUNCTION_WORDS = new Set([
   "the",
@@ -484,8 +485,8 @@ export function overlap(a: Set<string>, b: Set<string>): number {
 
 export interface MatchOptions {
   /** Theme overlap needed on the same file. Calibrate against real pairs and
-   * record what you measured — the harness's 0.2 Jaccard does not
-   * carry across, it was tuned for bot-vs-bot prose. */
+   * record what you measured — `compare.ts`'s 0.2 Jaccard does not carry
+   * across, it was tuned for bot-vs-bot prose. */
   threshold?: number;
   /** Lines apart still considered the same place. */
   lineWindow?: number;
@@ -541,9 +542,9 @@ export type FindingOutcome =
   | "reached"
   /** It did not reach an `expected-catch` finding. Worth a LOOK, not a bug. */
   | "not-reached"
-  /** It correctly stayed out of something ratified as out of remit. */
+  /** It correctly stayed out of something labelled out of remit. */
   | "correctly-silent"
-  /** It raised something ratified as out of remit. Note it; not a failure. */
+  /** It raised something labelled out of remit. Note it; not a failure. */
   | "out-of-remit-raised"
   /** An expected divergence, either way. Context only. */
   | "divergence";
@@ -562,8 +563,8 @@ export interface ScoredCase {
    * reads things humans skipped, which is the point of having it. */
   sandboxOnly: SandboxFinding[];
   /** True when the replay produced NOTHING for a case that has findings. The
-   * harness's failure mode was a vacuous PASS from an extractor that
-   * matched nothing; a case that scores clean because it scored nothing is a
+   * failure mode to avoid is a vacuous PASS from an extractor that matched
+   * nothing; a case that scores clean because it scored nothing is a
    * harness fault and is reported as one. */
   vacuous: boolean;
 }
@@ -644,9 +645,8 @@ export function assertReplaySafe(
   }
 }
 
-/** Renamed from `"ask-owner-legacy"`. The value is produced and rendered
- * (log line, JSON output, report markdown) but never parsed back or compared
- * outside this module, so the rename needs no input fold. */
+/** Produced and rendered (log line, JSON output, report markdown) but never
+ * parsed back or compared outside this module. */
 export type Recommendation = "no-action" | "look-at-these" | "ask-owner";
 
 export interface RegressionRun {

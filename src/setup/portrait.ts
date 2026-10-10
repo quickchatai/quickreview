@@ -1,6 +1,6 @@
-// The repo portrait (setup & scan spec "Portrait", user stories
-// 21–24): what the interview starts from. Two halves, kept apart on purpose
-// so the operator can check the one and still see the other:
+// The repo portrait (setup & scan spec "Portrait", user stories 21–24):
+// what the interview starts from. Two halves, kept apart on purpose so the
+// operator can check the one and still see the other:
 //
 //   - the FACTS — deterministic, assembled by the engine from what is already
 //     on disk: the stack (languages, manifests, frameworks) and the unit cut,
@@ -48,7 +48,7 @@ export const NARRATIVE_PREVIOUS_FILE = `${PORTRAIT_DIR}/narrative.previous.md`;
 /** A narrative is a page, not a report. */
 export const NARRATIVE_MAX = 16_000;
 
-// ---- the facts ---------------------------------------------------------------
+// ---- the facts ----
 
 export interface PortraitUnit {
   name: string;
@@ -93,8 +93,8 @@ export interface PortraitFacts {
   /** The last completed survey, for provenance — its notes are in reviewer
    * memory as `#survey` entries, not here. */
   survey: { id: string; finished_at: string; head: string | null; notes: number } | null;
-  /** What the scans found (scanfacts.ts); null — or absent, on facts
-   * stored before it existed — when nothing was ever scanned. */
+  /** What the scans found (scanfacts.ts); null — or absent, on legacy
+   * facts — when nothing was ever scanned. */
   scan?: PortraitScan | null;
   /** What could not be read while assembling — the rest is then partial. */
   problems: string[];
@@ -354,7 +354,7 @@ export function saveFacts(fs: StateFs, facts: PortraitFacts, now: Date): Assembl
   };
 }
 
-// ---- the narrative -----------------------------------------------------------
+// ---- the narrative ----
 
 export interface NarrativeDoc {
   /** The key of the facts it was written against; null for a file whose
@@ -560,7 +560,7 @@ export function storeNarrative(
   return { ok: true, facts_key: key, written_at: writtenAt, replaced, unchanged: false, diff };
 }
 
-// ---- the portrait, read back -------------------------------------------------
+// ---- the portrait, read back ----
 
 export interface PortraitView {
   facts: FactsRead;

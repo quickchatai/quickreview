@@ -5,7 +5,7 @@
 // registry (`PASS_ADDENDA`, src/include.ts) declares, authored as files so an
 // operator can match the reviewer's house-rule knowledge to their repo without
 // editing this codebase. The addendum registry remains the ONE composition
-// mechanism: a pack does not bypass it, it EXTENDS it — wire.ts appends the
+// mechanism: a pack does not bypass it, it extends it — wire.ts appends the
 // loaded pack to `PASS_ADDENDA` before calling `buildAgents`, so profile
 // entries compose onto built pass bodies AFTER every built-in generic entry
 // and BEFORE the dynamic same-day feedback addendum (which wire.ts appends
@@ -34,14 +34,14 @@
 // (README, .gitkeep) are ignored by contract; everything else that fails to
 // parse — missing frontmatter, unknown keys, a bad scope, an empty body, a
 // duplicate or reserved id — throws with the offending path. A malformed pack
-// is a LOUD build failure, never a silent skip.
+// is a loud build failure, never a silent skip.
 //
-// WHERE a profile lives is the install locator's call (,
-// `src/install.ts locateProfile`): the install's config home first, then the
+// Where a profile lives is the install locator's call
+// (`src/install.ts locateProfile`): the install's config home first, then the
 // checkout's generic examples — every loader below resolves the name through
 // it, so a name that could escape `profiles/` is refused before any read.
 //
-// INHERITANCE: `profile.toml` may say `extends = "<profile>"`, and
+// Inheritance: `profile.toml` may say `extends = "<profile>"`, and
 // the base may extend another, in chains. Every loader below resolves the
 // WHOLE chain (`profileChain` — base first, the selected profile last; a
 // cycle is refused, a missing base is a loud failure) and merges per kind:
@@ -55,7 +55,7 @@
 //     nearest profile that sets it wins;
 //   * the scan table (`[scan]`) — per key, the nearest profile that
 //     sets it wins (a list, `exclude`, is replaced whole, never appended);
-//   * the posting policy (`[posting]`, SNAPPY-PLAN.md) — per key, the nearest
+//   * the posting policy (`[posting]`) — per key, the nearest
 //     profile that sets it wins.
 // The shipped `default` profile encodes the shipped behaviour (an empty pack,
 // no heuristics, `ecosystem = "none"`) and is the base a generated profile
@@ -91,7 +91,7 @@ export interface ProfileLookup {
 }
 
 /** Where a not-found looked — and, when the checkout still strands a profile
- * of that name (never read), the way out. */
+ * of that name (which is never read), the way out. */
 function notFoundWhere(root: string, profile: string, lookup: ProfileLookup): string {
   const env = lookup.env ? { env: lookup.env } : {};
   const looked = `looked in ${profileSearchDirs({ root, ...env }).join(", ")} (the checkout's: generic examples only)`;
@@ -114,7 +114,7 @@ function profileDirOrThrow(root: string, profile: string, lookup: ProfileLookup)
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const PASS_NAME_RE = /^pass-[a-z0-9][a-z0-9-]*$/;
 
-// ---- the extends chain -------------------------------------------
+// ---- the extends chain -----------------------------------------------------
 
 /** One profile of a resolved chain: where it lives and what its
  * `profile.toml` says about inheritance and the scalars it sets. */
@@ -231,8 +231,8 @@ function profileChain(root: string, profile: string, lookup: ProfileLookup): Pro
 }
 
 /** The selected profile's resolved `extends` chain, base first — name and
- * directory of each layer (the setup's profile validate names what
- * it checked). Same refusals as every loader: not found, base not found,
+ * directory of each layer (the setup's profile validate names what it
+ * checked). Same refusals as every loader: not found, base not found,
  * cycle. `""` is no profile: an empty chain. */
 export function resolveProfileChain(
   root: string,
@@ -245,7 +245,7 @@ export function resolveProfileChain(
 
 /** The scan build's agent (src/setup/scan.ts `SCAN_PASS`) — not in
  * ALL_PASSES, yet a pass a house rule may bind. Spelled here, not imported:
- * no daemon module may reach src/setup/ at runtime (tests/single-shepherd S2);
+ * no daemon module may reach src/setup/ at runtime (tests/single-shepherd.test.ts);
  * tests/profiles.test.ts pins the two spellings together. */
 const SCAN_PASS = "pass-scan";
 
@@ -256,7 +256,7 @@ export function reservedAddendumIds(): Set<string> {
     ...PASS_ADDENDA.map((a) => a.id),
     "feedback-day-validate",
     // The lesson addendum wire.ts composes beside it under `[memory]
-    // delivery = "on"` (S9b, src/include.ts lessonAddenda).
+    // delivery = "on"` (src/include.ts lessonAddenda).
     LESSON_VALIDATE_ADDENDUM_ID,
     // The addendum `[posting]` compiles into (src/postingpolicy.ts).
     ...POSTING_ADDENDUM_IDS,
@@ -419,16 +419,15 @@ export function loadProfileAddenda(
  * key `ecosystem = "django" | "none"`.
  *
  * No profile (`""`), a profile found nowhere, or no `ecosystem` key anywhere
- * in its `extends` chain (the nearest profile that sets it wins) all
- * mean
- * `"none"` — a generic install gets NO framework-specific machinery (no
+ * in its `extends` chain (the nearest profile that sets it wins) all mean
+ * `"none"` — a generic install gets no framework-specific machinery (no
  * pre-check, no tier-forcing migration gate, no migration-gate prompt prose)
  * unless its profile asks for it. An unreadable file or an unknown value
  * throws with the path named — a loud boot failure, same contract as the
  * addenda loader above: a daemon must never review under a profile it could
  * not parse.
  *
- * Deliberately its OWN function rather than a fold into `loadProfileAddenda`:
+ * Deliberately its own function rather than a fold into `loadProfileAddenda`:
  * `profile.toml` is the profile's settings file and other loaders may own
  * other keys in it (each reads only its own; unknown keys are not an error
  * here), while `addenda/` stays the addenda loader's alone.
@@ -440,7 +439,7 @@ export function loadProfileEcosystem(
 ): EcosystemName {
   if (profile === "") return "none";
   if (!locateProfile({ root, profile, ...lookup })) return "none";
-  // child-wins — the nearest profile in the chain that sets the key.
+  // Child wins — the nearest profile in the chain that sets the key.
   // Every layer's value is validated, an overridden one too: a base that
   // names an unknown ecosystem is broken for every other child of it.
   let chosen: EcosystemName = "none";
@@ -457,7 +456,7 @@ export function loadProfileEcosystem(
   return chosen;
 }
 
-// ---- per-lens tuning ---------------------------------------------
+// ---- per-lens tuning -------------------------------------------------------
 
 /**
  * The named profile's per-lens tuning — `[lenses.<pass>]` in `profile.toml`,
@@ -488,7 +487,7 @@ export function loadProfileLensTuning(
   return merged;
 }
 
-// ---- the scan table ------------------------------------------------
+// ---- the scan table ----------------------------------------------------------
 
 /**
  * The named profile's overrides of `config.toml [scan]` — `[scan]` in
@@ -557,7 +556,7 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
   return { ...cfg, scan: { ...cfg.scan, ...overrides } };
 }
 
-// ---- lens-selection heuristics -----------------------------------
+// ---- lens-selection heuristics ---------------------------------------------
 //
 // A profile's `heuristics.toml` carries the repo-shaped lens-selection
 // predicates (framework settings-file globs, management-command dirs, a
@@ -565,8 +564,8 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 // added-line probes. The generic selection core stays compiled into
 // `src/heuristics.ts selectLenses`; the extension can only ADD predicates to
 // the lenses that module already selects by shape — never remove or weaken a
-// compiled-in one, and never touch the ADDABLE-ONLY lenses or
-// the body-keyed `pass-intent`.
+// compiled-in one, and never touch the addable-only lenses or the body-keyed
+// `pass-intent`.
 //
 // File format — one table per extendable lens, two optional keys each:
 //
@@ -581,7 +580,7 @@ export function applyProfileScan<C extends { scan: ScanConfig }>(
 // the `im` flags, so each one matches an ADDED unified-diff line containing
 // the pattern, case-insensitively. Anything malformed — an unknown lens, an
 // unknown key, a non-string entry, a regex that does not compile — throws
-// with the offending file and key named: a malformed extension is a LOUD
+// with the offending file and key named: a malformed extension is a loud
 // assembly failure (wire.ts loads it once at boot), never a silent skip.
 // An ABSENT heuristics.toml is not malformed: a profile that only carries
 // addenda simply extends selection with nothing.
@@ -661,10 +660,10 @@ export function parseProfileHeuristics(file: string, raw: string): HeuristicsExt
  * Load the named profile's lens-heuristics extension.
  *
  * `""` (no profile) and a profile chain without a `heuristics.toml` anywhere
- * both yield the
- * empty extension — the generic compiled-in core alone. Everything else that
- * is wrong throws; the caller (wire.ts, at daemon assembly) lets it crash the
- * boot rather than review with partial selection knowledge.
+ * both yield the empty extension — the generic compiled-in core alone.
+ * Everything else that is wrong throws; the caller (wire.ts, at daemon
+ * assembly) lets it crash the boot rather than review with partial selection
+ * knowledge.
  */
 export function loadProfileHeuristics(
   root: string,
@@ -672,7 +671,7 @@ export function loadProfileHeuristics(
   lookup: ProfileLookup = {},
 ): HeuristicsExtension {
   if (profile === "") return EMPTY_HEURISTICS;
-  // unioned across the chain, per lens, base predicates first —
+  // Unioned across the chain, per lens, base predicates first —
   // heuristics only ever ADD, so a child can neither drop nor narrow a
   // base's predicate (the same ADD-only contract as against the core).
   const paths: Record<string, RegExp[]> = {};

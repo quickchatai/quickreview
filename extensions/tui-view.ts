@@ -1,15 +1,15 @@
-// tui-view — the companion's read-only window onto the operator's
-// view: what is on the owner's screen right now, and the derived state behind it.
+// tui-view — the companion's read-only window onto the operator's view: what
+// is on the operator's screen right now, and the derived state behind it.
 //
-// THE ONE RULE, AND IT IS STRUCTURAL: these tools READ STATE THE TUI HAS
-// ALREADY FETCHED. They are never a fetcher.
+// The one rule, and it is structural: these tools read state the TUI has
+// already fetched. They are never a fetcher.
 //
-// Every value they return was produced by the TUI, on the owner's machine, with
-// the owner's ssh credential, for the owner's own screen, and written to a file on
-// a bind mount. Nothing here opens a socket, spawns a process, or asks the TUI
-// to go and get anything. That is not a matter of taste: the TUI's reach is
+// Every value they return was produced by the TUI, on the operator's machine,
+// with the operator's ssh credential, for the operator's own screen, and
+// written to a file on a bind mount. Nothing here opens a socket, spawns a
+// process, or asks the TUI to go and get anything. That is not a matter of taste: the TUI's reach is
 // real (`src/tui/remote.ts` runs `ssh <host> …`, and the deploy tab can run
-// `deploy.sh sync`), and root CLAUDE.md rule 8 says the companion holds NO VM
+// `deploy.sh sync`), and root CLAUDE.md rule 8 says the companion holds no VM
 // credential. A `tui_*` tool that could trigger a fetch would let the companion
 // make the TUI act on the VM on its behalf — laundering the operator's access
 // through a read verb. So:
@@ -18,27 +18,27 @@
 //     `node:child_process`, no `node:net/http/https`, no `fetch`, no import of
 //     anything under `src/`, above all not `remote.ts`;
 //   * no tool takes a parameter. There is no host to name, no command to pass,
-//     no path to traverse — the tools read three fixed filenames under
+//     no path to traverse — the tools read two fixed filenames under
 //     `$QCR_FEED_DIR` and nothing else;
-//   * a missing or stale file is ANSWERED AS SUCH ("the TUI is closed"), never
+//   * a missing or stale file is answered as such ("the TUI is closed"), never
 //     refreshed. Staleness is information; a refresh would be reach.
 //
-// `tests/tui-view-extension.test.ts` pins all three.
+// `tests/tui-view.test.ts` pins all three.
 //
-// The companion writing to the TUI is a different, already-ratified channel
-// (`/alerts/tui-actions/`) with its own validation and its own
-// whitelist. Nothing here is a second one: no tool writes anything, anywhere.
+// The companion writing to the TUI is a different channel
+// (`/alerts/tui-actions/`, src/tui/actions.ts) with its own validation and its
+// own whitelist. Nothing here is a second one: no tool writes anything, anywhere.
 //
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Pi, PiToolDefinition, PiToolResult } from "@earendil-works/pi-coding-agent";
 
-/** The three files the TUI publishes. Fixed names — never a tool parameter. */
+/** The two files these tools read. Fixed names — never a tool parameter. */
 export const VIEW_FILE = "view.json";
 export const SCREEN_FILE = "screen.txt";
 
-/** Past this, an answer says STALE before it says anything else. The TUI
+/** Past this, an answer says stale before it says anything else. The TUI
  * republishes on every repaint and every 3 s poll, so anything older than this
  * means it is closed, suspended or wedged. */
 export const STALE_AFTER_MS = 30_000;
@@ -62,7 +62,7 @@ export interface ReadResult {
   error?: string;
 }
 
-/** Read one published file. The ONLY I/O in this module, and it is a read. */
+/** Read one published file. The only I/O in this module, and it is a read. */
 export function readFeedFile(dir: string, name: string): ReadResult {
   try {
     const path = join(dir, name);
@@ -114,9 +114,9 @@ interface ViewJson {
   pane?: Record<string, unknown>;
   screen?: Record<string, unknown>;
   notice?: string;
-  /** status.json `memory` as the TUI read it (S1); `null` = unread. */
+  /** status.json `memory` as the TUI read it; `null` = unread. */
   memory?: Record<string, unknown> | null;
-  /** status.json `daemon` as the TUI read it (L2); `null` = unread. */
+  /** status.json `daemon` as the TUI read it; `null` = unread. */
   daemon?: Record<string, unknown> | null;
   /** The archiver's `qcr status` line and what in it needs a person, as the
    * TUI rendered them; `null` = unread. */
@@ -136,13 +136,13 @@ function loadView(dir: string): { view?: ViewJson; mtimeMs?: number; error?: str
 }
 
 /**
- * One `label: value` line, or nothing when the field is genuinely ABSENT.
+ * One `label: value` line, or nothing when the field is genuinely absent.
  *
- * `null` is not absent — it is the producer saying "I could not read this"
- *. Dropping the line made an unread working tree and an unproven
- * dry-run flag look like nothing worth mentioning, so a companion asked
- * "anything to deploy?" answered with a quiet all-clear built from data the
- * TUI never had. An explicit unknown is the whole point of the null.
+ * `null` is not absent — it is the producer saying "I could not read this".
+ * A dropped line would make an unread working tree or an unproven dry-run
+ * flag look like nothing worth mentioning, and the companion would answer
+ * with a quiet all-clear built from data the TUI never had. An explicit
+ * unknown is the whole point of the null.
  */
 function fmt(label: string, value: unknown): string | undefined {
   if (value === null) return `${label}: UNKNOWN (the TUI has not been able to read this)`;
@@ -217,7 +217,7 @@ export function deployAnswer(dir: string, now: Date): string {
     fmt("commits waiting to ship", d.pending_commit_count),
     fmt("diffstat", d.diffstat_summary),
     containerLine(d.container_status ?? null),
-    // whether the VM runs this machine's config home and profiles.
+    // Whether the VM runs this machine's config home and profiles.
     fmt("config home vs the VM", d.config_home ?? null),
     fmt("run in flight", d.run),
   ].filter((l): l is string => l !== undefined);
@@ -227,12 +227,12 @@ export function deployAnswer(dir: string, now: Date): string {
 }
 
 /**
- * Reviewer memory as ONE sentence (S1): its health state, since when,
- * the incident if one is open, and each credential's verdict. `null` (the TUI
- * could not read it, or the daemon reports no block) is an explicit UNKNOWN —
- * memory was dead for five weeks while every surface stayed quiet, and a
- * dropped line here would be one more quiet surface. A view written before
- * the field existed (`undefined`) says so too.
+ * Reviewer memory as one sentence: its health state, since when, whether it
+ * serves search, the incident if one is open, each credential's verdict and
+ * the day's EOD curation. `null` (the TUI could not read it, or the daemon
+ * reports no block) is an explicit UNKNOWN — a dropped line would hide dead
+ * memory behind a quiet surface. A view written before the field existed
+ * (`undefined`) says so too.
  */
 export function memoryLine(value: unknown): string {
   if (value === undefined)
@@ -275,12 +275,12 @@ export function memoryLine(value: unknown): string {
     m.last_error && m.state !== "healthy"
       ? `; last error ${txt(m.last_error.op)}: ${txt(m.last_error.code)} ${txt(m.last_error.message, "").slice(0, 120)}`
       : "";
-  // memory that authenticates but cannot search says so.
+  // Memory that authenticates but cannot search says so.
   const serving =
     m.serving && (m.serving.ok === false || typeof m.serving.since === "string")
       ? `; NOT serving search${typeof m.serving.since === "string" ? ` since ${m.serving.since}` : ""}${typeof m.serving.reason === "string" ? ` — ${m.serving.reason.slice(0, 160)}` : ""}`
       : "";
-  // the day's EOD curation — loud when it did not reach memory,
+  // The day's EOD curation — loud when it did not reach memory,
   // UNKNOWN when the daemon could not read its ledger; the lessons' balance.
   const c = m.curation;
   // Older failures nothing has made good yet ride beside the reported day.
@@ -312,13 +312,13 @@ export function memoryLine(value: unknown): string {
 }
 
 /**
- * The daemon's own event loop as ONE sentence (L2): ok / STALLED (with
+ * The daemon's own event loop as one sentence: ok / STALLED (with
  * the cause its evidence names — the container's throttling, the daemon's own
  * CPU across the stall, or neither) / UNKNOWN, its p50/p99/max
  * over the window, and the container's throttling beside it. `null` (the TUI
- * could not read it, or the daemon reports no block) is an explicit UNKNOWN —
- * on 2026-10-07 the daemon's /health went unanswered for ~70 s at a time and
- * no surface said so. A view written before the field existed says so too.
+ * could not read it, or the daemon reports no block) is an explicit UNKNOWN,
+ * so a stalled daemon is never hidden behind a dropped line. A view written
+ * before the field existed says so too.
  */
 export function daemonLoadLine(value: unknown): string {
   if (value === undefined)
@@ -366,7 +366,7 @@ export function daemonLoadLine(value: unknown): string {
 }
 
 /**
- * The archiver as ONE line (docs/archiving.md §11): the line the TUI
+ * The archiver as one line (docs/archiving.md §11): the line the TUI
  * rendered from status.json, with what needs a person first. Absent (an older
  * TUI) or `null` (the TUI has no snapshot) is an explicit UNKNOWN — a dropped
  * line would read as "nothing to report".
@@ -457,7 +457,7 @@ export function toolDefinitions(
 
 export const activate = (pi: Pi, env: NodeJS.ProcessEnv = process.env): void => {
   // A pi without registerTool registers nothing and says nothing — the
-  // companion must still start (rule: it never wedges).
+  // companion must still start (it never wedges).
   if (typeof pi.registerTool !== "function") return;
   const dir = resolveFeedDir(env);
   for (const def of toolDefinitions(dir)) pi.registerTool(def);

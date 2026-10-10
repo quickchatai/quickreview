@@ -15,7 +15,7 @@
 #   1. $QCR_CONFIG, taken as given (a missing file is the caller's error)
 #   2. the install's config home: ${XDG_CONFIG_HOME:-$HOME/.config}/qcr/<install>/config.toml,
 #      whether or not it exists (a missing file is the caller's error too)
-#      ($QCR_CONFIG_HOME, when set and absolute, IS the config home)
+#      ($QCR_CONFIG_HOME, when set and absolute, is the config home)
 # `<install>` is $QCR_INSTALL, default `default`, a plain name only. The
 # checkout's own config.toml is never read — `qcr install migrate`
 # moves it. The <checkout-root> argument is kept for the profile lookup.
@@ -23,7 +23,7 @@
 # Repo profiles: `qcr_profile_dirs <root>` prints the directories a
 # profile is looked up in, highest priority first — the config home's
 # profiles/, then profiles/ beside $QCR_CONFIG when it is set, then the
-# checkout's, which serves ONLY the generic examples (`QCR_EXAMPLE_PROFILES`,
+# checkout's, which serves only the generic examples (`QCR_EXAMPLE_PROFILES`,
 # pinned to src/install.ts EXAMPLE_PROFILES): `qcr_profile_dir` applies that.
 
 qcr_install_name() {
@@ -51,7 +51,7 @@ _qcr_xdg_base() { # _qcr_xdg_base <value> <fallback-under-home>
   fi
 }
 
-# A whole-home override ($QCR_CONFIG_HOME / $QCR_STATE_HOME, — the
+# A whole-home override ($QCR_CONFIG_HOME / $QCR_STATE_HOME — the
 # companion container points them at its mounts): taken only when set AND
 # absolute, trailing slashes dropped. Prints nothing when it does not apply.
 _qcr_home_override() { # _qcr_home_override <value>
@@ -148,7 +148,7 @@ qcr_profile_dir() { # qcr_profile_dir <checkout-root> <name>
   return 0
 }
 
-# ---- secrets -------------------------------------------------------
+# ---- secrets -----------------------------------------------------------------
 #
 #   SECRETS_DIR="$(qcr_locate_secrets "$configured" "${QC_SECRETS_DIR:-}")" || exit 1
 #
@@ -216,7 +216,7 @@ qcr_locate_secrets() { # qcr_locate_secrets [configured] [override]
 
 # The companion's OpenViking key file (src/install.ts `locateKeysFile`):
 # $QCR_OPENVIKING_KEYS, else $XDG_CONFIG_HOME/qcr-operator/<install>/ — whether
-# or not it exists. Deliberately OUTSIDE the config home, which a container
+# or not it exists. Deliberately outside the config home, which a container
 # mounts.
 qcr_locate_keys_file() {
   local override name
@@ -229,13 +229,13 @@ qcr_locate_keys_file() {
   printf '%s\n' "$(_qcr_xdg_base "${XDG_CONFIG_HOME:-}" .config)/qcr-operator/$name/openviking-keys.env"
 }
 
-# ---- the shipped config home ---------------------------------------
+# ---- the shipped config home -------------------------------------------------
 #
 #   SHIPPED="$(qcr_shipped_config "$ROOT")" || exit 1
 #
 # The located config when it is one `deploy.sh sync|rebuild` can ship: the file
 # exists and its directory — the config home, with the profiles/ beside it —
-# lies outside the checkout. Prints NOTHING (status 0) when there is none: no
+# lies outside the checkout. Prints nothing (status 0) when there is none: no
 # config at all, or a $QCR_CONFIG naming a file inside the checkout, which
 # deploy never ships (it rides no route but the checkout rsync, and the VM
 # reads the shipped home).

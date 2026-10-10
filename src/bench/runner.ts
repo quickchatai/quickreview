@@ -192,17 +192,16 @@ export interface CaseSummary {
   warnings: string[];
   /** Failed model calls by kind (aacr.ts modelErrorsFromEvents, plus pi's
    * stderr): how arm.sh tells the shared login pushing back from a review
-   * that genuinely failed. Absent on summaries written before 2026-09-27. */
+   * that genuinely failed. Absent on older summaries. */
   model_errors?: ModelErrors;
   /** What the profile's `[posting]` policy did to the session's output
-   * (src/bench/benchposting.ts). Absent at today's posting. */
+   * (src/bench/benchposting.ts). Absent at the default posting. */
   posting?: BenchPostingReport;
-  /**: a follow-up replay case — what it ran as (delta or full, and
+  /** A follow-up replay case — what it ran as (delta or full, and
    * why). Absent on every other case. */
   follow_up?: CaseFollowUp;
-  /**: per-phase subagent totals (aacr.ts stagesFromEvents; the
-   * per-call rows are in the case's stages.json). Absent on summaries
-   * written before it. */
+  /** Per-phase subagent totals (aacr.ts stagesFromEvents; the per-call rows
+   * are in the case's stages.json). Absent on older summaries. */
   stages?: Stages["phases"];
 }
 
@@ -258,21 +257,22 @@ export interface RunFingerprint {
     validate_demote?: boolean;
     skip_lenses?: string[];
     validate_consequence_rule?: boolean;
-    /**: the follow-up knobs, recorded only when they differ from
-     * the shipped default, so every earlier run keeps its fingerprint. */
+    /** The follow-up knobs, recorded only when they differ from the shipped
+     * default, so a run at the default keeps its fingerprint. */
     follow_up?: string;
     follow_up_max_delta_ratio?: number;
     follow_up_sweep?: boolean;
-    /**: the baseline split threshold, recorded only when it differs
+    /** The baseline split threshold, recorded only when it differs
      * from the shipped default (2000). */
     baseline_split_lines?: number;
-    /**: set only when the lever is on (H2) or the table is off (A1). */
+    /** Each set only when it differs from the shipped default: a light sweep
+     * tier is named, or the validator's compact decision table is off. */
     sweep_light_tier?: string;
     validate_compact?: boolean;
   };
-  /**: the profile's resolved per-lens tuning. Absent when untuned, so
-   * an untuned run's fingerprint is what it was before per-lens tuning. A
-   * profile style guide is recorded by name and content hash. */
+  /** The profile's resolved per-lens tuning. Absent when untuned, so an
+   * untuned run's fingerprint carries no tuning field. A profile style guide
+   * is recorded by name and content hash. */
   lenses?: Record<string, FingerprintLensTuning>;
   /** Per-lens tier pins (`[models.pass_tiers]`) and the risk passes. */
   pass_tiers?: Record<string, string>;
@@ -280,7 +280,7 @@ export interface RunFingerprint {
    * none, so a run without one keeps its fingerprint. */
   pass_models?: Record<string, string>;
   risk_passes?: string[];
-  /** The profile's `[posting]` policy. Absent at today's posting, so a run
+  /** The profile's `[posting]` policy. Absent at the default posting, so a run
    * without one keeps its fingerprint. */
   posting?: PostingPolicy;
 }
@@ -579,7 +579,7 @@ export async function prepareTree(store: string, tree: string, meta: PrefetchMet
   const shallow = join(store, "shallow");
   if (existsSync(shallow)) writeFileSync(join(tree, ".git", "shallow"), readFileSync(shallow));
   await git(tree, ["update-ref", `refs/remotes/origin/${meta.base_ref}`, meta.base_commit]);
-  //, a follow-up case: the head the previous round reviewed — the
+  // A follow-up case: the head the previous round reviewed — the
   // delta's from side. It is the PR's past, never its future.
   if (meta.prev_head) await git(tree, ["update-ref", "refs/bench/prev-head", meta.prev_head]);
   await git(tree, [
@@ -611,8 +611,7 @@ async function changedFiles(tree: string, meta: PrefetchMeta): Promise<PrFileEnt
   return filesFromGitDiff(nameStatus, numstat, patches);
 }
 
-/** The round order + system prompt this case runs — production renderers. */
-/** (`[review] context_pack = "pack-first"`), as dispatch writes it:
+/** `[review] context_pack = "pack-first"`, as dispatch writes it:
  * the case's context pack beside its task dirs (`<case>/context-pack.md` —
  * where the glue looks for a task file's pack), and the order the task files
  * render from, which then points at it. Off ⇒ the order unchanged, no file. */
@@ -643,6 +642,7 @@ function benchContextPack(
   return { order: { ...built, context_pack_file: path }, file: { path, text: pack.text } };
 }
 
+/** The round order + system prompt this case runs — production renderers. */
 export function renderCasePrompts(args: {
   root: string;
   cfg: Config;
@@ -655,7 +655,7 @@ export function renderCasePrompts(args: {
   issuedAt: string;
   /** The rendered third-party-sources block, "" when none (depsources.ts). */
   dependencyNote?: string;
-  /**, a follow-up case: the PR-owned delta `benchDelta` computed over
+  /** A follow-up case: the PR-owned delta `benchDelta` computed over
    * the tree (undefined = none could be — the round runs in full). */
   followUpDelta?: PrOwnedDelta;
 }): CasePrompts {
@@ -773,10 +773,10 @@ export interface CasePrompts {
   /** `[review] task_files`: the lens task files the order points at, for the
    * caller to write before the session starts. */
   taskFiles: Array<{ path: string; text: string }>;
-  /**: the case's context pack, for the caller to write (absent ⇒
+  /** The case's context pack, for the caller to write (absent ⇒
    * remove any stale one). */
   contextPack?: { path: string; text: string };
-  /**, a follow-up case only: every other file the order names (the
+  /** A follow-up case only: every other file the order names (the
    * delta patch, the prior-findings sidecar, the sweep's task files, the
    * pinned ledger), for the caller to write; what the round runs as; and the
    * pre-approval sweep's plan when one is owed. */
@@ -789,7 +789,7 @@ export interface CasePrompts {
 export interface CaseFollowUp {
   round_no: number;
   review_no: number;
-  /** `delta`: the follow-up round; `full`: today's full re-review. */
+  /** `delta`: the follow-up round; `full`: a full re-review. */
   scope: "delta" | "full";
   /** Why the round runs in full (dispatch's `followup_full_round` reasons). */
   reason?: string;
@@ -869,11 +869,11 @@ export function followUpOutcomeOf(
 }
 
 /**
- * The order of a FOLLOW-UP replay case: production's round k, built
+ * The order of a follow-up replay case: production's round k, built
  * from the same pieces dispatch uses — the full plan, `decideBenchFollowUp`
  * (dispatch's `planFollowUp`), the delta patch and order delta, the prior
  * findings note, the sweep's task files — rendered from the template
- * `templateFileForOrder` picks. Any doubt runs today's full re-review.
+ * `templateFileForOrder` picks. Any doubt runs a full re-review.
  */
 function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): CasePrompts {
   const { root, cfg, c, meta, tree } = args;
@@ -1019,7 +1019,7 @@ function renderFollowUpPrompts(args: Parameters<typeof renderCasePrompts>[0]): C
           );
         })()
       : [];
-  // the optional rows' task files, from the same order dispatch
+  // The optional rows' task files, from the same order dispatch
   // renders them from (`optionalOrderOf`), in their own directory.
   const optionalTasks =
     cfg.review.task_files && built.optional_plan && built.optional_plan.length > 0
@@ -1333,7 +1333,7 @@ export async function reviewCase(
       writeFileSync(join(caseDir, "deps.json"), JSON.stringify(manifest, null, 2));
       dependencyNote = renderDependencyNote(manifest);
     }
-    //, a follow-up case: the PR-owned delta, by production's own
+    // A follow-up case: the PR-owned delta, by production's own
     // `prOwnedDelta` over this tree. Total: a throw is a full round.
     let followUpDelta: PrOwnedDelta | undefined;
     if (c.followup) {
@@ -1414,7 +1414,7 @@ export async function reviewCase(
       QCR_SUBAGENT_CACHE_GROUP: String(ctx.cfg.pi.subagent_cache_group ?? 0),
       QCR_SUBAGENT_CACHE_STAGGER_MS: String(ctx.cfg.pi.subagent_cache_stagger_ms ?? 2500),
       QCR_LEAF_CACHE_EXT: join(o.root, "extensions", "leaf-cache.ts"),
-      // the case's task dirs are this replay's sanctioned launch_plan
+      // The case's task dirs are this replay's sanctioned launch_plan
       // dirs (production's live under state/pr-<n>-round-<k>-passes/).
       QCR_LAUNCH_PLAN_DIRS: [
         join(caseDir, "tasks"),
@@ -1486,7 +1486,7 @@ export async function reviewCase(
     );
     const outcomePath = join(caseDir, CASE_FILES.outcome);
     // One continuation, never more: the live system's answer to a round that
-    // stopped short is redelivery, not a fresh review (#5362). Same session —
+    // stopped short is redelivery, not a fresh review. Same session —
     // and only if there IS one: pi persists a session after its first
     // assistant message, and `--continue` on an empty session dir silently
     // starts a NEW session that would review with no round order at all.
@@ -1532,7 +1532,7 @@ export async function reviewCase(
       const lines = readFileSync(events, "utf8").split("\n");
       summary.usage = usageFromEvents(lines);
       summary.model_errors = modelErrorsFromEvents(lines);
-      // per-stage cost and time (stages.json; the per-phase totals
+      // Per-stage cost and time (stages.json; the per-phase totals
       // ride the summary).
       const stages = stagesFromEvents(lines);
       writeFileSync(join(caseDir, "stages.json"), JSON.stringify(stages, null, 2) + "\n");
@@ -1639,7 +1639,7 @@ export async function reviewCase(
           (p) => `${String(p["name"])}--${String(p["tier"])}`,
         )
       : [];
-    // a follow-up case keeps the session's own phase and sweep
+    // A follow-up case keeps the session's own phase and sweep
     // report, read the way production's verdict tail reads it.
     if (summary.follow_up && outcome !== undefined)
       summary.follow_up = followUpOutcomeOf(summary.follow_up, outcome, summary.verdict);
@@ -1748,7 +1748,7 @@ export function contextFor(
   // review.profile=<name>` (arm.sh's spelling) — every loader reads the same
   // one, so a profile chosen either way is the whole profile.
   const chosen = levered.review.profile;
-  // the profile's lens tuning (and its `[posting]` policy) is
+  // The profile's lens tuning (and its `[posting]` policy) is
   // overlaid LAST — after the `--config` levers and any preset re-parse —
   // exactly as production overlays it after config.toml: the profile wins.
   const cfg = withAuthModels(

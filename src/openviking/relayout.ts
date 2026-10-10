@@ -1,5 +1,5 @@
-// `qcr memory relayout` (S5) — the operator's one-off move of a flat
-// store into the §1 layout. The plan is `src/memory/relayout.ts`
+// `qcr memory relayout` — the operator's one-off move of a flat store into
+// the memory layout (`src/memory/layout.ts`). The plan is `src/memory/relayout.ts`
 // (pure); this is the run: one COMPLETE read, the plan printed, and — only
 // with `--apply` — the plan carried out through `OpenVikingStore.relocate`
 // (one batch-write per directory, hash preconditions, never a delete), then a

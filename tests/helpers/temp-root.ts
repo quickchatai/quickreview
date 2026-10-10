@@ -3,8 +3,7 @@
 // whole root goes when the file finishes. Installed for every file by
 // tests/helpers/install-env.ts. Tests still clean up after themselves where
 // they can; this is the backstop that makes a forgotten rmSync cost nothing
-// (full runs used to leave thousands of qcr-precheck-*/qcr-cand-*/
-// qcr-esc-gate-* dirs, and two dozen other prefixes, behind in /tmp).
+// rather than a dir left behind in /tmp.
 //
 // Removal is the caller's afterAll, never a process 'exit' hook: those never
 // fire in a vitest worker.

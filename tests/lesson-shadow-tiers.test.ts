@@ -1,10 +1,9 @@
-// shadow matching at LENS level (the owner's ruling, 2026-10-07:
-// "Lens level" over "Keep strict"). A dont-raise lesson marks a posted finding
+// Shadow matching at lens level. A dont-raise lesson marks a posted finding
 // of one of its lenses on a path its `paths=` globs match, even when the
 // finding's class differs; the class match, when present, is recorded as the
 // stronger tier. Pinned here: the two tiers on the mark, the no-paths rule,
 // P0 exempt on both tiers, the report's tier columns (separately and in
-// total), the status headline, and the once-only migration of a pre-R9 ledger
+// total), the status headline, and the once-only migration of a class-only ledger
 // (existing rows kept as `class`). Every I/O is faked: the state database is
 // in memory, the clock is fixed.
 import { readFileSync } from "node:fs";
@@ -452,7 +451,7 @@ describe("the shadow report's tiers over a fixture joined with fates", () => {
     const text = renderShadowReport(
       shadowReport(ledger, { days: 7, mode: "shadow", now: () => clock }),
     );
-    // The total is "marked": since R9 it holds lens-tier findings the
+    // The total is "marked": it holds lens-tier findings the
     // validator's license never reaches — only the class tier would demote.
     expect(text).toContain(
       "marked: 9 mark(s) on 6 posted finding(s) — class tier (would-demote) 3 finding(s) (3 mark(s)), lens tier (evidence only) 3 finding(s) (6 mark(s))",
@@ -477,7 +476,7 @@ describe("the shadow report's tiers over a fixture joined with fates", () => {
       "Dont-raise lessons neither tier can check (no class, no paths=, and not exactly one discovery lens — they mark nothing): experiences/20261001T000000-dr-unmeasurable.md",
     );
     // Under `on` only the CLASS tier is what the validator was licensed to
-    // demote: R9 widens the evidence, never the authority.
+    // demote: the lens tier widens the evidence, never the authority.
     const on = renderShadowReport(shadowReport(ledger, { days: 7, mode: "on", now: () => clock }));
     expect(on).toContain(
       "the CLASS-tier marks below are what the validator was LICENSED to demote",
@@ -488,7 +487,7 @@ describe("the shadow report's tiers over a fixture joined with fates", () => {
   it("a finding posted again is ONE finding on the strongest tier any of its postings got", () => {
     seed();
     markRound(ledger, store, 200, 1);
-    // Round 2 posts b again (S6 carries round 1's b to b2) — this time with
+    // Round 2 posts b again (the outcome capture carries round 1's b to b2) — this time with
     // kind `scope`, so LD matches it on its CLASS.
     ledger.recordRound(roundRow(22, 200, 2), reportSelections());
     store.recordRoundFindings({ pr: 200, round_id: 22, round_no: 2, head_sha: "h2" }, [
@@ -566,7 +565,7 @@ describe("the tier line is honest-unknown", () => {
     expect(lessonDeliveryPhrase(S)).toContain(" — by tier: UNKNOWN");
     expect(lessonDeliveryPhrase(S)).not.toMatch(/class 0|lens 0/);
     // Its marks are all class-tier (the strict matcher): its total keeps
-    // "would-demote"; an R9 status's total is "marked".
+    // "would-demote"; a two-tier status's total is "marked".
     expect(lessonHeadline(S)).toContain("2 would-demote (harm 1, help 1, unknown 0)");
     const r9 = {
       ...S,
@@ -595,7 +594,7 @@ describe("the tier line is honest-unknown", () => {
   });
 });
 
-// ---- the migration of a pre-R9 ledger ------------------------------------------------
+// ---- the migration of a class-only ledger ------------------------------------------------
 
 describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens tier added", () => {
   const S9A_SCHEMA = readFileSync(
@@ -706,7 +705,7 @@ describe("a pre-R9 ledger migrates once: existing rows kept as `class`, the lens
       match: "class",
     });
     expect(rows.map((m) => `${m.pr}:${m.finding_key}:${m.match}:${m.marked_at}`)).toEqual([
-      `300:a:class:${T_MARKED}`, // the S9a row, untouched
+      `300:a:class:${T_MARKED}`, // the class-only row, untouched
       `300:b:lens:${T_MARKED}`, // stamped with the round's own marking time
       `301:c:class:${T_FINDINGS}`, // a round never marked gets both tiers…
       `301:d:lens:${T_FINDINGS}`, // …stamped when its findings landed

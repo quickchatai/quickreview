@@ -1,9 +1,8 @@
-// The TUI's memory MODEL: timeline ordering and defect selection.
+// The TUI's memory model: timeline ordering and defect selection.
 //
 // Engine-free by construction — both functions take `MemoryEntry[]` and know
-// nothing about where the entries came from. The parser and remote-argv suites
-// that used to live here went with the hand-rolled engine; the
-// seam's one implementation is exercised in `openviking-store.test.ts`.
+// nothing about where the entries came from. The seam's one implementation is
+// exercised in `openviking-store.test.ts`.
 import { describe, expect, it } from "vitest";
 import { parseLegacyMemory } from "../src/memory/legacy-file.js";
 import { defectEntries, timelineOrder } from "../src/tui/memory.js";

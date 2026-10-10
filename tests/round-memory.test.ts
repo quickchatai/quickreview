@@ -1,4 +1,4 @@
-// every round prompt arrives carrying the pinned head and ONE
+// Every round prompt arrives carrying the pinned head and one
 // budgeted context block, and memory can never block or delay a round.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -210,9 +210,9 @@ describe("assembleRoundMemory", () => {
   });
 });
 
-// a fresh install has a healthy store and nothing pinned. That round
-// must not be told its memory is unavailable, and the operator must not be
-// alarmed about it: EMPTY IS NOT DEGRADED. The three states are kept apart
+// A fresh install has a healthy store and nothing pinned. That round must not
+// be told its memory is unavailable, and the operator must not be alarmed
+// about it: empty is not degraded. The three states are kept apart
 // here, each under its own name.
 describe("the three states of the pinned head", () => {
   it("healthy-and-populated: the head arrives, nothing is a gap", async () => {
@@ -298,8 +298,8 @@ describe("the three states of the pinned head", () => {
   });
 
   it("an assembler answering outside the contract (a bare string) is an error gap, never a rejection", async () => {
-    // The legacy shape. Unreachable from TypeScript; reachable from a
-    // client compiled against the old seam. "Total" has to hold for the value.
+    // A bare-string answer is unreachable from TypeScript but reachable from a
+    // client compiled against an older seam. "Total" has to hold for the value.
     const legacy = {
       pinnedHead: async () => "OLD HEAD",
       contextBlock: async () => "OLD BLOCK",

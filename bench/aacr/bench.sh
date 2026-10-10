@@ -194,8 +194,7 @@ esac
 # Scoring a stored run (judge / eval / judge-report) with no image named: use
 # the image the run itself was reviewed on (arm.sh records it in
 # <run>.arm.json), not :latest — a run scored on another build's judge code
-# is a different measurement (2026-10-03: `judge` failed "no image
-# qcr-bench:latest" on r7-dedup5-aacr, reviewed on qcr-bench:r7).
+# is a different measurement, and :latest may not exist at all.
 if [[ "$ARM" == qcr && -z "${QCR_BENCH_IMAGE:-}" && -n "$RUN" && "$cmd" =~ ^(judge|eval|judge-report)$ ]]; then
   recorded="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("image") or "")' \
     "$RUNS_DIR/$RUN.arm.json" 2>/dev/null || true)"
@@ -225,7 +224,7 @@ HARDEN=(
   --mount type=volume,dst=/opt/quickreview/sandbox/wt
 )
 
-# PRIVATE replay sets (recorded rounds of a private repo; the
+# Private replay sets (recorded rounds of a private repo; the
 # follow-up replay, src/bench/followup.ts) live OUTSIDE bench/aacr/sets — that
 # dir is baked into the image and shipped in both snapshots. QCR_BENCH_PRIVATE_SETS
 # names a host dir of <set>.json files, bind-mounted READ-ONLY where
@@ -415,8 +414,8 @@ case "$cmd" in
     [[ -f "$bench_config" ]] || die "no config to bake in — set QCR_BENCH_CONFIG=FILE"
     echo "bench: baking $bench_config in as the image's config.toml" >&2
     cp "$bench_config" "$ctx/config.toml"
-    # …and so are the profiles: the checkout's generic examples
-    # only (no other checkout profile is read, so none is baked);
+    # …and so are the profiles: the checkout's generic examples only (no
+    # other checkout profile is read, so none is baked);
     # a profile in a higher-priority place (the config home, or beside
     # $QCR_CONFIG) REPLACES an example of the same name — whole, never
     # merged — so the image's profiles/ holds exactly what the locator reads.

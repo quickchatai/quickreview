@@ -1,10 +1,9 @@
-// The dispatch levers: `drain` and `pause-pr`, and who may hold
-// them for how long.
+// The dispatch levers: `drain` and `pause-pr`, and who may hold them for how
+// long.
 //
 // Both levers stop review work — the drain stops all of it, a pause stops one
-// PR's. Before a pi session could hold either indefinitely: no cap, no
-// expiry, nothing that made work resume. The owner's ruling (2026-09-01,
-// ruling 3) bounds the SESSION's hold and leaves the OPERATOR's alone:
+// PR's. An LLM session must never hold an uncapped availability lever, so the
+// SESSION's hold is bounded and the OPERATOR's is not:
 //
 //   * An OPERATOR lever is the deploy flow's valve. `qcr drain on` engages it,
 //     the new boot's first healthy reconcile pass lifts it (daemon.ts), and it

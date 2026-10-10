@@ -1,14 +1,11 @@
-// the FULL (severity × confidence × reachability) matrix
-// (audit assertion #16).
+// The full (severity × confidence × reachability) matrix.
 //
 // The reachability axis is the one mechanism in this system that touches the
-// blocker bar, and the ratified decision it implements is absolute: it exists
-// to stop UNREACHABLE findings blocking, NEVER to reduce blockers. The audit
-// called the existing coverage "the model for the rest", and it nearly is —
-// three tests over three partial slices (contrived at two confidences,
-// plausible at five spot checks, routine at four). No single test walks the
-// cross-product, so a rule added for one (severity, confidence) pair could
-// weaken another and be met by a green suite.
+// blocker bar, and the decision it implements is absolute: it exists to stop
+// unreachable findings blocking, never to reduce blockers. Partial slices
+// cannot prove that — a rule added for one (severity, confidence) pair could
+// weaken another and be met by a green suite — so this walks the
+// cross-product.
 //
 // This walks all 5 × 4 × 4 combinations — including reachability values the
 // union does not name, because a misbehaving pass can invent one and
@@ -27,7 +24,7 @@ describe("the reachability gate over the whole matrix", () => {
   });
 
   /**
-   * THE BAR NEVER MOVES. For every cell, the tag with a reachability applied
+   * The bar never moves. For every cell, the tag with a reachability applied
    * is never STRONGER than the tag the base mapping gives — that is what
    * "demotes and never suppresses, and never promotes" means, stated over the
    * whole space instead of a slice.
@@ -81,7 +78,6 @@ describe("the reachability gate over the whole matrix", () => {
 
   /**
    * `plausible` moves P2 ONLY. P0/P1 still block; P3 and nit are untouched.
-   * This is the cell the audit's spot checks covered one confidence at a time.
    */
   it("plausible moves P2 and nothing else, at every confidence", () => {
     for (const c of CONFIDENCES) {
@@ -118,8 +114,8 @@ describe("the reachability gate over the whole matrix", () => {
 
   /**
    * The confidence boundary, pinned exactly: P2 blocks at ≥ 0.8 and asks
-   * below it. Off-by-one here moves the bar in the direction the ratified
-   * decision forbids.
+   * below it. Off-by-one here moves the bar in the direction the decision
+   * forbids.
    */
   it("P2's confidence boundary is exactly 0.8", () => {
     expect(postTag("P2", 0.79, "routine")).toBe("question");

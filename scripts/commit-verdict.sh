@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # commit-verdict.sh — publish this round's verdict file (or a recheck's
-# outcome file) ATOMICALLY (H1a, #5885).
+# outcome file) atomically.
 #
 # The session writes the COMPLETE JSON to verdict/<name>.tmp with its write
 # tool, then runs this. It checks the staged bytes are one whole JSON object
 # and renames them onto verdict/<name>. rename(2) inside one directory is
 # atomic, so the daemon's watcher sees either no file or the whole file —
 # never the empty or half-written one an in-place write shows it between its
-# open and its bytes (the watcher once misread a valid APPROVE that way and
-# held the PR for ten hours).
+# open and its bytes.
 #
 # It writes nothing but verdict/<name>.tmp and verdict/<name>: it reads no
 # config, no credential and no GitHub, and posts nothing. On a refusal the
@@ -19,7 +18,7 @@
 # the same round, under `[review] render_outputs` already carrying `verdict`,
 # `head_sha` and `summary` at its top level — also carries `passes` (and
 # `approval_withheld`, `sweep`, `sweep_reason`, `extent`, `extent_reason`,
-# `escalations` when the verdict has them — the reasons and extent
+# `escalations` when the verdict has them — the reasons and extent of the
 # follow-up decisions, which the daemon logs), and
 # this builds the verdict file from exactly those fields plus `pr`, `round_no`
 # (both checked against the name) and `finished_at` (now, UTC), writes it to

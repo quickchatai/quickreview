@@ -1,10 +1,10 @@
-// companion-guard — the companion's bright lines, made structural (2026-08-25).
+// companion-guard — the companion's bright lines, made structural.
 //
 // The companion's boundary (CLAUDE.md rule 8) is mostly structural already: no
-// GitHub WRITE credential (its token is read-only), no VM credential,
-// no gh binary in the image. But three
-// bright lines were held by PROMPT alone, and this extension turns them into
-// tool_call vetoes the model cannot talk itself past:
+// GitHub WRITE credential (its token is read-only), no VM credential, no gh
+// binary in the image. Three bright lines would otherwise be held by PROMPT
+// alone; this extension turns them into tool_call vetoes the model cannot
+// talk itself past:
 //
 //   1. Rule 6 — the frozen seeds. The companion edits the real checkout on
 //      master, live (rule 11), and prompts/ + agents/ seeded content is
@@ -18,9 +18,9 @@
 //   2. Rule 8 — never a GitHub WRITE, never the gate, never deploy.sh:
 //      `git push`, `gh`, the gate's shell route (post-review.sh and kin,
 //      mint-token.sh) and `scripts/deploy.sh` are refused by name, not just
-//      by missing credentials. Since the companion holds a READ-ONLY
-//      App token (src/tui/ghread.ts); write-shaped API calls made with it are
-//      refused here too, though GitHub would refuse them anyway.
+//      by missing credentials. The companion holds a READ-ONLY App token
+//      (src/tui/ghread.ts); write-shaped API calls made with it are refused
+//      here too, though GitHub would refuse them anyway.
 //   3. Rule 11 — the shared checkout is other actors' desk too: `git stash`,
 //      `git reset --hard`, `git checkout --`/`git checkout .`, `git restore`
 //      (worktree-discarding form) and `git clean` destroy uncommitted work
@@ -47,10 +47,9 @@ export interface BashRule {
 }
 
 /** Bash bright lines. Patterns are deliberately TIGHT: a false veto on a
- * legitimate command teaches the operator to want the guard gone (the same
- * lesson as the entrypoint's /proc/mounts note). `git checkout -b`, plain
- * branch switches, `git restore --staged` and `git stash list/show` stay
- * allowed on purpose. */
+ * legitimate command teaches the operator to want the guard gone. `git
+ * checkout -b`, plain branch switches, `git restore --staged` and `git stash
+ * list/show` stay allowed on purpose. */
 export const BASH_RULES: BashRule[] = [
   {
     pattern: /\bgit\s+push\b/,
@@ -68,11 +67,10 @@ export const BASH_RULES: BashRule[] = [
       "rule 8: the companion never runs scripts/deploy.sh. Deploys are the owner's, via the deploying skill.",
   },
   {
-    // the gate's shell route. The companion holds no App key, so
-    // these would fail anyway — refused by name so that stays a boundary.
-    // Refused when RUN, never when read (2026-10-06, the owner: the companion
-    // was refused a `git diff` of approve-pr.sh while finishing a fix to it):
-    // the script name in command position — at the start of a command, after
+    // The gate's shell route. The companion holds no App key, so these would
+    // fail anyway — refused by name so that stays a boundary. Refused when
+    // RUN, never when read (the companion edits these scripts too): the
+    // script name in command position — at the start of a command, after
     // a separator, `$(`, a backtick, `-exec`, or behind env assignments and
     // the wrappers that run their argument (bash/sh/source/./env/sudo/exec/
     // xargs/timeout/eval…). `git diff`, `cat`, `grep` and an editor name it
@@ -83,7 +81,7 @@ export const BASH_RULES: BashRule[] = [
       "rule 8: the companion never touches the gate — the posting scripts and mint-token.sh are the daemon's route to GitHub, not yours.",
   },
   {
-    // the read-only token's belt. The token is scoped read-only by
+    // The read-only token's belt. The token is scoped read-only by
     // GitHub itself (the brace — src/tui/ghread.ts); this refuses the shapes
     // of a write aimed at the API anyway: PUT/PATCH/DELETE, or a GraphQL
     // mutation.
@@ -153,9 +151,7 @@ export type ManifestRead =
  *
  * `{}`, `{"files":{}}`, or any JSON that lost the `files` key all name zero
  * frozen paths — which disarms the rule-6 veto for every seed just as
- * completely as an unparseable file does. Treating those as a good read
- * printed no warning at all and cached the empty set for the session, which
- * is strictly worse than the fail-open it replaced. Same call as
+ * completely as an unparseable file does, and would do it silently. Same call as
  * `CandidateStore.read`'s "no candidates array" and
  * `readRolloverStateFile`'s "no usable last_open_date": the file is there and
  * we cannot use it, so it is unreadable.
@@ -167,11 +163,10 @@ export function readSeedManifest(root: string): ManifestRead {
   } catch (err) {
     return { state: "unreadable", reason: err instanceof Error ? err.message : String(err) };
   }
-  // Everything below is a TOTAL check on an `unknown`. Reaching into the
-  // parsed value with a cast is what broke this once: a top-level `null`
-  // parses fine and `manifest.files` then throws OUT of the `pi.on` handler,
-  // which prints no DEGRADED line and applies no veto — the exact silent
-  // outcome this function exists to make impossible.
+  // Everything below is a TOTAL check on an `unknown`. A cast would not do: a
+  // top-level `null` parses fine and `manifest.files` would then throw OUT of
+  // the `pi.on` handler, printing no DEGRADED line and applying no veto — the
+  // exact silent outcome this function exists to make impossible.
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return { state: "unreadable", reason: "manifest is not an object" };
   }
@@ -188,9 +183,9 @@ export function readSeedManifest(root: string): ManifestRead {
  * Repo-relative frozen paths: every file in the seed manifest, plus the two
  * registry fixtures. A missing/unreadable manifest yields ONLY the fixtures.
  *
- * **This fail-open is DELIBERATE, and re-confirmed it** — it is the
- * one member of the "could not read ⇒ there is nothing" family in this repo
- * that is not a defect, so here is why, since every other one now is:
+ * **This fail-open is DELIBERATE** — it is the one member of the "could not
+ * read ⇒ there is nothing" family in this repo that is not a defect, so here
+ * is why:
  *
  *  * This guard is BELT, not the brace. The module header says so already: it
  *    is a `tool_call` veto over the companion's own write/edit calls, and bash
@@ -206,10 +201,10 @@ export function readSeedManifest(root: string): ManifestRead {
  *    normally fix ITSELF. The cost of the strict reading is total; the cost of
  *    the open one is bounded by the brace above.
  *
- * What DID change is that this degradation is now (a) always LOUD —
- * `readSeedManifest` classifies a manifest that names no files as unreadable,
- * so the empty frozen set can no longer arrive silently — and (b) never cached
- * for the life of the session; see `activate`.
+ * The degradation is (a) always LOUD — `readSeedManifest` classifies a
+ * manifest that names no files as unreadable, so the empty frozen set cannot
+ * arrive silently — and (b) never cached for the life of the session; see
+ * `activate`.
  *
  * It takes the READ rather than a path so `activate` can use this one function
  * for the set AND classify the degradation from the same single read.
@@ -238,7 +233,7 @@ export function writeBlockReason(
 }
 
 /** Same hookup shape as extensions/bash-guard.ts: `pi.on("tool_call", …)`
- * returning { block, reason } is VERIFIED (§5 lines 132-141); the
+ * returning { block, reason } is VERIFIED (pi control-surface findings §5); the
  * payload field names (`toolName`, `input`/`arguments`, write/edit's `path`)
  * stay VERIFY-ON-PIN, probed defensively. */
 export default function activate(pi: Pi): void {
@@ -260,12 +255,10 @@ export default function activate(pi: Pi): void {
     }
 
     if (ev.toolName !== "write" && ev.toolName !== "edit") return;
-    // cache a GOOD read only. The old code cached whatever the first
-    // write/edit call produced, so a manifest that was unreadable for one
-    // moment (a half-written fixture, a checkout mid-rewrite) left the guard
-    // degraded for the whole session, silently, long after the file was fine
-    // again. A degraded read is retried on the next call; the read is one
-    // small JSON file, and only on the degraded path.
+    // Cache a GOOD read only, so a manifest unreadable for one moment (a
+    // half-written fixture, a checkout mid-rewrite) does not leave the guard
+    // degraded for the whole session. A degraded read is retried on the next
+    // call; the read is one small JSON file, and only on the degraded path.
     let set = frozen;
     if (set === undefined) {
       const read = readSeedManifest(root);

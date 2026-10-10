@@ -1,4 +1,4 @@
-// the webhook-URL self-heal — hostname-file watcher + gated re-point.
+// The webhook-URL self-heal — hostname-file watcher + gated re-point.
 // All I/O faked except the temp-dir hostname file itself (the thing under
 // test); the GitHub reads/writes are recorded fakes, never a network.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";

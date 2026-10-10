@@ -1,9 +1,8 @@
-// the bot resolves its own threads of prior findings a follow-up
-// round verified fixed or obsolete.
+// The bot resolves its own threads of prior findings a follow-up round
+// verified fixed or obsolete — ping-pong resolves only on an author REPLY, so
+// without this a verified fix leaves its thread open.
 //
-// #5917 round 3 verified 12 of its 13 prior findings fixed and none of their
-// threads was resolved: the bot's only resolve path was ping-pong, which acts
-// on an author REPLY. These tests pin, over an in-memory store and a fake
+// These tests pin, over an in-memory store and a fake
 // adapter: which statuses resolve (fixed, obsolete — never open, unverifiable,
 // conceded, settled), which comment is a finding's (the outcome capture's link,
 // else the record's thread_id, plus a carried finding's earlier postings from

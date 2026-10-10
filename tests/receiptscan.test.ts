@@ -1,10 +1,8 @@
-// The receipt scan's index (boot stall, 2026-10-07). The old scan was
-// `readFileSync(file, "utf8").includes(marker)` per in-scope file, per query,
-// inside an `async` function with no real await — reconcile asked it 2,548
-// times a pass and the loop blocked for 132.7 s. These pin that the index
-// answers EXACTLY what that scan answered (#5362 rule ①: present / absent /
-// unknown, same scope), and that it reads each byte once, in chunks, with a
-// real event-loop turn between them.
+// The receipt scan's index. A plain `readFileSync(file, "utf8").includes(marker)`
+// per in-scope file, per query, blocks the event loop for as long as reconcile
+// keeps asking. These pin that the index answers EXACTLY what that plain scan
+// answers (the receipt rule: present / absent / unknown, same scope), and that
+// it reads each byte once, in chunks, with a real event-loop turn between them.
 import {
   appendFileSync,
   mkdirSync,
@@ -41,7 +39,7 @@ const filler = (bytes: number): string => {
   return line.repeat(Math.ceil(bytes / line.length));
 };
 
-/** The OLD answer, computed the old way, for the equivalence checks. */
+/** The reference answer — a plain read-and-includes — for the equivalence checks. */
 function oldAnswer(files: string[], marker: string): boolean {
   return files.some((f) => readFileSync(f, "utf8").includes(marker));
 }
@@ -114,7 +112,7 @@ describe("ReceiptIndex.present — the old scan's answers", () => {
     const idx = new ReceiptIndex();
     const marker = roundPromptMarker(42, 1);
     // A symlink to a directory: listed as not-a-directory, stats in scope,
-    // cannot be read (the fault shape, identical for every uid).
+    // cannot be read (a fault identical for every uid).
     mkdirSync(join(root, "blocked.d"));
     symlinkSync(join(root, "blocked.d"), join(root, "a-blocked.jsonl"));
     writeFileSync(join(root, "b-readable.jsonl"), userLine("no marker"));

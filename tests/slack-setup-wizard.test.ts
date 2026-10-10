@@ -377,7 +377,7 @@ describe("patchConfigToml", () => {
     const cfg = parseConfig(patched);
     expect(cfg.slack.channel).toBe("C0ABCDEFG");
     expect(cfg.slack.channel_kind).toBe("private");
-    // the wizard writes the legacy [slack] key; parseConfig folds it
+    // The wizard writes the legacy [slack] key; parseConfig folds it
     // into [owner] slack_id and drops it from the parsed slack shape.
     expect(cfg.owner.slack_id).toBe("U0OWNER");
     expect("legacy_owner_slack_id" in cfg.slack).toBe(false);

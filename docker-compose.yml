@@ -3,10 +3,9 @@
 #   docker compose up -d --build
 #
 # Prerequisites: a secrets dir — QCR_SECRETS_DIR, which the wizard's bring-up
-# writes into .env as the install locator's answer (<config home>/secrets,
-#); unset, the default install's ~/.config/qcr/default/secrets —
-# holding at least
-# app_id, app.pem, webhook_secret;
+# writes into .env as the install locator's answer (<config home>/secrets);
+# unset, the default install's ~/.config/qcr/default/secrets — holding at
+# least app_id, app.pem, webhook_secret;
 # optional openai_api_key (pi's API-key route), openviking_root_key,
 # openviking_reviewer_key, and openai_embeddings_api_key (only under the
 # hosted-embeddings opt-in — memory embeds locally by default).
@@ -62,7 +61,7 @@ services:
     # loopback by default — put your HTTPS ingress in front of it. OpenViking's
     # port (1933) is deliberately absent: it is loopback-INSIDE-the-container,
     # reachable by the daemon and the pi sessions and by nothing else. Do not
-    # publish it — nor the local embedder's (1934, S4), which binds
+    # publish it — nor the local embedder's (1934), which binds
     # 127.0.0.1 inside the container and refuses any other address.
     ports:
       - "${QCR_WEBHOOK_BIND:-127.0.0.1}:${QCR_WEBHOOK_PORT:-8787}:8787"
@@ -79,12 +78,12 @@ services:
       # holds host-side files the TUI and the onboarding wizard read directly
       # (the onboarding checklist, the companion's rollover and alert state,
       # the first-run marker). The entrypoint detects the double mount by inode
-      # and skips its legacy symlink migration.
+      # and skips its symlink migration.
       - qcr-state:/opt/quickreview/state
       - qcr-state:/opt/quickreview/sandbox/state
       # The tunnel sidecar's ONLY shared surface: the one directory holding
-      # the hostname file the self-heal watcher reads (contract,
-      # <root>/state/ingress/hostname — the default `[ingress] hostname_file`
+      # the hostname file the self-heal watcher reads
+      # (<root>/state/ingress/hostname — the default `[ingress] hostname_file`
       # resolves here through the entrypoint's state symlink). A nested mount
       # so the sidecar never sees the rest of the state volume: no SQLite, no
       # memory, no dry-run record.
@@ -94,12 +93,12 @@ services:
       - qcr-ingress:/opt/quickreview/sandbox/state/ingress
       - ${QCR_SECRETS_DIR:-~/.config/qcr/default/secrets}:/opt/quickreview/secrets:ro
       # The directory holding the live config.toml the install locator found
-      # on the host — the install's config home, or wherever
-      # QCR_CONFIG points — and with it the profiles/ beside that config, which
-      # the in-container locator finds beside the QCR_CONFIG the entrypoint
-      # names. The bring-up step writes QCR_CONFIG_HOME and
-      # QCR_CONFIG_NAME into .env and creates the directory first. The
-      # container reads no other config. Unset (compose run by
+      # on the host — the install's config home, or wherever QCR_CONFIG
+      # points — and with it the profiles/ beside that config, which the
+      # in-container locator finds beside the QCR_CONFIG the entrypoint
+      # names. The bring-up step writes QCR_CONFIG_HOME and QCR_CONFIG_NAME
+      # into .env and creates the directory first. The container reads no
+      # other config. Unset (compose run by
       # hand, before the wizard wrote .env) it defaults to a tracked dir with
       # no config.toml in it, so the boot fails naming the missing file —
       # never to ~/.config/qcr/<install>, which Docker would create owned by
@@ -113,7 +112,7 @@ services:
       TZ: ${TZ:-Europe/Warsaw}
       QC_REVIEW_PORT: "8787"
       QCR_CONFIG_NAME: ${QCR_CONFIG_NAME:-config.toml}
-      # The memory engine's embedder (S4): local by default —
+      # The memory engine's embedder: local by default —
       # the local English embedder, served on loopback inside the container —
       # so nothing but the model call leaves the machine. A hosted opt-in is
       # these four in the project .env (the onboarding bring-up step mirrors
@@ -125,7 +124,7 @@ services:
       QCR_OPENVIKING_EMBEDDING_MODEL: ${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-en-v1.5-f16}
       QCR_OPENVIKING_EMBEDDING_DIMENSION: ${QCR_OPENVIKING_EMBEDDING_DIMENSION:-384}
       QCR_OPENVIKING_EMBEDDING_KEY_FILE: ${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}
-      # The local embedder's runtime knobs (S4): the port the rendered
+      # The local embedder's runtime knobs: the port the rendered
       # ov.conf routes embeddings to and the provisioning step serves on, and
       # its thread count. The daemon reads the SAME two from config.toml
       # [openviking] local_embedder_port / _threads, so the bring-up step
@@ -143,7 +142,7 @@ services:
       # in-container mint-token.sh read) never inherits the entrypoint's env.
       QCR_SECRETS_MOUNT: /opt/quickreview/secrets
 
-  # ---- webhook ingress sidecars ---------------------------------
+  # ---- webhook ingress sidecars -------------------------------------------
   # All three run the same wrapper (docker/tunnel/sidecar.mjs) around an
   # official vendor binary, and all three are OPTIONAL: no profile, no
   # sidecar. None of them publishes a port — the tunnel dials OUT and reaches

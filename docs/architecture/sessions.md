@@ -282,7 +282,7 @@ round the daemon never recorded. It returns `false` when the bytes are gone, and
 the caller then falls through to the expensive path rather than inventing a
 prompt.
 
-`redeliverSessionCommand(commandId, observed)` (H1b) is the same cheap
+`redeliverSessionCommand(commandId, observed)` is the same cheap
 fix for ANY durable command — round prompt or wake — whose start lease ran out
 on a **live, bridge-ready** session: it hands the same row back to `pending`
 and rewrites the same bytes at the same inject path. Nothing is killed. The
@@ -307,10 +307,10 @@ payload hash, **kills the tmux session and proves it dead**, re-checks that the
 round is still owed, atomically returns the same row to pending, rewrites the
 same inject path, and rebirths. Rebirth without a delivery-attempt increment is
 reported as a failed retry, not a success — a bridge that became ready without
-reserving the command delivered nothing. Since H1b it runs on a missing
-start only when the session is provably dead or its `max_prompt_redeliveries`
-redeliveries are spent: on 2026-10-08 it killed seven live, idle sessions whose
-wake had merely waited behind the post-verdict compaction. The replay lands in a
+reserving the command delivered nothing. It runs on a missing start only when
+the session is provably dead or its `max_prompt_redeliveries` redeliveries are
+spent, because a live, idle session's wake may merely have waited behind the
+post-verdict compaction, and killing it would cost the conversation. The replay lands in a
 new session generation, so it resets `redeliveries`: the reborn conversation
 gets its own bounded redeliveries before any further kill (every replay still
 spends a `recovery_attempts`).
@@ -327,7 +327,7 @@ freshness through a supervisor lease (`round-stage`, stale after
   when available, otherwise the already-expired lease as the conservative
   latest possible origin — never observation time, which would let an outage
   reset the hard cap);
-- the session's bridge reports a compaction running (H1b) ⇒ late, not
+- the session's bridge reports a compaction running ⇒ late, not
   lost: the start lease is held open, re-checked every
   `session_command_unknown_grace_s`, bounded by the compaction's own start +
   `session_compaction_max_s` (600 s); event `session_command_start_deferred`.
@@ -388,14 +388,14 @@ ledger block and mirrors it to `state/ledgers/<session>.md` (only on change).
 On `session_before_compact` it returns a real `compaction`: pi's own
 default summary, made by calling the package's exported `compact()` with the
 session model's auth, with the pinned ledger block appended verbatim. pi 1.0.0
-reads only `cancel` and `compaction` from that hook; the earlier carriers
-(`instructions`, `summary`, `retainedTail`, `details`) were all ignored. Any
+reads only `cancel` and `compaction` from that hook (any other field, such as
+`instructions`, `summary`, `retainedTail` or `details`, is ignored). Any
 failure on that path returns nothing, so pi runs its default compaction rather
 than a cancelled one. The hook also appends a `qcr-review-ledger` custom entry
 (`appendEntry(customType, data)`) to the session file, so archival never
 depends on the summariser.
 
-The daemon hands the ledger back too, without any pi API (MC-18):
+The daemon hands the ledger back too, without any pi API:
 every round order carries the mirrored block from `state/ledgers/pr-<n>.md`
 (`src/ledgercarry.ts`, bounded, the path named, rendered as
 `{{ledger_note}}`), and the ledger's `SETTLED:` items become the order's
@@ -413,7 +413,7 @@ Two details are load-bearing:
   `extensions/vendor/openviking-pi/patches/0001-remove-session-before-compact-handler.patch`
   for exactly this reason.
 
-Compaction itself is REQUESTED by the daemon (H1b): `compactSession(pr)`
+Compaction itself is requested by the daemon: `compactSession(pr)`
 writes `.compact-request.json` into the session's inject dir after a round's
 verdict lands, and the inject bridge — the session's one mailbox consumer —
 runs it through pi's own `ctx.compact()` once nothing is in flight (no run, no
@@ -424,11 +424,11 @@ swallowed, and manual compaction emits no `agent_settled`. The bridge watches
 `session_before_compact` / `session_compact` / `session_compact_failed` (and pi's
 own `ctx.isIdle()`, which counts compaction), drains when it ends, and
 publishes the state in its ready receipt (`compaction: {state, seq, started_at,
-ended_at, outcome, source}`, read by `sessionCompaction(pr)`). Before H1b the
-daemon typed `/compact` into the pane: that aborted whatever turn was running,
-and a wake flushed right after it was submitted into the compaction, refused
-and never retried — seven healthy sessions were then killed as wedged in one
-morning. Best-effort still: a bridge from before H1b ignores the request.
+ended_at, outcome, source}`, read by `sessionCompaction(pr)`). The daemon never
+types `/compact` into the pane: that aborts whatever turn is running, and a wake
+flushed right after it would be submitted into the compaction, refused and never
+retried. Best-effort: an older bridge that does not know the request file
+ignores it.
 
 ## Prompts and rendering
 

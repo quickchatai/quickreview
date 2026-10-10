@@ -1,5 +1,5 @@
-// The repo profile, as setup reads, validates and writes it (setup &
-// scan spec "Profile resolution" + "Interview mapping").
+// The repo profile, as setup reads, validates and writes it (setup & scan
+// spec "Profile resolution" + "Interview mapping").
 //
 // VALIDATION IS THE DAEMON'S OWN. `checkProfile` resolves a profile through
 // every loader the daemon runs at boot (src/profiles.ts — the addenda pack,
@@ -74,7 +74,7 @@ export const DRAFTED_GUIDE_FILE = "style-guide.md";
 /** What a new profile extends (the shipped behaviour). */
 export const DEFAULT_BASE = "default";
 
-// ---- which profile ---------------------------------------------------------
+// ---- which profile ----
 
 export type ProfileTarget =
   | { state: "ok"; config: string; named: string }
@@ -113,7 +113,7 @@ export function writableProfileDir(home: ProfileHome, name: string): string {
   return join(configHome(home.env), PROFILES_DIR, assertPathSegment("profile", name));
 }
 
-// ---- the check ---------------------------------------------------------------
+// ---- the check ----
 
 /** What a valid profile resolves to — what the daemon would review with. */
 export interface ProfileSummary {
@@ -217,7 +217,7 @@ export function describeSummary(s: ProfileSummary): string {
   ].join("\n");
 }
 
-// ---- the surgical edit ---------------------------------------------------------
+// ---- the surgical edit ----
 
 /** A lens table's raw values, as TOML holds them. */
 export type RawLensTable = Record<string, string | boolean>;
@@ -381,7 +381,7 @@ export function editLensTables(
   return { ok: true, text: next, tables: intended };
 }
 
-// ---- staging -------------------------------------------------------------------
+// ---- staging ----
 
 /** Files of one profile, relative to its directory: text to write. */
 export type ProfileFiles = Record<string, string>;

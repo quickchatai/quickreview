@@ -8,9 +8,10 @@
 // PR's later commits — the future of the code it is reviewing. The same reason
 // the harness's own full clone (repo_utils.py, `fetch --all`) is not used.
 //
-// Anonymous only: no token of any kind (the project's credential rule: only the App's credential, never a personal token). The public API
-// is used once per case for the PR's title/body/base branch and degrades to
-// "unavailable" under the 60 req/h anonymous limit rather than blocking.
+// Anonymous only: no token of any kind (CLAUDE.md rule 3: the App's
+// credential only, never a personal token). The public API is used once per
+// case for the PR's title/body/base branch and degrades to "unavailable"
+// under the 60 req/h anonymous limit rather than blocking.
 //
 // External benchmarks (bench/aacr/EXTERNAL-BENCHMARKS.md) add three things,
 // each driven by a field of the case and absent from every AACR-Bench case:
@@ -55,7 +56,7 @@ export interface PrefetchOptions {
   /** Local read-only bare repos to fetch from first, keyed by fetch repo;
    * default from env QCR_BENCH_MIRRORS (`mirrorsFromEnv`). */
   mirrors?: ReadonlyMap<string, string>;
-  /**: the mirror is the ONLY source — no network fallback for a
+  /** The mirror is the only source — no network fallback for a
    * commit, no API call, no `ls-remote` (a private replay's repo must never
    * be asked for over the network). Default from env QCR_BENCH_MIRROR_ONLY=1. */
   mirrorOnly?: boolean;

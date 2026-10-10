@@ -1,8 +1,8 @@
-// the stores that belong to no PR (docs/archiving.md §5, §7.5):
+// The stores that belong to no PR (docs/archiving.md §5, §7.5):
 //
 //   (4) The current overseer file is never archived; non-current files are
 //       (into archive/overseer/transcripts/, named by their own file names);
-//       two rotations on the same date no longer overwrite each other.
+//       two rotations on the same date never overwrite each other.
 //
 // Plus the overseer's legacy archive/overseer/<date>/session.jsonl copies:
 // removed only as a verified exact or byte-prefix duplicate of the
@@ -536,7 +536,7 @@ describe("the plan measures the stores (§13: before anyone flips to `on`)", () 
   });
 });
 
-// ---- S4 review: the store manifest, the re-checks and the stops -----------
+// ---- the store manifest, the re-checks and the stops ----------------------
 
 const GIB = 1024 ** 3;
 const anomaliesOf = (f: PrFixture, kind: string): unknown[] =>

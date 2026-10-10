@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 // Is the daemon's heartbeat from the container that is running NOW?
 //
-// deploy.sh's post-deploy check used to `cat status.json` and pass on any
-// file at all. On 2026-10-03 a sync reported "deploy ok" over a daemon
-// crash-looping at startup: the file it read was the OLD daemon's last write
-// (made while ansible was still rsyncing, so even "written after the deploy
-// started" would have passed it). The only reference that cannot be fooled
-// that way is the container's own start: a heartbeat written after it came
-// from this boot, and one that is also recent says the daemon is still alive.
+// Any status.json on disk may be the previous daemon's last write (made while
+// ansible was still rsyncing, so even "written after the deploy started" does
+// not prove it). The only reference that cannot be fooled that way is the
+// container's own start: a heartbeat written after it came from this boot,
+// and one that is also recent says the daemon is still alive.
 //
 // stdin, all from ONE ssh call so every timestamp is the VM's own clock:
 //   line 1  the container's .State.StartedAt (docker inspect)

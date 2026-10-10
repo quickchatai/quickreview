@@ -1,4 +1,4 @@
-// DELIVERY when `[memory] delivery = "on"`: the lessons the
+// Delivery when `[memory] delivery = "on"`: the lessons the
 // round's selection found reach the lens task files, the lessons files of the
 // lenses a session adds and of the validator, the main session's prompt (the
 // "Lessons in force" index, the "Past reviews of these files" block, the
@@ -426,7 +426,7 @@ describe("on: a discovery row's lessons ride its task file", () => {
             expect(t.text, lens).not.toContain(LESSONS_SECTION_HEADING);
         }
         // The row holds a dont-raise lesson, so it is told that lesson never
-        // stops it raising a candidate (R2: only the validator demotes).
+        // stops it raising a candidate (only the validator demotes).
         expect(task.text).toContain(LENS_DONT_RAISE_RULE);
         // ONE selection ran for the round — awaited beside the seed, never
         // started again after the handoff: exactly one run's planned finds,
@@ -537,7 +537,7 @@ describe("on: the main session's prompt", () => {
         const r = await dispatchRound("on", { type });
         const off = await dispatchRound("off", { type });
         try {
-          // The pinned head and the recalled context block, exactly as today.
+          // The pinned head and the recalled context block, exactly as under `off`.
           expect(r.prompt).toContain("STANDING INSTRUCTIONS");
           expect(r.prompt).toContain("Standing: never re-approve.");
           expect(r.prompt).toContain("RECALLED CONTEXT");
@@ -598,7 +598,7 @@ describe("on: the main session's prompt", () => {
     });
     expect(renderBleedNote(empty)).toBe(BLEED_RULE_VERBATIM);
     expect(renderLessonsNote(empty)).toBe("");
-    // The verbatim rule is today's paragraph, byte for byte.
+    // The verbatim rule is the templates' paragraph, byte for byte.
     for (const t of ["first", "re-review", "staleness"] as RoundType[]) {
       const tpl = readFileSync(join(ROOT, "prompts", roundTemplateFile(t)), "utf8");
       expect(tpl).not.toContain("Notes from other PRs are noise");
@@ -765,7 +765,7 @@ describe("on: the selection is awaited beside the seed, within the budget (fake 
         ),
       memory: { assembler: slowAssembler, timeoutMs: 3000 },
       lessons: selector,
-      // The integrity baseline reads real files (async since H2),
+      // The integrity baseline reads real files (async),
       // which a fake clock cannot wait on; this harness times the lessons.
       integrityFingerprint: async () => ({ digest: "fake-clock", files: {} }),
     }).then((orders) => {
@@ -799,7 +799,7 @@ describe("on: the selection is awaited beside the seed, within the budget (fake 
         const firstFind = h.calls.findIndex((c) => c.startsWith("find:"));
         expect(firstFind).toBeGreaterThan(0);
         expect(h.calls.slice(0, firstFind)).toEqual(["seed:head", "seed:block"]);
-        // Nothing arrived: the prompt is today's, and the ledger says why.
+        // Nothing arrived: the prompt is the lesson-free one, and the ledger says why.
         expect(r.prompt).toContain(BLEED_RULE_VERBATIM);
         expect(r.ledger.roundRow(r.roundId)).toMatchObject({ state: "timeout", answered: 0 });
         // …and the log says what it cost: the round WAITED, for the budget.
@@ -1175,7 +1175,7 @@ describe("selection: one shared find for every addable lens, filtered per lens",
       prFiles: ["backend/api/views.py"],
       addable: ["pass-concurrency", "pass-security"],
     });
-    // S9b planned a third find for them, last; since F2 they share the rows'.
+    // They share the rows' lesson find; no third find is planned.
     expect(plan.addableKey).toBe(plan.lessonsKey);
     expect(plan.finds.at(-1)!.key).toBe(plan.addableKey);
     expect(plan.finds).toHaveLength(2);
@@ -1203,7 +1203,7 @@ describe("selection: one shared find for every addable lens, filtered per lens",
     ]);
     // The texts of every selected entry, by URI, for delivery.
     expect(texts.get(`${EXP}/20261001T000004-cc.md`)).toContain("CONCURRENCY:");
-    // No addable lenses ⇒ no addable find (S9a's plan, unchanged).
+    // No addable lenses ⇒ no addable find.
     expect(planFinds({ title: "T", rows, prFiles: ["x"] }).addableKey).toBeNull();
   });
 
@@ -1256,7 +1256,7 @@ describe("selection: one shared find for every addable lens, filtered per lens",
   });
 });
 
-// ---- review fixes (S9b round 1) ---------------------------------------------------------------
+// ---- the seed's search and the lesson finds ---------------------------------------------------
 
 describe("the seed says when its search is out — the lesson finds wait for that, nothing else", () => {
   it("OpenVikingContextAssembler calls onSent only once its search was issued, after the awaited retired list", async () => {
@@ -1295,7 +1295,7 @@ describe("the seed says when its search is out — the lesson finds wait for tha
     releaseRetired();
     await expect(p).resolves.toEqual({ status: "read", text: "" });
     expect(order).toEqual(["retired:asked", "retired:answered", "search:issued", "onSent"]);
-    // Without the option it answers exactly as before.
+    // Without the option it answers the same.
     await expect(assembler.contextBlock("q", { maxTokens: 100 })).resolves.toEqual({
       status: "read",
       text: "",

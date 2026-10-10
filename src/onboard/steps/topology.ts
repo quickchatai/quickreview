@@ -50,8 +50,8 @@ export const SSH_ALIAS_CHOICE_KEY = CHOICE_KEYS.sshAlias;
 
 export type { Topology };
 
-/** The recorded topology. Absent ⇒ "local": the compose path is what every
- * step did before this step existed, so an old checklist keeps its meaning. */
+/** The recorded topology. Absent ⇒ "local", the compose path, so a checklist
+ * that never recorded a topology keeps its meaning. */
 export function topologyOf(choices: Readonly<Record<string, unknown>>): Topology {
   return choices[TOPOLOGY_CHOICE_KEY] === "vm" ? "vm" : "local";
 }

@@ -1,8 +1,7 @@
-// ledger-pin — (first-night audit F3): the extension must only mirror
-// the session's OWN PR ledger. Six production sessions persisted PR #5288's
-// ledger over their own after quoting a sibling review's header; the overseer
-// mirrored a PR ledger it should never carry. Filter is on QCR_PR; missing or
-// garbage QCR_PR fails safe (no mirror).
+// ledger-pin: the extension mirrors only the session's own PR ledger. A
+// session that quotes a sibling review's header must not persist that ledger
+// over its own, and the overseer never carries a PR ledger. Filter is on
+// QCR_PR; missing or garbage QCR_PR fails safe (no mirror).
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

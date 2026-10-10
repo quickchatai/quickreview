@@ -1,5 +1,5 @@
 // A posted finding's identity, shared by the two ends that must agree on it
-// (S6, outcome capture): the findings-record PARSER, which turns the
+// for outcome capture: the findings-record PARSER, which turns the
 // session's record into `round_findings` rows keyed by `(pr, round_no,
 // finding_key)`, and the live RENDER route, which stamps that key into every
 // inline comment it renders so the comment can be linked back to its row.
@@ -72,7 +72,7 @@ const FINDING_MARKER_ALL_RE = new RegExp(FINDING_MARKER_RE.source, "g");
  * reviewer's, which may quote PR content — a marker-shaped string a PR
  * carries (or this repo's own tests, in a self-review) and the finding
  * quotes comes BEFORE it. Taking the first match would link the comment to
- * whatever finding the quoted text names (integration review).
+ * whatever finding the quoted text names.
  */
 export function parseFindingMarker(
   body: string | null | undefined,

@@ -1,4 +1,4 @@
-// Alert pipeline (slice C2) — the companion's only push channel.
+// Alert pipeline — the companion's only push channel.
 //
 // The companion writes `<alerts_dir>/<iso-ts>-<slug>.json` to the schema fixed
 // in prompts/companion.md § Alerts; this module is the consumer. Verdict-file
@@ -6,7 +6,7 @@
 // coercion for `pr`, and a malformed file is SURFACED (a status-line notice
 // naming the file) — never silently dropped.
 //
-// Policy is, ratified with the owner:
+// Policy:
 //   tier `notice` → TUI status line only;
 //   tier `alert`  → status line + KDE notify-send + an overseer inject;
 //   one notification per distinct cause per `cooldown_min`, repeats inside the
@@ -155,9 +155,8 @@ export function filePolicyStore(path: string): PolicyStore {
 /**
  * Per-cause cooldown + daily fold memory, persisted across TUI restarts.
  *
- * The day boundary is the **operations timezone** (`cfg.ops.timezone`,
- * established the principle after C2 shipped it as UTC and
- * flagged the deferral): "already told you today" has to flip when the
+ * The day boundary is the **operations timezone** (`cfg.ops.timezone`):
+ * "already told you today" has to flip when the
  * operator's day flips, and the daily escalation bypass has to reset with it
  * — an hour or two of drift either side of midnight is exactly when a
  * night's worth of folded causes should start speaking again. The TUI passes
@@ -390,8 +389,8 @@ export class AlertConsumer {
       this.sinks.badge(this.badgeState);
       return;
     }
-    // Derived from the policy's per-day memory, like `folds`: a per-process
-    // tally never reset at midnight and started from 0 on every restart.
+    // Derived from the policy's per-day memory, like `folds`, so the count
+    // resets at the ops-day boundary and survives a TUI restart.
     this.badgeState.count = this.policy.totalRouted();
     this.badgeState.folds = this.policy.totalFolds();
     this.badgeState.latest = {
@@ -474,7 +473,7 @@ export function maybeWritePiAuthAlert(
   return name;
 }
 
-// ---- reviewer memory unusable → the same alert pipeline (S1) -------
+// ---- reviewer memory unusable → the same alert pipeline ---------------------
 
 export interface MemoryAlertMemory {
   /** `<state>@<since>` of the transition the last written file covered. */
@@ -485,9 +484,9 @@ export interface MemoryAlertMemory {
  * Bridge from status.json `memory` into the alert pipeline: ONE alert-tier
  * file per TRANSITION into `auth_failed` or `down` — badge, notify-send,
  * overseer inject and the per-cause cooldown all come from the existing
- * consumer, exactly like `maybeWritePiAuthAlert`. Memory was dead for five
- * weeks while the only party told was the overseer; this is the desktop
- * notification half of reaching a person.
+ * consumer, exactly like `maybeWritePiAuthAlert`. This is the desktop
+ * notification half of reaching a person — telling only the overseer is not
+ * enough.
  *
  * Sourced from the daemon's snapshot, NEVER from OpenViking (the thing that is
  * down), and only from FRESH data: `fresh` is the poller's verdict — a stale
@@ -527,7 +526,7 @@ export function maybeWriteMemoryAlert(
   return name;
 }
 
-// ---- the day's curation did not reach memory → the same pipeline (S8)
+// ---- the day's curation did not reach memory → the same pipeline ----------
 
 export interface CurationAlertMemory {
   /** `<state>@<day>` the last written file covered. */
@@ -539,8 +538,8 @@ export interface CurationAlertMemory {
  * alert-tier file per (state, day) when the EOD curation is `missing` (no
  * receipt) or `not_persisted` (a lesson refused or not found) — badge,
  * notify-send and cooldown from the existing consumer, exactly like the memory
- * alert. For 30 days the curator persisted nothing and only its own digests
- * said so. Fresh snapshots only; a day that recovers re-arms it.
+ * alert, so a curation that persisted nothing reaches a person. Fresh
+ * snapshots only; a day that recovers re-arms it.
  */
 export function maybeWriteCurationAlert(
   alertsDir: string,

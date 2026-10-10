@@ -1,7 +1,9 @@
-// H1a — #5850 round 5, replayed through the REAL round-stage
-// supervisor and the REAL verdict watcher (wired as daemon.ts wires them).
+// A recorded live round, replayed through the REAL round-stage supervisor and
+// the REAL verdict watcher (wired as daemon.ts wires them). Without the
+// receipt check, the stage limit kills a round whose review is already
+// posted, and the re-run posts a second one.
 //
-// The live timeline (2026-10-08, UTC; health check report, state.db snapshot):
+// The recorded timeline (UTC):
 //   08:28:10.849  round 5 dispatched at head 8693fde (round_id 2485)
 //   08:30:46 / 08:35:23  a human re-requests review → successor_required ×2
 //   ~08:49:18     the last pass finishes
@@ -12,10 +14,11 @@
 //   09:08         round 6 re-reviews the same head; 09:29:32 a SECOND
 //                 REQUEST_CHANGES (review 5454497864)
 //
-// With the fix, the limit asks the receipt first: the review is on GitHub, so
-// the session's tail gets its bounded grace and the round ends with ONE
-// posting either way — the verdict file lands, or the grace runs out and the
-// round settles from the receipt. With no receipt the old path still runs.
+// The limit asks the receipt first: the review is on GitHub, so the session's
+// tail gets its bounded grace and the round ends with ONE posting either way —
+// the verdict file lands, or the grace runs out and the round settles from the
+// receipt. With no receipt the limit cancels the round as an infrastructure
+// failure, kills the session and requeues.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

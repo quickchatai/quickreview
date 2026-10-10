@@ -71,7 +71,7 @@ describe("daemon topology", () => {
     }
   });
 
-  //. A PR's OpenViking session shares the PR session's NAME and is not
+  // A PR's OpenViking session shares the PR session's NAME and is not
   // a session in this invariant's sense: it is a row in the memory store that
   // the daemon creates and deletes over HTTP — nothing schedules it, nothing
   // runs in it, no pi process is attached to it, and it never appears in tmux.
@@ -179,17 +179,17 @@ describe("daemon topology", () => {
     expect(offenders).toEqual([]);
     // The case runner's allowance holds only while no daemon module can reach
     // it: src/setup/ is imported from src/setup/ and the companion's
-    // extension — with leaf exceptions: setup/history.js (the
-    // TUI's `qcr history pull` needs the digest's file name),
+    // extension — with leaf exceptions: setup/history.js (the TUI's
+    // `qcr history pull` needs the digest's file name),
     // setup/stage2request.js (the TUI's stage-2 start click reads the
-    // proposal and writes the request), and's three for the
-    // operator's machine — pins.js (the TUI marks proposed pins),
+    // proposal and writes the request), three for the operator's
+    // machine — pins.js (the TUI marks proposed pins),
     // configcommit.js (the TUI and `qcr setup commit` carry out the profile
     // commits setup asked for) and profile.js (`qcr setup validate`, the
-    // daemon's own loaders over a profile), and's retunelog.js (the
-    // deploy tab says which post-scan re-tune is not deployed), and
-    // scanreport.js (the [8] scan tab reads the run record and the findings
-    // store, and asks for a stop). Each leaf may reach the rest of
+    // daemon's own loaders over a profile) — retunelog.js (the deploy tab
+    // says which post-scan re-tune is not deployed) and scanreport.js (the [8]
+    // scan tab reads the run record and the findings store, and asks for a
+    // stop). Each leaf may reach the rest of
     // src/setup/ by TYPE only (erased at build), so no exception can ever
     // carry the case runner along with it.
     const setupLeaves = [
@@ -231,7 +231,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     expect(start).toBeGreaterThan(-1);
     const block = text.slice(start, end);
     // The handler hands the reply to `serveAuthorReply` (exported so it can be
-    // driven directly — S9b) and does nothing else with it.
+    // driven directly) and does nothing else with it.
     expect(block).toContain("serveAuthorReply(");
     expect(block).not.toMatch(/await\s+hooks\.inject\(/);
     const fnStart = text.indexOf("export async function serveAuthorReply(");
@@ -240,7 +240,7 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
     expect(fn).toContain("wakeOrHold(");
     expect(fn).not.toMatch(/await\s+(?:deps\.|hooks\.)?inject\(/);
     // The reply is claimed before the wake: a failed injection must hold it,
-    // never drop it (selfscan 0df49200).
+    // never drop it.
     expect(fn).toContain("holdOnFailure: true");
   });
 
@@ -264,23 +264,22 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
   });
 
   /**
-   * / MC-10 — the assertion above greps for a CALL SHAPE, and the one
+   * The assertion above greps for a CALL SHAPE, and the one
    * module that actually reaches a `pr-<n>` session from outside the daemon
    * does not use it: `src/tui/msg.ts` writes the inject FILE itself, over ssh,
    * with `docker exec … mv … inject/<session>/<name>.md`. The regex above
-   * cannot see that, and never could — so the compliance audit was right that
-   * the invariant survived on a layer the tests did not cover.
+   * cannot see that.
    *
    * This is the fence for the OTHER spelling: constructing an inject path.
    * It names the file rather than the call, so a future module that reaches a
    * PR session by writing the drop-box directly fails here even if it never
    * calls `.inject(pr, …)`.
    *
-   * The allowlist is the point. `msg.ts` is a RATIFIED operator-initiated
-   * exception (rule: "the board is read-only over ssh with exactly two
-   * exceptions", the quick-message box being the first) — but it was
-   * *invisible* to the suite, and an invisible exception is indistinguishable
-   * from an oversight. Now it is written down, with what makes it legal.
+   * The allowlist is the point. `msg.ts` is a sanctioned operator-initiated
+   * exception ("the board is read-only over ssh with exactly two
+   * exceptions", the quick-message box being the first), and an exception the
+   * suite cannot see is indistinguishable from an oversight, so it is written
+   * down here with what makes it legal.
    */
   it(
     "only the sanctioned writers construct a session's inject drop-box path",
@@ -339,10 +338,10 @@ describe("S4: every PR-session wake goes through wakes.ts", () => {
       // without writing to it, and a fence that fires on prose gets muted.
       // BOTH spellings are detected — the path-segment form `…/inject/<x>` that
       // msg.ts and companion.ts use, and the `join(root, "inject", …)` form
-      // sessions.ts uses. The first version of this fence caught only the first
-      // spelling and passed a deliberately-planted rogue writer: a detector
-      // tuned to today's call sites is the same false all-clear as grepping for
-      // a name instead of a reader.
+      // sessions.ts uses. A fence that caught only the first spelling would
+      // pass a rogue writer using the second: a detector tuned to today's call
+      // sites is the same false all-clear as grepping for a name instead of a
+      // reader.
       const writers = srcFiles(src)
         .filter((f) => {
           const code = readFileSync(f, "utf8")
@@ -421,7 +420,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
     }
   });
 
-  // leaves may LOOK THINGS UP and may not write. Two layers — this
+  // Leaves may LOOK THINGS UP and may not write. Two layers — this
   // allowlist decides which memory tools exist inside a leaf at all, and the
   // vendored fork's PATCH 2 withholds `viking_write` in any leaf process.
   it("gives a leaf read-only memory and no way to author anything", () => {
@@ -458,7 +457,7 @@ describe("buildAgents — built passes cannot launch agents", () => {
 
 // ---- S3: children never get the subagent tool (no nested fan-out) ---------
 //
-// the native extension's children spawn WITHOUT per-spawn argv
+// The native extension's children spawn WITHOUT per-spawn argv
 // extensions and load only the global settings.json list. The glue therefore
 // rides argv (pinned in tests/sessions.test.ts / tests/tui-companion.test.ts),
 // and the global registration lists in BOTH container boots must never grow a
@@ -591,8 +590,8 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["do not lose me"]);
   });
 
-  // Selfscan fce511c3: with no round and no command, a NEW wake injected
-  // straight past older held wakes still waiting for the stranded sweep.
+  // With no round and no command, a NEW wake must not inject straight past
+  // older held wakes still waiting for the stranded sweep.
   it(
     "a new wake never overtakes an existing held backlog",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -638,9 +637,9 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(store.heldWakes(7).map((w) => w.payload)).toEqual(["newer reply"]);
   });
 
-  // Selfscan 0df49200: the daemon claims an author message BEFORE waking; an
-  // injection that failed before any command existed threw the wake away and
-  // the claim refused every redelivery — the reply was never answered.
+  // The daemon claims an author message BEFORE waking, so an injection that
+  // fails before any command exists must hold the wake: dropped, the claim
+  // would refuse every redelivery and the reply would never be answered.
   it("holdOnFailure turns an injection failure into a durable hold", async () => {
     const failing = {
       store,
@@ -687,7 +686,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
     expect(await flushHeldWakes(deps(), 7)).toBe(0);
   });
 
-  // H2: a round end that awaited long enough for the PR's NEXT round
+  // A round end that awaited long enough for the PR's NEXT round
   // to be dispatched must not flush its held wakes into that round. An acked
   // round command holds no session slot, so the slot check cannot see it.
   // MUTATION: drop the `hasRunningRound` check in flushHeldWakes — red.
@@ -772,7 +771,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
       expect(store.heldWakes(7).every((wake) => wake.claim_token !== null)).toBe(true),
     );
 
-    // H1b: author replies sit outside the cap — the leased batch is
+    // Author replies sit outside the cap — the leased batch is
     // never evicted and does not crowd out newcomers either: an author reply
     // and an ordinary wake arriving meanwhile are both held.
     expect(store.holdWake(7, "a ledger nudge arrived meanwhile", "ledger_stale")).toEqual([]);
@@ -871,7 +870,7 @@ describe("wakeOrHold / flushHeldWakes", () => {
   });
 });
 
-// Prompt cleanup (owner-approved 2026-10-03): a build whose leaves run
+// A build whose leaves run
 // without memory (the bench) carries neither the two memory tools nor the
 // memory rule that describes them.
 describe("buildAgents — memory off", () => {

@@ -1,14 +1,13 @@
-// Starting setup (setup & scan spec "Setup entry"): `qcr setup` and
+// Starting setup: `qcr setup` and
 // the board's `I` key both focus the companion on its `setup` skill, and both
 // carry out the profile commits setup asked for (src/setup/configcommit.ts).
 //
-// The ask travels as ONE inject file into the companion's own inject dir —
+// The ask travels as one inject file into the companion's own inject dir —
 // the channel the rollover's day-open and the first-run interview already
 // use, drained by the unmodified inject-bridge (on arrival when the companion
-// runs, at its next start when it does not). It is the OPERATOR's act, taken
+// runs, at its next start when it does not). It is the operator's act, taken
 // with a key or a command, exactly like typing the request into the column:
-// never ambient, never a synthetic turn the TUI decides to send on its own
-// (the retired companion-wake stays retired).
+// never ambient, never a synthetic turn the TUI decides to send on its own.
 import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { configHome, stateHome, type InstallEnv } from "../install.js";
@@ -65,7 +64,7 @@ export function writeCompanionAsk(opts: {
   return target;
 }
 
-/** Carry out the commits setup asked for, in THIS machine's homes. Total: a
+/** Carry out the commits setup asked for, in this machine's homes. Total: a
  * failure is a result, never a throw. */
 export function commitRequestedProfiles(env: InstallEnv = process.env): CommitResult[] {
   try {

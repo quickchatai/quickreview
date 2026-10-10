@@ -153,8 +153,8 @@ def main():
     m.add_argument("--line-k", type=int, default=1)
     m.add_argument("--harness", default="/opt/aacr-bench/evaluation")
     # The harness reader the shards ran with — it names the metrics files. Every
-    # arm is scored with ocr now (the Claude Code arm on its `review` view);
-    # claude stays accepted for re-merging shards of an older Claude Code eval.
+    # arm is scored with ocr (the Claude Code arm on its `review` view);
+    # claude is accepted for re-merging shards of an older Claude Code eval.
     m.add_argument("--reviewer", default="ocr", choices=["ocr", "claude"])
     m.add_argument("shards", nargs="+")
     a = ap.parse_args()

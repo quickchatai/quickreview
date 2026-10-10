@@ -84,7 +84,7 @@ export function readDigest(fs: StateFs): DigestRead {
     : { state: "unreadable", error: `${HISTORY_DIGEST_FILE}: ${p.error}` };
 }
 
-// ---- the companion's view ------------------------------------------------------
+// ---- the companion's view ----
 
 export type HistorySection = "human" | "rounds" | "feedback";
 
@@ -153,7 +153,7 @@ export function historyPage(
   return { total: all.length, offset: off, lines: all.slice(off, off + lim) };
 }
 
-// ---- themes: validation and the leak belt ------------------------------------
+// ---- themes: validation and the leak belt ----
 
 export type ThemeRefusal = { ok: false; errors: string[] };
 
@@ -265,7 +265,7 @@ export function themeEntryText(t: HistoryTheme): string {
   return `#${HISTORY_TAG} source=${t.source} weight=${t.weight} Theme: ${t.title} — ${t.summary}`;
 }
 
-// ---- save & read -----------------------------------------------------------------
+// ---- save & read ----
 
 export interface MemoryOutcome {
   written: number;

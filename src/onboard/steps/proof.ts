@@ -5,7 +5,7 @@
 //
 // The shape:
 //   1. ask for a real PR of theirs with the trigger label on it (the wizard
-//      never creates a demo PR — spec, "Out of Scope");
+//      never creates a demo PR);
 //   2. follow the round to completion THROUGH THE STATE STORE — the daemon's
 //      own record, read with the daemon's own `qcr why --json` inside the
 //      container, so the wizard is reading exactly what the operator would;
@@ -484,7 +484,7 @@ export function proofRoundStep(opts: ProofStepOptions = {}): OnboardingStep {
  * started. The dry-run dir is cumulative, so without this a re-run whose round
  * recorded no review would show — and certify — an earlier round's review.
  * A round whose start the daemon did not report cannot be bound, and keeps
- * every record (the pre-binding behaviour) rather than refusing outright.
+ * every record rather than refusing outright.
  */
 export function roundRecords(records: DryrunRecord[], round: ObservedRound): DryrunRecord[] {
   const start = Date.parse(round.started_at);

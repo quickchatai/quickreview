@@ -1,27 +1,26 @@
 // Prior findings to verify (docs/follow-up-rounds.md step 1).
 //
 // A follow-up round starts by verifying, mechanically, every finding earlier
-// rounds POSTED that is still open. Until now that list came only from the
-// session's own free-text ledger. This module makes it the daemon's: it reads
-// the durable reasoning record (`round_findings`), drops what a later
-// round resolved, and renders the rest with a daemon-issued ref
+// rounds posted that is still open. The daemon owns that list: it reads the
+// durable reasoning record (`round_findings`), drops what a later round
+// resolved, and renders the rest with a daemon-issued ref
 // `<round_no>:<finding_key>` — the spelling of the outcome capture's
 // `carried_to` and of the render route's comment marker — so the session can
 // report each one's status back in its findings record's top-level `prior`
 // array (`src/findingsrecord.ts`), and the next round's list shrinks.
 //
-// THE HONEST-UNKNOWN RULE BINDS HERE. A round whose record never landed is not
+// The honest-unknown rule binds here. A round whose record never landed is not
 // "a round with no findings": the list says INCOMPLETE and names it, so the
 // session falls back to its ledger for that round. An empty list is rendered
 // only when every delivered earlier round's record was read.
 //
-// TIMING. Round k-1's record is ingested by the verdict tail ~90 s after its
-// verdict, but round k can be dispatched at once (findings.md §3). So a
-// delivered round with no ingested record is read from its file directly,
-// synchronously, exactly as `escalationFindings` does — and its `prior`
-// reports count too. Nothing here writes `round_findings`: the tail does.
+// Timing. Round k-1's record is ingested by the verdict tail ~90 s after its
+// verdict, but round k can be dispatched at once. So a delivered round with
+// no ingested record is read from its file directly, synchronously, exactly
+// as `escalationFindings` does — and its `prior` reports count too. Nothing
+// here writes `round_findings`: the tail does.
 //
-// A RECORD, NOT A GATE. Nothing here holds a round, refuses an approval or
+// A record, not a gate. Nothing here holds a round, refuses an approval or
 // touches GitHub. The listing rows (`prior_finding_checks`) record exactly
 // what was handed out; the reports are the session's.
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -147,7 +146,7 @@ export interface ComputePriorInput {
 }
 
 /**
- * THE PURE CORE. Collapse an earlier rounds' rows into the open prior
+ * The pure core. Collapse the earlier rounds' rows into the open prior
  * findings:
  *
  * - A re-posting (a later posted row whose `raised_in_round` names an earlier

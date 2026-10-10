@@ -297,7 +297,7 @@ describe("structured thread decision", () => {
     );
   });
 
-  // the decision file's optional `outcome` is the session's own
+  // The decision file's optional `outcome` is the session's own
   // account of the finding's fate. It is recorded on the applied event — the
   // outcome capture's strongest evidence for the thread — and changes nothing
   // the daemon does with the decision.
@@ -415,7 +415,7 @@ describe("structured thread decision", () => {
   });
 
   it("a retry after a lost reply response finds the landed reply and does not post it again", async () => {
-    // selfscan d8e53a98: GitHub committed the POST but the answer was lost.
+    // GitHub committed the POST but the answer was lost.
     // Reposting would be a duplicate on the thread and one past the cap.
     ledger.claimAuthorMessage(event);
     ledger.recordExchange(4000, 77);

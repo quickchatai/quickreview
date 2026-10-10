@@ -1,5 +1,5 @@
-// extensions/setup.ts — the companion's setup tool belt over the SetupEngine
-//, and the real ports it assembles (src/setup/adapters.ts). The belt
+// extensions/setup.ts — the companion's setup tool belt over the SetupEngine,
+// and the real ports it assembles (src/setup/adapters.ts). The belt
 // is driven over an engine with a scratch checkout and a temp state home; the
 // ports are driven against temp dirs, one scratch git repo (the listing is
 // `git ls-files`, so git is the thing under test there) and a fake fetch.
@@ -240,36 +240,36 @@ describe("the tool belt", () => {
         "setup_survey_start",
         "setup_survey_status",
         "setup_survey_stop",
-        // the repo portrait.
+        // The repo portrait.
         "setup_portrait_assemble",
         "setup_portrait",
         "setup_portrait_narrative",
-        // the interview's tuning.
+        // The interview's tuning.
         "setup_interview",
         "setup_profile",
         "setup_profile_apply",
         "setup_retune",
         "setup_profile_validate",
         "setup_pin_propose",
-        // the scan half of the belt.
+        // The scan half of the belt.
         "scan_preview",
         "scan_start",
         "scan_status",
         "scan_stop",
         "scan_findings",
-        // the companion's sameness hand-off.
+        // The companion's sameness hand-off.
         "scan_matches",
         "scan_match",
-        // stage 2.
+        // Stage 2.
         "scan_suggestions",
         "scan_stage2_propose",
         "scan_stage2_start",
-        // triage and scan memory.
+        // Triage and scan memory.
         "scan_dismiss",
         "scan_promote",
         "scan_close_fixed",
         "scan_memory",
-        // the PR replay, old vs new profile.
+        // The PR replay, old vs new profile.
         "setup_replay_preview",
         "setup_replay_start",
         "setup_replay_status",
@@ -619,7 +619,7 @@ describe("the pass-survey agent and the case runner", () => {
       cost_usd: expect.closeTo(0.03),
       reads: [],
     });
-    // the running cost is heard as it grows, so a capped caller can
+    // The running cost is heard as it grows, so a capped caller can
     // stop a case mid-flight.
     expect(heard).toEqual([expect.closeTo(0.01), expect.closeTo(0.03)]);
     const { command, args, cwd } = f.calls[0]!;
@@ -686,7 +686,7 @@ describe("the pass-survey agent and the case runner", () => {
         spawn: fakeSpawn(lines, code).spawn,
         invocation: inv,
       }).run(spec, sig());
-    // A failure spent money too (review): priced when pi said, null
+    // A failure spent money too: priced when pi said, null
     // (unknown, never free) when it did not, 0 when nothing ever started.
     expect(await run([], 1)).toEqual({ ok: false, reason: "pi exited 1", cost_usd: null });
     expect(
@@ -784,7 +784,7 @@ describe("checkoutReader", () => {
     tree(dir, { "secret.txt": "no" });
     const r = checkoutReader(repo);
     expect(r.listFiles()?.sort()).toEqual(["bin.dat", "stray.ts", "x.ts"]);
-    // One stray NUL in a source file is still text (selfscan round 6).
+    // One stray NUL in a source file is still text.
     expect(r.read("stray.ts")).toBe("const k = `a\0b`;\n");
     expect(r.read("../secret.txt")).toBeNull();
     expect(r.read("/etc/passwd")).toBeNull();

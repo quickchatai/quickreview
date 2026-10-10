@@ -1,9 +1,9 @@
-// Raw Socket Mode client (S1) — no @slack/socket-mode dependency: this
+// Raw Socket Mode client — no @slack/socket-mode dependency: this
 // is a few hundred lines over Node >=22's global WebSocket + fetch, both
 // injected so tests script frames deterministically.
 //
 // This file is PURE TRANSPORT. It acks, it reconnects, it normalizes — it does
-// not filter, dedupe or tier. That is the router's job (S3).
+// not filter, dedupe or tier. That is the router's job.
 import diagnosticsChannel from "node:diagnostics_channel";
 import type { SlackFetchFn, SlackInboundEvent, SlackInboundHandler, SlackSocket } from "./types.js";
 

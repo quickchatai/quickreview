@@ -45,8 +45,8 @@ EXT_DATA="${EXT_DATA:-$ROOTDIR/ext-data}"
 QIMG="${QCR_EXT_IMAGE:-qcr-bench:pi099-ext}"
 # The judge (ext_judge.py) and the Qodo scorer (qodo_judge.py) run on the ext
 # OVERLAY image, whatever QCR_EXT_IMAGE names for the REVIEW: a review image
-# built from master carries neither script (2026-10-03, the r6 Qodo judge
-# failed to start on qcr-bench:r6). QCR_EXT_JUDGE_IMAGE overrides.
+# built from master carries neither script, so the judge cannot start on it.
+# QCR_EXT_JUDGE_IMAGE overrides.
 JIMG="${QCR_EXT_JUDGE_IMAGE:-qcr-bench:pi099-ext}"
 BASE_IMG="${QCR_EXT_BASE:-qcr-bench:pi099}"
 MIMG="qcr-ext-martian:e616e84"

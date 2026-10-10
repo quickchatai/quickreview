@@ -1,11 +1,11 @@
-// Reads a SKILL.md front-matter block the way pi does (H4).
+// Reads a SKILL.md front-matter block the way pi does.
 //
 // pi 1.0.0 (dist/utils/frontmatter.js, dist/core/skills.js, read from a local
 // copy of the pinned package) takes the text between a leading `---` and the
 // next `\n---` and gives it to the `yaml` package's `parse`. If that throws,
 // pi prints the parser's message as a "[Skill conflicts]" warning and SKIPS
-// the skill, so the skill silently disappears. That is how `replay` was lost
-// from 2026-10-03 to 2026-10-08: its unquoted description contained ": ".
+// the skill, so the skill silently disappears — an unquoted description
+// containing ": " is enough.
 //
 // Neither the `yaml` package nor any other YAML parser is a dependency here.
 // prettier is a pinned devDependency, and its YAML plugin parses with the same

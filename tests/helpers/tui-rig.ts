@@ -176,7 +176,7 @@ export function settle(ms = 5): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// ---- the [8] scan tab ---------------------------------------------------
+// ---- the [8] scan tab ---------------------------------------------------------
 
 /** One finding in the store's shape; `over` sets what a test cares about. */
 export function scanFinding(over: Partial<ScanFinding> & { fingerprint: string }): ScanFinding {

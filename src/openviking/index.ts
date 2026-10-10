@@ -20,7 +20,7 @@ export type {
   ReembedNamespace,
   ReembedStatus,
 } from "./types.js";
-// The local English embedder (S4): the loopback service the server
+// The local English embedder: the loopback service the server
 // embeds through, supervised beside it.
 export {
   EMBEDDER_FAST_POLL_MS,
@@ -106,7 +106,7 @@ export {
   openVikingContextAssembler,
   type OpenVikingContextOptions,
 } from "./context.js";
-// The AUTHENTICATED probe and the boot provisioning report (S1) —
+// The authenticated probe and the boot provisioning report —
 // what the memory health monitor (src/memory/health.ts) is fed from.
 export {
   classifyProbe,

@@ -1,7 +1,7 @@
-// `[2] memory` (FT-0129, re-laid-out FT-0398): the day-grouped timeline, the
-// reading pane and its verbs, the forward rows, and the honest states of a
-// store that may not answer. Fake stores/ssh throughout; the App is driven
-// through its installed TabHooks exactly as the real key router does.
+// `[2] memory`: the day-grouped timeline, the reading pane and its verbs, the
+// forward rows, and the honest states of a store that may not answer. Fake
+// stores/ssh throughout; the App is driven through its installed TabHooks
+// exactly as the real key router does.
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -337,8 +337,8 @@ describe("quit vs late async repaints (ghost-frame regression)", () => {
   });
 });
 
-// FT-0164: the tab runs on OpenViking, which can be unreachable. An empty
-// timeline and an unreachable store MUST NOT look alike — an empty tab reads
+// The tab runs on OpenViking, which can be unreachable. An empty timeline and
+// an unreachable store must not look alike — an empty tab reads
 // as a healthy tab with nothing in it, and the operator would act on it.
 class UnhealthyMemory implements MemoryStore {
   constructor(
@@ -420,7 +420,7 @@ describe("memory unreachable (FT-0164)", () => {
   });
 });
 
-// FT-0170 — the memory forward runs in the TUI process, and the tab is where
+// The memory forward runs in the TUI process, and the tab is where
 // its state is visible and its web UI is reachable.
 describe("memory forward on the tab", () => {
   const UP = {

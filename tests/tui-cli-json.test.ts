@@ -1,4 +1,4 @@
-// The daemon-side read-only additions rides on: `why --json`,
+// The daemon-side read-only surfaces the TUI reads: `why --json`,
 // `today --json`, `events --tail`, and the enriched status snapshot.
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

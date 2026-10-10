@@ -1,6 +1,5 @@
 ---
-# Review-sandbox provisioning knobs — vendored working copy (the
-# tracker asset is the historical record). Target: the EXISTING shared `VM`
+# Review-sandbox provisioning knobs. Target: the EXISTING shared `VM`
 # VM in the operator's GCP project (e2-standard-4); the container is capped, the VM is not
 # ours to resize.
 
@@ -11,28 +10,24 @@ image_name: quickreview-sandbox
 image_tag: v1
 
 node_major: "22"
-# pi CLI npm package + exact version pin (findings; registry-verified
-# 2026-08-13). The image never floats — bumping is a deliberate edit +
-# `-e rebuild_image=true`.
+# pi CLI npm package + exact version pin (registry-verified). The image never
+# floats — bumping is a deliberate edit + `-e rebuild_image=true`.
 pi_npm_package: "@earendil-works/pi-coding-agent"
 pi_version: "1.0.0"
 
-# RETIRED: pi_subagents_repo/pi_subagents_commit. The third-party
-# amosblomqvist/pi-subagents extension is removed entirely — subagents are
-# pi's own first-party extension, shipped INSIDE the pinned pi package
-# (examples/extensions/subagent) and loaded from the installed package by
-# extensions/subagents.ts, so there is no separate pin to drift. Re-adding a
-# clone step here would resurrect the unlicensed dependency deleted.
+# No subagent-extension pin: subagents are pi's own first-party extension,
+# shipped INSIDE the pinned pi package (examples/extensions/subagent) and
+# loaded from the installed package by extensions/subagents.ts, so there is no
+# separate pin to drift. Never add a third-party subagent clone step here (it
+# would bring in an unlicensed dependency).
 
-# RETIRED: pi_memory_package/pi_memory_version and
-# qmd_npm_package/qmd_version. The hand-rolled memory engine is gone — memory
-# is OpenViking (below) and its pi extension is vendored in the repo, not
-# installed from npm. Re-adding either pin would put a second memory engine in
-# the image; that is the thing this phase deleted.
+# No memory-engine npm pin: memory is OpenViking (below) and its pi extension
+# is vendored in the repo, not installed from npm. An npm memory package here
+# would put a second memory engine in the image.
 
 # OpenViking (github.com/volcengine/OpenViking) — the context store the daemon
-# supervises as a second process inside the container, on LOOPBACK 1933
-#. Same pin discipline as pi_version: exact versions, never floating,
+# supervises as a second process inside the container, on LOOPBACK 1933.
+# Same pin discipline as pi_version: exact versions, never floating,
 # bumping is a deliberate edit + `-e rebuild_image=true`.
 #
 # TRIPLE MIRROR: openviking_version / llama_cpp_python_version here ==
@@ -43,10 +38,9 @@ pi_version: "1.0.0"
 # llama-cpp-python is NOT an openviking dependency — it is an undeclared
 # optional extra, and without it the default local dense embedder raises
 # EmbeddingConfigurationError at startup, so the server cannot boot at all
-# (verified against a running 0.4.15, 2026-08-20). Since S4 it is
-# also the runtime of the local English embedder (below). PyPI-verified pins
-# (2026-08-20): openviking 0.4.15 (requires-python >=3.10; 24.04 ships 3.12),
-# llama-cpp-python 0.3.35.
+# (verified against a running 0.4.15). It is also the runtime of the local
+# English embedder (below). PyPI-verified pins: openviking 0.4.15
+# (requires-python >=3.10; 24.04 ships 3.12), llama-cpp-python 0.3.35.
 openviking_version: "0.4.15"
 llama_cpp_python_version: "0.3.35"
 openviking_venv: /opt/openviking/venv
@@ -56,13 +50,13 @@ openviking_port: 1933                 # loopback only — NEVER a published port
 openviking_home: /opt/quickreview/state/openviking
 openviking_workers: 1                 # ov.conf server.workers (2-CPU cap)
 openviking_queue_concurrency: 2       # ov.conf queue_workers.* (defaults 4/4/8) + embedding.max_concurrent (10)
-# The embedder (S4). LOCAL is the shipped default: a small
+# The embedder. LOCAL is the shipped default: a small
 # ENGLISH embedding model served on loopback INSIDE the container by
 # scripts/openviking-embedder.py (over the pinned llama_cpp_python above), so
 # no memory text ever leaves the machine — nothing but the model call does.
 # Under "local" the entrypoint renders ov.conf's OpenAI-COMPATIBLE provider
 # with api_base http://127.0.0.1:{{ openviking_local_embedder_port }}/v1 and no
-# key — the engine's async client, so a search no longer blocks the server.
+# key — the engine's async client, so a search does not block the server.
 # A HOSTED embedder is an explicit opt-in, written as INVENTORY HOST VARS on the
 # host line (host vars outrank this file, and this file stays tracked and
 # clean):
@@ -83,7 +77,7 @@ openviking_embedding_provider: "local"
 openviking_embedding_model: "bge-small-en-v1.5-f16"
 openviking_embedding_dimension: 384
 openviking_embedding_key_file: "openai_embeddings_api_key"
-# The LOCAL EMBEDDER's model file (S4) — a rule-7 pin like
+# The LOCAL EMBEDDER's model file — a rule-7 pin like
 # openviking_version. TRIPLE MIRROR: these == config.toml [openviking]
 # local_embedder_file (== dir/model.gguf) / local_embedder_url /
 # local_embedder_sha256 == the Dockerfile model layer, which downloads the
@@ -105,11 +99,10 @@ openviking_local_embedder_sha256: "f0b2fef971e8366438bfd2d9aefea1b01159193894488
 # runs it briefly from these).
 openviking_local_embedder_port: 1934
 openviking_local_embedder_threads: 1
-# Server-side confinement. `api_key` makes every request carry a USER
-# key the server confines to that user's tree; `dev` bypasses authentication
-# and makes the two-user design nominal — it was the deployed value until
-# and must never be it again. MIRRORS config.toml [openviking]
-# auth_mode / root_key_file / reviewer_key_file / provision_users;
+# Server-side confinement. `api_key` makes every request carry a USER key the
+# server confines to that user's tree; `dev` bypasses authentication and makes
+# the two-user design nominal, so it is never the deployed value. MIRRORS
+# config.toml [openviking] auth_mode / root_key_file / reviewer_key_file / provision_users;
 # tests/openviking.test.ts and the scripts/deploy.sh preflight refuse on drift.
 openviking_auth_mode: "api_key"
 # Secret FILE NAMES under the container's read-only secrets mount. The ROOT key
@@ -125,14 +118,14 @@ openviking_reviewer_key_file: "openviking_reviewer_key"
 # present, never rotated (a rotation orphans the distributed keys).
 openviking_provision_users: "reviewer,companion"
 
-# tmux ≥3.5 for csi-u extended keys end-to-end (§3E):
+# tmux ≥3.5 for csi-u extended keys end-to-end:
 # Ubuntu 24.04 apt ships 3.4, so the image builds this release from source.
 tmux_version: "3.5a"
 
 timezone: Europe/Warsaw
 container_uid: 1001                   # the in-container 'review' user (Dockerfile)
 
-# Hard Docker limits — the VM is shared (the owner, 2026-08-13).
+# Hard Docker limits — the VM is shared.
 container_cpus: "2"
 container_memory: "8g"
 

@@ -1,13 +1,11 @@
-// Typed lessons (S8): the header a curated lesson carries, and the
-// tolerant reader for every lesson shape memory already holds.
+// Typed lessons: the header a curated lesson carries, and the tolerant reader
+// for every lesson shape memory already holds.
 //
-// A lesson in `experiences/` used to be prose: 10 of the 17 EOD lessons the
-// audit read carried no machine header at all, and the rest spelled their
-// type, lens and evidence three different ways in the BODY. Nothing could
-// tell which lens a lesson was for, whether it said "look for X" or "do not
-// raise X", or which human evidence it rested on — so nothing could deliver
-// it to the right lens (S9), measure the look-for : don't-raise balance, or
-// tell which candidate a lesson adopted.
+// The typed header says which lens a lesson is for, whether it says "look for
+// X" or "do not raise X", and which human evidence it rests on — which is
+// what lets a lesson be delivered to the right lens, the look-for :
+// don't-raise balance be measured, and an adopted candidate be traced. Prose
+// lessons with no header cannot say any of that reliably.
 //
 // THE GRAMMAR. A typed lesson opens with one header line, written by the
 // vendored `viking_write` from its structured `lesson` parameter (patch 0010,
@@ -29,14 +27,14 @@
 // is an event (`#feedback`, `#adjudication`, `#bug`, `#operations`, `#case`,
 // or any `kind=` that is not a lesson kind); it never derives a placement or a
 // retirement from the body; and it records where its fields came from
-// (`fieldsSource`). The legacy shapes, from the live store:
+// (`fieldsSource`). The legacy shapes memory holds:
 //
 //   * `#refuted #eod-learning` + a `type: refuted — … Lens: UI/backcompat.
-//     Evidence: <PR url> …` body (August EOD lessons);
-//   * the import: `#imported #learning import-key:… #false-positive
-//     #eod-learning [[pr-5312]] type: false-positive — …`;
-//   * October's headerless `# Title` / `type:` / `lens:` / `date:` lines;
-//   * `#convention #corpus topic=… source=…` (the conventions).
+//     Evidence: <PR url> …` body (older EOD lessons);
+//   * the curated import (`import.ts`): `#imported #learning import-key:…
+//     #false-positive #eod-learning [[pr-5312]] type: false-positive — …`;
+//   * headerless `# Title` / `type:` / `lens:` / `date:` lines;
+//   * `#convention #corpus topic=… source=…` (corpus conventions).
 //
 // A leaf: the tag parsers and the lens vocabulary, nothing engine-specific.
 import { canonicalLensIds } from "../lensids.js";
@@ -104,7 +102,7 @@ function knownLens(id: string, known: readonly string[]): string | null {
  * built passes (a short `baseline` is read as `pass-baseline`); an unknown
  * lens id, a class that is not a slug, a glob or ref with whitespace or a
  * comma is REFUSED with a sentence saying which — a mistyped lens that
- * silently lands would be delivered to nobody (S9).
+ * silently lands would be delivered to nobody.
  */
 export function validateLessonFields(
   raw: unknown,
@@ -212,7 +210,7 @@ const EVENT_HASH_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 export interface ParsedLesson {
-  /** `typed` — the S8 header; `legacy` — one of the older shapes. */
+  /** `typed` — the typed header; `legacy` — one of the older shapes. */
   format: "typed" | "legacy";
   /** null when the entry is a lesson whose polarity cannot be told. */
   kind: LessonKind | null;
@@ -310,7 +308,7 @@ export function parseLesson(text: string): ParsedLesson | null {
   const headerType = hash.find((t) => t in LEGACY_TYPES) ?? null;
   const learningTagged = hash.includes("eod-learning") || hash.includes("learning");
   // A `type:` line near the top; for an entry the header already calls a
-  // learning (the import puts it mid-line, after its own tags), a
+  // learning (the curated import puts it mid-line, after its own tags), a
   // `type:` anywhere in the opening.
   const bodyType = (
     bodyField(trimmed, /^(?:[-*]\s*)?type:\s*([a-z-]+)/i) ??
@@ -347,7 +345,7 @@ export interface IndexedLesson extends ParsedLesson {
   id: string;
 }
 
-/** The health metric (S8): lessons in force by kind. `look_for` and
+/** The health metric: lessons in force by kind. `look_for` and
  * `dont_raise` are the two the ratio compares; a lesson whose polarity cannot
  * be told is `unknown`. */
 export interface LessonBalance {

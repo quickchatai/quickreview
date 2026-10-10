@@ -1,4 +1,4 @@
-// End-to-end dry-run fixture round (step 6, offline half).
+// End-to-end dry-run fixture round (the offline half).
 //
 // A fixture PR + fixture findings are driven through the real modules — agent
 // build → anchor validation → payload assembly → the real GitHubAdapter with a
@@ -7,8 +7,8 @@
 // HTTP request is made**.
 //
 // The live half of the acceptance criterion (a designated test PR with
-// dry_run = false) is a GitHub mutation and is deferred to the VM cutover
-// — it cannot and must not run here.
+// dry_run = false) is a GitHub mutation and belongs to the VM — it cannot
+// and must not run here.
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -124,12 +124,10 @@ afterEach(() => {
 });
 
 describe("dry-run fixture round", () => {
-  // This used to be a live-only tripwire on the committed config.toml's
-  // dry_run = false. moved the live config into the install's config
-  // home, out of every test's reach, so it skipped on every run. The live flag
-  // is the owner's (rule 1) and deploy.sh's plan shows the value it ships
-  // without ever changing it. What this file CAN pin is its own premise: the
-  // fixture round it drives is a DRY-RUN round.
+  // The live config lives in the install's config home, out of every test's
+  // reach, and the live flag is the owner's alone (CLAUDE.md rule 1). What
+  // this file can pin is its own premise: the fixture round it drives is a
+  // DRY-RUN round.
   it(
     "runs on a dry-run fixture config — the round never reaches GitHub",
     { timeout: HEAVY_TIMEOUT_MS },
@@ -156,7 +154,7 @@ describe("dry-run fixture round", () => {
         const text = readFileSync(agent.output, "utf8");
         expect(text).not.toContain("{{include:");
         expect(text).toContain("FINDINGS <lens> PR#<n>"); // the shared output contract
-        // the whole spec rides `model:` (pi --model takes the
+        // The whole spec rides `model:` (pi --model takes the
         // :thinking suffix; the native subagent extension reads only model).
         expect(text).toMatch(/^model: openai-codex\/gpt-5\.6-(sol|terra):(low|medium|high)$/m);
         expect(text).toMatch(/^thinking: (medium|high)$/m);

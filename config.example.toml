@@ -4,7 +4,7 @@
 # dry_run is ON (every GitHub mutation is recorded to state/dryrun/ instead of
 # executed) and every identity is empty. The ~10 values a new operator must
 # supply are marked "← FILL (n)" — grep for FILL. Flip dry_run to false only
-# as a deliberate, ratified cutover act, never as part of setup.
+# as a deliberate cutover act, never as part of setup.
 #
 # YOU DO NOT HAVE TO FILL THIS BY HAND: `scripts/qcr onboard` interviews you
 # for the few values only you can answer, derives the rest, and patches this
@@ -76,8 +76,8 @@ port = 8787                                  # loopback only; your HTTPS ingress
 # its assigned bare hostname (e.g. "abc.trycloudflare.com") to `hostname_file`;
 # the daemon watches it and re-points the GitHub App's own webhook URL on
 # change (JWT-authed PATCH /app/hook/config, read-back verified). This is the
-# ONE mutation class that executes even in dry_run — ratified 2026-08-30 as a
-# rule-1 amendment, loudly logged, structurally closed to this one kind; it
+# ONE mutation class that executes even in dry_run (CLAUDE.md rule 1) — loudly
+# logged, structurally closed to this one kind; it
 # touches only the App's own configuration, never the reviewed repo. Off by
 # default: with the section absent (or shape = "none") no watcher ever starts —
 # a stable hostname (named tunnel, VM route) needs none of this.
@@ -90,20 +90,20 @@ port = 8787                                  # loopback only; your HTTPS ingress
 [daemon]
 poll_interval_s = 300
 # Rounds are network-IO-bound (model calls), not CPU-bound; the container's
-# 2 CPU / 8 GB Docker cap is the hard resource guard (the owner, 2026-08-13).
+# 2 CPU / 8 GB Docker cap is the hard resource guard.
 max_concurrent_rounds = 12
 round_deadline_min = 75
 overseer_rotation_days = 7
-# a round overdue with no verdict whose session is dead is
+# A round overdue with no verdict whose session is dead is
 # self-requeued by the daemon (fresh dispatch to the PR's own session) at most
 # this many times per PR head. Past the cap the round is abandoned as an
 # anomaly and the PR RETURNS TO ITS STANDING-VERDICT STATE — never an approval,
 # and never a park: there is no "awaiting human" state.
 max_self_requeues = 2
-# lost-prompt net: a running round whose inject file was consumed but
-# whose session shows NO activity since the round started is re-queued (once
-# per head, inside the cap) after this many minutes — well before the
-# deadline, so a dropped round prompt no longer costs a full deadline window.
+# Lost-prompt net: a running round whose inject file was consumed but whose
+# session shows NO activity since the round started is re-queued (once per
+# head, inside the max_self_requeues cap) after this many minutes — well before
+# the deadline, so a dropped round prompt does not cost a full deadline window.
 round_stall_grace_min = 10
 # Durable daemon→Pi stage leases. Start is short because no model
 # work exists yet; running is a fixed hard cap above the measured 23.4m live
@@ -117,13 +117,13 @@ session_command_running_max_min = 45
 round_first_pass_max_min = 5
 round_passes_max_min = 35
 round_finalize_grace_min = 5
-# H1a: once a round's review is CONFIRMED posted, a stage limit no
-# longer cancels it — the session's tail (ledger, findings record, verdict
+# Once a round's review is CONFIRMED posted, a stage limit does not cancel
+# it — the session's tail (ledger, findings record, verdict
 # file) gets this long after the posting, and a round still without a verdict
 # then is settled from the posting receipt. Never a requeue, never a second
 # posting.
 round_posted_tail_grace_min = 15
-# a follow-up round whose pre-approval sweep is owed (a whole
+# A follow-up round whose pre-approval sweep is owed (a whole
 # round-1-style plan after the delta's) gets this many extra minutes for its
 # passes and its hard cap.
 # follow_up_sweep_extra_min = 20
@@ -131,14 +131,14 @@ posting_receipt_grace_s = 120
 session_command_unknown_grace_s = 60
 session_command_unknown_max_checks = 1
 session_command_max_start_retries = 2
-# H1b: pi refuses every prompt while it compacts, so a command queued
+# pi refuses every prompt while it compacts, so a command queued
 # behind a compaction the session's inject bridge reports running is late, not
 # lost — its start lease is held open for up to this long. Past it, the
 # bounded same-session redelivery (max_prompt_redeliveries), and only then the
 # kill-and-replay recovery, take over.
 session_compaction_max_s = 600
 round_stage_supervisor_stale_s = 180
-# L2: the daemon watches its own event loop (status.json
+# The daemon watches its own event loop (status.json
 # `daemon.event_loop`, `qcr status`, the TUI board). One delay of
 # event_loop_stall_max_s or more, or a p99 of event_loop_stall_p99_s or more
 # over a window its samples cover, is a stall: it wakes the overseer
@@ -164,7 +164,7 @@ time = "18:00"
 #timezone = "Europe/Warsaw"
 # Daily overseer heartbeat: anomaly-table + digest review pass.
 heartbeat_time = "09:00"
-# watch the owner's pinned entries across the sweep. Curation must never
+# Watch the owner's pinned entries across the sweep. Curation must never
 # touch them; this makes the invariant detectable rather than merely
 # instructed. The window closes early when the day's digest appears.
 pinned_watchdog = true
@@ -182,7 +182,7 @@ issues_per_day = 3
 improvement_pr_deny_prefixes = ["migrations/", "infra/", "ansible/", ".github/workflows/"]
 
 [models]
-# default for every role; tiered pass models below (replaces [models.passes])
+# default for every role; tiered pass models below
 # Provider prefix is `openai-codex/` — the ChatGPT-OAuth route's provider key
 # in pi's auth.json (direct `openai/` needs an API key we don't ship).
 default = "openai-codex/gpt-6.1-sol"
@@ -190,17 +190,16 @@ conversation = "openai-codex/gpt-6.1-sol"
 overseer = "openai-codex/gpt-6.1-sol"
 # Passes always run at sol-high — single variant, not raisable (already top).
 risk_passes = ["pass-security", "pass-prod-risk", "pass-data-safety"]
-# pass-validate's FLOOR tier — raised per round to the highest-tier lens that
-# ran (src/dispatch.ts validatorTier), never lowered. Pinned at sol-high since
-# the validator is the single adversarial gate over every finding, so
-# a cheaper model must never decide whether a sol-high finding is real. One
-# validator call per round — not a hot-path multiplier.
+# pass-validate's tier — its own configured tier (floored by a repo profile's
+# min_tier for it), never raised to match a lens (src/dispatch.ts
+# validatorTier). Shipped at sol-high: the validator is the adversarial gate
+# over every finding. One validator call per round — not a hot-path multiplier.
 validate_tier = "sol-high"
 # Diffs under this many changed lines (additions+deletions) start at terra-med.
 small_diff_lines = 150
-# [models.pass_tiers] — per-lens tier pins (2026-09-29): pass name → tier
-# name (a key of [models.tiers]). SHIPPED DEFAULT (owner decision 2026-10-03,
-# src/config.ts DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
+# [models.pass_tiers] — per-lens tier pins: pass name → tier
+# name (a key of [models.tiers]). SHIPPED DEFAULT (src/config.ts
+# DEFAULT_PASS_TIERS): pass-baseline, pass-sweep and
 # pass-behaviour-delta at "sol-high" (gpt-6.1-sol at high effort) — measured
 # +6 defects on 18 AACR PRs for +18% cost per PR. An entry here replaces that
 # lens's default pin (e.g. "pass-baseline" = "sol-med"); a repo profile lowers
@@ -273,14 +272,14 @@ version = "1.0.0"
 session_dir = "state/pi-sessions"
 # Process-wide subagent fan-out cap: enforced by the first-party
 # glue over pi's native subagent extension (extensions/subagents.ts). The
-# code default is 4 (the companion's). 12 since 2026-10-02: with
+# code default is 4 (the companion's). 12 here because with
 # [review] wide_lens_fanout a 13-19-lens round runs 12 wide, about 90 s a
 # review faster on the measured set (bench/aacr/PERF.md §1); each child is
 # ~100 MB, so the VM's 8 GiB holds it.
 subagent_max_concurrency = 12
 # Shared prompt cache for lens children (docs/prompt-caching.md):
 # children share one provider cache key in groups of this many per model,
-# instead of `--no-session`'s random one; 0 = `--no-session` as before. A
+# instead of `--no-session`'s random one; 0 = plain `--no-session`. A
 # pack-less group's later children start this many ms after its first.
 # subagent_cache_group = 5
 # subagent_cache_stagger_ms = 2500
@@ -290,13 +289,13 @@ subagent_max_concurrency = 12
 # long the daemon waits for it. Memory NEVER blocks or delays a round: past
 # the deadline the round dispatches memory-less and logs the gap.
 context_tokens = 2000
-# The seed's whole budget, in ms (clamped 100…15000). 9000 since H3
-# (was 3000): one document embedding on a 2-CPU VM takes 3 s or more, and a
-# seed's query queued behind one never answered inside 3 s. It costs at most
+# The seed's whole budget, in ms (clamped 100…15000). One document embedding
+# on a 2-CPU VM takes 3 s or more, and a seed's query queued behind one needs
+# room for it. It costs at most
 # a few seconds on a ~14-minute round. Keep it above the search's own
 # search_timeout_ms (the openviking block, below).
 context_timeout_ms = 9000
-# The embedding tail of one written finding case, in ms (H3; clamped
+# The embedding tail of one written finding case, in ms (clamped
 # 0…30000, 0 = off): the server goes on embedding a case batch after its
 # write returns, so a round seed that starts within (cases × this) of the
 # write waits that out before it sends its search — inside context_timeout_ms,
@@ -305,7 +304,7 @@ context_timeout_ms = 9000
 # its late activity and every case those two owe (only cases the capture
 # pass's sync owes are written meanwhile).
 case_embed_tail_ms = 4000
-# Memory health (S1, src/memory/health.ts) — how an outage reaches a
+# Memory health (src/memory/health.ts) — how an outage reaches a
 # person. Every probe_interval_s the daemon lists the reviewer memories root
 # AUTHENTICATED, once with its own key and once with the sessions' ovcli.conf.
 # A refused credential wakes memory_auth_failed at once (never graced, never
@@ -320,7 +319,7 @@ down_after_min = 10
 boot_grace_min = 5
 rewake_h = 6
 incident_ticket_after_min = 120
-# Writes that stick (S2): every [feedback] signal is ledgered with
+# Writes that stick: every [feedback] signal is ledgered with
 # its memory state, and whatever memory has not taken yet the backfill pump
 # writes every backfill_interval_s (at most 20 a tick, only while memory
 # reads healthy). A signal owed for longer than write_backlog_after_min wakes
@@ -329,18 +328,18 @@ incident_ticket_after_min = 120
 # the daemon's next start and once a day.
 backfill_interval_s = 60
 write_backlog_after_min = 120
-# Finding cases (S7, src/cases.ts): one document per posted finding a
+# Finding cases (src/cases.ts): one document per posted finding a
 # human answered or whose fate is known, in reviewer memory's `finding-cases/` — the
 # learner's context, searched by the EOD curator and the companion, never by a
 # review round. Every cases_interval_s the daemon works out from state.db which
 # cases are new or changed and, only while memory reads healthy, writes up to 2
 # (one batch-write — each case is ~3.4 s on the VM's one-thread embedder — and
-# never started while a review round is reading memory, F2) and
+# never started while a review round is reading memory) and
 # backfills two more PRs from the last cases_backfill_days days (resumable; 0
 # turns the backfill off).
 cases_interval_s = 120
 cases_backfill_days = 60
-# The learner (S8, src/learner/): lessons_mine_lead_min before the EOD
+# The learner (src/learner/): lessons_mine_lead_min before the EOD
 # sweep (and on `qcr lessons mine`) the daemon mines the human outcomes of the
 # last lessons_mine_days — refuted / contested findings, the [feedback]
 # ledger, human comments and REQUEST_CHANGES on PRs the bot approved, recheck
@@ -363,7 +362,7 @@ lessons_recall_window_days = 14
 lessons_recurrence_days = 90
 lessons_digest_backfill_from = "2026-08-31"
 lessons_digest_backfill_to = "2026-10-02"
-# How curated lessons and past finding cases reach a review (S9).
+# How curated lessons and past finding cases reach a review.
 #   "off"    — nothing runs: no selection, no shadow ledger.
 #   "shadow" — (the shipped value) every round selects the lessons and cases
 #              it WOULD carry, through OpenViking — one prefetch per round
@@ -392,12 +391,12 @@ shadow_budget_ms = 10000
 # searches. `context_tokens` above is the budget; this is the corpus — the two
 # bind independently.
 #
-# Since S5 a round searches `experiences/` ONLY — the curated lessons
-# of the §1 layout. Ops notes and feedback events live in `events/`,
+# A round searches `experiences/` ONLY — the curated lessons of the memory
+# layout (src/memory/layout.ts). Ops notes and feedback events live in `events/`,
 # the owner's unpinned instructions in `preferences/` (the pinned ones ride the
 # round's guaranteed head in full), and none of them belongs in a round's
 # recalled context; nor do the built-in `skills`/`resources` overview blurbs
-# that took most of the block when no quotas were set (measured 2026-08-21).
+# that take most of the block when no quotas are set.
 # Any other key here is IGNORED with one log line, and `experiences` defaults
 # to 24 when it is missing. The count is generous on purpose — its job is to
 # name the area, and `context_tokens` decides how much rides the prompt.
@@ -423,7 +422,7 @@ enabled = true
 version = "0.4.15"
 # The vendored pi extension's upstream base commit (extensions/vendor/
 # openviking-pi). Pinned beside the server version so a bump re-verifies the
-# four-patch series rather than silently rebasing onto new upstream behaviour.
+# vendored patch series rather than silently rebasing onto new upstream behaviour.
 extension_commit = "d436baa23c83938b22bb0aab08b0ce48568b5ff4"
 # The daemon and every review session act as this user, holding a key the
 # server confines to it — that confinement is what keeps companion memory out
@@ -432,12 +431,11 @@ extension_commit = "d436baa23c83938b22bb0aab08b0ce48568b5ff4"
 user = "reviewer"
 account = ""
 reviewer_key_file = "openviking_reviewer_key"
-# ov.conf `server.auth_mode`. `api_key` is the RATIFIED posture: the
+# ov.conf `server.auth_mode`. `api_key` is the required posture: the
 # server confines each USER key to its own tree, and that confinement is the
 # only thing keeping companion memory out of a posted review. `dev` bypasses
-# authentication on loopback — it was the deployed value until, which
-# made the two-user design nominal. MIRRORED into group_vars
-# (openviking_auth_mode), which the entrypoint renders; tests/openviking.test.ts
+# authentication on loopback, which makes the two-user design nominal.
+# MIRRORED into group_vars (openviking_auth_mode), which the entrypoint renders; tests/openviking.test.ts
 # and the scripts/deploy.sh preflight both refuse on drift.
 auth_mode = "api_key"
 # The SERVER's own root key, by file name under the secrets mount. ov.conf
@@ -453,8 +451,8 @@ root_key_file = "openviking_root_key"
 # openviking_provision_users (comma-joined).
 provision_users = ["reviewer", "companion"]
 request_timeout_ms = 10000
-# The round seed's one context search, in ms (clamped 100…15000). 8000 since
-# H3 (was 2500, under one document embedding); below
+# The round seed's one context search, in ms (clamped 100…15000) — above one
+# document embedding's time, and below
 # [memory] context_timeout_ms, and a seed that sent its search late passes
 # the time it has left, which wins when shorter.
 search_timeout_ms = 8000
@@ -462,9 +460,8 @@ default_category = "experiences"
 read_cache_ttl_ms = 15000
 # NOT an openviking dependency — an undeclared optional extra. Without it the
 # default local dense embedder raises EmbeddingConfigurationError at startup,
-# so the official image cannot boot (verified against a running 0.4.15 server,
-# 2026-08-20). Registry-verified pin (PyPI latest, 2026-08-20). Since
-# S4 it is also the runtime of the local English embedder (below).
+# so the official image cannot boot (verified against a running 0.4.15 server).
+# It is also the runtime of the local English embedder (below).
 llama_cpp_python_version = "0.3.35"
 host = "127.0.0.1"                # loopback ONLY — the port is never published
 port = 1933
@@ -485,20 +482,20 @@ queue_concurrency = 2             # ov.conf queue_workers.* (defaults 4/4/8) and
 health_interval_s = 30
 # The /health + /ready probe and the local embedder's /health, in ms (clamped
 # 100…20000). /ready runs an embedding and queues behind a case batch's
-# embeddings: 6000 since H3 (was 2000, which flapped /ready ~4 times
-# an hour under load). Memory health's "serving" half reads this probe.
+# embeddings, so a shorter limit flaps /ready under load. Memory health's
+# "serving" half reads this probe.
 health_timeout_ms = 6000
 # The supervisor never gives up: a memory engine that stays down is worse than
 # a slow retry, and every call site already degrades memory-less.
 restart_backoff_ms = [1000, 2000, 5000, 15000, 30000, 60000]
 restart_reset_after_s = 120       # an uptime this long resets the ladder
-# The embedder (S4). LOCAL is the shipped default: a small
+# The embedder. LOCAL is the shipped default: a small
 # ENGLISH embedding model (bge-small-en-v1.5, 384 dims) served on LOOPBACK
 # inside the container by scripts/openviking-embedder.py, over the pinned
 # llama-cpp-python — so nothing but the model call ever leaves the machine,
 # memory text included. ov.conf reaches it through the engine's
 # OpenAI-COMPATIBLE client (provider "openai", api_base http://127.0.0.1:<port>/v1,
-# no key): that client is asynchronous, so a search no longer stalls the
+# no key): that client is asynchronous, so a search does not stall the
 # server. Hosted embeddings are an explicit opt-in: embedding_provider =
 # "openai" with model "text-embedding-3-small" / dimension 1536, and the
 # credential in the secrets dir under `embedding_key_file` — a SEPARATE file
@@ -567,13 +564,13 @@ local_embedder_threads = 1
 # feed_dir = ""                   # → /feed;    empty = state/companion/feed
 # alerts_dir = ""                 # → /alerts;  empty = state/companion/alerts
 # ssh_dir = "~/.ssh"              # mounted read-only (VM reads + inject)
-# overdue_grace_min = 30          # watcher knobs — full set lands in C2
+# overdue_grace_min = 30          # watcher knobs
 # stale_alert_s = 300
 # awaiting_age_h = 24
 # cooldown_min = 20
 
 [sink]
-# where auto-filed defect flags (#bug reviewer-memory entries) land.
+# Where auto-filed defect flags (#bug reviewer-memory entries) land.
 # "github"    — defects filed as ISSUES on the reviewed repo. The TUI writes a
 #               file-issue command; the DAEMON files it through the one
 #               MutationGate with the [caps] day cap, title dedup and the
@@ -615,13 +612,13 @@ recheck_pr_state_before_post = true  # re-read the PR right before posting; merg
 # Guard 4: no green CI at this head ⇒ APPROVE is unavailable,
 # regardless of findings. The review still posts, as a COMMENT with approval
 # withheld, and the PR is re-queued when CI goes green at that head.
-# Amended (the owner, 2026-08-19): only the MOST RECENT run of each check name
-# counts — GitHub auto-cancels superseded runs, and their permanent
-# `cancelled` husks were withholding every approval forever. The latest run
+# Only the MOST RECENT run of each check name counts — GitHub auto-cancels
+# superseded runs, and their permanent `cancelled` husks would otherwise
+# withhold every approval forever. The latest run
 # of every name must succeed; a genuinely failing/cancelled LATEST run still
 # blocks exactly like a failing test.
 block_approve_on_red_ci = true       # red/pending CI ⇒ approval withheld, review posts as COMMENT
-# Also the owner 2026-08-19: a head with ZERO check-runs (conflicted PR, CI not
+# A head with ZERO check-runs (conflicted PR, CI not
 # started) carries no execution evidence — withhold there too. Set true for a repo that
 # always runs CI (then `none` means something is wrong, not "no CI setup").
 no_checks_is_red = true              # zero checks at head ⇒ approval withheld until checks pass
@@ -648,13 +645,13 @@ on_ci = true             # CI completing at the approved head (adverse => eviden
 on_base_advance = true   # the base branch moved; no PR-owned file changed => no-op
 
 [review]
-# a first-party agent-directive edit (.claude/**, prompts/**,
+# A first-party agent-directive edit (.claude/**, prompts/**,
 # AGENTS.md/CLAUDE.md in the reviewed repo) never auto-blocks on `kind:
-# injection` — the round still decides on the merits (there is no park:
-#) and the review carries ONE short escalation comment
+# injection` — the round still decides on the merits (there is no park) and
+# the review carries ONE short escalation comment
 # @-mentioning the most recent human author of the touched directive files. This is the fallback mention when git history yields no
 # attributable human login. It is a comment @-mention through the gated review
-# — never a GitHub reviewer nomination (rule 10 amendment, the owner 2026-08-19).
+# — never a GitHub reviewer nomination (CLAUDE.md rule 10).
 escalation_mention_default = ""             # ← FILL (8): fallback GitHub login for escalation @-mentions ("" = no @)
 # The review preset: "default" (the measured best value — every
 # benchmark-driven lever on, the lean plan), "max" (every model at its highest
@@ -687,7 +684,7 @@ preset = "default"
 # build defect, merges need a shared consequence).
 # skip_lenses = ["pass-abstraction", "pass-duplication"]
 # validate_consequence_rule = true
-# Review latency levers (bench/aacr/PERF.md §6, 2026-10-02) — each removes
+# Review latency levers (bench/aacr/PERF.md §6) — each removes
 # serial time; none changes which lenses run. All on by default except
 # validator sharding:
 #   wide_lens_fanout — a batched lens launch runs as wide as
@@ -695,7 +692,7 @@ preset = "default"
 #   task_files — the daemon writes each lens's complete task to a file, and
 #     the session launches every row with ONE `launch_plan` call over the
 #     round's task dir (extensions/subagents.ts; off ⇒ hand-written
-#     per-row subagent calls, as before);
+#     per-row subagent calls);
 #   render_outputs — the review body and inline comments are rendered from
 #     the findings record instead of being written out a second time;
 #   validator_shards — EXPERIMENTAL, off (1), unvalidated: split the
@@ -707,13 +704,13 @@ preset = "default"
 # task_files = false
 # render_outputs = false
 # validator_shards = 2
-# Duplicate merge (docs/duplicate-merge.md, 2026-10-03): one comment per root
+# Duplicate merge (docs/duplicate-merge.md): one comment per root
 # cause. Lens candidates are grouped deterministically before the validator
 # (same file within 10 lines, a shared named identifier, or the same fix
 # target), the validator merges or splits each group, and a post-check at
 # render time merges two posted findings that are one root cause posted twice.
 # dedup_merge = false
-# Per-file coverage check (2026-10-03): after the lenses return, every changed
+# Per-file coverage check: after the lenses return, every changed
 # non-test source file no lens raised a finding on gets a targeted pass-sweep
 # row (at most two, packed by line budget), each saying why it ran.
 # coverage_check = false
@@ -722,8 +719,8 @@ preset = "default"
 # the last reviewed head (base merges and rebases taken out), with one
 # whole-PR pre-approval sweep before an approval when no full look has run
 # since round 1 (or, once approved, when a push is large). Any doubt (no reviewed head, a rewound base, a git failure, a
-# delta above follow_up_max_delta_ratio of the PR's diff lines) runs today's
-# full re-review instead. "full" restores the old behaviour byte for byte.
+# delta above follow_up_max_delta_ratio of the PR's diff lines) runs a
+# full re-review instead. "full" re-reviews the whole PR every round.
 # follow_up = "full"
 # follow_up_max_delta_ratio = 0.6
 # follow_up_sweep = false
@@ -746,16 +743,16 @@ preset = "default"
 # the start of its prompt, after one cached warm-up per cache group — so the
 # lenses read it from cache instead of re-reading it uncached (each lens's
 # instructions move into a developer message after the pack). On by default
-# since the measured run (10 cases: 40% cheaper, verdicts and recall held);
-# "off" restores the old prompts. Needs [pi] subagent_cache_group > 0.
+# (measured 40% cheaper on 10 cases, verdicts and recall held); "off" sends
+# no pack. Needs [pi] subagent_cache_group > 0.
 # context_pack = "off"
 # context_pack_max_tokens = 40000
-# Loosened-test hint (2026-10-03): weakened assertions in the PR's test files
+# Loosened-test hint: weakened assertions in the PR's test files
 # (exact → bound or contains, a tolerance widened, a count lowered, a timeout
 # lengthened, an assert removed or commented out, a skip added) are found by
 # code and named in pass-tests' plan reason; their presence also plans it.
 # loosened_test_hint = false
-# repo profile — names a directory under profiles/ whose house-rule
+# Repo profile — names a directory under profiles/ whose house-rule
 # addenda pack (profiles/<name>/addenda/*.md) composes onto the built pass
 # bodies after the built-in generic registry, and whose optional
 # heuristics.toml extends lens selection with your repo's file shapes
@@ -769,7 +766,7 @@ preset = "default"
 profile = ""
 
 # EXTENSIONS to the first-party directive-path vocabulary the
-# escalation flow keys on (src/severity.ts). Extend-only by design:
+# directive-edit escalation flow keys on (src/severity.ts). Extend-only by design:
 # these ADD names, the built-ins (.claude/**, .cursor/**, root prompts/**,
 # AGENTS.md/AGENT.md/CLAUDE.md/.cursorrules anywhere,
 # .github/copilot-instructions.md) can never be removed — dropping one would
@@ -797,8 +794,8 @@ extra_vendored_segments = []   # extra third-party markers (case-insensitive)
 # Leave `enabled = false` and nothing below is read: no rule is evaluated, no
 # extra API call is made, and the round prompts carry no escalation text
 # whatever — the system BEHAVES exactly as a build without the feature.
-# (The prompt is not byte-for-byte what it was: the placeholder that renders
-# empty leaves a blank line, like the sibling notes beside it.)
+# (The placeholder that renders empty leaves a blank line in the prompt, like
+# the sibling notes beside it.)
 # `qcr onboard`'s escalation step writes this section.
 #
 # The configuration cannot be half-done: `enabled = true` with no `targets`,
@@ -850,7 +847,7 @@ max_per_pr = 2
 # so a session can stop review work for a reason, never indefinitely. The
 # OPERATOR's own levers (`qcr drain on`, the deploy tab's D) are NOT bounded
 # here: the deploy-window drain stands until the new boot's first healthy
-# reconcile lifts it, exactly as before. Which of the two a command is comes
+# reconcile lifts it. Which of the two a command is comes
 # from the channel it arrived on (the operator's is the root-owned
 # `commands/operator/` directory a session cannot write into), never from a
 # field in the file. All values are minutes; budgets count per [ops] timezone day.

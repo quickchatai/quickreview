@@ -46,14 +46,14 @@ export function onboardingSessionDir(root: string): string {
 /**
  * The full npx argv for the onboarding pi session.
  *
- * `--approve` is the same rule-7 discipline as buildPiCommand (src/sessions.ts)
- * and the companion's piArgv: the wizard must never stall on pi's interactive
- * "Trust project folder?" modal.
+ * `--approve` is the same never-block-on-input rule as buildPiCommand
+ * (src/sessions.ts) and the companion's piArgv: the wizard must never stall
+ * on pi's interactive "Trust project folder?" modal.
  *
  * VERIFY-ON-PIN: `--no-extensions`, `--no-skills`, `--no-context-files`,
  * `-e <path>` and `--tools <list>` against the pinned pi version's --help —
  * the intent (no ambient extensions, exactly one onboarding extension, a
- * read-only built-in belt) is the decision; the exact flag spellings
+ * read-only built-in belt) is the design decision; the exact flag spellings
  * are unverified statically and belong to the named onboarding smoke step.
  */
 export function onboardingPiArgv(pin: PiPin, root: string): string[] {

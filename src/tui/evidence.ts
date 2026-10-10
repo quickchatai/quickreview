@@ -1,26 +1,25 @@
 // Finished-round evidence transport.
 //
-// The companion cannot reach the VM — rule 8 is structural and this ticket does
-// not widen it by a byte. So the TUI, which already holds the ssh access, copies
-// every finished round's artefacts DOWN to a local store, and the companion
+// The companion cannot reach the VM — rule 8 is structural and this module
+// does not widen it. So the TUI, which already holds the ssh access, copies
+// every finished round's artefacts down to a local store, and the companion
 // reads plain files out of a read-only mount. Nothing new is granted to it: no
 // ssh, no credential, no network reach.
 //
-// Why on completion rather than on demand: on-demand transport is exactly what
-// lost #5306, #5308 and #5312 — nothing was copying while they happened, so the
-// three most interesting episodes have no local record at all. A round that has
-// finished is a round whose evidence is already complete; waiting for someone to
-// ask for it is waiting for the session to be recycled first.
+// Why on completion rather than on demand: on-demand transport loses exactly
+// the episodes nobody was watching. A round that has finished is a round whose
+// evidence is already complete; waiting for someone to ask for it is waiting
+// for the session to be recycled first.
 //
 // Shape follows remote.ts: command construction is pure so tests can assert the
 // exact argv, execution goes through the one injectable SshRunner, and every
 // failure degrades (logged, retried on the next poll) rather than throwing into
 // the paint loop.
 //
-// Retention: evidence is kept indefinitely by the owner's explicit choice
-// — not by omission. Do not add a TTL or a cleanup sweep.
+// Retention: evidence is kept indefinitely by deliberate choice, not by
+// omission. Do not add a TTL or a cleanup sweep.
 //
-// Load (L1, after the 2026-10-07 post-drain burst): the sweep's
+// Load: the sweep's
 // per-PR progress is kept on disk (`SweepProgressFile`), so a TUI re-exec —
 // every local `dist/` rebuild — resumes instead of re-running `qcr why` for
 // every PR; and the `why` execs are paced (`evidence_why_interval_s`) and held
@@ -28,12 +27,12 @@
 // heartbeat stale, so the sweep can never be the thing that saturates the
 // container.
 //
-// The closed-PR archiver (S4, docs/archiving.md §4, §14): a round
+// The closed-PR archiver (docs/archiving.md §4, §14): a round
 // copied after its PR's files were archived (14 days closed — a TUI that was
 // off that long) finds them in `archive/pr-<n>/` instead. The transcript is
 // read from its archived gzip (`zcat | head -c`, after `zcat -t` proves the
 // gzip whole, so a corrupt one fails the copy rather than landing short); a
-// role whose file now sits only inside a bundle is recorded as `archived`
+// role whose file sits only inside a bundle is recorded as `archived`
 // with its pointer — the bundle and the path in it — never as `missing`.
 import {
   existsSync,
@@ -51,7 +50,7 @@ import { whyArgv, type RemoteResult, type SshRunner } from "./remote.js";
 
 /** Roles a round bundle can carry, in copy order. `transcript` carries the pass
  * output too: lens passes run as subagent children inside the PR's one
- * session, so their output IS the session JSONL (root rule 9 — passes are
+ * session, so their output is the session JSONL (root rule 9 — passes are
  * leaves). */
 export const EVIDENCE_ROLES = ["transcript", "ledger", "prompt", "verdict"] as const;
 export type EvidenceRole = (typeof EVIDENCE_ROLES)[number];
@@ -70,7 +69,7 @@ const LOCAL_NAME: Record<EvidenceRole, string> = {
  * A knob would be knob sprawl: this is not a tuning dial but a blast-radius
  * bound. A transcript is ~0.6 MB per session; 32 MiB is two orders of magnitude
  * of headroom and still small enough that one runaway JSONL cannot fill
- * the owner's disk or stall an ssh for minutes. A truncated file is recorded as
+ * the operator's disk or stall an ssh for minutes. A truncated file is recorded as
  * truncated in the manifest — never silently short.
  */
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -84,7 +83,7 @@ export const ROUNDS_PER_SWEEP = 3;
  * and session-prompt live at `pr-<n>.md` and the transcript is "the newest
  * JSONL in the session dir". Copying them into `round-<k>/` is honest only for
  * a round that finished under this copier's watch — for a backlog round the
- * copy would stamp TODAY's files into an old round's dir and silently corrupt
+ * copy would stamp today's files into an old round's dir and silently corrupt
  * the adjudication evidence. Only `verdict` is genuinely round-scoped.
  */
 export const PR_CURRENT_ROLES: readonly EvidenceRole[] = ["transcript", "ledger", "prompt"];
@@ -117,8 +116,8 @@ export interface RoundManifest {
      * PR's file AS OF COPY TIME (honest only because the round finished under
      * this copier's watch). */
     scope: "round" | "pr-current";
-    /** Where the bytes were read: the live file, or the archived
-     * gzip `remote_path` names, decompressed. Absent from an older copier's
+    /** Where the bytes were read: the live file, or the archived gzip
+     * `remote_path` names, decompressed. Absent from an older copier's
      * manifest, which only ever read live files. */
     from?: "live" | "archive";
   }>;
@@ -237,7 +236,7 @@ export function parseManifest(stdout: string, root: string): EvidenceFile[] {
  * JSON), so the string the runner returns is the file — no base64 hop, and no
  * dependency on tar being present in the image.
  *
- * An ARCHIVED transcript (a `.gz` under `archive/`) is decompressed
+ * An archived transcript (a `.gz` under `archive/`) is decompressed
  * on the VM: `zcat -t` first proves the whole gzip decompresses — `zcat | head`
  * alone exits with head's status, so a corrupt gzip would land as a short
  * file that looks complete — then `zcat | head -c <cap>`. */
@@ -318,10 +317,10 @@ export interface WhyRound {
 }
 
 /**
- * A round is COPYABLE once it is no longer running. `done` is the common case;
+ * A round is copyable once it is no longer running. `done` is the common case;
  * `expired`, `overdue` and `cancelled` are copied too — a round that died is
  * precisely the episode worth having a local record of, and refusing them would
- * reproduce the gap this ticket exists to close.
+ * leave exactly the gap this copier exists to close.
  */
 export function finishedRounds(rounds: WhyRound[]): WhyRound[] {
   return rounds
@@ -347,12 +346,12 @@ export function readWhyRounds(stdout: string): WhyRound[] | undefined {
 
 /** Cheap "has anything changed for this PR" key, read off the poll snapshot the
  * TUI already fetches. Unchanged ⇒ no `why` call at all, so the steady state
- * costs the copier ZERO extra ssh. */
+ * costs the copier zero extra ssh. */
 export function prSignature(pr: StatusSnapshot["prs"][number]): string {
   return `${pr.rounds ?? 0}/${pr.last_verdict ?? ""}/${pr.state}/${pr.head_sha}`;
 }
 
-// ---- pacing and holds (L1) ----------------------------------------
+// ---- pacing and holds ----------------------------------------
 
 /** `[tui] evidence_why_interval_s` — the shipped default and its bounds. A
  * value outside the bounds is clamped, a non-number is the default: the knob
@@ -392,7 +391,7 @@ export function sweepHold(
   return undefined;
 }
 
-// ---- the sweep's progress record (L1) -----------------------------
+// ---- the sweep's progress record -----------------------------
 
 /** File name of the record, beside the TUI's other state files
  * (`<sandbox root>/state/`). */
@@ -574,11 +573,10 @@ export interface CopierDeps {
   timeoutMs: number;
   onNotice?: (text: string) => void;
   now?: () => Date;
-  /** L1: where the sweep keeps its per-PR progress across a re-exec
-   * or restart. Absent = in memory only (the pre-L1 behaviour, kept for the
-   * unit harness); the TUI always passes the file. */
+  /** Where the sweep keeps its per-PR progress across a re-exec or
+   * restart. Absent = in memory only (for the unit harness); the TUI always passes the file. */
   progress?: SweepProgressStore;
-  /** L1: the minimum gap between the END of one `why` exec and the
+  /** The minimum gap between the END of one `why` exec and the
    * start of the next — and between the copier's construction and its first
    * `why`, so the pace holds across a re-exec — and with it at most one `why`
    * per sweep. Absent or 0 = unpaced (the unit harness); the TUI always
@@ -606,7 +604,7 @@ export interface SweepReport {
  * hook, never awaited by it, and a sweep already in flight makes the next call a
  * no-op, so a wedged ssh can stall this and nothing else.
  *
- * Order (L1): PRs needing a `why` are visited in a ROTATION by number
+ * Order: PRs needing a `why` are visited in a rotation by number
  * starting at `nextFrom`. A failed PR moves the rotation past itself, so under
  * pacing — one `why` per sweep — it is retried only after every other pending
  * PR has had its turn (retried, never starving the rest). A PR that
@@ -617,7 +615,7 @@ export class EvidenceCopier {
   private busy = false;
   /** Last snapshot signature per PR that was fully reconciled, and whether
    * the store held anything for it then. Persisted through `deps.progress`
-   * (L1), loaded on the first sweep. */
+   * and loaded on the first sweep. */
   private readonly reconciled = new Map<number, SweepEntry>();
   /** The record has been loaded (or there is none to load). */
   private loaded = false;
@@ -640,7 +638,7 @@ export class EvidenceCopier {
    * purpose: after a TUI restart everything already copied has a manifest,
    * and anything not yet copied is honestly "first seen now". */
   private readonly firstSeen = new Map<number, number>();
-  /** The last sweep was HELD (L1). */
+  /** The last sweep was held. */
   private held = false;
   /** When the first sweep after a hold ran (ms since epoch; 0 = never held).
    * The copier was not looking while it was held, so a round that finished
@@ -699,7 +697,7 @@ export class EvidenceCopier {
     const nowMs = this.nowMs();
     for (const pr of snapshot.prs)
       if (!this.firstSeen.has(pr.number)) this.firstSeen.set(pr.number, nowMs);
-    // L1: the board's last status says leave the daemon alone — no
+    // The board's last status says leave the daemon alone — no
     // `why`, no listing, no fetch. The hold is visible on the board itself
     // (the drain badge, DATA STALE), so it is not a notice.
     const hold = sweepHold(snapshot, nowMs, this.cfg.stale_after_s);
@@ -864,8 +862,7 @@ export class EvidenceCopier {
     // The round list is what `qcr why --json` PROVES; anything else that came
     // back — a wrapper's own JSON, an older build's shape, a torn write — is an
     // unreadable list, not an empty one. Reading it as empty would retire this
-    // PR's signature with nothing copied, and nothing would ever retry it
-    //.
+    // PR's signature with nothing copied, and nothing would ever retry it.
     const rounds = readWhyRounds(res.stdout);
     if (rounds === undefined)
       return this.fail(report, `pr-${pr}`, `evidence: #${pr} — unreadable round list`);
@@ -895,7 +892,7 @@ export class EvidenceCopier {
       return this.fail(report, key, `evidence: ${key} — could not list artefacts (ssh)`);
     const files = parseManifest(listed.stdout, this.cfg.remote_sandbox_root);
     // A round that finished before this copier first saw the PR — or before
-    // it came back from a hold (L1) — is a BACKFILL: the pr-current
+    // it came back from a hold — is a backfill: the pr-current
     // roles on the VM are the PR's files as of TODAY, not that round's, so
     // copying them would fabricate round evidence. Verdict only. An
     // unparseable/absent finished_at is treated as backfill — the honest
@@ -907,7 +904,7 @@ export class EvidenceCopier {
       ? PR_CURRENT_ROLES.filter((r) => files.some((f) => f.role === r))
       : [];
     const toCopy = backfill ? files.filter((f) => f.role === "verdict") : files;
-    // a role found nowhere live may be in the PR's archive. Its
+    // A role found nowhere live may be in the PR's archive. Its
     // manifest says where; a role it holds is `archived` (a pr-current one
     // in a backfill is skipped as stale, exactly as a live one is), never
     // `missing`. A manifest that cannot be fetched or read fails the copy —

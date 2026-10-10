@@ -16,8 +16,8 @@ same computation over the full runs and against the papers' printed numbers.
               (HF Qodo/PR-Review-Bench@a73957c, MIT).
 
 The tools run from a copy of bench/aacr in WORK; when that compare.py does not
-read `bench_cost_usd` yet (C10), the copy gets the three-line patch
-below, which is exactly the change the public tree needs.
+read `bench_cost_usd` yet, the copy gets the three-line patch
+below (C10_PATCH), which is exactly the change the public tree needs.
 """
 from __future__ import annotations
 
@@ -326,8 +326,8 @@ def main():
             run(cmd + arms_, env=env)
             mine = json.loads((cdir / f"numbers{suffix}.json").read_text())
             theirs = json.loads((HERE / "charts" / f"numbers{suffix}.json").read_text())
-            # the committed gpt-6-sol chart data predates the product's rename
-            # (arms-gpt6sol.txt now says QuickReview where it said quickreviewd)
+            # the committed gpt-6-sol chart data labels the arm quickreviewd, the
+            # product's former name; arms-gpt6sol.txt says QuickReview
             renamed = {k.replace("quickreviewd", "QuickReview"): v for k, v in (theirs.get("arms") or {}).items()}
             same = _num_equal(mine.get("arms"), renamed)
             how = " (arm labels quickreviewd -> QuickReview)" if renamed.keys() != (theirs.get("arms") or {}).keys() else ""

@@ -1,4 +1,4 @@
-// Slack concierge caps + cooldowns (slice S2).
+// Slack concierge caps + cooldowns.
 //
 // Every limit here is enforced in DAEMON CODE, never by prompt: a session (or
 // an operator) may ask the concierge to speak, this module decides whether it
@@ -243,7 +243,7 @@ export interface AnnouncementDecision {
  * The rolling-hour announcement ceiling, read from the claimed `slack_posts`
  * rows. EVERY daemon-authored post counts here — `pickup` and `verdict` are as
  * visible in the channel as an `announce`, and this ceiling is their only
- * back-stop now that they no longer touch the conversational budget.
+ * back-stop, since they do not count against the conversational budget.
  * Expressed as "all posts minus replies" so a kind added later is bounded by
  * default rather than silently exempt. Read at admission (decideAnnouncement)
  * AND again when an admitted announcement claims its row (announce.ts

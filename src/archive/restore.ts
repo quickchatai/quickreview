@@ -1,6 +1,7 @@
 // RESTORE (docs/archiving.md §8.2–§8.4): a reopened PR's archived
 // transcripts and session-command payloads back to their original paths and
-// mtimes, so the #5362 receipt machinery answers truthfully again.
+// mtimes, so the wake-receipt check (`sessions.wakeReceiptPresent`) answers
+// truthfully again.
 //
 //   - What goes back: every PR transcript, and every session-command payload,
 //     whose latest manifest record is an archive record and whose live path
@@ -132,7 +133,7 @@ export async function restorePr(
       // unlinked, so one that is missing beside archived files (or behind a
       // row that counted some) is a LOST record, and a restore that called
       // itself done would disarm the receipt guard over receipts it never
-      // brought back (#5362 rule ①).
+      // brought back.
       const lost = row.transcript_files + row.state_files > 0 || (await holdsArchiveFiles(dir));
       if (lost)
         return fail(

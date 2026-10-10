@@ -1,11 +1,10 @@
-// ledger-pin — keeps the review ledger alive across pi's native compaction
-// (spec §4, brief B3 step 4; findings §6).
+// ledger-pin — keeps the review ledger alive across pi's native compaction.
 //
 // The PR session maintains a fenced block that starts with "LEDGER PR #<n> @
 // <sha>" (see prompts/conversation-system.md). Compaction is token-driven and
 // would happily summarise it away, so this extension hooks
 // session_before_compact, finds the most recent ledger block in the entries
-// the hook hands it, and returns a REAL compaction (MC-64): pi's own
+// the hook hands it, and returns a REAL compaction: pi's own
 // default summary, produced by calling the package's exported `compact()`
 // (the function pi would have called itself), with the pinned ledger block
 // appended to it VERBATIM. That summary is what pi puts back in front of the
@@ -14,25 +13,24 @@
 // recognise) returns nothing, and pi runs its default compaction unchanged:
 // never a cancelled compaction, never a wedged session. The ledger then still
 // comes back through the daemon, because every round order re-hands the
-// mirrored snapshot (src/ledgercarry.ts, / MC-18).
+// mirrored snapshot (src/ledgercarry.ts).
 //
-// Before the hook returned `instructions`/`summary`/`retainedTail`/
-// `details`. pi 1.0.0 reads only `cancel` and `compaction`, so all four were
-// inert and nothing pinned the ledger at all.
+// pi 1.0.0 reads only `cancel` and `compaction` from the handler's result, so
+// returning a whole compaction is the only way to pin anything.
 //
 // It also mirrors the newest ledger block to state/ledgers/<session>.md after
 // every turn — that snapshot is what archiveAndClose() copies into
 // archive/pr-<n>/ (the session JSONL alone would need parsing).
 //
-// (first-night audit F3): only a block whose PR number equals the
-// session's OWN PR (QCR_PR, riding the pi command line per session) is ever
-// mirrored or pinned. Sessions quote sibling PRs' ledger headers when reading
-// their posted reviews for format reference; without the filter six sessions
-// persisted PR #5288's ledger over their own. A session with no / garbage
+// Only a block whose PR number equals the session's OWN PR (QCR_PR, riding
+// the pi command line per session) is ever mirrored or pinned. Sessions quote
+// sibling PRs' ledger headers when reading their posted reviews for format
+// reference; without the filter a sibling's ledger would be persisted over
+// the session's own. A session with no / garbage
 // QCR_PR (the overseer) mirrors NO PR ledger, ever — fail safe is no mirror.
 //
 // pi is not installed here — everything touching the pi API is VERIFY-ON-PIN.
-// The contract was read out of pi 1.0.0's shipped dist (the
+// The compaction contract was read out of pi 1.0.0's shipped dist (the
 // `qcr-bench:fast1` image, docker create + docker cp, no container run); each
 // tag below names the file and symbol it was checked against.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -198,7 +196,7 @@ function isPreparation(value: unknown): value is PiCompactionPreparation {
 }
 
 /**
- * The compaction: pi's own default summary with the pinned block
+ * The pinned compaction: pi's own default summary with the pinned block
  * appended. It mirrors pi 1.0.0's `AgentSession._runDefaultCompaction`
  * (dist/core/agent-session.js): resolve request auth for the session model,
  * then `compact(preparation, model, apiKey, headers, customInstructions,

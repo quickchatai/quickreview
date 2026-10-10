@@ -5,9 +5,9 @@ Analysis only: reads run dirs, their scoring, and the benchmarks' keys; runs no
 review and no judge.
 
 Counting is per ROOT CAUSE (a merge group), never per comment trailer — the
-trailer credits every corroborating lens, so the old per-comment count let
-"posted" exceed "raised" and gave one lens two different unique counts
-(FREEZE-ANALYSIS B, 2026-10-03). A group is one lead finding of the findings
+trailer credits every corroborating lens, so a per-comment count would let
+"posted" exceed "raised" and give one lens two different unique counts.
+A group is one lead finding of the findings
 record (any disposition but merged/folded) plus every merged/folded entry
 pointing at it — `merged_into` (new records), "MERGED x into F1" in the reason
 (older ones), else the lead on the same path within 3 lines. Its RAISERS are

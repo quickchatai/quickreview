@@ -1,8 +1,7 @@
 // Webhook ingress — the onboarding step where the operator chooses how
-// GitHub's webhooks reach their daemon (spec "Webhook
-// ingress"). Four shapes, offered with their real trade-offs; the step then
-// writes the configuration each one needs and verifies the RUNNING shape
-// rather than trusting what it recorded.
+// GitHub's webhooks reach their daemon. Four shapes, offered with their real
+// trade-offs; the step then writes the configuration each one needs and
+// verifies the RUNNING shape rather than trusting what it recorded.
 //
 // The shapes, and why none of them is a trap:
 //

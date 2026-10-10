@@ -202,10 +202,9 @@ const order: RoundOrder = {
   round_no: 1,
   round_type: "first",
   lenses: ["pass-baseline"],
-  // These five are REQUIRED on RoundOrder and were missing: the fixture also
-  // carried a long-retired `escalation_reasons` key, and TypeScript reports
-  // the excess property first — so the retired key was masking five holes
-  // while tests/ went unchecked.
+  // These five are required on RoundOrder. Keep the fixture free of excess
+  // properties: TypeScript reports an excess property first, which would mask
+  // a missing required one.
   pass_plan: [{ lens: "pass-baseline", agent: "pass-baseline", tier: "sol-med", raisable_to: [] }],
   addable_lenses: [],
   base_ref: "master",
@@ -305,14 +304,14 @@ describe("buildPiCommand", () => {
     );
   });
 
-  // the subagents glue (pi's native subagent extension loaded from
+  // The subagents glue (pi's native subagent extension loaded from
   // the installed package) rides per-spawn argv, NEVER a settings.json entry —
   // children load only the global settings extensions, so a leaf never gets
   // the subagent tool and a pass cannot fan out (rule 9, structurally).
   it("loads the first-party subagents glue on argv in every parent session", () => {
     const paths = manager().extensionPaths();
     expect(paths).toContain(join(root, "extensions", "subagents.ts"));
-    // The retired register-lens-agents hook must not come back.
+    // The register-lens-agents hook is not loaded per spawn.
     expect(paths.join("\n")).not.toContain("register-lens-agents");
     expect(paths.join("\n")).not.toContain("pi-subagents");
   });
@@ -388,15 +387,14 @@ describe("birth", () => {
   });
 
   /**
-   * the config-scope pin has to be ON THE ARGV, and this test is the
-   * whole reason the ticket said "this is NOT a one-line change".
+   * The config-scope pin has to be on the argv.
    *
    * tmux panes inherit the tmux SERVER's environment, not the client's
-   * (CLAUDE.md's recorded gotcha, and why `ARGV_ENV_PREFIXES` exists at all).
+   * (the reason `ARGV_ENV_PREFIXES` exists at all).
    * A pin that rode only `buildEnv` would be present in every unit assertion
    * and absent from every real pane — silently doing nothing, which is exactly
-   * the failure mode this defence exists to prevent. Proven end-to-end against
-   * a real tmux server as well: `tmux new-session -d -s <n> -c <cwd> env
+   * the failure mode this defence exists to prevent. Against a real tmux
+   * server: `tmux new-session -d -s <n> -c <cwd> env
    * GIT_CONFIG_GLOBAL=… <cmd>` puts the value in a GRANDCHILD's environment and
    * `HOME=<evil> git diff --no-index` does not execute there.
    */
@@ -421,7 +419,7 @@ describe("birth", () => {
     }
     // NOT /dev/null for the global scope: the container's entrypoint writes a
     // `credential.helper` there and `fetch` is an allowed read verb, so
-    // /dev/null would have broken every session-side fetch on a private repo.
+    // /dev/null would break every session-side fetch on a private repo.
     expect(newSession.join(" ")).not.toContain("GIT_CONFIG_GLOBAL=/dev/null");
   });
 
@@ -477,14 +475,14 @@ describe("birth", () => {
       expect(env.GITHUB_TOKEN).toBeUndefined();
       expect(env.QCR_TEST_PERSONAL_TOKEN).toBeUndefined();
       expect(Object.keys(env).sort()).toEqual([
-        // config-scope pin — paths and a flag, no credential.
+        // The config-scope pin — paths and a flag, no credential.
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_NOSYSTEM",
         "GIT_CONFIG_SYSTEM",
         "HOME",
         "LANG",
         "OPENAI_API_KEY",
-        // identity — non-secret every one of them (the reviewer key
+        // Memory identity — non-secret every one of them (the reviewer key
         // rides ovcli.conf at 0600, never argv and never the environment).
         "OPENVIKING_BASE_URL",
         "OPENVIKING_CLI_CONFIG_FILE",
@@ -494,14 +492,14 @@ describe("birth", () => {
         "OPENVIKING_USER",
         "PATH",
         "QCR_INJECT_DIR",
-        // the leaf-cache extension's path and the prompt-cache
+        // The leaf-cache extension's path and the prompt-cache
         // groups (below) — a path and two numbers, not credentials.
         "QCR_LEAF_CACHE_EXT",
         "QCR_LEDGER_FILE",
-        // where the daemon publishes this PR's recall hint (the
+        // Where the daemon publishes this PR's recall hint (the
         // round's own query and areas) — a path, not a credential.
         "QCR_OV_RECALL_HINT_FILE",
-        // where the daemon publishes the retired URIs the
+        // Where the daemon publishes the retired URIs the
         // extension's recall excludes — a path, not a credential.
         "QCR_OV_RETIRED_FILE",
         "QCR_OV_SESSION_ID",
@@ -512,7 +510,7 @@ describe("birth", () => {
         "QCR_SESSION_NAME",
         "QCR_SUBAGENT_CACHE_GROUP",
         "QCR_SUBAGENT_CACHE_STAGGER_MS",
-        // the process-wide subagent fan-out cap for the glue.
+        // The process-wide subagent fan-out cap for the glue.
         "QCR_SUBAGENT_MAX_CONCURRENCY",
         "QCR_SUBAGENT_WIDE_FANOUT",
         "TERM",
@@ -536,7 +534,7 @@ describe("birth", () => {
     }
   });
 
-  // the daemon hands each session the config IT loaded, so the posting
+  // The daemon hands each session the config IT loaded, so the posting
   // scripts never re-locate one (and never land on a different file than the
   // daemon's). QCR_ rides the argv, so it reaches the pane.
   it("hands the session the daemon's resolved config as QCR_CONFIG when wired", () => {
@@ -662,8 +660,8 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     await expect(m.archiveAndClose(42)).resolves.toBeUndefined();
   });
 
-  // the delete used to swallow every failure silently, and 79
-  // sessions of closed PRs piled up on the server with nothing to say why.
+  // A failed raw-tier delete must never be silent: an unexplained pile of
+  // closed PRs' sessions on the server is otherwise all that is left.
   it("a raw-tier delete that fails is LOGGED and RECORDED — and the PR still closes", async () => {
     const store = new StateStore(":memory:");
     const m = new PiSessionManager({
@@ -715,9 +713,9 @@ describe("OpenViking identity and the PR's raw-notes session", () => {
     store.close();
   });
 
-  // 79 sessions of closed PRs sat on the server (a delete that
-  // failed silently before S1, or a close the daemon never saw). The reconcile
-  // pass sweeps them: closed PRs only, bounded, every outcome logged.
+  // Closed PRs' sessions can linger on the server (a failed delete, or a close
+  // the daemon never saw). The reconcile pass sweeps them: closed PRs only,
+  // bounded, every outcome logged.
   describe("the stale raw-tier sweep", () => {
     const pr = (store: StateStore, number: number, state: "closed" | "tracked") =>
       store.upsertPr({
@@ -934,7 +932,7 @@ describe("injection", () => {
     const dir = m.injectDir("pr-42");
     const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
     expect(files).toHaveLength(1);
-    // The body, plus the receipt token the recovery paths look for (#5362).
+    // The body, plus the receipt token the recovery paths look for.
     expect(readFileSync(join(dir, files[0]!), "utf8")).toBe(
       `ROUND PROMPT BODY\n\n${roundPromptMarker(42, order.round_no)}\n`,
     );
@@ -951,9 +949,8 @@ describe("injection", () => {
     // Nothing written since the round started: no evidence either way.
     expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
 
-    // The session wrote, but the prompt is not among what it accepted. This is
-    // #5362 exactly: round 1's prompt and two hand-typed messages were in the
-    // JSONL, round 2's order was simply not there.
+    // The session wrote, but the prompt is not among what it accepted: other
+    // messages are in the JSONL, this round's order is simply not there.
     writeFileSync(
       jsonl,
       `${JSON.stringify({ message: { role: "user", content: [{ type: "text", text: "wake up finish the review" }] } })}\n`,
@@ -975,12 +972,10 @@ describe("injection", () => {
     expect(await m.roundPromptAccepted(42, 2, started)).toBe(false);
   });
 
-  // / MC-01. The ratified receipt rule (#5362 ①) is: present =
-  // delivered, absent = never arrived, **unreadable = unknown, and unknown is
-  // NEVER read as loss**. The catch inside the scan returned `false`, which is
-  // the "provably never arrived" answer — the exact reading the rule forbids,
-  // and the one that (once redelivery is spent) kills a live conversation.
-  // The comment on the line above the catch already said so.
+  // The receipt rule: present = delivered, absent = never arrived,
+  // unreadable = unknown, and unknown is never read as loss. Returning `false`
+  // from a failed read would be the "provably never arrived" answer — the one
+  // that, once redelivery is spent, kills a live conversation.
   describe("an unreadable session JSONL is UNKNOWN, never loss", () => {
     // The fault is injected with a SYMLINK TO A DIRECTORY, not `chmod 0o000`.
     // `readdirSync(withFileTypes)` does not follow symlinks, so the entry is
@@ -988,10 +983,8 @@ describe("injection", () => {
     // `statSync` then follows it and succeeds (in scope, mtime now), and
     // `readFileSync` fails with EISDIR. That is exactly the shape the rule is
     // about — stats fine, cannot be read — and unlike a permission bit it
-    // behaves identically for every uid. The first version of these tests used
-    // `chmod` behind `it.skipIf(root)`, which meant the fix lost all cover in
-    // any root context while the suite still reported green: the "green suites
-    // lie" mode this whole ticket exists to close.
+    // behaves identically for every uid — a `chmod` fault would have to skip
+    // under root and leave the rule uncovered there while the suite reads green.
     const unreadableJsonl = (dir: string, name: string): void => {
       const target = join(dir, `${name}.d`);
       mkdirSync(target, { recursive: true });
@@ -1014,7 +1007,7 @@ describe("injection", () => {
 
         expect(await m.roundPromptAccepted(42, 1, started)).toBeNull();
 
-        // F4: and it says so. The flag is scan-global, so one permanently
+        // And it says so. The flag is scan-global, so one permanently
         // unreadable stale file would otherwise answer `null` for this PR
         // forever, silently disabling the redelivery-vs-loss decision and
         // reconcile's claim-release sweep.
@@ -1030,8 +1023,8 @@ describe("injection", () => {
       const started = Date.parse("2026-08-13T10:00:00Z");
       const jsonlDir = m.sessionDir("pr-42");
       mkdirSync(jsonlDir, { recursive: true });
-      // Named so the unreadable one is walked first: the old code returned out
-      // of `walk` entirely on a failed read, so `b.jsonl` was never opened.
+      // Named so the unreadable one is walked first: a failed read must not
+      // end the walk before `b.jsonl` is opened.
       unreadableJsonl(jsonlDir, "a-blocked.jsonl");
       writeFileSync(
         join(jsonlDir, "b-delivered.jsonl"),
@@ -1106,10 +1099,9 @@ describe("injection", () => {
     expect(readdirSync(m.injectDir("pr-42")).filter((f) => f.endsWith(".md"))).toHaveLength(1);
   });
 
-  // Live gap 2026-08-19: sticky sessions die with the container and are only
-  // reborn on round dispatch, but rechecks/ping-pong wake WITHOUT a round —
-  // every post-restart push recheck threw. With a title resolver set, inject
-  // respawns the session instead.
+  // Sticky sessions die with the container and round dispatch reborns them,
+  // but rechecks and ping-pong wake without a round. With a title resolver
+  // set, inject respawns the session instead of throwing.
   it("inject() respawns a dead session when the title resolver knows the PR", async () => {
     const m = manager();
     m.setTitleResolver((pr) => (pr === 42 ? "Add rate limiting" : undefined));
@@ -1168,9 +1160,9 @@ describe("injection", () => {
 
 describe("durable command ownership", () => {
   it("never births a command for a round an operator cancelled while dispatch was in flight", async () => {
-    // selfscan 1becb396: dispatch created round 1, then awaited the worktree
-    // fetch; `restart-session` cancelled that provisional round meanwhile.
-    // Delivering it anyway left a live command on a cancelled round.
+    // Dispatch creates round 1, then awaits the worktree fetch;
+    // `restart-session` cancels that provisional round meanwhile. Delivering
+    // it anyway would leave a live command on a cancelled round.
     const store = new StateStore(":memory:", () => new Date("2026-08-13T10:00:00Z"));
     try {
       const roundId = store.startRound(42, "first", ["pass-baseline"], 75);
@@ -1394,7 +1386,7 @@ describe("durable command ownership", () => {
         store.failPendingSessionCommand("cmd-5454", "historical attempt-zero failure");
         for (let n = 1; n <= 4; n++)
           store.holdWake(5454, `# Author reply — PR #5454\n\nreply ${n}`, "author_reply");
-        // Exact incident shape: tmux exists, but no generation receipt does.
+        // tmux exists, but no generation receipt does.
         liveSessions.add("pr-5454");
         autoBridgeReady = false;
         onNewSession = (_session, args) => {
@@ -1727,7 +1719,7 @@ describe("durable command ownership", () => {
       expect(readFileSync(original.payload_path)).toEqual(expectedBytes);
       expect(readFileSync(original.inject_path)).toEqual(expectedBytes);
       // The replay is never converted into the held queue; the queue itself
-      // keeps every author reply (H1b: the cap never evicts one).
+      // keeps every author reply (the cap never evicts one).
       expect(store.heldWakes(42).map((wake) => wake.payload)).toEqual([
         "later-0",
         "later-1",
@@ -1748,9 +1740,9 @@ describe("durable command ownership", () => {
   });
 
   it("closing a PR terminalizes its live ordinary wake, so recovery never reborns it (selfscan 666a2356)", async () => {
-    // A ping-pong wake was mid-turn when the author merged: archiveAndClose
-    // killed pr-42, but the row stayed 'running' and the running-bound
-    // recovery respawned a session (and worktree) for a merged PR.
+    // A ping-pong wake is mid-turn when the author merges: archiveAndClose
+    // kills pr-42, and a row left 'running' would let the running-bound
+    // recovery respawn a session (and worktree) for a merged PR.
     const store = new StateStore(
       join(root, "state", "state.db"),
       () => new Date("2026-08-13T10:00:00Z"),
@@ -2145,9 +2137,8 @@ describe("archive and close", () => {
     await m.archiveAndClose(42);
 
     const dest = m.archiveDir("pr-42");
-    // the transcript is the archiver's to keep (every file,
-    // verified and compressed, once safe to move) — no synchronous copy of the
-    // newest one on the close path any more.
+    // The transcript is the archiver's to keep (every file, verified and
+    // compressed, once safe to move) — the close path copies none of it.
     expect(existsSync(join(dest, "session.jsonl"))).toBe(false);
     expect(readFileSync(join(dest, "ledger.md"), "utf8")).toBe("LEDGER PR #42 @ abc123\n");
     expect(readdirSync(join(dest, "verdicts"))).toEqual(["pr-42-round-1.json"]);

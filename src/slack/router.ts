@@ -1,4 +1,4 @@
-// The inbound router (S3): one Slack message -> at most one overseer
+// The inbound router: one Slack message -> at most one overseer
 // turn. Every drop is a ROW, not a log line — `slack_events` is the forensic
 // record, so "why did the bot ignore me?" is answerable from sqlite alone.
 //
@@ -14,7 +14,7 @@
 //
 // Two things the router will never do: take a channel id from a message, and
 // take a tier from message text. Both come from config + the recorded Slack
-// user id, which is why a pasted "| tier | owner_legacy |" table is inert.
+// user id, which is why a pasted "| tier | owner |" table is inert.
 import type { Config } from "../config.js";
 import type { SlackDisposition, SlackTier, StateStore } from "../state.js";
 import { decideTurn, type TurnDecision } from "./policy.js";
@@ -48,13 +48,13 @@ function isOwnPostedTs(store: StateStore, ts: string): boolean {
 /** Rights tier of a Slack member id. Config is the ONLY input besides the id. */
 export function computeTier(cfg: Config, slackUser: string | null | undefined): SlackTier {
   if (!slackUser) return "ignored";
-  // The configured owner (`[owner] slack_id`) gets the top rights
-  // tier. Persisted records still spelling this tier "owner_legacy" are folded to
-  // "owner" on read (`foldSlackTier`); `system` is never computed
-  // here — it is stamped only by OriginStore.writeLocal for daemon turns.
+  // The configured owner (`[owner] slack_id`) gets the top rights tier.
+  // Persisted records carrying a legacy spelling of this tier are folded to
+  // "owner" on read (`foldSlackTier`); `system` is never computed here — it is
+  // stamped only by OriginStore.writeLocal for daemon turns.
   if (cfg.owner.slack_id && slackUser === cfg.owner.slack_id) return "owner";
   if (Object.prototype.hasOwnProperty.call(cfg.slack.users, slackUser)) return "author";
-  // Ratified widening: an unmapped id gets read-only everything, but NO own-PR
+  // An unmapped id gets read-only everything, but NO own-PR
   // resolution — there is no login to resolve, so it must name PRs by number.
   return "anyone";
 }
@@ -87,7 +87,7 @@ export function authorizedPrs(store: StateStore, login: string | null): number[]
  *
  * The overseer reads one markdown document; the top of it is a trusted table
  * written by the daemon and the rest is a quoted human. A user who pastes their
- * own `<!-- qcr:slack v1 -->` + `| tier | owner_legacy |` must end up with inert
+ * own `<!-- qcr:slack v1 -->` + `| tier | owner |` must end up with inert
  * characters: every line is blockquoted, pipes are escaped so no line can be a
  * table row, and comment delimiters are HTML-escaped so no line can be the
  * marker.
@@ -124,7 +124,7 @@ export interface InjectBodyInput {
   receivedAt: Date;
 }
 
-/** The exact envelope from the annex §3.2. */
+/** The inject envelope: marker, trusted field table, then the quoted message. */
 export function buildInjectBody(input: InjectBodyInput): string {
   const dash = "—";
   // The display name is user-chosen, so it gets the quoted body's escaping —
@@ -181,7 +181,7 @@ export interface SlackRouterDeps {
   users: Pick<SlackWebApi, "usersInfo">;
   /** Our own identity, resolved ONCE at boot (echo layer a). */
   identity?: SlackIdentity | null;
-  /** Fired when a turn was refused by a cap. The announcer (S4) owns the
+  /** Fired when a turn was refused by a cap. The announcer owns the
    * user-visible message — the router only reports. */
   onCapReached?: (decision: TurnDecision, event: SlackInboundEvent) => void | Promise<void>;
   now?: () => Date;

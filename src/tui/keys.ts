@@ -1,12 +1,10 @@
 // Board-mode key decoding. Only the tab / help / msg screens parse keys; a
-// FOCUSED embedded terminal (the board's pi pane, the companion column) is a
+// focused embedded terminal (the board's pi pane, the companion column) is a
 // raw passthrough — nothing here runs for it except the Ctrl-q release.
 //
-// Retired decodes, so nobody re-adds them by reflex: `o`/`M` (full-screen
-// attach of the overseer / main session, 2026-09-02 — the TUI never attaches
-// to a VM session) and `w` (the full-screen detail page, — a
-// non-scrolling duplicate of the side pane whose remembered route never
-// opened it). All three letters are plain text to the companion column now.
+// `o`, `M` and `w` are deliberately not decoded: the TUI never attaches to a
+// VM session and has no full-screen detail page (it would duplicate the side
+// pane). All three letters are plain text to the companion column.
 import { tabDigit, tabForDigit, type Tab } from "./tabs.js";
 
 export type BoardKey =
@@ -63,7 +61,7 @@ export function decodeKey(buf: Buffer): BoardKey {
 /**
  * The printable a decoded key was typed as, or undefined for keys that were
  * never a single printable (arrows, ⏎, Esc, chords). The metrics tab's `# <pr>`
- * box reads digits through this — `1`…`7` decode as tab switches before any
+ * box reads digits through this — `1`…`8` decode as tab switches before any
  * tab handler sees them — and the feedback tab's armed revert reads its `y`.
  */
 export function keyChar(key: BoardKey): string | undefined {

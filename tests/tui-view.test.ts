@@ -1,4 +1,4 @@
-// the companion sees the operator's view.
+// The companion sees the operator's view.
 //
 // Two halves and one boundary:
 //   * the TUI PUBLISHES its view to /feed as plain files (screen.txt +
@@ -112,7 +112,7 @@ function v_configHome(deploy: Parameters<typeof buildTuiView>[0]["deploy"]): str
 describe("buildTuiView — the derived state behind the frame", () => {
   it("leads with deploy state: the commit the VM runs, HEAD, dirt, and what is waiting to ship", () => {
     const v = buildTuiView({ now: NOW, tab: "deploy", snapshot: snap(), deploy: DEPLOY });
-    // Deploy first is not cosmetic — it is the trigger for the whole ticket.
+    // Deploy leads the view by design, not by accident of key order.
     expect(Object.keys(v)[1]).toBe("deploy");
     expect(v.deploy.deployed).toMatchObject({ sha: "aaa1111" });
     expect(v.deploy.head).toBe("bbb2222");
@@ -125,8 +125,8 @@ describe("buildTuiView — the derived state behind the frame", () => {
   it("an unopened deploy tab is reported as not loaded, never as 'nothing to ship'", () => {
     const v = buildTuiView({ now: NOW, tab: "board", snapshot: snap() });
     expect(v.deploy.loaded).toBe(false);
-    // this used to assert `0`, which IS "nothing to ship" — the very
-    // claim the test's name forbids, published to the companion as a number.
+    // Not `0`: that IS "nothing to ship" — the very claim the test's name
+    // forbids, published to the companion as a number.
     expect(v.deploy.pending_commit_count).toBeNull();
     expect(deployAnswer(publish(v), NOW)).toContain("has not loaded");
   });
@@ -215,10 +215,11 @@ describe("buildTuiView — the derived state behind the frame", () => {
   });
 });
 
-// the second half of the honest-unknown rule, at the surface where
-// it costs most: this object is handed to a model that repeats it to the owner
-// in prose. A dropped key rendered as nothing, and nothing read as "nothing to
-// report", so an ssh that never answered became a VM with no deployed commit.
+// The second half of the honest-unknown rule, at the surface where it costs
+// most: this object is handed to a model that repeats it to the operator in
+// prose. A dropped key renders as nothing, and nothing reads as "nothing to
+// report", so an ssh that never answered would become a VM with no deployed
+// commit.
 // The deliverable is the RENDERED line, so the tests below read what the
 // `tui_deploy` tool actually says.
 describe("a failed read reaches the companion as UNKNOWN, never as an absent line", () => {
@@ -252,7 +253,7 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(answer).toContain("local HEAD: UNKNOWN");
     expect(answer).toContain("container: UNKNOWN");
     expect(answer).not.toMatch(/never deployed|no container/);
-    // an uncompared config home is UNKNOWN too — never "deployed".
+    // An uncompared config home is UNKNOWN too — never "deployed".
     expect(v_configHome(UNREAD)).toBeNull();
     expect(answer).toContain("config home vs the VM: UNKNOWN");
   });
@@ -289,7 +290,7 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(answer).toContain("docker lists no container");
     expect(answer).not.toMatch(/VM is running: UNKNOWN|local HEAD: UNKNOWN|container: UNKNOWN/);
     // (With no marker there is nothing to diff against, so the pending count
-    // is honestly unknown — that line is's and unchanged here.)
+    // is honestly unknown.)
   });
 
   it("a marker the TUI read but could not parse is its own sentence — not 'never deployed', not 'could not read'", () => {
@@ -310,7 +311,7 @@ describe("a failed read reaches the companion as UNKNOWN, never as an absent lin
     expect(answer).toContain("corrupt marker");
     expect(answer).not.toContain("never deployed");
     expect(answer).not.toContain("VM is running: UNKNOWN (the TUI has not been able to read this)");
-    // (No sha to diff against, so the pending count is honestly UNKNOWN —'s line, unchanged.)
+    // (No sha to diff against, so the pending count is honestly UNKNOWN.)
   });
 
   it("the renderer holds the line on its own: a loaded view.json missing the keys entirely still says UNKNOWN", () => {
@@ -384,7 +385,7 @@ describe("FeedWriter.writeView", () => {
   it("publishes files only — nothing here can inject a companion chat turn", () => {
     const w = new FeedWriter(dir);
     w.writeView(buildTuiView({ now: NOW, tab: "board" }), "x", 1_000);
-    // The retired /feed/wake marker must not come back under a new name.
+    // No wake marker under any name: the feed is files only.
     expect(readdirSync(dir).sort()).toEqual(["screen.txt", "view.json"]);
   });
 });
@@ -627,16 +628,10 @@ describe("the tools read already-fetched state and can NEVER become a fetcher", 
       } as never,
       async () => ({ ok: true, stdout: "", stderr: "", code: 0 }),
       {},
-      // 4th parameter is `ensureDirs`, NOT the fs seam. Passing the seam here
-      // left `fs` on its real-filesystem DEFAULT, so this assertion read the
-      // host's disk instead of the injected stub.
-      //
-      // Stated precisely, because the looser version is wrong: the assertion
-      // was not vacuous. The fixture paths exist on no machine, so the real
-      // `existsSync` returned the same `false` the stub returns, and mutating
-      // the argv fails the test under either call form. What was broken is
-      // hermeticity — a machine where those paths DID exist would have got a
-      // different answer — and the type error that hid it.
+      // 4th parameter is `ensureDirs`, NOT the fs seam. Passing the seam in
+      // this slot would leave `fs` on its real-filesystem default and read the
+      // host's disk instead of the injected stub — not hermetic on a machine
+      // where the fixture paths exist.
       () => {},
       { exists: () => false, read: () => undefined, mode: () => undefined },
     );

@@ -1,12 +1,10 @@
-// Reading a JSON file another process may still be writing (H1a).
+// Reading a JSON file another process may still be writing.
 //
 // A session writes its verdict (and its recheck outcome) with pi's `write`
 // tool, which is Node's `fs.promises.writeFile`: open with O_TRUNC, then the
 // bytes, then close, each step a separate turn of pi's event loop. `fs.watch`
 // fires on the open. Between the two steps the file is empty or short, and on
-// a CPU-starved container that gap is not microseconds: #5885 round 2's
-// verdict file was last written 21 ms AFTER the watcher had given up on it,
-// and the watcher's tolerance was three re-reads 40 ms apart.
+// a CPU-starved container that gap can outlast a short burst of re-reads.
 //
 // So an unparseable read is not evidence of a malformed file while the file
 // is still plausibly being written: while its bytes moved within the last
@@ -14,7 +12,7 @@
 // re-reads with backoff until the JSON parses, or until the file has sat
 // unchanged for `settleMs` across several looks (it really is corrupt), or
 // until `windowMs` has passed since the first look (a hard bound, so a file
-// rewritten forever is still declared). Only UNPARSEABLE bytes wait: a file
+// rewritten forever is still declared). Only unparseable bytes wait: a file
 // that parses is complete, whatever its shape, and shape checking is the
 // caller's. A file that is there but cannot be read (EISDIR, EACCES, EIO, …)
 // waits the same way and is then reported as unparseable — never as missing,
@@ -50,7 +48,7 @@ export const DEFAULT_PARTIAL_WRITE_POLICY: PartialWritePolicy = {
 };
 
 /** Unchanged looks required before stillness counts — at least two re-reads
- * AFTER the signature was first seen, so a look that lands right after a
+ * after the signature was first seen, so a look that lands right after a
  * daemon stall (when the writer, in the same throttled cgroup, has not run
  * yet either) can never decide alone. */
 const MIN_STABLE_LOOKS = 3;
@@ -58,7 +56,7 @@ const MIN_STABLE_LOOKS = 3;
 export type SettledRead =
   | { kind: "parsed"; value: unknown; reads: number; waited_ms: number }
   /** The file is not there (ENOENT) — never there, or gone mid-wait. Only
-   * ENOENT: any other stat or read failure is evidence about a file that IS
+   * ENOENT: any other stat or read failure is evidence about a file that is
    * there, and is reported as `unparseable` below. */
   | { kind: "missing"; reads: number }
   | {
@@ -162,7 +160,7 @@ function isMissing(err: unknown): boolean {
 }
 
 /** One look: the file's signature and its bytes, or why they could not be had.
- * A read that fails on a file that IS there (EISDIR, EACCES, EIO, …) is not
+ * A read that fails on a file that is there (EISDIR, EACCES, EIO, …) is not
  * "missing" — a verdict path the watcher silently never consumes would wedge
  * its round with nothing ever said — so it is reported as an error and waited
  * out like unparseable bytes: transient ones clear, persistent ones are

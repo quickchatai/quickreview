@@ -1,4 +1,4 @@
-// Production-assembly invariants for the Slack concierge (S5b).
+// Production-assembly invariants for the Slack concierge.
 //
 // The subject is src/wire.ts — `startSlack()` and `buildLocalCommandWatcher()`,
 // the two functions `createProductionDaemon().onStart` is made of. Everything
@@ -344,13 +344,13 @@ describe("state layout", () => {
   });
 });
 
-// ---- G1: who caused this turn, on BOTH sides -------------------------------
+// ---- who caused this turn, on both sides -----------------------------------
 //
-// The legacy-dir belt used to fire on wall-clock recency: an unexpired non-M
-// origin refused `commands/`, an expired one released it. Both edges were bugs
-// — waiting out 15 minutes was an escalation to tier M, and one guest message
-// every 15 minutes blocked the daemon's OWN pipeline (EOD improvements/issues,
-// anomaly wakes). Cause is now explicit on both sides.
+// The legacy-dir belt decides on the turn's explicit cause, never on
+// wall-clock recency. A recency rule fails at both edges: waiting out the
+// window would be an escalation to tier M, and one guest message per window
+// would block the daemon's own pipeline (EOD improvements/issues, anomaly
+// wakes).
 
 describe("origin cause, not recency (the belt)", () => {
   const noHooks: SessionHooks = {
@@ -479,8 +479,8 @@ describe("origin cause, not recency (the belt)", () => {
     });
 
     // The wrap must forward the optional liveness/kill hooks: dropping
-    // sessionAlive here left the stuck-round detector blind in
-    // production (found 2026-08-19) — every stuck round parked.
+    // sessionAlive here leaves the stuck-round detector blind, so every stuck
+    // round stays stuck.
     const probed: number[] = [];
     const killedPrs: number[] = [];
     const optionalCalls: string[] = [];
@@ -497,10 +497,10 @@ describe("origin cause, not recency (the belt)", () => {
           optionalCalls.push("retrySessionCommand"),
           "retried" as const
         ),
-        // dropped by the wrap, the stale raw tier is never swept.
+        // Dropped by the wrap, the stale raw tier is never swept.
         sweepStaleOvSessions: async () => (optionalCalls.push("sweepStaleOvSessions"), null),
-        // H1b: dropped by the wrap, a wake waiting behind a compaction
-        // is read as lost and its live session killed (#5362 ③).
+        // Dropped by the wrap, a wake waiting behind a compaction is read as
+        // lost and its live session killed.
         redeliverSessionCommand: async (_id, observed) => (
           optionalCalls.push("redeliverSessionCommand"),
           forwardedObservation.push(observed),

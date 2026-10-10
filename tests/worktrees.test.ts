@@ -1,5 +1,5 @@
-// Worktree lifecycle against a REAL scratch git repo in a temp dir (the one
-// place in B3 where real I/O is allowed, per the brief). A local "origin" repo
+// Worktree lifecycle against a real scratch git repo in a temp dir (git is the
+// thing under test, so real I/O is allowed here). A local "origin" repo
 // stands in for GitHub: PR heads are published as refs/pull/<n>/head, exactly
 // the ref the manager fetches.
 import { execFileSync } from "node:child_process";
@@ -98,8 +98,8 @@ describe("WorktreeManager", () => {
       calls.push(args);
       return { code: 0, stdout: "", stderr: "" };
     };
-    // Same repo slug ⇒ same derived clone dir (the default clone dir
-    // derives from the repo's basename instead of a hardcode).
+    // Same repo slug ⇒ same derived clone dir (the default clone dir derives
+    // from the repo's basename).
     const m2 = new WorktreeManager({
       root,
       repo: "exampleorg/example-app",
@@ -139,10 +139,10 @@ describe("WorktreeManager", () => {
     expect(await m.headSha(7)).toBe(second);
   });
 
-  // ---- base-branch freshness (2026-08-18) ---------------------------------
-  // The bug this closes: the base clone was created once and only ever fetched
-  // refs/pull/<n>/head, so origin/master stayed frozen at clone time while
-  // pass-data-safety was told to verify migration ordering "against master's
+  // ---- base-branch freshness ----------------------------------------------
+  // The base branch is fetched alongside the PR head: a clone that only ever
+  // fetched refs/pull/<n>/head would keep origin/master frozen at clone time
+  // while pass-data-safety verifies migration ordering "against master's
   // current head" — a P1 rule reading a snapshot that could be weeks old.
 
   it("fetches the PR's base branch alongside the head and reports its tip", async () => {
@@ -290,7 +290,7 @@ describe("listMigrationFiles", () => {
 
   // Never []: an empty list means "the base has no migrations", and a reader
   // that cannot read must not be able to impersonate that answer — the
-  // pre-check would then go silently quiet, which forbids.
+  // pre-check would then go silently quiet, which it must never do.
   it("throws rather than returning [] when the sha is unusable", async () => {
     const m = mgr();
     await m.ensureBaseClone();
@@ -304,7 +304,7 @@ describe("listMigrationFiles", () => {
   });
 });
 
-// The owner, 2026-08-19 (amendment): a clean merge stays trivial; a
+// A clean merge stays trivial; a
 // hand-resolved conflict must be named so the recheck reviews it — the
 // dropped-master-change bug lives exactly in the difference between git's own
 // auto-merge and what the author committed.
@@ -447,7 +447,7 @@ describe("lastHumanAuthor", () => {
   });
 });
 
-// S6 (outcome capture): did the code at a posted finding's anchor
+// Outcome capture: did the code at a posted finding's anchor
 // change between two commits? Read-only git in the base clone, no fetch; a
 // commit the clone does not hold is UNKNOWN (null), never a guess.
 describe("anchorTouched (S6)", () => {
@@ -499,7 +499,7 @@ describe("anchorTouched (S6)", () => {
   });
 });
 
-// a reply's "Fixed in <sha>" counts only when <sha> is a commit
+// A reply's "Fixed in <sha>" counts only when <sha> is a commit
 // made after the reviewed head and carried by a later one.
 describe("introducedBetween (S6)", () => {
   it("is true only for a commit `to` contains and `from` does not", async () => {
@@ -552,7 +552,7 @@ describe("parseDiffHunks / hunksTouchLine", () => {
   });
 });
 
-// the base clone's name is per-install, so no tracked .gitignore line
+// The base clone's name is per-install, so no tracked .gitignore line
 // can cover it. Where the sandbox root IS a checkout (`npm run daemon`, the
 // plain-docker bind mount), the manager itself files the clone in the
 // checkout's LOCAL info/exclude — the same `/<name>/` line deploy.sh writes.
@@ -602,7 +602,7 @@ describe("base clone is locally ignored", () => {
   });
 });
 
-// ---- S8: post-merge commits that touch a merged PR's lines -----------
+// ---- post-merge commits that touch a merged PR's lines ---------------------
 
 describe("postMergeTouches (the learner's recall source)", () => {
   /** Commit the given files on master with `subject`, dated `at` (both
@@ -890,7 +890,7 @@ describe("postMergeTouches (the learner's recall source)", () => {
   });
 });
 
-// ----: the PR-owned inter-round delta --------------------------------
+// ---- the PR-owned inter-round delta ----------------------------------------
 
 describe("parseNewSideRanges", () => {
   it("reads -U0 hunks: changes, insertions and zero-width deletion points", () => {

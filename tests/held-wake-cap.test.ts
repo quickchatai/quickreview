@@ -1,20 +1,18 @@
-// H1b — the held-wake cap never evicts an author reply.
+// The held-wake cap (`MAX_HELD_WAKES`, 5) never evicts an author reply.
 //
-// MAX_HELD_WAKES (5) evicted the OLDEST held wake whatever it was. An author
-// reply's comment is CLAIMED before its wake is held (`claimAuthorMessage`),
-// and nothing raises a claimed comment again — the webhook was one-shot and the
-// reconcile comment sweep only captures — so an evicted reply was never
-// answered: 76 replies between 2026-10-05 and 10-08, two of them #5849's
-// 4216484565 and 4216484862, evicted at 08:02:45 and 08:05:57.
+// An author reply's comment is claimed before its wake is held
+// (`claimAuthorMessage`), and nothing raises a claimed comment again — the
+// webhook is one-shot and the reconcile comment sweep only captures — so an
+// evicted reply would never be answered.
 //
 // The policy pinned here:
 //   - author replies are outside the cap: never evicted, never counted;
 //   - what the cap evicts goes PUSH recheck nudges first (oldest first) — the
 //     one class a sweep re-raises — then every other ordinary wake, oldest
-//     first, a ci or base-advance recheck among them (review finding: only
-//     the push recheck has a reconcile backstop);
-//   - every evicted recheck nudge releases its claim (#5362 ④: a provable
-//     non-delivery): the reconcile backstop asks a push question again; a ci
+//     first, a ci or base-advance recheck among them (only the push recheck
+//     has a reconcile backstop);
+//   - every evicted recheck nudge releases its claim (an eviction is a
+//     provable non-delivery): the reconcile backstop asks a push question again; a ci
 //     or base-advance one waits for an identical webhook, and its eviction
 //     records the quiet `recheck_wake_dropped`;
 //   - a backlog of author replies is delivered in chunks, never one unbounded
@@ -110,7 +108,7 @@ describe("the held-wake cap (H1b)", () => {
   it("never evicts an author reply, evicts push recheck nudges first, then the oldest other wake", async () => {
     for (let c = 1; c <= 6; c++) await wakeOrHold(deps(), PR, authorReply(c), "author_reply");
     expect(heldReasons()).toEqual(Array(6).fill("author_reply"));
-    expect(eventsOf("wake_dropped")).toEqual([]); // the old cap dropped one here
+    expect(eventsOf("wake_dropped")).toEqual([]); // six replies exceed MAX_HELD_WAKES; none dropped
 
     // Four nudges first, THEN the recheck: by age alone the oldest nudge would
     // be the one to go.
@@ -253,7 +251,7 @@ describe("an evicted recheck is asked again by the reconcile backstop (#5362 ④
   };
 
   it("claimed and held: silent; evicted: the claim is released and the next pass re-raises it", async () => {
-    // The standing APPROVE at the old head; the author pushed (08:05:52).
+    // The standing APPROVE at the old head; the author pushed.
     store.recordReviewedHead(PR, { head_sha: OLD, verdict: "APPROVE", round_no: 4 });
     store.upsertPr({ ...store.getPr(PR)!, head_sha: NEW });
     const push = await recheckNudge("push", NEW);

@@ -1,4 +1,4 @@
-// the companion reaches memory without holding a VM credential.
+// The companion reaches memory without holding a VM credential.
 //
 // Three properties are pinned here, and each one is a rule-8 invariant rather
 // than an implementation detail:
@@ -452,8 +452,8 @@ describe("the memory forward", () => {
   });
 
   it("close() kills relays still in flight — a live caller must not strand ssh children", async () => {
-    // `server.close()` only stops accepting. The TUI now owns a forward while
-    // it runs, so a close that left the pairs alive would leak one
+    // `server.close()` only stops accepting. The TUI owns a forward while it
+    // runs, so a close that left the pairs alive would leak one
     // ssh + remote docker exec per open connection on every quit.
     const relay = {
       stdin: new PassThrough(),
@@ -474,18 +474,19 @@ describe("the memory forward", () => {
     const client: Socket = connect(port, "127.0.0.1");
     await new Promise((r) => client.once("connect", r));
     expect(fwd.liveRelays()).toBe(1);
-    // The client is still connected — exactly the case that used to leak.
+    // The client is still connected — exactly the case that would leak.
     fwd.close();
     expect(relay.killed).toBe(true);
     expect(fwd.liveRelays()).toBe(0);
     client.destroy();
   });
 
-  // ----: the flood, collapsed ---------------------------------------
+  // ---- the flood, collapsed ------------------------------------------------
   //
-  // A missing agent key used to fill the journal with thousands of
-  // `relay #N exited 255` lines — a symptom, repeated, naming neither a cause
-  // nor a remedy, because every HTTP connection spawns its own relay.
+  // Every HTTP connection spawns its own relay, so a missing agent key would
+  // fill the journal with thousands of `relay #N exited 255` lines — a
+  // symptom, repeated, naming neither a cause nor a remedy. Failures are
+  // collapsed into one line per cause, with its remedy.
 
   it("names the likely cause and the exact command for each failure shape", () => {
     const cause = (text: string) =>
@@ -502,7 +503,7 @@ describe("the memory forward", () => {
       key: "host",
       remedy: "ssh -v my-vm true",
     });
-    // F1: the forward's master lives at ITS OWN ControlPath, so the
+    // The forward's master lives at ITS OWN ControlPath, so the
     // remedy must name that socket — a bare `ssh -O exit my-vm` addresses
     // the operator's master from ~/.ssh/config and leaves the wedged one up.
     expect(cause("Control socket connect(/home/x/.ssh/cm): Connection refused")).toMatchObject({
@@ -511,7 +512,7 @@ describe("the memory forward", () => {
     });
     // No cause exists for a session sshd refused past its MaxSessions: under
     // `-q` the mux client says nothing about it and falls back to a full login
-    // of its own (F1 review), so there is no stderr to name it from.
+    // of its own, so there is no stderr to name it from.
     // The docker daemon's own refusal also says "permission denied" — it must
     // not be mistaken for an ssh key problem and send the operator to ssh-add.
     expect(
@@ -554,9 +555,9 @@ describe("the memory forward", () => {
   });
 
   it("counts what it hid ACROSS a change of cause — the honest-repeat feature must not itself lie", () => {
-    // The exact shape the review found: five auth failures (four
-    // suppressed), then one host failure. The old counter reset on the cause
-    // change, so the recovery line claimed "0 suppressed" after hiding four.
+    // Five auth failures (four suppressed), then one host failure. A counter
+    // that reset on the cause change would make the recovery line claim
+    // "0 suppressed" after hiding four.
     const lines: string[] = [];
     let now = 0;
     const c = forward.createFailureCollapser({

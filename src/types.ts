@@ -1,28 +1,28 @@
-// Shared cross-slice contracts. B2's dispatch emits RoundOrder; B3's session
-// manager consumes it; verdict files close the loop (spec §3–4).
+// Shared contracts: dispatch emits RoundOrder, the session manager consumes
+// it, and verdict files close the loop.
 import type { MigrationCollision } from "./migrations.js";
 import type { PostingPolicy } from "./postingpolicy.js";
 
 export type RoundType = "first" | "re-review" | "staleness";
 
 /**
- * Round outcomes. `NEEDS_HUMAN` is a legacy INPUT spelling only: the park it
- * once named was retired on 2026-08-19 (the review is never handed
- * to a human) and removed the lifecycle state itself. A verdict file
- * that still says NEEDS_HUMAN lands the PR on `tracked`: the review is posted,
- * no approval is implied, and the AI keeps driving. Nothing waits for a person.
+ * Round outcomes. `NEEDS_HUMAN` is a legacy INPUT spelling only: the review is
+ * never handed to a human and there is no lifecycle state for it. A verdict
+ * file that still says NEEDS_HUMAN lands the PR on `tracked`: the review is
+ * posted, no approval is implied, and the AI keeps driving. Nothing waits for
+ * a person.
  */
 export type Verdict = "APPROVE" | "REQUEST_CHANGES" | "NEEDS_HUMAN";
 
 export const VERDICTS: readonly Verdict[] = ["APPROVE", "REQUEST_CHANGES", "NEEDS_HUMAN"];
 
 /**
- * Accept a verdict string, tolerating the retired `ESCALATE` spelling.
+ * Accept a verdict string, tolerating the legacy `ESCALATE` spelling.
  *
- * The alias survives the hard cut because escalation came back as a
- * real (default-off) feature, so the vocabulary is live rather than
- * dead. It never parks: ESCALATE folds to NEEDS_HUMAN, which the state machine
- * lands on `tracked`. Returns null for anything else.
+ * The alias stays because escalation is a real (default-off) feature, so the
+ * vocabulary is live rather than dead. It never parks: ESCALATE folds to
+ * NEEDS_HUMAN, which the state machine lands on `tracked`. Returns null for
+ * anything else.
  */
 export function normalizeVerdict(raw: unknown): Verdict | null {
   if (typeof raw !== "string") return null;
@@ -32,7 +32,7 @@ export function normalizeVerdict(raw: unknown): Verdict | null {
 }
 
 /**
- * The per-round prompt receipt token (#5362).
+ * The per-round prompt receipt token.
  *
  * Deliberately plain ASCII with no JSON metacharacters, so it survives the
  * session JSONL's string encoding byte-for-byte and a raw substring search
@@ -48,14 +48,13 @@ export function roundPromptMarker(pr: number, roundNo: number): string {
 }
 
 /**
- * The per-nudge receipt token for a post-approval recheck (#5362 W2).
+ * The per-nudge receipt token for a post-approval recheck.
  *
- * A recheck needs a receipt MORE than a round does, not less: a round has a
- * deadline underneath it, but `rechecks` is an append-only claim table with no
- * deadline, no sweep and no expiry. A nudge dropped in delivery therefore left
- * a claim that suppressed the reconcile push-backstop forever, so a delta on
- * an APPROVED PR was silently never audited and the approval stood over code
- * nobody read.
+ * A recheck needs a receipt more than a round does: a round has a deadline
+ * underneath it, but a `rechecks` claim has none. Without a receipt, a nudge
+ * dropped in delivery would leave a claim that suppresses the reconcile
+ * push-backstop forever, so a delta on an APPROVED PR would never be
+ * audited.
  *
  * Keyed on the recheck fingerprint, which is exactly what the claim is keyed
  * on — so the sweep can ask "did the nudge I claimed actually land?".
@@ -65,8 +64,8 @@ export function recheckPromptMarker(pr: number, fingerprint: string): string {
 }
 
 /** The inverse of `recheckPromptMarker`: the claim a stamped recheck nudge
- * carries (H1b — a nudge evicted from the held queue releases exactly
- * that claim). The LAST marker wins, as `stampPrompt` appends it; null when the
+ * carries (a nudge evicted from the held queue releases exactly that
+ * claim). The LAST marker wins, as `stampPrompt` appends it; null when the
  * text carries none. */
 export function parseRecheckPromptMarker(text: string): { pr: number; fingerprint: string } | null {
   let found: { pr: number; fingerprint: string } | null = null;
@@ -120,7 +119,7 @@ export interface PassPlanEntry {
   focus?: string[];
 }
 
-/** One prior open finding as a lens's task file carries it (A6). */
+/** One prior open finding as a lens's task file carries it. */
 export interface PriorTaskEntry {
   /** `<round_no>:<finding_key>` — the ref the session reports. */
   ref: string;
@@ -164,7 +163,7 @@ export interface RoundOrder {
   title: string;
   round_id: number;
   round_no: number;
-  /** identity carried through the guarded shell posting route. */
+  /** Posting identity carried through the guarded shell posting route. */
   posting_key?: string;
   /** The PR's review age: prior VERDICTED rounds + 1. round_no stays the
    * audit-unique sequence (cancelled rounds included); review_no drives
@@ -177,7 +176,7 @@ export interface RoundOrder {
   pass_plan: PassPlanEntry[];
   /** Lenses NOT selected for this round that the session may add. */
   addable_lenses: string[];
-  /**: the addable lenses whose add variant is NOT the templates' own
+  /** The addable lenses whose add variant is NOT the templates' own
    * rule (`sol-med`, or `sol-high` for a risk pass) — the ones a profile
    * `min_tier` floors higher, lens → tier. Absent ⇒ the rule holds for all. */
   addable_tiers?: Record<string, PassTier>;
@@ -190,7 +189,7 @@ export interface RoundOrder {
   /** `[review] nits = "open"`: the round lifts the nit limits. Absent ⇒ strict. */
   nit_policy?: "open";
   /** The profile's `[posting]` policy (src/postingpolicy.ts). Absent ⇒
-   * today's posting: no note renders and nothing is enforced. */
+   * the default posting: no note renders and nothing is enforced. */
   posting_policy?: PostingPolicy;
   migration_gate: boolean;
   /**
@@ -213,12 +212,12 @@ export interface RoundOrder {
    * NOT run this round (no base reader, no base sha, or the base read threw).
    * The prompt then tells the session the pre-check did not run and that IT
    * must check base-branch migration-number collisions itself — which is what
-   * conditionally lifts the pass-data-safety withdrawal (degraded is
-   * never quieter). Absent on orders built before the field existed.
+   * conditionally lifts the pass-data-safety withdrawal (a degraded pre-check
+   * is never quieter). Absent on orders built before the field existed.
    */
   migration_precheck_degraded?: boolean;
   /**
-   * the PR touches first-party agent-directive files (.claude/**,
+   * The PR touches first-party agent-directive files (.claude/**,
    * prompts/**, AGENTS.md/CLAUDE.md and kin — `isFirstPartyDirectivePath`).
    * `files` lists them; `mention` is the deterministically-picked teammate the
    * ONE escalation comment must @-mention (most recent human author of the
@@ -229,7 +228,7 @@ export interface RoundOrder {
    */
   first_party_directives?: { files: string[]; mention: string };
   /**
-   * the logins this round's session may escalate to on its own
+   * The logins this round's session may escalate to on its own
    * judgement. Present ONLY when `[escalation] enabled = true` AND
    * `session_judgement = true` — so on a default install (escalation off) the
    * field is absent and `{{escalation_note}}` renders empty, so the round
@@ -242,7 +241,7 @@ export interface RoundOrder {
    * evaluates and delivers those itself, with no model in the loop.
    */
   escalation_targets?: string[];
-  /**: daemon-authored, exact predecessor identity for a fresh parent
+  /** Daemon-authored, exact predecessor identity for a fresh parent
    * recovering a proven pre-fanout stall. Absent on ordinary rounds. */
   recovery?: RoundRecoveryContext;
   /** The sha the worktree is ACTUALLY at — reconciled against the fetched
@@ -267,14 +266,13 @@ export interface RoundOrder {
    * when there is no ledger or it settles nothing. */
   settled_digest: string;
   /** The PR's ledger as ledger-pin last mirrored it, re-handed to the session
-   * every round (MC-18) and rendered as `{{ledger_note}}`. Absent
-   * when there is no readable ledger for this PR: the order then renders
-   * exactly as before. */
+   * every round and rendered as `{{ledger_note}}`. Absent when there is no
+   * readable ledger for this PR: nothing renders for it. */
   ledger_carry?: LedgerCarry;
   issued_at: string;
   /** `[review] task_files` (src/passtasks.ts): the discovery rows' task files
    * the daemon wrote for this round — plan row index, agent, absolute path.
-   * Absent ⇒ the session writes every task string itself, as before. */
+   * Absent ⇒ the session writes every task string itself. */
   pass_task_files?: Array<{ row: number; agent: string; path: string }>;
   /** `[review] render_outputs` (src/reviewrender.ts): the session writes the
    * findings record with the posting fields and renders the review body and
@@ -285,22 +283,22 @@ export interface RoundOrder {
   validator_shards?: number;
   /** `[review] dedup_merge` (docs/duplicate-merge.md): the round groups its
    * candidates with the `cluster_findings` tool before the validator. Absent
-   * ⇒ the order renders exactly as before. */
+   * ⇒ no merge step renders. */
   dedup_merge?: boolean;
-  /** `[review] validate_compact` (A1): the validator answers with a
-   * decision table keyed by candidate id. Absent ⇒ the order renders exactly
-   * as before. */
+  /** `[review] validate_compact`: the validator answers with a decision
+   * table keyed by candidate id. Absent ⇒ no compact-answer instruction
+   * renders. */
   validate_compact?: boolean;
   /** `[review] coverage_check` (src/coverage.ts): the changed non-test
    * source files the round holds itself to — after the lenses, the ones no
-   * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ the
-   * order renders exactly as before. */
+   * lens raised a finding on get a targeted pass-sweep row. Absent ⇒ no
+   * coverage check renders. */
   coverage_files?: Array<{ path: string; lines: number }>;
-  /** (docs/follow-up-rounds.md): `"delta"` ⇒ a FOLLOW-UP round,
+  /** docs/follow-up-rounds.md: `"delta"` ⇒ a FOLLOW-UP round,
    * rendered from `prompts/round-follow-up.md` — prior findings verified,
    * the PR-owned change since the last reviewed head reviewed, one
    * pre-approval sweep when owed. Absent or `"full"` ⇒ the round renders
-   * from its `round_type`'s template exactly as before. */
+   * from its `round_type`'s template. */
   scope?: "delta" | "full";
   /** The PR-owned change since the last reviewed head (a `scope: "delta"`
    * round): rendered as `{{delta_note}}`. */
@@ -309,10 +307,10 @@ export interface RoundOrder {
    * (src/priorfindings.ts `renderPriorFindingsNote`), as
    * `{{prior_findings_note}}`. */
   prior_findings_note?: string;
-  /** (A6): the listed prior findings, each already assigned to the
+  /** The listed prior findings, each already assigned to the
    * plan row that owns it and written into that row's task file
    * (src/priorfindings.ts `assignPriorFindings`). Absent ⇒ the session
-   * assigns them through `launch_plan`'s `extra`, as before. */
+   * assigns them through `launch_plan`'s `extra`. */
   prior_assignments?: PriorAssignment[];
   /** The pre-approval sweep's plan — present only when the sweep is owed
    * this round. Never part of `pass_plan`/`lenses`: it runs only when the
@@ -322,21 +320,21 @@ export interface RoundOrder {
    * `sweep_unswept`) — present only beside `sweep_plan`, and rendered in
    * `{{sweep_note}}` as round 1 renders its own. */
   sweep_plan_unswept?: string[];
-  /** (`[review] context_pack = "pack-first"`): the round's context
-   * pack, written beside its task files (src/contextpack.ts). The task files
-   * then point at it; absent ⇒ every task renders exactly as before. */
+  /** `[review] context_pack = "pack-first"`: the round's context pack,
+   * written beside its task files (src/contextpack.ts). The task files then
+   * point at it; absent ⇒ no task file mentions a pack. */
   context_pack_file?: string;
   /** Task files written for the sweep's rows (their own directory and row
    * index — `row` indexes `sweep_plan`). Absent ⇒ the session writes the
    * sweep's task strings itself. */
   sweep_task_files?: Array<{ row: number; agent: string; path: string }>;
-  /** (`[review] follow_up_extent = "session"`): the follow-up plan's
+  /** `[review] follow_up_extent = "session"`: the follow-up plan's
    * OPTIONAL rows — the full delta plan's per-file sweep rows and quality /
    * style lenses — that the main session runs, partly runs or skips, and
    * their task files (`row` indexes `optional_plan`). */
   optional_plan?: PassPlanEntry[];
   optional_task_files?: Array<{ row: number; agent: string; path: string }>;
-  /**: set when the session decides the follow-up round's extent —
+  /** Set when the session decides the follow-up round's extent —
    * the optional rows and whether an owed pre-approval sweep runs. Absent ⇒
    * the fixed rules. */
   follow_up_extent?: "session";
@@ -392,12 +390,10 @@ export interface LedgerCarry {
 }
 
 /**
- * Executed-pass telemetry: one entry per pass the session actually
- * launched via the subagent tool AND got a return from — real returns only,
- * never the plan table. The first-night audit (F2) found posted "Lenses
- * applied" lines claiming lenses on rounds where zero passes ran; this record
- * is what lets the daemon see the difference between the plan
- * (`rounds.lenses`) and reality.
+ * Executed-pass telemetry: one entry per pass the session actually launched
+ * via the subagent tool AND got a return from — real returns only, never the
+ * plan table. This record is what lets the daemon see the difference between
+ * the plan (`rounds.lenses`) and what actually ran.
  */
 export interface VerdictPassEntry {
   /** Lens name as planned/launched, e.g. "pass-baseline", "pass-validate". */
@@ -422,7 +418,7 @@ export interface VerdictPassEntry {
    * Additive — older verdicts simply omit them (null/undefined = unknown). */
   merged?: number | null;
   folded?: number | null;
-  /**: which stage of a follow-up round launched the pass — the
+  /** Which stage of a follow-up round launched the pass — the
    * step-2 change review (`delta`) or the pre-approval sweep (`sweep`).
    * Absent on every other round. */
   phase?: "delta" | "sweep" | null;
@@ -434,14 +430,14 @@ export interface VerdictFile {
   round_no: number;
   verdict: Verdict;
   /**
-   * Guard-5 landing (follow-up): a session refused at posting
-   * time because the PR advanced mid-round writes `outcome: "head_moved"`
-   * INSTEAD of a merits verdict — a cheap, explicit round ending the daemon
-   * maps to an immediate cancel + capped self-requeue against the fresh head
-   * (same counter; the session is healthy and is NOT killed).
+   * Guard-5 landing: a session refused at posting time because the PR
+   * advanced mid-round writes `outcome: "head_moved"` INSTEAD of a merits
+   * verdict — a cheap, explicit round ending the daemon maps to an immediate
+   * cancel + capped self-requeue against the fresh head (the same
+   * self-requeue counter; the session is healthy and is NOT killed).
    * `verdict` is absent/ignored on such a file; `head_sha` is the stale head
-   * the round reviewed. Without this the round idled to deadline expiry and
-   * the recovery path killed a perfectly healthy session.
+   * the round reviewed. It spares the round idling to its deadline and a
+   * healthy session being killed by the recovery path.
    */
   outcome?: "head_moved";
   /** Soundness marker on NEEDS_HUMAN: "the PR looks otherwise sound, I just
@@ -449,18 +445,18 @@ export interface VerdictFile {
   ai_approved?: boolean;
   /**
    * Set by the session when the code judgment was "no blockers" but the
-   * approval could not be given because CI is not green at this head
-   *. The review was posted as a COMMENT; the daemon records the
+   * approval could not be given because CI is not green at this head.
+   * The review was posted as a COMMENT; the daemon records the
    * withholding and re-queues the PR when CI goes green there.
    */
   approval_withheld?: boolean;
-  /**: what became of a follow-up round's pre-approval sweep —
+  /** What became of a follow-up round's pre-approval sweep —
    * `ran`, `not_owed` (the order carried none) or `not_reached` (the round
    * decided REQUEST_CHANGES first). Session-written; absent on other rounds. */
   sweep?: "ran" | "not_owed" | "not_reached" | "skipped";
-  /**: why the session skipped an owed pre-approval sweep. */
+  /** Why the session skipped an owed pre-approval sweep. */
   sweep_reason?: string;
-  /**: what the session did with the follow-up plan's optional rows —
+  /** What the session did with the follow-up plan's optional rows —
    * all run, some run, none run — and why. */
   extent?: "ran" | "partial" | "skipped";
   extent_reason?: string;
@@ -468,7 +464,7 @@ export interface VerdictFile {
   spend_usd?: number;
   ledger_snapshot?: string;
   /** 3-4 sentence plain-prose "what is going on" written by the session for
-   * the owner's TUI detail pane. Optional; capped by the consumer. */
+   * the operator's TUI detail pane. Optional; capped by the consumer. */
   summary?: string;
   /**
    * Executed-pass telemetry. Optional: sessions running older round
@@ -493,12 +489,13 @@ export interface VerdictFile {
   finished_at: string;
 }
 
-/** The daemon↔session boundary. B2 codes against this; B3 implements it; B2
- * ships a disk-logging stub so the daemon runs end-to-end without pi. */
+/** The daemon↔session boundary (`SessionHooks` below). The daemon codes
+ * against it, sessions.ts implements it, and a disk-logging stub lets the
+ * daemon run end-to-end without pi. */
 export type SessionCommandRetryResult =
   "retried" | "settled" | "round_finished" | "accepted_race" | "retry_failed";
-/** What one same-session REDELIVERY did (#5362 ③, H1b,
- * `SessionHooks.redeliverSessionCommand`): `redelivered` — the row is back in
+/** What one same-session REDELIVERY did
+ * (`SessionHooks.redeliverSessionCommand`): `redelivered` — the row is back in
  * `pending` and its file rewritten, the session untouched; `started` /
  * `settled` — the command started or ended meanwhile, nothing to redeliver;
  * `raced` — a bridge reserved it between the read and the write (look again
@@ -508,7 +505,7 @@ export type SessionCommandRetryResult =
 export type SessionCommandRedeliveryResult =
   "redelivered" | "started" | "settled" | "raced" | "not_live" | "redelivery_failed";
 /** The row the supervisor found DUE, as `redeliverSessionCommand` must find it
- * still (H1b review): the CAS is on what the supervisor saw, never on
+ * still: the CAS is on what the supervisor saw, never on
  * a fresh read — a bridge that reserved the command after the due check moved
  * `attempt` and `next_check_at`, and that fresh submission is not stale. */
 export interface SessionCommandObservation {
@@ -528,14 +525,14 @@ export interface SessionCompactionReport {
   source?: "request" | "event";
 }
 /** What the round-stage supervisor's failure callback did with a stage limit.
- * `posted_wait` (H1a): the round's review is already on GitHub (or
+ * `posted_wait`: the round's review is already on GitHub (or
  * was refused by guard 2), so the limit is NOT a failure — the session's tail
  * is given its bounded grace and nothing is cancelled, killed or requeued. */
 export type RoundRecoveryDisposition =
   "requeued" | "exhausted" | "retryable" | "failed_loud" | "settled" | "posted_wait";
 
-/** What one stale raw-tier sweep did (S3,
- * `PiSessionManager.sweepStaleOvSessions`): the `pr-<n>` OpenViking sessions
+/** What one stale raw-tier sweep did
+ * (`PiSessionManager.sweepStaleOvSessions`): the `pr-<n>` OpenViking sessions
  * of closed PRs it deleted, the ones it could not, and what it left for a
  * later pass. `error` = the server's session list could not be read, so
  * nothing was attempted. */
@@ -558,53 +555,53 @@ export interface SessionHooks {
   injectOverseer(message: string): Promise<void>;
   /** PR merged/closed: archive session JSONL + ledger, drop worktree, kill tmux. */
   archiveAndClose(pr: number): Promise<void>;
-  /** The reconcile pass's sweep over the raw tier (S3): delete the
+  /** The reconcile pass's sweep over the raw tier: delete the
    * OpenViking sessions of closed PRs that are still on the server, bounded
    * per pass. Optional — stubs and a daemon with no raw tier omit it (null =
    * no raw tier managed). Never a reconcile error: memory never blocks. */
   sweepStaleOvSessions?(): Promise<OvSessionSweepReport | null>;
-  /** After a round's verdict lands: compact the sticky conversation. Cache
-   * re-reads were 41% of measured cost (2026-08-14 mining) and sessions never
-   * compacted on their own. H1b: a REQUEST to the session's inject
-   * bridge, which runs it once nothing is in flight and holds every wake until
-   * it ends — never a keystroke into the pane. Optional — stubs may omit it. */
+  /** After a round's verdict lands: compact the sticky conversation, since
+   * cache re-reads of a long conversation dominate cost and sessions do not
+   * compact on their own. A REQUEST to the session's inject bridge, which
+   * runs it once nothing is in flight and holds every wake until it ends — never a keystroke into the pane. Optional — stubs may omit it. */
   compactSession?(pr: number): Promise<void>;
   /** Is the PR's session alive (tmux session present)? The stuck-round
-   * detector reads this — the EXISTING liveness signal, not a new one.
+   * detector reads this — the existing liveness signal, not a new one.
    * Optional: absent (stubs, tests) ⇒ liveness is unknown and the deadline
-   * checker degrades to the legacy anomaly park. */
+   * checker treats an overdue round as not stuck: the overdue-anomaly path
+   * stands, with no self-requeue. */
   sessionAlive?(pr: number): Promise<boolean>;
   /** Kill the PR's tmux session so the next dispatch rebirths it fresh. Read
-   * by the live-but-stuck self-requeue (2026-08-19): an overdue round whose
-   * session is alive but wedged is killed + requeued instead of parked.
-   * Optional: absent ⇒ live-but-stuck rounds park exactly as before. */
+   * by the live-but-stuck self-requeue: an overdue round whose session is
+   * alive but wedged is killed + requeued instead of left to the anomaly
+   * path. Optional: absent ⇒ a live-but-stuck round is not requeued (a fresh
+   * round is never injected into a wedged live session). */
   killSession?(pr: number): Promise<void>;
   /** Milliseconds-epoch mtime of the newest pi session JSONL for this PR, or
-   * null when unknown. Read by the lost-prompt net: a round whose
-   * inject was consumed while the session shows no activity since the round
-   * started never received its prompt. Optional: absent ⇒ no net, exactly the
-   * legacy behaviour. */
+   * null when unknown. Read by the lost-prompt net: a round whose inject was
+   * consumed while the session shows no activity since the round started
+   * never received its prompt. Optional: absent ⇒ no net. */
   sessionActivityAt?(pr: number): Promise<number | null>;
   /** Is any wake file still pending (unconsumed) in the PR session's inject
    * dir? Read by the same net — a pending file means the bridge is still
    * retrying delivery, which is patience, not loss. Optional as above. */
   injectPending?(pr: number): Promise<boolean>;
   /**
-   * Did this round's prompt actually reach the session? (#5362.)
+   * Did this round's prompt actually reach the session?
    *
    * The ONE positive delivery fact in the system. `dispatchRound` stamps a
    * receipt token into the wake file; pi writes the user message it accepted
    * — token and all — into the session JSONL. Present ⇒ delivered. Absent ⇒
-   * never delivered, which is a fact the older mtime inference could not
-   * express: a prompt is dropped BECAUSE the agent is busy, and a busy agent
-   * always bumps the mtime after the round started.
+   * never delivered, which an mtime inference cannot express: a prompt is
+   * dropped BECAUSE the agent is busy, and a busy agent always bumps the
+   * mtime after the round started.
    *
    * `null` means "cannot tell" and must never be read as loss.
-   * Optional: absent ⇒ no receipt check, exactly the pre-#5362 behaviour.
+   * Optional: absent ⇒ no receipt check.
    */
   roundPromptAccepted?(pr: number, roundNo: number, startedAtMs: number): Promise<boolean | null>;
   /**
-   * The general form of the same receipt read (#5362 W2): did a wake carrying
+   * The general form of the same receipt read: did a wake carrying
    * `marker` reach the session? Used by the undelivered-recheck sweep, which
    * has no round row to hang `roundPromptAccepted` off — and needs it more,
    * because a recheck claim has no deadline underneath it.
@@ -612,7 +609,7 @@ export interface SessionHooks {
    */
   wakeReceiptPresent?(pr: number, marker: string, sinceMs: number): Promise<boolean | null>;
   /**
-   * Re-deliver a round prompt whose receipt never appeared (#5362) — the same
+   * Re-deliver a round prompt whose receipt never appeared — the same
    * round, session and conversation, with the exact dispatched bytes written
    * to the inject dir again. The CHEAP recovery, deliberately distinct from
    * `selfRequeue`: no round is cancelled, no session is killed, no GitHub
@@ -620,31 +617,31 @@ export interface SessionHooks {
    *
    * False when the dispatched prompt is no longer on disk — the caller then
    * falls through to the expensive recovery rather than inventing an order.
-   * Optional: absent ⇒ the expensive path only, exactly as before.
+   * Optional: absent ⇒ the expensive path only.
    */
   redeliverRound?(pr: number, roundNo: number): Promise<boolean>;
-  /**: safely retry one durable command after a finite lease
+  /** Safely retry one durable command after a finite lease
    * expires. The production manager kills and verifies the old sticky session
    * first, then reuses the same id/path/bytes and rebirths the session. It may
    * replay an accepted non-round wake; rounds retain the stricter pre-start
    * rule because their merits lifecycle owns accepted-run recovery. */
   retrySessionCommand?(commandId: string, reason: string): Promise<SessionCommandRetryResult>;
-  /** #5362 ③ / H1b: the CHEAP recovery for a command whose start
+  /** The CHEAP recovery for a command whose start
    * lease ran out on a live, bridge-ready session — the same row handed back
    * to `pending` and the same bytes rewritten at the same path, the session
    * and its conversation left alone. The bridge resubmits only when pi
    * provably holds nothing of it. `observed` is the row the supervisor found
    * due; a row that moved since is `raced`, never requeued. Optional: absent ⇒
-   * the kill-and-replay recovery only, exactly as before. */
+   * the kill-and-replay recovery only. */
   redeliverSessionCommand?(
     commandId: string,
     observed: SessionCommandObservation,
   ): Promise<SessionCommandRedeliveryResult>;
-  /** H1b: what the PR session's inject bridge reports about pi's
+  /** What the PR session's inject bridge reports about pi's
    * compaction, or null when unknown (no live bridge generation — tmux gone
    * included, so a pi that died mid-compaction never reads "running" — an
    * older bridge, an unreadable receipt). A compaction holds the session's mailbox,
    * so a command waiting behind one is late, not lost. Optional: absent ⇒ no
-   * compaction is ever known about, exactly as before. */
+   * compaction is ever known about. */
   sessionCompaction?(pr: number): Promise<SessionCompactionReport | null>;
 }

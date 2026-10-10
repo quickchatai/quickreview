@@ -1,4 +1,4 @@
-// Scan stage 1's RUN: preview, start, status, stop — the stateful
+// Scan stage 1's run: preview, start, status, stop — the stateful
 // half behind the companion's `scan_*` tools. The rules are scan.ts's; the
 // records are ledger.ts's and findings.ts's; every effect goes through a port.
 //
@@ -22,20 +22,20 @@
 //     counts what it spent (its estimate when the runner cannot say), so
 //     failures can never carry a run past the cap. What it did not read stays
 //     out of the ledger, so the next preview prices exactly the rest — and
-//     runs it FIRST: stage-1 and delta cases are ordered coverage-first
+//     runs it first: stage-1 and delta cases are ordered coverage-first
 //     (scan.ts readTier: never read or cut short, then changed — stalest
-//     reading first — then the rest), so the stop never starves the same tail run after run. Stage-2
-//     rows keep the proposal's order.
+//     reading first — then the rest), so the stop never starves the same
+//     tail run after run. Stage-2 rows keep the proposal's order.
 //   * STOP AND RESUME BY THE LEDGER. `stop` aborts in-flight cases and starts
 //     no more. A run the companion was not there to finish (a TUI quit, an
 //     expired login) reads as `interrupted`. Either way, only FINISHED cases
 //     wrote ledger rows, so starting again reads only what is left.
 //
-// A DELTA re-scan is the same run over the files whose content
+// A delta re-scan is the same run over the files whose content
 // changed since the last scan (scan.ts changedSince) AND every file no
 // complete reading covers at its content — never read, cut short, unreadable
-// before (the plan's `owed`, read unread-first): priced from the
-// ledger like any stage-1 preview — so never before calibration — and
+// before (the plan's `owed`, read unread-first): priced from the ledger like
+// any stage-1 preview — so never before calibration — and
 // stopped hard at its estimate. Deep passes never ride a delta; stage 2 runs
 // only when asked. Every run, delta or not, ends by RECONCILING the findings
 // store (findings.ts): exact matches were already recognised case by case;
@@ -49,7 +49,7 @@
 // materialised read-only by the source port; the sha is recorded on every
 // ledger row and finding.
 //
-// STAGE 2 is the same run over a different plan: the companion
+// Stage 2 is the same run over a different plan: the companion
 // PROPOSES rows (file set × deep lens × tier, cost — stage2.ts's rules),
 // optionally fitted to a budget; the proposal is stored, and its key starts
 // it — quoted by the companion on the operator's word, or by the TUI's click
@@ -61,7 +61,7 @@
 // history), `scan/suggestions.json` (stage 1's deep-lens suggestions, the
 // input to stage 2), `scan/stage2.json` (the latest stage-2 proposal),
 // beside the ledger and the findings store — and the TUI's stop request
-// and its answer (`scan/stop.json`, `scan/stop-result.json`, —
+// and its answer (`scan/stop.json`, `scan/stop-result.json` —
 // scanreport.ts, which also owns the run record's name and parser).
 import { posix } from "node:path";
 import type { LensTuningMap } from "../lenstuning.js";
@@ -148,10 +148,9 @@ import {
 // ---- did the lens read? ------------------------------------------------------------
 
 /**
- * Why a lens's answer is NOT a reading of its case, or null when it is
- * (scan-loop, self-scan round 7: nine pass-concurrency cases answered NONE in
- * ~13s without opening a file, and the ledger then recorded those files as
- * deep-read and priced the lens from them).
+ * Why a lens's answer is not a reading of its case, or null when it is. A
+ * lens can answer NONE without opening a file; such an answer must not
+ * record the files as read in the ledger, nor price the lens.
  *
  * `reads` is what the case runner saw the lens's file-read calls name
  * (`CaseOutcome.reads`); absent means the runner cannot tell, and unknown is
@@ -389,8 +388,8 @@ export type Stage2Proposal = StoredStage2Proposal;
 
 const EPS = 1e-9;
 const clean = (err: unknown): string => (err instanceof Error ? err.message : String(err));
-/** The validator's variant at the tier of the lens it judges — never raised
- * (owner ruling 2026-09-30: the scan validator is the skeptic, same tier). */
+/** The validator's variant at the tier of the lens it judges — never raised:
+ * the scan validator is the skeptic, at the same tier. */
 const validatorAgent = (tier: PassTier): string => `pass-validate--${tier}`;
 
 /** Why a candidate the skeptic's answer never mentioned is doubtful. */
@@ -479,7 +478,7 @@ export function runSummary(run: ScanRun, state: ScanRunSummary["state"]): ScanRu
 }
 
 /**
- * The scan runs that FINISHED — complete, partial, stopped or capped —
+ * The scan runs that finished — complete, partial, stopped or capped —
  * newest first (what a portrait refresh and a re-tune stand on). A
  * run still `running` in the file is either live or was interrupted; neither
  * is a scan whose findings are settled.
@@ -1082,7 +1081,7 @@ export class ScanRunner {
 
   /**
    * Start the stored stage-2 proposal whose key is quoted — on the
-   * operator's word (the companion) or his click (the TUI, through
+   * operator's word (the companion) or their click (the TUI, through
    * `consumeStage2Request`). Re-planned first: a proposal that moved since it
    * was shown is refused. Hard stop at its estimate — or, when `rows` keeps
    * only some of its runnable rows (the TUI's plan pane), exactly
@@ -1540,8 +1539,8 @@ export class ScanRunner {
       });
     }
 
-    // The validator, when this scan runs one, is the SKEPTIC (owner ruling
-    // 2026-09-30): at the tier of the lens it judges, it sorts every
+    // The validator, when this scan runs one, is the skeptic: at the tier of
+    // the lens it judges, it sorts every
     // candidate into a validity tier — and kills none. A survivor is
     // `confirmed` (a traced scenario) or `likely`; a DOUBTED line, a KILLED
     // line and a candidate its answer never mentions are all kept `doubtful`,

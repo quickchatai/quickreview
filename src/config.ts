@@ -26,10 +26,10 @@ export interface GithubConfig {
   reviewed_label: string;
   improvement_label: string;
   issue_label: string;
-  /** Always an absolute-or-given path after parse: an empty (or the old
+  /** Always an absolute-or-given path after parse: an empty (or the legacy
    * default `~/.config/quickreview-bot`) value is resolved by the install
-   * locator to `<config home>/secrets` (the old dir itself is never
-   * read). A value the operator set is taken as given. */
+   * locator to `<config home>/secrets` (the legacy dir itself is never read).
+   * A value the operator set is taken as given. */
   secrets_dir: string;
   /** The reviewed repo's default branch: the base the improvement
    * filer targets, the branch replay diffs against, and the fixture base for
@@ -47,7 +47,7 @@ export interface GithubConfig {
  * repo slug's basename ("owner/name" → "name"; a URL's trailing path segment,
  * `.git` stripped), e.g. "acme/webapp" ⇒ "webapp". */
 export function githubCloneDir(g: GithubConfig): string {
-  // ?? "": hand-rolled test configs predating omit both keys.
+  // ?? "": hand-rolled configs (tests) may omit both keys.
   const explicit = (g.clone_dir ?? "").trim();
   if (explicit) return explicit;
   const tail = (g.repo ?? "")
@@ -58,7 +58,7 @@ export function githubCloneDir(g: GithubConfig): string {
   return tail || "repo";
 }
 
-/**: where the daemon container lives relative to the TUI. `"ssh"` is
+/** Where the daemon container lives relative to the TUI. `"ssh"` is
  * the VM topology (every remote op rides `ssh <ssh_host> …`); `"local"` is the
  * laptop topology (the SAME commands run against local docker directly, and no
  * ssh process is ever spawned). Always explicit — never inferred from a magic
@@ -83,7 +83,7 @@ export interface TuiConfig {
    * Every artefact fetch is killed at this age, so a wedged ssh control master
    * costs one sweep and nothing else — never the poll, never the paint loop. */
   evidence_timeout_s: number;
-  /** L1: the evidence sweep's pace — the minimum gap between the end of
+  /** The evidence sweep's pace — the minimum gap between the end of
    * one `qcr why` exec and the start of the next (each costs the container
    * ~0.5–1 s of CPU), whatever the poll cadence. Clamped to 5–600 s
    * (`evidenceWhyIntervalMs`, src/tui/evidence.ts); the pacing cannot be
@@ -111,11 +111,11 @@ export interface CompanionConfig {
    * Sits outside `tracker_dir`, so it needs its own mount: without it the
    * companion drives wayfinder from a summary instead of the real adapter. */
   tracker_docs_dir: string;
-  /** Host path of the REVIEWED repo → /reviewed-repo (a generic container
-   * path), READ-ONLY. The companion reads the code a review is about; it
-   * can never write to it, and rule 8's boundary is otherwise unchanged (no
-   * GitHub, no gate, no deploy.sh, no VM credential). A missing checkout
-   * simply drops the mount — under-equipped, never broken. */
+  /** Host path of the REVIEWED repo → /reviewed-repo, READ-ONLY. The
+   * companion reads the code a review is about; it can never write to it, and
+   * rule 8's boundary is otherwise unchanged (no GitHub write, no gate, no
+   * deploy.sh, no VM credential). A missing checkout simply drops the mount —
+   * under-equipped, never broken. */
   reviewed_repo_dir: string;
   /** Host dir the TUI copies finished-round evidence into → /evidence,
    * READ-ONLY. The companion reads transcripts, ledgers, prompts and
@@ -133,7 +133,7 @@ export interface CompanionConfig {
   ssh_dir: string;
   /** Docker build context for the companion image (auto-built when missing). */
   build_context: string;
-  // --- watcher knobs. C1 seeds sane defaults; C2 owns the full set. ---
+  // --- watcher knobs ---
   /** A round overdue by more than this is worth waking the operator for. */
   overdue_grace_min: number;
   /** status.json older than this counts as a stale-daemon alert. */
@@ -166,8 +166,8 @@ export interface BackfillConfig {
   max_search_pages: number;
 }
 
-// ---- [slack] — the Slack concierge ------------------------------
-// TOKENS ARE NEVER IN CONFIG. `bot_token_file` / `app_token_file` name flat
+// ---- [slack] — the Slack concierge ----
+// Tokens are never in config. `bot_token_file` / `app_token_file` name flat
 // files under [github].secrets_dir, read the way every other secret is
 // (PiSessionManager.secret / TokenMinter): the config carries the file NAME.
 
@@ -179,9 +179,9 @@ export interface SlackCausePolicy {
 }
 
 export interface SlackPolicyConfig {
-  /** Channel-wide model turns per policy day (RATIFIED at 80). */
+  /** Channel-wide model turns per policy day. */
   daily_turns: number;
-  /** Per-person model turns per policy day (RATIFIED at 20). */
+  /** Per-person model turns per policy day. */
   per_user_daily_turns: number;
   /** Daemon posts into any ONE thread per policy day. */
   thread_replies_per_day: number;
@@ -198,7 +198,7 @@ export interface SlackPolicyConfig {
   heartbeat_interval_min: number;
   storm_corrections: number;
   awaiting_author_stale_h: number;
-  /** RATIFIED "never": verdicts stay in-thread, never reply_broadcast. */
+  /** "never" (the default): verdicts stay in-thread, never reply_broadcast. */
   broadcast_verdicts: "never" | "always";
   causes: Record<string, SlackCausePolicy>;
 }
@@ -275,10 +275,9 @@ export const SLACK_DEFAULTS: SlackConfig = {
 };
 
 /**
- * [guards] — the posting-time guards. Every one is ON by default:
- * each answers a documented incident from the predecessor system, and a knob
- * exists only so a guard can be taken out of the path deliberately, in one
- * place, rather than by editing the gate.
+ * [guards] — the posting-time guards. Every one but `no_checks_is_red` is on
+ * by default; a knob exists only so a guard can be taken out of the path
+ * deliberately, in one place, rather than by editing the gate.
  */
 export interface GuardsConfig {
   /** A non-author human APPROVED at the head ⇒ post COMMENT, not REQUEST_CHANGES. */
@@ -290,10 +289,10 @@ export interface GuardsConfig {
   /** No green CI at this head ⇒ APPROVE is unavailable; the review posts as a
    * COMMENT with approval withheld. */
   block_approve_on_red_ci: boolean;
-  /** A head with ZERO check-runs also withholds approval (the owner,
-   * 2026-08-19): in a CI-running repo that is a conflicted PR or CI that has
-   * not started — no execution evidence. Off by default so a repo with no CI
-   * at all is never wedged (the original `none` exemption). */
+  /** A head with ZERO check-runs also withholds approval: in a CI-running
+   * repo that is a conflicted PR or CI that has not started — no execution
+   * evidence. Off by default so a repo with no CI at all is never wedged (the
+   * `none` exemption). */
   no_checks_is_red: boolean;
   /** The head the review is ABOUT must still be the PR's live head at posting
    * time: a push landing between the round's validation and
@@ -333,17 +332,12 @@ export const RECHECK_DEFAULTS: RecheckConfig = {
 };
 
 /**
- * [review] — review-content knobs. Distinct from [guards] (posting-
- * time refusals) and [recheck] (post-approval triggers): these shape what a
- * review says, not whether it posts.
- */
-/**
  * [review.directives] — EXTENSIONS to the first-party directive-path
  * vocabulary (`src/severity.ts DEFAULT_DIRECTIVE_VOCABULARY`). Extend-only by
  * design: config ADDS names, nothing can remove a built-in — dropping, say,
  * `CLAUDE.md` would silently re-enable auto-blocking on first-party directive
- * edits, drifting's ratified behaviour by config typo. The shape
- * mirrors `severity.ts DirectiveVocabularyExtras`.
+ * edits by config typo. The shape mirrors
+ * `severity.ts DirectiveVocabularyExtras`.
  */
 export interface ReviewDirectivesConfig {
   /** Extra vendored/third-party path segments (matched case-insensitively). */
@@ -366,6 +360,11 @@ export const REVIEW_DIRECTIVES_DEFAULTS: ReviewDirectivesConfig = {
   extra_files: [],
 };
 
+/**
+ * [review] — review-content knobs. Distinct from [guards] (posting-time
+ * refusals) and [recheck] (post-approval triggers): these shape what a review
+ * says, not whether it posts.
+ */
 export interface ReviewConfig {
   /**
    * Fallback @-mention for the first-party-directive escalation comment when
@@ -375,8 +374,8 @@ export interface ReviewConfig {
    */
   escalation_mention_default: string;
   /**
-   * Repo profile: names a directory under `profiles/` — the
-   * install's config home first, then the checkout's generic examples
+   * Repo profile: names a directory under `profiles/` — the install's config
+   * home first, then the checkout's generic examples
    * (`src/install.ts locateProfile`; a non-plain name is refused) — whose
    * house-rule addenda pack (`profiles/<name>/addenda/*.md`) is composed onto
    * the built pass bodies AFTER the built-in generic registry and BEFORE the
@@ -397,7 +396,7 @@ export interface ReviewConfig {
   /** Content-triggered sub-lenses (`SUBLENS_TRIGGERS` in src/heuristics.ts):
    * narrow passes, each a fixed procedure, planned when the diff or the PR
    * text shows the shape its procedure exists for. Off ⇒ the path-shaped
-   * plan alone (the pre-2026-09 behaviour). */
+   * plan alone. */
   sublenses: boolean;
   /** The per-file sweep (`agents/pass-sweep.md`): changed files are grouped
    * into a few small batches and each batch gets its own line-by-line pass —
@@ -419,19 +418,17 @@ export interface ReviewConfig {
    * `behaviour_delta_max_groups` rows (heuristics.ts behaviourDeltaGroups). */
   behaviour_delta: boolean;
   behaviour_delta_max_groups: number;
-  /**: over this many changed lines (heuristics.ts
-   * `baselineSplitLines` — the sweep's sizing: prose half, lockfiles,
-   * generated and vendored files nothing) pass-baseline is planned as 2–3
-   * rows, each STARTING from one group of the change's files with the whole
-   * PR as its charter (heuristics.ts `baselineGroups`). 0 ⇒ never: one row,
-   * as before. At 2000 only the largest live PRs split (2026-10-09 study:
-   * 2,600–3,000-line PRs, where the lone baseline row ran 500 s and set the
-   * round's critical path); every PR under it plans byte-identically. */
+  /** Over this many changed lines (heuristics.ts `baselineSplitLines` — the
+   * sweep's sizing: prose half, lockfiles, generated and vendored files
+   * nothing) pass-baseline is planned as 2–3 rows, each STARTING from one
+   * group of the change's files with the whole PR as its charter
+   * (heuristics.ts `baselineGroups`). 0 ⇒ never: one row. At 2000 only the
+   * largest PRs split — those where a lone baseline row sets the round's
+   * critical path; every PR under it plans as one row. */
   baseline_split_lines: number;
-  /** The loosened-test hint (src/loosenedtests.ts, owner decision
-   * 2026-10-03): weakened assertions in the PR's test files are found
-   * deterministically and named in pass-tests' plan reason; their presence
-   * also plans pass-tests. Off ⇒ the reason and the plan are as before. */
+  /** The loosened-test hint (src/loosenedtests.ts): weakened assertions in
+   * the PR's test files are found deterministically and named in pass-tests'
+   * plan reason; their presence also plans pass-tests. Off ⇒ neither. */
   loosened_test_hint: boolean;
   /** Selection cost knobs (heuristics.ts SelectionTuning): pass-intent's
    * substance bar in words, and when pass-placement runs — this many code
@@ -444,7 +441,7 @@ export interface ReviewConfig {
    * (src/depsources.ts). Download-and-unpack only — nothing is installed or
    * run. */
   dependency_sources: boolean;
-  /**: the tests lens (`agents/pass-tests.md`) on every PR that
+  /** The tests lens (`agents/pass-tests.md`) on every PR that
    * changes code — which existing tests the change breaks, and whether the
    * PR's own tests exercise the code or mock the failure point away. */
   tests_lens: boolean;
@@ -470,20 +467,19 @@ export interface ReviewConfig {
    * can set it too. Style still needs the repo's written guide either way. */
   nits: NitPolicy;
   /** The validator demotes a confirmed, actionable observation instead of
-   * killing it for a small consequence (`validate-demote-not-kill`, 2026-09-27).
+   * killing it for a small consequence (`validate-demote-not-kill`).
    * On by default; off reproduces the earlier validator for a benchmark. */
   validate_demote: boolean;
-  /** Passes never planned and never addable this round (cost tuning,
-   * 2026-09-29). `[]` (the default) plans every lens selection picks. Names
-   * must be known passes; `pass-validate` is refused here — switching the
-   * validator off is the profile's `enabled = false`. Not a preset
-   * lever. */
+  /** Passes never planned and never addable this round (cost tuning). `[]`
+   * (the default) plans every lens selection picks. Names must be known
+   * passes; `pass-validate` is refused here — switching the validator off is
+   * the profile's `enabled = false`. Not a preset lever. */
   skip_lenses: string[];
-  /** The validator's consequence rules (`validate-consequence-rule`,
-   * 2026-09-29): intent/contract appeals, dead code, CI-enabled lint rules and
+  /** The validator's consequence rules (`validate-consequence-rule`):
+   * intent/contract appeals, dead code, CI-enabled lint rules and
    * merges judged by consequence. Off by default; opt-in for a benchmark arm. */
   validate_consequence_rule: boolean;
-  /** Review latency levers (bench/aacr/PERF.md §6, 2026-10-02). None changes
+  /** Review latency levers (bench/aacr/PERF.md §6). None changes
    * which lenses run or what they are asked; each removes serial time.
    *
    * `wide_lens_fanout`: a batched `tasks:[…]` lens launch runs as wide as
@@ -499,25 +495,25 @@ export interface ReviewConfig {
    * instead of being written out by the session a second time. */
   render_outputs: boolean;
   /** `validator_shards`: how many `pass-validate` children split the
-   * candidates (by file); 1 = one validator, the pre-2026-10 shape. */
+   * candidates (by file); 1 = one validator. */
   validator_shards: number;
   /** `dedup_merge` (docs/duplicate-merge.md): candidates are grouped
    * deterministically before the validator (the `cluster_findings` tool,
    * src/dedup.ts), the validator judges each group as one root cause or
    * splits it, and a post-check at render time merges two posted findings
-   * that are one root cause posted twice. Off ⇒ every round order, built
-   * agent and rendered review is byte-identical to before. */
+   * that are one root cause posted twice. Off ⇒ none of that: no grouping,
+   * no merge. */
   dedup_merge: boolean;
-  /** `coverage_check` (src/coverage.ts, 2026-10-03): after the lenses
-   * return, every changed non-test source file no lens raised a finding on
-   * gets a targeted pass-sweep row (at most two, packed by line budget), each
-   * saying why. Off ⇒ the round order renders exactly as before. */
+  /** `coverage_check` (src/coverage.ts): after the lenses return, every
+   * changed non-test source file no lens raised a finding on gets a targeted
+   * pass-sweep row (at most two, packed by line budget), each saying why. Off
+   * ⇒ no coverage rows. */
   coverage_check: boolean;
-  /** `follow_up` (docs/follow-up-rounds.md): `"delta"` ⇒ every round
-   * after the first is a FOLLOW-UP round — prior findings verified, the
-   * PR-owned change since the last reviewed head reviewed, one pre-approval
-   * sweep when owed — falling back to today's full re-review on any doubt.
-   * `"full"` ⇒ every later round is today's full re-review, byte for byte. */
+  /** `follow_up` (docs/follow-up-rounds.md): `"delta"` ⇒ every round after
+   * the first is a FOLLOW-UP round — prior findings verified, the PR-owned
+   * change since the last reviewed head reviewed, one pre-approval sweep when
+   * owed — falling back to a full re-review on any doubt. `"full"` ⇒ every
+   * later round is a full re-review. */
   follow_up: "delta" | "full";
   /** Above this share of the PR's diff lines (additions + deletions), the
    * delta is too large to be worth a follow-up round: the round runs in full. */
@@ -526,17 +522,16 @@ export interface ReviewConfig {
   follow_up_sweep: boolean;
   /** After a POSTED approval the sweep is owed only when the PR-owned change
    * since it reaches this many lines (additions + deletions); 0 ⇒ never.
-   * Measured 2026-10-09: the post-approval blockers live re-reviews
-   * found outside the change sat behind 618–1204-line pushes, while 47 of
-   * the 69 post-approval rounds changed fewer than 500 lines. */
+   * The default of 500 reflects measurement: post-approval blockers outside
+   * the change sat behind 600+-line pushes, while most post-approval rounds
+   * change fewer than 500 lines. */
   follow_up_post_approval_sweep_lines: number;
   /** A follow-up delta of at most this many lines (additions + deletions)
    * gets a LEAN plan: no per-file pass-sweep rows (pass-baseline reads a small
    * change whole) and the quality and style lenses offered as addable instead
    * of planned (they judged the PR in round 1; on a fix push they mostly
-   * re-raise nits). 0 ⇒ never lean. Measured 2026-10-09: a
-   * follow-up round's time tracks its agent count, and 138-line deltas were
-   * fanning out to 15–20 agents. */
+   * re-raise nits). 0 ⇒ never lean. A follow-up round's time tracks its
+   * agent count, and small deltas otherwise fan out to 15–20 agents. */
   follow_up_small_delta_lines: number;
   /** `context_pack` (src/contextpack.ts): `"pack-first"` ⇒ the
    * daemon writes the round's CONTEXT PACK (the diff, the change since the
@@ -544,34 +539,32 @@ export interface ReviewConfig {
    * every lens child carries it at the very start of its prompt, ahead of its
    * lens instructions (extensions/leaf-cache.ts) — one shared, cached prefix
    * instead of every lens re-reading the same text uncached. `"off"` ⇒ no
-   * pack, prompts exactly as before. Takes effect only with
-   * `[pi] subagent_cache_group` > 0 (an unshared pack would cost more, not
-   * less). On by default since the measured run (2026-10-09, 10 follow-up
-   * cases: 40% cheaper than the same code without it, the cache share of
-   * input 0.69 → 0.88, verdicts matching live 10/10, recall unchanged). */
+   * pack. Takes effect only with `[pi] subagent_cache_group` > 0 (an unshared
+   * pack would cost more, not less). On by default: measured ~40% cheaper,
+   * with verdicts and recall unchanged. */
   context_pack: "off" | "pack-first";
   /** The pack's size cap in tokens (≈4 characters each). */
   context_pack_max_tokens: number;
-  /** (H2, a benchmark lever until measured): a pass-sweep row whose
-   * files are ALL tests, prose or config/data (heuristics.ts
-   * `isLightSweepFile`) runs at this tier instead of the sweep's own. `""` ⇒
-   * off: every sweep row at the sweep's tier, as before. A profile `min_tier`
+  /** A benchmark lever until measured: a pass-sweep row whose files are ALL
+   * tests, prose or config/data (heuristics.ts `isLightSweepFile`) runs at
+   * this tier instead of the sweep's own. `""` ⇒ off: every sweep row at the
+   * sweep's tier. A profile `min_tier`
    * for pass-sweep still floors it, and a tier at or above the sweep's own
    * changes nothing. */
   sweep_light_tier: "" | PassTier;
-  /** (A1): the validator answers with a DECISION TABLE keyed by
+  /** The validator answers with a DECISION TABLE keyed by
    * candidate id instead of restating every survivor — only a finding whose
    * text it changed is written out in full (`validate-compact-output`
    * addendum; the session's half is `{{validator_output_note}}`). What it
    * decides is unchanged. `false` ⇒ the frozen output format. */
   validate_compact: boolean;
-  /** (the owner, 2026-10-09): who sizes a FOLLOW-UP round.
+  /** Who sizes a FOLLOW-UP round.
    * `"session"` ⇒ every follow-up round plans the lean core (pass-baseline,
    * the risk lenses, behaviour-delta, the validator) and offers the full
    * plan's per-file sweep rows and quality/style lenses as OPTIONAL rows the
    * main session runs, partly runs or skips — and it decides whether an owed
    * pre-approval sweep is needed — each with a stated reason, logged.
-   * `"rules"` ⇒ the fixed rules before it: the lean plan only at or under
+   * `"rules"` ⇒ fixed rules: the lean plan only at or under
    * `follow_up_small_delta_lines`, the pre-approval sweep always run when
    * owed and the round would approve. */
   follow_up_extent: "session" | "rules";
@@ -581,7 +574,7 @@ export type NitPolicy = "strict" | "open";
 
 /**
  * `[review] preset` — three named review configurations, measured on the
- * defect benchmark (bench/aacr/RESULTS.md, 2026-09-27):
+ * defect benchmark (bench/aacr/RESULTS.md):
  *
  *   - `default` — the measured best value. Every lever on with the lean plan:
  *     on ten PRs no change was designed from it found 81% of the real defects
@@ -625,10 +618,9 @@ const LEAN_LEVERS: PresetLevers = {
   sublenses: true,
   sweep: true,
   sweep_max_groups: 6,
-  // (A3): 5 → 8. The 500-line budget binds first on most groups; at 5
-  // files, 130 of the 275 sweep rows on the 145 stored rest145 PRs were cut
-  // by the file cap at a median of 78 changed lines. 8 plans 17% fewer rows
-  // on the 185 stored AACR PRs (334 → 277), none unswept.
+  // 8 files, so the 500-line budget binds first on most groups: a 5-file cap
+  // cut nearly half the sweep rows at a median of 78 changed lines, and 8
+  // plans ~17% fewer rows with none unswept.
   sweep_group_files: 8,
   sweep_group_lines: 500,
   sweep_wide_files: 40,
@@ -704,8 +696,8 @@ export const REVIEW_DEFAULTS: ReviewConfig = {
 };
 
 /**
- * [escalation] — the optional, OFF-BY-DEFAULT escalation feature (,
- * ratified 2026-08-31; rule-10 amendment).
+ * [escalation] — the optional, OFF-BY-DEFAULT escalation feature (CLAUDE.md
+ * rule 10).
  *
  * Two invariants bound everything this table can express, and neither is a
  * knob:
@@ -812,7 +804,7 @@ const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$
 /**
  * Parse and VALIDATE `[escalation]`.
  *
- * The half-configured state the ticket forbids is made unrepresentable here
+ * A half-configured live state is made unrepresentable here
  * rather than only in the wizard: a config with the feature on and no target,
  * or with a rule pointing at a login that is not a target, or with a rule that
  * declares no condition, fails to LOAD. A hand-edited config gets the same
@@ -820,8 +812,8 @@ const ESCALATION_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$
  *
  * With `enabled = false` NOTHING below the early return is checked, so a
  * half-filled table that is switched off really is a draft — it cannot wedge
- * daemon startup, which it could before the review caught it. The
- * whole validation set fires the moment the operator flips the switch.
+ * daemon startup. The whole validation set fires the moment the operator
+ * flips the switch.
  */
 export function parseEscalation(raw: Record<string, any>): EscalationConfig {
   const rawRules = Array.isArray(raw.rules) ? (raw.rules as Record<string, any>[]) : [];
@@ -853,8 +845,8 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
         .toUpperCase() as EscalationRule["min_severity"],
     })),
   };
-  // SWITCHED OFF IS A DRAFT — and that is checked FIRST, before any shape
-  // rule, because "draft" has to mean it (review, F8). Nothing below
+  // Switched off is a draft — checked FIRST, before any shape rule, because
+  // "draft" has to mean it. Nothing below
   // this line is read while the feature is off, so a half-written rule an
   // operator is still thinking about must not wedge daemon startup. Every one
   // of these checks fires the moment they flip `enabled = true`, and the
@@ -922,8 +914,8 @@ export function parseEscalation(raw: Record<string, any>): EscalationConfig {
 }
 
 /**
- * [owner] — the system's ONE accountable human, as a configured role
- *. Every identity surface renders from here: Slack fallback prose,
+ * [owner] — the system's ONE accountable human, as a configured role. Every
+ * identity surface renders from here: Slack fallback prose,
  * the companion day-open role label, the pinned-memory head framing, and the
  * escalation-mention fallback. Empty values degrade to neutral wording
  * ("the owner" / "the operator"), never to a hardcoded personal name.
@@ -933,9 +925,9 @@ export interface OwnerConfig {
   name: string;
   /**
    * Slack member id (U…). When [slack] is enabled it must be non-empty and a
-   * key of [slack.users] — the rules that used to bind `legacy_owner_slack_id`.
-   * Legacy alias on INPUT only: a set `[slack] legacy_owner_slack_id` feeds this
-   * when it is empty; nothing reads the legacy key after load.
+   * key of [slack.users]. Legacy alias on INPUT only: a set
+   * `[slack] legacy_owner_slack_id` feeds this when it is empty; nothing reads the
+   * legacy key after load.
    */
   slack_id: string;
   /** GitHub login; the fallback for [review] escalation_mention_default when
@@ -955,8 +947,7 @@ export interface ModelPricing {
   output_per_mtok: number;
 }
 
-/** [models] — role models plus the tiered pass-model scheme (replaces the
- * old per-pass [models.passes] override map). */
+/** [models] — role models plus the tiered pass-model scheme. */
 export interface ModelsConfig {
   default: string;
   conversation: string;
@@ -965,10 +956,10 @@ export interface ModelsConfig {
   tiers: Record<PassTier, string>;
   /** Passes always run at sol-high, single variant, not raisable. */
   risk_passes: string[];
-  /** The tier pass-validate runs at (amended): no longer
-   * raised to the round's highest lens tier — a validity veto is a `doubted`
-   * mark now, not a deletion. Only the profile's `min_tier` for the validator
-   * moves it, and only upward. */
+  /** The tier pass-validate runs at — never raised to the round's highest
+   * lens tier, because a validity veto is a `doubted` mark, not a deletion.
+   * Only the profile's `min_tier` for the validator moves it, and only
+   * upward. */
   validate_tier: PassTier;
   /** Diffs under this many changed lines start at terra-med (heuristics). */
   small_diff_lines: number;
@@ -987,7 +978,7 @@ export interface ModelsConfig {
    * VERIFY-ON-PIN); a model that tops out lower needs this set to its own
    * ceiling. */
   effort_max: ThinkingLevel;
-  /** Per-lens tier pins (`[models.pass_tiers]`, 2026-09-29): pass name → tier.
+  /** Per-lens tier pins (`[models.pass_tiers]`): pass name → tier.
    * A pinned lens runs at that tier on every PR whatever the diff size — the
    * plan names that tier, the lens is not raisable, and every built variant
    * of it carries that tier's spec. The default is `DEFAULT_PASS_TIERS`
@@ -1054,10 +1045,9 @@ function parseEffortMax(raw: unknown): ThinkingLevel {
 }
 
 /**
- * The shipped per-lens tier pins (owner decision 2026-10-03, after the
- * decisions validation: the same 30 PRs at default vs high effort gave +6
- * AACR defects, +3 medium on the miss set, no high-severity loss, for +18%
- * cost per PR). The three lenses that read the whole diff line by line run at
+ * The shipped per-lens tier pins (measured: high effort on these lenses found
+ * more defects with no high-severity loss, for ~18% more cost per PR). The
+ * three lenses that read the whole diff line by line run at
  * the `sol-high` tier — gpt-6.1-sol at high effort — on every PR; every other
  * lens keeps its planned tier. A config's own `[models.pass_tiers]` entry for
  * one of them replaces its pin (e.g. `"pass-baseline" = "sol-med"`), and a
@@ -1136,7 +1126,7 @@ export interface OpenVikingConfig {
    * key. Never an ADMIN or ROOT key: ADMIN grants no cross-user data access
    * and can list every user key in plaintext. */
   reviewer_key_file: string;
-  /** ov.conf `server.auth_mode`. `api_key` is the ratified posture:
+  /** ov.conf `server.auth_mode`. `api_key` is the required posture:
    * every request carries a USER key the server CONFINES to its own tree, and
    * that confinement is the only thing keeping companion memory out of a
    * posted review. `dev` bypasses authentication entirely — it is a local
@@ -1160,10 +1150,10 @@ export interface OpenVikingConfig {
   provision_users: string[];
   request_timeout_ms: number;
   /** Tighter than `request_timeout_ms`: a search sits on the round-build
-   * path, where the deadline in [memory] is the real guard. 8000 since
-   * H3 (was 2500 — shorter than one document embedding on the live
-   * VM). Clamped to `SEARCH_TIMEOUT_BOUNDS_MS`; a seed that sent its search
-   * late passes its time left, and the search takes the shorter. */
+   * path, where the deadline in [memory] is the real guard. It must exceed
+   * one document embedding on the live VM. Clamped to
+   * `SEARCH_TIMEOUT_BOUNDS_MS`; a seed that sent its search late passes its
+   * time left, and the search takes the shorter. */
   search_timeout_ms: number;
   /** Where an entry lands when the writer names no category. */
   default_category: string;
@@ -1182,18 +1172,17 @@ export interface OpenVikingConfig {
   /** ov.conf `server.workers` — one worker on a 2-CPU cap. */
   workers: number;
   /** ov.conf `queue_workers.*.max_concurrent` — reduced from the shipped
-   * defaults (4/4/8) for the same 2-CPU cap — and, since S3,
-   * `embedding.max_concurrent` too (the server's default is 10). */
+   * defaults (4/4/8) for the same 2-CPU cap — and `embedding.max_concurrent`
+   * too (the server's default is 10). */
   queue_concurrency: number;
   /** Health-poll cadence; the heartbeat reports the CACHED sample, so
    * status.json writing never waits on the network. */
   health_interval_s: number;
   /** The supervisor's `/health` + `/ready` probe and the local embedder's
    * `/health` probe. `/ready` runs an embedding, so it queues behind a case
-   * batch's embeddings: 6000 since H3 (was 2000; ~28 `/ready` flaps
-   * on 2026-10-08, one of which tipped memory health degraded). It is the
-   * timeout behind memory health's "serving" half (`memoryServing`). Clamped
-   * to `HEALTH_TIMEOUT_BOUNDS_MS`. */
+   * batch's embeddings — a shorter timeout makes `/ready` flap and can tip
+   * memory health to degraded. It is the timeout behind memory health's
+   * "serving" half (`memoryServing`). Clamped to `HEALTH_TIMEOUT_BOUNDS_MS`. */
   health_timeout_ms: number;
   /** Restart backoff ladder; the last entry is the ceiling. The supervisor
    * never gives up — a memory engine that stays down is worse than a slow
@@ -1201,7 +1190,7 @@ export interface OpenVikingConfig {
   restart_backoff_ms: number[];
   /** A child that stayed up this long resets the backoff ladder. */
   restart_reset_after_s: number;
-  /** Which embedder memory runs (S4). `local` is the shipped
+  /** Which embedder memory runs. `local` is the shipped
    * default: the LOCAL ENGLISH EMBEDDER (`LOCAL_EMBEDDING`) — a loopback
    * service inside the container, so no memory text leaves the machine.
    * `openai` is the explicit hosted opt-in and needs `embedding_key_file` in
@@ -1219,7 +1208,7 @@ export interface OpenVikingConfig {
    * NOT `openai_api_key` (pi's model credential), so the two can be set
    * independently. Read only by the ov.conf render, only under `openai`. */
   embedding_key_file: string;
-  /** The local embedder's MODEL FILE pin (S4, rule 7): the GGUF the
+  /** The local embedder's MODEL FILE pin (CLAUDE.md rule 7): the GGUF the
    * image downloads at BUILD time from `local_embedder_url`, verified against
    * `local_embedder_sha256` there and again by the service at every start.
    * TRIPLE-MIRRORED like `version`: this block == group_vars
@@ -1244,7 +1233,7 @@ export const EMBEDDING_PROVIDERS = ["local", "openai"] as const;
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
 
 /**
- * The LOCAL ENGLISH EMBEDDER (S4, the owner's ruling R5): the model
+ * The LOCAL ENGLISH EMBEDDER: the model
  * `embedding_provider = "local"` runs, served on loopback by
  * `scripts/openviking-embedder.py` from the GGUF the image pins. Chosen by an
  * offline retrieval evaluation over the reviewer's own memory
@@ -1255,12 +1244,11 @@ export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
  * two together. Mirrored by `LOCAL_EMBEDDER` in scripts/openviking-reembed.mjs.
  */
 export const LOCAL_EMBEDDING = Object.freeze({ model: "bge-small-en-v1.5-f16", dimension: 384 });
-/** The engine's BUILT-IN local embedder — what `local` meant from until
- * S4, and what every store embedded in that time was built under. A
- * config.toml that still spells it under `local` (the previous release
- * REQUIRED exactly this) is read as the current local embedder rather than
- * refused: the daemon must not stop booting over a value it used to demand.
- * The re-embed migration carries the store across. */
+/** The engine's BUILT-IN local embedder — the retired meaning of `local`, and
+ * what an older store was embedded under. A config.toml that still spells it
+ * under `local` is read as the current local embedder rather than refused: the
+ * daemon must not stop booting over a value an earlier release required. The
+ * re-embed migration carries the store across. */
 export const RETIRED_LOCAL_EMBEDDING = Object.freeze({
   model: "bge-small-zh-v1.5-f16",
   dimension: 512,
@@ -1309,8 +1297,6 @@ export function ovConfEmbedder(
   };
 }
 
-/** [openviking] is optional in config.toml — the defaults ARE the shipped
- * configuration, exactly like [tui]/[companion]. */
 /** Round-seeding knobs: how much memory rides each round prompt and
  * how long the daemon is willing to wait for it. Every value is defaulted —
  * an absent `[memory]` block is a supported configuration, and a store that
@@ -1319,21 +1305,20 @@ export interface MemoryConfig {
   /** Token budget for the assembled context block. */
   context_tokens: number;
   /** Deadline for the head + block assembly, after which the round proceeds
-   * memory-less. 9000 since H3 (was 3000 — shorter than one document
-   * embedding on the live VM); the seed's wait for the case writer's
+   * memory-less. It must exceed one document embedding on the live VM; the
+   * seed's wait for the case writer's
    * embedding tail is inside it. Clamped to `CONTEXT_TIMEOUT_BOUNDS_MS`. */
   context_timeout_ms: number;
-  /** The embedding tail of one written finding case (ms, H3): after
+  /** The embedding tail of one written finding case (ms): after
    * a case batch's write returns the server goes on embedding it for about
    * this long a case, and a round seed starting inside that waits for it —
    * within its own `context_timeout_ms`. Clamped to 0…30000; 0 turns the
    * tail off. */
   case_embed_tail_ms: number;
-  /** Memory health (S1, `src/memory/health.ts`): how often the
-   * daemon's AUTHENTICATED probe lists the reviewer memories root with each
-   * credential in use (its key file and the sessions' ovcli.conf). Replaces
-   * the per-round `alert_cooldown_min` (an alert that never woke anyone; a
-   * leftover key in a live config.toml is ignored). */
+  /** Memory health (`src/memory/health.ts`): how often the daemon's
+   * AUTHENTICATED probe lists the reviewer memories root with each credential
+   * in use (its key file and the sessions' ovcli.conf). A leftover
+   * `alert_cooldown_min` key in a live config.toml is ignored. */
   probe_interval_s: number;
   /** No authenticated answer for this long ⇒ `down` (wakes `memory_down`). */
   down_after_min: number;
@@ -1345,23 +1330,23 @@ export interface MemoryConfig {
   /** The TUI files ONE tracker ticket for a memory incident older than this
    * (sourced from status.json, never from memory). */
   incident_ticket_after_min: number;
-  /** Writes that stick (S2): how often the backfill pump writes the
+  /** Writes that stick: how often the backfill pump writes the
    * [feedback] signals memory still owes (at most 20 a tick, only while
    * memory health reads healthy). */
   backfill_interval_s: number;
   /** An owed signal older than this wakes `memory_write_backlog` (and again
    * every `rewake_h` while the backlog lasts). */
   write_backlog_after_min: number;
-  /** Finding cases (S7, src/cases.ts): how often the case writer
-   * syncs the cases state.db says are owed and, only while memory health
-   * reads healthy, writes up to 2 of them (one batch-write, never started
-   * while a round reads memory — F2) and backfills two more PRs. */
+  /** Finding cases (src/cases.ts): how often the case writer syncs the cases
+   * state.db says are owed and, only while memory health reads healthy,
+   * writes up to 2 of them (one batch-write, never started while a round
+   * reads memory) and backfills two more PRs. */
   cases_interval_s: number;
   /** How far back the case backfill reaches: PRs with a finding posted in
    * the last this-many days get their cases written (resumable, a few PRs a
    * tick, only while memory reads healthy). 0 turns the backfill off. */
   cases_backfill_days: number;
-  /** The learner (S8, src/learner/learner.ts). The miner runs this
+  /** The learner (src/learner/learner.ts). The miner runs this
    * many minutes before the EOD sweep (and on `qcr lessons mine`). */
   lessons_mine_lead_min: number;
   /** How far back a mine reads human outcomes (fates, the feedback ledger,
@@ -1387,7 +1372,7 @@ export interface MemoryConfig {
   lessons_digest_backfill_from: string;
   lessons_digest_backfill_to: string;
   /** How many items the round's context search may draw from each area it
-   * searches. Since S5 a round searches `experiences/` ONLY
+   * searches. A round searches `experiences/` ONLY
    * (`ROUND_SEARCH_AREAS`, src/memory/layout.ts): any other key here is
    * ignored with one log line (src/openviking/context.ts
    * `roundSearchQuotas`), and a missing or non-positive `experiences` count
@@ -1395,7 +1380,7 @@ export interface MemoryConfig {
    * across every scope (see the comment in config.toml). */
   context_quotas: Record<string, number>;
   /**
-   * How curated lessons and past finding cases reach a review (S9):
+   * How curated lessons and past finding cases reach a review:
    *   `off`    — nothing runs: no selection, no shadow ledger;
    *   `shadow` — the SHIPPED value: every round selects lessons and cases
    *              through OpenViking (one bounded prefetch, never delaying the
@@ -1403,7 +1388,7 @@ export interface MemoryConfig {
    *              delivered and which posted findings a delivered dont-raise
    *              lesson would have touched — and NO prompt, task file or
    *              agent changes;
-   *   `on`     — delivery (S9b): the same selection, AWAITED beside the
+   *   `on`     — delivery: the same selection, AWAITED beside the
    *              round's memory seed within the same budget, and rendered —
    *              each lens's task file, the lessons files of the validator
    *              and the lenses a session adds, the main session's "Lessons
@@ -1420,14 +1405,14 @@ export interface MemoryConfig {
    * hard ceiling is 2 s. */
   delivery_budget_ms: number;
   /** The same prefetch's budget (ms) when NOTHING waits for it — under
-   * `shadow`, where it starts after the round's handoff (F2): looser,
+   * `shadow`, where it starts after the round's handoff: looser,
    * so a shadow selection behind a busy embedder still records what it would
    * have delivered. Clamped to 1…20000 — it holds the selector's two places
    * in the embedder queue for at most that long. */
   shadow_budget_ms: number;
 }
 
-/** H3: the three memory timeouts are BOUNDED — memory must never
+/** The three memory timeouts are BOUNDED — memory must never
  * hold a round past a budget an operator can read off the config, and a
  * mistyped 0 must not turn every seed memory-less. Inclusive ms. */
 export const CONTEXT_TIMEOUT_BOUNDS_MS = { min: 100, max: 15_000 } as const;
@@ -1443,19 +1428,19 @@ function clampMs(v: unknown, bounds: { min: number; max: number }, fallback: num
   return Math.max(bounds.min, Math.min(bounds.max, Math.floor(n)));
 }
 
-/** The values `[memory] delivery` takes (S9). */
+/** The values `[memory] delivery` takes. */
 export const MEMORY_DELIVERY_MODES = ["off", "shadow", "on"] as const;
 export type MemoryDelivery = (typeof MEMORY_DELIVERY_MODES)[number];
-/** The contract's hard ceiling on the lesson prefetch (S9). */
+/** The contract's hard ceiling on the lesson prefetch. */
 export const LESSON_PREFETCH_MAX_MS = 2000;
-/** The shadow prefetch's ceiling and default (F2). The default covers
+/** The shadow prefetch's ceiling and default. The default covers
  * the live VM's measured worst case — a find's 2.5 s p90 behind a case batch
  * already on the embedder (two ~3.4 s embeddings, src/cases.ts). */
 export const LESSON_SHADOW_PREFETCH_MAX_MS = 20_000;
 export const LESSON_SHADOW_PREFETCH_DEFAULT_MS = 10_000;
 
 /**
- * The [memory] block, defaults filled and the S9 delivery switch checked: an
+ * The [memory] block, defaults filled and the delivery switch checked: an
  * unknown `delivery` value REFUSES to load (a misspelt `"onn"` must not
  * quietly mean shadow, or off), and the prefetch budget is clamped to the
  * contract's ceiling.
@@ -1515,6 +1500,8 @@ export const MEMORY_DEFAULTS: MemoryConfig = {
   shadow_budget_ms: LESSON_SHADOW_PREFETCH_DEFAULT_MS,
 };
 
+/** [openviking] is optional in config.toml — the defaults ARE the shipped
+ * configuration, exactly like [tui]/[companion]. */
 export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
   enabled: true,
   version: "0.4.15",
@@ -1564,7 +1551,7 @@ export const OPENVIKING_DEFAULTS: OpenVikingConfig = {
  */
 export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig {
   const merged = { ...OPENVIKING_DEFAULTS, ...(raw as Partial<OpenVikingConfig>) };
-  // H3: bounded, never a tight loop or an unbounded wait.
+  // Bounded, never a tight loop or an unbounded wait.
   merged.search_timeout_ms = clampMs(
     merged.search_timeout_ms,
     SEARCH_TIMEOUT_BOUNDS_MS,
@@ -1595,9 +1582,9 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
     (raw.embedding_dimension === undefined ||
       merged.embedding_dimension === RETIRED_LOCAL_EMBEDDING.dimension)
   ) {
-    // the previous release REQUIRED this spelling under `local`.
-    // It now means the local embedder that replaced it — the boot renders the
-    // same, and the re-embed migration moves the store across.
+    // An earlier release required this spelling under `local`. It means the
+    // current local embedder — the boot renders the same, and the re-embed
+    // migration moves the store across.
     merged.embedding_model = LOCAL_EMBEDDING.model;
     merged.embedding_dimension = LOCAL_EMBEDDING.dimension;
   }
@@ -1634,7 +1621,7 @@ export function parseOpenViking(raw: Record<string, unknown>): OpenVikingConfig 
   return resolveOpenVikingPaths(merged);
 }
 
-/** The local embedder's model-file pin and service knobs (S4). The
+/** The local embedder's model-file pin and service knobs. The
  * file and the URL must both name `LOCAL_EMBEDDING.model`: a pin for another
  * model would put a file the service's model table does not describe under a
  * name the vector store trusts. */
@@ -1696,9 +1683,9 @@ export function openVikingBaseUrl(c: OpenVikingConfig): string {
  * calendar day the system runs on. Every day-scoped feature derives its day
  * from here — the [feedback] same-day addendum + agent-rebuild rollover,
  * metrics day buckets, TUI alert fold memory and companion day rollover —
- * and the two sections that already carried their own zone ([eod] and
- * [slack.policy] `timezone`) now DEFAULT from it, each still individually
- * overridable in its own section.
+ * and the two sections that carry their own zone ([eod] and [slack.policy]
+ * `timezone`) DEFAULT from it, each still individually overridable in its own
+ * section.
  */
 export interface OpsConfig {
   /** IANA zone (e.g. "Europe/Warsaw") of the operator's day. */
@@ -1726,7 +1713,7 @@ export function assertIanaTimeZone(tz: string, where: string): string {
  * public hostname (e.g. `abc.trycloudflare.com`, trailing newline tolerated)
  * to `hostname_file`, and the daemon re-points the App's own webhook URL when
  * it changes — through the app-self-config gate class, which executes even in
- * dry-run (ratified rule-1 amendment, 2026-08-30). `none` (the default, and
+ * dry-run (CLAUDE.md rule 1). `none` (the default, and
  * what an absent section means) starts nothing at all.
  */
 export interface IngressConfig {
@@ -1758,15 +1745,15 @@ export function ingressHostnameFile(cfg: Config, root: string): string {
 
 export interface Config {
   dry_run: boolean;
-  /**: the selected profile's resolved per-lens tuning
+  /** The selected profile's resolved per-lens tuning
    * (`[lenses.<pass>]` in profile.toml, src/lenstuning.ts). config.toml never
    * sets it: `applyProfileTuning` overlays it after parsing, which is what
    * makes the profile win over config.toml, the preset and the defaults.
    * Absent or empty ⇒ untuned. */
   lenses?: LensTuningMap;
   /** The selected profile's posting policy (`[posting]` in profile.toml,
-   * src/postingpolicy.ts), overlaid by `applyProfilePosting`. Absent ⇒ today's
-   * behaviour; an all-default policy is never attached. */
+   * src/postingpolicy.ts), overlaid by `applyProfilePosting`. Absent ⇒ the
+   * default posting behaviour; an all-default policy is never attached. */
   posting?: PostingPolicy;
   ops: OpsConfig;
   ingress: IngressConfig;
@@ -1777,24 +1764,24 @@ export interface Config {
     max_concurrent_rounds: number;
     round_deadline_min: number;
     overseer_rotation_days: number;
-    /**: how many times the daemon may self-requeue a stuck round
-     * (overdue + no verdict + session dead) per PR head. Past the cap the
-     * round terminalizes through the existing overdue-anomaly park. Optional
+    /** How many times the daemon may self-requeue a stuck round (overdue +
+     * no verdict + session dead) per PR head. Past the cap the round
+     * terminalizes through the overdue-anomaly path. Optional
      * so hand-rolled test configs keep compiling; readers default to
      * DEFAULT_MAX_SELF_REQUEUES. */
     max_self_requeues?: number;
-    /**: minutes after dispatch before a running round with no prompt
-     * receipt (#5362) counts as lost and is recovered. Optional; readers
+    /** Minutes after dispatch before a running round with no prompt receipt
+     * counts as lost and is recovered. Optional; readers
      * default to DEFAULT_ROUND_STALL_GRACE_MIN. */
     round_stall_grace_min?: number;
-    /** #5362: how many times a round's prompt may be RE-DELIVERED before the
+    /** How many times a round's prompt may be RE-DELIVERED before the
      * expensive recovery takes over. Separate from `max_self_requeues` on
      * purpose — redelivery costs one file write and keeps the round, the
      * session and the conversation, where a self-requeue burns a round and
      * (for a live session) kills it. Optional; readers default to
      * DEFAULT_MAX_PROMPT_REDELIVERIES. */
     max_prompt_redeliveries?: number;
-    /** daemon→Pi stage bounds. Optional only for old configs; the
+    /** Daemon→pi stage bounds. Optional only for old configs; the
      * parser supplies the exported defaults so production always has finite
      * values. Progress telemetry never changes any of them. */
     session_command_start_lease_s?: number;
@@ -1802,19 +1789,19 @@ export interface Config {
      * startup receipt. Tmux existence alone is never delivery readiness. */
     session_bridge_ready_timeout_s?: number;
     session_command_running_max_min?: number;
-    /** round execution milestones, all anchored to durable command
+    /** Round execution milestones, all anchored to durable command
      * start. They never renew from heartbeat/activity telemetry. */
     round_first_pass_max_min?: number;
     round_passes_max_min?: number;
     round_finalize_grace_min?: number;
-    /** H1a: once a round's review is CONFIRMED posted, a stage limit
+    /** Once a round's review is CONFIRMED posted, a stage limit
      * no longer cancels it — the session's tail (ledger, findings record,
      * verdict file) gets this long after the posting to finish, and a round
      * still without a verdict then is settled from the posting receipt. Never
      * a self-requeue, so never a second posting. Readers default to
      * DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN. */
     round_posted_tail_grace_min?: number;
-    /**: the extra minutes a follow-up round whose pre-approval sweep
+    /** The extra minutes a follow-up round whose pre-approval sweep
      * is OWED gets for its passes and its hard cap — the sweep is a whole
      * round-1 plan run after the delta's. Readers default to
      * DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN. */
@@ -1823,7 +1810,7 @@ export interface Config {
     session_command_unknown_grace_s?: number;
     session_command_unknown_max_checks?: number;
     session_command_max_start_retries?: number;
-    /** H1b: how long a compaction the session's inject bridge reports
+    /** How long a compaction the session's inject bridge reports
      * running may hold a waiting command's start lease open. pi refuses every
      * prompt while it compacts, so a command queued behind one is late, not
      * lost; past this bound a compaction still "running" is no reason to wait,
@@ -1831,7 +1818,7 @@ export interface Config {
      * Readers default to DEFAULT_SESSION_COMPACTION_MAX_S. */
     session_compaction_max_s?: number;
     round_stage_supervisor_stale_s?: number;
-    /** L2: the daemon's event-loop watch (src/eventloop.ts). All
+    /** The daemon's event-loop watch (src/eventloop.ts). All
      * optional — `eventLoopPolicy` defaults each (300 s window, a 10 s single
      * delay or a 2 s p99 over a full window is a stall, one wake per 60 min,
      * "CPU starved" from 20% of CFS periods throttled) and clamps a number
@@ -1841,9 +1828,9 @@ export interface Config {
     event_loop_stall_p99_s?: number;
     event_loop_wake_cooldown_min?: number;
     event_loop_starved_throttle_ratio?: number;
-    /** Zombie-round expiry horizon: a round stuck `overdue` for
-     * longer than this — and whose PR has since verdicted or closed, so a
-     * rerun would never touch it — moves to terminal `expired`.
+    /** Zombie-round expiry horizon: a round stuck `overdue` for longer than
+     * this — and whose PR has since verdicted or closed, so a self-requeue
+     * would never touch it — moves to terminal `expired`.
      * 0 disables the sweep. */
     expire_overdue_after_h: number;
   };
@@ -1852,9 +1839,8 @@ export interface Config {
     timezone: string;
     /** Daily overseer heartbeat wall time; same zone as `time`. */
     heartbeat_time: string;
-    /** Watch the pinned area across the sweep and raise an anomaly
-     * if curation touched it. Off ⇒ the EOD inject is byte-identical to
-     * legacy behaviour. */
+    /** Watch the pinned area across the sweep and raise an anomaly if
+     * curation touched it. Off ⇒ no watch. */
     pinned_watchdog: boolean;
     /** How long after the inject the watchdog keeps looking, when the day's
      * digest never appears to close the window early. */
@@ -1866,12 +1852,10 @@ export interface Config {
     improvement_pr_per_day: number;
     improvement_pr_per_week: number;
     issues_per_day: number;
-    /** Path prefixes a bot improvement PR may never touch (lift of
-     * the src/improvements.ts hardcode). A configured value REPLACES the
-     * list (it is repo-shape, not an invariant — `migrations/` is Django's
-     * name for the concept); the shipped default is today's exact list, and
-     * `.env`-named files are refused unconditionally regardless of this
-     * knob. */
+    /** Path prefixes a bot improvement PR may never touch. A configured
+     * value REPLACES the list (it is repo-shape, not an invariant —
+     * `migrations/` is Django's name for the concept), and `.env`-named files
+     * are refused unconditionally regardless of this knob. */
     improvement_pr_deny_prefixes: string[];
   };
   models: ModelsConfig;
@@ -1880,17 +1864,16 @@ export interface Config {
     version: string;
     session_dir: string;
     /** Process-wide subagent fan-out cap the glue extension enforces per
-     * session (rides the command line as
-     * QCR_SUBAGENT_MAX_CONCURRENCY). Default 4 — the companion/desktop
-     * number; the VM config sets 6, the old pi-subagents config.json value. */
+     * session (rides the command line as QCR_SUBAGENT_MAX_CONCURRENCY).
+     * Default 4 — the companion/desktop number; the VM config sets 6. */
     subagent_max_concurrency: number;
-    /**: lens children share a provider PROMPT CACHE in groups of this
+    /** Lens children share a provider PROMPT CACHE in groups of this
      * many (rides the command line as QCR_SUBAGENT_CACHE_GROUP). Each group's
      * children run under one pi session id — the provider's cache key — instead
      * of a random one per child, so an identical prompt prefix is read
-     * from cache by every child after the first (probe 2026-10-09: 24,320 of
-     * 24,467 tokens cached; 0 under per-child ids). Groups, not one key per
-     * round, keep each key's request rate low. 0 ⇒ a random id per child, as before. */
+     * from cache by every child after the first (per-child ids get no cache
+     * hits at all). Groups, not one key per round, keep each key's request
+     * rate low. 0 ⇒ a random id per child. */
     subagent_cache_group: number;
     /** How long a group's later children wait after its first one started, so
      * the cache is written before they ask (QCR_SUBAGENT_CACHE_STAGGER_MS;
@@ -1910,11 +1893,11 @@ export interface Config {
   levers: LeversConfig;
   slack: SlackConfig;
   owner: OwnerConfig;
-  /**: the whole-repo scan's defaults. The repo profile's `[scan]`
+  /** The whole-repo scan's defaults. The repo profile's `[scan]`
    * table overrides the keys in `SCAN_PROFILE_KEYS` (`applyProfileScan`,
    * src/profiles.ts) — the profile wins, as for per-lens tuning. */
   scan: ScanConfig;
-  /**: the closed-PR archiver (`src/archive/`). Optional in the file;
+  /** The closed-PR archiver (`src/archive/`). Optional in the file;
    * the parser fills every key. */
   archive: ArchiveConfig;
 }
@@ -1931,11 +1914,10 @@ export interface ScanConfig {
   tier: PassTier;
   /** Run the scan's SKEPTIC — `pass-validate` in scan mode — over each
    * case's candidates, at the tier of the lens that raised them. ON by
-   * default (owner ruling 2026-09-30: the scan validator is the skeptic, on by
-   * default — amending the spec's original cost choice of off); a profile
-   * may switch it off. It sorts every finding into a validity tier —
-   * confirmed / likely / doubtful — and kills none: a refuted finding is
-   * kept, marked doubtful. Its cost is part of every case's measured price. */
+   * default; a profile may switch it off. It sorts every finding into a
+   * validity tier — confirmed / likely / doubtful — and kills none: a
+   * refuted finding is kept, marked doubtful. Its cost is part of every
+   * case's measured price. */
   validator: boolean;
   /** Repo-relative globs never scanned (src/glob.ts), on top of tests,
    * migrations and what no pass reads (lockfiles, binaries, prose). */
@@ -2119,11 +2101,11 @@ export interface ArchiveConfig {
    *            writes nothing;
    *   `on`   — it MOVES, every tick: it restores reopened PRs' transcripts
    *            and payloads first; then the old reader-less event rows and
-   *            webhook deliveries into `archive/db/`, sealing finished months
-   *            (S2); then each eligible closed PR's files into
-   *            `archive/pr-<n>/`, removing each from the live tree once its
-   *            copy is verified (S3); then the overseer's non-current
-   *            transcripts and pi's day-old global session files (S4).
+   *            webhook deliveries into `archive/db/`, sealing finished months;
+   *            then each eligible closed PR's files into `archive/pr-<n>/`,
+   *            removing each from the live tree once its copy is verified;
+   *            then the overseer's non-current transcripts and pi's day-old
+   *            global session files.
    *            Nothing is deleted that is not verified in the archive or a
    *            proven duplicate.
    */
@@ -2253,7 +2235,7 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
   tracker_dir: "", // → /tracker (rw) when set; empty = no tracker mount
   tracker_docs_dir: "", // → /tracker-docs (ro) when set
   reviewed_repo_dir: "", // → /reviewed-repo (ro) when set and present
-  evidence_dir: "~/.local/share/qcr/evidence", // → /evidence (ro),
+  evidence_dir: "~/.local/share/qcr/evidence", // → /evidence (ro)
   feed_dir: "", // → <root>/state/companion/feed
   alerts_dir: "", // → <root>/state/companion/alerts
   ssh_dir: "~/.ssh",
@@ -2265,36 +2247,33 @@ export const COMPANION_DEFAULTS: CompanionConfig = {
 };
 
 /**
- * the issue sink — where auto-filed defect flags (`#bug` memory
- * entries, §9) land. Three kinds:
+ * The issue sink — where auto-filed defect flags (`#bug` memory entries)
+ * land. Three kinds:
  *
  *   `wayfinder` — tickets written into a filesystem wayfinder tracker on the
- *                 operator's PC (the legacy behaviour, with the effort
- *                 and parent lifted out of code literals into this block).
+ *                 operator's PC, into the effort and under the parent this
+ *                 block names.
  *   `github`    — defects filed as issues on the reviewed repo. The TUI never
  *                 talks to GitHub: it writes a `file-issue` COMMAND into the
  *                 daemon's commands/ channel, so the daemon's MutationGate,
  *                 day caps and title dedup enforce the filing.
  *   `none`      — auto-filing off. The default when `[sink]` is absent:
- *                 unconfigured = off, the degrade-gracefully boundary the
- *                 filer has always had.
+ *                 unconfigured = off.
  */
 export type IssueSinkKind = "wayfinder" | "github" | "none";
 
 export interface SinkConfig {
   kind: IssueSinkKind;
   /** Wayfinder tracker root (also the ticket projection's root). Empty ⇒
-   * defaults from `[companion] tracker_dir` — continuity: that dir has been
-   * the one tracker path the TUI knew. */
+   * defaults from `[companion] tracker_dir`. */
   root: string;
   /** Wayfinder: the effort auto-filed tickets are written into. */
   effort: string;
   /** Wayfinder: the `Parent:` map id stamped into each filed ticket. */
   parent: string;
-  /** The TUI [2]-tab read-only ticket projection's effort. Deliberately a
-   * SEPARATE key: today's live board reads a different effort
-   * ("review-feedback-loop") from the one the filer writes into
-   * ("review-sandbox"). Empty ⇒ same as `effort`. */
+  /** The TUI's read-only ticket projection's effort. Deliberately a
+   * SEPARATE key: the board may read a different effort from the one the
+   * filer writes into. Empty ⇒ same as `effort`. */
   tickets_effort: string;
 }
 
@@ -2342,17 +2321,17 @@ export function sinkTicketsEffort(cfg: Config): string {
 export const DEFAULT_ROUND_STALL_GRACE_MIN = 10;
 
 /** Default self-requeue budget per PR head when [daemon] carries no
- * `max_self_requeues` — the brief's recommended N=2. */
+ * `max_self_requeues`. */
 export const DEFAULT_MAX_SELF_REQUEUES = 2;
 
-/** Default prompt-redelivery budget per round (#5362). Two is enough to cover
+/** Default prompt-redelivery budget per round. Two is enough to cover
  * a delivery that raced a busy session and one that raced a session restart;
  * a third failure is no longer a delivery problem, so escalating beats
  * re-sending the same file forever. */
 export const DEFAULT_MAX_PROMPT_REDELIVERIES = 2;
 
-/** finite daemon→Pi stage bounds. The 45-minute hard run cap is above
- * the measured 23.4-minute live maximum yet materially below the 75-minute
+/** Finite daemon→pi stage bounds. The 45-minute hard run cap is above the
+ * measured live maximum (~23 minutes) yet materially below the 75-minute
  * defense-in-depth round deadline. */
 export const DEFAULT_SESSION_COMMAND_START_LEASE_S = 120;
 export const DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S = 30;
@@ -2360,19 +2339,18 @@ export const DEFAULT_SESSION_COMMAND_RUNNING_MAX_MIN = 45;
 export const DEFAULT_ROUND_FIRST_PASS_MAX_MIN = 5;
 export const DEFAULT_ROUND_PASSES_MAX_MIN = 35;
 export const DEFAULT_ROUND_FINALIZE_GRACE_MIN = 5;
-/** H1a: measured posting→verdict tails ran to 6.5 min (210 rounds,
- * 2026-10-01…08); 15 is over twice that and still well inside the 75-minute
- * round deadline. */
+/** Measured posting→verdict tails run to ~6.5 min; 15 is over twice that and
+ * still well inside the 75-minute round deadline. */
 export const DEFAULT_ROUND_POSTED_TAIL_GRACE_MIN = 15;
-/**: `[daemon] follow_up_sweep_extra_min`'s default. */
+/** `[daemon] follow_up_sweep_extra_min`'s default. */
 export const DEFAULT_FOLLOW_UP_SWEEP_EXTRA_MIN = 20;
 export const DEFAULT_POSTING_RECEIPT_GRACE_S = 120;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_GRACE_S = 60;
 export const DEFAULT_SESSION_COMMAND_UNKNOWN_MAX_CHECKS = 1;
 export const DEFAULT_SESSION_COMMAND_MAX_START_RETRIES = 2;
-/** H1b: the post-verdict compaction on #5849 (2026-10-08) took 73 s
- * with the container CPU-starved; ten minutes is several times the worst seen
- * and still well inside the 75-minute round deadline. */
+/** A post-verdict compaction can take over a minute with the container
+ * CPU-starved; ten minutes is several times the worst seen and still well
+ * inside the 75-minute round deadline. */
 export const DEFAULT_SESSION_COMPACTION_MAX_S = 600;
 export const DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S = 180;
 
@@ -2420,12 +2398,11 @@ function req(obj: Record<string, unknown>, key: string): unknown {
 }
 
 /**
- * `[caps]` parsed with each numeric cap CHECKED, not cast. This
- * section used to be spread into `Config["caps"]` through an `as`, so a key
- * missing from an operator's file reached `checkDiffstat` as `undefined` —
- * and `files > undefined` is `false`, i.e. the cap passed. A cap the daemon
- * cannot compare against is a startup refusal: the improvement channel is the
- * one place this system pushes code, and it must never run uncapped.
+ * `[caps]` parsed with each numeric cap CHECKED, not cast: a key missing
+ * from an operator's file must never reach `checkDiffstat` as `undefined`,
+ * where `files > undefined` is `false` and the cap would pass. A cap the
+ * daemon cannot compare against is a startup refusal: the improvement
+ * channel is the one place this system pushes code, and it must never run uncapped.
  */
 export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
   const cap = (key: string): number => {
@@ -2457,9 +2434,8 @@ export function parseCaps(raw: Record<string, unknown>): Config["caps"] {
   };
 }
 
-/** The shipped improvement-PR path denylist: the exact pre-lift
- * hardcode. Lives here (not in improvements.ts) so config carries the default
- * without a runtime import cycle. */
+/** The shipped improvement-PR path denylist. Lives here (not in
+ * improvements.ts) so config carries the default without a runtime import cycle. */
 export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
   "migrations/",
   "infra/",
@@ -2469,8 +2445,7 @@ export const IMPROVEMENT_DENY_PREFIXES_DEFAULT: readonly string[] = [
 
 export function parseConfig(toml: string): Config {
   const raw = parse(toml) as Record<string, any>;
-  // base_branch/clone_dir default so older configs keep parsing;
-  // the live config states both explicitly.
+  // base_branch/clone_dir default so older configs keep parsing.
   const github: GithubConfig = {
     base_branch: "main",
     clone_dir: "",
@@ -2507,7 +2482,7 @@ export function parseConfig(toml: string): Config {
     ingress,
     github,
     server: { ...(req(raw, "server") as Config["server"]) },
-    // Both knobs default so legacy configs keep parsing.
+    // Every optional knob defaults so older configs keep parsing.
     daemon: {
       max_self_requeues: DEFAULT_MAX_SELF_REQUEUES,
       expire_overdue_after_h: 24,
@@ -2527,8 +2502,8 @@ export function parseConfig(toml: string): Config {
       round_stage_supervisor_stale_s: DEFAULT_ROUND_STAGE_SUPERVISOR_STALE_S,
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
-    // heartbeat_time defaults so legacy configs keep parsing; the
-    // timezone defaults from [ops], own [eod] value wins.
+    // heartbeat_time defaults so older configs keep parsing; the timezone
+    // defaults from [ops], own [eod] value wins.
     eod: {
       heartbeat_time: "09:00",
       pinned_watchdog: true,
@@ -2710,7 +2685,7 @@ export function parseConfig(toml: string): Config {
     "issue_label",
   ] as const)
     req(cfg.github as unknown as Record<string, unknown>, k);
-  // every secrets reader in the daemon reads THIS field, so the
+  // Every secrets reader in the daemon reads THIS field, so the
   // install locator decides it here, once, for all of them.
   cfg.github.secrets_dir = locateSecrets({
     configured: typeof cfg.github.secrets_dir === "string" ? cfg.github.secrets_dir : "",
@@ -2799,9 +2774,9 @@ export function slackTokenPath(cfg: Config, which: "bot" | "app"): string {
 }
 
 /** Pure (I/O-free) part of Slack boot validation. When disabled, nothing at
- * all is required — the concierge is simply not there. The owner's Slack id
- * (`[owner] slack_id`, legacy alias `[slack] legacy_owner_slack_id`)
- * carries the same rules the legacy key always had. */
+ * all is required — the concierge is simply not there. When enabled, the
+ * owner's Slack id (`[owner] slack_id`, legacy alias
+ * `[slack] legacy_owner_slack_id`) must be set and be a key of [slack.users]. */
 function checkSlackShape(slack: SlackConfig, owner: OwnerConfig): void {
   if (!slack.enabled) return;
   const fail = (msg: string): never => {
@@ -2854,9 +2829,9 @@ export function validateSlackConfig(cfg: Config, deps: { readSecret?: SecretRead
 let cached: Config | null = null;
 
 /**
- * The live config's path for this process, decided by the install locator
- *: `$QCR_CONFIG`, else the install's config home — never the
- * checkout's `config.toml`. The ONE answer every no-argument
+ * The live config's path for this process, decided by the install locator:
+ * `$QCR_CONFIG`, else the install's config home — never the checkout's
+ * `config.toml`. The ONE answer every no-argument
  * `loadConfig()` reads, and the one the daemon hands its sessions.
  */
 export function liveConfigPath(): string {

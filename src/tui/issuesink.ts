@@ -1,26 +1,24 @@
-// FT-0345 — the pluggable issue sink: where auto-filed defect flags land.
+// The pluggable issue sink: where auto-filed defect flags land.
 //
-// ONE seam in the MemoryStore style: every method is TOTAL (a broken backend
+// One seam in the MemoryStore style: every method is total (a broken backend
 // is a refusal-as-answer, never a throw — the TUI poll loop must survive any
 // sink), and the kinds are a closed set chosen by `[sink] kind` in
 // config.toml:
 //
-//   * `wayfinder` — the pre-FT-0345 auto-filer verbatim: tickets into a local
-//     filesystem tracker (src/tui/autofile.ts is unchanged and stays
-//     byte-compatible), with the effort/parent that used to be code literals
-//     now carried by config.
-//   * `github`    — defects filed as ISSUES on the reviewed repo. The TUI has
+//   * `wayfinder` — the auto-filer in src/tui/autofile.ts: tickets into a
+//     local filesystem tracker, with the effort/parent carried by config.
+//   * `github`    — defects filed as issues on the reviewed repo. The TUI has
 //     no MutationGate and must never grow one, so this sink executes nothing
-//     itself: it writes a `file-issue` COMMAND file into the daemon's
+//     itself: it writes a `file-issue` command file into the daemon's
 //     operator command channel, commands/operator/ (the same ssh idiom as src/tui/unwedge.ts)
 //     and reads back the daemon's verdict. The daemon's whitelist re-validates
 //     the payload, and `fileIssue` (src/improvements.ts) enforces the day cap,
-//     the jaccard title dedup and the bot label behind the ONE gate — in
+//     the jaccard title dedup and the bot label behind the one gate — in
 //     dry-run the gate writes an intent instead of creating anything.
 //   * `none`      — clean off. `SinkReport` is always `{ filed: [] }`.
 //
 // Dedup discipline is shared: every sink checks the entry's own `filed=` tag
-// first and stamps it back through the injected MemoryStore only AFTER the
+// first and stamps it back through the injected MemoryStore only after the
 // filing exists on the other side, so a crash between the two costs a
 // re-check, never a lost filing. The backstop differs per sink — wayfinder
 // scans ticket `Memory-key:` lines, github leans on the daemon's title dedup
@@ -69,9 +67,9 @@ export class NoneIssueSink implements IssueSink {
   }
 }
 
-/** The filesystem wayfinder tracker — a thin adapter over the unchanged
- * auto-filer, so the ticket format, the id claim, the crash-safe order and
- * the quiet-skip on an unavailable tracker are byte-for-byte today's. */
+/** The filesystem wayfinder tracker — a thin adapter over the auto-filer,
+ * so the ticket format, the id claim, the crash-safe order and the
+ * quiet-skip on an unavailable tracker are exactly autofile.ts's. */
 export class WayfinderIssueSink implements IssueSink {
   readonly kind = "wayfinder" as const;
 
@@ -120,9 +118,9 @@ ${e.text}
 type FileOneOutcome = { ok: true; id: string; stamp: string } | { ok: false; reason: string };
 
 /**
- * GitHub issues via the daemon's command channel. WHERE THIS EXECUTES is the
+ * GitHub issues via the daemon's command channel. Where this executes is the
  * point: the filer runs PC-side in the TUI, which holds no GitHub credential
- * and no gate — so the sink's only write is a command FILE, validated here
+ * and no gate — so the sink's only write is a command file, validated here
  * against the daemon's own `validateCommand` before it is ever sent, and
  * re-validated, tier-checked, capped and gated daemon-side. The TUI inherits
  * the `local`-dir belt exactly like unwedge does, instead of bypassing it.
@@ -156,7 +154,7 @@ export class GithubIssueSink implements IssueSink {
         continue;
       }
       filed.push({ id: outcome.id, key: memoryKey(e) });
-      // Best-effort stamp, AFTER the daemon's receipt — same crash-safe order
+      // Best-effort stamp, after the daemon's receipt — same crash-safe order
       // as the wayfinder filer. A refused stamp costs a re-check next tick,
       // where the daemon's title dedup refuses the duplicate.
       if (this.store) {
@@ -176,7 +174,7 @@ export class GithubIssueSink implements IssueSink {
 
   private async fileOne(e: MemoryEntry): Promise<FileOneOutcome> {
     const payload = { command: "file-issue", title: issueTitleFor(e), body: issueBodyFor(e) };
-    // The daemon's OWN schema, checked before anything leaves this process:
+    // The daemon's own schema, checked before anything leaves this process:
     // this module can never produce a command the whitelist would not accept.
     const valid = validateCommand(payload);
     if (!valid.ok) return { ok: false, reason: `refused locally: ${valid.reason}` };
@@ -185,7 +183,7 @@ export class GithubIssueSink implements IssueSink {
       stdin: `${JSON.stringify(payload, null, 2)}\n`,
     });
     if (!write.ok) return { ok: false, reason: "command write failed (ssh unreachable?)" };
-    // Read the DAEMON's verdict, not the write's: a cap or dedup refusal is a
+    // Read the daemon's verdict, not the write's: a cap or dedup refusal is a
     // real answer, and only a receipt may stamp the entry as filed.
     const deadline = this.now().getTime() + this.cfg.msg_timeout_s * 1000;
     while (this.now().getTime() < deadline) {
@@ -203,7 +201,7 @@ export class GithubIssueSink implements IssueSink {
       if (result.ok !== true)
         return { ok: false, reason: resultReason(result.reason, "refused, no reason given") };
       const issue = typeof result.issue === "number" && result.issue > 0 ? result.issue : null;
-      // Dry-run leaves no issue number, but the intent IS on record (the
+      // Dry-run leaves no issue number, but the intent is on record (the
       // gate's dryrun/ file plus the day-cap row) — so the entry is stamped
       // anyway: re-filing the same defect every refresh would burn the cap on
       // rehearsal duplicates.
@@ -232,8 +230,8 @@ export function buildIssueSink(full: Config, ssh: SshRunner, store?: MemoryStore
 }
 
 /** Where the TUI's read-only ticket projection reads from, or undefined when
- * nothing is configured (no literal effort anywhere any more — FT-0345). The
- * root falls back to the companion's tracker mount for continuity. */
+ * no effort is configured. The root falls back to the companion's tracker
+ * mount. */
 export function ticketProjection(full: Config): { root: string; effort: string } | undefined {
   const effort = sinkTicketsEffort(full);
   const root = full.sink.root || full.companion.tracker_dir;

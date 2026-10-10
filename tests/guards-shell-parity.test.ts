@@ -13,19 +13,17 @@ const s = useGuardsShellRig();
 const { run, dryrunRecords, bodyFile } = s;
 
 /**
- * / MC-02 — guard 2 on BOTH routes, pinned by the same table.
+ * Guard 2 on both routes, pinned by the same table.
  *
- * The two implementations had silently diverged: `src/guards.ts hasNewEvidence`
- * carries the undecided carve-out (a NEEDS_HUMAN/ESCALATE mark is an
- * UNDECIDED review and must never suppress a re-run or a posting), while
- * `scripts/guards.sh` — the route the sessions ACTUALLY post through — never
- * even selected the `verdict` column, so it suppressed exactly the postings the
- * carve-out exists to let through. Neither guards suite covered it.
+ * `src/guards.ts hasNewEvidence` and `scripts/guards.sh` — the route the
+ * sessions actually post through — must apply the same rule, including the
+ * undecided carve-out: a NEEDS_HUMAN/ESCALATE mark is an undecided review and
+ * never suppresses a re-run or a posting.
  *
- * Drift between the twins IS the bug class, so this asserts them TOGETHER: one
+ * Drift between the twins is the bug class, so this asserts them together: one
  * case list, each case run through the TypeScript predicate and through the
  * real `post-review.sh`, with the two answers required to agree. Asserting each
- * side separately is what let them drift in the first place.
+ * side separately would let them drift.
  */
 describe("guard 2 parity — src/guards.ts and scripts/guards.sh answer identically", () => {
   interface Case {
@@ -105,7 +103,7 @@ describe("guard 2 parity — src/guards.ts and scripts/guards.sh answer identica
         expect(dryrunRecords()).toHaveLength(1);
       }
 
-      // --- and the two agree, which is the property that was missing ---
+      // --- and the two agree ---
       expect(res.ok, "the shell twin must answer exactly what hasNewEvidence answers").toBe(ts);
     });
   }

@@ -1,4 +1,4 @@
-// TUI hot-reload (§2 /). The TUI watches its own dist/ and
+// TUI hot-reload. The TUI watches its own dist/ and
 // re-execs in place when it changes, restoring tab + selected PR + scroll from
 // a small state file.
 //
@@ -6,28 +6,24 @@
 // mtime change and the running TUI is untouched — the reload path can only be
 // entered by a build that compiled.
 //
-// EVERY build reloads, unconditionally — there is no busy/defer check and one
-// must never come back (the owner, 2026-08-21,: "any change made is
-// reload, I prefer broken in between than not knowing why nothing changed").
-// The deferral existed to protect a focused surface from a re-exec, but it
-// keyed on `App.isBusy()`, which counts a focused companion column as busy —
-// so a reload was held exactly while the companion was editing the TUI you
-// were watching, and the change silently never appeared. A reload at an
-// awkward moment is visible and recoverable; a reload that never happens is
-// neither. If a surface cannot survive a re-exec, fix that surface — do not
-// re-add a condition here.
+// Every build reloads, unconditionally — there is no busy/defer check and one
+// must never be added (root CLAUDE.md, the hot-reload decision). A busy check
+// keyed on `App.isBusy()` would hold a reload exactly while the companion
+// column is focused editing the TUI, and the change would silently never
+// appear. A reload at an awkward moment is visible and recoverable; a reload
+// that never happens is neither. If a surface cannot survive a re-exec, fix
+// that surface — do not add a condition here.
 //
-// THE CHAIN STAYS TWO PROCESSES DEEP (S3). Node cannot replace its own
-// image, so a re-exec runs the new build as a CHILD and waits for it. It used
-// to do that at every reload: each generation sat frozen inside `spawnSync`
-// under the next, and a day of edits left a chain of them — 14 live on the
-// owner's PC on 2026-10-06, ~200 MB each, every one still holding whatever its
-// teardown had not released. Now the FIRST process to reload becomes the
-// SUPERVISOR: it runs each new build as its child, in a loop, and a child that
-// wants a reload simply EXITS with `RELOAD_EXIT_CODE` after its teardown — the
-// supervisor runs the next build beside it, never under it. Depth: the
-// supervisor plus the live TUI, whatever the number of reloads. Still no
-// condition of any kind on WHEN a reload fires; only on how it is executed.
+// The chain stays two processes deep. Node cannot replace its own image, so a
+// re-exec runs the new build as a child and waits for it; done at every
+// reload, each generation would sit frozen inside `spawnSync` under the next,
+// still holding whatever its teardown had not released. So the first process
+// to reload becomes the supervisor: it runs each new build as its child, in a
+// loop, and a child that wants a reload exits with `RELOAD_EXIT_CODE` after
+// its teardown — the supervisor runs the next build beside it, never under
+// it. Depth: the supervisor plus the live TUI, whatever the number of
+// reloads. There is no condition on when a reload fires; only on how it is
+// executed.
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
@@ -133,10 +129,10 @@ function resumeStateName(pid: number): string {
   return `tui-resume-${pid}.json`;
 }
 
-/** Where THIS process writes its hot-reload snapshot. Per pid, never one
+/** Where this process writes its hot-reload snapshot. Per pid, never one
  * shared name: two TUIs on one install watch the same dist/ and reload within
- * ms of each other on one tsc emit, so a shared file let one clobber the
- * other's view and the first reader consume it. The path reaches the new
+ * ms of each other on one tsc emit, so a shared file would let one clobber
+ * the other's view and the first reader consume it. The path reaches the new
  * build through `--resume-state`, which deletes it on read. */
 export function resumeStatePath(root: string, pid: number = process.pid): string {
   return join(root, "state", resumeStateName(pid));
@@ -196,12 +192,12 @@ export function reexecArgv(argv: string[], stateFile: string): string[] {
   return [entry!, ...rest, "--resume-state", stateFile];
 }
 
-/** The exit code a SUPERVISED TUI uses to say "run the new build" (
- * S3). 75 is EX_TEMPFAIL, "try again" — distinct from every exit the TUI
+/** The exit code a supervised TUI uses to say "run the new build". 75 is
+ * EX_TEMPFAIL, "try again" — distinct from every exit the TUI
  * makes on its own (0 quit, 1 crash, 2 no terminal, 130/143 on a signal). */
 export const RELOAD_EXIT_CODE = 75;
 
-/** Set on every TUI a supervisor runs: the SUPERVISOR's pid. A TUI follows the
+/** Set on every TUI a supervisor runs: the supervisor's pid. A TUI follows the
  * exit protocol only when that pid is its own parent, so the variable leaking
  * into something the TUI starts (a shell on the real terminal, the companion)
  * can never make an unsupervised TUI exit instead of reloading. */
@@ -244,7 +240,7 @@ export function isSupervised(io: Pick<ReexecIo, "env" | "ppid">): boolean {
 /**
  * The supervisor's loop: run the build, and while it exits asking for a
  * reload, run the next one with the snapshot that child wrote. Returns the
- * last child's exit code (a signal death counts as 0, as it always did).
+ * last child's exit code (a signal death counts as 0).
  * One process deep beneath the supervisor, however many reloads.
  */
 export function superviseReloads(firstStateFile: string, io: ReexecIo): number {
@@ -258,18 +254,18 @@ export function superviseReloads(firstStateFile: string, io: ReexecIo): number {
 }
 
 /**
- * Production re-exec. A TUI under a supervisor EXITS with `RELOAD_EXIT_CODE`
- * and the supervisor runs the new build; the first TUI to reload BECOMES the
+ * Production re-exec. A TUI under a supervisor exits with `RELOAD_EXIT_CODE`
+ * and the supervisor runs the new build; the first TUI to reload becomes the
  * supervisor, running every later build as its child (see the header), then
  * exits with the last one's code. spawnSync keeps the terminal on one process
  * at a time.
  *
- * `teardown` is the LAST code this generation runs. `app.quit()` only resolves
+ * `teardown` is the last code this generation runs. `app.quit()` only resolves
  * a promise, so `App.teardown()` is a microtask — and the `spawnSync` below
  * blocks the stack before any microtask can run, which means this process
  * freezes with its listeners still registered and its event loop stopped for
  * good. Anything that must happen before that freeze has to happen
- * SYNCHRONOUSLY inside `teardown`, and that specifically includes killing
+ * synchronously inside `teardown`, and that specifically includes killing
  * in-flight ssh children: their timeouts live on the loop that is about to
  * stop (see `killInFlightSsh` in remote.ts).
  */

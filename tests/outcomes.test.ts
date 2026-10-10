@@ -1,4 +1,4 @@
-// Outcome capture (S6): every posted inline comment linked to its
+// Outcome capture: every posted inline comment linked to its
 // finding, every posted finding given a fate, the whole-review signals
 // recorded per review, and canonical lens ids. The contract's acceptance
 // criteria, one block each:
@@ -528,8 +528,8 @@ describe("the linker", () => {
   });
 
   it("a comment the registry attributes to a round never links to ANOTHER round's finding", () => {
-    // Live #5725: a round-1 comment whose reply had drifted onto a line a
-    // round-30 finding sat on was linked to round 30.
+    // A round-1 comment whose reply has drifted onto a line a later round's
+    // finding sits on stays round 1's.
     const h = harness();
     h.round(H1, [posted({ key: "F1", line: 10 })]);
     h.round(H2, [posted({ key: "G1", line: 16 })]);
@@ -760,8 +760,8 @@ describe("the fate table", () => {
   });
 
   it("an inferred refutation the human reply contradicts is unknown, its basis naming the conflict", async () => {
-    // Live: "fair catch", "Updated: the description now says …", a fix made
-    // away from the anchor — all read refuted_conceded before.
+    // Replies like "fair catch", "Updated: the description now says …", or a
+    // fix made away from the anchor contradict an inferred refutation.
     const resolved = threaded();
     humanReply(resolved.store, {
       id: 840,
@@ -822,8 +822,8 @@ describe("the fate table", () => {
   });
 
   it("a thread kept open right after a sha-citing reply is no hold: a verified fix stands, an unchecked one is unknown", async () => {
-    // Live #5725 r73 f3: 'Fixed in `432a199f79`' at 18:43:43, keep_open 37 s
-    // later — stored as upheld_after_reply.
+    // 'Fixed in `432a199f79`' followed seconds later by keep_open is not a
+    // hold: the sha decides.
     const verified = threaded(fakeGit({}, { "432a199f79": true }));
     verified.push(H2);
     humanReply(verified.store, {
@@ -1054,7 +1054,7 @@ describe("the fate table", () => {
   });
 
   it("an equal key alone is no match: per-round key numbering is a coincidence, not identity", async () => {
-    // Live #5725: r1 f1 at line 233 'carried' onto r4 f1 at line 968.
+    // r1 f1 at line 233 and r4 f1 at line 968 share a key, not a finding.
     const far = harness({ git: fakeGit({}) });
     far.round(H1, [posted({ key: "f1", line: 233 })]);
     far.tick(5);
@@ -1196,7 +1196,7 @@ describe("whole-review signals are recorded per review, never smeared over findi
 describe("the bounded pass", () => {
   it("yields a real event-loop turn per PR it considers (boot stall)", async () => {
     // With no git (or every git answer memoised) a capture never awaits real
-    // I/O, so 25 of them back to back were one ~130 ms block of the loop.
+    // I/O, so without a yield per PR a pass would block the loop throughout.
     const h = harness();
     for (let i = 1; i <= 15; i++)
       h.store.upsertPr({

@@ -124,9 +124,8 @@ export const PR_DIR = /^pr-(\d+)$/;
 const PR_PREFIX = /^pr-(\d+)-/;
 const ROUND_PROMPT = /^pr-(\d+)-round-\d+\.md$/;
 /** Every per-round entry at the top of `state/` — the daemon's (`-passes/`,
- * `-review.md`, `-comments.json`) and any a session wrote beside them (the
- * rehearsal found a `pr-<n>-round-<k>-body.md` the narrower list left live
- * forever under an `archived` row). */
+ * `-review.md`, `-comments.json`) and any a session wrote beside them (e.g. a
+ * `pr-<n>-round-<k>-body.md`), so none is left live under an `archived` row. */
 const STATE_ROUND = /^pr-(\d+)-round-\d+-.+$/;
 /** Any top-level `state/` entry named for a PR. Those no class claims are
  * reported by the plan (`unclassified`) and kept live — never moved on a

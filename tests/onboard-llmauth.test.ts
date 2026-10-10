@@ -350,7 +350,7 @@ describe("tolerant config reads", () => {
   it("resolves the secrets dir: config first, then $QC_SECRETS_DIR, then the install locator", async () => {
     expect(resolveSecretsDir('[github]\nsecrets_dir = "~/keys"\n', "/h")).toBe("/h/keys");
     expect(resolveSecretsDir("[github]\n", "/h", "/env/keys")).toBe("/env/keys");
-    // nothing set → the install locator (the test's temp XDG config
+    // Nothing set → the install locator (the test's temp XDG config
     // home; /h holds no legacy dir), and the legacy spelling means the same.
     const { secretsHome } = await import("../src/install.js");
     const home = secretsHome({ ...process.env, HOME: "/h" });
@@ -433,7 +433,7 @@ describe("OAuth route", () => {
     expect(embeddings?.detail).toMatch(/embeds LOCALLY by default/);
     expect(embeddings?.detail).toMatch(/never read for embeddings/);
     expect(embeddings?.detail).toMatch(/embeddings step, order 38/);
-    // The retired advice is gone: no route recommends an embeddings key.
+    // No route recommends an embeddings key.
     expect(embeddings?.detail).not.toMatch(/recommend|worth providing/i);
   });
 

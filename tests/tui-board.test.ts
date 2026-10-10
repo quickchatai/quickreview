@@ -180,7 +180,7 @@ describe("detailLines", () => {
 
   it("renders header facts, ledger, rounds and threads", () => {
     const lines = detailLines(why, snapshot.prs[0], 60).map(stripAnsi);
-    // The esc-worthy fact went with the escalation heuristic (2026-08-18).
+    // No escalation-worthiness fact: the header carries state and round only.
     expect(lines[1]).toBe("reviewing · round 2");
     expect(lines[2]).toContain("spend $1.30 · head a2e380f · trig");
     expect(lines).toContain("F1 [P1/0.9][delivery] tasks.py:88 open");
@@ -398,8 +398,8 @@ describe("detailLines", () => {
     expect(lines).toContain("  ? pass-validate · unknown");
   });
 
-  // a cancelled round used to render as a bare "—", identical to
-  // every other verdictless round. It now says which kind of cancellation.
+  // A cancelled round is told apart from every other verdictless round: it
+  // says which kind of cancellation it was.
   describe("cancelled rounds name their cause", () => {
     const withRounds = (rounds: WhyPayload["rounds"]): string[] =>
       detailLines({ ...why, rounds }, snapshot.prs[0], 60).map(stripAnsi);
@@ -544,10 +544,10 @@ describe("adaptive layout", () => {
 
   it("the body reaches the command bar now the companion strip is retired", () => {
     // Frame geometry: top bar (0), body 1..rows-4, command bar rows-3..rows-2,
-    // bottom border rows-1. The 7 strip rows the board used to give up are the
-    // sidebar's problem now — it is a column, not a band. (140 wide: the bar
-    // is two rows only while the nav and the globals share one — at 120 the
-    // eight nav slots,, wrap the globals onto a row of their own.)
+    // bottom border rows-1. The companion is a column, not a band, so it takes
+    // no rows from the body. (140 wide: the bar is two rows only while the nav
+    // and the globals share one — at 120 the eight nav slots wrap the globals
+    // onto a row of their own.)
     for (const rows of [24, 40]) {
       const frame = renderBoard(
         view({ pi: { pr: 5012, lines: ["pi output"], missing: false, stale: false, offset: 0 } }),
@@ -612,7 +612,7 @@ describe("renderBoard", () => {
     expect(text).toContain("1 board");
     expect(text).toContain("2 memory");
     expect(frame.lines.length).toBe(24);
-    // The demoted EVENTS strip is gone until `e` asks for it.
+    // The EVENTS strip is not painted; `e` opens it as an overlay.
     expect(text).not.toContain("EVENTS");
     expect(text).not.toContain("verdict_applied #5049");
   });
@@ -663,8 +663,8 @@ describe("renderBoard", () => {
     expect(raw).toContain("\x1b[31mlast line");
     const text = frame.lines.map(stripAnsi).join("\n");
     expect(text).toContain("last line");
-    // At 100 columns the bar wraps to three rows (the seven nav slots, the
-    // globals, the board's verbs), so the pane shows 7 lines.
+    // At 100 columns the bar wraps to three rows (the nav slots, the globals,
+    // the board's verbs), so the pane shows 7 lines.
     expect(text).toContain("line_33"); // tail, not head
     expect(text).not.toContain("line_32");
     expect(text).not.toContain("line_0 ");
@@ -772,9 +772,9 @@ describe("renderBoard", () => {
   });
 
   it("scrolls the PR list so the selected row stays painted and clickable", () => {
-    // `j` walks the whole sorted list; a list painted from index 0 lost the
-    // highlight (and its click target) once the selection passed the visible
-    // rows — while m/u/g still acted on that invisible PR.
+    // `j` walks the whole sorted list; a list painted from index 0 would lose
+    // the highlight (and its click target) once the selection passed the
+    // visible rows — while m/u/g still acted on that invisible PR.
     const prs = Array.from({ length: 40 }, (_, i) => ({
       number: 6000 + i,
       state: "reviewing" as const,
@@ -877,9 +877,9 @@ describe("key decoding", () => {
     expect(decodeKey(Buffer.from("\r"))).toEqual({ kind: "enter" });
     expect(decodeKey(Buffer.from("q"))).toEqual({ kind: "quit" });
     expect(decodeKey(Buffer.from("\x03"))).toEqual({ kind: "quit" });
-    // `o`/`M` used to be the overseer/main full-screen attach verbs. Retired
-    // 2026-09-02: both are plain text now, which the board hands to the
-    // companion column like any other unclaimed printable.
+    // `o`/`M` are not verbs: the TUI never attaches full-screen, so both are
+    // plain text the board hands to the companion column like any other
+    // unclaimed printable.
     expect(decodeKey(Buffer.from("M"))).toEqual({ kind: "char", ch: "M" });
     expect(decodeKey(Buffer.from("o"))).toEqual({ kind: "char", ch: "o" });
     expect(decodeKey(Buffer.from("?"))).toEqual({ kind: "help" });
@@ -924,10 +924,10 @@ describe("remote argv builders", () => {
 });
 
 describe("the mirrored pi session gets the board's real geometry", () => {
-  // A tmux session the daemon created detached sits at 80×24 forever, so pi
-  // wrapped its output at 80 columns however wide the board painted the
-  // mirror: the text crowded into the left of the pane and a selection drawn
-  // over the empty remainder picked up nothing (reported 2026-08-21).
+  // A tmux session the daemon created detached sits at 80×24 forever, so
+  // unless resized pi wraps its output at 80 columns however wide the board
+  // paints the mirror: the text crowds into the left of the pane and a
+  // selection drawn over the empty remainder picks up nothing.
   it("is the painted rectangle: two chrome rows off, borders and the leading space off the width", () => {
     expect(piPaneSize(100, 24, 2)).toEqual({ cols: 96, rows: piRows(24, 2) - 2 });
     expect(piPaneSize(200, 60, 2)).toEqual({ cols: 196, rows: piRows(60, 2) - 2 });

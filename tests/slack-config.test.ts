@@ -29,7 +29,7 @@ describe("shipped config.toml [slack]", () => {
   it("ships disabled — turning Slack on is a deliberate deploy-time act", () => {
     expect(cfg.slack.enabled).toBe(false);
     expect(cfg.slack.channel).toBe("");
-    // the owner id lives on [owner]; the legacy [slack] key is
+    // The owner id lives on [owner]; the legacy [slack] key is
     // consumed at parse time and never carried on the parsed shape.
     expect("legacy_owner_slack_id" in cfg.slack).toBe(false);
     expect(cfg.owner.slack_id).toBe("");
@@ -148,7 +148,7 @@ describe("boot validation", () => {
     ).toThrow(/must appear as a key in \[slack.users\]/);
   });
 
-  // ----: the legacy [slack] legacy_owner_slack_id alias ----------------
+  // ---- the legacy [slack] legacy_owner_slack_id alias -------------------------
   it("folds a set legacy legacy_owner_slack_id into [owner] slack_id", () => {
     const cfg = withSlack(enabled());
     expect(cfg.owner.slack_id).toBe("U0MAT");

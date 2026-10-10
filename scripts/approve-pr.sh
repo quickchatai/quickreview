@@ -6,8 +6,8 @@
 #   3. DELETE /repos/{repo}/pulls/{n}/requested_reviewers
 #             {"reviewers":[],"team_reviewers":["review"]}
 #
-# The dry-run gate is honored: when `dry_run` is true in config.toml (the
-# default until the manual cutover flip) nothing is sent — each intended
+# The dry-run gate is honored: when `dry_run` is true in config.toml (anything
+# but an explicit `false` counts as true) nothing is sent — each intended
 # mutation is written to state/dryrun/ as a JSON record with the same shape as
 # src/gate.ts writes (recorded_at/kind/method/path/body/note/pr). Live mode
 # authenticates with scripts/mint-token.sh (app installation token only).
@@ -22,8 +22,8 @@ set -euo pipefail
 
 API="${GITHUB_API:-https://api.github.com}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# the install locator decides — $QCR_CONFIG, the install's config
-# home, then (legacy) the checkout. Never a path built here.
+# The install locator decides — $QCR_CONFIG, else the install's config home.
+# Never a path built here.
 . "$ROOT/scripts/install-locator.sh"
 CONFIG="$(qcr_locate_config "$ROOT")" || exit 1
 DRYRUN_DIR="${QCR_DRYRUN_DIR:-$ROOT/state/dryrun}"
@@ -76,7 +76,7 @@ TEAM_SLUG="${REVIEW_TEAM##*/}"
 # Anything other than an explicit `false` is treated as dry-run (fail closed).
 [[ "$DRY_RUN" == "false" ]] && LIVE=1 || LIVE=0
 
-# replay guard precedes posting guards: a confirmed approval retry must
+# The replay guard precedes the posting guards: a confirmed approval retry must
 # resume idempotent trigger cleanup even if CI/head/state changed afterwards.
 POSTING_RECEIPT=""
 POSTING_MARKER=""
@@ -196,21 +196,20 @@ do_mutation() { # do_mutation <kind> <method> <path> <body> <note>
 
 urlenc() { python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.quote(sys.argv[1], safe=""))' "$1"; }
 
-# ---- the posting-time guards --------------------------------------
+# ---- the posting-time guards ------------------------------------------------
 #
-# Four of the predecessor system's reviews landed at or after the merge (one
-# approved 13s after it). The daemon enforces this on the MutationGate; this
-# shell path is the other posting route, so it mirrors the check the same way
-# it mirrors the dry-run gate — scripts/guards.sh is that mirror. One read,
-# right before the mutation; a read is never gated. Live mode fails CLOSED — an
-# unverifiable PR state is exactly the case those post-merge reviews came from.
+# The daemon enforces these on the MutationGate; this shell path is the other
+# posting route, so it mirrors them the same way it mirrors the dry-run gate —
+# scripts/guards.sh is that mirror. One read, right before the mutation; a read
+# is never gated. Live mode fails closed: a PR whose state cannot be read may
+# already be merged or closed, so it gets no approval.
 #
 # Guards 3, 4 and 5 apply here. Guard 1 softens REQUEST_CHANGES and has nothing to
-# say about an approval; guard 2 deliberately does NOT gate an approval — this
+# say about an approval; guard 2 deliberately does not gate an approval — this
 # script also clears both wake triggers, so refusing it would leave a PR
-# triggered with nothing left able to clear it. Guard 4 is the
-# opposite case: it is only ever about approvals, so it belongs precisely here —
-# no green CI at this head and the approval is refused, whatever the findings.
+# triggered with nothing left able to clear it. Guard 4 is only ever about
+# approvals, so it belongs here: no green CI at this head and the approval is
+# refused, whatever the findings.
 # shellcheck source=scripts/guards.sh
 . "$ROOT/scripts/guards.sh"
 
@@ -278,7 +277,7 @@ if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
   fi
 fi
 # The reviewed-head mark, only for an approval that really reached GitHub (the
-# same rule the gate's after-step follows). reads this mark.
+# same rule the gate's after-step follows). The post-approval recheck reads it.
 if [[ "$LIVE" == "1" ]]; then guard_stamp_reviewed_head "$GUARD_HEAD_SHA" "APPROVE"; fi
 
 # ---- 2. clear the label trigger ---------------------------------------------

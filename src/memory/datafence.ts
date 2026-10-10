@@ -1,4 +1,4 @@
-// Untrusted text quoted INTO a memory entry as data (S7).
+// Untrusted text quoted INTO a memory entry as data.
 //
 // Two writers put words other people wrote into reviewer memory: the
 // [feedback] sink (a human's `[feedback]` comment, in full, into `events/`)

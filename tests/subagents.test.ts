@@ -1,4 +1,4 @@
-// the first-party glue over pi's native subagent extension.
+// The first-party glue over pi's native subagent extension.
 //
 // The native extension itself is pi's code, loaded at runtime from the
 // installed pinned package (nothing vendored, nothing to drift); what THESE
@@ -9,10 +9,10 @@
 //    pins agentScope (repo-controlled `.pi/agents` must be unreachable unless
 //    deliberately enabled) and disables the project-agents confirm modal
 //    (the reviewer never blocks on interactive pi input);
-//  - the weighted semaphore restores the PROCESS-WIDE fan-out cap the old
-//    extension had — the native one caps only within a single tasks-array
-//    call, and the round templates fan out as many single-mode calls in one
-//    turn (4 default / 6 on the VM via QCR_SUBAGENT_MAX_CONCURRENCY).
+//  - the weighted semaphore enforces a PROCESS-WIDE fan-out cap — the native
+//    extension caps only within a single tasks-array call, and the round
+//    templates fan out as many single-mode calls in one turn (4 by default,
+//    set per install via QCR_SUBAGENT_MAX_CONCURRENCY).
 import { describe, expect, it } from "vitest";
 import {
   CONCURRENCY_ENV,

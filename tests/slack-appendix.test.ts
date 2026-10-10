@@ -1,4 +1,4 @@
-// The Slack concierge appendix (slice S5a): the overseer system prompt
+// The Slack concierge appendix: the overseer system prompt
 // is the seeded template plus — only when Slack is enabled — the appendix body,
 // concatenated at spawn time. The seed file itself is never modified.
 // All I/O is faked: no tmux, no pi, no Slack.

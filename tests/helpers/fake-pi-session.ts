@@ -1,5 +1,5 @@
-// A fake pi 1.0.0 session for the inject bridge (H1b): just enough of
-// `AgentSession` to reproduce the 2026-10-08 failure and its fix.
+// A fake pi 1.0.0 session for the inject bridge: just enough of `AgentSession`
+// to reproduce a prompt lost to a running compaction, and the bridge's fix.
 //
 // Modelled on the pinned dist (`core/agent-session.js`), the parts that matter:
 //   - `prompt()` REFUSES while a compaction runs ("Cannot submit a prompt while

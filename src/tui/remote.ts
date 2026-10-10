@@ -1,12 +1,12 @@
 // Remote access layer for qcr tui — every VM touch goes through here, and
 // every command it can produce is read-only against the box except the
 // user-initiated writes (inject files in msg.ts, and `sendKeysArgv` typing
-// into the board's focused pi pane). There is NO interactive attach any more
-// (2026-09-02): the TUI never takes a pty to a VM tmux session — the board's
-// PR pane and the companion column are the only terminals, both embedded. Rubric proposals do NOT ride this runner any more: they are LOCAL
-// state/rubric/ dirs (companion-authored) handled by fs in proposals.ts.
-// Memory edits do NOT ride it either: the TUI talks HTTP to
-// OpenViking over the memory forward's loopback listener — see
+// into the board's focused pi pane). There is no interactive attach: the TUI
+// never takes a pty to a VM tmux session — the board's PR pane and the
+// companion column are the only terminals, both embedded. Rubric proposals do
+// not ride this runner: they are local state/rubric/ dirs (companion-authored)
+// handled by fs in proposals.ts. Memory edits do not ride it either: the TUI
+// talks HTTP to OpenViking over the memory forward's loopback listener — see
 // src/tui/memory.ts.
 // None of them touch GitHub mutations, so none go near the gate (the
 // proposals pane's gh reads are reads — direct per the gate rules).
@@ -25,19 +25,19 @@ export interface RemoteResult {
 
 /** Runs `ssh <host> <argv…>`. Injectable — tests never spawn.
  *
- * this is the TUI's ONE remote-runner interface, and it now has two
- * implementations — `realSshRunner` (the VM topology) and
- * `realLocalCommandRunner` (the laptop topology: the same argv runs on THIS
- * machine, `host` ignored, no ssh anywhere). `runnerFor(cfg)` picks; callers
- * keep calling `ssh(cfg.ssh_host, someArgv(cfg))` untouched. */
+ * This is the TUI's one remote-runner interface, with two implementations —
+ * `realSshRunner` (the VM topology) and `realLocalCommandRunner` (the laptop
+ * topology: the same argv runs on this machine, `host` ignored, no ssh
+ * anywhere). `runnerFor(cfg)` picks; callers keep calling
+ * `ssh(cfg.ssh_host, someArgv(cfg))` untouched. */
 export type SshRunner = (
   host: string,
   argv: string[],
   opts?: { stdin?: string; timeoutMs?: number },
 ) => Promise<RemoteResult>;
 
-/**: transport of every TUI remote op. Driven by the explicit
- * `[tui] target` knob ONLY — never inferred from ssh_host's value. */
+/** Transport of every TUI remote op. Driven by the explicit `[tui] target`
+ * knob only — never inferred from ssh_host's value. */
 export type Transport = "ssh" | "local";
 
 export function transportOf(cfg: TuiConfig): Transport {
@@ -154,7 +154,7 @@ export interface CaptureRange {
  * `-e` keeps the pane's colors, `-p` writes to stdout, `-J` joins wrapped
  * lines. Reads only — writing into the pane is `sendKeysArgv`.
  *
- * `size` prepends a `resize-window`, in the SAME tmux invocation, so the
+ * `size` prepends a `resize-window`, in the same tmux invocation, so the
  * capture can never race an asynchronous resize. A session the daemon created
  * detached sits at tmux's 80×24 default forever (verified on the VM: a fresh
  * detached session reports `80x24 window-size=latest`), so pi wraps its output
@@ -217,15 +217,14 @@ export function sendKeysArgv(cfg: TuiConfig, session: string, parts: string[]): 
 }
 
 /**
- * POSIX-quote one argv element for the remote shell. ssh does NOT pass argv
- * through — it space-joins everything after the host into ONE string the
+ * POSIX-quote one argv element for the remote shell. ssh does not pass argv
+ * through — it space-joins everything after the host into one string the
  * remote shell re-parses. Unquoted, a multi-word `sh -c <script>` argument
  * is shredded into separate words: `sh -c "cat '/x' || true"` reaches the
  * VM as `sh -c cat '/x' || true`, so sh runs bare `cat` against an empty
- * stdin and the `|| true` masks it — every dockerSh() read silently
- * returned nothing (an empty memory tab, and the digest tab's reads
- * before it). Quoting each element makes the remote shell rebuild
- * the exact argv.
+ * stdin and the `|| true` masks it — every dockerSh() read would silently
+ * return nothing. Quoting each element makes the remote shell rebuild the
+ * exact argv.
  */
 export function shellQuote(arg: string): string {
   if (/^[\w./:=@-]+$/.test(arg)) return arg; // common safe tokens stay readable
@@ -235,13 +234,13 @@ export function shellQuote(arg: string): string {
 /**
  * Every ssh child this runner has started and not yet settled.
  *
- * The per-call SIGKILL below lives on OUR event loop, so it only fires while
+ * The per-call SIGKILL below lives on our event loop, so it only fires while
  * that loop is turning. The hot reload stops it dead: `realReexec` calls
  * `spawnSync`, which blocks the stack forever, and the timers of any ssh
  * in flight at that moment never run again. Those children then outlive the
- * generation that spawned them — measured live at 4h58m against a wedged
- * ControlMaster (an ssh-config block with no `ServerAliveInterval`, so a
- * network blip hangs the master and every slave riding it).
+ * generation that spawned them — for hours against a wedged ControlMaster
+ * (with no `ServerAliveInterval`, a network blip hangs the master and every
+ * slave riding it).
  *
  * Hence this set and `killInFlightSsh`: whoever is about to freeze the loop
  * kills the children first, while it still can.
@@ -273,7 +272,7 @@ export const realSshRunner: SshRunner = (host, argv, opts) =>
   runChild("ssh", ["-o", "BatchMode=yes", host, argv.map(shellQuote).join(" ")], opts);
 
 /**
- * the laptop topology's runner — the SAME argv every builder above
+ * The laptop topology's runner — the same argv every builder above
  * produces, executed directly on this machine (`spawn(argv[0], argv.slice(1))`,
  * no shell, no quoting, no ssh). `host` is accepted and ignored so every
  * caller's `ssh(cfg.ssh_host, …)` call site stays untouched; `sudo_docker`
@@ -288,7 +287,7 @@ export const realLocalCommandRunner: SshRunner = (_host, argv, opts) => {
   return runChild(bin, rest, opts);
 };
 
-/** The transport decision, made ONCE: everything wired off this runner runs
+/** The transport decision, made once: everything wired off this runner runs
  * over ssh or locally per `[tui] target`, with no per-call branching. */
 export function runnerFor(cfg: TuiConfig): SshRunner {
   return transportOf(cfg) === "local" ? realLocalCommandRunner : realSshRunner;
@@ -309,7 +308,7 @@ function runChild(
     // `buf.toString()` per chunk mangles any multi-byte character split across
     // two of them into replacement bytes. Harmless on a one-line `cat
     // status.json`; corrupting on a megabyte of pi transcript full of box
-    // drawing and emoji (evidence copier reads exactly that). The
+    // drawing and emoji (the evidence copier reads exactly that). The
     // decoder carries the partial sequence across chunks.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");

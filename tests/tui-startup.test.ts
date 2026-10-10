@@ -1,9 +1,9 @@
-// the startup contract, enforced.
+// The TUI startup contract, enforced.
 //
 // The PRIMARY assertion is structural and cannot go flaky: driving the REAL
 // `runTui` against fake terminal streams, no network call, no docker call and
 // no filesystem walk happens before the first frame is painted. A wall-clock
-// budget rides alongside as a WARNING only, exactly as ruling 6 requires — a
+// budget rides alongside as a WARNING only — a
 // timing assertion would eventually be skipped, and then the structural
 // property would go unguarded too.
 //
@@ -47,9 +47,9 @@ function startupLog(): ExternalLog {
  * into the same list — and a call from a TUI the previous test finished with,
  * landing after this test reset the log, reads as "something external happened
  * before the first frame". That is a shared-mutable-state flake, and this
- * file carries the assertion the whole ticket exists for, so it is closed at
- * the root (`runTui` no longer leaves work running past quit — see
- * `assertQuiesced`) AND here, where a stray write can only reach a discarded
+ * file carries the startup contract's central assertion, so it is closed at
+ * the root (`runTui` leaves no work running past quit — checked by the
+ * harness's `stop()`) AND here, where a stray write can only reach a discarded
  * object.
  */
 function freshLog(): ExternalLog {
@@ -156,11 +156,10 @@ function fakeTerminal(): {
   painted: Promise<void>;
 } {
   const written: string[] = [];
-  // An EVENT, not a poll budget. Waiting a fixed number of 10ms ticks made the
-  // centerpiece assertion depend on how loaded the machine is: on a busy box
-  // `runTui`'s ~25 dynamic imports take longer to transform than the budget,
-  // and the test failed with "never painted" while the code was fine. The
-  // only bound now is vitest's own test timeout.
+  // An EVENT, not a poll budget: a fixed number of ticks would make the
+  // centerpiece assertion depend on machine load (`runTui`'s ~25 dynamic
+  // imports transform slowly on a busy box). The only bound is vitest's own
+  // test timeout.
   let resolvePainted: () => void;
   const painted = new Promise<void>((r) => (resolvePainted = r));
   const out = new EventEmitter() as unknown as NodeJS.WriteStream & {
@@ -217,7 +216,7 @@ async function startTui(
   // A REAL ticket projection, so `readEffortTickets` actually walks a
   // directory: without it `ticketProjection` returns undefined, no readdir ever
   // runs, and the "no filesystem walk before the first frame" assertion is
-  // vacuous for the one walk this diff deliberately moved (review).
+  // vacuous for the ticket scan, a walk that must run behind the first frame.
   const trackerRoot = join(tmp, "tracker");
   mkdirSync(join(trackerRoot, "efforts", "probe", "tickets"), { recursive: true });
   writeFileSync(
@@ -292,11 +291,9 @@ async function startTui(
       // quiescence below without it would be asserting over a live TUI.
       expect(quit, "runTui did not finish quitting within 30s").toBe(true);
       // When `runTui` resolves, its bring-up, its `s` chain and its poll are
-      // DONE — quit waits for them. Enforced here rather than assumed: before
-      //'s quit fix this window carried ssh and docker calls for ~1.5s
-      // after the harness believed the TUI was gone, and they landed in the
-      // NEXT test's log as phantom pre-paint external work. A regression there
-      // fails right here instead of flaking one run in three.
+      // DONE — quit waits for them. Enforced here rather than assumed: a call
+      // escaping quit would land in the NEXT test's log as phantom pre-paint
+      // external work, so a regression fails right here instead of flaking.
       const settledAt = log.entries.length;
       await new Promise((r) => setTimeout(r, QUIESCE_WATCH_MS));
       const late = log.entries.slice(settledAt);
@@ -308,11 +305,9 @@ async function startTui(
   };
 }
 
-/** The first launch on a machine opens the key map over the board; any key
- * closes it, and the board is what is underneath. */
 /** Poll `step` every 20ms until it returns true or WAIT_MS pass. A deadline,
- * not a count of ticks: 100 ticks of 20ms is a two-second budget in disguise,
- * and on a loaded machine it ran out while the TUI was merely slow. WAIT_MS
+ * not a count of ticks: a tick count is a fixed budget in disguise, which a
+ * loaded machine exhausts while the TUI is merely slow. WAIT_MS
  * sits inside the file's test timeout, so a real miss still reaches the
  * assertion after the loop and fails with its message. */
 const WAIT_MS = 45_000;
@@ -321,6 +316,8 @@ async function pollUntil(step: () => boolean | Promise<boolean>): Promise<void> 
   while (!(await step()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
 }
 
+/** The first launch on a machine opens the key map over the board; any key
+ * closes it, and the board is what is underneath. */
 async function board(h: Harness): Promise<string> {
   h.written.length = 0;
   await h.press("\x1b");
@@ -372,16 +369,15 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
     expect(frame).not.toContain(" LIVE ");
     // The companion column is there at its config width from the very first
     // frame — the container has not been asked about, and the bring-up reports
-    // into it (rulings 2 and 3).
+    // into it.
     expect(frame).toMatch(/VM ssh|memory forward|companion container/);
     await h.stop();
   });
 
   it("holds with the hot reload ON — the recursive dist watch comes after the frame too", async () => {
     // The default harness runs `--no-reload`, which makes `reloader` undefined
-    // and never exercises `fs.watch` — the ONE filesystem walk this diff
-    // reordered (review). This is the configuration `npm run dev`
-    // actually uses.
+    // and never exercises `fs.watch` — a filesystem walk that must run behind
+    // the first frame. This is the configuration `npm run dev` actually uses.
     const h = await startTui(tmp, []);
     expect(h.log.paintedAt, "the TUI never painted a first frame").not.toBeUndefined();
     const before = h.log.entries.slice(0, h.log.paintedAt);
@@ -393,10 +389,10 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
   });
 
   it("with the companion OFF the column is STILL there, carries the bring-up, and says why it is off", async () => {
-    // 2026-09-02: `--no-companion` (and `[companion] enabled = false`) no
-    // longer removes the column. The layout is fixed — tab left, companion
-    // right — so ruling 3's surface always exists and the bring-up always
-    // reports there; the board's unknown block no longer doubles as one.
+    // `--no-companion` (and `[companion] enabled = false`) never removes the
+    // column. The layout is fixed — tab left, companion right — so the
+    // bring-up's progress surface always exists and always reports there; the
+    // board's unknown block does not double as one.
     const h = await startTui(tmp, ["--no-reload", "--no-companion"], false);
     await board(h);
     // Wait for a step to actually TRANSITION: the initial checklist is painted
@@ -457,8 +453,8 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
       probesBefore,
     );
     expect(h.frame()).toContain("ssh-add");
-    // The remedy is never RUN for the operator: ruling 4 declined self-healing
-    // explicitly. `ssh-add -l` is a read-only probe; `ssh-add <key>` and
+    // The remedy is never RUN for the operator: the TUI does no self-healing.
+    // `ssh-add -l` is a read-only probe; `ssh-add <key>` and
     // `ssh -O exit` are the operator's to type.
     const ran = h.log.entries.filter(
       (e) => /ssh-add\s+(?!-l\b)/.test(e) || /ssh\s+-O\s+exit/.test(e),
@@ -468,7 +464,7 @@ describe("the first frame (ruling 6 — structural, not timed)", () => {
   });
 });
 
-// ---- ruling 4: three classes, three causes, three remedies -------------------
+// ---- ssh triage: three classes, three causes, three remedies ----------------
 
 describe("connection triage", () => {
   const base = {
@@ -599,8 +595,8 @@ describe("connection triage", () => {
     const { classifyConnection, triageConnection } = await import("../src/tui/sshtriage.js");
     // Asserted through the CALLER, over the ssh option semantics that actually
     // decide the behaviour — not by reading back the builder's own literals,
-    // which is what let `StrictHostKeyChecking=no` (accept an unverified key,
-    // and historically append it) sit here looking pinned and correct.
+    // which would let `StrictHostKeyChecking=no` (accept an unverified key)
+    // sit here looking pinned and correct.
     const seen: string[][] = [];
     await triageConnection(TUI_DEFAULTS, {
       home: "/home/x",
@@ -660,7 +656,7 @@ describe("connection triage", () => {
     expect(path).toBe("/home/x/.ssh/cm-%C");
     // The socket itself cannot be stat'd, but its DIRECTORY answers the only
     // question that matters — is multiplexing configured here at all. Bailing
-    // to "" used to demote a wedged master to `unknown` and lose the remedy.
+    // to "" would demote a wedged master to `unknown` and lose the remedy.
     expect(controlSocketPresent(path, (p) => p === "/home/x/.ssh")).toBe(true);
     const d = classifyConnection({
       ...base,
@@ -698,8 +694,8 @@ describe("connection triage", () => {
 
   // The `.mjs` forward cannot import this module (it is dependency-free ESM
   // that systemd runs from a bare checkout), so the two classifiers are pinned
-  // to AGREE instead. Drift between them is what produced the remote-failure /
-  // local-remedy bug the review found.
+  // to AGREE instead. Drift between them hands a remote failure a local
+  // remedy.
   it("agrees with the memory forward's classifier on the same stderr", async () => {
     const { classifyConnection } = await import("../src/tui/sshtriage.js");
     const forward = (await import("../scripts/companion-memory-forward.mjs")) as unknown as {
@@ -755,7 +751,7 @@ describe("connection triage", () => {
     };
     const cfg = { sshHost: "example-vm", container: "qc", sudo: true, local: false };
     // The relay is `ssh <host> sudo docker exec …`, so a docker refusal is the
-    // VM's. `systemctl status docker` pointed the operator at their laptop.
+    // VM's; `systemctl status docker` would point the operator at their laptop.
     const d = forward.relayFailureCause(
       cfg,
       "permission denied while trying to connect to the Docker daemon socket",
@@ -850,7 +846,7 @@ describe("connection triage", () => {
   });
 });
 
-// ---- ruling 3: progress in the column, and a stalled step that says so -------
+// ---- progress in the column, and a stalled step that says so ----------------
 
 describe("startup progress", () => {
   it("the tickets panes read UNKNOWN until the tracker is scanned", async () => {
@@ -981,7 +977,7 @@ describe("startup progress", () => {
     ).hooks.tabs.feedback;
     const screen = (a: unknown, c: number, r: number): unknown => feedback.screen(a, c, r);
     // First visit with no snapshot yet — the instant first frame makes this the
-    // NORMAL case now, and it used to park the pane for the whole session.
+    // NORMAL case, and it must not park the pane for the whole session.
     screen(app, 160, 40);
     await new Promise((r) => setTimeout(r, 10));
     expect(calls).toBe(1);
@@ -1170,8 +1166,8 @@ describe("the companion column during startup", () => {
     expect(paintSidebar(sb.view(), 60, 14).join("\n")).toContain("pi> hello");
 
     // The day-rollover kills and respawns pi ON PURPOSE, so an empty capture is
-    // a NORMAL mid-session event. Before the latch it flipped the column back
-    // to a checklist from boot, hint row reading "starting up", hours later.
+    // a NORMAL mid-session event. The latch keeps it from flipping the column
+    // back to the boot checklist ("starting up") hours later.
     capture = "";
     await sb.refresh();
     const blank = paintSidebar(sb.view(), 60, 14).join("\n");
@@ -1194,9 +1190,8 @@ describe("the companion column during startup", () => {
       "the column must not ask docker anything to know its width",
     ).not.toHaveBeenCalled();
     expect(sidebarWidth(160)).toBeGreaterThan(20);
-    // 2026-09-02: there is no config-driven "no column" any more. The class
-    // has no `shown()` and takes no `enabled` — `--no-companion` changes what
-    // the column SAYS (`setOff`), never whether it is there.
+    // There is no config-driven "no column". The class has no `shown()` and
+    // takes no `enabled` — `--no-companion` changes what the column SAYS (`setOff`), never whether it is there.
     expect("shown" in sb).toBe(false);
     sb.setOff("--no-companion");
     expect(sb.view().off).toBe("--no-companion");
@@ -1204,10 +1199,10 @@ describe("the companion column during startup", () => {
   });
 });
 
-// ---- ruling 1 beyond the board ----------------------------------------------
+// ---- honest unknowns beyond the board ---------------------------------------
 //
-// "Any surface that can lose its source follows the same rule." Each of these
-// was a confident value standing in for an answer nobody had.
+// Any surface that can lose its source follows the same rule: no confident
+// value stands in for an answer nobody had.
 
 describe("honest unknowns on the other surfaces", () => {
   it("a failed `git status` is UNKNOWN on the deploy tab, never a green clean tree", async () => {
@@ -1254,10 +1249,8 @@ describe("honest unknowns on the other surfaces", () => {
     expect(view.deploy?.dirty_files).toBeNull();
   });
 
-  // The "AWAITING YOU is (?) until a snapshot arrives" honesty fix went
-  // away with the panel itself: the count could only ever be zero,
-  // and an honest rendering of a number nobody needs is still a panel nobody
-  // needs. `tests/tui-msg-digest.test.ts` pins the full-width replacement.
+  // There is no AWAITING YOU panel to test here: its count could only ever be
+  // zero. `tests/tui-msg-digest.test.ts` pins the full-width replacement.
 
   it("metrics say a field an older daemon omits is UNKNOWN, not zero", async () => {
     const { cancellationLines, statStrip } = await import("../src/tui/metricstab.js");
@@ -1327,8 +1320,8 @@ describe("actions are never taken on unfetched values", () => {
     ).toBeUndefined();
 
     // …and the key does not arm it either. Two presses is the full ceremony:
-    // if it armed, the second would fire. (`S` is not even a
-    // registered key while the state is unread — the tab hands it back.)
+    // if it armed, the second would fire. (`S` is not even a registered key
+    // while the state is unread — the tab hands it back.)
     const key = { kind: "char", ch: "S" } as never;
     const deployKey = (a: unknown, k: unknown): boolean =>
       (
@@ -1365,8 +1358,8 @@ describe("actions are never taken on unfetched values", () => {
       scroll: 0,
     } as never;
     const driver = buildTuiDriver(app, {} as never, {} as never, deployState);
-    // The same fold — unknown ⇒ "stop" — lived here too, so a companion asking
-    // for a stop could stop a live reviewer on data nobody fetched.
+    // The same unknown ⇒ "stop" fold must not live here either, or a companion
+    // asking for a stop could stop a live reviewer on data nobody fetched.
     expect(() => driver.deployTab("stop")).toThrow(/has not been read/);
     expect(() => driver.deployTab("start")).toThrow(/has not been read/);
   });
@@ -1376,7 +1369,8 @@ describe("published facts are never invented either", () => {
   it("the companion-facing view never claims a mode, a PR count or a clean tree it has not read", async () => {
     const { buildTuiView } = await import("../src/tui/feed.js");
     const v = buildTuiView({ now: new Date("2026-08-31T10:00:00Z"), tab: "board" } as never);
-    // THE TITULAR BUG, in the file the companion reads and repeats in words.
+    // The dry-run claim matters most: the companion reads this file and
+    // repeats it in words.
     expect(v.board.dry_run, "the feed published a dry-run claim with no heartbeat").toBeNull();
     expect(v.board.total).toBeNull();
     expect(v.board.by_state).toBeNull();
@@ -1396,7 +1390,7 @@ describe("published facts are never invented either", () => {
     writeFileSync(join(dir, "view.json"), JSON.stringify(v));
     const now = new Date("2026-08-31T10:00:01Z");
     // A dropped line reads as "nothing worth mentioning": a companion asked
-    // "anything to deploy?" got a quiet all-clear built from unread data.
+    // "anything to deploy?" would give a quiet all-clear built from unread data.
     const deploy = deployAnswer(dir, now);
     expect(deploy).toContain("dirty files in the local checkout: UNKNOWN");
     expect(deploy).toContain("commits waiting to ship: UNKNOWN");

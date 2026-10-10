@@ -1,26 +1,25 @@
-// The durable candidate list behind the `survey` skill (deciding
-//).
+// The durable candidate list behind the `survey` skill.
 //
 // The survey answers *"anything worth looking at?"*. It does NOT judge — that
 // is `adjudicate`'s job, and the two must not blur. Everything in this module
 // is detection, ordering and durability; nothing here reaches a verdict about
 // whether the review was right.
 //
-// FOUR PROPERTIES, all load-bearing:
+// Four properties, all load-bearing:
 //
 //  1. **The list does not expire.** There is no TTL here, no rolling window, no
 //     retention sweep, and none may be added. A candidate not worked today is
 //     still on the list next week: `mergeCandidates` only ever inserts or
-//     updates, and the ONLY thing that takes an entry out of the open list is a
+//     updates, and the only thing that takes an entry out of the open list is a
 //     recorded adjudication (and even then the row stays in the file). The
 //     event feed's horizon is about a day; the reviews worth adjudicating are
 //     usually older, which is the whole reason this file exists rather than the
 //     companion re-reading `/feed/events.jsonl`.
 //
-//  2. **Worst-first, GROUPED BY FAMILY.** A flat worst-first list buries a rare
-//     disagreement under a pile of long re-blocks — and with ~93% of reviews
-//     deviating from the perfect path (29 live PRs, exactly 2 perfect), the
-//     rare families are the informative ones. Groups come out in
+//  2. **Worst-first, grouped by family.** A flat worst-first list buries a rare
+//     disagreement under a pile of long re-blocks — and since most reviews
+//     deviate from the perfect path, the rare families are the informative
+//     ones. Groups come out in
 //     `FAMILY_ORDER`, highest-signal first; inside a group it is severity
 //     descending, then PR number.
 //
@@ -29,10 +28,10 @@
 //     not reachable from here — the named gap. Never silence, never a
 //     consolation candidate: the owner has to be able to tell it actually looked.
 //
-//  4. **Derivation is LOCAL and costs no VM read.** Round facts come from the
-//     round manifests already copied down; PR facts come from the poll
-//     snapshot the TUI already holds. The three comment-derived families are
-//     fully implemented over `CapturedComment` (record) and wired to
+//  4. **Derivation is local and costs no VM read.** Round facts come from the
+//     round manifests the evidence copier already copied down; PR facts come
+//     from the poll snapshot the TUI already holds. The three comment-derived
+//     families are fully implemented over `CapturedComment` and wired to
 //     an empty source today, with the transport gap stated in the family
 //     report rather than hidden.
 //
@@ -58,7 +57,7 @@ import { MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from ".
 // ---- the families ------------------------------------------------------------
 
 /**
- * The seven candidate families (§2). Ordered as they are REPORTED:
+ * The seven candidate families. Ordered as they are reported:
  * highest-signal and rarest first, so a single explicit complaint is never
  * buried under a pile of long re-blocks.
  */
@@ -107,11 +106,9 @@ export const LONG_REVIEW_ROUNDS = 10;
 /**
  * Three consecutive REQUEST_CHANGES rounds, not two.
  *
- * **A block the author accepted and fixed is the review WORKING**, not a
- * deviation (§1, the owner explicit). Block → fix → block is one fix
- * cycle and stays off the list; block → fix → block → fix → block is a
- * treadmill. PR 5249 (ten rounds, all REQUEST_CHANGES) and 5180 (nine) are the
- * shape this catches.
+ * **A block the author accepted and fixed is the review working**, not a
+ * deviation. Block → fix → block is one fix cycle and stays off the list;
+ * block → fix → block → fix → block is a treadmill.
  */
 export const REPEAT_BLOCK_ROUNDS = 3;
 export const REPEAT_APPROVAL_ROUNDS = 2;
@@ -127,7 +124,7 @@ export interface RoundFact {
   finished_at?: string | null;
 }
 
-/** Behavioural signals that are not comments —'s ledger kinds. Supplied
+/** Behavioural signals that are not comments — the `feedback_signals` ledger kinds. Supplied
  * as plain strings so a new kind needs no change here. */
 export interface PrSignal {
   kind: string;
@@ -140,14 +137,14 @@ export interface PrFacts {
   state: string;
   title?: string;
   author?: string;
-  /** Cheap "has anything changed" key — `prSignature`, shared with. */
+  /** Cheap "has anything changed" key — `prSignature`, shared with the evidence copier. */
   signature: string;
   /** Rounds with a local record. May be shorter than the daemon's count; the
    * shortfall is reported as coverage, never silently treated as "no rounds". */
   rounds: RoundFact[];
   /** Rounds the daemon says exist, when known. */
   rounds_reported?: number;
-  /**'s captured human comments for this PR, when a transport supplies
+  /** Captured human comments for this PR, when a transport supplies
    * them. Empty is normal today and is reported as a gap, not as "clean". */
   comments: CapturedComment[];
   signals: PrSignal[];
@@ -176,10 +173,9 @@ function verdictOf(r: RoundFact): string {
 }
 
 /**
- * The ONE good path: triggered → APPROVE in one round → merged. Everything else
- * is the space the survey works in (inverts the ticket: name the good
- * path, flag every departure). Measured, this describes 2 of 29 PRs — so it is
- * a carve-out, not a filter.
+ * The one good path: triggered → APPROVE in one round → merged. Everything else
+ * is the space the survey works in: name the good path, flag every departure.
+ * Few PRs take it, so it is a carve-out, not a filter.
  */
 export function isPerfectPath(facts: PrFacts): boolean {
   if (facts.rounds.length !== 1) return false;
@@ -302,7 +298,7 @@ export function detectCandidates(facts: PrFacts): Detected[] {
   return out;
 }
 
-/**'s ledger kinds, split by which family they feed. Strings rather than
+/** The `feedback_signals` ledger kinds, split by which family they feed. Strings rather than
  * a union so a kind added daemon-side needs no change here. */
 const DISAGREEMENT_KINDS = new Set([
   "posting_guard_downgraded",
@@ -402,7 +398,7 @@ export class CandidateStore {
   }
 
   /**
-   * The three answers a read of the durable list can give, kept APART.
+   * The three answers a read of the durable list can give, kept apart.
    *
    * `absent` (no file yet) and `unreadable` (a file that exists and could not
    * be understood — truncated by a crash between the tmp write and the
@@ -410,7 +406,7 @@ export class CandidateStore {
    * whole point: `absent` means there is genuinely no candidate history,
    * `unreadable` means there is one and we cannot see it. A caller that folds
    * the second into the first rebuilds from an empty baseline and then saves
-   * that truncation over the history —.
+   * that truncation over the history.
    */
   read(): CandidateRead {
     let raw: string;
@@ -431,15 +427,11 @@ export class CandidateStore {
     }
   }
 
-  // There is deliberately NO `load(): CandidateList | undefined` here. It
-  // existed, it collapsed `absent` and `unreadable` into one `undefined`, it
-  // had exactly one caller — the sweep, whose merge-then-save turned that
-  // collapse into silent data loss — and once that caller was fixed it had
-  // none at all. The only other reader of this file is the
-  // companion, over the `/evidence:ro` mount, which parses the JSON itself.
-  // A convenient collapsing accessor sitting next to `read()` is precisely
-  // what the next merge-and-save reaches for, so it is gone rather than
-  // documented.
+  // There is deliberately no `load(): CandidateList | undefined` here: an
+  // accessor that collapses `absent` and `unreadable` into one `undefined` is
+  // what a merge-then-save reaches for, and it turns an unreadable file into
+  // silent data loss. The only other reader of this file is the companion,
+  // over the `/evidence:ro` mount, which parses the JSON itself.
 
   save(list: CandidateList): void {
     this.ensure();
@@ -461,7 +453,7 @@ export function candidateKey(family: CandidateFamily, pr: number): string {
  * candidate that stops being re-derived (its PR merged, the TUI went down,
  * nobody looked for a month) keeps its row, its `first_seen` and its place in
  * the ordering. If you are here to add a TTL, a rolling window or a
- * `MAX_CANDIDATES` cap, read first: the durability IS the feature.
+ * `MAX_CANDIDATES` cap, don't: the durability is the feature.
  *
  * `adjudications` maps PR → the timestamp of the newest `#adjudication` memory
  * entry for it. That is the only judged-ness input, and it flows one way:
@@ -691,7 +683,7 @@ function parseHeaderPairs(line: string): Record<string, string> {
 // ---- the sweep ---------------------------------------------------------------
 
 export interface CandidateSweepDeps {
-  /** Where put the round manifests (usually the same dir as the list). */
+  /** Where the evidence copier put the round manifests (usually the same dir as the list). */
   evidenceDir: string;
   /** Captured human comments per PR, when a transport supplies them. */
   comments?: (pr: number) => CapturedComment[];
@@ -715,16 +707,16 @@ export const SIGNAL_TRANSPORT_GAP =
  *
  * Rides the TUI's existing poll, exactly like `EvidenceCopier`: no second
  * scheduler, re-entrant-safe, and it never throws — a TUI that cannot survey is
- * a TUI that must still paint. Unlike the copier it makes NO remote call at
+ * a TUI that must still paint. Unlike the copier it makes no remote call at
  * all: everything it reads is already on the owner's disk.
  */
 export class CandidateSweeper {
   private busy = false;
   private lastAdjudications = new Map<number, string>();
   /** Per-PR round facts, keyed by the PR's snapshot signature — an unchanged
-   * PR costs the 3-second poll ZERO manifest reads (adversarial finding:
-   * unbounded sync fs work on the paint process). In-memory on purpose: a TUI
-   * restart simply re-reads once. */
+   * PR costs the 3-second poll zero manifest reads, since the reads are sync
+   * fs work on the paint process. In-memory on purpose: a TUI restart simply
+   * re-reads once. */
   private readonly roundsCache = new Map<number, { signature: string; rounds: RoundFact[] }>();
   /** The last list this sweeper produced, and its content fingerprint
    * (timestamps excluded) — when nothing material changed, the save is
@@ -774,15 +766,13 @@ export class CandidateSweeper {
 
   /**
    * The baseline this sweep merges onto: the in-memory list when we have one,
-   * otherwise the durable file. `undefined` means the file EXISTS and could
+   * otherwise the durable file. `undefined` means the file exists and could
    * not be read — the sweep must then do nothing at all.
    *
-   * The old shape was `(this.lastList ?? this.store.load())?.candidates ?? []`,
-   * which folded "unreadable" into "no candidates" three hundred lines below
-   * the docstring that exists to keep them apart. `mergeCandidates` then seeds
+   * Folding "unreadable" into "no candidates" would seed `mergeCandidates`
    * from an empty `previous`, dropping every candidate whose PR has since left
-   * the snapshot, and the save writes that truncation over the history the
-   * feature IS.
+   * the snapshot, and the save would write that truncation over the history
+   * the feature exists to keep.
    */
   private baseline(): Candidate[] | undefined {
     if (this.lastList !== undefined) return this.lastList.candidates;
@@ -805,7 +795,7 @@ export class CandidateSweeper {
     snapshot: StatusSnapshot,
     adjudications: Map<number, string>,
   ): CandidateList | undefined {
-    // Read the baseline FIRST: an unread one means this sweep neither merges
+    // Read the baseline first: an unread one means this sweep neither merges
     // nor saves, and there is no point walking the manifests for it.
     const previous = this.baseline();
     if (previous === undefined) return undefined;
@@ -819,7 +809,7 @@ export class CandidateSweeper {
       const sig = prSignature(pr);
       const cached = this.roundsCache.get(pr.number);
       // Fresh cache = same signature AND a local record at least as long as
-      // the daemon reports. The second half matters: the copier
+      // the daemon reports. The second half matters: the evidence copier
       // drains a backlog ROUNDS_PER_SWEEP at a time across ticks with no
       // signature move, so a signature-only key would freeze the shortfall.
       // (A cheap `existsSync` miss for a never-copied PR, a manifest re-read

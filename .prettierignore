@@ -13,8 +13,8 @@ inject/
 verdict/
 commands/
 digest/
-# Anchored: an unanchored `archive/` also matched src/archive/, the
-# archiver's source, which must stay formatted like the rest of src/.
+# Anchored so it does not also match src/archive/, the archiver's source,
+# which must stay formatted like the rest of src/.
 /archive/
 memory/
 wt/
@@ -25,7 +25,7 @@ state-snapshots/
 coverage/
 .claude/worktrees/
 
-# VENDORED VERBATIM — rule 7's extension pin. Provenance for
+# Vendored verbatim — rule 7's extension pin. Provenance for
 # extensions/vendor/openviking-pi is a byte comparison against its recorded
 # upstream commit (upstream.json), and extensions/inline-bash.ts is copied
 # unmodified from the pinned pi release's shipped examples. Reformatting
@@ -64,11 +64,11 @@ deploy/ansible/
 # cares about layout.
 publish-manifest.json
 
-# VENDORED from the pinned upstream skills repo (see VENDORED.md) — provenance
+# Vendored from the pinned upstream skills repo (see VENDORED.md) — provenance
 # is a comparison against that copy, so local reformatting would be drift.
 .claude/skills/
 
-# Benchmark DATA, machine-written by the Python harness (bench/aacr/*.py):
+# Benchmark data, machine-written by the Python harness (bench/aacr/*.py):
 # the defect keys, the PR sets and their labels, the run plans, the
 # reference sets and the golden audits. They are inputs the harness reads
 # and the dataset export publishes byte for byte; a formatter rewriting them

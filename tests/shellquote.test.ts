@@ -1,9 +1,9 @@
-// shellQuote (src/tui/remote.ts) — the empty-tab root cause. ssh space-joins
-// argv into one remote string; unquoted, a multi-word `sh -c <script>`
-// element was shredded into separate words (`sh -c cat '/x' || true` ran
-// bare `cat` on empty stdin, `|| true` masked it) — every dockerSh() read
-// silently returned nothing. shellQuote makes the remote shell rebuild the
-// exact argv.
+// shellQuote (src/tui/remote.ts). ssh space-joins argv into one remote
+// string; unquoted, a multi-word `sh -c <script>` element would be shredded
+// into separate words (`sh -c cat '/x' || true` runs bare `cat` on empty stdin
+// and `|| true` masks it), so every dockerSh() read would silently return
+// nothing.
+// shellQuote makes the remote shell rebuild the exact argv.
 import { describe, expect, it } from "vitest";
 import { shellQuote } from "../src/tui/remote.js";
 

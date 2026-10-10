@@ -1,9 +1,9 @@
 // `[review] task_files` (src/passtasks.ts, bench/aacr/PERF.md §6 proposal 2):
 // the daemon writes each discovery row's complete lens task, so the session
 // launches lenses with a pointer instead of generating every task string.
-// What a hand-written task string had to carry (round-first.md step 2) must
-// all be in the file; the validator gets no file; an order without files
-// renders exactly as before.
+// What a hand-written task string carries (round-first.md step 2) must all be
+// in the file; the validator gets no file; an order without files renders as
+// it does with the lever off.
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

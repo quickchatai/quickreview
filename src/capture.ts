@@ -1,4 +1,4 @@
-// Human-comment capture (deciding).
+// Human-comment capture.
 //
 // Every human comment on a PR this system tracks is kept as a durable local
 // record. The reason it is not optional: the companion cannot read GitHub, and
@@ -12,22 +12,22 @@
 //     which kind an event interprets as. A `[feedback]`-prefixed comment still
 //     diverts to the feedback sink before author_reply; an untagged reply in a
 //     bot thread still reaches ping-pong; a top-level comment is still
-//     `ignored` for routing purposes — and is now recorded all the same
-//     (the owner's ruling: mistaking a genuine reply for feedback silently
-//     ignores the author, which is worse than losing a signal; broad capture
-//     is what makes erring toward the reply cost no evidence).
+//     `ignored` for routing purposes — and is recorded all the same.
+//     Mistaking a genuine reply for feedback silently ignores the author,
+//     which is worse than losing a signal; broad capture is what makes erring
+//     toward the reply cost no evidence.
 //
 //  2. **Nothing classifies at capture time.** There is no heuristic here that
 //     decides what "is" feedback. The `tagged` column records only the plain
 //     fact that the body starts with `[feedback]` — the tag's privileges (read
 //     first, and the ONLY thing that may soften the review the same day via
-//     the tag-gated `feedback-day-validate` addendum) stay exactly where
-//     put them, in feedback.ts. The companion sorts the record later,
-//     with the whole episode in front of it.
+//     the tag-gated `feedback-day-validate` addendum) stay in feedback.ts.
+//     The companion sorts the record later, with the whole episode in front
+//     of it.
 //
 //  3. **Capture never writes to GitHub.** Reads are direct (adapter
 //     convention); there is no mutation path in this module and none may be
-//     added — rule 1.
+//     added (CLAUDE.md rule 1).
 import { isFeedbackBody } from "./feedback.js";
 import type { IssueCommentFull, ReviewCommentFull, ReviewFull } from "./github.js";
 
@@ -61,8 +61,8 @@ export interface CapturedComment {
   /** GitHub's own timestamp when the payload carried one. */
   created_at: string | null;
   /** A submitted review's state (`approved` | `changes_requested` |
-   * `commented`), lowercased — the learner's "a human asked for changes"
-   * (S8). Null for comments, and when the payload carried none. A
+   * `commented`), lowercased — the learner's "a human asked for changes".
+   * Null for comments, and when the payload carried none. A
    * recorded fact, like `tagged`: nothing routes on it. */
   review_state?: string | null;
 }

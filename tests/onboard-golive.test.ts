@@ -1,6 +1,6 @@
-// the go-live offer, and root rule 1 made structural.
+// The go-live offer, and root rule 1 made structural.
 //
-// `dry_run` is the owner's flag alone. This slice may move it in exactly one
+// `dry_run` is the owner's flag alone. This step may move it in exactly one
 // place, on an explicit confirmation, after a proof round the daemon's own
 // state store still agrees happened. Everything below exists to make that
 // sentence a property of the code rather than a promise in a comment — and the

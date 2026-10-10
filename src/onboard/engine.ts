@@ -1,15 +1,15 @@
-// OnboardingEngine — the one new seam of the onboarding wizard (spec,
-// skeleton): a checklist state machine plus deterministic step
-// implementations behind injected adapters. pi is a thin driver over this
-// engine (extensions/onboarding.ts registers one tool per step); the engine
+// OnboardingEngine — the seam of the onboarding wizard: a checklist state
+// machine plus deterministic step implementations behind injected adapters.
+// pi is a thin driver over this engine (extensions/onboarding.ts registers one
+// tool per step); the engine
 // itself is fully drivable from tests and from a non-LLM fallback entry, and
 // nothing in here touches the network, Docker, or a real pi except through
 // the adapters.
 //
-// Resumability contract ("Engine and resumability"):
+// Resumability contract:
 //   - checklist state persists to state/onboarding/checklist.json after every
 //     step, tmp+rename atomic (the verdicts.ts convention);
-//   - startup reconciles claimed state against REALITY: a step claimed done is
+//   - startup reconciles claimed state against reality: a step claimed done is
 //     re-verified with its verify(), never trusted from the file alone;
 //   - a fully-done checklist re-runs as verify-only (the wizard doubles as a
 //     diagnostic);
@@ -17,7 +17,7 @@
 //     re-verifies everything anyway) — never a crash.
 //
 // The finish path writes the first-run marker state/companion/first-run.json
-// ({"completed_at": "<iso>"}) exactly once — the contract's companion
+// ({"completed_at": "<iso>"}) exactly once — the contract the companion's
 // first-run greeting consumes. Keep the path and shape stable.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,16 +30,16 @@ export interface ProcessResult {
   stderr: string;
 }
 
-/** Process seam. NEVER throws: a missing binary is a nonzero code with the
+/** Process seam. Never throws: a missing binary is a nonzero code with the
  * error text in stderr, so a step can render it as a plain red check. */
 export interface ProcessRunner {
   run(cmd: string, args: string[]): Promise<ProcessResult>;
 }
 
 /** Everything a step may touch outside its own logic. All injected — tests
- * fake every field; extensions/onboarding.ts builds the real set. Later
- * steps use fetch (manifest exchange, health
- * probes) and prompter (non-LLM fallback entry); preflight needs neither. */
+ * fake every field; extensions/onboarding.ts builds the real set. Steps use
+ * fetch (manifest exchange, health probes) and prompter (non-LLM fallback
+ * entry) as they need them; preflight needs neither. */
 export interface OnboardAdapters {
   /** HTTP seam (GitHub App manifest exchange, health endpoints, …). */
   fetch: typeof fetch;
@@ -54,7 +54,7 @@ export interface OnboardAdapters {
   host: { nodeVersion: string; uid: number | null };
   /** Filesystem roots. `stateDir` is `<sandbox root>/state`; `configPath` is
    * the live config.toml as the install locator resolved it — the
-   * ONE file every step reads and writes, captured once by the real assembly
+   * one file every step reads and writes, captured once by the real assembly
    * so no step builds a config path itself. */
   paths: { stateDir: string; configPath: string };
   log?: (line: string) => void;
@@ -78,7 +78,7 @@ export interface StepReport {
 
 export interface StepContext {
   adapters: OnboardAdapters;
-  /** The tool call's inputs — the operator's ANSWER to a step that asks one
+  /** The tool call's inputs — the operator's answer to a step that asks one
    * (`{}` for a step that declares no `parameters`, and always on verify()).
    * A step that needs an answer and does not get one must return a refusal
    * naming the options, never a guess: the wizard offers, the operator picks. */
@@ -93,11 +93,11 @@ export interface StepContext {
 }
 
 /**
- * One onboarding step. Later tickets register more of these (defaultSteps in
+ * One onboarding step (the registered set is defaultSteps in
  * src/onboard/steps/index.ts); the interface is the extension point:
  *   - `id` must be tool-name-safe ([a-z][a-z0-9_]*) — the pi extension
  *     registers each step as tool `onboard_<id>`;
- *   - `explain` is the teach-text the guide relays BEFORE running the step;
+ *   - `explain` is the teach-text the guide relays before running the step;
  *   - `enabled` gates on recorded choices (e.g. the VM route's steps are
  *     disabled on the laptop topology); absent ⇒ always enabled;
  *   - `run` performs the step; `verify` re-checks its outcome against reality
@@ -141,12 +141,12 @@ export interface ChecklistFile {
   created_at: string;
   updated_at: string;
   /** Set exactly once, by finish() when every enabled step verifies green.
-   * HISTORY — when onboarding first finished; it never moves and never clears. */
+   * History — when onboarding first finished; it never moves and never clears. */
   completed_at: string | null;
   /** When a completed checklist stopped verifying (a demotion, a failed run,
    * a refused finish, a newly-enabled unfinished step); null/absent while the
    * completion still holds. A green finish() clears it. Whether onboarding is
-   * complete NOW is `completed_at` set AND this unset. */
+   * complete now is `completed_at` set and this unset. */
   reopened_at?: string | null;
   choices: Record<string, unknown>;
   steps: Record<string, StepRecord>;
@@ -156,7 +156,7 @@ export function checklistPath(stateDir: string): string {
   return join(stateDir, "onboarding", "checklist.json");
 }
 
-/** The contract path: the companion's first-run greeting keys off this
+/** The first-run contract path: the companion's first-run greeting keys off this
  * file. Written once, by finish(), shape {"completed_at": "<iso>"}. */
 export function firstRunMarkerPath(stateDir: string): string {
   return join(stateDir, "companion", "first-run.json");
@@ -304,7 +304,7 @@ export class OnboardingEngine {
     };
   }
 
-  /** The registered steps, in order (later tickets' tools register off this). */
+  /** The registered steps, in order (the pi tools register off this). */
   stepDefs(): readonly OnboardingStep[] {
     return this.registry;
   }
@@ -343,7 +343,7 @@ export class OnboardingEngine {
 
   /**
    * Resume: re-verify every enabled claimed-done step against reality. A step
-   * whose verify() fails is DEMOTED to pending with the failures in its note —
+   * whose verify() fails is demoted to pending with the failures in its note —
    * the file's claim is never trusted alone. A fully-done checklist therefore
    * re-runs as verify-only. Persists once at the end.
    */
@@ -430,7 +430,7 @@ export class OnboardingEngine {
   }
 
   /**
-   * Verify EVERY enabled step — done or not. A pending step whose verify()
+   * Verify every enabled step — done or not. A pending step whose verify()
    * holds is promoted to done (its outcome exists in reality, which is the
    * only truth the checklist mirrors); a done step whose verify() fails
    * reports red here (finish refuses) but demotion is reconcile()'s job.
@@ -458,7 +458,7 @@ export class OnboardingEngine {
   /**
    * The finish tool's engine half: re-run the full verification checklist.
    * Anything red ⇒ refuse with the failures (the caller returns them as the
-   * tool result and does NOT exit). All green ⇒ mark the checklist complete
+   * tool result and does not exit). All green ⇒ mark the checklist complete
    * and write the first-run marker — once: a marker already on disk is left
    * untouched, so the completed_at the companion greets on never moves.
    */

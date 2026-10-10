@@ -166,9 +166,9 @@ describe("martian_ingest.py --arm (a third-party bench arm)", () => {
 });
 
 describe("martian_ingest.py --rejudge", () => {
-  // fast1-martian50 (2026-10-05): the re-judge loop reused the arm's tool
-  // variable, so from the second PR on the arm's review was filed under the
-  // last re-judged tool's name and the arm was scored on one PR.
+  // The re-judge loop must not reuse the arm's tool variable: if it does, from
+  // the second PR on the arm's review is filed under the last re-judged tool's
+  // name and the arm is scored on one PR.
   it("keeps the arm's tool name on every PR beside the re-judged reviews", async () => {
     const runDir = join(t, "run");
     for (const id of ["o__r-1@aaa", "o__r-2@bbb"]) {

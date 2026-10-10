@@ -8,22 +8,18 @@
 // the reviewed repo) is never pushed, never merged into, never touched beyond
 // `fetch` + read-only diffing.
 //
-// Working tree rule: every git step below runs in the BASE CLONE of
-// the reviewed repo (`WorktreeManager.basePath`) — the one working tree whose
+// Working tree rule: every git step below runs in the base clone of the
+// reviewed repo (`WorktreeManager.basePath`) — the one working tree whose
 // `origin` is the reviewed repo and whose ref namespace holds the branch the
-// session prepared. For the channel's whole life the steps ran with no cwd at
-// all, i.e. in the daemon's own checkout, which has no remote: zero
-// `filed_items` rows, zero `branch_pushed` events, and a suite that discarded
-// the cwd it was handed. `Run` now REQUIRES a cwd so a call without one does
-// not compile, and the context carries the clone locator.
+// session prepared. The daemon's own checkout has no remote, so `Run` requires
+// a cwd (a call without one does not compile) and the context carries the
+// clone locator.
 //
-// The channel never checks anything out. A diffstat and a push both read refs;
-// the scratch worktree the first shape materialised the branch into served no
-// step and was a wedge waiting to happen (a daemon killed between `worktree
-// add` and the cleanup left a populated directory that `--force` does not
-// clear, and every later filing failed on "already exists"). The clone's own
-// working tree is never touched either — the base fetch lands in
-// `refs/remotes/`, and the branch is addressed by ref, never checked out.
+// The channel never checks anything out. A diffstat and a push both read refs,
+// so no scratch worktree is needed (one left behind by a killed daemon would
+// wedge every later filing). The clone's own working tree is never touched
+// either — the base fetch lands in `refs/remotes/`, and the branch is
+// addressed by ref, never checked out.
 import { IMPROVEMENT_DENY_PREFIXES_DEFAULT, type Config } from "./config.js";
 import { localWallClockToInstant, zonedParts } from "./eod.js";
 import { GitHubRequestError, type GitHubAdapter } from "./github.js";
@@ -36,9 +32,9 @@ import { runOrThrow, type ExecFn } from "./tmux.js";
 export type Run = (args: string[], cwd: string) => Promise<string>;
 
 /** The production `Run` over an `ExecFn` (`nodeExec` in wire.ts). A failing
- * git step throws instead of returning its stdout — the daemon's first runner
- * ignored the exit code, so a refused fetch or push would have read as
- * success. The end-to-end test drives this same runner against real git. */
+ * git step throws instead of returning its stdout, so a refused fetch or push
+ * never reads as success. The end-to-end test drives this same runner against
+ * real git. */
 export function gitRunner(exec: ExecFn): Run {
   return async (args, cwd) => (await runOrThrow(exec, "git", args, { cwd })).stdout;
 }
@@ -54,8 +50,8 @@ export interface IssuePayload {
   title: string;
   body: string;
   /**
-   * The PR this issue was filed from (deferrals — the review session
-   * files a deferral's ticket itself, in the round that deferred). Optional
+   * The PR this issue was filed from (deferrals — the review session files a
+   * deferral's ticket itself, in the round that deferred). Optional
    * and purely provenance: it attributes the events and the cap refusal to
    * that PR so the refusal is visible where the deferral happened. It changes
    * no cap and grants no rights of its own.
@@ -83,9 +79,8 @@ export interface ImprovementContext {
    * remote instead of failing on a missing directory.
    */
   ensureRepoDir: () => Promise<string>;
-  /** Base branch override. Default: `[github] base_branch` off `cfg`
-   * ("main" unless configured — the original deployment sets "master").
-   * Never pushed, never modified. */
+  /** Base branch override. Default: `[github] base_branch` off `cfg` ("main"
+   * unless configured). Never pushed, never modified. */
   base?: string;
   now?: () => Date;
 }
@@ -161,10 +156,9 @@ export function parseNumstat(out: string): NumstatEntry[] {
 }
 
 /** Paths the bot may never touch, whatever the diffstat says. The prefix list
- * is config since (`[caps] improvement_pr_deny_prefixes`, shipped
- * default = the old hardcode, `IMPROVEMENT_DENY_PREFIXES_DEFAULT` in
- * src/config.ts); `.env`-named files are refused UNCONDITIONALLY — a secrets
- * file is never repo-shape. */
+ * is config (`[caps] improvement_pr_deny_prefixes`, default
+ * `IMPROVEMENT_DENY_PREFIXES_DEFAULT` in src/config.ts); `.env`-named files are
+ * refused unconditionally — a secrets file is never repo-shape. */
 export function deniedPath(
   path: string,
   prefixes: readonly string[] = IMPROVEMENT_DENY_PREFIXES_DEFAULT,
@@ -189,16 +183,13 @@ export interface DiffstatVerdict {
 }
 
 /**
- * A cap this module can compare against: a finite, non-negative number. The
- * type says every cap is a number; until `parseConfig` cast the TOML
- * section into that type, so a key missing from an operator's file reached
- * here as `undefined` — and `files > undefined` is `false`, which PASSED the
- * cap. `parseCaps` now refuses such a config at startup; this is the cap
- * checks' own belt, so their answers never depend on who built the `caps`
- * they were handed — which is why it takes `unknown` and narrows, rather than
- * trusting the type it exists to distrust. A cap that cannot be compared
- * against is a refusal, never a pass: the improvement channel is the one
- * place this system pushes code.
+ * A cap this module can compare against: a finite, non-negative number.
+ * `parseCaps` refuses a config without one at startup; this is the cap checks'
+ * own belt, so their answers never depend on who built the `caps` they were
+ * handed — which is why it takes `unknown` and narrows, rather than trusting
+ * the type. An unusable cap would otherwise pass silently (`files > undefined`
+ * is `false`). A cap that cannot be compared against is a refusal, never a
+ * pass: the improvement channel is the one place this system pushes code.
  */
 function usableCap(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -276,12 +267,11 @@ export function checkDiffstat(entries: NumstatEntry[], caps: Config["caps"]): Di
 // ---- rate caps -------------------------------------------------------------
 
 /**
- * The instant the operations day containing `now` began (MC-16).
- * The day caps count the `[ops] timezone` day — "the ONE knob that defines
- * whose calendar day the system runs on" — and until this they
- * counted the UTC day, the one day boundary in the system that did not. A zone
+ * The instant the operations day containing `now` began. The day caps count
+ * the `[ops] timezone` day, the one knob that defines whose calendar day the
+ * system runs on. A zone
  * whose midnight falls in a DST gap starts its day at the first wall time that
- * exists (`localWallClockToInstant`'s shifted-forward reading). The WEEK cap
+ * exists (`localWallClockToInstant`'s shifted-forward reading). The week cap
  * is a rolling seven days and has no day boundary to honour.
  */
 function startOfDayIso(now: Date, timeZone: string): string {
@@ -301,7 +291,7 @@ export function improvementRateReason(
   timeZone = "UTC",
 ): string | null {
   const unusable = unusableCapReason(caps, ["improvement_pr_per_day", "improvement_pr_per_week"]);
-  if (unusable !== null) return unusable; // `day >= undefined` is false: uncapped, the same fail-open as checkDiffstat's
+  if (unusable !== null) return unusable; // otherwise `day >= undefined` is false: an uncapped pass
   const day = store.filedSince("improvement_pr", startOfDayIso(now, timeZone));
   if (day >= caps.improvement_pr_per_day) {
     return `improvement-PR day cap reached (${day}/${caps.improvement_pr_per_day})`;
@@ -506,11 +496,9 @@ async function fileImprovementPrNow(
       body: { remote: "origin", source: branchRef, commit, target: botBranch },
       note: `push ${botBranch} (${verdict.files} files, ${verdict.lines} lines)`,
     };
-    // the push goes through the gate in BOTH modes. It used to consult
-    // the gate only when `isDryRun` was true and shell out directly otherwise —
-    // so the one mode in which the push was real was the one mode the gate
-    // never saw, which is precisely the bypass rule 1 forbids. The gate now
-    // owns the decision (kind check, guards, dry-run branch) and calls this
+    // The push goes through the gate in both modes — never a direct push in
+    // live mode, which is the bypass CLAUDE.md rule 1 forbids. The gate owns
+    // the decision (kind check, guards, dry-run branch) and calls this
     // performer only when the mutation is genuinely to happen.
     const pushResult = await ctx.gate.execute(pushIntent, async () => {
       await ctx.run(["push", "origin", refspec], repoDir);
@@ -605,7 +593,7 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
   const pr = payload.pr ?? null;
   const reject = (reason: string, extra: Record<string, unknown> = {}): FileOutcome => {
     ctx.store.logEvent("issue_rejected", pr, { title: payload.title, reason, pr, ...extra });
-    // **a cap refusal is loud.** A deferral that produced no ticket is
+    // A cap refusal is loud. A deferral that produced no ticket is
     // a deferral that silently became free again — exactly the failure this
     // mechanism exists to prevent — so a refusal on a PR-attributed draft also
     // leaves a durable anomaly row against that PR, beside the result file the

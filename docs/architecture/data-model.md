@@ -7,7 +7,7 @@ Everything this daemon remembers lives in one of four places:
 | SQLite database | `state/state.db` | `StateStore` (`src/state.ts`) — the only module with SQL in it | every daemon module, through typed `StateStore` methods |
 | Runtime drop-boxes | `inject/`, `verdict/`, `commands/`, `archive/`, `digest/`, `memory/` at the sandbox root | daemon and pi sessions, by file | the opposite side of each channel |
 | Derived / scratch state | `state/**` (everything except `state.db`) | daemon, TUI, onboarding | the same, plus the operator CLI |
-| Configuration | `config.toml` at the sandbox root | the operator (or `qcr onboard`) | `loadConfig()` in `src/config.ts` |
+| Configuration | `config.toml` in the install's config home (`$QCR_CONFIG`, else `<config home>/config.toml`; never the checkout's) | the operator (or `qcr onboard`) | `loadConfig()` in `src/config.ts` |
 
 Two rules cover almost everything below.
 
@@ -58,7 +58,7 @@ interpreter in `src/standing-review.ts`, never by inspecting columns directly.
 
 | Table | Purpose | Key columns | Principal methods |
 | --- | --- | --- | --- |
-| `session_commands` | the durable daemon→session command slot: one owner per session at a time, with a finite lease | `id` (PK), `pr`, `session`, `kind`, `payload_sha256`, `payload_path`, `inject_path`, `status`, `owner_token`, `next_check_at`, `redeliveries` (H1b; same-session redeliveries of this delivery, reset by a replay into a new session generation) | `createSessionCommand`, `claimSessionCommand`, `markSessionCommandStarted`, `finishSessionCommand`, `dueSessionCommands`, `retrySessionCommand`, `requeueSessionCommandForRedelivery` |
+| `session_commands` | the durable daemon→session command slot: one owner per session at a time, with a finite lease | `id` (PK), `pr`, `session`, `kind`, `payload_sha256`, `payload_path`, `inject_path`, `status`, `owner_token`, `next_check_at`, `redeliveries` (same-session redeliveries of this delivery, reset by a replay into a new session generation) | `createSessionCommand`, `claimSessionCommand`, `markSessionCommandStarted`, `finishSessionCommand`, `dueSessionCommands`, `retrySessionCommand`, `requeueSessionCommandForRedelivery` |
 | `pending_wakes` | wakes held while the PR's round was in flight, flushed at round end | `id` (PK), `pr`, `payload`, `reason`, `held_at`, `claim_token` | `holdWake`, `heldWakes`, `claimHeldWakeBatch`, `ackHeldWakeBatch`, `dropHeldWakes` |
 | `review_failures` | the canonical loud-failure debt; at most one open row per PR | `incident_id` (PK), `pr`, `stage`, `attempts`, `retry_cap`, `retry_epoch`, `next_retry_at`, `next_action`, `work_owed` | `openReviewFailure`, `openReviewFailures`, `recoverReviewFailure`, `resolveTerminalReviewFailure` |
 | `round_recovery_instructions` | identity-bound instructions for exactly one recovery successor round | `(pr, target_round_no)` (PK), `target_head_sha`, `stage`, `retry_epoch` | `recordRoundRecoveryInstruction`, `roundRecoveryInstruction`, `roundRecoveryInstructionForDispatch` |
@@ -88,12 +88,12 @@ distinct, which would void the comment-key dedupe.
 
 `round_findings` has a unique index on `(pr, round_no, finding_key)`, so
 re-recording a round replaces its rows instead of doubling them. `lens_ids`
-(S6) is a JSON array of the known pass ids the free-text `lens` names
+is a JSON array of the known pass ids the free-text `lens` names
 (`src/lensids.ts`; `[]` for an entry raised outside any lens), filled at boot
 for rows recorded before the column; `title` is the posted comment's title as
 the record wrote it, null when it wrote none.
 
-#### Outcome capture (S6)
+#### Outcome capture
 
 `src/outcomes.ts` creates and owns four more tables on the same file, the way
 `src/pingpong.ts` owns its ledger's:
@@ -111,13 +111,13 @@ the record wrote it, null when it wrote none.
 fate set is closed: `fixed`, `refuted_conceded`, `upheld_after_reply`,
 `open_at_close`, `unknown`. Nothing here is written to GitHub.
 
-`pr_comments.review_state` (S8) is a captured REVIEW's own state
+`pr_comments.review_state` is a captured review's own state
 (`approved`, `changes_requested`, `commented`), lowercased; null for inline and
 top-level comments, and for a review captured before the column (a later sweep
 that sees the review again fills it in, once). The learner reads it as "a human
 asked for changes"; nothing routes on it.
 
-#### The learner (S8)
+#### The learner
 
 `src/learner/learner.ts` creates and owns four more tables on the same file:
 
@@ -133,7 +133,7 @@ A candidate's `status` is `open` (queued while `offered_day` is null),
 typed lesson in `experiences/` cites `cand:c<id>`), `declined`, `expired`
 (undecided `lessons_expiry_ops_days` after its first offer — or after
 `reopened_day`, when a refused write or an unfound adoption put it back in the
-packet), or `withdrawn` (a fate candidate whose S6 outcome changed since it was
+packet), or `withdrawn` (a fate candidate whose finding outcome changed since it was
 mined). Nothing is ever deleted. A day stays reported as `missing` in
 status.json `memory.curation` until it or a later day is receipted, and as
 `not_persisted` until each candidate on its list is decided.
@@ -193,22 +193,22 @@ processes that do not share memory.
 
 | Directory | Files | Producer | Consumer |
 | --- | --- | --- | --- |
-| `verdict/` | `pr-<n>-round-<k>.json`, `pr-<n>-recheck-<head12>.json`; each first staged as `<name>.tmp` | the PR's pi session at round end, published by `scripts/commit-verdict.sh` (one rename, H1a) | `VerdictWatcher` (`src/verdicts.ts`) and `RecheckWatcher` (`src/recheck.ts`), which never read a `.tmp`; the path is set in `src/daemon.ts` as `join(root, "verdict")` |
+| `verdict/` | `pr-<n>-round-<k>.json`, `pr-<n>-recheck-<head12>.json`; each first staged as `<name>.tmp` | the PR's pi session at round end, published by `scripts/commit-verdict.sh` (one rename) | `VerdictWatcher` (`src/verdicts.ts`) and `RecheckWatcher` (`src/recheck.ts`), which never read a `.tmp`; the path is set in `src/daemon.ts` as `join(root, "verdict")` |
 | `inject/<session>/` | `*.md` wake files, plus a `.done/` subdirectory | `SessionManager` (`src/sessions.ts`) | `extensions/inject-bridge.ts` inside pi, which moves consumed files to `.done/` |
 | `commands/` | `*.json` command files, plus `results/` and `processed/` | pi sessions (the overseer's action space) | `CommandWatcher` (`src/commands.ts`) |
 | `commands/slack/` | the same envelope, tier-checked | the Slack router | the second `CommandWatcher` built in `src/wire.ts` |
 | `commands/operator/` | the same envelope, root-owned so the daemon's uid cannot write it | operator tools (`qcr drain`, the board's unwedge key, the deploy tab) | the operator `CommandWatcher`; results are written to `commands/results/` so clients read one place |
-| `archive/<session>/` | session JSONL and ledger of a closed PR | `SessionManager.archiveAndClose` | humans, and `qcr why` |
+| `archive/<session>/` | a closed session's `ledger.md`, its verdict files and `meta.json` (naming its newest transcript); for a closed PR the archiver later adds `transcripts/` and state bundles | `SessionManager.archiveAndClose`, then the closed-PR archiver (`src/archive/`) | humans, `qcr why`, `qcr archive extract` |
 | `digest/` | `<YYYY-MM-DD>.md` | `writeDigest` (`src/digest.ts`) | `latestDigestHeadline`, which `src/wire.ts` points at `join(root, "digest")` |
 | `memory/` | empty drop-box; reviewer memory lives in the memory engine | — | see [`../../memory/README.md`](../../memory/README.md) |
 | `evidence/` | finished-round evidence copied down by the TUI | `EvidenceStore` (`src/tui/evidence.ts`) | the companion container, read-only. The location is `[companion] evidence_dir`; the shipped default is outside the repo, and an empty value resolves to `<root>/evidence` |
 | `pihome/` | pi's home inside the container (auth tokens, sessions) | pi | pi |
 
 Note on the digest path: `writeDigest`/`latestDigestHeadline` default to
-`<root>/digest`, and that is what `src/wire.ts` passes for the status
-headline. The end-of-day pinned-area watchdog wired in the same file probes
-`<root>/state/digest/<date>.md` for its "digest has landed" signal. Two
-different paths; read the call site before assuming either.
+`<root>/digest`, and `src/wire.ts` passes that same directory both for the
+status headline and for the end-of-day pinned-area watchdog's "digest has
+landed" probe (`digestWritten`). The digest lives in `digest/`, never under
+`state/`.
 
 ---
 
@@ -243,7 +243,7 @@ losing the review record, except `state.db` itself.
 | `state/onboarding/` | `checklist.json`, `config.candidate.toml`, `pi-sessions/` | `src/onboard/` | the wizard's own state |
 | `state/changes/` | `change-register.json` | `src/tui/index.ts` | the TUI change log |
 | `state/tui-deploy-runs/`, `state/tui-deploy-ceremony.json`, `state/tui-resume-<pid>.json`, `state/tui-help-shown` | JSON / markers | the TUI | deploy run logs and small per-operator markers |
-| `state/tui-evidence-sweep.json` | JSON | `SweepProgressFile` (`src/tui/evidence.ts`) | the evidence sweep's per-PR progress (L1): the signature each PR was last cleanly reconciled at and whether the store then held its evidence (`{sig, stored}`), and the evidence store it describes; written temp + rename. Unreadable or another store's ⇒ treated as empty, with a notice |
+| `state/tui-evidence-sweep.json` | JSON | `SweepProgressFile` (`src/tui/evidence.ts`) | the evidence sweep's per-PR progress: the signature each PR was last cleanly reconciled at and whether the store then held its evidence (`{sig, stored}`), and the evidence store it describes; written temp + rename. Unreadable or another store's ⇒ treated as empty, with a notice |
 | `state/tsc-watch.log` | text | `npm run dev` | the TypeScript watcher's output, kept off-screen so a stray compiler line cannot corrupt the alt-screen frame |
 
 ---
@@ -295,7 +295,7 @@ say — a reader must default rather than assume:
   token-expired errors (`src/authwatch.ts`).
 - `openviking` — the supervised memory server's reachability, version, RSS and
   CPU (unauthenticated: whether the server is UP).
-- `memory` — reviewer-memory HEALTH (S1, `MemoryStatus` in
+- `memory` — reviewer-memory health (`MemoryStatus` in
   `src/memory/health.ts`): `state` (`unknown | healthy | degraded | down |
   auth_failed`), `since`, `last_ok_at`, `last_error`, each credential's latest
   verdict (`credentials.daemon`, `credentials.sessions`), `probe_ms`, request
@@ -304,13 +304,13 @@ say — a reader must default rather than assume:
   `ok`, `absent` (NOT_FOUND answers), `conflict`, `auth_failed` and `failed`.
   `enabled: false` means not monitored — memory switched off in config.toml,
   never a server that cannot run. What a person sees about memory is read from
-  here. Its `curation` sub-block (S8, `CurationStatus` in
+  here. Its `curation` sub-block (`CurationStatus` in
   `src/learner/status.ts`) is the learner's: the reported day's state
   (`no_packet | packet_ready | nothing | awaiting | missing | not_persisted |
   received`) and counts, every `unresolved` failure, the oldest of them as the
   `incident` the TUI files one ticket for, and the look-for : don't-raise
   `balance` of the lessons in force (null until memory was read in full).
-- `daemon` — the daemon's own load (L2, `DaemonLoadStatus` in
+- `daemon` — the daemon's own load (`DaemonLoadStatus` in
   `src/eventloop.ts`). `event_loop`: `state` (`unknown | ok | stalled`),
   `since`, p50/p99/max of the event-loop delay over the window (`window_s`,
   `covered_s`, `samples`, `max_at`), the `longest_stall` since `started_at`
@@ -377,9 +377,9 @@ there is no generic escape hatch. The whitelist is closed:
 
 `rerun-round`, `restart-session`, `resolve-terminal-failure`, `pause-pr`,
 `resume-pr`, `flag-owner`, `file-improvement-pr`, `file-issue`, `slack_reply`,
-`drain`, `retry-thread-decision`, `eod-curation-receipt` (S8 — the
-EOD curator's per-candidate adopted / declined / refused answer to the day's
-outcomes packet, `src/learner/receipt.ts`).
+`drain`, `retry-thread-decision`, `eod-curation-receipt` (the EOD curator's
+per-candidate adopted / declined / refused answer to the day's outcomes
+packet, `src/learner/receipt.ts`).
 
 Nothing inside a command file says who wrote it. The **issuer is decided by
 directory**: `commands/` and `commands/slack/` are session-issued;
@@ -445,7 +445,7 @@ Identity is `roundPostingKey(pr, roundNo, headSha)` → `v1:<pr>:<round>:<sha>`,
 embedded in the review body as `postingMarker(key)`. A *missing* receipt is
 still a loud failure; a `skipped` one settles the round terminally; a
 `confirmed` one whose round has a malformed or missing verdict file settles
-the round from the receipt (H1a) when `decidedVerdictFromReceipt`
+the round from the receipt when `decidedVerdictFromReceipt`
 can read the decision off `intended_event`/`actual_event` — a COMMENT the
 session asked for is the templates' withheld approval (APPROVE,
 `approval_withheld`); a receipt the daemon reconciled from GitHub, whose
@@ -456,8 +456,9 @@ keeps the loud path.
 
 ## 5. `config.toml`
 
-One file at the sandbox root, parsed by `parseConfig` in `src/config.ts` and
-loaded through `loadConfig()`. Every runtime knob lives there —
+One file, located by the install locator (`src/install.ts`: `$QCR_CONFIG`,
+else `config.toml` in the install's config home — never the checkout's),
+parsed by `parseConfig` in `src/config.ts` and loaded through `loadConfig()`. Every runtime knob lives there —
 [`config.example.toml`](../../config.example.toml) is the annotated copy with
 the shipped defaults, and it is validated on every test run by
 `tests/publishability.test.ts` and `tests/config.test.ts`.
@@ -492,6 +493,8 @@ may be omitted entirely; its defaults constant then supplies the whole block.
 | `[review]` (+ `.directives`) | yes (`REVIEW_DEFAULTS`) | `parseConfig` | `src/severity.ts`, `src/profiles.ts` |
 | `[escalation]` | yes (`ESCALATION_DEFAULTS`) | `parseEscalation` | `src/escalation.ts` |
 | `[levers]` | yes (`LEVERS_DEFAULTS`) | `parseLevers` | `src/levers.ts` |
+| `[archive]` | yes (`ARCHIVE_DEFAULTS`) | `parseArchive` | `src/archive/` |
+| `[scan]` | yes (`SCAN_DEFAULTS`) | `parseScan` | `src/setup/` (read only inside the companion) |
 | `[slack]` (+ `.users`, `.policy`, `.policy.causes`) | yes (`SLACK_DEFAULTS`) | `parseSlack` | `src/slack/` |
 
 Two sections validate rather than merely parse, and refuse to load on a
@@ -553,21 +556,21 @@ mutation is recorded to `state/dryrun/` instead of executed.
 | `overseer_rotation_days` | number | `7` |
 | `max_self_requeues` | number | `2` |
 | `round_stall_grace_min` | number | `10` |
-| `max_prompt_redeliveries` | number | `2` (`DEFAULT_MAX_PROMPT_REDELIVERIES`; since H1b it also bounds the same-session redeliveries of a durable command, `session_commands.redeliveries`, before any kill-and-replay) |
+| `max_prompt_redeliveries` | number | `2` (`DEFAULT_MAX_PROMPT_REDELIVERIES`; also bounds the same-session redeliveries of a durable command, `session_commands.redeliveries`, before any kill-and-replay) |
 | `session_command_start_lease_s` | number | `120` |
 | `session_bridge_ready_timeout_s` | number | `30` (`DEFAULT_SESSION_BRIDGE_READY_TIMEOUT_S`) |
 | `session_command_running_max_min` | number | `45` |
 | `round_first_pass_max_min` | number | `5` |
 | `round_passes_max_min` | number | `35` |
 | `round_finalize_grace_min` | number | `5` |
-| `round_posted_tail_grace_min` | number | `15` (H1a: after a CONFIRMED posting, how long a stage limit — and, since the integration review, the round deadline — waits for the session's tail before settling the round from the receipt) |
+| `round_posted_tail_grace_min` | number | `15` (after a confirmed posting, how long a stage limit or the round deadline waits for the session's tail before settling the round from the receipt) |
 | `posting_receipt_grace_s` | number | `120` |
 | `session_command_unknown_grace_s` | number | `60` |
 | `session_command_unknown_max_checks` | number | `1` |
 | `session_command_max_start_retries` | number | `2` |
-| `session_compaction_max_s` | number | `600` (H1b: how long a compaction the session's bridge reports running may hold a waiting command's start lease open) |
+| `session_compaction_max_s` | number | `600` (how long a compaction the session's bridge reports running may hold a waiting command's start lease open) |
 | `round_stage_supervisor_stale_s` | number | `180` |
-| `event_loop_window_s` | number | `300` (clamped 60–3600; L2, `src/eventloop.ts`) |
+| `event_loop_window_s` | number | `300` (clamped 60–3600; `src/eventloop.ts`) |
 | `event_loop_stall_max_s` | number | `10` (one delay this long is a stall; clamped 1–600) |
 | `event_loop_stall_p99_s` | number | `2` (a p99 this high over a full window is a stall; clamped 0.1–60) |
 | `event_loop_wake_cooldown_min` | number | `60` (one `daemon_event_loop_stalled` wake per cooldown; clamped 5–1440) |
@@ -586,24 +589,25 @@ shipped default `["migrations/", "infra/", "ansible/", ".github/workflows/"]`
 regardless).
 
 **`[models]`** — `default`, `conversation`, `overseer` (model spec strings,
-all `"openai-codex/gpt-6-sol"` in the example), `risk_passes` (string array,
+all `"openai-codex/gpt-6.1-sol"` in the example), `risk_passes` (string array,
 `["pass-security", "pass-prod-risk", "pass-data-safety"]`), `validate_tier`
-(`PassTier`, `"sol-high"` — a *floor*, raised per round by `validatorTier` in
-`src/dispatch.ts`, never lowered), `small_diff_lines` (number, `150`).
+(`PassTier`, `"sol-high"` — the validator's own tier, floored only by the
+profile's `min_tier` for it and never raised to match a lens; `validatorTier`
+in `src/dispatch.ts`), `small_diff_lines` (number, `150`).
 `[models.tiers]` maps each `PassTier` to a model spec; `[models.pricing]` maps
 a bare model id to `{ input_per_mtok, output_per_mtok }` for spend accounting.
 
 **`[pi]`** — `package` (`"@earendil-works/pi-coding-agent"`), `version`
 (pinned; mirrored in `package.json` and the deploy variables), `session_dir`
-(`"state/pi-sessions"`), `subagent_max_concurrency` (number; `6` in the
+(`"state/pi-sessions"`), `subagent_max_concurrency` (number; `12` in the
 example, `4` in code).
 
-**`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`9000`
-since H3, was `3000`; clamped 100…15000), `case_embed_tail_ms`
-(`4000` a case, clamped 0…30000 — the finding-case batch's embedding tail a
-round seed waits out inside its budget, H3), `context_quotas` (table, `{ experiences = 24 }` — since S5 only the
+**`[memory]`** — `context_tokens` (`2000`), `context_timeout_ms` (`9000`;
+clamped 100…15000), `case_embed_tail_ms` (`4000` a case, clamped 0…30000 —
+the finding-case batch's embedding tail a round seed waits out inside its
+budget), `context_quotas` (table, `{ experiences = 24 }` — only the
 `experiences` key is honoured, any other is ignored with a log line), and memory
-health (S1): `probe_interval_s` (`120`), `down_after_min` (`10`),
+health: `probe_interval_s` (`120`), `down_after_min` (`10`),
 `boot_grace_min` (`5`), `rewake_h` (`6`), `incident_ticket_after_min` (`120`).
 The retired `alert_cooldown_min` is ignored if still present.
 
@@ -611,18 +615,18 @@ The retired `alert_cooldown_min` is ignored if still present.
 `version`, `llama_cpp_python_version` and `extension_commit`; identity
 `user` (`"reviewer"`), `account`, `reviewer_key_file`, `auth_mode`
 (`"api_key"`), `root_key_file`, `provision_users`; client behaviour
-`request_timeout_ms` (`10000`), `search_timeout_ms` (`8000` since H3,
-was `2500`; clamped 100…15000),
+`request_timeout_ms` (`10000`), `search_timeout_ms` (`8000`; clamped
+100…15000),
 `default_category` (`"experiences"`), `read_cache_ttl_ms` (`15000`);
 process `host` (`"127.0.0.1"` — loopback only, the port is never published),
 `port` (`1933`), `bin`, `home`, `config_file`, `workspace`, `workers` (`1`),
 `queue_concurrency` (`2`); supervision `health_interval_s` (`30`),
-`health_timeout_ms` (`6000` since H3, was `2000`; clamped 100…20000 —
+`health_timeout_ms` (`6000`; clamped 100…20000 —
 `/ready` runs an embedding), `restart_backoff_ms` (array,
 `[1000, 2000, 5000, 15000, 30000, 60000]`), `restart_reset_after_s` (`120`);
 embeddings `embedding_provider` (`"local"`), `embedding_model`
 (`"bge-small-en-v1.5-f16"` under local), `embedding_dimension` (`384` under
-local), `embedding_key_file`; the local English embedder (S4)
+local), `embedding_key_file`; the local English embedder
 `local_embedder_file`, `local_embedder_url`, `local_embedder_sha256` (the
 model-file pin), `local_embedder_port` (`1934`), `local_embedder_threads`
 (`1`).
@@ -633,7 +637,7 @@ explicit, an empty `ssh_host` does not mean local), `ssh_host`, `container`
 `remote_sandbox_root` (`"/opt/quickreview/sandbox"`), `sudo_docker` (`true`),
 `poll_interval_s` (`3`), `stale_after_s` (`90`), `msg_timeout_s` (`30`),
 `evidence_timeout_s` (`60`), `evidence_why_interval_s` (`10`, clamped to
-5–600: the evidence sweep's minimum gap between `qcr why` execs, L1).
+5–600: the evidence sweep's minimum gap between `qcr why` execs).
 
 **`[companion]`** — every key is commented out in the example because
 `COMPANION_DEFAULTS` is the shipped configuration: `enabled` (`true`),
@@ -665,8 +669,10 @@ around them.
 boolean, all `true`. The fourth trigger, an author reply, belongs to
 `src/pingpong.ts` and has no knob.
 
-**`[review]`** — `escalation_mention_default` (string, `""`), `profile`
-(string, `""`; names a directory under `profiles/`). `[review.directives]`
+**`[review]`** — `escalation_mention_default` (string, `""`), `preset`
+(`"default"`; names a whole review configuration, `REVIEW_PRESETS`),
+`profile` (string, `""`; names a repo profile), plus the review-quality levers
+annotated in `config.example.toml`. `[review.directives]`
 carries five extend-only string arrays, all `[]`:
 `extra_basenames`, `extra_dir_segments`, `extra_root_dirs`, `extra_files`,
 `extra_vendored_segments`. They *add* to the built-in agent-directive

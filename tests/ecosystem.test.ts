@@ -1,11 +1,13 @@
 // The ecosystem pre-check seam.
 //
-// Django behind the seam is today's behavior byte-for-byte (the
-// regression net in migration-precheck.test.ts runs against the seam's
-// default); `none` is a first-class configured-off, structurally distinct
-// from a degraded Django check. The ratified decision this file guards for
-// the Django case: "migration renumber posts as a COMMENT, never a blocker —
-// and the check gets MORE reliable, never quieter."
+// Django behind the seam renders its round-prompt prose (the migration gate
+// and the degraded pre-check note) byte-for-byte as pinned below, and its
+// pre-check behaves unchanged (the regression net in
+// migration-precheck.test.ts runs against the seam's default); `none` is a
+// first-class configured-off, structurally distinct from a degraded Django
+// check. The invariant this file guards for the Django case: migration
+// renumber posts as a COMMENT, never a blocker — and the check gets more
+// reliable, never quieter.
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,10 +35,9 @@ const cfg: Config = parseConfig(
 );
 
 // ---- byte-identity fixtures -------------------------------------------------
-// Captured VERBATIM from src/templates.ts as it stood before moved the
-// prose behind the seam. These literals are the proof: if the seam ever
-// renders different bytes for the Django case, this file — not the seam — is
-// the record of what the prompt used to say.
+// The Django prompt prose, captured verbatim. These literals are the proof:
+// if the seam ever renders different bytes for the Django case, this file —
+// not the seam — is the record of what the prompt says.
 const EXPECTED_GATE_ON =
   "MIGRATION GATE: this PR touches migrations — pass-data-safety must judge the ORM operations and any supplied generated SQL for destructive mutation, concrete rebuild/locking risk, backfill safety, and rolling-deploy ordering. Ordinary Django ORM operations are acceptable and must not be rewritten as handwritten SQL merely for reviewability. Only a concrete migration hazard blocks; missing generated SQL or an unproven database algorithm does not.";
 const EXPECTED_GATE_OFF = "no migration gate on this round";
@@ -187,7 +188,7 @@ describe("the seam's two implementations", () => {
     ).resolves.toEqual({ status: "checked", collisions: [] });
   });
 
-  // the dedupe's third answer. A comment row the ledger cannot read
+  // The dedupe's third answer. A comment row the ledger cannot read
   // means a comment WAS posted at a fingerprint nobody can recover, so posting
   // again risks the exact duplicate the read exists to prevent. The COMMENT is
   // withheld, loudly, and the check still counts as RUN: the collisions ride

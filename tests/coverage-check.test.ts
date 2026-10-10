@@ -1,9 +1,8 @@
-// `[review] coverage_check` (src/coverage.ts, 2026-10-03 gap plan item 4):
+// `[review] coverage_check` (src/coverage.ts):
 // a changed non-test source file no lens raised a finding on gets a targeted
-// pass-sweep row (at most two, packed by line budget), each saying why. The
-// motivating miss: a high-severity defect in a changed file that no lens
-// produced anything on. With the knob off, or every file addressed, nothing
-// changes.
+// pass-sweep row (at most two, packed by line budget), each saying why, so a
+// changed file no lens produced anything on still gets read. With the knob
+// off, or every file addressed, nothing changes.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -103,7 +102,7 @@ describe("coverageGaps", () => {
         "a/Five.java",
       ]),
     ).toEqual({ uncovered: [], groups: [], unchecked: [] });
-    // No sweep list: exactly the old check.
+    // No sweep list: the same as an empty one.
     expect(coverageGaps(el, ["a/One.java"])).toEqual(
       coverageGaps(el, ["a/One.java"], undefined, undefined, []),
     );
@@ -134,7 +133,7 @@ describe("the knob and the note", () => {
     expect(note).toContain("COVERAGE <files>");
     expect(note).toContain('[{"path":"a/B.java","lines":12}]');
     expect(note).toContain("At most two such rows");
-    // a returned sweep row's focus counts, NONE included; a failed
+    // A returned sweep row's focus counts, NONE included; a failed
     // row's does not; other NONE lenses still address nothing.
     expect(note).toContain("`swept` =");
     expect(note).toContain("`pass-sweep` row that RETURNED — NONE\nincluded");

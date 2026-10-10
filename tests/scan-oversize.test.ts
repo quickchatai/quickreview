@@ -1,5 +1,4 @@
-// A file larger than the scan's per-case line limit (selfscan round 2:
-// src/state.ts, ~5.9k lines against the 3,000-line case) is still reviewed:
+// A file larger than the scan's per-case line limit is still reviewed:
 // the scan cuts it into LINE-RANGE cases — overlapping windows, at a
 // declaration boundary when one is cheap to find — each naming its range in
 // the task, the unit's name kept. The ledger records each range, a file is

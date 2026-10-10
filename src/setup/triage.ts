@@ -329,8 +329,8 @@ export class ScanTriage {
    * unless it has one already — then it is promoted onto that ticket and
    * nothing is filed. Refused for a fixed finding; a dismissed one may be
    * promoted (the operator changed their mind). Promotion DEFAULTS TO
-   * CONFIRMED findings (owner ruling 2026-09-30: the scan validator is the
-   * skeptic): a likely, doubtful or unjudged one is refused unless
+   * CONFIRMED findings (the scan validator is the skeptic): a likely,
+   * doubtful or unjudged one is refused unless
    * `unconfirmed: true` says the operator asked for it explicitly.
    */
   async promote(args: {
@@ -354,7 +354,7 @@ export class ScanTriage {
       };
     }
     // A dismissal a re-scan no longer reports (findings.ts: sticky, stamped
-    // `unreported`) is what used to read `fixed`: nothing to file either —
+    // `unreported`) is out of play as a fixed one is: nothing to file —
     // the ticket would close at the next scan. It is back in play once a
     // scan reports it again.
     if (goneDismissal(f)) {

@@ -1,5 +1,5 @@
-// The vendored OpenViking pi extension — provenance + the ten
-// patches. Two kinds of assertion live here on purpose:
+// The vendored OpenViking pi extension — provenance + its patches. Two kinds
+// of assertion live here on purpose:
 //
 //   * BEHAVIOUR, wherever the fork's own code can be imported. `qcr-leaf.ts`,
 //     `qcr-write.ts`, `qcr-namespaces.ts`, `config.ts`, `sync.ts` and
@@ -218,8 +218,8 @@ describe("PATCH 2 — no ambient work in a subagent leaf", () => {
     "--no-skills",
     "--no-extensions",
   ];
-  // pi's NATIVE subagent extension's child argv (read statically
-  // from the pinned 0.84.4 tarball's examples/extensions/subagent/index.ts:
+  // pi's native subagent extension's child argv (read statically from the
+  // 0.84.4 tarball's examples/extensions/subagent/index.ts:
   // no --no-skills, no --no-extensions — but -p / --no-session / --mode json
   // are all present, and any one of them is enough).
   const NATIVE_SUBAGENT_ARGV = [
@@ -681,7 +681,7 @@ describe("PATCH 5 — a second memory namespace, and only where it belongs", () 
   });
 });
 
-// ---- PATCH 6 (S2) ----------------------------------------------------
+// ---- PATCH 6 ----------------------------------------------------------------
 
 describe("PATCH 6 — writes that stick, errors that say so", () => {
   const BUSY_409 = {
@@ -753,7 +753,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
     expect(auth).toContain("REFUSED this session's key");
     expect(auth).toContain("Invalid API Key");
     expect(auth).toContain("not an empty result");
-    // The 0.4.15 server has wrapped a bad key in a non-401 envelope.
+    // The 0.4.15 server can wrap a bad key in a non-401 envelope.
     expect(isAuthFailure({ ok: false, status: 500, error: { message: "Invalid API Key" } })).toBe(
       true,
     );
@@ -801,7 +801,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
       built.request.operations.map((o) => sha256Prefixed(o.content)),
     );
     expect(built.request.wait).toBe(false);
-    // One entry the old way is the same request PATCH 4 built.
+    // The single-entry form ({uri, content}) builds the same request PATCH 4 built.
     const one = buildBatchWriteRequest({ uri: `${ROOT}/experiences/a.md`, content: "x" });
     expect(one.ok && one.request.operations).toEqual(
       (() => {
@@ -814,8 +814,8 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
 
   it("routes a batch by its ENTRIES — a reviewer-only batch is never refused as two trees", () => {
     // The companion: its own tree first, the reviewer's second. A batch has
-    // no top-level uri, so routing the bare params fell back to `companion`
-    // and then refused every reviewer entry as "more than one memory tree".
+    // no top-level uri, so routing by the bare params would fall back to
+    // `companion` and refuse every reviewer entry as "more than one memory tree".
     const TWO = ["companion", "reviewer"];
     const R = "viking://user/reviewer/memories/experiences";
     const C = "viking://user/companion/memories/experiences";
@@ -851,7 +851,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
     expect(
       routeWrite({ entries: [{ uri: "viking://user/memories/x.md", content: "x" }] }, TWO),
     ).toEqual({ ok: true, namespace: "companion" });
-    // One entry the old way routes exactly as routeNamespace does.
+    // The single-entry form ({uri, content}) routes exactly as routeNamespace does.
     expect(routeWrite({ uri: `${R}/a.md`, content: "x" }, TWO)).toEqual(
       routeNamespace({ uri: `${R}/a.md` }, TWO),
     );
@@ -1007,7 +1007,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
       );
       expect(browse).toContain("failureText(listed");
       expect(browse).toContain("failureText(st");
-      // The old collapsing calls are gone from the tools.
+      // The tools never use the collapsing client calls.
       expect(tools).not.toMatch(/ns\.client\.(abstract|overview|readContent|ls|stat)\(/);
     });
 
@@ -1054,7 +1054,7 @@ describe("PATCH 6 — writes that stick, errors that say so", () => {
   });
 });
 
-// ---- PATCH 7 (S3) ----------------------------------------------------
+// ---- PATCH 7 ----------------------------------------------------------------
 
 describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
   const ROOT = "viking://user/reviewer/memories";
@@ -1434,8 +1434,8 @@ describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
         },
       ];
       const synced = await sync.syncBranch(branch);
-      // The turn WAS synced (per-turn sync stays, R3) — the old code would
-      // have read the session here and committed at its 999,999 pending tokens.
+      // The turn is synced (per-turn sync stays), but upstream's code would
+      // also read the session here and commit at its 999,999 pending tokens.
       expect(synced.added).toBeGreaterThan(0);
       expect(calls).toContain("add");
       expect(calls.filter((c) => c === "commit" || c.startsWith("get "))).toEqual([]);
@@ -1514,7 +1514,7 @@ describe("PATCH 7 — bounded recall, no commit (owner ruling R3)", () => {
   });
 });
 
-// ---- PATCH 8 (S5) ----------------------------------------------------
+// ---- PATCH 8 ----------------------------------------------------------------
 
 describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas", () => {
   const ROOT = "viking://user/reviewer/memories";
@@ -1719,7 +1719,7 @@ describe("PATCH 8 — a PR session recalls for its PR, inside the round's areas"
   });
 });
 
-// ---- PATCH 9 (S7) ----------------------------------------------------
+// ---- PATCH 9 ----------------------------------------------------------------
 
 describe("PATCH 9 — a PR session's memory tools stay inside the round's areas", () => {
   const ROOT = "viking://user/reviewer/memories";
@@ -1847,7 +1847,7 @@ describe("PATCH 9 — a PR session's memory tools stay inside the round's areas"
   });
 });
 
-// ---- PATCH 10 (S8) ---------------------------------------------------
+// ---- PATCH 10 ---------------------------------------------------------------
 
 describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
   const LESSON_URI = "viking://user/reviewer/memories/experiences/20261007-lesson.md";
@@ -2002,7 +2002,7 @@ describe("PATCH 10 — viking_write writes a typed lesson's header", () => {
   });
 });
 
-// ---- PATCH 11 (integration review) -----------------------------------
+// ---- PATCH 11 ---------------------------------------------------------------
 
 describe("PATCH 11 — the review session's memory boundary holds for recall, search and writes", () => {
   const ROOT = "viking://user/reviewer/memories";

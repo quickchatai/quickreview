@@ -1,13 +1,11 @@
-// Ledger carry (MC-18): every round order re-hands the PR's ledger.
+// Ledger carry: every round order re-hands the PR's ledger.
 //
 // The session keeps its review ledger in its conversation; ledger-pin mirrors
-// the newest own-PR block to `state/ledgers/pr-<n>.md` after every turn. Until
-// nothing ever gave that file BACK: `settledDigest` had no production
-// supplier, so `{{settled_digest}}` always rendered "(nothing settled yet)",
-// and a session reborn after a kill, a restart or a compaction that lost the
-// block started its next round blind. The compaction half is ledger-pin's
-// (it now pins the block into pi's summary); this module is the daemon half,
-// which needs no model and no pi API at all:
+// the newest own-PR block to `state/ledgers/pr-<n>.md` after every turn. This
+// module gives that file BACK, so a session reborn after a kill, a restart or
+// a compaction that lost the block does not start its next round blind. The
+// compaction half is ledger-pin's (it pins the block into pi's summary); this
+// module is the daemon half, which needs no model and no pi API at all:
 //
 //   - `ledger_carry` on the order: the mirrored block, verbatim, bounded to
 //     LEDGER_CARRY_MAX_CHARS, with the path it came from, rendered by the

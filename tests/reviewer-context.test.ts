@@ -1,8 +1,8 @@
-// The reviewer context stub (the owner, 2026-09-26): pi loads the FIRST of
-// AGENTS.override.md / AGENTS.md / CLAUDE.md from the cwd into every session
-// and every lens pass, and they all run in the sandbox root — so the 14.5 KB
-// contributor guide rode every turn of every review. On the VM the entrypoint
-// installs a short stub there instead; the bench image copies the same stub;
+// The reviewer context stub: pi loads the first of AGENTS.override.md /
+// AGENTS.md / CLAUDE.md from the cwd into every session and every lens pass,
+// and they all run in the sandbox root, so without a stub the full
+// contributor guide would ride every turn of every review. On the VM the
+// entrypoint installs a short stub there instead; the bench image copies the same stub;
 // the plain-Docker path cannot (its sandbox root is the operator's checkout).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

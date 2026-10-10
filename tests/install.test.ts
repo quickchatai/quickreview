@@ -1,4 +1,4 @@
-// the install locator (spec seam 1): temp XDG homes and QCR_CONFIG
+// The install locator: temp XDG homes and QCR_CONFIG
 // in, every config path out. Never the operator's own homes: every case hands
 // the locator an explicit env.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -308,8 +308,8 @@ describe("qcr install", () => {
 });
 
 describe("no TypeScript reader builds the checkout config path itself", () => {
-  // acceptance: every reader of the live config goes through the
-  // locator. The one allowed spelling COMPARES a located path against the
+  // Every reader of the live config goes through the
+  // locator. The one allowed spelling compares a located path against the
   // checkout's (to decide whether an accepted proposal is committed) — it
   // never reads it. The shell half is swept in tests/install-shell.test.ts.
   const ALLOWED = new Set(["src/tui/proposals.ts"]);
@@ -340,7 +340,7 @@ describe("no TypeScript reader builds the checkout config path itself", () => {
   });
 });
 
-// ---- repo profiles --------------------------------------------------
+// ---- repo profiles ----------------------------------------------------------
 
 /** A profile directory with one file, whose bytes tell the copies apart. */
 const putProfile = (base: string, name: string, body = "x\n"): string => {
@@ -358,7 +358,7 @@ describe("locateProfile", () => {
       source: "checkout",
     });
     putProfile(root, "house");
-    // an install's own profile left in the checkout is never read.
+    // An install's own profile left in the checkout is never read.
     expect(locateProfile({ root, profile: "house", env })).toBeNull();
     const beside = join(dir, "mounted");
     const inOverride = putProfile(beside, "house");
@@ -576,7 +576,7 @@ describe("the checkout's profiles/ holds the generic examples", () => {
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 
   it("every other directory there is a stranded install pack BOTH snapshots exclude", () => {
-    // a pack left there (the deployment's own, until `qcr install
+    // A pack left there (the deployment's own, until `qcr install
     // migrate` moves it) is never read, and whatever it is called it must
     // never ship — publicly or internally.
     const dirs = readdirSync(join(repo, "profiles"), { withFileTypes: true })
@@ -622,7 +622,7 @@ describe("the checkout's profiles/ holds the generic examples", () => {
   );
 });
 
-// ----: secrets under the install's config home ----------------------
+// ---- secrets under the install's config home --------------------------------
 
 describe("locateSecrets", () => {
   const secret = (dirPath: string, name = "app_id", text = "123\n"): string => {
@@ -723,7 +723,7 @@ describe("locateSecrets", () => {
       Object.assign(process.env, env);
       expect(parseConfig(withDir("")).github.secrets_dir).toBe(secretsHome(env));
       secret(legacySecretsDir(env));
-      // the old spelling, with the old dir populated, still reads the home.
+      // The legacy spelling, with the legacy dir populated, still reads the home.
       expect(parseConfig(withDir("~/.config/quickreview-bot")).github.secrets_dir).toBe(
         secretsHome(env),
       );
@@ -963,8 +963,8 @@ describe("migrate repoints the compose .env (review)", () => {
 });
 
 describe("nothing but migrate (and a not-found's hint) touches the old places", () => {
-  // Acceptance "no fallback reads remain (grep-clean)": the locator's old-place
-  // helpers are called from exactly the modules that MOVE or NAME what is
+  // No fallback reads remain: the locator's old-place
+  // helpers are called from exactly the modules that move or name what is
   // stranded — `qcr install` (cli.ts), the loaders' not-found (config.ts,
   // profiles.ts) and the companion column's missing-keys note — never from a
   // reader deciding where to read.
@@ -1013,10 +1013,9 @@ describe("nothing but migrate (and a not-found's hint) touches the old places", 
 });
 
 describe("no reader builds the legacy secrets path itself", () => {
-  // acceptance: every secrets reader resolves through the locator.
-  // contracted the rest: only the locator's migrate half (and its
-  // spelling check) and the shell mirror's spelling check name the old dir —
-  // the entrypoints' compatibility link and the forward's fallback are gone.
+  // Every secrets reader resolves through the locator. Only the locator's
+  // migrate half (and its spelling check) and the shell mirror's spelling
+  // check name the legacy dir.
   const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
   const ALLOWED = new Set(["src/install.ts", "scripts/install-locator.sh"]);
   const SPELLS = /quickreview-bot/;

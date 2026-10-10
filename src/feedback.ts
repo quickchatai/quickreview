@@ -1,4 +1,4 @@
-// The [feedback] tuning loop (the owner + Priya, Slack 2026-08-20).
+// The [feedback] tuning loop.
 //
 // Humans mark a wrong / over-specific review comment by starting a PR comment
 // with `[feedback]`; the system additionally learns from ACTIONS (a dismissed
@@ -14,22 +14,20 @@
 //      written verbatim through the ONE MemoryStore seam
 //      (src/memory/store.ts) as a `note` op. The daemon does not grow a
 //      second writer and it does not know which engine is behind the seam.
-//      Since S2 the write STICKS: the ledger row records its memory
+//      The write STICKS: the ledger row records its memory
 //      state (`pending` → `written`, or `failed`/`skipped`), the entry has a
 //      deterministic address in the `events` area (`feedbackEntryName`,
 //      created-if-absent, so a replay of a write that landed but timed out
 //      finds its own entry), the ingest attempt runs under a deadline, and
 //      whatever it did not land the backfill pump (`FeedbackMemoryPump`)
 //      writes while memory is healthy — loudly (`memory_write_backlog`) when
-//      it cannot. 36 of 39 signals were dropped on the floor before this.
-//      Since S7 a `[feedback]` comment's entry also carries the
-//      comment's full text, fenced as data (`memoryEntryFor`).
-//      The SQLite `feedback_signals` ledger is still the record;
+//      it cannot. A `[feedback]` comment's entry also carries the comment's
+//      full text, fenced as data (`memoryEntryFor`).
+//      The SQLite `feedback_signals` ledger is the record;
 //   2. the same-day validator addendum — regenerated on every explicit
-//      [feedback] comment and composed into pass-validate's BUILT body
-//      (the owner, 2026-08-20: "ingestable at least into the memory for a day,
-//      so the user won't be frustrated by seeing the same problem whole
-//      day"). Demotion-only: the addendum tells the validator to demand
+//      [feedback] comment and composed into pass-validate's BUILT body, so
+//      the same criticized shape does not keep reappearing for the rest of
+//      the day. Demotion-only: the addendum tells the validator to demand
 //      stronger evidence for criticized finding shapes and to label any
 //      resulting downgrade `feedback-shape` — it never licenses a kill, and
 //      the blocker bar does not move.
@@ -39,7 +37,7 @@
 // expires with the operations day (`[ops] timezone`; wire.ts rebuilds on day
 // change) and is built
 // from the LEDGER (`feedbackCommentsForDay`), never from memory — it therefore
-// survives a memory outage and the engine cutover untouched.
+// survives a memory outage untouched.
 import { opsDay } from "./eod.js";
 import { VALIDATE_PASS, type PassAddendum } from "./include.js";
 import { FEEDBACK_FULL_TEXT_LABEL, cleanQuotedText, fenceAsData } from "./memory/datafence.js";
@@ -223,8 +221,8 @@ function proseFor(e: FeedbackEvent, day: string): string {
   }
 }
 
-/** The label the full text of a [feedback] comment follows in its entry
- * (S7) — what a reader looks for to show it again. It lives in the
+/** The label the full text of a [feedback] comment follows in its entry —
+ * what a reader looks for to show it again. It lives in the
  * leaf `memory/datafence.ts`, so the TUI reads it without this module. */
 export { FEEDBACK_FULL_TEXT_LABEL };
 
@@ -239,7 +237,7 @@ function feedbackFullText(body: string): string {
  * queries.
  *
  * A `[feedback]` comment's sentence quotes it flattened and capped
- * (`sanitizeFeedbackText`). Since S7 the entry also carries the
+ * (`sanitizeFeedbackText`). The entry also carries the
  * comment's FULL text, fenced as data after the sentence, whenever the
  * one-line quote is not already all of it (a long or multi-line comment, or
  * one with quotes or backticks) — the learner reads what the human wrote,
@@ -320,9 +318,9 @@ export function feedbackDayAddendum(items: FeedbackSignalRow[], day: string): Pa
   };
 }
 
-// ---- the ledger row → its memory entry (S2) -------------------------
+// ---- the ledger row → its memory entry --------------------------------------
 
-/** The area of reviewer memory signals live in — the §1 `events/`
+/** The area of reviewer memory signals live in — the layout's `events/`
  * directory, beside `kind=bug`/ops signals. Not `experiences/`: that is the
  * curator's, and a batch-write locks the directory it writes into, so a
  * feedback write landing during the EOD sweep would make one of them busy. */
@@ -399,9 +397,10 @@ export function memoryEntryForRow(row: FeedbackSignalRow): string | null {
 }
 
 /**
- * A pre-S2 row's entry, if one landed after all. Before S2 a signal
- * was written under a fresh random name in `experiences/`, and a write that
- * timed out could still have landed — its row was ledgered as a failure. So
+ * A legacy row's entry, if one landed after all. A row older than the
+ * store's legacy cutoff (`feedbackLegacyCutoff`) was written under a fresh
+ * random name in `experiences/`, and a write that timed out could still have
+ * landed — its row was ledgered as a failure. So
  * before backfilling such a row the pump looks for its entry among what the
  * store holds: the same `signal`/`pr`/`day` event tags (header-only, so a
  * quoted comment cannot fake them) and, for a signal with an id, that id in
@@ -436,9 +435,9 @@ export interface LedgeredSignal {
 /**
  * The LEDGER half of an ingest, on its own: dedupe, record, event. Needs
  * nothing but the state store, so the daemon can ledger a signal that
- * arrives before the engine (and its memory store) is built — it used to
- * DROP those. The new row starts `pending` in memory (the pump writes it),
- * or `skipped` when memory is switched off.
+ * arrives before the engine (and its memory store) is built. The new row
+ * starts `pending` in memory (the pump writes it), or `skipped` when memory
+ * is switched off.
  */
 export function ledgerFeedbackSignal(
   store: StateStore,
@@ -577,7 +576,7 @@ export async function writeFeedbackMemory(
   }
 }
 
-// ---- the backfill pump (S2) -----------------------------------------
+// ---- the backfill pump ------------------------------------------------------
 
 /** The wake the pump raises (listed in `src/anomalies.ts` WAKE_KINDS). */
 export const MEMORY_WRITE_BACKLOG_KIND = "memory_write_backlog";
@@ -610,10 +609,10 @@ export interface FeedbackMemoryPumpDeps extends FeedbackWriteDeps {
   healthState?: () => string;
   /** Raise a WAKE-class anomaly (wire.ts: `store.logAnomaly`). Never throws. */
   wake: (kind: string, detail: string, message: string) => void;
-  /** Every entry the store holds — RETIRED ones included (S5: a
-   * signal whose entry was retired since was written once, and is not owed
-   * again) — and whether the read was complete; consulted only for pre-S2
-   * rows (`legacyFeedbackEntry`). A partial read defers those rows rather than
+  /** Every entry the store holds — RETIRED ones included (a signal whose
+   * entry was retired since was written once, and is not owed again) — and
+   * whether the read was complete; consulted only for legacy rows
+   * (`legacyFeedbackEntry`). A partial read defers those rows rather than
    * risking a duplicate. Defaults to `memory.read()` (live entries only),
    * taken as complete. */
   readEntries?: () => Promise<{ entries: MemoryEntry[]; complete: boolean }>;
@@ -633,7 +632,7 @@ export interface FeedbackPumpTick {
   written: number;
   /** Rows given up on this tick. */
   failed: number;
-  /** Pre-S2 rows found already in memory (no write needed). */
+  /** Legacy rows found already in memory (no write needed). */
   found: number;
   /** True when memory was not healthy, so nothing was attempted. */
   held: boolean;
@@ -661,10 +660,10 @@ function fmtAge(ms: number): string {
  * `note` op on the same seam — a retry on the one route, never a second
  * channel. It covers everything the ingest attempt did not land: a write that
  * failed or timed out, a signal that arrived before the engine existed, and
- * the 2026-08-31..10-02 losses the boot migration marked owed. Then it checks
+ * the earlier losses the boot migration marked owed. Then it checks
  * the backlog: a row owed for longer than `backlogAfterMs` (measured from
  * when it became owed, `memory_owed_since` — never from the signal's own
- * date, or a September loss queued today would wake at once) wakes
+ * date, or an old loss queued today would wake at once) wakes
  * `memory_write_backlog`, and again every `rewakeMs` while it lasts — a
  * cadence kept in state.db, so a restart does not wake again at once. The
  * backlog is not judged while memory health reads `unknown` (its boot
@@ -790,7 +789,7 @@ export class FeedbackMemoryPump {
         why = `the memory read failed (${err instanceof Error ? err.message : String(err)})`;
       }
       if (entries === null) {
-        // A pre-S2 row is never written blind — its entry may have landed
+        // A legacy row is never written blind — its entry may have landed
         // under a name nobody recorded — so without a complete read it
         // waits, says why, and does not hold the newer rows behind it.
         this.log(`feedback pump: ${why} — pre-S2 rows wait for a complete one`);
@@ -829,7 +828,7 @@ export class FeedbackMemoryPump {
     }
   }
 
-  /** One row. True when it is settled (written, or a pre-S2 row found
+  /** One row. True when it is settled (written, or a legacy row found
    * already in memory); false when its write failed. */
   private async pumpOne(
     row: FeedbackSignalRow,
@@ -914,7 +913,7 @@ export class FeedbackMemoryPump {
     }
     // Memory health's boot grace: nothing measured yet, and the pump has
     // not had a healthy tick to write anything — no wake on an unmeasured
-    // state (the same rule S1's health wakes follow).
+    // state (the same rule memory health's own wakes follow).
     if (state === "unknown") return backlog.pending;
     const age = t - Date.parse(since);
     if (!(age > this.backlogAfterMs)) return backlog.pending;
@@ -967,8 +966,8 @@ export interface FeedbackEngineDeps {
    * passes the day it just stamped, so a rebuild triggered at 23:59:59
    * cannot recompute a newer day and drop the very comment that caused it. */
   rebuildAgents: (day?: string) => void;
-  /** Reviewer memory — REQUIRED, and injected rather than constructed here
-   *. The sink must not be able to conjure an engine of its own: a
+  /** Reviewer memory — REQUIRED, and injected rather than constructed here.
+   * The sink must not be able to conjure an engine of its own: a
    * second store would be a second opinion about where memory lives. wire.ts
    * hands it the OpenViking store; tests pass a fake. */
   memory: MemoryStore;
@@ -1006,7 +1005,7 @@ export class FeedbackEngine {
    * comments only) agents rebuild. Never throws — the webhook path must
    * survive a broken memory store. A memory write that does not land here
    * leaves the row `pending` for the backfill pump: memory is a sink, the
-   * ledger is the record, and the record now says what memory still owes. */
+   * ledger is the record, and the record says what memory still owes. */
   async ingest(e: FeedbackEvent): Promise<IngestResult> {
     const now = this.deps.now?.() ?? new Date();
     const { result, row, day } = ledgerFeedbackSignal(this.deps.store, e, {

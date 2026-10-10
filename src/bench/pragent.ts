@@ -28,7 +28,7 @@
 // description, AGENTS.md repo context, and the findings as JSON rather than
 // only Markdown). No GitHub access exists or is needed.
 //
-// THE MODEL. `gpt-6.1-sol` (the operator's choice, 2026-09-30) through the ChatGPT login,
+// THE MODEL. `gpt-6.1-sol` through the ChatGPT login,
 // via bench/aacr/codex_bridge.py (non-streaming Chat Completions → the Codex
 // Responses backend), which forces the model and the effort and holds the only
 // credential (the refresh-disabled copy src/bench/auth.ts writes). PR-Agent is

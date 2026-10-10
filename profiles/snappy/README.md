@@ -7,8 +7,9 @@
   finding, a verdict-only review body, concise single-claim comments. The
   validator SELECTS what posts; the rest is recorded `withheld` in the
   findings record and shown in the TUI — never posted, never deleted. The
-  policy is also applied mechanically after the session (src/posting.ts and
-  the benchmark export, src/bench/benchposting.ts).
+  policy is also applied mechanically after the session
+  (`selectPosted` in src/postingpolicy.ts, run by the render step on the live
+  route and in the benchmark).
 - **Lenses off** — maintainability, duplication, abstraction, consistency,
   style, ui, placement, intent: the lenses that find true but non-bug issues.
   Baseline, the per-file sweep, tests, bounds, widened, security,

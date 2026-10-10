@@ -1,5 +1,5 @@
-// the VM-over-ssh route end to end: the inventory filled from the
-// interview, the deploy composed from the real script, and
+// The VM-over-ssh route end to end: the inventory filled from the
+// interview, the deploy composed from the real script, and the laptop route's
 // verification / proof / flip machinery running over ssh instead of being
 // written twice.
 //
@@ -433,7 +433,7 @@ describe("the deploy composes the real script, at full strictness", () => {
     writeFileSync(inventoryPath(root), `[quickreview]\n${ALIAS}\n`);
     for (const record of [
       { mode: "rebuild", at: "2026-08-30T10:00:00Z", host: "old-box" },
-      // A record from before deploys were scoped names no host: not trusted.
+      // A record that names no host is not trusted.
       { mode: "rebuild", at: "2026-08-30T10:00:00Z" },
     ]) {
       const moved = deployHarness({ choices: { ...VM_CHOICES, [VM_DEPLOY_CHOICE_KEY]: record } });
@@ -567,7 +567,7 @@ describe("the deploy composes the real script, at full strictness", () => {
   });
 });
 
-// ----'s machinery, over ssh -------------------------------------------
+// ---- verification, proof and go-live, over ssh ------------------------------
 
 describe("the transport is the one decision point", () => {
   function ctxWith(

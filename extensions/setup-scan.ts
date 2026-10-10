@@ -1,6 +1,6 @@
-// setup-scan — the SCAN half of the companion's setup tool belt.
-// Not an extension of its own: extensions/setup.ts (the ONE setup & scan
-// extension) registers these beside the setup_* tools. The companion judges
+// setup-scan — the scan half of the companion's setup tool belt. Not an
+// extension of its own: extensions/setup.ts (the one setup & scan extension)
+// registers these beside the setup_* tools. The companion judges
 // — when to scan, what to tell the operator about the price — and these
 // tools act: every number, refusal and record is ScanRunner's.
 //
@@ -24,7 +24,7 @@
 //     `watchTuiRequests` (the start channel, src/setup/stage2request.ts —
 //     and the [8] scan tab's stop, src/setup/scanreport.ts).
 //
-// A DELTA re-scan is scan_preview / scan_start with `delta: true`: stage 1
+// A delta re-scan is scan_preview / scan_start with `delta: true`: stage 1
 // over the files whose content changed since the last scan, plus any file
 // no complete reading covers yet (never read, cut short, unreadable before).
 //
@@ -217,7 +217,7 @@ export function renderStatus(s: ScanStatus): string {
             : ""),
       );
     }
-    // A dismissal is sticky (scan-loop): what would have been fixed is only stamped.
+    // A dismissal is sticky: what would have been fixed is only stamped.
     const dismissedGone = r.matching?.dismissed_unreported ?? 0;
     if (dismissedGone > 0) {
       out.push(
@@ -737,8 +737,8 @@ export const STAGE2_POLL_MS = 2000;
 
 /** Answer the TUI's requests while the companion runs: the stage-2 start
  * click starts the stored proposal it showed, exactly as the operator's word
- * would, and the `[8] scan` tab's stop stops the run it showed
- * running, exactly as scan_stop would. Returns the stop. */
+ * would, and the `[8] scan` tab's stop stops the run it showed running,
+ * exactly as scan_stop would. Returns the stop. */
 export function watchTuiRequests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): () => void {
   const timer = setInterval(() => {
     try {
@@ -761,7 +761,7 @@ export function watchTuiRequests(scan: ScanRunner, everyMs = STAGE2_POLL_MS): ()
 /** The scan runner the companion's belt drives: the reviewed checkout as a
  * source of trees, the state home for every record, the saved unit cut from
  * the setup engine, the live config under the profile, and a case runner
- * over the scan agent build — and the TRIAGE over its findings:
+ * over the scan agent build — and the triage over its findings:
  * reviewer memory and the tracker sink are the engine's own, handed in. */
 export function buildScan(
   engine: SetupEngine,

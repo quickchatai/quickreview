@@ -1,19 +1,18 @@
 // Held wakes — the single-shepherd invariant S4 (docs/single-shepherd-invariant.md).
 //
-// A PR has exactly ONE main pi, and it owns the whole review: rounds AND author
+// A PR has exactly one main pi, and it owns the whole review: rounds and author
 // exchanges. Two instructions in flight at once is therefore a topology
 // violation, not a scheduling detail: an author-reply wake landing between a
 // round's pass dispatch and its posting step makes the session answer for
 // findings it has not posted yet, out of a context it is still assembling.
 //
-// So: while a PR's round is running, its wakes are HELD (persisted in
+// So: while a PR's round is running, its wakes are held (persisted in
 // `pending_wakes`), and the round-end paths flush them in arrival order.
 // Nothing is dropped silently — the per-PR cap logs what it evicts.
 //
-// H1b: the cap never evicts an author reply. Each one is a claimed
-// obligation nothing else will raise again, and 76 of them were evicted unanswered
-// in three days while the coalesced delivery would have answered them in one
-// run. What the cap may evict goes push recheck nudges first (their claim is
+// The cap never evicts an author reply: each one is a claimed obligation
+// nothing else will raise again. What the cap may evict goes push recheck
+// nudges first (their claim is
 // released and the reconcile push backstop asks the question again), then
 // every other ordinary wake, oldest first — a ci or base-advance recheck
 // among them: nothing re-raises those, so an eviction releases its claim and
@@ -28,9 +27,8 @@ import {
   type StateStore,
 } from "./state.js";
 
-/** The most author replies one coalesced delivery carries (H1b). A
- * longer backlog goes in several runs, oldest first — the bound the old cap of
- * five used to give the prompt by throwing the rest away. */
+/** The most author replies one coalesced delivery carries. A longer backlog
+ * goes in several runs, oldest first, so the prompt stays bounded. */
 export const MAX_AUTHOR_REPLIES_PER_DELIVERY = 10;
 
 export interface WakeDeps {
@@ -151,10 +149,10 @@ function hold(deps: WakeDeps, pr: number, message: string, reason: string): void
   }
 }
 
-/** H1b: the anomaly a dropped author reply raises (WAKE grade). */
+/** The anomaly a dropped author reply raises (WAKE grade). */
 export const AUTHOR_REPLY_DROPPED_KIND = "author_reply_wake_dropped";
 
-/** H1b review: the anomaly an evicted recheck nudge that nothing
+/** The anomaly an evicted recheck nudge that nothing
  * re-raises records (a ci or base-advance recheck; QUIET grade — unlisted in
  * `anomalies.ts`, read at the daily heartbeat). */
 export const RECHECK_WAKE_DROPPED_KIND = "recheck_wake_dropped";
@@ -215,9 +213,9 @@ function deliveryPayload(pr: number, wakes: PendingWakeRow[]): string {
  * without a wake receipt, at-least-once is the honest side of the
  * loss-vs-duplicate tradeoff.
  *
- * Never into a running round (H2): a flush that finds the PR's next
+ * Never into a running round: a flush that finds the PR's next
  * round already in flight — dispatched while the previous round's end was
- * still awaiting something — delivers nothing; the wakes stay held for THAT
+ * still awaiting something — delivers nothing; the wakes stay held for that
  * round's end. An acked round command does not block the session slot, so the
  * slot check alone cannot see such a round.
  */
@@ -270,7 +268,7 @@ export async function flushHeldWakes(deps: WakeDeps, pr: number): Promise<number
       }
       // `inject` transferred ownership into the one durable session-command
       // slot. Stop here: deleting the upstream rows is safe, but a second
-      // inject before the slot acks would violate S4.
+      // inject before the slot acks would put two instructions in flight.
       if (store.blockingSessionCommand(`pr-${pr}`)) break;
     } catch (err) {
       const first = wakes[0]!;

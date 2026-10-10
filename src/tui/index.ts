@@ -1,5 +1,5 @@
-// `qcr tui [pr|overseer]` entry point. Wires the real ssh runner; the
-// optional target becomes the deep link.
+// `qcr tui [pr]` entry point. Wires the real ssh runner; the optional PR
+// number opens the board with that PR selected.
 import { join } from "node:path";
 import { liveConfigPath, loadConfig, sandboxRoot, type Config } from "../config.js";
 import type { TuiDriver } from "./actions.js";
@@ -32,9 +32,8 @@ export { chainOnPoll } from "./poll-hooks.js";
 
 /**
  * `qcr tui <pr>` opens the board with that PR selected. `overseer` and `main`
- * used to deep-link into a full-screen attach of those sessions; the attach
- * is gone (2026-09-02 — the TUI never attaches to a VM session), so both are
- * refused with the place to go instead.
+ * are refused with the place to go instead: the TUI never attaches to a VM
+ * session.
  */
 export function parseTarget(
   arg: string | undefined,
@@ -126,11 +125,11 @@ export function parseTuiArgs(args: string[]): TuiArgs {
 }
 
 /**
- * the companion action channel's executor, mapped onto the App's
- * public surface plus the per-tab states the install hooks return. Exported
- * so tests can drive a real App through `processTuiActions`; runTui wires it
- * inside the companionUp block. RATIFIED: actions run instantly — no confirm
- * gate (see src/tui/actions.ts header).
+ * The companion action channel's executor, mapped onto the App's public
+ * surface plus the per-tab states the install hooks return. Exported so tests
+ * can drive a real App through `processTuiActions`; runTui wires it inside
+ * the companionUp block. Actions run instantly — no confirm gate (see
+ * src/tui/actions.ts header).
  */
 export function buildTuiDriver(
   app: App,
@@ -221,22 +220,22 @@ export function buildTuiDriver(
       app.repaint();
     },
     memoryPin: async (ref, pin) => {
-      // The owner's ruling R7 (2026-10-07; root CLAUDE.md rule 8):
-      // the companion may pin or unpin an EXISTING entry, and nothing else
+      // The companion may pin or unpin an existing entry, and nothing else
       // about memory rides this channel — the only op built here is `pin` or
-      // `unpin`. A memory write, not a keystroke: no tab switch and no focus
-      // change (prep is for synthesized keys). It goes through the ONE store
-      // — the same verb the tab's `p` uses — against the entry as a NEW read
-      // finds it (the tab may never have been opened). That read lists every
-      // tree again (the TUI's store keeps no sweep cache; a file the listing
-      // shows unchanged may come from its per-file cache), and the write
-      // re-reads the file and refuses a stale hash — never applied blind.
+      // `unpin` (CLAUDE.md rule 8). A memory write, not a keystroke: no tab
+      // switch and no focus change (prep is for synthesized keys). It goes
+      // through the one store — the same verb the tab's `p` uses — against
+      // the entry as a new read finds it (the tab may never have been
+      // opened). That read lists every tree again (the TUI's store keeps no
+      // sweep cache; a file the listing shows unchanged may come from its
+      // per-file cache), and the write re-reads the file and refuses a stale
+      // hash — never applied blind.
       const memory = learning.store.memory;
       const entry = findMemoryEntry(await memory.read(), ref);
       if (!entry) {
-        // Not found in a read that did not read everything is NOT "no such
-        // entry" — honest-unknown's second half: a fact published to the
-        // companion from no data.
+        // Not found in a read that did not read everything is not "no such
+        // entry": answering that would publish a fact to the companion from
+        // no data.
         const unread = memoryRefUnread(storeHealth(memory), ref);
         if (unread)
           throw new Error(
@@ -282,14 +281,13 @@ export function buildTuiDriver(
       }
       if (action === "deploy") {
         app.pressKey("D");
-        app.pressKey("D"); // arm+confirm inside the window = instant (ratified)
+        app.pressKey("D"); // arm+confirm inside the window = instant
         return;
       }
-      // stop/start: the tab's S button computes its own kind from the OBSERVED
+      // stop/start: the tab's S button computes its own kind from the observed
       // container state; refuse a mismatched request rather than silently doing
-      // the opposite — and refuse outright when that state has not been read.
-      // Unknown folded into "stop" here exactly as it did in the tab, so a
-      // companion asking for a stop could stop a live reviewer on data nobody
+      // the opposite — and refuse outright when that state has not been read,
+      // so a stop request can never stop a live reviewer on data nobody
       // fetched.
       if (deployState.containerStatus === undefined) {
         throw new Error(
@@ -321,21 +319,6 @@ export interface RunTuiDeps {
   exit?: (code: number) => void;
 }
 
-/**
- * `qcr tui` — the whole startup, in two phases (contract).
- *
- * PHASE 0 is local only: parse, config, wire, and PAINT. Nothing external —
- * no ssh, no docker, no network, no directory scan — may run before the first
- * frame, and the frame it paints is the REAL layout with every unfetched value
- * marked unknown. The companion column's width comes from config, which is the
- * only layout-affecting fact there was, so nothing jumps when the container
- * later arrives (that is's objection, answered rather than dodged).
- *
- * PHASE 1 is the bring-up, streaming in behind that frame and reporting into
- * the companion column: connection triage, memory forward, namespaces,
- * container, day rollover, pi. It never blocks the board, and a step that
- * fails is a degraded mode, never a reason the TUI does not open.
- */
 /** First slice of the quit-time wait for an in-flight bring-up. */
 const BRING_UP_QUIT_GRACE_MS = 250;
 
@@ -374,6 +357,20 @@ export async function stopCompanionOnQuit(opts: {
   }
 }
 
+/**
+ * `qcr tui` — the whole startup, in two phases.
+ *
+ * Phase 0 is local only: parse, config, wire, and paint. Nothing external —
+ * no ssh, no docker, no network, no directory scan — may run before the first
+ * frame, and the frame it paints is the real layout with every unfetched value
+ * marked unknown. The companion column's width comes from config, the only
+ * layout-affecting fact, so nothing jumps when the container later arrives.
+ *
+ * Phase 1 is the bring-up, streaming in behind that frame and reporting into
+ * the companion column: connection triage, memory forward, namespaces,
+ * container, day rollover, pi. It never blocks the board, and a step that
+ * fails is a degraded mode, never a reason the TUI does not open.
+ */
 export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}): Promise<void> {
   const args = parseTuiArgs(typeof argv === "string" ? [argv] : argv);
   if (args.help) {
@@ -399,8 +396,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   const full = deps.config ?? loadConfig();
   const cfg = full.tui;
-  // ONE transport decision for every remote op — ssh to the VM, or
-  // the same commands against local docker on the laptop topology.
+  // One transport decision for every remote op — ssh to the VM, or the same
+  // commands against local docker on the laptop topology.
   const runner = runnerFor(cfg);
 
   const app = new App(cfg, runner, out, input);
@@ -415,11 +412,10 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
     out.write(MOUSE_OFF + ALT_SCREEN_OFF);
   };
-  // A reload under the supervisor (S3) exits with RELOAD_EXIT_CODE so
-  // the next build takes over THIS terminal state — the alt screen, mouse
-  // reporting and raw mode stay exactly as they are, as they did when the old
-  // generation simply froze. Restoring here would flash the shell between
-  // builds. Every other exit restores.
+  // A reload under the supervisor exits with RELOAD_EXIT_CODE so the next
+  // build takes over this terminal state — the alt screen, mouse reporting
+  // and raw mode stay exactly as they are. Restoring here would flash the
+  // shell between builds. Every other exit restores.
   process.on("exit", (code) => {
     if (code === RELOAD_EXIT_CODE) return;
     restoreTerminal();
@@ -489,16 +485,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     },
   };
 
-  // The companion column is LAYOUT (ruling 2, made unconditional
-  // 2026-09-02): its width depends on nothing but the terminal, so wiring it
-  // here — before anything asks docker whether the container is running — is
-  // what makes the first frame the real one. The sidebar is only
-  // `available()` once the container answers, and the container fills a
-  // column that was already the right size.
+  // The companion column is layout: its width depends on nothing but the
+  // terminal, so wiring it here — before anything asks docker whether the
+  // container is running — is what makes the first frame the real one. The
+  // sidebar is only `available()` once the container answers, and the
+  // container fills a column that was already the right size.
   const { CompanionSidebar, restorePreferredSidebarWidth } = await import("./sidebar.js");
   const { CompanionLifecycle, realDockerRunner } = await import("./companion.js");
   const companion = new CompanionLifecycle(full.companion, realDockerRunner);
-  // the companion's READ-ONLY GitHub token, minted HERE from the App
+  // The companion's read-only GitHub token, minted here from the App
   // credential this host holds and handed over as an env file in a dir the
   // container mounts read-only. Refreshed while the TUI runs (it lives an
   // hour); constructed now, first minted in the bring-up — it is network.
@@ -517,9 +512,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
    * whether or not the rollover and pi spawn behind it ever finish. */
   let companionContainerStarted = false;
   let companionError: string | undefined;
-  // The column exists in EVERY configuration (2026-09-02): `--no-companion`
-  // and `[companion] enabled = false` decide what runs and what the column
-  // says, never whether the right half of the screen is there.
+  // The column exists in every configuration: `--no-companion` and
+  // `[companion] enabled = false` decide what runs and what the column says,
+  // never whether the right half of the screen is there.
   app.sidebar = new CompanionSidebar(full.companion, realDockerRunner, {
     available: () => companionUp,
     onUpdate: () => app.repaint(),
@@ -530,16 +525,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   if (!companionOn)
     app.sidebar.setOff(args.companion ? "[companion] enabled = false" : "--no-companion");
 
-  // Bring-up progress goes IN that column (ruling 3): it is empty at this
-  // moment and already the right shape, so it costs no new surface — and the
-  // lines are never written to the normal screen, where the alt screen's clear
-  // used to erase them (that erasure was the flicker). With the companion off
-  // the same column carries the skipped steps, and stays as the place that
-  // says WHY it is off.
+  // Bring-up progress goes in that column: it is empty at this moment and
+  // already the right shape, so it costs no new surface — and the lines are
+  // never written to the normal screen, where the alt screen's clear would
+  // erase them (a visible flicker). With the companion off the same column
+  // carries the skipped steps, and stays as the place that says why it is off.
   const { StartupProgress } = await import("./startup.js");
   const progress = new StartupProgress(undefined, {
     onUpdate: (p) => {
-      // Kept after the bring-up settles ON PURPOSE: a `✗ companion container ·
+      // Kept after the bring-up settles on purpose: a `✗ companion container ·
       // docker is not running` is the most useful thing the column can show,
       // and clearing it would delete the diagnosis a second after it appeared.
       // The hand-off is the sidebar's `mirrored` latch — the checklist yields
@@ -550,7 +544,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   });
   app.sidebar.setStartup(progress.lines());
 
-  // No attach hooks: the full-screen attach is retired — see AppHooks.
+  // No attach hooks: the TUI never attaches to a VM session — see AppHooks.
   const { installMessageHooks } = await import("./msg.js");
   installMessageHooks(app);
   const { installUnwedgeHooks } = await import("./unwedge.js");
@@ -574,18 +568,17 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     );
     theApp.openCompanion();
   };
-  // The profile commits setup asked for, carried out HERE, on the config
+  // The profile commits setup asked for, carried out here, on the config
   // mirror's timer — the container cannot see the config home's .git (the
   // home holds secrets/, so it is never mounted whole).
   const commitProfiles = (): void => {
     for (const r of commitRequestedProfiles()) app.notice(commitLine(r));
   };
   // The four learning surfaces — [2] memory, [3] digest, [4] tickets,
-  // [7] feedback — over ONE store. Accept-verdict git
-  // actions run against THIS working copy (the canonical repo); the [sink]
-  // config decides where the defect auto-filer writes (wayfinder
-  // tracker, gated github command channel, or none) and which effort the
-  // ticket projection reads.
+  // [7] feedback — over one store. Accept-verdict git actions run against
+  // this working copy (the canonical repo); the [sink] config decides where
+  // the defect auto-filer writes (wayfinder tracker, gated github command
+  // channel, or none) and which effort the ticket projection reads.
   const { installLearningTabs } = await import("./learning.js");
   const { execFile } = await import("node:child_process");
   const gitRun = (cmd: string, args2: string[], stdin?: string): Promise<string> =>
@@ -597,29 +590,29 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       if (stdin !== undefined) child.stdin?.end(stdin);
       else child.stdin?.end();
     });
-  // ONE memory store for the whole TUI: OpenViking on the VM,
-  // reached over the memory forward's loopback listener, holding BOTH user
-  // keys. Every memory surface in the TUI shares this instance — a second one
-  // would mean a second sweep and a second health opinion.
+  // One memory store for the whole TUI: OpenViking on the VM, reached over
+  // the memory forward's loopback listener, holding both user keys. Every
+  // memory surface in the TUI shares this instance — a second one would mean
+  // a second sweep and a second health opinion.
   const { tuiMemoryStore, tuiMemoryBaseUrl } = await import("./memory.js");
-  // the companion namespace's retired URIs, published into the
-  // state home the companion mounts — its recall excludes them.
+  // The companion namespace's retired URIs, published into the state home
+  // the companion mounts — its recall excludes them.
   const { MEMORY: COMPANION_MEMORY } = await import("./companion.js");
   const { stateHome: memStateHome } = await import("../install.js");
   const memStore = tuiMemoryStore({
     retiredFiles: { companion: join(memStateHome(), COMPANION_MEMORY.retiredFile) },
   });
-  // the TUI brings the memory forward up itself, so the Memory tab
-  // works without the operator installing the systemd unit first. It ADOPTS a
+  // The TUI brings the memory forward up itself, so the Memory tab works
+  // without the operator installing the systemd unit first. It adopts a
   // forward that is already listening (the unit, or another qcr tui) and stops
   // only one it started — see memforward.ts for why that split matters.
-  // Constructed here, STARTED in the bring-up: `ensure()` probes over HTTP.
+  // Constructed here, started in the bring-up: `ensure()` probes over HTTP.
   const { MemoryForward } = await import("./memforward.js");
   const memForward = new MemoryForward({
     baseUrl: tuiMemoryBaseUrl(),
     repoRoot: sandboxRoot(),
-    // the forward follows the SAME [tui] target knob — local mode
-    // reaches the daemon container's loopback engine via plain docker exec.
+    // The forward follows the same [tui] target knob — local mode reaches the
+    // daemon container's loopback engine via plain docker exec.
     local: transportOf(cfg) === "local",
     sudoDocker: cfg.sudo_docker,
     log: (line) => app.notice(line),
@@ -631,9 +624,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     await import("./deploytab.js");
   const { FileDeployCeremonyStore } = await import("./deploy-ceremony.js");
   const localRunner = realLocalRunner(sandboxRoot());
-  // the change register — every feedback-derived commit (identified by
-  // its `Ratified-in-session:` trailer), newest first, with a one-key revert
-  // on the feedback tab. It reads and writes the LOCAL checkout only, through
+  // The change register — every feedback-derived commit (identified by its
+  // `Ratified-in-session:` trailer), newest first, with a one-key revert on
+  // the feedback tab. It reads and writes the local checkout only, through
   // the same read-only local-git seam the deploy tab uses; nothing here
   // touches the VM, GitHub or the gate. Persisted under state/ so the list is
   // on screen before git has been asked anything.
@@ -642,7 +635,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   const { PIN_PROPOSALS_FILE, parsePinProposals } = await import("../setup/pins.js");
   const learning = installLearningTabs(app, {
     memory: memStore,
-    // the entries setup proposed to pin, marked ☆ on the memory tab.
+    // The entries setup proposed to pin, marked ☆ on the memory tab.
     readPinProposals: () => {
       try {
         return parsePinProposals(readFileSync(join(stateHome(), PIN_PROPOSALS_FILE), "utf8"));
@@ -670,8 +663,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       : {}),
   });
   app.hooks.powerRun = (_theApp, action, onData, onExit) => {
-    // docker stop/start on the VM (or local docker in local mode),
-    // streamed into the tab like a deploy.
+    // docker stop/start on the VM (or local docker in local mode), streamed
+    // into the tab like a deploy.
     const cmd = powerSpawnArgv(cfg, action);
     const child = spawn(cmd[0]!, cmd.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
     onData(`$ ${cmd.join(" ")}\n`);
@@ -734,8 +727,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       !companionOn || companionError !== undefined ? false : companionUp ? true : undefined,
   });
 
-  // finished-round evidence, copied down from the VM into a local
-  // store the companion reads read-only. Its dir is CREATED in the bring-up,
+  // Finished-round evidence, copied down from the VM into a local store the
+  // companion reads read-only. Its dir is created in the bring-up,
   // before the container starts — the mount source must exist first, or docker
   // invents it root-owned and the copier can never write into it.
   const {
@@ -747,14 +740,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   } = await import("./evidence.js");
   const evidence = new EvidenceStore(full.companion.evidence_dir);
 
-  // ambient feed + alert pipeline + startup healing. All of it hangs
+  // Ambient feed + alert pipeline + startup healing. All of it hangs
   // off companionOn, so --no-companion really means "none of this runs" —
   // the column itself is not part of "this": it is layout, and it is always
   // there.
   const { companionStarter, installCompanionTabHooks } = await import("./companiontab.js");
 
-  // the companion sidebar is the ONLY companion surface (the strip and
-  // the full-screen attach it opened are both retired). Mirror + send go
+  // The companion sidebar is the only companion surface. Mirror + send go
   // through the same local docker seam the lifecycle uses; refresh piggybacks
   // the app poll (the sidebar's own 500ms timer only runs focused/after-send).
   chainOnPoll(app, (a) => void a.sidebar?.refresh());
@@ -772,7 +764,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     });
   });
 
-  // the evidence copier rides the EXISTING poll — no second scheduler,
+  // The evidence copier rides the existing poll — no second scheduler,
   // and deliberately not awaited. `sweep()` is re-entrant-safe (a sweep in
   // flight makes the next call a no-op) and every remote read is killed at
   // `evidence_timeout_s`, so a wedged ssh control master stalls the copier and
@@ -780,7 +772,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // whether or not the companion is up — the record is worth keeping either
   // way, and it is what the companion will read when it next starts.
   //
-  // L1: its per-PR progress lives beside the TUI's other state files,
+  // Its per-PR progress lives beside the TUI's other state files,
   // so a re-exec (every local build) resumes instead of re-running `qcr why`
   // for every PR, and its `why` execs are paced by `evidence_why_interval_s`
   // and held while the board's last status shows a drain or a stale heartbeat.
@@ -797,9 +789,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     });
   });
 
-  // the durable candidate list behind the `survey` skill. Derived from
-  // what is already on this disk — the poll snapshot plus's round
-  // manifests — so it costs ZERO remote reads and rides the same poll. It lands
+  // The durable candidate list behind the `survey` skill. Derived from what
+  // is already on this disk — the poll snapshot plus the evidence store's
+  // round manifests — so it costs no remote reads and rides the same poll. It lands
   // in the evidence dir, which is already mounted `/evidence:ro`, so the
   // companion reads `/evidence/candidates.json` over an existing channel and
   // cannot write to it.
@@ -831,8 +823,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     });
   });
 
-  // a reviewer-memory incident older than
-  // `[memory] incident_ticket_after_min` becomes ONE issue-tracker ticket
+  // A reviewer-memory incident older than
+  // `[memory] incident_ticket_after_min` becomes one issue-tracker ticket
   // (actor qcr-tui, deduped by the incident's start), read from status.json —
   // never from memory, which is the thing that is down (the `#bug` filer reads
   // memory, so it could never report this). Independent of the companion:
@@ -865,8 +857,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       a.notice(line);
     }
   });
-  // the learner's EOD curation that did not reach memory (no
-  // receipt, or lessons memory does not hold) — the same person path: ONE
+  // The learner's EOD curation that did not reach memory (no receipt, or
+  // lessons memory does not hold) — the same person path: one
   // ticket per curation incident (its oldest unresolved failure) older than
   // the same threshold, from status.json `memory.curation`.
   const curationMemo = newIncidentFilerMemo();
@@ -890,14 +882,13 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     }
   });
 
-  // ---- the connection triage (ruling 4) ----------------------------
+  // ---- the connection triage ------------------------------------------------
   //
-  // The TUI does the three-way ssh triage the operator used to do by hand, and
-  // it does it BEHIND the first frame: the old startup ran `ensureSshMaster`
-  // synchronously before the alt screen, which is both a network call gating
-  // the first paint and, on a bad day, an interactive prompt. Nothing here is
-  // self-healing — the owner declined that explicitly; the TUI reports the
-  // cause and the exact command, and `s` re-runs the check.
+  // The TUI does the three-way ssh triage behind the first frame:
+  // `ensureSshMaster` before the alt screen would be both a network call
+  // gating the first paint and, on a bad day, an interactive prompt. Nothing
+  // here is self-healing by design; the TUI reports the cause and the exact
+  // command, and `s` re-runs the check.
   const { diagnosisLine, triageConnection } = await import("./sshtriage.js");
   const applyDiagnosis = (d: ConnectionDiagnosis): void => {
     app.view.connection = d;
@@ -937,13 +928,12 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
 
   const startCompanion = async (): Promise<void> => {
     try {
-      // BEFORE the container, never after: the companion's pi extension picks
+      // Before the container, never after: the companion's pi extension picks
       // the user namespace it writes into by listing `viking://user/`, and
       // caches that choice for the life of the process. A namespace whose
       // directory does not exist yet is invisible to it, so it falls back to
-      // `user/default` and every write is refused — the whole of 2026-08-21,
-      // reported only as "access denied". Needs the forward up, so await it
-      // rather than riding the eager `ensure()` above.
+      // `user/default` and every write is refused, reported only as "access
+      // denied". Needs the forward up, so it is awaited here.
       progress.begin("memory-forward");
       const fwd = await memForward.ensure();
       if (fwd.state === "failed") progress.fail("memory-forward", fwd.detail);
@@ -986,7 +976,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       });
       companionContainerStarted = true;
       progress.done("container");
-      // daily rollover — strictly between "container is up" and
+      // Daily rollover — strictly between "container is up" and
       // "pi is spawned": on the first start of a new ops day it archives
       // yesterday, kills the session and queues the opening context, so the
       // spawnPi below births the fresh conversation that reads it.
@@ -1001,15 +991,15 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         localDigestHeadline: () => latestDigestHeadline(),
         ownerName: full.owner.name,
         timeZone: full.ops.timezone,
-        // the first-run interview — the marker path is the
-        // wizard's contract; the template makes it work without the wizard too.
+        // The first-run interview — the marker path is the setup wizard's
+        // contract; the template makes it work without the wizard too.
         firstRunTemplatePath: join(sandboxRoot(), "prompts", "companion-first-run.md"),
         firstRunMarkerPath: join(companionStateDir, "first-run.json"),
       });
       const report = await rollover.run();
       if (report.deferred) {
-        // the container could not be read, so the day is deliberately
-        // NOT recorded and yesterday's conversation continues. Loud, because a
+        // The container could not be read, so the day is deliberately not
+        // recorded and yesterday's conversation continues. Loud, because a
         // rollover that silently did not happen reads as one that did.
         app.notice(`companion: day rollover DEFERRED — ${report.deferred}`);
       } else if (report.verdict.kind === "rollover") {
@@ -1074,11 +1064,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     const { FeedWriter, buildTuiView } = await import("./feed.js");
     const feed = new FeedWriter(full.companion.feed_dir);
 
-    // publish the operator's view: the last painted frame plus the
-    // derived state behind it. Two triggers, one throttle: the poll below (so
-    // it keeps up with the daemon) and every repaint (so it keeps up with
-    // the owner's keystrokes — "what is on their screen" is only true if it
-    // tracks the screen). Files only: this NEVER injects a companion turn,
+    // Publish the operator's view: the last painted frame plus the derived
+    // state behind it. Two triggers, one throttle: the poll below (so it
+    // keeps up with the daemon) and every repaint (so it keeps up with the
+    // operator's keystrokes — "what is on their screen" is only true if it
+    // tracks the screen). Files only: this never injects a companion turn,
     // and the companion reads it on demand through the `tui_*` tools.
     const publishView = (): void => {
       try {
@@ -1153,9 +1143,9 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         // alerting is best-effort; never break the poll loop
       }
     });
-    // reviewer memory refusing a key or down — one desktop
-    // notification per transition, from status.json `memory` (never from
-    // OpenViking), and only from a FRESH snapshot.
+    // Reviewer memory refusing a key or down — one desktop notification per
+    // transition, from status.json `memory` (never from OpenViking), and only
+    // from a fresh snapshot.
     const memoryAlertMem = { lastWritten: "" };
     chainOnPoll(app, (a) => {
       try {
@@ -1170,7 +1160,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       }
     });
 
-    // the day's EOD curation did not reach memory (no receipt,
+    // The day's EOD curation did not reach memory (no receipt,
     // or a lesson refused / not found) — one notification per (state, day),
     // from status.json `memory.curation`, fresh snapshots only.
     const curationAlertMem = { lastWritten: "" };
@@ -1187,18 +1177,16 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
       }
     });
 
-    // No memory request-file channel here, and no memory feed:
-    // the companion reaches OpenViking DIRECTLY, over a host-owned forward,
-    // holding both USER keys. The `/alerts/memedit` mediation and the
-    // `/feed/memory.json` publication it depended on are retired —
-    // two write paths was the thing being deleted. Do not reintroduce either
-    // as an "offline fallback".
+    // No memory request-file channel here, and no memory feed: the companion
+    // reaches OpenViking directly, over a host-owned forward, holding both
+    // user keys. A second write path is exactly what must not exist — do not
+    // add one as an "offline fallback" (CLAUDE.md rule 8).
 
-    // the companion → TUI action channel. Sweep discipline is the
-    // usual one (poll cadence, busy flag so a slow sweep never stacks);
-    // processTuiActions itself archives-before-execute and
-    // writes the result files. Each executed action's trace lands on the
-    // notice line — instant execution is the ratified decision.
+    // The companion → TUI action channel. Sweep discipline is the usual one
+    // (poll cadence, busy flag so a slow sweep never stacks);
+    // processTuiActions itself archives-before-execute and writes the result
+    // files. Each executed action's trace lands on the notice line — actions
+    // execute instantly, with no confirm gate.
     const { processTuiActions } = await import("./actions.js");
     const tuiActionsDir = join(full.companion.alerts_dir, "tui-actions");
     const driver = buildTuiDriver(app, learning, metricsView, deployState);
@@ -1232,7 +1220,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
     // The triage runs CONCURRENTLY with the companion: a wedged ssh master can
     // cost its probe seconds, and the companion has nothing to do with ssh.
     //
-    // `begin` FIRST, and it is not decoration: the probe chain is the slowest
+    // `begin` first, and it is not decoration: the probe chain is the slowest
     // thing here (a blackholed host costs its ConnectTimeout), so this is the
     // step most likely to need the overdue warning — and a step left `pending`
     // says "nobody has reached this yet", which would be a lie the moment the
@@ -1244,7 +1232,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         progress.fail("ssh", `probe failed: ${String(err instanceof Error ? err.message : err)}`),
       );
 
-    // the evidence store's dir must exist before the container mounts
+    // The evidence store's dir must exist before the container mounts
     // it (docker would invent it root-owned), and the copier writes into it
     // whether or not the companion is up.
     try {
@@ -1291,8 +1279,8 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // on the right tab with the right selection.
   const resumed = args.resumeState ? readResumeState(args.resumeState) : undefined;
   if (resumed) {
-    // A tab name from an older build (`changes`) is not a tab any more and
-    // lands on the board, like an unknown one.
+    // A tab name this build does not know (e.g. from an older build) lands on
+    // the board.
     if (isTab(resumed.tab)) app.tab = resumed.tab;
     app.view.eventsScroll = resumed.eventsScroll;
     app.view.eventsFocus = resumed.eventsFocus;
@@ -1315,7 +1303,7 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
           sidebarWidth: app.sidebar?.preferredWidth,
           saved_at: "",
         }),
-        // The forward MUST be released here, not in the cleanup after
+        // The forward must be released here, not in the cleanup after
         // `await running`. `realReexec` calls this teardown and then
         // spawnSync's the new build synchronously — `app.quit()` merely
         // resolves a promise, so that cleanup is a microtask which cannot run
@@ -1326,12 +1314,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         // Same reasoning covers in-flight ssh: the per-call SIGKILL in
         // `realSshRunner` is a timer on the loop that spawnSync is about to
         // freeze, so a capture/poll/why still running at reload time is
-        // orphaned FOREVER. Against a wedged ControlMaster (an ssh-config
-        // config block sets no ServerAliveInterval, so a network blip hangs
-        // the master and every slave riding it) those children never exit on
-        // their own either: measured live at 4h58m, with 26 stacked
-        // generations each holding its own. Kill them here, while the loop
-        // still turns.
+        // orphaned forever. Against a wedged ControlMaster (an ssh config
+        // block with no ServerAliveInterval lets a network blip hang the
+        // master and every slave riding it) those children never exit on
+        // their own either, and they stack up one generation per reload.
+        // Kill them here, while the loop still turns.
         reexec: (file) =>
           realReexec(file, () => {
             killInFlightSsh();
@@ -1344,17 +1331,17 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // ---- the first frame ------------------------------------------------------
   //
   // Deep link: `qcr tui <pr>` is the board with that PR selected — nothing
-  // opens over it (the full-screen attach it used to start is gone).
+  // opens over it.
   const initial = target.kind === "pr" ? target.pr : resumed?.pr;
   const running = app.run(initial);
   // Only now: a recursive dist watcher walks the tree, and the bring-up talks
   // to ssh, docker and OpenViking. Neither may precede the frame above.
   reloader?.start();
-  // Kept, not dropped on the floor. Quitting DURING the bring-up used to leave
-  // it running against the teardown below: `spawnPi()` could land after
-  // `gracefulStop()` (a clean quit that leaves a freshly spawned companion
-  // behind — the opposite of what it promises), and `memForward.stop()` could
-  // close a forward the bring-up was still about to use.
+  // Kept, not dropped on the floor: quitting during the bring-up must not
+  // leave it running against the teardown below, or `spawnPi()` could land
+  // after `gracefulStop()` (a clean quit that leaves a freshly spawned
+  // companion behind) and `memForward.stop()` could close a forward the
+  // bring-up was still about to use.
   const bringUpDone = bringUp().catch(() => {
     /* every step already reports itself; a bring-up cannot fail the quit */
   });
@@ -1380,12 +1367,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
   // Clean quit stops the container (conversation + auth survive on volumes).
   // A crash deliberately leaves it running — the next start adopts it.
   //
-  // This runs AFTER the terminal is restored, so every millisecond it takes is
+  // This runs after the terminal is restored, so every millisecond it takes is
   // a terminal that looks dead: board gone, prompt not back, nothing
-  // responding. It used to take 10.1s — `docker stop`'s full timeout, because
-  // the container's PID 1 ignored SIGTERM (fixed that in the
-  // entrypoint). Say what is happening regardless: a slow docker, or a
-  // container built before that fix, must not look like a hang.
+  // responding. Say what is happening: a slow docker, or a container whose
+  // PID 1 ignores SIGTERM (so `docker stop` runs to its full timeout), must
+  // not look like a hang.
   await stopCompanionOnQuit({
     containerStarted: companionContainerStarted || companionUp,
     stop: () => companion.gracefulStop(),

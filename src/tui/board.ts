@@ -1,5 +1,4 @@
-// Board screen — the main-screen mockup, restyled per the 2026-08-14
-// design grill: semantic truecolor everywhere, rich PR rows (author, last-tick
+// Board screen: semantic truecolor everywhere, rich PR rows (author, last-tick
 // age, rounds, verdict chip), colored glyph legend, section titles with
 // subtitles, clickable zones for full mouse navigation, OSC-8 PR links.
 // Pure: (view, cols, rows) → Frame (+ zones/meta for the input layer).
@@ -57,11 +56,11 @@ export type BoardAction =
 
 export interface BoardView {
   health: Health;
-  /** `undefined` = NOT YET KNOWN. Only a heartbeat sets it: a
-   * rendering default here is what put a DRY-RUN badge on a live install. */
+  /** `undefined` = not yet known. Only a heartbeat sets it: a rendering
+   * default here would paint a DRY-RUN badge on a live install. */
   dryRun: boolean | undefined;
   snapshot?: StatusSnapshot;
-  /**: the triaged reason the daemon cannot be reached, with the exact
+  /** The triaged reason the daemon cannot be reached, with the exact
    * remedy. Painted where the PR list would be, because that is where the
    * operator is looking when the list is empty. */
   connection?: ConnectionDiagnosis;
@@ -72,7 +71,7 @@ export interface BoardView {
   eventsFocus: boolean;
   eventsScroll: number;
   help: boolean;
-  /**: the quit prompt is up. Painted by App over the composed frame,
+  /** The quit prompt is up. Painted by App over the composed frame,
    * so it covers every tab without any renderer knowing about it. */
   confirmQuit?: boolean;
   /** Live mirror of the selected PR's pi session (board's lower region). */
@@ -80,7 +79,7 @@ export interface BoardView {
   /** Structured parent/lens activity for the selected running round. */
   progress?: RoundProgressSnapshot;
   /** The PR the pane is showing. Defaults to the selection; while the pane is
-   * focused it is LOCKED to the session being typed into, so a poll that
+   * focused it is locked to the session being typed into, so a poll that
    * reorders the list cannot yank the keyboard to another PR. */
   piPr?: number;
   /** The pi pane owns the keyboard: every key but Ctrl-q goes to the session. */
@@ -93,12 +92,12 @@ export interface BoardView {
   now?: Date;
   /** owner/repo for GitHub links (OSC-8 + click). */
   repo?: string;
-  /**: companion alert badge (count + latest, themed by tier). */
+  /** Companion alert badge (count + latest, themed by tier). */
   alerts?: AlertBadge;
   /** A live `alert`-tier badge takes ⏎ until it is acknowledged (Esc) or
    * followed into the companion tab. */
   alertFocus?: boolean;
-  /**: active board filter (companion `board_filter` verb; F clears).
+  /** Active board filter (companion `board_filter` verb; F clears).
    * Consumed through `visiblePrs` — never filter a sortPrs call directly. */
   boardFilter?: BoardFilter | null;
 }
@@ -125,7 +124,7 @@ function pauseChip(pr: SnapshotPr): string {
 }
 
 function rowPlain(pr: SnapshotPr, now: Date): string {
-  // "ESCALATE" still appears in rounds recorded before 2026-08-18.
+  // "ESCALATE" is the legacy spelling of NEEDS_HUMAN; older rounds carry it.
   const chip =
     pr.last_verdict === "APPROVE"
       ? "✓A"
@@ -160,15 +159,15 @@ export function listWidth(prs: SnapshotPr[], cols: number, now: Date = new Date(
 }
 
 /**
- * What the board answers to on this frame (the bar is state-derived,
- * so a button is painted exactly when its key would do something).
+ * What the board answers to on this frame (the bar is state-derived, so a
+ * button is painted exactly when its key would do something).
  *
- * The verbs that act on the selected PR appear only while there IS one: with
+ * The verbs that act on the selected PR appear only while there is one: with
  * no snapshot, or an empty list, a `[u unwedge]` would be an action derived
  * from no data — the second half of the honest-unknown rule. `g` also needs
  * the repo slug the URL is built from. `e` toggles the events overlay
- * regardless, and `I` (setup) is about the repo, not a PR. Inline: `a` is ⏎'s printable twin and `F` clears a filter the
- * PRS subtitle is advertising.
+ * regardless, and `I` (setup) is about the repo, not a PR. Inline: `a` is ⏎'s
+ * printable twin and `F` clears a filter the PRS subtitle is advertising.
  */
 export function boardKeys(
   view: Pick<BoardView, "snapshot" | "boardFilter" | "selected" | "repo">,
@@ -179,7 +178,7 @@ export function boardKeys(
   if (selected && view.repo) bar.push({ key: "g", label: "g github" });
   bar.push({ key: "e", label: "e events" });
   if (selected) bar.push({ key: "u", label: "u unwedge" });
-  // setup is about the repo, not a PR — offered whatever is selected.
+  // Setup is about the repo, not a PR — offered whatever is selected.
   bar.push({ key: "I", label: "I setup" });
   const inline: string[] = [];
   if (selected) inline.push("a");
@@ -197,9 +196,8 @@ export function boardBarHeight(
 }
 
 /**
- * The live pi mirror owns the bottom half of the board — the region that used
- * to sit empty under a short PR list (and, before that, under the EVENTS
- * strip). Two rows are chrome (divider + header), the rest is session tail.
+ * The live pi mirror owns the bottom half of the board. Two rows are chrome
+ * (divider + header), the rest is session tail.
  * Floors at 6 rows and never squeezes the list/detail body below 3.
  */
 export function piRows(rows: number, barRows: number): number {
@@ -211,7 +209,7 @@ export function piRows(rows: number, barRows: number): number {
  * The exact terminal geometry the mirrored pi session should have — the
  * rectangle `renderBoard` paints its capture into, and nothing more.
  *
- * ONE source of truth on purpose, shared with the paint below: if these numbers
+ * One source of truth on purpose, shared with the paint below: if these numbers
  * drift, pi lays itself out for a terminal of a different size than the one its
  * output is rendered in, which is the bug this exists to stop. Two of the pane's
  * rows are chrome (divider + header); of the width, two cells are the board's
@@ -261,12 +259,12 @@ const CONNECTION_LABEL: Record<ConnectionDiagnosis["kind"], string> = {
 };
 
 /**
- * What the board says where the PR list would be, when it has NEVER had a
+ * What the board says where the PR list would be, when it has never had a
  * snapshot.
  *
- * `PRS (0)` was a count of an empty list where the truth was "I could not ask",
- * and it read as "the data is gone". The count is `?`, the reason is named, and
- * the remedy is a command the operator can paste into their own shell.
+ * The count is `?`, never `0` (an empty count reads as "the data is gone" when
+ * the truth is "I could not ask"), the reason is named, and the remedy is a
+ * command the operator can paste into their own shell.
  */
 export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width: number): string[] {
   const lines = [
@@ -292,9 +290,8 @@ export function unknownSourceLines(conn: ConnectionDiagnosis | undefined, width:
   } else if (!conn) {
     lines.push(`${FG.dim}checking the connection…${RESET}`);
   }
-  // (Bring-up progress used to be appended here for the no-column
-  // configuration. Since 2026-09-02 the companion column is on every frame,
-  // so the progress always has its own place — sidebar.ts `startup`.)
+  // Bring-up progress is not painted here: the companion column is on every
+  // frame and carries it (sidebar.ts `startup`).
   lines.push("");
   lines.push(`${FG.dim}s re-checks the connection · r refreshes${RESET}`);
   return lines.map((l) => truncate(l, width));
@@ -316,16 +313,15 @@ export function unknownDetailLines(conn: ConnectionDiagnosis | undefined, width:
 }
 
 /**
- * The board's reviewer-memory banner (S1), from status.json `memory`
- * and nothing else — never from OpenViking, which is the thing that may be
- * down. Memory was dead for five weeks while every surface a person looks at
- * stayed quiet; this segment is the board-level half of the fix (the memory
- * tab [2] only shows what the TUI's OWN store can reach).
+ * The board's reviewer-memory banner, from status.json `memory` and nothing
+ * else — never from OpenViking, which is the thing that may be down. The
+ * memory tab [2] only shows what the TUI's own store can reach, so this is
+ * where the daemon's view of memory health reaches a person.
  *
  *   `loud`  — down / refusing a key / degraded: painted right after the
  *             daemon health, where truncation reaches it last;
  *   `quiet` — not measured yet, not reported by this daemon, not monitored:
- *             a short dim mark at the END of the bar — honest, never healthy,
+ *             a short dim mark at the end of the bar — honest, never healthy,
  *             and the first thing a narrow terminal drops;
  *   nothing — healthy, or no snapshot at all (the whole board already says
  *             it does not know).
@@ -347,7 +343,7 @@ export function memorySegment(
       return { text: `${FG.dim}mem ?${RESET}`, loud: false };
     case "degraded":
       return {
-        // memory that answers but cannot search says so.
+        // Memory that answers but cannot search says so.
         text: `${WARN}▲ MEMORY DEGRADED${age}${m.serving?.ok === false ? " · search not serving" : ""}${DRESET}`,
         loud: true,
       };
@@ -377,14 +373,14 @@ export function memorySegment(
 }
 
 /**
- * The board's EOD-curation banner (S8), from status.json
+ * The board's EOD-curation banner, from status.json
  * `memory.curation` alone: loud when the day's curation did not reach memory
  * — no receipt (`missing`), or a lesson refused or not found
- * (`not_persisted`). Both are also overseer wakes; this is the half a PERSON
+ * (`not_persisted`). Both are also overseer wakes; this is the half a person
  * sees, beside the memory banner. A block the daemon could not read (`null`)
  * is a dim `curation ?` — honest-unknown: painting nothing would read the
  * same as a quiet day, which `qcr status` and the companion's view both call
- * UNKNOWN. Nothing for a daemon that reports no block (`undefined`: memory
+ * unknown. Nothing for a daemon that reports no block (`undefined`: memory
  * off, or an older daemon), and a quiet day is quiet.
  */
 export function curationSegment(snapshot: StatusSnapshot | undefined): string | undefined {
@@ -397,11 +393,11 @@ export function curationSegment(snapshot: StatusSnapshot | undefined): string | 
 }
 
 /**
- * The board's ARCHIVE banner (docs/archiving.md §11), from
+ * The board's archive banner (docs/archiving.md §11), from
  * status.json `archive` alone, through its total reader: loud only for what
  * needs a person (`archiveAttention`) — held for disk, a restore that failed,
  * a reopened PR no tick or birth will restore (mode not `on`: its archived
- * receipts read UNKNOWN until `qcr archive restore`), or repeated verify
+ * receipts read unknown until `qcr archive restore`), or repeated verify
  * failures. A block this build cannot read is a dim `archive ?`, never
  * silence; nothing for a daemon that reports no block, and a quiet archiver
  * is quiet.
@@ -416,16 +412,16 @@ export function archiveSegment(snapshot: StatusSnapshot | undefined): string | u
 }
 
 /**
- * The board's event-loop banner (L2), from status.json `daemon` and
- * nothing else: the daemon measuring its own loop. On 2026-10-07 its /health
- * went unanswered for ~70 s at a time and no surface said so.
+ * The board's event-loop banner, from status.json `daemon` and nothing else:
+ * the daemon measuring its own loop, so a stalled loop (an unanswered /health)
+ * is visible on the board.
  *
  *   `loud`  — stalled: painted beside the memory banner, with the cause the
  *             evidence names (the loop itself blocked / CPU starved /
  *             cause unknown);
  *   `quiet` — not measured yet, not reported by this daemon (an older one),
  *             or a block this build cannot read whole (a newer daemon's state,
- *             a missing field): a short dim `loop ?` at the END of the bar —
+ *             a missing field): a short dim `loop ?` at the end of the bar —
  *             honest, never ok;
  *   nothing — ok, or no snapshot at all.
  *
@@ -465,12 +461,12 @@ function barSegments(view: BoardView, alerts: boolean): string[] {
   const s = view.snapshot;
   const rounds = s ? `rounds ${s.running_rounds}/${s.max_concurrent_rounds ?? "?"}` : "";
   const spend = s?.today_spend_usd !== undefined ? `today $${s.today_spend_usd.toFixed(2)}` : "";
-  // Deploy-window drain (2026-08-25): while the daemon drains, the bar says
-  // so loudly, with how many rounds still have to finish before a deploy is
-  // safe and how many webhook deliveries were dropped so far.
-  // and by WHOM, and when it lapses — an operator's drain holds
-  // until lifted, a session's always has an expiry. An older daemon that
-  // reports neither is shown as such rather than guessed at.
+  // Deploy-window drain: while the daemon drains, the bar says so loudly,
+  // with how many rounds still have to finish before a deploy is safe and how
+  // many webhook deliveries were dropped so far — and by whom, and when it
+  // lapses: an operator's drain holds until lifted, a session's always has an
+  // expiry. An older daemon that reports neither is shown as such rather than
+  // guessed at.
   const drainSeg = s?.draining
     ? `${FG.anomaly}⛔ DRAINING — ${s.running_rounds} round${s.running_rounds === 1 ? "" : "s"} finishing · ${s.drain_failed_loud ?? 0} failed loud · ${s.drained_deliveries ?? 0} dropped · ${leverHolderLabel(s.draining_by, s.draining_until)}${RESET}`
     : "";
@@ -620,7 +616,7 @@ function currentProgressLines(
 
   // A sticky session may process neighboring wakes at nearly identical times.
   // Only the exact durable delivery + prompt-derived round/head identity may
-  // paint THIS round; timestamp proximity is not identity.
+  // paint this round; timestamp proximity is not identity.
   const current =
     progress?.version === 2 &&
     round.command_id !== undefined &&
@@ -793,7 +789,7 @@ export function detailLines(
     );
   }
   if (pr.paused) {
-    // a held PR says who holds it and when the hold lapses.
+    // A held PR says who holds it and when the hold lapses.
     const hold = pr.pause;
     const why = hold?.reason ? ` · ${oneLine(sanitizeText(hold.reason))}` : "";
     lines.push(
@@ -822,7 +818,7 @@ export function detailLines(
     );
   }
   lines.push(`${FG.dim}${"─".repeat(Math.max(0, width))}${RESET}`);
-  // status.json advances every poll and therefore owns CURRENT timing/plan;
+  // status.json advances every poll and therefore owns current timing/plan;
   // `why` is enriched and deliberately cached, so it is only the fallback for
   // an older daemon that has not shipped current_round yet.
   const runningRound =
@@ -854,10 +850,10 @@ export function detailLines(
       truncate(`${FG.dim}none yet — the live ledger is pinned in the session${RESET}`, width),
     );
   }
-  // A cancelled round used to render as a bare "—", indistinguishable from any
-  // other verdictless round. It now carries its own glyph, and the
-  // ONE loud cause — a round that stopped dead inside its deadline — is the
-  // only one that gets a color; a redeploy orphan stays dim on purpose.
+  // A cancelled round carries its own glyph, distinct from any other
+  // verdictless round, and the one loud cause — a round that stopped dead
+  // inside its deadline — is the only one that gets a color; a redeploy orphan
+  // stays dim on purpose.
   const roundsBits = detail.rounds.map((r) => {
     const cancelled = r.status === "cancelled";
     const loud = cancelled && isLoudCancelCause(r.cancel_cause);
@@ -931,7 +927,7 @@ export function detailLines(
 /**
  * The `?` overlay. Pinned against docs/tui.md (tests/tui-surfaces.test.ts):
  * every key named here is in some surface's vocabulary, and every surface
- * the doc lists is named here. The bar shows what the CURRENT frame answers
+ * the doc lists is named here. The bar shows what the current frame answers
  * to; this is the whole map.
  */
 export const HELP_LINES = [
@@ -1126,7 +1122,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
 
   // Board body: list | detail.
   //
-  // A snapshot that never arrived is UNKNOWN, not empty. The count
+  // A snapshot that never arrived is unknown, not empty. The count
   // reads `?`, the rows are replaced by the reason and the remedy, and the
   // detail pane says "no data" rather than "no PR selected".
   const known = view.snapshot !== undefined;
@@ -1147,7 +1143,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     const i = start + offset;
     listLines.push(styledRow(pr, i === view.selected, listW - 1, now, view.repo));
     const y = 1 + listLines.length - 1 + 1; // frame row of this PR line (below top bar)
-    // Only PAINTED rows get zones: with a long list, off-screen rows would
+    // Only painted rows get zones: with a long list, off-screen rows would
     // otherwise leave phantom click targets over the pi region and the
     // bar-row gaps — a click there could select (or double-click into the
     // pi pane of) an invisible PR. The slice above holds only painted rows,
@@ -1229,7 +1225,7 @@ export function renderBoard(view: BoardView, cols: number, rows: number): Frame 
     }
   }
 
-  // EVENTS: no longer a permanent strip — a floating overlay on `e`.
+  // EVENTS: a floating overlay on `e`.
   if (view.eventsFocus) renderEventsOverlay(frame, view, cols, rows, barRows);
 
   // The shared command bar: exactly the verbs this frame answers to.

@@ -244,7 +244,7 @@ function watcher(
 }
 
 /**
- * A PR's round-end transcript reads, held at a gate (H2 review):
+ * A PR's round-end transcript reads, held at a gate:
  * `reached` resolves once the round end is waiting inside them, `release`
  * lets them finish. The transcript is one in-memory session file of `lines`.
  */
@@ -363,7 +363,7 @@ describe("valid verdicts", () => {
     expect(store.getPr(101)!.state).toBe("tracked");
   });
 
-  // These park pins carry `passes` telemetry: since 2026-08-19 a NEEDS_HUMAN
+  // These park pins carry `passes` telemetry: a NEEDS_HUMAN
   // with no executed-pass evidence is an unfinished review and is requeued,
   // not parked (see self-requeue.test.ts "NEEDS_HUMAN requires a finished review").
   it("a legacy NEEDS_HUMAN lands the PR tracked (park retired 2026-08-19), no reviewer touched", async () => {
@@ -455,11 +455,11 @@ describe("valid verdicts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H1a — #5885: the session writes the verdict IN PLACE (open O_TRUNC,
-// then the bytes). On a CPU-starved container the gap between the two outlived
-// the watcher's 3 × 40 ms tolerance, and a valid APPROVE was read as
-// "Unexpected end of JSON input". These write the file the way pi does — one
-// open fd, the bytes in two halves — with the PRODUCTION partial-write policy.
+// A session may write the verdict in place (open O_TRUNC, then the bytes). On a
+// CPU-starved container the gap between the two can outlive a short retry
+// tolerance, and a valid APPROVE would read as "Unexpected end of JSON input".
+// These write the file the way pi does — one open fd, the bytes in two halves —
+// with the production partial-write policy.
 // ---------------------------------------------------------------------------
 describe("partial writes are waited out, not misread (H1a, #5885)", () => {
   const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -639,7 +639,7 @@ describe("measured round usage", () => {
     expect(round.est_usd).toBeNull();
   });
 
-  // round 2 — the git-config integrity check, WIRED.
+  // The git-config integrity check, wired.
   //
   // The pure logic is proven in tests/exec-boundary.test.ts. What matters here
   // is that a round actually runs it: five write primitives on the guard's own
@@ -668,7 +668,7 @@ describe("measured round usage", () => {
   });
 
   it("a round with NO baseline is never judged — unknown is not evidence of a change", async () => {
-    // The same rule the receipt scan had to learn the hard way. A round that
+    // The same rule as the receipt scan. A round that
     // predates the check, or whose fingerprint could not be taken, must be
     // silent rather than alarming on every single round.
     const roundId = reviewingRound(109);
@@ -681,17 +681,15 @@ describe("measured round usage", () => {
   });
 
   it("…and a MALFORMED baseline is not judged either", async () => {
-    // The teeth behind the previous test. Mutation-verification found that
-    // deleting the "no baseline ⇒ never judged" guard changed nothing
-    // observable, because the surrounding try/catch swallowed the throw that
-    // followed. `gitConfigChanges` is now total over a malformed fingerprint,
-    // so the guard is load-bearing: without it, this round reports every
-    // watched path as changed.
+    // The teeth behind the previous test. `gitConfigChanges` is total over a
+    // malformed fingerprint, so the "no baseline ⇒ never judged" guard is
+    // load-bearing: without it, this round reports every watched path as
+    // changed.
     const roundId = reviewingRound(111);
     writeSessionJsonl(111, [modelLine(), jsonlLine(10, 1)]);
     // A watched file must actually EXIST, or the round-end fingerprint is
-    // all-"absent" and matches an empty baseline by accident — which is how
-    // this test passed for the wrong reason on its first cut.
+    // all-"absent" and matches an empty baseline by accident, passing for the
+    // wrong reason.
     mkdirSync(join(dir, "pihome"), { recursive: true });
     writeFileSync(join(dir, "pihome", ".gitconfig"), "[user]\n\tname = qcr\n");
     store.recordRoundGitConfig(roundId, { not: "a fingerprint" });
@@ -725,7 +723,7 @@ describe("measured round usage", () => {
     ).toMatchObject({ c: 0 });
   });
 
-  // the same fingerprint carries this system's OWN policy surface, and
+  // The same fingerprint carries this system's OWN policy surface, and
   // a change there raises its OWN wake — not git's — because it means something
   // worse: the boundary every later round runs under has been rewritten.
   // MUTATION: in verdicts.ts route the `policy` half into the git event — the
@@ -754,8 +752,8 @@ describe("measured round usage", () => {
     ).toMatchObject({ c: 0 });
   });
 
-  // follow-up: the live config lives where the install locator says —
-  // outside the sandbox root on the VM. The daemon's own baseline,
+  // The live config lives where the install locator says — outside the
+  // sandbox root on the VM. The daemon's own baseline,
   // taken over the real disk, must see a rewrite of THAT file.
   // MUTATION: drop `locatedPolicyWatchPaths` from `roundPolicyWatchPaths` in
   // src/execboundary.ts — the first expectation fails.
@@ -810,7 +808,7 @@ describe("measured round usage", () => {
     const ev = store.db
       .prepare("SELECT payload FROM events WHERE kind = 'exec_policy_violation'")
       .get() as { payload: string };
-    // the payload now carries the CLASS as well as the command, and
+    // The payload carries the class as well as the command, and
     // `git diff | head` is still a plain read — the widened audit must not turn
     // every round's ordinary git reads into a violation line.
     expect(JSON.parse(ev.payload)).toEqual({
@@ -837,7 +835,7 @@ describe("measured round usage", () => {
     expect(round.tokens_out).toBe(0);
   });
 
-  // H2 — the transcripts are read off the event loop, and what cannot
+  // The transcripts are read off the event loop, and what cannot
   // be read is UNKNOWN: never a partial sum posing as a measurement, and never
   // a reason to hold the verdict.
   describe("unknown, never a partial sum — and the verdict still applies (H2)", () => {
@@ -956,9 +954,9 @@ describe("measured round usage", () => {
       expect(transcripts.stats()).toMatchObject({ full_scans: 1, incremental_scans: 1 });
     });
 
-    // The review of H2: the reads take seconds now (up to the budget), so
-    // WHERE a round end awaits them matters. Each path measures a window that
-    // closed at its old point, and reads it only after its lifecycle rows (and,
+    // The reads can take seconds (up to the budget), so WHERE a round end
+    // awaits them matters. Each path measures a window that closed at the
+    // round's end, and reads it only after its lifecycle rows (and,
     // on a settling path, its held-wake flush) have landed.
 
     // MUTATION: in apply(), await the measurement before `flushWakes` (and
@@ -1025,7 +1023,7 @@ describe("measured round usage", () => {
       gated.release();
       expect(await handled).toBe(true);
 
-      // The same round's violations ride its own anomaly, as before H2.
+      // The same round's violations ride its own anomaly.
       expect(rec.overseer).toHaveLength(1);
       expect(rec.overseer[0]).toContain("python manage.py test");
       expect(tokensIn(roundId)).toBe(10);
@@ -1095,14 +1093,13 @@ describe("measured round usage", () => {
   });
 
   /**
-   * / MC-03. `measureUsage` had exactly ONE call site — the verdict
-   * path — so a round that ended any other way carried NULL cost forever.
-   * `markRoundOverdue` deliberately does NOT set status `expired`, with the
-   * comment "that would drop the round from spend and every other aggregate,
-   * hiding tokens this round really burned"; `totalSpend` is `SUM(est_usd) FROM
-   * rounds` with no status filter; and the stranded-round operator message says
-   * "Its spend still counts." All three were structurally true and empirically
-   * zero, because nothing ever put a number in the column.
+   * Every round end measures usage, not only the verdict path: a round that
+   * ends any other way would otherwise carry NULL cost forever.
+   * `markRoundOverdue` deliberately does not set status `expired` (that would
+   * drop the round from spend and every other aggregate); `totalSpend` is
+   * `SUM(est_usd) FROM rounds` with no status filter; and the stranded-round
+   * operator message says "Its spend still counts." All three hold only if
+   * something puts a number in the column.
    */
   describe("a round that never produced a verdict is measured too", () => {
     const priced = {
@@ -1130,7 +1127,7 @@ describe("measured round usage", () => {
     it("measures a round buried by a POSTING-RECEIPT failure", async () => {
       // Same class as the two above and in the same file — the round ran a
       // full review and burned its tokens; the receipt is what failed, not the
-      // work. Missed by the first pass, found by adversarial review.
+      // work.
       const roundId = reviewingRound(402);
       stampPosting(402, 1);
       writeSessionJsonl(402, [modelLine(), jsonlLine(750_000, 250_000)]);
@@ -1192,10 +1189,10 @@ describe("confirmed round posting receipts", () => {
     expect(roundId).toBe(store.roundsFor(180)[0]?.id);
   });
 
-  // Selfscan 152c429f: a merits verdict for a round that is already DONE (an
-  // archive that failed and left the file in verdict/, or a session re-emitting
-  // an old round's file) re-applied everything — labels, the lifecycle
-  // transition, and the old head stamped over a newer reviewed-head mark.
+  // A merits verdict for a round that is already done (an archive that failed
+  // and left the file in verdict/, or a session re-emitting an old round's
+  // file) must not re-apply anything — labels, the lifecycle transition, or the
+  // old head stamped over a newer reviewed-head mark.
   it("a replayed verdict for a round already done is inert", async () => {
     reviewingRound(184);
     const { key } = stampPosting(184, 1);
@@ -1238,8 +1235,8 @@ describe("confirmed round posting receipts", () => {
     expect(settled.c).toBe(1);
   });
 
-  // Selfscan 4866a7cc: the payload's identity was never compared with the
-  // filename's, so pr-185-round-1.json naming PR 186 was applied to PR 186.
+  // The payload's identity must match the filename's: pr-185-round-1.json
+  // naming PR 186 must never be applied to PR 186.
   it("a verdict whose payload names another PR or round than its filename is not applied", async () => {
     reviewingRound(185);
     reviewingRound(186);
@@ -1319,10 +1316,10 @@ describe("confirmed round posting receipts", () => {
     ).toMatchObject({ c: 1 });
   });
 
-  // H1a changed the ending, deliberately: the posted review is the
-  // evidence, so a round whose session stopped without its verdict file is
-  // SETTLED from the receipt — still never requeued (that would post twice),
-  // and no longer FAILED_LOUD over a review that stands on GitHub.
+  // The posted review is the evidence, so a round whose session stopped
+  // without its verdict file is settled from the receipt — never requeued
+  // (that would post twice), and never FAILED_LOUD over a review that stands
+  // on GitHub.
   it("never requeues a confirmed posted review whose session lost only the verdict — it settles from the receipt", async () => {
     reviewingRound(184);
     const { key } = stampPosting(184, 1);
@@ -1352,7 +1349,7 @@ describe("confirmed round posting receipts", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H1a — a malformed or missing verdict whose posting receipt is
+// A malformed or missing verdict whose posting receipt is
 // CONFIRMED is settled from the receipt; a missing receipt still fails loud.
 // ---------------------------------------------------------------------------
 describe("settling from a confirmed posting receipt (H1a)", () => {
@@ -1455,9 +1452,8 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
     expect(store.roundsFor(188)[0]!.summary).toContain("withheld");
     expect(store.getPr(188)?.state).toBe("tracked");
     expect(store.reviewedHead(188)).toMatchObject({ head_sha: "abc123", verdict: "APPROVE" });
-    // The mark is what the approval waits on — before H1a review
-    // round 1 this shape closed with no mark, and CI turning green never
-    // brought the PR back.
+    // The mark is what the approval waits on — without it, CI turning green
+    // would never bring the PR back.
     expect(store.approvalWithheld(188)).toMatchObject({
       head_sha: "abc123",
       reason: "red-ci",
@@ -1840,7 +1836,7 @@ describe("settling from a confirmed posting receipt (H1a)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H1a — #5850 round 5: every stage limit asks the receipt first.
+// Every stage limit asks the receipt first.
 // ---------------------------------------------------------------------------
 describe("receipt-aware stage limits (H1a, #5850 r5)", () => {
   // The receipt helper confirms at 2026-08-13T11:59:59Z.
@@ -2095,7 +2091,7 @@ describe("anomaly paths", () => {
     expect(
       store.db.prepare("SELECT COUNT(*) AS c FROM events WHERE kind = 'verdict_malformed'").get(),
     ).toMatchObject({ c: 1 });
-    // the durable anomaly record rides beside the inject file.
+    // The durable anomaly record rides beside the inject file.
     const anomalies = store.anomalies();
     expect(anomalies).toHaveLength(1);
     expect(anomalies[0]).toMatchObject({ kind: "malformed", pr: 200, round_no: 1 });
@@ -2171,7 +2167,7 @@ describe("anomaly paths", () => {
 
     expect(await w.checkDeadlines()).toEqual([300]);
     expect(overseer[0]).toContain("ANOMALY (overdue)");
-    // the durable anomaly record rides beside the inject file.
+    // The durable anomaly record rides beside the inject file.
     expect(overdueStore.anomalies()).toMatchObject([{ kind: "overdue", pr: 300, round_no: 1 }]);
     expect(overdueStore.getPr(300)!.state).toBe("queued");
     expect(overdueStore.openReviewFailure(300)?.stage).toBe("round_deadline");
@@ -2197,8 +2193,8 @@ describe("anomaly paths", () => {
   });
 
   it("an overdue round superseded by a newer round is cancelled silently", async () => {
-    // Live incident (overseer report 2026-08-14): old phantom round 2 expired
-    // and yanked #4844 to awaiting_human while round 7 was actively running.
+    // An expired phantom round must not yank the PR's state while a newer
+    // round is actively running.
     let clock = new Date("2026-08-14T12:00:00Z");
     const s = new StateStore(":memory:", () => clock);
     s.upsertPr({
@@ -2242,13 +2238,13 @@ describe("anomaly paths", () => {
   });
 });
 
-// Single-shepherd S4 wiring (docs/single-shepherd-invariant.md): a wake held
+// Single-shepherd wiring (docs/single-shepherd-invariant.md): a wake held
 // while the round ran must actually reach the session once the round ends.
 // wakes.ts is unit-tested on its own; these prove the WATCHER calls it.
 describe("held wakes are flushed at round end", () => {
   it("delivers them after a verdict is applied", async () => {
     const roundId = reviewingRound(100);
-    // A fresh ledger keeps's re-nudge out of this test's injects.
+    // A fresh ledger keeps the post-round ledger re-nudge out of this test's injects.
     mkdirSync(join(dir, "state", "ledgers"), { recursive: true });
     writeFileSync(join(dir, "state", "ledgers", "pr-100.md"), "LEDGER PR #100 @ abc123\n");
     store.holdWake(100, "author says: fixed in abc123", "author_reply");
@@ -2397,7 +2393,7 @@ describe("structural invariant: no review-retraction path", () => {
     }
   });
 
-  // carved one deliberate hole: feedback.ts names GitHub's own
+  // One deliberate hole: feedback.ts names GitHub's own
   // review-removal action (it interprets the event as a tuning signal). The
   // hole stays safe only while that module can not reach GitHub at all —
   // pin that structurally, so the vocabulary never rides back into a module
@@ -2484,7 +2480,7 @@ describe("executed-pass telemetry", () => {
     ]);
   });
 
-  // merge-stage dispositions ride the same tolerant normalization —
+  // Merge-stage dispositions ride the same tolerant normalization —
   // additive fields, digit-strings coerce, absence stays null (unknown).
   it("normalizes merge-stage disposition counts (merged/folded) additively", () => {
     const parsed = validateVerdict(
@@ -2516,7 +2512,7 @@ describe("executed-pass telemetry", () => {
         folded: 2,
       },
     ]);
-    // A legacy verdict without the fields is still clean — no note.
+    // A verdict without the fields is still clean — no note.
     const old = validateVerdict(
       verdictFile({ passes: [{ name: "pass-validate", killed: 1 }] as never }),
     );
@@ -2704,9 +2700,9 @@ describe("executed-pass telemetry", () => {
   });
 });
 
-// Durability (the owner, 2026-08-19, #5314): a head that advances while the
-// round runs chains a SYSTEM re-trigger at verdict time — the
-// classifier then decides full-round vs short-circuit. Never on a park.
+// Durability: a head that advances while the round runs chains a system
+// re-trigger at verdict time — the delta classifier then decides full-round vs
+// short-circuit. Never on a park.
 describe("mid-round head advance chains a system re-trigger", () => {
   it("head moved while reviewing ⇒ event + queued with system provenance", async () => {
     reviewingRound(400);
@@ -2786,8 +2782,8 @@ describe("mid-round head advance chains a system re-trigger", () => {
   });
 });
 
-// x compaction race (2026-08-19, #5290 r7): the post-round ledger
-// check is DELAYED past the compaction window; 0 keeps it inline for tests.
+// Compaction race: the post-round ledger check is delayed past the compaction
+// window; 0 keeps it inline for tests.
 describe("post-round ledger check settle delay", () => {
   it("delay 0 ⇒ inline check fires during apply; default ⇒ deferred (no immediate event)", async () => {
     reviewingRound(500);
@@ -2814,21 +2810,19 @@ describe("post-round ledger check settle delay", () => {
 });
 
 /**
- * a guard-2 refusal is a terminal NO-OP, not a failure.
+ * A guard-2 refusal is a terminal no-op, not a failure.
  *
- * #5409 round 18 (2026-09-01): a healthy ten-lens round decided REQUEST_CHANGES,
- * post-review.sh correctly refused the duplicate (same head as round 12's
- * review, no author reply since), and because that refusal left no receipt the
- * watcher classified the round as `posting_receipt` infrastructure failure —
- * FAILED_LOUD debt, operator recovery, and the standing review still standing
- * the whole time. Now the shell records the refusal; these cases pin what the
- * watcher does with it, and what it must never do.
+ * When post-review.sh refuses a duplicate (same head as a standing review, no
+ * author reply since), the shell records the refusal as a `skipped` receipt;
+ * without it the watcher would read the round as a `posting_receipt`
+ * infrastructure failure while the standing review still stands. These cases
+ * pin what the watcher does with that record, and what it must never do.
  */
 describe("guarded no-op settlement", () => {
   const HEAD = "abc123";
 
   /** The standing review from an earlier round, in the shape the shell leaves
-   * before the watcher enriches it (the #5409 mark). */
+   * before the watcher enriches it. */
   function standingMark(
     pr: number,
     posted: "REQUEST_CHANGES" | "APPROVE" | "COMMENT" = "REQUEST_CHANGES",
@@ -3179,7 +3173,7 @@ describe("guarded no-op settlement", () => {
     expect(events("posting_guarded_noop", 509)).toEqual([]);
   });
 
-  // H2 review. MUTATION: in settleGuardedNoop, await the measurement
+  // MUTATION: in settleGuardedNoop, await the measurement
   // right after the claim — the restored state is not there while the reads
   // wait, and the held wake is never delivered before them.
   it("a guarded no-op's reads run after the restored lifecycle and its held-wake flush", async () => {
@@ -3234,7 +3228,7 @@ describe("guarded no-op settlement", () => {
   });
 
   it("the ordinary receipt paths are unchanged: confirmed still applies, absent still fails loud after grace", async () => {
-    // Confirmed: the verdict applies and the mark is enriched, exactly as before.
+    // Confirmed: the verdict applies and the mark is enriched as usual.
     standingMark(511);
     reviewingRound(511);
     const { key } = stampPosting(511, 1);
@@ -3261,7 +3255,7 @@ describe("guarded no-op settlement", () => {
 });
 
 // ---------------------------------------------------------------------------
-// integration review: a round end's measurement is OWED durably and a
+// A round end's measurement is OWED durably and a
 // restart resumes it; the round-stage supervisor and the deadline tick never
 // wait on it; the deadline honours the posted-tail grace; a POST whose outcome
 // is unknown is never requeued; apply's finishRound is a claim; and staging
@@ -3747,7 +3741,7 @@ describe("integration review", () => {
   });
 });
 
-// (docs/follow-up-rounds.md): a follow-up round's verdict carries the
+// docs/follow-up-rounds.md: a follow-up round's verdict carries the
 // pre-approval sweep's claim and per-pass phases. Both are parsed tolerantly,
 // the pass plan is compared per stage, and `rounds.sweep_status` records what
 // became of the sweep — `ran` only on a claim WITH sweep-phase telemetry.
@@ -3843,7 +3837,7 @@ describe("follow-up rounds: sweep telemetry", () => {
       ["pass-validate", undefined],
       ["pass-security", undefined],
     ]);
-    // Absent phase stays absent — the legacy shape is unchanged.
+    // Absent phase stays absent — a verdict without phases is unchanged.
     expect("phase" in parsed.verdict!.passes![2]!).toBe(false);
     expect(parsed.passes_note).toContain("1 unusable phase ignored");
 

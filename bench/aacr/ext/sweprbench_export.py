@@ -21,8 +21,8 @@ DELETED line (side LEFT: its line number is an OLD-file line, which SWE-PRBench
 would read as a new-file line) goes out with its file and `line: null`, the
 schema's "no specific line", instead of being dropped: the scored result file
 excludes left-side comments, so they are read back from the case's
-comments.json (2026-10-03: effect#5952's only finding sat on a deleted line, so
-the PR scored as an empty review, a hard zero). Each becomes one array item:
+comments.json (dropping them would score a PR whose only finding sits on a
+deleted line as an empty review, a hard zero). Each becomes one array item:
 
   body      the comment text, verbatim
   file      its path

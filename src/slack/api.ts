@@ -1,4 +1,4 @@
-// Slack Web API poster (S1) — plain global fetch, no SDK.
+// Slack Web API poster — plain global fetch, no SDK.
 //
 // Two hard properties:
 //   1. ONE serialized post queue with a minimum interval between message posts,
@@ -8,7 +8,7 @@
 //      callers — failures come back as `{ ok: false, error }`.
 //
 // This class reads no config and no files: tokens and intervals arrive as
-// plain options (S2 owns config).
+// plain options (the caller owns config).
 import type {
   SlackFetchFn,
   SlackIdentity,

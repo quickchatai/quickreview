@@ -1,13 +1,12 @@
-// The daemon↔pi boundary (spec §4, brief B3 steps 2/6): birth, wake, adopt,
-// archive and kill of the per-PR pi sessions and the overseer session.
+// The daemon↔pi boundary: birth, wake, adopt, archive and kill of the per-PR
+// pi sessions and the overseer session.
 //
 // Shape of a session: a detached tmux session named `pr-<n>` (or `overseer`)
 // running the pinned interactive pi TUI with cwd = the sandbox root, the
 // substituted system prompt passed by path, and the two sandbox extensions
 // loaded. The daemon never types into that TUI: it wakes the session by
 // dropping a Markdown file into inject/<session>/, which the inject-bridge
-// extension picks up (findings §3 option 2 — tmux send-keys is the fallback of
-// last resort and is not used here).
+// extension picks up (tmux send-keys is not used).
 //
 // pi is not installed in this repo; every assumption about its CLI surface is
 // tagged VERIFY-ON-PIN and confined to buildPiCommand().
@@ -83,7 +82,7 @@ export const OVERSEER_SESSION = "overseer";
  * spawnSession). `QCR_` is the daemon's routing surface; `OPENVIKING_` is the
  * session's memory identity, which must be per-session and therefore cannot
  * come from the tmux server environment; `GIT_CONFIG_` is the config-scope pin
- * (see sessionGitConfigPins). SECRETS ARE NEVER PREFIXED — argv is
+ * (see sessionGitConfigPins). Secrets are never prefixed — argv is
  * world-readable — so no prefix carries a credential. */
 const ARGV_ENV_PREFIXES = ["QCR_", "OPENVIKING_", "GIT_CONFIG_"] as const;
 
@@ -93,53 +92,46 @@ const ARCHIVED_UNKNOWN_LOG_KEYS = 10_000;
 
 /**
  * The config-scope pin: which files git may read configuration from, decided by
- * the DAEMON at spawn time rather than discovered by git at run time.
+ * the daemon at spawn time rather than discovered by git at run time.
  *
- * Why this exists. `extensions/bash-guard.ts` vets COMMAND STRINGS, and four
- * adversarial rounds each found a way through it. The fourth is the
- * one that generalises: `HOME=/tmp/evil git diff --no-index A B` executes
- * arbitrary shell out of `$HOME/.gitconfig`, because git's *implicit search
- * path* was open while the *explicit* pointers (`GIT_CONFIG_GLOBAL`,
- * `GIT_CONFIG_SYSTEM`) were blocked. Push it one step and the command becomes
- * innocent: a session writes the real `$HOME/.gitconfig` with its ordinary
- * write tool and then runs a plain `git diff` — no suspicious token anywhere
- * for a command-string guard to see. The guard is structurally blind to that
- * half, and no length of blocklist reaches it.
+ * Why this exists. `extensions/bash-guard.ts` vets command strings, and a
+ * command-string guard cannot see git's implicit config search path:
+ * `HOME=/tmp/evil git diff --no-index A B` executes arbitrary shell out of
+ * `$HOME/.gitconfig`, and a session can equally write the real
+ * `$HOME/.gitconfig` with its ordinary write tool and then run a plain
+ * `git diff` — no suspicious token anywhere for the guard to see. No length of
+ * blocklist reaches that.
  *
  * So the search path is not searched. Setting `GIT_CONFIG_GLOBAL` makes both
  * `$HOME/.gitconfig` and `$XDG_CONFIG_HOME/git/config` inert — git consults the
- * named file INSTEAD, so `HOME` and `XDG_CONFIG_HOME` stop being config
- * vectors whether or not the guard knows their names. VERIFIED by execution,
- * not read off the docs:
+ * named file instead, so `HOME` and `XDG_CONFIG_HOME` stop being config
+ * vectors whether or not the guard knows their names. Verified by execution:
  *
  *   HOME=<evil> git diff --no-index A B                        → ran <cmd>
  *   HOME=<evil> GIT_CONFIG_GLOBAL=<pin> git diff --no-index A B → did NOT run
  *   XDG_CONFIG_HOME=<evil> …                                    → same pair
  *
  * …and end-to-end through the real spawn shape (`tmux new-session -d -s <n> -c
- * <cwd> env K=V … <cmd>`), because CLAUDE.md's recorded gotcha is that tmux
- * panes inherit the tmux SERVER environment: a pin that rode the client env
- * would silently do nothing, which is the exact failure mode this defence is
- * about. Hence `GIT_CONFIG_` in ARGV_ENV_PREFIXES above.
+ * <cwd> env K=V … <cmd>`), because tmux panes inherit the tmux server
+ * environment: a pin that rode the client env would silently do nothing.
+ * Hence `GIT_CONFIG_` in ARGV_ENV_PREFIXES above.
  *
- * The target is the pi HOME's own `.gitconfig` — the SAME file git would have
- * found by searching — and NOT `/dev/null`, which the ticket's note suggested.
- * `/dev/null` would have been a live regression: the container's entrypoint
- * writes a `credential.helper` shell snippet into the global config
+ * The target is the pi HOME's own `.gitconfig` — the same file git would have
+ * found by searching — and not `/dev/null`: the container's entrypoint writes
+ * a `credential.helper` shell snippet into the global config
  * (deploy/ansible/templates/entrypoint.sh.j2), and `fetch` is deliberately on
  * the session's read-verb allowlist because refusing it would wedge a review.
- * Verified that the pinned file's own `credential.helper` is still read AND
- * still invoked (`git credential fill`), so nothing legitimate changes.
+ * The pinned file's own `credential.helper` is still read and still invoked
+ * (`git credential fill`), so nothing legitimate changes.
  *
- * What this does NOT do, stated plainly because two docstrings in this codebase
- * have already asserted a closedness they did not have:
+ * What this does not do:
  *
- *   - It does not cover the REPO scope. `<clone>/.git/config` is still read,
+ *   - It does not cover the repo scope. `<clone>/.git/config` is still read,
  *     and a session that writes `diff.external` there gets execution from a
- *     plain `git diff <base> <head>` — VERIFIED executing. That half is closed
- *     at the WRITE boundary instead (`checkWritePath` in bash-guard), because
- *     git has no "ignore the local config" switch to pin.
- *   - It does not stop a caller RE-POINTING these three variables on the
+ *     plain `git diff <base> <head>`. That half is closed at the write
+ *     boundary instead (`checkWritePath` in bash-guard), because git has no
+ *     "ignore the local config" switch to pin.
+ *   - It does not stop a caller re-pointing these three variables on the
  *     command line: a later `GIT_CONFIG_GLOBAL=…` prefix wins over the spawn
  *     environment. The bash guard's COMMAND_INJECTING_ENV blocks that, and
  *     that block stays load-bearing. Env pins the floor; the guard stops it
@@ -184,20 +176,20 @@ export interface PiCommandSpec {
  * The pi argv for a session.
  *
  * VERIFY-ON-PIN, every flag:
- * - `--model <provider/id>` — documented (findings §8).
- * - `--session-dir <path>` — documented for RPC mode (findings §1); assumed to
+ * - `--model <provider/id>` — documented.
+ * - `--session-dir <path>` — documented for RPC mode; assumed to
  *   apply to the interactive TUI as well. Per-session dir (not the shared
  *   store) so archival can pick "the newest .jsonl" unambiguously — all PR
  *   sessions share one cwd, so the cwd-keyed global store would mix them.
- * - `--system-prompt <path>` — NOT documented. findings §7 document only the
+ * - `--system-prompt <path>` — not documented; pi documents only the
  *   `.pi/SYSTEM.md` / `~/.pi/agent/SYSTEM.md` override files. If no such flag
  *   exists, fall back to writing the substituted prompt to
  *   `<pi home>/.pi/SYSTEM.md` per session home (the substituted text is
  *   already on disk at systemPromptPath either way).
- * - `--extension <path>` — NOT documented; findings §5 document discovery dirs
- *   and a settings.json "extensions" array. Fallback: emit the same paths into
- *   the session's settings.json.
- * - `--name <display name>` — documented (findings §1).
+ * - `--extension <path>` — not documented; pi documents discovery dirs and a
+ *   settings.json "extensions" array. Fallback: emit the same paths into the
+ *   session's settings.json.
+ * - `--name <display name>` — documented.
  * - `--theme <path>` — same flag the companion uses (VERIFY-ON-PIN); loads the
  *   fleet muted theme so no session ever flashes pi's bright-green tool panel.
  * There is deliberately no update/auto-update flag: the pi version is pinned by
@@ -206,11 +198,10 @@ export interface PiCommandSpec {
 export function buildPiCommand(spec: PiCommandSpec): string[] {
   const argv = [
     spec.piBin,
-    // --approve: pre-trust project-local .pi resources for this run (verified
-    // against the pinned 0.84.1 --help). Without it a cwd carrying .pi/ (our
-    // settings.json, shipped 2026-08-20) hits pi's interactive "Trust project
-    // folder?" modal and the session stalls forever (pr-5334 incident). The
-    // reviewer never blocks on interactive input — the owner, 2026-08-20.
+    // --approve: pre-trust project-local .pi resources for this run. Without
+    // it a cwd carrying .pi/ (our settings.json) hits pi's interactive "Trust
+    // project folder?" modal and the session stalls forever. The reviewer
+    // never blocks on interactive input.
     "--approve",
     "--model",
     spec.model,
@@ -236,7 +227,7 @@ export interface PiSessionManagerOptions {
   piBin?: string;
   /** HOME for the pi process — the container's pihome volume. */
   piHome?: string;
-  /** The PR's raw-notes tier: an OpenViking SESSION created when the
+  /** The PR's raw-notes tier: an OpenViking session created when the
    * PR's pi session is born and deleted when the PR closes. Absent ⇒ no raw
    * tier is managed at all (test wiring, or a daemon with memory off) — the
    * sessions still run, memory-less, which is the standing degradation rule. */
@@ -283,7 +274,7 @@ export class PiSessionManager implements SessionHooks {
    * otherwise write ~288 rows a day per claim, indefinitely. A changed
    * archive state logs again; a restart logs each once more. */
   private readonly archivedUnknownLogged = new Set<string>();
-  /** Awaited before a PR session is born (§8.3): the archiver's
+  /** Awaited before a PR session is born: the archiver's
    * restore of a reopened PR's archived files. Unset ⇒ nothing to wait for. */
   private beforeBirthHook?: (pr: number) => Promise<void>;
 
@@ -297,7 +288,7 @@ export class PiSessionManager implements SessionHooks {
         root: opts.root,
         repo: opts.cfg.github.repo,
         // [github] clone_dir when set, else the repo slug's basename
-        // — "acme/widget-app" keeps deriving "widget-app".
+        // ("acme/widget-app" → "widget-app").
         cloneDir: githubCloneDir(opts.cfg.github),
         run: opts.exec,
       });
@@ -350,9 +341,9 @@ export class PiSessionManager implements SessionHooks {
       // sidecar for the operator TUI. It observes pi events only; no session
       // scheduling or daemon state passes through it.
       join(this.root, "extensions", "round-progress.ts"),
-      // first-party glue over pi's OWN subagent extension, imported
-      // at runtime from the installed pinned package (nothing vendored,
-      // nothing that can drift from the rule-7 pin). The built state/agents
+      // First-party glue over pi's own subagent extension, imported at
+      // runtime from the installed pinned package (nothing vendored, nothing
+      // that can drift from the rule-7 pin). The built state/agents
       // passes reach it through the native "user" discovery scope — the VM
       // entrypoint symlinks ~/.pi/agent/agents to state/agents. Rides argv on
       // purpose: children load only the global settings extensions, so the
@@ -363,8 +354,8 @@ export class PiSessionManager implements SessionHooks {
       // loads the same file (src/bench/runner.ts), so both routes group
       // candidates with one code path. Pure: it reads and writes nothing.
       join(this.root, "extensions", "finding-clusters.ts"),
-      // The vendored + patched OpenViking extension: the memory
-      // tools a session reaches. LAST on purpose — it is the only extension
+      // The vendored + patched OpenViking extension: the memory tools a
+      // session reaches. Last on purpose — it is the only extension
       // here we did not write, and pi registers handlers in load order, so
       // ours (ledger-pin above all) are in place before it arrives.
       //
@@ -372,9 +363,9 @@ export class PiSessionManager implements SessionHooks {
       // child loads no argv extensions, so a lens pass gets no memory surface
       // at all. Its own PATCH 2 is the second layer.
       //
-      // Its four patches are load-bearing — read
+      // Its patches are load-bearing — read
       // extensions/vendor/openviking-pi/README.md before touching this line.
-      // In particular PATCH 1 removed the extension's session_before_compact
+      // In particular PATCH 1 removes the extension's session_before_compact
       // handler so ledger-pin stays the sole owner of compaction.
       join(this.root, "extensions", "vendor", "openviking-pi", "index.ts"),
     ];
@@ -385,7 +376,7 @@ export class PiSessionManager implements SessionHooks {
     return join(this.root, "extensions", "muted-theme.json");
   }
 
-  // ---- OpenViking identity -------------------------------------
+  // ---- OpenViking identity ----------------------------------------------
 
   /** `http://host:port` from `[openviking]`; a hand-rolled config without the
    * block falls back to the loopback default (the port is never published). */
@@ -400,12 +391,12 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** Where the daemon publishes the retired URIs the sessions' recall
-   * excludes (S3) — beside ovcli.conf. */
+   * excludes — beside ovcli.conf. */
   ovRetiredPath(): string {
     return ovRetiredPathIn(this.piHome);
   }
 
-  /** Where the daemon publishes a PR session's recall hint (S5) — the
+  /** Where the daemon publishes a PR session's recall hint — the
    * round's own context query, which the session's recall searches with
    * instead of the whole round order. */
   ovRecallHintPath(session: string): string {
@@ -413,8 +404,8 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * Write the reviewer USER key into the pi HOME, 0600, before a session is
-   * born. The key is deliberately NOT an environment variable and NOT on the
+   * Write the reviewer user key into the pi HOME, 0600, before a session is
+   * born. The key is deliberately not an environment variable and not on the
    * argv — `ps` is readable by anything in the container — and it can never be
    * the server's root key: `writeOvcliConf` refuses that, leaving the session
    * unauthenticated (a loud 401) rather than omnipotent (silent).
@@ -446,12 +437,11 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** Delete the PR's raw-notes session and its archives — the raw tier ages
-   * out by DELETE, never by `commit` (which exists to PROMOTE notes into
-   * durable memory, i.e. the extraction we deliberately switched off).
+   * out by DELETE, never by `commit` (which exists to promote notes into
+   * durable memory, the extraction that is deliberately switched off).
    *
-   * A failure is LOGGED and RECORDED (S1): this used to swallow every
-   * one silently, and 79 sessions of closed PRs piled up on the server with
-   * nothing to say why. Still total — the PR closes either way. */
+   * A failure is logged and recorded as an event, so lingering sessions are
+   * visible. Total — the PR closes either way. */
   private async deleteOvSession(pr: number): Promise<boolean> {
     if (!this.ovSessions) return false;
     const id = ovSessionIdForPr(pr);
@@ -496,7 +486,7 @@ export class PiSessionManager implements SessionHooks {
    * process.env. Only the app credential path is reachable: the OpenAI key
    * comes out of the app secrets dir, and GitHub auth is minted per command by
    * scripts/mint-token.sh from the app PEM. No GH_TOKEN/GITHUB_TOKEN, no
-   * personal credential, is ever placed here (B3 hard rule).
+   * personal credential, is ever placed here (CLAUDE.md rule 3).
    */
   buildEnv(session: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = {
@@ -510,26 +500,24 @@ export class PiSessionManager implements SessionHooks {
       QCR_LEDGER_FILE: this.ledgerPath(session),
       QCR_SECRETS_DIR: this.cfg.github.secrets_dir,
       QCR_PI_VERSION: this.cfg.pi.version,
-      // the process-wide subagent fan-out cap the glue extension
-      // enforces (config.toml [pi] subagent_max_concurrency; VM runs 6 — the
-      // old pi-subagents config.json number — the glue's own default is the
-      // companion's 4).
+      // The process-wide subagent fan-out cap the glue extension enforces
+      // (config.toml [pi] subagent_max_concurrency).
       QCR_SUBAGENT_MAX_CONCURRENCY: String(this.cfg.pi.subagent_max_concurrency),
       // `[review] wide_lens_fanout`: a batched lens launch runs as wide as
       // that cap instead of native pi's in-call four (bench/aacr/PERF.md §1).
       QCR_SUBAGENT_WIDE_FANOUT: this.cfg.review?.wide_lens_fanout === false ? "0" : "1",
-      // lens children share the provider's prompt cache in groups
+      // Lens children share the provider's prompt cache in groups
       // (extensions/subagents.ts), and the leaf-cache extension that puts a
       // round's context pack first rides a child only where the round has one.
       QCR_SUBAGENT_CACHE_GROUP: String(this.cfg.pi.subagent_cache_group ?? 0),
       QCR_SUBAGENT_CACHE_STAGGER_MS: String(this.cfg.pi.subagent_cache_stagger_ms ?? 2500),
       QCR_LEAF_CACHE_EXT: join(this.root, "extensions", "leaf-cache.ts"),
-      // the daemon's own resolved config, so the posting scripts read
-      // the file the daemon read. Set by the DAEMON — the bash guard still
+      // The daemon's own resolved config, so the posting scripts read the
+      // file the daemon read. Set by the daemon — the bash guard
       // refuses a session's own `QCR_CONFIG=` prefix.
       ...(this.configPath ? { QCR_CONFIG: this.configPath } : {}),
-      // The config-scope pin. Here as well as on the argv because
-      // buildEnv is also the tmux CLIENT's environment; the argv copy is the
+      // The config-scope pin. Here as well as on the argv because buildEnv
+      // is also the tmux client's environment; the argv copy is the
       // one that reaches the pane (ARGV_ENV_PREFIXES carries `GIT_CONFIG_`).
       ...sessionGitConfigPins(this.piHome),
       ...(this.commandStore && this.commandStore.path !== ":memory:"
@@ -629,7 +617,7 @@ export class PiSessionManager implements SessionHooks {
       stage: "starting",
       updated_at: this.now().toISOString(),
     });
-    // tmux panes inherit the tmux SERVER's environment, not the client's, so
+    // tmux panes inherit the tmux server's environment, not the client's, so
     // per-session vars must ride the command line itself. Only the QCR_* routing
     // vars and the OPENVIKING_* identity are prefixed — HOME/PATH/OPENAI_API_KEY
     // stay whatever the container (or dev box) provides, which is where pi's
@@ -637,7 +625,7 @@ export class PiSessionManager implements SessionHooks {
     //
     // Nothing prefixed here is a secret, and nothing may become one: argv is
     // world-readable inside the container (`ps`), which is why the OpenViking
-    // KEY rides a 0600 ovcli.conf instead (see provisionOvCredentials).
+    // key rides a 0600 ovcli.conf instead (see provisionOvCredentials).
     const qcrPrefix = Object.entries(this.buildEnv(session, spawnEnv))
       .filter(([k, v]) => ARGV_ENV_PREFIXES.some((p) => k.startsWith(p)) && v !== undefined)
       .map(([k, v]) => `${k}=${v}`);
@@ -681,7 +669,7 @@ export class PiSessionManager implements SessionHooks {
     );
   }
 
-  /** The bridge receipt of the session's CURRENT generation (the one its
+  /** The bridge receipt of the session's current generation (the one its
    * birth file names), or undefined when there is none to read. */
   private currentBridgeState(session: string): SessionBridgeState | undefined {
     try {
@@ -731,8 +719,8 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * §8.3: before a PR session is born, its archived transcripts and
-   * session-command payloads go back (a reopen) — so the #5362 receipts of
+   * Before a PR session is born, its archived transcripts and
+   * session-command payloads go back (a reopen) — so the delivery receipts of
    * its pre-close wakes are read from the real files again. Bounded at
    * RESTORE_WAIT_MS (the archiver bounds it too), and it never refuses the
    * birth: a slow or failed restore lets the session be born, and the receipt
@@ -773,7 +761,7 @@ export class PiSessionManager implements SessionHooks {
         throw new Error(`session ${session} survived stale-bridge fence`);
       }
     }
-    // The PR's raw-notes tier, created BEFORE pi starts so the extension has
+    // The PR's raw-notes tier, created before pi starts so the extension has
     // something to attach to on the first turn. A store object, not a session
     // anyone schedules: the daemon still owns exactly two pi session kinds.
     await this.ensureOvSession(pr);
@@ -792,7 +780,7 @@ export class PiSessionManager implements SessionHooks {
     } catch (err) {
       // A creator outside this manager instance may win after our first check.
       // Adopt only when both tmux and the matching bridge-generation receipt
-      // prove that winner is usable; process existence alone caused #5454.
+      // prove that winner is usable; process existence alone is not proof.
       if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return session;
       throw err;
     }
@@ -802,7 +790,7 @@ export class PiSessionManager implements SessionHooks {
   /** Slack concierge appendix, or "" when Slack is off. */
   private slackAppendix(): string {
     // Typed access, not a cast: rename `slack` or `enabled` in Config and this
-    // FAILS THE BUILD instead of silently dropping the appendix. (The `?.`
+    // fails the build instead of silently dropping the appendix. (The `?.`
     // survives hand-rolled test configs that omit the block entirely.)
     if (!this.cfg.slack?.enabled) return "";
     const path = join(this.root, "prompts", "slack-overseer-appendix.md");
@@ -876,9 +864,10 @@ export class PiSessionManager implements SessionHooks {
     return { restored, failed };
   }
 
-  /** Adopt at most the oldest legacy file per PR. Later files remain the
-   * filesystem backlog and are adopted after the slot terminalizes; no legacy
-   * file is ever declared accepted merely because it already exists. */
+  /** Adopt at most the oldest legacy inject file (one with no durable command
+   * row) per PR. Later files remain the filesystem backlog and are adopted
+   * after the slot terminalizes; no legacy file is ever declared accepted
+   * merely because it already exists. */
   private adoptLegacyPendingCommands(): void {
     const store = this.commandStore;
     if (!store) return;
@@ -1039,7 +1028,7 @@ export class PiSessionManager implements SessionHooks {
   /**
    * SessionHooks: ensure worktree + session, then inject the round prompt.
    *
-   * The worktree is checked out at the ORDER's sha, without a fetch: dispatch
+   * The worktree is checked out at the order's sha, without a fetch: dispatch
    * already fetched and pinned it (`prepareWorktree`). Re-fetching here would
    * reintroduce the drift the pinning exists to remove — a push landing
    * between the two calls would leave the tree ahead of the prompt. Only if
@@ -1053,7 +1042,7 @@ export class PiSessionManager implements SessionHooks {
     }
     await this.ensurePrSession(order.pr, order.title, order.worktree);
     const stamped = stampRoundPrompt(renderedPrompt, order.pr, order.round_no);
-    // Keep the exact bytes that were dispatched. Redelivery must send the SAME
+    // Keep the exact bytes that were dispatched. Redelivery must send the same
     // prompt — re-rendering later would quietly change the order (a different
     // head, a different memory block, a different nit-scope note), so what the
     // session eventually reads would not be the round the daemon recorded.
@@ -1079,21 +1068,15 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** SessionHooks: has this round's prompt actually been ACCEPTED into the
-   * session? (#5362.)
+  /** SessionHooks: has this round's prompt actually been accepted into the
+   * session?
    *
-   * The daemon had no positive evidence of delivery at all — every net
-   * inferred it from a JSONL mtime, which cannot distinguish "the prompt
-   * arrived" from "the session was busy doing something else". That is the
-   * inference that made the net structurally blind: a prompt is
-   * dropped precisely BECAUSE the agent is busy, and a busy agent always
-   * bumps the mtime after the round started.
-   *
-   * The receipt is a fact instead of a guess: `dispatchRound` stamps a token
-   * into the wake file, and pi writes the user message it accepted — token
-   * included — into the session JSONL. Present ⇒ delivered. Absent ⇒ never
-   * delivered. Verified live on #5362, whose JSONL holds round 1's prompt and
-   * two hand-typed messages but no trace whatsoever of round 2's.
+   * A JSONL mtime cannot tell "the prompt arrived" from "the session was busy
+   * doing something else" — and a prompt is dropped precisely because the
+   * agent is busy, which also bumps the mtime. So delivery is read from a
+   * receipt instead: `dispatchRound` stamps a token into the wake file, and pi
+   * writes the user message it accepted — token included — into the session
+   * JSONL. Present ⇒ delivered. Absent ⇒ never delivered.
    *
    * Returns null for "cannot tell": no session dir, nothing readable. The
    * caller must treat null as "no evidence either way" and never as loss.
@@ -1114,17 +1097,14 @@ export class PiSessionManager implements SessionHooks {
    * (unlike a round) no deadline underneath it to catch a silent loss. */
   async wakeReceiptPresent(pr: number, marker: string, sinceMs: number): Promise<boolean | null> {
     const root = this.sessionDir(prSessionName(pr));
-    // The scan itself lives in `receiptscan.ts` (boot stall): the same
-    // scope and the same three answers, read through an index that touches
-    // each byte of a session file once, asynchronously and in chunks. The old
-    // in-place `readFileSync(…, "utf8").includes(marker)` re-read every
-    // in-scope transcript per query as one synchronous span — 132.7 s of a
-    // blocked loop at the 2026-10-07 boot.
+    // The scan lives in `receiptscan.ts`: an index that reads each byte of a
+    // session file once, asynchronously and in chunks, so a query never
+    // blocks the event loop re-reading whole transcripts.
     const { answer, unreadable } = await this.receipts.present(root, marker, sinceMs);
     // A file we could not read might have held the marker, so absence is not
-    // established: the answer is UNKNOWN rather than loss (#5362 rule ①;
-    // before the scan returned `false` here). …but say so. The flag is
-    // scan-GLOBAL, so ONE permanently unreadable stale `.jsonl` makes every
+    // established: the answer is unknown rather than loss (CLAUDE.md, "a
+    // delivered prompt is a receipt" ①) — but say so. The flag is
+    // scan-global, so one permanently unreadable stale `.jsonl` makes every
     // receipt query for this PR answer `null` forever — which silently disables
     // both the redelivery-vs-loss decision and reconcile's claim-release sweep.
     // Unknown is the correct answer and a durable row is how it stops being a
@@ -1135,15 +1115,15 @@ export class PiSessionManager implements SessionHooks {
         since_ms: sinceMs,
         root,
       });
-    // ARCHIVED IS NEVER ABSENT (§8.1, #5362 rule ①). The archiver
+    // Archived is never absent. The archiver
     // moves a closed PR's transcripts out of this dir; once a reopened PR's
     // reborn session writes a fresh JSONL, a scan for a pre-close wake reads
     // only that file and answers `false` — and the claim sweep would release
     // a nudge that may well have landed. While the PR's archive is not
     // restored and could hold a file in this query's scope (its newest
-    // archived mtime reaches the scope floor), a live `false` is UNKNOWN. A
+    // archived mtime reaches the scope floor), a live `false` is unknown. A
     // live `true` stays true; a wake sent after the reopen is past every
-    // archived mtime and is answered from the live files exactly as before.
+    // archived mtime and is answered from the live files alone.
     if (answer === false) {
       const scope = this.archiveScopeOf(pr);
       if (
@@ -1183,7 +1163,7 @@ export class PiSessionManager implements SessionHooks {
     pr: number,
   ): { state: string; max_mtime_ms: number | null } | null | "unreadable" {
     // A store without the archive ledger (a narrow test double) has nothing
-    // archived; a real store whose read fails is UNKNOWN.
+    // archived; a real store whose read fails is unknown.
     if (typeof this.commandStore?.archiveScope !== "function") return null;
     try {
       return this.commandStore.archiveScope(pr);
@@ -1197,8 +1177,8 @@ export class PiSessionManager implements SessionHooks {
     return this.receipts.stats();
   }
 
-  /** SessionHooks: re-deliver a round prompt whose receipt never appeared
-   * (#5362). The cheap recovery: the same round, the same session, the same
+  /** SessionHooks: re-deliver a round prompt whose receipt never appeared.
+   * The cheap recovery: the same round, the same session, the same
    * conversation — just the wake file written again, byte-identical to what
    * was dispatched. No round is cancelled, no session is killed, no GitHub
    * state is touched, and the self-requeue budget is untouched.
@@ -1261,8 +1241,8 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * SessionHooks (#5362 ③, H1b): REDELIVER one command whose start
-   * lease ran out, into the SAME live, bridge-ready session — never a kill.
+   * SessionHooks: redeliver one command whose start lease ran out, into the
+   * same live, bridge-ready session — never a kill.
    * The row goes back to `pending` (same id, path and bytes; a CAS on what was
    * read) and the payload is rewritten at its inject path, which wakes the
    * bridge. A bridge that still holds the command as submitted-but-unstarted
@@ -1271,11 +1251,11 @@ export class PiSessionManager implements SessionHooks {
    * `not_live` when there is no live, ready bridge to redeliver into: that is
    * the kill-and-replay recovery's case.
    *
-   * `observed` is the row the supervisor found DUE, and every check — this
+   * `observed` is the row the supervisor found due, and every check — this
    * read and the CAS — is against it, never against a fresh read: a bridge
    * that reserved the command after the due check (a new attempt, a fresh
    * lease) may hold a submission pi is still preflighting, and handing that
-   * back would send it twice (H1b review). A row that moved is
+   * back would send it twice. A row that moved is
    * `raced`: the supervisor looks again on the fresh lease.
    */
   async redeliverSessionCommand(
@@ -1343,7 +1323,7 @@ export class PiSessionManager implements SessionHooks {
     return "redelivered";
   }
 
-  /**: retry one durable command without ever leaving the old
+  /** Retry one durable command without ever leaving the old
    * consumer alive beside its replay. Rounds may only use this before start;
    * an ordinary wake may use it after acceptance because the tmux fence comes
    * first. In both cases the same id, path and exact payload bytes survive. */
@@ -1360,8 +1340,8 @@ export class PiSessionManager implements SessionHooks {
       (command.kind === "round" && command.started_at !== null)
     )
       return "retry_failed";
-    // A closed PR is never reborn for an ordinary wake (selfscan 666a2356):
-    // settle the row instead of replaying it into a respawned session.
+    // A closed PR is never reborn for an ordinary wake: settle the row
+    // instead of replaying it into a respawned session.
     if (command.kind !== "round" && this.prClosed(command.pr)) {
       store.cancelSessionCommandsForClosedPr(command.pr);
       return "settled";
@@ -1420,10 +1400,10 @@ export class PiSessionManager implements SessionHooks {
       await this.ensureSessionForWake(command.pr);
       const replayed = store.getSessionCommand(command.id);
       if (replayed?.status === "acked" || replayed?.status === "cancelled") return "settled";
-      // The recovery file exists BEFORE birth. A matching bridge writes ready
+      // The recovery file exists before birth. A matching bridge writes ready
       // only after its synchronous startup drain, whose reservation is the one
       // transition that increments attempt. Tmux birth without that increment
-      // is zero deliveries, never a successful replay (#5454).
+      // is zero deliveries, never a successful replay.
       if (!replayed || replayed.attempt <= command.attempt) {
         const detail = `bridge became ready without reserving command ${command.id} (delivery attempt stayed ${command.attempt})`;
         store.noteSessionCommandRecoveryFailure(command.id, detail);
@@ -1465,13 +1445,12 @@ export class PiSessionManager implements SessionHooks {
 
   /** SessionHooks: wake a PR session outside a round (ping-pong, follow-ups).
    *
-   * Sticky sessions die with the container (restart/deploy) and are only
-   * reborn on round dispatch — but rechecks and ping-pong are exactly the
-   * paths that fire WITHOUT a round (live gap 2026-08-19: every post-restart
-   * push recheck threw "no live session"). If the title is resolvable, the
-   * session is respawned here: same prompt template, same env, worktree
-   * re-ensured best-effort (the wake message cites it). Only when no title is
-   * known (PR never tracked) does the original error stand. */
+   * Sticky sessions die with the container (restart/deploy) and are otherwise
+   * reborn only on round dispatch — but rechecks and ping-pong fire without a
+   * round. So a dead or unready session is respawned here (see
+   * ensureSessionForWake): same prompt template, same env, worktree
+   * re-ensured best-effort (the wake message cites it). A PR whose title is
+   * unknown (never tracked) or that is closed throws instead. */
   async inject(pr: number, message: string): Promise<void> {
     await this.ensureSessionForWake(pr);
     this.queuePrCommand(pr, "wake", message, null);
@@ -1481,7 +1460,7 @@ export class PiSessionManager implements SessionHooks {
    * to land. Shared by `inject` and `redeliverRound` — a redelivery into tmux
    * without the matching watcher receipt would be written to a mailbox nobody
    * proved it owns, which is the same silent loss the receipt exists to catch.
-   * Throws only when the PR was never tracked, so no title is known. */
+   * Throws when the PR is closed, or was never tracked so no title is known. */
   private async ensureSessionForWake(pr: number): Promise<void> {
     const session = prSessionName(pr);
     if ((await this.tmux.hasSession(session)) && this.currentBridgeReady(session)) return;
@@ -1506,7 +1485,7 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * Wake the overseer and return the PATH of the wake file just written.
+   * Wake the overseer and return the path of the wake file just written.
    *
    * The Slack router binds its origin record to the inject file's
    * basename, so it needs the name back; `injectOverseer` below keeps the
@@ -1525,7 +1504,7 @@ export class PiSessionManager implements SessionHooks {
   // ---- archival / death --------------------------------------------------
 
   /** Newest *.jsonl anywhere under a session's --session-dir. Ties break on the
-   * filename — pi names sessions `<timestamp>_<uuid>.jsonl` (findings §1). */
+   * filename — pi names sessions `<timestamp>_<uuid>.jsonl`. */
   newestSessionFile(session: string): string | undefined {
     const root = this.sessionDir(session);
     let newest: { path: string; mtime: number; name: string } | undefined;
@@ -1552,8 +1531,8 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** SessionHooks: newest session-JSONL mtime for the PR's sticky session —
-   * the lost-prompt net's activity signal. Null when no JSONL exists
-   * (a session that never wrote anything has no activity to date).
+   * an activity signal. Null when no JSONL exists (a session that never wrote
+   * anything has no activity to date).
    * VERIFY-ON-PIN: the net's entire evidence base is that pi APPENDS to the
    * session JSONL promptly (bumping mtime) whenever a prompt is ACCEPTED into
    * the session — a stale mtime after a consumed inject must mean the prompt
@@ -1573,11 +1552,10 @@ export class PiSessionManager implements SessionHooks {
   /** SessionHooks: unconsumed wake files in the PR session's inject dir —
    * still pending means the inject-bridge is retrying, not that it lost
    * anything. Its callers (reconcile's recheck-claim sweep, verdicts' silent-round check)
-   * read it as a PATIENCE signal only: a pending wake means wait.
-   * Whether a wake was delivered is never inferred from it — the retired
-   * reading ("consumed with no JSONL activity ⇒ dropped mid-turn") was
-   * replaced by the receipt token (#5362 rule ①, `wakeReceiptPresent`):
-   * present = delivered, absent = never arrived, unreadable = unknown. */
+   * read it as a patience signal only: a pending wake means wait.
+   * Whether a wake was delivered is never inferred from it — that is the
+   * receipt token's job (`wakeReceiptPresent`): present = delivered, absent =
+   * never arrived, unreadable = unknown. */
   async injectPending(pr: number): Promise<boolean> {
     const dir = this.injectDir(prSessionName(pr));
     try {
@@ -1588,17 +1566,16 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * Write a session's RECORD into an archive dir: its ledger (+ any verdict
+   * Write a session's record into an archive dir: its ledger (+ any verdict
    * still at the top of verdict/) and `meta.json`, whose `session_file` names
    * the live transcript that was newest at this moment. Returns what landed.
    *
-   * The transcript itself is NOT copied (S4): the closed-PR archiver
-   * keeps every JSONL of the session — verified, compressed, all of them, not
-   * just the newest — in `archive/<session>/transcripts/` once it is safe to
-   * move (`src/archive/`), so a copy here was a duplicate, and its synchronous
-   * `copyFileSync` of a multi-MB file sat on the close path. `qcr why`, the
-   * TUI LEDGER and the overseer seed read `ledger.md` and `meta.json`, which
-   * stay plain.
+   * The transcript itself is not copied: the closed-PR archiver keeps every
+   * JSONL of the session — verified and compressed — in
+   * `archive/<session>/transcripts/` once it is safe to move (`src/archive/`),
+   * and a multi-MB synchronous copy does not belong on the close path.
+   * `qcr why`, the TUI ledger and the overseer seed read `ledger.md` and
+   * `meta.json`, which stay plain.
    */
   archiveSession(session: string, dest: string): string[] {
     mkdirSync(dest, { recursive: true });
@@ -1641,7 +1618,7 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /** Is a session birth for `pr` in flight right now? Synchronous — the
-   * archiver's eligibility (§7.1) re-reads it immediately before
+   * archiver's eligibility re-reads it immediately before
    * anything of the PR's leaves the live tree. */
   birthInFlight(pr: number): boolean {
     return this.prSessionBirths.has(pr);
@@ -1667,10 +1644,9 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * The reconcile sweep over the raw tier (S3): delete the `pr-<n>`
-   * OpenViking sessions of PRs the registry says are CLOSED — the ones
-   * `archiveAndClose` failed to delete (79 on the VM on 2026-10-06, most from
-   * before failures were even logged) or never got to. Bounded per pass
+   * The reconcile sweep over the raw tier: delete the `pr-<n>` OpenViking
+   * sessions of PRs the registry says are closed — the ones
+   * `archiveAndClose` failed to delete or never got to. Bounded per pass
    * (`OV_SESSION_SWEEP_MAX`), every outcome logged and recorded. A PR whose pi
    * session is still alive keeps its raw tier until that session is gone (its
    * turn sync would otherwise write into nothing), and an id whose delete
@@ -1802,18 +1778,16 @@ export class PiSessionManager implements SessionHooks {
   }
 
   /**
-   * Post-round compaction, REQUESTED from the session's inject
-   * bridge (H1b): one `.compact-request.json` in the inject dir, which
-   * the bridge runs through pi's own `ctx.compact()` once nothing is in flight,
-   * holding every wake until it ends. Before H1b this typed `/compact` into the
-   * pane: that ABORTED whatever turn was running (verified live 2026-08-19)
-   * and, worse, left the wakes flushed right after it to be submitted INTO the
-   * compaction, where pi refuses a prompt and the bridge never learned — seven
-   * healthy sessions were killed over it on 2026-10-08. The verdict file is
-   * still the round's last durable write; the tail after it now simply
-   * finishes before the compaction starts.
-   * Best-effort: no live session is a no-op, and a bridge from before H1b
-   * ignores the request (no compaction, never a stuck mailbox).
+   * Post-round compaction, requested from the session's inject bridge: one
+   * `.compact-request.json` in the inject dir, which the bridge runs through
+   * pi's own `ctx.compact()` once nothing is in flight, holding every wake
+   * until it ends. Never `/compact` typed into the pane: that aborts whatever
+   * turn is running, and a wake submitted into a running compaction is
+   * refused by pi without the bridge learning. The verdict file is the
+   * round's last durable write; the tail after it finishes before the
+   * compaction starts.
+   * Best-effort: no live session is a no-op, and a bridge that does not know
+   * the request ignores it (no compaction, never a stuck mailbox).
    */
   async compactSession(pr: number): Promise<void> {
     const session = prSessionName(pr);
@@ -1836,8 +1810,8 @@ export class PiSessionManager implements SessionHooks {
     }
   }
 
-  /** SessionHooks (H1b): the current bridge generation's compaction
-   * report — null when there is no ready bridge to read or it predates H1b,
+  /** SessionHooks: the current bridge generation's compaction report — null
+   * when there is no ready bridge to read or it reports no compaction,
    * and null when tmux holds no session: a pi killed or OOM'd mid-compaction
    * never reaches `session_shutdown`, so its last receipt still says
    * "running", and a dead session must never hold off its own recovery. */
@@ -1857,13 +1831,13 @@ export class PiSessionManager implements SessionHooks {
 
   async archiveAndClose(pr: number): Promise<void> {
     const session = prSessionName(pr);
-    // Terminalize outstanding ordinary wakes FIRST, so no recovery sweep can
-    // replay one into a session reborn after the kill below (selfscan 666a2356).
+    // Terminalize outstanding ordinary wakes first, so no recovery sweep can
+    // replay one into a session reborn after the kill below.
     this.commandStore?.cancelSessionCommandsForClosedPr(pr);
     this.archiveSession(session, this.archiveDir(session));
     await this.worktrees.remove(pr);
     await this.tmux.killSession(session);
-    // A compaction request the killed bridge never took (H1b) is not
+    // A compaction request the killed bridge never took is not
     // a wake and nothing archives it; it would only keep the inject dir alive.
     try {
       rmSync(join(this.injectDir(session), COMPACTION_REQUEST_FILE), { force: true });
@@ -1871,8 +1845,8 @@ export class PiSessionManager implements SessionHooks {
       /* best-effort */
     }
     // The raw tier dies with the PR: DELETE removes the session's messages AND
-    // its archives (verified — the tree is gone). Deliberately AFTER the tmux
-    // kill, so nothing is still syncing turns into it, and deliberately NOT in
+    // its archives. Deliberately after the tmux kill, so nothing is still
+    // syncing turns into it, and deliberately not in
     // killSession(): a wedged session is respawned and keeps its notes.
     await this.deleteOvSession(pr);
   }
@@ -1881,10 +1855,10 @@ export class PiSessionManager implements SessionHooks {
 
   /**
    * Weekly rotation on the daemon timer (and the operator's `restart-session
-   * overseer`): record the run, then respawn. Each rotation gets its OWN
+   * overseer`): record the run, then respawn. Each rotation gets its own
    * record dir — `archive/overseer/<YYYY-MM-DD>`, then `<date>-2`, `-3`, … for
    * another the same day — so two rotations on one date never overwrite each
-   * other (S4). Only the ledger and `meta.json` are written there;
+   * other. Only the ledger and `meta.json` are written there;
    * the transcript stays live until the archiver moves it, named by its own
    * file name, into `archive/overseer/transcripts/`. Returns the dir's name.
    */

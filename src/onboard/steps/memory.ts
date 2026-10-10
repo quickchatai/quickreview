@@ -1,11 +1,9 @@
 // Memory keys — mint, place, prove.
 //
 // A new operator gets working, CONFINED memory without ever learning what a
-// memory key is. Until this step existed the docs said "mint one, once" and no
-// command minted anything: the operator was expected to hand-issue three keys
-// and hand-place them, and the one placement mistake that matters (the
-// companion key landing where review sessions can read it) was a paragraph of
-// prose rather than a check.
+// memory key is: this step issues and places all three keys, and the one
+// placement mistake that matters (the companion key landing where review
+// sessions can read it) is a check, not a paragraph of prose.
 //
 // THE THREE KEYS AND WHERE EACH ONE MAY LIVE. This is the whole point of the
 // step, and it is absolute (root CLAUDE.md rule 8, docs/companion-memory-access.md):
@@ -22,11 +20,10 @@
 //
 // The compose route mounts the WHOLE secrets dir into the container read-only,
 // so the key file must never sit inside it. Its documented home is the
-// operator home, outside every mounted dir; `resolveKeysFile`
-// refuses any layout that would put it inside a dir the container mounts
-// anyway (the secrets dir, the config home, the live config's directory, the
-// checkout — `keysFileConfinement`), rather than writing a key into a mounted directory. (The old
-// relocation out of the old secrets dir went with that dir,.)
+// operator home, outside every mounted dir; `resolveKeysFile` refuses any
+// layout that would put it inside a dir the container mounts anyway (the
+// secrets dir, the config home, the live config's directory, the checkout —
+// `keysFileConfinement`), rather than writing a key into a mounted directory.
 //
 // IDEMPOTENT BY CONSTRUCTION. An existing key is left exactly alone: minting
 // asks the server for the key a user ALREADY has instead of issuing a second
@@ -58,7 +55,7 @@
 // store row red, the EOD curator and the [feedback] sink have nowhere to write.
 // The step records the choice, mints and places nothing, and writes exactly ONE
 // thing: `[openviking] enabled = false` in config.toml — the daemon's word for
-// "off" (S1). Without it the daemon cannot tell a declined install from
+// "off". Without it the daemon cannot tell a declined install from
 // a broken one: memory health reads a missing reviewer key as the credential
 // failure it would be on an install that wanted memory, and wakes the overseer,
 // paints the board and files a ticket for a choice. Configuring memory later
@@ -239,8 +236,8 @@ export function resolveKeysFile(
 
 /**
  * Is a key file at `path` confined — outside EVERY directory the daemon
- * container mounts? Those are the secrets dir, the install's config home
- *, and whatever the caller adds: bring-up mounts the directory of
+ * container mounts? Those are the secrets dir, the install's config home,
+ * and whatever the caller adds: bring-up mounts the directory of
  * the live config.toml (wherever `QCR_CONFIG` points, `configMountOf`) and the
  * whole checkout (read-write, at /opt/quickreview/sandbox). A key file inside
  * any of them is one `cat` away from every review session.
@@ -438,7 +435,7 @@ function configPathOf(ctx: StepContext): string {
 }
 
 /**
- * Tell the DAEMON the operator's answer (S1): `[openviking] enabled =
+ * Tell the DAEMON the operator's answer: `[openviking] enabled =
  * false` on a decline — its word for "off", under which memory health reports
  * "not monitored" and raises nothing — and back to `true` when memory is
  * configured over an earlier decline. Configuring never ADDS the key: an

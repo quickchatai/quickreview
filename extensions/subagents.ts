@@ -1,9 +1,8 @@
-// subagents — first-party glue over pi's OWN subagent extension.
+// subagents — first-party glue over pi's own subagent extension.
 //
-// The third-party amosblomqvist/pi-subagents extension is REMOVED (owner,
-// 2026-08-30: unlicensed upstream, stale, and pi now ships a first-party
-// equivalent inside the pinned npm package). This file is the ONE loader for
-// that native extension, on both surfaces (VM sessions via
+// No third-party subagent extension is used: pi ships a first-party one
+// inside the pinned npm package. This file is the one loader for that native
+// extension, on both surfaces (VM sessions via
 // `src/sessions.ts` extensionPaths, companion via `src/tui/companion.ts`
 // piArgv), and it exists for three reasons the native code does not cover:
 //
@@ -19,20 +18,19 @@
 //     native tool caps concurrency only WITHIN one `tasks:[…]` call
 //     (MAX_CONCURRENCY = 4, index.ts) — multiple single-mode `subagent` calls
 //     in one assistant turn (the fan-out pattern the round templates mandate)
-//     run with NO cap at all, because pi dispatches a turn's tool calls via
-//     Promise.all. The weighted semaphore below restores the process-wide cap
-//     the old extension had (default 4; the VM passes 6 via
-//     QCR_SUBAGENT_MAX_CONCURRENCY, from config.toml [pi]
-//     subagent_max_concurrency).
+//     run with no cap at all, because pi dispatches a turn's tool calls via
+//     Promise.all. The weighted semaphore below is the process-wide cap
+//     (default 4; the VM passes its own via QCR_SUBAGENT_MAX_CONCURRENCY,
+//     from config.toml [pi] subagent_max_concurrency).
 //
 //  3. **Child processes must never see repo-controlled pi config.** Native
-//     children spawn as `pi --mode json -p --no-session` WITHOUT
-//     `--no-extensions` (the old extension passed it), so a child's cwd
-//     decides which PROJECT `.pi/` resources it loads — and
+//     children spawn as `pi --mode json -p --no-session` without
+//     `--no-extensions`, so a child's cwd decides which project `.pi/`
+//     resources it loads — and
 //     `defaultProjectTrust = "always"` (the no-stall decision) trusts them
 //     all. A task `cwd` pointing into a reviewed-repo worktree would load
 //     that repo's `.pi/extensions` into a reviewer child. The sanitizer
-//     therefore STRIPS every `cwd` param (top-level, tasks[], chain[]): a
+//     therefore strips every `cwd` param (top-level, tasks[], chain[]): a
 //     child always runs in the parent session's own cwd (the sandbox root /
 //     /workspace — first-party ground), and passes address the worktree by
 //     absolute path exactly as their task strings already do. It also pins
@@ -41,21 +39,22 @@
 //     state/agents on the VM, docker/companion/agents in the companion) and
 //     forces `confirmProjectAgents: false` (never an interactive modal).
 //
-// Beside the wrapped subagent tool the glue registers `launch_plan` (,
-// below): the round's discovery task files launched as ONE call through the
-// same wrapped execute, so the one-turn launch the round templates ask for is
+// Beside the wrapped subagent tool the glue registers `launch_plan` (below):
+// the round's discovery task files launched as ONE call through the same
+// wrapped execute, so the one-turn launch the round templates ask for is
 // one tool call rather than a discipline.
 //
 // What stays structural without any glue: children never gain the `subagent`
 // tool (this extension rides per-spawn argv, never the global settings.json,
-// and children load only global extensions), so a pass cannot fan out — the
-// single-shepherd leaves rule (root CLAUDE.md rule 9). Children DO now load
-// the globally-registered bash-guard, which is a strengthening: the old
-// `--no-extensions` children had only the prompt-level exec policy.
+// and children load only global extensions, plus leaf-cache.ts in a round
+// with a context pack, below), so a pass cannot fan out — the
+// single-shepherd leaves rule (root CLAUDE.md rule 9). Children do load the
+// globally-registered bash-guard, so the exec policy binds them structurally,
+// not only through the prompt.
 //
 // VERIFY-ON-PIN (0.84.4, read statically from the published tarball, and
 // the subagent example re-compared byte-identical at 0.87.1, 0.99.1 and 1.0.0; live
-// smoke listed in the report):
+// smoke-tested):
 //  - native child argv is `--mode json -p --no-session` + optional
 //    --model/--thinking/--tools/--append-system-prompt (examples/extensions/
 //    subagent/index.ts, runSingleAgent) — `-p`/`--no-session`/`--mode json`
@@ -82,11 +81,11 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:pa
  * matter what the model asks for. */
 export const SCOPE_ENV = "QCR_SUBAGENT_SCOPE";
 
-/** Env var carrying the process-wide child cap (VM: 6, from config.toml
+/** Env var carrying the process-wide child cap (on the VM, config.toml
  * [pi] subagent_max_concurrency riding the session command line). */
 export const CONCURRENCY_ENV = "QCR_SUBAGENT_MAX_CONCURRENCY";
 
-/** Env var switching the WIDE fan-out on ("1"): a `tasks:[…]` call is split
+/** Env var switching the wide fan-out on ("1"): a `tasks:[…]` call is split
  * into native-sized chunks that run CONCURRENTLY, each under its own permits
  * of the process-wide semaphore, so one batched launch runs as wide as the
  * configured cap instead of native's in-call four (bench/aacr/PERF.md §1).
@@ -99,8 +98,7 @@ export function resolveWideFanout(env: Record<string, string | undefined> = proc
   return (env[WIDE_FANOUT_ENV] ?? "").trim() === "1";
 }
 
-/** Default process-wide cap — the companion's desktop number; the old
- * extension's config.json default was the same 4. */
+/** Default process-wide cap — the companion's desktop number. */
 export const DEFAULT_MAX_CONCURRENCY = 4;
 
 /** The native extension's own within-one-call concurrency constant
@@ -426,24 +424,23 @@ async function runWide(
 // ---------------------------------------------------------------------------
 // launch_plan — the one-turn discovery launch, made structural.
 //
-// The round templates have always asked the PR's main session to launch every
-// discovery row in ONE assistant turn. Live rounds show it often did not: in
-// 6 of 12 studied rounds the session launched one lens per turn (fan-out
-// 850–1,740 s instead of ~150–220 s) or launched pass-baseline alone and
-// waited, and every round spent 20–150 s hand-writing 20-odd near-identical
-// subagent calls whose whole task is a pointer to the task file the daemon
-// already wrote (`[review] task_files`, src/passtasks.ts). `launch_plan`
-// reads the round's task directory and launches every discovery task file in
-// it as ONE `tasks:[…]` call through the SAME wrapped execute the subagent
-// tool runs — the same sanitizer, the same process-wide semaphore, the same
-// wide fan-out — so the result is exactly what the subagent tool returns and
+// The round templates ask the PR's main session to launch every discovery
+// row in one assistant turn. Left to discipline, a session launches one lens
+// per turn or one lens alone and waits, multiplying fan-out time, and spends
+// time hand-writing near-identical subagent calls whose whole task is a
+// pointer to the task file the daemon already wrote (`[review] task_files`,
+// src/passtasks.ts). `launch_plan` reads the round's task directory and
+// launches every discovery task file in it as one `tasks:[…]` call through
+// the same wrapped execute the subagent tool runs — the same sanitizer, the
+// same process-wide semaphore, the same wide fan-out — so the result is exactly what the subagent tool returns and
 // the session merges it as before.
 //
-// Still the main session's act (root rule 9): the session calls the tool; the
-// daemon schedules nothing. Bounded on purpose:
+// Still the main session's act (root CLAUDE.md rule 9): the session calls the
+// tool; the daemon schedules nothing. Bounded on purpose:
 //  - only a round's sanctioned task dirs — `<sandbox root>/state/pr-<n>-round-
-//    <k>-passes/tasks` (the plan) and `…/tasks-sweep` (the owed pre-approval
-//    sweep), or the pass dir itself, which means its `tasks` — every path
+//    <k>-passes/tasks` (the plan), `…/tasks-optional` (a follow-up round's
+//    optional rows) and `…/tasks-sweep` (the owed pre-approval sweep), or the
+//    pass dir itself, which means its `tasks` — every path
 //    resolved through symlinks first; the bench names its case dirs exactly in
 //    QCR_LAUNCH_PLAN_DIRS (the session cannot set its own environment);
 //  - only regular files named as passtasks.ts names them (`NN-<agent>.md`), so
@@ -453,8 +450,8 @@ async function runWide(
 //  - no cwd and no free-form agent: each unit is the row's file-named agent
 //    and the pointer the templates prescribe, plus optional `extra` text the
 //    session keys to a row (a prior finding to verify, a site to look at).
-// Rows the session RAISES are named in `skip` and launched through the
-// subagent tool in the same turn; rows it ADDS have no file and go there too.
+// Rows the session raises are named in `skip` and launched through the
+// subagent tool in the same turn; rows it adds have no file and go there too.
 
 /** The tool's name, as the round templates spell it. */
 export const LAUNCH_PLAN_TOOL = "launch_plan";
@@ -479,7 +476,8 @@ export function taskPointer(path: string): string {
 
 /** One unit of a planned launch. */
 export interface LaunchUnit {
-  /** "plan" for the round's tasks dir, "sweep" for the sweep's. */
+  /** "plan" for the round's tasks dir, "optional" for a follow-up round's
+   * optional rows, "sweep" for the sweep's. */
   phase: "plan" | "sweep" | "optional";
   /** 1-based row, as the plan tables print it. */
   row: number;
@@ -567,8 +565,9 @@ function listTaskFiles(dir: string): Array<{ row: number; agent: string; file: s
 }
 
 /** The keys a unit answers to in `extra` and `skip`: its file name (with or
- * without `.md`), its row (`3`, or `sweep:3` for a sweep row), its agent, its
- * phase's wildcard (`plan:*` / `sweep:*`) and `*`. */
+ * without `.md`), its row (`3`, or `sweep:3` / `optional:3` outside the
+ * plan), its agent, its phase's wildcard (`plan:*` / `optional:*` /
+ * `sweep:*`) and `*`. */
 export function unitKeys(u: Pick<LaunchUnit, "phase" | "row" | "file" | "agent">): string[] {
   const row = u.phase === "plan" ? String(u.row) : `${u.phase}:${u.row}`;
   return [u.file, u.file.replace(/\.md$/, ""), row, u.agent, `${u.phase}:*`, "*"];
@@ -755,22 +754,19 @@ export function launchPlanDefinition(
 }
 
 // ---------------------------------------------------------------------------
-// The shared PROMPT CACHE — lens children in cache groups.
+// The shared prompt cache — lens children in cache groups.
 //
 // The provider caches a request's prefix, and pi's cache key is its session
 // id. Native children run `--no-session`, so every child gets a random id and
-// lands on a cold cache: in 12 live rounds the children's first turns read 0
-// cached tokens even where their prompts were byte-identical, and uncached
-// input was 71–81% of their cost.
+// lands on a cold cache, even where prompts are byte-identical.
 //
-// What the reviewer's backend (ChatGPT login, gpt-6.1-sol) was measured to do
-// (2026-10-09, ~30 short probe calls):
+// What the reviewer's backend (ChatGPT login) was measured to do:
 //  - an identical prefix is reused across separate pi processes that share a
 //    session id: 24,320 of 24,467 tokens; under `--no-session`, 0;
-//  - a request that EXTENDS a cached one hits however long the extension is
+//  - a request that extends a cached one hits however long the extension is
 //    (a child's own later turns, and a lens after a warm-up: 23,808 cached
 //    beneath a 1,500-word lens text);
-//  - but two requests that share a prefix and then DIVERGE share it only when
+//  - but two requests that share a prefix and then diverge share it only when
 //    the cached one's tail past the prefix is short (≈60 words hit, ≈250
 //    words missed, a 10 s wait made no difference);
 //  - a request sent at the same instant as the one that would warm it misses.
@@ -780,25 +776,25 @@ export function launchPlanDefinition(
 // removed when the child exits). Children share a key in GROUPS of
 // QCR_SUBAGENT_CACHE_GROUP per model (a few children per key, so no one key
 // carries a whole round's request rate):
-//  - a round WITHOUT a context pack: every child after a group's first starts
+//  - a round without a context pack: every child after a group's first starts
 //    QCR_SUBAGENT_CACHE_STAGGER_MS after it, so rows of one agent whose prompts
 //    differ only in a short task pointer (the sweep rows) share their prefix;
-//  - a round WITH a context pack (`[review] context_pack`, written beside its
-//    task files): the group's first child first spawns a WARM-UP — the same
+//  - a round with a context pack (`[review] context_pack`, written beside its
+//    task files): the group's first child first spawns a warm-up — the same
 //    model and tools, no lens text, the pack and "reply OK" — and every child
 //    of the group waits for it to finish (at most CACHE_WARMUP_WAIT_S) before
 //    it starts. Each child loads extensions/leaf-cache.ts, which puts the pack
-//    ahead of its lens's instructions, so every lens request EXTENDS the
+//    ahead of its lens's instructions, so every lens request extends the
 //    warm-up's and reads the pack from cache.
 // A child that waits does so through `sh -c '…; exec "$@"'`, so once it runs
-// it IS the child and every signal reaches it.
+// it is the child and every signal reaches it.
 //
 // The spawn is native's own (`spawn` from node:child_process, in
 // runSingleAgent); the glue cannot reach its argv any other way without
 // vendoring the extension, which the drift-free sourcing above forbids. Only
 // a spawn whose argv carries native's exact leaf flags
 // (`--mode json -p --no-session`) is touched; every other spawn passes
-// through unchanged. A child stays a LEAF: `-p` alone marks it so for the
+// through unchanged. A child stays a leaf: `-p` alone marks it so for the
 // vendored OpenViking fork's qcr-leaf.ts, and children load no per-spawn
 // extension but leaf-cache.ts.
 //
@@ -1126,7 +1122,7 @@ export default async function activate(pi: Pi): Promise<void> {
   } catch (err) {
     // Loud, unmissable, never a crashed pi: without the tool every planned
     // lens spawn fails and the round templates order STOP + anomaly rather
-    // than a stand-in (same degrade stance as the old register-lens-agents).
+    // than a stand-in.
     log(
       `subagents: FATAL — could not load pi's native subagent extension (pi ${version}): ` +
         `${err instanceof Error ? err.message : String(err)}. The subagent tool will NOT exist in this session.`,

@@ -1,10 +1,10 @@
-// `fixed` only when the code changed (scan-loop, round 4 of the self-scan):
+// `fixed` only when the code changed:
 // a re-read of a file at the SAME content a finding was last seen at that
 // does not report it again is model variance, not a fix. The finding stays
 // open, stamped `not_reproduced` (how many such re-reads, and the latest),
 // so triage can still dismiss it — and a promoted one's ticket is not
 // closed. A re-read of CHANGED content that no longer reports it is still
-// `fixed` (FT-0428). Driven at the FindingsStore / ScanTriage seam through
+// `fixed`. Driven at the FindingsStore / ScanTriage seam through
 // the real rooted state port on a temp dir.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

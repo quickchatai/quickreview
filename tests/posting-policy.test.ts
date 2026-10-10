@@ -147,7 +147,7 @@ describe("[posting] — inheritance through extends", () => {
   it("no profile and an unknown profile are today's posting; the default profile sets one comment per root cause", () => {
     expect(loadProfilePosting(sandbox, "", lookup())).toEqual({});
     expect(loadProfilePosting(sandbox, "nope", lookup())).toEqual({});
-    // docs/duplicate-merge.md, decision 2 (round 7)
+    // docs/duplicate-merge.md, decision 2
     expect(loadProfilePosting(sandbox, "default", lookup())).toEqual({ repeat_sites: false });
   });
 });
@@ -605,9 +605,9 @@ describe("benchmark export (src/bench/benchposting.ts) enforces the policy", () 
   });
 });
 
-// Owner-approved 2026-10-02 (GOLDEN-MINING.md §5.4): the budget counts root
-// causes, not sites, and within one severity prefers the changed line. Both
-// are policy-only — the default's identity is pinned elsewhere and unchanged.
+// The budget counts root causes, not sites, and within one severity prefers
+// the changed line (GOLDEN-MINING.md §5.4). Both are policy-only — the
+// default's byte-identity is pinned in tests/posting-default-identity.test.ts.
 describe("the budget: one root cause, the changed line first", () => {
   it("the note and the validator addendum ask for the root-cause merge and the changed-line tie-break", () => {
     const note = renderPostingPolicyNote(SNAPPY);

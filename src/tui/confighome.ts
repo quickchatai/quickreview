@@ -5,8 +5,9 @@
 // over `scripts/install-locator.sh`), locally and inside the container; this
 // module only reads and compares the two answers. Pure — shared by the tab's
 // render and the companion feed, so the two can never say different things.
-// the tab also says WHICH post-scan re-tune a pending profile change
-// is, from the setup re-tune log (the type-only S2 leaf `setup/retunelog.js`).
+// The tab also says which post-scan re-tune a pending profile change is, from
+// the setup re-tune log (`setup/retunelog.js`, a type-only leaf of the
+// single-shepherd fence).
 import { retuneLine, type RetuneRecord, type RetunesRead } from "../setup/retunelog.js";
 
 /** `scripts/config-fingerprint.sh` output: what a config home ships, as the
@@ -79,12 +80,12 @@ export function configDriftText(d: ConfigDrift): string {
   }
 }
 
-// ---- the re-tunes a deploy would ship ------------------------------
+// ---- the re-tunes a deploy would ship -----------------------------------------
 
 /**
  * Which post-scan re-tunes (`<state home>/setup/retunes.json`, written by the
- * companion's `setup_retune`) the VM does NOT run yet. The config drift is the
- * authority on WHETHER the profile is behind; the re-tune log only says WHICH
+ * companion's `setup_retune`) the VM does not run yet. The config drift is the
+ * authority on whether the profile is behind; the re-tune log only says which
  * change that is, so it is consulted only while the profile is (or may be)
  * behind:
  *
@@ -93,11 +94,11 @@ export function configDriftText(d: ConfigDrift): string {
  *   - `never-shipped` → every logged re-tune that wrote a file is pending;
  *   - profiles `changed` → those written after the VM's last deploy (the
  *     BUILD_SHA marker's time, written on this machine by deploy.sh); with no
- *     readable deploy time, the latest re-tune, as UNKNOWN;
- *   - drift `unknown` → the re-tunes since the last deploy, as UNKNOWN (with
- *     no readable deploy time either, the latest re-tune, as UNKNOWN).
+ *     readable deploy time, the latest re-tune, as unknown;
+ *   - drift `unknown` → the re-tunes since the last deploy, as unknown (with
+ *     no readable deploy time either, the latest re-tune, as unknown).
  *
- * An unreadable log is UNKNOWN with its reason, never "no re-tunes".
+ * An unreadable log is unknown with its reason, never "no re-tunes".
  */
 export type PendingRetunes =
   | { state: "none" }

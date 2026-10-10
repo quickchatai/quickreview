@@ -1,12 +1,10 @@
 // Stage 2's price for a row the ledger never measured at its own settings
 // (src/setup/stage2.ts priceStage2Row), at the pricing seam with fake ledger
-// rows. Round 6 of the scan loop: the skeptic went default-on, no stage-2
-// row had been measured with the validator on, and every row was priced at
-// stage 1's rate × the coarse `unmeasured_rate_factor` (~$0.31/kline against
-// the ~$0.21 the same run then measured) — the fit cut 52 of 64 rows and
-// left $2.47 of the budget unspent. The prior is now LEARNED where the
-// ledger can teach it: stage 1's rate at the row's validator setting × the
-// stage-2/stage-1 factor measured at the other setting.
+// rows. Pricing every unmeasured row at stage 1's rate × the coarse
+// `unmeasured_rate_factor` overprices it badly and makes a budget fit cut rows
+// it could afford, so the prior is LEARNED where the ledger can teach it:
+// stage 1's rate at the row's validator setting × the stage-2/stage-1 factor
+// measured at the other setting.
 import { describe, expect, it } from "vitest";
 import { SCAN_DEFAULTS } from "../src/config.js";
 import type { LedgerEntry } from "../src/setup/ledger.js";

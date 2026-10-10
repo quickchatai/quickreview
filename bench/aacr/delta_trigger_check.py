@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Replay the narrowed pass-behaviour-delta trigger on stored runs.
 
-The owner's 2026-10-03 decision: behaviour-delta is planned only where base
-behaviour is at risk (src/heuristics.ts behaviourDeltaRisk), never removed, and
+The rule: behaviour-delta is planned only where base behaviour is at risk
+(src/heuristics.ts behaviourDeltaRisk), never removed, and
 a narrowing must still plan the lens on every stored case where it produced a
 posted real finding. This replays, from stored data only (no review, no judge):
 

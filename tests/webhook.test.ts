@@ -28,7 +28,7 @@ const deps = (botCommentPr: (id: number) => number | undefined = () => undefined
   botCommentPr,
 });
 
-// ---- fixture payloads (shapes per findings §3.1) -----------------
+// ---- fixture payloads (GitHub's webhook payload shapes) -------------------
 
 const prBody = (over: Record<string, unknown> = {}) => ({
   number: 4242,
@@ -220,8 +220,8 @@ describe("handleDelivery", () => {
 
   it("drops an event from another repository the App is installed on (selfscan b448dc04)", () => {
     // The App's installation spans many repos and every one of them delivers
-    // here. A PR closed elsewhere whose NUMBER matches a tracked PR used to
-    // drive this repo's closed transition and archive its live session.
+    // here. A PR closed elsewhere whose NUMBER matches a tracked PR must not
+    // drive this repo's closed transition or archive its live session.
     const store = new StateStore(":memory:");
     const foreignClose = {
       ...closedPayload(false),
@@ -384,7 +384,7 @@ describe("interpretEvent — review comments", () => {
       in_reply_to_id: 800001,
       via: "thread_reply",
       author: "alice",
-      // the replied thread's file — the repo facts' path.
+      // The replied thread's file — the path the repo-fact lessons match on.
       path: "workers/ingest.py",
     });
     // A payload without a path carries none (never an empty string).

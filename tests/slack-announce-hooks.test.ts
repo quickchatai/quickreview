@@ -1,4 +1,4 @@
-// The two hook points (S4): dispatch announces a round, the verdict
+// The two hook points: dispatch announces a round, the verdict
 // watcher announces the verdict, the anomalies and a supersede. Both modules
 // must keep working with the announcer ABSENT, and neither may ever be
 // disturbed by a Slack failure.

@@ -1,10 +1,7 @@
-// The §1 layout of a user's memories tree, built at last (S5).
-//
-// Ratified 2026-08-20 and never built: every entry the reviewer ever wrote
-// sat flat in `experiences/`, so the round's pinned head had to read the whole
-// store to find the owner's standing instructions, and the round's context
-// search drew ops notes and raw feedback events as readily as lessons. The
-// areas, under `viking://user/<user>/memories/`:
+// The layout of a user's memories tree. Separate areas let the round's pinned
+// head read one directory instead of the whole store, and keep ops notes and
+// raw feedback events out of the round's context search. The areas, under
+// `viking://user/<user>/memories/`:
 //
 //   preferences/pinned/  the GUARANTEED HEAD — the owner's standing
 //                        instructions, delivered verbatim every round. An
@@ -15,7 +12,7 @@
 //   experiences/         curated lessons, written by the EOD curator (and the
 //                        setup/scan notes) — the ONLY area the round's context
 //                        block searches.
-//   finding-cases/               one document per posted finding and its fate (S7),
+//   finding-cases/       one document per posted finding and its fate,
 //                        written by the daemon (src/cases.ts); never listed by
 //                        the whole-tree sweep, never searched by a round.
 //   events/              feedback, bug and ops signals, with `k=v` tags
@@ -35,7 +32,7 @@ export const PREFERENCES_AREA = "preferences";
 export const EXPERIENCES_AREA = "experiences";
 /** Feedback, bug and ops signals. */
 export const EVENTS_AREA = "events";
-/** Finding cases (S7). */
+/** Finding cases. */
 export const CASES_AREA = "finding-cases";
 
 /** Every area of the layout, most specific first. */
@@ -48,7 +45,7 @@ export const MEMORY_AREAS: readonly string[] = [
 ];
 
 /**
- * The areas the round's context block may draw from (S5): `experiences/`
+ * The areas the round's context block may draw from: `experiences/`
  * alone. No ops notes, no raw feedback events, no standing instructions that
  * are not pinned (the head carries the pinned ones in full), no repo-wide
  * resources blurbs. They are OpenViking quota buckets by name, which is how
@@ -57,7 +54,7 @@ export const MEMORY_AREAS: readonly string[] = [
 export const ROUND_SEARCH_AREAS: readonly string[] = [EXPERIENCES_AREA];
 
 /**
- * Areas the store's whole-tree SWEEP does not list (S7): `finding-cases/`.
+ * Areas the store's whole-tree SWEEP does not list: `finding-cases/`.
  * A case is a document the daemon derives from state.db and rewrites itself
  * (src/cases.ts) — one per posted finding a human answered or whose fate is
  * known, so hundreds of them, growing every day. Listing them would put every
@@ -130,15 +127,14 @@ export function areaForNewEntry(text: string, fallback: string): string {
 }
 
 /**
- * What the EOD curator is told about the layout (S5). The sweep's seed
- * (`prompts/eod-sweep.md`) is a ratified reseed and frozen (rule 6), so the
- * layout reaches the curator the way the day's cancellation line does: the
- * daemon renders it after the seed (`renderEodPrompt`'s `memoryLayout`). It
- * rules on nothing the seed rules on — it says WHERE each kind of entry lives.
- * Since the R8 reseed (2026-10-07) the seed names the `events/`,
- * `experiences/` and `preferences/pinned/` areas itself and owns what may be
- * done with a `#manual` entry; this note must say nothing against it, which
- * `tests/eod-seed-coherence.test.ts` checks over the real seed.
+ * What the EOD curator is told about the layout. The sweep's seed
+ * (`prompts/eod-sweep.md`) is frozen (rule 6), so the layout reaches the
+ * curator the way the day's cancellation line does: the daemon renders it
+ * after the seed (`renderEodPrompt`'s `memoryLayout`). It rules on nothing the
+ * seed rules on — it says WHERE each kind of entry lives. The seed names the
+ * `events/`, `experiences/` and `preferences/pinned/` areas itself and owns
+ * what may be done with a `#manual` entry; this note must say nothing against
+ * it, which `tests/eod-seed-coherence.test.ts` checks over the real seed.
  */
 export const MEMORY_LAYOUT_NOTE = [
   "Reviewer memory (`viking://user/reviewer/memories/`) is laid out in areas — the",

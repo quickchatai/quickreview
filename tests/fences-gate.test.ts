@@ -1,12 +1,10 @@
-// fences over the mutation gate and the daemon's dead surfaces.
+// Fences over the mutation gate and the daemon's dead surfaces.
 // See tests/fences.test.ts for the three rules these are written under.
 //
-// The compliance audit's own caveat is what this file answers: a green suite
-// proves the assertions that exist pass, not that they assert what their names
-// suggest. Belief 1's strongest sentence — "dismissing a review is a
-// nonexistent code path" — was pinned only by an explicit four-name list, so a
-// kind called `retract_review` would have sailed through; and the "no caller"
-// half of it was asserted nowhere at all.
+// A green suite proves the assertions that exist pass, not that they assert
+// what their names suggest. "Dismissing a review is a nonexistent code path"
+// needs both a name-shape check (an explicit list of names would let a kind
+// called `retract_review` through) and a no-caller check.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -34,9 +32,8 @@ function tsFiles(dir: string): string[] {
   );
 }
 
-/** Comments removed — this fence's own explanation of what it removed QUOTES
- * the removed line, and a detector that reads prose flags its own docs.
- * (Caught exactly that way while building it.) */
+/** Comments removed — this fence's own explanation of what it removed quotes
+ * the removed line, and a detector that reads prose flags its own docs. */
 function codeOf(path: string): string {
   return readFileSync(path, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -58,14 +55,14 @@ function allFiles(dir: string): string[] {
 
 describe("no review-dismissing mutation can appear", () => {
   /**
-   * A name-shape fence, so a future `dismiss_stale_review` fails BEFORE anyone
-   * reads the diff. The existing test pins an explicit four-name blocklist
-   * (`dismiss_review`, `delete_review`, `update_review`, `dismiss_approval`),
-   * which is a list of the four names somebody thought of.
+   * A name-shape fence, so a future `dismiss_stale_review` fails before anyone
+   * reads the diff. An explicit blocklist (`dismiss_review`, `delete_review`,
+   * `update_review`, `dismiss_approval`) only covers the names somebody
+   * thought of.
    *
-   * `reviewer` is deliberately NOT in the pattern: `request_reviewer` is a
-   * ratified, default-off kind. The DISMISSAL half is the half that
-   * must never move — hard rule 2, which has no knob and no exception.
+   * `reviewer` is deliberately not in the pattern: `request_reviewer` is a
+   * sanctioned, default-off kind. The dismissal half is the half that must
+   * never move — CLAUDE.md hard rule 2, which has no knob and no exception.
    *
    * MUTATION: add `"retract_review"` to MUTATION_KINDS — this fails.
    */
@@ -78,10 +75,9 @@ describe("no review-dismissing mutation can appear", () => {
   });
 
   /**
-   * The assertion that actually pins belief 1's "nonexistent code path", and
-   * which the audit found did not exist.
+   * The assertion that pins "dismissal is a nonexistent code path".
    *
-   * `supersede_own_review` is a DECLARED kind whose ratified endpoint IS
+   * `supersede_own_review` is a declared kind whose sanctioned endpoint is
    * GitHub's dismissal endpoint. Nothing constructs it. So the claim is true
    * of the executable path and false of the type — a reader of `src/gate.ts`
    * alone would conclude a dismissal is representable. This is what makes the
@@ -107,10 +103,9 @@ describe("no review-dismissing mutation can appear", () => {
   });
 
   /**
-   * MC's #13, in the narrower form left behind. `/dismissals` must
-   * appear in no request path; and the POST to `/requested_reviewers` — the
-   * escalation feature's second delivery shape — must have exactly one
-   * builder, so nomination cannot grow a second, ungated route.
+   * `/dismissals` must appear in no request path; and the POST to
+   * `/requested_reviewers` — the escalation feature's second delivery shape —
+   * must have exactly one builder, so nomination cannot grow a second, ungated route.
    *
    * MUTATION: add a second `requested_reviewers` POST to src/github.ts — this
    * fails.
@@ -146,12 +141,9 @@ describe("no review-dismissing mutation can appear", () => {
 
 describe("every process entrypoint that builds a gate installs its guards", () => {
   /**
-   * MC-09: `src/daemon.ts` carried a second live entrypoint
-   * (`if (process.argv[1]?.endsWith("daemon.js")) void main()`) that built a
-   * REAL gate against the real config and never called `setGuard`/`setLog` —
-   * a daemon whose posting guards and CI gate simply do not exist. Production
-   * runs `wire.js`, so it was a footgun rather than live drift, and nothing
-   * could see it.
+   * A second process entrypoint that builds a real gate against the real
+   * config without calling `setGuard`/`setLog` would be a daemon whose posting
+   * guards and CI gate simply do not exist.
    *
    * The fence is stated as the invariant, not as "daemon.ts has no main":
    * a module that is a process entrypoint AND constructs a MutationGate must
@@ -195,15 +187,13 @@ describe("every process entrypoint that builds a gate installs its guards", () =
 
 describe("[T6] tests/ type-checks", () => {
   /**
-   * `tsconfig.json` excludes `tests/` from the build, so nothing type-checked
-   * the suite and roughly forty latent errors accumulated — three of them
-   * tests that were asserting nothing at all (a filesystem seam passed into
-   * the wrong positional parameter, a parameter a function never reads, a
-   * field the row type does not have). This is the structural fix behind a
-   * whole category of the inventory's findings.
+   * `tsconfig.json` excludes `tests/` from the build, so without this nothing
+   * type-checks the suite, and type errors hide tests that assert nothing at
+   * all (a filesystem seam passed into the wrong positional parameter, a
+   * parameter a function never reads, a field the row type does not have).
    *
-   * It runs HERE rather than in `npm run build` on purpose: `scripts/dev-tui.sh`
-   * blocks on that build before the TUI paints (ruling 5), and a
+   * It runs here rather than in `npm run build` on purpose: `scripts/dev-tui.sh`
+   * blocks on that build before the TUI paints, and a
    * second full tsc pass there is seven seconds of blank terminal. The suite
    * is this repo's CI, so the suite is where it belongs.
    *
@@ -212,8 +202,7 @@ describe("[T6] tests/ type-checks", () => {
    */
   it("npm run typecheck:tests is clean", { timeout: TYPECHECK_TIMEOUT_MS }, () => {
     // Incremental, with the build info kept per checkout: a cold run of this
-    // tsc was the suite's longest test (87s beside the rest of the suite,
-    // 317s under 2x-cores load), and a warm one re-checks only what changed
+    // tsc is the suite's longest test, and a warm one re-checks only what changed
     // and re-reports every error it recorded, so the fence is exactly as
     // strict. `noEmit` means there is no emitted output for the build info to
     // go stale against (the one staleness tsconfig.json documents). The run

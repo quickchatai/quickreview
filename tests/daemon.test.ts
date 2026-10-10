@@ -157,7 +157,7 @@ describe("daemon wiring", () => {
     },
   );
 
-  // (MC-18): the production daemon supplies the ledger carry from
+  // The production daemon supplies the ledger carry from
   // ledger-pin's mirror at state/ledgers/pr-<n>.md — the order re-hands it and
   // its SETTLED items become the digest; no file ⇒ neither.
   it(
@@ -249,7 +249,7 @@ describe("daemon wiring", () => {
     },
   );
 
-  // Boot-order regression (live, #5290 2026-08-19): the first reconcile can
+  // Boot order: the first reconcile can
   // nudge a recheck at a dead session immediately; the respawn path needs the
   // title resolver wired by onStart, so onStart must run BEFORE the sweep.
   it("runs onStart before the first reconcile", { timeout: HEAVY_TIMEOUT_MS }, async () => {
@@ -282,9 +282,10 @@ describe("daemon wiring", () => {
   });
 
   // A throw in onStart (Slack auth.test refusing, a malformed profile pack,
-  // tmux preflight) used to be logged and swallowed: reconcile and the pump
-  // ran on while the command watchers and the EOD timer — built later in the
-  // same onStart — never existed. A half-assembled daemon must not start.
+  // tmux preflight) fails start(): if it were swallowed, reconcile and the
+  // pump would run on while the command watchers and the EOD timer — built
+  // later in the same onStart — never existed. A half-assembled daemon must
+  // not start.
   it("an onStart failure fails start() — no reconcile, no half-assembled daemon", async () => {
     const order: string[] = [];
     const recorded: string[] = [];
@@ -664,16 +665,13 @@ describe("daemon wiring", () => {
   );
 
   /**
-   * the author's "I want a human" is recorded, not dropped.
+   * The author's "I want a human" is recorded, not dropped.
    *
-   * `human_requested` reached `applyEvent`, whose transition returns `current`;
-   * because `applyEvent` only logs a `pr_transition` on a change, NOTHING was
-   * written at all. The only trace was one boolean inside a
-   * `pingpong_decision_applied` payload that no surface reads — while the
-   * comment beside the wiring said "Park the PR locally", a park
-   * retired. Silently dropping an author-facing request was the one option
-   * ruled out; recording it durably (quiet tier — DB + heartbeat, no wake) is
-   * the shape chosen. It is still never a handover.
+   * `human_requested` reaches `applyEvent`, whose transition returns `current`,
+   * and `applyEvent` only logs a `pr_transition` on a change — so without its
+   * own record the request would leave no trace any surface reads. It is
+   * recorded durably (quiet tier — DB + heartbeat, no wake), and it is never a
+   * handover: there is no park.
    */
   it(
     "records an author's request for a human as a durable anomaly, and still never parks",

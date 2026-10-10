@@ -1,6 +1,6 @@
-// The RATIFIED wording (S4, annex §1-2), asserted byte for
-// byte — emoji, separators and all. If a template needs to change, the annex
-// changes first and these strings follow it, never the other way round.
+// The specified Slack wording, asserted byte for byte — emoji, separators and
+// all. If a template needs to change, the wording spec changes first and these
+// strings follow it, never the other way round.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";

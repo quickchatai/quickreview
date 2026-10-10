@@ -1,19 +1,17 @@
 // Daemon-side ledger freshness enforcement.
 //
-// The prompt mandate "rewrite your ledger at round end" did not stick: the
-// 2026-08-19 audit found the end-of-round ledger write made in 0 of 8
-// post-deploy rounds (missing in all eight) and skipped in 4 of 6 pre-deploy
-// rounds. So the daemon now checks:
-// after each verdicted round (once ledger-pin's mirror has had its chance,
-// i.e. AFTER compactSession) it parses `state/ledgers/pr-<n>.md` and requires
-// the header `LEDGER PR #<n> @ <round head sha>`.
+// A prompt mandate to "rewrite your ledger at round end" is not reliably
+// followed, so the daemon checks: after each verdicted round (once
+// ledger-pin's mirror has had its chance, i.e. AFTER compactSession) it parses
+// `state/ledgers/pr-<n>.md` and requires the header
+// `LEDGER PR #<n> @ <round head sha>`.
 //
-// Stale/missing/wrong-PR ⇒ a queryable anomaly (`ledger_stale`,
-// channel) AND exactly ONE re-nudge wake through `wakeOrHold` telling the
-// session to ONLY rewrite its ledger — no review work, no posting, no verdict
-// file. A second stale detection for the same round logs the anomaly again
-// but never nudges again: the once-mark is persisted BEFORE the inject, so
-// even a crashed inject can never turn into a nudge loop.
+// Stale/missing/wrong-PR ⇒ a queryable anomaly (`ledger_stale`) AND exactly
+// ONE re-nudge wake through `wakeOrHold` telling the session to ONLY rewrite
+// its ledger — no review work, no posting, no verdict file. A second stale
+// detection for the same round logs the anomaly again but never nudges again:
+// the once-mark is persisted BEFORE the inject, so even a crashed inject can
+// never turn into a nudge loop.
 import { readFileSync } from "node:fs";
 import type { StateStore } from "./state.js";
 import { wakeOrHold } from "./wakes.js";
@@ -130,7 +128,7 @@ export async function enforceLedgerFreshness(
   const key = roundNo !== null ? `round-${roundNo}` : `head-${headSha}`;
   if (store.ledgerNudgeSent(pr, key)) {
     // Still stale AFTER the re-nudge: the session ignored its one nudge —
-    // this grade WAKES the overseer (severity map), first-detection
+    // this grade WAKES the overseer (the severity map in src/anomalies.ts), first-detection
     // "ledger_stale" stays quiet (the nudge itself is the response).
     store.logAnomaly("ledger_stale_unresolved", pr, roundNo, detail);
     store.logEvent("ledger_stale_repeat", pr, { round_no: roundNo, head_sha: headSha, freshness });

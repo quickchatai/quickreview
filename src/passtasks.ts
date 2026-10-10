@@ -1,13 +1,12 @@
-// Lens task files (`[review] task_files`, bench/aacr/PERF.md §6 proposal 2).
+// Lens task files (`[review] task_files`).
 //
 // A round's lenses are blank slates: every one of them needs the same
 // self-contained context (worktree, head, the PR's own diff range, what the PR
 // says about itself, SETTLED, the gate notes) plus its own row of the plan.
-// Until 2026-10 the PR's main session wrote all of that out by hand, once per
-// lens, as tool-call arguments: on a 19-lens PR that was ~10k output tokens
-// and ~6 minutes before the first lens started. Everything in it except the
-// session's own optional extra focus is already in the RoundOrder, so the
-// daemon (dispatch.ts) and the bench (runner.ts) render it here, one file per
+// Writing that out by hand per lens as tool-call arguments costs the main
+// session thousands of output tokens and minutes before the first lens starts.
+// Everything in it except the session's own optional extra focus is already in
+// the RoundOrder, so the daemon (dispatch.ts) and the bench (runner.ts) render it here, one file per
 // plan row, and the session launches each lens with a pointer to its file.
 //
 // The session keeps every power it had: it may append focus lines after the
@@ -16,7 +15,7 @@
 // narrows a lens's charter — the same rule the round templates set for
 // hand-written task strings.
 //
-// LESSONS (S9b, `[memory] delivery = "on"` only): a row's curated
+// Lessons (`[memory] delivery = "on"` only): a row's curated
 // lessons ride its task file as one more section, and the lenses the session
 // may ADD — and the validator, which has no task file — get theirs in
 // `lessons/<lens>.md` beside the tasks, which the main session names in the
@@ -61,7 +60,7 @@ function fencedBody(body: string | undefined): string[] {
 }
 
 function focusLines(worktree: string, p: PassPlanEntry, followUp = false): string[] {
-  // a split pass-baseline row STARTS from its files; unlike a sweep
+  // A split pass-baseline row starts from its files; unlike a sweep
   // row's, its focus never bounds what it covers.
   if (isSplitBaselineRow(p))
     return [
@@ -151,22 +150,21 @@ export function renderDeltaNote(delta: RoundOrder["delta"], worktree = "<worktre
 }
 
 /** What a task carries beside the order: the row's delivered lessons
- * (S9b) and the repo slug their evidence links point into. */
+ * and the repo slug their evidence links point into. */
 export interface PassTaskLessons {
   /** Plan row → its lessons. A row absent here gets no section. */
   rows: ReadonlyMap<number, readonly DeliveredLesson[]>;
   repo: string;
 }
 
-/** The text of one row's task. Pure. `lessons` — the row's delivered lessons
- * (S9b); none ⇒ the task is byte-identical to before. */
+/** The text of one row's task. Pure. `lessons` — the row's delivered lessons;
+ * none ⇒ no lessons section, and not one other byte changes. */
 export function renderPassTask(
   order: RoundOrder,
   p: PassPlanEntry,
   gateNotes: string,
   lessons?: { lessons: readonly DeliveredLesson[]; repo: string },
-  /** The row's index in `pass_plan` — selects its assigned prior findings
-   * (A6). */
+  /** The row's index in `pass_plan` — selects its assigned prior findings. */
   row?: number,
 ): string {
   const L: string[] = [];
@@ -181,10 +179,9 @@ export function renderPassTask(
   L.push(
     `- Worktree: \`${order.worktree}\` at \`${order.head_sha}\`. You run at the sandbox root, never inside the worktree: every path you read is absolute, under the worktree.`,
   );
-  // a follow-up round's lens reviews the change since the last
-  // review for NEW findings; the whole PR is its context. Only a
-  // `scope: "delta"` order with a delta says so — every other task renders
-  // exactly as before.
+  // A follow-up round's lens reviews the change since the last review for
+  // new findings; the whole PR is its context. Only a `scope: "delta"` order
+  // with a delta says so — every other task renders the whole-PR scope.
   const delta = order.scope === "delta" ? order.delta : undefined;
   if (order.merge_base)
     L.push(
@@ -212,7 +209,7 @@ export function renderPassTask(
       "The launch message may name prior findings assigned to you: verify each one mechanically at this head and report its status (`fixed`, `open`, `obsolete`, `unverifiable`) with evidence BEFORE looking for anything new.",
     );
     L.push("");
-    // (A6): the daemon's assignment — this row's prior findings.
+    // The daemon's assignment — this row's prior findings.
     const mine = order.prior_assignments?.find((a) => a.row === row)?.priors ?? [];
     const section = renderPriorTaskSection(mine);
     if (section) {
@@ -303,7 +300,7 @@ export function writePassTasks(
   lessons?: PassTaskLessons,
 ): Array<PassTask & { path: string }> {
   // Only a real directory is emptied; anything else at the path is left to
-  // fail the write below, as it always did.
+  // fail the write below.
   if (lstatSync(dir, { throwIfNoEntry: false })?.isDirectory())
     rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -319,7 +316,7 @@ export function writePassTasks(
 const LENS_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
- * Write the round's LESSONS FILES (S9b) into `dir` (created): one
+ * Write the round's lessons files into `dir` (created): one
  * `<lens>.md` per lens the session may add that has lessons, and
  * `pass-validate.md` when the validator has any. Returns the delivery with
  * each written file's absolute path recorded — a lens whose file was not
@@ -359,11 +356,11 @@ export function taskDirOf(files: ReadonlyArray<{ path: string }>): string {
 }
 
 /** The round prompt's `{{pass_task_note}}`: "" when the order carries no task
- * files (the knob off), so the round order renders exactly as before.
+ * files (the knob off), so the round order carries no task-file note.
  *
- * the rows launch through ONE `launch_plan` call over the task
- * directory (extensions/subagents.ts) — the one-turn launch made structural;
- * the hand-written per-row `subagent` calls are the fallback only. */
+ * The rows launch through one `launch_plan` call over the task directory
+ * (extensions/subagents.ts), which makes the one-turn launch structural; the
+ * hand-written per-row `subagent` calls are the fallback only. */
 export function renderPassTaskNote(
   order: Pick<
     RoundOrder,
@@ -374,9 +371,10 @@ export function renderPassTaskNote(
   if (!files || files.length === 0) return "";
   const rows = files.map((f) => `| ${f.row + 1} | \`${f.agent}\` | \`${f.path}\` |`);
   const dir = taskDirOf(files);
-  // a follow-up round's task files already carry the change since
-  // the last review; what the session still adds is each lens's assigned
-  // prior findings (step 1), which only it knows.
+  // A follow-up round's task files already carry the change since the last
+  // review, and the daemon's prior-finding assignments when it made any;
+  // without those, the session assigns prior findings itself (step 1) and
+  // passes them through `extra`.
   const followUp = order.scope === "delta" && order.delta !== undefined;
   const intro = followUp
     ? [

@@ -1,6 +1,5 @@
-// qcr — the operator CLI. Read-only against state/ (status.json + state.db);
-// `attach` wraps tmux/docker-exec. Subcommands land across slices: status and
-// spend here (B1); today/why in B5; checklist/compare in B6.
+// qcr — the operator CLI. Read-only against state/ (status.json + state.db)
+// except where a subcommand says otherwise; `attach` wraps tmux/docker-exec.
 import {
   readFileSync,
   existsSync,
@@ -75,7 +74,7 @@ function openStore(): StateStore {
 export const OUTCOMES_USAGE =
   "usage: qcr outcomes [--days <n>] [--capture] [--read-github] [--json]";
 
-/** `qcr outcomes` flags (S6). An unknown token is refused, so a
+/** `qcr outcomes` flags. An unknown token is refused, so a
  * mistyped `--capture` cannot quietly print a stale table. */
 export function parseOutcomesArgs(rest: readonly string[]): {
   days: number;
@@ -100,7 +99,7 @@ export function parseOutcomesArgs(rest: readonly string[]): {
 }
 
 /**
- * The gate behind `qcr outcomes --read-github` (S6): it can only
+ * The gate behind `qcr outcomes --read-github`: it can only
  * RECORD. Dry-run, so every ordinary kind is written to `dryrunDir` and never
  * executed; and an executor that refuses, so even the one class the gate runs
  * in dry-run (`APP_SELF_CONFIG_KINDS`) cannot reach GitHub. The read the
@@ -151,7 +150,7 @@ export async function captureOutcomesWindow(opts: {
 }
 
 /**
- * `qcr outcomes` (S6): what became of the findings posted in the last
+ * `qcr outcomes`: what became of the findings posted in the last
  * `--days` (default 30) — the fate table per lens, how many posted findings
  * are linked to their comment, and the whole-review signals per review.
  * `--capture` first re-captures every PR with a posted finding in the window
@@ -206,7 +205,7 @@ export const LESSONS_USAGE =
   "usage: qcr lessons [mine] [--json] | qcr lessons shadow-report [--days <n>] [--json] | " +
   "qcr lessons off|on | qcr lessons suppress|unsuppress <experiences/<file>.md | viking://… URI>";
 
-/** The S9a subcommands of `qcr lessons`: the shadow report, and the
+/** The subcommands of `qcr lessons` beyond the table: the shadow report, and the
  * operator's kill switch (written into the root-sealed commands/operator/). */
 export type LessonsSubcommand =
   | { kind: "shadow-report"; days: number }
@@ -214,7 +213,7 @@ export type LessonsSubcommand =
   | { kind: "switch"; command: "suppress-lesson" | "unsuppress-lesson"; target: string };
 
 /** `qcr lessons shadow-report|off|on|suppress|unsuppress …`, or null when
- * `rest` is the S8 table (`[mine]`). An unknown flag or a missing target is
+ * `rest` is the candidates table (`[mine]`). An unknown flag or a missing target is
  * refused. */
 export function parseLessonsSubcommand(rest: readonly string[]): LessonsSubcommand | null {
   const [head, ...tail] = rest;
@@ -248,7 +247,7 @@ export function parseLessonsSubcommand(rest: readonly string[]): LessonsSubcomma
   }
 }
 
-/** `qcr lessons` arguments (S8): `mine` or nothing. An unknown token
+/** `qcr lessons` arguments: `mine` or nothing. An unknown token
  * is refused, so a mistyped `mine` cannot quietly print yesterday's table. */
 export function parseLessonsArgs(rest: readonly string[]): { mine: boolean } {
   if (rest.length === 0) return { mine: false };
@@ -317,7 +316,7 @@ export function renderLessons(opts: {
 }
 
 /**
- * `qcr lessons [mine]` (S8): the learner's candidates per class and
+ * `qcr lessons [mine]`: the learner's candidates per class and
  * the latest EOD curation, from the state database. `mine` first runs the
  * miner on the operator's word — the same deterministic mine the daemon runs
  * before every EOD sweep (state.db, and read-only git in the base clone when
@@ -365,15 +364,15 @@ export async function cmdLessons(rest: string[], json: boolean): Promise<number>
 }
 
 /**
- * `qcr lessons shadow-report [--days N]` (S9a): the lesson shadow
+ * `qcr lessons shadow-report [--days N]`: the lesson shadow
  * ledger joined with what humans did — in total, per lesson and per lens, the
  * findings a delivered dont-raise lesson would have touched that humans then
  * FIXED (harm), refuted or set aside (help), or not yet, each split by match
- * tier (R9: `class`, the lesson's class matched too — the would-demote tier,
+ * tier (`class`, the lesson's class matched too — the would-demote tier,
  * what the validator's license reaches; `lens`, lens and path alone —
  * evidence only); and the look-for lessons whose class later showed a
- * human-raised miss. state.db only (opening it migrates a pre-R9 ledger
- * once).
+ * human-raised miss. state.db only (opening it migrates a ledger without
+ * match tiers once).
  */
 async function cmdShadowReport(days: number, json: boolean): Promise<number> {
   const cfg = loadConfig();
@@ -390,8 +389,8 @@ async function cmdShadowReport(days: number, json: boolean): Promise<number> {
 }
 
 /**
- * `qcr lessons off|on|suppress|unsuppress` (S9a): the operator's kill
- * switch, written AS ROOT into the sealed commands/operator/ (the drain's
+ * `qcr lessons off|on|suppress|unsuppress`: the operator's kill
+ * switch, written as root into the sealed commands/operator/ (the drain's
  * channel) and confirmed by the daemon's own result file.
  */
 async function cmdLessonSwitch(
@@ -438,14 +437,14 @@ export function renderStatus(snapshot: StatusSnapshot): string {
   lines.push(
     `rounds running: ${snapshot.running_rounds}   total spend: $${snapshot.total_spend_usd.toFixed(2)}`,
   );
-  // whether reviewer memory WORKS, every time — an absent block
+  // Whether reviewer memory works, every time — an absent block
   // (older daemon) and an unmeasured one say so, never "healthy".
   lines.push(oneLine(memoryStatusLine(snapshot.memory, new Date(snapshot.written_at))));
-  // L2: the daemon's own event loop and the container's CPU
+  // The daemon's own event loop and the container's CPU
   // throttling, every time — an absent block (older daemon) and an unmeasured
   // one say so, never "ok".
   lines.push(oneLine(daemonLoadLine(snapshot.daemon)));
-  // the closed-PR archiver, every time — an absent block (older
+  // The closed-PR archiver, every time — an absent block (older
   // daemon) says so, and a backlog nobody planned yet is UNKNOWN, never 0.
   lines.push(oneLine(archiveStatusLine(snapshot.archive)));
   if (snapshot.draining) {
@@ -465,7 +464,7 @@ export function renderStatus(snapshot: StatusSnapshot): string {
         `#${String(pr.number).padEnd(5)} ${pr.state.padEnd(17)} ${(pr.stale_recheck ? "yes" : "-").padEnd(6)} ${pr.head_sha.slice(0, 10).padEnd(11)} ${oneLine(pr.title).slice(0, 60)}`,
       );
     }
-    // every held PR says who holds it and when the hold lapses.
+    // Every held PR says who holds it and when the hold lapses.
     const held = snapshot.prs.filter((pr) => pr.paused);
     if (held.length > 0) {
       lines.push("");
@@ -509,9 +508,9 @@ function cmdSpend(): void {
   try {
     const total = store.totalSpend();
     const today = new Date().toISOString().slice(0, 10);
-    // est_usd is the ONE spend field (legacy spend_usd folded into it
-    // at boot). Expired rounds ARE counted: they blew a deadline,
-    // they did not get a refund — excluding them erased real token cost.
+    // est_usd is the one spend field. Expired rounds are counted: they blew
+    // a deadline, they did not get a refund — excluding them would erase real
+    // token cost.
     const todayRounds = store.roundsOn(today);
     const todaySpend = todayRounds.reduce((n, r) => n + (r.est_usd ?? 0), 0);
     const totals = store.db
@@ -543,8 +542,7 @@ function cmdToday(): void {
         r.tokens_in !== null || r.tokens_out !== null
           ? ` tok=${r.tokens_in ?? 0}/${r.tokens_out ?? 0}`
           : "";
-      // A cancelled round says WHY inline — its status alone was
-      // exactly the thing nobody could read back.
+      // A cancelled round says why inline — its status alone does not.
       const why = r.status === "cancelled" ? ` cause=${cancelCauseLabel(r.cancel_cause)}` : "";
       console.log(
         `#${r.pr} round ${r.round_no} (${r.round_type}) [${r.status}]${why} verdict=${r.verdict ?? "—"} spend=$${(r.est_usd ?? 0).toFixed(2)}${tokens} lenses=${r.lenses}`,
@@ -602,7 +600,7 @@ export interface WhyPayload {
   withheld?: DoubtedFinding[];
   ledger?: string;
   archive?: string[];
-  /** S4: the PR's archive manifest in brief — what the archiver
+  /** The PR's archive manifest in brief — what the archiver
    * holds for it and what left the live tree. Absent when there is no
    * manifest (nothing archived, or an older daemon); `unreadable` with why
    * when there is one that cannot be read — never read as "nothing". */
@@ -614,7 +612,7 @@ export interface WhyPayload {
   comments?: Array<{ author: string; body: string; created_at: string }>;
 }
 
-/** `why --json`'s archive manifest summary (S4). */
+/** `why --json`'s archive manifest summary. */
 export type WhyArchiveManifest =
   ({ state: "read" } & ManifestSummary) | { state: "unreadable"; error: string };
 
@@ -819,7 +817,7 @@ export function cancellationsOn(store: StateStore, date: string): CancellationTa
 }
 
 /** `qcr today`'s one-line cancellation summary. Never silent: "none" is an
- * answer, and it is the answer that used to be missing entirely. */
+ * answer. */
 export function todayCancellationLine(tallies: CancellationTally[]): string {
   if (tallies.length === 0) return "cancelled: none";
   const total = tallies.reduce((n, t) => n + t.count, 0);
@@ -1024,7 +1022,7 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   const { nodeReplayIo, parseRegressionArgs, readCaseSet, runRegressionCli, ScratchReplay } =
     await import("./replay.js");
   const root = sandboxRoot();
-  // the replay plans rounds with `buildPassPlan`, so it must see the
+  // The replay plans rounds with `buildPassPlan`, so it must see the
   // profile's per-lens tuning exactly as the daemon does (wire.ts buildParts)
   // — otherwise a lens the profile switched off would be replayed.
   const { applyProfileTuning } = await import("./lenstuning.js");
@@ -1065,15 +1063,17 @@ export async function cmdRegression(rest: string[], json: boolean): Promise<numb
   });
 }
 
-// ---- deploy-window drain (2026-08-25) -------------------------------------
+// ---- deploy-window drain -----------------------------------------------------
 //
-// `qcr drain on|off` follows the TUI unwedge precedent EXACTLY: ONE validated
-// command file written into the daemon's existing commands/ dir (docker exec
-// over ssh, payload on stdin, tmp+mv), then the daemon's own result file read
-// back. src/commands.ts re-validates against the same whitelist and the same
-// tier gate; nothing here touches GitHub or goes near the MutationGate.
-// `--local` writes the file into THIS machine's sandbox commands/ dir instead
-// (for running inside the container or against a local dev daemon).
+// `qcr drain on|off` works as the TUI's unwedge does: ONE validated command
+// file written as root into the daemon's sealed commands/operator/ dir
+// (docker exec over ssh, payload on stdin, tmp+mv), then the daemon's own
+// result file read back. src/commands.ts re-validates against the same
+// whitelist and the same tier gate; nothing here touches GitHub or goes near
+// the MutationGate. `--local` writes the file into THIS machine's sandbox
+// commands/operator/ dir instead, as the current user (for running inside the
+// container or against a local dev daemon) — sealed only if that dir is
+// root-owned; otherwise the daemon bounds it like a session's drain.
 
 /** The documented manual fallback: the exact ssh one-liner that writes the
  * same command file by hand when the runner path fails. */
@@ -1148,7 +1148,8 @@ export async function runDrain(on: boolean, deps: DrainRunDeps): Promise<number>
 }
 
 /** `--local`: same command file, written straight into this machine's
- * sandbox commands/ dir (in-container use; no ssh). Fire-and-forget — the
+ * sandbox commands/operator/ dir as the current user (in-container use; no
+ * ssh). Fire-and-forget — the
  * local watcher's result lands in commands/results/. */
 function runDrainLocal(on: boolean): number {
   const dir = join(sandboxRoot(), "commands", "operator");
@@ -1170,7 +1171,7 @@ async function cmdDrain(rest: string[]): Promise<number> {
   if (!sub) throw new Error("usage: qcr drain <on|off> [--local]");
   const on = sub === "on";
   if (rest.includes("--local")) return runDrainLocal(on);
-  // honour [tui] target — on the laptop topology the same command
+  // Honour [tui] target — on the laptop topology the same command
   // file write runs against local docker instead of ssh.
   const { runnerFor } = await import("./tui/remote.js");
   const cfg = loadConfig();
@@ -1183,13 +1184,13 @@ async function cmdDrain(rest: string[]): Promise<number> {
  * install's config home, and every install profile out of the
  * checkout's `profiles/` — idempotent, and it never overwrites a differing
  * config or profile. Deliberately NOT loadConfig(): a config that does not
- * parse must still be movable.: both verbs cover the secrets too —
+ * parse must still be movable. Both verbs cover the secrets too —
  * `where` names the secrets dir and the companion key file the locator picks
  * (without the configured `[github] secrets_dir`, which only a parsed config
  * knows), and `migrate` moves `~/.config/quickreview-bot/` into
  * `<config home>/secrets/` — and repoints a compose `.env` whose
- * `QCR_SECRETS_DIR` still names it.: nothing else reads those old
- * places any more, so `where` lists whatever is still STRANDED there, and
+ * `QCR_SECRETS_DIR` still names it. Nothing else reads those old
+ * places, so `where` lists whatever is still STRANDED there, and
  * `migrate` is the one command that opens them.
  */
 export function cmdInstall(
@@ -1220,7 +1221,7 @@ export function cmdInstall(
         `secrets     ${secrets.path}  (${secrets.source}; a set [github] secrets_dir overrides it)`,
       );
       log(`memory keys ${keys.path}  (${keys.source})`);
-      // nothing reads the old places any more, so an install that
+      // Nothing reads the old places, so an install that
       // has not migrated is told what it is stranding, and the way out.
       const stranded = [
         strandedCheckoutConfig({ root, env }),
@@ -1281,7 +1282,7 @@ export async function cmdCompanion(sub: string | undefined): Promise<void> {
   const lc = new CompanionLifecycle(cfg, realDockerRunner);
   switch (sub) {
     case "up": {
-      // mint the read-only GitHub token first. One-shot: nothing
+      // Mint the read-only GitHub token first. One-shot: nothing
       // refreshes it after this command exits (the TUI does, while it runs).
       const { CompanionGithubToken, tokenOutcomeLine } = await import("./tui/ghread.js");
       const { companionGithubDir } = await import("./install.js");
@@ -1452,9 +1453,9 @@ export function parseRelayoutArgs(
 }
 
 /**
- * `qcr memory relayout [--plan|--apply] [--user <name>]` (S5) — sort
+ * `qcr memory relayout [--plan|--apply] [--user <name>]` — sort
  * one memory namespace (default: the daemon's, `[openviking] user`) into the
- * §1 layout. `--plan` (the default) prints where every entry goes;
+ * memory layout (src/memory/layout.ts). `--plan` (the default) prints where every entry goes;
  * `--apply` carries the plan out and reads the store again to show what is
  * left — idempotent, so a second `--apply` plans nothing. Run from the PC
  * that holds the keys, over the memory forward, like `reembed`; the daemon
@@ -1658,11 +1659,11 @@ export function parseArchiveArgs(rest: readonly string[]): ArchiveArgs {
  *     with `--plan`, a plan computed HERE, now (tmux asked in this container;
  *     the daemon's in-flight births are not visible from a CLI, and the daemon
  *     re-checks them before anything moves). Moves nothing.
- *   - `run`, `restore <pr>` (S4) — the operator's two verbs: ONE command file
+ *   - `run`, `restore <pr>` — the operator's two verbs: ONE command file
  *     written as root into the sealed `commands/operator/` (the kill switch's
  *     channel), confirmed by the daemon's own result file. The daemon runs
  *     them under the archiver's strict mutex.
- *   - `extract <pr> --to <dir>` (S4) — read-only over the archive: the PR's
+ *   - `extract <pr> --to <dir>` — read-only over the archive: the PR's
  *     archive decompressed into a scratch dir, every byte sha-verified, never
  *     into a live tree. Runs where the archive is (the container).
  */

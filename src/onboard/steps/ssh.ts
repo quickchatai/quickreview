@@ -11,8 +11,8 @@
 //      transport (transport.ts), carries `-o BatchMode=yes`. BatchMode makes
 //      ssh refuse to ask: no passphrase prompt, no password prompt, no host-key
 //      question. A key that would have prompted fails instantly with a message
-//      instead of hanging forever with none. There is no code path in this
-//      slice that builds an ssh command without it — `sshArgv` is the only
+//      instead of hanging forever with none. There is no code path in
+//      onboarding that builds an ssh command without it — `sshArgv` is the only
 //      builder, and it always prepends the options.
 //   2. IN THE OPEN — this step probes the alias, the agent and a real
 //      connection BEFORE anything is minted, written or deployed, and when the
@@ -41,7 +41,7 @@ export const SSH_PREFLIGHT_STEP_ID = "ssh_preflight";
 export const SSH_USER_CHOICE_KEY = CHOICE_KEYS.sshUser;
 
 /**
- * The options EVERY ssh in this slice carries.
+ * The options EVERY onboarding ssh carries.
  *
  * `BatchMode=yes` is the load-bearing one (see the header): it turns every
  * would-be prompt into an immediate, explained failure. `ConnectTimeout` keeps
@@ -49,7 +49,7 @@ export const SSH_USER_CHOICE_KEY = CHOICE_KEYS.sshUser;
  */
 export const SSH_BATCH_OPTS: readonly string[] = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
 
-/** The ONE ssh command builder in the onboarding slice. Remote argv is quoted
+/** The ONE ssh command builder in onboarding. Remote argv is quoted
  * into a single command string, because ssh hands its arguments to a remote
  * shell rather than execing them. */
 export function sshArgv(host: string, remote: readonly string[]): string[] {

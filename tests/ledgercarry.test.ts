@@ -1,4 +1,4 @@
-// Ledger carry (MC-18): every round order re-hands the PR's ledger
+// Ledger carry: every round order re-hands the PR's ledger
 // from ledger-pin's mirror, bounded, saying where it came from; the ledger's
 // SETTLED items become the order's settled digest. Absent / unreadable /
 // foreign ledger ⇒ no section and an empty digest, never an error.

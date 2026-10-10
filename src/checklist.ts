@@ -14,7 +14,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ProbeResult {
-  /** The item marker: ①…⑨. */
+  /** The checklist item marker: ①…⑨. */
   item: string;
   name: string;
   pass: boolean;
@@ -335,7 +335,7 @@ export async function probeRestartRecovery(deps: RestartProbeDeps): Promise<Prob
 
 /** The two live test-PR items. Never automated: they are the only steps that
  * run with `dry_run` off, and running them is the operator's act on the VM.
- * identity prose renders from config, never from a hardcoded login. */
+ * The bot identity renders from config, never from a hardcoded login. */
 export function manualItems(
   botLogin = "the review App bot",
 ): Array<{ item: string; name: string; instructions: string[] }> {
@@ -395,7 +395,7 @@ export interface ChecklistDeps {
   digest: DigestProbeDeps;
   tmux: TmuxProbeDeps;
   restart: RestartProbeDeps;
-  /**: `[github] bot_login`, rendered into the guided-manual prose.
+  /** `[github] bot_login`, rendered into the guided-manual prose.
    * Absent ⇒ the role wording ("the review App bot"). */
   bot_login?: string;
 }
@@ -444,7 +444,7 @@ export interface ChecklistRun {
   exitCode: number;
 }
 
-/** The `qcr checklist` entrypoint. Wire it into the CLI (coordinator's job);
+/** The `qcr checklist` entrypoint (wired in `cliops.ts`);
  * `print` defaults to console.log so tests can capture instead. */
 export async function runChecklist(
   deps: ChecklistDeps,

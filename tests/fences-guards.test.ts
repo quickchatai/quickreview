@@ -1,16 +1,10 @@
-// [T10] — guard coverage DERIVED from the call sites, never asserted
-// in prose.
+// [T10] — guard coverage derived from the call sites, never asserted in prose.
 //
-// [P2]: `scripts/CLAUDE.md` states which posting-time guards each
-// posting script calls. It is a documentation claim about a SAFETY INVARIANT,
-// which the inventory rightly calls the worst thing in this repo to let drift
-// — and it had drifted: it omits guard 5 (the stale-head refusal) on
-// both scripts that call it.
-//
-// The fix that lasts is not to correct the sentence; it is to make the
-// sentence derivable, so the next drift fails a test instead of surviving a
-// read. Nothing here is hand-maintained except the mapping's own liveness
-// check: guard NUMBERS come from `guards.sh`'s own section headers, guard
+// `scripts/CLAUDE.md` states which posting-time guards each posting script
+// calls. It is a documentation claim about a safety invariant, the worst kind
+// of claim to let drift, so the sentence is checked against what is derivable
+// and a drift fails a test instead of surviving a read. Nothing here is
+// hand-maintained except the mapping's own liveness check: guard NUMBERS come from `guards.sh`'s own section headers, guard
 // CALLS come from the scripts, and the claim comes from the doc.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,12 +19,11 @@ const read = (rel: string): string => readFileSync(join(ROOT, rel), "utf8");
  * Functions in `guards.sh` that are NOT guards — plumbing the guards share,
  * plus the mark writer.
  *
- * `guard_stamp_reviewed_head` is the one that matters here, and it is why this
- * list is not an afterthought: it is DEFINED below the `# ---- guard 4:`
- * header, so the positional derivation below assigns it to guard 4, and
- * `post-review.sh` came out claiming a CI gate it does not have. It is guard
- * 2's mark WRITER — it runs after a successful post, not before one — and a
- * fence that mis-derives in the permissive direction is worse than none.
+ * `guard_stamp_reviewed_head` is the one that matters here: it is guard 2's
+ * mark writer — it runs after a successful post, not before one — and
+ * counting it as a guard would credit `post-review.sh` with a check it does
+ * not make. A fence that mis-derives in the permissive direction is worse
+ * than none.
  */
 const NOT_A_GUARD = new Set([
   "guard_enabled",
@@ -38,7 +31,7 @@ const NOT_A_GUARD = new Set([
   "guard_api_get",
   "guard_read_pr",
   "guard_stamp_reviewed_head",
-  // the evidence hook guard 2 calls on refusal. Defined by
+  // The evidence hook guard 2 calls on refusal. Defined by
   // post-review.sh (not guards.sh, so it sits under no header), it writes the
   // guarded-no-op record and gates nothing — the refusal is already decided
   // before it runs, and its failure never changes guard 2's answer.
@@ -50,25 +43,17 @@ const NOT_A_GUARD = new Set([
  * headers (`# ---- guard N: … ----`). A function belongs to the guard whose
  * header it sits under, and to NO guard once a non-guard header intervenes.
  *
- * THAT SECOND CLAUSE IS THE WHOLE FENCE, and the first version of this
- * function did not have it. It set `current` on a guard header and never
- * cleared it, so every function below `guards.sh`'s
- * `# ---- the reviewed-head mark ----` header inherited guard 4. The symptom
- * was `guard_stamp_reviewed_head` — patched at the time with a hand-written
- * `NOT_A_GUARD` entry, which fixed the instance and left the mechanism.
+ * That second clause is the whole fence. Without it, every function below
+ * `guards.sh`'s `# ---- the reviewed-head mark ----` header would inherit
+ * guard 4: add any function at the end of `guards.sh`, call it from
+ * `approve-pr.sh` instead of `guard_require_green_ci`, and the approval
+ * route would stop gating on CI while every test in this file passed — a
+ * fence mis-deriving in the permissive direction.
  *
- * What that cost, demonstrated by an adversarial reviewer: add any function
- * at the end of `guards.sh`, call it from `approve-pr.sh` INSTEAD of
- * `guard_require_green_ci`, and the approval route stops gating on CI while
- * every test in this file passes — including the one that asserts
- * `approve-pr.sh` must contain guard 4. A fence mis-deriving in the
- * PERMISSIVE direction, which the header of this file calls worse than none,
- * being exactly that.
- *
- * Now: ANY `# ---- … ----` header resets the section, and only a guard header
+ * So any `# ---- … ----` header resets the section, and only a guard header
  * opens one. A function outside every guard section is unnumbered, which
  * makes it a loud orphan in the test below unless it is named in
- * `NOT_A_GUARD` — so that list is now structural rather than a patch.
+ * `NOT_A_GUARD`.
  */
 function guardNumbers(): Map<string, number> {
   const out = new Map<string, number>();
@@ -98,8 +83,8 @@ function guardCalls(script: string): string[] {
 describe("[T10] guard coverage is derived from the call sites", () => {
   it("guards.sh's section headers actually number its functions", () => {
     const numbers = guardNumbers();
-    // Five numbered guards exist (1-3, 4, 5). If the
-    // header parse breaks, everything below silently checks nothing.
+    // Five numbered guards exist. If the header parse breaks, everything below
+    // silently checks nothing.
     expect(
       [...new Set(numbers.values())].sort(),
       "the guard-number parse found the wrong set of guards",
@@ -161,12 +146,8 @@ describe("[T10] guard coverage is derived from the call sites", () => {
 
   /**
    * The doc comparison. `scripts/CLAUDE.md` states the coverage per script in
-   * prose, and prose about a safety invariant drifts — it had, omitting guard
-   * 5 from both scripts that call it, and this fence RECORDED that divergence
-   * rather than repairing it ([P2]) because the fence's author would
-   * not edit a CLAUDE.md. corrected the sentence, so the recording
-   * shape is gone and the comparison is direct: whatever the doc claims must
-   * equal what the call sites do.
+   * prose, and prose about a safety invariant drifts, so the comparison is
+   * direct: whatever the doc claims must equal what the call sites do.
    *
    * MUTATION: change "approve-pr.sh 3+4+5" to "approve-pr.sh 3+4" in
    * scripts/CLAUDE.md — this fails.
@@ -191,7 +172,7 @@ describe("[T10] guard coverage is derived from the call sites", () => {
   });
 
   /**
-   * The other half of [P2], and the half with teeth: whatever the doc says,
+   * The other half, and the half with teeth: whatever the doc says,
    * a script that POSTS must call guard 3, and the script that APPROVES must
    * call guard 4. Those two are the invariants; the prose is only their
    * description.

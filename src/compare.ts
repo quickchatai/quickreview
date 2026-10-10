@@ -1,14 +1,13 @@
-// `qcr compare <pr...>` — the five-PR comparison harness.
+// `qcr compare <pr...>` — the cutover comparison harness.
 //
 // For each PR: run one dry-run round, collect the would-be review out of
 // state/dryrun/, fetch the old flow's actual review from GitHub (reads only),
-// and assemble a side-by-side report per the rubric:
+// and assemble a side-by-side report per the cutover rubric:
 //
 //   (a) blocker parity      old-flow blockers vs sandbox blockers, matched by
 //                           path + theme; every unmatched row flagged
 //   (b) invariant scan      zero dry-run records of any kind outside the known
-//                           allowlist (the retired-kind rule was deleted with
-//                           its last member)
+//                           allowlist
 //   (c) anchor validity     every sandbox inline anchor lands on a changed line
 //   (d) settled threads     no finding re-raises a thread the archived ledger
 //                           lists as SETTLED
@@ -88,11 +87,10 @@ export const ALLOWED_MUTATION_KINDS = [
   "create_issue",
   "create_pull",
   "push_branch",
-  // an escalation's review request is a legitimate intent again when
-  // the operator switched the feature on (it is off by default, so on a stock
-  // install no such record can appear). Listing it keeps the scan an honest
-  // allowlist — a configured, gated mutation must not read as a structural
-  // violation.
+  // An escalation's review request is a legitimate intent when the operator
+  // switched the feature on (it is off by default, so on a stock install no
+  // such record can appear). A configured, gated mutation must not read as a
+  // structural violation.
   "request_reviewer",
 ] as const satisfies readonly MutationKind[];
 
@@ -380,18 +378,12 @@ export function invariantScan(records: DryrunRecord[], pr: number): InvariantVio
       });
     }
   }
-  // There is no "retired mutation kind" rule any more. It existed for exactly
-  // one kind — `request_reviewer` — and brought that back as an
-  // ordinary gated mutation, so the rule would now flag a legitimate,
-  // configured, off-by-default escalation. Under the hard-cut policy a
-  // rule with nothing left to say is deleted rather than kept as debt; the
-  // generic allowlist above still catches every kind the gate does not define.
   return violations;
 }
 
 // ---- (c) anchor validity -----------------------------------------------------
 //
-// The verdict comes from src/anchors.ts (B4) — the same changed-run containment
+// The verdict comes from src/anchors.ts — the same changed-run containment
 // check the posting path uses, so the report cannot disagree with what the
 // daemon would have accepted. The two local diff walkers below are kept only to
 // classify a *failed* anchor for the human (context line inside a hunk vs
@@ -517,15 +509,13 @@ export function settledThreadViolations(
 
 // ---- the dry-run attestation -------------------------------------------------
 //
-// The report used to end on the unconditional sentence "dry_run stayed true —
-// nothing was posted". No code backed it: it printed identically in a run where
-// the gate was live (and rule 1 has had `dry_run = false` on the VM since
-// 2026-08-14). A harness that asserts a safety property it never checked is
-// worse than one that says nothing, so the sentence is now an OBSERVATION of
-// the gate's own record, and the harness says so loudly when it cannot make it.
+// "Nothing was posted" is an observation of the gate's own record, never an
+// assumption: a harness that asserts a safety property it never checked is
+// worse than one that says nothing, so the report says so loudly when it
+// cannot make the claim.
 //
-// Nothing here can change `dry_run` — it is the owner's alone (rule 1). This only
-// reports what the gate did.
+// Nothing here can change `dry_run` — it is the owner's alone (CLAUDE.md
+// rule 1). This only reports what the gate did.
 
 /** What the caller actually observed of the gate this comparison ran through.
  * Both fields are `null` when the caller could not observe it at all — which is
@@ -788,7 +778,7 @@ export function comparePr(input: ComparePrInput): CompareResult {
 // ---- the run -----------------------------------------------------------------
 
 export interface CompareDeps {
-  /** Run one dry-run round against the PR's head. Injected: B2's dispatch. */
+  /** Run one dry-run round against the PR's head. Injected: the daemon's dispatch. */
   dispatchDryRun: (pr: number) => Promise<void>;
   /** Dry-run records produced for this PR (default: read state/dryrun/). */
   readRecords: (pr: number) => Promise<DryrunRecord[]> | DryrunRecord[];

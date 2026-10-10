@@ -1,10 +1,9 @@
 # Companion sidebar — the build contract
 
-Working contract for the parallel build of the always-visible companion right
-column. Every module below is coded against these signatures **exactly**, so
-the pieces meet without a negotiation round. Decisions come from the map
-the companion right-panel UX effort (internal design history)
-; this file is mechanics only, not decisions.
+The contract for the always-visible companion right column. The modules below
+are coded against these signatures, so the pieces meet without negotiation.
+This file is mechanics only; the layout rule itself is in the TUI's ratified
+decisions (root CLAUDE.md, "The TUI has ONE layout").
 
 ## Geometry
 
@@ -21,14 +20,14 @@ cols = inner.cols + sidebarWidth(cols, state)
 - resized: drag the column's left border; minimum `24`, maximum leaves
   `64` columns for the tab
 
-That is the whole state space (2026-09-02, the owner's fixed-layout order).
-There is **no collapsed spine, no hidden state and no config-driven zero
-width**: the column is on every frame in every configuration — `--no-companion`
+That is the whole state space. There is **no collapsed spine, no hidden
+state and no config-driven zero width**: the column is on every frame in every configuration — `--no-companion`
 and `[companion] enabled = false` change what runs and what the column says,
 never whether it is there — and a terminal too narrow for both minimums gets a
 cramped tab beside a minimum-width column, not a column that folds away. An
-explicitly resized width survives TUI hot reload; the old fixed 46-column
-default is migrated away rather than restored as a preference. Pinned by
+explicitly resized width survives TUI hot reload; a stored width equal to the
+legacy fixed 46-column default (`LEGACY_SIDEBAR_WIDTH`) is dropped rather
+than restored as a preference. Pinned by
 `tests/tui-fixed-layout.test.ts`.
 
 **Row contract**: the sidebar column supplies **exactly `rows` strings**, each
@@ -56,7 +55,7 @@ export function sidebarWidth(cols: number, st?: { preferredWidth?: number }): nu
 export interface SidebarHeader {
   up: boolean;            // container running
   piUp: boolean;          // the companion pi session is alive
-  day: string;            // Warsaw day token, e.g. "2026-08-21"
+  day: string;            // ops-day token, e.g. "2026-08-21"
   lastWake: string;       // "3m ago" | "—"
   memory: "ok" | "degraded" | "off";
 }
@@ -106,7 +105,7 @@ export class CompanionSidebar {
 Reuse from `pipane.ts`, do not reimplement: `keepSgrOnly`, `splitCapture`,
 `keysToTmux`, `SCROLL_STEP`. Capture with `-e` (colors kept — that is the whole
 point of the restyle work) and `-J`, through the same local `DockerRunner`
-seam `CompanionStrip` used.
+seam.
 
 ### `src/tui/paint.ts` — composition (agent C)
 
@@ -118,15 +117,9 @@ seam `CompanionStrip` used.
 export function composeColumn(inner: Frame, column: string[], width: number): Frame;
 ```
 
-### Strip retirement (agent B)
+### Tab body height (agent B)
 
-`src/tui/strip.ts` is deleted; the sidebar absorbs it. `board.ts`,
-`memtab.ts`, `digesttab.ts` drop their `strip?: StripView` parameter and the
-`stripHeight()` row reservation, so `bodyRows` becomes `rows - 4`.
-
-*Amended 2026-09-02:* `rows - 4` assumed a two-row command bar.
-The bar now WRAPS instead of dropping buttons — at the shipped companion
-width the board used to lose `[u unwedge]` — so a tab's body height is
+The command bar wraps instead of dropping buttons, so a tab's body height is
 `rows - 2 - barHeight(tab, cols, live.bar)` (`src/tui/cmdbar.ts`), and the
 board's pi viewport is sized from the same number (`boardBarHeight`). The
 eight tabs (`src/tui/tabs.ts`: board · memory · digest · tickets · deploy ·
@@ -137,19 +130,16 @@ surface contract.
 
 ### Wiring (`app.ts`, `index.ts`) — the orchestrator, not an agent
 
-Key model (provisional — decides it properly):
+Key model:
 
 | key | meaning |
 |---|---|
 | `/` | focus the sidebar |
-| printable the current FRAME does not register (`App.registeredKeys()`, derived from the bar it is painting) | focus the sidebar, seeded with that char |
+| printable the current frame does not register (`App.registeredKeys()`, derived from the bar it is painting) | focus the sidebar, seeded with that char |
 | `Esc` | forwarded to pi while focused |
 | `Ctrl-q` | release focus (same as the board's pi pane) |
 | `PgUp`/`PgDn` | scroll the sidebar while focused |
 
-(`\` used to toggle a collapsed spine; retired 2026-09-02 with the spine.)
-
-Fullscreen is retired entirely: `AttachScreen` no longer exists (2026-09-02).
-The companion, the PR sessions, the overseer and the main session are never
+There is no fullscreen attach and no collapsed spine. The companion, the PR sessions, the overseer and the main session are never
 attached to from the TUI — the board's PR pane and this column are the only
 terminals, both embedded.

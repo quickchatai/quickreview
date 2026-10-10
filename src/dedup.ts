@@ -1,5 +1,4 @@
-// Duplicate merge (docs/duplicate-merge.md, the owner's decisions of
-// 2026-10-03): one comment per root cause.
+// Duplicate merge (docs/duplicate-merge.md): one comment per root cause.
 //
 // Two deterministic halves, both pure and both on the code path the live
 // round and the benchmark share:
@@ -8,10 +7,10 @@
 //     units. Called by the `cluster_findings` pi tool
 //     (extensions/finding-clusters.ts), which the daemon's PR sessions and the
 //     bench session both load. Two candidates join a group when ANY one signal
-//     holds (decision 8): the same file with anchors within CLOSE_LINES, a
+//     holds: the same file with anchors within CLOSE_LINES, a
 //     shared named identifier, or the same fix target. "Same consequence" has
-//     no deterministic signal: the validator judges it inside a group (decision
-//     7), so two findings that share no signal are never shown to it as one.
+//     no deterministic signal: the validator judges it inside a group, so two
+//     findings that share no signal are never shown to it as one.
 //
 //   * `postCheckRecord` — the leftovers after the validator. Run by
 //     `renderPostedReview` (src/reviewrender.ts), which both the live render
@@ -188,9 +187,9 @@ const PROSE_CAMEL = new Set([
   "linkedin",
   "wordpress",
 ]);
-/** An identifier written WITHOUT backticks (freeze fixes 2: the dedup5 audit
- * found 0 of 463 candidates used backticks, so the shared-identifier signal
- * never fired): camelCase or PascalCase with an inner capital, snake_case,
+/** An identifier written without backticks (lenses rarely backtick names, so
+ * code spans alone would leave the shared-identifier signal silent):
+ * camelCase or PascalCase with an inner capital, snake_case,
  * SCREAMING_CASE, or a name called as `name(` / reached as `a.b`. */
 const BARE_IDENT_RE =
   /\b(?:[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*|[a-z][a-z0-9]*_[a-z0-9_]+|[A-Z][A-Z0-9]*_[A-Z0-9_]+|[A-Za-z_$][A-Za-z0-9_$]*(?=\()|[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+)\b/g;
@@ -236,8 +235,8 @@ function samePath(a: string | null | undefined, b: string | null | undefined): b
   return !!a && !!b && a === b;
 }
 
-/** The candidate groups a validator judges as units (decision 8: any one
- * signal joins two candidates; union-find, so groups are transitive). */
+/** The candidate groups a validator judges as units (any one signal joins
+ * two candidates; union-find, so groups are transitive). */
 export function clusterFindings(candidates: readonly ClusterCandidate[]): ClusterResult {
   const n = candidates.length;
   const parent = candidates.map((_, i) => i);
@@ -377,7 +376,7 @@ export interface PostCheckMerge {
 }
 
 /**
- * The deterministic post-check (decision 3): over the record's POSTED
+ * The deterministic post-check: over the record's POSTED
  * entries, two in the same file whose anchors are within POST_CHECK_LINES and
  * that share a named identifier are one root cause posted twice. Returns a
  * NEW record (the input is not mutated) where each follower is `merged`
@@ -415,11 +414,10 @@ export function postCheckRecord(record: unknown): { record: unknown; merges: Pos
       if (s(A.path) !== s(B.path)) continue;
       if (Math.abs(lineOf(A.line)! - lineOf(B.line)!) > POST_CHECK_LINES) continue;
       if (![...ids[a]!].some((x) => ids[b]!.has(x))) continue;
-      // Never undo the validator (2026-10-03 regression, fv1): two posted
-      // findings it judged in ONE group were kept distinct on purpose, and two
-      // with no group recorded cannot be told apart from that — so the
-      // post-check merges only survivors of DIFFERENT recorded groups, the
-      // leftovers the validator never compared.
+      // Never undo the validator: two posted findings it judged in one group
+      // were kept distinct on purpose, and two with no group recorded cannot
+      // be told apart from that — so the post-check merges only survivors of
+      // different recorded groups, the leftovers the validator never compared.
       if (!distinctGroups(A, B)) continue;
       // The higher severity leads; equal → the earlier entry.
       const [lead, fol, folIdx] = rank(B) < rank(A) ? [B, A, a] : [A, B, b];

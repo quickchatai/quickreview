@@ -1,9 +1,9 @@
-// the `[8] scan` tab: the scan report where the prototype
-// placed it. Driven through the App like every surface test (keys typed on
-// the fake terminal, frames rendered from the tab hook) over a temp state
-// home holding the records the companion writes. What is asserted is what the
-// operator SEES and what the tab WRITES — the request files the companion's
-// scan belt answers, and the asks that reach its column.
+// The `[8] scan` tab: the scan report. Driven through the App like every
+// surface test (keys typed on the fake terminal, frames rendered from the tab
+// hook) over a temp state home holding the records the companion writes.
+// What is asserted is what the operator SEES and what the tab WRITES — the
+// request files the companion's scan belt answers, and the asks that reach
+// its column.
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";

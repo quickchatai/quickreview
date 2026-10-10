@@ -22,16 +22,15 @@
 //   * pinnedHead() is EXACT and GUARANTEED. The owner's standing instructions
 //     are delivered verbatim, in full, every round, so it reads the stored
 //     bytes — never a search, whose budget and tier degradation could
-//     silently truncate an instruction. Since S5 it reads the pinned
-//     DIRECTORY alone (`preferences/pinned/`, `store.pinnedSweep()`): one
-//     listing and the few files in it, where it used to read all ~176 files
-//     of the store every round to find the pinned ones.
+//     silently truncate an instruction. It reads the pinned directory alone
+//     (`preferences/pinned/`, `store.pinnedSweep()`): one listing and the few
+//     files in it, never a sweep of the whole store.
 //   * contextBlock() is BUDGETED and APPROXIMATE. It is the server's own
 //     assembled block: one deterministic `mode: "context"` search, rendered
 //     server-side, pasted verbatim. Determinism is pinned inside the client
 //     (`rewrite`/`query_expansion` off) rather than requested here, so this
 //     module cannot ask for an LLM in the daemon's hot path even by accident.
-//     Since S5 it searches `experiences/` ONLY (`ROUND_SEARCH_AREAS`):
+//     It searches `experiences/` only (`ROUND_SEARCH_AREAS`):
 //     the quotas name nothing else whatever config.toml says, and an entry
 //     from anywhere else that comes back anyway is dropped — no ops notes, no
 //     raw feedback events, no folder blurbs in a round.
@@ -75,15 +74,15 @@ export interface OpenVikingContextOptions {
   /** Deadline for the ONE context search. Shorter than the client's default
    * and than the round's own memory deadline (`[memory] context_timeout_ms`):
    * a request that outlives the round's seed is pure cost. A seed that sent
-   * its search late (H3) passes the time it has left, and the search
+   * its search late passes the time it has left, and the search
    * takes the shorter of the two. */
   searchTimeoutMs?: number;
   log?: (msg: string, extra?: unknown) => void;
 }
 
-/** 8000 since H3 (was 2500): one document embedding on the live VM
- * takes 3 s or more, so a query queued behind one never answered inside
- * 2.5 s. Mirrors `OPENVIKING_DEFAULTS.search_timeout_ms`. */
+/** One document embedding on the live VM takes 3 s or more, and a query
+ * queued behind one must still be answered inside this. Mirrors
+ * `OPENVIKING_DEFAULTS.search_timeout_ms`. */
 export const DEFAULT_SEARCH_TIMEOUT_MS = 8_000;
 
 export class OpenVikingContextAssembler implements ContextAssembler {
@@ -113,7 +112,7 @@ export class OpenVikingContextAssembler implements ContextAssembler {
 
   /**
    * The owner's pinned standing instructions, oldest first, verbatim — the
-   * pinned directory and nothing else (S5).
+   * pinned directory and nothing else.
    *
    * Three answers, kept apart: the text; `text: ""` when the pinned
    * area was read whole and holds nothing — every fresh install, and not a
@@ -166,24 +165,23 @@ export class OpenVikingContextAssembler implements ContextAssembler {
       // so the search is told to skip it; `read()` filtering it is not enough.
       // Answered from the last completed sweep, so the search is never queued
       // behind a sweep inside the round's deadline; the store refreshes that
-      // sweep in the background for the next round (the head no longer sweeps
-      // the store, S5). A sweep that fails yields no exclusions rather
+      // sweep in the background for the next round. A sweep that fails yields no exclusions rather
       // than no block.
       const excludeUris = await this.store.retiredUris().catch(() => [] as string[]);
       const search: ContextSearchOptions = {
         maxTokens: opts.maxTokens,
         purpose: "coding",
-        // The seed's time left, when it says (H3): never past it.
+        // The seed's time left, when it says: never past it.
         timeoutMs:
           typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs)
             ? Math.max(1, Math.min(this.searchTimeoutMs, Math.floor(opts.timeoutMs)))
             : this.searchTimeoutMs,
-        // `experiences/` alone (S5) — never the server's own balance
+        // `experiences/` alone — never the server's own balance
         // across every scope, never an area config.toml adds.
         quotas: this.quotas,
         ...(excludeUris.length > 0 ? { excludeUris } : {}),
       };
-      // Issue the search, THEN say so (S9b): the client reaches its
+      // Issue the search, then say so: the client reaches its
       // `fetch` synchronously, so by the time `onSent` runs the round's own
       // search is ahead of any lesson find the signal releases.
       const pending = this.client.searchContext(query, search);

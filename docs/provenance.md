@@ -1,36 +1,31 @@
 # Provenance — what the FT-#### citations mean
 
-Throughout this codebase — comments, test names, docs, commit messages —
-you'll find citations like,, often with a date and
-"ratified" or "decided". These are ticket ids from the project's **internal
-design-history tracker**, where every substantial design decision was argued,
-decided, and recorded before it was built.
+In places across this codebase — commit messages, some test names and fixture
+data, dated reports, and tokens the code itself matches on — you'll find
+citations like or. These are ticket ids from the project's
+**internal design-history tracker**, where substantial design decisions were
+argued, decided, and recorded before they were built.
 
 The tracker itself is not published, so the ids are not links you can follow.
-They remain in the code deliberately, as **provenance**: a citation marks a
-line of code or a rule as the outcome of a recorded decision — usually with a
-rejected alternative behind it — rather than an accident of implementation.
-When a comment says something like *"uphold by default; the only transition
-is APPROVE → REQUEST_CHANGES"*, the id tells you this exact shape
-was chosen on purpose, on a specific day, over named alternatives.
+Code comments and docs do not depend on them: a comment states the rule and,
+where it is not obvious, its reason, as a fact about the system. Git history
+carries who decided what and when.
 
 Practical guidance:
 
 - **You never need a ticket to work on the code.** Everything load-bearing
-  from a cited decision is restated where it matters: in the comment carrying
-  the citation, in the test that pins the behaviour, or in
-  [ownership.md](ownership.md).
-- **Treat a citation as a "here be a decision" marker.** If your change
-  contradicts a comment carrying an FT id, the disagreement is worth raising
-  in your PR rather than silently "fixing" — the odds are good the current
-  shape survived an argument.
-- **Dates and role wording.** Decision attributions are written in the owner
-  role ("the owner, 2026-08-19"): the accountable human's identity is
-  installation config, not a name in code. Older artifacts (ratification
-  fence markers, divergence-registry notes) may carry the original owner's
-  name; the verifying grammars accept both spellings, and history is never
-  rewritten.
+  from a decision is stated where it matters: in the comment on the code, in
+  the test that pins the behaviour, or in [ownership.md](ownership.md).
+- **Treat a pinned rule as a decision.** If your change contradicts a rule a
+  comment states or a test pins, raise the disagreement in your PR rather than
+  silently "fixing" it — the odds are good the current shape was chosen over
+  named alternatives.
+- **Role wording.** Decisions belong to the owner role: the accountable
+  human's identity is installation config, not a name in code. Older artifacts
+  (ratification fence markers, divergence-registry notes) may carry the
+  original owner's name; the verifying grammars accept both spellings, and
+  history is never rewritten.
 
 New decisions in the public project need no FT ids — use GitHub issues and
 PR discussions; the convention to keep is the *practice* (decide, record,
-cite), not the id format.
+then build), not the id format.

@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { StateStore, type PrLifecycleState } from "../src/state.js";
 import { applyEvent, isBotAuthor, transition, type SmEvent } from "../src/statemachine.js";
 
-// `awaiting_human` is no longer a member of the union, so the table
-// below is five columns wide, not six. The rows it used to carry were an
-// exact copy of the awaiting_author/idempotent column and pinned nothing the
-// rest of the table did not already say.
+// One column per member of the lifecycle union. There is no `awaiting_human`
+// state, so there is no park column.
 const STATES: PrLifecycleState[] = ["tracked", "queued", "reviewing", "awaiting_author", "closed"];
 
 // The transition table from src/statemachine.ts, transcribed independently:
@@ -22,7 +20,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   ],
   [
     { type: "verdict", verdict: "NEEDS_HUMAN" },
-    // Legacy input only (retired 2026-08-19): review posted, no approval, no park.
+    // Legacy input only: review posted, no approval, no park.
     ["tracked", "tracked", "tracked", "tracked", "closed"],
   ],
   [
@@ -34,7 +32,7 @@ const TABLE: Array<[SmEvent, PrLifecycleState[]]> = [
   [{ type: "synchronize" }, ["tracked", "queued", "reviewing", "awaiting_author", "closed"]],
   [
     { type: "human_requested" },
-    // Noted, never a handover (2026-08-19): the AI keeps working.
+    // Noted, never a handover: the AI keeps working.
     ["tracked", "queued", "reviewing", "awaiting_author", "closed"],
   ],
   [{ type: "closed" }, ["closed", "closed", "closed", "closed", "closed"]],
@@ -60,26 +58,25 @@ describe("invariants", () => {
     }
   });
 
-  // THE ONE RESIDUAL SCENARIO LEAVES OPEN, named so it is not a
-  // surprise. The park's rows were drained on the live install on
-  // 2026-08-19T17:04Z and the reconcile migration that drained them is gone,
-  // so the only way a `pr_state` row can hold the string again is a RESTORE
-  // from a backup older than that date. `state` is a TEXT column — SQLite does
+  // The one residual scenario the park's removal leaves, named so it is not a
+  // surprise. No writer
+  // produces `awaiting_human` and no migration converts it, so the only way a
+  // `pr_state` row can hold the string is a RESTORE from a backup taken while
+  // the park still existed. `state` is a TEXT column — SQLite does
   // not know about the union — so the cast below is not a trick, it is what a
   // restored row would really look like coming out of the store.
   //
   // Why it is BENIGN, stated precisely: the VERDICT branch ignores `current`
   // entirely and maps the verdict straight to a state, so a restored row
   // rejoins normal flow on its first verdict with no migration and no special
-  // case. That is the narrow claim, and it is the one the migration's deletion
-  // rests on. `transition` does read `current` elsewhere — the `closed` early
-  // return, `trigger`, `stale_detected` and `reopened` all branch on it — so
-  // "it never looks at the current state" would be false, and false in the
-  // half that licenses the deletion.
+  // case. That is the narrow claim, and it is why no migration is needed.
+  // `transition` does read `current` elsewhere — the `closed` early return,
+  // `trigger`, `stale_detected` and `reopened` all branch on it — so "it never
+  // looks at the current state" would be false.
   //
-  // The honest caveat, which the runbook also carries: a restored row that is
-  // only ever hit by `track`/`author_reply`/`synchronize`/`human_requested`
-  // STAYS in the retired state, because those return `current` unchanged. It
+  // The caveat, which the runbook also carries: a restored row that is only
+  // ever hit by `track`/`author_reply`/`synchronize`/`human_requested` stays
+  // `awaiting_human`, because those return `current` unchanged. It
   // is inert while it sits there (the board paints glyph `?`, `sortPrs` ranks
   // it last, no live surface names it), and the next verdict moves it.
   it("a restored pre-2026-08-19 row rejoins normal flow on its first verdict, with no migration", () => {
@@ -99,13 +96,11 @@ describe("invariants", () => {
     }
   });
 
-  // The old "nothing transitions INTO awaiting_human any more" test is DELETED
-  //, not narrowed. It became structurally vacuous the moment the
-  // union lost the member — `transition` returns `PrLifecycleState`, so the
-  // comparison had no type overlap and could not fail. The stronger successor
-  // is `tests/park-retired.test.ts`, which asserts the general property the
-  // old test was one instance of: every member of the union is REACHABLE from
-  // the initial state, so a writerless member fails rather than hiding.
+  // "Nothing transitions INTO awaiting_human" is not tested here: `transition`
+  // returns `PrLifecycleState`, so such a comparison could not fail.
+  // `tests/park-retired.test.ts` asserts the general property instead: every
+  // member of the union is REACHABLE from the initial state, so a writerless
+  // member fails rather than hiding.
 
   it("an overdue round returns to the standing-verdict state and can never land on an approve state", () => {
     for (const state of STATES) {

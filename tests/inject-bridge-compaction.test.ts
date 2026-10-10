@@ -1,11 +1,11 @@
-// H1b — the inject bridge and pi's compaction.
+// The inject bridge and pi's compaction.
 //
-// 2026-10-08: seven times in one morning a wake flushed right after a verdict
-// was submitted while pi ran the post-verdict `/compact`. pi 1.0.0 refuses a
-// prompt during compaction ("Cannot submit a prompt while compaction is in
-// progress") and the extension-facing send swallows the refusal; manual
-// compaction emits no `agent_settled`, so nothing drained again, the start
-// lease ran out, and the supervisor killed a healthy, idle session.
+// pi 1.0.0 refuses a prompt during compaction ("Cannot submit a prompt while
+// compaction is in progress") and the extension-facing send swallows the
+// refusal; manual compaction emits no `agent_settled`. A wake flushed while pi
+// compacts after a verdict would therefore be lost, nothing would drain again,
+// the start lease would run out, and the supervisor would kill a healthy, idle
+// session.
 //
 // Pinned here, against a fake pi that refuses exactly as 1.0.0 does
 // (tests/helpers/fake-pi-session.ts):
@@ -14,7 +14,7 @@
 //   - the daemon's round-end compaction REQUEST runs through ctx.compact()
 //     only while nothing is in flight, and before the wakes queued behind it;
 //   - the bridge publishes the compaction in its ready receipt;
-//   - a command the daemon hands back for REDELIVERY (#5362 ③) is resubmitted
+//   - a command the daemon hands back for redelivery is resubmitted
 //     only when pi provably holds nothing of it.
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -93,10 +93,10 @@ function start(opts: { withContext?: boolean } = {}): FakePiSession {
 describe("a compaction holds the mailbox (H1b)", () => {
   it("a wake written while pi compacts is submitted only after it ends — nothing refused, nothing lost", async () => {
     const s = start();
-    s.startCompaction(); // `/compact` typed into the pane, as the daemon used to
+    s.startCompaction(); // a manual compaction, `/compact` typed into the pane
     writeAtomic(join(dir, "2026-10-08T08-52-10-0000.md"), "author reply wake");
     await sleep(150);
-    // Before the fix this was one send, refused by pi and never retried.
+    // Held, not sent: a send now would be refused by pi and never retried.
     expect(s.sends).toEqual([]);
     expect(s.refused).toEqual([]);
     expect(pending()).toHaveLength(1);
@@ -380,7 +380,7 @@ describe("redelivery into the same live session (#5362 ③, H1b)", () => {
       store.close();
     }
   });
-  // H1b review: pi reads idle through its whole prompt preflight, so
+  // pi reads idle through its whole prompt preflight, so
   // idleness alone cannot say a submission is gone. Its `input` event can:
   // pi emits it right after the compaction refusal.
   it("a submission pi took past its input stage is never resubmitted, even if it never starts", async () => {

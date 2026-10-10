@@ -262,7 +262,7 @@ describe("startEodTimer", () => {
     timer.stop();
   });
 
-  // the learner builds the day's outcomes packet in dayContext —
+  // The learner builds the day's outcomes packet in dayContext —
   // asynchronously — and answers the digest's pointer line beside the
   // curation instructions, which render as their own section.
   it("awaits an async dayContext; its curation renders as its own section, the pointer under the digest's lines", async () => {

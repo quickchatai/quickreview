@@ -1,4 +1,4 @@
-// Socket Mode is the ONLY inbound Slack transport (ratified).
+// Socket Mode is the only inbound Slack transport.
 //
 // This file turns that decision into a structural constraint rather than a
 // paragraph in a spec: the webhook server must expose exactly two things —

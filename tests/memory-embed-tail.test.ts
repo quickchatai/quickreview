@@ -1,16 +1,12 @@
-// H3 — round seeds stop running memory-less.
+// Round seeds do not run memory-less behind the case writer.
 //
-// The 2026-10-08 health check: 3 of 15 round seeds since boot (5 of 32 since
-// the profile deploy) ran with NO memory, each logging "context unreadable
-// (search transport: timeout)". In the three logged today, a case-writer
-// batch was SENT 1–3 s before the seed (08:33:38.6 → seed 08:33:39.2, both
-// backfill cases; 09:08:14.9 → 09:08:17.6, backfill again), and OpenViking
-// embeds a written batch AFTER the write returns, on the one-thread local
-// embedder: the seed's query (request 62856040) finished 8.5 s after it was
-// sent, 6 s after the daemon's 2.5 s search timeout gave up. F2's round
-// window only stops a batch STARTING once a seed has begun.
+// OpenViking embeds a written batch AFTER the write returns, on the one-thread
+// local embedder, so a case-writer batch sent a moment before a round seed
+// delays the seed's search by the batch's embedding tail. The round
+// window only stops a batch STARTING once a seed has begun; the properties
+// below cover the tail.
 //
-// The fix, one block per acceptance criterion:
+// One block per property:
 //
 //   1. With a review round running or queued, the case writer runs no
 //      backfill and no late-activity step and writes no history case; it
@@ -20,7 +16,7 @@
 //      TAIL — inside the seed's (longer) budget, never past it: the
 //      round-activity tracker, the assembly, dispatch, the OpenViking
 //      assembler's per-request bound.
-//   3. The budgets are longer, bounded and named in config.example.toml; a
+//   3. The budgets are bounded and named in config.example.toml; a
 //      search past the budget still leaves the round memory-less, logged.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -78,7 +74,7 @@ describe("RoundMemoryActivity — the case writer's embedding tail (H3)", () => 
     expect(a.embedderBusyForMs()).toBeNull();
     let waited: number | null = null;
     void a.whenEmbedderQuiet(20_000).then((ms) => (waited = ms));
-    // The write is out for 2 s (the 08:33 batch's write took 2.07 s)…
+    // The write is out for 2 s…
     await vi.advanceTimersByTimeAsync(2000);
     expect(waited).toBeNull();
     // …returns, and the server goes on embedding its two cases for ~8 s.

@@ -2,29 +2,27 @@
 // FIXED.
 //
 // A follow-up round verifies every open prior finding at the new head and
-// reports each one's status in its findings record's `prior` array
-// (stored in `prior_finding_checks`). Until this module nothing
-// acted on a `fixed`: the bot's only resolve path was ping-pong, which
-// resolves a thread when the AUTHOR REPLIES in it. An author who fixed a
-// finding with a push and no reply left the bot's thread open for good, and
-// the reviewed repo's merge rule — every conversation resolved — made a human
-// (or their agent) resolve the bot's threads by hand: #5917 round 3 verified
-// 12 of its 13 prior findings fixed, and none of their threads was resolved.
+// reports each one's status in its findings record's `prior` array (stored
+// in `prior_finding_checks`). Ping-pong resolves a thread only when the
+// author replies in it, so a finding fixed by a push with no reply would
+// otherwise keep its thread open, and the reviewed repo's merge rule (every
+// conversation resolved) would leave a human to resolve the bot's threads.
 //
 // So when a round's findings record lands, the daemon resolves the bot's own
 // root comment of every prior finding that round reported `fixed` or
-// `obsolete` (the code it was anchored on is gone) — through the adapter's ONE
+// `obsolete` (the code it was anchored on is gone) — through the adapter's one
 // resolve path, `resolveOwnReviewThread`, which reads the thread first and
 // resolves only a thread whose root the bot authored, refuses a `[check this]`
-// or `[deferred]` thread (human-only by decision), and goes
-// through the MutationGate (suppressed in dry-run like every other kind).
+// or `[deferred]` thread (both human-only to resolve; `[check this]` is
+// CLAUDE.md rule 10), and goes through the MutationGate (suppressed in
+// dry-run like every other kind).
 // `open`, `unverifiable`, `conceded` and `settled` are left alone: an open one
 // still holds, and the last two are ping-pong's and the ledger's.
 //
 // Which comment is a finding's: the outcome capture's settled link
-// (`finding_comments`, S6) for that posting, else the findings
+// (`finding_comments`) for that posting, else the findings
 // record's own `thread_id`. A finding re-posted across rounds (a carried
-// chain) has a thread per posting; the round reported its LATEST ref, and the
+// chain) has a thread per posting; the round reported its latest ref, and the
 // earlier postings' threads are resolved with it when the round's prior list
 // sidecar names them (`earlier_refs`). A thread with no known comment is
 // logged, never guessed.

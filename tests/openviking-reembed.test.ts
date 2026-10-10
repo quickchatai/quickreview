@@ -1,5 +1,4 @@
-// the embedder migration behind "the local embedder ships as the
-// default".
+// The embedder migration behind "the local embedder ships as the default".
 //
 // Three properties are acceptance criteria here, not implementation detail:
 //
@@ -18,8 +17,8 @@
 //      and nothing else — the server's confinement is what scopes it.
 //
 // The HTTP shapes below (reindex `accepted` + task polling, the collection
-// description marker, the 403 wording) were taken from a running 0.4.15 on
-// 2026-09-02, on a throwaway copy — see docs/memory-embeddings.md.
+// description marker, the 403 wording) were taken from a running 0.4.15 on a
+// throwaway copy — see docs/memory-embeddings.md.
 import {
   existsSync,
   mkdirSync,
@@ -380,7 +379,7 @@ describe("prepare — the disk half", () => {
       base: BASE,
       fetchFn: noServer,
     });
-    // The server has since created the new collection under the new embedder.
+    // The server has now created the new collection under the new embedder.
     seedStore(LOCAL);
     const again = await reembed.prepare({
       home,
@@ -1060,7 +1059,7 @@ describe("cli surface", () => {
   });
 });
 
-// S4 (the owner's ruling R5) — the SAME migration carries a store from
+// The same migration carries a store from
 // the engine's built-in Chinese-first local model (512 dims) to the local
 // English embedder (384 dims, the engine's OpenAI-compatible provider at a
 // loopback api_base). Nothing new is needed in the script but the records:

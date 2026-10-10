@@ -1,8 +1,6 @@
-// Companion sidebar — the companion is an always-visible right
-// COLUMN, not a strip above the command bar. It replaces `strip.ts`: the strip
-// bought five mirror lines by stealing seven rows from every tab, and a mirror
-// that narrow could not carry a conversation. A column pays once, vertically,
-// and the tab keeps its full height.
+// Companion sidebar — the companion is an always-visible right COLUMN, not a
+// strip above the command bar: a column pays once, vertically, the tab keeps
+// its full height, and the mirror is wide enough to carry a conversation.
 //
 // Geometry (the binding half of docs/sidebar-contract.md): the sidebar owns its
 // own LEFT border, so the inner tab Frame keeps its right border and the two
@@ -14,16 +12,16 @@
 // pi's own colors) and `-J`, through the same local DockerRunner seam the
 // lifecycle uses. Input goes back as `tmux send-keys`, never a shell string.
 //
-// THE COLUMN IS A TERMINAL (root CLAUDE.md). While focused, EVERY
+// THE COLUMN IS A TERMINAL (root CLAUDE.md). While focused, every
 // byte goes to pi — `/` commands and their menu, completion, history,
 // multi-line editing, Ctrl-C to interrupt a turn are all pi's, and running it
 // under tmux is pointless if the bytes stop here. `Ctrl-q` is the only
 // reserved one; it releases focus.
 //
-// There is deliberately NO draft/input field on this class or its view. One
-// shipped in and it was the bug: a second, worse input box in front of
-// the real one, which the mirror was already showing. If you are about to add
-// `input: string` back, you are re-introducing it — the quick-message box
+// There is deliberately NO draft/input field on this class or its view: it
+// would be a second, worse input box in front of the real one, which the
+// mirror already shows. If you are about to add `input: string`, the
+// quick-message box
 // (msg.ts) is the thing you actually want, and it is for sessions you are NOT
 // focused on.
 import type { CompanionConfig } from "../config.js";
@@ -59,8 +57,8 @@ export const SIDEBAR_BORDER = 2;
 export const SIDEBAR_MIN_WIDTH = 24;
 /** Width reserved for the tab beside the sidebar. */
 export const SIDEBAR_MIN_INNER_COLS = 64;
-/** The legacy fixed default. Hot reload used to serialize this as a user
- * preference, so one reload could pin the narrow width forever. */
+/** A former fixed default that older hot-reload snapshots serialized as if it
+ * were a user preference; `restorePreferredSidebarWidth` discards it. */
 export const LEGACY_SIDEBAR_WIDTH = 46;
 
 /** Clamp a drag request while guaranteeing usable space for the tab. */
@@ -75,15 +73,15 @@ export function defaultSidebarWidth(cols: number): number {
   return clampSidebarWidth(cols, Math.floor(cols / 2));
 }
 
-/** A width emitted by the old hot-reload snapshot was not a real operator
- * choice. Drop it so the first reload after this fix adopts the new default. */
+/** A restored width equal to LEGACY_SIDEBAR_WIDTH was not a real operator
+ * choice; drop it so the responsive default applies. */
 export function restorePreferredSidebarWidth(width: number | undefined): number | undefined {
   return width === LEGACY_SIDEBAR_WIDTH ? undefined : width;
 }
 
 /**
- * Total width the column occupies — ALWAYS its full width (2026-09-02, the
- * owner's fixed-layout order). There is no collapsed spine, no auto-collapse
+ * Total width the column occupies — always its full width (the fixed-layout
+ * decision, root CLAUDE.md). There is no collapsed spine, no auto-collapse
  * on a narrow terminal and no hidden state: the layout is the tab on the left
  * and the companion on the right, whatever the terminal width, whatever the
  * config, whatever docker says. On a terminal too narrow for both minimums the
@@ -116,17 +114,16 @@ export interface SidebarView {
   available: boolean;
   /** The companion is OFF by configuration (`--no-companion`, `[companion]
    * enabled = false`), with the reason. The column is on screen regardless
-   * (2026-09-02) — this is what it says instead of "starting up". */
+   * — this is what it says instead of "starting up". */
   off?: string;
   /** Lines above the live tail; 0 = following. */
   offset: number;
   /** Newest alerts, newest last; rendered inline under the mirror. */
   alerts: Array<{ tier: "notice" | "alert"; title: string; ts: string }>;
-  /**: bring-up progress, painted in the mirror's space while the mirror
-   * is still empty. The column is on screen from the first frame (its width is
-   * config-derived), so this is where startup reports — never the normal
-   * screen, whose lines the alt screen then erased. Optional so a bare test
-   * harness (and any legacy caller) still paints a plain mirror. */
+  /** Bring-up progress, painted in the mirror's space while the mirror is
+   * still empty. The column is on screen from the first frame, so this is
+   * where startup reports — never the normal screen, whose lines the alt
+   * screen would erase. Optional so a bare caller paints a plain mirror. */
   startup?: string[];
   /** The mirror has carried content at least once in this session. Once true
    * the bring-up checklist NEVER comes back, however empty a capture is.
@@ -336,10 +333,8 @@ export function paintSidebar(view: SidebarView, width: number, rows: number): st
 /**
  * 1-based terminal click → what the sidebar does with it. The column occupies
  * terminal columns `cols-width+1 … cols`; terminal y=r+1 paints frame row r
- * (the same convention as barHitKey). Both borders are inert chrome — the
- * top one used to be the collapse affordance until the collapse was retired
- * (2026-09-02); the left seam's DRAG is handled before this, by
- * `sidebarResizeHit`.
+ * (the same convention as barHitKey). Both borders are inert chrome; the left
+ * seam's DRAG is handled before this, by `sidebarResizeHit`.
  */
 export function sidebarHit(
   x: number,
@@ -366,8 +361,7 @@ const FAST_POLL_MS = 500;
 const SCROLL_PAD = 200;
 
 /**
- * The sidebar's state + I/O. Same discipline as the retired CompanionStrip: a
- * failed capture KEEPS the last good mirror (a transient docker hiccup must not
+ * The sidebar's state + I/O. A failed capture KEEPS the last good mirror (a transient docker hiccup must not
  * blank the panel), the fast poll runs only while focused or just after a send
  * and stops itself, and its timer is unref'd so it never holds the process up.
  *
@@ -383,7 +377,7 @@ export class CompanionSidebar {
   preferredWidth: number | undefined;
   offset = 0;
   alerts: SidebarView["alerts"] = [];
-  /**: bring-up progress lines, shown until the mirror has content. */
+  /** Bring-up progress lines, shown until the mirror has content. */
   startup: string[] = [];
   /** Set once by the orchestrator when the companion is off by configuration. */
   private off: string | undefined;
@@ -435,13 +429,11 @@ export class CompanionSidebar {
     return this.opts.available?.() ?? true;
   }
 
-  // There is no `shown()` / `enabled` any more (2026-09-02). The column is
-  // part of the layout unconditionally — `--no-companion` and `[companion]
-  // enabled = false` decide what RUNS (no container, no feed, no alerts) and
-  // what the column SAYS ("companion off"), never whether it is there. That
-  // closes the layout-jump objection for good: geometry depends on
-  // nothing that can arrive late, because it depends on nothing at all but
-  // the terminal width and the operator's own seam drag.
+  // The column is part of the layout unconditionally — `--no-companion` and
+  // `[companion] enabled = false` decide what RUNS (no container, no feed, no
+  // alerts) and what the column SAYS ("companion off"), never whether it is
+  // there. Geometry depends on nothing that can arrive late: only the
+  // terminal width and the operator's own seam drag.
 
   /** Replace the bring-up progress lines (pure state; the App repaints). */
   setStartup(lines: string[]): void {

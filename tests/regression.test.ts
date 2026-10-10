@@ -1,8 +1,8 @@
-// the regression case set. Everything here is offline: the case set
-// is a committed fixture extracted from the corpus, the replay is
+// The regression case set. Everything here is offline: the case set is a
+// committed fixture extracted from the review corpus, the replay is
 // injected, and no test executes reviewed code (scoping rule 2).
 //
-// Four properties are pinned because they are the ticket, not the code:
+// Four properties are pinned because they are the design, not the code:
 //   1. selection reads SUBSTANCE and never the GitHub verdict;
 //   2. a failure is an investigation with a recommendation, never a veto;
 //   3. dry-run is asserted by this module's own code, and an open or
@@ -343,7 +343,7 @@ describe("the run asserts dry-run in its own code", () => {
     expect(seen).toEqual([]);
   });
 
-  // Rule 1 and the safety note: the replay must not be the live daemon,
+  // Rule 1 and the corpus safety note: the replay must not be the live daemon,
   // and this module must not be able to become one.
   it("imports nothing that could reach GitHub or the daemon", () => {
     const src = readFileSync(SRC_PATH, "utf8");

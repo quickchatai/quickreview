@@ -1,4 +1,4 @@
-// (slice C3): daily rollover, opening-context assembly, and the
+// Daily rollover, opening-context assembly, and the
 // Warsaw-day alert-policy memory. No docker, no pi, no clock dependence —
 // every seam is injected and every path is a temp dir.
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -116,7 +116,7 @@ function rollover(
 // ---------------------------------------------------------------------------
 
 describe("ops-day derivation", () => {
-  // the zone is threaded from config; these pin the derivation for a
+  // The zone is threaded from config; these pin the derivation for a
   // concrete zone (Europe/Warsaw) including both DST edges.
   const TZ = "Europe/Warsaw";
 
@@ -180,9 +180,9 @@ describe("rollover decision", () => {
     });
   });
 
-  // an UNREADABLE state file is not a fresh installation. It used to
-  // decide `first-run`, which recorded today over it — so nothing rolled over,
-  // nothing was deferred, and the retry could never happen.
+  // An unreadable state file is not a fresh installation. Deciding
+  // `first-run` would record today over it — so nothing would roll over,
+  // nothing would be deferred, and the retry could never happen.
   it("an unreadable state file decides NOTHING — it is not a first run", () => {
     expect(decideRollover("2026-08-14", { state: "unreadable", reason: "torn" })).toEqual({
       kind: "unknown",
@@ -209,8 +209,8 @@ describe("rollover decision", () => {
       reason: "no usable last_open_date",
     });
 
-    // Valid JSON that is not an object at all is unreadable too — it used to
-    // throw a TypeError past the parse catch and take the companion down.
+    // Valid JSON that is not an object at all is unreadable too — never a
+    // TypeError past the parse catch that takes the companion down.
     for (const text of ["null", "42", '"2026-08-13"', "[]"]) {
       writeFileSync(p, text);
       expect(readRolloverStateFile(p).state).toBe("unreadable");
@@ -514,10 +514,10 @@ describe("the rollover sequence", () => {
     expect(readFileSync(report.dayOpenFile!, "utf8")).toContain("Good morning");
   });
 
-  // a lost `docker exec` is not an empty volume. Both reads used to
-  // return "" on failure, so the rollover archived nothing, compacted zero
-  // turns, published "nothing happened yesterday" to the companion as its
-  // opening context — and then recorded the day, so it never retried.
+  // A lost `docker exec` is not an empty volume. Reading a failure as ""
+  // would archive nothing, compact zero turns, publish "nothing happened
+  // yesterday" to the companion as its opening context — and then record the
+  // day, so it would never retry.
   describe("a lost docker exec defers the day instead of fabricating one", () => {
     /** Fails every exec whose script contains `failOn`; OK (from the table)
      * otherwise. The container-recreate race companion.ts documents. */
@@ -613,9 +613,9 @@ describe("the rollover sequence", () => {
       }
     });
 
-    //, and it GATES the two above: a torn rollover.json used to read
-    // as a fresh installation, so `record()` stamped today over it and the
-    // whole sequence — docker calls, deferral, retry — never happened.
+    // This gates the two above: a torn rollover.json read as a fresh
+    // installation would let `record()` stamp today over it, and the whole
+    // sequence — docker calls, deferral, retry — would never happen.
     it("an unreadable state file defers everything, records nothing and never re-fires the interview", async () => {
       const p = statePath();
       mkdirSync(dirname(p), { recursive: true });

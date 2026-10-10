@@ -1,4 +1,4 @@
-// Semantic truecolor theme (grill decision 2026-08-14): every lifecycle
+// Semantic truecolor theme: every lifecycle
 // state owns a hue used consistently across the list, detail, events, and
 // legend — a glance at the color tells the state without reading. Verdicts
 // and anomalies get their own fixed colors.
@@ -9,17 +9,16 @@ export const FG = {
   reviewing: rgb(97, 175, 239), // blue — the daemon is on it
   queued: rgb(140, 148, 160), // grey — waiting its turn
   awaiting_author: rgb(229, 192, 123), // yellow — ball with the author
-  // Magenta belongs to the NEEDS_HUMAN *verdict* spelling, which rounds
-  // recorded before 2026-08-18 still carry. It is not a lifecycle state:
-  // the park was retired in and removed, so `stateColor`
-  // can never reach this key.
+  // Magenta belongs to the legacy NEEDS_HUMAN *verdict* spelling that older
+  // rounds still carry. It is not a lifecycle state, so `stateColor` can
+  // never reach this key.
   needs_human: rgb(198, 120, 221),
   tracked: rgb(92, 99, 112), // dim grey — known, no live trigger
   closed: rgb(92, 99, 112),
   approve: rgb(152, 195, 121), // green
   request_changes: rgb(209, 154, 102), // orange
   anomaly: rgb(224, 108, 117), // red
-  accent: ACCENT, // the ONE accent (design.ts, §8) — titles, links, focus
+  accent: ACCENT, // the one accent (design.ts) — titles, links, focus
   text: rgb(171, 178, 191),
   dim: MUTED,
   author: rgb(152, 195, 121),
@@ -34,7 +33,7 @@ export function stateColor(state: string): string {
 export function verdictColor(verdict: string | null | undefined): string {
   if (verdict === "APPROVE") return FG.approve;
   if (verdict === "REQUEST_CHANGES") return FG.request_changes;
-  // "ESCALATE" persists in rounds recorded before 2026-08-18.
+  // "ESCALATE" is the legacy spelling older recorded rounds still carry.
   if (verdict === "NEEDS_HUMAN" || verdict === "ESCALATE") return FG.needs_human;
   return FG.dim;
 }

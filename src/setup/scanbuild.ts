@@ -1,13 +1,12 @@
-// The SCAN AGENT BUILD and the settings a scan runs with.
+// The scan agent build and the settings a scan runs with.
 //
 // A scan's leaves are the production lenses — `pass-scan` for stage 1, the
-// validator when `[scan] validator` is on (the default — Owner ruling 2026-09-30:
-// the scan validator is the SKEPTIC, composed with the `mode: "scan"`
-// `scan-skeptic-validate` addendum and run at the tier of the lens it
-// judges, so every tier's variant is built), and stage 2's deep lenses (:
-// every suggestible lens the profile leaves on, at the tier its row names) —
-// built by the ONE agent build (`src/include.ts buildAgents`) in
-// `"scan"` mode:
+// validator when `[scan] validator` is on (the default: the scan validator is
+// the skeptic, composed with the `mode: "scan"` `scan-skeptic-validate`
+// addendum and run at the tier of the lens it judges, so every tier's variant
+// is built), and stage 2's deep lenses (every suggestible lens the profile
+// leaves on, at the tier its row names) — built by the one agent build
+// (`src/include.ts buildAgents`) in `"scan"` mode:
 //
 //   * the scan-mode anchor addendum composes (`mode: "scan"` in PASS_ADDENDA)
 //     — in this build and in no other: the daemon's, the bench's and the

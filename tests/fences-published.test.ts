@@ -1,11 +1,9 @@
-// fences over the PUBLISHED surface: the shipped configs, and the
+// Fences over the published surface: the shipped configs, and the
 // manifesto's mechanically-checkable claims. See tests/fences.test.ts for the
 // three rules all of these are written under.
 //
-// This map gates publication, and the manifesto closes with "where the
-// codebase drifts from a principle, the drift is the bug". It is currently
-// referenced by `README.md` and asserted by no test at all. Two of its claims
-// can be checked by a machine; these are them.
+// The manifesto closes with "where the codebase drifts from a principle, the
+// drift is the bug". The claims of it a machine can check are checked here.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -45,14 +43,12 @@ function arrayMembers(relPath: string, name: string): string[] {
 
 describe("[T11] the shipped configs describe the system that exists", () => {
   /**
-   * `config.example.toml` is the first file a stranger reads, and [P1]
-   * found it describing the park as live — which survived every previous
-   * review precisely because the sentence's FIRST clause was true. A reader
-   * who checks the first half stops reading.
+   * `config.example.toml` is the first file a stranger reads, so it must not
+   * describe the park as live — not even in a sentence whose first clause is
+   * true, because a reader who checks the first half stops reading.
    *
-   * The park was retired 2026-08-19: a session always decides on the
-   * merits, and `awaiting_human` is unreachable. The prose in both files was
-   * corrected here; this keeps it corrected.
+   * There is no park: a session always decides on the merits, and
+   * `awaiting_human` is unreachable.
    *
    * MUTATION: put `the round parks on awaiting_human` back into a comment in
    * config.example.toml — this fails.
@@ -65,28 +61,20 @@ describe("[T11] the shipped configs describe the system that exists", () => {
   ];
 
   /**
-   * EMPTY, and that is the end state this record was written to reach.
-   *
-   * It held the two remnants that were CODE rather than prose: the
-   * `awaiting_human_stale_h` knob the config parsed and the
-   * `pr.awaiting_human_stale` Slack cause keyed on a state nothing can enter.
-   * Both shipped DISABLED and were recorded so a reader could tell them from
-   * an oversight — and so a THIRD could not appear quietly. cut both
-   * from `src/config.ts` and `src/slack/`, and the shipped configs with them.
-   *
-   * With the list empty the assertion below is now absolute: NO
-   * `awaiting_human` reference of any kind survives in a shipped config. The
-   * exemption mechanism stays for the next remnant that needs recording.
+   * Empty, which is the intended end state: with the list empty the
+   * assertion below is absolute — no `awaiting_human` reference of any kind
+   * survives in a shipped config. The exemption mechanism stays for a
+   * code remnant (a parsed knob, a Slack cause) that needs recording so a
+   * reader can tell it from an oversight.
    */
   const RETIRED_KNOBS_PENDING_REMOVAL: readonly string[] = [];
 
   /**
    * The two tracked configs, both in every tree: `config.example.toml`, the
    * file an adopter copies, and `tests/fixtures/config.toml`, the neutral copy
-   * of the live config's STRUCTURE that the suite parses (kept in lockstep
-   * with it). The operator's LIVE config.toml left the checkout with
-   * `qcr install migrate` — it is the operator's file in their
-   * config home now, and no test reads it.
+   * of the live config's structure that the suite parses (kept in lockstep
+   * with it). The operator's live config.toml lives in their config home,
+   * outside the checkout, and no test reads it.
    */
   const CONFIGS = ["config.example.toml", "tests/fixtures/config.toml"] as const;
 
@@ -96,8 +84,7 @@ describe("[T11] the shipped configs describe the system that exists", () => {
       const offenders: string[] = [];
       for (const [i, line] of lines.entries()) {
         if (RETIRED_KNOBS_PENDING_REMOVAL.some((k) => line.includes(k))) continue;
-        // A sentence that RECORDS the retirement necessarily names it.
-        // A line that RECORDS the retirement necessarily names the thing it
+        // A line that records the retirement necessarily names the thing it
         // retired, and a line that NEGATES it ("is never handed to a human")
         // says the pattern out loud in order to deny it.
         if (/\b(retired|never|no park|was |removed|no longer)\b/i.test(line)) continue;
@@ -141,15 +128,12 @@ describe("MANIFESTO.md is pinned by something", () => {
   const manifesto = () => readFileSync(join(ROOT, "MANIFESTO.md"), "utf8");
 
   /**
-   * The manifesto is PHILOSOPHY, and the owner ruled the shape (,
-   * 2026-09-02): no number of any kind, no single PR, no concrete example,
-   * no mechanism, file or knob — "the project is the implementation of
-   * those." The lens-count claim that used to drift (MC-20) is gone with the
-   * rest, and this fence is what replaced pinning it: a count, a token
-   * figure, a `src/` path or a `#5362` cannot come back without failing
-   * here. Every earlier draft rotted exactly this way — a true number at
-   * publication, false a month later — so the rule is structural, not a
-   * style note.
+   * The manifesto is philosophy: no number of any kind, no single PR, no
+   * concrete example, no mechanism, file or knob — the project is the
+   * implementation of those. A count, a token figure, a `src/` path or a PR
+   * number cannot come back without failing here, because such facts are
+   * true at publication and false a month later; the rule is structural, not
+   * a style note.
    *
    * MUTATION: write "3 of 105 rounds" or "`src/gate.ts`" anywhere in
    * MANIFESTO.md — this fails naming the line.
@@ -167,8 +151,7 @@ describe("MANIFESTO.md is pinned by something", () => {
 
   /**
    * The lens plan and the agent files still have to agree even though the
-   * manifesto no longer counts them — this is the half of the old MC-20 fence
-   * that pinned the CODE, kept because it still can fail.
+   * manifesto does not count them.
    *
    * MUTATION: add `agents/pass-extra.md` without a plan entry — this fails.
    */
@@ -183,8 +166,8 @@ describe("MANIFESTO.md is pinned by something", () => {
   });
 
   /**
-   * THE EGRESS ALLOWLIST — the assertion that makes the sovereignty claim
-   * checkable rather than merely honest (MC-24). Every hostname literal in
+   * The egress allowlist — the assertion that makes the sovereignty claim
+   * checkable rather than merely honest. Every hostname literal in
    * `src/` and the deploy/docker templates must be on this list WITH A REASON.
    *
    * That is the point of the shape: the list is not "hosts we happen to
@@ -328,11 +311,10 @@ describe("MANIFESTO.md is pinned by something", () => {
   });
 
   /**
-   * MC-27. The manifesto said what the reviewer learns "is periodically mined
-   * back into the instructions of the implementing agents". `feedback-mining`
-   * is an agent SKILL a human runs: no code path, scheduler, timer or command
-   * invokes it, and the skill's own text describes a human-run sweep. Pinning
-   * the ABSENCE is what would have caught the claim.
+   * `feedback-mining` is an agent skill a human runs: no code path,
+   * scheduler, timer or command invokes it, and the skill's own text
+   * describes a human-run sweep. Pinning the absence keeps any claim that the
+   * mining is automatic honest.
    *
    * MUTATION: add a `feedback-mining` reference to package.json — this fails.
    */

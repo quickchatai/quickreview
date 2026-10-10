@@ -1,4 +1,4 @@
-// the embedder step (src/onboard/steps/embeddings.ts) and the two
+// The embedder step (src/onboard/steps/embeddings.ts) and the two
 // route-specific writers that carry its answer to the boot.
 //
 // What is pinned: (1) calling the step with nothing confirms the LOCAL default
@@ -117,8 +117,8 @@ describe("the local default", () => {
     expect(config()).toBe(before);
   });
 
-  // the previous release REQUIRED `bge-small-zh-v1.5-f16` / 512
-  // under local. Such a config still loads (as the local English embedder),
+  // A config naming `bge-small-zh-v1.5-f16` / 512 under local (the engine's
+  // built-in model) still loads (as the local English embedder),
   // verify stays green, and confirming the default rewrites the two lines.
   it("a config from before the local English embedder still loads, and confirming local rewrites its model and dimension", async () => {
     writeFileSync(
@@ -350,7 +350,7 @@ describe("the writers that carry the answer to the boot", () => {
     expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_MODEL")).toBe("bge-small-en-v1.5-f16");
     expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_DIMENSION")).toBe("384");
     expect(readEnvKey(env, "QCR_OPENVIKING_EMBEDDING_KEY_FILE")).toBe("openai_embeddings_api_key");
-    // S4 (review): and the local embedder's port and threads — the
+    // And the local embedder's port and threads — the
     // daemon reads config.toml's, the boot renders ov.conf from these.
     expect(readEnvKey(env, "QCR_OPENVIKING_LOCAL_EMBEDDER_PORT")).toBe("1934");
     expect(readEnvKey(env, "QCR_OPENVIKING_LOCAL_EMBEDDER_THREADS")).toBe("1");

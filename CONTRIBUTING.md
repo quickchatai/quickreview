@@ -7,15 +7,16 @@ test-driven; the rules below are the ones that will actually affect your PR.
 
 ```sh
 npm ci
-npm test          # vitest, ~4000 tests, seconds — all I/O mocked, no secrets
+npm test          # vitest, 6,500+ tests, about a minute — all I/O mocked, no secrets
 npm run build     # tsc, must be clean
 ```
 
 The suite is required to stay green **offline with no secrets on a fresh
 clone** — that property is part of the spec, because a stranger's first
 command is the suite. Tests mock all I/O (fake fetch/adapters, in-memory
-SQLite, temp dirs); the only real-subprocess tests are the worktree suite
-(scratch git repo) and the shell-guard parity suite (loopback HTTP stub).
+SQLite, temp dirs); the few tests that touch the real world (scratch git
+repos, shell scripts against a loopback HTTP stub, local subprocesses) are
+listed in `tests/CLAUDE.md`.
 
 Conventions: TypeScript strict, ESM (`"type": "module"`, NodeNext — local
 imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
@@ -55,8 +56,9 @@ imports use the `.js` suffix), Node ≥ 22, minimal dependencies.
 - Keep PRs small and behaviour-focused; every behaviour change needs a test
   at the seam it changes (see `tests/CLAUDE.md` for the house test style).
 - Run `npm test && npm run build` before pushing.
-- Reference the issue you're addressing. FT-#### ids you'll find in comments
-  are the project's internal design-history citations
+- Reference the issue you're addressing. FT-#### ids you'll find in test
+  names, data strings and commit messages are the project's internal
+  design-history citations
   ([docs/provenance.md](docs/provenance.md)) — you don't need them for new
   work.
 

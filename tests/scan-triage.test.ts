@@ -1,4 +1,4 @@
-// Scan triage and scan memory (FT-0463; setup & scan spec "Findings" and
+// Scan triage and scan memory (setup & scan spec "Findings" and
 // "Scan memory", seam 3) driven the engine way: an in-memory MemoryStore, a
 // FAKE tracker sink recording what it was asked, the findings store over a
 // temp state home through the real rooted state port — and, end to end, a

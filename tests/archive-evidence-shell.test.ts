@@ -1,4 +1,4 @@
-// the evidence copier's archive fallback, run for real
+// The evidence copier's archive fallback, run for real
 // (acceptance 5): the listing and fetch scripts the copier sends to the VM run
 // under `sh` here, against a PR the real archiver archived — so `ls -1t` on
 // the archived gzips (their mtimes kept at the originals'), the `grep -v` that

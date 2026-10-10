@@ -1,34 +1,33 @@
 #!/usr/bin/env node
-// OpenViking boot provisioning — the users that make `api_key` mode
-// mean something.
+// OpenViking boot provisioning — the users that make `api_key` mode mean
+// something.
 //
-// WHY THIS EXISTS
+// Why this exists
 // ---------------
-// Until the deployed server ran `auth_mode: "dev"`, which bypasses
-// authentication on loopback. The whole two-user design (rule 8) rests on the
-// server CONFINING each USER key to its own tree, so in dev mode the
-// confinement was nominal: a reviewer-scoped search returned another user's
-// content on 2026-08-20. `api_key` mode is the ratified posture — and it only
-// works if the users exist and hold the keys we distributed.
+// The two-user design (CLAUDE.md rule 8) rests on the server CONFINING each
+// USER key to its own tree. `auth_mode: "dev"` bypasses authentication on
+// loopback, which makes that confinement nominal; `api_key` mode is the
+// required posture, and it only works if the users exist and hold the keys
+// that were distributed.
 //
-// WHAT IT DOES, AND WHAT IT DELIBERATELY DOES NOT
+// What it does, and what it deliberately does not
 // ------------------------------------------------
 //   * ENSURES the users exist: created if absent, LEFT EXACTLY ALONE if
 //     present. Re-running is a no-op; a restored state volume keeps its users.
 //   * VERIFIES the reviewer key from the secrets mount actually authenticates,
 //     and says so in the boot log when it does not.
-//   * REPORTS what it found in `state/openviking/provision.json` (S1):
-//     the daemon reads it at boot, carries it in status.json `memory`, and
-//     wakes `memory_provision_failed` on a failure or a user it had to create.
-//     The boot log alone reached nobody.
+//   * REPORTS what it found in `state/openviking/provision.json`: the daemon
+//     reads it at boot, carries it in status.json `memory`, and wakes
+//     `memory_provision_failed` on a failure or a user it had to create, so a
+//     failure reaches a person rather than only the boot log.
 //   * NEVER ROTATES, and never mints a key for a user that already has one. A
 //     rotation would orphan the key already distributed to the companion's PC
-//     (and to this container's secrets mount) — the exact "must not orphan or
-//     rotate them" the ticket forbids.
+//     (and to this container's secrets mount).
 //   * NEVER WRITES A COMPANION KEY ANYWHERE ON THIS MACHINE. The companion key
-//     is minted once by a human, in the deploy window, and goes straight to his
-//     PC (docs/companion-memory-access.md). A container that stored it would be
-//     handing every review session the reach confinement exists to deny.
+//     is minted once by the operator, in the deploy window, and goes straight
+//     to the operator's PC (docs/companion-memory-access.md). A container that
+//     stored it would be handing every review session the reach confinement
+//     exists to deny.
 //
 // THE ROOT KEY
 // ------------
@@ -42,18 +41,17 @@
 // MEMORY NEVER BLOCKS THE BOOT. Every failure here is a log line, a report
 // line and exit 0: an unprovisioned server means memory degrades (401s, which
 // the daemon's memory health monitor turns into a wake and a TUI banner),
-// never a reviewer that does not come up. `--strict` (tests, manual runs) is the only way to get a
-// non-zero exit.
+// never a reviewer that does not come up. `--strict` (tests, manual runs) is
+// the only way to get a non-zero exit.
 //
-// MINTING lives here too, and is NOT part of the boot path.
-// `main()` below never mints: the boot container ensures users and verifies the
-// reviewer key, exactly as before. The onboarding wizard
-// (`src/onboard/steps/memory.ts`) imports `mintRootKey` / `mintUserKeys` to
-// close the documented "mint one, once" gap with an actual command. The mint
-// helpers are PURE of the filesystem — they generate a value or ask the server
-// for one and RETURN it; where each key may be written is the step's business,
-// and the confinement rules there are absolute (root + reviewer into the
-// daemon-side secrets, the companion key ONLY into the operator's key file).
+// MINTING lives here too, and is NOT part of the boot path. `main()` below
+// never mints: the boot container ensures users and verifies the reviewer key.
+// The onboarding wizard (`src/onboard/steps/memory.ts`) imports `mintRootKey` /
+// `mintUserKeys` to mint keys once, by command. The mint helpers are PURE of
+// the filesystem — they generate a value or ask the server for one and RETURN
+// it; where each key may be written is the step's business, and the
+// confinement rules there are absolute (root + reviewer into the daemon-side
+// secrets, the companion key ONLY into the operator's key file).
 // Minting is idempotent by construction: a user that already exists keeps the
 // key it already has (read back from the admin listing), and nothing here ever
 // rotates one.
@@ -88,10 +86,10 @@ export const DEFAULTS = {
 
 // ---- admin surface ----------------------------------------------------------
 //
-// Verified to EXIST against a running 0.4.15 (triage): the account
-// user routes below. Their request/response BODIES are the adjustable part —
-// everything that reads a response goes through the tolerant helpers here, and
-// anything unrecognised is INCONCLUSIVE, never a silent success.
+// Verified to EXIST against a running 0.4.15: the account user routes below.
+// Their request/response BODIES are the adjustable part — everything that
+// reads a response goes through the tolerant helpers here, and anything
+// unrecognised is INCONCLUSIVE, never a silent success.
 
 export function adminUsersPath(account) {
   return `/api/v1/admin/accounts/${encodeURIComponent(account)}/users`;
@@ -119,8 +117,8 @@ export function usersFromListing(body) {
   const candidates = [body, body?.data, body?.result].filter((c) => c && typeof c === "object");
   // The live 0.4.15 answers `{status:"ok", result:[...]}` — the envelope's
   // `result`/`data` IS the array, not an object carrying one (verified against
-  // the deployed server, 2026-08-25; the miss made boot provisioning refuse to
-  // create anything, correctly but uselessly).
+  // the deployed server). Missing it reads every listing as unreadable, and
+  // provisioning then creates nothing.
   let list = Array.isArray(body)
     ? body
     : Array.isArray(body?.result)
@@ -156,7 +154,7 @@ export function usersFromListing(body) {
  * user → key out of a listing, when the listing carries keys.
  *
  * A root/admin listing answers each user with its key in plaintext (verified
- * against 0.4.15, asset 17). That is what makes minting idempotent
+ * against 0.4.15). That is what makes minting idempotent
  * WITHOUT rotating: a user that already exists hands its existing key back, so
  * the wizard can distribute it instead of issuing a second one. Tolerant of the
  * same envelope/item shapes as `usersFromListing`; users whose item carries no
@@ -337,7 +335,7 @@ export async function createUser({
     fetchFn,
     `${base}${adminUsersPath(account)}`,
     // role is lowercase on the live 0.4.15: uppercase gets INVALID_ARGUMENT
-    // "Account user role must be user or admin" (verified 2026-08-25).
+    // "Account user role must be user or admin".
     {
       method: "POST",
       headers: adminHeaders(rootKey),
@@ -359,8 +357,7 @@ export async function createUser({
 /**
  * Ensure every wanted user exists and RETURN the key each one holds.
  *
- * The mint capability the "mint one, once" docs described and no command
- * implemented. Idempotent by construction, in three layers:
+ * The wizard's mint capability. Idempotent by construction, in three layers:
  *
  *   * a user that exists keeps its key — read back from the admin listing,
  *     never re-issued (a rotation orphans the copy already distributed to the
@@ -456,7 +453,7 @@ export async function probeKey({
   timeoutMs = DEFAULTS.requestTimeoutMs,
 }) {
   // Namespace in the URI — the server confines by URI, not by the header
-  // (verified live 2026-08-25; see PATHS.readUri in the forward).
+  // (verified live; see PATHS.readUri in the forward).
   const url = `${base}${PATHS.read(env)}?uri=${encodeURIComponent(PATHS.readUri(env, user))}`;
   const r = await call(
     fetchFn,
@@ -520,7 +517,7 @@ export function readyCheckOk(v) {
 
 /**
  * Is a `/ready` answer the server saying it is up in every respect BUT its
- * embedder (S4)? The failing `embedding` check's text, or null. The
+ * embedder? The failing `embedding` check's text, or null. The
  * engine is then initialized, its filesystem, vector store and key manager
  * answer — everything provisioning's admin API needs, none of which embeds.
  *
@@ -576,7 +573,7 @@ export async function waitForProvisionable({
   }
 }
 
-// ---- the local English embedder (S4) --------------------------------
+// ---- the local English embedder ---------------------------------------------
 //
 // Under `embedding_provider = "local"` the server embeds through an
 // OpenAI-compatible service on loopback (scripts/openviking-embedder.py), and
@@ -794,8 +791,7 @@ export async function provision({
     failed: [],
     reviewer: "skipped",
     ok: true,
-    // every failure as a sentence, for the report file the daemon
-    // reads — the boot log alone reached nobody.
+    // Every failure as a sentence, for the report file the daemon reads.
     errors: [],
   };
   const fail = (line) => {
@@ -835,7 +831,7 @@ export async function provision({
   // The reviewer key is the ONE client credential this container may hold. We
   // check that it works; we never mint or replace it — issuing keys is a human
   // step in the deploy window, precisely because a minted key has to reach
-  // the owner's PC and must not be written anywhere a review session can read.
+  // the operator's PC and must not be written anywhere a review session can read.
   if (reviewerKey) {
     const probe = await probeKey({ base, key: reviewerKey, user: reviewerUser, fetchFn, env });
     report.reviewer = probe.classification;
@@ -855,12 +851,12 @@ export async function provision({
   return report;
 }
 
-// ---- the report file (S1) ---------------------------------------------
+// ---- the report file --------------------------------------------------------
 //
 // What this run found, for the DAEMON to read at boot (src/openviking/
 // provisionreport.ts → status.json `memory.provision`, and a
-// `memory_provision_failed` wake on a failure or a recreated user). The boot
-// log said all of this before and reached nobody. Never carries a key.
+// `memory_provision_failed` wake on a failure or a recreated user). Never
+// carries a key.
 
 /** Where the report goes by default: `<sandbox>/state/openviking/provision.json`
  * — the daemon resolves the same path from its own root, so neither entrypoint
@@ -940,9 +936,9 @@ export function parseArgs(argv, env = process.env) {
     port,
     readyTimeoutMs: Number(flags.get("ready-timeout-ms") ?? DEFAULTS.readyTimeoutMs),
     strict: flags.has("strict"),
-    // where the report lands; default beside the daemon's state.
+    // Where the report lands; default beside the daemon's state.
     reportPath: flags.get("report") ?? env.QCR_OV_PROVISION_REPORT ?? provisionReportPath(),
-    // the local embedder the server's `/ready` depends on — a
+    // The local embedder the server's `/ready` depends on — a
     // spec, `null` (hosted: nothing to run) or an error string.
     embedder: embedderSpecFromFlags(flags),
   };
@@ -955,9 +951,9 @@ export const SERVER_STOP_GRACE_MS = 5000;
  * Stop the temporary server child WITHOUT ever wedging the boot: SIGTERM,
  * a bounded wait, then SIGKILL — and the child is unref'd, so even a process
  * that somehow survives SIGKILL (e.g. stuck in uninterruptible IO) cannot keep
- * the node event loop alive. Before this existed, a server that trapped
- * SIGTERM kept node alive forever and the entrypoint's `|| true` never fired
- * because node never exited: the container boot hung.
+ * the node event loop alive. An unbounded wait on a server that traps SIGTERM
+ * would keep node alive forever, and the entrypoint's `|| true` only fires
+ * once node exits: the container boot would hang.
  *
  * Returns what happened, for tests and the boot log: "absent",
  * "already-exited", "terminated" (exited within the grace) or "killed".
@@ -979,12 +975,11 @@ export async function stopServerChild(child, { graceMs = SERVER_STOP_GRACE_MS } 
       clearTimeout(timer);
       resolve(true);
     };
-    // The grace timer is deliberately NOT unref'd (S4): with the child
-    // unref'd, nothing else holds the event loop, and node used to exit
-    // mid-await — so the NEXT stop (the embedder, after the server) never sent
-    // its SIGTERM and the boot left an unsupervised embedder on the daemon's
-    // port. A ref'd timer holds node for at most `graceMs`, so it still cannot
-    // wedge the boot; the child itself stays unref'd for a SIGKILL survivor.
+    // The grace timer is deliberately NOT unref'd: with the child unref'd,
+    // nothing else holds the event loop, so node would exit mid-await and the
+    // NEXT stop (the embedder, after the server) would never send its SIGTERM,
+    // leaving an unsupervised embedder on the daemon's port. A ref'd timer
+    // holds node for at most `graceMs`, so it still cannot wedge the boot; the child itself stays unref'd for a SIGKILL survivor.
     const timer = setTimeout(() => {
       child.removeListener?.("exit", onExit);
       resolve(false);
@@ -1003,7 +998,7 @@ export async function stopServerChild(child, { graceMs = SERVER_STOP_GRACE_MS } 
 async function main(argv) {
   const cfg = parseArgs(argv);
   const log = (line) => console.log(line);
-  // what the local embedder did, carried into EVERY report — so a
+  // What the local embedder did, carried into EVERY report — so a
   // person reading it (status.json `memory.provision`) learns the embedder
   // failed, never only that something downstream did.
   /** @type {string[]} */

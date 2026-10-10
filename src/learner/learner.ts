@@ -1,5 +1,5 @@
-// The LEARNER (S8): candidates in, curated lessons out, and a person
-// told when the curation did not happen.
+// The learner: candidates in, curated lessons out, and a person told when the
+// curation did not happen.
 //
 // The loop, daemon-side and deterministic up to the curator's own judgement:
 //
@@ -7,12 +7,12 @@
 //      the operator's word (`qcr lessons mine`): every human outcome becomes a
 //      row of `lesson_candidates`, deduplicated by a deterministic ref, with a
 //      class. The first mine also turns the digests' lost "Learnings" into
-//      candidates (`source = digest-backfill`), and — by the owner's ruling
-//      R6 — a post-approval recheck's APPROVE → REQUEST_CHANGES reversal is
-//      one too (`source = recheck`): the reviewer's OWN conclusion, labelled
-//      so, offered after every other source.
+//      candidates (`source = digest-backfill`), and a post-approval recheck's
+//      APPROVE → REQUEST_CHANGES reversal is one too (`source = recheck`): the
+//      reviewer's own conclusion, labelled so, offered after every other
+//      source.
 //   2. PACKET (src/learner/packet.ts) — at the day's EOD fire: candidates
-//      first offered more than `lessons_expiry_ops_days` ago are EXPIRED
+//      first offered more than `lessons_expiry_ops_days` ago are expired
 //      (recorded on the row, in an event, and in the packet's own list — never
 //      silent); up to `lessons_packet_new_max` queued ones are offered for the first
 //      time; every undecided offered candidate is carried forward. Clustered
@@ -29,9 +29,9 @@
 //      reads healthy; a claimed lesson memory does not hold, or a refused
 //      write, wakes `eod_lessons_not_persisted` and puts the candidate back
 //      in the packet. No receipt `lessons_receipt_wait_min` after the sweep
-//      was delivered wakes `eod_curation_missing`. Both are WAKE kinds and
+//      was delivered wakes `eod_curation_missing`. Both are wake kinds and
 //      ride status.json `memory.curation` — the board banner, the desktop
-//      notification and `qcr status` (the S1 person-reaching path).
+//      notification and `qcr status`.
 //
 // Also measured: the look-for : don't-raise balance of the lessons in force
 // (`lessonBalance`), the learner's health metric.
@@ -101,7 +101,7 @@ export interface LearnerConfig {
   lessons_receipt_wait_min: number;
   /** An offered candidate undecided this many ops days expires (recorded). */
   lessons_expiry_ops_days: number;
-  /** At most this many candidates are offered for the FIRST time per packet;
+  /** At most this many candidates are offered for the first time per packet;
    * the rest wait (queued) for a later one. Carried candidates are never
    * capped. */
   lessons_packet_new_max: number;
@@ -168,11 +168,11 @@ export interface LearnerDeps {
   /** Post-merge recall (the base clone). Absent ⇒ that source is skipped. */
   git?: RecallGit;
   /** The lessons in force. Absent (memory switched off) ⇒ coverage and the
-   * balance read UNKNOWN and no adoption is ever verified. */
+   * balance read unknown and no adoption is ever verified. */
   lessons?: LessonSource;
   /** Memory health: verification and coverage read memory only while true. */
   healthy?: () => boolean;
-  /** Raise a WAKE anomaly (wire.ts: `store.logAnomaly(kind, null, null,
+  /** Raise a wake anomaly (wire.ts: `store.logAnomaly(kind, null, null,
    * detail, message)`). */
   wake?: (kind: string, detail: string, message: string) => void;
   now?: () => Date;
@@ -322,12 +322,14 @@ export interface MineReport {
   added_by_source: Partial<Record<CandidateSource, number>>;
   recall: { scanned: number; unknown: number } | null;
   digest: { files: number; absent: number; unreadable: number; added: number } | null;
-  /** Undecided fate candidates re-read against S6 as it stands: revised in
-   * place, withdrawn (their fate is no longer a candidate's, or their chain's
-   * root changed), and withdrawn ones reinstated. */
+  /** Undecided fate candidates re-read against the outcome capture as it
+   * stands: revised in place, withdrawn (their fate is no longer a
+   * candidate's, or their chain's root changed), and withdrawn ones
+   * reinstated. */
   fates: { revised: number; withdrawn: number; reinstated: number };
   /** Undecided feedback / tagged-comment candidates whose finding link (and
-   * so class, lens and anchor) S6 made or moved since they were minted. */
+   * so class, lens and anchor) the outcome capture made or moved since they
+   * were minted. */
   relinked: number;
   errors: string[];
 }
@@ -503,9 +505,9 @@ export class Learner {
     run("feedback", () => mineFeedback(this.store, since));
     run("tagged comments", () => mineTaggedComments(this.store, since));
     run("human recall", () => mineHumanRecall(this.store, since, this.deps.botLogin));
-    // The recheck's own APPROVE → REQUEST_CHANGES reversals — the REVIEWER's
-    // conclusion, a candidate only by the owner's ruling R6, gated on a
-    // standing APPROVE and one per (PR, head) (miner.ts header).
+    // The recheck's own APPROVE → REQUEST_CHANGES reversals — the reviewer's
+    // conclusion, so a candidate only, gated on a standing APPROVE and one per
+    // (PR, head) (miner.ts header).
     run("recheck reversals", () => mineRecheckFlips(this.store, since));
     if (this.deps.git) {
       try {
@@ -562,13 +564,12 @@ export class Learner {
 
   /**
    * An undecided `[feedback]` reply, tagged comment or deleted bot comment
-   * takes its class, lens and anchor from S6's link of the bot comment it
-   * answered — a link the reconcile sweep or the case backfill may make only
-   * AFTER the candidate was mined, which left it `feedback.general` with no
-   * lens for good (`INSERT OR IGNORE` never revisits a row; integration
-   * review: 11 of 14 live `feedback.general` replies answered a comment
-   * linked later). Every mine re-derives them from today's drafts, as
-   * `reviseFates` does for fates. Decided candidates are history.
+   * takes its class, lens and anchor from the outcome capture's link of the
+   * bot comment it answered — a link the reconcile sweep or the case backfill
+   * may make only after the candidate was mined, and `INSERT OR IGNORE` never
+   * revisits a row, so it would stay `feedback.general` with no lens for good.
+   * Every mine re-derives them from today's drafts, as `reviseFates` does for
+   * fates. Decided candidates are history.
    */
   private relink(drafts: readonly CandidateDraft[]): number {
     const stmt = this.store.db.prepare(
@@ -610,10 +611,9 @@ export class Learner {
 
   /**
    * Post-merge recall between mines (`RECALL_SCAN_LIMITS.prsPerTick` PRs and
-   * `budgetMs` a tick): the day's mine alone read ten merged PRs a day
-   * against ~8 bot-approved merges a day and a first-deploy backlog in the
-   * hundreds. Git only, read-only; what it finds is inserted at once and
-   * offered by the next packet. Never throws.
+   * `budgetMs` a tick): the day's mine alone reads too few merged PRs to keep
+   * up with the merge rate or drain a backlog. Git only, read-only; what it
+   * finds is inserted at once and offered by the next packet. Never throws.
    */
   private async recallStep(): Promise<void> {
     if (!this.deps.git) return;
@@ -641,15 +641,16 @@ export class Learner {
   }
 
   /**
-   * Re-read the undecided fate candidates against S6's outcomes as they stand
-   * (`reviewFateCandidates`): S6 re-decides a fate on every capture and may
-   * join a posting to an earlier chain later, so a candidate minted once is
-   * never trusted as written. One whose chain still holds a candidate fate is
-   * REVISED in place (its kind, polarity and summary follow the fate); one
-   * that no longer does is WITHDRAWN — recorded on the row, in an event and in
-   * the mine's report, never deleted; and a withdrawn one whose chain holds a
-   * candidate fate again is REINSTATED (its ref is the same, so the mine's
-   * insert could not bring it back). Queued and offered candidates alike; a
+   * Re-read the undecided fate candidates against the outcome capture's
+   * outcomes as they stand (`reviewFateCandidates`): the capture re-decides a
+   * fate on every pass and may join a posting to an earlier chain later, so a
+   * candidate minted once is never trusted as written. One whose chain still
+   * holds a candidate fate is revised in place (its kind, polarity and summary
+   * follow the fate); one that no longer does is withdrawn — recorded on the
+   * row, in an event and in the mine's report, never deleted; and a withdrawn
+   * one whose chain holds a candidate fate again is reinstated (its ref is
+   * the same, so the mine's insert could not bring it back). Queued and
+   * offered candidates alike; a
    * decided one is history and is left as it is.
    */
   private reviseFates(sinceIso: string): MineReport["fates"] {
@@ -673,7 +674,7 @@ export class Learner {
       d.quote,
       JSON.stringify(d.evidence),
       // The event's time moves only with its fate: a recurrence window
-      // counts the human outcome, not S6's re-reading of it.
+      // counts the human outcome, not the capture's re-reading of it.
       d.kind !== c.kind ? d.occurred_at : c.occurred_at,
     ];
     db.transaction(() => {
@@ -755,7 +756,7 @@ export class Learner {
 
   /** Per class, the candidates whose event fell in the window, whatever
    * became of them — offered, queued, decided or expired — except the
-   * WITHDRAWN (minted from an outcome that has since changed). */
+   * withdrawn (minted from an outcome that has since changed). */
   private recurrence(sinceIso: string): Map<string, number> {
     return new Map(
       (
@@ -856,9 +857,8 @@ export class Learner {
         after_ops_days: this.cfg.lessons_expiry_ops_days,
       });
     // Offer: queued candidates, look-for first, up to the day's cap — the
-    // reviewer's own recheck reversals (R6) after EVERY other source, so its
-    // own conclusions never queue a person's outcome behind them (the
-    // integration review's 37-of-40 first packet).
+    // reviewer's own recheck reversals after every other source, so its own
+    // conclusions never crowd a person's outcome out of the packet.
     const offeredToday = (
       db.prepare("SELECT COUNT(*) AS n FROM lesson_candidates WHERE offered_day = ?").get(day) as {
         n: number;
@@ -928,8 +928,8 @@ export class Learner {
       expires_after: addDays(clockDay(c), this.cfg.lessons_expiry_ops_days - 1),
       new: c.offered_day === day,
     });
-    // A PARTIAL read proves nothing absent: the lessons it found do cover the
-    // class, but "none found" is UNKNOWN, and a balance over part of memory
+    // A partial read proves nothing absent: the lessons it found do cover the
+    // class, but "none found" is unknown, and a balance over part of memory
     // is no balance at all.
     const coverage = (cls: string, lensIds: readonly string[]): string[] | null => {
       if (!read) return null;
@@ -949,7 +949,7 @@ export class Learner {
         candidates: rows.map(toPacket),
       };
     });
-    // The reviewer's own recheck reversals (R6) after every other cluster —
+    // The reviewer's own recheck reversals after every other cluster —
     // the same demotion as the first offer, because a busy reversal class
     // would otherwise lead the packet on recurrence alone; then misses first,
     // then the busiest classes.
@@ -1051,16 +1051,16 @@ export class Learner {
   /**
    * Apply a validated `eod-curation-receipt`. All or nothing: a day with no
    * packet, a candidate id the learner never minted, or one that day's packet
-   * did not OFFER, refuses the whole receipt (the curator fixes it and writes
+   * did not offer, refuses the whole receipt (the curator fixes it and writes
    * it again) — a receipt decides what its packet put in front of the
-   * curator, never a queued candidate nobody showed it (integration review,
-   *). `adopted` waits for memory to show the lesson (`adopting`);
+   * curator, never a queued candidate nobody showed it. `adopted` waits for
+   * memory to show the lesson (`adopting`);
    * `declined` is final; `refused` keeps the candidate open and wakes
    * `eod_lessons_not_persisted` at once. A candidate already settled since
    * the packet — adopted (memory showed its lesson), withdrawn or expired —
    * keeps its status whatever the receipt says: memory's evidence and the
-   * learner's own record outrank a later claim (only `refused`, as before,
-   * re-opens an expired one, with a fresh clock).
+   * learner's own record outrank a later claim (only `refused` re-opens an
+   * expired one, with a fresh clock).
    */
   applyReceipt(receipt: CurationReceipt): FileOutcome {
     const row = this.curation(receipt.day);
@@ -1275,9 +1275,9 @@ export class Learner {
 
   /**
    * Check adoptions against memory (only while it reads healthy): a lesson
-   * in `experiences/` whose typed header cites a candidate ADOPTS it — with or
+   * in `experiences/` whose typed header cites a candidate adopts it — with or
    * without a receipt. An `adopting` candidate whose receipt is older than the
-   * grace, with memory read in full and no lesson citing it, was NOT
+   * grace, with memory read in full and no lesson citing it, was not
    * persisted: it goes back to open and wakes. A partial read proves nothing
    * absent.
    */
@@ -1351,7 +1351,7 @@ export class Learner {
     for (const [day, items] of missingByDay) this.notPersisted(day, items);
   }
 
-  /** A candidate DECIDED since leaves the not-persisted lists it was on: the
+  /** A candidate decided since leaves the not-persisted lists it was on: the
    * lesson landed after all (adopted — a retry, the next day's curation), or
    * the curator declined it, or it expired (recorded) or was withdrawn. What
    * stays on a list is still a lesson nobody has made good. */
@@ -1397,10 +1397,10 @@ export class Learner {
    * Every curation failure not made good since, newest first, over the last
    * `UNRESOLVED_SCAN_DAYS` curation days: a `missing` day (the sweep
    * delivered, candidates offered, no receipt within the wait) until it or a
-   * LATER day is receipted — its candidates rode the later packet, so that
+   * later day is receipted — its candidates rode the later packet, so that
    * receipt decided them or carried them on — and a `not_persisted` day until
    * every candidate on its list is decided (`pruneNotPersisted`). The next
-   * day's packet does NOT resolve either: a failure stays in front of a
+   * day's packet does not resolve either: a failure stays in front of a
    * person until something made it good.
    */
   private unresolved(): UnresolvedCuration[] {
@@ -1458,7 +1458,7 @@ export class Learner {
     return out;
   }
 
-  /** The curation for status.json: the newest UNRESOLVED failure when there
+  /** The curation for status.json: the newest unresolved failure when there
    * is one (a missed day stays reported after the next packet is written),
    * else the latest day's. */
   status(): CurationStatus {

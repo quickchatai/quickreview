@@ -1,4 +1,4 @@
-// The RATIFIED Slack message templates (S4, annex §1-2).
+// The Slack message templates. The wording is fixed, not model-written.
 //
 // Pure functions, zero I/O: every announcement the daemon can make is rendered
 // here from data the daemon already has, so the wording is testable byte for
@@ -51,9 +51,6 @@ export function userRef(cfg: Config, githubLogin: string): string {
   }
   return escapeMrkdwn(login);
 }
-
-// escalationRef() was removed on 2026-08-18: there is no nominated escalation
-// reviewer any more. Parked PRs are addressed to the owner, via ownerRef().
 
 /** The owner — by mention when their Slack id is configured, by configured
  * name otherwise, and by the neutral role when neither is set. */
@@ -180,10 +177,6 @@ export function reRoundMessage(m: {
 }): string {
   return `🔄 round ${m.round_no} started — ${reRoundReasonText(m.reason)} (\`${shortSha(m.head_sha)}\`)`;
 }
-
-// escalationWorthyMessage() and its pre-flag line were removed on 2026-08-18:
-// the daemon no longer scores PRs for escalation-worthiness, so there is
-// nothing to pre-announce.
 
 /**
  * A newer round replaced an older one. WORDING IS LOAD-BEARING: no approval and

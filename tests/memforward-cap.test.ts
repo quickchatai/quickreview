@@ -1,12 +1,10 @@
-// F1 — the memory forward caps its concurrent relays under the ssh
-// session limit.
+// The memory forward caps its concurrent relays under the ssh session limit.
 //
-// The defect (2026-10-07): every accepted connection spawned its own relay —
-// one ssh SESSION on the forward's one shared connection — and the VM's
-// sshd refuses sessions past `MaxSessions` (10). The store's 8-way read sweep
-// beside the TUI's polls went over it, the extra sessions were refused, and
-// `qcr memory relayout` saw `fetch failed`. Pinned here, all on fake relays
-// (no ssh, no docker — PassThrough streams standing in for a child's stdio):
+// Each relay is one ssh SESSION on the forward's one shared connection, and
+// sshd refuses sessions past `MaxSessions` (10); an uncapped forward under the
+// store's 8-way read sweep beside the TUI's polls goes over it and requests
+// fail. Pinned here, all on fake relays (no ssh, no docker — PassThrough
+// streams standing in for a child's stdio):
 //
 //   * never more than `maxRelays` relays open at once, every request answered
 //     with its OWN response;
@@ -524,7 +522,7 @@ describe("the relay cap (F1)", () => {
     // A full relay stdin pauses the client's socket until that relay drains,
     // and a relay that answered and exited never drains. Without a resume the
     // connection's next request would be neither read nor queued: a silent
-    // hang where, before F1, the client at least saw a close.
+    // hang.
     const r = relays({ stuckStdin: true });
     const { port } = await start({ maxRelays: 2 }, r);
     const a = new Client(port);

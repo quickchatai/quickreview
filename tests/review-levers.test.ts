@@ -1,4 +1,4 @@
-// The benchmark-driven review levers (bench/aacr/RESULTS.md, 2026-09-26):
+// The benchmark-driven review levers (bench/aacr/RESULTS.md):
 // one reasoning-effort setting, per-run bench config levers, the
 // content-triggered sub-lenses, the per-file sweep, their place in the pass
 // plan and its rendering, and the validator's restate-don't-kill rule.
@@ -35,8 +35,8 @@ import type { PrStateRow } from "../src/state.js";
 const fixture = readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8");
 const baseCfg: Config = parseConfig(fixture);
 // The shipped pins (DEFAULT_PASS_TIERS: baseline, sweep and behaviour-delta at
-// sol-high, owner decision 2026-10-03) are cleared here: these tests exercise the
-// UNPINNED tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
+// sol-high) are cleared here: these tests exercise the
+// unpinned tier heuristics; the pins themselves are pinned in lens-knobs.test.ts.
 baseCfg.models.pass_tiers = {};
 
 function withLevers(over: Partial<Config["review"]>): Config {
@@ -585,7 +585,7 @@ describe("validator: restate, don't kill", () => {
   });
 });
 
-// ---- ------------------------------------------------------
+// ---- the tests lens and the one-region rule ---------------------------------
 
 describe("the tests lens", () => {
   it("is planned on every PR that changes code, and only then", () => {

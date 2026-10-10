@@ -1,4 +1,4 @@
-// FT-0546 S1 — a memory outage REACHES A PERSON through the TUI, from
+// A memory outage reaches a person through the TUI, from
 // status.json and never from OpenViking: the board-level banner, the desktop
 // notification through the existing alert pipeline, ONE issue-tracker ticket
 // for an incident older than 2 h, and the companion's view. Temp dirs, fake
@@ -414,7 +414,7 @@ describe("the companion's view.json carries the block (null when unread)", () =>
   });
 });
 
-// ---- memory that answers but cannot search (FT-0546 S4 review) ---------------
+// ---- memory that answers but cannot search ----------------------------------
 
 describe("memory that answers but does not serve search reaches every surface", () => {
   const notServing = (over: Partial<MemoryStatus> = {}): MemoryStatus =>
@@ -534,7 +534,7 @@ describe("the TUI counts its own OpenViking requests per user/op", () => {
   });
 });
 
-// ---- FT-0546 S8: the day's EOD curation reaches a person the same way ---------
+// ---- the day's EOD curation reaches a person the same way -------------------
 
 describe("the EOD curation (status.json memory.curation) reaches a person", () => {
   const curation = (over: Partial<CurationStatus> = {}): CurationStatus => ({

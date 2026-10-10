@@ -1,13 +1,11 @@
 // The single GitHub mutation gate. Every write to GitHub — REST, GraphQL or
 // git push — is described as a MutationIntent and passed through execute().
-// In dry-run (config.dry_run, the default until cutover) the intent is written
-// to state/dryrun/ instead of being executed. There is deliberately no
-// review-dismissal intent kind: the never-dismiss invariant is structural.
+// In dry-run (config.dry_run) the intent is written to state/dryrun/ instead
+// of being executed. There is deliberately no review-dismissal intent kind:
+// the never-dismiss invariant is structural (CLAUDE.md rule 2).
 //
-// "or git push" is load-bearing and was NOT true until: the improvement
-// branch push consulted the gate only in dry-run. It is true now — a git intent
-// carries a `GitPerformer` (see below) and the gate, not the call site, decides
-// whether it runs.
+// A git push is gated too: a git intent carries a `GitPerformer` (see below)
+// and the gate, not the call site, decides whether it runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -15,9 +13,9 @@ export type MutationKind =
   | "add_label"
   | "remove_label"
   | "delete_team_review_request"
-  // Reviewer nomination, returned 2026-08-31 as the optional escalation
-  // feature's second delivery shape (ratified rule-10 amendment).
-  // It is an ORDINARY kind and nothing about it is special-cased: fully
+  // Reviewer nomination, the optional escalation feature's second delivery
+  // shape (CLAUDE.md rule 10). It is an ordinary kind and nothing about it
+  // is special-cased: fully
   // gated, suppressed in dry-run like everything else, never `forceLive`,
   // never in APP_SELF_CONFIG_KINDS. It is reachable only from
   // `src/escalation.ts`, only when `[escalation] enabled = true` (off by
@@ -35,13 +33,13 @@ export type MutationKind =
   | "create_issue"
   | "create_pull"
   | "push_branch"
-  // Post-review cleanup (the owner, 2026-08-13): the bot supersedes ITS OWN
+  // Post-review cleanup: the bot supersedes ITS OWN
   // stale non-APPROVED reviews after posting a new one. The adapter enforces
   // owner+state guards; dismissing an approval or another identity's review
   // remains structurally impossible.
   | "supersede_own_review"
-  // App-self-config class (ratified rule-1 amendment, the owner, 2026-08-30,
-  //): re-point the GitHub App's OWN webhook URL
+  // App-self-config class (CLAUDE.md rule 1): re-point the GitHub App's OWN
+  // webhook URL
   // (JWT-authed PATCH /app/hook/config). Touches only the App's own
   // configuration — never the reviewed repo. See APP_SELF_CONFIG_KINDS.
   | "update_own_webhook_url";
@@ -49,10 +47,9 @@ export type MutationKind =
 /**
  * The same set at RUNTIME. The union above is erased at compile time, so on
  * its own it stops honest call sites and nothing else — a hand-rolled intent
- * (or one that crosses a JSON boundary) sailed straight through. Every intent
- * is now checked against this list, which makes a kind that is not on it — a
- * review dismissal, say — unreachable in fact and not merely in the type
- * system.
+ * (or one that crosses a JSON boundary) would pass. Every intent is checked
+ * against this list, which makes a kind that is not on it — a review
+ * dismissal, say — unreachable in fact and not merely in the type system.
  */
 export const MUTATION_KINDS: readonly MutationKind[] = [
   "add_label",
@@ -71,8 +68,7 @@ export const MUTATION_KINDS: readonly MutationKind[] = [
 ];
 
 /**
- * The app-self-config gate class (ratified by the owner, 2026-08-30, in-session,
- * as a rule-1 amendment — recorded in spec): mutations that touch
+ * The app-self-config gate class (CLAUDE.md rule 1): mutations that touch
  * ONLY the GitHub App's own configuration and can never reach the reviewed
  * repo. The gate EXECUTES this class even when `dry_run = true`, loudly
  * logged every time, because new users run dry-run during exactly the window
@@ -100,11 +96,11 @@ export type AppSelfConfigKind = (typeof APP_SELF_CONFIG_KINDS)[number];
  * writes. Absent means substantive.
  *
  * Both members are COMMENT-event reviews that state a fact and ask for
- * nothing: the migration-number collision remedy, and the
- * escalation note pointing one named person at one named thing. Neither
- * carries a verdict, so neither may claim the head (guards.ts `after`).
+ * nothing: the migration-number collision remedy, and the escalation note
+ * pointing one named person at one named thing. Neither carries a verdict, so
+ * neither may claim the head (guards.ts `after`).
  *
- * THAT IS ENFORCED, NOT DESCRIBED (review). A `reviewPurpose` buys two
+ * That is enforced, not described. A `reviewPurpose` buys two
  * exemptions — it never claims the head, and the escalation purpose is exempt
  * from guard 2 — so a purpose riding an APPROVE would be an approval that
  * skips the no-new-evidence guard AND never marks the head it approved.
@@ -141,8 +137,8 @@ export interface MutationIntent {
    * it only to keep mechanical pre-check output from claiming the head. */
   readonly reviewPurpose?: ReviewPurpose;
   /** Execute even in dry-run. Only `supersede_own_review` may set this: the
-   * session-side posting leakage is accepted (the owner, 2026-08-13), so the
-   * cleanup of that leakage must be real too. Noise-reducing only. */
+   * session-side posting leakage is accepted, so the cleanup of that leakage
+   * must be real too. Noise-reducing only. */
   readonly forceLive?: boolean;
 }
 
@@ -161,15 +157,10 @@ export type MutationExecutor = (intent: MutationIntent) => Promise<unknown>;
  * How a `method: "git"` intent is actually performed.
  *
  * A git push cannot go through the REST executor — `GitHubAdapter.executeMutation`
- * throws on `method === "git"` — so before `src/improvements.ts`
- * consulted the gate ONLY in dry-run and shelled straight to `git push` in
- * live mode: the one mode where the push is real was the one mode the gate
- * never saw. That is the shape rule 1 forbids, and this header claimed
- * otherwise ("REST, GraphQL or git push").
- *
- * The decision taken instead of softening the header: the gate genuinely
- * mediates the push. The caller — which is the only thing that knows which
- * clone the push must run in — hands the gate a performer, and the
+ * throws on `method === "git"` — yet it must still be gated in live mode
+ * (CLAUDE.md rule 1). So the gate mediates the push: the caller — which is
+ * the only thing that knows which clone the push must run in — hands the gate
+ * a performer, and the
  * GATE, never the call site, decides whether it runs: the kind check, the
  * `forceLive` check, the guards and the dry-run branch all run first, exactly
  * as they do for a REST mutation.
@@ -208,27 +199,24 @@ export interface GuardDecision {
  *
  * Why a closed list of what MAY change, rather than checks on what must not:
  * the gate admits an intent, lets the guards rewrite it, then executes what
- * came back. Before that rewrite was re-checked for `reviewPurpose`
- * and for the git performer's method/kind and for nothing else, so a guard
- * that returned `kind: "dismiss_review"` executed it, one that returned
- * `kind: "update_own_webhook_url"` executed FOR REAL in dry-run, and one that
- * added `forceLive` to a `create_review` did the same. No shipped guard did
- * any of that — guards 1 and 4 rewrite `body` and `note` and nothing else,
+ * came back. A re-check that enumerates only the fields it thought of would
+ * let a guard return `kind: "dismiss_review"`, or turn a review into
+ * `update_own_webhook_url` (which executes for real in dry-run), or add
+ * `forceLive`. Guards 1 and 4 rewrite `body` and `note` and nothing else,
  * which is the whole of what a guard is for: it may change the PAYLOAD
  * (`body` — and for a review, a label, a reviewer request or a pull that IS
  * the verdict, the labels, the logins, the branches; softening is the shipped
  * use, not the limit) and the RECORD (`note`), never the ROUTE — `kind`,
  * `method`, `path`, `pr` — nor the two exemptions. Rule 2 is meant to be
- * structural, and a re-check that enumerates the fields it thought of is the
- * shape that left this seam open. So a guard's authority is stated positively
- * and exhaustively. A field added to MutationIntent later is identity by
- * default and stays un-rewritable until someone puts it here on purpose.
+ * structural, so a guard's authority is stated positively and exhaustively.
+ * A field added to MutationIntent later is identity by default and stays
+ * un-rewritable until someone puts it here on purpose.
  *
- * How the comparison is made to mean something (review, round 1): a
- * check on what a guard RETURNS is only a check if the guard cannot change the
+ * How the comparison is made to mean something: a check on what a guard
+ * RETURNS is only a check if the guard cannot change the
  * object it was HANDED — `MutationIntent` is a plain object, and a guard that
  * assigned `intent.kind = …` and returned `{}` (or returned that same object)
- * executed the assigned kind through the compiled gate. So `execute` hands the
+ * would execute the assigned kind. So `execute` hands the
  * guard a `snapshot` of the admitted intent — frozen, with its own copy of
  * `body` (strict-mode ESM: an assignment to an identity field throws inside
  * the guard, and an edit to the body reaches the guard's copy, never the
@@ -322,10 +310,9 @@ function reviewPurposeCheck(intent: MutationIntent): void {
 /**
  * Admission: what the gate demands of ANY intent before it may execute or be
  * recorded. It runs on the entry `snapshot` of the caller's intent — never on
- * the caller's object itself, whose fields could answer this check one way
- * and the snapshot's spread another (round-2 review: a getter on `kind` did
- * exactly that through the compiled gate, on a gate with no guard installed)
- * — and again on the snapshot of whatever a guard hands back. Each
+ * the caller's object itself, whose fields (a getter on `kind`, say) could
+ * answer this check one way and the snapshot's spread another — and again on
+ * the snapshot of whatever a guard hands back. Each
  * run is the invariant "only an admitted intent executes", checked on the
  * very object that goes on rather than inferred from GUARD_REWRITABLE_FIELDS.
  * The field list and admission are deliberately independent belts: the list
@@ -334,8 +321,8 @@ function reviewPurposeCheck(intent: MutationIntent): void {
  */
 function admit(intent: MutationIntent, perform: GitPerformer | undefined): void {
   // Checked before anything else — an unknown kind is never recorded to
-  // state/dryrun/ either, so a retired kind cannot even leave evidence
-  // suggesting the daemon still performs it.
+  // state/dryrun/ either, so it cannot leave evidence suggesting the daemon
+  // performs it.
   if (!(MUTATION_KINDS as readonly string[]).includes(intent.kind)) {
     throw new Error(
       `gate: unknown mutation kind "${intent.kind}" — refusing to execute or record it`,
@@ -442,8 +429,8 @@ export class MutationGate {
       intent = post;
     }
     // The app-self-config class (see APP_SELF_CONFIG_KINDS): executes for real
-    // even in dry-run — the ratified rule-1 amendment — and every execution is
-    // loud. The intent's `note` names old and new URL, so the line does too.
+    // even in dry-run (CLAUDE.md rule 1), and every execution is loud. The
+    // intent's `note` names old and new URL, so the line does too.
     if ((APP_SELF_CONFIG_KINDS as readonly string[]).includes(intent.kind)) {
       this.logFn(
         `gate: APP-SELF-CONFIG "${intent.kind}" executing FOR REAL${this.dryRun ? " despite dry_run (ratified rule-1 amendment, 2026-08-30)" : ""} — ${intent.note}`,

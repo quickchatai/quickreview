@@ -1,4 +1,4 @@
-// M2 backfill importer. The GitHub side is a fake fetch behind the
+// Backfill importer. The GitHub side is a fake fetch behind the
 // real GitHubAdapter (github.test.ts style), so the GraphQL/search shapes are
 // exercised too; the store is an in-memory StateStore.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -369,7 +369,7 @@ describe("runBackfill", () => {
         .m,
     ).toBe(1);
     // The live round is still running (no verdict), so it does not age the PR:
-    // priorRoundCount counts VERDICTED rounds only (2026-08-18, #5313).
+    // priorRoundCount counts verdicted rounds only.
     expect(s.priorRoundCount(5000)).toBe(0);
     s.close();
   });

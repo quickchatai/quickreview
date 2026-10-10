@@ -12,19 +12,18 @@
 // marker we control, so they are matched by file mtime falling inside the
 // round window — strictly best-effort, surfaced via `passes_included`.
 //
-// pi's NATIVE subagent children run without a saved session (or,
-//, in a temp session dir removed when they exit), so they leave no
-// transcript anywhere the walk reads — and a round's spend was the main
-// session's alone: 5–9% of what it really cost (12 live rounds, 2026-10-09).
-// Their usage IS in the parent's transcript: the `subagent` / `launch_plan`
+// pi's NATIVE subagent children run without a saved session (or in a temp
+// session dir removed when they exit), so they leave no transcript anywhere
+// the walk reads; counting the main session alone undercounts a round many
+// times over. Their usage IS in the parent's transcript: the `subagent` / `launch_plan`
 // tool result carries `details.results[]`, each child's model and its summed
 // `usage` (input, output, cacheRead, cost — native runSingleAgent). Each child
 // counts there, once (`childUsage`), surfaced via `children_included`.
 //
 // This file owns WHAT a transcript line contributes — its usage and its
 // exec-policy audit items (`parseTranscriptLine`) — and how contributions add
-// up (`addLineUsage`). READING the transcripts is `transcriptindex.ts` (
-// H2): async, chunked, each line parsed once for both consumers, each byte read
+// up (`addLineUsage`). READING the transcripts is `transcriptindex.ts`: async,
+// chunked, each line parsed once for both consumers, each byte read
 // once per daemon lifetime. Everything here is pure: malformed lines are
 // skipped, never thrown.
 // The guard's TOKENISER — not its policy. The rules below stay an
@@ -133,16 +132,16 @@ export interface LineContribution {
 }
 
 /**
- * Parse one transcript line — ONCE, for both consumers (H2). `model` is
+ * Parse one transcript line — ONCE, for both consumers. `model` is
  * the attribution in effect before the line; the result carries the one in
  * effect after it (a `modelId` record re-keys attribution for everything after
  * it, including an assistant message on the same line).
  *
- * The rules are the pre-H2 ones exactly: `sumFile` for usage (a non-object
- * record contributes nothing; only an assistant message with a usage object
- * counts; a finite `usage.cost.total` is the primary cost) and
- * `collectWindowLines` + `auditExecViolationDetails` for the audit (any value
- * JSON.parse returns is walked; the window reads its top-level `timestamp`).
+ * The rules: for usage, a non-object record contributes nothing, only an
+ * assistant message with a usage object counts, and a finite
+ * `usage.cost.total` is the primary cost; for the audit (as
+ * `auditExecViolationDetails`), any value JSON.parse returns is walked, and
+ * the window reads its top-level `timestamp`.
  */
 export function parseTranscriptLine(
   line: string,
@@ -156,8 +155,8 @@ export function parseTranscriptLine(
   } catch {
     return { model, contribution: null }; // malformed line — skipped, never thrown
   }
-  // `null.timestamp` threw in the old window read (a skipped line); any other
-  // value without one reads as no timestamp.
+  // A JSON `null` record, like any value without a `timestamp`, reads as no
+  // timestamp.
   const ts = value === null ? null : parseTs((value as { timestamp?: unknown }).timestamp);
   let usage: LineUsage | undefined;
   let childUsage: LineUsage[] = [];
@@ -238,7 +237,8 @@ function assistantUsage(rec: JsonlRecord, model: string): LineUsage | undefined 
 }
 
 /** Add one in-window assistant message to the round's usage — in file order,
- * so the floating-point sums are the pre-H2 sums bit for bit. */
+ * so the floating-point sums (which are order-sensitive) come out the same
+ * bit for bit however the transcripts are read. */
 export function addLineUsage(acc: RoundUsage, u: LineUsage): void {
   if (u.cost !== null) acc.cost_usd = (acc.cost_usd ?? 0) + u.cost; // pi's own accounting — primary
   if (u.tin === 0 && u.tout === 0 && u.cache === 0) return;
@@ -280,15 +280,11 @@ export function estimateUsd(
 // ---- exec-policy audit -----------------------------------------------------
 
 /**
- * The post-hoc audit's vocabulary (widened).
- *
- * It used to be ONE pattern — interpreters — which meant that **not one of the
- * chains proven to execute or POST across's four adversarial rounds
- * would have produced a single audit line.** `gh pr review --approve`,
- * `gh api … --input`, `gh api -fevent=APPROVE`, `git -c alias.x=!cmd x`,
- * `git --git-dir=<dir> diff`, `HOME=<dir> git diff` — every one of them was
- * invisible here while it was live. The guard blocked them, eventually; the
- * audit would not have known if it hadn't.
+ * The post-hoc audit's vocabulary. Interpreters alone are not enough: chains
+ * such as `gh pr review --approve`, `gh api … --input`,
+ * `gh api -fevent=APPROVE`, `git -c alias.x=!cmd x`,
+ * `git --git-dir=<dir> diff` and `HOME=<dir> git diff` execute or POST
+ * without one, so each class below has its own kind.
  *
  * What this is and is not. It is TELEMETRY: a durable event and an overseer
  * line, not a control. It is deliberately an INDEPENDENT implementation rather
@@ -309,9 +305,8 @@ export type ExecViolationKind =
   | "git_config_injection"
   | "git_config_surface_write"
   /** A read-only-allowlisted program (awk/sed/sort/find) used in a write or
-   * exec mode — the four primitives the first review found this audit
-   * blind to — and git's read verbs in theirs: `--output=<file>` (the diff
-   * options' file write) and `git grep -O<cmd>` (S8b review). */
+   * exec mode, and git's read verbs in theirs: `--output=<file>` (the diff
+   * options' file write) and `git grep -O<cmd>`. */
   | "reader_write_or_exec"
   /** A write landing on THIS system's own policy surface — config.toml,
    * scripts/, dist/, extensions/, prompts/agents/seeds, .pi/. The
@@ -319,7 +314,7 @@ export type ExecViolationKind =
   | "policy_surface_write"
   /** A write landing on a MEMORY-SCOPE file — the recall hint
    * (`recall-hints/<session>.json`) or the retired list
-   * (`retired-uris.json`) a session's own memory recall reads (S8b).
+   * (`retired-uris.json`) a session's own memory recall reads.
    * Writing either widens what that recall may reach. */
   | "memory_scope_write"
   /** A session env-prefix that relocates this system's policy inputs
@@ -327,7 +322,7 @@ export type ExecViolationKind =
    * `bash -c '…'` payload. */
   | "policy_relocation";
 
-/** Interpreters — the original rule, unchanged. */
+/** Interpreters. */
 const EXEC_VIOLATION_RE =
   /\b(?:python3?|pytest|uv|npm|npx|node|make|pip3?|poetry|cargo|go (?:run|test)|[gmn]?awk|perl|ruby|php)\b/;
 
@@ -385,9 +380,8 @@ const GIT_WRITE_RE =
   /\bgit\s+(?:-\S+\s+|-[cC]\s+\S+\s+)*(?:push|send-pack|commit|merge|rebase|reset|revert|cherry-pick|am|apply|checkout|switch|restore|clean|stash|init|clone|update-ref|update-index|symbolic-ref|filter-branch|fast-import|gc|prune|notes|mv|rm|add)\b/;
 
 /** Anything that changes WHICH CONFIG GIT READS, or names a program for it to
- * run — the family that produced rounds 2, 3 and 4. Both the option forms and
- * the environment-prefix twins, because the twins were round 2's and round 4's
- * whole point. */
+ * run. Both the option forms and their environment-prefix twins: either one
+ * alone is bypassed by the other. */
 const GIT_CONFIG_INJECTION_RE =
   /(?:\bgit\s+(?:-\S+\s+)*-c\s|--config-env[=\s]|--git-dir[=\s]|--work-tree[=\s]|--exec-path[=\s]|--upload-pack[=\s]|--receive-pack[=\s]|(?:^|[\s;&|(])(?:GIT_CONFIG[A-Z0-9_]*|GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE|GIT_EXEC_PATH|GIT_EXTERNAL_DIFF|GIT_PAGER|PAGER|GIT_SSH|GIT_SSH_COMMAND|GIT_ASKPASS|GIT_EDITOR|GIT_SEQUENCE_EDITOR|GIT_PROXY_COMMAND|GIT_TEMPLATE_DIR|HOME|XDG_CONFIG_HOME|LD_PRELOAD|LD_AUDIT|BASH_ENV|ENV|PATH|SHELL|IFS|NODE_OPTIONS|PYTHONSTARTUP|PERL5OPT)=)/;
 
@@ -404,8 +398,8 @@ const GIT_CONFIG_SURFACE_PATH_RE = /(?:^|\/)(?:\.git\/|\.gitconfig$|git\/config$
 /** The operators that WRITE the word after them: a redirection (`>`, `>>`,
  * every other spelling folded onto those by `normalizeRedirections`) and the
  * diff options' `--output=<file>` / `--output <file>`, which `git log`,
- * `git show` and `git diff` write into (S8b review — the guard
- * refuses it; this is what makes a write that got past it visible). */
+ * `git show` and `git diff` write into (the guard refuses it; this is what
+ * makes a write that got past it visible). */
 const WRITE_OPERATOR = String.raw`(?:>>?|--output[=\s])\s*`;
 
 /** The same surface as a bash WRITE: a redirection target, or `sed -i`'s. A
@@ -442,7 +436,7 @@ const POLICY_SURFACE_PATH_RE =
   /(?:^|\/)(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
 
 /**
- * A write landing on a MEMORY-SCOPE file (S8b) — the same SHAPE again:
+ * A write landing on a MEMORY-SCOPE file — the same SHAPE again:
  * a redirection or a `sed -i` whose target is the recall hint dir
  * (`recall-hints/`) or the retired list (`retired-uris.json`), at any prefix.
  * A review session never writes either; the daemon does, every round. Mirrors
@@ -466,7 +460,7 @@ const MEMORY_SCOPE_WRITE_RE = new RegExp(
 const MEMORY_SCOPE_PATH_RE = /(?:^|\/)(?:recall-hints(?:\/|$)|retired-uris\.json(?:\.tmp-[^/]*)?$)/;
 
 /**
- * A write target spelled as a PATTERN (S8b review): bash expands a
+ * A write target spelled as a PATTERN: bash expands a
  * redirection target before it opens the file, so `> retired-uri[s].json`,
  * `> recall-hint?/pr-1.json`, `> config.tom?` and `> recall-hint{s..s}/…`
  * write the protected file while no literal name above matches. Each pattern
@@ -560,7 +554,7 @@ const OUTPUT_TARGET_RE = /--output[=\s]\s*([^\s;&|()<>]+)/g;
 
 /** A session env-prefix that relocates this system's own policy inputs — the
  * `QCR_` inputs the guard refuses in `POLICY_RELOCATING_ENV` (`QCR_INSTALL`
- *: it names the config home the locator reads). Matched as
+ * included: it names the config home the locator reads). Matched as
  * an assignment prefix at a command position (or after a separator), so a
  * laundered `bash -c 'sanctioned ; QCR_CONFIG=… script'` is seen: the string is
  * right there in the segment whether it is quoted or not. Independent of the
@@ -571,8 +565,8 @@ const POLICY_RELOCATION_RE =
 /**
  * Programs whose ARGUMENTS are search patterns and paths, never commands.
  *
- * Without this the audit read every grep pattern as if it were a command, and
- * fired on the reads that ARE the job here: `rg -n PATH= Dockerfile`,
+ * Without this the audit would read every grep pattern as if it were a
+ * command, and fire on the reads that ARE the job here: `rg -n PATH= Dockerfile`,
  * `grep -n ENV= .env.example`, `rg -n 'gh pr create' .github/workflows/ci.yml`,
  * `grep -n 'git push' scripts/deploy.sh`. Reviewing a PR that touches a
  * Dockerfile, a workflow or a deploy script means grepping for exactly those
@@ -614,36 +608,36 @@ const AUDIT_READERS: ReadonlySet<string> = new Set([
   "sed",
   "xargs",
   "test",
-  // `awk` was here and is not any more (round 3): it is off the
-  // guard's ALLOWED set, so an awk invocation in a transcript is itself a
-  // policy violation, and it is classified as the interpreter it is.
+  // Not `awk`: it is off the guard's ALLOWED set, so an awk invocation in a
+  // transcript is itself a policy violation, classified as the interpreter it
+  // is.
 ]);
 
 /**
- * The write/exec MODES of the four programs that are allowlisted for reading
- * (round 2). The first review found the audit blind to four of the five
- * write primitives that reach `<clone>/.git/config`, so layers 2 and 3 failed
- * in exactly the same place — which undercuts the point of having both.
+ * The write/exec MODES of the programs that are allowlisted for reading.
+ * Without them the audit would be blind to the very write primitives (e.g.
+ * onto `<clone>/.git/config`) that the guard's reader-mode check stops, so a
+ * gap in that check would go unseen — which undercuts the point of having
+ * both layers.
  *
- * Honest about what this is: the same SHAPE as `checkReaderModes` in the guard,
- * as a separate coarse implementation over whole segments. Independence buys
- * less here than it does elsewhere in this file, and claiming otherwise would
- * be the kind of overstatement this ticket exists to stop.
+ * This is the same SHAPE as `checkReaderModes` in the guard, as a separate
+ * coarse implementation over whole segments; independence buys less here than
+ * it does elsewhere in this file.
  *
- * The fifth primitive — `T=.git/config; cat p >> $T` — is deliberately NOT
- * here. Its target is a variable, so no reader of command strings can ever see
+ * The variable-target write — `T=.git/config; cat p >> $T` — is deliberately
+ * NOT here. Its target is a variable, so no reader of command strings can ever see
  * it; that one is caught by the round-boundary integrity check in
  * `execboundary.ts`, which is why that check exists.
  *
- * `awk` had an entry here and no longer does. The same indirection defeated it
- * (`print "cmd" | c`), and the answer was not a fifth pattern: awk came off the
- * guard's ALLOWED set entirely, so any awk at all is now an `interpreter` line.
+ * `awk` has no entry: the same indirection defeats any pattern for it
+ * (`print "cmd" | c`), so awk is off the guard's ALLOWED set entirely and any
+ * awk at all is an `interpreter` line.
  */
 const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
   sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
   sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
-  // S8b review: the diff options' `--output=<file>` on any verb, and
+  // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
   git: /(?:^|\s)--output(?:=|\s|$)|\bgit\s+(?:-C\s+\S+\s+|-\S+\s+)*grep\b.*?\s(?:--op[a-z-]*(?:=|\s|$)|-[A-Za-z]*O)/,
@@ -655,10 +649,9 @@ const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
 function segmentProgram(segment: string): string | null {
   // `xargs` RUNS the program named after it, so it is resolved through rather
   // than treated as the program — the guard's `checkProgram` recurses for the
-  // same reason. Without this, `… | xargs awk '{print}'` classified as `xargs`,
-  // which is on AUDIT_READERS, and the whole segment was skipped: the guard
-  // blocked it and the audit stayed silent about it. Found by running the
-  // corpus against the build, not by reading this function.
+  // same reason. Without this, `… | xargs awk '{print}'` would classify as
+  // `xargs`, which is on AUDIT_READERS, and the whole segment would be
+  // skipped.
   let sawXargs = false;
   for (const raw of segment.trim().split(/\s+/)) {
     const t = raw.replace(/^['"(]+|['")]+$/g, "");
@@ -690,8 +683,8 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   if (GIT_CONFIG_SURFACE_WRITE_RE.test(bare)) return "git_config_surface_write";
   if (MEMORY_SCOPE_WRITE_RE.test(bare)) return "memory_scope_write";
   if (POLICY_SURFACE_WRITE_RE.test(bare)) return "policy_surface_write";
-  // The same surfaces once more, over the writes bash would actually perform
-  // (S8b review): every unquoted redirection's target with its
+  // The same surfaces once more, over the writes bash would actually perform:
+  // every unquoted redirection's target with its
   // quoting removed as bash removes it (`> $'retired-uris.json'`), and every
   // `--output` target — each named literally, or as a PATTERN bash expands
   // (`> retired-uri[s].json`).
@@ -715,7 +708,7 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
   // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
   // reader skip so `grep QCR_CONFIG=x file` (a read of a config) does not trip
   // it, but a `bash -c '… ; QCR_CONFIG=… script'` (prog is `bash`, not a
-  // reader) still does. This is what makes door 4 visible to the audit.
+  // reader) still does.
   if (POLICY_RELOCATION_RE.test(segment)) return "policy_relocation";
   if (ghApiWrites(segment) || GITHUB_DIRECT_WRITE_RE.test(segment)) return "github_write";
   const gh = GH_SUBCOMMAND_RE.exec(segment);
@@ -734,9 +727,9 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
 /**
  * Which rule, if any, this command trips — decided PER SHELL SEGMENT.
  *
- * Whole-command matching was the bug: a pattern in an argument to `rg` is not a
- * command, and treating it as one produced eight false positives on ordinary
- * review reads. Segmenting reuses the guard's splitter — the TOKENISER, not its
+ * Not whole-command matching: a pattern in an argument to `rg` is not a
+ * command, and treating it as one produces false positives on ordinary review
+ * reads. Segmenting reuses the guard's splitter — the TOKENISER, not its
  * policy; the rules above stay an independent implementation on purpose, so
  * this reader and the guard do not fail in the same places.
  */

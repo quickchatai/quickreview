@@ -1,5 +1,4 @@
-// tests/selfscan2-dispatch-agents.test.ts — the pure seams behind the
-// selfscan-2 "dispatch-agents" fixes: migration collision detection, the
+// The pure seams of the dispatch-side helpers: migration collision detection, the
 // collision gate note's delivered/undelivered split, style-guide containment,
 // and author-controlled strings (filenames, titles) rendered as bounded data.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

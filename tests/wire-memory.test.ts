@@ -1,4 +1,4 @@
-// The production wiring of the memory phase. Every slice
+// The production wiring of reviewer memory. Every slice
 // below degrades SILENTLY and correctly when memory is absent — rounds render
 // memory-less, the raw tier is skipped, the watchdog stands down — which is
 // the behaviour we want at runtime and exactly what makes an unwired daemon
@@ -41,17 +41,16 @@ describe("wire.ts: the memory phase is actually connected", () => {
 
   it("the EOD watchdog reads through the store that has the pinned-area read", () => {
     // `readPinnedFromSweep` prefers `pinnedSweep()` — the directory the round's
-    // head reads (S5) — and the store handed to it has one.
+    // head reads — and the store handed to it has one.
     expect(wire).toMatch(/memorySweep = memory;/);
     expect(wire).toMatch(/readPinned: readPinnedFromSweep\(sweepSource\)/);
   });
 
   it("the round renderer receives the assembled seed", () => {
-    // the owner name rides along so the pinned-head framing renders
-    // from config.
-    // the profile-selected ecosystem rides along too, so a none
-    // profile's prompts really carry no migration-gate prose.
-    // the identity variable map rides beside them.
+    // The owner name rides along so the pinned-head framing renders from
+    // config; the profile-selected ecosystem rides along too, so a none
+    // profile's prompts really carry no migration-gate prose; and the identity
+    // variable map rides beside them.
     expect(wire).toMatch(
       /renderRoundPrompt\([\s\S]*?order,\s*memory,\s*cfg\.owner\.name,\s*ecosystem,\s*identity,?\s*\)/,
     );
@@ -85,8 +84,8 @@ describe("wire.ts: the memory phase is actually connected", () => {
   });
   it("the EOD pin-watch waits for the digest where the sweep WRITES it — the sandbox root's digest/, the same dir the headline reads", () => {
     // prompts/eod-sweep.md has the overseer (cwd = the sandbox root) write
-    // `digest/<date>.md`. A readiness probe on state/digest/ never saw it, so
-    // the watch never closed early and ran its whole window every night.
+    // `digest/<date>.md`. A readiness probe on state/digest/ would never see
+    // it, so the watch would never close early and would run its whole window.
     expect(wire).toContain('latestDigestHeadline(join(root, "digest"))');
     expect(wire).toMatch(
       /digestReady:\s*\(date\)\s*=>\s*digestWritten\(date, join\(root, "digest"\)\)/,
@@ -95,7 +94,7 @@ describe("wire.ts: the memory phase is actually connected", () => {
   });
 });
 
-// memory failures reach a person. Like everything above, this
+// Memory failures reach a person. Like everything above, this
 // wiring degrades silently when disconnected (no block, no wake, no banner),
 // so the tripwire is structural.
 describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
@@ -120,7 +119,7 @@ describe("wire.ts: reviewer-memory health is actually connected (S1)", () => {
   });
 
   it("its block reaches status.json beside openviking", () => {
-    // the block is the monitor's status plus the [feedback]
+    // The block is the monitor's status plus the [feedback]
     // ledger's memory backlog.
     expect(wire).toMatch(
       /memoryStatus: \(\): MemoryStatus => \{\s*const base = memoryHealth\s*\? memoryHealth\.status\(\)/,
@@ -238,7 +237,7 @@ describe("wire.ts: bounded sessions, shed load (S3)", () => {
   });
 });
 
-// the local English embedder. Unwired, the server would start
+// The local English embedder. Unwired, the server would start
 // with nothing on its api_base: every search and every new vector fails while
 // the server itself looks up. The tripwire is structural, like the rest.
 describe("wire.ts: the local English embedder is actually connected (S4)", () => {
@@ -261,8 +260,8 @@ describe("wire.ts: the local English embedder is actually connected (S4)", () =>
     );
   });
 
-  // Review (S4): memory health's probe is an fs/ls, which needs no embedding —
-  // unwired, a dead embedder read healthy while every search failed.
+  // Memory health's probe is an fs/ls, which needs no embedding — unwired, a
+  // dead embedder would read healthy while every search failed.
   it("memory health reads whether memory SERVES, from both supervisors", () => {
     expect(wire).toMatch(
       /new MemoryHealthMonitor\(\{[\s\S]*?serving: \(\) =>\s*memoryServing\(\s*cfg\.openviking\.embedding_provider,\s*openviking\?\.status\(\),\s*localEmbedder\?\.status\(\),\s*\)/,
@@ -277,7 +276,7 @@ describe("wire.ts: the local English embedder is actually connected (S4)", () =>
   });
 });
 
-// the lesson shadow ledger — every slice below degrades silently
+// The lesson shadow ledger — every slice below degrades silently
 // (no selector ⇒ no ledger rows, no hook ⇒ no marks), so these are tripwires.
 describe("wire.ts: the lesson shadow ledger is actually connected", () => {
   const daemon = readFileSync(join(process.cwd(), "src", "daemon.ts"), "utf8");
@@ -309,8 +308,8 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
     expect(wire).toMatch(
       /new RoundLessonSelector\(\{\s*ledger: lessonLedger,\s*mode: \(\) => cfg\.memory\.delivery,\s*engine: \(\) => lessonEngine,\s*budgetMs: cfg\.memory\.delivery_budget_ms,/,
     );
-    // F2: the budget follows the mode — the selector is handed the
-    // shadow budget too, and opens its windows on the ONE round-activity
+    // The budget follows the mode — the selector is handed the shadow budget
+    // too, and opens its windows on the one round-activity
     // tracker the case writer yields to.
     expect(wire).toMatch(
       /budgetMs: cfg\.memory\.delivery_budget_ms,[\s\S]{0,240}?shadowBudgetMs: cfg\.memory\.shadow_budget_ms,\s*activity: roundActivity,/,
@@ -337,7 +336,7 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
   });
 });
 
-// delivery — each slice below degrades silently (a hook method
+// Delivery — each slice below degrades silently (a hook method
 // not forwarded ⇒ dispatch never delivers; an addendum not composed ⇒ the
 // validator never learns `lesson-shape`), so these are tripwires too.
 describe("wire.ts: lesson delivery (S9b) is actually connected", () => {

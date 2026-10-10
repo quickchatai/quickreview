@@ -1,4 +1,4 @@
-// Minimal ambient declarations for the slice of the pi extension API the two
+// Minimal ambient declarations for the slice of the pi extension API the
 // sandbox extensions use. pi is NOT installed in this repo (it lives only in
 // the VM container), so nothing here is checked against the real package:
 // EVERY declaration below is // VERIFY-ON-PIN against
@@ -51,9 +51,8 @@ declare module "@earendil-works/pi-coding-agent" {
    * against pi 1.0.0: `dist/core/extensions/types.d.ts`
    * `SessionBeforeCompactResult` is `{ cancel?, compaction? }`, and
    * `dist/core/agent-session.js` reads only `result.cancel` and
-   * `result.compaction` — any other key is silently ignored (the legacy
-   * `instructions`/`summary`/`retainedTail`/`details` carriers were inert,
-   * MC-64). Only the LAST non-undefined handler result counts
+   * `result.compaction` — any other key is silently ignored. Only the LAST
+   * non-undefined handler result counts
    * (`dist/core/extensions/runner.js` `emit`). */
   export interface CompactHandlerResult {
     cancel?: boolean;
@@ -117,7 +116,7 @@ declare module "@earendil-works/pi-coding-agent" {
     modelRegistry?: PiModelRegistry;
     model?: unknown;
     thinkingLevel?: string;
-    /** H1b, read off pi 1.0.0 `dist/core/extensions/types.d.ts`
+    /** Read off pi 1.0.0 `dist/core/extensions/types.d.ts`
      * `ExtensionContext` (implemented in `dist/core/agent-session.js`):
      * `isIdle()` is `!agentRunActive && !isCompacting`; `hasPendingMessages()`
      * counts the queued steer + followUp prompts; `compact(options)` starts the
@@ -135,19 +134,20 @@ declare module "@earendil-works/pi-coding-agent" {
     [key: string]: unknown;
   }
 
-  /** tool_call event payload. VERIFIED capability (findings §5 lines
-   * 132-141): handlers see the tool name + input and `event.input` is mutable.
+  /** tool_call event payload. VERIFIED capability (pi control-surface
+   * findings §5): handlers see the tool name + input and `event.input` is
+   * mutable.
    * VERIFY-ON-PIN: the exact field names (`toolName` vs `name`, `input` vs
    * `arguments`) — consumers must probe both and degrade gracefully. */
   export interface ToolCallEvent extends PiEventPayload {
     toolName?: string;
-    /** Mutable per §5 lines 132-141 (handlers may rewrite tool input). */
+    /** Mutable (handlers may rewrite tool input). */
     input?: Record<string, unknown>;
     arguments?: Record<string, unknown>;
   }
 
   /** Return shape a tool_call handler uses to veto the call. VERIFIED
-   * (findings §5 lines 132-141): `{ block: true, reason }` blocks the
+   * (pi control-surface findings §5): `{ block: true, reason }` blocks the
    * tool call and surfaces `reason` to the model. VERIFY-ON-PIN: additional
    * keys, and whether `reason` is required when blocking. */
   export interface ToolCallBlockResult {
@@ -240,15 +240,14 @@ declare module "@earendil-works/pi-coding-agent" {
     /** Injects a real user message. Pinned Pi 0.84.1 exposes this to extensions
      * as fire-and-forget `void`; its internal Promise and rejection are not
      * observable at this interface (verified against extensions/types.d.ts
-     * and agent-session.js while diagnosing PR #5408). */
+     * and agent-session.js). */
     sendUserMessage(content: string, options?: SendMessageOptions): void;
     sendMessage?(message: unknown, options?: SendMessageOptions): void | Promise<void>;
     /** Persists extension state into the session file as a `custom` entry
      * (not sent to the LLM). VERIFIED against pi 1.0.0
      * `dist/core/extensions/types.d.ts` `ExtensionAPI.appendEntry<T>(customType:
      * string, data?: T): void` → `dist/core/agent-session.js`
-     * `sessionManager.appendCustomEntry(customType, data)` (it took
-     * one object before, which 1.0.0 would store as the customType). */
+     * `sessionManager.appendCustomEntry(customType, data)`. */
     appendEntry?(customType: string, data?: unknown): void;
     /** VERIFY-ON-PIN: accessor for the live session's info. */
     session?: PiSessionInfo;
@@ -263,7 +262,7 @@ declare module "@earendil-works/pi-coding-agent" {
   /** VERIFY-ON-PIN: extensions are default-exported activation functions. */
   export type Extension = (pi: Pi) => void | Promise<void>;
 
-  // ---- package-root helpers ------------------------------------
+  // ---- package-root helpers ---------------------------------------------
   // VERIFIED statically against the published 0.84.4 tarball: both are public
   // exports of the package root (dist/index.js re-exports them from
   // dist/config.js). Used by extensions/subagents.ts to import the native

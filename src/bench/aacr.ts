@@ -21,8 +21,8 @@
 // `prompts/conversation-system.md` — both byte-for-byte, fences and all. What
 // cannot run offline is the GitHub-bound tail (CI gate, posting scripts,
 // verdict file, ledger, deferral issues). `benchAppendix` REPLACES exactly
-// that tail, in words appended after the order, the same way the
-// replay (`src/replay.ts`) overrides its session: no frozen or ratified text is
+// that tail, in words appended after the order, the same way the replay
+// (`src/replay.ts`) overrides its session: no frozen or ratified text is
 // edited, and the sandbox image carries no `scripts/`, no `gh` and no
 // credential, so the override is backed by an environment in which posting is
 // impossible rather than merely forbidden.
@@ -72,11 +72,11 @@ export interface BenchCase {
    * (a mirror of a repository with no public remote, e.g. a self-review of
    * this repo's own commits) has no remote to ask. */
   base_ref?: string;
-  /**: a FOLLOW-UP replay case — round `round_no` of a recorded PR,
+  /** A FOLLOW-UP replay case — round `round_no` of a recorded PR,
    * reviewed at `head_commit` after an earlier round reviewed `prev_head`.
    * The order is production's follow-up round (src/bench/followup.ts),
    * rendered from the same delta, plan and prior-findings pieces dispatch
-   * uses. Absent ⇒ an ordinary round-1 case, byte-identical to before. */
+   * uses. Absent ⇒ an ordinary round-1 case. */
   followup?: BenchFollowUp;
 }
 
@@ -199,7 +199,7 @@ export const DATASET_PINS: readonly DatasetPin[] = [
     sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   },
   {
-    // a PRIVATE replay set (recorded rounds of the deployed repo,
+    // A PRIVATE replay set (recorded rounds of the deployed repo,
     // read from a local mirror; QCR_BENCH_PRIVATE_SETS, never bench/aacr/sets).
     // There is no published dataset to pin, so the pin is EXPLICITLY unpinned
     // — the literal sha256 below can never be a file's digest — and a set
@@ -538,7 +538,7 @@ export interface PrefetchMeta {
   depth: number;
   diff: { files: number; additions: number; deletions: number };
   fetched_at: string;
-  /**, a follow-up case: the previous round's head (installed as
+  /** A follow-up case: the previous round's head (installed as
    * `refs/bench/prev-head`) and its verified merge-base with the base. */
   prev_head?: string;
   prev_merge_base?: string;
@@ -576,9 +576,8 @@ const STATUS: Record<string, string> = {
 /**
  * Build the GitHub-files-API-shaped list `buildPassPlan` consumes, from
  * `git diff -z --name-status -M` and `git diff -z --numstat -M` over the same
- * range. The replay seam stamped every file `modified` with no patch, which
- * silently disarmed the added-file and added-line lens probes; this carries the
- * real status, the rename source and (via `patches`) the real hunks.
+ * range. It carries the real status, the rename source and (via `patches`)
+ * the real hunks, so the added-file and added-line lens probes stay armed.
  *
  * `-z` framing, because a path may contain a tab or a newline and the
  * non-z forms quote or mangle those.
@@ -674,14 +673,13 @@ export interface AppendixArgs {
    * (with the posting fields) and outcome.json; the bench renders
    * comments.json and review.md from them (src/reviewrender.ts). */
   renderOutputs?: boolean;
-  /**: the round number the outcome names (default 1 — every
-   * round-1 case's appendix is byte-identical to before). */
+  /** The round number the outcome names (default 1). */
   roundNo?: number;
-  /**: a PRIVATE replay (a recorded round of a private repo, read
+  /** A PRIVATE replay (a recorded round of a private repo, read
    * from a local mirror): the opening sentence says so neutrally instead of
    * "a public open-source pull request". Default public. */
   privateReplay?: boolean;
-  /**: a follow-up replay — the head the previous round reviewed. */
+  /** A follow-up replay — the head the previous round reviewed. */
   prevHead?: string;
 }
 
@@ -820,16 +818,16 @@ export interface BenchComment {
  * Where a comment on a DELETED line (side LEFT, an old-file line number) lands
  * on the head side of its own hunk, so a scorer that reads only head-side
  * lines still sees it. Every scorer the bench feeds (AACR's evaluate.py, the
- * Qodo judge, SWE-PRBench's export) is head-side only, and a LEFT comment was
- * dropped whole — a posted finding the benchmark never saw.
+ * Qodo judge, SWE-PRBench's export) is head-side only, so a LEFT comment left
+ * in place would be dropped whole — a posted finding the benchmark never sees.
  *
  * The anchor is the nearest added (`+`) line of the same hunk to the deletion's
  * position; a hunk with no added line uses the head-side line where the
  * deletion sat (an unchanged context line that exists at head); a file the PR
  * deletes outright has no head side at all, so the comment goes to line 1
  * (`how: "file"`, a file-level anchor). `null` when the patch has no such old
- * line (a stale or truncated patch) — the caller keeps the comment out, as
- * before, rather than guess.
+ * line (a stale or truncated patch) — the caller keeps the comment out rather
+ * than guess.
  */
 export function reanchorLeftLine(
   patch: string,
@@ -1189,7 +1187,7 @@ export function usageFromEvents(lines: Iterable<string>): Usage & { children: nu
   return u;
 }
 
-// ---- per-stage cost and time ----------------------------------------
+// ---- per-stage cost and time -------------------------------------------------
 
 /** One `subagent` tool call of the main session: a lens fan-out, a validator,
  * a re-run. */
@@ -1371,9 +1369,9 @@ export function stagesFromEvents(lines: Iterable<string>): Stages {
  * draws on ONE ChatGPT login): a case that failed with either is retried by
  * arm.sh after a pause, never scored as the reviewer's own miss.
  * `usage_limit` is the login's PLAN window exhausted ("Codex error: The usage
- * limit has been reached" — every refusal on record, 2026-09-29, each case
- * failing within seconds): no pause of minutes cures it, so arm.sh stops launching
- * instead of burning the retries (absent in summaries written before it). */
+ * limit has been reached", each case failing within seconds): no pause of
+ * minutes cures it, so arm.sh stops launching instead of burning the retries
+ * (older summaries lack this kind). */
 export interface ModelErrors {
   rate_limited: number;
   overloaded: number;

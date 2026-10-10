@@ -1,50 +1,46 @@
 // The memory forward, owned by the TUI process.
 //
-// WHAT CHANGED AND WHY. built the forward as a host-owned systemd
-// --user service and said, in as many words, that it was "deliberately NOT
-// part of the TUI: `qcr tui` starting and stopping is not an event memory
-// should notice". That reasoning stands for the COMPANION — but it made the
-// TUI's own memory tab depend on a unit the operator had to install
-// first, and an uninstalled unit renders as MEMORY UNREACHABLE, which reads
-// like a broken server rather than a missing local service. The owner asked for
-// the forward to run inside the TUI (2026-08-21). This module is that, without
-// giving up the property was protecting:
+// The forward can also run as a host-owned systemd --user service, so that
+// the companion's memory does not depend on `qcr tui` running. The TUI's own
+// memory tab must not depend on that unit being installed (a missing unit
+// would read as MEMORY UNREACHABLE, like a broken server), so the TUI brings
+// a forward up itself, without taking the unit's property away:
 //
-//   * If a forward is ALREADY listening — the systemd unit, or another TUI —
-//     we ADOPT it. We never bind over it, never restart it, never stop it on
+//   * If a forward is already listening — the systemd unit, or another TUI —
+//     we adopt it. We never bind over it, never restart it, never stop it on
 //     exit. The unit stays the better setup and keeps winning where installed.
 //   * Only when nothing answers do we bind ourselves, and then we close
 //     exactly what we opened.
 //
-// So the unit is now an OPTIONAL upgrade (memory that outlives the TUI) rather
+// So the unit is an optional upgrade (memory that outlives the TUI) rather
 // than a prerequisite, and the two can be installed in either order.
 //
-// ONE IMPLEMENTATION, NOT A SECOND ONE. The relay itself is not reimplemented
+// One implementation, not a second one. The relay itself is not reimplemented
 // here: `scripts/companion-memory-forward.mjs` stays the only place that knows
 // how to reach the VM, and this module imports `createForwarder`/`parseArgs`
-// out of it at runtime. The import is DYNAMIC and by file URL on purpose — the
+// out of it at runtime. The import is dynamic and by file URL on purpose — the
 // script is dependency-free, build-free ESM (systemd must run it from a bare
 // checkout at boot) and lives outside `tsconfig`'s `include`, so a static
 // import would either drag it into the build or fork the logic. Config comes
 // from that script's own `parseArgs`, so both entrypoints honour the same
 // flags and `QCR_*` env vars and cannot drift.
 //
-// NOTHING HERE HOLDS A VM CREDENTIAL, and nothing here changes that: the ssh
-// runs on the owner's PC as him, exactly as the unit runs it (root CLAUDE.md
-// rule 8). The forward carries bytes; the KEYS stay in the keys file that
+// Nothing here holds a VM credential: the ssh runs on the operator's PC as
+// the operator, exactly as the unit runs it (root CLAUDE.md rule 8). The
+// forward carries bytes; the keys stay in the keys file that
 // `src/tui/memory.ts` reads.
 //
-// THE RELAY CAP (F1) rides the same route: `parseArgs` fills
+// The relay cap rides the same route: `parseArgs` fills
 // `maxRelays`/`queueMax`/`queueTimeoutMs` from the same flags and `QCR_MEMORY_*`
 // env the unit reads, and nothing here passes a second value — a forward the
 // TUI binds is capped exactly as the unit's is. While it is ours, `view()`
-// carries its live counts; an ADOPTED forward's counts belong to another
+// carries its live counts; an adopted forward's counts belong to another
 // process, so they are not painted at all (`companion-memory-forward.mjs
 // status` reads them) rather than painted as zero.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 
-/** What the forward's `stats()` reports (F1) — the fields painted. */
+/** What the forward's `stats()` reports — the fields painted. */
 export interface ForwardStats {
   maxRelays: number;
   queueMax: number;
@@ -61,7 +57,7 @@ export interface ForwardStats {
 export interface ForwarderHandle {
   listen(): Promise<number>;
   close(): void;
-  /** F1. Optional: a handle without it is painted without counts. */
+  /** Optional: a handle without it is painted without counts. */
   stats?(): ForwardStats;
 }
 
@@ -72,7 +68,7 @@ export function relaySummary(s: ForwardStats): string {
 }
 
 /** The slice of `scripts/companion-memory-forward.mjs` we depend on. Declared
- * structurally because the script is untyped JS: this interface IS the
+ * structurally because the script is untyped JS: this interface is the
  * contract, and `tests/tui-memforward.test.ts` checks the real module still
  * satisfies it. */
 export interface ForwardModule {
@@ -91,7 +87,7 @@ export interface ForwardConfig {
 /**
  * Where the forward stands, as the tab paints it.
  *
- * `adopted` and `owned` are BOTH working states and the tab must not dress
+ * `adopted` and `owned` are both working states and the tab must not dress
  * them up as different degrees of health — the distinction exists so the
  * operator knows what happens when the TUI quits, nothing more.
  */
@@ -135,12 +131,12 @@ export interface MemForwardDeps {
   log?: (line: string) => void;
   /** Probe deadline. Short: this runs on the TUI's startup path. */
   probeTimeoutMs?: number;
-  /**: `[tui] target = "local"` — the ONE forward script's `--local`
+  /** `[tui] target = "local"` — the one forward script's `--local`
    * mode (plain local `docker exec`, no ssh hop). Default false (ssh). */
   local?: boolean;
   /** Local mode only: mirrors `[tui] sudo_docker` onto the script's
-   * `--no-sudo` flag. Ignored in ssh mode (the script's own defaults rule,
-   * exactly as before). Default true. */
+   * `--no-sudo` flag. Ignored in ssh mode (the script's own defaults rule).
+   * Default true. */
   sudoDocker?: boolean;
 }
 
@@ -201,7 +197,7 @@ export class MemoryForward {
   }
 
   view(): ForwardStatus {
-    // A forward we own reports its relay cap live (F1). Read at each
+    // A forward we own reports its relay cap live. Read at each
     // view() — the memory tab takes one at every paint (`LearningStore.forward`
     // is a getter over this), and the TUI repaints on every poll — never a
     // count kept from the moment it was bound or the last memory reload.
@@ -228,7 +224,7 @@ export class MemoryForward {
    * own a forward re-probes rather than binding a second time, so the memory
    * tab's refresh key can drive it.
    *
-   * Calls are SERIALISED through one in-flight promise. Two callers reach here
+   * Calls are serialised through one in-flight promise. Two callers reach here
    * — the TUI's eager start at boot and the tab's refresh — and both begin
    * with an async probe, so without this the second would probe while the
    * first was still binding, see nothing listening, and bind a second time.
@@ -270,9 +266,9 @@ export class MemoryForward {
     }
     let bound = 0;
     try {
-      // local mode rides the script's OWN flags — the same argv the
+      // Local mode rides the script's own flags — the same argv the
       // standalone runner would take — so both entrypoints keep one config
-      // parser and cannot drift. ssh mode passes exactly what it always did.
+      // parser and cannot drift. ssh mode passes no flags.
       const runArgs = [
         "run",
         ...(this.deps.local ? ["--local", ...(this.deps.sudoDocker ? [] : ["--no-sudo"])] : []),
@@ -287,7 +283,7 @@ export class MemoryForward {
         // that never got an address, and leaking them across a retry is worse
         // than a no-op close.
         handle.close();
-        // The port being taken usually means a forward appeared BETWEEN our
+        // The port being taken usually means a forward appeared between our
         // probe and our bind — the hot-reload handover is exactly that window.
         // Re-probe before calling it a failure, so the race heals itself
         // instead of leaving memory dead until someone presses `r`.
@@ -305,7 +301,7 @@ export class MemoryForward {
       this.handle = handle;
       // A bound socket is not memory: the relay only reaches upstream when a
       // connection arrives, so ssh auth, the VM container and OpenViking are
-      // all still unproven. Probe THROUGH it, exactly as a re-check of an owned
+      // all still unproven. Probe through it, exactly as a re-check of an owned
       // forward does. On failure the listener stays ours — the next `r` probes
       // through it again, and stop() still closes it.
       if (!(await this.deps.probe(this.deps.baseUrl, this.deps.probeTimeoutMs))) {
@@ -320,7 +316,7 @@ export class MemoryForward {
     }
   }
 
-  /** A partial bind is a WORKING state, not a failure: loopback alone serves
+  /** A partial bind is a working state, not a failure: loopback alone serves
    * the TUI, and the docker-bridge bind only matters when the companion
    * container is up. Say which, rather than reporting a bare "ok". */
   private ownedDetail(bound?: number, wanted?: number): string {
@@ -341,7 +337,7 @@ export class MemoryForward {
   }
 
   /**
-   * Close ONLY a forward we started. An adopted one belongs to systemd or to
+   * Close only a forward we started. An adopted one belongs to systemd or to
    * another TUI; stopping it here would be this module reaching outside its
    * own lifetime, and would strand a companion container we never launched.
    */

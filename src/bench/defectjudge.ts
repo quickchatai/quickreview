@@ -4,7 +4,7 @@
 //
 // Every judgement is a file beside the run it judged, keyed by the ground
 // truth's version and the judge model (the label), so a run can be re-judged
-// against a newer defect set without touching the old verdicts, and re-scored
+// against a newer defect set without touching the existing verdicts, and re-scored
 // (`defect-report`) with no model call at all.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ export interface JudgePiResult {
 
 /**
  * Run one judge session through the bench's ONE pi spawn (runner.ts owns the
- * judge's argv too — tests/single-shepherd.test.ts S2), then read the answer
+ * judge's argv too — tests/single-shepherd.test.ts), then read the answer
  * and the usage back out of the event stream it wrote.
  */
 export async function runJudgePi(prompt: string, o: JudgePiOptions): Promise<JudgePiResult> {

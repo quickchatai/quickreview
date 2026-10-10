@@ -12,10 +12,10 @@ set -euo pipefail
 SANDBOX=/opt/quickreview/sandbox
 SECRETS=/opt/quickreview/secrets
 
-# The live config: the host's install locator found it, and compose
-# mounts its directory read-only at /opt/quickreview/config-home. Always named
-# for the daemon (which hands the same path to every session): there is no
-# checkout config to fall back to, so an empty mount — a stack
+# The live config: the host's install locator found it, and compose mounts
+# its directory read-only at /opt/quickreview/config-home. Always named for the
+# daemon (which hands the same path to every session): there is no checkout
+# config to fall back to, so an empty mount — a stack
 # started by hand before the wizard wrote QCR_CONFIG_HOME — fails the boot
 # naming this file, rather than reading one the operator never chose.
 export QCR_CONFIG="${QCR_CONFIG:-/opt/quickreview/config-home/${QCR_CONFIG_NAME:-config.toml}}"
@@ -27,7 +27,7 @@ OV_PORT="${QCR_OPENVIKING_PORT:-1933}"
 OV_WORKERS="${QCR_OPENVIKING_WORKERS:-1}"
 OV_QUEUE_CONCURRENCY="${QCR_OPENVIKING_QUEUE_CONCURRENCY:-2}"
 OV_AUTH_MODE="${QCR_OPENVIKING_AUTH_MODE:-api_key}"
-# The embedder (S4): LOCAL by default — the local ENGLISH
+# The embedder: LOCAL by default — the local ENGLISH
 # embedder, served on loopback in this container by
 # scripts/openviking-embedder.py from the GGUF the image pins, so no memory
 # text leaves the machine. A hosted opt-in is provider/model/dimension in the
@@ -37,13 +37,13 @@ OV_EMBEDDING_PROVIDER="${QCR_OPENVIKING_EMBEDDING_PROVIDER:-local}"
 OV_EMBEDDING_MODEL="${QCR_OPENVIKING_EMBEDDING_MODEL:-bge-small-en-v1.5-f16}"
 OV_EMBEDDING_DIMENSION="${QCR_OPENVIKING_EMBEDDING_DIMENSION:-384}"
 OV_EMBEDDING_KEY_FILE="${QCR_OPENVIKING_EMBEDDING_KEY_FILE:-openai_embeddings_api_key}"
-# The local embedder's pin (S4): model, file and sha256 are the
-# image's — docker/daemon/Dockerfile exports its LOCAL_EMBEDDER_* ARGs as these
+# The local embedder's pin: model, file and sha256 are the image's —
+# docker/daemon/Dockerfile exports its LOCAL_EMBEDDER_* ARGs as these
 # QCR_OPENVIKING_LOCAL_EMBEDDER_* (== config.toml [openviking] local_embedder_*
 # == group_vars openviking_local_embedder_*); the literals below only cover an
-# image built before that. Port and threads are runtime knobs the daemon reads
-# from config.toml — docker-compose.yml passes the .env's mirror of them, which
-# the onboarding bring-up step writes.
+# image that does not export them. Port and threads are runtime knobs the
+# daemon reads from config.toml — docker-compose.yml passes the .env's mirror
+# of them, which the onboarding bring-up step writes.
 OV_LOCAL_EMBEDDER_MODEL="${QCR_OPENVIKING_LOCAL_EMBEDDER_MODEL:-bge-small-en-v1.5-f16}"
 OV_LOCAL_EMBEDDER_DIMENSION="${QCR_OPENVIKING_LOCAL_EMBEDDER_DIMENSION:-384}"
 OV_LOCAL_EMBEDDER_DIR="${QCR_OPENVIKING_LOCAL_EMBEDDER_DIR:-/opt/openviking/models}"
@@ -61,12 +61,11 @@ OV_VENV="${QCR_OPENVIKING_VENV:-/opt/openviking/venv}"
 # The compose file mounts that ONE volume at BOTH paths — /opt/quickreview/state
 # (the absolute path the docs, the TUI and the ingress checks use) and
 # <sandbox>/state (where the code looks). That is deliberate and it is why the
-# first branch exists: the sandbox is a BIND MOUNT OF THE OPERATOR'S CHECKOUT,
+# first branch exists: the sandbox is a bind mount of the operator's checkout,
 # so anything this script does to <sandbox>/state happens on their machine.
-# The old migration deleted that directory and replaced it with a symlink to a
-# path that does not exist on the host — taking with it the onboarding
+# Replacing that directory with a symlink would delete the onboarding
 # checklist, the companion's rollover/alert state and the first-run marker, all
-# of which are HOST-side files the TUI and the wizard read directly
+# of which are host-side files the TUI and the wizard read directly
 # (src/tui/index.ts, src/onboard/engine.ts). Same-inode means the volume is
 # already mounted here: there is nothing to migrate and nothing to link, and
 # the destructive branch must not run — `rm -rf` on a mountpoint deletes the
@@ -76,7 +75,7 @@ VOLUME_ID="$(stat -c %d:%i /opt/quickreview/state 2>/dev/null || echo volume)"
 if [[ "$STATE_ID" == "$VOLUME_ID" ]]; then
   : # the state volume is mounted straight onto <sandbox>/state — nothing to do
 else
-  # Legacy layout (volume only at /opt/quickreview/state): link, migrating a real
+  # Volume mounted only at /opt/quickreview/state: link, migrating a real
   # directory's contents once.
   if [[ -d "$SANDBOX/state" && ! -L "$SANDBOX/state" ]]; then
     cp -a "$SANDBOX/state/." /opt/quickreview/state/ 2>/dev/null || true
@@ -85,11 +84,10 @@ else
   [[ -L "$SANDBOX/state" ]] || ln -sfn /opt/quickreview/state "$SANDBOX/state"
 fi
 
-# The code resolves secrets through the install locator: an empty
-# (or old-default) config.toml [github].secrets_dir means
-# <config home>/secrets, i.e. ${XDG_CONFIG_HOME:-~/.config}/qcr/<install>/secrets
-# — point that at the read-only secrets mount. (The old ~/.config/quickreview-bot
-# link is gone with the contract step,: nothing reads that dir.)
+# The code resolves secrets through the install locator: an empty (or
+# old-default) config.toml [github].secrets_dir means <config home>/secrets,
+# i.e. ${XDG_CONFIG_HOME:-~/.config}/qcr/<install>/secrets — point that at the
+# read-only secrets mount.
 XDG_BASE="${XDG_CONFIG_HOME:-}"
 [[ "$XDG_BASE" == /* ]] || XDG_BASE="$HOME/.config"
 SECRETS_HOME="$XDG_BASE/qcr/${QCR_INSTALL:-default}/secrets"
@@ -100,7 +98,7 @@ mkdir -p "$(dirname "$SECRETS_HOME")"
 # it spawns and mint-token.sh alike (they all inherit this).
 export QCR_SECRETS_MOUNT="$SECRETS"
 
-# OpenAI auth for pi — native, two routes (findings):
+# OpenAI auth for pi — native, two routes:
 #   1. API key: exported here so the tmux server and every pi process inherit it.
 #   2. ChatGPT-subscription OAuth: run `/login` once in any pi session; tokens
 #      persist in /home/review/.pi/agent/auth.json (a mounted volume) and take
@@ -110,15 +108,14 @@ if [[ -r "$SECRETS/openai_api_key" ]]; then
   export OPENAI_API_KEY
 fi
 
-# OpenViking — the context store the DAEMON supervises as a child
-# process on loopback $OV_PORT. This block prepares its state and configuration
-# and provisions its users; it never leaves a server RUNNING (the provisioning
-# step below starts one in the FOREGROUND and stops it again, so the container
+# OpenViking — the context store the daemon supervises as a child process on
+# loopback $OV_PORT. This block prepares its state and configuration and
+# provisions its users; it never leaves a server running (the provisioning
+# step below starts one in the foreground and stops it again, so the container
 # still ends up with a single supervised process tree — the long-lived server
-# is the daemon's child, as before) and it NEVER runs the server's own setup
-# wizard (the `init` subcommand): that wizard is interactive, and an
-# interactive prompt in this container is exactly the class of stall that
-# wedged pr-5334. ov.conf is rendered below instead.
+# is the daemon's child) and it never runs the server's own setup wizard (the
+# `init` subcommand): that wizard is interactive, and the reviewer must never
+# block on an interactive prompt. ov.conf is rendered below instead.
 #
 # ~/.openviking is a SYMLINK onto the state volume, so memories, the vector db
 # and ov.conf all survive an image rebuild.
@@ -144,23 +141,23 @@ fi
 #     (This is also why `doctor` is not the health gate — it exits 1 with no
 #     vlm configured. The daemon polls /ready.)
 #   * auth_mode comes from $QCR_OPENVIKING_AUTH_MODE (mirrored with config.toml
-#     [openviking] auth_mode), default "api_key". Loopback-only was
-#     NEVER the whole story: every review session runs INSIDE this container,
+#     [openviking] auth_mode), default "api_key". Loopback-only is not enough:
+#     every review session runs inside this container,
 #     so "nobody can reach the port" does not stop a review session from
 #     reading companion memory. Only the server's per-USER-key confinement
 #     does, and that confinement exists only in api_key mode — which is why
 #     the root key is read from the read-only secrets mount here and never
 #     written as a literal.
 #   * workers/queue_workers — and embedding.max_concurrent, on the same knob
-#     (S3) — are cut for a 2-CPU cap: CPU is the measured cost
+#     — are cut for a 2-CPU cap: CPU is the measured cost
 #     (~1.63 core-seconds per ~500 B write), not RAM.
-#   * retrieval.enable_intent = false (S3): no model-based query
+#   * retrieval.enable_intent = false: no model-based query
 #     planning on a session search — there is no model for it.
-#   * The EMBEDDER is a knob, never a literal — $QCR_OPENVIKING_
-#     EMBEDDING_*. The shipped default is the server's own LOCAL llama-cpp
-#     embedder, so no memory text leaves this machine; a hosted provider is an
-#     explicit opt-in and reads ITS OWN credential file — never pi's
-#     `openai_api_key`, so the two are set independently.
+#   * The embedder is a knob, never a literal — $QCR_OPENVIKING_EMBEDDING_*.
+#     The shipped default is the local English embedder (a loopback service
+#     over llama-cpp-python), so no memory text leaves this machine; a hosted
+#     provider is an explicit opt-in and reads ITS OWN credential file —
+#     never pi's `openai_api_key`, so the two are set independently.
 #
 # The `||` is deliberate (the boot runs under `set -e`): a memory engine that
 # cannot be configured must never stop the reviewer from coming up. The daemon
@@ -323,7 +320,7 @@ fi
 # script's own exit-0 discipline are belt and braces — an unprovisioned memory
 # engine degrades, it never stops the reviewer coming up.
 #
-# Under the LOCAL embedder (S4) the server's /ready probes the
+# Under the LOCAL embedder the server's /ready probes the
 # loopback embedding service, so provisioning runs that too — first, for the
 # same foreground step, stopped with the server. The daemon supervises the
 # long-lived pair from config.toml's mirror of these values.
@@ -470,7 +467,7 @@ try {
 PI_EXT_MERGE
 
 # Private-repo git auth (reviewed-repo clone + per-PR fetches): the app
-# installation token over HTTPS — never a personal credential (§2).
+# installation token over HTTPS — never a personal credential (CLAUDE.md rule 3).
 git config --global credential.helper \
   "!f() { echo username=x-access-token; echo \"password=\$(\"$SANDBOX/scripts/mint-token.sh\")\"; }; f"
 

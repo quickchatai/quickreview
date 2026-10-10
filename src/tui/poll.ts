@@ -1,6 +1,6 @@
 // Poller: one `ssh … cat status.json` every poll interval, with backoff on
 // failure and an honest health classification — the TUI never silently shows
-// old truth (main-screen contract).
+// old truth.
 import type { StatusSnapshot } from "../state.js";
 import type { TuiConfig } from "../config.js";
 import { statusArgv, type SshRunner } from "./remote.js";
@@ -19,7 +19,7 @@ export type Health =
  * Health rules, in precedence order:
  *  - no successful fetch yet, or the last fetch failed → unreachable;
  *  - `written_at` older than `staleAfterS` (sized to the daemon's ~30s write
- *    cadence, NOT the TUI's fetch cadence) → DATA STALE;
+ *    cadence, not the TUI's fetch cadence) → DATA STALE;
  *  - otherwise ok, reporting the daemon heartbeat age.
  * Snapshot ages are judged against wall clock, so a dead daemon behind a
  * healthy ssh path still degrades to stale.

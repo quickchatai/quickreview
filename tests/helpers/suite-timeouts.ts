@@ -1,7 +1,7 @@
 // Test budgets under machine load — the rule is in tests/CLAUDE.md
 // ("Timeouts under load") and pinned by tests/suite-timeouts.test.ts.
 //
-// Measured 2026-09-30 on the 16-core dev PC with the AACR benchmark running
+// Measured on a 16-core dev PC with the AACR benchmark running
 // and a CPU burner at 2x cores: the slowest single test in a process-spawning
 // file took 22s (tui-startup), the guards-shell cases 5-18s each, against
 // 0.8-7s on the same machine with only the benchmark load. The in-process

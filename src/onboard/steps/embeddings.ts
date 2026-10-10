@@ -1,18 +1,17 @@
-// The embedder step — where memory's vectors are computed, and the
-// ONLY place a new operator is asked about it.
+// The embedder step — where memory's vectors are computed, and the only
+// place a new operator is asked about it.
 //
-// WHY IT IS A STEP. The shipped default is the LOCAL embedder — since
-// S4 a small English model served on loopback inside the daemon
-// container — so nothing but the model call leaves the machine, memory text
-// included. That default needs no answer and
-// no key, which is exactly why the step exists: an operator who WANTS hosted
-// embeddings must say so, in one place, and the whole installation then moves
-// together — config.toml, the credential file, and (through the bring-up or
+// Why it is a step: the shipped default is the local embedder — a small
+// English model served on loopback inside the daemon container — so nothing
+// but the model call leaves the machine, memory text included. That default
+// needs no answer and no key, which is exactly why the step exists: an
+// operator who WANTS hosted embeddings must say so, in one place, and the
+// whole installation then moves together — config.toml, the credential file, and (through the bring-up or
 // inventory step) the environment the boot actually renders. Half of that is
 // the failure this step makes impossible: a config that says "openai" over a
 // boot that renders "local" is a vector-store reset on the next start.
 //
-// THE CREDENTIAL IS ITS OWN FILE. `openai_api_key` is pi's model credential
+// The credential is its own file: `openai_api_key` is pi's model credential
 // and is never read for embeddings; the hosted opt-in reads
 // `<secrets>/<embedding_key_file>` (default `openai_embeddings_api_key`).
 // Either can be set without the other. The wizard never accepts the value
@@ -106,7 +105,7 @@ export function embedderEnvEntries(e: DeclaredEmbedder): Array<[string, string]>
 }
 
 /**
- * The local embedder's two RUNTIME knobs as `.env` keys (S4):
+ * The local embedder's two runtime knobs as `.env` keys:
  * docker-compose.yml passes them to the entrypoint, which renders ov.conf's
  * `api_base` and runs the provisioning embedder on that port — while the
  * daemon reads the same two from config.toml. Mirrored on every bring-up so

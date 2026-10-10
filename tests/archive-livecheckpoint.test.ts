@@ -1,8 +1,7 @@
-// the LIVE state.db's WAL checkpoint, off the loop (the 2026-10-08
-// rehearsal on real data: the daemon connection's automatic checkpoint fired
-// inside one delete commit in every 8–11 batches and fsynced the 466 MB file
-// on the loop — 35–93 ms commits, a cost per ~4 MB of WAL no batch size
-// bounds). While a run deletes, the daemon connection's `wal_autocheckpoint`
+// The LIVE state.db's WAL checkpoint, off the loop: the daemon connection's
+// automatic checkpoint would fire inside a delete commit and fsync the whole
+// database file on the loop, a cost per few MB of WAL that no batch size
+// bounds. While a run deletes, the daemon connection's `wal_autocheckpoint`
 // is off and every deleting batch is followed by a PASSIVE checkpoint on a
 // worker thread with its own connection; the setting comes back when the run
 // ends, when the checkpointer fails, and on stop().

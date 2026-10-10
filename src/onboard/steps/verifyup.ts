@@ -16,17 +16,16 @@
 //      only the App's own webhook.
 //
 // A red layer STOPS the step and says so: the later layers would report
-// noise. Every check names its own fix in its own detail line — that is the
-// promise that the wizard "refuses to proceed past a failed
-// verification with a plain explanation".
+// noise. Every check names its own fix in its own detail line: the wizard
+// refuses to proceed past a failed verification, and says why in plain words.
 //
 // Nothing here mutates the reviewed repo. The one write it can make is a
 // webhook REDELIVERY on the App's own hook — App-scoped, never a review, a
 // label, a branch or a comment, and so nowhere near the daemon's mutation gate
-// (this is the wizard, running before and beside the daemon, exactly as
-//'s App creation is).
+// (this is the wizard, running before and beside the daemon, exactly as the
+// github_app step's App creation is).
 //
-// layers 1 and 2 run against WHICHEVER host the system lives on. The
+// Layers 1 and 2 run against WHICHEVER host the system lives on. The
 // step does not know or care which: it asks `stackTransportFor(ctx)` — the one
 // decision point — and gets either the compose transport (docker on this
 // machine, a fetch to the published port) or the ssh one (docker on the

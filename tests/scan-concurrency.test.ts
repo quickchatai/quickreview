@@ -1,12 +1,10 @@
-// pass-concurrency in a SCAN (scan-loop, self-scan round 7): every one of its
-// 9 cases (3 in round 6) took ~13s, cost ~$0.028 and answered NONE, while the
-// other deep lenses on the same files took minutes. The built agent carried
-// the PR-round trigger rule — "your task string must NAME THE SHAPE … if it
-// names no concrete read-then-write, say so in one line and return NONE" —
-// and a scan case has no session to name one: its "Why this case" line says
-// why the row was planned ("files this lens has never deep-read"). So the
-// lens obeyed its rule and read nothing, and the ledger recorded the files as
-// deep-read.
+// pass-concurrency in a scan. The PR-round build carries a trigger rule —
+// "your task string must NAME THE SHAPE … if it names no concrete
+// read-then-write, say so in one line and return NONE" — and a scan case has
+// no session to name one: its "Why this case" line only says why the row was
+// planned ("files this lens has never deep-read"). With that rule in the scan
+// build the lens reads nothing and returns NONE, while the ledger records the
+// files as deep-read.
 //
 // Pinned here: the trigger stays in every PR build and leaves the scan build;
 // the scan build carries a scan-only rule that makes the focus files the

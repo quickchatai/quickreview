@@ -1670,16 +1670,16 @@ describe("pruneDependencyCache — the cache's size cap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// selfscan2 (depsources-replay unit): bounded work, provenance, nearest pins
+// bounded work, provenance, nearest pins
 // ---------------------------------------------------------------------------
 
 describe("selfscan2: bounded scanning and archive work", () => {
   it(
     "import scanning is linear: a megabyte of dangling `import ` tokens is not a daemon stall",
     () => {
-      // Quadratic before: the lazy `[^;'"`]*?` gap re-scanned the whole suffix
-      // at every `import` token (~30s at the 1MB source cap, on the event loop).
-      // Asserted as SCALING (tests/helpers/scaling.ts), never a wall-clock
+      // A lazy gap pattern that re-scans the whole suffix at every `import`
+      // token is quadratic (tens of seconds at the 1MB source cap, on the
+      // event loop). Asserted as SCALING (tests/helpers/scaling.ts), never a wall-clock
       // budget: 10× the tokens must cost ~10× the time, not ~100×.
       const hostile = (n: number) => "import ".repeat(n);
       const s = measureScaling(extractJsImports, hostile(4_000), hostile(40_000));
@@ -1969,7 +1969,7 @@ describe("selfscan2: the version a file actually runs against", () => {
     // The PyPI-sourced pin is still a pin.
     expect(parsePythonLock(uv).get("httpx")).toBe("0.27.0");
     expect(parsePipfileLock(pipfile).get("httpx")).toBe("0.27.0");
-    // No `_meta.sources` at all: plain PyPI, as before.
+    // No `_meta.sources` at all: plain PyPI.
     expect(
       parsePipfileLock(JSON.stringify({ default: { httpx: { version: "==0.27.0" } } })).get(
         "httpx",
@@ -2153,8 +2153,8 @@ describe("selfscan2: the version a file actually runs against", () => {
 });
 
 // ---------------------------------------------------------------------------
-// selfscan4 (depsources-replay unit): bounded work on hostile input, the note
-// keeps author text as data, and the cache never evicts what a round is using
+// bounded work on hostile input, the note keeps author text as data, and the
+// cache never evicts what a round is using
 // ---------------------------------------------------------------------------
 
 describe("selfscan4: hostile lockfiles and archives are linear work", () => {

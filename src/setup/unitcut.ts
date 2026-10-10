@@ -1,4 +1,4 @@
-// The unit cut (item 4, setup & scan spec "Unit"): the
+// The unit cut (setup & scan spec "Unit"): the
 // partition of a repo into stack-aware units — a Django app, a package, a
 // workspace — that the survey reads, the scan reviews and every report groups
 // by. The COMPANION proposes it, the OPERATOR adjusts it, and once saved it is

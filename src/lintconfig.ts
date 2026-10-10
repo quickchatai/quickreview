@@ -1,10 +1,8 @@
-// The repo's CI-enforced linters and formatters (freeze fixes 2, 2026-10-03):
-// what plans `pass-lint-conformance`. A violation of a lint or format rule
-// that a CI job of the repo runs fails that job — a build defect, not taste —
-// and the pre-freeze miss analysis found such defects killed as "style" or
-// never raised (a clang-format failure, a gci import order, a `cargo fmt`
-// whitespace, a root jsdoc rule). The lens judges from the config; it never
-// runs a tool (scoping rule 2).
+// The repo's CI-enforced linters and formatters: what plans
+// `pass-lint-conformance`. A violation of a lint or format rule that a CI job
+// of the repo runs fails that job — a build defect, not taste (a clang-format
+// failure, a gci import order, a `cargo fmt` whitespace, a root jsdoc rule).
+// The lens judges from the config; it never runs a tool (scoping rule 2).
 //
 // Pure reading, total: an unreadable tree or file is "no linter".
 

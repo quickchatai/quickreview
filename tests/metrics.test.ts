@@ -38,7 +38,7 @@ interface RoundSeed {
   round_type?: string;
   lenses?: string;
   verdict?: string | null;
-  /** Seed spend — lands in est_usd, the ONE spend field. */
+  /** Seed spend — lands in est_usd, the one spend field. */
   spend_usd?: number | null;
   duration_s?: number | null;
   started_at: string;
@@ -705,7 +705,7 @@ describe("schema migrations", () => {
   });
 });
 
-// ---- the operational half (OPERATIONS) -----------------------------
+// ---- the operational half ---------------------------------------------------
 
 describe("events_by_kind", () => {
   it("counts EVERY event kind in the window, busiest first", () => {
@@ -833,7 +833,7 @@ describe("ops", () => {
     });
   });
 
-  // ---- -------------------------------------------------------------
+  // ---- cancellations ---------------------------------------------------------
 
   describe("cancellations by cause", () => {
     const cancel = (

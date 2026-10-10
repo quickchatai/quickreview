@@ -4,8 +4,8 @@
 //   1. the array is ordered P0, P1, P2, then P3/unstamped (the harness keeps
 //      the first 30, so the cap only ever drops the least severe);
 //   2. a comment on a DELETED line (side LEFT) is exported with `line: null`
-//      instead of being dropped (2026-10-03: effect#5952's only finding sat on
-//      a deleted line and the PR scored as an empty review, a hard zero).
+//      instead of being dropped (a PR whose only finding sits on a deleted
+//      line would otherwise score as an empty review, a hard zero).
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";

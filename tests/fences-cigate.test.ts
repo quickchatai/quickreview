@@ -1,15 +1,13 @@
-// the CI-classifier DIFFERENTIAL (audit assertion #7, MC-15).
+// The CI-classifier differential.
 //
 // `scripts/guards.sh`'s `guard_ci_state` is a hand-rolled jq reimplementation
 // of `classifyCi` in `src/cigate.ts`, and both file headers claim the two are
-// behaviourally identical. Nothing checked that. They are asserted separately
-// — `tests/cigate.test.ts` drives the TypeScript, `tests/guards-shell-cigate.test.ts`
-// drives the script — over different inputs, with no shared fixture set and no
-// agreement assertion.
+// behaviourally identical. `tests/cigate.test.ts` drives the TypeScript and
+// `tests/guards-shell-cigate.test.ts` drives the script, over different
+// inputs; this file is the agreement assertion between them.
 //
 // That matters more here than for any other pair in the tree, because guard 4
-// is the ONLY guard that gates an approval. `tests/guards.test.ts` has no
-// guard-4 case at all.
+// is the only guard that gates an approval.
 //
 // This runs the REAL shell function against a loopback stub and the REAL
 // TypeScript function over the same corpus, and requires them to agree.
@@ -34,9 +32,9 @@ const cfg = parseConfig(readFileSync(join(ROOT, "tests", "fixtures", "config.tom
  * The shared corpus. Each case is a set of check runs; both classifiers see
  * exactly these and must return the same word.
  *
- * The cases are chosen for the branches the audit called out: latest-run-per-
- * name (GitHub auto-cancels superseded runs, and permanent `cancelled` husks
- * withheld every approval for a day), the inert conclusions, the unfinished
+ * The cases cover the risky branches: latest-run-per-name (GitHub
+ * auto-cancels superseded runs, and a permanent `cancelled` husk would
+ * withhold every approval), the inert conclusions, the unfinished
  * states, and the default-to-red fall-through that makes every conclusion
  * GitHub invents next fail closed.
  */
@@ -110,9 +108,8 @@ const CORPUS: ReadonlyArray<{
     ],
   },
   {
-    // THE case: GitHub cancels the superseded run of a check name.
-    // Only the newest run of each name counts, or a permanent husk withholds
-    // every approval forever — which it did, for a day.
+    // GitHub cancels the superseded run of a check name. Only the newest run
+    // of each name counts, or a permanent husk withholds every approval forever.
     name: "a cancelled husk superseded by a green rerun",
     runs: [
       {
@@ -150,9 +147,9 @@ const CORPUS: ReadonlyArray<{
       },
     ],
   },
-  // and its review round 1: a commit status is a second check, never
-  // a superseded run — whichever kind is timestamped, whichever is listed
-  // first. These are the rows the two copies used to answer differently.
+  // A commit status is a second check, never a superseded run — whichever
+  // kind is timestamped, whichever is listed first. The two copies must agree
+  // on each of these rows.
   {
     name: "a failing status under a passing check-run's name",
     runs: [
@@ -347,8 +344,8 @@ describe("the shell CI classifier agrees with classifyCi", () => {
    * Both readers must see EVERY check at the head, not the first page of each
    * endpoint. A head with more than 100 check-runs (matrix jobs plus reruns —
    * superseded runs still count toward the total) or 100 status contexts puts
-   * the rest on page 2; a failing or pending one there was invisible, the
-   * first page classified green, and APPROVE was allowed.
+   * the rest on page 2; a reader of page 1 alone would miss a failing or
+   * pending one there, classify green, and allow APPROVE.
    *
    * MUTATION: drop the page loop from `listChecks` in src/github.ts, or from
    * `guard_ci_pages` in scripts/guards.sh — the matching case reads green.
@@ -415,9 +412,9 @@ describe("the shell CI classifier agrees with classifyCi", () => {
   });
 
   /**
-   * THE ONE CASE WHERE THEY DO NOT AGREE, asserted as the disagreement it is.
+   * The one case where they do not agree, asserted as the disagreement it is.
    *
-   * MC-15: when the check list cannot be read at all, `guard_ci_state` ends
+   * When the check list cannot be read at all, `guard_ci_state` ends
    * `2>/dev/null || echo unknown`, and `guard_require_green_ci`'s `case`
    * treats `unknown` like `green` — "the guard blocks only what it can see".
    * That is a silent FAIL-OPEN on the only guard that gates approvals, and it
@@ -427,9 +424,9 @@ describe("the shell CI classifier agrees with classifyCi", () => {
    * `classifyCi` has no such state: it takes a list, and an empty list is
    * `none`.
    *
-   * This is NOT repaired here. Making guard 4 fail closed would withhold
-   * approvals during a GitHub API blip — a live behaviour change on the
-   * approval path, which is the owner's call and not a fence's. What the
+   * This is deliberately not repaired here. Making guard 4 fail closed would
+   * withhold approvals during a GitHub API blip — a live behaviour change on
+   * the approval path, which is the owner's call and not a fence's. What the
    * fence owes is that the asymmetry is written down and cannot change
    * unnoticed in either direction.
    *
@@ -451,12 +448,10 @@ describe("the shell CI classifier agrees with classifyCi", () => {
       "case ",
     );
 
-    // …and `unknown` is still NOT among the states that refuse. This is the
-    // assertion the record turns on, and the first version did not have it:
-    // it asserted only that a `*)` catch-all exists, which survives the fix,
-    // because `green` needs that arm too. Applying this record's own named
-    // repair left all seventeen tests passing — a self-retiring record that
-    // does not retire, still reading "still broken" after the repair.
+    // …and `unknown` is still not among the states that refuse. This is the
+    // assertion the record turns on: asserting only that a `*)` catch-all
+    // exists would survive the fix, because `green` needs that arm too, and
+    // the record would never retire.
     const refusing = /case "\$state" in([\s\S]*?)esac/.exec(requireGreen)?.[1] ?? "";
     expect(
       refusing,

@@ -1,4 +1,4 @@
-// the status.json `memory` block and the state it is built from:
+// The status.json `memory` block and the state it is built from:
 // the block reaches the heartbeat BESIDE the unauthenticated `openviking`
 // block (never instead of it), a throwing read never costs the heartbeat, the
 // open incident survives a restart through the events table, and `qcr status`

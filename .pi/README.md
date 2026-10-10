@@ -3,21 +3,18 @@
 ## How the lens agents reach the subagent tool
 
 Subagents run on **pi's own first-party subagent extension**, shipped inside
-the pinned pi npm package (`examples/extensions/subagent/`). The third-party
-amosblomqvist/pi-subagents extension — and with it the `globalThis`
-registration hook, the image clone layer and the vendored copy — was removed
-entirely on 2026-08-30 (owner's order; the unlicensed dependency is dissolved
-by removal, →). The wiring is now:
+the pinned pi npm package (`examples/extensions/subagent/`). No third-party
+subagent extension and no vendored copy are involved. The wiring:
 
 | concern | mechanism |
 |---|---|
 | the extension itself | `extensions/subagents.ts` (per-session `--extension` argv; also the companion's `piArgv`) dynamic-imports the native extension from the INSTALLED pi package (`getExamplesPath()`), so it can never drift from the rule-7 pin |
 | lens agent discovery | the native "user" scope reads `~/.pi/agent/agents`, which the container entrypoints symlink at the daemon-built `state/agents/` (VM) / `docker/companion/agents/` (companion); the glue pins `agentScope` so repo-controlled `.pi/agents` dirs are unreachable |
-| concurrency cap | process-wide weighted semaphore in the glue — `QCR_SUBAGENT_MAX_CONCURRENCY` per session from `config.toml [pi] subagent_max_concurrency` (VM 6); default 4 (companion) |
+| concurrency cap | process-wide weighted semaphore in the glue — `QCR_SUBAGENT_MAX_CONCURRENCY` per session — from `config.toml [pi] subagent_max_concurrency` on the VM, 8 for the companion (`SUBAGENTS.maxConcurrency`); 4 when unset |
 | child confinement | children spawn as `pi --mode json -p --no-session`; they load only the global settings.json extensions (bash-guard — never the subagents glue or the memory extension, which ride argv), so a pass cannot fan out and does no ambient memory work; the glue also strips every task `cwd`, so a child never runs where a reviewed repo's `.pi/` project config could load |
 | per-agent model | pinned in each built agent's frontmatter by `src/include.ts` as the FULL `provider/model:thinking` spec — pi's `--model` accepts the thinking suffix (never a default — the container auth is ChatGPT OAuth, provider prefix `openai-codex/`) |
 
-Load-order note (load-bearing): the subagents glue rides per-session argv
+Load order matters: the subagents glue rides per-session argv
 only; children see only the global `~/.pi/agent/settings.json` extensions.
 Children therefore never get the `subagent` tool — a pass cannot fan out into
 another pass, which structurally enforces the passes-are-leaves rule.

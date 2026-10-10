@@ -1,6 +1,6 @@
-// §8 — the "muted + one accent" design system: token composition,
-// helper shapes, geometry transparency, and the sweep assertion that no
-// renderer emits ad-hoc inverse styling any more.
+// The "muted + one accent" design system: token composition, helper shapes,
+// geometry transparency, and the sweep assertion that no renderer emits
+// ad-hoc inverse styling.
 import { describe, expect, it } from "vitest";
 import {
   ACCENT,
@@ -317,9 +317,8 @@ describe("sweep: the old ad-hoc styling is gone from every tab", () => {
   });
 
   it("token wrapping never changes cell math: displayWidth == stripAnsi length, frame-wide", () => {
-    // (memtab/digesttab carry a pre-existing 1-cell body overflow — layout is
-    // out of scope for this slice, so the invariant pinned here is the
-    // §8 one: styling is ANSI-transparent to the cell math.)
+    // Pins that styling is ANSI-transparent to the cell math; whether each
+    // line fits the frame width is layout, not asserted here.
     for (const [, frame] of frames()) {
       for (const line of frame.lines) {
         expect(displayWidth(line)).toBe(stripAnsi(line).length);

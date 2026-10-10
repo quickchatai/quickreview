@@ -1,4 +1,4 @@
-// bring-up, and memory's second phase.
+// Bring-up, and memory's second phase.
 //
 // Bring-up is the one step in the wizard that takes a long time, so two of its
 // properties are behavioural rather than incidental and are pinned here: the
@@ -145,17 +145,17 @@ describe("the registered sequence (tail)", () => {
     const ids = steps.map((s) => s.id);
     expect(ids).toEqual([
       "preflight",
-      // the topology question, then the VM route's ssh preflight —
+      // The topology question, then the VM route's ssh preflight —
       // first among that route's steps, before anything is minted or written.
       "topology",
       "ssh_preflight",
       "llm_auth",
       "config_fill",
-      // the escalation question sits right after the interview — it
+      // The escalation question sits right after the interview — it
       // patches the config the interview just wrote, and "no" (the default,
       // and the right answer for most teams) leaves everything unchanged.
       "escalation",
-      // the embedder — local by default, so calling it with no answer
+      // The embedder — local by default, so calling it with no answer
       // confirms the default; a hosted opt-in is the only thing it asks about.
       "embeddings",
       // The ingress step before the App: its fixed hostname goes into the
@@ -235,11 +235,11 @@ describe("bring-up, happy path", () => {
     expect(result.checks.find((c) => c.name === "ingress-sidecar")!.ok).toBe(true);
   });
 
-  // the container reads the config the install locator found on the
+  // The container reads the config the install locator found on the
   // host. The compose file mounts QCR_CONFIG_HOME read-only and the entrypoint
   // names QCR_CONFIG_NAME inside it — so a config in the install's config home
-  // reaches the daemon.: there is no checkout fallback in the
-  // container either, so whatever the locator found is what is mounted.
+  // reaches the daemon. There is no checkout fallback in the container
+  // either, so whatever the locator found is what is mounted.
   it("mounts the directory of the config the locator found", async () => {
     const home = join(root, "..", `${root.split("/").pop()}-cfghome`);
     mkdirSync(home, { recursive: true });
@@ -262,7 +262,7 @@ describe("bring-up, happy path", () => {
     expect(readEnvKey(envText(), "QCR_CONFIG_NAME")).toBe("config.toml");
   });
 
-  // the compose file mounts QCR_SECRETS_DIR read-only as the
+  // The compose file mounts QCR_SECRETS_DIR read-only as the
   // container's secrets — the install locator's answer, created before Docker
   // could create it as root.
   it("writes the located secrets dir into .env and creates it", async () => {

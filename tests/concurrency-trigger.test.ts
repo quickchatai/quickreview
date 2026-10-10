@@ -1,7 +1,7 @@
-// The concurrency lens's content trigger (owner ruling 2026-10-02, amending
-// for content): pass-concurrency still has no PATH predicate, but a
-// diff that touches synchronisation in its own language, or a PR whose text
-// says it is about a race or a lock, plans it through SUBLENS_TRIGGERS. Every
+// The concurrency lens's content trigger: pass-concurrency has no PATH
+// predicate, but a diff that touches synchronisation in its own language, or a
+// PR whose text says it is about a race or a lock, plans it through
+// SUBLENS_TRIGGERS. Every
 // spelling below is pinned in both directions: it fires in its language, and
 // a near-miss (another language, a lockfile, a test file) does not.
 import { describe, expect, it } from "vitest";

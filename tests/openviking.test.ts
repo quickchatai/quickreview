@@ -1,4 +1,4 @@
-// the OpenViking runtime's CONFIG and DEPLOY halves.
+// The OpenViking runtime's config and deploy halves.
 //
 // The centrepiece is the triple-mirror drift test: the pinned versions live in
 // config.toml, in the ansible group_vars and in the image, and this file fails
@@ -27,9 +27,9 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The TRACKED config.example.toml — the pin spelling every tree carries —
-// against group_vars/Dockerfile (rule 7). The operator's LIVE config.toml
-// left the checkout with `qcr install migrate`, so no test reads
-// it: its half of the drift tripwire is scripts/deploy.sh's preflight, which
+// against group_vars/Dockerfile (rule 7). The operator's live config.toml
+// lives in the config home, not the checkout, so no test reads it: its half
+// of the drift tripwire is scripts/deploy.sh's preflight, which
 // reads it through the install locator and REFUSES on any OpenViking pin
 // drift (pinned in tests/deploy.test.ts, "OpenViking pin drift").
 const configToml = readFileSync(resolve(root, "config.example.toml"), "utf8");
@@ -111,7 +111,7 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)"
   });
 
   it("llama-cpp-python is installed even though openviking does not depend on it", () => {
-    // Verified 2026-08-20: without it the default local dense embedder raises
+    // Verified live: without it the default local dense embedder raises
     // EmbeddingConfigurationError and the server cannot boot at all.
     const llama = dockerfile.indexOf("llama-cpp-python==");
     const ov = dockerfile.indexOf('"openviking==');
@@ -133,7 +133,7 @@ describe("triple-mirror version pin (config.toml ↔ group_vars ↔ Dockerfile)"
     expect(playbook).toContain("{{ openviking_home }}");
   });
 
-  // the embedder is an OPERATOR knob, so the live config may differ
+  // The embedder is an operator knob, so the live config may differ
   // from the tracked group_vars (an opt-in rides inventory host vars, never an
   // edit to the tracked file). What is pinned is the SHIPPED default — local,
   // in every mirror — and that the live value is one the server can run.
@@ -226,9 +226,8 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
       entrypoint.indexOf("OV_CONF_RENDER"),
       entrypoint.lastIndexOf("OV_CONF_RENDER"),
     );
-    // the mode is a group_var, never a literal. `dev` bypasses
-    // authentication, which makes the two-user confinement nominal — a literal
-    // here is exactly the drift that shipped it for a week.
+    // The mode is a group_var, never a literal. `dev` bypasses
+    // authentication, which makes the two-user confinement nominal.
     expect(render).toContain('auth_mode: "{{ openviking_auth_mode }}"');
     expect(render).not.toContain('auth_mode: "dev",');
     expect(render).toContain('host: "127.0.0.1"');
@@ -248,7 +247,7 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
     );
     expect(entrypoint).toContain('QCR_SECRETS="$SECRETS"');
     expect(render).toContain('provider: "{{ openviking_embedding_provider }}"');
-    // the ONE literal "openai" is the local embedder's WIRE
+    // The one literal "openai" is the local embedder's WIRE
     // provider, inside the `local` branch, beside the loopback api_base — never
     // the operator's provider.
     expect(render.match(/provider: "openai"/g)).toHaveLength(1);
@@ -276,7 +275,7 @@ describe("boot-time ov.conf (never the interactive wizard)", () => {
   });
 });
 
-// the sovereignty claim, checked by EXECUTION: the render heredoc is
+// The sovereignty claim, checked by execution: the render heredoc is
 // lifted out of the template, its Jinja variables filled from the SAME
 // group_vars the playbook uses, and run with node against a temp secrets dir.
 // Reading the guard would only prove what the text says; this proves what the
@@ -334,7 +333,7 @@ describe("the rendered ov.conf (executed)", () => {
       {},
       { openai_api_key: "sk-pi-model-credential", openviking_root_key: "root-key-value" },
     );
-    // the local English embedder, reached through the engine's
+    // The local English embedder, reached through the engine's
     // OpenAI-COMPATIBLE async client at the loopback service.
     expect(conf.embedding.dense).toEqual({
       provider: "openai",
@@ -406,7 +405,7 @@ describe("the rendered ov.conf (executed)", () => {
     });
   });
 
-  // two server knobs that shed load, verified against the pinned
+  // Two server knobs that shed load, verified against the pinned
   // 0.4.15's own config models (both `extra: "forbid"` — a misspelt key would
   // stop the server booting, so the executed render is the proof).
   it("turns model-based query planning OFF and bounds embedding concurrency on the 2-CPU knob", () => {
@@ -441,8 +440,8 @@ describe("the rendered ov.conf (executed)", () => {
   });
 });
 
-// the deployed server ran `auth_mode: "dev"`, so the per-user
-// confinement rule 8 rests on did not exist. These pin the fix: the posture is
+// The per-user confinement rule 8 rests on needs a non-dev auth mode. These
+// pin it: the posture is
 // configuration (mirrored, preflight-checked), the root key comes from the
 // secrets mount, and boot provisioning is idempotent and non-rotating.
 describe("api_key confinement", () => {
@@ -538,7 +537,7 @@ describe("container topology", () => {
   });
 });
 
-// S4 (the owner's ruling R5) — the LOCAL ENGLISH EMBEDDER. A model
+// The local English embedder. A model
 // file is a new pin, so it gets rule 7's discipline: config.toml ==
 // group_vars == the image layer, by URL and sha256, never a literal in the
 // layer, and the deploy preflight refuses on drift (tests/deploy.test.ts).
@@ -667,10 +666,10 @@ describe("the local English embedder pin (config.toml ↔ group_vars ↔ Dockerf
     ).toThrow(/local English embedder/);
   });
 
-  // The previous release REQUIRED the retired spelling under `local`: a daemon
-  // must not refuse to boot over it. It is read as the current local embedder
-  // (the boot renders that whatever the knob says, and the re-embed migration
-  // moves the store).
+  // A config written for the built-in model still carries its spelling under
+  // `local`: a daemon must not refuse to boot over it. It is read as the
+  // current local embedder (the boot renders that whatever the knob says, and
+  // the re-embed migration moves the store).
   it("a config that still spells the retired built-in model under local loads as the local English embedder", () => {
     for (const raw of [
       {

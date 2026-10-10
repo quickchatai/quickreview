@@ -4,16 +4,16 @@
 //  1. The loader contract: deterministic filename-sort order, strict
 //     frontmatter (id + scope only), loud failure on anything malformed —
 //     never a silent skip.
-//  2. The byte-equivalence proof for the extraction: the six LEGACY_*
-//     constants below are frozen, verbatim copies of the compiled-in registry
-//     entries moved into profiles/quickchat/addenda/. Building the
+//  2. The byte-equivalence proof for the house-rule pack: the six LEGACY_*
+//     constants below are frozen, verbatim copies of the house rules that
+//     live in profiles/quickchat/addenda/ rather than in the compiled-in
+//     registry. Building the
 //     real agents/ seeds with [generic registry + quickchat pack] must produce
 //     exactly the bytes that [generic registry + these constants at the tail]
 //     produces, across EVERY built variant file. The constants' tail position
 //     mirrors the pack's composition point (after every built-in generic
-//     entry, before the dynamic feedback-day addendum) — see docs/profiles.md
-//     for the one deliberate delta vs the legacy registry: an extracted
-//     entry that used to sit mid-registry now composes at its pass's tail.
+//     entry, before the dynamic feedback-day addendum) — see docs/profiles.md:
+//     a pack entry composes at its pass's tail, never mid-registry.
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,20 +37,20 @@ import { HEAVY_TIMEOUT_MS } from "./helpers/suite-timeouts.js";
 const sandbox = join(import.meta.dirname, "..");
 /** A fixture profile in `<root>/profiles/` — found because `at(root)` names a
  * config in `<root>`, and a profile beside `$QCR_CONFIG` is on the lookup
- * path (the compose / VM shape).: a checkout's `profiles/` serves only
- * the generic examples, so a fixture can no longer just sit in one. The
+ * path (the compose / VM shape). A checkout's `profiles/` serves only the
+ * generic examples, so a fixture cannot just sit in one. The
  * config-home half is exercised in "the two locations" below. */
 const profileDir = (root: string, profile: string): string => join(root, "profiles", profile);
 const at = (root: string) => ({
   env: { QCR_CONFIG: join(root, "config.toml"), HOME: root, XDG_CONFIG_HOME: join(root, "xdg") },
 });
 // The quickchat pack, as its frozen fixture copy (tests/fixtures/profiles/
-// quickchat — moved the live pack to the install's config home). The
-// fixture is dropped from the assembled snapshots, where the pins for
+// quickchat — the live pack lives in the install's config home). The
+// fixture is dropped from the assembled publish snapshots, where the pins for
 // that exact pack self-skip; in the source tree a missing fixture throws.
 const HAS_QC = stageFixtureProfile(sandbox, "quickchat");
 
-// ---- the frozen legacy constants (verbatim from legacy src/include.ts) --
+// ---- the frozen legacy constants (verbatim compiled-in registry text) --------
 
 const LEGACY_MIGRATION_DISCIPLINE = "[private profile text removed]";
 
@@ -64,8 +64,8 @@ const LEGACY_DECLARED_SHAPE = "[private profile text removed]";
 
 const LEGACY_CONFIG_PLACEMENT = "[private profile text removed]";
 
-/**: the stack rules the three reseeded seeds carried, composed after
- * the six (filename order: 70-, 80-, 90-). */
+/** The stack rules for the three stack-neutral seeds (baseline, ui,
+ * data-safety), composed after the six (filename order: 70-, 80-, 90-). */
 const STACK_PACK_IDS = ["stack-baseline", "stack-ui", "stack-data-safety"];
 
 /** The moved pack exactly as the compiled-in registry declared it. */
@@ -259,7 +259,7 @@ describe("the shipped profiles", () => {
   );
 });
 
-// ---- the byte-equivalence proof ------------------------------------
+// ---- the byte-equivalence proof --------------------------------------------
 
 describe("quickchat extraction is byte-preserving", () => {
   it.skipIf(!HAS_QC)(
@@ -297,7 +297,7 @@ describe("quickchat extraction is byte-preserving", () => {
     "building with the quickchat pack reproduces the compiled-in constants' output byte-for-byte",
     { timeout: HEAVY_TIMEOUT_MS },
     () => {
-      // The six at the tail as before;'s stack rules after them.
+      // The six at the tail; the stack rules after them.
       const pack = loadProfileAddenda(sandbox, "quickchat");
       const expected = build([...PASS_ADDENDA, ...LEGACY_PACK, ...pack.slice(LEGACY_PACK.length)]);
       const actual = build([...PASS_ADDENDA, ...pack]);
@@ -344,7 +344,7 @@ describe("quickchat extraction is byte-preserving", () => {
   });
 });
 
-// ---- lens-selection heuristics ------------------------------------
+// ---- lens-selection heuristics ----------------------------------------------
 
 describe("parseProfileHeuristics", () => {
   const F = "/p/heuristics.toml";
@@ -441,12 +441,12 @@ describe("loadProfileHeuristics", () => {
   });
 });
 
-// ---- the two locations --------------------------------------------
+// ---- the two locations ------------------------------------------------------
 //
 // A profile is looked up in the install's config home first, then in the
-// checkout's `profiles/` — for the generic examples ONLY (an
-// install's own profile left there is stranded, never read, until `qcr
-// install migrate` moves it). Every loader resolves through the install
+// checkout's `profiles/` — for the generic examples ONLY (an install's own
+// profile left there is stranded, never read, until `qcr install migrate`
+// moves it). Every loader resolves through the install
 // locator, so these cases hold for all three — and, through `buildAgents`,
 // for what the built passes actually say.
 describe("profiles load from the config home, then the checkout's examples", () => {

@@ -67,11 +67,10 @@
     base_packages: [python3-docker, git, curl, ca-certificates, gnupg, rsync]
   tasks:
     # Refresh the apt cache only when a package is actually missing. The VM
-    # is shared and carries third-party repos we do not own; on 2026-10-03 one
-    # of them made python-apt's cache update fail on every attempt (empty
-    # error, while the host's own apt runs still stamped success), and an
-    # unconditional update_cache failed every rebuild with all six packages
-    # already installed — the image was never rebuilt.
+    # is shared and carries third-party repos we do not own; a broken one makes
+    # python-apt's cache update fail (with an empty error), and an unconditional
+    # update_cache would then fail every rebuild even with every package
+    # already installed.
     - name: Installed packages
       ansible.builtin.package_facts:
 
@@ -178,8 +177,8 @@
       loop: [app_id, app.pem, webhook_secret]
       no_log: true
 
-    # Optional — the owner chose the ChatGPT-OAuth route (2026-08-13): pi auths
-    # via `/login` inside the container; the key file ships only if present.
+    # Optional — the deployment uses the ChatGPT-OAuth route: pi auths via
+    # `/login` inside the container; the key file ships only if present.
     - name: OpenAI API key (optional under the OAuth route)
       ansible.builtin.copy:
         src: "{{ secrets_src }}/openai_api_key"
@@ -190,7 +189,7 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/openai_api_key') | length > 0
 
-    # the HOSTED embeddings credential — a separate file from pi's
+    # The HOSTED embeddings credential — a separate file from pi's
     # key, present only when the operator opted into a hosted embedder
     # (openviking_embedding_provider != local). Copied-if-present; absent by
     # default, because the shipped embedder is local and needs no key.
@@ -204,7 +203,7 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + openviking_embedding_key_file) | length > 0
 
-    # the OpenViking auth keys. Copied-if-present, matching the
+    # The OpenViking auth keys. Copied-if-present, matching the
     # openai_api_key idiom — a missing root key degrades the boot LOUDLY to
     # auth_mode=dev (the entrypoint warns), it never blocks the deploy. The
     # companion key must NEVER be in this list (rule 8: it never touches the VM).
@@ -219,19 +218,15 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
-    # NOTE: the two "seed from the artifact set" copy tasks
-    # that used to live here are DELETED. They required a private sibling
-    # checkout at an exact controller path, and their output was overwritten by
-    # the rsync below anyway: the repo's prompts/ and agents/ carry the same
-    # files, byte-identical to the artifact set (enforced by
+    # The seed content (prompts/, agents/) has no copy task of its own: it rides
+    # the rsync below, byte-identical to the canonical seed set (enforced by
     # tests/seed-integrity.test.ts — root CLAUDE.md rule 6).
 
-    # Stale-image guard (2026-10-03). The entrypoint and Dockerfile are BAKED
-    # into the image, so a sync — which never rebuilds it — boots new code on
-    # the old entrypoint. That day a sync shipped the secrets locator
-    # onto a 2026-09-03 image whose entrypoint still linked only the old
-    # secrets path, and the daemon crash-looped on a missing webhook_secret.
-    # Every build stamps the image with a fingerprint of its rendered build
+    # Stale-image guard. The entrypoint and Dockerfile are BAKED into the
+    # image, so a sync — which never rebuilds it — would boot new code on the
+    # old entrypoint (e.g. a daemon expecting a secrets path the old entrypoint
+    # never links, crash-looping on a missing webhook_secret). Every build
+    # stamps the image with a fingerprint of its rendered build
     # context; a sync whose context differs (or an image with no stamp — an
     # unknown is never read as a match) stops HERE, before the rsync and the
     # restart, so the old container keeps running the old code. A missing
@@ -268,9 +263,8 @@
         # sandbox root is excluded, which also protects it from the delete.
         # The runtime excludes are ANCHORED with a leading slash so they match
         # ONLY at the sandbox root. An unanchored rsync pattern matches any
-        # path COMPONENT of that name, and `memory` collided with the daemon's
-        # own `src/memory/` — the VM got no src/memory or dist/src/memory, and
-        # the daemon crash-looped on a missing ovsession.js (2026-08-20).
+        # path COMPONENT of that name — `memory` would also exclude the
+        # daemon's own `src/memory/` and `dist/src/memory/`.
         # .git/.claude/node_modules stay unanchored: those may nest.
         # The base clone's name is the configured one: deploy.sh
         # derives it from config.toml and passes `-e base_clone_dir=…`. No
@@ -296,12 +290,12 @@
           - "--exclude=/pihome"
       when: sandbox_src is defined
 
-    # the install's config home — the live config.toml and the
+    # The install's config home — the live config.toml and the
     # profiles/ beside it — shipped by the secrets' route: its own task from a
     # controller-side dir deploy.sh names (`-e config_home_src=…`, the install
     # locator's answer, and `-e config_file_name=…`), onto a VM dir the
     # container mounts read-only. Never the checkout rsync: the config and the
-    # install's profiles no longer live in the checkout. It runs in `sync`
+    # install's profiles do not live in the checkout. It runs in `sync`
     # (it follows the start-at task) so a profile change reaches the VM
     # without a rebuild.
     # Exactly two things ship — the filter admits the config file and
@@ -340,10 +334,10 @@
     # …except the operator command channel: `commands/operator/` is
     # root-owned 0755 so no session (uid {{ container_uid }}) can write there,
     # and that seal is the ONLY thing telling an operator's drain from a
-    # session's. The recurse above handed it to the container user on every
-    # deploy, so the next operator command was served as a session's, bounded
-    # and not lifted by the boot (2026-10-05: a TUI deploy-drain left the
-    # board drained after a sync). Re-seal it; never create it here — a
+    # session's. The recurse above hands it to the container user on every
+    # deploy, and an unsealed channel serves the next operator command as a
+    # session's (bounded, and not lifted by the boot). Re-seal it; never
+    # create it here — a
     # root-owned commands/ parent would lock the daemon out of its own dir.
     - name: Operator command channel present?
       ansible.builtin.stat:
@@ -422,18 +416,16 @@
           # In-container bind must be 0.0.0.0 — the published port targets the
           # container's eth0; host exposure stays 127.0.0.1-only above.
           QC_BIND_HOST: "0.0.0.0"
-          # the live config is the shipped one. The in-container
+          # The live config is the shipped one. The in-container
           # install locator finds the install's profiles beside it, then the
           # rsynced checkout's generic examples; the daemon hands this path
           # to every session. Set on the container (not in the image) so a
           # plain `sync` delivers it.
           QCR_CONFIG: "/opt/quickreview/config-home/{{ config_file_name | mandatory }}"
 
-    # RETIRED: the post-start pi-subagents config.json write that
-    # set the fan-out cap to 6. The cap now rides config.toml [pi]
-    # subagent_max_concurrency, delivered per session as
-    # QCR_SUBAGENT_MAX_CONCURRENCY and enforced by extensions/subagents.ts —
-    # nothing image-side to rewrite per deploy any more.
+    # The subagent fan-out cap needs no post-start task: it rides config.toml
+    # [pi] subagent_max_concurrency, delivered per session as
+    # QCR_SUBAGENT_MAX_CONCURRENCY and enforced by extensions/subagents.ts.
 
     - name: Note — webhook ingress
       ansible.builtin.debug:

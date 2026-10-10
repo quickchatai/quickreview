@@ -1,13 +1,12 @@
-// The AUTHENTICATED memory probe (S1).
+// The authenticated memory probe.
 //
 // `health.ts` beside this file asks `/health` and `/ready`, and both are
-// UNAUTHENTICATED: from 2026-09-03 to 10-02 they said "ready" every 30 s while
-// every round got `UNAUTHENTICATED: Invalid API Key` on both reads and nothing
-// was written. A server that is up is not a memory that works. This probe asks
+// unauthenticated: they say "ready" while a refused key fails every read and
+// every write. A server that is up is not a memory that works. This probe asks
 // the question that matters — "does THIS key list THIS user's memories root?" —
 // and answers it for one credential at a time, so the daemon's key and the
-// `ovcli.conf` the sessions are handed are judged separately (the feedback
-// writer and the round reader failed on different days).
+// `ovcli.conf` the sessions are handed are judged separately (either can fail
+// while the other works).
 //
 // Total by construction, like every call in this directory: a dead server, a
 // missing key or a garbage body is a classified answer, never a throw.
@@ -54,7 +53,7 @@ export function probeKeyFrom(source: KeySource): () => ProbeKey {
  *   * 2xx → `ok`;
  *   * `NOT_FOUND` with a key → `ok` too: the server authenticates before it
  *     resolves a path, so a 404 proves the key works and only says nothing has
- *     created the root yet (a fresh server,'s "empty is not degraded");
+ *     created the root yet (a fresh server: empty is not degraded);
  *   * 401/403, an auth code or "Invalid API Key" → `auth_failed`;
  *   * `no_key` (nothing to send) → `no_key`;
  *   * no answer at all → `unreachable`;

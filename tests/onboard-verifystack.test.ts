@@ -1,4 +1,4 @@
-// the layered verification: container state, health endpoint, and
+// The layered verification: container state, health endpoint, and
 // GitHub's own record that a webhook ping reached the daemon.
 //
 // The two properties worth pinning are the layering itself (a red layer stops

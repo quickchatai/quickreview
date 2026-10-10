@@ -1,10 +1,10 @@
-// Local companion container lifecycle (build slice C1).
+// Local companion container lifecycle.
 //
 // The shape mirrors remote.ts: command construction is pure so tests can assert
 // the exact argv, execution goes through one injectable runner, and nothing
 // here ever kills anything the user did not explicitly ask to stop.
 //
-// Lifecycle contract (grilled):
+// Lifecycle contract:
 //   `qcr tui` start → adopt a running container, else `docker start`, else
 //   `docker run` it. Quit → `docker stop` (conversation, pihome auth and
 //   the pi home survive on volumes; next start is a fast resume). TUI crash →
@@ -54,10 +54,10 @@ export type DockerRunner = (argv: string[], opts?: { timeoutMs?: number }) => Pr
 export interface ContainerStatus {
   exists: boolean;
   running: boolean;
-  /** `dest -> source` for every mount the container was CREATED with; empty
+  /** `dest -> source` for every mount the container was created with; empty
    * when it does not exist or docker could not be asked. */
   mounts: Map<string, string>;
-  /** Set when docker could not be ASKED (daemon down, permission denied):
+  /** Set when docker could not be asked (daemon down, permission denied):
    * `exists`/`running` are then false by default, not by observation. Absent
    * when the inspect succeeded or docker said the container does not exist. */
   unknown?: string;
@@ -71,13 +71,13 @@ export function companionStateWord(st: ContainerStatus): string {
 }
 
 /**
- * The companion's resolvers, pinned at `docker run` (2026-08-28). Without
- * this, docker's embedded DNS forwards to whatever upstream the HOST had at
- * container creation — and that upstream is network-specific, so the first
- * wifi change after a long-lived start left every lookup dead (pi: "Error:
- * fetch failed" on all model calls; container up 17h). Public
- * resolvers are identical on every network, and the companion needs no LAN
- * names: it talks to public endpoints and to the memory bridge by IP.
+ * The companion's resolvers, pinned at `docker run`. Without this, docker's
+ * embedded DNS forwards to whatever upstream the host had at container
+ * creation — and that upstream is network-specific, so the first network
+ * change after a long-lived start leaves every lookup dead (pi: "Error: fetch
+ * failed" on all model calls). Public resolvers are identical on every
+ * network, and the companion needs no LAN names: it talks to public endpoints
+ * and to the memory bridge by IP.
  */
 export const PUBLIC_DNS = ["1.1.1.1", "8.8.8.8"];
 
@@ -120,30 +120,29 @@ export const CONTAINER = {
    * issues; the doc that says how to write them lives one level up on the
    * host, outside every other mount. */
   trackerDocs: "/tracker-docs",
-  /** The REVIEWED repo, read-only. The companion reads the code a
+  /** The reviewed repo, read-only. The companion reads the code a
    * review is about; `:ro` is the whole guarantee that it can never touch that
    * repo's `master`. Mounted only when the host checkout exists — a missing
-   * one leaves the companion under-equipped, never broken. A GENERIC path
-   *: it used to be named after the one repo this system was built
-   * for, and the container path is not the place a repo's name belongs. */
+   * one leaves the companion under-equipped, never broken. A generic path:
+   * the container path is not the place a repo's name belongs. */
   reviewedRepo: "/reviewed-repo",
-  /** The install's config home, in part: `profiles/` read-write —
-   * setup writes and re-tunes the repo profile there — `portrait/`
-   * read-write (the portrait narrative), and a mirror of the live
-   * `config.toml` read-only. Deliberately NOT the whole home: it holds
+  /** The install's config home, in part: `profiles/` read-write — setup
+   * writes and re-tunes the repo profile there — `portrait/` read-write (the
+   * portrait narrative), and a mirror of the live `config.toml` read-only.
+   * Deliberately not the whole home: it holds
    * `secrets/` (the App's private key, which can write to GitHub), and the
    * companion's reach into GitHub is the read-only token below and nothing
    * else. Mounting the two pieces rather than masking a subdirectory is what
-   * keeps a `secrets/` created LATER out as well. */
+   * keeps a `secrets/` created later out as well. */
   configHome: "/qcr-config",
-  /** Inside `configHome`: the profiles dir (`:rw`) and a read-only MIRROR of
-   * the live config (`configLive`, a DIRECTORY mount). The live config is not
+  /** Inside `configHome`: the profiles dir (`:rw`) and a read-only mirror of
+   * the live config (`configLive`, a directory mount). The live config is not
    * bind-mounted as a file: a file bind pins the inode, and every writer of
    * config.toml (the onboarding wizard, most editors) replaces it by rename —
    * the companion would read the old text until the container was recreated,
    * and no drift check can see it (the source path never changes). The host
    * copies the located config into the mirror dir instead
-   * (`syncConfigMirror`), and a rename inside a mounted dir IS visible.
+   * (`syncConfigMirror`), and a rename inside a mounted dir is visible.
    * Spelled out so the in-container paths are literals — nothing here builds
    * a host config path (the locator does). */
   configLive: "/qcr-config/live",
@@ -155,32 +154,29 @@ export const CONTAINER = {
   /** The install's state home, read-write: the survey, the scan
    * ledger, findings and the portrait facts — PC-only, never shipped. */
   stateHome: "/qcr-state",
-  /** The down-scoped READ-ONLY GitHub token, as an env file the host re-mints
+  /** The down-scoped read-only GitHub token, as an env file the host re-mints
    * before it expires (`src/tui/ghread.ts`). `:ro` — the file is the
    * host's to write; the token itself cannot write to GitHub either way. */
   githubRead: "/github-read",
-  /** Finished-round evidence, read-only. The TUI holds the VM access
-   * and copies each finished round's artefacts down here; the companion reads
-   * plain files. That is the WHOLE of the transport — it grants no ssh, no
-   * credential and no network reach (root CLAUDE.md rule 8 is unchanged).
+  /** Finished-round evidence, read-only. The TUI holds the VM access and
+   * copies each finished round's artefacts down here; the companion reads
+   * plain files. That is the whole of the transport — it grants no ssh, no
+   * credential and no network reach (root CLAUDE.md rule 8).
    * `:ro` because this is a record: read history, never rewrite it. */
   evidence: "/evidence",
   feed: "/feed",
   alerts: "/alerts",
 } as const;
 
-// NOTE: `/home/companion/.ssh` and `/ssh-agent` used to be mounted
-// here so the companion could read the VM itself. They are GONE, and the
-// removal is the point of this slice: the companion's reach into the VM is now
-// OpenViking memory over a forward the HOST owns (systemd --user, see
-// scripts/companion-memory-forward.mjs), so the container holds no VM ssh
-// credential of any kind and cannot ssh anywhere even if it wanted to. Do not
-// reintroduce either mount — the boundary is meant to be structural, not
-// prompted (root CLAUDE.md rule 8).
+// No `~/.ssh` and no ssh-agent socket are mounted, on purpose: the companion's
+// only reach into the VM is OpenViking memory over a forward the host owns
+// (systemd --user, see scripts/companion-memory-forward.mjs), so the container
+// holds no VM ssh credential of any kind and cannot ssh anywhere. Never mount
+// either — the boundary is structural, not prompted (root CLAUDE.md rule 8).
 
 export type EnsureOutcome = "adopted" | "started" | "created" | "recreated";
 
-// ---- the memory forward ------------------------------------------
+// ---- the memory forward -----------------------------------------------------
 
 /**
  * Constants of the host-owned memory path. The companion never speaks ssh:
@@ -198,17 +194,17 @@ export const MEMORY = {
   gateway: "198.51.100.1",
   /** Same port the server listens on in the VM container ([openviking] port). */
   port: 1933,
-  /** The OpenViking USER whose memory the companion owns — becomes the
+  /** The OpenViking user whose memory the companion owns — becomes the
    * `X-OpenViking-User` header on every request it makes. */
   user: "companion",
   /** Peer id the patched extension reports (`X-OpenViking-Actor-Peer`);
-   * verified to override the path-derived default (spike). Same
+   * verified to override the path-derived default. Same
    * identity as `user` for the companion — one surface, one actor. */
   peerId: "companion",
   /** The vendored patched OpenViking pi extension, inside /workspace. */
   extension: `${CONTAINER.workspace}/extensions/vendor/openviking-pi/index.ts`,
-  /** The companion namespace's RETIRED URIs, relative to the state home
-   * (S3). The TUI's memory store publishes them there on the host
+  /** The companion namespace's retired URIs, relative to the state home.
+   * The TUI's memory store publishes them there on the host
    * (no daemon sweeps the companion's tree); the extension's per-turn recall
    * reads them from the mount (`QCR_OV_RETIRED_FILE`, set in `piEnvPrefix`)
    * and sends them as `exclude_uris`, so a retired companion memory is never
@@ -216,7 +212,7 @@ export const MEMORY = {
   retiredFile: "openviking/companion-retired-uris.json",
 } as const;
 
-/** The first-party subagents glue — loads pi's OWN subagent
+/** The first-party subagents glue — loads pi's own subagent
  * extension out of the installed pinned package (no vendored copy, nothing
  * that can drift from the rule-7 pin) and pins scope + the process-wide
  * concurrency cap; see extensions/subagents.ts. The companion agent set
@@ -269,7 +265,7 @@ export function mirrorConfigFile(source: string | undefined, dir: string): Confi
   }
 }
 
-/** The three env names the keys file must define. Values are NEVER read into a
+/** The three env names the keys file must define. Values are never read into a
  * log line or an argv — docker reads the file itself via `--env-file`. */
 export const KEY_NAMES = [
   "OPENVIKING_API_KEY",
@@ -292,8 +288,8 @@ export function memoryEndpoint(gateway: string, port: number = MEMORY.port): str
   return `http://${gateway}:${port}`;
 }
 
-/** Host path of the OpenViking key file, decided by the install locator
- *: `QCR_OPENVIKING_KEYS`, else the operator home
+/** Host path of the OpenViking key file, decided by the install locator:
+ * `QCR_OPENVIKING_KEYS`, else the operator home
  * (`$XDG_CONFIG_HOME/qcr-operator/<install>/`, outside every dir a container
  * mounts). 0600, and handed to the container by `--env-file`, so no value
  * reaches an argv. */
@@ -317,7 +313,7 @@ export function keyNamesIn(text: string): string[] {
 /**
  * Lines docker's `--env-file` parser would choke on.
  *
- * This matters more than it looks: `docker run --env-file` REJECTS a file with
+ * This matters more than it looks: `docker run --env-file` rejects a file with
  * `export FOO=…`, `FOO = bar` or a bare word, and a rejected `docker run` is a
  * companion that does not start. Memory must never be able to do that, so a
  * file we cannot vouch for is left out of the argv (degraded, not fatal).
@@ -407,15 +403,15 @@ export class CompanionLifecycle {
     if (this.cfg.tracker_docs_dir !== "") {
       argv.push("--volume", `${this.cfg.tracker_docs_dir}:${CONTAINER.trackerDocs}:ro`);
     }
-    // the reviewed repo, READ-ONLY and only when it is really there.
+    // The reviewed repo, read-only and only when it is really there.
     if (this.reviewedRepoPresent()) {
       argv.push("--volume", `${this.cfg.reviewed_repo_dir}:${CONTAINER.reviewedRepo}:ro`);
     }
     argv.push(
-      // the evidence store. Created by the TUI before the container
+      // The evidence store. Created by the TUI before the container
       // starts (`ensureDirs`), so unlike the reviewed repo it is never absent
       // and the mount is unconditional — an empty store is a companion that has
-      // seen no rounds yet, which is honest; a MISSING one would have docker
+      // seen no rounds yet, which is honest; a missing one would have docker
       // invent a root-owned dir the copier could not then write.
       "--volume",
       `${this.cfg.evidence_dir}:${CONTAINER.evidence}:ro`,
@@ -424,9 +420,9 @@ export class CompanionLifecycle {
       "--volume",
       `${this.cfg.alerts_dir}:${CONTAINER.alerts}:rw`,
     );
-    // the install's homes (added `portrait/`), the config
-    // mirror and the read-only GitHub token. All directories, created before a cold run (`ensureDirs`),
-    // so unconditional like the evidence store.
+    // The install's homes (profiles/, portrait/, state), the config mirror
+    // and the read-only GitHub token. All directories, created before a cold
+    // run (`ensureDirs`), so unconditional like the evidence store.
     const homes = this.hostHomes();
     argv.push(
       "--volume",
@@ -450,7 +446,7 @@ export class CompanionLifecycle {
    *
    * The two USER keys ride `--env-file`, so the values never appear in this
    * process's argv (and therefore never in `ps`). docker reads the file
-   * itself. NEVER switch these to `--env NAME=<value>`.
+   * itself. Never switch these to `--env NAME=<value>`.
    */
   memoryEnvArgv(): string[] {
     const argv: string[] = [];
@@ -494,7 +490,7 @@ export class CompanionLifecycle {
    * fresh start), and so daily rollover can archive "the newest .jsonl".
    */
   piArgv(): string[] {
-    // the vendored patched OpenViking extension — the companion's
+    // The vendored patched OpenViking extension — the companion's
     // memory hands. Loaded only when the vendor dir is actually present: a
     // missing extension must degrade to memory-less, never to a pi that
     // refuses to start (the companion never wedges).
@@ -505,36 +501,34 @@ export class CompanionLifecycle {
       "pi",
       // --approve: pre-trust project-local .pi resources for this run. Without
       // it a cwd carrying .pi/ hits pi's interactive "Trust project folder?"
-      // modal and the session stalls forever — the pr-5334 incident, whose
-      // three-layer fix (rule 7 / CLAUDE.md 2026-08-20) was applied to the
-      // reviewer sessions but never to the companion, which has been eating
-      // the modal on every start since. Same flag sessions.ts passes.
+      // modal and the session stalls forever. Same flag sessions.ts passes
+      // (the never-block-on-pi-input decision in root CLAUDE.md).
       "--approve",
       ...openviking,
-      // Ambient /feed state is deliberately NOT an extension: loading the old
-      // companion-wake here turned every meaningful poll into a synthetic user
-      // message in the owner's active conversation. The model reads the bounded
-      // feed files on demand instead.
+      // Ambient /feed state is deliberately not an extension: one would turn
+      // every meaningful poll into a synthetic user message in the operator's
+      // active conversation. The model reads the bounded feed files on demand
+      // instead.
       "--extension",
       `${CONTAINER.workspace}/extensions/muted-theme.ts`,
       "--theme",
       `${CONTAINER.workspace}/extensions/muted-theme.json`,
       "--extension",
-      // day-open channel: the daemon's inject bridge, unmodified. It
+      // Day-open channel: the daemon's inject bridge, unmodified. It
       // drains its directory on session_start before it starts watching, so
-      // the rollover can queue the opening message BEFORE pi is spawned and
+      // the rollover can queue the opening message before pi is spawned and
       // the delivery is race-free. QCR_INJECT_DIR (below) points it at the
       // companion's own dir. VERIFY-ON-PIN: `--extension <path>` again.
       `${CONTAINER.workspace}/extensions/inject-bridge.ts`,
       "--extension",
-      // the read-only `tui_*` tools over what the TUI published to
+      // The read-only `tui_*` tools over what the TUI published to
       // /feed (screen.txt + view.json). Reads only — it holds no credential and
       // cannot fetch; see the header of extensions/tui-view.ts for why that is
       // structural and not a promise. QCR_FEED_DIR (below) points it at the
       // same dir the FeedWriter writes. VERIFY-ON-PIN: `--extension <path>`.
       `${CONTAINER.workspace}/extensions/tui-view.ts`,
       "--extension",
-      // first-party glue over pi's OWN subagent extension (loaded
+      // First-party glue over pi's own subagent extension (loaded
       // out of the installed pinned package — see SUBAGENTS above and
       // extensions/subagents.ts). First-party and always in the repo, so it
       // loads unconditionally like inject-bridge; a failed native import
@@ -543,13 +537,13 @@ export class CompanionLifecycle {
       // (SUBAGENTS.maxConcurrency).
       SUBAGENTS.extension,
       "--extension",
-      // 2026-08-25: the companion's bright lines (frozen seeds, no-GitHub,
+      // The companion's bright lines (frozen seeds, no-GitHub,
       // no-discard in the shared checkout) as tool_call vetoes — see the
       // header of extensions/companion-guard.ts. Companion only; the VM has
       // the gate + guards.sh.
       `${CONTAINER.workspace}/extensions/companion-guard.ts`,
       "--extension",
-      // the setup & scan tool belt — the deterministic SetupEngine
+      // The setup & scan tool belt — the deterministic SetupEngine
       // (repo facts, the unit cut) as `setup_*` tools. Reads the reviewed
       // checkout (`:ro`) and writes only the state home; see the header of
       // extensions/setup.ts. Unconditional like every other repo extension:
@@ -557,7 +551,7 @@ export class CompanionLifecycle {
       // won't start.
       `${CONTAINER.workspace}/extensions/setup.ts`,
       "--extension",
-      // 2026-08-25: `!{cmd}` inline expansion in typed prompts — vendored
+      // `!{cmd}` inline expansion in typed prompts — vendored
       // verbatim from the pinned pi package's shipped examples (see its
       // header; byte-identical at 0.84.1 and 0.84.4). QoL for the operator
       // typing into the mirrored terminal.
@@ -574,7 +568,7 @@ export class CompanionLifecycle {
   }
 
   /** QCR_* routing vars. They ride the pi command line, never the client env:
-   * tmux panes inherit the tmux SERVER's environment (§Q4.3). */
+   * tmux panes inherit the tmux server's environment. */
   piEnvPrefix(): string[] {
     return [
       "env",
@@ -586,7 +580,7 @@ export class CompanionLifecycle {
       `QCR_FEED_DIR=${CONTAINER.feed}`,
       `QCR_ALERTS_DIR=${CONTAINER.alerts}`,
       `QCR_TRACKER_DIR=${CONTAINER.tracker}`,
-      // where the install's homes and the token file sit in here.
+      // Where the install's homes and the token file sit in here.
       // The locator (src/install.ts) honours QCR_CONFIG_HOME/QCR_STATE_HOME
       // as whole-home overrides, so code run in the container resolves the
       // mounted homes — profiles written by setup land on the host, not in
@@ -596,23 +590,23 @@ export class CompanionLifecycle {
       `QCR_CONFIG_HOME=${CONTAINER.configHome}`,
       `QCR_CONFIG=${CONTAINER.configFile}`,
       `QCR_STATE_HOME=${CONTAINER.stateHome}`,
-      // where the setup tools read the reviewed checkout.
+      // Where the setup tools read the reviewed checkout.
       `QCR_REVIEWED_REPO=${CONTAINER.reviewedRepo}`,
       `QCR_GITHUB_READ_ENV=${CONTAINER.githubRead}/${TOKEN_FILE}`,
-      // survey and scan fan out one case per unit — see SUBAGENTS.
+      // Survey and scan fan out one case per unit — see SUBAGENTS.
       `QCR_SUBAGENT_MAX_CONCURRENCY=${SUBAGENTS.maxConcurrency}`,
-      // the retired URIs the recall excludes — see MEMORY.retiredFile.
+      // The retired URIs the recall excludes — see MEMORY.retiredFile.
       `QCR_OV_RETIRED_FILE=${CONTAINER.stateHome}/${MEMORY.retiredFile}`,
     ];
   }
 
   /**
-   * Host side of the mounts, from the install locator over THIS
+   * Host side of the install-home mounts, from the install locator over this
    * lifecycle's env (so a test's temp XDG homes are what it mounts):
-   * `<config home>/profiles` and `<config home>/portrait`, the
-   * live config file when one exists (the SOURCE of the mirror — never itself
-   * mounted), the mirror dir, the state home, and the token dir. Never the config home as a whole — see
-   * `CONTAINER.configHome` for why `secrets/` must stay out.
+   * `<config home>/profiles` and `<config home>/portrait`, the live config
+   * file when one exists (the source of the mirror — never itself mounted),
+   * the mirror dir, the state home, and the token dir. Never the config home
+   * as a whole — see `CONTAINER.configHome` for why `secrets/` must stay out.
    */
   hostHomes(): {
     profiles: string;
@@ -680,7 +674,7 @@ export class CompanionLifecycle {
   /**
    * Is the reviewed repo checked out on this host?
    *
-   * The mount is conditional on this, in `runArgv()` AND in `expectedMounts()`,
+   * The mount is conditional on this, in `runArgv()` and in `expectedMounts()`,
    * so the two never disagree: present ⇒ the container must carry it (absence
    * is drift, and drift recreates); absent ⇒ nothing is expected and a stale
    * mount is still drift. `docker run` would happily invent an empty host dir
@@ -706,12 +700,10 @@ export class CompanionLifecycle {
     const res = await this.docker([
       "inspect",
       "--format",
-      // `.Name` for a named volume, `.Source` for a bind. Docker
-      // reports a volume's Source as its on-disk _data path, which never
-      // equals the volume NAME the run argv asks for — comparing Source made
-      // the drift check fire on every single start and recreate the container
-      // each time, which is also how a `docker exec` landed on a container
-      // that was still coming up.
+      // `.Name` for a named volume, `.Source` for a bind. Docker reports a
+      // volume's Source as its on-disk _data path, which never equals the
+      // volume name the run argv asks for — comparing Source would make the
+      // drift check fire on every start and recreate the container each time.
       "{{.State.Running}}\n{{range .Mounts}}{{.Destination}}={{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}\n{{end}}",
       this.cfg.container_name,
     ]);
@@ -731,12 +723,12 @@ export class CompanionLifecycle {
   }
 
   /**
-   * The DNS servers the container was CREATED with, or undefined when docker
+   * The DNS servers the container was created with, or undefined when docker
    * could not be asked (no opinion — never drift). Its own inspect call on
-   * purpose: on docker 29, referencing `.HostConfig` in the SAME template as
+   * purpose: on docker 29, referencing `.HostConfig` in the same template as
    * the mounts' `{{if .Name}}` makes execution fall back to the raw JSON map,
-   * where a bind mount has no "Name" key and the whole inspect errors —
-   * verified live 2026-08-28. Do not fold this back into status().
+   * where a bind mount has no "Name" key and the whole inspect errors. Do not
+   * fold this back into status().
    */
   async createdDns(): Promise<string[] | undefined> {
     const res = await this.docker([
@@ -767,15 +759,12 @@ export class CompanionLifecycle {
 
   // ---- transitions --------------------------------------------------------
 
-  /** Idempotent: running → adopt; stopped → start; absent → run. */
   /** True when the companion image exists locally. */
   async imageExists(): Promise<boolean> {
     const res = await this.docker(["image", "inspect", this.cfg.image]);
     return res.ok;
   }
 
-  /** Build the companion image from docker/companion (idempotent, cached).
-   * Runs with the caller's uid so the host bind mounts stay writable. */
   /** Remove the container, running or not. Volumes (pihome: OAuth, the
    * conversation) survive — this replaces the container, never its memory. */
   async removeContainer(): Promise<void> {
@@ -785,6 +774,8 @@ export class CompanionLifecycle {
     if (!res.ok) throw new Error(`docker rm ${this.cfg.container_name} failed: ${errText(res)}`);
   }
 
+  /** Build the companion image from docker/companion (idempotent, cached).
+   * Runs with the caller's uid so the host bind mounts stay writable. */
   async buildImage(onProgress?: (line: string) => void): Promise<void> {
     onProgress?.(`building ${this.cfg.image} image (first run — takes a few minutes)…`);
     const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
@@ -803,10 +794,10 @@ export class CompanionLifecycle {
     onProgress?.(`${this.cfg.image} image built`);
   }
 
-  // ---- memory wiring --------------------------------------------
+  // ---- memory wiring --------------------------------------------------------
 
   /**
-   * Work out how this container will reach memory, WITHOUT ever failing.
+   * Work out how this container will reach memory, without ever failing.
    *
    * The forward (scripts/companion-memory-forward.mjs, run by systemd on the
    * host) owns the network; the lifecycle only joins it. When the network is
@@ -837,7 +828,7 @@ export class CompanionLifecycle {
       notes.push(
         `no OpenViking keys at ${keysFile} — memory reads/writes will be refused (see docs/companion-memory-access.md)`,
       );
-      // the old copy is never read; say so when it is the reason.
+      // The old-place copy is never read; say so when it is the reason.
       const stranded = `${legacySecretsDir({ ...this.env, HOME: homedir() })}/${KEYS_FILE}`;
       if (this.fs.exists(stranded))
         notes.push(
@@ -897,12 +888,12 @@ export class CompanionLifecycle {
 
   /**
    * Bind mounts are frozen at creation, so a container that predates a mount
-   * change keeps the OLD set forever — `docker start` on it silently resurrects
-   * the old boundary. That is not cosmetic: it is how a container created
-   * before still carries `~/.ssh` and an ssh-agent socket, defeating a
-   * boundary root CLAUDE.md rule 8 means to be structural.
+   * change keeps the old set forever — `docker start` on it silently resurrects
+   * the old boundary. That is not cosmetic: a stale container can carry a
+   * mount (an `~/.ssh`, an ssh-agent socket) that defeats a boundary root
+   * CLAUDE.md rule 8 means to be structural.
    *
-   * So: compare what the container HAS against what `runArgv()` asks for, and
+   * So: compare what the container has against what `runArgv()` asks for, and
    * report the drift. Named volumes are compared by name, binds by host path.
    * Extra mounts count as drift (that is the ssh case); an unreadable inspect
    * reports nothing.
@@ -924,7 +915,7 @@ export class CompanionLifecycle {
   /**
    * DNS is frozen at creation exactly like the mounts, so a container created
    * before PUBLIC_DNS was pinned keeps forwarding lookups to a
-   * network-specific upstream forever — the 2026-08-28 wifi-change outage.
+   * network-specific upstream forever (see PUBLIC_DNS).
    * Same remedy as mount drift: recreate. Consulted only after status()
    * yielded a mount set (see ensureUp) so an unreadable inspect stays
    * "no opinion", never a recreate.
@@ -949,8 +940,8 @@ export class CompanionLifecycle {
     if (this.cfg.tracker_docs_dir !== "") m.set(CONTAINER.trackerDocs, this.cfg.tracker_docs_dir);
     // Same condition as runArgv() — see reviewedRepoPresent().
     if (this.reviewedRepoPresent()) m.set(CONTAINER.reviewedRepo, this.cfg.reviewed_repo_dir);
-    // same shape as runArgv(), so a container created before these
-    // mounts (or with the old repo-named reviewed-repo one) drifts and is
+    // Same shape as runArgv(), so a container created without these mounts
+    // (or with a differently named reviewed-repo one) drifts and is
     // recreated.
     const homes = this.hostHomes();
     m.set(CONTAINER.profiles, homes.profiles);
@@ -961,12 +952,12 @@ export class CompanionLifecycle {
     return m;
   }
 
+  /** Idempotent: running → adopt; stopped → start; absent → run. */
   async ensureUp(onProgress?: (line: string) => void): Promise<EnsureOutcome> {
     await this.resolveMemoryWiring(onProgress);
-    // say which of the two worlds this start is in, either way. A
-    // missing checkout is a normal, non-fatal state — but a companion silently
-    // reading no reviewed source at all is exactly the gap found, so it
-    // is never left implicit.
+    // Say which of the two worlds this start is in, either way. A missing
+    // checkout is a normal, non-fatal state — but a companion silently reading
+    // no reviewed source at all must never be left implicit.
     onProgress?.(
       this.reviewedRepoPresent()
         ? `reviewed repo ${this.cfg.reviewed_repo_dir} → ${CONTAINER.reviewedRepo} (read-only)`
@@ -979,7 +970,7 @@ export class CompanionLifecycle {
     // The conversation is on the pihome volume and survives the rm.
     if (st.exists) {
       // DNS drift is only worth asking about when the mounts came back clean
-      // (drifted mounts already force the recreate) AND status() actually
+      // (drifted mounts already force the recreate) and status() actually
       // yielded a mount set: a real companion container always reports its
       // mounts, so an empty set means the answer was unreadable — no opinion,
       // never a recreate. An unreadable createdDns() is no opinion too.
@@ -1006,10 +997,9 @@ export class CompanionLifecycle {
       const started = await this.docker(["start", this.cfg.container_name]);
       if (started.ok) return "started";
       // A stopped container can be permanently unstartable: bind-mount
-      // sources are recorded at creation, and the ssh-agent socket path is
-      // random per boot — after a reboot `docker start` fails forever
-      // (observed live, 2026-08-14 crash). Remove the husk and recreate with
-      // the CURRENT environment; named volumes (pihome auth, conversation)
+      // sources are recorded at creation, and a source that no longer exists
+      // makes `docker start` fail forever. Remove the husk and recreate with
+      // the current environment; named volumes (pihome auth, conversation)
       // survive the rm.
       onProgress?.(`companion container unstartable (${firstLine(errText(started))}) — recreating`);
       const removed = await this.docker(["rm", "-f", this.cfg.container_name]);
@@ -1034,14 +1024,12 @@ export class CompanionLifecycle {
     return st.exists || recreating ? "recreated" : "created";
   }
 
-  /** Idempotent: a live companion session is left strictly alone (a second
-   * TUI attaches to it). Returns true when this call birthed the session. */
   /**
    * Wait until the container is actually running.
    *
    * `docker run --detach` returns once the container is created, and a
    * `docker exec` an instant later can still lose the race with "container is
-   * not running" — observed live right after a recreate. Bounded and total: if
+   * not running", typically right after a recreate. Bounded and total: if
    * it never comes up, the caller's own error is the better message.
    */
   async waitRunning(timeoutMs = 5_000, stepMs = 100): Promise<boolean> {
@@ -1057,13 +1045,15 @@ export class CompanionLifecycle {
     }
   }
 
+  /** Idempotent: a live companion session is left strictly alone (a second
+   * TUI attaches to it). Returns true when this call birthed the session. */
   async spawnPi(): Promise<boolean> {
     if (await this.piRunning()) return false;
     let res = await this.docker(this.spawnArgv());
-    // `docker run --detach` returns at CREATE, not at running, so an exec an
-    // instant after a recreate can lose the race — observed live as
-    // "container is not running", which then reported the companion as
-    // unavailable for the whole session. Wait for it once and try again;
+    // `docker run --detach` returns at create, not at running, so an exec an
+    // instant after a recreate can lose the race with "container is not
+    // running", which would report the companion unavailable for the whole
+    // session. Wait for it once and try again;
     // anything else is a real failure and is raised as one.
     if (!res.ok && /is not running/i.test(errText(res))) {
       await this.waitRunning();

@@ -41,9 +41,9 @@ changes nothing.
 ### The closed set of kinds
 
 `MutationKind` is a union, and `MUTATION_KINDS` is the same set as a runtime
-array. The union alone would stop only honest call sites — it is erased at
-compile time, so a hand-rolled intent or one crossing a JSON boundary sailed
-through. Admission checks the runtime array **first**, before the dry-run
+array. The union alone stops only honest call sites — it is erased at
+compile time, so a hand-rolled intent or one crossing a JSON boundary would
+pass it. Admission checks the runtime array **first**, before the dry-run
 branch, so an unknown kind is neither executed nor even recorded as a would-be
 call.
 
@@ -312,8 +312,8 @@ faults.
 ## 5. The exec boundary
 
 **Full treatment: [docs/exec-boundary.md](../exec-boundary.md).** It is the one
-document in this repo written as falsifiable claims, because eight adversarial
-rounds each found a live bypass while the suite stayed green. Read it before
+document in this repo written as falsifiable claims, because a green suite has
+repeatedly coexisted with a live bypass. Read it before
 touching any of the code below; do not treat this section as a substitute.
 
 The shape, so this inventory is complete:
@@ -329,9 +329,10 @@ The shape, so this inventory is complete:
 Two sets are protected, from one definition each so the write veto and the
 integrity check cannot drift: **git's configuration surface** (anything inside
 a `.git` directory, `.gitconfig`, `<any>/git/config`, `.gitattributes`) and
-**this system's own policy surface** — `POLICY_SURFACE_FILES = ["config.toml"]`
-and `POLICY_SURFACE_DIRS = ["scripts", "dist", "extensions", "prompts",
-"agents", "seeds"]` in `extensions/bash-guard.ts`.
+**this system's own policy surface** — `POLICY_SURFACE_FILES` (`config.toml`
+and the agent-directive files such as `AGENTS.md` and `CLAUDE.md`) and
+`POLICY_SURFACE_DIRS` (`scripts`, `dist`, `extensions`, `prompts`, `agents`,
+`seeds`, `.pi`) in `extensions/bash-guard.ts`.
 
 The single most important thing to carry away: **layers 2 and 3 read command
 strings and are not closed, and are not claimed to be.**
@@ -467,8 +468,8 @@ local ref → diffstat → gated push → gated `createPull` → label → recor
 files and an empty diff are refused outright.
 
 `usableCap` is the belt under all of it: a cap that is not a finite
-non-negative number is a **refusal**, not a pass. (`files > undefined` is
-`false`, which silently passed a cap.) `parseCaps` also refuses such a config at
+non-negative number is a **refusal**, not a pass (`files > undefined` is
+`false`, so an unchecked missing cap would pass everything). `parseCaps` also refuses such a config at
 startup, and these checks distrust the type they were handed anyway.
 
 `fileIssue` adds title-token Jaccard dedup against open bot-filed issues

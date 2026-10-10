@@ -1,15 +1,14 @@
-// A DISMISSAL IS STICKY (scan-loop): the operator's triage decision is never
-// overwritten by a re-scan. Round 5 of the self-scan flipped two dismissed
-// findings (dbca4cdc, 540945d9) to `fixed` when a re-read no longer reported
-// them. Every path that settles an unreported finding — reconcile's outright
-// settle, a report that shrinks the pending question, the companion's match
-// answer, all through the one settle (`settleUnreported`) — now keeps a
-// dismissed finding `dismissed` and records the audit (`unreported`: the run
-// and sha that no longer reported it). A re-sighting
-// clears the audit and keeps the dismissal; a store written before this
-// (fixed, from dismissed) reads back as dismissed. Promoted findings still
-// become `fixed` (their ticket closes). Driven at the FindingsStore
-// seam through the real rooted state port on a temp dir.
+// A dismissal is sticky: the operator's triage decision is never overwritten
+// by a re-scan, even when a re-read no longer reports the finding. Every path
+// that settles an unreported finding — reconcile's outright settle, a report
+// that shrinks the pending question, the companion's match answer, all
+// through the one settle (`settleUnreported`) — keeps a dismissed finding
+// `dismissed` and records the audit (`unreported`: the run and sha that no
+// longer reported it). A re-sighting clears the audit and keeps the
+// dismissal; a legacy store row (fixed, from dismissed) reads back as
+// dismissed. Promoted findings still become `fixed` (their ticket closes).
+// Driven at the FindingsStore seam through the real rooted state port on a
+// temp dir.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

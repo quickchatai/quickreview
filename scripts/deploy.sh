@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — push this working copy to the review-sandbox VM, through the
-# ansible. Spec §9 (revised): the runtime is ONE Docker container with
+# vendored ansible (deploy/ansible/). The runtime is one Docker container with
 # cloudflared on the host, so "deploy" means
 #
 #   sync    rsync the sandbox working copy into /opt/quickreview/sandbox and
@@ -11,7 +11,7 @@
 #           container, and the state/status.json heartbeat the status collector
 #           reads
 #
-# There are no systemd units for the daemon any more: quickreviewd is the
+# There are no systemd units for the daemon: quickreviewd is the
 # container entrypoint (`restart: unless-stopped`). The only host service this
 # script cares about is cloudflared.
 #
@@ -20,9 +20,8 @@
 #     commit you can point at
 #   * refuses when config.toml's [pi] version and the ansible group_vars
 #     pi_version disagree, and refuses on the "PIN-ME" placeholder. The pin
-#     never floats and this script never bumps it (spec §9).
-#   * refuses on OpenViking pin drift, the same way. Three pins,
-#     two mirrors:
+#     never floats and this script never bumps it.
+#   * refuses on OpenViking pin drift, the same way. Four pins:
 #       - [openviking] version              == group_vars openviking_version
 #       - [openviking] llama_cpp_python_version
 #                                           == group_vars llama_cpp_python_version
@@ -33,7 +32,7 @@
 #         (the vendored fork rides the rsync, not the image)
 #       - [openviking] local_embedder_file/_url/_sha256/_port/_threads
 #                                           == group_vars openviking_local_embedder_*
-#         (S4: the local embedder's model file, baked into the image
+#         (the local embedder's model file, baked into the image
 #          by a layer that interpolates the group_vars — a changed pin needs
 #          `rebuild`)
 #   * refuses to ship without a config home: sync|rebuild deliver
@@ -44,7 +43,7 @@
 #     the checkout is refused (`qcr install migrate` moves it), and so is a
 #     `[review] profile` — or any profile it extends — found neither in the
 #     home's profiles/ nor among the checkout's generic examples (the two
-#     places the VM looks;: no other checkout profile is read).
+#     places the VM looks; no other checkout profile is read).
 #     Every pin/drift check below reads that same located config.
 #   * refuses a base-clone name (`[github] clone_dir`, else the
 #     repo slug's basename — the same rule as githubCloneDir in
@@ -56,14 +55,14 @@
 #     (.git/info/exclude, never the tracked .gitignore) so a clone of any
 #     name never reads as a dirty tree.
 #
-# This script performs NO live run on its own beyond ansible/ssh; every live
+# This script performs no live run on its own beyond ansible/ssh; every live
 # invocation belongs to the owner on a machine with VM access.
 #
 # Usage:
 #   scripts/deploy.sh [--dry-run] [sync|rebuild|verify]
 #
 # Env:
-#   QC_ANSIBLE_DIR  ansible project dir (default: the asset path)
+#   QC_ANSIBLE_DIR  ansible project dir (default: deploy/ansible in this checkout)
 #   QC_INVENTORY    inventory file      (default: $QC_ANSIBLE_DIR/inventory.ini)
 #   QC_SANDBOX_DIR  sandbox working copy (default: this script's parent)
 #   QC_VM_HOST      ssh target for `verify` (default: the inventory's first host)
@@ -74,7 +73,6 @@
 #                   accepts a QCR_CONFIG inside the checkout
 #   (secrets)       the playbook's secrets_src is the install locator's answer
 #                   too — [github] secrets_dir, else <config home>/secrets
-#                  
 
 set -euo pipefail
 
@@ -84,8 +82,8 @@ DEFAULT_ANSIBLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/ans
 SANDBOX_DIR="${QC_SANDBOX_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ANSIBLE_DIR="${QC_ANSIBLE_DIR:-$DEFAULT_ANSIBLE_DIR}"
 INVENTORY="${QC_INVENTORY:-$ANSIBLE_DIR/inventory.ini}"
-# the pin/drift preflight reads the config the install locator names.
-# Sourced from beside THIS script, not from $SANDBOX_DIR: the sandbox may be a
+# The pin/drift preflight reads the config the install locator names.
+# Sourced from beside this script, not from $SANDBOX_DIR: the sandbox may be a
 # scratch working copy.
 . "$(dirname "${BASH_SOURCE[0]}")/install-locator.sh"
 CONFIG="$(qcr_locate_config "$SANDBOX_DIR")" || exit 1
@@ -263,7 +261,7 @@ first_inventory_host() {
 # ---- pre-flight --------------------------------------------------------------
 
 [[ -f "$CONFIG" ]] || die "no config at $CONFIG — the install's config home holds none (run the onboarding wizard, or \`qcr install migrate\` to move a checkout config.toml there: the checkout's is no longer read)"
-# a shipping mode ships the install's CONFIG HOME — the located
+# A shipping mode ships the install's config home — the located
 # config and the profiles/ beside it — to the VM by the secrets' route (its own
 # playbook task, never the checkout rsync), and the container reads it there
 # ($QCR_CONFIG names the shipped file). So the config must live in such a home:
@@ -293,7 +291,7 @@ fi
 # The repo profile the config names, and every profile it `extends`,
 # must be found where the VM's daemon will look for it (src/install.ts
 # locateProfile, in the container): profiles/ beside the shipped config first,
-# then the rsynced checkout's profiles/ — for a generic example ONLY
+# then the rsynced checkout's profiles/ — for a generic example only
 # (`qcr_is_example_profile`, pinned to EXAMPLE_PROFILES). A profile
 # found in neither fails the VM's boot, so it fails here. Only presence is checked; the daemon's
 # resolver refuses a cycle, so the walk just stops at a name it has seen.
@@ -405,7 +403,7 @@ fi
 HEAD_SHA="$(git -C "$SANDBOX_DIR" rev-parse --short HEAD 2>/dev/null || echo "no-commits")"
 
 # The dry_run flag as the shipped config carries it — shown in the plan, never
-# changed: a sync now ships the config home, so its flag is the VM's flag.
+# changed: a sync ships the config home, so its flag is the VM's flag.
 CFG_DRY_RUN="$(awk '/^\[/ { exit } /^[[:space:]]*dry_run[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*(#.*)?$/, ""); print; exit }' "$CONFIG")"
 
 # 2. the pi pin must agree, and must not be the placeholder
@@ -457,11 +455,11 @@ if [[ -n "$CFG_OV" ]]; then
   check_pin "llama-cpp-python" \
     'config.toml   [openviking] llama_cpp_python_version' "$(config_table_key openviking llama_cpp_python_version || true)" \
     'group_vars    llama_cpp_python_version' "$(group_vars_key llama_cpp_python_version || true)"
-  # the auth posture is mirrored the same way the pins are, and for
-  # the same reason — the entrypoint renders group_vars, so a config.toml that
-  # says "api_key" while group_vars says "dev" would ship a server with NO
+  # The auth posture is mirrored the same way the pins are, and for the same
+  # reason — the entrypoint renders group_vars, so a config.toml that says
+  # "api_key" while group_vars says "dev" would ship a server with no
   # per-user confinement while every doc claims otherwise. Same for the secret
-  # FILE NAMES the template interpolates and the user list it provisions:
+  # file names the template interpolates and the user list it provisions:
   # drift there is a memory outage or an unprovisioned user, silently.
   CFG_OV_AUTH="$(config_table_key openviking auth_mode || true)"
   if [[ -n "$CFG_OV_AUTH" ]]; then
@@ -478,7 +476,7 @@ if [[ -n "$CFG_OV" ]]; then
       'config.toml   [openviking] provision_users' "$(config_list_key openviking provision_users || true)" \
       'group_vars    openviking_provision_users' "$(group_vars_key openviking_provision_users || true)"
   fi
-  # the EMBEDDER is mirrored the same way, against the value the boot
+  # The embedder is mirrored the same way, against the value the boot
   # will actually render — a host var on the inventory line (how an opt-in is
   # written) outranks group_vars. This one is not a pin but a vector space: a
   # config.toml that says "openai" over a boot that renders "local" would make
@@ -489,13 +487,12 @@ if [[ -n "$CFG_OV" ]]; then
   if [[ -n "$CFG_OV_EMBED" ]]; then
     CFG_OV_EMBED_MODEL="$(config_table_key openviking embedding_model || true)"
     CFG_OV_EMBED_DIM="$(config_table_key openviking embedding_dimension || true)"
-    # S4 (integration review): read config.toml the way the daemon's
-    # parser does (src/config.ts) — under `local`, the previous release's
-    # REQUIRED spelling (the engine's built-in Chinese-first model, 512 dims,
-    # `RETIRED_LOCAL_EMBEDDING`) means the local English embedder that
-    # replaced it (`LOCAL_EMBEDDING`). So the live config.toml needs no edit
-    # for this deploy, and the same file keeps loading on the previous release
-    # (which refuses the new spelling) — a rollback cannot strand it. Both
+    # Read config.toml the way the daemon's parser does (src/config.ts):
+    # under `local`, the older spelling (the engine's built-in Chinese-first
+    # model, 512 dims, `RETIRED_LOCAL_EMBEDDING`) means the local English
+    # embedder (`LOCAL_EMBEDDING`). So a config.toml with the older spelling
+    # needs no edit, and the same file keeps loading on a release that
+    # refuses the new spelling — a rollback cannot strand it. Both
     # pairs are pinned to config.ts by tests/deploy.test.ts.
     RETIRED_LOCAL_EMBED_MODEL="bge-small-zh-v1.5-f16"
     RETIRED_LOCAL_EMBED_DIM="512"
@@ -520,16 +517,16 @@ if [[ -n "$CFG_OV" ]]; then
       'config.toml   [openviking] embedding_key_file' "$(config_table_key openviking embedding_key_file || true)" \
       'ansible (host var, else group_vars)  openviking_embedding_key_file' "$(effective_var openviking_embedding_key_file || true)"
   fi
-  # the LOCAL EMBEDDER's model file is a pin like `version` —
+  # The local embedder's model file is a pin like `version` —
   # config.toml == group_vars == the image's model layer (which interpolates
   # these vars, so agreeing here means agreeing in the image). Its port and
   # threads are mirrored the same way: the boot's provisioning step runs the
   # service and renders ov.conf's api_base from the ansible values, the daemon
   # supervises it from config.toml's — a port they disagree on is a search
-  # nothing serves. A config.toml that predates the pin names NONE of the five
+  # nothing serves. A config.toml that predates the pin names none of the five
   # keys: the code defaults are the pin then (held to group_vars by
   # tests/openviking.test.ts) and the check stands down, said aloud. One that
-  # names ANY of them is checked key by key — every named key against
+  # names any of them is checked key by key — every named key against
   # group_vars first, so a drift reads as the drift it is — and a partial block
   # is then refused, never half-verified.
   CFG_OV_LE_FILE="$(config_table_key openviking local_embedder_file || true)"
@@ -600,13 +597,13 @@ VERIFY_CMDS=(
   "cat /opt/quickreview/state/status.json | head -20   # heartbeat for the status collector"
 )
 
-# ---- drain advisory (WARN only — the owner chose warn over refusal) -----------
+# ---- drain advisory (warn only, never a refusal) ------------------------------
 # A deploy recreates the container; rounds in flight are orphaned mid-review,
 # burn self-requeue budget, and the cold boot's reconcile eats GitHub rate
-# limit (measured 2026-08-25: three cold boots exhausted the hourly limit).
+# limit (a few cold boots in an hour can exhaust it).
 # The drain valve (`qcr drain on`) hard-stops the webhook and starts no new
-# work, so running_rounds converges to 0. This reads the heartbeat and WARNS
-# on an undrained deploy while rounds run — it NEVER refuses, and an
+# work, so running_rounds converges to 0. This reads the heartbeat and warns
+# on an undrained deploy while rounds run — it never refuses, and an
 # unreadable heartbeat is noted, not fatal. QC_STATUS_JSON_CMD overrides the
 # ssh read (tests).
 drain_advisory() {
@@ -700,9 +697,9 @@ echo >&2
 
 # The companion's memory-health watcher (docker/companion/memory-health.mjs)
 # alerts after 3 failed probes — and a deploy's container recreate takes the
-# memory chain down for longer than that, so the "memory unreachable" alert
-# fired on EVERY deploy (the owner, 2026-08-27). The marker below opens the
-# watcher's deploy-grace window: it rides the alerts bind mount into the
+# memory chain down for longer than that, so without a grace window the
+# "memory unreachable" alert would fire on every deploy. The marker below opens
+# the watcher's deploy-grace window: it rides the alerts bind mount into the
 # companion container, the watcher holds the alert while the marker is
 # younger than 10 min, and refresh_memory_forward deletes it the moment the
 # chain answers again. Dotfile on purpose — AlertConsumer skips dotfiles.
@@ -714,24 +711,21 @@ DEPLOY_MARKER_FILE="$COMPANION_ALERTS_DIR/.deploy-window.json"
 if [[ "$MODE" != "verify" ]]; then
   command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook not on PATH — run this from the controller machine"
   [[ -f "$INVENTORY" ]] || die "no inventory at $INVENTORY (cp inventory.example.ini inventory.ini, then edit; or set QC_INVENTORY)"
-  # Rebuild dist HERE, against the exact tree being shipped. The rsync mirrors
+  # Rebuild dist here, against the exact tree being shipped. The rsync mirrors
   # dist/ and the container entrypoint rebuilds only when package-lock.json
-  # changes — so a stale local dist ships stale COMPILED code under a fresh
-  # BUILD_SHA. Bit us live 2026-08-18: three fix deploys shipped source whose
-  # dist was still the pre-fix build (builds had run in worktrees, never in
-  # this checkout), and the daemon kept spawning sessions with the old argv.
+  # changes — so a stale local dist (e.g. builds run only in worktrees) would
+  # ship stale compiled code under a fresh BUILD_SHA.
   note "building dist against $HEAD_SHA"
-  # A COLD build, every time (integration review). tsc's incremental
+  # A cold build, every time. tsc's incremental
   # build info (tsconfig.json `tsBuildInfoFile`) lives under node_modules/,
   # and every worktree reaches this checkout's node_modules through a symlink,
-  # so a build in a worktree rewrites THIS checkout's build info. Once that
+  # so a build in a worktree rewrites this checkout's build info. Once that
   # worktree's sources are merged here, tsc reads them as already emitted and
   # writes nothing — and verify-dist below checks that dist/ is complete, not
-  # that it is fresh, so the rsync would ship the OLD compiled daemon. The
-  # same failure as 2026-08-18, through the cache instead of the tree.
+  # that it is fresh, so the rsync would ship the old compiled daemon.
   rm -f "$SANDBOX_DIR/node_modules/.cache/qcr-tsbuildinfo"
   (cd "$SANDBOX_DIR" && npm run build) || die "npm run build failed — refusing to ship a tree whose dist cannot be rebuilt"
-  # `npm run build` already chains this; run it again HERE, at the point where
+  # `npm run build` already chains this; run it again here, at the point where
   # the tree becomes something the VM will run. `incremental` emits from the
   # build info rather than from what is on disk, so a targeted delete, an
   # interrupted build or a half-copied tree leaves a dist/ that tsc calls
@@ -742,7 +736,7 @@ if [[ "$MODE" != "verify" ]]; then
   # (the qcr tui deploy tab diffs local HEAD against it). Gitignored, so the
   # clean-tree guard above stays meaningful.
   printf '%s %s %s\n' "$HEAD_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$SANDBOX_DIR/BUILD_SHA"
-  # Open the deploy-grace window BEFORE the disruptive phase starts.
+  # Open the deploy-grace window before the disruptive phase starts.
   mkdir -p "$COMPANION_ALERTS_DIR"
   printf '{"since":"%s","by":"deploy.sh","mode":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" > "$DEPLOY_MARKER_FILE"
   note "running: ${ANSIBLE_CMD[*]}"
@@ -760,10 +754,9 @@ for cmd in "${VERIFY_CMDS[@]}"; do
   fi
 done
 
-# The heartbeat must come from THIS boot (scripts/heartbeat-fresh.mjs says
-# why: on 2026-10-03 the cat above showed the old daemon's file and the deploy
-# reported ok over a crash loop). Polled, because a cold boot spends ~40s on
-# OpenViking before the daemon starts, and a sync's restart re-runs the
+# The heartbeat must come from this boot (scripts/heartbeat-fresh.mjs says
+# why: the status.json the cat above shows may be the old daemon's). Polled,
+# because a cold boot spends ~40s on OpenViking before the daemon starts, and a sync's restart re-runs the
 # entrypoint's dist rebuild. QC_HEARTBEAT_PROBE_CMD stands in for the ssh
 # read (tests); QC_HEARTBEAT_WAIT_S bounds the wait.
 heartbeat_probe() {
@@ -804,15 +797,13 @@ EOF
   exit 1
 fi
 
-# Refresh the host-side memory forward (2026-08-25, the owner: "this has to
-# happen during the deploy"). The forward's long-lived ssh state ages while
-# the container underneath it churns — after the 2026-08-25 window every
-# relay was exiting 255 and the TUI reported OpenViking down until a manual
-# `systemctl --user restart`. So a deploy that touched the container restarts
-# the unit itself. Three deliberate softnesses: the unit may not exist or may
-# be inactive (the TUI can own the forward instead, adopt-or-bind) —
-# skip silently; the restart or the probe failing WARNS and never fails the
-# deploy (memory never blocks a deploy, same rule as the boot); verify-only
+# Refresh the host-side memory forward. Its long-lived ssh state goes stale
+# when the container underneath it is recreated (every relay exits 255 and the
+# TUI reports OpenViking down until a restart), so a deploy that touched the
+# container restarts the unit itself. Three deliberate softnesses: the unit
+# may not exist or may be inactive (the TUI can own the forward instead,
+# adopt-or-bind) — skip silently; the restart or the probe failing warns and
+# never fails the deploy (memory never blocks a deploy, same rule as the boot); verify-only
 # runs skip it (no container was touched).
 refresh_memory_forward() {
   [[ "$MODE" == "verify" ]] && return 0
@@ -831,9 +822,9 @@ refresh_memory_forward() {
   fi
   # Poll, don't probe once: right after the ansible run the VM container is
   # still booting OpenViking (~40s) and the forward's first relays die against
-  # it — the old single probe here raced that boot and WARNed on every deploy
-  # even when the chain came up fine a minute later. Up to 3 min covers the
-  # boot plus relay churn; only then is a WARN believable.
+  # it — a single probe would race that boot and warn on every deploy even
+  # when the chain comes up a minute later. Up to 3 min covers the boot plus
+  # relay churn; only then is a warning believable.
   local waited=0
   while (( waited < 180 )); do
     if curl -s -m 5 -o /dev/null "http://198.51.100.1:1933/health"; then

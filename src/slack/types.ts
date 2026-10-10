@@ -1,4 +1,4 @@
-// The Slack transport seam (S1). ONE interface behind which both
+// The Slack transport seam. ONE interface behind which both
 // halves of Slack live: inbound over Socket Mode (the only inbound transport —
 // there is no HTTP Events endpoint, ever) and outbound over the Web API.
 // Everything above this seam (router, concierge, overseer bridge) codes against
@@ -14,7 +14,7 @@ export type SlackFetchFn = typeof fetch;
 export interface SlackInboundEvent {
   /** Slack's per-delivery id (`envelope.payload.event_id`) — the dedupe key. */
   event_id: string;
-  /** Slack event type; S1 only ever emits `"message"`. */
+  /** Slack event type; the socket client only ever emits `"message"`. */
   type: string;
   /** Channel id the message landed in (C…/G…/D…). */
   channel: string;
@@ -93,7 +93,8 @@ export interface SlackSocket {
   stopSocket(): Promise<void>;
   /**
    * `num_connections` from the last `hello` frame (0 before the first hello).
-   * >1 outside a deploy window means a duplicate consumer — S4 raises it.
+   * >1 outside a deploy window means a duplicate consumer — the announcer
+   * raises it.
    */
   readonly numConnections: number;
 }

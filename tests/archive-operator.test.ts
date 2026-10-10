@@ -1,4 +1,4 @@
-// the operator's archive verbs (docs/archiving.md §11):
+// The operator's archive verbs (docs/archiving.md §11):
 //
 //   (1) `archive-run` and `archive-restore` are OPERATOR commands: a file in
 //       a session's `commands/` dir (or an unsealed operator dir) is refused;

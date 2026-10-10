@@ -1,9 +1,7 @@
-// The scan-mode precision addendum (scan-loop, 2026-09-30): the recurring
-// false-positive classes that adversarial skeptics refuted across three
-// self-scan rounds (162 refuted findings — the analysis lives on the issue
-// tracker, efforts/scan-and-setup/assets/improvement-loop/
-// false-positive-classes.md), turned into a pre-report checklist for the scan
-// build's stage-1 lens and the four deep lenses those findings came from.
+// The scan-mode precision addendum: the recurring false-positive classes that
+// adversarial skeptics refuted in self-scans, turned into a pre-report
+// checklist for the scan build's stage-1 lens and the four deep lenses those
+// findings came from.
 //
 // Pinned here: it rides the scan build and NO PR build (a PR build is
 // byte-identical with and without the entry), it binds exactly the five

@@ -35,8 +35,8 @@
 // under `synchronous = NORMAL` (`livecheckpoint.ts`): the WAL synced before
 // any page is copied, the database file synced before the WAL may restart —
 // SQLite's own protocol, off the loop. Left on, the automatic checkpoint
-// fsyncs the 466 MB file inside every ~4 MB of WAL's commit, a cost no batch
-// size bounds (the 2026-10-08 rehearsal: 35–93 ms commits). A checkpointer
+// fsyncs the whole database file inside a commit every ~4 MB of WAL — tens of
+// milliseconds on the loop, a cost no batch size bounds. A checkpointer
 // that cannot start or fails stops the run (`checkpoint_unavailable`,
 // `checkpoint_failed`) with the setting restored — never a run that deletes
 // with the WAL unbounded or the checkpoint back on the loop. An in-memory
@@ -47,13 +47,13 @@
 // table's rows (its month file locked, a row read back different, a delete
 // that did not match) skips THAT table and lets the other one run; a locked
 // state.db or a failed fsync stops the run. A live column the archive file
-// lacks (a later migration) is added to it before the batch, never a wedge. The scan stops after the
-// first window that holds a row younger than the cut-off (§9.2); the
-// watermark never passes such a row, so it is read again once it has aged. An
-// undatable row is passed over and kept live (never archived on a guess,
-// never a wedge). A delivery that holds the
-// table's highest rowid is never moved: without AUTOINCREMENT SQLite would
-// hand its rowid to the next delivery, which the watermark would then skip.
+// lacks (a later migration) is added to it before the batch, never a wedge.
+// The scan stops after the first window that holds a row younger than the
+// cut-off (§9.2); the watermark never passes such a row, so it is read again
+// once it has aged. An undatable row is passed over and kept live (never
+// archived on a guess, never a wedge). A delivery that holds the table's
+// highest rowid is never moved: without AUTOINCREMENT SQLite would hand its
+// rowid to the next delivery, which the watermark would then skip.
 //
 // At most `DB_SYNC_BUDGET_MS` of synchronous time per run, measured; the run
 // also stops at the wall budget, on a hold, and on the archiver's stop().

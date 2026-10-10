@@ -1,4 +1,4 @@
-// the frame compositor that hangs the companion sidebar column off
+// The frame compositor that hangs the companion sidebar column off
 // the right edge of any tab's frame. Row-width discipline is the whole point —
 // a ragged row shreds the border and rehomes the cursor.
 import { describe, expect, it } from "vitest";
@@ -38,13 +38,13 @@ function column(width: number, rows = ROWS): string[] {
   return out;
 }
 
-// Reported 2026-08-21: the board's embedded pi mirror "escaped its container"
-// and coloured the companion sidebar. `Frame.render` resets at each row's END,
+// A row that ends mid-style lets the board's embedded pi mirror colour the
+// companion sidebar. `Frame.render` resets at each row's END,
 // so styling never leaks DOWNWARD — but nothing stopped it leaking RIGHTWARD
 // across the row into the column composed beside it.
 describe("styling never crosses a surface boundary", () => {
   it("sees through the ESC[39m trap — it restores the FOREGROUND only", () => {
-    // The exact shape measured on the live mirror: a background is set, then
+    // The shape the live mirror produces: a background is set, then
     // the row ends on `39`, which looks like a reset and closes nothing of it.
     expect(sgrOpenAtEnd("\x1b[41mred bg\x1b[39m   ")).toBe(true);
     expect(sgrOpenAtEnd("\x1b[31mred fg\x1b[39m   ")).toBe(false);
@@ -233,10 +233,10 @@ describe("spliceDisplay", () => {
 });
 
 describe("width safety under selection", () => {
-  // The 2026-08-21 screenshot: dragging a selection shredded the layout. Row
-  // width was the cause — a row wider than the frame WRAPS, and every row
-  // below it shifts. These walk every boundary rather than sampling, because
-  // the break only happened where an edge landed inside a wide glyph.
+  // A row wider than the frame wraps, and every row below it shifts — which
+  // is how a selection drag shreds the layout. These walk every boundary
+  // rather than sampling, because the break happens only where an edge lands
+  // inside a wide glyph.
   const LINES = [
     "| ab日本語 cd efgh |",
     `| ${SGR.red}styled${SGR.reset} 日本 tail |`,
@@ -278,8 +278,8 @@ describe("width safety under selection", () => {
     // " "=col8, then "abcdef" from col9.
     const line = "| 日本語 abcdef |";
     expect(sliceDisplay(line, 9, 13)).toBe("abcd");
-    // The old code-unit slice lands four characters early — that is exactly
-    // how the highlight ended up over text the operator never pointed at.
+    // A code-unit slice lands four characters early, putting the highlight
+    // over text the operator never pointed at.
     expect(stripAnsi(line).slice(9, 13)).not.toBe("abcd");
   });
 

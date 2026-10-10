@@ -1,8 +1,8 @@
-// S9a/S9b — BYTE-IDENTITY where nothing is delivered. Under `off` and
-// `shadow` the round prompts, the lens task files, the recheck nudge, the
-// ping-pong wake, the built agents and the bench are byte-identical to today:
-// the selection runs (and finds lessons) under `shadow`, and nothing it found
-// reaches anything a session reads. Under `on` (S9b) a round that is
+// Byte-identity where nothing is delivered. Under `off` and `shadow` the
+// round prompts, the lens task files, the recheck nudge, the ping-pong wake,
+// the built agents and the bench are byte-identical to the lesson-free
+// baseline: the selection runs (and finds lessons) under `shadow`, and nothing
+// it found reaches anything a session reads. Under `on` a round that is
 // delivered NOTHING — the engine finds no eligible lesson, or the operator's
 // kill switch is off — is byte-identical too (the bleed rule verbatim, no
 // section, no file). The bench is byte-identical under every value. What `on`
@@ -275,7 +275,7 @@ describe("byte-identity wherever nothing is delivered", () => {
           for (const t of r.tasks)
             expect(t.text).not.toMatch(/Lessons from this repo|tenant filters/);
         }
-        // Today's bleed paragraph, verbatim.
+        // The standing bleed paragraph, verbatim.
         expect(off.prompt).toContain(BLEED_RULE_VERBATIM);
         // …and `on` with lessons in force is NOT the same round (what it
         // carries: tests/lesson-delivery.test.ts).
@@ -291,8 +291,8 @@ describe("byte-identity wherever nothing is delivered", () => {
     "the recheck prompt (the production renderer, through runRecheck) and the ping-pong wake are the same under every value when no repo fact applies",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      // S9b gives these two the repo-fact lessons for the touched paths under
-      // `on`; the engine here has none (a dont-raise and a look-for), so — as
+      // `on` gives these two the repo-fact lessons for the touched paths; the
+      // engine here has none (a dont-raise and a look-for), so — as
       // under `off` and `shadow` always — not one byte moves.
       const OLD = "1".repeat(40);
       const HEAD = "2".repeat(40);
@@ -448,7 +448,7 @@ describe("byte-identity wherever nothing is delivered", () => {
         expect([...builds[1]!.entries()]).toEqual([...builds[0]!.entries()]);
         expect([...builds[2]!.entries()]).toEqual([...builds[0]!.entries()]);
         // `on`: every lens body is byte-identical; each validator variant is
-        // today's body with the lesson addendum composed in.
+        // the baseline body with the lesson addendum composed in.
         const on = builds[3]!;
         expect([...on.keys()]).toEqual([...builds[0]!.keys()]);
         let validators = 0;

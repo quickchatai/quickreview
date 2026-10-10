@@ -57,8 +57,8 @@
 // src/bench/prtext.ts): then they follow the target sentence, in the natural-
 // language request pi-review's contract asks for.
 //
-// The PANEL (fairness audit item A, `--panel code-experts`, QCR_BENCH_PIREVIEW_
-// PANEL): what `/rv` runs inside Pi by default — its `pi_review` tool spawns
+// The panel (`--panel code-experts`, QCR_BENCH_PIREVIEW_PANEL): what `/rv`
+// runs inside Pi by default — its `pi_review` tool spawns
 // `pi-review --mode code --panel code-experts -- <target>` when no width or
 // preset is given (extensions/panel-tool.ts, extensions/rv-prompts.ts). Three
 // isolated reviewers (correctness, security, testing), quorum 2; the meta line

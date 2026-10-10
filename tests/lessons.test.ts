@@ -1,4 +1,4 @@
-// typed lessons: the header grammar and the tolerant reader.
+// Typed lessons: the header grammar and the tolerant reader.
 //
 //   * `#lesson kind=<repo-fact|look-for|dont-raise|convention> lens=<ids>
 //     class=<slug> paths=<globs> evidence=<refs>` — rendered from structured
@@ -141,7 +141,7 @@ describe("the tolerant reader — the live store's legacy shapes", () => {
       "kind=bug area=operations type: refuted — a defect",
       "#retired #refuted #eod-learning type: refuted — superseded",
       "#retired #moved moved-to=experiences/x.md",
-      // An event's `kind=` header with a lesson-shaped BODY (the S5 relayout's
+      // An event's `kind=` header with a lesson-shaped body (the relayout's
       // ops entries): the header decides, the body is never read.
       "kind=ops area=operations\n\ntype: refuted\nlens: pass-baseline",
       "kind=bug area=operations\n\n#eod-learning type: false-positive",

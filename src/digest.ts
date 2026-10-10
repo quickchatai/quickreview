@@ -1,6 +1,5 @@
 // Digest support: the EOD sweep writes digest/<date>.md; the daemon lifts its
-// headline into state/status.json (the status collector's pickup surface,
-//).
+// headline into state/status.json (the status collector's pickup surface).
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sandboxRoot } from "./config.js";
@@ -70,23 +69,23 @@ export function latestDigestHeadline(digestDir: string = defaultDigestDir()): st
   }
 }
 
-// ---- daily usage summary -----------------------------------------
+// ---- daily usage summary ---------------------------------------------------
 
 export interface DailyUsage {
   date: string;
   rounds: number;
   tokens_in: number;
   tokens_out: number;
-  /** est_usd is the ONE spend field (legacy spend_usd folded in). */
+  /** est_usd is the one spend field (legacy spend_usd folded in). */
   est_usd: number;
 }
 
 /**
  * Aggregate one day's measured usage from the rounds table.
  *
- * Expired rounds are INCLUDED (reversing the exclusion): a
- * round that blew its deadline still burned its tokens, and leaving it out of
- * the day's spend under-reported real cost — see `StateStore.totalSpend`.
+ * Expired rounds are included: a round that blew its deadline still burned
+ * its tokens, and leaving it out would under-report the day's real cost —
+ * see `StateStore.totalSpend`.
  */
 export function dailyUsage(store: StateStore, date: string): DailyUsage {
   const rounds = store.roundsOn(date);
@@ -104,7 +103,7 @@ export function usageSummaryLine(usage: DailyUsage): string {
   return `usage: ${usage.rounds} rounds — ${usage.tokens_in} in / ${usage.tokens_out} out tokens — est $${usage.est_usd.toFixed(2)}`;
 }
 
-// ---- cancellations -----------------------------------------------
+// ---- cancellations ---------------------------------------------------------
 
 export interface DailyCancellations {
   date: string;
@@ -117,12 +116,10 @@ export interface DailyCancellations {
 /**
  * One day's cancelled rounds, grouped by cause.
  *
- * The digest is where a day's shape is written down, and cancellation was
- * missing from it entirely: measured 55 cancellations since the
- * cutover with no digest entry, no metric and no anomaly, while the rare
- * `overdue` raised an alarm five times. Grouping is the whole point — 70% of
- * that volume is the boot orphan sweep after a redeploy, and a total that
- * lumps it in with a round that stopped dead says nothing.
+ * The digest is where a day's shape is written down, so cancellations belong
+ * in it. Grouping is the whole point: most of the volume is the boot orphan
+ * sweep after a redeploy, and a total that lumps it in with a round that
+ * stopped dead says nothing.
  */
 export function dailyCancellations(
   store: StateStore,
@@ -177,8 +174,8 @@ function roundsOnDay(store: StateStore, date: string, timeZone?: string) {
 /**
  * One digest-ready line, e.g.
  * "cancelled: 4 rounds — stopped dead 1 ⚑, orphan sweep (redeploy) 3".
- * A quiet day says so explicitly: "cancelled: none" is a fact, and its absence
- * was the bug.
+ * A quiet day says so explicitly: "cancelled: none" is a fact, and a missing
+ * line would read as "not measured".
  */
 export function cancellationSummaryLine(c: DailyCancellations): string {
   if (c.total === 0) return "cancelled: none";
@@ -193,13 +190,11 @@ export function cancellationSummaryLine(c: DailyCancellations): string {
 }
 
 /**
- * Daemon-measured context appended to the EOD sweep prompt (wiring).
+ * Daemon-measured context appended to the EOD sweep prompt.
  *
- * The digest itself is written by the sweep's pi session from a ratified
- * seed prompt the daemon may not edit — so the only render the daemon owns is
- * the injected prompt, and the cancellation line rides it. Without this the
- * two helpers above were dead code and the digest never mentioned
- * cancellations at all (the gap, reopened).
+ * The digest itself is written by the sweep's pi session from a frozen seed
+ * prompt the daemon may not edit, so the only render the daemon owns is the
+ * injected prompt, and the cancellation line rides it.
  */
 export function eodDigestContext(store: StateStore, date: string, timeZone?: string): string {
   // The EOD timer names a ZONE-LOCAL date; `timeZone` makes the selection

@@ -1,5 +1,5 @@
 // Prompt template rendering: the round prompts injected into a PR session and
-// the system prompts handed to pi at session birth (spec §4, brief B3 step 5).
+// the system prompts handed to pi at session birth (spec §4).
 // Contract: a {{placeholder}} in the text with no supplied value is a bug and
 // throws; a supplied value the template does not use is fine (templates are
 // edited independently of this renderer).
@@ -66,7 +66,7 @@ export function roundTemplateFile(roundType: RoundType): string {
   return ROUND_TEMPLATE_FILES[roundType];
 }
 
-/** The fourth template. Not a RoundType: a recheck starts no round,
+/** The post-approval recheck template. Not a RoundType: a recheck starts no round,
  * plans no passes and asks one question. */
 export const RECHECK_TEMPLATE_FILE = "round-recheck.md";
 
@@ -79,7 +79,7 @@ export const FOLLOW_UP_TEMPLATE_FILE = "round-follow-up.md";
 
 /** The template file a dispatched order renders from — the ONE production
  * choice. A `scope: "delta"` order is a follow-up round; every other order
- * renders from its round type's template exactly as before. */
+ * renders from its round type's template. */
 export function templateFileForOrder(order: Pick<RoundOrder, "round_type" | "scope">): string {
   return order.scope === "delta" ? FOLLOW_UP_TEMPLATE_FILE : roundTemplateFile(order.round_type);
 }
@@ -102,7 +102,7 @@ export function renderDeltaFiles(files: readonly FileClass[]): string {
 }
 
 /** The full variable set the recheck template may reference. `identity` is
- * the variable map (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`);
+ * the identity variable map (`{{owner_name}}`/`{{repo}}`/`{{bot_login}}`);
  * neutral role wording by default, `identityVars(cfg)` in production. */
 export function recheckVars(
   order: RecheckOrder,
@@ -124,7 +124,7 @@ export function recheckVars(
   };
 }
 
-/** The conflict-resolution audit block (the owner, 2026-08-19): files whose
+/** The conflict-resolution audit block: files whose
  * merge-commit content differs from git's own auto-merge were resolved by
  * hand, and hand resolutions have dropped the base branch's changes before.
  * Empty when the delta's merges were all clean. */
@@ -151,17 +151,15 @@ export function renderRecheckPrompt(
   return render(stripModelDocs(templateText), recheckVars(order, identity));
 }
 
-// The migration-gate prose (GATE_ON/GATE_OFF and the two GATE NOTES
-// paragraphs) is the Django ecosystem's own text and moved into
-// src/ecosystem.ts with the seam: `{{migration_gate_note}}` now
-// renders whatever the round's ecosystem says — byte-identical for Django,
+// The migration-gate prose (GATE_ON/GATE_OFF and the GATE NOTES paragraphs)
+// is the Django ecosystem's own text and lives in src/ecosystem.ts:
+// `{{migration_gate_note}}` renders whatever the round's ecosystem says —
 // empty for `none` (a none round carries no migration-gate prose at all).
 
 /**
- * The NIT SCOPE note: the stopping rule on nit generation. The retro
- * named the failure the "nit treadmill" — each re-review minted 2–3 fresh
- * style points on code already reviewed, the author fixed one, and the push
- * re-armed the trigger (one PR ran rounds 10→11→12 inside 65 minutes). So from
+ * The NIT SCOPE note: the stopping rule on nit generation, against the "nit
+ * treadmill" — each re-review minting fresh style points on code already
+ * reviewed, the author fixing one, and the push re-arming the trigger. So from
  * round 3 onward a NEW `nit` is only raisable on lines inside the current
  * delta, and surviving nits append to ONE running non-blocking thread instead
  * of minting fresh inline threads that each invite a reply and a push.
@@ -211,7 +209,7 @@ export function renderNitScopeNote(roundNo: number): string {
  */
 export function renderNitPolicyNote(policy: "open" | undefined, reviewNo = 1): string {
   if (policy !== "open") return "";
-  // From review 3 the NIT SCOPE note is armed (ratified): open lifts
+  // From review 3 the NIT SCOPE note is armed: open lifts
   // the volume limits, never the treadmill rule, so the posting order defers
   // to it rather than contradicting it.
   const posting =
@@ -294,10 +292,10 @@ export function renderIntentNote(order: RoundOrder): string {
  * The FIRST-PARTY DIRECTIVES note: rendered into `{{directive_note}}`
  * when dispatch detected first-party agent-directive files in the PR's diff
  * (`isFirstPartyDirectivePath` in src/severity.ts) and picked the escalation
- * mention. superseded the path-shaped carve-out: routine first-party
- * directives produce no injection finding, while a surviving malicious or
- * source-to-sink injection follows ordinary severity and may block. The note
- * now says exactly that and retains the one @-mention for the surviving case.
+ * mention. Routine first-party directives produce no injection finding, while
+ * a surviving malicious or source-to-sink injection follows ordinary severity
+ * and may block; the note says exactly that and carries the one @-mention for
+ * the surviving case.
  * A comment @-mention rides the ordinary gated posting route — never a GitHub
  * reviewer nomination. Empty when the PR touches no such file.
  */
@@ -334,9 +332,8 @@ const NO_BASE = "(unknown — the daemon could not resolve the base branch this 
 
 /** Markdown table of the round's pass plan — one row per subagent launch.
  * A fifth column appears only when a row carries a focus (sweep rows) or a
- * reason (content-triggered sub-lenses), so a plan without either renders
- * exactly as it always has. Files past the sweep cap are named under the
- * table. */
+ * reason (content-triggered sub-lenses). Files past the sweep cap are named
+ * under the table. */
 export function renderPassPlan(
   plan: PassPlanEntry[],
   unswept: string[] = [],
@@ -372,7 +369,7 @@ export function renderPassPlan(
         "| --- | --- | --- | --- | --- |",
       ]
     : ["| lens | subagent to call | tier | may raise to |", "| --- | --- | --- | --- |"];
-  // a split pass-baseline says what its rows are, and which one a
+  // A split pass-baseline says what its rows are, and which one a
   // prior finding goes to — exactly one. Absent on every unsplit plan.
   const baselineRows = plan.filter(isSplitBaselineRow).length;
   const split =
@@ -496,11 +493,11 @@ export function renderDedupNote(order: Pick<RoundOrder, "dedup_merge">): string 
 }
 
 /**
- * `[review] validate_compact` (A1): the validator answers with a
- * DECISION TABLE keyed by candidate id (the `validate-compact-output`
- * addendum, src/include.ts) instead of restating every survivor — its long
- * final turn, and the session's re-reading of it, were serial time on every
- * round (live study 2026-10-09: 87–144 s restating). This is the session's
+ * `[review] validate_compact`: the validator answers with a DECISION TABLE
+ * keyed by candidate id (the `validate-compact-output` addendum,
+ * src/include.ts) instead of restating every survivor — a long restating
+ * final turn, and the session's re-reading of it, are serial time on every
+ * round. This is the session's
  * half: how to read the table. Rendered into `{{validator_output_note}}` at
  * the end of step 4; "" when the order does not carry the flag.
  */
@@ -526,10 +523,10 @@ export function renderValidatorOutputNote(
 }
 
 /**
- * `{{prior_assign_note}}` (A6): step 1's instruction for the listed
+ * `{{prior_assign_note}}`: step 1's instruction for the listed
  * prior findings. When the daemon assigned them (`prior_assignments`), the
  * session checks that assignment instead of making it — the findings already
- * ride their lenses' task files. Otherwise the step-1 text as it always read.
+ * ride their lenses' task files. Otherwise the plain step-1 text.
  */
 export function renderPriorAssignNote(order: Pick<RoundOrder, "prior_assignments">): string {
   if ((order.prior_assignments?.length ?? 0) === 0)
@@ -656,9 +653,9 @@ export function renderExtentVerdictNote(
 /**
  * `[review] coverage_check` (src/coverage.ts): after the planned lenses
  * return, the changed non-test source files no lens raised a finding on and no
- * returned sweep row had in focus get a targeted pass-sweep row. Rendered into `{{coverage_note}}` at the end of
- * step 2; "" when the order carries no `coverage_files`, so an order without
- * them is byte-identical.
+ * returned sweep row had in focus get a targeted pass-sweep row. Rendered
+ * into `{{coverage_note}}` at the end of step 2; "" when the order carries no
+ * `coverage_files`, so an order without them is byte-identical.
  */
 export function renderCoverageNote(order: Pick<RoundOrder, "coverage_files">): string {
   const files = order.coverage_files;
@@ -708,7 +705,7 @@ export function renderSweepNote(
   const out = [...head, "", renderPassPlan(plan, order.sweep_plan_unswept ?? [], { sweep: true })];
   const files = order.sweep_task_files;
   if (files && files.length > 0) {
-    // the sweep launches through `launch_plan` too, as its own call.
+    // The sweep launches through `launch_plan` too, as its own call.
     const dir = taskDirOf(files);
     out.push(
       "",
@@ -729,7 +726,7 @@ export function renderSweepNote(
   return out.join("\n");
 }
 
-/**'s changed-behavior receipt. The daemon binds it to one successor
+/** The pre-fanout-stall recovery note. The daemon binds it to one successor
  * order; ordinary rounds render nothing. It does not change the plan or move
  * scheduling into the daemon — it tells the fresh parent how to execute the
  * same plan without repeating the proven pre-fanout stall. */
@@ -771,10 +768,9 @@ function fenceAround(body: string): string {
 }
 
 /**
- * `{{ledger_note}}` (MC-18): the PR's ledger as ledger-pin last
- * mirrored it, handed back in every round order and saying where it came
- * from. "" when the order carries none, so a PR with no ledger renders
- * exactly as before.
+ * `{{ledger_note}}`: the PR's ledger as ledger-pin last mirrored it, handed
+ * back in every round order and saying where it came from. "" when the order
+ * carries none.
  */
 export function renderLedgerNote(order: RoundOrder): string {
   const carry = order.ledger_carry;
@@ -804,19 +800,6 @@ export function renderLedgerNote(order: RoundOrder): string {
   ].join("\n");
 }
 
-/**
- * The full variable set every round template may reference.
- *
- * `memory` defaults to MEMORY_LESS, so a caller that knows nothing
- * about memory — the stub-wired daemon core, every legacy test — renders
- * exactly the prompt it rendered before: both memory sections come out empty.
- *
- * `ecosystem` defaults to Django — the shipped pre-seam behavior,
- * which is what every historical call site means; the production assembly
- * (wire.ts) always passes the profile-selected ecosystem explicitly. With
- * `NONE_ECOSYSTEM` the migration_gate_note renders empty: no gate prose, no
- * collision note, no degraded note.
- */
 /** The GATE NOTES every lens task carries: the ecosystem's migration gate
  * note and the intent block, as the round templates render them. */
 export function renderGateNotes(
@@ -829,6 +812,18 @@ export function renderGateNotes(
     .join("\n\n");
 }
 
+/**
+ * The full variable set every round template may reference.
+ *
+ * `memory` defaults to MEMORY_LESS, so a caller that knows nothing about
+ * memory (the stub-wired daemon core, tests) renders both memory sections
+ * empty.
+ *
+ * `ecosystem` defaults to Django; the production assembly (wire.ts) always
+ * passes the profile-selected ecosystem explicitly. With `NONE_ECOSYSTEM` the
+ * migration_gate_note renders empty: no gate prose, no collision note, no
+ * degraded note.
+ */
 export function roundVars(
   order: RoundOrder,
   memory: RoundMemory = MEMORY_LESS,
@@ -840,11 +835,11 @@ export function roundVars(
     ...identity,
     pinned_head: renderPinnedHeadSection(memory, ownerName),
     context_block: renderContextBlockSection(memory),
-    // today's bleed paragraph VERBATIM unless the round delivers
-    // lessons or cases (`[memory] delivery = "on"`), then the contract's
-    // rewording — and the "Lessons in force" index and the "Past reviews of
-    // these files" block after it, "" otherwise. Off, shadow, the bench and a
-    // round `on` delivered nothing to all render byte-for-byte as before.
+    // The plain bleed paragraph verbatim unless the round delivers lessons or
+    // cases (`[memory] delivery = "on"`), then the delivery rewording — and
+    // the "Lessons in force" index and the "Past reviews of these files"
+    // block after it, "" otherwise. Off, shadow, the bench and an `on` round
+    // that delivered nothing all render the plain paragraph.
     bleed_note: renderBleedNote(memory.lessons),
     lessons_note: renderLessonsNote(memory.lessons),
     n: String(order.pr),
@@ -855,8 +850,7 @@ export function roundVars(
     round_no: String(order.round_no),
     lenses: order.lenses.join(", "),
     pass_plan: renderPassPlan(order.pass_plan, order.sweep_unswept ?? []),
-    // Third-party sources (src/depsources.ts) — "" when nothing was unpacked,
-    // so a round without them renders exactly as before.
+    // Third-party sources (src/depsources.ts) — "" when nothing was unpacked.
     dependency_note: order.dependency_note ? `\n${order.dependency_note}\n` : "",
     addable_lenses: renderAddableLenses(order.addable_lenses, order.addable_tiers),
     validator_note: renderValidatorNote(order),
@@ -895,11 +889,11 @@ export function roundVars(
     validator_output_note: renderValidatorOutputNote(order),
     // `[review] coverage_check`: "" unless the order carries coverage files.
     coverage_note: renderCoverageNote(order),
-    // follow-up rounds: "" unless the order carries them; only
+    // Follow-up rounds: "" unless the order carries them; only
     // round-follow-up.md places them, so every other template is unchanged.
     prior_findings_note: order.prior_findings_note ?? "",
     prior_assign_note: renderPriorAssignNote(order),
-    // (`follow_up_extent = "session"`): "" otherwise.
+    // `follow_up_extent = "session"`: "" otherwise.
     extent_note: renderExtentNote(order),
     sweep_decision_note: renderSweepDecisionNote(order),
     extent_verdict_note: renderExtentVerdictNote(order),
@@ -911,7 +905,7 @@ export function roundVars(
 /**
  * Render a round-*.md template against a dispatched RoundOrder.
  *
- * the round's memory seed rides in as a second argument rather than
+ * The round's memory seed rides in as a second argument rather than
  * on the order, because it is not part of the daemon↔session contract — it is
  * prompt material with a degradation story, and an order that has already been
  * built must never be able to fail because memory was down. The PINNED HEAD is

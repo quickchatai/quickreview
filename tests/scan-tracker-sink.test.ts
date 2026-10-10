@@ -1,4 +1,4 @@
-// The tracker sink (FT-0463; setup & scan spec "Findings"): a promoted scan
+// The tracker sink (setup & scan spec "Findings"): a promoted scan
 // finding filed on a TEMP issue tracker exactly as the tracker's protocol
 // says (id by exclusive create of `.ids/`, the header grammar, the edit lock
 // around every rewrite), never twice (the fingerprint stamp), and closed only

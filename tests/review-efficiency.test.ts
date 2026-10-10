@@ -1,8 +1,7 @@
-// the second cost pass, ruled on by the owner 2026-10-09: the
-// validator's decision-table answer (A1), cheaper sweep packing (A3), prior
-// findings assigned by the daemon into the lens task files (A6), and two
-// benchmark levers measured before any default moves — a light tier for sweep
-// rows that hold no production code (H2) and a per-lens model (H6).
+// Review cost levers: the validator's decision-table answer, cheaper sweep
+// packing, prior findings assigned by the daemon into the lens task files, and
+// two benchmark levers measured before any default moves — a light tier for
+// sweep rows that hold no production code and a per-lens model.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -63,7 +62,7 @@ const prompt = (order: RoundOrder): string =>
     order,
   );
 
-// ---- A3: sweep packing -------------------------------------------------------
+// ---- sweep packing -----------------------------------------------------------
 
 describe("A3 — the sweep packs 8 files a row and skips translation catalogs", () => {
   it("defaults to 8 files per group under the same 500-line budget", () => {
@@ -99,7 +98,7 @@ describe("A3 — the sweep packs 8 files a row and skips translation catalogs", 
   });
 });
 
-// ---- H2: the light sweep tier ------------------------------------------------
+// ---- the light sweep tier ----------------------------------------------------
 
 describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
   it("tests, prose and config/data are light; code and CI workflows are not", () => {
@@ -161,7 +160,7 @@ describe("H2 — `[review] sweep_light_tier` (off by default)", () => {
   });
 });
 
-// ---- H6: a per-lens model ----------------------------------------------------
+// ---- a per-lens model --------------------------------------------------------
 
 describe("H6 — `[models.pass_models]` (empty by default)", () => {
   it("moves every variant of the lens onto the model, at the level it would have run at", () => {
@@ -214,7 +213,7 @@ describe("H6 — `[models.pass_models]` (empty by default)", () => {
   });
 });
 
-// ---- A1: the validator's decision table --------------------------------------
+// ---- the validator's decision table ------------------------------------------
 
 describe("A1 — the validator answers with a decision table", () => {
   it("is composed for PR builds by default, never for the scan, and off restores the frozen format", () => {
@@ -268,7 +267,7 @@ describe("A1 — the validator answers with a decision table", () => {
   });
 });
 
-// ---- A6: prior findings in the task files ------------------------------------
+// ---- prior findings in the task files ----------------------------------------
 
 const prior = (over: Partial<PriorFinding>): PriorFinding =>
   ({

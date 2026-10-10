@@ -1,4 +1,4 @@
-// the OpenViking memory engine: the HTTP client, the `MemoryStore`
+// The OpenViking memory engine: the HTTP client, the `MemoryStore`
 // over it, and the round path's `ContextAssembler`.
 //
 // Two things are pinned here, and they are the reasons the phase is safe:
@@ -199,7 +199,7 @@ class FakeOpenViking {
   }
 
   /** `fs/mkdir` as 0.4.15 really behaves: NOT idempotent — an existing
-   * directory comes back 409 CONFLICT, verified live 2026-08-21. That is the
+   * directory comes back 409 CONFLICT (verified live). That is the
    * whole reason `client.mkdir` counts a conflict as success, so the fake has
    * to reproduce it or the test would pin the opposite of the server. */
   private mkdir(req: { uri: string; parents?: boolean }): Promise<HttpResponseLike> {
@@ -344,14 +344,13 @@ function wire(
 
 // ---- namespace materialization ----------------------------------------------
 
-// follow-up, 2026-08-21. The companion could not write a single memory
-// for a day. Cause: its pi extension picks WHICH user namespace to write into
-// by listing `viking://user/` and choosing a directory that exists
-// (`resolveScopeSpace` in the vendored fork). Nothing had ever written to
-// `user/companion`, so the directory did not exist, so the resolver could not
-// see the namespace at all and silently fell back to `user/default` — whose
-// `memories/` tree does not exist either. Every write refused; the surfaced
-// error said "access denied" and named neither fact.
+// The companion's pi extension picks WHICH user namespace to write into by
+// listing `viking://user/` and choosing a directory that exists
+// (`resolveScopeSpace` in the vendored fork). A namespace nothing has written
+// to yet has no directory, so the resolver cannot see it and falls back to
+// `user/default`, whose `memories/` tree does not exist either: every write is
+// refused as "access denied". `ensureWritable` materializes the namespace
+// root so a writer that discovers namespaces by listing can find it.
 //
 // `create()`'s existing self-heal does not cover this: it fires on a write
 // through THIS class, and the companion does not write through this class.
@@ -363,10 +362,10 @@ describe("ensureWritable materializes the namespace before anyone writes", () =>
 
   it("creates the category root, and makes the namespace visible to a lister", async () => {
     const { store, client } = wire(server);
-    // `.result` lives only on the success arm of `OvOutcome`, so `?? []` used
-    // to fold a FAILED listing into "nothing there" — the same read this very
-    // suite exists to forbid, sitting inside its own assertion. Narrow first:
-    // a refusal now fails the test instead of satisfying it.
+    // `.result` lives only on the success arm of `OvOutcome`, so `?? []` would
+    // fold a FAILED listing into "nothing there" — the same read this suite
+    // exists to forbid. Narrow first: a refusal fails the test instead of
+    // satisfying it.
     const listing = async (): Promise<OvDirEntry[]> => {
       const out = await client.ls("viking://user/reviewer/memories");
       if (!out.ok) throw new Error(`ls refused: ${out.status} ${out.code}`);
@@ -416,7 +415,7 @@ describe("ensureWritable materializes the namespace before anyone writes", () =>
 
   it("still lets the first write self-heal — the eager path is a belt, not a replacement", async () => {
     // Nobody calls ensureWritable here: a write into a fresh namespace must
-    // keep working on its own, as it did before this change.
+    // work on its own.
     const { store } = wire(server);
     const res = await store.apply({ op: "note", text: "self-healed" });
     expect(res.ok).toBe(true);
@@ -712,9 +711,9 @@ describe("context search", () => {
     "past the exclusion cap, a retired entry still never reaches the round's context block",
     { timeout: HEAVY_TIMEOUT_MS },
     async () => {
-      // The request carries at most EXCLUDE_URIS_CAP exclusions. Retired entries
-      // past the cap in URI order used to come back from the search and be
-      // pasted into the session prompt verbatim.
+      // The request carries at most EXCLUDE_URIS_CAP exclusions; retired
+      // entries past the cap in URI order are still filtered from the result,
+      // so none reaches the session prompt.
       const server = new FakeOpenViking();
       const gaps: OvGap[] = [];
       const log: string[] = [];
@@ -758,9 +757,8 @@ describe("context search", () => {
 
     const before = server.calls.length;
     // A sweep would never finish now: the search must not be behind one.
-    // (Since S5 the call starts a background sweep to refresh the
-    // retired list for the NEXT round — the head no longer sweeps — but it is
-    // never awaited.)
+    // (The call starts a background sweep to refresh the retired list for the
+    // next round, but never awaits it.)
     server.hangLs = true;
     const block = await assembler.contextBlock("renumber", { maxTokens: 800 });
     // The search went out and answered — no listing or read it waited on —
@@ -846,8 +844,8 @@ describe("the reviewer USER key", () => {
     clock = 1500;
     expect(read()).toBe(KEY);
     // Inside the TTL a found key is remembered, not re-read. (Past it the file
-    // is re-stat'ed, so a rotated or removed key is noticed — S1,
-    // pinned in tests/memory-probe.test.ts.)
+    // is re-stat'ed, so a rotated or removed key is noticed — pinned in
+    // tests/memory-probe.test.ts.)
     rmSync(dir, { recursive: true, force: true });
     expect(read()).toBe(KEY);
   });
@@ -1073,7 +1071,7 @@ describe("a dead server cannot make a caller throw", () => {
     expect(sweep.entries).toHaveLength(1);
     expect(sweep.unread).toHaveLength(1);
     expect(sweep.unread[0]).toContain(doomed);
-    // The head reads the pinned directory alone (S5): an unreadable
+    // The head reads the pinned directory alone: an unreadable
     // lesson elsewhere is not the head's gap, and an empty pinned area is an
     // answer.
     const assembler2 = new OpenVikingContextAssembler({ client: client2, store: store2 });
@@ -1170,7 +1168,7 @@ describe("a dead server cannot make a caller throw", () => {
 
 // ---- the key never leaves the client ----------------------------------------
 
-// review: the unread/reason chain now carries server and transport
+// The unread/reason chain carries server and transport
 // messages into the round prompt, the round_memory_seeded event, the overseer
 // anomaly and the daemon log. A server body that echoes the bearer key must be
 // scrubbed where the failure is BUILT, not only on the client's own log line.
@@ -1224,7 +1222,7 @@ describe("a failure message never carries the key", () => {
 
 // ---- the pinned head --------------------------------------------------------
 
-// three answers, kept apart. `read` with text, `read` with "" (a
+// Three answers, kept apart. `read` with text, `read` with "" (a
 // healthy store with nothing pinned — every fresh install), and `unreadable`.
 describe("the pinned head", () => {
   it("healthy-and-populated: delivers pinned entries verbatim, oldest first, and nothing else", async () => {
@@ -1363,12 +1361,11 @@ describe("entry naming and tag helpers", () => {
 });
 
 // ---- untrusted text cannot pin itself (prompt-injection guard) --------------
-// Carried over from the retired engine's suite when it was deleted,
-// re-aimed at the implementation that actually runs. A pinned entry rides the
+// A pinned entry rides the
 // guaranteed head of EVERY round prompt — the highest-trust position in the
 // system — and the [feedback] sink quotes PR comments VERBATIM. So a PR author
 // writing "#pinned" inside a comment must not be able to promote that text
-// into every reviewer's standing instructions. Since S5 `pinned` is
+// into every reviewer's standing instructions. `pinned` is
 // PLACEMENT — an entry in `preferences/pinned/` — and a new entry's area is
 // chosen by its writer (a named area, else its own header-only `#pinned`), so
 // no `#pinned` in prose, however many, can put text in the head. This one is
@@ -1428,7 +1425,7 @@ describe("pinned is placement, never quoted text (prompt-injection guard)", () =
   });
 });
 
-// ---- selfscan fixes: retirement header-only, sweep generation, lazy root ----
+// ---- retirement header-only, sweep generation, lazy root -------------------
 
 describe("retired is header-only, like pinned", () => {
   let server: FakeOpenViking;
@@ -1481,7 +1478,7 @@ describe("a write outruns an older in-flight sweep", () => {
     };
     let ms = NOW.getTime();
     const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
-    // Every sweep FULL (S3): the race under test needs the expired
+    // Every sweep FULL: the race under test needs the expired
     // sweep to READ the entry, which an incremental sweep of an unchanged file
     // would not.
     const store = new OpenVikingStore({
@@ -1526,7 +1523,7 @@ describe("a sweep that read before a write never fills the cache", () => {
     };
     let ms = NOW.getTime();
     const client = new OpenVikingClient({ baseUrl: BASE, apiKey: KEY, user: "reviewer", fetchFn });
-    // Every sweep FULL (S3): the race under test needs the expired
+    // Every sweep FULL: the race under test needs the expired
     // sweep to READ the entry, which an incremental sweep of an unchanged file
     // would not.
     const store = new OpenVikingStore({
@@ -1590,7 +1587,7 @@ describe("the lazy memory root is ensured only by a mkdir that succeeded", () =>
 
 // ---- the EOD pinned-area watchdog over the SHARED store ---------------------
 
-// selfscan c067a756: production hands ONE store (15s sweep cache) to both the
+// Production hands ONE store (15s sweep cache) to both the
 // round path and the watchdog. The curator writes through the vendored pi
 // extension, straight over HTTP, so none of its writes invalidate that cache.
 // A round's sweep just before the curator edits a pin must not let the
@@ -1622,13 +1619,12 @@ describe("the pinned watchdog reads fresh through a shared, cached store", () =>
   });
 });
 
-// ---- the incremental sweep (S3) -------------------------------------
+// ---- the incremental sweep --------------------------------------------------
 //
 // Every category is listed every sweep, but a file is READ only when its listed
 // size or modification time moved since this store last read it — except on
-// the periodic full refresh. Before this, the TUI's candidate sweeper, the
-// companion and the daemon each re-read all ~176 files every few minutes
-// (about 716 content/read per 10 min on the live server).
+// the periodic full refresh, so the TUI, the companion and the daemon do not
+// each re-read the whole store every few minutes.
 describe("the incremental sweep (S3)", () => {
   const reads = (server: FakeOpenViking) =>
     server.calls.filter((c) => c.path === "/api/v1/content/read").length;
@@ -1985,7 +1981,7 @@ describe("the incremental sweep (S3)", () => {
     await expect(throwing.read()).resolves.toEqual([]);
   });
 
-  // Review of S3: the published list is what every session's recall excludes,
+  // The published list is what every session's recall excludes,
   // so a sweep that could not read part of the store must not shrink it.
   it("a sweep that cannot read everything never shrinks the published retired list — only a complete one may", async () => {
     const server = new FakeOpenViking();
