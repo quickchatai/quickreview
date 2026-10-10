@@ -1840,6 +1840,8 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
         ]);
       }
       eod?.stop();
+      // Its open window polls the pinned area; drop it before the server goes.
+      pinWatch?.stop();
       heartbeat?.stop();
       commands?.stop();
       operatorCommands?.stop();

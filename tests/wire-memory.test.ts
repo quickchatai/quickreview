@@ -328,6 +328,12 @@ describe("wire.ts: the lesson shadow ledger is actually connected", () => {
     expect(stop.indexOf("selector.stop()")).toBeLessThan(stop.indexOf("openviking.stop()"));
   });
 
+  it("shutdown stops the EOD pinned-area watchdog before the server goes", () => {
+    const stop = /async onStop\(reason = "shutdown"\) \{[\s\S]*?\n    \},\n/.exec(wire)?.[0] ?? "";
+    expect(stop).toMatch(/pinWatch\?\.stop\(\);/);
+    expect(stop.indexOf("pinWatch?.stop()")).toBeLessThan(stop.indexOf("openviking.stop()"));
+  });
+
   it("the kill switch is wired to the ledger, and the headline reaches the memory status block", () => {
     expect(wire).toMatch(
       /lessonSwitch\(change, file\) \{[\s\S]*?lessonLedger\.apply\(change, file\)/,
