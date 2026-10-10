@@ -98,6 +98,7 @@ export const PROCESS_SUITES: readonly string[] = [
   "tests/setup-interview.test.ts",
   "tests/setup-replay.test.ts",
   "tests/shellquote.test.ts",
+  "tests/slack-setup-wizard-run.test.ts",
   "tests/sweprbench-export.test.ts",
   "tests/temp-root.test.ts",
   "tests/tui-deploy-process.test.ts",

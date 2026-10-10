@@ -924,7 +924,9 @@ async function main() {
       }
       bad("the bot is NOT a member — Socket Mode will deliver NOTHING from here");
       para(`remedy: open #${channelName} in Slack and type:   /invite @quickreview`);
-      if (!(await confirm("re-check now?", true))) break;
+      // Spent input ends the re-check: an empty answer would otherwise take
+      // the [Y/n] default and poll Slack forever.
+      if (exhausted() || !(await confirm("re-check now?", true))) break;
     }
     if (verified || exhausted()) break;
     if (!(await confirm("use a different channel?", false))) break;
