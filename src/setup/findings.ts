@@ -764,10 +764,14 @@ export class FindingsStore {
     const { file, error } = this.loadFile();
     if (error !== null) throw new Error(error);
     const byFp = new Map(file.findings.map((f) => [f.fingerprint, f]));
-    // An absorbed near-duplicate's fingerprint names the finding it joined.
+    // Every alias names the finding that carries it: an absorbed
+    // near-duplicate's fingerprint, and a fingerprint the finding had before
+    // the companion matched it to a moved or reworded sighting.
     const aliasOf = new Map<string, string>();
-    for (const f of file.findings)
+    for (const f of file.findings) {
+      for (const a of f.aliases ?? []) aliasOf.set(a, f.fingerprint);
       for (const a of f.merged ?? []) aliasOf.set(a.fingerprint, f.fingerprint);
+    }
     const held = new Set(file.question?.unreported ?? []);
     let added = 0;
     let matched = 0;
@@ -789,7 +793,9 @@ export class FindingsStore {
           last_seen: seen,
           seen: again ? known.seen : known.seen + 1,
         };
-        if (ownFp === r.fingerprint) {
+        if (!(known.merged ?? []).some((m) => m.fingerprint === r.fingerprint)) {
+          // Its own fingerprint, or one it carried before a match: a sighting
+          // of the finding itself, stored under the identity it already has.
           // A collapsed finding carries the highest severity its sightings now
           // give — its own latest and each absorbed one's latest, never a
           // stale maximum a re-scan has since lowered.
@@ -797,6 +803,7 @@ export class FindingsStore {
           byFp.set(ownFp, {
             ...known,
             ...r,
+            fingerprint: ownFp,
             ...judgementOf(known, r),
             severity,
             ...(known.merged ? { own_severity: r.severity } : {}),

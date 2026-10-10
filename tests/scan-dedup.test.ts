@@ -215,6 +215,64 @@ describe("near-duplicate findings collapse into one", () => {
     expect(f.lenses).toEqual(["pass-security", "pass-data-safety"]);
     expect(f.aliases).toEqual(expect.arrayContaining([A932.fingerprint, A986.fingerprint]));
   });
+
+  it("a fingerprint a match retired as an alias, reported again, is the matched finding — its triage kept, nothing added", () => {
+    const st = store();
+    st.report([A932], S("r1", "2026-09-30T10:00:00Z"));
+    const moved = {
+      ...A932,
+      fingerprint: "cc".repeat(32),
+      blob: "b2",
+      start: 940,
+      end: 940,
+      claim: "Something else entirely about a moved check.",
+    };
+    st.report([moved], S("r2", "2026-09-30T11:00:00Z"));
+    const rows = [
+      {
+        path: A932.path,
+        blob: "b2",
+        lens: "pass-security",
+        tier: "t",
+        effort: "low",
+        validator: false,
+        sha: "sha-r2",
+        lines: 9,
+        cost_usd: 0,
+        run: "r2",
+        case: "u",
+        at: "2026-09-30T11:00:01Z",
+      },
+    ];
+    st.reconcile({ rows, tree: new Set([A932.path]), run: S("r2", "2026-09-30T11:00:02Z") });
+    const q = st.question().question!;
+    st.match({ key: q.key, pairs: [{ old: A932.fingerprint, new: moved.fingerprint }] });
+    st.update(moved.fingerprint, (f) => ({
+      ...f,
+      state: "dismissed",
+      dismissal: { reason: "not real", at: "x", memory: "written" },
+    }));
+    // The code goes back to what the old fingerprint anchored.
+    expect(st.report([A932], S("r3", "2026-09-30T12:00:00Z"))).toEqual({
+      added: 0,
+      matched: 1,
+      merged: 0,
+    });
+    const all = st.load().findings;
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({
+      fingerprint: moved.fingerprint,
+      state: "dismissed",
+      dismissal: { reason: "not real" },
+      aliases: [A932.fingerprint],
+      blob: A932.blob,
+      start: 932,
+      claim: A932.claim,
+      seen: 3,
+      last_seen: { run: "r3" },
+    });
+    expect(all[0]!.merged).toBeUndefined();
+  });
 });
 
 describe("the end-of-run fold, and what stays the companion's", () => {
