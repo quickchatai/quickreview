@@ -895,7 +895,7 @@ export function renderPragentReport(set: CaseSet, outDir: string, cases: BenchCa
     `- Reviewer: PR-Agent ${String(run["pragent_version"] ?? "?")} — its CLI \`describe\`, \`review\`, \`improve\` (the GitHub App's default pr_commands) on the local git provider (base...head), PR title/description ${run["pr_text"] === false ? "withheld (--no-pr-text)" : "as the GitHub provider supplies them"}, PR-Agent's default configuration; timeout ${String((run["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s) per command`,
   );
   L.push(
-    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py, Chat Completions)`,
+    `- Model: \`${String(run["model"] ?? "?")}\`, reasoning effort \`${String(run["effort"] ?? "?")}\` — ${typeof run["endpoint"] === "string" ? run["endpoint"] : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)"}, Chat Completions`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);

@@ -730,6 +730,26 @@ describe("the run", () => {
   });
 });
 
+describe("the report", () => {
+  it("names the endpoint run.json recorded, the API-key route included", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-pragent-report-"));
+    try {
+      const api =
+        "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)";
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "pragent", endpoint: api }));
+      const md = renderPragentReport(SET, tmp, []);
+      expect(md).toContain(`— ${api}, Chat Completions`);
+      expect(md).not.toContain("ChatGPT Codex backend");
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "pragent" }));
+      expect(renderPragentReport(SET, tmp, [])).toContain(
+        "— ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py), Chat Completions",
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the sandbox wiring", () => {
   const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
   const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");

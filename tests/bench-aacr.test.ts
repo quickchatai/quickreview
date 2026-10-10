@@ -1200,6 +1200,13 @@ describe("the open-code-review baseline arm", () => {
       expect(withText).toContain(
         `- Reviewed WITHOUT the PR title/description (none prefetched): \`${c.instance_id}\``,
       );
+      // The backend is the one run.json recorded, the API-key route included.
+      const api =
+        "the public OpenAI API (API key) via the loopback bridge (bench/aacr/codex_bridge.py)";
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ ...runRec, endpoint: api }));
+      const viaKey = renderOcrReport(set, tmp, [c]);
+      expect(viaKey).toContain(`— ${api}: OCR's Chat Completions calls`);
+      expect(viaKey).not.toContain("ChatGPT Codex backend");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

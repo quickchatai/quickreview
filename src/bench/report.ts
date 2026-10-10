@@ -330,7 +330,7 @@ export function renderOcrReport(set: CaseSet, outDir: string, cases: BenchCase[]
     }
   }
   L.push(
-    `- Model: \`${run.model ?? "?"}\`, reasoning effort \`${run.effort ?? "?"}\`, text verbosity \`${run.verbosity ?? "?"}\` — the ChatGPT Codex backend through the loopback bridge (bench/aacr/codex_bridge.py: OCR's Chat Completions calls → streamed Responses)`,
+    `- Model: \`${run.model ?? "?"}\`, reasoning effort \`${run.effort ?? "?"}\`, text verbosity \`${run.verbosity ?? "?"}\` — ${typeof run.endpoint === "string" ? run.endpoint : "ChatGPT Codex backend via the loopback bridge (bench/aacr/codex_bridge.py)"}: OCR's Chat Completions calls → streamed Responses`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
