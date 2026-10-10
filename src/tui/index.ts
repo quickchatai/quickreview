@@ -10,11 +10,9 @@ import type { MetricsView } from "./metricstab.js";
 import { ensureSshMaster } from "./connect.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { ALT_SCREEN_OFF, ALT_SCREEN_ON, CLEAR } from "./paint.js";
-import { visiblePrs } from "./filters.js";
 import { storeHealth } from "./memory.js";
 import { findMemoryEntry, memoryOrder, memoryRefUnread } from "./memtab.js";
 import { refOf } from "../memory/store.js";
-import { reselect } from "./model.js";
 import { isTab } from "./tabs.js";
 import {
   HotReloader,
@@ -255,9 +253,7 @@ export function buildTuiDriver(
     setBoardFilter: (f) => {
       prep();
       app.tab = "board";
-      app.view.boardFilter = f;
-      // The old ordinal may point past (or at a hole in) the narrowed list.
-      app.view.selected = reselect(visiblePrs(app.view), undefined, app.view.selected);
+      app.setBoardFilter(f);
       app.repaint();
     },
     setMemoryFilter: (tag) => {

@@ -190,6 +190,25 @@ describe("actions wiring: the watcher on a real App", () => {
     expect(stripAnsi(renderBoard(app.view, 110, 30).render())).toContain("#5049");
   });
 
+  it("F keeps the highlighted row, the selected PR and the session on one PR", () => {
+    const { app, driver } = makeRig();
+    driver.setBoardFilter({ author: "bob" });
+    driver.selectPr(5049); // the only row under the filter — ordinal 0
+    app.pressKey("F");
+    expect(app.view.boardFilter).toBeNull();
+    expect(app.currentPr()).toBe(5049);
+    expect(app.selectedPrNumber()).toBe(5049);
+    expect(app.selectedSession()).toBe("pr-5049");
+  });
+
+  it("a filter that hides the selected PR moves the selection to a listed one", () => {
+    const { app, driver } = makeRig();
+    driver.selectPr(5049);
+    driver.setBoardFilter({ author: "alice" });
+    expect(app.currentPr()).toBe(app.selectedPrNumber());
+    expect(app.currentPr()).not.toBe(5049);
+  });
+
   it("memory_filter narrows the timeline render and labels it", async () => {
     const rig = makeRig();
     rig.app.tab = "memory";

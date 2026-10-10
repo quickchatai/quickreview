@@ -21,7 +21,7 @@ import {
 import { barHitKey, NO_LIVE_KEYS, registeredKeys, type LiveKeys } from "./cmdbar.js";
 import { decodeInputKey, decodeKey, type BoardKey } from "./keys.js";
 import type { Tab } from "./tabs.js";
-import { visiblePrs } from "./filters.js";
+import { visiblePrs, type BoardFilter } from "./filters.js";
 import { formatEvent, moveSelection, reselect, type EventLine } from "./model.js";
 import { TripleCtrlC } from "./chord.js";
 import { MOUSE_OFF, MOUSE_ON, MouseDecoder, hitTest, type MouseEvent, type Zone } from "./mouse.js";
@@ -668,6 +668,23 @@ export class App {
     this.followSelection();
   }
 
+  /** Narrow (or, with null, clear) the board. The selection stays on the
+   * same PR while it is still listed; otherwise it lands on the nearest row
+   * of the new list — and the row, the detail and the mirrored session move
+   * together, so the next key addresses the highlighted PR. */
+  setBoardFilter(filter: BoardFilter | null): void {
+    this.view.boardFilter = filter;
+    const sorted = visiblePrs(this.view);
+    this.view.selected = reselect(sorted, this.selectedPr, this.view.selected);
+    const pr = sorted[this.view.selected]?.number;
+    if (pr === this.selectedPr) return;
+    this.selectedPr = pr;
+    if (this.view.progress?.pr !== pr) this.view.progress = undefined;
+    void this.refreshDetail();
+    void this.refreshProgress();
+    this.followSelection();
+  }
+
   selectedSession(): string | undefined {
     const pr = this.selectedPrNumber();
     return pr === undefined ? undefined : `pr-${pr}`;
@@ -1240,7 +1257,7 @@ export class App {
       case "char":
         // F clears the board filter — the indicator promises it.
         if (key.ch === "F" && this.tab === "board" && this.view.boardFilter != null) {
-          this.view.boardFilter = null;
+          this.setBoardFilter(null);
           break;
         }
         // I starts setup — the companion takes it from there.
