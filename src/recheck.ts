@@ -199,16 +199,39 @@ function squash(lines: string[], path?: string): string {
 }
 
 /**
+ * The slash-span form of a side of a patch: on each line, the raw text from
+ * its first `/` to its last is kept verbatim (delimited), and whitespace
+ * elsewhere is dropped. A regex literal never crosses a line, so it always
+ * lies inside its line's span; whitespace inside one is content (`/a b/` →
+ * `/ab/` changes the program). Telling a regex from a division, a comment or
+ * a markup closing tag is not attempted: any whitespace change between the
+ * first and last `/` of a line is held significant, so this form can only
+ * make a delta less trivial, never more.
+ */
+function slashSpans(lines: string[]): string {
+  return lines
+    .map((l) => {
+      const i = l.indexOf("/");
+      const j = l.lastIndexOf("/");
+      if (i === j) return l.replace(/\s+/g, "");
+      return `${l.slice(0, i).replace(/\s+/g, "")}\0${l.slice(i, j + 1)}\0${l.slice(j + 1).replace(/\s+/g, "")}`;
+    })
+    .join("");
+}
+
+/**
  * Whitespace-only change: the added and removed text are identical once
  * insignificant whitespace is dropped (see `squash` — never inside a quoted
- * literal, never leading indentation of a whitespace-significant language).
+ * literal, never leading indentation of a whitespace-significant language),
+ * and no line's whitespace changed between its first and last `/` (see
+ * `slashSpans` — a regex literal's whitespace is content).
  * Concatenation (not a per-line set) is the comparison, so a re-indent or a
  * re-flow passes while a reordering of real lines does not.
  */
 export function formattingOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
   if (added.length === 0 && removed.length === 0) return false;
-  return squash(added, path) === squash(removed, path);
+  return squash(added, path) === squash(removed, path) && slashSpans(added) === slashSpans(removed);
 }
 
 /** Same text once every MIGRATION-NUMBER run is masked — the renumber's
@@ -220,7 +243,8 @@ export function formattingOnly(patch: string, path?: string): boolean {
 export function digitsOnly(patch: string, path?: string): boolean {
   const { added, removed } = patchLines(patch);
   const mask = (lines: string[]): string => squash(lines, path).replace(/\d+(?=_)/g, "#");
-  return mask(added) === mask(removed);
+  const maskSpans = (lines: string[]): string => slashSpans(lines).replace(/\d+(?=_)/g, "#");
+  return mask(added) === mask(removed) && maskSpans(added) === maskSpans(removed);
 }
 
 /** One release-version line and nothing else on it: `"version": "1.2.3",`

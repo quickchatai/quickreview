@@ -18,6 +18,7 @@ import {
   RecheckWatcher,
   classifyDelta,
   ciIsAdverse,
+  digitsOnly,
   formattingOnly,
   isMigrationRenumber,
   planRecheck,
@@ -92,6 +93,37 @@ describe("trivial-delta classifier", () => {
     expect(formattingOnly("@@\n-x = 'a  b'\n+x = 'a b'", "app/x.py")).toBe(false);
     // …while whitespace around the literal is still formatting.
     expect(formattingOnly('@@\n-return   "a b";\n+return "a b";', "src/x.ts")).toBe(true);
+  });
+
+  it("keeps a whitespace change inside a regex literal significant", () => {
+    expect(formattingOnly("@@\n-const pattern = /a b/;\n+const pattern = /ab/;", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-if (/[ ]x/.test(s)) f();\n+if (/[]x/.test(s)) f();", "src/x.ts")).toBe(false);
+    expect(formattingOnly("@@\n-return /a  b/g;\n+return /a b/g;", "src/x.ts")).toBe(false);
+    expect(digitsOnly("@@\n-const p = /a b/;\n+const p = /ab/;", "app/migrations/0043_x.py")).toBe(false);
+    // …while whitespace around it is still formatting.
+    expect(formattingOnly("@@\n-const pattern =   /a b/;\n+const pattern = /a b/;", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-    return /a b/;\n+  return /a b/;", "src/x.ts")).toBe(true);
+    expect(formattingOnly("@@\n-x = a / b;\n+x = a/b;", "src/x.ts")).toBe(true);
+  });
+
+  it("errs toward significant whenever a `/` could open a regex", () => {
+    // A division pair is not told apart from a regex: held significant.
+    expect(formattingOnly("@@\n-x = a / b / c;\n+x = a/b/c;", "src/x.ts")).toBe(false);
+    // A JSX closing tag followed by a string holding `/`.
+    expect(formattingOnly('@@\n-<b>x</b>{" / q r"}\n+<b>x</b>{" / qr"}', "src/x.tsx")).toBe(false);
+    expect(formattingOnly('@@\n-<span>{a}</span>{" / "}{b}\n+<span>{a}</span>{" /"}{b}', "src/x.tsx")).toBe(false);
+    // A `<` comparison followed by a string holding `/`.
+    expect(formattingOnly('@@\n-x = y</2; s = "a b / c d"\n+x = y</2; s = "a b / cd"', "src/x.ts")).toBe(false);
+    expect(formattingOnly('@@\n-if (a < b) s = "p / q r";\n+if (a < b) s = "p / qr";', "src/x.ts")).toBe(false);
+    // Whitespace around those lines is still formatting.
+    expect(formattingOnly('@@\n-  <b>x</b>{" / q r"}\n+    <b>x</b>{" / q r"}', "src/x.tsx")).toBe(true);
+  });
+
+  it("stays linear on a long unterminated slash run", () => {
+    const line = `= /${"[".repeat(50000)}`;
+    const t0 = Date.now();
+    expect(formattingOnly(`@@\n-${line}\n+${line} `, "src/x.ts")).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(1000);
   });
 
   it("does not call a reordering formatting", () => {
