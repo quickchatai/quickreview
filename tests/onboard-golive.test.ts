@@ -77,6 +77,7 @@ const dryRunOnDisk = (): boolean => loadConfig(join(root, "config.toml")).dry_ru
 interface Harness {
   engine: OnboardingEngine;
   restarts: string[][];
+  adapters: OnboardAdapters;
 }
 
 function harness(
@@ -120,7 +121,7 @@ function harness(
     host: { nodeVersion: "v22.5.1", uid: 1000 },
     paths: { stateDir: join(root, "state"), configPath: join(root, "config.toml") },
   };
-  return { engine: new OnboardingEngine([goLiveStep({ stream })], adapters), restarts };
+  return { engine: new OnboardingEngine([goLiveStep({ stream })], adapters), restarts, adapters };
 }
 
 // ---- the guard itself --------------------------------------------------------
@@ -351,6 +352,35 @@ describe("declining is a first-class outcome", () => {
         .ok,
     ).toBe(true);
     expect(dryRunOnDisk()).toBe(false);
+  });
+
+  it("a decline on a LIVE installation is refused, records nothing and never claims file-only reviews", async () => {
+    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    seedChoices({ [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "live" });
+    const h = harness();
+    const before = configText();
+    const result = await h.engine.runStep(GO_LIVE_STEP_ID, { decision: "stay_dry_run" });
+    expect(result.ok).toBe(false);
+    const detail = result.checks.map((c) => c.detail).join(" ");
+    expect(detail).toMatch(/LIVE/);
+    expect(detail).not.toMatch(/state\/dryrun/);
+    expect(h.engine.choices()[GO_LIVE_CHOICE_KEY]).toBe("live");
+    expect(configText()).toBe(before);
+    expect(h.restarts).toEqual([]);
+  });
+
+  it("a recorded decline later hand-flipped to live verifies as LIVE, not as dry-run", async () => {
+    writeFileSync(join(root, "config.toml"), exampleConfig.replace(/^dry_run = true/m, "dry_run = false"));
+    const report = await goLiveStep().verify({
+      adapters: harness().adapters,
+      input: {},
+      choices: { [PROOF_CHOICE_KEY]: PROOF, [GO_LIVE_CHOICE_KEY]: "dry_run" },
+      data: {},
+      recordChoice: () => undefined,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.checks[0]!.detail).toMatch(/^LIVE/);
+    expect(report.checks[0]!.detail).toMatch(/posted to GitHub/);
   });
 
   it("with no answer at all the step is red — the wizard wants a decision, not a default", async () => {

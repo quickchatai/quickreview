@@ -264,6 +264,29 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
       }
 
       if (decision === "stay_dry_run") {
+        // A decline promises reviews land in files, so it is recorded only on
+        // an installation that IS in dry-run. This step never writes the flag
+        // back to true: a live installation stays live until its owner edits
+        // that line, and the decline is refused rather than reported as true.
+        const dryRunNow = currentDryRun(ctx.adapters);
+        if (dryRunNow !== true) {
+          return {
+            ok: false,
+            checks: [
+              {
+                name: "decision",
+                ok: false,
+                detail:
+                  dryRunNow === false
+                    ? `nothing was recorded and nothing was changed: ${configPath(ctx.adapters)} has dry_run = false, so this ` +
+                      "installation is LIVE and reviews are posted to GitHub. This step only ever flips toward live; to go back " +
+                      "to dry-run, set dry_run = true in config.toml yourself and restart the daemon, then run this step again."
+                    : `nothing was recorded and nothing was changed: ${configPath(ctx.adapters)} could not be read, so whether ` +
+                      "this installation is in dry-run is unknown. Fix the config, then run this step again.",
+              },
+            ],
+          };
+        }
         ctx.recordChoice(GO_LIVE_CHOICE_KEY, "dry_run");
         return {
           ok: true,
@@ -420,6 +443,20 @@ export function goLiveStep(opts: GoLiveStepOptions = {}): OnboardingStep {
         };
       }
       if (recorded === "dry_run") {
+        if (dryRun === false) {
+          return {
+            ok: true,
+            checks: [
+              {
+                name: "decision",
+                ok: true,
+                detail:
+                  "LIVE — dry-run was declined here once, but config.toml now has dry_run = false, so reviews are posted " +
+                  "to GitHub. A finished installation.",
+              },
+            ],
+          };
+        }
         return {
           ok: true,
           checks: [
