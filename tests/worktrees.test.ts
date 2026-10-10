@@ -379,6 +379,30 @@ describe("resolvedFilesInMerges", () => {
     expect(res.files).toEqual(["shared.txt"]);
   });
 
+  it("an octopus merge it cannot verify degrades the answer, keeping the files it did verify", async () => {
+    const { from } = mergeScenario({
+      conflicting: true,
+      resolution: "line1 SIDE\nline2\nline3\n",
+    });
+    git(origin, "checkout", "-q", "-b", "octo-a", from);
+    writeFileSync(join(origin, "a.txt"), "a\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "a");
+    git(origin, "checkout", "-q", "-b", "octo-b", from);
+    writeFileSync(join(origin, "b.txt"), "b\n");
+    git(origin, "add", "-A");
+    git(origin, "commit", "-q", "-m", "b");
+    git(origin, "checkout", "-q", "side");
+    git(origin, "merge", "-q", "--no-edit", "octo-a", "octo-b");
+    const to = git(origin, "rev-parse", "HEAD").trim();
+    expect(git(origin, "rev-list", "--parents", "-n", "1", to).trim().split(/\s+/)).toHaveLength(4);
+    const m = mgr();
+    await m.ensureBaseClone();
+    git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
+    const res = await m.resolvedFilesInMerges(from, to);
+    expect(res).toEqual({ files: ["shared.txt"], degraded: true });
+  });
+
   it("reports degraded on unusable shas instead of guessing", async () => {
     const m = mgr();
     await m.ensureBaseClone();

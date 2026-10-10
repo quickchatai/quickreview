@@ -869,12 +869,19 @@ export class WorktreeManager {
         .map((l) => l.trim())
         .filter(Boolean);
       const files = new Set<string>();
+      let unverified = false;
       for (const m of merges) {
         const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
           .trim()
           .split(/\s+/)
           .slice(1);
-        if (parents.length !== 2) continue; // octopus/odd merges: skip, stay honest below
+        // An octopus (or otherwise odd) merge has no two-parent auto-merge to
+        // compare against: the files it resolved are unknown, so the answer is
+        // degraded — the other merges' files still count.
+        if (parents.length !== 2) {
+          unverified = true;
+          continue;
+        }
         // merge-tree exits 1 on conflicts while still printing the tree oid —
         // run unchecked and read the first line.
         const mt = await this.run("git", ["merge-tree", "--write-tree", parents[0]!, parents[1]!], {
@@ -889,7 +896,7 @@ export class WorktreeManager {
           .filter(Boolean))
           files.add(f);
       }
-      return { files: [...files], degraded: false };
+      return { files: [...files], degraded: unverified };
     } catch {
       return { files: [], degraded: true };
     }
