@@ -200,7 +200,9 @@ def main():
     ap.add_argument("--qodo-gt", required=True)
     ap.add_argument("--skip-charts", action="store_true")
     a = ap.parse_args()
-    work = Path(a.work)
+    # absolute, because the Martian step imports from both while its cwd is the checkout
+    a.martian = str(Path(a.martian).resolve())
+    work = Path(a.work).resolve()
     if work.exists():
         shutil.rmtree(work)
     slim, tools = work / "slim", work / "aacr"
