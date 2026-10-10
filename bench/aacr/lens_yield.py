@@ -179,10 +179,20 @@ def aacr_comments(runs: Path, run: str):
 
 def qodo_comments(runs: Path, run: str, set_file: Path):
     by_pr = {c["pr_url"]: c["instance_id"] for c in json.load(open(set_file))["cases"]}
+    # judgements.jsonl is append-only: a retry appends its replacement and
+    # keeps the record it replaces. The judge scores the last record without
+    # an error per PR, else the last record — one judgement per case.
+    best: dict[str, dict] = {}
     for line in open(runs / f"{run}.qodo" / "judgements.jsonl"):
+        if not line.strip():
+            continue
         j = json.loads(line)
         if j.get("tool") != "quickreview" or j.get("pass", 1) != 1:
             continue
+        prev = best.get(j["pr"])
+        if prev is None or "error" in (prev.get("meta") or {}) or "error" not in (j.get("meta") or {}):
+            best[j["pr"]] = j
+    for j in best.values():
         matched = {m["comment"] for m in j.get("matches") or []}
         out = [(c.get("path"), _line(c.get("start")), lenses_of_text(c.get("body", "")), i in matched) for i, c in enumerate(j.get("comments") or [])]
         yield runs / run / "cases" / by_pr[j["pr"]], out

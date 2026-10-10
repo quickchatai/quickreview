@@ -137,4 +137,37 @@ print(json.dumps([p.name for p, _ in ly.martian_comments(Path(sys.argv[1]), sys.
     );
     expect(got).toEqual(["acme__app-2@bbbbbbb"]);
   });
+
+  it("qodo: a retried judgement replaces the one before it — one case per PR, the judge's own pick", () => {
+    const runs = mkdtempSync(join(tmpdir(), "ly-runs-"));
+    const run = "r";
+    mkdirSync(join(runs, `${run}.qodo`), { recursive: true });
+    const pr = "https://github.com/acme/app/pull/1";
+    const pr2 = "https://github.com/acme/app/pull/2";
+    const rec = (p: string, comments: unknown[], matches: unknown[], meta: object = {}) =>
+      JSON.stringify({ pr: p, tool: "quickreview", pass: 1, comments, matches, meta });
+    writeFileSync(
+      join(runs, `${run}.qodo`, "judgements.jsonl"),
+      [
+        rec(pr, [], [], { empty: true }),
+        rec(pr, [{ path: "a.py", start: 3, body: "x" }], [{ comment: 0 }]),
+        rec(pr2, [{ path: "b.py", start: 1, body: "y" }], [{ comment: 0 }]),
+        rec(pr2, [{ path: "b.py", start: 1, body: "y" }], [], { error: "timeout" }),
+        "",
+      ].join("\n"),
+    );
+    const set = join(runs, "set.json");
+    writeFileSync(set, JSON.stringify({ cases: [{ pr_url: pr, instance_id: "c1" }, { pr_url: pr2, instance_id: "c2" }] }));
+    const got = py(
+      `from pathlib import Path
+print(json.dumps(sorted([p.name, [c[3] for c in cs]] for p, cs in ly.qodo_comments(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])))))`,
+      runs,
+      run,
+      set,
+    );
+    expect(got).toEqual([
+      ["c1", [true]],
+      ["c2", [true]],
+    ]);
+  });
 });
