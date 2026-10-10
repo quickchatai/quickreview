@@ -60,6 +60,8 @@ emit("VM_ROOT", c.tui.remote_sandbox_root);
 emit("SUDO", c.tui.sudo_docker ? 1 : 0);
 ')"
 eval "$CONF"
+DOCKER_ON_VM="docker"
+[[ "$SUDO" == "1" ]] && DOCKER_ON_VM="sudo docker"
 
 QCR="$ROOT/scripts/qcr"
 
