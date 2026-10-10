@@ -204,8 +204,8 @@ export function readSlackValues(text) {
   const section = sliceSection(String(text ?? ""), "[slack]");
   const ownerSection = sliceSection(String(text ?? ""), "[owner]");
   const scalarIn = (body, key) => {
-    const m = body.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, "m"));
-    return m ? m[1] : "";
+    const m = body.match(new RegExp(`^\\s*${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "m"));
+    return m ? (m[1] ?? m[2]) : "";
   };
   const scalar = (key) => scalarIn(section.body, key);
   const ownerId = scalarIn(ownerSection.body, "slack_id").trim();
@@ -288,8 +288,8 @@ export function patchConfigToml(text, values) {
   const owner = sliceSection(src, "[owner]");
   if (String(values.legacy_owner_slack_id ?? "").trim() !== "" && owner.start !== -1) {
     for (let i = owner.start + 1; i < owner.end; i++) {
-      const m = out[i].match(/^\s*slack_id\s*=\s*"([^"]*)"/);
-      if (m && m[1].trim() !== "") {
+      const m = out[i].match(/^\s*slack_id\s*=\s*(?:"([^"]*)"|'([^']*)')/);
+      if (m && (m[1] ?? m[2]).trim() !== "") {
         out[i] = replaceScalar(out[i], "slack_id", values.legacy_owner_slack_id);
       }
     }

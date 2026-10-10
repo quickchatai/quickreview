@@ -262,6 +262,29 @@ describe("readSlackValues", () => {
     expect(cfg.owner.slack_id).toBe("U0NEWID");
     expect(wiz.readSlackValues(changed).owner_id_conflict).toBe(false);
   });
+
+  it("reads and follows a single-quoted [owner] slack_id, as the daemon does", () => {
+    const literal = shipped.replace(/^slack_id = ""/m, "slack_id = 'U0OLDID'");
+    expect(parseConfig(literal).owner.slack_id).toBe("U0OLDID");
+    expect(wiz.readSlackValues(literal).legacy_owner_slack_id).toBe("U0OLDID");
+
+    const changed: string = wiz.patchConfigToml(literal, {
+      legacy_owner_slack_id: "U0NEWID",
+      users: new Map([["U0NEWID", "mhale"]]),
+    });
+    expect(parseConfig(changed).owner.slack_id).toBe("U0NEWID");
+    const v = wiz.readSlackValues(changed);
+    expect(v.legacy_owner_slack_id).toBe("U0NEWID");
+    expect(v.owner_id_conflict).toBe(false);
+  });
+
+  it("flags a conflict whose canonical id is single-quoted", () => {
+    const both = shipped
+      .replace(/^slack_id = ""/m, "slack_id = 'U0OWNER'")
+      .replace(/^legacy_owner_slack_id = ""/m, 'legacy_owner_slack_id = "U0OTHER"');
+    expect(() => parseConfig(both)).toThrow(/both set and differ/);
+    expect(wiz.readSlackValues(both).owner_id_conflict).toBe(true);
+  });
 });
 
 describe("readSecretsDir", () => {
