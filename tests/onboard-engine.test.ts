@@ -343,6 +343,23 @@ describe("finish", () => {
     expect(checklistComplete(stateDir)).toBe(false);
   });
 
+  it("a successful re-run on a completed checklist withdraws the claim until a green finish", async () => {
+    const e = engine();
+    await e.runStep(PREFLIGHT_STEP_ID);
+    expect((await e.finish()).ok).toBe(true);
+    const markerBytes = readFileSync(firstRunMarkerPath(stateDir), "utf8");
+
+    const rerun = engine();
+    expect((await rerun.runStep(PREFLIGHT_STEP_ID)).ok).toBe(true);
+    expect(rerun.isComplete()).toBe(false);
+    expect(checklistComplete(stateDir)).toBe(false);
+    expect(readChecklist(stateDir)?.completed_at).toBe("2026-08-30T12:00:00.000Z");
+    expect(readFileSync(firstRunMarkerPath(stateDir), "utf8")).toBe(markerBytes);
+
+    expect((await rerun.finish()).ok).toBe(true);
+    expect(checklistComplete(stateDir)).toBe(true);
+  });
+
   it("a step newly enabled on a completed checklist withdraws the claim at reconcile", async () => {
     const vmOnly: OnboardingStep = {
       id: "vm_only",

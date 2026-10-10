@@ -144,7 +144,8 @@ export interface ChecklistFile {
    * History — when onboarding first finished; it never moves and never clears. */
   completed_at: string | null;
   /** When a completed checklist stopped verifying (a demotion, a failed run,
-   * a refused finish, a newly-enabled unfinished step); null/absent while the
+   * a refused finish, a newly-enabled unfinished step, a step run again —
+   * a run changes what the full verification checked); null/absent while the
    * completion still holds. A green finish() clears it. Whether onboarding is
    * complete now is `completed_at` set and this unset. */
   reopened_at?: string | null;
@@ -409,6 +410,10 @@ export class OnboardingEngine {
       rec.completed_at = this.adapters.clock().toISOString();
       rec.verified_at = null;
       rec.note = null;
+      // A run acts on the installation (choices, config, deploys) after the
+      // full verification that backed the completion claim: only the next
+      // green finish() may make that claim again.
+      this.reopen();
     } else {
       rec.status = "pending";
       rec.note = `last run failed: ${failures(report.checks).join("; ") || "unknown"}`;
