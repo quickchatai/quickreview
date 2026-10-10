@@ -141,6 +141,22 @@ describe("posting receipts", () => {
     expect(dryrunRecords()).toEqual([]);
   });
 
+  it("a review refused by another attempt's receipt lock leaves that lock in place", async () => {
+    const key = `v1:5180:11:${HEAD}`;
+    const lock = join(s.dir, "receipts", "pr-5180-round-11.json.lock");
+    mkdirSync(lock, { recursive: true });
+    const res = await run("post-review.sh", ["5180", "COMMENT", bodyFile()], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "11",
+      QCR_POSTING_KEY: key,
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.out).toContain("another posting attempt owns");
+    expect(existsSync(lock)).toBe(true);
+    expect(dryrunRecords()).toEqual([]);
+  });
+
   it("requires GitHub's returned id, commit and state before confirming", async () => {
     const key = `v1:5180:10:${HEAD}`;
     const path = join(s.dir, "receipts", "pr-5180-round-10.json");
