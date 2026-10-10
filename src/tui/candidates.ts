@@ -179,6 +179,9 @@ function verdictOf(r: RoundFact): string {
  */
 export function isPerfectPath(facts: PrFacts): boolean {
   if (facts.rounds.length !== 1) return false;
+  // A short local record is not proof of one round: the daemon's count wins
+  // when it says there were more.
+  if ((facts.rounds_reported ?? 0) > 1) return false;
   const only = facts.rounds[0]!;
   if (verdictOf(only) !== APPROVE) return false;
   return facts.comments.every((c) => !c.tagged) && facts.signals.length === 0;

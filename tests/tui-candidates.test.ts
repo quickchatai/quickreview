@@ -85,6 +85,17 @@ describe("the good path and its one carve-out", () => {
     expect(detectCandidates(f)).toEqual([]);
   });
 
+  it("one local APPROVE is not the perfect path when the daemon reports more rounds", () => {
+    const f = facts({
+      pr: 5003,
+      rounds: [round(1, "APPROVE")],
+      rounds_reported: LONG_REVIEW_ROUNDS,
+    });
+    expect(isPerfectPath(f)).toBe(false);
+    const d = detectCandidates(f).find((x) => x.family === "long-review");
+    expect(d?.severity).toBe(LONG_REVIEW_ROUNDS);
+  });
+
   it("a block the author ACCEPTED AND FIXED never appears as a candidate", () => {
     // This is the review working, not a deviation.
     // Block → fix → approve must produce nothing in ANY family.
