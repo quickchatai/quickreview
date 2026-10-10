@@ -173,7 +173,7 @@ describe("plain Dockerfile — ARG defaults mirror the pinned sources of truth",
   it("creates the pihome and state volume mount points owned by the container user, before USER", () => {
     const prep = /^RUN install -d -o review -g review (.+)$/m.exec(dockerfile);
     expect(prep).not.toBeNull();
-    const dirs = prep![1].split(/\s+/);
+    const dirs = prep![1]!.split(/\s+/);
     expect(dirs).toContain("/home/review/.pi");
     expect(dirs).toContain("/opt/quickreview/state");
     expect(compose).toContain("qcr-pihome:/home/review/.pi");

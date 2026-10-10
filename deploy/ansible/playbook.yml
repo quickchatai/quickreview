@@ -218,8 +218,8 @@
       no_log: true
       when: lookup('ansible.builtin.fileglob', secrets_src + '/' + item) | length > 0
 
-    # The Slack concierge's tokens, under config.toml's default
-    # `bot_token_file` / `app_token_file` names. Copied-if-present: Slack is
+    # The Slack concierge's tokens, under the default [slack] token file
+    # names. Copied-if-present: Slack is
     # optional and off by default, but with `[slack] enabled = true` a missing
     # token is a hard startup error (validateSlackConfig), so whatever the
     # Slack wizard saved in the secrets dir must reach the container.
