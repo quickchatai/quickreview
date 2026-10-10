@@ -5,13 +5,13 @@
 // (prepareTree), and the bridge's own credential check runs under python3.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { BenchCase, CaseSet, PrefetchMeta } from "../src/bench/aacr.js";
-import { DISABLED_REFRESH } from "../src/bench/auth.js";
+import { authFingerprint, DISABLED_REFRESH } from "../src/bench/auth.js";
 import { reviewForJudge } from "../src/bench/defects.js";
 import { run } from "../src/bench/exec.js";
 import { runArmOf, scoredOcrComments } from "../src/bench/ocr.js";
@@ -608,6 +608,93 @@ describe("the credential: the bridge's refresh-disabled copy, never a refresher"
       const refused = load(join(src, "auth.json"));
       expect(refused.status).not.toBe(0);
       expect(refused.stderr).toContain("refresh token is not the disabled sentinel");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("--resume under a new model drops every mismatched result BEFORE the loop, so an auth stop cannot score model A under model B", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-opencode-resume-"));
+    try {
+      const out = join(tmp, "out");
+      const SAME: BenchCase = { ...CASE, instance_id: "acme__widget@ccccccc" };
+      const base: OpencodeFingerprint = {
+        qcr_commit: "c",
+        opencode_version: "1.18.33",
+        model: "model-B",
+        effort: "medium",
+        variant: "medium",
+        timeout_min: 30,
+        ...authFingerprint(),
+      };
+      const fpA: OpencodeFingerprint = { ...base, model: "model-A" };
+      const fpB: OpencodeFingerprint = base;
+      // Case 0 was reviewed under A; case 1 under B (already matches the resume).
+      const seed = (c: BenchCase, fp: OpencodeFingerprint) => {
+        mkdirSync(join(out, "cases", c.instance_id), { recursive: true });
+        writeFileSync(
+          join(out, "cases", c.instance_id, "case-summary.json"),
+          JSON.stringify({
+            instance_id: c.instance_id,
+            arm: "opencode",
+            status: "ok",
+            fingerprint: fp,
+          }),
+        );
+        mkdirSync(join(out, "results", "all"), { recursive: true });
+        writeFileSync(join(out, "results", "all", `${c.instance_id}.json`), "{}");
+      };
+      seed(CASE, fpA);
+      seed(SAME, fpB);
+      const src = join(tmp, "src");
+      mkdirSync(src);
+      // A login too close to expiry for one case: the run stops at the first case it must review.
+      writeFileSync(
+        join(src, "auth.json"),
+        JSON.stringify({
+          "openai-codex": {
+            type: "oauth",
+            access: "a",
+            refresh: "R",
+            expires: Date.now() + 60_000,
+          },
+        }),
+      );
+      const lines: string[] = [];
+      const code = await runOpencodeReview({
+        set: SET,
+        cases: [SAME, CASE],
+        outDir: out,
+        root: join(tmp, "root"),
+        store: join(tmp, "store"),
+        authSrc: src,
+        agentDir: join(tmp, "agent"),
+        opencodeBin: "opencode",
+        opencodeVersion: fpB.opencode_version,
+        bridgeUrl: "http://127.0.0.1:1",
+        model: fpB.model,
+        effort: fpB.effort,
+        verbosity: "medium",
+        mcpPython: "p",
+        mcpScript: "s",
+        flags: { timeoutMin: fpB.timeout_min, variant: fpB.variant },
+        qcrCommit: fpB.qcr_commit,
+        resume: true,
+        keepTree: false,
+        readMeta: () => {
+          throw new Error("x");
+        },
+        log: (l) => lines.push(l),
+      });
+      expect(code).toBe(1);
+      expect(lines.join("\n")).toContain("STOPPED");
+      expect(JSON.parse(readFileSync(join(out, "run.json"), "utf8")).model).toBe("model-B");
+      // Model A's result is gone, not left to be scored under the model-B label…
+      expect(existsSync(join(out, "results", "all", `${CASE.instance_id}.json`))).toBe(false);
+      expect(existsSync(join(out, "cases", CASE.instance_id, "case-summary.json"))).toBe(false);
+      // …while the matching one is kept.
+      expect(existsSync(join(out, "results", "all", `${SAME.instance_id}.json`))).toBe(true);
+      expect(existsSync(join(out, "cases", SAME.instance_id, "case-summary.json"))).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

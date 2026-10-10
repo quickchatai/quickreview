@@ -1134,11 +1134,21 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
   const previous = existsSync(runFile)
     ? (JSON.parse(readFileSync(runFile, "utf8")) as Record<string, unknown>)
     : null;
-  if (!r.resume) {
-    for (const c of r.cases) {
-      rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
-      rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
-    }
+  // run.json is about to carry THIS configuration, so no case reviewed under
+  // another may stay a result of the run: without --resume every case goes;
+  // with it, every case whose fingerprint differs goes now, not when the loop
+  // reaches it — a stop partway (AuthExpiring) must leave those cases
+  // incomplete, never scored under the new model/flags label.
+  for (const c of r.cases) {
+    const prior = r.resume ? readOpencodeSummary(r.outDir, c) : null;
+    if (r.resume && (!prior || JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)))
+      continue;
+    if (prior)
+      r.log(
+        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/flags — its result is dropped`,
+      );
+    rmSync(join(r.outDir, "cases", safeId(c.instance_id), "case-summary.json"), { force: true });
+    rmSync(join(r.outDir, "results", "all", `${safeId(c.instance_id)}.json`), { force: true });
   }
   const runRecord = {
     reviewer: "opencode",
@@ -1185,15 +1195,11 @@ export async function runOpencodeReview(r: OpencodeReviewRun): Promise<number> {
   let stopped: string | null = null;
   for (const c of r.cases) {
     const prior = readOpencodeSummary(r.outDir, c);
+    // (a prior summary here carries this run's fingerprint — the others went above)
     if (r.resume && prior && prior.status === "ok") {
-      if (JSON.stringify(prior.fingerprint) === JSON.stringify(fingerprint)) {
-        r.log(`opencode: ${c.instance_id} already done — skipped (--resume)`);
-        summaries.push(prior);
-        continue;
-      }
-      r.log(
-        `opencode: ${c.instance_id} was reviewed by a different OpenCode/model/flags — re-running`,
-      );
+      r.log(`opencode: ${c.instance_id} already done — skipped (--resume)`);
+      summaries.push(prior);
+      continue;
     }
     try {
       // The bridge reads this refresh-disabled copy on every call.
