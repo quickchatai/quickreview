@@ -111,17 +111,23 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Whitespace inside a tuple, where a line break in a unified diff carries
+ * the next line's `+` prefix. */
+const DIFF_GAP = "(?:[^\\S\\n]|\\n\\+?)*";
+
 /** Does this file's diff name `(app_label, name)` as a `dependencies` tuple?
  * A cross-app reference must carry the label — a bare `"0001_initial"` in
- * another app is that app's own migration. */
+ * another app is that app's own migration. The tuple may be split across
+ * added diff lines and carry a trailing comma. */
 function referencesAppMigration(
   patch: string | undefined,
   appLabel: string,
   name: string,
 ): boolean {
   if (!patch || !name || !appLabel) return false;
+  const g = DIFF_GAP;
   return new RegExp(
-    `\\(\\s*["']${escapeRe(appLabel)}["']\\s*,\\s*["']${escapeRe(name)}["']\\s*\\)`,
+    `\\(${g}["']${escapeRe(appLabel)}["']${g},${g}["']${escapeRe(name)}["']${g}(?:,${g})?\\)`,
   ).test(patch);
 }
 

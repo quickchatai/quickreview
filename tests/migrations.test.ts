@@ -189,6 +189,43 @@ describe("detectMigrationCollisions", () => {
     expect(body).toContain("backend/chat/migrations/0045_b.py");
   });
 
+  it("finds a cross-app dependency tuple split across added diff lines", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/billing/migrations/0008_link.py",
+          status: "added",
+          patch: '@@\n+    dependencies = [\n+        (\n+            "chat",\n+            "0042_a",\n+        ),\n+    ]',
+        },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({
+      kind: "renamed-dependency",
+      pr_path: "backend/billing/migrations/0008_link.py",
+      stale_dependency: "0042_a",
+      dependency: '("chat", "0043_a")',
+      renumber: false,
+    });
+  });
+
+  it("does not read a removed line's tuple half as a cross-app reference", () => {
+    const out = detectMigrationCollisions({
+      files: [
+        added("backend/chat/migrations/0042_a.py"),
+        {
+          filename: "backend/billing/migrations/0008_link.py",
+          status: "modified",
+          patch: '@@\n     dependencies = [\n-        ("chat",\n+        ("billing",\n         "0042_a"),\n     ]',
+        },
+      ],
+      baseFiles: BASE,
+    });
+    expect(out.filter((c) => c.kind === "renamed-dependency")).toHaveLength(0);
+  });
+
   it("cascades: a follow-up depending on a renumbered follow-up renumbers too", () => {
     const out = detectMigrationCollisions({
       files: [
