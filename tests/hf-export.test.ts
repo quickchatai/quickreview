@@ -8,7 +8,9 @@
 //      (src/bench/defects.ts reviewForJudge): scored rows first, deleted-line
 //      comments appended last, tag and footer stripped;
 //   3. defect_summary counts a defect with no verdict row as missed and a
-//      partial find as 1/2.
+//      partial find as 1/2;
+//   4. qodo_effective reads the Qodo judge's append-only cache as its scorer
+//      does: one pass-1 judgement per PR and tool, a retry's success winning.
 
 import { afterAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -160,5 +162,31 @@ describe("hf_export.defect_summary", () => {
     expect(r.low).toBe(0.5);
     expect(r.medium).toBe(0);
     expect(r.weighted).toBeCloseTo(3.5 / 6, 6);
+  });
+});
+
+describe("hf_export.qodo_effective", () => {
+  it("keeps the judgement the scorer scores: one per PR and tool, a retry's success over its errored record", () => {
+    const rec = (pr: string, tool: string, pass: number, meta: Record<string, unknown>) =>
+      JSON.stringify({ pr, tool, pass, meta, n_comments: 1, matches: [], comments: [] });
+    const lines = [
+      rec("a", "x", 1, { error: "timeout" }),
+      rec("a", "y", 1, { tries: 1 }),
+      rec("a", "x", 2, { tries: 1 }),
+      rec("b", "x", 1, { error: "first" }),
+      rec("a", "x", 1, { tries: 1, n: "retry" }),
+      rec("b", "x", 1, { error: "second" }),
+      "",
+    ].join("\n");
+    const r = py("print(json.dumps(h.qodo_effective(sys.argv[1].splitlines())))", lines) as {
+      pr: string;
+      tool: string;
+      meta: Record<string, unknown>;
+    }[];
+    expect(r.map((j) => [j.pr, j.tool, j.meta])).toEqual([
+      ["a", "x", { tries: 1, n: "retry" }],
+      ["a", "y", { tries: 1 }],
+      ["b", "x", { error: "second" }],
+    ]);
   });
 });
