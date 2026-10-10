@@ -1091,7 +1091,7 @@ export function installMetricsHooks(
         const pr = Number(view.prEntry);
         view.prEntry = undefined;
         if (Number.isFinite(pr) && pr > 0) drillTo(pr);
-      } else if (ch !== undefined && /^\d$/.test(ch)) view.prEntry += ch;
+      } else if (ch !== undefined && /^\d+$/.test(ch)) view.prEntry += ch; // a pasted run arrives whole
       else if (key.kind === "quit") return false;
       theApp.repaint();
       return true;

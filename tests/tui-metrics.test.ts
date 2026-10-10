@@ -938,6 +938,30 @@ describe("metrics tab wiring", () => {
     },
   );
 
+  it("a pasted digit run enters the PR number whole, like digits typed one by one", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    const timelineCalls: number[] = [];
+    const view = installMetricsHooks(app, {
+      overall: async () => ({ payload: payload as never }),
+      timeline: async (pr) => (timelineCalls.push(pr), { payload: timeline as never }),
+    });
+    const run = app.run();
+    streams.type("6");
+    await new Promise((r) => setTimeout(r, 0));
+    streams.type("#");
+    streams.type("52"); // one chunk, as a paste delivers it
+    streams.type("65");
+    expect(view.prEntry).toBe("5265");
+    streams.type("x5"); // a mixed run is not a number
+    expect(view.prEntry).toBe("5265");
+    streams.type("\r");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(timelineCalls).toEqual([5265]);
+    app.quit();
+    await run;
+  });
+
   it("r inside a drill-down refetches the timeline, like r on the dashboard — never the cache", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
