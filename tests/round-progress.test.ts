@@ -306,6 +306,93 @@ describe("round progress extension", () => {
     }
   });
 
+  it("keeps every task slot of one agent within a single call apart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
+    dirs.push(root);
+    const previous = { ...process.env };
+    process.env.QCR_SANDBOX_ROOT = root;
+    process.env.QCR_SESSION_NAME = "pr-5410";
+    process.env.QCR_PR = "5410";
+    const handlers = new Map<string, PiEventHandler[]>();
+    const pi = {
+      on(name: string, handler: PiEventHandler) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+    };
+    const emit = async (name: string, event: Record<string, unknown> = {}) => {
+      for (const handler of handlers.get(name) ?? []) await handler(event);
+    };
+    try {
+      activate(pi as never);
+      await emit("agent_start");
+      await emit("message_start", {
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `<!-- qcr-command:cmd-5410:${"c".repeat(64)} -->` }],
+        },
+      });
+      await emit("tool_execution_start", {
+        toolName: "subagent",
+        toolCallId: "sweep-1",
+        args: {
+          tasks: [
+            { agent: "pass-sweep", task: "files a" },
+            { agent: "pass-sweep", task: "files b" },
+          ],
+        },
+      });
+      const path = join(root, "state", "round-progress", "pr-5410.json");
+      const started = parseRoundProgress(readFileSync(path, "utf8"))!;
+      expect(started.agents.map((a) => a.execution_id)).toEqual([
+        "sweep-1:pass-sweep",
+        "sweep-1:pass-sweep#2",
+      ]);
+
+      await emit("tool_execution_update", {
+        toolName: "subagent",
+        toolCallId: "sweep-1",
+        partialResult: {
+          details: {
+            mode: "parallel",
+            results: [
+              { agent: "pass-sweep", exitCode: 0 },
+              { agent: "pass-sweep", exitCode: -1 },
+            ],
+          },
+        },
+      });
+      const mid = parseRoundProgress(readFileSync(path, "utf8"))!;
+      expect(mid.agents).toHaveLength(2);
+      const byId = new Map(mid.agents.map((a) => [a.execution_id, a]));
+      expect(byId.get("sweep-1:pass-sweep")).toMatchObject({
+        status: "completed",
+        finished_at: expect.any(String),
+      });
+      expect(byId.get("sweep-1:pass-sweep#2")?.status).toBe("running");
+      expect(byId.get("sweep-1:pass-sweep#2")?.finished_at).toBeUndefined();
+
+      await emit("tool_execution_end", {
+        toolName: "subagent",
+        toolCallId: "sweep-1",
+        result: {
+          details: {
+            results: [
+              { agent: "pass-sweep", exitCode: 0 },
+              { agent: "pass-sweep", exitCode: 1 },
+            ],
+          },
+        },
+      });
+      const done = parseRoundProgress(readFileSync(path, "utf8"))!;
+      expect(done.agents.map((a) => [a.execution_id, a.status])).toEqual([
+        ["sweep-1:pass-sweep", "completed"],
+        ["sweep-1:pass-sweep#2", "failed"],
+      ]);
+    } finally {
+      process.env = previous;
+    }
+  });
+
   it("stamps a parallel slot's completion on the update that first reports it finished", async () => {
     const root = mkdtempSync(join(tmpdir(), "qcr-progress-"));
     dirs.push(root);

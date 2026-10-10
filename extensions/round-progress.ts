@@ -238,12 +238,21 @@ export default function activate(pi: Pi): void {
   const path = join(root, "state", "round-progress", `pr-${pr}.json`);
   let sequence = 0;
   let lastHeartbeat = 0;
-  // Key by invocation, never by agent name: a parent may deliberately launch
-  // the same lens twice, and the second run must not inherit the first run's
-  // terminal timestamp.
+  // Key by invocation and task slot, never by agent name alone: a parent may
+  // deliberately launch the same lens twice, and one call may carry several
+  // tasks of one agent (sweep rows); no run may inherit or hide another's
+  // status. The first slot of an agent in a call is `<call>:<agent>`, a later
+  // one `<call>:<agent>#<n>` — the n-th task of that agent in the call's order.
   const agents = new Map<string, LiveAgentProgress>();
   const callAgents = new Map<string, string[]>();
-  const executionKey = (callId: string, agent: string): string => `${callId}:${agent}`;
+  const executionKeys = (callId: string, names: readonly string[]): string[] => {
+    const seen = new Map<string, number>();
+    return names.map((agent) => {
+      const n = (seen.get(agent) ?? 0) + 1;
+      seen.set(agent, n);
+      return n === 1 ? `${callId}:${agent}` : `${callId}:${agent}#${n}`;
+    });
+  };
   const nowIso = (): string => new Date().toISOString();
   let snapshot: RoundProgressSnapshot | undefined;
 
@@ -324,8 +333,9 @@ export default function activate(pi: Pi): void {
         const at = nowIso();
         const callId = toolId(event);
         callAgents.set(callId, names);
-        for (const agent of names) {
-          const key = executionKey(callId, agent);
+        const keys = executionKeys(callId, names);
+        for (const [index, agent] of names.entries()) {
+          const key = keys[index]!;
           agents.set(key, {
             execution_id: key,
             agent,
@@ -356,15 +366,21 @@ export default function activate(pi: Pi): void {
     // while streaming, so mid-update they read as running regardless.
     const mode = record(record(event.partialResult)?.details)?.mode;
     let changed = false;
-    for (const [index, result] of reported.entries()) {
-      const stillLive = mode === "parallel" ? result.exitCode === -1 : true;
-      const agent = asAgent(
-        result,
-        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
-        stillLive,
-      );
-      if (!agent) continue;
-      const key = executionKey(toolId(event), agent.agent);
+    const updated = reported
+      .map((result, index) =>
+        asAgent(
+          result,
+          fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
+          mode === "parallel" ? result.exitCode === -1 : true,
+        ),
+      )
+      .filter((agent): agent is LiveAgentProgress => agent !== undefined);
+    const updateKeys = executionKeys(
+      toolId(event),
+      updated.map((agent) => agent.agent),
+    );
+    for (const [index, agent] of updated.entries()) {
+      const key = updateKeys[index]!;
       const previous = agents.get(key);
       // A parallel slot can finish while its siblings still run: a terminal
       // record carries its completion milestone from the first update that
@@ -390,13 +406,17 @@ export default function activate(pi: Pi): void {
     const fallbacks = callAgents.get(id) ?? [];
     const reported = resultsFrom(event, "result");
     const finalAgents: LiveAgentProgress[] = [];
-    for (const [index, result] of reported.entries()) {
-      const agent = asAgent(
-        result,
-        fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined),
-      );
-      if (!agent) continue;
-      const key = executionKey(id, agent.agent);
+    const ended = reported
+      .map((result, index) =>
+        asAgent(result, fallbacks[index] ?? (fallbacks.length === 1 ? fallbacks[0] : undefined)),
+      )
+      .filter((agent): agent is LiveAgentProgress => agent !== undefined);
+    const endKeys = executionKeys(
+      id,
+      ended.map((agent) => agent.agent),
+    );
+    for (const [index, agent] of ended.entries()) {
+      const key = endKeys[index]!;
       const previous = agents.get(key);
       const finalAgent: LiveAgentProgress = {
         ...previous,
@@ -410,8 +430,9 @@ export default function activate(pi: Pi): void {
     }
     if (finalAgents.length === 0 && fallbacks.length > 0) {
       const failed = event.isError === true;
-      for (const fallback of fallbacks) {
-        const key = executionKey(id, fallback);
+      const fallbackKeys = executionKeys(id, fallbacks);
+      for (const [index, fallback] of fallbacks.entries()) {
+        const key = fallbackKeys[index]!;
         const previous = agents.get(key);
         const finalAgent: LiveAgentProgress = {
           ...(previous ?? {
