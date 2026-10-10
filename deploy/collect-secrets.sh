@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Interactive wizard: collect the quickreview secrets into the install's secrets
-# dir — $QC_SECRETS_DIR, else the install locator's answer:
-# <config home>/secrets (~/.config/qcr/<install>/secrets). An old
+# dir — $QC_SECRETS_DIR, else the install locator's answer: the live config's
+# [github] secrets_dir when set, else <config home>/secrets
+# (~/.config/qcr/<install>/secrets) — the dir deploy.sh and the daemon read. An old
 # ~/.config/quickreview-bot/ is never read (`qcr install migrate` moves it).
 # Values are read with hidden input and NEVER printed back. Re-run any time —
 # existing files are kept unless you choose to replace them.
@@ -27,8 +28,34 @@
 #   bash deploy/collect-secrets.sh --force  # offer to replace existing files too
 set -euo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/install-locator.sh"
-DIR="$(qcr_locate_secrets "" "${QC_SECRETS_DIR:-}")"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/scripts/install-locator.sh"
+
+# [github] secrets_dir out of the live config, as written — "" when the config
+# or the key is absent, which leaves the choice to the install locator.
+configured_secrets_dir() {
+  local config
+  config="$(qcr_locate_config "$ROOT" 2>/dev/null)" || return 0
+  [[ -r "$config" ]] || return 0
+  awk '
+    /^\[github\][[:space:]]*(#.*)?$/ { in_t = 1; next }
+    /^\[/                            { in_t = 0 }
+    in_t && /^[[:space:]]*secrets_dir[[:space:]]*=/ {
+      line = $0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      sub(/[[:space:]]*(#.*)?$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
+      exit
+    }
+  ' "$config"
+}
+
+if [[ -n "${QC_SECRETS_DIR:-}" ]]; then
+  DIR="$(qcr_locate_secrets "" "$QC_SECRETS_DIR")"
+else
+  DIR="$(qcr_locate_secrets "$(configured_secrets_dir)")" || exit 1
+fi
 FORCE=0
 [[ "${1:-}" == "--force" ]] && FORCE=1
 

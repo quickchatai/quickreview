@@ -200,3 +200,49 @@ describe("wizard UX conventions survive the shape split", () => {
     expect(out).toContain("NEVER put the COMPANION key here");
   });
 });
+
+describe("the secrets dir is the one deploy.sh and the daemon read", () => {
+  /** A config file and a private config home, with no QC_SECRETS_DIR override. */
+  const isolated = (cfgText: string): Record<string, string> => {
+    const cfg = join(dir, "config.toml");
+    writeFileSync(cfg, cfgText);
+    return {
+      QC_SECRETS_DIR: "",
+      QCR_SECRETS_MOUNT: "",
+      QCR_CONFIG_HOME: "",
+      QCR_INSTALL: "",
+      QCR_CONFIG: cfg,
+      XDG_CONFIG_HOME: join(dir, "xdg"),
+      QC_DEPLOY_SHAPE: "docker",
+    };
+  };
+
+  it("writes into the configured [github] secrets_dir when no override is given", async () => {
+    const keys = join(dir, "keys");
+    const env = isolated(
+      `[github]\nrepo = "o/r"\nsecrets_dir = "${keys}" # pinned\n\n[pi]\nversion = "1"\n`,
+    );
+    const { code, out } = await runWizard("123456\n", { env });
+    expect(out).toContain(`quickreview secrets — ${keys} `);
+    expect(readFileSync(join(keys, "app_id"), "utf8")).toBe("123456");
+    expect(statSync(join(keys, "app_id")).mode & 0o777).toBe(0o600);
+    expect(code).not.toBe(0); // the rest of the set is still missing
+  });
+
+  it("falls back to <config home>/secrets when secrets_dir is empty", async () => {
+    const env = isolated(`[github]\nsecrets_dir = ""\n`);
+    const { out } = await runWizard("", { env });
+    expect(out).toContain(
+      `quickreview secrets — ${join(dir, "xdg", "qcr", "default", "secrets")} `,
+    );
+  });
+
+  it("QC_SECRETS_DIR still wins over the configured dir", async () => {
+    const env = {
+      ...isolated(`[github]\nsecrets_dir = "${join(dir, "keys")}"\n`),
+      QC_SECRETS_DIR: dir,
+    };
+    const { out } = await runWizard("", { env });
+    expect(out).toContain(`quickreview secrets — ${dir} `);
+  });
+});
