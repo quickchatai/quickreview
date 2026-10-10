@@ -1066,7 +1066,10 @@ export function installMetricsHooks(
 
   const screen = (theApp: App, cols: number, rows: number): Frame => {
     view.dryRun = theApp.view.dryRun;
-    void load(); // TTL-gated: a repaint inside the window costs nothing
+    // TTL-gated: a repaint inside the window costs nothing. Started after this
+    // frame is written, never inside the paint: a TUI resumed on this tab
+    // paints it first, and nothing external may precede the first frame.
+    queueMicrotask(() => void load());
     const frame = renderMetrics(view, cols, rows);
     lastFrame = frame;
     return frame;

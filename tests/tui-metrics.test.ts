@@ -1020,6 +1020,26 @@ describe("metrics tab wiring", () => {
     await run;
   });
 
+  it("a TUI resumed on the tab paints its first frame before the fetch starts", async () => {
+    const streams = fakeStreams();
+    const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
+    let writtenAtFetch: string | undefined;
+    installMetricsHooks(app, {
+      overall: async () => {
+        writtenAtFetch = stripAnsi(streams.written());
+        return { payload: payload as never };
+      },
+      timeline: async () => ({ payload: timeline as never }),
+    });
+    app.tab = "metrics"; // restored from a hot-reload snapshot before run()
+    const run = app.run();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(writtenAtFetch).toBeDefined();
+    expect(writtenAtFetch).toContain("metrics");
+    app.quit();
+    await run;
+  });
+
   it("surfaces a fetch failure as a dim line, never a crash", async () => {
     const streams = fakeStreams();
     const app = new App(TUI_DEFAULTS, async () => ok(""), streams.out, streams.input);
