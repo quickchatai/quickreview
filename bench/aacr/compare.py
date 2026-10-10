@@ -202,8 +202,12 @@ def score(runs_dir, runs, cases, judge_model):
     correct = (comments["correct-valuable"] + comments["correct-minor"]) / max(ct, 1)
     sev = " | ".join(f"{found[s]:g}/{total[s]}" for s in W)
     incomplete = "" if judged == len(cases) else " INCOMPLETE"
+    # An unpriced or untimed case is unknown, never $0 or 0 minutes: no figure
+    # at all reads "?", and a figure over only some judged PRs says how many.
+    price = "?" if not usd else f"${statistics.mean(usd):.2f}" + ("" if len(usd) == judged else f" ({len(usd)}/{judged} priced)")
+    minutes = "?" if not mins else f"{statistics.median(mins):.1f}" + ("" if len(mins) == judged else f" ({len(mins)}/{judged} timed)")
     return (f"{f:g}/{n} | {f / max(n, 1):.0%} | {sev} | {wt:.0%} | {correct:.0%} | "
-            f"${statistics.mean(usd) if usd else 0:.2f} | {statistics.median(mins) if mins else 0:.1f} | {judged}/{len(cases)}{incomplete}")
+            f"{price} | {minutes} | {judged}/{len(cases)}{incomplete}")
 
 
 def build(runs_dir, runs):

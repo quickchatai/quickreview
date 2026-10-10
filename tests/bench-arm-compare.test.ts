@@ -571,6 +571,25 @@ describe("compare.py", () => {
     expect(await compare("slim=slim")).toContain("| $1.00 | 1.0 | 2/2 |");
   });
 
+  it("an unpriced arm reads ? rather than $0.00, and a partly priced one says how many were priced", async () => {
+    for (const [arm, costs] of [
+      ["none", [null, null]],
+      ["part", [1.5, null]],
+    ] as const) {
+      judgement(arm, A, found(["D1"]));
+      judgement(arm, B, found([]));
+      [A, B].forEach((id, i) => {
+        mkdirSync(join(runs, arm, "cases", id), { recursive: true });
+        writeFileSync(
+          join(runs, arm, "cases", id, "case-summary.json"),
+          JSON.stringify({ duration_seconds: 60, bench_cost_usd: costs[i] }),
+        );
+      });
+    }
+    expect(await compare("none=none")).toContain("| ? | 1.0 | 2/2 |");
+    expect(await compare("part=part")).toContain("| $1.50 (1/2 priced) | 1.0 | 2/2 |");
+  });
+
   // The harness's per-round file: every reference of a PR with its match
   // flag; and the result file whose comments it scored.
   const ref = (n: number) => ({ path: "f.py", from_line: n, to_line: n, note: `ref ${n}` });
