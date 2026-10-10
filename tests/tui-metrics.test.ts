@@ -605,6 +605,26 @@ describe("metrics dashboard", () => {
     expect(failed).toContain("metrics unavailable: ssh: connect timed out");
   });
 
+  it("keeps cached data on screen through a failed refresh and says the refresh failed", () => {
+    const dash = renderMetrics(mkView({ error: "ssh: connect timed out" }), 160, 30)
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(dash).toContain("generated");
+    expect(dash).toContain("refresh failed: ssh: connect timed out");
+    const clean = renderMetrics(mkView(), 160, 30).lines.map(stripAnsi).join("\n");
+    expect(clean).not.toContain("refresh failed");
+    const drill = renderMetrics(
+      mkView({
+        drill: { pr: 5265, payload: timeline, error: "ssh: connect timed out", loading: false },
+      }),
+      160,
+      30,
+    )
+      .lines.map(stripAnsi)
+      .join("\n");
+    expect(drill).toContain("refresh failed: ssh: connect timed out");
+  });
+
   it(
     "never overflows the pane at any width or height (the width-30 lesson)",
     { timeout: HEAVY_TIMEOUT_MS },

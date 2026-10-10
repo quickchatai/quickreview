@@ -879,8 +879,13 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
   );
 
   if (drill) {
+    // A cached timeline stays on screen through a failed refresh, and the
+    // failure is said above it rather than hidden behind the old data.
     const lines = drill.payload
-      ? timelineLines(drill.payload, cols - 4, now)
+      ? [
+          ...(drill.error ? [`${WARN}refresh failed: ${drill.error}${RESET}`] : []),
+          ...timelineLines(drill.payload, cols - 4, now),
+        ]
       : [
           drill.error
             ? `${FG.dim}metrics unavailable: ${drill.error}${RESET}`
@@ -899,8 +904,11 @@ export function renderMetrics(view: MetricsView, cols: number, rows: number): Fr
     view.prEntry !== undefined
       ? `   ${FG.accent}#${view.prEntry}▁${RESET} ${FG.dim}⏎ open timeline · Esc cancel${RESET}`
       : "";
+  // Cached metrics stay on screen through a failed refresh; the failure is
+  // said beside their age rather than hidden behind the old data.
   const generated = view.payload
-    ? `${FG.dim}generated ${fmtAge(view.payload.generated_at, now)} ago${RESET}`
+    ? `${FG.dim}generated ${fmtAge(view.payload.generated_at, now)} ago${RESET}` +
+      (view.error ? `   ${WARN}refresh failed: ${view.error}${RESET}` : "")
     : "";
   frame.boxRow(1, [{ text: ` ${sw.text}${entry}   ${generated}`, width: cols - 2 }]);
   for (const z of sw.zones) {
