@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -112,15 +113,31 @@ export class DurableDeployProcess {
       } catch {
         // The detached child may not have opened its log yet.
       }
-      const result = this.readResult(resultPath);
-      if (result) {
+      const finishWith = (result: Result): void => {
         done = true;
         clearInterval(timer);
         if (result.error) onData(`\ndeploy runner error: ${result.error}\n`);
         onExit(result.code);
+      };
+      const result = this.readResult(resultPath);
+      if (result) {
+        finishWith(result);
         return;
       }
       const current = this.readMarker(markerPath);
+      if (current && current.pid > 0 && !this.runnerAlive(current)) {
+        // The runner writes its result before it exits, so a result that
+        // landed between the read above and the liveness check wins.
+        const late = this.readResult(resultPath);
+        if (late) {
+          finishWith(late);
+          return;
+        }
+        const error = "detached deploy runner exited without a result; drain remains on";
+        this.writeFailure(resultPath, error);
+        finishWith(this.readResult(resultPath) ?? { code: 1, error });
+        return;
+      }
       let malformedMarkerStale = false;
       if (!current && existsSync(markerPath)) {
         try {
@@ -158,6 +175,24 @@ export class DurableDeployProcess {
         }
       },
     };
+  }
+
+  // A runner started before the last boot is gone whatever now holds its
+  // pid. Otherwise the run lives while anything in its process group does
+  // (the runner leads it, and deploy.sh outlives a runner killed outright),
+  // and signal 0 answers that without signalling (EPERM: it exists).
+  private runnerAlive(marker: Marker): boolean {
+    const started = Date.parse(marker.started_at);
+    if (Number.isFinite(started) && started < Date.now() - uptime() * 1000) return false;
+    for (const target of [-marker.pid, marker.pid]) {
+      try {
+        process.kill(target, 0);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
+      }
+    }
+    return false;
   }
 
   private readMarker(path: string): Marker | undefined {

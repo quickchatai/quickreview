@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,5 +74,67 @@ describe("DurableDeployProcess", () => {
     });
     expect(code).toBe(1);
     expect(output.join("")).toContain("never started");
+  });
+  it("fails a running marker whose runner died without a result", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-dead-"));
+    roots.push(root);
+    const state = join(root, "state", "runs");
+    mkdirSync(state, { recursive: true });
+    // A pid that has already exited and been reaped.
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+    writeFileSync(
+      join(state, "dead-run-1234.started.json"),
+      JSON.stringify({ pid: gone, state: "running", started_at: new Date().toISOString() }),
+    );
+    const output: string[] = [];
+    const runner = new DurableDeployProcess(root, state, 5, 5);
+    const code = await new Promise<number | null>((resolve) => {
+      runner.startOrAttach("dead-run-1234", (chunk) => output.push(chunk), resolve);
+    });
+    expect(code).toBe(1);
+    expect(output.join("")).toContain("exited without a result");
+    // The failure is durable: the next generation reads it without polling.
+    expect(JSON.parse(readFileSync(join(state, "dead-run-1234.result.json"), "utf8")).code).toBe(1);
+  });
+
+  it("treats a runner started before the last boot as gone even if its pid is live", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-boot-"));
+    roots.push(root);
+    const state = join(root, "state", "runs");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(
+      join(state, "boot-run-1234.started.json"),
+      JSON.stringify({ pid: process.pid, state: "running", started_at: "2000-01-01T00:00:00Z" }),
+    );
+    const output: string[] = [];
+    const runner = new DurableDeployProcess(root, state, 5, 5);
+    const code = await new Promise<number | null>((resolve) => {
+      runner.startOrAttach("boot-run-1234", (chunk) => output.push(chunk), resolve);
+    });
+    expect(code).toBe(1);
+    expect(output.join("")).toContain("exited without a result");
+  });
+
+  it("keeps attaching while the running marker's runner is alive", async () => {
+    const root = mkdtempSync(join(tmpdir(), "qcr-durable-deploy-live-"));
+    roots.push(root);
+    const state = join(root, "state", "runs");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(
+      join(state, "live-run-1234.started.json"),
+      JSON.stringify({ pid: process.pid, state: "running", started_at: new Date().toISOString() }),
+    );
+    let exited = false;
+    const runner = new DurableDeployProcess(root, state, 5, 5);
+    runner.startOrAttach(
+      "live-run-1234",
+      () => {},
+      () => (exited = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(exited).toBe(false);
+    writeFileSync(join(state, "live-run-1234.result.json"), JSON.stringify({ code: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(exited).toBe(true);
   });
 });
