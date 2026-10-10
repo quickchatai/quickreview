@@ -1925,9 +1925,31 @@ describe("selfscan2: the version a file actually runs against", () => {
       version: "1.0.0",
     });
     // The workspace's own copy is the private one: still skipped.
-    expect(
-      planDependencyRequests(root, [{ filename: "packages/web/src/b.js" }])[0],
-    ).toMatchObject({ name: "x", version: null });
+    expect(planDependencyRequests(root, [{ filename: "packages/web/src/b.js" }])[0]).toMatchObject({
+      name: "x",
+      version: null,
+    });
+    // Both importers in ONE plan, in either order: the private copy stays its
+    // own skipped request, never folded into the registry pin.
+    for (const order of [
+      ["src/a.js", "packages/web/src/b.js"],
+      ["packages/web/src/b.js", "src/a.js"],
+    ]) {
+      const reqs = planDependencyRequests(
+        root,
+        order.map((filename) => ({ filename })),
+      );
+      expect(reqs).toHaveLength(2);
+      expect(reqs.find((r) => r.version === "1.0.0")).toMatchObject({
+        name: "x",
+        why: "imported by src/a.js",
+      });
+      expect(reqs.find((r) => r.version === null)).toMatchObject({
+        name: "x",
+        range: "@ non-npmjs source",
+        why: "imported by packages/web/src/b.js",
+      });
+    }
   });
 
   it("python: a package locked to a git or non-PyPI source is skipped, never swapped for PyPI's", async () => {

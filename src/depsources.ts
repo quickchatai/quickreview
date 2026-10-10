@@ -2016,9 +2016,15 @@ export function planDependencyRequests(
   // Keyed by package, one Acc per distinct resolved VERSION: two workspaces can
   // lock one package at different versions, and each importer must be shown the
   // sources it actually runs against. An unresolved (null) sighting joins the
-  // package's first entry, and a later resolution fills a null one in.
+  // package's first registry entry, and a later resolution fills a null one
+  // in. A sighting preparation SKIPS (a git / URL / private-registry source)
+  // stays apart from every registry entry and joins only one of the same
+  // source, so its importers are never credited with the registry's release
+  // and a registry pin never turns it into a fetch.
   const accs = new Map<string, Acc[]>();
   let seq = 0;
+  const unfetchable = (x: { version: string | null; range?: string }): boolean =>
+    x.version === null && x.range !== undefined && isNonRegistryRange(x.range);
   const note = (
     eco: DepEcosystem,
     r: Resolved,
@@ -2026,10 +2032,13 @@ export function planDependencyRequests(
   ): void => {
     const key = `${eco}:${r.name}`;
     const same = accs.get(key) ?? [];
-    let a =
-      r.version === null
-        ? same[0]
-        : (same.find((x) => x.version === r.version) ?? same.find((x) => x.version === null));
+    const registry = same.filter((x) => !unfetchable(x));
+    let a = unfetchable(r)
+      ? same.find((x) => unfetchable(x) && x.range === r.range)
+      : r.version === null
+        ? registry[0]
+        : (registry.find((x) => x.version === r.version) ??
+          registry.find((x) => x.version === null));
     if (!a) {
       a = {
         ecosystem: eco,
