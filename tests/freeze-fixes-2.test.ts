@@ -191,6 +191,235 @@ describe("pass-lint-conformance: planned only on linters a CI job runs", () => {
     }
   });
 
+  it("reads a package.json only through the scripts CI calls, not its other scripts or dependencies", () => {
+    const d = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",
+      "package.json": JSON.stringify({
+        scripts: {
+          check: "tsc && npm run lint",
+          prelint: "biome check .",
+          lint: "run-s lint:*",
+          "lint:es": "eslint .",
+          format: "prettier --write .",
+        },
+        devDependencies: { prettier: "^3", "@biomejs/biome": "^1", eslint: "^9", ruff: "0" },
+      }),
+    });
+    try {
+      expect(findCiLinters(d).map((x) => x.tool)).toEqual(["eslint", "biome"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+    const e = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",
+      "package.json": JSON.stringify({
+        scripts: { check: "tsc", format: "prettier --write ." },
+        devDependencies: { prettier: "^3", eslint: "^9" },
+      }),
+    });
+    try {
+      expect(findCiLinters(e)).toEqual([]);
+    } finally {
+      rmSync(e, { recursive: true, force: true });
+    }
+  });
+
+  it("follows package scripts a wrapper CI calls invokes (make → npm, just → pnpm)", () => {
+    const pkg = JSON.stringify({
+      scripts: { lint: "eslint .", format: "prettier --write ." },
+      devDependencies: { prettier: "^3", eslint: "^9" },
+    });
+    const viaMake = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: make lint\n",
+      Makefile: "lint:\n\tnpm run lint\n",
+      "package.json": pkg,
+    });
+    try {
+      const l = findCiLinters(viaMake);
+      expect(l.map((x) => x.tool)).toEqual(["eslint"]);
+      expect(l[0]!.ci).toEqual(["package.json"]);
+    } finally {
+      rmSync(viaMake, { recursive: true, force: true });
+    }
+    const viaJust = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: just check\n",
+      justfile: "check:\n    pnpm lint\n",
+      "package.json": pkg,
+    });
+    try {
+      expect(findCiLinters(viaJust).map((x) => x.tool)).toEqual(["eslint"]);
+    } finally {
+      rmSync(viaJust, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a package.json whole when its scripts fan out through a workspace runner", () => {
+    const d = repo({
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint\n",
+      "package.json": JSON.stringify({
+        scripts: { lint: "turbo run lint" },
+        devDependencies: { eslint: "^9", turbo: "^2" },
+      }),
+    });
+    try {
+      expect(findCiLinters(d).map((x) => x.tool)).toEqual(["eslint"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  // Every way a CI step, a wrapper or a followed script names a package
+  // script. Each fixture holds only what the named chain runs, so the whole
+  // reading (the behaviour before scripts were followed) finds exactly the
+  // tools a CI job runs — and the followed reading must find them too.
+  const ESLINT_ONLY = { devDependencies: { eslint: "^9" } };
+  const viaCheck = (check: string, more: Record<string, string> = {}) => ({
+    ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",
+    "package.json": JSON.stringify({
+      scripts: { check: check, "lint:es": "eslint .", ...more },
+      ...ESLINT_ONLY,
+    }),
+  });
+  const SHAPES: Record<string, Record<string, string>> = {
+    "npm run -s <name>": viaCheck("npm run -s lint:es"),
+    "npm run --silent <name>": viaCheck("npm run --silent lint:es"),
+    "npm run --if-present <name>": viaCheck("npm run --if-present lint:es"),
+    "yarn --silent <name>": viaCheck("yarn --silent lint:es"),
+    "pnpm --silent run <name>": viaCheck("pnpm --silent run lint:es"),
+    "npm run '<name>' (single-quoted)": viaCheck("npm run 'lint:es'"),
+    'npm run "<name>" (double-quoted)': viaCheck('npm run "lint:es"'),
+    'concurrently "npm:<glob>"': viaCheck('concurrently "npm:lint:*"'),
+    "concurrently npm:<name> unquoted": viaCheck("concurrently npm:lint:es pnpm:tsc"),
+    'concurrently "npm run <name>"': viaCheck('concurrently -n x "tsc --noEmit" "npm run lint:es"'),
+    "node --run <name>": viaCheck("node --run lint:es"),
+    "node --run=<name>": viaCheck("node --run=lint:es"),
+    'run-s "<glob>"': viaCheck('run-s -l "lint:*"'),
+    "npm-run-all -p <glob>": viaCheck("npm-run-all --parallel lint:*"),
+    "pnpm run /<regex>/": viaCheck("pnpm run /^lint:/"),
+    "$npm_execpath run <name>": viaCheck("$npm_execpath run lint:es"),
+    "pre<name> hook": viaCheck("tsc", { precheck: "npm run lint:es" }),
+    "npm run --prefix <dir> (another package)": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",
+      "package.json": JSON.stringify({
+        scripts: { check: "npm --prefix web run lint" },
+        ...ESLINT_ONLY,
+      }),
+    },
+    "yarn --cwd <dir> (another package)": {
+      ".github/workflows/ci.yml": "steps:\n  - run: yarn --cwd web lint\n  - run: npm run lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "yarn --cwd web lint" }, ...ESLINT_ONLY }),
+    },
+    "npm run <name> --workspaces": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint --workspaces\n",
+      "package.json": JSON.stringify({ scripts: {}, ...ESLINT_ONLY }),
+    },
+    "pnpm -r <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: pnpm lint\n  - run: pnpm -r lint\n",
+      "package.json": JSON.stringify({ scripts: {}, ...ESLINT_ONLY }),
+    },
+    "yarn workspace <ws> <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint\n",
+      "package.json": JSON.stringify({
+        scripts: { lint: "yarn workspace web lint" },
+        ...ESLINT_ONLY,
+      }),
+    },
+    "turbo run <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "turbo run lint" }, ...ESLINT_ONLY }),
+    },
+    "npm run $VAR (a name a variable supplies)": {
+      ".github/workflows/ci.yml":
+        "steps:\n  - run: npm run lint\n  - run: npm run ${{ matrix.task }}\n",
+      "package.json": JSON.stringify({ scripts: { lint: "tsc" }, ...ESLINT_ONLY }),
+    },
+    "make lint → $(NPM) run <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: make lint\n",
+      Makefile: "NPM ?= npm\nlint:\n\t$(NPM) run lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "eslint ." }, ...ESLINT_ONLY }),
+    },
+    "make lint → @npm run <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: make lint\n",
+      Makefile: "lint:\n\t@npm run lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "eslint ." }, ...ESLINT_ONLY }),
+    },
+    "make lint → npm run <name> after a line continuation": {
+      ".github/workflows/ci.yml": "steps:\n  - run: make lint\n",
+      Makefile: "lint:\n\tCI=1 \\\n\t  npm run lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "eslint ." }, ...ESLINT_ONLY }),
+    },
+    "just check → pnpm <name>": {
+      ".github/workflows/ci.yml": "steps:\n  - run: just check\n",
+      justfile: "check:\n    pnpm lint\n",
+      "package.json": JSON.stringify({ scripts: { lint: "eslint ." }, ...ESLINT_ONLY }),
+    },
+    "a package.json that does not parse": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint\n",
+      "package.json": '{"scripts":{"lint":"eslint ."},}',
+    },
+    "a package.json with no scripts object": {
+      ".github/workflows/ci.yml": "steps:\n  - run: npm run lint\n",
+      "package.json": JSON.stringify(ESLINT_ONLY),
+    },
+  };
+
+  for (const [shape, files] of Object.entries(SHAPES)) {
+    it(`finds the linter a CI-called script reaches through ${shape}`, () => {
+      const d = repo(files);
+      try {
+        expect(findCiLinters(d).map((x) => x.tool)).toEqual(["eslint"]);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("differential: over every shape, the followed reading finds all the whole reading finds", () => {
+    const misses: string[] = [];
+    for (const [shape, files] of Object.entries(SHAPES)) {
+      const d = repo(files);
+      try {
+        const followed = new Set(findCiLinters(d).map((x) => x.tool));
+        const whole = findCiLinters(d, "whole").map((x) => x.tool);
+        expect(whole.length).toBeGreaterThan(0);
+        for (const t of whole) if (!followed.has(t)) misses.push(`${shape}: ${t}`);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    }
+    expect(misses).toEqual([]);
+  });
+
+  it("a resolvable shape still drops the scripts and dependencies CI never runs", () => {
+    for (const check of [
+      "npm run -s lint:es",
+      "yarn --silent lint:es",
+      "npm run 'lint:es'",
+      'concurrently "npm:lint:*"',
+      "node --run lint:es",
+    ]) {
+      const d = repo({
+        ".github/workflows/ci.yml": "steps:\n  - run: npm run check\n",
+        "package.json": JSON.stringify({
+          scripts: { check, "lint:es": "eslint .", format: "prettier --write ." },
+          devDependencies: { eslint: "^9", prettier: "^3" },
+        }),
+      });
+      try {
+        expect(
+          findCiLinters(d).map((x) => x.tool),
+          check,
+        ).toEqual(["eslint"]);
+        expect(
+          findCiLinters(d, "whole").map((x) => x.tool),
+          check,
+        ).toEqual(["eslint", "prettier"]);
+      } finally {
+        rmSync(d, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("no CI definition, no linter — however much lint config the repo carries", () => {
     const d = repo({
       "eslint.config.js": "export default [];\n",
