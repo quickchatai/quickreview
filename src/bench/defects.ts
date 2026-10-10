@@ -552,12 +552,16 @@ export function scoreExitCode(
  * Average over rounds, per case, then pool over cases. A case with no usable
  * round (every round errored) counts every defect as MISSED and every comment
  * as UNVERIFIABLE — an unjudged case never silently leaves the denominator.
+ * Given a `model`, a round another judge model wrote is stale: a judge dir
+ * reused across a model change keeps the old model's later rounds on disk,
+ * and they must not be averaged under the new model's name.
  */
 export function scoreRun(
   set: DefectSet,
   instanceIds: readonly string[],
   judgements: Record<string, CaseJudgement[]>,
   reviews: Record<string, ReviewForJudge>,
+  model?: string,
 ): RunScore {
   const sev = Object.fromEntries(
     SEVERITIES.map((s) => [s, { total: 0, credit: 0, recall: 0 }]),
@@ -586,7 +590,9 @@ export function scoreRun(
     const review = reviews[iid] ?? { verdict: null, body: null, comments: [] };
     const clean = (judgements[iid] ?? []).filter((j) => !j.error);
     errors += (judgements[iid] ?? []).length - clean.length;
-    const ok = clean.filter((j) => judgedReview(j, review, set.version));
+    const ok = clean.filter(
+      (j) => (model === undefined || j.model === model) && judgedReview(j, review, set.version),
+    );
     stale += clean.length - ok.length;
     rounds = Math.max(rounds, (judgements[iid] ?? []).length);
     if (ok.length) judged++;
@@ -697,7 +703,7 @@ export function renderDefectReport(
     DEFECT_REPORT_PREAMBLE,
     "",
     `- Ground truth: \`${set.set}\` defect set, version \`${set.version}\` — ${set.method || "verified real defects"}`,
-    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review or ground-truth version (not scored — re-run defect-judge --resume)` : ""}`,
+    `- Judged ${s.judged}/${s.cases} cases, ${s.rounds} round(s)${s.errors ? `, ${s.errors} judge error(s) (counted as missed / unverifiable)` : ""}${s.stale ? `, ${s.stale} stale round(s) that judged an earlier review or ground-truth version, or came from another judge model (not scored — re-run defect-judge --resume)` : ""}`,
     "",
     "## Did the review find the real defects?",
     "",

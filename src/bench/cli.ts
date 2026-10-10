@@ -1147,11 +1147,14 @@ async function main(): Promise<number> {
     const judged = loadJudgements(judgeDir);
     const byCase: Record<string, (typeof judged)[string]> = {};
     for (const c of cases) byCase[c.instance_id] = judged[safeId(c.instance_id)] ?? [];
+    // Scored under `model`: when judging, or when a report names one, a round
+    // another judge model left in the dir is stale rather than averaged in.
     const score = scoreRun(
       defects,
       cases.map((c) => c.instance_id),
       byCase,
       reviews,
+      f.cmd === "defect-judge" || f.get("--model") !== undefined ? model : undefined,
     );
     // Cost, from what the run itself recorded (both arms).
     // A case that recorded no token counts is left out of the token average

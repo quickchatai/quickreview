@@ -414,6 +414,25 @@ describe("scoring", () => {
     expect(scoreExitCode(s, false)).toBe(1);
   });
 
+  it("scored under a judge model, a round another model wrote is stale, never averaged in", () => {
+    // Three rounds by model A, then `--resume --model B` with one round over
+    // the same `--label`: round 1 is re-judged, rounds 2–3 by A stay on disk.
+    const b1 = J(1, "found", "correct-minor", { review_hash: reviewHash(REVIEW), model: "B" });
+    const a2 = J(2, "missed", "correct-minor", { review_hash: reviewHash(REVIEW), model: "A" });
+    const a3 = J(3, "missed", "correct-minor", { review_hash: reviewHash(REVIEW), model: "A" });
+    const ids = ["o__r@1234567"];
+    const by = { "o__r@1234567": [b1, a2, a3] };
+    const s = scoreRun(set, ids, by, { "o__r@1234567": REVIEW }, "B");
+    expect(s.stale).toBe(2);
+    expect(s.judged).toBe(1);
+    expect(s.by_severity.high.credit).toBe(1);
+    expect(scoreExitCode(s, false)).toBe(1);
+    // With no model named, every round stands, as before.
+    const any = scoreRun(set, ids, by, { "o__r@1234567": REVIEW });
+    expect(any.stale).toBe(0);
+    expect(any.by_severity.high.credit).toBeCloseTo(1 / 3);
+  });
+
   it("counts wrong blockers, approvals over a missed high defect, and new-defect candidates once", () => {
     const s = scoreRun(
       set,
