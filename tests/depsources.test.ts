@@ -1899,6 +1899,37 @@ describe("selfscan2: the version a file actually runs against", () => {
     ).toMatchObject({ name: "x", version: "1.0.0" });
   });
 
+  it("package-lock: a foreign copy in another workspace never taints the copy this file resolves to", () => {
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { x: "^1.0.0" } }),
+      "package-lock.json": JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/x": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
+          },
+          "packages/web/node_modules/x": {
+            version: "1.0.0",
+            resolved: "https://npm.acme.internal/x/-/x-1.0.0.tgz",
+          },
+        },
+      }),
+      "src/a.js": "import x from 'x';\n",
+      "packages/web/src/b.js": "import x from 'x';\n",
+    });
+    expect(planDependencyRequests(root, [{ filename: "src/a.js" }])[0]).toMatchObject({
+      name: "x",
+      version: "1.0.0",
+    });
+    // The workspace's own copy is the private one: still skipped.
+    expect(
+      planDependencyRequests(root, [{ filename: "packages/web/src/b.js" }])[0],
+    ).toMatchObject({ name: "x", version: null });
+  });
+
   it("python: a package locked to a git or non-PyPI source is skipped, never swapped for PyPI's", async () => {
     const uv = [
       "[[package]]",

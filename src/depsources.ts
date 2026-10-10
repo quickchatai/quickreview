@@ -1584,11 +1584,22 @@ export function pickNpmVersion(
   return maxSatisfying(versions, r);
 }
 
+/**
+ * The locked version a file resolves to, and whether the copy it resolves to
+ * — in the same nearest-workspace pool the version came from — is foreign.
+ */
 function pickLocked(
   entries: LockEntry[],
   range: string | undefined,
   relInLockDir: string,
-): string | null {
+): { version: string; foreign: boolean } | null {
+  const pool = lockPool(entries, relInLockDir);
+  const version = pickFromPool(pool, range);
+  if (!version) return null;
+  return { version, foreign: pool.some((e) => e.version === version && e.foreign) };
+}
+
+function lockPool(entries: LockEntry[], relInLockDir: string): LockEntry[] {
   const inScope = entries.filter(
     (e) => e.scope && (relInLockDir === e.scope || relInLockDir.startsWith(`${e.scope}/`)),
   );
@@ -1597,7 +1608,10 @@ function pickLocked(
   const depth = Math.max(0, ...inScope.map((e) => e.scope?.length ?? 0));
   const scoped = inScope.filter((e) => (e.scope?.length ?? 0) === depth);
   const hoisted = entries.filter((e) => !e.scope);
-  const pool = scoped.length ? scoped : hoisted.length ? hoisted : entries;
+  return scoped.length ? scoped : hoisted.length ? hoisted : entries;
+}
+
+function pickFromPool(pool: LockEntry[], range: string | undefined): string | null {
   if (pool.length === 1) return pool[0]?.version ?? null;
   if (range) {
     const exact = pool.find((e) => e.specs?.includes(range));
@@ -1891,11 +1905,11 @@ class Resolver {
     if (range !== undefined && isNonRegistryRange(range)) return { name, version: null, range };
     if (locked) {
       const rel = locked.dir ? posix.relative(locked.dir, relFile) : relFile;
-      const version = pickLocked(locked.entries, range, rel);
+      const picked = pickLocked(locked.entries, range, rel);
       // Locked to a private registry / git / URL: skip rather than hand the
       // reviewer npmjs's same-named release as the PR's locked source.
-      if (version && locked.entries.some((e) => e.version === version && e.foreign))
-        return { name, version: null, range: NPM_FOREIGN_PIN };
+      if (picked?.foreign) return { name, version: null, range: NPM_FOREIGN_PIN };
+      const version = picked?.version;
       if (version) return range !== undefined ? { name, version, range } : { name, version };
     }
     if (range !== undefined) return { name, version: null, range };
