@@ -715,6 +715,26 @@ describe("the credential: a refresh-disabled copy, never a refresher", () => {
   });
 });
 
+describe("the report", () => {
+  it("names the endpoint the run recorded — an API-key run never reads as the ChatGPT login", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pireview-report-"));
+    try {
+      const endpoint = "pi's built-in openai provider (the public OpenAI API), an API key";
+      writeFileSync(
+        join(tmp, "run.json"),
+        JSON.stringify({ reviewer: "pireview", model: "openai/gpt-6-sol", endpoint }),
+      );
+      const md = renderPireviewReport(SET, tmp, [CASE]);
+      expect(md).toContain(`thinking \`?\` — ${endpoint}`);
+      expect(md).not.toContain("ChatGPT login");
+      writeFileSync(join(tmp, "run.json"), JSON.stringify({ reviewer: "pireview" }));
+      expect(renderPireviewReport(SET, tmp, [CASE])).toContain("— endpoint not recorded");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the sandbox wiring", () => {
   const docker = readFileSync(join(ROOT, "bench", "aacr", "Dockerfile"), "utf8");
   const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");

@@ -1020,7 +1020,7 @@ export function renderPireviewReport(set: CaseSet, outDir: string, cases: BenchC
     `- Reviewer: @zephyrdeng/pi-review ${String(runRec["pireview_version"] ?? "?")} on pi ${String(runRec["pi_version"] ?? "?")} — ${typeof runRec["panel"] === "string" ? `panel \`${runRec["panel"]}\` (every cluster scored, confirmed and advisory)` : "single reviewer"}, mode \`code\`, its own prompts; the diff \`git diff <base>...<head>\` attached with \`@file\`, the tree checked out at head; findings from its \`PI_REVIEW_META_JSON\` line; timeout ${String((runRec["flags"] as Record<string, unknown> | undefined)?.["timeout_min"] ?? "?")} min (+60 s); ${runRec["pr_text"] === true ? "PR title/description in the target" : "no PR title/description"}`,
   );
   L.push(
-    `- Model: \`${String(runRec["model"] ?? "?")}\`, thinking \`${String(runRec["thinking"] ?? "?")}\` — pi's openai-codex provider on the refresh-disabled ChatGPT login copy`,
+    `- Model: \`${String(runRec["model"] ?? "?")}\`, thinking \`${String(runRec["thinking"] ?? "?")}\` — ${typeof runRec["endpoint"] === "string" ? runRec["endpoint"] : "endpoint not recorded"}`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
