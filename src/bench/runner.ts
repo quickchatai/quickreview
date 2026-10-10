@@ -1722,13 +1722,15 @@ export function collectComments(caseDir: string): {
   };
 }
 
-/** Write the scorer's input for every variant. */
+/** Write the scorer's input for every variant; returns the variants whose
+ * file for this case now holds different bytes than before. */
 export function writeResults(
   outDir: string,
   c: BenchCase,
   comments: readonly BenchComment[],
   summary: CaseSummary,
-): void {
+): Variant[] {
+  const changed: Variant[] = [];
   for (const variant of Object.keys(VARIANTS) as Variant[]) {
     const dir = join(outDir, "results", variant);
     mkdirSync(dir, { recursive: true });
@@ -1745,10 +1747,61 @@ export function writeResults(
       verdict: summary.verdict,
       unparseable: summary.comments.unparseable,
     });
-    writeFileSync(
-      join(dir, `${safeId(c.instance_id)}.json`),
-      JSON.stringify(result, null, 2) + "\n",
-    );
+    const file = join(dir, `${safeId(c.instance_id)}.json`);
+    const text = JSON.stringify(result, null, 2) + "\n";
+    let before: string | null = null;
+    try {
+      before = readFileSync(file, "utf8");
+    } catch {
+      // no earlier result for this case
+    }
+    if (before !== text) changed.push(variant);
+    writeFileSync(file, text);
+  }
+  return changed;
+}
+
+/** `cli results`: rebuild every finished case's summary counts and scorer
+ * inputs from its case dir. The harness scored the result files as they
+ * were, so a variant whose file for any case changed has every metrics file
+ * beside it removed (as the eval step's own `rm -f metrics_*.json` does): a
+ * report before the next eval shows no score rather than a stale one. A
+ * variant whose files all came out byte-identical keeps its metrics. */
+export function rebuildResults(
+  outDir: string,
+  cases: readonly BenchCase[],
+  log: (line: string) => void,
+): void {
+  const changed = new Set<Variant>();
+  for (const c of cases) {
+    const dir = join(outDir, "cases", safeId(c.instance_id));
+    const sPath = join(dir, "case-summary.json");
+    if (!existsSync(sPath)) continue;
+    const s = JSON.parse(readFileSync(sPath, "utf8")) as CaseSummary;
+    const collected = collectComments(dir);
+    // Refresh the per-case counts too, so the report describes exactly
+    // what the rebuilt result files score.
+    s.comments = {
+      total: collected.comments.length,
+      by_tag: {},
+      left_side: collected.comments.filter((x) => x.side === "LEFT").length,
+      unparseable: collected.dropped,
+      body: collected.body,
+      reanchored: collected.reanchored,
+    };
+    for (const x of collected.comments)
+      s.comments.by_tag[x.tag] = (s.comments.by_tag[x.tag] ?? 0) + 1;
+    writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
+    for (const v of writeResults(outDir, c, collected.comments, s)) changed.add(v);
+  }
+  for (const variant of changed) {
+    const dir = join(outDir, "results", variant);
+    const stale = readdirSync(dir).filter((n) => n.startsWith("metrics_") && n.endsWith(".json"));
+    for (const f of stale) rmSync(join(dir, f), { force: true });
+    if (stale.length)
+      log(
+        `results: ${variant}: ${stale.length} metrics file(s) scored the old results — removed; re-run eval to score the rebuilt ones`,
+      );
   }
 }
 

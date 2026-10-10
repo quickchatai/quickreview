@@ -104,9 +104,9 @@ import { run as runCmd } from "./exec.js";
 import { renderWhatifReport, writeWhatifRun } from "./whatifrun.js";
 import {
   buildBenchAgents,
-  collectComments,
   contextFor,
   prepareTree,
+  rebuildResults,
   resultLine,
   reviewCase,
   runFingerprint,
@@ -479,27 +479,7 @@ async function main(): Promise<number> {
     const set = loadSet(f.get("--set"));
     const outDir = resolve(f.get("--out") ?? "");
     assertArm(outDir, "qcr");
-    for (const c of selectCases(set, only(f))) {
-      const dir = join(outDir, "cases", safeId(c.instance_id));
-      const sPath = join(dir, "case-summary.json");
-      if (!existsSync(sPath)) continue;
-      const s = JSON.parse(readFileSync(sPath, "utf8")) as CaseSummary;
-      const collected = collectComments(dir);
-      // Refresh the per-case counts too, so the report describes exactly
-      // what the rebuilt result files score.
-      s.comments = {
-        total: collected.comments.length,
-        by_tag: {},
-        left_side: collected.comments.filter((x) => x.side === "LEFT").length,
-        unparseable: collected.dropped,
-        body: collected.body,
-        reanchored: collected.reanchored,
-      };
-      for (const x of collected.comments)
-        s.comments.by_tag[x.tag] = (s.comments.by_tag[x.tag] ?? 0) + 1;
-      writeFileSync(sPath, JSON.stringify(s, null, 2) + "\n");
-      writeResults(outDir, c, collected.comments, s);
-    }
+    rebuildResults(outDir, selectCases(set, only(f)), log);
     log("results: rebuilt");
     return 0;
   }

@@ -48,6 +48,7 @@ import {
   reanchorLeftLine,
   modelErrorsFromEvents,
   usageFromEvents,
+  type BenchCase,
   type BenchComment,
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
@@ -73,6 +74,7 @@ import {
   benchConfig,
   collectComments,
   HEAD_PATCHES_FILE,
+  rebuildResults,
   renderCasePrompts,
   resultLine,
   retryable,
@@ -1402,6 +1404,49 @@ describe("reanchorLeftLine / reanchorLeftComments", () => {
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a results rebuild that changes a scorer input drops that variant's metrics; a no-op rebuild keeps them", () => {
+    const out = mkdtempSync(join(tmpdir(), "bench-rebuild-"));
+    try {
+      const c = { instance_id: "o__r@1234567" } as BenchCase;
+      const caseDir = join(out, "cases", c.instance_id);
+      mkdirSync(caseDir, { recursive: true });
+      const summary: CaseSummary = {
+        instance_id: c.instance_id,
+        status: "ok",
+        verdict: "REQUEST_CHANGES",
+        duration_seconds: 1,
+        usage: { input: 0, output: 0, cacheRead: 0, children: 0 },
+        planned_lenses: [],
+        executed_passes: [],
+        comments: { total: 0, by_tag: {}, left_side: 0, unparseable: 0, body: 0 },
+        pr_meta: { title: false, body: false, base_ref_source: "none" },
+        diff: { files: 0, additions: 0, deletions: 0 },
+        continued: false,
+        warnings: [],
+      };
+      writeFileSync(join(caseDir, "case-summary.json"), JSON.stringify(summary));
+      writeFileSync(
+        join(caseDir, "comments.json"),
+        JSON.stringify([{ path: "f.ts", line: 12, side: "LEFT", body: "[blocker] guard removed" }]),
+      );
+      const lines: string[] = [];
+      rebuildResults(out, [c], (l) => lines.push(l));
+      const all = join(out, "results", "all");
+      const metrics = join(all, "metrics_ocr_round_1.json");
+      // the run is scored; a rebuild that changes nothing keeps the score
+      writeFileSync(metrics, "{}\n");
+      rebuildResults(out, [c], (l) => lines.push(l));
+      expect(existsSync(metrics)).toBe(true);
+      // the stored comment now converts differently: the old score goes
+      writeFileSync(join(caseDir, HEAD_PATCHES_FILE), JSON.stringify({ "f.ts": patch }));
+      rebuildResults(out, [c], (l) => lines.push(l));
+      expect(readdirSync(all).filter((n) => n.startsWith("metrics_"))).toEqual([]);
+      expect(lines.join("\n")).toMatch(/metrics.*re-run eval/i);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
     }
   });
 });
