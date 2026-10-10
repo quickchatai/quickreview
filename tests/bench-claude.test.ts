@@ -177,6 +177,11 @@ describe("the credential is its own, and only it rides", () => {
       credential: { CLAUDE_CODE_OAUTH_TOKEN: "t" },
       maxRetries: "10",
     });
+    expect(
+      claudeEnv({ path: "/usr/bin", home: "/h", tmpDir: "/t", credential: {}, model: "claude-opus-5-5" })[
+        "ANTHROPIC_MODEL"
+      ],
+    ).toBe("claude-opus-5-5");
     expect(env["HOME"]).toBe("/tmp/claude-home/x");
     expect(env["CLAUDE_CONFIG_DIR"]).toBe("/tmp/claude-home/x/.claude");
     expect(env["CLAUDE_CODE_OAUTH_TOKEN"]).toBe("t");
@@ -459,6 +464,7 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(env["CLAUDE_CODE_OAUTH_TOKEN"]).toBe("tok-123");
     expect(env["GH_TOKEN"]).toBeUndefined();
     expect(env["DISABLE_AUTOUPDATER"]).toBe("1");
+    expect(env["ANTHROPIC_MODEL"]).toBeUndefined();
     // …in the harness's repo layout, the PR head checked out.
     const tree = JSON.parse(readFileSync(join(caseDir, "tree-seen.json"), "utf8")) as {
       cwd: string;
@@ -560,6 +566,43 @@ describe("claudeReviewRun: one case at a time, through the driver", () => {
     expect(readClaudeSummary(out, c)!.status).toBe("failed");
     expect(existsSync(join(caseDir, "review.md"))).toBe(false);
     expect(reviewForJudge(out, c.instance_id)).toMatchObject({ body: null, comments: [] });
+  });
+
+  it("a pinned ANTHROPIC_MODEL reaches the driver and joins the resume fingerprint", async () => {
+    const t = mkdtempSync(join(tmpdir(), "qcr-claude-"));
+    const { set, c, meta, store } = scratchCase(t);
+    const out = join(t, "run");
+    const opts = {
+      set,
+      outDir: out,
+      store,
+      workRoot: join(t, "work"),
+      homeRoot: join(t, "homes"),
+      python: "python3",
+      driver: stubDriver(t, "ok"),
+      timeoutMin: 30,
+      resume: false,
+      keepTree: false,
+      readMeta: () => meta,
+      log: () => {},
+    };
+    const env = { PATH: process.env.PATH, CLAUDE_CODE_OAUTH_TOKEN: "tok-123" };
+    expect(await claudeReviewRun({ ...opts, env: { ...env, ANTHROPIC_MODEL: "claude-opus-5-5" } })).toBe(0);
+    const caseDir = join(out, "cases", c.instance_id);
+    const seen = JSON.parse(readFileSync(join(caseDir, "env-seen.json"), "utf8")) as Record<
+      string,
+      string
+    >;
+    expect(seen["ANTHROPIC_MODEL"]).toBe("claude-opus-5-5");
+    expect(readClaudeSummary(out, c)!.fingerprint).toMatchObject({ model: "claude-opus-5-5" });
+    const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8")) as Record<string, unknown>;
+    expect(run["pinned_model"]).toBe("claude-opus-5-5");
+    expect(renderClaudeReport(set, out, [c])).toContain("pinned by ANTHROPIC_MODEL=`claude-opus-5-5`");
+    // A resume without the pin is a different configuration: the case re-runs.
+    const lines: string[] = [];
+    expect(await claudeReviewRun({ ...opts, resume: true, env, log: (l) => lines.push(l) })).toBe(0);
+    expect(lines.some((l) => /different build\/version — re-running/.test(l))).toBe(true);
+    expect(readClaudeSummary(out, c)!.fingerprint.model).toBeUndefined();
   });
 
   it("a raw-text answer gets its view from the prose parser, paths checked against the tree's diff", async () => {

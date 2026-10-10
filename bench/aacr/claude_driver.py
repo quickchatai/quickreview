@@ -29,8 +29,10 @@ What is ours, all mechanical:
     `resolve_claude_env` demands a gateway triple (ANTHROPIC_BASE_URL /
     ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL); this arm runs on Claude Code's
     own credential (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, from
-    bench/aacr/claude.env) and Claude Code's default model, which the case
-    summary records from the JSON output;
+    bench/aacr/claude.env) and Claude Code's default model unless the
+    environment's ANTHROPIC_MODEL (set by claudecode.ts from bench.sh's
+    QCR_BENCH_CLAUDE_MODEL) pins one; the case summary records the model that
+    ran from the JSON output;
   - the argv the harness ran (CompletedProcess.args) is written to --argv-out
     so claudecode.ts can check it against the pinned shape.
 

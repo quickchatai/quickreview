@@ -32,8 +32,9 @@
 //   - the credential is Claude Code's own (CLAUDE_CODE_OAUTH_TOKEN from
 //     `claude setup-token`, or ANTHROPIC_API_KEY), from bench/aacr/claude.env
 //     via `docker run --env-file` — never the host's interactive login — and
-//     the model is Claude Code's default for it (the harness pins one through
-//     its ANTHROPIC_MODEL gateway triple; we record which model ran instead);
+//     the model is Claude Code's default for it unless the container's
+//     ANTHROPIC_MODEL pins one (bench.sh's QCR_BENCH_CLAUDE_MODEL); either
+//     way the case records which model ran;
 //   - every case gets a FRESH, empty HOME/CLAUDE_CONFIG_DIR on tmpfs, so no
 //     session, memory or settings carry from one case to the next.
 //
@@ -165,7 +166,7 @@ export function pickCredential(env: NodeJS.ProcessEnv): {
 
 /** The environment the driver (and so the harness, and so `claude`) runs
  * with: a fresh per-case HOME and CLAUDE_CONFIG_DIR, exactly one credential,
- * no auto-update, no telemetry or other non-essential traffic, git without any
+ * the pinned model (ANTHROPIC_MODEL) when there is one, no auto-update, no telemetry or other non-essential traffic, git without any
  * system/global config. Nothing else of the container's environment rides. */
 export function claudeEnv(o: {
   path: string;
@@ -173,6 +174,7 @@ export function claudeEnv(o: {
   tmpDir: string;
   credential: Record<string, string>;
   maxRetries?: string;
+  model?: string;
 }): NodeJS.ProcessEnv {
   return {
     PATH: o.path,
@@ -182,6 +184,7 @@ export function claudeEnv(o: {
     LANG: "C.UTF-8",
     ...o.credential,
     ...(o.maxRetries ? { CLAUDE_CODE_MAX_RETRIES: o.maxRetries } : {}),
+    ...(o.model ? { ANTHROPIC_MODEL: o.model } : {}),
     DISABLE_AUTOUPDATER: "1",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     DISABLE_TELEMETRY: "1",
@@ -376,6 +379,8 @@ export interface ClaudeFingerprint {
   claude_code_version: string;
   credential: ClaudeCredential;
   timeout_min: number;
+  /** The model ANTHROPIC_MODEL pinned; absent = Claude Code's default. */
+  model?: string;
 }
 
 export interface ClaudeTokens {
@@ -549,6 +554,8 @@ export interface ClaudeRunnerOptions {
   path: string;
   homeRoot: string;
   credential: Record<string, string>;
+  /** ANTHROPIC_MODEL for `claude`; absent = Claude Code's default. */
+  model?: string;
   timeoutMin: number;
   fingerprint: ClaudeFingerprint;
   keepTree?: boolean;
@@ -624,6 +631,7 @@ export async function reviewCaseClaude(
       tmpDir,
       credential: o.credential,
       maxRetries: process.env.CLAUDE_CODE_MAX_RETRIES,
+      model: o.model,
     });
     const mb = await run("git", ["-C", tree, "merge-base", c.base_commit, c.head_commit], { env });
     summary.merge_base_ok = mb.code === 0 && mb.stdout.trim() === meta.merge_base;
@@ -914,12 +922,14 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     throw new Error("claude-review: --timeout-min must be a positive integer");
   const cred = pickCredential(o.env);
   const version = (o.env["QCR_CLAUDE_VERSION"] ?? "").trim() || "unknown";
+  const model = (o.env["ANTHROPIC_MODEL"] ?? "").trim() || undefined;
   const cases = selectCases(o.set, o.only);
   const fingerprint: ClaudeFingerprint = {
     qcr_commit: o.env["QCR_BENCH_COMMIT"] ?? "unknown",
     claude_code_version: version,
     credential: cred.kind,
     timeout_min: o.timeoutMin,
+    ...(model ? { model } : {}),
   };
   mkdirSync(o.outDir, { recursive: true });
   const runFile = join(o.outDir, "run.json");
@@ -940,7 +950,10 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
     dataset: o.set.dataset,
     claude_code_version: version,
     credential: cred.kind,
-    model: "Claude Code's default for the credential (per case: case-summary.json `model`)",
+    model: model
+      ? `${model} (pinned by ANTHROPIC_MODEL; per case: case-summary.json \`model\`)`
+      : "Claude Code's default for the credential (per case: case-summary.json `model`)",
+    pinned_model: model ?? null,
     invocation:
       "AACR harness evaluation/reviewers/claude.py run_claude_review + save_result, via bench/aacr/claude_driver.py",
     flags: { timeout_min: o.timeoutMin },
@@ -981,6 +994,7 @@ export async function claudeReviewRun(o: ClaudeReviewCommand): Promise<number> {
       path: o.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
       homeRoot: o.homeRoot,
       credential: cred.vars,
+      model,
       timeoutMin: o.timeoutMin,
       fingerprint,
       keepTree: o.keepTree,
@@ -1033,7 +1047,7 @@ export function renderClaudeReport(set: CaseSet, outDir: string, cases: BenchCas
     `- Reviewer: Claude Code ${String(run["claude_code_version"] ?? "?")}, run by the AACR harness's own reviewers/claude.py: \`claude -p '/code-review <base_commit>...<head_commit> ' --add-dir <repo> --permission-mode acceptEdits --output-format json --mcp-config <findings server> --allowed-tools mcp__findings__report --append-system-prompt <findings requirement> --settings <StopFailure hook>\`, timeout ${String((run["flags"] as Obj | undefined)?.["timeout_min"] ?? "?")} min; no PR title/description (the harness passes none)`,
   );
   L.push(
-    `- Model: ${models.length ? models.map((m) => `\`${m}\``).join(", ") : "?"} — Claude Code's default for its ${String(run["credential"] ?? "?")} credential (the harness pins one via its gateway's ANTHROPIC_MODEL; this arm records what ran)`,
+    `- Model: ${models.length ? models.map((m) => `\`${m}\``).join(", ") : "?"} — ${typeof run["pinned_model"] === "string" ? `pinned by ANTHROPIC_MODEL=\`${run["pinned_model"]}\`` : `Claude Code's default for its ${String(run["credential"] ?? "?")} credential`} (this arm records what ran)`,
   );
   L.push(`- Judge: ${judge[0] ?? ""}`);
   for (const w of judge.slice(1)) L.push(`  ${w}`);
