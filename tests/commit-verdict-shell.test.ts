@@ -239,12 +239,15 @@ describe("commit-verdict.sh", () => {
       expect(existsSync(join(verdict, "pr-5885-round-2.json.tmp"))).toBe(false);
     });
 
-    it("carries approval_withheld only when true, and a follow-up's sweep and escalations when present", async () => {
+    it("carries approval_withheld only when true, and a follow-up's sweep, extent, their reasons and escalations when present", async () => {
       writeRecord({
         ...RECORD,
         verdict: "APPROVE",
         approval_withheld: true,
-        sweep: "ran",
+        sweep: "skipped",
+        sweep_reason: "targeted fix; every file read in full at round 1",
+        extent: "skipped",
+        extent_reason: "adds the requested assertion only",
         escalations: [{ question: "q" }],
       });
       expect((await commit("--from-record", "pr-5885-round-2.json")).code).toBe(0);
@@ -252,8 +255,20 @@ describe("commit-verdict.sh", () => {
       expect(v).toMatchObject({
         verdict: "APPROVE",
         approval_withheld: true,
-        sweep: "ran",
+        sweep: "skipped",
+        sweep_reason: "targeted fix; every file read in full at round 1",
+        extent: "skipped",
+        extent_reason: "adds the requested assertion only",
         escalations: [{ question: "q" }],
+      });
+      // The daemon reads the decisions and their reasons off the verdict
+      //: a projection that dropped them lost both events live.
+      const parsed = validateVerdict(v);
+      expect(parsed.ok && parsed.verdict).toMatchObject({
+        sweep: "skipped",
+        sweep_reason: "targeted fix; every file read in full at round 1",
+        extent: "skipped",
+        extent_reason: "adds the requested assertion only",
       });
 
       writeRecord({ ...RECORD, approval_withheld: false, summary: "  " });

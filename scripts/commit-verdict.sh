@@ -18,7 +18,9 @@
 # the verdict. Its findings record, state/findings/<name> — written earlier in
 # the same round, under `[review] render_outputs` already carrying `verdict`,
 # `head_sha` and `summary` at its top level — also carries `passes` (and
-# `approval_withheld`, `sweep`, `escalations` when the verdict has them), and
+# `approval_withheld`, `sweep`, `sweep_reason`, `extent`, `extent_reason`,
+# `escalations` when the verdict has them — the reasons and extent
+# follow-up decisions, which the daemon logs), and
 # this builds the verdict file from exactly those fields plus `pr`, `round_no`
 # (both checked against the name) and `finished_at` (now, UTC), writes it to
 # verdict/<name>.tmp and publishes it the same way. The verdict's shape is the
@@ -61,7 +63,8 @@ if [[ "$FROM_RECORD" == 1 ]]; then
   [[ ! -L "$STAGED" ]] || die "verdict/$NAME.tmp is a symlink — nothing was published"
   # Exactly the verdict's fields, copied — never derived. Required: verdict,
   # head_sha, passes (the round templates' shape). Optional, copied only when
-  # present: summary, approval_withheld (only `true`), sweep, escalations.
+  # present: summary, approval_withheld (only `true`), sweep, sweep_reason,
+  # extent, extent_reason, escalations.
   python3 - "$RECORD" "$STAGED" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" <<'PY' ||
 import json, sys
 from datetime import datetime, timezone
@@ -114,7 +117,7 @@ if isinstance(summary, str) and summary.strip():
 if rec.get("approval_withheld") is True:
     out["approval_withheld"] = True
 out["passes"] = passes
-for key in ("sweep", "escalations"):
+for key in ("sweep", "sweep_reason", "extent", "extent_reason", "escalations"):
     if key in rec and rec[key] is not None:
         out[key] = rec[key]
 out["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
