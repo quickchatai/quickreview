@@ -1772,5 +1772,7 @@ export function withAuthModels(cfg: Config, mode: BenchAuthMode = benchAuthMode(
   m.overseer = modelForAuth(m.overseer, mode);
   for (const k of Object.keys(m.tiers) as (keyof typeof m.tiers)[])
     m.tiers[k] = modelForAuth(m.tiers[k], mode);
+  for (const pass of Object.keys(m.pass_models))
+    m.pass_models[pass] = modelForAuth(m.pass_models[pass]!, mode);
   return out;
 }

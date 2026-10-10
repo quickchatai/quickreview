@@ -148,6 +148,16 @@ describe("dry config check: a fresh clone's config on the key route", () => {
     expect(withAuthModels(login, "login")).toBe(login);
   });
 
+  it("a per-pass model override (models.pass_models) runs as openai/ too", () => {
+    const keyed = withEnv(
+      { QCR_BENCH_AUTH: "api-key" },
+      () => contextFor(ROOT, "", "models.pass_models.pass-baseline=openai-codex/gpt-6-sol").cfg,
+    );
+    expect(keyed.models.pass_models["pass-baseline"]).toBe("openai/gpt-6-sol");
+    const login = contextFor(ROOT, "", "models.pass_models.pass-baseline=openai-codex/gpt-6-sol").cfg;
+    expect(login.models.pass_models["pass-baseline"]).toBe("openai-codex/gpt-6-sol");
+  });
+
   it("the BUILT lens agents carry openai/ specs — what pi's subagents actually run", () => {
     const cfg = withEnv({ QCR_BENCH_AUTH: "api-key" }, () => contextFor(ROOT, "").cfg);
     const out = mkdtempSync(join(tmpdir(), "bench-apikey-agents-"));
