@@ -369,6 +369,13 @@ describe("the boot build (executed)", () => {
     rmSync(join(dir, "sandbox", "node_modules"), { recursive: true });
     expect(boot()).toEqual(["ci", "run build"]);
   });
+
+  it("a missing dist/ reinstalls too — an incremental build over a deleted dist/ emits nothing", () => {
+    setup();
+    boot();
+    rmSync(join(dir, "sandbox", "dist"), { recursive: true });
+    expect(boot()).toEqual(["ci", "run build"]);
+  });
 });
 
 // The sovereignty claim, checked by execution: the render heredoc is

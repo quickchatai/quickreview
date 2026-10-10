@@ -475,12 +475,15 @@ git config --global credential.helper \
 # source tree reaches this container only through this build — skipping it
 # would run the previous dist/ against the new source. The build is
 # incremental (tsconfig's buildinfo), so an unchanged tree costs only the
-# up-to-date check. Dependencies are reinstalled only when the lockfile hash
-# marker says they moved (or nothing is installed yet).
+# up-to-date check. Dependencies are reinstalled when the lockfile hash
+# marker says they moved or nothing is installed yet — and when dist/ is
+# missing: tsc decides from its buildinfo, not from what is on disk, so an
+# incremental build over a deleted dist/ emits nothing; `npm ci` clears
+# node_modules/.cache (the buildinfo) and forces the cold build.
 cd "$SANDBOX"
 marker=/opt/quickreview/state/.build-lock-hash
 current="$(sha256sum package-lock.json | cut -d' ' -f1)"
-if [[ ! -d node_modules || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
+if [[ ! -d dist || ! -d node_modules || ! -f "$marker" || "$(cat "$marker")" != "$current" ]]; then
   npm ci
   npm run build
   echo "$current" > "$marker"
