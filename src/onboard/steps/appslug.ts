@@ -55,6 +55,9 @@ import { readCredentials } from "./githubapp.js";
 
 export const APP_SLUG_STEP_ID = "app_slug_reconcile";
 
+/** Step data: a correction is on disk that the daemon has not been restarted onto. */
+const RESTART_OWED_KEY = "restart_owed";
+
 export interface AppSlugStepOptions {
   apiBase?: string;
   secretsDir?: string;
@@ -216,18 +219,30 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     ctx.recordChoice(CHOICE_KEYS.botLogin, botLoginFor(identity.slug));
 
     // A correction only reaches a running daemon through a restart: the config
-    // loader runs once, at boot.
-    if (write && edits.length > 0) {
+    // loader runs once, at boot. The file is corrected before the restart, so
+    // a restart that fails leaves a file that already agrees — the owed
+    // restart is kept in the step's data and paid by the next run, never
+    // forgotten because the edits came back empty.
+    let restartOwed = edits.length > 0 || ctx.data[RESTART_OWED_KEY] === true;
+    if (write && restartOwed) {
       // Whichever host the daemon lives on: `docker compose restart` here, the
       // deploy that ships the corrected config on the server route.
       const transport = stackTransportFor(ctx, opts.stream ? { stream: opts.stream } : {});
       const running = await transport.running();
-      checks.push(
-        await transport.restart(
-          (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
-          running,
-        ),
+      const restarted = await transport.restart(
+        (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
+        running,
       );
+      checks.push(restarted);
+      restartOwed = !restarted.ok;
+    } else if (restartOwed) {
+      checks.push({
+        name: "daemon-restart",
+        ok: false,
+        detail:
+          "the corrected bot_login is on disk but the daemon was never restarted onto it, so a running daemon still holds " +
+          `the old login — Fix: run the ${APP_SLUG_STEP_ID} step; it restarts the daemon`,
+      });
     }
 
     return {
@@ -237,6 +252,7 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
         slug: identity.slug,
         bot_login: botLoginFor(identity.slug),
         corrected: edits.length > 0,
+        [RESTART_OWED_KEY]: restartOwed,
       },
     };
   }

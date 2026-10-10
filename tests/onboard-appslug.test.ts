@@ -240,6 +240,32 @@ describe("the step", () => {
     expect(result.failures.join(" ")).toMatch(/docker compose restart daemon/);
   });
 
+  it("a failed restart stays owed: verify is red, and the next run restarts though the file already agrees", async () => {
+    writeConfig("quick-review");
+    writeCreds();
+    const failing = harness({ slug: "quick-review-9f2", daemonRunning: true, streamCode: 1 });
+    expect((await failing.engine.runStep(APP_SLUG_STEP_ID)).ok).toBe(false);
+    expect(readTomlKey(configText(), "github", "bot_login")).toBe("quick-review-9f2[bot]");
+
+    // A new session: the file agrees, but the daemon never re-read it.
+    const verifying = harness({ slug: "quick-review-9f2", daemonRunning: true });
+    const all = await verifying.engine.verifyAll();
+    expect(all.ok).toBe(false);
+    expect(all.results[0]!.failures.join(" ")).toMatch(/never restarted/);
+    expect(verifying.streamed).toEqual([]);
+
+    const retry = harness({ slug: "quick-review-9f2", daemonRunning: true });
+    const result = await retry.engine.runStep(APP_SLUG_STEP_ID);
+    expect(result.ok).toBe(true);
+    expect(retry.streamed.map((a) => a.slice(-2))).toEqual([["restart", "daemon"]]);
+
+    // Paid: a further run neither restarts again nor goes red.
+    const settled = harness({ slug: "quick-review-9f2", daemonRunning: true });
+    expect((await settled.engine.runStep(APP_SLUG_STEP_ID)).ok).toBe(true);
+    expect(settled.streamed).toEqual([]);
+    expect((await settled.engine.verifyAll()).ok).toBe(true);
+  });
+
   it("missing App credentials are red and name the step that writes them", async () => {
     writeConfig("quick-review");
     const h = harness({});
