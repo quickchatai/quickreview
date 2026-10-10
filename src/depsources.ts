@@ -1596,6 +1596,10 @@ function pickLocked(
   relInLockDir: string,
 ): { version: string; foreign: boolean } | null {
   const pool = lockPool(entries, relInLockDir);
+  // A range a lock entry names outright selects THAT entry, so its own mark
+  // decides; a version reached any other way may be any copy at it.
+  const exact = range ? pool.find((e) => e.specs?.includes(range)) : undefined;
+  if (exact) return { version: exact.version, foreign: !!exact.foreign };
   const version = pickFromPool(pool, range);
   if (!version) return null;
   return { version, foreign: pool.some((e) => e.version === version && e.foreign) };
@@ -1609,15 +1613,14 @@ function lockPool(entries: LockEntry[], relInLockDir: string): LockEntry[] {
   // workspace's copies count, never a max across its ancestors.
   const depth = Math.max(0, ...inScope.map((e) => e.scope?.length ?? 0));
   const scoped = inScope.filter((e) => (e.scope?.length ?? 0) === depth);
-  const hoisted = entries.filter((e) => !e.scope);
-  return scoped.length ? scoped : hoisted.length ? hoisted : entries;
+  // Outside every workspace that holds a copy and with none hoisted, the file
+  // resolves to nothing: a sibling workspace's copy is not its dependency.
+  return scoped.length ? scoped : entries.filter((e) => !e.scope);
 }
 
 function pickFromPool(pool: LockEntry[], range: string | undefined): string | null {
   if (pool.length === 1) return pool[0]?.version ?? null;
   if (range) {
-    const exact = pool.find((e) => e.specs?.includes(range));
-    if (exact) return exact.version;
     const m = maxSatisfying(
       pool.map((e) => e.version),
       range,

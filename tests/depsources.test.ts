@@ -1899,6 +1899,27 @@ describe("selfscan2: the version a file actually runs against", () => {
     ).toMatchObject({ name: "x", version: "1.0.0" });
   });
 
+  it("package-lock: a copy only a sibling workspace holds is never the pin of a file outside it", () => {
+    const root = tree({
+      "package.json": JSON.stringify({ dependencies: {} }),
+      "packages/web/package.json": JSON.stringify({ name: "web", dependencies: { x: "^1.0.0" } }),
+      "package-lock.json": JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "packages/web/node_modules/x": { version: "1.0.0" },
+        },
+      }),
+      "src/a.js": "import x from 'x';\n",
+      "packages/web/src/b.js": "import x from 'x';\n",
+    });
+    expect(planDependencyRequests(root, [{ filename: "src/a.js" }])).toEqual([]);
+    expect(planDependencyRequests(root, [{ filename: "packages/web/src/b.js" }])[0]).toMatchObject({
+      name: "x",
+      version: "1.0.0",
+    });
+  });
+
   it("package-lock: a foreign copy in another workspace never taints the copy this file resolves to", () => {
     const root = tree({
       "package.json": JSON.stringify({ dependencies: { x: "^1.0.0" } }),
@@ -2173,6 +2194,33 @@ describe("selfscan2: the version a file actually runs against", () => {
     expect(m.sources).toEqual([]);
     expect(m.skipped.map((s) => s.name)).toEqual(["left-pad"]);
     expect(calls).toEqual([]);
+  });
+
+  it("npm: a range naming the public yarn.lock block is not skipped for a private block at its version", () => {
+    const yarn = [
+      "# yarn lockfile v1",
+      "",
+      "left-pad@~1.3.0:",
+      '  version "1.3.0"',
+      '  resolved "https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#def"',
+      "",
+      "left-pad@^1.3.0:",
+      '  version "1.3.0"',
+      '  resolved "https://npm.internal.corp/left-pad/-/left-pad-1.3.0.tgz#abc"',
+      "",
+    ].join("\n");
+    const root = tree({
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "left-pad": "~1.3.0" },
+      }),
+      "yarn.lock": yarn,
+      "src/a.ts": `import lp from "left-pad";\n`,
+    });
+    expect(planDependencyRequests(root, [{ filename: "src/a.ts" }])[0]).toMatchObject({
+      name: "left-pad",
+      version: "1.3.0",
+    });
   });
 
   it("pypi: an unpinned range never lands on a release whose files are all yanked", async () => {
