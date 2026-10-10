@@ -553,6 +553,10 @@ describe("OAuth route", () => {
     expect(report.ok).toBe(false);
     expect(report.results[0]?.failures.join(" ")).toMatch(/daemon container: no auth\.json/);
     expect(calls.some((c) => c[0] === "ssh" && c.includes("review-vm"))).toBe(true);
+    // The repair command reaches the same host and container the probe did.
+    expect(report.results[0]?.failures.join(" ")).toContain(
+      "ssh -t review-vm sudo docker exec -it quickreview-sandbox tmux attach -t overseer → /login",
+    );
     // The companion is this machine's: never probed over ssh.
     expect(
       calls.filter((c) => c[0] === "ssh").some((c) => (c.at(-1) ?? "").includes("qcr-companion")),

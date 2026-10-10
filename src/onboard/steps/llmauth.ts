@@ -402,7 +402,7 @@ export async function probeContainerLogin(
 function loginCheck(
   name: string,
   label: string,
-  container: string,
+  attach: string,
   probe: LoginProbe,
 ): CheckResult {
   switch (probe.state) {
@@ -418,7 +418,7 @@ function loginCheck(
         ok: false,
         detail:
           `${label}: no auth.json on the pi home (${probe.mount}). Attach and log in: ` +
-          `docker exec -it ${container} tmux attach -t overseer → /login → detach (Ctrl-b d). ` +
+          `${attach} → /login → detach (Ctrl-b d). ` +
           "Host tokens do not transfer — this container needs its own login.",
       };
     case "wrong-provider":
@@ -428,7 +428,7 @@ function loginCheck(
         detail:
           `${label}: auth.json on the pi home (${probe.mount}) holds no ChatGPT (${OAUTH_PROVIDER}) OAuth login — ` +
           "a /login to another provider does not count. Attach and log in with the ChatGPT option: " +
-          `docker exec -it ${container} tmux attach -t overseer → /login → detach (Ctrl-b d).`,
+          `${attach} → /login → detach (Ctrl-b d).`,
       };
     case "no-pi-volume":
       return {
@@ -458,6 +458,11 @@ function loginCheck(
         detail: `${label}: no container yet — this browser login is guided at the moment the container first needs it (tokens never transfer from this host)`,
       };
   }
+}
+
+/** The command that attaches to a container's overseer pane on this machine. */
+function localAttach(container: string): string {
+  return `docker exec -it ${container} tmux attach -t overseer`;
 }
 
 /** Container names to probe, config first so a renamed deployment still works. */
@@ -684,12 +689,15 @@ async function oauthLoginChecks(
   // The daemon runs where the topology says: on the VM route its container is
   // on the review host, so the probe goes there over ssh (the transport's own
   // facts: alias, container, sudo). The companion is always this machine's.
+  // The repair command names the same host and container the probe reached.
   let daemon = daemonContainerName(configText);
   let daemonRunner: ProcessRunner = runner;
+  let daemonAttach = localAttach(daemon);
   if (topologyOf(ctx.choices) === "vm") {
     const facts = remoteFactsFor(ctx.adapters, ctx.choices);
     daemon = facts.container;
     const prefix = facts.sudo ? ["sudo"] : [];
+    daemonAttach = `ssh -t ${facts.alias || "<vm>"} ${facts.sudo ? "sudo " : ""}${localAttach(daemon)}`;
     daemonRunner =
       facts.alias === ""
         ? { run: async () => ({ code: 1, stdout: "", stderr: "no ssh alias recorded" }) }
@@ -701,7 +709,7 @@ async function oauthLoginChecks(
     loginCheck(
       "daemon_login",
       "daemon container",
-      daemon,
+      daemonAttach,
       await probeContainerLogin(daemonRunner, daemon),
     ),
   );
@@ -709,7 +717,7 @@ async function oauthLoginChecks(
     loginCheck(
       "companion_login",
       "companion container",
-      companion,
+      localAttach(companion),
       await probeContainerLogin(runner, companion),
     ),
   );
