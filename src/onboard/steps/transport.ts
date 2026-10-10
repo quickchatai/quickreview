@@ -52,6 +52,11 @@ import { sshAliasOf, topologyOf } from "./topology.js";
 
 export type TransportKind = "compose" | "ssh";
 
+/** What a probe of the daemon's container found; `unknown` is a probe that failed. */
+export type DaemonState =
+  | { readonly state: "running" | "stopped" }
+  | { readonly state: "unknown"; readonly detail: string };
+
 /**
  * Everything the bring-up tail needs from the host the system runs on. Total
  * by construction: nothing here throws, and an unreachable host is a red check
@@ -63,8 +68,13 @@ export interface StackTransport {
   readonly where: string;
   /** Layer 1 of verification: is the daemon (and the chosen ingress) up? */
   containerChecks(ingress: IngressOption | null): Promise<CheckResult[]>;
-  /** Is the daemon up enough to talk to? */
+  /** Is the daemon up enough to talk to? A probe that failed reads false. */
   running(): Promise<boolean>;
+  /**
+   * The same probe, with a failed one kept apart from a daemon that is not
+   * running: `unknown` carries why the host could not be asked.
+   */
+  daemonState(): Promise<DaemonState>;
   /** Run an argv INSIDE the daemon container. */
   exec(argv: readonly string[]): Promise<ProcessResult>;
   /** Layer 2 of verification: does the daemon answer `GET /health`? */
@@ -103,6 +113,11 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
   const root = rootOf(ctx.adapters);
   const stream = opts.stream ?? nodeStreamRunner;
   const healthTimeoutMs = opts.healthTimeoutMs ?? 10_000;
+  const daemonState = async (): Promise<DaemonState> => {
+    const ps = await composePs(ctx.adapters.runner, root);
+    if (!ps.ok) return { state: "unknown", detail: ps.detail };
+    return { state: isUp(serviceRow(ps.rows, DAEMON_SERVICE)) ? "running" : "stopped" };
+  };
 
   return {
     kind: "compose",
@@ -113,9 +128,10 @@ function composeTransport(ctx: StepContext, opts: TransportOptions): StackTransp
     },
 
     async running() {
-      const ps = await composePs(ctx.adapters.runner, root);
-      return ps.ok && isUp(serviceRow(ps.rows, DAEMON_SERVICE));
+      return (await daemonState()).state === "running";
     },
+
+    daemonState,
 
     async exec(argv) {
       return ctx.adapters.runner.run("docker", daemonExecArgs(root, argv));
@@ -183,6 +199,25 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
   const remote = (argv: readonly string[]): Promise<ProcessResult> =>
     ctx.adapters.runner.run("ssh", sshArgv(facts.alias, argv));
   const healthEndpoint = `http://127.0.0.1:${facts.port}/health`;
+  const daemonState = async (): Promise<DaemonState> => {
+    // No alias recorded: the server route was never deployed to.
+    if (facts.alias === "") return { state: "stopped" };
+    const ps = await remote([
+      ...dockerPrefix,
+      "ps",
+      "--filter",
+      `name=${facts.container}`,
+      "--format",
+      "{{.Names}}",
+    ]);
+    if (ps.code !== 0) {
+      return {
+        state: "unknown",
+        detail: (ps.stderr || ps.stdout).trim().slice(0, 200) || `exit ${ps.code}`,
+      };
+    }
+    return { state: ps.stdout.includes(facts.container) ? "running" : "stopped" };
+  };
   const logsCommand = (tail: number): string =>
     sshCommandLine(facts.alias || "<vm>", [
       ...dockerPrefix,
@@ -313,17 +348,10 @@ function sshTransport(ctx: StepContext, opts: TransportOptions): StackTransport 
     },
 
     async running() {
-      if (facts.alias === "") return false;
-      const ps = await remote([
-        ...dockerPrefix,
-        "ps",
-        "--filter",
-        `name=${facts.container}`,
-        "--format",
-        "{{.Names}}",
-      ]);
-      return ps.code === 0 && ps.stdout.includes(facts.container);
+      return (await daemonState()).state === "running";
     },
+
+    daemonState,
 
     async exec(argv) {
       if (facts.alias === "")

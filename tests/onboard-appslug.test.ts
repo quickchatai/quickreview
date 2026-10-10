@@ -77,7 +77,13 @@ interface Harness {
 }
 
 function harness(
-  o: { slug?: string; appStatus?: number; daemonRunning?: boolean; streamCode?: number } = {},
+  o: {
+    slug?: string;
+    appStatus?: number;
+    daemonRunning?: boolean;
+    psFails?: boolean;
+    streamCode?: number;
+  } = {},
 ): Harness {
   const runs: string[][] = [];
   const streamed: string[][] = [];
@@ -101,6 +107,9 @@ function harness(
     run: async (cmd: string, args: string[]): Promise<ProcessResult> => {
       runs.push([cmd, ...args]);
       if (args.includes("ps")) {
+        if (o.psFails) {
+          return { code: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" };
+        }
         const rows = o.daemonRunning ? [{ Service: "daemon", State: "running" }] : [];
         return { code: 0, stdout: JSON.stringify(rows), stderr: "" };
       }
@@ -229,6 +238,23 @@ describe("the step", () => {
     expect(result.checks.find((c) => c.name === "daemon-restart")!.detail).toMatch(
       /nothing to restart/,
     );
+  });
+
+  it("a probe that cannot ask the host keeps the restart owed — never read as a stopped daemon", async () => {
+    writeConfig("quick-review");
+    writeCreds();
+    const blind = harness({ slug: "quick-review-9f2", psFails: true });
+    const result = await blind.engine.runStep(APP_SLUG_STEP_ID);
+    expect(result.ok).toBe(false);
+    expect(blind.streamed).toEqual([]);
+    expect(result.failures.join(" ")).toMatch(/could not tell whether the daemon is running/);
+    expect(readTomlKey(configText(), "github", "bot_login")).toBe("quick-review-9f2[bot]");
+
+    // The file already agrees, yet the next run with a reachable host restarts.
+    const retry = harness({ slug: "quick-review-9f2", daemonRunning: true });
+    const second = await retry.engine.runStep(APP_SLUG_STEP_ID);
+    expect(second.ok).toBe(true);
+    expect(retry.streamed.map((a) => a.slice(-2))).toEqual([["restart", "daemon"]]);
   });
 
   it("a failed restart is red and says the file on disk is already correct", async () => {

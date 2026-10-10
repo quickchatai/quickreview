@@ -227,14 +227,26 @@ export function appSlugStep(opts: AppSlugStepOptions = {}): OnboardingStep {
     if (write && restartOwed) {
       // Whichever host the daemon lives on: `docker compose restart` here, the
       // deploy that ships the corrected config on the server route.
+      // A probe that could not ask the host is not a daemon that is down: the
+      // restart stays owed rather than being discharged as "nothing to restart".
       const transport = stackTransportFor(ctx, opts.stream ? { stream: opts.stream } : {});
-      const running = await transport.running();
-      const restarted = await transport.restart(
-        (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
-        running,
-      );
-      checks.push(restarted);
-      restartOwed = !restarted.ok;
+      const probe = await transport.daemonState();
+      if (probe.state === "unknown") {
+        checks.push({
+          name: "daemon-restart",
+          ok: false,
+          detail:
+            `could not tell whether the daemon is running ${transport.where} (${probe.detail}), so it was not restarted ` +
+            `onto the corrected bot_login — Fix: make the host reachable, then run the ${APP_SLUG_STEP_ID} step again`,
+        });
+      } else {
+        const restarted = await transport.restart(
+          (line) => ctx.adapters.log?.(`${APP_SLUG_STEP_ID}: ${line}`),
+          probe.state === "running",
+        );
+        checks.push(restarted);
+        restartOwed = !restarted.ok;
+      }
     } else if (restartOwed) {
       checks.push({
         name: "daemon-restart",
