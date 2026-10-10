@@ -717,7 +717,9 @@ It doubles as a diagnostic. Every claimed-done step is re-verified against
 reality — containers, health endpoint, GitHub's delivery log, the memory
 confinement matrix, the config's own invariants — and anything that no longer
 holds is demoted with the reason. `verify` never writes: a re-run on a healthy
-installation changes nothing.
+installation changes nothing. Running a step tool again is different: a step
+that succeeds has acted on the installation, so it withdraws the completion
+claim until `finish_and_exit` runs green again.
 
 ## Windows
 

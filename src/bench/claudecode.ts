@@ -166,8 +166,9 @@ export function pickCredential(env: NodeJS.ProcessEnv): {
 
 /** The environment the driver (and so the harness, and so `claude`) runs
  * with: a fresh per-case HOME and CLAUDE_CONFIG_DIR, exactly one credential,
- * the pinned model (ANTHROPIC_MODEL) when there is one, no auto-update, no telemetry or other non-essential traffic, git without any
- * system/global config. Nothing else of the container's environment rides. */
+ * the pinned model (ANTHROPIC_MODEL) when there is one, no auto-update, no
+ * telemetry or other non-essential traffic, git without any system/global
+ * config. Nothing else of the container's environment rides. */
 export function claudeEnv(o: {
   path: string;
   home: string;

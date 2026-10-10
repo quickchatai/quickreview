@@ -840,7 +840,7 @@ describe("drag-to-copy", () => {
     h.mouse(0, 42, 4, false);
     await settle();
     expect(h.copied).toEqual([h.onScreen(32, 2, 42, 4)]);
-    // Every copied line came from columns 30..40 ONLY — a block, not a run of
+    // Every copied line came from columns 32..42 ONLY — a block, not a run of
     // whole rows spliced across panes.
     for (const line of h.copied[0]!.split("\n")) expect(line.length).toBeLessThanOrEqual(11);
     h.app.quit();
