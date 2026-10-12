@@ -12,7 +12,9 @@
 //            each, style findings grouped per rule with a count — over the
 //            selected one's detail; `t` steps the tier filter;
 //            or, after `P`, the stage 2 plan: rows, their cost, the kept total
-//            that is the hard stop, ⏎ to approve, space to toggle a row
+//            that is the hard stop, ⏎ to approve, space to toggle a row — a
+//            deep proposal's floor rows (`floor-<n>`) after the companion's,
+//            windowed like any list, each with its reason
 //
 // The tab reads the state home (src/setup/scanreport.ts, stage2request.ts —
 // the single-shepherd fence's type-only leaves; the TUI never imports the
@@ -615,7 +617,7 @@ function headerLines(deps: ScanTabDeps, repo: string | undefined): string[] {
   const pct = run.cases.length === 0 ? 0 : Math.round((100 * done) / run.cases.length);
   const line1 = [
     `${HEADING}SCAN${RESET}${repo ? ` ${repo}` : ""} @${short(run.sha)}`,
-    `${STRONG}${MODE_LABEL[run.mode] ?? run.mode}${RESET} ${stateWord(runDisplay(run, deps))}`,
+    `${STRONG}${MODE_LABEL[run.mode] ?? run.mode}${run.settings?.depth === "deep" ? " (deep)" : ""}${RESET} ${stateWord(runDisplay(run, deps))}`,
     `${done}/${run.cases.length} cases (${pct}%)`,
   ].join("  ");
   const fs = deps.store.findings;
@@ -784,9 +786,13 @@ function planRows(
     ]);
     return right;
   }
+  // A deep proposal: the companion's rows, then the floor (`floor-<n>`).
+  const floorN = p.rows.filter((r) => r.floor).length;
+  const depth =
+    p.depth === "deep" ? ` · deep: ${p.rows.length - floorN} + ${floorN} floor row(s)` : "";
   row([
     {
-      text: `${sectionTitle("STAGE 2 PLAN", `proposed by the companion · @${short(p.sha)} · ${p.key.slice(0, 8)}`)}`,
+      text: `${sectionTitle("STAGE 2 PLAN", `proposed by the companion${depth} · @${short(p.sha)} · ${p.key.slice(0, 8)}`)}`,
     },
   ]);
   const off = st.planOff.key === p.key ? st.planOff.rows : [];

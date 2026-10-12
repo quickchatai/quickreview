@@ -35,7 +35,8 @@
 // `scan/stage2-start-result.json` (the engine's answer).
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { RowPrice, Stage2Row, Stage2RowRequest } from "./stage2.js";
+import type { ScanDepth } from "../config.js";
+import type { RowPrice, Stage2Floor, Stage2Row, Stage2RowRequest } from "./stage2.js";
 
 export const STAGE2_FILE = "scan/stage2.json";
 export const STAGE2_START_FILE = "scan/stage2-start.json";
@@ -57,7 +58,17 @@ export interface StoredStage2Proposal {
   runnable: number;
   over_budget_usd: number;
   validator: boolean;
+  /** The depth it was made at — a start re-plans at this depth, whatever
+   * `[scan] depth` says by then. Absent = standard (a proposal stored before
+   * depths). */
+  depth?: ScanDepth;
+  /** A deep proposal's floor: its lenses, and what it left out. */
+  floor?: Stage2Floor | null;
 }
+
+/** The depth a stored proposal was made at. */
+export const proposalDepth = (p: Pick<StoredStage2Proposal, "depth">): ScanDepth =>
+  p.depth === "deep" ? "deep" : "standard";
 
 export interface Stage2File {
   version: number;
@@ -314,14 +325,21 @@ export function stage2ClickOutcome(home: string, request: string): string | null
 // ---- a row's price, as the preview names it -------------------------------------
 
 /** Whether a row's price is a measurement of the row's own lens at its own
- * settings — every other basis is an estimate. */
+ * settings and depth — every other basis is an estimate. */
 export function priceIsMeasured(p: RowPrice): boolean {
-  return p.basis === "measured";
+  return p.basis === "measured" && p.across_depth !== true;
 }
 
 /** What the preview says a row's price stands on: `measured`, or
  * `estimate: …` and how it was made. */
 export function priceLabel(p: RowPrice): string {
+  const label = basisLabel(p);
+  return p.across_depth
+    ? `${p.basis === "measured" ? "estimate: measured" : label} — from readings at the other depth`
+    : label;
+}
+
+function basisLabel(p: RowPrice): string {
   const onOff = (v: boolean): string => (v ? "on" : "off");
   switch (p.basis) {
     case "measured":

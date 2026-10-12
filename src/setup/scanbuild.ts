@@ -14,7 +14,13 @@
 //   * `agents/scan/` joins `agents/` as a source, so `pass-scan` exists here
 //     and nowhere else;
 //   * every variant's tools are `SCAN_LEAF_TOOLS` — a scan leaf runs with no
-//     extensions, so there is no bash guard to stand between it and a shell.
+//     extensions, so there is no bash guard to stand between it and a shell;
+//   * a DEEP scan (`[scan] depth = "deep"`, or a stage-2 proposal made deep)
+//     also composes the `depth: "deep"` addenda: `scan-deep-suggest` on
+//     `pass-scan` (a deep lens named for every focus file) and `scan-deep-dig`
+//     on every lens a scan may run (follow callers and siblings, the state ×
+//     obligation table, what each early exit drops). A standard scan build is
+//     byte-identical without them.
 //
 // Everything a PR build composes from the repo's profile composes here too
 // (the pack, the per-lens emphasis/ceiling/guide, a lens's `effort`), so a
@@ -118,8 +124,9 @@ export function scanPassModels(cfg: Pick<Config, "models" | "scan">): Record<str
   };
 }
 
-/** Build the scan agents into `outDir` — `buildAgents` in `"scan"` mode, the
- * profile's pack and tuning composed exactly as a PR build composes them. */
+/** Build the scan agents into `outDir` — `buildAgents` in `"scan"` mode at
+ * `cfg.scan.depth`, the profile's pack and tuning composed exactly as a PR
+ * build composes them. */
 export function buildScanAgents(
   root: string,
   outDir: string,
@@ -129,6 +136,7 @@ export function buildScanAgents(
   return buildAgents(join(root, "agents"), outDir, {
     root,
     mode: "scan",
+    scanDepth: cfg.scan.depth,
     extraSrcDirs: [join(root, SCAN_AGENTS_SRC)],
     tiers: cfg.models.tiers,
     riskPasses: cfg.models.risk_passes,

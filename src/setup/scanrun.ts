@@ -42,6 +42,18 @@
 // what a re-read file no longer reports is fixed, or handed to the companion
 // as a match question when a fresh finding might be the same one.
 //
+// DEPTH (`[scan] depth`, profile over config.toml): a deep run builds the
+// agents deep (scanbuild.ts — the deep suggest and dig addenda), lifts stage
+// 1's suggestion cap to `SCAN_DEEP_MAX_SUGGESTIONS`, writes `depth: "deep"` on
+// its ledger rows and reads coverage at its depth: a file the ledger holds
+// only a standard reading of is read again by a deep run (ledger.ts). It is
+// priced from readings at its depth, or — when none prices it — from readings
+// at the other depth, and the preview says so (`rate_across_depth`, a row's
+// `across_depth`). A stage-2 proposal records the depth it was made at — the
+// propose call's `deep`, else `[scan] depth` — and a start re-plans and
+// builds at that depth; a deep one adds the floor (stage2.ts). The depth is
+// part of a deep plan's key, so a key never starts a run at another depth.
+//
 // Where a case runs: background pi subagents inside the companion (the case
 // runner port), from the scan agent build — `pass-scan`, and the validator
 // when `[scan] validator` is on, both built with the scan-mode anchor
@@ -66,7 +78,7 @@
 import { posix } from "node:path";
 import type { LensTuningMap } from "../lenstuning.js";
 import { PASS_TIER_ORDER, type PassTier } from "../types.js";
-import type { ScanConfig } from "../config.js";
+import type { ScanConfig, ScanDepth } from "../config.js";
 import type { CaseOutcome, CaseRunner, Refusal, StateFs } from "./engine.js";
 import {
   FindingsStore,
@@ -100,6 +112,7 @@ import {
   planStage1,
   scanCasePrompt,
   scanValidatorPrompt,
+  SCAN_DEEP_MAX_SUGGESTIONS,
   SCAN_PASS,
   type ExclusionReason,
   type PromptContext,
@@ -126,6 +139,7 @@ import {
   parseStage2File,
   parseStartRequest,
   parseStartResult,
+  proposalDepth,
   STAGE2_FILE,
   STAGE2_RESULT_FILE,
   STAGE2_START_FILE,
@@ -303,7 +317,14 @@ export interface ScanRun {
   /** Priced cost, plus the estimate of every case that finished unpriced. */
   spent_usd: number;
   unpriced_cases: number;
-  settings: { tier: PassTier; effort: string; validator: boolean; validate_tier: PassTier | null };
+  settings: {
+    tier: PassTier;
+    effort: string;
+    validator: boolean;
+    validate_tier: PassTier | null;
+    /** `"deep"` for a deep run; absent = standard. */
+    depth?: ScanDepth;
+  };
   cases: ScanCaseState[];
   problems: string[];
   /** What the run's end did to the stored findings; null until it
@@ -353,6 +374,11 @@ export interface ScanPreview {
   /** The run would stop hard here. */
   cap_usd: number;
   rate: ScanRate | null;
+  /** The run's depth (`[scan] depth`). */
+  depth: ScanDepth;
+  /** The rate stands on readings at the other depth: nothing at this depth
+   * is priced at these settings yet. */
+  rate_across_depth: boolean;
   /** Priced cases the rate stands on, and how many calibration wants. */
   calibration: { measured: number; wanted: number };
   /** Stage-1 cases left after this run (all of them, for a calibration). */
@@ -551,6 +577,7 @@ export class ScanRunner {
     if (error !== null) return { ok: false, errors: [error] };
     const settings = s.settings;
     const cfg = settings.scan;
+    const depth = cfg.depth;
     // A delta compares against the last scan: each file's newest content the
     // ledger read, and the tree that scan read (listed, not materialised).
     let basis: { since: string; read: Map<string, string>; baseline: Map<string, string> } | null =
@@ -582,12 +609,14 @@ export class ScanRunner {
       files: tree.files,
       linesOf: (p) => tree.lines(p),
       whyUnreadable: (p) => tree.whyUnreadable?.(p) ?? null,
-      covered: coveredBy(entries, SCAN_PASS),
-      partial: partialRanges(entries, SCAN_PASS),
+      // Coverage at the run's depth: a deep run reads again what only a
+      // standard reading covers.
+      covered: coveredBy(entries, SCAN_PASS, depth),
+      partial: partialRanges(entries, SCAN_PASS, depth),
       // Coverage first: never-read and cut-short files run before changed
       // ones, so the hard stop never starves the same tail run after run.
       history: new Map(
-        [...readings(entries, SCAN_PASS)].map(([path, r]) => [
+        [...readings(entries, SCAN_PASS, depth)].map(([path, r]) => [
           path,
           { blob: r.blob, complete: r.complete, at: r.newest.at },
         ]),
@@ -603,7 +632,10 @@ export class ScanRunner {
       effort: cfg.effort,
       validator: cfg.validator,
     };
-    const rate = measuredRate(entries, key);
+    // Priced at the run's depth; from readings at the other depth only when
+    // none at this one is priced yet (and the preview says so).
+    const own = measuredRate(entries, { ...key, depth });
+    const rate = own ?? measuredRate(entries, key);
     const tally = casesFor(entries, key);
     const measured = rate?.cases ?? 0;
     const blockers: string[] = [];
@@ -659,11 +691,12 @@ export class ScanRunner {
           : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
       );
     }
-    const runSettings = {
+    const runSettings: ScanRun["settings"] = {
       tier: cfg.tier,
       effort: cfg.effort,
       validator: cfg.validator,
       validate_tier: cfg.validator ? cfg.tier : null,
+      ...(depth === "deep" ? { depth } : {}),
     };
     const preview: ScanPreview = {
       key: planKey({
@@ -686,6 +719,8 @@ export class ScanRunner {
       estimate_usd: estimate,
       cap_usd: cap,
       rate,
+      depth,
+      rate_across_depth: own === null && rate !== null,
       calibration: { measured, wanted: cfg.calibration_units },
       remaining_cases: mode === "calibration" ? plan.cases.length - cases.length : 0,
       excluded: plan.excluded,
@@ -797,6 +832,7 @@ export class ScanRunner {
           effort: preview.settings.effort,
           validator: preview.settings.validator,
           validate_tier: preview.settings.validate_tier,
+          ...(preview.settings.depth ? { depth: preview.settings.depth } : {}),
         },
       },
       jobs,
@@ -949,10 +985,14 @@ export class ScanRunner {
     }
   }
 
+  /** Plan the companion's rows at `deep` (true / false), or at `[scan] depth`
+   * when it is undefined; the settings returned carry that depth, so the
+   * build and the run are at it too. */
   private async planStage2(
     request: Stage2RowRequest[],
     budgetUsd: number | null,
     ref: string | undefined,
+    deep: boolean | undefined,
   ): Promise<Stage2Planned> {
     const s = this.ports.settings();
     if (!s.ok) return s;
@@ -974,7 +1014,9 @@ export class ScanRunner {
     const tree = opened.tree;
     const { entries, error } = this.ledger.load();
     if (error !== null) return { ok: false, errors: [error] };
-    const settings = s.settings;
+    const depth: ScanDepth =
+      deep === undefined ? s.settings.scan.depth : deep ? "deep" : "standard";
+    const settings: ScanSettings = { ...s.settings, scan: { ...s.settings.scan, depth } };
     const cfg = settings.scan;
     const plan = planStage2({
       rows: request,
@@ -988,10 +1030,11 @@ export class ScanRunner {
       lenses: settings.lenses,
       riskPasses: settings.riskPasses ?? [],
       defaultTier: cfg.tier,
-      covered: (lens) => coveredBy(entries, lens),
-      partial: (lens) => partialRanges(entries, lens),
-      price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort),
+      covered: (lens) => coveredBy(entries, lens, depth),
+      partial: (lens) => partialRanges(entries, lens, depth),
+      price: (lens, tier, effort) => priceStage2Row(entries, cfg, lens, tier, effort, depth),
       budgetUsd,
+      ...(depth === "deep" ? { floor: cfg.deep_lenses } : {}),
     });
     if (!plan.ok) return { ok: false, errors: plan.errors };
     const runnable = plan.rows.filter((r) => r.status === "run");
@@ -1007,6 +1050,7 @@ export class ScanRunner {
       ]),
       validator: cfg.validator,
       cap: Math.round(plan.total_usd * 1e6),
+      ...(depth === "deep" ? { depth } : {}),
     });
     const proposal: StoredStage2Proposal = {
       key,
@@ -1019,6 +1063,8 @@ export class ScanRunner {
       runnable: plan.runnable,
       over_budget_usd: plan.over_budget_usd,
       validator: cfg.validator,
+      depth,
+      floor: plan.floor,
     };
     return { ok: true, proposal, tree, settings, cut: cut.cut };
   }
@@ -1026,6 +1072,8 @@ export class ScanRunner {
   /**
    * Plan and STORE a stage-2 proposal from the companion's rows: checked,
    * tests paired, priced from the ledger, fitted to `budget_usd` when given.
+   * `deep` (true / false) sets its depth, else `[scan] depth`; a deep one adds
+   * the floor after the companion's rows, which may then be none.
    * Runs nothing. The stored proposal replaces the previous one — it is what
    * the TUI shows and what a start's key must name.
    */
@@ -1033,11 +1081,16 @@ export class ScanRunner {
     rows?: unknown;
     budget_usd?: unknown;
     sha?: string;
+    deep?: unknown;
   }): Promise<{ ok: true; proposal: Stage2Proposal } | Refusal> {
-    if (!Array.isArray(args.rows))
+    const rows = args.rows ?? [];
+    if (!Array.isArray(rows))
       return { ok: false, errors: ["`rows` must be a list of { lens, files, tier?, reason }"] };
+    if (args.deep !== undefined && args.deep !== null && typeof args.deep !== "boolean")
+      return { ok: false, errors: ["`deep` must be true or false (or left out)"] };
+    const deep = typeof args.deep === "boolean" ? args.deep : undefined;
     const request: Stage2RowRequest[] = [];
-    for (const [i, r] of args.rows.entries()) {
+    for (const [i, r] of rows.entries()) {
       if (typeof r !== "object" || r === null || Array.isArray(r))
         return { ok: false, errors: [`row-${i + 1}: not a { lens, files, tier?, reason } object`] };
       const o = r as Record<string, unknown>;
@@ -1066,7 +1119,7 @@ export class ScanRunner {
       }
       budget = args.budget_usd;
     }
-    const p = await this.planStage2(request, budget, args.sha);
+    const p = await this.planStage2(request, budget, args.sha, deep);
     if (!p.ok) return p;
     try {
       this.ports.state.write(
@@ -1146,10 +1199,12 @@ export class ScanRunner {
         ],
       };
     }
+    // At the depth it was made at, whatever `[scan] depth` says now.
     const p = await this.planStage2(
       stored.proposal.request,
       stored.proposal.budget_usd,
       stored.proposal.sha,
+      proposalDepth(stored.proposal) === "deep",
     );
     if (!p.ok) return p;
     if (p.proposal.key !== key) {
@@ -1224,6 +1279,7 @@ export class ScanRunner {
           effort: "per row",
           validator: cfg.validator,
           validate_tier: cfg.validator ? top : null,
+          ...(cfg.depth === "deep" ? { depth: cfg.depth } : {}),
         },
       },
       jobs,
@@ -1511,7 +1567,11 @@ export class ScanRunner {
       const r = rangeOf.get(cand.path);
       return r !== undefined && (cand.end < r.start || cand.start > r.end);
     };
-    const answer = parseScanAnswer(outcome.output, { root: tree.root });
+    const deep = settings.scan.depth === "deep";
+    const answer = parseScanAnswer(outcome.output, {
+      root: tree.root,
+      ...(deep && job.suggestions ? { maxSuggestions: SCAN_DEEP_MAX_SUGGESTIONS } : {}),
+    });
     // Only findings or an explicit NONE is a reading. Prose with neither (a
     // tool error told in words, a broken grammar) is not "nothing found",
     // and must never enter the ledger as clean coverage — that reading is
@@ -1723,6 +1783,7 @@ export class ScanRunner {
       tier: job.tier,
       effort: job.effort,
       validator: settings.scan.validator,
+      ...(deep ? { depth: "deep" as const } : {}),
       sha: run.sha,
       lines: f.lines,
       cost_usd: cost === null ? null : (cost * Math.max(f.lines, 1)) / total,

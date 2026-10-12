@@ -14,6 +14,13 @@
 // of its newest reading cover every line — a run cut short between ranges
 // leaves the rest to read, and changed content re-reads every range.
 //
+// A row records the DEPTH it was read at (`[scan] depth`; absent = standard,
+// so a ledger written before depths reads as standard). A deep reading is its
+// own coverage: a standard reading of a file never covers it for a deep run
+// (a deep run on a scanned repo would otherwise read nothing), while a deep
+// reading covers it for a standard one. A standard row and a deep row of the
+// same file, content and lens stand side by side.
+//
 // A row is written only when its case FINISHED — a case cut short leaves no
 // row, so it is read again in full. A case's cost is apportioned over its
 // files by lines; a case the runner could not price writes null costs, which
@@ -23,6 +30,7 @@
 // state port. An unreadable ledger is REPORTED and refuses writes: it is the
 // record of money already spent, and starting over on top of it would pay
 // for the same files twice.
+import type { ScanDepth } from "../config.js";
 import type { StateFs } from "./engine.js";
 import { coverKey, rangesCover, type FileRange, type ScanRate } from "./scan.js";
 
@@ -41,6 +49,8 @@ export interface LedgerEntry {
   effort: string;
   /** Whether the validator ran over the case (it is part of the price). */
   validator: boolean;
+  /** `"deep"` for a deep scan's reading; absent = standard. */
+  depth?: ScanDepth;
   sha: string;
   /** Lines read: the file's, or its range's. */
   lines: number;
@@ -53,21 +63,27 @@ export interface LedgerEntry {
   at: string;
 }
 
-/** What a price is measured over: the same lens at the same settings. */
+/** What a price is measured over: the same lens at the same settings — at
+ * one depth when `depth` is given, at any otherwise. */
 export interface RateKey {
   lens: string;
   tier: string;
   effort: string;
   validator: boolean;
+  depth?: ScanDepth;
 }
+
+/** The depth a row was read at. */
+export const depthOf = (e: Pick<LedgerEntry, "depth">): ScanDepth =>
+  e.depth === "deep" ? "deep" : "standard";
 
 export interface LedgerFile {
   version: number;
   entries: LedgerEntry[];
 }
 
-const entryKey = (e: Pick<LedgerEntry, "path" | "blob" | "lens" | "range">): string =>
-  `${e.lens}\0${coverKey(e.path, e.blob)}${e.range ? `\0${e.range.start}-${e.range.end}` : ""}`;
+const entryKey = (e: Pick<LedgerEntry, "path" | "blob" | "lens" | "range" | "depth">): string =>
+  `${e.lens}\0${coverKey(e.path, e.blob)}${e.range ? `\0${e.range.start}-${e.range.end}` : ""}${depthOf(e) === "deep" ? "\0deep" : ""}`;
 
 export class Ledger {
   constructor(private readonly state: StateFs) {}
@@ -115,8 +131,9 @@ export class Ledger {
     }
   }
 
-  /** Add (or replace, by file + content hash + lens) finished rows. Throws
-   * when the stored ledger cannot be read — never writes over it. */
+  /** Add (or replace, by file + content hash + lens + range + depth)
+   * finished rows. Throws when the stored ledger cannot be read — never
+   * writes over it. */
   record(rows: readonly LedgerEntry[]): void {
     const { entries, error } = this.load();
     if (error !== null) throw new Error(error);
@@ -128,13 +145,18 @@ export class Ledger {
 }
 
 /** `path\0blob` of each file's NEWEST reading by `lens` — the same newest
- * row `FindingsStore.reconcile` settles findings against. An older reading a
- * later one superseded covers nothing: its findings may since have been
- * settled `fixed`, so content that comes back to it (a revert) must be read
- * again for them to come back too. */
-export function coveredBy(entries: readonly LedgerEntry[], lens: string): Set<string> {
+ * row `FindingsStore.reconcile` settles findings against — complete at
+ * `depth` (`readings`). An older reading a later one superseded covers
+ * nothing: its findings may since have been settled `fixed`, so content that
+ * comes back to it (a revert) must be read again for them to come back too. */
+export function coveredBy(
+  entries: readonly LedgerEntry[],
+  lens: string,
+  depth: ScanDepth = "standard",
+): Set<string> {
   const out = new Set<string>();
-  for (const [path, r] of readings(entries, lens)) if (r.complete) out.add(coverKey(path, r.blob));
+  for (const [path, r] of readings(entries, lens, depth))
+    if (r.complete) out.add(coverKey(path, r.blob));
   return out;
 }
 
@@ -154,8 +176,17 @@ export interface Reading {
   runs: string[];
 }
 
-/** Every path's newest reading by `lens`. */
-export function readings(entries: readonly LedgerEntry[], lens: string): Map<string, Reading> {
+/** Every path's newest reading by `lens`, as `depth` counts it. The newest
+ * content is settled by every row whatever its depth (a later reading of
+ * other content supersedes a deep one too); within it, a `"standard"` reading
+ * is made of every row — a deep reading is at least a standard one — and a
+ * `"deep"` reading of the deep rows alone, so a path whose newest content was
+ * read only at standard depth has no deep reading. */
+export function readings(
+  entries: readonly LedgerEntry[],
+  lens: string,
+  depth: ScanDepth = "standard",
+): Map<string, Reading> {
   const byPath = new Map<string, LedgerEntry[]>();
   for (const e of entries) {
     if (e.lens !== lens) continue;
@@ -170,15 +201,17 @@ export function readings(entries: readonly LedgerEntry[], lens: string): Map<str
       .map((e, i) => ({ e, i }))
       .sort((a, b) => (a.e.at < b.e.at ? -1 : a.e.at > b.e.at ? 1 : a.i - b.i));
     const newest = sorted[sorted.length - 1]!.e;
-    const streak: LedgerEntry[] = [];
+    const all: LedgerEntry[] = [];
     for (let k = sorted.length - 1; k >= 0 && sorted[k]!.e.blob === newest.blob; k--)
-      streak.push(sorted[k]!.e);
+      all.push(sorted[k]!.e);
+    const streak = depth === "deep" ? all.filter((e) => depthOf(e) === "deep") : all;
+    if (streak.length === 0) continue;
     const whole = streak.some((e) => !e.range);
     const ranges = streak.filter((e) => e.range).map((e) => e.range!);
     const total = ranges[0]?.total ?? 0;
     out.set(path, {
       blob: newest.blob,
-      newest,
+      newest: streak[0]!,
       complete: whole || (ranges.length > 0 && rangesCover(ranges, 1, total)),
       ranges: whole ? [] : ranges,
       runs: [...new Set(streak.map((e) => e.run))],
@@ -187,14 +220,15 @@ export function readings(entries: readonly LedgerEntry[], lens: string): Map<str
   return out;
 }
 
-/** `path\0blob` → the ranges of each newest reading by `lens` that is not
- * yet complete: the ranges a plan need not read again. */
+/** `path\0blob` → the ranges of each newest reading by `lens` at `depth` that
+ * is not yet complete: the ranges a plan need not read again. */
 export function partialRanges(
   entries: readonly LedgerEntry[],
   lens: string,
+  depth: ScanDepth = "standard",
 ): Map<string, FileRange[]> {
   const out = new Map<string, FileRange[]>();
-  for (const [path, r] of readings(entries, lens))
+  for (const [path, r] of readings(entries, lens, depth))
     if (!r.complete && r.ranges.length > 0) out.set(coverKey(path, r.blob), r.ranges);
   return out;
 }
@@ -230,7 +264,8 @@ export function measuredRate(entries: readonly LedgerEntry[], key: RateKey): Sca
       e.lens === key.lens &&
       e.tier === key.tier &&
       e.effort === key.effort &&
-      e.validator === key.validator,
+      e.validator === key.validator &&
+      (key.depth === undefined || depthOf(e) === key.depth),
   );
 }
 

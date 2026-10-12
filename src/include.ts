@@ -27,7 +27,8 @@ import { stripModelDocs } from "./promptdoc.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
-import { MODELS_TIER_DEFAULTS, THINKING_LEVELS } from "./config.js";
+import { MODELS_TIER_DEFAULTS, THINKING_LEVELS, type ScanDepth } from "./config.js";
+import { SCAN_DEEP_LENSES } from "./passes.js";
 import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
@@ -304,6 +305,10 @@ export const PASS_TIERS: readonly PassTier[] = PASS_TIER_ORDER;
 /** The single pass that consumes findings instead of producing them. */
 export const VALIDATE_PASS = "pass-validate";
 
+/** Scan stage 1's lens (agents/scan/pass-scan.md) — built only into the
+ * companion's scan build. */
+export const SCAN_PASS = "pass-scan";
+
 /** No path predicate: added mid-round by the session, or planned by its
  * content trigger when the diff touches synchronisation or the PR text says
  * race/lock/thread-safe (heuristics.ts SUBLENS_TRIGGERS; the
@@ -347,6 +352,12 @@ export interface PassAddendum {
    * never a PR round's — the daemon's build is a `"pr"` build, always.
    */
   mode?: BuildMode;
+  /**
+   * Composed only in a scan build of this depth (`[scan] depth`). Absent ⇒
+   * every depth. Only a `mode: "scan"` entry carries one; a PR build is
+   * always `"standard"`, so a `"deep"` entry never reaches it.
+   */
+  depth?: ScanDepth;
 }
 
 /** What an agent build is for: a PR round (the daemon, the bench,
@@ -361,6 +372,11 @@ export function addendumInEcosystem(addendum: PassAddendum, ecosystem: Ecosystem
 /** Does `addendum` compose into a build of `mode`? */
 export function addendumInMode(addendum: PassAddendum, mode: BuildMode): boolean {
   return addendum.mode === undefined || addendum.mode === mode;
+}
+
+/** Does `addendum` compose into a build of `depth`? */
+export function addendumInDepth(addendum: PassAddendum, depth: ScanDepth): boolean {
+  return addendum.depth === undefined || addendum.depth === depth;
 }
 
 /** Does `scope` bind `pass`? */
@@ -1074,6 +1090,38 @@ export const SCAN_DELIVERY_ADDENDUM =
   "- **Two sources that lag each other.** Where one loop or handler reads two sources of truth — a webhook and a poll, a cache and its table, a local record and a remote API — ask what each branch does while one is behind the other, and apply the fetch-window rule above to every read whose window moves with a boundary.\n\n" +
   "`NONE` is correct only after that reading: say in one or two lines which consumptions you traced and why each exit is safe, or that the focus files consume no delivery.\n";
 
+/** Suggestions a deep scan's stage 1 may make per case (the cheap pass's
+ * own cap is five): enough for every focus file of a full case to be named. */
+export const SCAN_DEEP_MAX_SUGGESTIONS = 20;
+
+// A deep scan's stage 1 points a deep lens at every focus file, and names the
+// quality, consistency and delivery lenses where the code shows their shape —
+// the cheap pass's own guidance names only risk areas, so left alone it
+// never suggests them. A deep scan build only (`depth: "deep"`).
+export const SCAN_DEEP_SUGGEST_ADDENDUM =
+  "\n## Deep scan — a deep lens for every focus file (sandbox rule; supersedes the five-suggestion cap and the risk-area focus of your SUGGEST block above)\n" +
+  `This is a DEEP scan. Deep lenses follow you over every file, and your SUGGEST block tells them where to look hardest and what to chase. Name every focus file in at least one SUGGEST row — a row may name several files when one lens and one reason fit them all — in up to ${SCAN_DEEP_MAX_SUGGESTIONS} rows. \`SUGGEST NONE\` is not an answer here.\n\n` +
+  "Point past the risk areas above. What a first look misses lives between functions, so name the quality, consistency and delivery lenses wherever the code shows their shape, and say in the reason what to compare:\n\n" +
+  "- **Sibling handlers or branches doing the same job** (the handlers of different kinds of one event, the arms of a switch, an if/else chain over a state) — `pass-consistency`: does one sibling skip, reorder or forget a step the others take?\n" +
+  "- **A rule written twice** (one check, mapping, threshold or parse in two places) — `pass-duplication`, naming both sites.\n" +
+  "- **A loop or switch over a state, kind or source** — `pass-consistency` for what each branch owes, `pass-maintainability` when the dispatch is hard to follow or a branch's obligations are left implicit.\n" +
+  "- **A poll, webhook, queue, retry or reconcile pass that recovers dropped events** — `pass-delivery`: where is each delivery consumed, and what delivers it again after an early exit?\n" +
+  "- **A helper, layer or abstraction that does too much or too little** — `pass-simplicity` or `pass-abstraction`.\n\n" +
+  "Every row still names one lens from your task string's list and one line on what to chase. Your findings block is unchanged: report what is plainly wrong, and leave the digging to the lenses you name.\n";
+
+// A deep scan's deep lenses dig: the defects a first look misses sit between
+// functions — one branch of a dispatch that owes what its siblings do, an
+// early exit after the edge that triggered it was already recorded. Every
+// lens a scan may run, in a deep scan build only (`depth: "deep"`).
+export const SCAN_DEEP_DIG_ADDENDUM =
+  "\n## Deep scan — dig past your row's files (sandbox rule)\n" +
+  "This is a DEEP scan: you run on these files to find what a first look over one unit misses, and that lives between functions. The focus files are where you start, not where your reading stops.\n\n" +
+  "- **Follow the code across files.** For every function in the focus files your lens has a question about, read its callers, its callees and its siblings — the other handlers of the same event, the other arms of the same dispatch, the other implementations of the same interface — wherever they live under the tree root.\n" +
+  "- **Write down the state × obligation table**, in your reasoning. For code that branches on a state, kind or source — a switch, an if/else chain, a loop whose body ends early for some inputs — list every state, the terminal ones too (closed, paused, failed, unknown), against what each sibling branch does: applies the event, upgrades or clears a field, records or logs it, schedules work, skips. Report the cell that differs from its siblings with no reason in the code — no comment, guard, test or recorded decision that says why.\n" +
+  '- **Every early exit names what it drops.** For each early `continue`, `return` or `break` in such code, name the input it drops and what delivers it again later. Check whether the triggering edge or level was RECORDED before the skip — a "last seen" stamped, a flag set, a key written, a request consumed: then nothing later sees that edge again, and the drop is permanent.\n' +
+  "- **Two sources, one loop.** When two sources of truth feed one loop (a webhook and a poll, a cache and its table, a local record and a remote API), ask what each branch does while one lags the other.\n\n" +
+  "A finding names the one cell or exit that is wrong, anchored where the defect happens — a focus file's lines when it is there, the sibling's when that is where the differing branch lives — and cites the siblings it was compared with (`path:line` each) in `evidence`.\n";
+
 // The scan's precision checklist. Scan findings refuted by an adversarial
 // skeptic fall into ten recurring classes (the analysis, with counts and
 // examples, is on the issue tracker: efforts/scan-and-setup/assets/
@@ -1378,6 +1426,22 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
   },
   // In a scan pass-delivery's checks read the code as it stands.
   { id: "scan-delivery", scope: ["pass-delivery"], mode: "scan", text: SCAN_DELIVERY_ADDENDUM },
+  // A deep scan only: stage 1 points a deep lens at every focus file…
+  {
+    id: "scan-deep-suggest",
+    scope: [SCAN_PASS],
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_SUGGEST_ADDENDUM,
+  },
+  // …and every lens a scan may run digs past its row's files.
+  {
+    id: "scan-deep-dig",
+    scope: SCAN_DEEP_LENSES,
+    mode: "scan",
+    depth: "deep",
+    text: SCAN_DEEP_DIG_ADDENDUM,
+  },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   {
     id: "ask-human-named-defect-validate",
@@ -1584,18 +1648,21 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
 ];
 
 /** The addenda binding `pass`, in composition order. `ecosystem` defaults to
- * Django, as everywhere on the ecosystem seam. */
+ * Django, as everywhere on the ecosystem seam; `depth` to `"standard"`, which
+ * is every PR build's. */
 export function addendaForPass(
   pass: string,
   registry: readonly PassAddendum[] = PASS_ADDENDA,
   ecosystem: EcosystemName = "django",
   mode: BuildMode = "pr",
+  depth: ScanDepth = "standard",
 ): PassAddendum[] {
   return registry.filter(
     (a) =>
       addendumApplies(a.scope, pass) &&
       addendumInEcosystem(a, ecosystem) &&
-      addendumInMode(a, mode),
+      addendumInMode(a, mode) &&
+      addendumInDepth(a, depth),
   );
 }
 
@@ -1605,8 +1672,9 @@ export function composeAddendum(
   registry: readonly PassAddendum[] = PASS_ADDENDA,
   ecosystem: EcosystemName = "django",
   mode: BuildMode = "pr",
+  depth: ScanDepth = "standard",
 ): string {
-  return addendaForPass(pass, registry, ecosystem, mode)
+  return addendaForPass(pass, registry, ecosystem, mode, depth)
     .map((a) => a.text)
     .join("");
 }
@@ -1641,6 +1709,10 @@ export interface BuildAgentsOptions {
    * runs with no extensions, so no bash guard stands between it and a shell,
    * and none of the memory tools exists in it. */
   mode?: BuildMode;
+  /** A scan build's depth (`[scan] depth`): a `"deep"` build also composes
+   * the `depth: "deep"` addenda. Default `"standard"`; a `"pr"` build is
+   * always `"standard"`, whatever this says. */
+  scanDepth?: ScanDepth;
   /** A `"pr"` build whose leaves the companion's case runner runs (the
    * profile replay): composed exactly as a PR round's build — no
    * scan-mode addendum — but every variant's tools are `SCAN_LEAF_TOOLS`,
@@ -1774,6 +1846,7 @@ export function buildAgents(
   const ecosystem = opts.ecosystem ?? "django";
   const vars = opts.vars ?? NEUTRAL_IDENTITY_VARS;
   const mode = opts.mode ?? "pr";
+  const depth: ScanDepth = mode === "scan" ? (opts.scanDepth ?? "standard") : "standard";
   const passFiles = (dir: string): string[] =>
     readdirSync(dir)
       .filter((f) => f.startsWith("pass-") && f.endsWith(".md"))
@@ -1810,6 +1883,7 @@ export function buildAgents(
         memory ? addenda : addenda.filter((a) => a.id !== MEMORY_ADDENDUM_ID),
         ecosystem,
         mode,
+        depth,
       );
     const only = opts.onlyTiers?.[pass];
     const passTiers = tiersForPass(pass, riskPasses, validateTier).filter(

@@ -13,7 +13,7 @@ import {
 import { globProblem } from "./glob.js";
 import type { LensTuningMap } from "./lenstuning.js";
 import type { PostingPolicy } from "./postingpolicy.js";
-import { ALL_PASSES } from "./passes.js";
+import { ALL_PASSES, SCAN_DEEP_FLOOR_LENSES, SCAN_DEEP_LENSES } from "./passes.js";
 import { PASS_TIER_ORDER, type PassTier } from "./types.js";
 
 export interface GithubConfig {
@@ -1940,7 +1940,21 @@ export interface ScanConfig {
    * until the first stage-2 run measures the real one; the hard stop holds
    * whatever it says. */
   unmeasured_rate_factor: number;
+  /** How hard the scan looks. `standard`: stage 1 is a cheap first look and
+   * stage 2 runs only the rows the companion proposes. `deep`: stage 1 names a
+   * deep lens for every focus file, every deep lens is told to dig past its
+   * row's files, and a stage-2 proposal adds the deterministic FLOOR — every
+   * `deep_lenses` lens over every file stage 1 reads. A deep reading is its own
+   * coverage: a file read only at `standard` is read again. */
+  depth: ScanDepth;
+  /** The deep floor's lenses, each a lens a scan may run
+   * (`SCAN_DEEP_LENSES`); one the profile switched off is skipped. */
+  deep_lenses: string[];
 }
+
+/** How hard a scan looks — `[scan] depth`. */
+export const SCAN_DEPTHS = ["standard", "deep"] as const;
+export type ScanDepth = (typeof SCAN_DEPTHS)[number];
 
 export const SCAN_DEFAULTS: ScanConfig = {
   effort: "low",
@@ -1953,12 +1967,21 @@ export const SCAN_DEFAULTS: ScanConfig = {
   case_max_files: 30,
   case_max_lines: 3000,
   unmeasured_rate_factor: 4,
+  depth: "standard",
+  deep_lenses: [...SCAN_DEEP_FLOOR_LENSES],
 };
 
 /** The `[scan]` keys a repo profile may override — what is about THIS repo
  * (how hard to look, whether to validate, what is not worth reading), never
  * the install's operating limits. */
-export const SCAN_PROFILE_KEYS = ["effort", "tier", "validator", "exclude"] as const;
+export const SCAN_PROFILE_KEYS = [
+  "effort",
+  "tier",
+  "validator",
+  "exclude",
+  "depth",
+  "deep_lenses",
+] as const;
 
 /**
  * Validate one `[scan]` table — config.toml's (every key) or a profile's
@@ -2016,6 +2039,25 @@ export function parseScanTable(
         if (typeof v === "number" && Number.isFinite(v) && v >= 1) out.unmeasured_rate_factor = v;
         else fail(key, "must be a number of at least 1", v);
         break;
+      case "depth":
+        if (typeof v === "string" && (SCAN_DEPTHS as readonly string[]).includes(v))
+          out.depth = v as ScanDepth;
+        else fail(key, `must be ${SCAN_DEPTHS.map((d) => `"${d}"`).join(" or ")}`, v);
+        break;
+      case "deep_lenses": {
+        if (!Array.isArray(v) || v.length === 0)
+          fail(key, "must be a non-empty array of lens names", v);
+        for (const l of v as unknown[]) {
+          if (typeof l !== "string" || !SCAN_DEEP_LENSES.includes(l))
+            fail(
+              key,
+              `entry ${JSON.stringify(l)} is not a lens a scan can run (one of: ${SCAN_DEEP_LENSES.join(", ")})`,
+              v,
+            );
+        }
+        out.deep_lenses = [...new Set(v as string[])];
+        break;
+      }
       default: {
         // The integer knobs.
         if (typeof v === "number" && Number.isInteger(v) && v >= 1) {

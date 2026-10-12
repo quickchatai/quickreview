@@ -178,7 +178,7 @@ companion is down shows as interrupted, never as "no scan".
 | `f` | filter: `state=new\|promoted\|dismissed\|fixed` `lens=<name>` `sev=P0…P3\|nit` `tier=confirmed\|likely\|doubtful\|unknown` `doubted` / `valid` |
 | `t` | step the tier filter: all → confirmed → likely → doubtful → unknown → all |
 | `F` | clear the filter the FINDINGS title is advertising |
-| `P` | swap the right pane to the stage 2 plan: rows, their cost, the kept total that is the hard stop, the budget |
+| `P` | swap the right pane to the stage 2 plan: rows, their cost, the kept total that is the hard stop, the budget — a deep proposal's title splits the companion's rows from the floor's (`floor-<n>`, each with its `deep floor: <lens> over <unit>` reason) |
 | `⏎` | in the plan: approve — the companion starts exactly the kept rows, stopped hard at their total |
 | ` ` | in the plan (space): toggle the selected row off / on |
 | `Esc` | in the plan: back to the findings |

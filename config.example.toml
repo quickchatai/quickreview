@@ -895,8 +895,8 @@ gzip_level = 6           # (clamped 1..9)
 # settings is a calibration run over a few units; every later cost preview is
 # priced from the coverage ledger's actual costs, and a run stops hard at the
 # estimate the operator approved. A repo profile's `[scan]` table overrides
-# effort / tier / validator / exclude (the profile wins); the rest is the
-# install's. All optional — these are the defaults.
+# effort / tier / validator / exclude / depth / deep_lenses (the profile
+# wins); the rest is the install's. All optional — these are the defaults.
 [scan]
 effort = "low"                 # stage 1's reasoning level: low | medium | high (= [models] effort_max)
 tier = "sol-med"               # whose model pass-scan runs on ([models.tiers])
@@ -908,6 +908,10 @@ concurrency = 8                # scan cases in flight at once (stage 1 and stage
 case_max_files = 30            # one case reads at most this much; a bigger unit splits, name kept
 case_max_lines = 3000          # (stage-2 rows too: split a bigger row)
 unmeasured_rate_factor = 4     # stage 2: a deep lens never priced here costs stage 1's rate × this
+depth = "standard"             # "deep": stage 1 names a deep lens for every file, every lens digs past its row's
+                               # files, a stage-2 proposal adds the floor below, and only a deep reading covers a file
+deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-maintainability"]
+                               # the deep floor: each of these over every file stage 1 reads (one switched off by the profile is skipped)
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are

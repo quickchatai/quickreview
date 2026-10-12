@@ -17,7 +17,10 @@
 //     lenses and tiers stage 2 may use — the companion's input;
 //   - scan_stage2_propose: the companion's rows (file set × deep lens × tier,
 //     reason) checked, tests paired, priced from the ledger and fitted to a
-//     budget when given one — stored, so the TUI can show it;
+//     budget when given one — stored, so the TUI can show it. A DEEP proposal
+//     (`[scan] depth = "deep"`, or `deep: true`; `deep: false` makes it
+//     standard) adds the floor after them — every `[scan] deep_lenses` lens
+//     over every file stage 1 reads — and the companion's rows may be none;
 //   - scan_stage2_start: start the stored proposal by its key — or only the
 //     runnable rows named in `rows`, stopped hard at their total — on the
 //     operator's word. The TUI's click reaches the same start through
@@ -90,7 +93,12 @@ const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixe
 
 export function renderPreview(p: ScanPreview): string {
   const out: string[] = [];
-  const head = `at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
+  const deep = p.depth === "deep";
+  const head = `${deep ? "(deep) " : ""}at ${p.sha.slice(0, 12)} — ${p.settings.tier} at ${p.settings.effort} effort, skeptic ${p.settings.validator ? `on (at the lens's tier, ${p.settings.validate_tier}; its cost is in the price)` : "off (findings stay unjudged — validity unknown)"}`;
+  // A rate measured at the other depth stands in until this depth is priced.
+  const across = p.rate_across_depth
+    ? ` — from readings at the other depth: nothing at ${p.depth} depth is priced at these settings yet`
+    : "";
   if (p.mode === "delta") {
     out.push(
       `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
@@ -100,7 +108,7 @@ export function renderPreview(p: ScanPreview): string {
           ? `; ${p.delta.owed} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first`
           : "") +
         `. Estimate ${usd(p.estimate_usd)}, measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate. ` +
+        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. ` +
         "No deep pass runs on a delta.",
     );
   } else if (p.mode === "calibration") {
@@ -115,7 +123,13 @@ export function renderPreview(p: ScanPreview): string {
     out.push(
       `STAGE 1 ${head}.`,
       `Estimate ${usd(p.estimate_usd)} for ${p.cases.length} case(s), ${p.files} files, ${p.lines} lines — measured at ` +
-        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s). The run stops hard at the estimate.`,
+        `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate.`,
+    );
+  }
+  if (deep) {
+    out.push(
+      "DEEP: pass-scan names a deep lens for every focus file, and a file the ledger holds only a standard reading of is read again. " +
+        "A deep stage 2 proposal then adds the floor — the [scan] deep_lenses over every file this stage reads.",
     );
   }
   const rows = p.cases
@@ -182,7 +196,7 @@ export function renderStatus(s: ScanStatus): string {
     const findings = r.cases.reduce((n, c) => n + c.findings, 0);
     const doubted = r.cases.reduce((n, c) => n + c.doubted, 0);
     out.push(
-      `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
+      `${r.id} (${r.mode === "stage2" ? "stage 2" : r.mode}${r.settings.depth === "deep" ? ", deep" : ""}) at ${r.sha.slice(0, 12)}: ${r.display.toUpperCase()} — ${done}/${r.cases.length} cases, ` +
         `${findings} finding(s)${tierCounts(r, findings, doubted)}, spent ${usd(r.spent_usd)} of ${usd(r.cap_usd)}` +
         (r.unpriced_cases
           ? ` (${r.unpriced_cases} unpriced case(s) counted at their estimate)`
@@ -337,38 +351,94 @@ export function renderSuggestions(
       "",
       `Stage 2 may run: ${lenses.map((l) => `${l} (${lensTiers(settings.lenses, l, settings.riskPasses ?? []).join("|")})`).join(", ")}.`,
       `One row reads at most ${settings.scan.case_max_files} files / ${settings.scan.case_max_lines} lines, paired tests included; at most ${MAX_STAGE2_ROWS} rows.`,
+      settings.scan.depth === "deep"
+        ? `Depth: deep — a proposal adds the floor after your rows (${settings.scan.deep_lenses.filter((l) => lenses.includes(l)).join(", ") || "no lens: every deep_lenses lens is switched off"} over every file stage 1 reads; not counted in the ${MAX_STAGE2_ROWS}), so your rows may be none. deep: false proposes a standard plan.`
+        : "Depth: standard — deep: true on a proposal makes it deep (the floor, every lens told to dig).",
     );
   }
   return out.join("\n");
 }
 
+/** The floor's rows, one line per lens: its row ids, files, cost and what
+ * the budget left out — the floor is bounded by the tree, so its rows are
+ * summed, never listed one by one. */
+function renderFloor(p: StoredStage2Proposal): string[] {
+  const floor = p.rows.filter((r) => r.floor);
+  const out: string[] = [];
+  const lenses = [...new Set(floor.map((r) => r.lens))];
+  for (const lens of lenses) {
+    const rows = floor.filter((r) => r.lens === lens);
+    const run = rows.filter((r) => r.status === "run");
+    const over = rows.filter((r) => r.status === "over-budget");
+    const covered = rows.filter((r) => r.status === "covered");
+    const ids = rows.length === 1 ? rows[0]!.id : `${rows[0]!.id}…${rows[rows.length - 1]!.id}`;
+    out.push(
+      `  ${lens} (floor ${ids}) at ${rows[0]!.tier}: ${rows.length} row(s) over ${[...new Set(rows.flatMap((r) => r.units))].length} unit(s), ` +
+        `${rows.reduce((n, r) => n + r.files.length, 0)} file(s), ${rows.reduce((n, r) => n + r.lines, 0)} lines — ` +
+        `${run.length} to run, ~${usd(run.reduce((n, r) => n + r.estimate_usd, 0))} (${priceLabel(rows[0]!.price)})` +
+        (covered.length ? `; ${covered.length} covered (free)` : "") +
+        (over.length
+          ? `; OVER BUDGET, left out: ${over.map((r) => r.id).join(", ")} (${usd(over.reduce((n, r) => n + r.estimate_usd, 0))})`
+          : ""),
+    );
+  }
+  const f = p.floor;
+  if (f) {
+    if (f.lenses.length === 0)
+      out.push("  The floor has no lens: every [scan] deep_lenses lens is switched off.");
+    if (f.skipped.length > 0)
+      out.push(`  Switched off by the profile, no floor rows: ${f.skipped.join(", ")}.`);
+    if (f.covered > 0 || f.named > 0)
+      out.push(
+        `  Left out of the floor: ${f.covered} file × lens already read deep at this content` +
+          (f.named > 0 ? `, ${f.named} named by your rows for the same lens` : "") +
+          ".",
+      );
+  }
+  return out;
+}
+
 export function renderProposal(p: StoredStage2Proposal): string {
   const out: string[] = [];
   const run = p.rows.filter((r) => r.status === "run");
+  const deep = p.depth === "deep";
   out.push(
-    `STAGE 2 proposal at ${p.sha.slice(0, 12)} — ${run.length} row(s) to run, estimate ${usd(p.cap_usd)} (the run stops hard there)` +
+    `STAGE 2 proposal ${deep ? "(deep) " : ""}at ${p.sha.slice(0, 12)} — ${run.length} row(s) to run, estimate ${usd(p.cap_usd)} (the run stops hard there)` +
       (p.budget_usd !== null ? `, fitted to a ${usd(p.budget_usd)} budget` : "") +
       `; validator ${p.validator ? "on" : "off"}.`,
   );
-  const rows = p.rows.map((r) => {
-    const mark =
-      r.status === "run"
-        ? ""
-        : r.status === "covered"
-          ? " — COVERED (already read at this content, free)"
-          : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
-    const price = priceLabel(r.price);
-    return [
-      `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
-        (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
-        `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
-      `      ${r.reason}`,
-      `      files: ${r.files.map((f) => f.path).join(", ")}`,
-      ...(r.tests.length ? [`      tests: ${r.tests.map((f) => f.path).join(", ")}`] : []),
-      ...(r.unpaired.length ? [`      not paired (row full): ${r.unpaired.join(", ")}`] : []),
-    ].join("\n");
-  });
-  out.push(rows.join("\n"));
+  if (deep) {
+    const own = run.filter((r) => !r.floor);
+    const floor = run.filter((r) => r.floor);
+    const sum = (rs: readonly { estimate_usd: number }[]): number =>
+      rs.reduce((n, r) => n + r.estimate_usd, 0);
+    out.push(
+      `DEEP: your rows ${own.length} to run, ~${usd(sum(own))}; the floor ${floor.length} to run, ~${usd(sum(floor))}. ` +
+        "Every lens is told to dig past its row's files; a standard reading covers nothing here, and the floor runs after your rows (the budget fits them first).",
+    );
+  }
+  const rows = p.rows
+    .filter((r) => !r.floor)
+    .map((r) => {
+      const mark =
+        r.status === "run"
+          ? ""
+          : r.status === "covered"
+            ? " — COVERED (already read at this content, free)"
+            : ` — OVER BUDGET (${usd(r.estimate_usd)}, left out)`;
+      const price = priceLabel(r.price);
+      return [
+        `  ${r.id}: ${r.lens} at ${r.tier} over ${r.units.join(" + ")}${r.units.length > 1 ? " (cross-module)" : ""} — ${r.files.length} file(s)` +
+          (r.tests.length ? ` + ${r.tests.length} paired test(s)` : "") +
+          `, ${r.lines} lines, ~${usd(r.estimate_usd)} (${price})${mark}`,
+        `      ${r.reason}`,
+        `      files: ${r.files.map((f) => f.path).join(", ")}`,
+        ...(r.tests.length ? [`      tests: ${r.tests.map((f) => f.path).join(", ")}`] : []),
+        ...(r.unpaired.length ? [`      not paired (row full): ${r.unpaired.join(", ")}`] : []),
+      ].join("\n");
+    });
+  if (rows.length > 0) out.push(rows.join("\n"));
+  if (deep) out.push(["The deep floor:", ...renderFloor(p)].join("\n"));
   const priced = p.rows.filter((r) => r.status !== "covered");
   const measured = priced.filter((r) => priceIsMeasured(r.price)).length;
   if (priced.length > 0) {
@@ -418,7 +488,8 @@ export function scanToolDefinitions(
       "What scan stage 1 would read at a commit and what it would cost: pass-scan over every unit of the saved unit cut (tests, migrations, " +
       "excluded globs and files the coverage ledger already holds left out). On a repo never priced at these settings it offers the " +
       "CALIBRATION run instead — a few units, a small hard cap — whose measured cost prices every later preview. Free: it runs nothing. " +
-      "Show the operator the cost before starting anything.",
+      'Under [scan] depth = "deep" it plans a DEEP stage 1: pass-scan names a deep lens for every file, and a file only a standard ' +
+      "reading covers is read again. Show the operator the cost before starting anything.",
     promptSnippet: "Preview a scan's cases and cost",
     parameters: { type: "object", properties: { sha: SHA_PARAM, delta: DELTA_PARAM } },
     execute: async (_id, params) => {
@@ -644,7 +715,10 @@ export function scanToolDefinitions(
       "Propose stage 2 — the scan's deep, targeted plan — as rows: each a set of files, ONE deep lens, a tier (optional) and a one-line " +
       "reason, most valuable first. A row may span units (cross-cutting problems live between them). Name code only: each code file's " +
       "tests are paired in automatically. Give budget_usd to fit the plan to a budget (rows that do not fit are left out). Every row is " +
-      "priced from the coverage ledger; the proposal is stored (the TUI shows it) and runs nothing. Refused as a whole if any row is bad.",
+      "priced from the coverage ledger; the proposal is stored (the TUI shows it) and runs nothing. Refused as a whole if any row is bad. " +
+      'A DEEP proposal ([scan] depth = "deep", or deep: true; deep: false makes it standard) adds the floor after your rows — every ' +
+      "[scan] deep_lenses lens over every file stage 1 reads, priced and fitted like any row — so your rows may be none; every lens digs " +
+      "past its row's files, and only a deep reading covers a file.",
     promptSnippet: "Propose a priced stage-2 plan",
     parameters: {
       type: "object",
@@ -664,6 +738,12 @@ export function scanToolDefinitions(
         },
         budget_usd: { type: "number" },
         sha: SHA_PARAM,
+        deep: {
+          type: "boolean",
+          description:
+            "true: a DEEP proposal (the floor after your rows, every lens told to dig, coverage only from deep readings); false: a " +
+            "standard one, no floor. Left out: [scan] depth decides.",
+        },
       },
       required: ["rows"],
     },
@@ -672,8 +752,10 @@ export function scanToolDefinitions(
         rows: params?.rows,
         budget_usd: params?.budget_usd,
         sha: typeof params?.sha === "string" ? params.sha : undefined,
+        ...(params?.deep !== undefined ? { deep: params.deep } : {}),
       });
       if (!r.ok) return refused("Stage 2 proposal", r);
+      const floor = r.proposal.rows.filter((x) => x.floor);
       return text(renderProposal(r.proposal), {
         proposal: {
           key: r.proposal.key,
@@ -681,6 +763,11 @@ export function scanToolDefinitions(
           cap_usd: r.proposal.cap_usd,
           runnable: r.proposal.runnable,
           rows: r.proposal.rows.length,
+          depth: r.proposal.depth ?? "standard",
+          floor_rows: floor.length,
+          floor_usd: floor
+            .filter((x) => x.status === "run")
+            .reduce((n, x) => n + x.estimate_usd, 0),
         },
       });
     },
@@ -806,11 +893,14 @@ export function buildScan(
       const loaded = loadScanConfig(root, env);
       return loaded.ok ? { ok: true, settings: scanSettings(loaded.cfg) } : loaded;
     },
-    buildAgents: () => {
+    // At the depth the runner planned at — a stage-2 proposal's own, which
+    // its `deep` may have set apart from `[scan] depth`.
+    buildAgents: (settings) => {
       const loaded = loadScanConfig(root, env);
       if (!loaded.ok) return loaded;
+      const cfg = { ...loaded.cfg, scan: { ...loaded.cfg.scan, depth: settings.scan.depth } };
       try {
-        buildScanAgents(root, agentsDir, loaded.cfg, { env });
+        buildScanAgents(root, agentsDir, cfg, { env });
         return { ok: true };
       } catch (err) {
         return { ok: false, errors: [err instanceof Error ? err.message : String(err)] };

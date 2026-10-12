@@ -238,7 +238,11 @@ run as background subagents here; the records live in `/qcr-state/scan/`.
   tree AT that commit is read, not the working copy). On a repo never priced
   at these settings it offers a CALIBRATION run (a few units, a small hard
   cap) instead of an estimate; after it, previews are priced from what past
-  cases actually cost. Tell them the cost and what is left out.
+  cases actually cost. Tell them the cost and what is left out. When the
+  profile's `[scan] depth` is `deep`, the preview says `(deep)`: `pass-scan`
+  then names a deep lens for every file, and files read only at standard
+  depth are read again — say so, and say when the price was measured at the
+  other depth.
 - **`scan_start`** with the preview's key and sha — only after they agreed to
   that cost ("do it"). It stops HARD at the estimate; a plan that moved since
   the preview is refused, so preview again rather than guessing.
@@ -293,6 +297,17 @@ Stage 2 is the deep, targeted plan, and you propose it from stage 1.
   out and named. Every row is priced from the ledger ("extrapolated" means no
   deep lens has been measured at those settings yet — say so). The proposal
   is stored and the TUI shows it; it runs nothing.
+- **A deep proposal** — `[scan] depth = "deep"` in the profile, or `deep:
+  true` on the call when they ask for a deep look (`deep: false` keeps one
+  proposal standard) — adds the FLOOR after your rows: every `[scan]
+  deep_lenses` lens (by default consistency, delivery, duplication,
+  maintainability) over every file stage 1 reads, a unit's chunk a row. Your
+  rows may then be none; propose the ones stage 1's suggestions earn first,
+  since the budget fits them before the floor. Every lens is told to dig past
+  its row's files, and only a deep reading covers a file, so files already
+  scanned at standard depth are read again. Tell them the split the preview
+  gives — your rows and their cost, the floor and its cost — and when a
+  price was measured at the other depth.
 - **`scan_stage2_start`** with the proposal's key — only on their word ("do
   it"). They can also start it with a click in the TUI; either way it runs
   exactly the proposal they saw, stops HARD at its estimate, and a proposal

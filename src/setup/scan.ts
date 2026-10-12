@@ -12,7 +12,9 @@
 // output, binaries, prose — `isSweepSkipped`), nor the operator's `[scan]
 // exclude` globs. A file the coverage ledger already holds at the same
 // content hash for `pass-scan` is not read again: that is how an interrupted
-// scan resumes, and why a finished one costs nothing to "re-run".
+// scan resumes, and why a finished one costs nothing to "re-run". Coverage is
+// read at the run's depth (`[scan] depth`): a deep run reads again a file only
+// a standard reading covers, and a deep reading covers both (ledger.ts).
 //
 // A delta re-scan is stage 1 over the files whose content changed since the
 // last scan (read by the ledger at another content, or new or different
@@ -25,13 +27,18 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
-import { SCAN_FALSE_POSITIVE_CLASSES, VALIDATE_PASS } from "../include.js";
+import {
+  SCAN_DEEP_MAX_SUGGESTIONS,
+  SCAN_FALSE_POSITIVE_CLASSES,
+  SCAN_PASS,
+  VALIDATE_PASS,
+} from "../include.js";
 import { SCAN_DEEP_LENSES } from "../passes.js";
 import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** The stage-1 lens (agents/scan/pass-scan.md). */
-export const SCAN_PASS = "pass-scan";
+export { SCAN_PASS };
 
 /** Lenses a stage-1 suggestion may NOT name (passes.ts), and the deep lenses
  * stage 1 may point stage 2 at. */
@@ -579,8 +586,10 @@ export interface ParsedScanAnswer {
   none: boolean;
 }
 
-/** At most this many suggestions per case are kept. */
+/** At most this many suggestions per case are kept — `SCAN_DEEP_MAX_SUGGESTIONS`
+ * in a deep scan, where every focus file is to be named in one. */
 export const MAX_SUGGESTIONS = 5;
+export { SCAN_DEEP_MAX_SUGGESTIONS };
 
 const ITEM_FIELD = /^(\s*)(-\s+)?([a-z][a-z0-9_-]{0,40}):(?:\s(.*)|$)/i;
 
@@ -737,15 +746,17 @@ function blockBody(text: string, name: string): string | null {
  * Read a `pass-scan` answer: its findings (line anchors required — a scan
  * finding without lines is dropped, per the scan-mode anchor rule) and its
  * deep-lens suggestions (lenses from `deepLenses` only, files as given — the
- * caller checks they exist). `root` strips an absolute tree prefix a lens
- * wrote by mistake.
+ * caller checks they exist; at most `maxSuggestions`, default
+ * `MAX_SUGGESTIONS`). `root` strips an absolute tree prefix a lens wrote by
+ * mistake.
  */
 export function parseScanAnswer(
   text: string,
-  opts: { root?: string | null; deepLenses?: readonly string[] } = {},
+  opts: { root?: string | null; deepLenses?: readonly string[]; maxSuggestions?: number } = {},
 ): ParsedScanAnswer {
   const root = opts.root ?? null;
   const lenses = opts.deepLenses ?? SCAN_DEEP_LENSES;
+  const cap = opts.maxSuggestions ?? MAX_SUGGESTIONS;
   const head = findingsPart(text);
   const { candidates, dropped } = readFindings(head, root);
   const none = candidates.length === 0 && /^\s*NONE\s*$/m.test(head);
@@ -764,7 +775,7 @@ export function parseScanAnswer(
         !lenses.includes(lens) ||
         files.length === 0 ||
         reason === "" ||
-        suggestions.length >= MAX_SUGGESTIONS
+        suggestions.length >= cap
       ) {
         suggestionsDropped++;
         continue;

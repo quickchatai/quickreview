@@ -13,7 +13,7 @@ import {
   SCAN_STOP_RESULT_FILE,
   type ScanFinding,
 } from "../src/setup/scanreport.js";
-import { STAGE2_RESULT_FILE, STAGE2_START_FILE } from "../src/setup/stage2request.js";
+import { STAGE2_FILE, STAGE2_RESULT_FILE, STAGE2_START_FILE } from "../src/setup/stage2request.js";
 import { App } from "../src/tui/app.js";
 import { stripAnsi } from "../src/tui/paint.js";
 import {
@@ -420,6 +420,48 @@ describe("the stage 2 plan", () => {
     });
   });
 
+  it("a deep proposal: the title splits the companion's rows from the floor, the floor rows window like any row and show their reason", async () => {
+    const { app, s, type, screen } = rig({ running: false });
+    const stored = JSON.parse(readFileSync(join(s.home, STAGE2_FILE), "utf8"));
+    const own = stored.proposal.rows[0];
+    const floor = Array.from({ length: 60 }, (_, i) => ({
+      ...own,
+      id: `floor-${i + 1}`,
+      lens: "pass-consistency",
+      tier: "sol-med",
+      reason: `deep floor: pass-consistency over unit${i + 1}`,
+      units: [`unit${i + 1}`],
+      estimate_usd: 0.5,
+      floor: true,
+    }));
+    stored.proposal = {
+      ...stored.proposal,
+      key: "deepkey000000001",
+      depth: "deep",
+      budget_usd: null,
+      rows: [own, ...floor],
+      runnable: 61,
+      cap_usd: 36.1,
+      over_budget_usd: 0,
+    };
+    writeFileSync(join(s.home, STAGE2_FILE), JSON.stringify(stored));
+    s.store.reload();
+    await driving(app, () => {
+      type("P");
+      const text = screen();
+      expect(text).toContain("deep: 1 + 60 floor row(s)");
+      expect(text).toMatch(/\[✓\] row-1 security/);
+      expect(text).toMatch(/\[✓\] floor-1 consistency {2}sol-med {2}unit1 \(1 files\)/);
+      expect(text).toContain("61/61 row(s) · $36.10 — the hard stop");
+      // Far past the pane's height: the window follows the selection.
+      for (let i = 0; i < 50; i++) type("j");
+      const later = screen();
+      expect(later).toMatch(/\[✓\] floor-50 consistency/);
+      expect(later).not.toMatch(/\[✓\] row-1 security/);
+      expect(later).toContain("floor-50: deep floor: pass-consistency over unit50");
+    });
+  });
+
   it("no proposal yet: the plan says so and offers nothing to approve", async () => {
     const { app, type, screen } = rig({ running: false, proposal: false });
     await driving(app, () => {
@@ -603,10 +645,7 @@ describe("validity tiers (the scan validator is the skeptic)", () => {
   it("tier headings count against the list's row budget, so a short terminal still shows the selected finding's detail", () => {
     const { app } = rig({ findings: tiered });
     for (const rows of [16, 17, 18, 20]) {
-      const text = app.hooks.tabs
-        .scan!.screen(app, COLS, rows)
-        .lines.map(stripAnsi)
-        .join("\n");
+      const text = app.hooks.tabs.scan!.screen(app, COLS, rows).lines.map(stripAnsi).join("\n");
       expect(text, `rows=${rows}`).toContain("CONFIRMED — the skeptic traced");
       expect(text, `rows=${rows}`).toContain("P3 data-safety · billing/a.py:88-90");
     }
