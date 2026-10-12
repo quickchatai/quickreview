@@ -23,35 +23,19 @@
 // lens ever read out of every delta for as long as it stays unchanged.
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
-import { ALL_PASSES } from "../dispatch.js";
 import { globMatcher } from "../glob.js";
 import { isSweepSkipped, isTestFile } from "../heuristics.js";
 import { SCAN_FALSE_POSITIVE_CLASSES, VALIDATE_PASS } from "../include.js";
+import { SCAN_DEEP_LENSES } from "../passes.js";
 import { REACHABILITY_VALUES, reachabilityCappedSeverity, type Reachability } from "../severity.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
 /** The stage-1 lens (agents/scan/pass-scan.md). */
 export const SCAN_PASS = "pass-scan";
 
-/** Lenses a stage-1 suggestion may NOT name: each needs a diff, a PR body or
- * a mid-round session to mean anything,
- * plus the validator, which is not a lens. */
-export const DIFF_ONLY_LENSES: readonly string[] = [
-  "pass-intent",
-  "pass-claims",
-  "pass-backcompat",
-  "pass-rollout",
-  "pass-delivery",
-  "pass-widened",
-  "pass-sweep",
-  "pass-ask-human",
-  VALIDATE_PASS,
-];
-
-/** The deep lenses stage 1 may point stage 2 at. */
-export const SCAN_DEEP_LENSES: readonly string[] = ALL_PASSES.filter(
-  (p) => !DIFF_ONLY_LENSES.includes(p),
-);
+/** Lenses a stage-1 suggestion may NOT name (passes.ts), and the deep lenses
+ * stage 1 may point stage 2 at. */
+export { DIFF_ONLY_LENSES, SCAN_DEEP_LENSES } from "../passes.js";
 
 /** Migration files, whatever the stack calls their directory. */
 const MIGRATION_RE = /(^|\/)(migrations?|alembic\/versions|db\/migrate)\//i;

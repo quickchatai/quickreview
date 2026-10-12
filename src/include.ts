@@ -1061,6 +1061,19 @@ export const SCAN_MODE_ANCHOR_ADDENDUM =
   "You post nothing, and you read nothing outside the tree root. Your working directory is NOT the tree root — a relative path opens some other checkout's file — so open every file, focus files, callers and tests alike, by its absolute path under the tree root. Your findings block is headed `FINDINGS <lens> SCAN <case id> @<scan sha>`.\n\n" +
   "Validator: verify an anchor by opening the file under the tree root, never against a diff — a finding whose lines do not show the code it describes is `bad-anchor`.\n";
 
+// pass-delivery's three checks — drop paths, redelivery, fetch windows — need
+// no diff: a handler consumes its only delivery in code as it stands. The lens
+// text speaks of a PR and its claims, so in a scan build this recasts the
+// checks onto the focus files. Scan mode only; seeds untouched (CLAUDE.md
+// rule 6).
+export const SCAN_DELIVERY_ADDENDUM =
+  "\n## Scan mode — the delivery paths in this code (sandbox rule; supersedes the lens's change-shaped wording above)\n" +
+  "In a scan nothing changed: the lens's three checks apply to the code as it stands at the scan sha. Wherever the lens above speaks of the PR, the change or what the PR claims, read: the handlers, consumers, polls and loops in your focus files. Its rules bind unchanged, recast:\n\n" +
+  '- **Drop paths in this code.** Find every place the focus files consume a delivery — an ACK, a dedup or seen key written, a cursor or watermark advanced, a trigger, label or request removed, a "last seen" or "consumed" field stamped, a row marked done — and list every exit between that consumption and the durable completion of the work it stood for (`return`, `continue`, `break`, `raise`, an early guard, a caught exception). For each exit name what delivers the input again — a retry, a redelivery, the next poll, a reconcile or backstop sweep — and check that it does not key on the very state the consumption already wrote. An exit nothing delivers again is a permanent loss: a finding, anchored at the exit.\n' +
+  "- **Redelivery.** Every handler that can run twice on one input — a webhook redelivered, a queue message retried, a timer firing again, a poll re-reading its window — gets the redelivery sweep above: killed after each write and run again from the top, does it raise, duplicate or converge?\n" +
+  "- **Two sources that lag each other.** Where one loop or handler reads two sources of truth — a webhook and a poll, a cache and its table, a local record and a remote API — ask what each branch does while one is behind the other, and apply the fetch-window rule above to every read whose window moves with a boundary.\n\n" +
+  "`NONE` is correct only after that reading: say in one or two lines which consumptions you traced and why each exit is safe, or that the focus files consume no delivery.\n";
+
 // The scan's precision checklist. Scan findings refuted by an adversarial
 // skeptic fall into ten recurring classes (the analysis, with counts and
 // examples, is on the issue tracker: efforts/scan-and-setup/assets/
@@ -1363,6 +1376,8 @@ export const PASS_ADDENDA: readonly PassAddendum[] = [
     mode: "scan",
     text: CONCURRENCY_SCAN_ADDENDUM,
   },
+  // In a scan pass-delivery's checks read the code as it stands.
+  { id: "scan-delivery", scope: ["pass-delivery"], mode: "scan", text: SCAN_DELIVERY_ADDENDUM },
   { id: "ask-human-trigger", scope: [ASK_HUMAN_PASS], text: ASK_HUMAN_TRIGGER_ADDENDUM },
   {
     id: "ask-human-named-defect-validate",

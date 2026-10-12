@@ -1,7 +1,8 @@
-// The pass vocabulary — every pass the system knows, in plan order. Its own
-// module (no imports) so config parsing can validate pass-name knobs
-// (`[review] skip_lenses`, `[models.pass_tiers]`) against it without an import
-// cycle through dispatch.ts, which re-exports it.
+// The pass vocabulary — every pass the system knows, in plan order, and which
+// of them a whole-repo scan may run. Its own module (no imports) so config
+// parsing can validate pass-name knobs (`[review] skip_lenses`,
+// `[models.pass_tiers]`) against it without an import cycle through
+// dispatch.ts, which re-exports it.
 
 /** Every pass the system knows: the lenses selectLenses can emit plus the
  * always-appended validator. addable_lenses derives from this set (∪ the
@@ -76,3 +77,23 @@ export const ALL_PASSES: readonly string[] = [
   "pass-lint-conformance",
   "pass-validate",
 ];
+
+/** Lenses the whole-repo scan never runs: each needs a diff, a PR body or a
+ * mid-round session to mean anything — plus the validator, which is not a
+ * lens. Everything else in `ALL_PASSES` is a deep lens a scan may run. */
+export const DIFF_ONLY_LENSES: readonly string[] = [
+  "pass-intent",
+  "pass-claims",
+  "pass-backcompat",
+  "pass-rollout",
+  "pass-widened",
+  "pass-sweep",
+  "pass-ask-human",
+  "pass-validate",
+];
+
+/** The deep lenses a scan may run: stage 1 may name them in a suggestion,
+ * stage 2 may run them on a row. */
+export const SCAN_DEEP_LENSES: readonly string[] = ALL_PASSES.filter(
+  (p) => !DIFF_ONLY_LENSES.includes(p),
+);
