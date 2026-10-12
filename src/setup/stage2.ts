@@ -51,12 +51,17 @@
 // 1 reads (stage 1's file rules — no tests, migrations, `[scan] exclude` or
 // unreadable kinds — and only files a unit owns), grouped by owning unit and
 // chunked to one case (an oversized file alone, read in line ranges). A floor
-// row reads code only (no tests are paired: its chunk already fills a case),
-// skips every file the companion's rows name for the same lens and every file
-// the ledger already holds a deep reading of for it at this content, and says
-// `deep floor: <lens> over <unit>`. Floor rows run in `deep_lenses` order,
-// each over the units in the cut's order, priced and fitted like any row and
-// after every row of the companion's. `MAX_STAGE2_ROWS` binds the companion's
+// row pairs no tests, by design: the deep dig addendum already sends its lens
+// out to the callers, siblings and contract of the code it reads, and its
+// chunk already fills a case. It skips every file the companion's rows name
+// for the same lens and every file the ledger already holds a deep reading of
+// for it at this content, and says `deep floor: <lens> over <unit>`. Floor
+// rows are ordered lens-first, deliberately: every row of the first
+// `deep_lenses` lens (over the units in the cut's order), then every row of
+// the next — so under a budget the first-listed lens covers the whole tree
+// before the next one starts, and the order of `deep_lenses` is the priority.
+// They are priced and fitted like any row, after every row of the
+// companion's. `MAX_STAGE2_ROWS` binds the companion's
 // rows alone — the floor is bounded by the tree. A deep proposal is priced
 // and covered at its depth: a standard reading never covers a deep row, and a
 // price measured at the other depth is borrowed only when nothing at the

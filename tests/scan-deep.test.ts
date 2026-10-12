@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PiToolDefinition } from "@earendil-works/pi-coding-agent";
-import { scanToolDefinitions } from "../extensions/setup-scan.js";
+import { renderPreview, renderStatus, scanToolDefinitions } from "../extensions/setup-scan.js";
 import { parseConfig, SCAN_DEFAULTS, type Config, type ScanConfig } from "../src/config.js";
 import {
   PASS_ADDENDA,
@@ -788,6 +788,39 @@ describe("a deep stage 1", () => {
     expect(std.ok && std.preview.rate_across_depth).toBe(false);
   });
 
+  it("a deep delta says an unchanged file read only at standard depth is not yet read deep; the ledger line counts files, not readings", async () => {
+    const r = rig();
+    await scanAll(r.scan);
+    r.settings.depth = "deep";
+    const p = await r.scan.preview({ delta: true });
+    if (!p.ok) throw new Error(p.errors.join("; "));
+    expect(p.preview.delta).toEqual({ since: SHA, owed: 6, owed_shallow: 6 });
+    const text = renderPreview(p.preview);
+    expect(text).toContain("; 6 of the files are unchanged but not yet read at deep depth — read first");
+    expect(text).not.toMatch(/no reading covers them yet/);
+    // Owed for both reasons: each named with its own count.
+    const mixed = renderPreview({ ...p.preview, delta: { since: SHA, owed: 6, owed_shallow: 2 } });
+    expect(mixed).toContain(
+      "; 4 of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before)" +
+        "; 2 of the files are unchanged but not yet read at deep depth — read first",
+    );
+    // A standard delta keeps its one clause and carries no shallow count.
+    r.settings.depth = "standard";
+    const std = await r.scan.preview({ delta: true });
+    expect(std.ok && std.preview.delta).toEqual({ since: SHA, owed: 0 });
+    const legacy = renderPreview({ ...p.preview, delta: { since: SHA, owed: 3 } });
+    expect(legacy).toContain(
+      "; 3 of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first",
+    );
+
+    // Six files read at both depths: twelve stage-1 rows, six files.
+    r.settings.depth = "deep";
+    await scanAll(r.scan);
+    expect(ledgerRows().filter((e) => e.lens === SCAN_PASS)).toHaveLength(12);
+    expect(r.scan.status().ledger).toMatchObject({ files: 6 });
+    expect(renderStatus(r.scan.status())).toMatch(/Ledger: 6 file\(s\) read by stage 1/);
+  });
+
   it("a deep plan's key is not a standard plan's", async () => {
     const r = rig();
     const std = await r.scan.preview();
@@ -890,6 +923,16 @@ describe("a deep stage 2 proposal through the runner", () => {
       price: { basis: "measured", across_depth: true },
     });
     expect(readStage2Proposal(stateDir)).toMatchObject({ ok: true, proposal: { depth: "deep" } });
+  });
+});
+
+describe("a stage 2 start narrowed by row ids", () => {
+  it("refuses rows that are not a list of ids, naming both id shapes", async () => {
+    const r = rig();
+    expect(await r.scan.startStage2({ key: "k", rows: [1] })).toEqual({
+      ok: false,
+      errors: ["`rows` must be a list of row ids from the proposal (`row-<n>` / `floor-<n>`)"],
+    });
   });
 });
 

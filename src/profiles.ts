@@ -68,7 +68,7 @@ import type { EcosystemName } from "./ecosystem.js";
 import { ALL_PASSES } from "./dispatch.js";
 import { EMPTY_HEURISTICS, PROFILE_EXTENDABLE_LENSES } from "./heuristics.js";
 import type { HeuristicsExtension } from "./heuristics.js";
-import { LESSON_VALIDATE_ADDENDUM_ID, PASS_ADDENDA, splitFrontmatter } from "./include.js";
+import { LESSON_VALIDATE_ADDENDUM_ID, PASS_ADDENDA, SCAN_PASS, splitFrontmatter } from "./include.js";
 import type { PassAddendum, PassAddendumScope } from "./include.js";
 import {
   locateProfile,
@@ -242,12 +242,6 @@ export function resolveProfileChain(
   if (profile === "") return [];
   return profileChain(root, profile, lookup).map((l) => ({ name: l.name, dir: l.dir }));
 }
-
-/** The scan build's agent (src/setup/scan.ts `SCAN_PASS`) — not in
- * ALL_PASSES, yet a pass a house rule may bind. Spelled here, not imported:
- * no daemon module may reach src/setup/ at runtime (tests/single-shepherd.test.ts);
- * tests/profiles.test.ts pins the two spellings together. */
-const SCAN_PASS = "pass-scan";
 
 /** Ids a pack may not claim: every compiled-in entry, plus the dynamic
  * same-day feedback addendum wire.ts composes last (src/feedback.ts). */

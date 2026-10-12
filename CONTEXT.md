@@ -105,7 +105,7 @@ _Avoid_: audit, sweep (that is a PR lens), survey
 The scan's cheap wide pass — one case per unit, tests and migrations excluded — producing findings and deep-lens suggestions.
 
 **Stage 2**:
-The scan's deep, targeted plan — rows of file set × lens × tier with a cost — proposed by the companion, optionally fitted to a budget, and started by the operator's word to the companion or a click in the TUI (no approval record; the start quotes the proposal's key).
+The scan's deep, targeted plan — rows of file set × lens × tier with a cost — proposed by the companion (a deep proposal adds the deep floor after the companion's rows), optionally fitted to a budget, and started by the operator's word to the companion or a click in the TUI (no approval record; the start quotes the proposal's key).
 
 **Row**:
 One case of stage 2: a set of files, which may span units, read by one deep lens at one tier, with the reason it deserves the look and the tests paired with its code.
@@ -122,7 +122,15 @@ The findings a re-scan stopped reporting exactly, held beside the fresh findings
 _Avoid_: dedup, merge queue
 
 **Coverage ledger**:
-What a scan has read — file, content hash and lens (with tier, sha, cost); the resume grain and the source of cost previews.
+What a scan has read — file, content hash, lens and depth (with tier, sha, cost); the resume grain and the source of cost previews. A reading with no depth is standard; a standard reading never covers a deep plan, and a deep reading covers both.
+
+**Deep scan**:
+A scan at `[scan] depth = "deep"`: stage 1 names a deep lens for every file, every lens digs past its row's files (callers, siblings, the contract), and only a deep reading covers a file.
+_Avoid_: full scan, thorough scan
+
+**Deep floor**:
+The rows a deep stage-2 proposal adds after the companion's: each `deep_lenses` lens the profile leaves on over every file stage 1 reads, a unit's chunk a row, no tests paired; the lenses' order is the priority under a budget.
+_Avoid_: baseline (that is a PR lens), sweep
 
 **Calibration run**:
 The first stage-1 run at given settings: one case from each of a few units spread across the size range, under its own small hard cap, whose measured cost prices every later preview.

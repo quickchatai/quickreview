@@ -91,6 +91,22 @@ const usd = (n: number | null): string => (n === null ? "unknown" : `$${n.toFixe
 
 // ---- rendering ---------------------------------------------------------------
 
+/** A delta's unchanged-but-owed files: those no reading covers, and — on a
+ * deep delta — those a standard reading covers but no deep one does yet. */
+function owedClause(d: ScanPreview["delta"]): string {
+  if (d === null || d.owed <= 0) return "";
+  const shallow = Math.min(d.owed_shallow ?? 0, d.owed);
+  const unread = d.owed - shallow;
+  const parts: string[] = [];
+  if (unread > 0)
+    parts.push(
+      `${unread} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before)`,
+    );
+  if (shallow > 0)
+    parts.push(`${shallow} of the files are unchanged but not yet read at deep depth`);
+  return `; ${parts.join("; ")} — read first`;
+}
+
 export function renderPreview(p: ScanPreview): string {
   const out: string[] = [];
   const deep = p.depth === "deep";
@@ -104,9 +120,7 @@ export function renderPreview(p: ScanPreview): string {
       `DELTA re-scan ${head}, against the last scan at ${p.delta?.since.slice(0, 12) ?? "?"}.`,
       `Files whose content changed since, and any not yet read whole: ${p.files} files, ${p.lines} lines in ${p.cases.length} case(s) — ` +
         `${p.covered} already read at this content` +
-        (p.delta && p.delta.owed > 0
-          ? `; ${p.delta.owed} of the files are unchanged but no reading covers them yet (never read, cut short or unreadable before) — read first`
-          : "") +
+        owedClause(p.delta) +
         `. Estimate ${usd(p.estimate_usd)}, measured at ` +
         `${usd(p.rate?.usd_per_kline ?? null)}/kline over ${p.rate?.cases ?? 0} finished case(s)${across}. The run stops hard at the estimate. ` +
         "No deep pass runs on a delta.",

@@ -103,6 +103,8 @@ import {
   anchoredLines,
   calibrationCases,
   caseEstimate,
+  changedSince,
+  coverKey,
   evidenceQuotesAnchor,
   findingFingerprint,
   normalizeCode,
@@ -393,8 +395,10 @@ export interface ScanPreview {
   settings: ScanRun["settings"] & { exclude: string[]; concurrency: number };
   /** A delta: the last scan's sha it compares against, and how many of its
    * files are unchanged since but still owed a complete reading (never read,
-   * cut short, unreadable before). Null for a full preview. */
-  delta: { since: string; owed: number } | null;
+   * cut short, unreadable before). Null for a full preview. `owed_shallow`
+   * (a deep delta only): how many of those a complete standard reading covers
+   * at this content — owed only because no deep reading does. */
+  delta: { since: string; owed: number; owed_shallow?: number } | null;
   /** Why a start would be refused whatever the key. */
   blockers: string[];
 }
@@ -405,7 +409,8 @@ export interface ScanStatus {
   run: (ScanRun & { display: ScanRunState | "interrupted" }) | null;
   active: boolean;
   history: ScanRunSummary[];
-  /** `files`: read by stage 1; `deep_files`: file × lens rows stage 2 read. */
+  /** `files`: distinct paths stage 1 read; `deep_files`: distinct file × lens
+   * pairs stage 2 read. */
   ledger: { files: number; deep_files: number; cost_usd: number } | null;
 }
 
@@ -691,6 +696,17 @@ export class ScanRunner {
           : "nothing to read: no unit of the saved cut owns a readable, non-excluded file",
       );
     }
+    // A deep delta owes an unchanged file a standard reading already covers
+    // only because no deep one does: counted apart, so the preview says so.
+    const owedShallow = (b: NonNullable<typeof basis>): { owed_shallow?: number } => {
+      if (depth !== "deep") return {};
+      const standard = coveredBy(entries, SCAN_PASS, "standard");
+      const seen = new Set<string>();
+      for (const c of plan.cases)
+        for (const f of c.files)
+          if (!changedSince(f, b) && standard.has(coverKey(f.path, f.blob))) seen.add(f.path);
+      return { owed_shallow: seen.size };
+    };
     const runSettings: ScanRun["settings"] = {
       tier: cfg.tier,
       effort: cfg.effort,
@@ -729,7 +745,7 @@ export class ScanRunner {
       unreadable: plan.unreadable,
       skipped: plan.skipped,
       settings: { ...runSettings, exclude: cfg.exclude, concurrency: cfg.concurrency },
-      delta: basis ? { since: basis.since, owed: plan.owed } : null,
+      delta: basis ? { since: basis.since, owed: plan.owed, ...owedShallow(basis) } : null,
       blockers,
     };
     return { ok: true, planned: { preview, tree, settings } };
@@ -939,8 +955,13 @@ export class ScanRunner {
         ledger.error !== null
           ? null
           : {
-              files: ledger.entries.filter((e) => e.lens === SCAN_PASS).length,
-              deep_files: ledger.entries.filter((e) => e.lens !== SCAN_PASS).length,
+              // Distinct files (and file × lens pairs): a file read at two
+              // contents, two depths or in ranges is still one file.
+              files: new Set(ledger.entries.filter((e) => e.lens === SCAN_PASS).map((e) => e.path))
+                .size,
+              deep_files: new Set(
+                ledger.entries.filter((e) => e.lens !== SCAN_PASS).map((e) => `${e.lens}\0${e.path}`),
+              ).size,
               cost_usd: ledger.entries.reduce((n, e) => n + (e.cost_usd ?? 0), 0),
             },
     };
@@ -1170,7 +1191,7 @@ export class ScanRunner {
       ) {
         return {
           ok: false,
-          errors: ["`rows` must be a list of row ids (row-<n>) from the proposal"],
+          errors: ["`rows` must be a list of row ids from the proposal (`row-<n>` / `floor-<n>`)"],
         };
       }
       keep = args.rows;

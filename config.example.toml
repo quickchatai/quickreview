@@ -911,7 +911,8 @@ unmeasured_rate_factor = 4     # stage 2: a deep lens never priced here costs st
 depth = "standard"             # "deep": stage 1 names a deep lens for every file, every lens digs past its row's
                                # files, a stage-2 proposal adds the floor below, and only a deep reading covers a file
 deep_lenses = ["pass-consistency", "pass-delivery", "pass-duplication", "pass-maintainability"]
-                               # the deep floor: each of these over every file stage 1 reads (one switched off by the profile is skipped)
+                               # the deep floor: each of these over every file stage 1 reads (one switched off by the profile is skipped);
+                               # the order is the priority: under a budget the first lens covers the whole tree before the next starts
 
 [slack]
 # The Slack concierge — ONE channel, one thread per PR. Tokens are
