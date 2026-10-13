@@ -4,3 +4,6 @@ judge.env
 __pycache__/
 claude.env
 openai.env
+
+# Local benchmark logs, results, and launch metadata on durable disk.
+artifacts/

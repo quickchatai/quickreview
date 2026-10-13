@@ -26,6 +26,58 @@ const commitId = (text: string): string =>
     .update(`commit ${Buffer.byteLength(text)}\0${text}`)
     .digest("hex");
 
+describe("GLM smoke scope", () => {
+  it("contains one unchanged upstream PR per benchmark, three PRs total", () => {
+    let total = 0;
+    for (const [smoke, parent, index] of [
+      ["glm-aacr1", "full", 0],
+      ["glm-martian1", "martian50", 2],
+      ["glm-qodo1", "qodo-pr100", 0],
+    ] as const) {
+      const raw = set(smoke);
+      const upstream = set(parent);
+      const parsed = parseCaseSet(raw);
+      expect(parsed.cases).toHaveLength(1);
+      expect(raw.cases).toEqual([upstream.cases[index]]);
+      expect(raw.dataset).toEqual(upstream.dataset);
+      expect(raw.backups).toEqual([]);
+      total += parsed.cases.length;
+    }
+    expect(total).toBe(3);
+  });
+  it("expands to ten distinct unchanged upstream PRs with the additional sets", () => {
+    const ids = new Set<string>();
+    for (const [initial, extra, parent, end] of [
+      ["glm-aacr1", "glm-aacr-extra3", "full", 4],
+      ["glm-martian1", "glm-martian-extra2", "martian50", 3],
+      ["glm-qodo1", "glm-qodo-extra2", "qodo-pr100", 3],
+    ] as const) {
+      const upstream = set(parent);
+      const raw = set(extra);
+      expect(raw.dataset).toEqual(upstream.dataset);
+      expect(raw.backups).toEqual([]);
+      const combined = [...parseCaseSet(set(initial)).cases, ...parseCaseSet(raw).cases];
+      expect(combined).toHaveLength(end);
+      expect(combined.map((c) => c.instance_id).sort()).toEqual(
+        upstream.cases
+          .slice(0, end)
+          .map((c: { instance_id: string }) => c.instance_id)
+          .sort(),
+      );
+      for (const c of raw.cases) {
+        expect(c).toEqual(
+          upstream.cases.find((u: { instance_id: string }) => u.instance_id === c.instance_id),
+        );
+      }
+      for (const c of combined) {
+        expect(ids.has(c.instance_id)).toBe(false);
+        ids.add(c.instance_id);
+      }
+    }
+    expect(ids.size).toBe(10);
+  });
+});
+
 describe("dataset pin registry", () => {
   it("keeps AACR-Bench v1.0 and adds exactly the external pins, the self-review pin and the unpinned private pin", () => {
     expect(DATASET_PINS.map((p) => p.id)).toEqual([

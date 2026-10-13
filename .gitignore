@@ -45,6 +45,9 @@ deploy/ansible/inventory.ini
 # QCR_* overrides beside it. Operator-local, never committed.
 /.env
 
+# DigitalOcean benchmark model access key, supplied locally via --env-file.
+/bench/aacr/digitalocean.env
+
 # Worktree build artifacts: agents symlink node_modules into a worktree (a symlink is
 # not matched by `node_modules/`) and keep an incremental tsbuildinfo beside it.
 node_modules

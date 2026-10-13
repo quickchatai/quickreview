@@ -1,0 +1,27 @@
+{
+  "name": "glm-aacr1",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "rule": "One PR from the first three cases of the full benchmark, for a three-PR total GLM smoke test",
+  "references": 19,
+  "cases": [
+    {
+      "instance_id": "FreeCAD__FreeCAD@a050e42",
+      "repo": "FreeCAD/FreeCAD",
+      "pr": 19411,
+      "pr_url": "https://github.com/FreeCAD/FreeCAD/pull/19411",
+      "base_commit": "0c65673a6fd2421be8fbe613116077120adea068",
+      "head_commit": "a050e422e23ce3eaee960b75ceff236b34f369b9",
+      "language": "C++",
+      "pr_category": "Code Refactoring / Architectural Improvement",
+      "change_line_count": 862,
+      "references": 19
+    }
+  ],
+  "backups": [],
+  "defects_from": "rest145"
+}

@@ -230,6 +230,7 @@ export interface RunFingerprint {
   overrides?: string;
   /** Present only on the API-key route (src/bench/auth.ts authFingerprint). */
   auth?: "api-key";
+  inference?: { provider: "digitalocean"; config_sha256: string };
   conversation: string;
   tiers: Record<string, string>;
   validate_tier: string;

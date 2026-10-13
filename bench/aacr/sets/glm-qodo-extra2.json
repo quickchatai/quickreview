@@ -1,0 +1,58 @@
+{
+  "name": "glm-qodo-extra2",
+  "dataset": {
+    "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+    "commit": "a73957c450a70693a743260e5637fffc44625f16",
+    "file": "git_code_review_bench_100_w_open_prs.jsonl",
+    "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+  },
+  "rule": "Additional cases for the authorized ten-PR GLM smoke; combined with the original three PRs",
+  "references": 8,
+  "cases": [
+    {
+      "instance_id": "agentic-review-benchmarks__Ghost@e25e1ab",
+      "repo": "agentic-review-benchmarks/Ghost",
+      "pr": 2,
+      "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/2",
+      "base_commit": "a9171afaa1a6f6d1ad4538d53e24c5fe4b4a8e01",
+      "head_commit": "e25e1ab6f17ebd2978a23625e756152ddf7cbdb6",
+      "language": "JavaScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "\ud83d\udc1b Fixed reply form showing parent comment author's details",
+      "body": "## Summary\r\n\r\nWhen opening a reply form on a comment, the form header was incorrectly displaying the parent comment author's name and expertise instead of the current user's data. This happened because the code used fallback patterns that pulled values from the comment being replied to when the current member had no name or expertise set.\r\n\r\nThe fix removes these fallbacks so the reply form only shows the logged-in user's own details (or the appropriate placeholder if they have none).\r\n\r\nref https://linear.app/ghost/issue/BER-3212",
+      "leakproof": {
+        "source_head": "e01e8b11898c942dfc81ef28851e2c2f9e9a1cce",
+        "source_merge_base": "889f71bb7aee73c3c0f223044af1e0f79907e6c5",
+        "base_tree": "783794baa9d24252f70367d9efdce57069b523ef",
+        "head_tree": "18dc0d3925f5c6e6ee152a01c1d4b7d6d5fc97f2"
+      },
+      "task_id": "Ghost#2",
+      "source_base_commit": "889f71bb7aee73c3c0f223044af1e0f79907e6c5"
+    },
+    {
+      "instance_id": "agentic-review-benchmarks__Ghost@ea0e598",
+      "repo": "agentic-review-benchmarks/Ghost",
+      "pr": 3,
+      "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/3",
+      "base_commit": "70ae800a257cb90d67e354f3ac33c9116cfe89bb",
+      "head_commit": "ea0e598ae04a5426f93a7c9b8060849c599d6963",
+      "language": "JavaScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Updated the scaling factors for domain warmup",
+      "body": "closes [GVA-605](https://linear.app/ghost/issue/GVA-605/adjust-the-warmup-numbers-to-reflect-joeys-suggestions)\r\n\r\nOur initial scaling factors were based on some preliminary research, and were designed to be as simple as possible. After further discussions, we've decided to avoid having such a fast ramp-up at the early stage, and limit the growth at the later stages to 75k+ per send. That should still prevent any large sites from going back into warm-up between sends, but is more likely to avoid damaging the reputation by scaling too aggressively.",
+      "leakproof": {
+        "source_head": "71f56480360617f8632fda9cc062723f5b0f03bd",
+        "source_merge_base": "91d969440b995ff050c46f37e795700f20105050",
+        "base_tree": "146c744dfcbfa6e8af4ef9c0fb108a11b3d446b9",
+        "head_tree": "90a5c002998a137a304f26ce9c5edca0197d8e13"
+      },
+      "task_id": "Ghost#3",
+      "source_base_commit": "91d969440b995ff050c46f37e795700f20105050"
+    }
+  ],
+  "backups": []
+}

@@ -229,6 +229,10 @@ describe("MANIFESTO.md is pinned by something", () => {
         why: "loopback: the webhook listener and the OpenViking memory server. Nothing here leaves the host.",
       },
       {
+        host: "inference.do-ai.run",
+        why: "opt-in DigitalOcean Gradient model calls for benchmark reviews (src/bench/auth.ts); PR context goes to the operator-selected model endpoint, while reviewer memory stays local and GPT scoring uses its separate credential route.",
+      },
+      {
         host: "daemon",
         why: "a docker-compose SERVICE name, not a public host — it resolves only on the compose network.",
       },

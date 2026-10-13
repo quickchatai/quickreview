@@ -20,6 +20,10 @@ the Hugging Face dataset and run archive<!-- TODO(launch): link the dataset and 
 
 ## Reproduce
 
+For DigitalOcean Gradient and GLM, see [the setup and run instructions](docs/DIGITALOCEAN.md).
+The Gradient route uses `QCR_BENCH_PROVIDER=digitalocean` for reviews;
+GPT judging uses its separate login or OpenAI credential route.
+
 Three tiers, cheapest first. Nothing here needs this repo's private history or
 the authors' machines.
 
@@ -80,14 +84,14 @@ mount needs Docker 25 or newer), and `bench/aacr/claude.env` for Claude Code.
 With `QCR_BENCH_AUTH=api-key` nothing is mounted and every arm runs on your
 own keys:
 
-| Arm | On `QCR_BENCH_AUTH=api-key` |
-|---|---|
-| QuickReview | pi's `openai/` provider, `OPENAI_API_KEY` from `bench/aacr/openai.env` (an `anthropic/` model arm: `ANTHROPIC_API_KEY` from `claude.env`) |
-| pi-review | pi's `openai/` provider, the same key |
+| Arm                                  | On `QCR_BENCH_AUTH=api-key`                                                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| QuickReview                          | pi's `openai/` provider, `OPENAI_API_KEY` from `bench/aacr/openai.env` (an `anthropic/` model arm: `ANTHROPIC_API_KEY` from `claude.env`)     |
+| pi-review                            | pi's `openai/` provider, the same key                                                                                                         |
 | open-code-review, OpenCode, PR-Agent | the loopback bridge forwards to `api.openai.com/v1/responses` with the key (OpenCode's native ChatGPT provider is login-only: use the bridge) |
-| Codex CLI | the AACR harness's own `CODEX_API_KEY` route |
-| Claude Code | unchanged: `claude.env` (`ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` subscription token) |
-| defect judge / AACR judge | `openai/<model>` with the key / `--judge openai` |
+| Codex CLI                            | the AACR harness's own `CODEX_API_KEY` route                                                                                                  |
+| Claude Code                          | unchanged: `claude.env` (`ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` subscription token)                                               |
+| defect judge / AACR judge            | `openai/<model>` with the key / `--judge openai`                                                                                              |
 
 `openai.env` (gitignored) holds one line, `OPENAI_API_KEY=<key>`; bench.sh
 passes it with `--env-file`, never on a command line. On the key route every
@@ -110,16 +114,16 @@ The final comparison (2026-10-01): 185 runnable PRs, 520 real defects and
 1,418 AACR references, eight reviewers, each third-party tool at the best
 configuration found for it, all on gpt-6.1-sol except Claude Code (Opus 5.5):
 
-| Reviewer | Configuration | Defects found | Recall | High (90) | Comments correct | $ / PR | AACR F1 |
-|---|---|---|---|---|---|---|---|
-| **QuickReview default** | `default` preset | **409** | **79%** | **83.5** | **95%** | $1.36 | **12.5%** |
-| QuickReview low | `low` preset | 365.5 | 70% | 79.5 | 94% | $0.88 | 11.5% |
-| pi-review 0.18.0 | 3-reviewer panel, thinking high | 347.5 | 67% | 80 | 89% | $0.27 | 8.5% |
-| Claude Code 2.1.283 | `/code-review`, Opus 5.5, as published | 324.5 | 62% | 72.5 | 81% | $0.20 | 8.9% |
-| open-code-review 1.3.1 | effort high | 298.5 | 57% | 63.5 | 86% | $0.53 | 11.6% |
-| Codex CLI 0.159.2 | effort high | 287 | 55% | 81 | 93% | $0.14 | 7.8% |
-| OpenCode 1.18.33 | native provider + PR text | 263.5 | 51% | 76 | 93% | $0.17 | 6.9% |
-| PR-Agent 0.46.0 | shipped defaults | 194 | 37% | 55.5 | 76% | $0.07 | 9.4% |
+| Reviewer                | Configuration                          | Defects found | Recall  | High (90) | Comments correct | $ / PR | AACR F1   |
+| ----------------------- | -------------------------------------- | ------------- | ------- | --------- | ---------------- | ------ | --------- |
+| **QuickReview default** | `default` preset                       | **409**       | **79%** | **83.5**  | **95%**          | $1.36  | **12.5%** |
+| QuickReview low         | `low` preset                           | 365.5         | 70%     | 79.5      | 94%              | $0.88  | 11.5%     |
+| pi-review 0.18.0        | 3-reviewer panel, thinking high        | 347.5         | 67%     | 80        | 89%              | $0.27  | 8.5%      |
+| Claude Code 2.1.283     | `/code-review`, Opus 5.5, as published | 324.5         | 62%     | 72.5      | 81%              | $0.20  | 8.9%      |
+| open-code-review 1.3.1  | effort high                            | 298.5         | 57%     | 63.5      | 86%              | $0.53  | 11.6%     |
+| Codex CLI 0.159.2       | effort high                            | 287           | 55%     | 81        | 93%              | $0.14  | 7.8%      |
+| OpenCode 1.18.33        | native provider + PR text              | 263.5         | 51%     | 76        | 93%              | $0.17  | 6.9%      |
+| PR-Agent 0.46.0         | shipped defaults                       | 194           | 37%     | 55.5      | 76%              | $0.07  | 9.4%      |
 
 The configurations were chosen per tool, on gpt-6-sol, on a seeded 40-PR
 subset (`final/select40.txt`: highest defect recall, ties to comments
@@ -135,19 +139,19 @@ charts into `charts/` (the final comparison under the plain names; the
 gpt-6-sol study under `-gpt6sol`). This repo ships only the ones the papers
 include; the full set, with the numbers behind them, is in the Hugging Face dataset and run archive<!-- TODO(launch): link the dataset and the run archive here -->:
 
-| Chart | Shows |
-|---|---|
-| [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | the main figure: real defects found, split high / medium / low |
-| `overview.jpg` | defects found, high-severity caught, AACR recall — the one-image summary |
-| `high-severity.jpg` | merge-blocking defects caught, of 90 |
-| [`cost-vs-coverage.jpg`](charts/cost-vs-coverage.jpg) | $ per PR against share of defects found |
-| [`two-scores.jpg`](charts/two-scores.jpg) | the same reviews on our judge vs AACR's metric |
-| [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg) | the 40 tuning PRs vs the 145 never-seen ones |
-| `independent-defects.jpg` | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment) |
-| `reference-quality.jpg` | what AACR's reference comments are, checked against the code by agents (no human check) |
-| `judge-agreement.jpg` | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5) |
-| [`config-sensitivity.jpg`](charts/config-sensitivity.jpg) | the selection step: per tool, recall and $/PR of the published configuration vs each variant run on the 40 PRs; drawn by `charts.py --sensitivity` |
-| `*-gpt6sol.jpg` | the same charts for the gpt-6-sol study (seven reviewers as shipped) |
+| Chart                                                       | Shows                                                                                                                                              |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`defects-by-severity.jpg`](charts/defects-by-severity.jpg) | the main figure: real defects found, split high / medium / low                                                                                     |
+| `overview.jpg`                                              | defects found, high-severity caught, AACR recall — the one-image summary                                                                           |
+| `high-severity.jpg`                                         | merge-blocking defects caught, of 90                                                                                                               |
+| [`cost-vs-coverage.jpg`](charts/cost-vs-coverage.jpg)       | $ per PR against share of defects found                                                                                                            |
+| [`two-scores.jpg`](charts/two-scores.jpg)                   | the same reviews on our judge vs AACR's metric                                                                                                     |
+| [`tuned-vs-unseen.jpg`](charts/tuned-vs-unseen.jpg)         | the 40 tuning PRs vs the 145 never-seen ones                                                                                                       |
+| `independent-defects.jpg`                                   | share found on all 520 defects vs on the 369 the code hunt or an AACR reference raised (in the key without any reviewer's comment)                 |
+| `reference-quality.jpg`                                     | what AACR's reference comments are, checked against the code by agents (no human check)                                                            |
+| `judge-agreement.jpg`                                       | gpt-6-sol study only: share of defects found under each of the two judges (gpt-6-sol high, Claude Opus 5.5)                                        |
+| [`config-sensitivity.jpg`](charts/config-sensitivity.jpg)   | the selection step: per tool, recall and $/PR of the published configuration vs each variant run on the 40 PRs; drawn by `charts.py --sensitivity` |
+| `*-gpt6sol.jpg`                                             | the same charts for the gpt-6-sol study (seven reviewers as shipped)                                                                               |
 
 `charts.py` also writes `numbers.json`, the headline figures behind the charts
 (with each arm's recall on the tuned and unseen halves and on the independent
@@ -158,7 +162,10 @@ subset), `numbers-gpt6sol.json` the gpt-6-sol study's, and with
 Regenerate after a run. Every number comes from the judge and harness files
 through `compare.py`'s scoring, and adding a reviewer is one more
 `NAME=runs`. The runs directory is `$QCR_BENCH_RUNS_DIR` (default
-`bench/aacr/runs`; keep runs outside any checkout). `final/score.sh`
+`bench/aacr/runs`). For local runs, use the Git-ignored
+`bench/aacr/artifacts/` folder in the base checkout. Store logs and results
+on disk, outside reviewer worktrees; avoid `/tmp` because it may be RAM-backed
+and cleared on reboot. `final/score.sh`
 prints every final table and redraws both chart sets:
 
 ```sh
@@ -181,7 +188,7 @@ find the real bugs, and is what it said true. One experiment = one image and
 several ARMS that differ only in config levers:
 
 ```sh
-export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs   # outside any worktree
+export QCR_BENCH_RUNS_DIR="$PWD/bench/aacr/artifacts/runs"
 QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/bench.sh build
 QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix low --config review.preset=low --cases fresh10+levers16
 QCR_BENCH_IMAGE=qcr-bench:exp bench/aacr/arm.sh --prefix nosweep --config review.sweep=false --cases fresh10
@@ -214,6 +221,7 @@ dataset). The benchmark's references carry no severity, so its table has no
 high/medium/low; its categories are the counterpart.
 
 What makes the rows comparable, and is enforced rather than assumed:
+
 - **One defect judge.** Every arm, OCR included, is judged in the QuickReview
   image (`$QCR_BENCH_IMAGE`) with the same model; `compare.py` reads one judge
   label. `--eval R` runs AACR-Bench's own metric with the codex judge
@@ -273,12 +281,12 @@ All are generated from the **pinned v1.0 dataset** (git `ab8af8d`, sha256
 `d8683cb2…`, the revision every published leaderboard row is denominated in —
 x/1505) by `select_cases.py`, which refuses any other revision:
 
-| Set | PRs | References | Rule |
-|---|---|---|---|
-| `smoke10` | 10 | 62 | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 17 backups |
-| `holdout10` | 10 | 85 | smoke10's filters, no smoke10 repository, quota Python 1 / TS 2 / JS 2 / Go 1 / Java 2 / Rust 1 / C 1, a short language filled from the smallest remaining PR. The generalisation check: a change is kept only if it holds here too, and nothing is ever tuned on it |
-| `dev10` | 10 | 106 | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1 |
-| `full` | 196 | 1,505 | every PR the harness scores (4 of the 200 have no positive references and are never scored by it) |
+| Set         | PRs | References | Rule                                                                                                                                                                                                                                                                 |
+| ----------- | --- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smoke10`   | 10  | 62         | 20–160 changed lines, ≥4 references, quota Python 3 / TS 2 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1, smallest first, one PR per repo; 17 backups                                                                                                                        |
+| `holdout10` | 10  | 85         | smoke10's filters, no smoke10 repository, quota Python 1 / TS 2 / JS 2 / Go 1 / Java 2 / Rust 1 / C 1, a short language filled from the smallest remaining PR. The generalisation check: a change is kept only if it holds here too, and nothing is ever tuned on it |
+| `dev10`     | 10  | 106        | a second development set, so changes are not tuned on smoke10 alone: 20–400 changed lines (the small-PR pool is spent), ≥4 references, no smoke10 or holdout10 repository, quota C++ 2 / TS 1 / JS 1 / Go 1 / Java 1 / Rust 1 / C 1 / C# 1 / PHP 1                   |
+| `full`      | 196 | 1,505      | every PR the harness scores (4 of the 200 have no positive references and are never scored by it)                                                                                                                                                                    |
 
 `--only id,id` narrows any command to named instances (backups included).
 
@@ -291,14 +299,14 @@ one that says whether the reviewer got better rather than merely noisier.
 
 ## The steps
 
-| Step | Network | Writes | What it does |
-|---|---|---|---|
-| `build` | npm, github.com (image build) | the `qcr-bench` image | compiles this repo, installs pi 0.84.4, clones the harness at `68a5697`, extracts dataset v1.0 **and verifies its sha256**, converts it with the harness's own converter (196 instances) |
-| `prefetch` | github.com, anonymous | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous — pass `--wait-rate-limit` for `full`) |
-| `review` | the model API | `runs/<id>/` | one production round per PR; `pi -p` exits when the round settles; one continuation if it stopped before writing its files; 45 min timeout per PR |
-| `eval` | the judge's endpoint | `runs/<id>/` | the harness's `pipeline run --stage eval` once per variant — `all`, `no-nits`, `blockers`, side by side (`--variants` narrows them) — and with `--shards N` split by PR into N harness processes each, merged by `eval_shards.py` into the files one process writes; then `report.md` |
-| `results` | none | `runs/<id>/results/` | rebuild the scored files from the case dirs — no model calls; use after a harness change |
-| `report` | none | `runs/<id>/report.md` | re-render the report |
+| Step       | Network                       | Writes                   | What it does                                                                                                                                                                                                                                                                          |
+| ---------- | ----------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`    | npm, github.com (image build) | the `qcr-bench` image    | compiles this repo, installs pi 0.84.4, clones the harness at `68a5697`, extracts dataset v1.0 **and verifies its sha256**, converts it with the harness's own converter (196 instances)                                                                                              |
+| `prefetch` | github.com, anonymous         | volume `qcr-bench-repos` | per instance: a bare store with ONLY the PR's base and reviewed head, shallow, deepened until the merge-base resolves; PR title/body/base branch from the public API (60 req/h anonymous — pass `--wait-rate-limit` for `full`)                                                       |
+| `review`   | the model API                 | `runs/<id>/`             | one production round per PR; `pi -p` exits when the round settles; one continuation if it stopped before writing its files; 45 min timeout per PR                                                                                                                                     |
+| `eval`     | the judge's endpoint          | `runs/<id>/`             | the harness's `pipeline run --stage eval` once per variant — `all`, `no-nits`, `blockers`, side by side (`--variants` narrows them) — and with `--shards N` split by PR into N harness processes each, merged by `eval_shards.py` into the files one process writes; then `report.md` |
+| `results`  | none                          | `runs/<id>/results/`     | rebuild the scored files from the case dirs — no model calls; use after a harness change                                                                                                                                                                                              |
+| `report`   | none                          | `runs/<id>/report.md`    | re-render the report                                                                                                                                                                                                                                                                  |
 
 Everything is resumable: `prefetch` reuses a verified store, `review --resume`
 skips cases already `ok`.
@@ -345,19 +353,19 @@ production session can read its own pihome; the no-exec policy and
 
 ## What is production and what is not
 
-| | Production | Here |
-|---|---|---|
-| Round order | `round-first.md` via `renderRoundPrompt` | same, plus an appended **BENCHMARK MODE** override (below) |
-| Persona | `conversation-system.md` | same (identity `repo` = the benchmark repo) |
-| Project context | the synced repo root: pi loads `AGENTS.md` | same file (the image ships `AGENTS.md` and the `AGENTS.override.md` stub production installs, which pi reads first) |
-| Pass plan | `buildRoundOrder` → `buildPassPlan` | same, from a real git file list (status, renames, hunks) |
-| Agents | `buildAgents` + `PASS_ADDENDA` + profile addenda + same-day feedback addendum | same minus the feedback addendum; profile `""` (generic) by default, `--profile <name>` (the one `config.toml [review] profile` names) for production-as-deployed |
-| Models | `config.toml [models]` | the config baked into the image (`QCR_BENCH_CONFIG`, else your install's, else `config.example.toml`) |
-| Extensions | inject-bridge, ledger-pin, muted-theme, round-progress, subagents, openviking; bash-guard global | ledger-pin, subagents; bash-guard global |
-| Memory | OpenViking, recall + turn sync | **off** — foreign repos must not read the reviewed repo's memory, and a session would write its turns into it |
-| GitHub, CI, posting, verdict, ledger, deferrals | yes | replaced by the override: no CI gate (decide on the merits), write `comments.json` / `review.md` / `findings-record.json` / `outcome.json` instead of posting |
-| Delivery | inject file into a tmux session | the order on `pi -p`'s stdin (no argv size limit); one `--continue` if the session stopped before its files — only when a session exists |
-| Posting shape | `post-review.sh` keeps `path, line, side, body` | same four fields; any multi-line span is scored at its single `line` |
+|                                                 | Production                                                                                       | Here                                                                                                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Round order                                     | `round-first.md` via `renderRoundPrompt`                                                         | same, plus an appended **BENCHMARK MODE** override (below)                                                                                                        |
+| Persona                                         | `conversation-system.md`                                                                         | same (identity `repo` = the benchmark repo)                                                                                                                       |
+| Project context                                 | the synced repo root: pi loads `AGENTS.md`                                                       | same file (the image ships `AGENTS.md` and the `AGENTS.override.md` stub production installs, which pi reads first)                                               |
+| Pass plan                                       | `buildRoundOrder` → `buildPassPlan`                                                              | same, from a real git file list (status, renames, hunks)                                                                                                          |
+| Agents                                          | `buildAgents` + `PASS_ADDENDA` + profile addenda + same-day feedback addendum                    | same minus the feedback addendum; profile `""` (generic) by default, `--profile <name>` (the one `config.toml [review] profile` names) for production-as-deployed |
+| Models                                          | `config.toml [models]`                                                                           | the config baked into the image (`QCR_BENCH_CONFIG`, else your install's, else `config.example.toml`)                                                             |
+| Extensions                                      | inject-bridge, ledger-pin, muted-theme, round-progress, subagents, openviking; bash-guard global | ledger-pin, subagents; bash-guard global                                                                                                                          |
+| Memory                                          | OpenViking, recall + turn sync                                                                   | **off** — foreign repos must not read the reviewed repo's memory, and a session would write its turns into it                                                     |
+| GitHub, CI, posting, verdict, ledger, deferrals | yes                                                                                              | replaced by the override: no CI gate (decide on the merits), write `comments.json` / `review.md` / `findings-record.json` / `outcome.json` instead of posting     |
+| Delivery                                        | inject file into a tmux session                                                                  | the order on `pi -p`'s stdin (no argv size limit); one `--continue` if the session stopped before its files — only when a session exists                          |
+| Posting shape                                   | `post-review.sh` keeps `path, line, side, body`                                                  | same four fields; any multi-line span is scored at its single `line`                                                                                              |
 
 The seeds carry no reviewed repo's stack since the reseed: the
 pytest/Django Ninja, Tailwind and MySQL rules `pass-baseline`, `pass-ui` and
@@ -436,7 +444,7 @@ bench/aacr/bench.sh eval   --arm ocr --run ocr-1 --judge codex --rounds 3
 - **OCR runs as the harness runs it.** `src/bench/ocr.ts` mirrors
   `evaluation/reviewers/ocr.py` at the pinned harness commit flag for flag —
   `ocr review --from <base_commit> --to <head_commit> --format json --audience
-  agent --concurrency 8 --timeout 30 --max-tools 30`, a process timeout of
+agent --concurrency 8 --timeout 30 --max-tools 30`, a process timeout of
   30×60+300 s — and writes that runner's result file, which the harness scores
   with its own OCR reader. OCR diffs merge-base..head itself. The repo is the
   same `prepareTree` checkout the QuickReview arm gets (OCR reads code only
@@ -472,7 +480,7 @@ ChatGPT login, judged by the same judges — run by the AACR harness's OWN
 Codex runner.
 
 ```sh
-export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs
+export QCR_BENCH_RUNS_DIR="$PWD/bench/aacr/artifacts/runs"
 bench/aacr/bench.sh build  --arm codex                                   # image qcr-bench-codex
 bench/aacr/bench.sh review --arm codex --run codex-1 --set fresh10      # one case at a time
 bench/aacr/bench.sh judge  --run codex-1 --set fresh10                  # the defect benchmark (QuickReview image)
@@ -484,8 +492,8 @@ bench/aacr/compare.py --cases fresh10 default=default-fresh10 codex=codex-fresh1
 - **Codex runs as the harness runs it.** `bench/aacr/codex_arm.py` imports
   `evaluation/reviewers/codex.py` at the pinned harness commit and calls its
   `review_instance`: the prompt (`/review <base>...<head> (<report-tool
-  instructions>)`), the argv (`codex --sandbox workspace-write exec review
-  --json --skip-git-repo-check <prompt>`), the process timeout (30×60+60 s),
+instructions>)`), the argv (`codex --sandbox workspace-write exec review
+--json --skip-git-repo-check <prompt>`), the process timeout (30×60+60 s),
   the temporary CODEX_HOME + `config.toml` with the harness's `findings` MCP
   server (`mcp_codex_finding_server.py`, auto-approved), the two-channel
   finding collection (MCP partial file vs. the final JSONL message, more wins,
@@ -512,7 +520,7 @@ bench/aacr/compare.py --cases fresh10 default=default-fresh10 codex=codex-fresh1
   `--resume` from mixing versions.
 - **The result file** is the harness's `save_result` payload, untouched, plus
   `review` (an OCR-shaped view of the same comments: `summary + "\n" +
-  description` at `file:start_line-end_line`) and `bench`. The view exists so
+description` at `file:start_line-end_line`) and `bench`. The view exists so
   the rest of this bench — the eval (`pipeline --reviewer ocr`), the defect
   judge, compare.py, the what-if tools — reads the file unchanged; every case
   is checked by the harness's own two readers (`build_target_comments_from_codex`
@@ -521,6 +529,7 @@ bench/aacr/compare.py --cases fresh10 default=default-fresh10 codex=codex-fresh1
   ignores, so only the `all` variant exists for this arm.
 
 **What differs from the harness's own run, and why:**
+
 - **The repo** is `prepareTree`'s checkout (objects from the prefetched store,
   detached head, one base ref), not a fresh clone: the sandbox reviews offline.
   Same base, head and merge-base; `git clean -fdx` after, as the harness does.
@@ -564,15 +573,15 @@ bench/aacr/bench.sh eval   --arm opencode --run oc-1 --set fresh10 --judge codex
 bench/aacr/arm.sh --prefix opencode --arm opencode --cases fresh10 --eval 3   # all of it, per set
 ```
 
-| Harness `reviewers/codex.py` | Here |
-|---|---|
-| `codex exec review "/review <base>...<head> (<fragment>)"` — codex's built-in review | `opencode run --pure --auto --format json --command review "<base>...<head> (<fragment>)"` — OpenCode's **built-in** `review` command template, byte for byte, re-declared in the config with `subtask: false` (below) |
-| `INLINE_FINDINGS_PROMPT_FRAGMENT`: call `report` once per finding with file / start_line / end_line / severity / summary / description | the same fragment word for word, naming the tool `findings_report` (OpenCode prefixes MCP tools with the server's name) |
-| `mcp_codex_finding_server.py` via `[mcp_servers.findings]` | the SAME script from the pinned harness, run by the harness's venv, as OpenCode's local MCP server `findings` |
-| `--sandbox workspace-write` (no network) | `--auto` (every permission not denied is approved); `webfetch`, `websearch` and directories outside the tree denied |
-| process timeout 30 × 60 + 60 s | the same (`--timeout-min`, default 30) |
-| `save_result`: MCP partial vs JSON parsed from the final text, the larger wins, a tie goes to MCP; raw text scores nothing | the same, the "final text" being the session's last answer |
-| result file `{reviewer: "codex", review_output, token_usage, …}` | the same payload with `reviewer: "opencode"`, **plus** `review.comments` — the same notes (summary + "\n" + description), paths and line ranges in the OCR reader's shape, because `eval` scores every arm with the harness's OCR reader and the defect judge reads that key |
+| Harness `reviewers/codex.py`                                                                                                           | Here                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `codex exec review "/review <base>...<head> (<fragment>)"` — codex's built-in review                                                   | `opencode run --pure --auto --format json --command review "<base>...<head> (<fragment>)"` — OpenCode's **built-in** `review` command template, byte for byte, re-declared in the config with `subtask: false` (below)                                                       |
+| `INLINE_FINDINGS_PROMPT_FRAGMENT`: call `report` once per finding with file / start_line / end_line / severity / summary / description | the same fragment word for word, naming the tool `findings_report` (OpenCode prefixes MCP tools with the server's name)                                                                                                                                                      |
+| `mcp_codex_finding_server.py` via `[mcp_servers.findings]`                                                                             | the SAME script from the pinned harness, run by the harness's venv, as OpenCode's local MCP server `findings`                                                                                                                                                                |
+| `--sandbox workspace-write` (no network)                                                                                               | `--auto` (every permission not denied is approved); `webfetch`, `websearch` and directories outside the tree denied                                                                                                                                                          |
+| process timeout 30 × 60 + 60 s                                                                                                         | the same (`--timeout-min`, default 30)                                                                                                                                                                                                                                       |
+| `save_result`: MCP partial vs JSON parsed from the final text, the larger wins, a tie goes to MCP; raw text scores nothing             | the same, the "final text" being the session's last answer                                                                                                                                                                                                                   |
+| result file `{reviewer: "codex", review_output, token_usage, …}`                                                                       | the same payload with `reviewer: "opencode"`, **plus** `review.comments` — the same notes (summary + "\n" + description), paths and line ranges in the OCR reader's shape, because `eval` scores every arm with the harness's OCR reader and the defect judge reads that key |
 
 **Why `subtask: false`.** The built-in `review` runs as a subtask; when it
 returns, OpenCode tells the parent session to "continue with your task",
@@ -612,12 +621,12 @@ Its findings carry the harness's codex severities, not our tags, so only the
   — the reviewed repo's `opencode.json`/`.opencode/` cannot add providers,
   plugins, MCP servers or permissions. Its `AGENTS.md` is still read, as
   OpenCode (and codex) always do. Two performance-only settings: `snapshot:
-  false` (OpenCode's undo tracking hashes the whole tree every step) and no
+false` (OpenCode's undo tracking hashes the whole tree every step) and no
   file watcher.
 - **Pin and bump**: `ARG OPENCODE_VERSION` + `OPENCODE_SHA256_LINUX_X64` in the
   Dockerfile's `opencode` stage (the platform package's binary, checked by
   sha256). To bump: `npm pack opencode-linux-x64@<v>`, `sha256sum
-  package/bin/opencode`, set both (or pass `QCR_BENCH_OPENCODE_VERSION` and
+package/bin/opencode`, set both (or pass `QCR_BENCH_OPENCODE_VERSION` and
   `QCR_BENCH_OPENCODE_SHA256` to `bench.sh build --arm opencode`), then re-run
   the smoke test: the `--format json` event stream and the built-in `review`
   command are not stable contracts.
@@ -737,7 +746,7 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
   pulled. To bump: `npm view @zephyrdeng/pi-review@<v> dist.integrity`,
   decode it (`echo <b64> | base64 -d | xxd -p -c 100`), set both (or pass
   `QCR_BENCH_PIREVIEW_VERSION` + `QCR_BENCH_PIREVIEW_SHA512` to `bench.sh build
-  --arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
+--arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
   the `PI_REVIEW_META_JSON` shape, and re-run the smoke test. pi itself is the
   runtime's pin (rule 7) — bump it there, for every arm at once.
 - **Per case**: `cases/<id>/` holds `pireview-argv.json`, `pi-events.jsonl`
@@ -862,7 +871,7 @@ on stub and on real output: `tests/bench-pireview.test.ts`.
   pulled. To bump: `npm view @zephyrdeng/pi-review@<v> dist.integrity`,
   decode it (`echo <b64> | base64 -d | xxd -p -c 100`), set both (or pass
   `QCR_BENCH_PIREVIEW_VERSION` + `QCR_BENCH_PIREVIEW_SHA512` to `bench.sh build
-  --arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
+--arm pireview`), re-read `dist/prompt.js`, `resources/system-prompt.md` and
   the `PI_REVIEW_META_JSON` shape, and re-run the smoke test. pi itself is the
   runtime's pin (rule 7) — bump it there, for every arm at once.
 - **Per case**: `cases/<id>/` holds `pireview-argv.json`, `pi-events.jsonl`
@@ -921,7 +930,7 @@ python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_
 - **The provider.** PR-Agent's own documented local mode
   (`git_provider = "local"`, usage-guide `local_git_provider.md`): HEAD is the
   change, the diff is HEAD against merge-base(HEAD, target) — `git diff
-  base...head` — with the full base and head file contents for its context
+base...head` — with the full base and head file contents for its context
   extension. No GitHub access exists or is needed. The driver runs PR-Agent's
   CLI entry point (`pr_agent.cli.run`) unchanged, with one provider registered
   through PR-Agent's own `register_git_provider` hook — `bench-local`, the
@@ -942,7 +951,7 @@ python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_
   `num_max_findings = 3`, `max_model_tokens = 32000` (larger diffs are clipped
   as PR-Agent clips them), patch extension, `/improve`'s self-reflection and
   `focus_only_on_problems`, `ai_timeout = 120` s per call, `reasoning_effort =
-  "medium"`. Each command's capture carries `effective`: PR-Agent's FULLY
+"medium"`. Each command's capture carries `effective`: PR-Agent's FULLY
   RESOLVED settings, read back from its settings object after the run, and
   the token budget it resolves for the model (`resolved_max_tokens` = 32,000:
   `max_model_tokens` clamps EVERY model, gpt-5.6's 1.05M included — the
@@ -954,7 +963,7 @@ python pragent_driver.py --command improve  … → python -m pr_agent.cli --pr_
   would only repeat the call); `custom_model_max_tokens = 272000` (pi's catalog
   context window — PR-Agent refuses a model missing from its table without it;
   `max_model_tokens` still clamps at 32k); `additional_reasoning_effort_models
-  = ["gpt-6.1-sol"]` and `litellm.drop_params = true` (PR-Agent treats only
+= ["gpt-6.1-sol"]` and `litellm.drop_params = true` (PR-Agent treats only
   GPT-5/6-astra ids as reasoning models and drops temperature for those; for
   this id LiteLLM refuses temperature 0.2 beside a reasoning effort, and
   `drop_params`, PR-Agent's documented `[litellm]` knob, drops it); no progress
@@ -1037,9 +1046,9 @@ bench/aacr/bench.sh claude-rebuild --arm claude --run claude-1 --set fresh10
 - **The harness runs it.** `claude_driver.py` imports the pinned harness's own
   `evaluation/reviewers/claude.py` and calls `run_claude_review` +
   `save_result`: `claude -p '/code-review <base>...<head> ' --add-dir <repo>
-  --permission-mode acceptEdits --output-format json --mcp-config <findings
-  server> --allowed-tools mcp__findings__report --append-system-prompt
-  <findings requirement> --settings <StopFailure hook>`, 30 min (+60 s). The
+--permission-mode acceptEdits --output-format json --mcp-config <findings
+server> --allowed-tools mcp__findings__report --append-system-prompt
+<findings requirement> --settings <StopFailure hook>`, 30 min (+60 s). The
   argv it ran is checked against that shape per case (`claude-argv.json`,
   `argv_ok`). `/code-review` is Claude Code's built-in skill.
 - **Why a prose parser, and what the eval scores.** In 2.1.283 `/code-review`
@@ -1117,12 +1126,12 @@ a dropped row is scored with the LENS'S claim — never with its record
 `reason`, which for a killed or merged row says why it was dropped. Four
 variants, scored exactly like `eval`:
 
-| Variant | What it scores |
-|---|---|
-| `posted` | the run's own `results/all`, byte-for-byte — the control; it must land within judge noise of the run's own score |
-| `posted+killed` | + every candidate the validator KILLED, as its lens's claim |
-| `posted+merged` | + every MERGED / FOLDED candidate, as its own comment |
-| `all-candidates` | every raw lens candidate alone, deduplicated only on identical path, line and claim |
+| Variant          | What it scores                                                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `posted`         | the run's own `results/all`, byte-for-byte — the control; it must land within judge noise of the run's own score |
+| `posted+killed`  | + every candidate the validator KILLED, as its lens's claim                                                      |
+| `posted+merged`  | + every MERGED / FOLDED candidate, as its own comment                                                            |
+| `all-candidates` | every raw lens candidate alone, deduplicated only on identical path, line and claim                              |
 
 The extra comments follow `toOcrResult`'s rules: single-line anchors at the
 lens's own line, LEFT side excluded, and no comment without a line (the
@@ -1154,7 +1163,7 @@ image. `plans/freeze-validation.json` is the pre-freeze validation run.
 ## Running the whole benchmark (throughput)
 
 ```sh
-export QCR_BENCH_RUNS_DIR=~/qcr-bench-runs/runs QCR_BENCH_IMAGE=qcr-bench:full1
+export QCR_BENCH_RUNS_DIR="$PWD/bench/aacr/artifacts/runs" QCR_BENCH_IMAGE=qcr-bench:full1
 bench/aacr/bench.sh build                                    # the scheduler needs an image with eval_shards.py
 bench/aacr/bench.sh prefetch --set full --wait-rate-limit    # once; ~196 API calls, waits out the anonymous limit
 bench/aacr/arm.sh --prefix full1 --cases full --eval 3       # review 185 runnable PRs, judge the 40, score AACR
@@ -1171,6 +1180,7 @@ old `arm.sh --cases full` ran the whole set in one container at
 **~33 hours**.
 
 **What the scheduler does now** (`arm.sh`, QuickReview arm):
+
 - **One queue, one container per case.** Every case of every set and repeat,
   longest PR first (`change_line_count`, so the slow ones do not form the
   tail). A container per case costs ~1 s (agents build in under a second) and
@@ -1246,22 +1256,22 @@ Search → File Search → add it to the excluded folders, or
 
 ## Files
 
-| Path | What |
-|---|---|
-| `bench.sh` | host side: builds the image, wires mounts, hardens every container |
-| `Dockerfile` | the sandbox image (build context assembled from an explicit allowlist) |
-| `in-container.sh` | the image's entrypoint (dispatch + the eval loop) |
-| `select_cases.py` | deterministic set selection from the pinned dataset |
-| `arm.sh` / `compare.py` | one arm end to end (review → defect judge → optional AACR eval); the comparison table |
-| `check_available.py` | can every PR's base and head still be fetched from github.com |
-| `references.json` / `reference_index.py` | each AACR reference's own category and context, for the benchmark table's breakdown |
-| `sets/*.json` | the committed case sets |
-| `judge_shim.py` | OpenAI-compatible judge endpoint over `pi -p` |
-| `eval_shards.py` | splits one eval by PR across harness processes and merges them with the harness's own summary functions |
-| `codex_bridge.py` | the OCR, OpenCode and PR-Agent arms' loopback Chat Completions/Responses → Codex backend bridge |
-| `src/bench/pragent.ts` / `pragent_driver.py` | the PR-Agent arm: the runner and conversion (`tests/bench-pragent.test.ts`); the driver that runs PR-Agent's CLI with the bench provider (`--self-test` at image build) |
-| `src/bench/pireview.ts` | the pi-review arm (`tests/bench-pireview.test.ts`, real-output fixture `tests/fixtures/pireview-stdout-immich.txt`) |
-| `codex_arm.py` | the Codex CLI arm's driver: the harness's own `reviewers/codex.py` on one prepared case (`src/bench/codex.ts`, `codexcli.ts`, `codexreport.ts`; `tests/bench-codex.test.ts`) |
-| `src/bench/` | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the OpenCode arm (`opencode.ts`, `tests/bench-opencode.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`); the Codex CLI arm (`codex.ts`, `codexcli.ts`, `codexreport.ts`, `tests/bench-codex.test.ts`) |
-| `whatif/<id>/` | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json` |
-| `runs/<id>/` | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction) |
+| Path                                         | What                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bench.sh`                                   | host side: builds the image, wires mounts, hardens every container                                                                                                                                                                                                                                                                                      |
+| `Dockerfile`                                 | the sandbox image (build context assembled from an explicit allowlist)                                                                                                                                                                                                                                                                                  |
+| `in-container.sh`                            | the image's entrypoint (dispatch + the eval loop)                                                                                                                                                                                                                                                                                                       |
+| `select_cases.py`                            | deterministic set selection from the pinned dataset                                                                                                                                                                                                                                                                                                     |
+| `arm.sh` / `compare.py`                      | one arm end to end (review → defect judge → optional AACR eval); the comparison table                                                                                                                                                                                                                                                                   |
+| `check_available.py`                         | can every PR's base and head still be fetched from github.com                                                                                                                                                                                                                                                                                           |
+| `references.json` / `reference_index.py`     | each AACR reference's own category and context, for the benchmark table's breakdown                                                                                                                                                                                                                                                                     |
+| `sets/*.json`                                | the committed case sets                                                                                                                                                                                                                                                                                                                                 |
+| `judge_shim.py`                              | OpenAI-compatible judge endpoint over `pi -p`                                                                                                                                                                                                                                                                                                           |
+| `eval_shards.py`                             | splits one eval by PR across harness processes and merges them with the harness's own summary functions                                                                                                                                                                                                                                                 |
+| `codex_bridge.py`                            | the OCR, OpenCode and PR-Agent arms' loopback Chat Completions/Responses → Codex backend bridge                                                                                                                                                                                                                                                         |
+| `src/bench/pragent.ts` / `pragent_driver.py` | the PR-Agent arm: the runner and conversion (`tests/bench-pragent.test.ts`); the driver that runs PR-Agent's CLI with the bench provider (`--self-test` at image build)                                                                                                                                                                                 |
+| `src/bench/pireview.ts`                      | the pi-review arm (`tests/bench-pireview.test.ts`, real-output fixture `tests/fixtures/pireview-stdout-immich.txt`)                                                                                                                                                                                                                                     |
+| `codex_arm.py`                               | the Codex CLI arm's driver: the harness's own `reviewers/codex.py` on one prepared case (`src/bench/codex.ts`, `codexcli.ts`, `codexreport.ts`; `tests/bench-codex.test.ts`)                                                                                                                                                                            |
+| `src/bench/`                                 | prefetch, review runner, result conversion, report, the OCR arm (`ocr.ts`) (`tests/bench-aacr.test.ts`); the OpenCode arm (`opencode.ts`, `tests/bench-opencode.test.ts`); the what-if scorer `whatif.ts` + `whatifrun.ts` (`tests/bench-whatif.test.ts`); the Codex CLI arm (`codex.ts`, `codexcli.ts`, `codexreport.ts`, `tests/bench-codex.test.ts`) |
+| `whatif/<id>/`                               | per what-if run: `source/` (the copied run), `results/<variant>/`, `extract/`, `eval/`, `report.md`, `whatif-summary.json`                                                                                                                                                                                                                              |
+| `runs/<id>/`                                 | per run: `run.json`, `cases/<id>/` (system prompt, round order, files, pi event stream, the session's four files, `case-summary.json`), `results/<variant>/` (the harness's input + metrics), `eval/`, `report.md`, `sandbox-commands.log` (every docker invocation, for reproduction)                                                                  |

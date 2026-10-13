@@ -1,0 +1,36 @@
+{
+  "name": "glm-qodo1",
+  "dataset": {
+    "source": "https://huggingface.co/datasets/Qodo/PR-Review-Bench",
+    "commit": "a73957c450a70693a743260e5637fffc44625f16",
+    "file": "git_code_review_bench_100_w_open_prs.jsonl",
+    "sha256": "2f0448ed1f9a55bea14039961d8d9e610ee8885b37559b80f5821f3f70cfe64d"
+  },
+  "rule": "One PR from the first three cases of the full benchmark, for a three-PR total GLM smoke test",
+  "references": 4,
+  "cases": [
+    {
+      "instance_id": "agentic-review-benchmarks__Ghost@1987365",
+      "repo": "agentic-review-benchmarks/Ghost",
+      "pr": 1,
+      "pr_url": "https://github.com/agentic-review-benchmarks/Ghost/pull/1",
+      "base_commit": "47c713139b6e8ba45c6f282991929ad73b17d511",
+      "head_commit": "19873656af953712cb3c5f5f4d881824c0357097",
+      "language": "JavaScript",
+      "pr_category": "qodo-injected",
+      "change_line_count": 0,
+      "references": 4,
+      "title": "Removed xmlrpc/pingomatic ping service",
+      "body": "Pingomatic is a legacy blog ping service that notified external services when posts were published. It is no longer relevant for modern SEO or content distribution.\r\n\r\nThe service was disabled by default and added unnecessary complexity to the codebase.\r\n\r\nGot some code for us? Awesome \ud83c\udf8a!\r\n\r\nPlease take a minute to explain the change you're making:\r\n- Why are you making it?\r\n- What does it do?\r\n- Why is this something Ghost users or developers need?\r\n\r\nPlease check your PR against these items:\r\n\r\n- [x] I've read and followed the [Contributor Guide](https://github.com/TryGhost/Ghost/blob/main/.github/CONTRIBUTING.md)\r\n- [x] I've explained my change\r\n- [x] I've written an automated test to prove my change works\r\n\r\nWe appreciate your contribution! \ud83d\ude4f\r\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> Removes the obsolete XML-RPC ping service (Pingomatic) from core and config.\n> \n> - Deletes `server/services/xmlrpc.js` and its unit tests\n> - Drops `xmlrpc.listen()` and the `xmlrpc` require from `boot.js`\n> - Removes `privacy.useRpcPing` from `config.development.json`\n> \n> No other services or boot order affected.\n> \n> <sup>Written by [Cursor Bugbot](https://cursor.com/dashboard?tab=bugbot) for commit 6214dd7fd9def1e68e3f6845a6219055afb92eba. This will update automatically on new commits. Configure [here](https://cursor.com/dashboard?tab=bugbot).</sup>\n<!-- /CURSOR_SUMMARY -->",
+      "leakproof": {
+        "source_head": "d3184872c4837be0457b6311bc9113538d871db1",
+        "source_merge_base": "18c03d2522d44f458b717120ceb3caa3521ee751",
+        "base_tree": "28811be89727f04c35cc42d352a6f9eeaf96312f",
+        "head_tree": "c58b55f1770fde869471bc670940b5a84d3a9b4b"
+      },
+      "task_id": "Ghost#1",
+      "source_base_commit": "18c03d2522d44f458b717120ceb3caa3521ee751"
+    }
+  ],
+  "backups": []
+}

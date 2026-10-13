@@ -33,6 +33,8 @@ import {
   apiKeyEnv,
   authFingerprint,
   benchAuthMode,
+  benchProvider,
+  digitalOceanModels,
   modelForAuth,
   syncBenchAuth,
 } from "../src/bench/auth.js";
@@ -71,6 +73,58 @@ function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
 }
 
 describe("the switch", () => {
+  it("DigitalOcean admits only the named provider and forwards only its credential", () => {
+    expect(benchProvider({})).toBeUndefined();
+    expect(() => benchProvider({ QCR_BENCH_PROVIDER: "other" })).toThrow(/digitalocean/);
+    const env = {
+      QCR_BENCH_PROVIDER: "digitalocean",
+      DIGITALOCEAN_API_KEY: "fake-gradient",
+      OPENAI_API_KEY: "fake-openai",
+    };
+    expect(apiKeyEnv("api-key", env)).toEqual({ DIGITALOCEAN_API_KEY: "fake-gradient" });
+    expect(apiKeyEnv("login", env)).toEqual({});
+  });
+
+  it("DigitalOcean fingerprints provider settings without credentials and provisions pi in its private directory", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-gradient-"));
+    try {
+      withEnv({ QCR_BENCH_PROVIDER: "digitalocean", DIGITALOCEAN_API_KEY: "fake-secret" }, () => {
+        const fp = authFingerprint("api-key");
+        expect(fp.inference?.provider).toBe("digitalocean");
+        expect(fp.inference?.config_sha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(fp)).not.toContain("fake-secret");
+        const changedKey = withEnv({ DIGITALOCEAN_API_KEY: "different-secret" }, () =>
+          authFingerprint("api-key"),
+        );
+        expect(changedKey).toEqual(fp);
+        syncBenchAuth({
+          srcDir: join(tmp, "absent"),
+          dstDir: tmp,
+          root: "/r",
+          needMs: 0,
+          mode: "api-key",
+        });
+        const models = readFileSync(join(tmp, "models.json"), "utf8");
+        expect(JSON.parse(models)).toEqual(digitalOceanModels());
+        expect(models).toContain("${DIGITALOCEAN_API_KEY}");
+        expect(models).not.toContain("fake-secret");
+        expect(statSync(join(tmp, "models.json")).mode & 0o777).toBe(0o600);
+      });
+      withEnv({ QCR_BENCH_PROVIDER: undefined }, () => {
+        syncBenchAuth({
+          srcDir: join(tmp, "absent"),
+          dstDir: tmp,
+          root: "/r",
+          needMs: 0,
+          mode: "api-key",
+        });
+        expect(existsSync(join(tmp, "models.json"))).toBe(false);
+        expect(authFingerprint("api-key")).toEqual({ auth: "api-key" });
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
   it("QCR_BENCH_AUTH: unset/login = the login route, api-key = the key route, anything else refused", () => {
     expect(benchAuthMode({})).toBe("login");
     expect(benchAuthMode({ QCR_BENCH_AUTH: "login" })).toBe("login");
@@ -197,6 +251,36 @@ describe("dry config check: a fresh clone's config on the key route", () => {
         .map((f) => /^model:\s*(\S+)/m.exec(readFileSync(join(out, f), "utf8"))?.[1] ?? "");
       expect(models.length).toBeGreaterThan(10);
       for (const m of models) expect(m, m).toMatch(/^openai\//);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("the GLM run configuration reaches every built lens and the validator", () => {
+    const model = "digitalocean/glm-5.3-flash";
+    const overrides = `models.default=${model},models.conversation=${model},models.overseer=${model},models.tiers.terra-med=${model}:medium,models.tiers.sol-med=${model}:medium,models.tiers.sol-high=${model}:high`;
+    const cfg = withEnv(
+      { QCR_BENCH_AUTH: "api-key", QCR_BENCH_PROVIDER: "digitalocean" },
+      () => contextFor(ROOT, "", overrides).cfg,
+    );
+    expect(cfg.models.conversation).toBe(model);
+    const out = mkdtempSync(join(tmpdir(), "bench-glm-agents-"));
+    try {
+      buildAgents(join(ROOT, "agents"), out, {
+        root: ROOT,
+        tiers: cfg.models.tiers,
+        riskPasses: cfg.models.risk_passes,
+        validateTier: cfg.models.validate_tier,
+        vars: identityVars(cfg),
+        addenda: [...PASS_ADDENDA],
+      });
+      const files = readdirSync(out).filter((f) => f.endsWith(".md"));
+      expect(files.length).toBeGreaterThan(10);
+      expect(files).toContain("pass-validate--sol-high.md");
+      for (const file of files) {
+        const spec = /^model:\s*(\S+)/m.exec(readFileSync(join(out, file), "utf8"))?.[1];
+        expect(spec, file).toMatch(/^digitalocean\/glm-5\.3-flash:(medium|high)$/);
+      }
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
@@ -332,6 +416,60 @@ describe("the Codex CLI arm: the harness's own CODEX_API_KEY route", () => {
 describe("the host side (bench.sh, ext.sh)", () => {
   const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
   const ext = readFileSync(join(ROOT, "bench", "aacr", "ext", "ext.sh"), "utf8");
+
+  it("DigitalOcean passes the key file only to review case containers; bookkeeping has the same provider fingerprint", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-gradient-shell-"));
+    try {
+      const bin = join(tmp, "bin");
+      mkdirSync(bin);
+      const log = join(tmp, "docker.log");
+      writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`);
+      chmodSync(join(bin, "docker"), 0o755);
+      const keyFile = join(tmp, "digitalocean.env");
+      writeFileSync(keyFile, "DIGITALOCEAN_API_KEY=fake-gradient-secret\n");
+      for (const phase of ["init", "case", "finish"]) {
+        const r = spawnSync(
+          "bash",
+          [
+            join(ROOT, "bench/aacr/bench.sh"),
+            "review",
+            "--phase",
+            phase,
+            "--run",
+            `gradient-${phase}`,
+            "--set",
+            "smoke10",
+            "--config",
+            "models.conversation=digitalocean/glm-5.3-flash",
+          ],
+          {
+            env: {
+              PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+              HOME: tmp,
+              QCR_BENCH_RUNS_DIR: join(tmp, "runs"),
+              QCR_BENCH_PROVIDER: "digitalocean",
+              QCR_BENCH_DIGITALOCEAN_ENV: keyFile,
+            },
+            encoding: "utf8",
+          },
+        );
+        expect(r.status, r.stderr).toBe(0);
+        const call = readFileSync(log, "utf8")
+          .trim()
+          .split("\n")
+          .filter((l) => l.startsWith("run "))
+          .at(-1)!;
+        expect(call).toContain("QCR_BENCH_PROVIDER=digitalocean");
+        expect(call).toContain("QCR_BENCH_AUTH=api-key");
+        expect(call).not.toContain("fake-gradient-secret");
+        expect(call).not.toContain("pi-agent-src");
+        if (phase === "case") expect(call).toContain(`--env-file ${keyFile}`);
+        else expect(call).not.toContain("--env-file");
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 
   it("on the key route auth_mounts returns before any login volume is touched", () => {
     const fn = sh.slice(

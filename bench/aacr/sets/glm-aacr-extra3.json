@@ -1,0 +1,51 @@
+{
+  "name": "glm-aacr-extra3",
+  "dataset": {
+    "source": "https://github.com/alibaba/aacr-bench",
+    "commit": "ab8af8d5c74e2a4d1945d247ea4bbc49f93eb33f",
+    "file": "dataset/positive_samples.json",
+    "sha256": "d8683cb240249bc4e0aff6428802bdffa7b7573ace600552cab1cd0cb7e905c9"
+  },
+  "rule": "Additional cases for the authorized ten-PR GLM smoke; combined with the original three PRs",
+  "references": 25,
+  "cases": [
+    {
+      "instance_id": "FreeCAD__FreeCAD@eb761fd",
+      "repo": "FreeCAD/FreeCAD",
+      "pr": 21257,
+      "pr_url": "https://github.com/FreeCAD/FreeCAD/pull/21257",
+      "base_commit": "17e56f6570a97aa9803b502b23cf27dc8be1da70",
+      "head_commit": "eb761fd69cf1fb9c674e385bb1d419814526ba5a",
+      "language": "C++",
+      "pr_category": "Bug Fix",
+      "change_line_count": 672,
+      "references": 19
+    },
+    {
+      "instance_id": "FreeCAD__FreeCAD@82fef4a",
+      "repo": "FreeCAD/FreeCAD",
+      "pr": 22744,
+      "pr_url": "https://github.com/FreeCAD/FreeCAD/pull/22744",
+      "base_commit": "ab225f5672cbe45404299437d1613c308b68900b",
+      "head_commit": "82fef4a22503dd3affdd39e7120b6f71e9423f86",
+      "language": "C++",
+      "pr_category": "Security Patches / Vulnerability Fixes",
+      "change_line_count": 41,
+      "references": 3
+    },
+    {
+      "instance_id": "FreeCAD__FreeCAD@ec3da2e",
+      "repo": "FreeCAD/FreeCAD",
+      "pr": 20612,
+      "pr_url": "https://github.com/FreeCAD/FreeCAD/pull/20612",
+      "base_commit": "79008331b30d098b2c32e59752e24e0705b350bc",
+      "head_commit": "ec3da2e93e3fd8f69f113ca14abf892dfb86c11b",
+      "language": "C++",
+      "pr_category": "Code Refactoring / Architectural Improvement",
+      "change_line_count": 80,
+      "references": 3
+    }
+  ],
+  "backups": [],
+  "defects_from": "rest145"
+}

@@ -16,8 +16,17 @@
 // remaining life against the case budget BEFORE the case starts and stops the
 // run with a clear instruction, instead of failing case after case.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 
 // The API-key route: the published runs used the login above; an outsider
@@ -32,6 +41,37 @@ import { PI_DISABLED_BUILTINS } from "../pibuiltins.js";
 //     resumes over, or is mixed with, a login run.
 
 export type BenchAuthMode = "login" | "api-key";
+
+/** The benchmark's custom provider. Credentials remain environment references. */
+export function digitalOceanModels() {
+  return {
+    providers: {
+      digitalocean: {
+        baseUrl: "https://inference.do-ai.run/v1",
+        api: "openai-completions",
+        apiKey: "${DIGITALOCEAN_API_KEY}",
+        models: [
+          {
+            id: "glm-5.3-flash",
+            name: "GLM-5.3 Flash (DigitalOcean)",
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 65536,
+            cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+          },
+        ],
+      },
+    },
+  };
+}
+
+export function benchProvider(env: NodeJS.ProcessEnv = process.env): "digitalocean" | undefined {
+  const provider = env["QCR_BENCH_PROVIDER"];
+  if (!provider) return undefined;
+  if (provider === "digitalocean") return provider;
+  throw new Error("QCR_BENCH_PROVIDER must be digitalocean or unset");
+}
 
 /** The sandbox's credential route, from `QCR_BENCH_AUTH` (unset = login). */
 export function benchAuthMode(env: NodeJS.ProcessEnv = process.env): BenchAuthMode {
@@ -50,8 +90,25 @@ export function modelForAuth(spec: string, mode: BenchAuthMode = benchAuthMode()
 
 /** Spread into an arm's fingerprint: empty on the login route (so every
  * published fingerprint is unchanged), `{ auth: "api-key" }` on the key route. */
-export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): { auth?: "api-key" } {
-  return mode === "api-key" ? { auth: "api-key" } : {};
+export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): {
+  auth?: "api-key";
+  inference?: { provider: "digitalocean"; config_sha256: string };
+} {
+  return mode === "api-key"
+    ? {
+        auth: "api-key",
+        ...(benchProvider() === "digitalocean"
+          ? {
+              inference: {
+                provider: "digitalocean" as const,
+                config_sha256: createHash("sha256")
+                  .update(JSON.stringify(digitalOceanModels()))
+                  .digest("hex"),
+              },
+            }
+          : {}),
+      }
+    : {};
 }
 
 /** The API keys a pi process may see on the key route — read from the
@@ -63,7 +120,11 @@ export function apiKeyEnv(
 ): Record<string, string> {
   if (mode !== "api-key") return {};
   const out: Record<string, string> = {};
-  for (const k of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
+  const keys =
+    benchProvider(env) === "digitalocean"
+      ? ["DIGITALOCEAN_API_KEY"]
+      : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+  for (const k of keys) {
     const v = env[k];
     if (v) out[k] = v;
   }
@@ -131,6 +192,9 @@ export function syncBenchAuth(o: {
   /** Default: `benchAuthMode()` — the key route reads no login at all. */
   mode?: BenchAuthMode;
 }): { expiresAt: number | null } {
+  // Each sandbox owns this file. Switching routes must not keep an earlier
+  // provider active (pi loads models.json independently of auth.json).
+  if (benchProvider() !== "digitalocean") rmSync(join(o.dstDir, "models.json"), { force: true });
   if ((o.mode ?? benchAuthMode()) === "api-key") {
     // No login: an empty auth.json, so pi takes each provider's key from the
     // environment. Nothing is read from srcDir (bench.sh mounts nothing there).
@@ -140,6 +204,14 @@ export function syncBenchAuth(o: {
     const { settings, trust } = benchSettings(o.root);
     writeFileSync(join(o.dstDir, "settings.json"), settings);
     writeFileSync(join(o.dstDir, "trust.json"), trust);
+    if (benchProvider() === "digitalocean") {
+      writeFileSync(
+        join(o.dstDir, "models.json"),
+        JSON.stringify(digitalOceanModels(), null, 2) + "\n",
+        { mode: 0o600 },
+      );
+      chmodSync(join(o.dstDir, "models.json"), 0o600);
+    }
     return { expiresAt: null };
   }
   const src = join(o.srcDir, "auth.json");

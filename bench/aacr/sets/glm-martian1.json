@@ -1,0 +1,37 @@
+{
+  "name": "glm-martian1",
+  "dataset": {
+    "source": "https://github.com/withmartian/code-review-benchmark",
+    "commit": "e616e849755441da38f18bf3adba2c9583b03803",
+    "file": "offline/golden_comments/*.json + offline/results/benchmark_data.json (manifest sha256)",
+    "sha256": "0265909b9ebe206e9b8e28f548f0a3ffa145c9b28d317da522ef1034186269ee"
+  },
+  "rule": "One PR from the first three cases of the full benchmark, for a three-PR total GLM smoke test",
+  "references": 2,
+  "cases": [
+    {
+      "instance_id": "calcom__cal.com-8087@820d7fa",
+      "repo": "calcom/cal.com",
+      "pr": 8087,
+      "pr_url": "https://github.com/calcom/cal.com/pull/8087",
+      "base_commit": "ba9688a04a8398c9a8332ee7061bfae2f2efd524",
+      "head_commit": "820d7fa87e0c824c5dee8082a33efadb1a2566f7",
+      "language": "TypeScript",
+      "pr_category": "",
+      "change_line_count": 189,
+      "references": 2,
+      "fetch_repo": "code-review-benchmark/cal_dot_com__cal.com__augment__PR8087__20260122",
+      "fetch_pr": 1,
+      "title": "Async import of the appStore packages",
+      "body": "## What does this PR do?\r\n\r\nAsync imports of all apps\r\n",
+      "expect_merge_base": "ba9688a04a8398c9a8332ee7061bfae2f2efd524",
+      "martian": {
+        "project": "cal_dot_com",
+        "golden_url": "https://github.com/calcom/cal.com/pull/8087",
+        "fork": "cal_dot_com__cal.com__augment__PR8087__20260122",
+        "base_ref": "main"
+      }
+    }
+  ],
+  "backups": []
+}
