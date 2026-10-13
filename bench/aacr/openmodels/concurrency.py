@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""How much ran at once in a GLM arm.
+"""How much ran at once in an open-model benchmark arm.
 
   concurrency.py --runs-dir DIR --prefix P --sets s1,s2,... [--samples FILE]
 
 PR level: the peak and the time spent at each count of review containers, from
-the sampler log glm-bench.sh writes (`<epoch> <n>` every 10 s), plus the peak of
+the sampler log openbench.sh writes (`<epoch> <n>` every 10 s), plus the peak of
 overlapping case windows (each case's first to last recorded message).
 Lens level, per PR: the peak number of lens children running at once (each
 child's first to last message timestamp in the launch_plan / subagent results),

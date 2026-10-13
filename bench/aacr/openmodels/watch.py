@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Live view of a GLM benchmark arm. Ctrl-C quits; it only reads.
+"""Live view of an open-model benchmark arm. Ctrl-C quits; it only reads.
 
   watch.py --out DIR [--prefix P] [--every 5]
 
-DIR is bench/aacr/artifacts/glm-benchmark; P defaults to the newest run prefix.
+DIR is bench/aacr/artifacts/open-models; P defaults to the newest run prefix.
 Per PR: state, minutes, lenses running right now (pi processes in its
-container), GLM replies, provider errors in the last 5 minutes, idle time and
+container), model replies, provider errors in the last 5 minutes, idle time and
 cost (live from the main session's usage; the final figure once it finishes).
 """
 import argparse, json, os, re, subprocess, sys, time
 from pathlib import Path
 
-PRICE = {"input": 0.15, "output": 0.50, "cacheRead": 0.03}   # $/1M, glm-5.3-flash list price
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from models import MODELS  # noqa: E402
+
+PRICE = {}   # set from the run's model (models.py)
 SETS = Path(__file__).resolve().parents[1] / "sets"
 DIM, RED, GRN, YEL, BOLD, RST = "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[1m", "\033[0m"
 
@@ -82,9 +85,14 @@ def main():
     image = (a.out / "image.txt").read_text().strip()
     prefix = a.prefix
     if not prefix:
-        newest = max((p for p in runs.glob("glm53-*.arm.json")), key=lambda p: p.stat().st_mtime)
-        prefix = json.loads(newest.read_text()).get("prefix") or re.sub(r"-glm-.*|-(smoke10|dev10|holdout10|fresh10|rest145|martian50|qodo-pr100)\.arm\.json$", "", newest.name)
+        newest = max(runs.glob("*.arm.json"), key=lambda p: p.stat().st_mtime)
+        prefix = re.sub(r"-(glm-[a-z0-9-]+|smoke10|dev10|holdout10|fresh10|rest145|martian50|qodo-pr100)\.arm\.json$", "", newest.name)
     sets = sorted({p.name[len(prefix) + 1:-len(".arm.json")] for p in runs.glob(f"{prefix}-*.arm.json")})
+    model = ""
+    for rj in runs.glob(f"{prefix}-*/run.json"):
+        model = (json.loads(rj.read_text()).get("models") or {}).get("conversation", "").split("/")[-1]
+        break
+    PRICE.update(MODELS.get(model, {"price": {}})["price"])
     tails = {}
     while True:
         live = containers(image)
@@ -136,7 +144,7 @@ def main():
                     idle = f"{now - t.path.stat().st_mtime:.0f}s"
                 er = f"{RED}{len(recent)}{RST}" if recent else "0"
                 rows.append((s, cid, state, mins, lenses, t.replies, er, idle, cost))
-        out = [f"{BOLD}GLM benchmark — {prefix}{RST}   image {image}   {time.strftime('%H:%M:%S')}",
+        out = [f"{BOLD}{model or '?'} — {prefix}{RST}   image {image}   {time.strftime('%H:%M:%S')}",
                f"ok {GRN}{totals['ok']}{RST}   degraded (lenses lost) {RED if totals['degraded'] else ''}{totals['degraded']}{RST}   failed {RED if totals['fail'] else ''}{totals['fail']}{RST}   "
                f"running {YEL}{totals['running']}{RST}   queued {totals['queued']}   "
                f"of {sum(totals.values())}      PR containers {len(live)}/10   lenses running {sum(live.values())}",

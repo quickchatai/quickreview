@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Gate a GLM benchmark arm before GPT-6.1 Sol scores it.
+"""Gate an open-model benchmark arm before GPT-6.1 Sol scores it.
 
-  gate.py --runs-dir DIR --prefix P --sets s1,s2,... [--strict] [--out FILE]
+  gate.py --runs-dir DIR --model ID --prefix P --sets s1,s2,... [--strict] [--out FILE]
 
 For every run <P>-<set>: run.json finished, every PR of the set present,
 status ok, zero model_errors, every planned pass executed, the fingerprint and
-every recorded assistant message naming digitalocean/glm-5.3-flash.
+every recorded assistant message naming digitalocean/<ID> (ID from models.py).
 
 --strict (the smoke): any failure exits 1, so nothing is scored.
 Without it (the full run): failures are LISTED and written to --out, and the
 exit is 1 only on a wrong reviewer model (that run must never be scored) —
 failed PRs stay visible as failures; the set is never shrunk to what passed.
-Also prints the cost and time at DigitalOcean list prices.
+Also prints the cost and time at the model's DigitalOcean list price.
 """
 import argparse, json, sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from models import MODELS  # noqa: E402
+
 SETS = Path(__file__).resolve().parents[1] / "sets"
-MODEL = "digitalocean/glm-5.3-flash"
-# $/1M tokens — DigitalOcean list price for glm-5.3-flash (input, output, cache read).
-PRICE = {"input": 0.15, "output": 0.50, "cacheRead": 0.03}
 
 
 def models_in(events: Path) -> Counter:
@@ -51,11 +51,13 @@ def models_in(events: Path) -> Counter:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-dir", required=True, type=Path)
+    ap.add_argument("--model", required=True, choices=sorted(MODELS))
     ap.add_argument("--prefix", required=True)
     ap.add_argument("--sets", required=True)
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--out")
     a = ap.parse_args()
+    MODEL, PRICE = f"digitalocean/{a.model}", MODELS[a.model]["price"]
 
     report, wrong_model, failed = {"prefix": a.prefix, "sets": {}}, False, 0
     for s in a.sets.split(","):
@@ -81,8 +83,8 @@ def main() -> int:
             errs = {k: v for k, v in (d.get("model_errors") or {}).items() if v}
             if errs:
                 why.append(f"model_errors {errs}")
-            # GLM sometimes launches a lens with its tier suffix doubled
-            # (pass-x--sol-high--sol-high); the lens still ran, so count it, but say so.
+            # A session sometimes launches a lens with its tier suffix doubled
+            # (pass-x--sol-high--sol-high, seen with GLM); the lens still ran, so count it, but say so.
             ran = set()
             for p in d.get("executed_passes") or []:
                 parts = p.split("--")
@@ -131,7 +133,7 @@ def main() -> int:
     if a.out:
         Path(a.out).write_text(json.dumps(report, indent=2) + "\n")
     if wrong_model:
-        print("gate: a reviewer call used a model other than GLM — do NOT score", file=sys.stderr)
+        print(f"gate: a reviewer call used a model other than {MODEL} — do NOT score", file=sys.stderr)
         return 1
     if a.strict and failed:
         print("gate: smoke not clean — do NOT score", file=sys.stderr)

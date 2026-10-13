@@ -50,6 +50,8 @@ export function digitalOceanModels() {
         baseUrl: "https://inference.do-ai.run/v1",
         api: "openai-completions",
         apiKey: "${DIGITALOCEAN_API_KEY}",
+        // Limits and $/1M prices from DigitalOcean's model catalog and pricing
+        // pages (2026-10-13); maxTokens is the output budget pi asks for.
         models: [
           {
             id: "glm-5.3-flash",
@@ -59,6 +61,33 @@ export function digitalOceanModels() {
             contextWindow: 1048576,
             maxTokens: 65536,
             cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+          },
+          {
+            id: "gemma-4-31B-it",
+            name: "Gemma 4 31B (DigitalOcean)",
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 256000,
+            maxTokens: 8192,
+            cost: { input: 0.18, output: 0.5, cacheRead: 0.036, cacheWrite: 0 },
+          },
+          {
+            id: "deepseek-v4.1-flash",
+            name: "DeepSeek V4.1 Flash (DigitalOcean)",
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 65536,
+            cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+          },
+          {
+            id: "qwen3.8-max",
+            name: "Qwen3.8-Max (DigitalOcean)",
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 1000000,
+            maxTokens: 65536,
+            cost: { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 },
           },
         ],
       },

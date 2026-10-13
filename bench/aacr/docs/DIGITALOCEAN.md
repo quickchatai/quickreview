@@ -12,21 +12,38 @@ passes `digitalocean.env` without mounting a login, and each private pi director
 gets the provider configuration. Judge commands use their separate existing
 login or OpenAI API-key route.
 
+## The models
+
+`MODEL=<id>` picks the model that runs every reviewer call; the default is
+`glm-5.3-flash`. Each id is registered with the provider in `src/bench/auth.ts`
+and priced in `bench/aacr/openmodels/models.py` (DigitalOcean list prices, $ per
+1M tokens, 2026-10-13):
+
+| Model id | Runs named | Input | Output | Cache read | Context | Output budget |
+|---|---|---|---|---|---|---|
+| `glm-5.3-flash` | `glm53-…` | 0.15 | 0.50 | 0.03 | 1M | 65,536 |
+| `gemma-4-31B-it` | `gemma4-…` | 0.18 | 0.50 | 0.036 | 256k | 8,192 (the model's maximum) |
+| `deepseek-v4.1-flash` | `dsv41f-…` | 0.30 | 1.20 | 0.006 | 1M | 65,536 |
+| `qwen3.8-max` | `qwen38max-…` | 2.00 | 6.00 | 0.20 | 1M | 65,536 |
+
+All four answered a tool call with reasoning on 2026-10-13. Adding a model means
+one entry in each of those two places and an image rebuild.
+
 ## The driver
 
-`bench/aacr/glm/glm-bench.sh` runs everything below as fixed steps; the
+`bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the
 sections after it explain what each step does. Logs and results land in the
-main checkout's Git-ignored `bench/aacr/artifacts/glm-benchmark/`.
+main checkout's Git-ignored `bench/aacr/artifacts/open-models/`.
 
 ```bash
-bench/aacr/glm/glm-bench.sh build              # review + judge image from master HEAD (clean worktree)
-bench/aacr/glm/glm-bench.sh preflight          # checks only
-bench/aacr/glm/glm-bench.sh smoke --go         # 10-PR smoke on that image: reviews, concurrency report, GPT-6.1 judging
-bench/aacr/glm/glm-bench.sh full --go          # 335 PRs, 10 at once, then gate + judge
-bench/aacr/glm/glm-bench.sh score-full --go    # re-gate and re-judge a reviewed full run
+bench/aacr/openmodels/openbench.sh build              # review + judge image from master HEAD (clean worktree)
+bench/aacr/openmodels/openbench.sh preflight          # checks only
+bench/aacr/openmodels/openbench.sh smoke --go         # 10-PR smoke on that image: reviews, concurrency report, GPT-6.1 judging
+bench/aacr/openmodels/openbench.sh full --go          # 335 PRs, 10 at once, then gate + judge
+bench/aacr/openmodels/openbench.sh score-full --go    # re-gate and re-judge a reviewed full run
 ```
 
-`bench/aacr/glm/glm-bench.sh watch` is the live view: per PR its state, minutes,
+`bench/aacr/openmodels/openbench.sh watch` is the live view: per PR its state, minutes,
 lenses running now, GLM replies, provider errors in the last five minutes, idle
 time and cost; a PR whose review lost lenses shows as `degraded -N`.
 
@@ -39,7 +56,7 @@ OpenAI key, on top of a DigitalOcean overload window (17:28–17:35) that timed 
 38 lenses.
 
 Without `--go`, a step that spends model money prints its plan and exits. A
-benchmark run needs the owner's approval. `bench/aacr/glm/gate.py` refuses
+benchmark run needs the owner's approval. `bench/aacr/openmodels/gate.py` refuses
 scoring when any reviewer call used a model other than GLM, lists every failed
 PR (never shrinking a set to what passed), and prints cost and time at
 DigitalOcean list prices. It counts a lens launched with a doubled tier suffix
@@ -194,7 +211,7 @@ of the base checkout, outside the reviewer worktrees. `EXT_CACHE` points to the 
 external dataset cache; it must contain the Qodo data and repository mirrors.
 
 ```bash
-export QCR_BENCH_RUNS_DIR="$PWD/bench/aacr/artifacts/glm-benchmark/runs"
+export QCR_BENCH_RUNS_DIR="$PWD/bench/aacr/artifacts/open-models/runs"
 mkdir -p "$QCR_BENCH_RUNS_DIR"
 # Set EXT_CACHE to your local external dataset cache.
 export EXT_CACHE=/path/to/ext-cache
