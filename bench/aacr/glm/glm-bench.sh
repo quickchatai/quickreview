@@ -7,6 +7,7 @@
 #   glm-bench.sh smoke [--go]          10-PR smoke on the built image (all 10 slots), then
 #                                      gate + concurrency report + GPT-6.1 judge
 #   glm-bench.sh score-smoke [--go]    gate + GPT-6.1 judge the finished smoke on the built image
+#   glm-bench.sh watch [--prefix P]    live view of the newest run (Ctrl-C quits; read-only)
 #   glm-bench.sh full [--go]           prefetch → review 335 PRs (10 at once) → gate → judge
 #   glm-bench.sh score-full [--go]     gate + judge an already reviewed full run (resume / rescore)
 #
@@ -31,11 +32,14 @@ export QCR_BENCH_PRIVATE_SETS="$SRC/bench/aacr/sets"
 
 M=digitalocean/glm-5.3-flash
 # GLM on every role and tier (the validator runs at sol-high), 12 lenses per PR.
+# use_image adds the image config's [models.pass_models] pins (lenses pinned to
+# another model, e.g. gpt-6-luna) re-pointed at GLM, each keeping its own effort.
 GLM_CONFIG="models.default=$M,models.conversation=$M,models.overseer=$M,models.tiers.terra-med=$M:medium,models.tiers.sol-med=$M:medium,models.tiers.sol-high=$M:high,pi.subagent_max_concurrency=12,pi.subagent_cache_group=0"
 JUDGE=openai-codex/gpt-6.1-sol:high
 
-# The smoke's runs are named after the image's commit, so each build smokes afresh.
-SMOKE_PREFIX=glm53-smoke-p10-l12   # the first smoke (2026-10-13, image 21c40ad9-dirty)
+# Each smoke launch gets its own run name (image commit + launch time), kept in
+# smoke-prefix.txt for score-smoke and the live view.
+SMOKE_PREFIX=""
 SMOKE_SETS=(glm-aacr1 glm-aacr-extra3 glm-martian1 glm-martian-extra2 glm-qodo1 glm-qodo-extra2)
 FULL_PREFIX=glm53-full
 AACR_SETS=(smoke10 dev10 holdout10 fresh10 rest145)   # the published 185-PR AACR comparison
@@ -53,8 +57,30 @@ use_image() {
   IMAGE="$(cat "$OUT/image.txt")"
   docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE is gone — run: $0 build"
   export QCR_BENCH_IMAGE="$IMAGE" QCR_EXT_IMAGE="$IMAGE" QCR_EXT_JUDGE_IMAGE="$IMAGE"
-  SMOKE_PREFIX="glm53-smoke-$(sed -n 's/^qcr-bench:glm53-\([0-9a-f]*\)-ext$/\1/p' <<<"$IMAGE")"
-  [[ "$SMOKE_PREFIX" != glm53-smoke- ]] || die "unexpected image tag $IMAGE"
+  [[ -f "$OUT/smoke-prefix.txt" ]] && SMOKE_PREFIX="$(cat "$OUT/smoke-prefix.txt")"
+  # Every per-lens model pin in the baked config, re-pointed at GLM (its effort kept).
+  local pins
+  pins="$(docker run --rm --network none --entrypoint cat "$IMAGE" /opt/quickreview/sandbox/config.toml | python3 -I -c '
+import sys, tomllib
+pm = tomllib.loads(sys.stdin.read()).get("models", {}).get("pass_models", {})
+print(",".join(f"models.pass_models.{k}=digitalocean/glm-5.3-flash" + (":" + v.rsplit(":", 1)[1] if ":" in v.split("/")[-1] else "") for k, v in sorted(pm.items())))
+')"
+  [[ -z "$pins" || "$GLM_CONFIG" == *"$pins"* ]] || GLM_CONFIG="$GLM_CONFIG,$pins"
+}
+
+# Refuse a config where any reviewer model spec would still name another model.
+check_models() {
+  docker run --rm --network none --entrypoint cat "$IMAGE" /opt/quickreview/sandbox/config.toml | python3 -I -c '
+import sys, tomllib
+m = tomllib.loads(sys.stdin.read()).get("models", {})
+over = dict(p.split("=", 1) for p in sys.argv[1].split(","))
+specs = {f"models.{k}": m.get(k) for k in ("default", "conversation", "overseer")}
+specs |= {f"models.tiers.{k}": v for k, v in m.get("tiers", {}).items()}
+specs |= {f"models.pass_models.{k}": v for k, v in m.get("pass_models", {}).items()}
+bad = [k for k, v in specs.items() if v and not over.get(k, v).startswith("digitalocean/glm-5.3-flash")]
+print("ok   every reviewer model spec is GLM (%d specs, %d per-lens pins re-pointed)" % (len(specs), len(m.get("pass_models", {}))) if not bad else "FAIL not GLM: " + ", ".join(bad))
+sys.exit(1 if bad else 0)
+' "$GLM_CONFIG"
 }
 
 # Review containers running, every 10 s, until killed: "<epoch> <count>".
@@ -89,6 +115,9 @@ preflight() {
     label="$(docker image inspect "$img" --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^QCR_BENCH_COMMIT=//p')"
     [[ "$label" != *-dirty ]] && echo "ok   image $img (commit $label)" || { echo "FAIL image $img built from a dirty tree"; bad=1; }
   else echo "FAIL no image — run: $0 build"; bad=1; fi
+  if [[ -f "$OUT/image.txt" ]] && docker image inspect "$(cat "$OUT/image.txt")" >/dev/null 2>&1; then
+    use_image; check_models || bad=1
+  fi
   docker volume inspect qcr-bench-repos >/dev/null 2>&1 && echo "ok   repo cache volume" || { echo "FAIL qcr-bench-repos volume missing"; bad=1; }
   [[ -d "$EXT_CACHE/martian" && -d "$EXT_CACHE/qodo" && -d "$EXT_DATA" ]] && echo "ok   ext cache + data" || { echo "FAIL $EXT_CACHE or $EXT_DATA incomplete"; bad=1; }
   local s; for s in "${FULL_SETS[@]}" "${SMOKE_SETS[@]}"; do [[ -f "bench/aacr/sets/$s.json" ]] || { echo "FAIL set $s missing"; bad=1; }; done
@@ -124,14 +153,18 @@ case "$cmd" in
 
   preflight) preflight ;;
 
+  watch) exec python3 -I "$HERE/watch.py" --out "$OUT" "${@:2}" ;;
+
   smoke)
     preflight || die "preflight failed"
     use_image
+    SMOKE_PREFIX="glm53-smoke-$(sed -n 's/^qcr-bench:glm53-\([0-9a-f]*\)-ext$/\1/p' <<<"$IMAGE")-$(date +%m%d-%H%M)"
     if (( ! go )); then
       echo "would run on $IMAGE: arm.sh --prefix $SMOKE_PREFIX --cases $(join + "${SMOKE_SETS[@]}") --parallel 10 --retries 0 --resume --no-judge"
       echo "  (10 PRs: 4 AACR, 3 Martian, 3 Qodo — every slot busy), then: $0 score-smoke --go"
       echo "glm-bench: nothing run — add --go (needs the owner's approval)"; exit 0
     fi
+    echo "$SMOKE_PREFIX" > "$OUT/smoke-prefix.txt"
     for s in "${SMOKE_SETS[@]}"; do
       case "$(scorer_of "$s")" in
         aacr) "$SRC/bench/aacr/bench.sh" prefetch --set "$s" ;;
@@ -153,6 +186,7 @@ case "$cmd" in
 
   score-smoke)
     use_image
+    [[ -n "$SMOKE_PREFIX" ]] || die "no smoke launched yet (smoke-prefix.txt)"
     python3 -I "$HERE/gate.py" --runs-dir "$QCR_BENCH_RUNS_DIR" --prefix "$SMOKE_PREFIX" \
       --sets "$(join , "${SMOKE_SETS[@]}")" --strict --out "$OUT/gate-$SMOKE_PREFIX.json"
     (( go )) || { echo "glm-bench: gate passed; nothing judged — add --go"; exit 0; }

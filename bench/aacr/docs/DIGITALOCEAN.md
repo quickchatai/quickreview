@@ -26,6 +26,18 @@ bench/aacr/glm/glm-bench.sh full --go          # 335 PRs, 10 at once, then gate 
 bench/aacr/glm/glm-bench.sh score-full --go    # re-gate and re-judge a reviewed full run
 ```
 
+`bench/aacr/glm/glm-bench.sh watch` is the live view: per PR its state, minutes,
+lenses running now, GLM replies, provider errors in the last five minutes, idle
+time and cost; a PR whose review lost lenses shows as `degraded -N`.
+
+The image bakes the operator's config, whose `[models.pass_models]` pins some
+lenses to another model (the `gpt-6-luna` quality and design lenses). The driver
+re-points every pin at GLM with that pin's own effort, and `preflight` refuses a
+config where any reviewer model spec would still name another model. The
+2026-10-13 17:23 smoke ran before this fix: those six lenses failed for lack of an
+OpenAI key, on top of a DigitalOcean overload window (17:28–17:35) that timed out
+38 lenses.
+
 Without `--go`, a step that spends model money prints its plan and exits. A
 benchmark run needs the owner's approval. `bench/aacr/glm/gate.py` refuses
 scoring when any reviewer call used a model other than GLM, lists every failed
