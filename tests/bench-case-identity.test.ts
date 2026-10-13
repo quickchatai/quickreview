@@ -202,3 +202,71 @@ describe("a retried case's continuation", () => {
     expect(s.error).toMatch(/nothing to continue/);
   });
 });
+
+describe("a round whose output files do not parse", () => {
+  // The fake pi reads its prompt, persists a session (so `--continue` has one
+  // to resume), and writes the BENCHMARK MODE files: the first turn's
+  // findings record with escaped quotes around a key — the shape Gemma 4 wrote
+  // — and the continuation's as `fixed` says.
+  const run = async (fixed: string) => {
+    const c = mkCase(B1);
+    const cstore = join(tmp, `store-json-${fixed.length}`);
+    execFileSync("git", ["clone", "--quiet", "--bare", join(tmp, "work"), storeDir(cstore, c)]);
+    const root = join(tmp, `root-json-${fixed.length}`);
+    mkdirSync(root);
+    for (const e of readdirSync(ROOT))
+      if (!["wt", ".git", "state"].includes(e)) symlinkSync(join(ROOT, e), join(root, e));
+    const outDir = join(tmp, `out-json-${fixed.length}`);
+    const calls = join(tmp, `pi-calls-json-${fixed.length}.log`);
+    const piBin = join(tmp, `fake-pi-json-${fixed.length}`);
+    writeFileSync(
+      piBin,
+      [
+        "#!/bin/sh",
+        "cat >/dev/null",
+        `echo "$*" >> ${JSON.stringify(calls)}`,
+        'sd=""; prev=""; for a in "$@"; do [ "$prev" = "--session-dir" ] && sd="$a"; prev="$a"; done',
+        'mkdir -p "$sd"; echo \'{"type":"session"}\' > "$sd/s.jsonl"; cd="$(dirname "$sd")"',
+        'case "$*" in',
+        `  *--continue*) printf '%s' ${JSON.stringify(fixed)} > "$cd/findings-record.json" ;;`,
+        `  *) printf '%s' '{"findings": [], \\"verdict\\": \\"REQUEST_CHANGES\\"}' > "$cd/findings-record.json"`,
+        `     printf '%s' '{"verdict": "REQUEST_CHANGES", "passes": []}' > "$cd/outcome.json" ;;`,
+        "esac",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(piBin, 0o755);
+    const s = await reviewCase(
+      c,
+      metaFor(c),
+      {
+        root,
+        store: cstore,
+        outDir,
+        agentDir: join(tmp, "agent"),
+        profile: "",
+        timeoutMs: 10 * 60_000,
+        piBin,
+      },
+      { cfg: benchConfig(""), ecosystem: ecosystemFor("none"), fingerprint: {} as never },
+    );
+    return { s, invocations: readFileSync(calls, "utf8").trim().split("\n") };
+  };
+
+  it("gets the one continuation, told which file and why, and is read once rewritten", async () => {
+    const { s, invocations } = await run('{"findings": []}');
+    expect(invocations).toHaveLength(2);
+    expect(invocations[1]).toMatch(/--continue/);
+    expect(invocations[1]).toMatch(/findings-record\.json is not valid JSON/);
+    expect(s.continued).toBe(true);
+    expect(s.status).not.toBe("no-output");
+  });
+
+  it("still unreadable after it: no-output that names the file, never a second continuation", async () => {
+    const { s, invocations } = await run('{"findings": [], \\"x\\": 1}');
+    expect(invocations).toHaveLength(2);
+    expect(s.continued).toBe(true);
+    expect(s.status).toBe("no-output");
+    expect(s.error).toMatch(/findings-record\.json is not valid JSON/);
+  });
+});

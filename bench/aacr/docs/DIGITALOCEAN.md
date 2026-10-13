@@ -31,6 +31,12 @@ for now: at GLM's token profile it would cost about $3.09 a PR, ~$1,030 a full
 run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means
 one entry in each of those two places and an image rebuild.
 
+Gemma 4's smoke (2026-10-13 19:57) reviewed 9 of 10 PRs cleanly; the tenth
+wrote its findings record with escaped quotes around a key, so the record did
+not parse and the bench silently ended the case as no-output. The bench now
+gives such a round its one continuation, naming the file and the parser's
+message, and a file still unreadable after it is the case's recorded error.
+
 ## The driver
 
 `bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the

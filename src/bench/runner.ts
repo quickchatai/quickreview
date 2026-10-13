@@ -1276,6 +1276,31 @@ function readJson(path: string): unknown {
   }
 }
 
+/** Why a session's JSON output file cannot be used: `undefined` when it parses,
+ * `"missing"` when absent, otherwise the parser's message. */
+export function jsonProblem(path: string): string | undefined {
+  if (!existsSync(path)) return "missing";
+  try {
+    JSON.parse(readFileSync(path, "utf8"));
+    return undefined;
+  } catch (err) {
+    return String(err instanceof Error ? err.message : err).slice(0, 300);
+  }
+}
+
+/** The BENCHMARK MODE files the session wrote that do not parse — the ones a
+ * scorer reads as JSON (the outcome always; the findings record when the bench
+ * renders the posted review from it). A missing file is not listed here. */
+export function unparseableOutputs(caseDir: string, renderOutputs: boolean): string[] {
+  const names = renderOutputs ? [CASE_FILES.findings, CASE_FILES.outcome] : [CASE_FILES.outcome];
+  const out: string[] = [];
+  for (const n of names) {
+    const p = jsonProblem(join(caseDir, n));
+    if (p !== undefined && p !== "missing") out.push(`${n} is not valid JSON (${p})`);
+  }
+  return out;
+}
+
 /** Review one case end to end and write its scored result files. Never throws
  * for a case that fails — a failure is a recorded outcome. */
 export async function reviewCase(
@@ -1496,22 +1521,35 @@ export async function reviewCase(
     // and only if there IS one: pi persists a session after its first
     // assistant message, and `--continue` on an empty session dir silently
     // starts a NEW session that would review with no round order at all.
+    // A round whose files are there but do not parse stopped short too (a
+    // model that broke its own JSON escaping): the same one continuation,
+    // told which file and what the parser said.
+    const broken = existsSync(outcomePath)
+      ? unparseableOutputs(caseDir, ctx.cfg.review.render_outputs)
+      : [];
     const resumable =
       existsSync(sessionDir) && readdirSync(sessionDir).some((f) => f.endsWith(".jsonl"));
     if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && !resumable) {
       summary.error = `pi exited ${String(r.code)} before any assistant message — nothing to continue`;
     }
-    if (!r.timedOut && !r.streamError && !existsSync(outcomePath) && resumable) {
+    const stoppedShort = !existsSync(outcomePath) || broken.length > 0;
+    if (!r.timedOut && !r.streamError && stoppedShort && resumable) {
       const left = o.timeoutMs - (Date.now() - started);
       if (left > 120_000) {
         summary.continued = true;
-        log(`review: ${c.instance_id} — no outcome.json yet, one continuation`);
+        log(
+          broken.length
+            ? `review: ${c.instance_id} — ${broken.join("; ")}, one continuation`
+            : `review: ${c.instance_id} — no outcome.json yet, one continuation`,
+        );
         r = await runPi(
           [
             ...base,
             "--continue",
             "-p",
-            ctx.cfg.review.render_outputs
+            broken.length
+              ? `Your BENCHMARK MODE files in ${caseDir} cannot be read: ${broken.join("; ")}. Rewrite ${broken.length > 1 ? "them" : "it"} as valid JSON with the same content — plain double quotes, no escaped quotes around keys or values — and write ${CASE_FILES.outcome} last.`
+              : ctx.cfg.review.render_outputs
               ? `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.findings} (with the posting fields) and, last, ${CASE_FILES.outcome} in ${caseDir}.`
               : `You stopped before the BENCHMARK MODE files were complete. Finish the round now and write ${CASE_FILES.comments}, ${CASE_FILES.review}, ${CASE_FILES.findings} and, last, ${CASE_FILES.outcome} in ${caseDir}.`,
           ],
@@ -1650,6 +1688,11 @@ export async function reviewCase(
         : summary.verdict === "APPROVE" || summary.verdict === "REQUEST_CHANGES"
           ? "ok"
           : "no-verdict";
+    // A no-output round says why when the files are there but unreadable.
+    if (summary.status === "no-output" && summary.error === undefined) {
+      const still = unparseableOutputs(caseDir, ctx.cfg.review.render_outputs);
+      if (still.length) summary.error = still.join("; ").slice(0, 2000);
+    }
   } catch (err) {
     summary.status = "failed";
     summary.error = String(err instanceof Error ? err.message : err).slice(0, 2000);
