@@ -40,6 +40,22 @@ not parse and the bench silently ended the case as no-output. The bench now
 gives such a round its one continuation, naming the file and the parser's
 message, and a file still unreadable after it is the case's recorded error.
 
+## Why the open models take longer
+
+The same 10 PRs, 2026-10-13. GPT-6.1 Sol from the `final1` run; generation speed
+is each reply's output tokens over the time from its request to the next message.
+
+| Model | Minutes / PR | Output tokens / PR | Replies / PR | Typical reply | Generation speed | $ / PR |
+|---|---|---|---|---|---|---|
+| GPT-6.1 Sol | 8 | 21k | 71 | 12 s | ~25 tok/s | $2.30 API-equivalent |
+| GLM-5.3 Flash | 30 | 244k | 196 | 8 s | ~37 tok/s | $0.32 |
+| DeepSeek V4.1 Flash | 41 | 323k | 223 | 14 s | ~36 tok/s | ~$0.57 |
+| Gemma 4 31B | 34 | 109k | 130 | 25 s | ~9 tok/s | $0.32 |
+
+GLM and DeepSeek are served quickly. They are slow because they take about 3× the
+steps and write 12–15× the output, mostly reasoning, and a PR waits for its
+longest lens. Gemma is the one model DigitalOcean serves slowly.
+
 ## The driver
 
 `bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the
