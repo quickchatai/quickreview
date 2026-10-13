@@ -147,7 +147,7 @@ def main():
         out = [f"{BOLD}{model or '?'} — {prefix}{RST}   image {image}   {time.strftime('%H:%M:%S')}",
                f"ok {GRN}{totals['ok']}{RST}   degraded (lenses lost) {RED if totals['degraded'] else ''}{totals['degraded']}{RST}   failed {RED if totals['fail'] else ''}{totals['fail']}{RST}   "
                f"running {YEL}{totals['running']}{RST}   queued {totals['queued']}   "
-               f"of {sum(totals.values())}      PR containers {len(live)}/10   lenses running {sum(live.values())}",
+               f"of {sum(totals.values())}      PR containers {len(live)}   lenses running {sum(live.values())}",
                f"provider errors, last 5 min: {RED if err5 else ''}{err5}{RST}      "
                f"cost: ${cost_done:.2f} finished + ${cost_live:.2f} so far in running PRs (main session only)", "",
                f"{'set':<20}{'PR':<44}{'state':<18}{'min':>5}{'lenses':>8}{'replies':>9}{'err5m':>7}{'idle':>7}{'cost':>9}"]

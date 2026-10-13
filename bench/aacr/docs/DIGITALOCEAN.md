@@ -177,7 +177,7 @@ existing provider requirements.
 ## Configure all reviewer calls
 
 Build the updated image and assign GLM to every role and tier, including the
-validator tier. Run up to ten PR reviews at a time with twelve concurrent lens calls per PR.
+validator tier. Run up to ten PR reviews at a time (`PARALLEL=N` raises it for a full run) with twelve concurrent lens calls per PR.
 
 ```bash
 export QCR_BENCH_IMAGE=qcr-bench:glm-flash

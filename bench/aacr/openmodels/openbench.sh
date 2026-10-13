@@ -8,7 +8,7 @@
 #                                                concurrency report + GPT-6.1 judge
 #   [MODEL=<id>] openbench.sh score-smoke [--go] gate + GPT-6.1 judge the model's latest smoke
 #   openbench.sh watch [--prefix P]              live view of the newest run (Ctrl-C quits; read-only)
-#   [MODEL=<id>] openbench.sh full [--go]        prefetch → review 335 PRs (10 at once) → gate → judge
+#   [MODEL=<id>] openbench.sh full [--go]        prefetch → review 335 PRs (PARALLEL at once) → gate → judge
 #   [MODEL=<id>] openbench.sh score-full [--go]  gate + judge an already reviewed full run (resume / rescore)
 #
 # MODEL is a DigitalOcean model id from models.py (default glm-5.3-flash): glm-5.3-flash,
@@ -18,6 +18,9 @@
 # Every step resumes. Logs and results go to bench/aacr/artifacts/open-models/ of the
 # MAIN checkout (git-ignored), wherever this script is run from.
 #
+#   PARALLEL=N             PR reviews at once in `full` (default 10; the smoke always runs
+#                          its 10 PRs at once). The machine is not the limit — a review
+#                          is ~250–800 MB and nearly idle CPU — DigitalOcean's capacity is.
 #   EXT_CACHE / EXT_DATA   the external benchmarks' caches (default: ~/qcr-bench-runs/)
 set -euo pipefail
 
@@ -46,6 +49,8 @@ JUDGE=openai-codex/gpt-6.1-sol:high
 SMOKE_PREFIX=""
 SMOKE_SETS=(glm-aacr1 glm-aacr-extra3 glm-martian1 glm-martian-extra2 glm-qodo1 glm-qodo-extra2)
 FULL_PREFIX="$SLUG-full"
+PARALLEL="${PARALLEL:-10}"
+[[ "$PARALLEL" =~ ^[1-9][0-9]?$ ]] || { echo "openbench: PARALLEL must be 1..99" >&2; exit 2; }
 AACR_SETS=(smoke10 dev10 holdout10 fresh10 rest145)   # the published 185-PR AACR comparison
 FULL_SETS=("${AACR_SETS[@]}" martian50 qodo-pr100)
 
@@ -207,7 +212,7 @@ case "$cmd" in
     use_image
     if (( ! go )); then
       echo "would run $M on $IMAGE: prefetch ${FULL_SETS[*]};"
-      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel 10 --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=digitalocean)"
+      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel $PARALLEL --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=digitalocean)"
       echo "  then: MODEL=$MODEL $0 score-full --go"
       echo "openbench: nothing run — add --go (needs the owner's approval)"; exit 0
     fi
@@ -217,7 +222,7 @@ case "$cmd" in
     log "reviewing $(join + "${FULL_SETS[@]}") on $IMAGE"
     QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
       --prefix "$FULL_PREFIX" --config "$MODEL_CONFIG" --cases "$(join + "${FULL_SETS[@]}")" \
-      --parallel 10 --no-judge --retries 1 --resume > "$OUT/reviews-$FULL_PREFIX.log" 2>&1 \
+      --parallel "$PARALLEL" --no-judge --retries 1 --resume > "$OUT/reviews-$FULL_PREFIX.log" 2>&1 \
       || log "arm.sh reported failures — gating and scoring what finished"
     exec "$0" score-full --go ;;
 
