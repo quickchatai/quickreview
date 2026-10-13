@@ -1,0 +1,13 @@
+# The AACR defect-benchmark reviewers the showcase charts draw, one per line:
+#   <tool id from data/tools.json>=<run>[,<run>...]
+# Runs are compare.py's: for each PR the first run that has it judged wins.
+# The frozen build first; then the build the paper's design study measured;
+# then the six third-party tools exactly as final/arms.txt lists them.
+quickreview=final1-smoke10,final1-dev10,final1-holdout10,final1-fresh10,final1-rest145
+quickreview-b2ce03a=g61-smoke-smoke10,g61-dev10,g61-holdout10,g61-fresh10,g61-rest145
+pi-review=g61-fair-pireview-panel-rest145,g61-145-pireview-panel-dev10,g61-145-pireview-panel-fresh10,g61-145-pireview-panel-holdout10,g61-145-pireview-panel-rest145,g61-145-pireview-panel-smoke10
+claude-code=all-claude-smoke10,all-claude-dev10,all-claude-holdout10,all-claude-fresh10,all-claude-c1-rest145,all-claude-c2-rest145,all-claude-c3-rest145,all-claude-c4-rest145
+open-code-review=g61-fair-ocr-high-rest145,g61-145-ocr-high-dev10,g61-145-ocr-high-fresh10,g61-145-ocr-high-holdout10,g61-145-ocr-high-rest145,g61-145-ocr-high-smoke10
+codex-cli=g61-fair-codex-high-rest145,g61-145-codex-high-dev10,g61-145-codex-high-fresh10,g61-145-codex-high-holdout10,g61-145-codex-high-rest145,g61-145-codex-high-smoke10
+opencode=g61-fair-opencode-native-pr-rest145,g61-145-opencode-native-pr-dev10,g61-145-opencode-native-pr-fresh10,g61-145-opencode-native-pr-holdout10,g61-145-opencode-native-pr-rest145,g61-145-opencode-native-pr-smoke10
+pr-agent=fair-pragent-g61-rest145,g61-pragent-145-dev10,g61-pragent-145-fresh10,g61-pragent-145-holdout10,g61-pragent-145-rest145,g61-pragent-145-smoke10

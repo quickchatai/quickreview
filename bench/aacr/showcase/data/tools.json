@@ -1,0 +1,30 @@
+{
+ "_doc": "Every reviewer any showcase chart draws. kind: quickreview | closed (a proprietary product or agent) | open (open-source tool). The charts colour by kind, so re-classing a tool is a one-word edit here. verify: a classification not yet checked against the tool's licence.",
+ "tools": {
+  "quickreview":         {"name": "QuickReview",          "kind": "quickreview", "model": "gpt-6.1-sol", "note": "frozen build e32f0cf"},
+  "quickreview-b2ce03a": {"name": "QuickReview (b2ce03a)", "kind": "quickreview", "model": "gpt-6.1-sol", "note": "the build the paper's design study measured"},
+  "claude-code":         {"name": "Claude Code",          "kind": "closed", "model": "Claude Opus 5.5 (AACR); Martian's own published run (Martian)"},
+  "codex-cli":           {"name": "Codex CLI",            "kind": "open",   "model": "gpt-6.1-sol", "note": "OpenAI's open-source CLI, not the Codex cloud reviewer"},
+  "pi-review":           {"name": "pi-review panel",      "kind": "open",   "model": "gpt-6.1-sol", "verify": true},
+  "open-code-review":    {"name": "open-code-review",     "kind": "open",   "model": "gpt-6.1-sol", "verify": true},
+  "opencode":            {"name": "OpenCode",             "kind": "open",   "model": "gpt-6.1-sol"},
+  "pr-agent":            {"name": "PR-Agent",             "kind": "open",   "model": "gpt-6.1-sol", "note": "Qodo's open-source reviewer"},
+  "qodo-exhaustive":     {"name": "Qodo (exhaustive)",    "kind": "closed"},
+  "qodo-precise":        {"name": "Qodo (precise)",       "kind": "closed"},
+  "qodo-extended":       {"name": "Qodo (extended)",      "kind": "closed"},
+  "qodo":                {"name": "Qodo",                 "kind": "closed"},
+  "augment":             {"name": "Augment Code",         "kind": "closed"},
+  "github-copilot":      {"name": "GitHub Copilot",       "kind": "closed"},
+  "cursor-bugbot":       {"name": "Cursor Bugbot",        "kind": "closed"},
+  "greptile":            {"name": "Greptile",             "kind": "closed"},
+  "codex-cloud":         {"name": "OpenAI Codex review",  "kind": "closed", "note": "the vendor's GitHub reviewer, not the open-source CLI"},
+  "coderabbit":          {"name": "CodeRabbit",           "kind": "closed"},
+  "sentry":              {"name": "Sentry",               "kind": "closed"},
+  "cubic":               {"name": "cubic",                "kind": "closed"},
+  "gemini":              {"name": "Gemini Code Assist",   "kind": "closed"},
+  "gitlab":              {"name": "GitLab Duo",           "kind": "closed"},
+  "devin":               {"name": "Devin",                "kind": "closed"},
+  "sourcery":            {"name": "Sourcery",             "kind": "closed"},
+  "macroscope":          {"name": "Macroscope",           "kind": "closed"}
+ }
+}

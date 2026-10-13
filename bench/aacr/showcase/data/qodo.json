@@ -1,0 +1,500 @@
+{
+ "benchmark": "Qodo PR-Review-Bench",
+ "generated": "2026-10-13",
+ "tools": {
+  "augment": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 255,
+     "f1": 0.4119760479041916,
+     "per_pr": 2.55,
+     "precision": 0.6745098039215687,
+     "recall": 0.296551724137931,
+     "recall_functional": 0.4919093851132686,
+     "recall_rule": 0.07380073800738007,
+     "tp": 172
+    },
+    "same file": {
+     "comments": 255,
+     "f1": 0.41676646706586823,
+     "per_pr": 2.55,
+     "precision": 0.6823529411764706,
+     "recall": 0.3,
+     "recall_functional": 0.49838187702265374,
+     "recall_rule": 0.07380073800738007,
+     "tp": 174
+    },
+    "semantic only": {
+     "comments": 255,
+     "f1": 0.43832335329341326,
+     "per_pr": 2.55,
+     "precision": 0.7176470588235294,
+     "recall": 0.31551724137931036,
+     "recall_functional": 0.5275080906148867,
+     "recall_rule": 0.07380073800738007,
+     "tp": 183
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:augment"
+  },
+  "coderabbit": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 190,
+     "f1": 0.2155844155844156,
+     "per_pr": 1.9,
+     "precision": 0.4368421052631579,
+     "recall": 0.14310344827586208,
+     "recall_functional": 0.2297734627831715,
+     "recall_rule": 0.04428044280442804,
+     "tp": 83
+    },
+    "same file": {
+     "comments": 190,
+     "f1": 0.22337662337662334,
+     "per_pr": 1.9,
+     "precision": 0.45263157894736844,
+     "recall": 0.1482758620689655,
+     "recall_functional": 0.23948220064724918,
+     "recall_rule": 0.04428044280442804,
+     "tp": 86
+    },
+    "semantic only": {
+     "comments": 190,
+     "f1": 0.24155844155844156,
+     "per_pr": 1.9,
+     "precision": 0.48947368421052634,
+     "recall": 0.16034482758620688,
+     "recall_functional": 0.2621359223300971,
+     "recall_rule": 0.04428044280442804,
+     "tp": 93
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:coderabbit"
+  },
+  "codex-cloud": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 165,
+     "f1": 0.34630872483221475,
+     "per_pr": 1.65,
+     "precision": 0.7818181818181819,
+     "recall": 0.22241379310344828,
+     "recall_functional": 0.32362459546925565,
+     "recall_rule": 0.1070110701107011,
+     "tp": 129
+    },
+    "same file": {
+     "comments": 165,
+     "f1": 0.35436241610738256,
+     "per_pr": 1.65,
+     "precision": 0.8,
+     "recall": 0.22758620689655173,
+     "recall_functional": 0.3300970873786408,
+     "recall_rule": 0.11070110701107011,
+     "tp": 132
+    },
+    "semantic only": {
+     "comments": 165,
+     "f1": 0.3704697986577181,
+     "per_pr": 1.65,
+     "precision": 0.8363636363636363,
+     "recall": 0.23793103448275862,
+     "recall_functional": 0.34627831715210355,
+     "recall_rule": 0.11439114391143912,
+     "tp": 138
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:codex"
+  },
+  "cursor-bugbot": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 191,
+     "f1": 0.3657587548638132,
+     "per_pr": 1.91,
+     "precision": 0.7382198952879581,
+     "recall": 0.24310344827586206,
+     "recall_functional": 0.4110032362459547,
+     "recall_rule": 0.05166051660516605,
+     "tp": 141
+    },
+    "same file": {
+     "comments": 191,
+     "f1": 0.37613488975356674,
+     "per_pr": 1.91,
+     "precision": 0.7591623036649214,
+     "recall": 0.25,
+     "recall_functional": 0.42394822006472493,
+     "recall_rule": 0.05166051660516605,
+     "tp": 145
+    },
+    "semantic only": {
+     "comments": 191,
+     "f1": 0.3942931258106355,
+     "per_pr": 1.91,
+     "precision": 0.7958115183246073,
+     "recall": 0.2620689655172414,
+     "recall_functional": 0.44660194174757284,
+     "recall_rule": 0.05166051660516605,
+     "tp": 152
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:cursor"
+  },
+  "github-copilot": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 417,
+     "f1": 0.39117352056168503,
+     "per_pr": 4.17,
+     "precision": 0.4676258992805755,
+     "recall": 0.33620689655172414,
+     "recall_functional": 0.4627831715210356,
+     "recall_rule": 0.1918819188191882,
+     "tp": 195
+    },
+    "same file": {
+     "comments": 417,
+     "f1": 0.3971915747241725,
+     "per_pr": 4.17,
+     "precision": 0.4748201438848921,
+     "recall": 0.3413793103448276,
+     "recall_functional": 0.4692556634304207,
+     "recall_rule": 0.19557195571955718,
+     "tp": 198
+    },
+    "semantic only": {
+     "comments": 417,
+     "f1": 0.41524573721163494,
+     "per_pr": 4.17,
+     "precision": 0.49640287769784175,
+     "recall": 0.3568965517241379,
+     "recall_functional": 0.49838187702265374,
+     "recall_rule": 0.19557195571955718,
+     "tp": 207
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:copilot"
+  },
+  "greptile": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 238,
+     "f1": 0.37652811735941316,
+     "per_pr": 2.38,
+     "precision": 0.6470588235294118,
+     "recall": 0.2655172413793103,
+     "recall_functional": 0.37216828478964403,
+     "recall_rule": 0.14391143911439114,
+     "tp": 154
+    },
+    "same file": {
+     "comments": 238,
+     "f1": 0.3789731051344743,
+     "per_pr": 2.38,
+     "precision": 0.6512605042016807,
+     "recall": 0.2672413793103448,
+     "recall_functional": 0.37540453074433655,
+     "recall_rule": 0.14391143911439114,
+     "tp": 155
+    },
+    "semantic only": {
+     "comments": 238,
+     "f1": 0.3887530562347188,
+     "per_pr": 2.38,
+     "precision": 0.6680672268907563,
+     "recall": 0.27413793103448275,
+     "recall_functional": 0.3851132686084142,
+     "recall_rule": 0.14760147601476015,
+     "tp": 159
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:greptile"
+  },
+  "open-code-review": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 346,
+     "f1": 0.35205183585313177,
+     "per_pr": 3.46,
+     "precision": 0.47109826589595377,
+     "recall": 0.2810344827586207,
+     "recall_functional": 0.4563106796116505,
+     "recall_rule": 0.08118081180811808,
+     "tp": 163
+    },
+    "same file": {
+     "comments": 346,
+     "f1": 0.3650107991360692,
+     "per_pr": 3.46,
+     "precision": 0.4884393063583815,
+     "recall": 0.2913793103448276,
+     "recall_functional": 0.47249190938511326,
+     "recall_rule": 0.08487084870848709,
+     "tp": 169
+    },
+    "semantic only": {
+     "comments": 346,
+     "f1": 0.3844492440604751,
+     "per_pr": 3.46,
+     "precision": 0.5144508670520231,
+     "recall": 0.30689655172413793,
+     "recall_functional": 0.5016181229773463,
+     "recall_rule": 0.08487084870848709,
+     "tp": 178
+    }
+   },
+   "source": "final1-ocr-qodo-pr100.qodo:open-code-review"
+  },
+  "opencode": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 259,
+     "f1": 0.40047675804529204,
+     "per_pr": 2.59,
+     "precision": 0.6486486486486487,
+     "recall": 0.2896551724137931,
+     "recall_functional": 0.4368932038834951,
+     "recall_rule": 0.12177121771217712,
+     "tp": 168
+    },
+    "same file": {
+     "comments": 259,
+     "f1": 0.4123957091775924,
+     "per_pr": 2.59,
+     "precision": 0.667953667953668,
+     "recall": 0.2982758620689655,
+     "recall_functional": 0.44983818770226536,
+     "recall_rule": 0.12546125461254612,
+     "tp": 173
+    },
+    "semantic only": {
+     "comments": 259,
+     "f1": 0.43861740166865315,
+     "per_pr": 2.59,
+     "precision": 0.7104247104247104,
+     "recall": 0.31724137931034485,
+     "recall_functional": 0.48220064724919093,
+     "recall_rule": 0.12915129151291513,
+     "tp": 184
+    }
+   },
+   "source": "final1-opencode-qodo-pr100.qodo:opencode"
+  },
+  "pr-agent": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 335,
+     "f1": 0.34535519125683056,
+     "per_pr": 3.35,
+     "precision": 0.4716417910447761,
+     "recall": 0.27241379310344827,
+     "recall_functional": 0.4368932038834951,
+     "recall_rule": 0.08487084870848709,
+     "tp": 158
+    },
+    "same file": {
+     "comments": 335,
+     "f1": 0.34972677595628415,
+     "per_pr": 3.35,
+     "precision": 0.47761194029850745,
+     "recall": 0.27586206896551724,
+     "recall_functional": 0.44336569579288027,
+     "recall_rule": 0.08487084870848709,
+     "tp": 160
+    },
+    "semantic only": {
+     "comments": 335,
+     "f1": 0.3693989071038251,
+     "per_pr": 3.35,
+     "precision": 0.5044776119402985,
+     "recall": 0.2913793103448276,
+     "recall_functional": 0.4692556634304207,
+     "recall_rule": 0.08856088560885608,
+     "tp": 169
+    }
+   },
+   "source": "final1-pragent-qodo-pr100.qodo:pr-agent"
+  },
+  "qodo-exhaustive": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 464,
+     "f1": 0.5153256704980843,
+     "per_pr": 4.64,
+     "precision": 0.5797413793103449,
+     "recall": 0.46379310344827585,
+     "recall_functional": 0.48220064724919093,
+     "recall_rule": 0.44280442804428044,
+     "tp": 269
+    },
+    "same file": {
+     "comments": 464,
+     "f1": 0.5287356321839081,
+     "per_pr": 4.64,
+     "precision": 0.5948275862068966,
+     "recall": 0.47586206896551725,
+     "recall_functional": 0.49514563106796117,
+     "recall_rule": 0.45387453874538747,
+     "tp": 276
+    },
+    "semantic only": {
+     "comments": 464,
+     "f1": 0.5651340996168582,
+     "per_pr": 4.64,
+     "precision": 0.6357758620689655,
+     "recall": 0.5086206896551724,
+     "recall_functional": 0.5436893203883495,
+     "recall_rule": 0.46863468634686345,
+     "tp": 295
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:qodo-exhaustive"
+  },
+  "qodo-precise": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 306,
+     "f1": 0.4695259593679458,
+     "per_pr": 3.06,
+     "precision": 0.6797385620915033,
+     "recall": 0.3586206896551724,
+     "recall_functional": 0.36245954692556637,
+     "recall_rule": 0.35424354243542433,
+     "tp": 208
+    },
+    "same file": {
+     "comments": 306,
+     "f1": 0.48532731376975163,
+     "per_pr": 3.06,
+     "precision": 0.7026143790849673,
+     "recall": 0.3706896551724138,
+     "recall_functional": 0.37216828478964403,
+     "recall_rule": 0.36900369003690037,
+     "tp": 215
+    },
+    "semantic only": {
+     "comments": 306,
+     "f1": 0.5124153498871332,
+     "per_pr": 3.06,
+     "precision": 0.7418300653594772,
+     "recall": 0.3913793103448276,
+     "recall_functional": 0.4045307443365696,
+     "recall_rule": 0.3763837638376384,
+     "tp": 227
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:qodo-precise"
+  },
+  "quickreview": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 706,
+     "f1": 0.4090202177293935,
+     "per_pr": 7.06,
+     "precision": 0.37252124645892354,
+     "recall": 0.453448275862069,
+     "recall_functional": 0.5210355987055016,
+     "recall_rule": 0.3763837638376384,
+     "tp": 263
+    },
+    "same file": {
+     "comments": 706,
+     "f1": 0.4261275272161742,
+     "per_pr": 7.06,
+     "precision": 0.3881019830028329,
+     "recall": 0.4724137931034483,
+     "recall_functional": 0.5372168284789643,
+     "recall_rule": 0.3985239852398524,
+     "tp": 274
+    },
+    "semantic only": {
+     "comments": 706,
+     "f1": 0.4665629860031104,
+     "per_pr": 7.06,
+     "precision": 0.42492917847025496,
+     "recall": 0.5172413793103449,
+     "recall_functional": 0.6116504854368932,
+     "recall_rule": 0.4095940959409594,
+     "tp": 300
+    }
+   },
+   "source": "final1-qodo-pr100.qodo:quickreview"
+  },
+  "sentry": {
+   "issues": 580,
+   "prs": 100,
+   "rule_issues": 271,
+   "scores": {
+    "N=5": {
+     "comments": 95,
+     "f1": 0.21629629629629632,
+     "per_pr": 0.95,
+     "precision": 0.7684210526315789,
+     "recall": 0.12586206896551724,
+     "recall_functional": 0.22653721682847897,
+     "recall_rule": 0.01107011070110701,
+     "tp": 73
+    },
+    "same file": {
+     "comments": 95,
+     "f1": 0.2251851851851852,
+     "per_pr": 0.95,
+     "precision": 0.8,
+     "recall": 0.1310344827586207,
+     "recall_functional": 0.23624595469255663,
+     "recall_rule": 0.01107011070110701,
+     "tp": 76
+    },
+    "semantic only": {
+     "comments": 95,
+     "f1": 0.22814814814814813,
+     "per_pr": 0.95,
+     "precision": 0.8105263157894737,
+     "recall": 0.13275862068965516,
+     "recall_functional": 0.23948220064724918,
+     "recall_rule": 0.01107011070110701,
+     "tp": 77
+    }
+   },
+   "source": "ext-r6-qodo-pr100.qodo:sentry"
+  }
+ }
+}

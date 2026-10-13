@@ -1,0 +1,18 @@
+# Qodo PR-Review-Bench rows the showcase draws, one per line:
+#   <tool id from data/tools.json>=<scored run dir>:<key in its scores.json>
+# Every row is qodo_judge.py's output under the same gpt-6.1-sol judge
+# (ext/QODO-BENCH.md). The nine vendor rows are the vendors' public January
+# 2026 comments, judged in the r6 scoring; QuickReview is the frozen build.
+quickreview=final1-qodo-pr100.qodo:quickreview
+qodo-exhaustive=ext-r6-qodo-pr100.qodo:qodo-exhaustive
+qodo-precise=ext-r6-qodo-pr100.qodo:qodo-precise
+augment=ext-r6-qodo-pr100.qodo:augment
+github-copilot=ext-r6-qodo-pr100.qodo:copilot
+cursor-bugbot=ext-r6-qodo-pr100.qodo:cursor
+greptile=ext-r6-qodo-pr100.qodo:greptile
+codex-cloud=ext-r6-qodo-pr100.qodo:codex
+coderabbit=ext-r6-qodo-pr100.qodo:coderabbit
+sentry=ext-r6-qodo-pr100.qodo:sentry
+opencode=final1-opencode-qodo-pr100.qodo:opencode
+open-code-review=final1-ocr-qodo-pr100.qodo:open-code-review
+pr-agent=final1-pragent-qodo-pr100.qodo:pr-agent

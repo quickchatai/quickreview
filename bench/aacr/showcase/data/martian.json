@@ -1,0 +1,28 @@
+{
+ "_doc": "Martian offline code-review benchmark, 50 PRs, 158 golden comments, of which an audit judged 86 real defects introduced by the PR (charts/martian-data.json, built by martian_figs.py from the golden audit). real_found: how many of those 86 the tool's review states, Martian's own matcher. judge 'same' = one gpt-6.1-sol judge for every 'same' row (QuickReview frozen build final1-martian50 and the re-judged published comments); 'published' = Martian's published Opus 4.5 evaluations of the vendor's January 2026 comments, which credit the three tools judged both ways 4-6 goldens more than our judge does.",
+ "real_goldens": 86,
+ "prs": 50,
+ "rows": [
+  {"tool": "quickreview",      "judge": "same",      "real_found": 75, "source": "charts/martian-data.json real_same_judge (final1-martian50)"},
+  {"tool": "qodo-extended",    "judge": "same",      "real_found": 68, "source": "charts/martian-data.json real_same_judge"},
+  {"tool": "cubic",            "judge": "same",      "real_found": 58, "source": "charts/martian-data.json real_same_judge"},
+  {"tool": "claude-code",      "judge": "same",      "real_found": 45, "source": "charts/martian-data.json real_same_judge"},
+  {"tool": "open-code-review", "judge": "same",      "real_found": 67, "source": "ext/RUNS.md final1-ocr-martian50"},
+  {"tool": "opencode",         "judge": "same",      "real_found": 48, "source": "ext/RUNS.md final1-opencode-martian50"},
+  {"tool": "pr-agent",         "judge": "same",      "real_found": 46, "source": "ext/RUNS.md final1-pragent-martian50"},
+  {"tool": "qodo-extended",    "judge": "published", "real_found": 72, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "github-copilot",   "judge": "published", "real_found": 71, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "augment",          "judge": "published", "real_found": 68, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "qodo",             "judge": "published", "real_found": 65, "source": "charts/martian-data.json real_published_opus (qodo-v2)"},
+  {"tool": "cubic",            "judge": "published", "real_found": 64, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "coderabbit",       "judge": "published", "real_found": 59, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "cursor-bugbot",    "judge": "published", "real_found": 55, "source": "charts/martian-data.json real_published_opus (bugbot)"},
+  {"tool": "sourcery",         "judge": "published", "real_found": 55, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "gitlab",           "judge": "published", "real_found": 54, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "greptile",         "judge": "published", "real_found": 53, "source": "charts/martian-data.json real_published_opus (greptile-v4-1)"},
+  {"tool": "gemini",           "judge": "published", "real_found": 53, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "claude-code",      "judge": "published", "real_found": 51, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "macroscope",       "judge": "published", "real_found": 51, "source": "charts/martian-data.json real_published_opus"},
+  {"tool": "devin",            "judge": "published", "real_found": 47, "source": "charts/martian-data.json real_published_opus"}
+ ]
+}
