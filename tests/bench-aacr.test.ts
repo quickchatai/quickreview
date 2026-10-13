@@ -54,7 +54,7 @@ import {
   type PrefetchMeta,
 } from "../src/bench/aacr.js";
 import { parseReferenceLabels, recallByQuality, renderReport } from "../src/bench/report.js";
-import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth } from "../src/bench/auth.js";
+import { AuthExpiring, benchAuthFrom, DISABLED_REFRESH, syncBenchAuth, BENCH_RETRY } from "../src/bench/auth.js";
 import {
   bridgeDelta,
   OCR_HARNESS_DEFAULTS,
@@ -938,6 +938,7 @@ describe("the benchmark's login: read-only, never refreshed", () => {
           "-builtin:llama.cpp",
         ],
         defaultProjectTrust: "always",
+        retry: BENCH_RETRY,
       });
       // The source is never touched.
       expect(JSON.parse(readFileSync(join(src, "auth.json"), "utf8"))["openai-codex"].refresh).toBe(
