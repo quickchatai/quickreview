@@ -121,7 +121,51 @@ def skip(path: Path, key: str, raw_pr: str, raw_round: str, head: str, intended:
     atomic(path, value)
 
 
+def enqueue(path: Path, key: str, raw_pr: str, raw_round: str, head: str, event: str,
+            repo: str, mode: str, body_file: str, comments_file: str) -> None:
+    """Snapshot replayable input before the first GitHub read, under shell lock."""
+    if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT") or mode not in ("live", "dryrun"):
+        raise SystemExit("posting-receipt: invalid delivery intent")
+    body = Path(body_file).read_text() if body_file else "Automated review: approved."
+    payload = {"commit_id": head.lower(), "event": event,
+               "body": body + "\n\n" + f"<!-- qcr-post:{key} -->"}
+    if comments_file:
+        comments = json.loads(Path(comments_file).read_text())
+        if not isinstance(comments, list):
+            raise SystemExit("posting-receipt: comments file must be a JSON array")
+        for c in comments:
+            if not isinstance(c, dict) or not isinstance(c.get("path"), str) or type(c.get("line")) is not int or c["line"] < 1 or not isinstance(c.get("body"), str) or c.get("side", "RIGHT") not in ("RIGHT", "LEFT"):
+                raise SystemExit("posting-receipt: invalid inline comment")
+        payload["comments"] = [{k: c[k] for k in ("path", "line", "side", "body") if k in c} for c in comments]
+    source_hash = hashlib.sha256(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    existing = base(path)
+    if existing:
+        if existing.get("posting_key") != key or existing.get("repo") != repo or existing.get("mode") != mode:
+            raise SystemExit("posting-receipt: delivery identity mismatch")
+        if existing.get("source_sha256") != source_hash:
+            raise SystemExit("posting-receipt: refusing to change queued review input")
+        return
+    if path.exists():
+        raise SystemExit("posting-receipt: refusing to overwrite unreadable delivery intent")
+    atomic(path, {"version": 1, "posting_key": key, "repo": repo, "mode": mode,
+                  "pr": int(raw_pr), "round_no": int(raw_round), "head_sha": head.lower(),
+                  "intended_event": event, "payload": payload, "payload_sha256": source_hash, "source_sha256": source_hash,
+                  "status": "pending", "attempts": 0,
+                  "created_at": now(), "next_attempt_at": now()})
+
+
 def main() -> None:
+    if len(sys.argv) == 4 and sys.argv[1] == "owner":
+        pid = int(sys.argv[3])
+        start = Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1].split()[19]
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        Path(sys.argv[2]).write_text(f"{pid} {start} {boot}\n")
+        return
+    if len(sys.argv) >= 2 and sys.argv[1] == "enqueue":
+        if len(sys.argv) != 12:
+            raise SystemExit("usage: posting-receipt.py enqueue <path> <key> <pr> <round> <head> <event> <repo> <mode> <body> <comments>")
+        enqueue(Path(sys.argv[2]), *sys.argv[3:12])
+        return
     if len(sys.argv) >= 2 and sys.argv[1] == "check":
         if len(sys.argv) != 4:
             raise SystemExit("usage: posting-receipt.py check <path> <key>")
@@ -191,6 +235,17 @@ def main() -> None:
     else:
         raise SystemExit(f"posting-receipt: bad action {action}")
     atomic(path, value)
+    queued_path = path.with_name(path.stem + ".outbox.json")
+    queued = base(queued_path)
+    if queued.get("posting_key") == key:
+        queued["payload"] = json.loads(payload)
+        queued["payload_sha256"] = hashlib.sha256(json.dumps(queued["payload"], separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        if action == "prepare":
+            queued["attempted_at"] = now()
+            queued.pop("negative_at", None)
+        elif action in ("confirm", "dryrun"):
+            queued["status"] = "done"
+        atomic(queued_path, queued)
 
 
 if __name__ == "__main__":

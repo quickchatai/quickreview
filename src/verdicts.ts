@@ -10,6 +10,7 @@
 // the invariant against retracting an approval is structural, not prompted
 // (CLAUDE.md rule 2).
 import { sweepStatusOf, type SweepStatus } from "./sweepstatus.js";
+import { pendingPosting } from "./posting-outbox.js";
 
 export { sweepStatusOf, type SweepStatus };
 import {
@@ -983,6 +984,13 @@ export class VerdictWatcher {
       } else if (proof.kind === "skipped" && proof.noop) {
         await this.settleGuardedNoop(round, proof.noop, "malformed_verdict");
         return;
+      } else if (
+        proof.kind === "waiting" &&
+        pendingPosting(this.postingReceiptDir(), pr, roundNo, round.posting_key)
+      ) {
+        // The malformed tail cannot cancel independently owned delivery.
+        // Its confirmed receipt will settle the decision on a later tick.
+        return;
       }
     }
     await this.handleAnomaly(pr, roundNo, anomaly, "malformed");
@@ -1410,6 +1418,15 @@ export class VerdictWatcher {
         failure: "contradicted",
       };
     }
+
+    // Delivery debt outlives the session and its deadline. The independent
+    // outbox worker reconciles/retries it; never rerun lenses or archive a
+    // waiting verdict merely because GitHub's outage outlasted the grace.
+    if (
+      !this.deps.cfg.dry_run &&
+      pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)
+    )
+      return { kind: "waiting" };
 
     const origin =
       receiptIdentityOk && receipt && receipt.status !== "skipped"
@@ -3290,7 +3307,12 @@ export class VerdictWatcher {
       }
       return null;
     }
-    if (proof.kind === "waiting" && this.postInFlight(round)) {
+    if (
+      proof.kind === "waiting" &&
+      (this.postInFlight(round) ||
+        (round.posting_key &&
+          pendingPosting(this.postingReceiptDir(), round.pr, round.round_no, round.posting_key)))
+    ) {
       store.logEvent("round_stage_posting_in_flight", round.pr, {
         round_id: round.id,
         round_no: round.round_no,

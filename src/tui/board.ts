@@ -760,6 +760,21 @@ export function detailLines(
   lines.push(
     `${stateColor(pr.state)}${STRONG}#${pr.number}${RESET} ${STRONG}${truncate(sanitizeText(pr.title), width - 8 - String(pr.number).length)}${RESET}`,
   );
+  const delivery = pr.current_round?.posting_delivery;
+  if (delivery) {
+    lines.push(
+      truncate(
+        `${FG.dim}POSTING PENDING · automatic retry · attempts ${delivery.attempts}${RESET}`,
+        width,
+      ),
+    );
+    lines.push(
+      truncate(
+        `next ${sanitizeText(delivery.next_attempt_at)}${delivery.last_error ? ` · ${oneLine(delivery.last_error)}` : ""}`,
+        width,
+      ),
+    );
+  }
   if (!detail || detail.pr !== pr.number) {
     lines.push(`${FG.dim}loading detail…${RESET}`);
     return lines;

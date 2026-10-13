@@ -43,6 +43,7 @@ import { GitHubAdapter } from "./github.js";
 import { priorSidecarPath } from "./priorfindings.js";
 import { resolveVerifiedPriorThreads } from "./priorresolve.js";
 import { makePostingGuard } from "./guards.js";
+import { classifyCi, ciBlocksApproval } from "./cigate.js";
 import { TokenMinter } from "./githubAuth.js";
 import {
   FeedbackEngine,
@@ -793,6 +794,27 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     cfg,
     root,
     adapter,
+    postingDelivery: {
+      createReview: async (pr, payload) => {
+        // An approval queued by approve-pr.sh keeps that route's green-CI
+        // precondition. Do not silently turn an old approval verdict into a
+        // COMMENT that its session never marked approval_withheld.
+        if (payload.event === "APPROVE" && cfg.guards.block_approve_on_red_ci) {
+          try {
+            if (
+              ciBlocksApproval(classifyCi(await adapter.listChecks(payload.commit_id)), {
+                noChecksIsRed: cfg.guards.no_checks_is_red,
+              })
+            )
+              return { executed: false, blocked: "ci-not-green" };
+          } catch {
+            return { executed: false, blocked: "pr-unreadable" };
+          }
+        }
+        return adapter.createReview(pr, payload);
+      },
+      listReviewsFull: (pr) => adapter.listReviewsFull(pr),
+    },
     hooks,
     renderPrompt,
     ecosystem,

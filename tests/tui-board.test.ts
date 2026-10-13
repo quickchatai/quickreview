@@ -178,6 +178,32 @@ describe("detailLines", () => {
     ledger: "F1 [P1/0.9][delivery] tasks.py:88 open\n",
   };
 
+  it("shows independently retried posting debt even before detail loads", () => {
+    const lines = detailLines(
+      undefined,
+      {
+        ...snapshot.prs[0]!,
+        current_round: {
+          round_no: 1,
+          round_type: "first",
+          status: "running",
+          started_at: "",
+          deadline_at: "",
+          lenses: "",
+          validate_tier: null,
+          posting_delivery: {
+            attempts: 3,
+            next_attempt_at: "2026-10-12T12:00:00Z",
+            last_error: "GitHub unavailable",
+          },
+        },
+      },
+      100,
+    ).map(stripAnsi);
+    expect(lines.join("\n")).toContain("POSTING PENDING · automatic retry · attempts 3");
+    expect(lines.join("\n")).toContain("GitHub unavailable");
+  });
+
   it("renders header facts, ledger, rounds and threads", () => {
     const lines = detailLines(why, snapshot.prs[0], 60).map(stripAnsi);
     // No escalation-worthiness fact: the header carries state and round only.

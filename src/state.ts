@@ -6599,6 +6599,8 @@ export interface StatusSnapshot {
           command_id?: string;
           command_sha256?: string;
           head_sha?: string;
+          /** Finished review waiting on GitHub, not another model round. */
+          posting_delivery?: { attempts: number; next_attempt_at: string; last_error?: string };
           /** Immutable command-start-derived bounds. Absent until exact start
            * exists (and on snapshots from older daemons). */
           stage_deadlines?: {

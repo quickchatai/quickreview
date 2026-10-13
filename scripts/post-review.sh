@@ -81,7 +81,7 @@ POSTING_RECEIPT=""
 POSTING_MARKER=""
 POST_ALREADY_CONFIRMED=0
 RECEIPT_LOCK=""
-cleanup_receipt_lock() { [[ -z "$RECEIPT_LOCK" ]] || rmdir "$RECEIPT_LOCK" 2>/dev/null || true; }
+cleanup_receipt_lock() { if [[ -n "$RECEIPT_LOCK" ]]; then rm -f "$RECEIPT_LOCK/pid"; rmdir "$RECEIPT_LOCK" 2>/dev/null || true; fi; }
 trap cleanup_receipt_lock EXIT
 # The lock is recorded for cleanup only once this attempt holds it: a refused
 # attempt must never remove the lock another attempt owns.
@@ -89,6 +89,7 @@ acquire_receipt_lock() {
   mkdir -p "$RECEIPT_DIR"
   mkdir "$POSTING_RECEIPT.lock" 2>/dev/null || die "another posting attempt owns $POSTING_KEY"
   RECEIPT_LOCK="$POSTING_RECEIPT.lock"
+  python3 "$ROOT/scripts/posting-receipt.py" owner "$RECEIPT_LOCK/pid" "$$"
 }
 ROUND_NO="${QCR_ROUND_NO:-}"
 if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
@@ -101,6 +102,7 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
   POSTING_MARKER="<!-- qcr-post:$POSTING_KEY -->"
   RECEIPT_DIR="${QCR_POSTING_RECEIPT_DIR:-$ROOT/state/posting-receipts}"
   POSTING_RECEIPT="$RECEIPT_DIR/pr-$PR-round-$ROUND_NO.json"
+  acquire_receipt_lock
   RECEIPT_STATE="$(python3 "$ROOT/scripts/posting-receipt.py" check "$POSTING_RECEIPT" "$POSTING_KEY")"
   case "$RECEIPT_STATE" in
     confirmed) POST_ALREADY_CONFIRMED=1 ;;
@@ -108,8 +110,10 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       if [[ "$LIVE" == "0" ]]; then
         POST_ALREADY_CONFIRMED=1
       else
-        mv "$POSTING_RECEIPT" "$POSTING_RECEIPT.dryrun-$(date -u +%Y%m%dT%H%M%SZ)"
-        acquire_receipt_lock
+        ARCHIVE_SUFFIX="dryrun-$(date -u +%Y%m%dT%H%M%SZ)"
+        mv "$POSTING_RECEIPT" "$POSTING_RECEIPT.$ARCHIVE_SUFFIX"
+        QUEUED="${POSTING_RECEIPT%.json}.outbox.json"
+        [[ ! -f "$QUEUED" ]] || mv "$QUEUED" "$QUEUED.$ARCHIVE_SUFFIX"
       fi
       ;;
     prepared) die "posting outcome is still unknown for $POSTING_KEY — refusing a duplicate POST; let the daemon reconcile the marker" ;;
@@ -120,7 +124,7 @@ if [[ -n "$ROUND_NO" || -n "${QCR_POSTING_KEY:-}" ]]; then
       # daemon has (or will have) closed the round on the record.
       die "posting for $POSTING_KEY was already refused: #$PR head ${RECEIPT_HEAD:0:7} was already reviewed with no author reply since (guard 2). Nothing was posted for this round and nothing will be — record that in the verdict and stop."
       ;;
-    none) acquire_receipt_lock ;;
+    none) : ;;
     *) die "invalid or mismatched posting receipt for $POSTING_KEY" ;;
   esac
 fi
@@ -131,6 +135,14 @@ fi
 [[ -n "$BODY_FILE" && -r "$BODY_FILE" ]] || die "unreadable review body file: ${BODY_FILE:-<missing>}"
 if [[ -n "$COMMENTS_FILE" ]]; then
   [[ -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
+fi
+
+# Snapshot before any GitHub read, under the same lock as the first POST.
+if [[ -n "$POSTING_RECEIPT" && "$POST_ALREADY_CONFIRMED" == "0" ]]; then
+  [[ -r "$BODY_FILE" ]] || die "unreadable review body file: $BODY_FILE"
+  [[ -z "$COMMENTS_FILE" || -r "$COMMENTS_FILE" ]] || die "unreadable comments file: $COMMENTS_FILE"
+  MODE="dryrun"; [[ "$LIVE" != "1" ]] || MODE="live"
+  python3 "$ROOT/scripts/posting-receipt.py" enqueue "${POSTING_RECEIPT%.json}.outbox.json" "$POSTING_KEY" "$PR" "$ROUND_NO" "$RECEIPT_HEAD" "$EVENT" "$REPO" "$MODE" "$BODY_FILE" "$COMMENTS_FILE"
 fi
 
 # ---- the posting-time guards --------------------------------------------------
@@ -244,13 +256,13 @@ CALL_RESPONSE=""
 call() { # call <method> <path> <body-json> <note>
   local out status
   out="$(mktemp)"
-  status="$(curl -sS -X "$1" -o "$out" -w '%{http_code}' \
+  status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
     -H "Authorization: Bearer $("$ROOT/scripts/mint-token.sh")" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     -H "Content-Type: application/json" -d "$3" "$API$2")"
   if [[ "$status" == "401" ]]; then          # stale installation token: re-mint once
-    status="$(curl -sS -X "$1" -o "$out" -w '%{http_code}' \
+    status="$(curl --connect-timeout 10 --max-time 60 -sS -X "$1" -o "$out" -w '%{http_code}' \
       -H "Authorization: Bearer $("$ROOT/scripts/mint-token.sh" --refresh)" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \

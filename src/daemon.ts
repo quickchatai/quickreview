@@ -66,6 +66,7 @@ import { VerdictWatcher, type VerdictAdapter } from "./verdicts.js";
 import { applyInterpretation, createWebhookServer, type Interpretation } from "./webhook.js";
 import { wakeOrHold } from "./wakes.js";
 import { PrConversation, type ConversationAdapter } from "./pr-conversation.js";
+import { PostingOutbox, readPostingJob, type PostingDeliveryAdapter } from "./posting-outbox.js";
 
 // Partial<RecheckAdapter>: the recheck's two extra reads (compare, files) are a
 // seam, not a requirement — a daemon wired without them simply never rechecks.
@@ -77,6 +78,9 @@ export type DaemonAdapter = DispatchAdapter &
   Partial<ConversationAdapter>;
 
 export interface DaemonDeps {
+  /** Finished-review delivery, through the existing guarded adapter. Absent
+   * in stub-wired daemons: never guess a mutation route from a partial stub. */
+  postingDelivery?: PostingDeliveryAdapter;
   cfg?: Config;
   root?: string;
   store?: StateStore;
@@ -437,6 +441,37 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
     ...(deps.onFindingsRecorded ? { onFindingsRecorded: deps.onFindingsRecorded } : {}),
     log,
   });
+  const postingOutbox = deps.postingDelivery
+    ? new PostingOutbox({
+        dir: join(stateDir, "posting-receipts"),
+        repo: cfg.github.repo,
+        dryRun: cfg.dry_run,
+        botLogins: [cfg.github.bot_login, `${cfg.github.app_slug}[bot]`],
+        adapter: deps.postingDelivery,
+        current: (job) => {
+          const pr = store.getPr(job.pr);
+          const round = store.roundsFor(job.pr).find((r) => r.round_no === job.round_no);
+          return (
+            pr?.state === "reviewing" &&
+            pr.head_sha.toLowerCase() === job.head_sha.toLowerCase() &&
+            round?.status === "running" &&
+            round.posting_key === job.posting_key
+          );
+        },
+        ...(deps.now ? { now: deps.now } : {}),
+        log: (message, job) => {
+          log(`#${job.pr} round ${job.round_no}: ${message}`);
+          store.logEvent("posting_delivery", job.pr, {
+            round_no: job.round_no,
+            posting_key: job.posting_key,
+            status: job.status,
+            attempts: job.attempts,
+            next_attempt_at: job.next_attempt_at,
+            detail: message,
+          });
+        },
+      })
+    : undefined;
   const roundStages = new SessionCommandSupervisor({
     cfg,
     store,
@@ -889,24 +924,39 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       log("archive status read failed (heartbeat continues)", err);
     }
     try {
-      writeStatusJson(
-        stateDir,
-        buildStatusSnapshot(
-          store,
-          cfg.dry_run,
-          deps.digestHeadline?.(),
-          undefined,
-          cfg.daemon.max_concurrent_rounds,
-          piAuthWatch?.status(),
-          openviking,
-          threadDecisions.status(),
-          roundStages.health(),
-          roundStageBounds,
-          memory,
-          daemonLoad,
-          archive,
-        ),
+      const snapshot = buildStatusSnapshot(
+        store,
+        cfg.dry_run,
+        deps.digestHeadline?.(),
+        undefined,
+        cfg.daemon.max_concurrent_rounds,
+        piAuthWatch?.status(),
+        openviking,
+        threadDecisions.status(),
+        roundStages.health(),
+        roundStageBounds,
+        memory,
+        daemonLoad,
+        archive,
       );
+      if (postingOutbox)
+        for (const pr of snapshot.prs) {
+          if (!pr.current_round) continue;
+          const job = readPostingJob(
+            join(
+              stateDir,
+              "posting-receipts",
+              `pr-${pr.number}-round-${pr.current_round.round_no}.outbox.json`,
+            ),
+          );
+          if (job?.status === "pending" && job.mode === "live" && job.repo === cfg.github.repo)
+            pr.current_round.posting_delivery = {
+              attempts: job.attempts,
+              next_attempt_at: job.next_attempt_at,
+              ...(job.last_error ? { last_error: job.last_error } : {}),
+            };
+        }
+      writeStatusJson(stateDir, snapshot);
     } catch (err) {
       log("status.json write failed", err);
     }
@@ -959,6 +1009,12 @@ export function createDaemon(deps: DaemonDeps = {}): Daemon {
       }
 
       verdicts.start();
+      // Independent of reconcile and round/session scheduling: a GitHub read
+      // outage must not prevent the delivery worker itself getting a turn.
+      if (postingOutbox) {
+        void guard("posting delivery", () => postingOutbox.tick());
+        every(15, () => void guard("posting delivery", () => postingOutbox.tick()));
+      }
       threadDecisions.start();
       rechecks.start();
       writeStatus();

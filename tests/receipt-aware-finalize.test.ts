@@ -32,6 +32,7 @@ import { standingReview } from "../src/standing-review.js";
 import { StateStore } from "../src/state.js";
 import type { SessionHooks } from "../src/types.js";
 import { VerdictWatcher, type VerdictAdapter } from "../src/verdicts.js";
+import { createHash } from "node:crypto";
 
 const cfg: Config = parseConfig(
   readFileSync(resolve(process.cwd(), "tests/fixtures/config.toml"), "utf8"),
@@ -203,7 +204,7 @@ function progress(): RoundProgressSnapshot {
   };
 }
 
-function wire(): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
+function wire(live = false): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor } {
   const hooks: SessionHooks = {
     async dispatchRound() {},
     async inject() {},
@@ -217,7 +218,7 @@ function wire(): { watcher: VerdictWatcher; supervisor: SessionCommandSupervisor
     },
   };
   const watcher = new VerdictWatcher({
-    cfg,
+    cfg: live ? { ...cfg, dry_run: false } : cfg,
     store,
     adapter: new FakeAdapter(),
     hooks,
@@ -275,6 +276,51 @@ function expectOnePostingAndNothingOwed(): void {
 }
 
 describe("#5850 round 5 replayed", () => {
+  it("a finished review survives an outage beyond stage limits and deadline, then settles without another round", async () => {
+    const key = roundPostingKey(PR, 5, HEAD);
+    const dir = join(root, "state", "posting-receipts");
+    mkdirSync(dir, { recursive: true });
+    const payload = {
+      commit_id: HEAD,
+      event: "REQUEST_CHANGES",
+      body: `Review\n\n${postingMarker(key)}`,
+    };
+    writeFileSync(
+      join(dir, `pr-${PR}-round-5.outbox.json`),
+      JSON.stringify({
+        version: 1,
+        posting_key: key,
+        repo: cfg.github.repo,
+        mode: "live",
+        pr: PR,
+        round_no: 5,
+        head_sha: HEAD,
+        intended_event: "REQUEST_CHANGES",
+        payload,
+        status: "pending",
+        attempts: 7,
+        payload_sha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+        next_attempt_at: clock.toISOString(),
+        created_at: clock.toISOString(),
+      }),
+    );
+    const { watcher, supervisor } = wire(true);
+    set("2026-10-08T08:54:18.408Z");
+    await supervisor.scan();
+    expect(round5().status).toBe("running");
+    expect(killed).toEqual([]);
+    set("2026-10-09T10:00:00.000Z");
+    await watcher.checkDeadlines();
+    expect(round5().status).toBe("running");
+    expect(store.openReviewFailure(PR)).toBeUndefined();
+    expect(count("round_self_requeued")).toBe(0);
+    // Recovery confirmation is the same receipt the shell/worker writes.
+    postReview();
+    set("2026-10-09T10:30:00.000Z");
+    await watcher.checkDeadlines();
+    expectOnePostingAndNothingOwed();
+  });
+
   it("the parent_finalize limit after a confirmed posting waits; the late verdict then lands — one posting", async () => {
     const { watcher, supervisor } = wire();
     postReview();

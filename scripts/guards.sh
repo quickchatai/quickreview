@@ -47,10 +47,10 @@ guard_api_get() { # guard_api_get <path> — response body on stdout, "" on fail
   local tok
   tok="$(guard_token)"
   if [[ -n "$tok" ]]; then
-    curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
+    curl --connect-timeout 10 --max-time 60 -sS -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" "$API$1" || true
   else
-    curl -sS -H "Accept: application/vnd.github+json" "$API$1" || true
+    curl --connect-timeout 10 --max-time 60 -sS -H "Accept: application/vnd.github+json" "$API$1" || true
   fi
 }
 

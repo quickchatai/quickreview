@@ -9,18 +9,56 @@ import { join } from "node:path";
 import { HEAD, exec, root, useGuardsShellRig } from "./helpers/guards-shell-rig.js";
 
 const s = useGuardsShellRig();
-const inlineComments = [{ path: "src/example.ts", line: 12, side: "RIGHT", body: "Optional improvement." }];
+const inlineComments = [
+  { path: "src/example.ts", line: 12, side: "RIGHT", body: "Optional improvement." },
+];
 const { run, dryrunRecords, record, bodyFile } = s;
 
 describe("posting receipts", () => {
-  it.each([
-    {},
-    [null],
-    [{ path: "src/example.ts", line: true, body: "Invalid line" }],
-    [{ path: "src/example.ts", line: 0, body: "Invalid line" }],
-    [{ path: "src/example.ts", line: 1, body: "Invalid side", side: "MIDDLE" }],
-    [{ path: "src/example.ts", line: 1 }],
-  ].map((comments) => [comments]))("approval refuses invalid inline comments before any mutation: %j", async (comments) => {
+  it.each(["post-review.sh", "approve-pr.sh"])(
+    "%s checks replay identity only after acquiring ownership",
+    (script) => {
+      // MUTATION: move receipt check above acquire_receipt_lock — this fails.
+      const source = readFileSync(join(root, "scripts", script), "utf8");
+      expect(source.indexOf("\n  acquire_receipt_lock\n")).toBeLessThan(
+        source.indexOf("  RECEIPT_STATE="),
+      );
+    },
+  );
+
+  it("snapshots review and inline comments before a posting-time read refuses", async () => {
+    s.pr = { state: "closed", merged: false, head: { sha: HEAD } };
+    const comments = join(s.dir, "comments.json");
+    writeFileSync(comments, JSON.stringify(inlineComments));
+    const result = await run("post-review.sh", ["5180", "COMMENT", bodyFile(), comments], {
+      QCR_EXPECTED_HEAD: HEAD,
+      QCR_ROUND_NO: "21",
+      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+    });
+    expect(result.ok).toBe(false);
+    const job = JSON.parse(
+      readFileSync(join(s.dir, "receipts", "pr-5180-round-21.outbox.json"), "utf8"),
+    );
+    expect(job).toMatchObject({
+      status: "pending",
+      mode: "dryrun",
+      payload: { comments: inlineComments, commit_id: HEAD, event: "COMMENT" },
+    });
+    expect(job.payload.body).toContain(`<!-- qcr-post:v1:5180:21:${HEAD} -->`);
+    expect(job.payload_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(existsSync(join(s.dir, "receipts", "pr-5180-round-21.json.lock"))).toBe(false);
+  });
+
+  it.each(
+    [
+      {},
+      [null],
+      [{ path: "src/example.ts", line: true, body: "Invalid line" }],
+      [{ path: "src/example.ts", line: 0, body: "Invalid line" }],
+      [{ path: "src/example.ts", line: 1, body: "Invalid side", side: "MIDDLE" }],
+      [{ path: "src/example.ts", line: 1 }],
+    ].map((comments) => [comments]),
+  )("approval refuses invalid inline comments before any mutation: %j", async (comments) => {
     const commentsFile = join(s.dir, "invalid-comments.json");
     writeFileSync(commentsFile, JSON.stringify(comments));
     const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile]);
@@ -29,7 +67,11 @@ describe("posting receipts", () => {
   });
 
   it("approval refuses an unreadable comments file before any mutation", async () => {
-    const res = await run("approve-pr.sh", ["5180", bodyFile(), join(s.dir, "no-such-comments.json")]);
+    const res = await run("approve-pr.sh", [
+      "5180",
+      bodyFile(),
+      join(s.dir, "no-such-comments.json"),
+    ]);
     expect(res.ok).toBe(false);
     expect(res.out).toContain("unreadable comments file");
     expect(dryrunRecords()).toEqual([]);
@@ -41,7 +83,9 @@ describe("posting receipts", () => {
     const res = await run("approve-pr.sh", ["5180", bodyFile(), commentsFile]);
     expect(res.ok).toBe(true);
     const create = dryrunRecords().find((name) => name.includes("create_review"));
-    expect(JSON.parse(readFileSync(join(s.dir, "dryrun", create!), "utf8")).body.comments).toEqual([]);
+    expect(JSON.parse(readFileSync(join(s.dir, "dryrun", create!), "utf8")).body.comments).toEqual(
+      [],
+    );
   });
 
   const receipt = (round: number) =>
@@ -187,7 +231,16 @@ describe("posting receipts", () => {
   it("confirmed approval retry bypasses changed posting guards and resumes cleanup only", async () => {
     const key = `v1:5180:12:${HEAD}`;
     const path = join(s.dir, "receipts", "pr-5180-round-12.json");
-    const args = [path, key, "5180", "12", HEAD, "APPROVE", "APPROVE", JSON.stringify({ event: "APPROVE", comments: inlineComments })];
+    const args = [
+      path,
+      key,
+      "5180",
+      "12",
+      HEAD,
+      "APPROVE",
+      "APPROVE",
+      JSON.stringify({ event: "APPROVE", comments: inlineComments }),
+    ];
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "prepare", ...args]);
     await exec("python3", [join(root, "scripts", "posting-receipt.py"), "confirm", ...args], {
       env: {
@@ -202,12 +255,16 @@ describe("posting receipts", () => {
       user: { login: "pr-author" },
     };
     s.checkRuns = [{ name: "unit", status: "completed", conclusion: "failure" }];
-    const res = await run("approve-pr.sh", ["5180", join(s.dir, "missing-body.md"), join(s.dir, "missing-comments.json")], {
-      QCR_EXPECTED_HEAD: HEAD,
-      QCR_ROUND_NO: "12",
-      QCR_POSTING_KEY: key,
-      QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
-    });
+    const res = await run(
+      "approve-pr.sh",
+      ["5180", join(s.dir, "missing-body.md"), join(s.dir, "missing-comments.json")],
+      {
+        QCR_EXPECTED_HEAD: HEAD,
+        QCR_ROUND_NO: "12",
+        QCR_POSTING_KEY: key,
+        QCR_POSTING_RECEIPT_DIR: join(s.dir, "receipts"),
+      },
+    );
     expect(res.ok).toBe(true);
     expect(res.out).toContain("skipping duplicate approval");
     expect(dryrunRecords().some((name) => name.includes("create_review"))).toBe(false);

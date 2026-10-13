@@ -249,6 +249,7 @@ export class GitHubRequestError extends Error {
     readonly path: string,
     readonly status: number,
     detail: string,
+    readonly retryAfterMs?: number,
   ) {
     super(`${method} ${path} → ${status}: ${detail}`);
     this.name = "GitHubRequestError";
@@ -304,6 +305,7 @@ export class GitHubAdapter {
     const token = auth === "jwt" ? this.minter.appJwt() : await this.minter.installationToken();
     const res = await this.fetchFn(`${this.apiBase}${path}`, {
       method,
+      signal: AbortSignal.timeout(60_000),
       headers: {
         authorization: `Bearer ${token}`,
         accept: "application/vnd.github+json",
@@ -316,8 +318,24 @@ export class GitHubAdapter {
       this.minter.invalidate();
       return this.request(method, path, body, auth, true);
     }
-    if (!res.ok)
-      throw new GitHubRequestError(method, path, res.status, (await res.text()).slice(0, 300));
+    if (!res.ok) {
+      const retryAfter = res.headers?.get("retry-after");
+      const reset = res.headers?.get("x-ratelimit-reset");
+      const retryAfterMs = retryAfter
+        ? /^\d+$/.test(retryAfter)
+          ? Number(retryAfter) * 1000
+          : Math.max(0, Date.parse(retryAfter) - Date.now())
+        : reset
+          ? Math.max(0, Number(reset) * 1000 - Date.now())
+          : undefined;
+      throw new GitHubRequestError(
+        method,
+        path,
+        res.status,
+        (await res.text()).slice(0, 300),
+        Number.isFinite(retryAfterMs) ? retryAfterMs : undefined,
+      );
+    }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
