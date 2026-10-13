@@ -4,7 +4,9 @@
 #
 #   glm-bench.sh build                 both images from master HEAD in a clean temporary worktree
 #   glm-bench.sh preflight             checks only — no inference, no review, no judge
-#   glm-bench.sh score-smoke [--go]    gate + GPT-6.1 judge the finished 10-PR smoke
+#   glm-bench.sh smoke [--go]          10-PR smoke on the built image (all 10 slots), then
+#                                      gate + concurrency report + GPT-6.1 judge
+#   glm-bench.sh score-smoke [--go]    gate + GPT-6.1 judge the finished smoke on the built image
 #   glm-bench.sh full [--go]           prefetch → review 335 PRs (10 at once) → gate → judge
 #   glm-bench.sh score-full [--go]     gate + judge an already reviewed full run (resume / rescore)
 #
@@ -32,7 +34,8 @@ M=digitalocean/glm-5.3-flash
 GLM_CONFIG="models.default=$M,models.conversation=$M,models.overseer=$M,models.tiers.terra-med=$M:medium,models.tiers.sol-med=$M:medium,models.tiers.sol-high=$M:high,pi.subagent_max_concurrency=12,pi.subagent_cache_group=0"
 JUDGE=openai-codex/gpt-6.1-sol:high
 
-SMOKE_PREFIX=glm53-smoke-p10-l12
+# The smoke's runs are named after the image's commit, so each build smokes afresh.
+SMOKE_PREFIX=glm53-smoke-p10-l12   # the first smoke (2026-10-13, image 21c40ad9-dirty)
 SMOKE_SETS=(glm-aacr1 glm-aacr-extra3 glm-martian1 glm-martian-extra2 glm-qodo1 glm-qodo-extra2)
 FULL_PREFIX=glm53-full
 AACR_SETS=(smoke10 dev10 holdout10 fresh10 rest145)   # the published 185-PR AACR comparison
@@ -50,6 +53,16 @@ use_image() {
   IMAGE="$(cat "$OUT/image.txt")"
   docker image inspect "$IMAGE" >/dev/null 2>&1 || die "image $IMAGE is gone — run: $0 build"
   export QCR_BENCH_IMAGE="$IMAGE" QCR_EXT_IMAGE="$IMAGE" QCR_EXT_JUDGE_IMAGE="$IMAGE"
+  SMOKE_PREFIX="glm53-smoke-$(sed -n 's/^qcr-bench:glm53-\([0-9a-f]*\)-ext$/\1/p' <<<"$IMAGE")"
+  [[ "$SMOKE_PREFIX" != glm53-smoke- ]] || die "unexpected image tag $IMAGE"
+}
+
+# Review containers running, every 10 s, until killed: "<epoch> <count>".
+sample_containers() {
+  while :; do
+    echo "$(date +%s) $(docker ps --filter "ancestor=$IMAGE" --format '{{.ID}}' | wc -l)"
+    sleep 10
+  done >> "$1"
 }
 
 # Judge one run with GPT-6.1 Sol. The reviewer's DigitalOcean route is switched off here.
@@ -111,16 +124,43 @@ case "$cmd" in
 
   preflight) preflight ;;
 
+  smoke)
+    preflight || die "preflight failed"
+    use_image
+    if (( ! go )); then
+      echo "would run on $IMAGE: arm.sh --prefix $SMOKE_PREFIX --cases $(join + "${SMOKE_SETS[@]}") --parallel 10 --retries 0 --resume --no-judge"
+      echo "  (10 PRs: 4 AACR, 3 Martian, 3 Qodo — every slot busy), then: $0 score-smoke --go"
+      echo "glm-bench: nothing run — add --go (needs the owner's approval)"; exit 0
+    fi
+    for s in "${SMOKE_SETS[@]}"; do
+      case "$(scorer_of "$s")" in
+        aacr) "$SRC/bench/aacr/bench.sh" prefetch --set "$s" ;;
+        *)    "$SRC/bench/aacr/ext/ext.sh" prefetch "$s" ;;
+      esac
+    done
+    samples="$OUT/containers-$SMOKE_PREFIX.log"
+    sample_containers "$samples" & sampler=$!
+    trap 'kill "$sampler" 2>/dev/null || true' EXIT
+    log "reviewing $(join + "${SMOKE_SETS[@]}") on $IMAGE"
+    QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
+      --prefix "$SMOKE_PREFIX" --config "$GLM_CONFIG" --cases "$(join + "${SMOKE_SETS[@]}")" \
+      --parallel 10 --no-judge --retries 0 --resume > "$OUT/reviews-$SMOKE_PREFIX.log" 2>&1 \
+      || log "arm.sh reported failures"
+    kill "$sampler" 2>/dev/null || true
+    python3 -I "$HERE/concurrency.py" --runs-dir "$QCR_BENCH_RUNS_DIR" --prefix "$SMOKE_PREFIX" \
+      --sets "$(join , "${SMOKE_SETS[@]}")" --samples "$samples" | tee "$OUT/concurrency-$SMOKE_PREFIX.txt"
+    exec "$0" score-smoke --go ;;
+
   score-smoke)
     use_image
     python3 -I "$HERE/gate.py" --runs-dir "$QCR_BENCH_RUNS_DIR" --prefix "$SMOKE_PREFIX" \
-      --sets "$(join , "${SMOKE_SETS[@]}")" --strict --out "$OUT/gate-smoke.json"
+      --sets "$(join , "${SMOKE_SETS[@]}")" --strict --out "$OUT/gate-$SMOKE_PREFIX.json"
     (( go )) || { echo "glm-bench: gate passed; nothing judged — add --go"; exit 0; }
     for s in glm-martian1 glm-martian-extra2 glm-qodo1 glm-qodo-extra2; do "$SRC/bench/aacr/ext/ext.sh" prefetch "$s"; done
     for s in "${SMOKE_SETS[@]}"; do
-      score_one "$SMOKE_PREFIX-$s" "$s" > "$OUT/score-smoke-$s.log" 2>&1 || log "$s: scoring failed (score-smoke-$s.log)"
+      score_one "$SMOKE_PREFIX-$s" "$s" > "$OUT/score-$SMOKE_PREFIX-$s.log" 2>&1 || log "$s: scoring failed (score-$SMOKE_PREFIX-$s.log)"
     done
-    log "smoke scored — score-smoke-*.log; reports under $QCR_BENCH_RUNS_DIR/$SMOKE_PREFIX-*" ;;
+    log "smoke scored — score-$SMOKE_PREFIX-*.log; reports under $QCR_BENCH_RUNS_DIR/$SMOKE_PREFIX-*" ;;
 
   full)
     preflight || die "preflight failed"

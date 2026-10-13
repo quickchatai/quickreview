@@ -21,7 +21,7 @@ main checkout's Git-ignored `bench/aacr/artifacts/glm-benchmark/`.
 ```bash
 bench/aacr/glm/glm-bench.sh build              # review + judge image from master HEAD (clean worktree)
 bench/aacr/glm/glm-bench.sh preflight          # checks only
-bench/aacr/glm/glm-bench.sh score-smoke --go   # GPT-6.1 Sol judges the 10-PR smoke
+bench/aacr/glm/glm-bench.sh smoke --go         # 10-PR smoke on that image: reviews, concurrency report, GPT-6.1 judging
 bench/aacr/glm/glm-bench.sh full --go          # 335 PRs, 10 at once, then gate + judge
 bench/aacr/glm/glm-bench.sh score-full --go    # re-gate and re-judge a reviewed full run
 ```
