@@ -79,6 +79,11 @@ export function digitalOceanModels() {
             contextWindow: 1048576,
             maxTokens: 65536,
             cost: { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+            // DigitalOcean refuses `none`, `minimal` and `medium` for this
+            // model (400 "… reasoning effort is not supported"); it takes low,
+            // high, xhigh and max. Every tier's level is sent as the nearest
+            // one it accepts at or above it — never less reasoning than asked.
+            thinkingLevelMap: { off: null, minimal: "low", medium: "high" },
           },
         ],
       },

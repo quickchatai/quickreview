@@ -25,7 +25,10 @@ and priced in `bench/aacr/openmodels/models.py` (DigitalOcean list prices, $ per
 | `gemma-4-31B-it` | `gemma4-…` | 0.18 | 0.50 | 0.036 | 256k | 8,192 (the model's maximum) |
 | `deepseek-v4.1-flash` | `dsv41f-…` | 0.30 | 1.20 | 0.006 | 1M | 65,536 |
 
-All three answered a tool call with reasoning on 2026-10-13. Qwen3.8-Max
+All three answered a tool call with reasoning on 2026-10-13. DeepSeek V4.1 Flash
+accepts only the reasoning levels low, high, xhigh and max (DigitalOcean answers
+400 to `medium`), so its registry entry maps `medium` → `high` and `minimal` →
+`low`: the sol-med and terra-med lenses run at high on DeepSeek. Qwen3.8-Max
 (`qwen3.8-max`, $2.00 / $6.00 / $0.20) also passed that probe but is left out
 for now: at GLM's token profile it would cost about $3.09 a PR, ~$1,030 a full
 run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means
