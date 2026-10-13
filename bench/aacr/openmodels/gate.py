@@ -4,8 +4,10 @@
   gate.py --runs-dir DIR --model ID --prefix P --sets s1,s2,... [--strict] [--out FILE]
 
 For every run <P>-<set>: run.json finished, every PR of the set present,
-status ok, zero model_errors, every planned pass executed, the fingerprint and
-every recorded assistant message naming digitalocean/<ID> (ID from models.py).
+status ok, every planned lens's FINAL attempt successful (lensfinal.py — a
+transient provider error that a retry recovered is reported, never a failure),
+the fingerprint and every recorded assistant message naming digitalocean/<ID>
+(ID from models.py).
 
 --strict (the smoke): any failure exits 1, so nothing is scored.
 Without it (the full run): failures are LISTED and written to --out, and the
@@ -19,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models import MODELS  # noqa: E402
+from lensfinal import lost as lost_lenses  # noqa: E402
 
 SETS = Path(__file__).resolve().parents[1] / "sets"
 
@@ -80,9 +83,12 @@ def main() -> int:
             why = []
             if d.get("status") != "ok":
                 why.append(f"status {d.get('status')}")
-            errs = {k: v for k, v in (d.get("model_errors") or {}).items() if v}
+            errs = {k: v for k, v in (d.get("model_errors") or {}).items() if v and k != "sample"}
             if errs:
-                why.append(f"model_errors {errs}")
+                row.setdefault("recovered", {})[cid] = errs
+            gone = lost_lenses(d.get("planned_lenses") or [], run / "cases" / cid / "pi-events.jsonl")
+            if gone:
+                why.append("lenses lost after retries: " + "; ".join(f"{l} ({w})" for l, w in gone))
             # A session sometimes launches a lens with its tier suffix doubled
             # (pass-x--sol-high--sol-high, seen with GLM); the lens still ran, so count it, but say so.
             ran = set()
@@ -122,6 +128,9 @@ def main() -> int:
         print(f"{s:>20}: {row['ok']}/{row['cases']} ok, ${row['usd']}, "
               f"median {row['minutes']['median']} min, max {row['minutes']['max']} min"
               + ("" if row["finished"] else "  [run not finished]"))
+        if row.get("recovered"):
+            n = sum(sum(v.values()) for v in row["recovered"].values())
+            print(f"{'':>22}note: {n} transient provider error(s) retried successfully in {len(row['recovered'])} PR(s)")
         if row.get("doubled_suffix"):
             row["doubled_suffix"] = sorted(set(row["doubled_suffix"]))
             print(f"{'':>22}note: doubled tier suffix on lens launches in {row['doubled_suffix']}")

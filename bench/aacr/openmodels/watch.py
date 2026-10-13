@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from models import MODELS  # noqa: E402
+from lensfinal import lost as lost_lenses  # noqa: E402
 
 PRICE = {}   # set from the run's model (models.py)
 SETS = Path(__file__).resolve().parents[1] / "sets"
@@ -116,7 +117,10 @@ def main():
                 if summ.is_file():
                     j = json.loads(summ.read_text())
                     ran = {"--".join(p.split("--")[:2]) for p in j.get("executed_passes") or []}
-                    missing = len(set(j.get("planned_lenses") or []) - ran)
+                    planned = j.get("planned_lenses") or []
+                    # Lost = the session never ran it, or its final attempt failed
+                    # after retries (a retried, recovered lens is complete).
+                    missing = len(set(planned) - ran | {l for l, _ in lost_lenses(planned, t.path)})
                     if j.get("status") != "ok":
                         state, key = f"{RED}{j.get('status')}{RST}", "fail"
                     elif missing:

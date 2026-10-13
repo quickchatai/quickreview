@@ -182,12 +182,23 @@ export function benchAuthFrom(raw: string): { json: string; expiresAt: number | 
   return { json: JSON.stringify(parsed, null, 2) + "\n", expiresAt };
 }
 
+/** pi's agent-level retry for a benchmark sandbox — every session and every
+ * lens child reads it (one agent dir). pi's own default (3 attempts, ≤ 60 s
+ * apart) gives up inside two minutes, and a provider's overload window
+ * (DigitalOcean "529 Platform overloaded", or a request timeout) is longer than
+ * that: the lens is lost and the review posts without it. This backs off from
+ * 5 s doubling to a 2-minute cap over 10 attempts — about 13 minutes of
+ * patience per request — so a PR is processed fully and fails only when the
+ * provider is really unavailable. Provider-level retries stay off (pi's advice:
+ * they would hide quota and usage-limit errors from pi). */
+export const BENCH_RETRY = { enabled: true, maxRetries: 10, baseDelayMs: 5_000, maxAgentDelayMs: 120_000 } as const;
+
 /** pi's global settings for the sandbox — what the VM entrypoint provisions
  * (deploy/ansible/templates/entrypoint.sh.j2): bash-guard registered globally
  * so lens children load it too; pi's built-in extensions switched off
  * (src/pibuiltins.ts — the reviewed checkout is exactly the untrusted ground a
  * `.pi/mcp.json` would come from); every project trusted so no modal can stall
- * a run; /opt/quickreview pre-trusted. */
+ * a run; /opt/quickreview pre-trusted; and the durable retry above. */
 export function benchSettings(root: string): { settings: string; trust: string } {
   return {
     settings:
@@ -195,6 +206,7 @@ export function benchSettings(root: string): { settings: string; trust: string }
         {
           extensions: [join(root, "extensions", "bash-guard.ts"), ...PI_DISABLED_BUILTINS],
           defaultProjectTrust: "always",
+          retry: BENCH_RETRY,
         },
         null,
         2,

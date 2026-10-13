@@ -98,4 +98,20 @@ describe("pi built-ins are switched off wherever we provision pi settings", () =
     const s = JSON.parse(benchSettings("/r").settings) as { extensions: string[] };
     expect(s.extensions).toEqual(["/r/extensions/bash-guard.ts", ...PI_DISABLED_BUILTINS]);
   });
+
+  it("the bench sandbox outlasts a provider overload window: durable agent-level retry", () => {
+    // pi's default (3 attempts, ≤ 60 s apart) lost a DeepSeek lens to a
+    // two-minute DigitalOcean 529 window on 2026-10-13.
+    const s = JSON.parse(benchSettings("/r").settings) as {
+      retry: { enabled: boolean; maxRetries: number; baseDelayMs: number; maxAgentDelayMs: number };
+    };
+    expect(s.retry.enabled).toBe(true);
+    expect(s.retry.maxRetries).toBeGreaterThanOrEqual(10);
+    expect(s.retry.maxAgentDelayMs).toBeGreaterThanOrEqual(120_000);
+    // The backoff schedule covers at least ten minutes before a lens gives up.
+    let waited = 0;
+    for (let i = 0; i < s.retry.maxRetries; i++)
+      waited += Math.min(s.retry.baseDelayMs * 2 ** i, s.retry.maxAgentDelayMs);
+    expect(waited).toBeGreaterThanOrEqual(10 * 60_000);
+  });
 });

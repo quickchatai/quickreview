@@ -57,7 +57,11 @@ def main() -> None:
             if not ch:
                 continue
             case_windows.append((min(c[1] for c in ch), max(c[2] for c in ch)))
-            errors += [(ev.parent.name, c[0], c[3], c[4]) for c in ch if c[3] == "error" or c[4]]
+            # A lens whose last attempt failed (a retried, recovered one is not an error).
+            final = {}
+            for c in ch:
+                final["--".join((c[0] or "").split("--")[:2])] = c
+            errors += [(ev.parent.name, c[0], c[3], c[4]) for c in final.values() if c[3] in ("error", "aborted")]
             print(f"{ev.parent.name:<48}{len(ch):>7}{peak([(c[1], c[2]) for c in ch]):>14}")
     print(f"\nPRs reviewing at once (lens windows overlapping): peak {peak(case_windows)}")
     if a.samples and a.samples.is_file():
@@ -65,7 +69,7 @@ def main() -> None:
         if counts:
             mins = ", ".join(f"{n}: {c * 10 / 60:.0f} min" for n, c in sorted(counts.items(), reverse=True) if n)
             print(f"review containers sampled every 10 s: peak {max(counts)} — time at each count: {mins}")
-    print(f"lens children ending in an error: {len(errors)}")
+    print(f"lenses whose final attempt failed: {len(errors)}")
     for e in errors:
         print(f"  {e[0]} {e[1]}: {e[2]} {e[3] or ''}")
 

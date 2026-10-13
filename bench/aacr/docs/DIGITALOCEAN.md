@@ -56,6 +56,22 @@ GLM and DeepSeek are served quickly. They are slow because they take about 3× t
 steps and write 12–15× the output, mostly reasoning, and a PR waits for its
 longest lens. Gemma is the one model DigitalOcean serves slowly.
 
+## Durable retries, and what counts as a lost lens
+
+DigitalOcean has overload windows: "529 Platform overloaded" and request
+timeouts, a few minutes at a time. pi's default retry (3 attempts, ≤ 60 s
+apart) gives up inside two minutes, and on 2026-10-13 a DeepSeek lens was lost
+that way. Every benchmark sandbox's pi settings (`BENCH_RETRY` in
+`src/bench/auth.ts`, read by the main session and every lens child) retry 10
+times, backing off from 5 s to a 2-minute cap — about 13 minutes per request —
+so a PR is reviewed fully and fails only when the provider is really
+unavailable.
+
+The gate, the concurrency report and the live view judge each planned lens by
+its FINAL attempt (`bench/aacr/openmodels/lensfinal.py`): a transient error a
+retry recovered is reported as a note, never a failure; a lens whose last
+attempt failed, or that never ran, makes the PR degraded.
+
 ## The driver
 
 `bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the
