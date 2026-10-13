@@ -24,9 +24,11 @@ and priced in `bench/aacr/openmodels/models.py` (DigitalOcean list prices, $ per
 | `glm-5.3-flash` | `glm53-…` | 0.15 | 0.50 | 0.03 | 1M | 65,536 |
 | `gemma-4-31B-it` | `gemma4-…` | 0.18 | 0.50 | 0.036 | 256k | 8,192 (the model's maximum) |
 | `deepseek-v4.1-flash` | `dsv41f-…` | 0.30 | 1.20 | 0.006 | 1M | 65,536 |
-| `qwen3.8-max` | `qwen38max-…` | 2.00 | 6.00 | 0.20 | 1M | 65,536 |
 
-All four answered a tool call with reasoning on 2026-10-13. Adding a model means
+All three answered a tool call with reasoning on 2026-10-13. Qwen3.8-Max
+(`qwen3.8-max`, $2.00 / $6.00 / $0.20) also passed that probe but is left out
+for now: at GLM's token profile it would cost about $3.09 a PR, ~$1,030 a full
+run, more than GPT-6.1 Sol's ~$770 API-equivalent for the same 335 PRs. Adding a model means
 one entry in each of those two places and an image rebuild.
 
 ## The driver

@@ -9,7 +9,6 @@ MODELS = {
     "glm-5.3-flash": {"slug": "glm53", "price": {"input": 0.15, "output": 0.50, "cacheRead": 0.03}},
     "gemma-4-31B-it": {"slug": "gemma4", "price": {"input": 0.18, "output": 0.50, "cacheRead": 0.036}},
     "deepseek-v4.1-flash": {"slug": "dsv41f", "price": {"input": 0.30, "output": 1.20, "cacheRead": 0.006}},
-    "qwen3.8-max": {"slug": "qwen38max", "price": {"input": 2.00, "output": 6.00, "cacheRead": 0.20}},
 }
 
 

@@ -12,7 +12,7 @@
 #   [MODEL=<id>] openbench.sh score-full [--go]  gate + judge an already reviewed full run (resume / rescore)
 #
 # MODEL is a DigitalOcean model id from models.py (default glm-5.3-flash): glm-5.3-flash,
-# gemma-4-31B-it, deepseek-v4.1-flash, qwen3.8-max. It runs EVERY reviewer call.
+# gemma-4-31B-it, deepseek-v4.1-flash. It runs EVERY reviewer call.
 # Without --go a step that spends model money prints what it would run and exits.
 # A benchmark run needs the owner's approval; --go is that approval, never a default.
 # Every step resumes. Logs and results go to bench/aacr/artifacts/open-models/ of the
