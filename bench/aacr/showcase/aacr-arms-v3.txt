@@ -1,0 +1,5 @@
+# Extra AACR arms for the v3 graphs (same format as aacr-arms.txt):
+#   <tool id from data/tools.json>=<run>[,<run>...]
+# The fast option: profile fast + preset low + models.effort=low, on the frozen
+# build's image (ext/RUNS.md "fast1-*").
+quickreview-fast=fast1-smoke10,fast1-dev10,fast1-holdout10,fast1-fresh10,fast1-rest145

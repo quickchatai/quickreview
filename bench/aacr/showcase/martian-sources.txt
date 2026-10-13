@@ -1,0 +1,10 @@
+# Martian's OWN metric (Core precision / recall / F1, Martian's matcher), every row graded by the
+# same gpt-6.1-sol judge, one line per tool:
+#   <tool id from data/tools.json>=<scored run dir>:<key in its martian-scores.json "this_run">
+quickreview=final1-martian50.martian:quickreview
+qodo-extended=final1-martian50.martian:rejudged-qodo-extended-v2
+cubic=final1-martian50.martian:rejudged-cubic-v2
+claude-code=final1-martian50.martian:rejudged-claude-code
+open-code-review=final1-ocr-martian50.martian:open-code-review
+opencode=final1-opencode-martian50.martian:opencode
+pr-agent=final1-pragent-martian50.martian:pr-agent

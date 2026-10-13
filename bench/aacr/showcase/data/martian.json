@@ -1,5 +1,5 @@
 {
- "_doc": "Martian offline code-review benchmark, 50 PRs, 158 golden comments, of which an audit judged 86 real defects introduced by the PR (charts/martian-data.json, built by martian_figs.py from the golden audit). real_found: how many of those 86 the tool's review states, Martian's own matcher. judge 'same' = one gpt-6.1-sol judge for every 'same' row (QuickReview frozen build final1-martian50 and the re-judged published comments); 'published' = Martian's published Opus 4.5 evaluations of the vendor's January 2026 comments, which credit the three tools judged both ways 4-6 goldens more than our judge does.",
+ "_doc": "Martian offline code-review benchmark, 50 PRs, 173 golden comments (158 in Martian's Core subset), of which an audit judged 86 real defects introduced by the PR (charts/martian-data.json, built by martian_figs.py from the golden audit). real_found: how many of those 86 the tool's review states, Martian's own matcher. judge 'same' = one gpt-6.1-sol judge for every 'same' row (QuickReview frozen build final1-martian50 and the re-judged published comments); 'published' = Martian's published Opus 4.5 evaluations of the vendors' own published comments (vendor runs dated 2026-01-22 to 2026-06-24), which credit the three tools judged both ways 4-6 goldens more than our judge does.",
  "real_goldens": 86,
  "prs": 50,
  "rows": [
