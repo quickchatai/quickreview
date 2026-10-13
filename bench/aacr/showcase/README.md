@@ -16,6 +16,36 @@ uv run bench/aacr/showcase/make_charts.py            # or name figures: ... make
 $2.06/PR — it matches `paper/quickreview.tex` Table `tab:frozen` and every third-party row of
 `tab:final` exactly).
 
+## v2: one chart, as few words as possible
+
+```sh
+uv run bench/aacr/showcase/make_charts_v2.py     # into out/v2/ — v1 (make_charts.py, out/) is left untouched
+```
+
+Each v2 image is ONE chart: a short title that is the message, the marks, the names and values,
+and a one-line benchmark tag. No subtitle, legend or footnote — the method and the caveats below
+stay in this README. QuickReview is blue, every other tool one grey. v2 reuses v1's data layer
+(`Bench` in `make_charts.py`), so both always show the same numbers; its own look is `theme_v2.py`.
+
+Two choices v2 makes that the images do not spell out:
+- **Martian** (`martian-real-bugs`, `every-benchmark`): each competitor is drawn at its BEST real-bug
+  count, our judge's or Martian's own published grading, whichever is higher — the reading most
+  generous to them; QuickReview at our judge's count only.
+- **`every-benchmark`** plots one measure per benchmark: all verified defects (AACR-Bench), the
+  audited real bugs (Martian), the functional bugs (Qodo).
+
+| | |
+|---|---|
+| ![](out/v2/headline.png) | ![](out/v2/headline-missed.png) |
+| ![](out/v2/one-vs-six.png) | ![](out/v2/head-to-head.png) |
+| ![](out/v2/clean-catch.png) | ![](out/v2/every-benchmark.png) |
+| ![](out/v2/qodo-functional.png) | ![](out/v2/martian-real-bugs.png) |
+| ![](out/v2/same-model.png) | ![](out/v2/by-kind.png) |
+| ![](out/v2/by-size.png) | |
+
+The rest of this README describes v1 (the annotated versions in `out/`), the data and the gaps;
+all of it applies to v2.
+
 ## What is where
 
 | File | Role |
@@ -29,6 +59,7 @@ $2.06/PR — it matches `paper/quickreview.tex` Table `tab:frozen` and every thi
 | `data/manual.json` | hand-kept costs and intervals the runs do not hold in one place. |
 | `theme.py` | the look: tokens for both themes, pixel layout, rounded bars, export. |
 | `make_charts.py` | one function per figure; titles are computed (ranks, "more than", "every kind"). |
+| `make_charts_v2.py`, `theme_v2.py` | v2: the same figures as one minimal chart each, into `out/v2/`. |
 | `out/` | the rendered figures and `NUMBERS.md`, the table view of every chart. |
 
 Colour does one job: **QuickReview is blue; every other tool is grey** — darker for closed-source
