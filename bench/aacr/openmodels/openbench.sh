@@ -21,6 +21,8 @@
 #   PARALLEL=N             PR reviews at once in `full` (default 10; the smoke always runs
 #                          its 10 PRs at once). The machine is not the limit — a review
 #                          is ~250–800 MB and nearly idle CPU — DigitalOcean's capacity is.
+#   TIMEOUT_MIN=N          each review's time limit (default 180). The published GPT-6.1 runs used
+#                          75; the open models take 54–66 min on the largest AACR PRs.
 #   EXT_CACHE / EXT_DATA   the external benchmarks' caches (default: ~/qcr-bench-runs/)
 set -euo pipefail
 
@@ -51,6 +53,8 @@ SMOKE_SETS=(glm-aacr1 glm-aacr-extra3 glm-martian1 glm-martian-extra2 glm-qodo1 
 FULL_PREFIX="$SLUG-full"
 PARALLEL="${PARALLEL:-10}"
 [[ "$PARALLEL" =~ ^[1-9][0-9]?$ ]] || { echo "openbench: PARALLEL must be 1..99" >&2; exit 2; }
+TIMEOUT_MIN="${TIMEOUT_MIN:-180}"
+[[ "$TIMEOUT_MIN" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "openbench: TIMEOUT_MIN must be minutes" >&2; exit 2; }
 AACR_SETS=(smoke10 dev10 holdout10 fresh10 rest145)   # the published 185-PR AACR comparison
 FULL_SETS=("${AACR_SETS[@]}" martian50 qodo-pr100)
 
@@ -171,7 +175,7 @@ case "$cmd" in
     use_image
     SMOKE_PREFIX="$SLUG-smoke-$(sed -n 's/^qcr-bench:openbench-\([0-9a-f]*\)-ext$/\1/p' <<<"$IMAGE")-$(date +%m%d-%H%M)"
     if (( ! go )); then
-      echo "would run $M on $IMAGE: arm.sh --prefix $SMOKE_PREFIX --cases $(join + "${SMOKE_SETS[@]}") --parallel 10 --retries 0 --resume --no-judge"
+      echo "would run $M on $IMAGE: arm.sh --prefix $SMOKE_PREFIX --cases $(join + "${SMOKE_SETS[@]}") --parallel 10 --timeout-min $TIMEOUT_MIN --retries 0 --resume --no-judge"
       echo "  (10 PRs: 4 AACR, 3 Martian, 3 Qodo — every slot busy), then: MODEL=$MODEL $0 score-smoke --go"
       echo "openbench: nothing run — add --go (needs the owner's approval)"; exit 0
     fi
@@ -188,7 +192,7 @@ case "$cmd" in
     log "reviewing $(join + "${SMOKE_SETS[@]}") on $IMAGE"
     QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
       --prefix "$SMOKE_PREFIX" --config "$MODEL_CONFIG" --cases "$(join + "${SMOKE_SETS[@]}")" \
-      --parallel 10 --no-judge --retries 0 --resume > "$OUT/reviews-$SMOKE_PREFIX.log" 2>&1 \
+      --parallel 10 --timeout-min "$TIMEOUT_MIN" --no-judge --retries 0 --resume > "$OUT/reviews-$SMOKE_PREFIX.log" 2>&1 \
       || log "arm.sh reported failures"
     kill "$sampler" 2>/dev/null || true
     python3 -I "$HERE/concurrency.py" --runs-dir "$QCR_BENCH_RUNS_DIR" --prefix "$SMOKE_PREFIX" \
@@ -212,7 +216,7 @@ case "$cmd" in
     use_image
     if (( ! go )); then
       echo "would run $M on $IMAGE: prefetch ${FULL_SETS[*]};"
-      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel $PARALLEL --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=digitalocean)"
+      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel $PARALLEL --timeout-min $TIMEOUT_MIN --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=digitalocean)"
       echo "  then: MODEL=$MODEL $0 score-full --go"
       echo "openbench: nothing run — add --go (needs the owner's approval)"; exit 0
     fi
@@ -222,7 +226,7 @@ case "$cmd" in
     log "reviewing $(join + "${FULL_SETS[@]}") on $IMAGE"
     QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
       --prefix "$FULL_PREFIX" --config "$MODEL_CONFIG" --cases "$(join + "${FULL_SETS[@]}")" \
-      --parallel "$PARALLEL" --no-judge --retries 1 --resume > "$OUT/reviews-$FULL_PREFIX.log" 2>&1 \
+      --parallel "$PARALLEL" --timeout-min "$TIMEOUT_MIN" --no-judge --retries 1 --resume > "$OUT/reviews-$FULL_PREFIX.log" 2>&1 \
       || log "arm.sh reported failures — gating and scoring what finished"
     exec "$0" score-full --go ;;
 

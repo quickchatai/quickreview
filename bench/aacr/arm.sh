@@ -37,6 +37,9 @@
 #   --retries N       re-run a failed case (not ok, and not unfetchable) up to N more times at
 #                     the end of the queue (default 1)
 #   --no-judge        review only
+#   --timeout-min N   each review's time limit (bench.sh --timeout-min; default its 75). A slower
+#                     model than the published runs' needs more — GLM-5.3 Flash takes 54–66 min on
+#                     the largest AACR PRs
 #   --judge-concurrency N   defect-judge sessions at once per run (default 4)
 #   --eval R          also score AACR-Bench's own metric: bench.sh eval --judge codex --rounds R
 #                     (the harness's references; JUDGE_CODEX_MODEL fixes the judge for every arm)
@@ -123,6 +126,7 @@ while [[ $# -gt 0 ]]; do
     --cases) CASES="$2"; shift 2 ;;
     --parallel|--max-parallel|--concurrency) PAR="$2"; shift 2 ;;
     --no-judge) JUDGE=0; shift ;;
+    --timeout-min) TMO=(--timeout-min "$2"); shift 2 ;;
     --judge-concurrency) JCONC="$2"; shift 2 ;;
     --arm) ARM="$2"; shift 2 ;;
     --resume) MODE=resume; shift ;;
@@ -250,6 +254,7 @@ if [[ ${#exists[@]} -gt 0 && -z "$MODE" ]]; then
 fi
 RESUME=(); [[ "$MODE" == resume ]] && RESUME=(--resume)
 CFG=(); [[ -n "$CONFIG" ]] && CFG=(--config "$CONFIG")
+CFG+=(${TMO[@]+"${TMO[@]}"})
 
 # Run a command holding a lock file (blocking); without flock (not Linux), just run it.
 with_lock() { # lockfile cmd...

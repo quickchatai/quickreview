@@ -72,6 +72,15 @@ its FINAL attempt (`bench/aacr/openmodels/lensfinal.py`): a transient error a
 retry recovered is reported as a note, never a failure; a lens whose last
 attempt failed, or that never ran, makes the PR degraded.
 
+## Review time limit
+
+The bench's per-review limit is 75 minutes, sized for GPT-6.1 Sol (~8 minutes a
+PR). GLM-5.3 Flash takes 54–66 minutes on the largest AACR PRs, and 5 of the
+first 10 PRs of the 2026-10-14 full run timed out at 75. The driver passes
+`TIMEOUT_MIN` (default 180) through `arm.sh --timeout-min`. The limit is not
+part of a run's fingerprint, so a resume keeps finished PRs and re-runs the
+timed-out ones.
+
 ## The driver
 
 `bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the
