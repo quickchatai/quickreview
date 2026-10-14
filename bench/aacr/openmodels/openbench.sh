@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Open models on DigitalOcean Gradient as QuickReview's reviewer on AACR, Martian
-# and Qodo, every PR judged by GPT-6.1 Sol. Runbook: bench/aacr/docs/DIGITALOCEAN.md.
+# Open models on DigitalOcean Gradient, and Gemini on the Gemini API, as QuickReview's
+# reviewer on AACR, Martian and Qodo, every PR judged by GPT-6.1 Sol.
+# Runbook: bench/aacr/docs/DIGITALOCEAN.md.
 #
 #   [MODEL=<id>] openbench.sh build              both images from master HEAD in a clean temporary worktree
 #   [MODEL=<id>] openbench.sh preflight          checks only — no inference, no review, no judge
@@ -11,8 +12,9 @@
 #   [MODEL=<id>] openbench.sh full [--go]        prefetch → review 335 PRs (PARALLEL at once) → gate → judge
 #   [MODEL=<id>] openbench.sh score-full [--go]  gate + judge an already reviewed full run (resume / rescore)
 #
-# MODEL is a DigitalOcean model id from models.py (default glm-5.3-flash): glm-5.3-flash,
-# gemma-4-31B-it, deepseek-v4.1-flash. It runs EVERY reviewer call.
+# MODEL is a model id from models.py (default glm-5.3-flash): glm-5.3-flash, gemma-4-31B-it,
+# deepseek-v4.1-flash (DigitalOcean, key bench/aacr/digitalocean.env) or gemini-4-argon
+# (Gemini API, key bench/aacr/google.env). It runs EVERY reviewer call.
 # Without --go a step that spends model money prints what it would run and exits.
 # A benchmark run needs the owner's approval; --go is that approval, never a default.
 # Every step resumes. Logs and results go to bench/aacr/artifacts/open-models/ of the
@@ -39,7 +41,10 @@ export QCR_BENCH_PRIVATE_SETS="$SRC/bench/aacr/sets"
 
 MODEL="${MODEL:-glm-5.3-flash}"
 SLUG="$(python3 -I "$HERE/models.py" slug "$MODEL")" || { echo "openbench: unknown MODEL=$MODEL" >&2; exit 2; }
-M="digitalocean/$MODEL"
+PROVIDER="$(python3 -I "$HERE/models.py" provider "$MODEL")"
+KEYFILE="$MAIN/bench/aacr/$(python3 -I "$HERE/models.py" keyfile "$MODEL")"
+KEYVAR="$(python3 -I "$HERE/models.py" keyvar "$MODEL")"
+M="$PROVIDER/$MODEL"
 # The model on every role and tier (the validator runs at sol-high), 12 lenses per PR.
 # use_image adds the image config's [models.pass_models] pins (lenses pinned to
 # another model, e.g. gpt-6-luna) re-pointed at the model, each keeping its own effort.
@@ -105,7 +110,7 @@ sample_containers() {
   done >> "$1"
 }
 
-# Judge one run with GPT-6.1 Sol. The reviewer's DigitalOcean route is switched off here.
+# Judge one run with GPT-6.1 Sol. The reviewer's provider route is switched off here.
 score_one() {
   local run="$1" set="$2"
   log "scoring $run ($(scorer_of "$set"))"
@@ -120,10 +125,10 @@ score_one() {
 }
 
 preflight() {
-  local bad=0 key="$MAIN/bench/aacr/digitalocean.env"
-  export QCR_BENCH_DIGITALOCEAN_ENV="$key"
+  local bad=0 key="$KEYFILE"
   echo "info model $M (runs named $SLUG-…)"
-  [[ "$(stat -c %a "$key" 2>/dev/null)" == 600 ]] && echo "ok   digitalocean.env 0600" || { echo "FAIL $key missing or not 0600"; bad=1; }
+  [[ "$(stat -c %a "$key" 2>/dev/null)" == 600 ]] && echo "ok   $(basename "$key") 0600" || { echo "FAIL $key missing or not 0600"; bad=1; }
+  grep -qE "^$KEYVAR=.+" "$key" 2>/dev/null && echo "ok   it sets $KEYVAR" || { echo "FAIL $key does not set $KEYVAR"; bad=1; }
   git -C "$MAIN" check-ignore -q "$key" && echo "ok   key file git-ignored" || { echo "FAIL key file not ignored"; bad=1; }
   if [[ -f "$OUT/image.txt" ]] && docker image inspect "$(cat "$OUT/image.txt")" >/dev/null 2>&1; then
     local img label; img="$(cat "$OUT/image.txt")"
@@ -145,7 +150,7 @@ preflight() {
 }
 
 mkdir -p "$QCR_BENCH_RUNS_DIR"
-export QCR_BENCH_DIGITALOCEAN_ENV="$MAIN/bench/aacr/digitalocean.env"
+export QCR_BENCH_DIGITALOCEAN_ENV="$MAIN/bench/aacr/digitalocean.env" QCR_BENCH_GOOGLE_ENV="$MAIN/bench/aacr/google.env"
 cmd="${1:-}"; go=0; [[ "${2:-}" == --go ]] && go=1
 case "$cmd" in
   build)
@@ -190,7 +195,7 @@ case "$cmd" in
     sample_containers "$samples" & sampler=$!
     trap 'kill "$sampler" 2>/dev/null || true' EXIT
     log "reviewing $(join + "${SMOKE_SETS[@]}") on $IMAGE"
-    QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
+    QCR_BENCH_PROVIDER="$PROVIDER" ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
       --prefix "$SMOKE_PREFIX" --config "$MODEL_CONFIG" --cases "$(join + "${SMOKE_SETS[@]}")" \
       --parallel 10 --timeout-min "$TIMEOUT_MIN" --no-judge --retries 0 --resume > "$OUT/reviews-$SMOKE_PREFIX.log" 2>&1 \
       || log "arm.sh reported failures"
@@ -216,7 +221,7 @@ case "$cmd" in
     use_image
     if (( ! go )); then
       echo "would run $M on $IMAGE: prefetch ${FULL_SETS[*]};"
-      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel $PARALLEL --timeout-min $TIMEOUT_MIN --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=digitalocean)"
+      echo "  arm.sh --prefix $FULL_PREFIX --cases $(join + "${FULL_SETS[@]}") --parallel $PARALLEL --timeout-min $TIMEOUT_MIN --retries 1 --resume --no-judge (QCR_BENCH_PROVIDER=$PROVIDER)"
       echo "  then: MODEL=$MODEL $0 score-full --go"
       echo "openbench: nothing run — add --go (needs the owner's approval)"; exit 0
     fi
@@ -224,7 +229,7 @@ case "$cmd" in
     "$SRC/bench/aacr/ext/ext.sh" prefetch martian50
     "$SRC/bench/aacr/ext/ext.sh" prefetch qodo-pr100
     log "reviewing $(join + "${FULL_SETS[@]}") on $IMAGE"
-    QCR_BENCH_PROVIDER=digitalocean ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
+    QCR_BENCH_PROVIDER="$PROVIDER" ${inhibit[@]+"${inhibit[@]}"} "$SRC/bench/aacr/arm.sh" \
       --prefix "$FULL_PREFIX" --config "$MODEL_CONFIG" --cases "$(join + "${FULL_SETS[@]}")" \
       --parallel "$PARALLEL" --timeout-min "$TIMEOUT_MIN" --no-judge --retries 1 --resume > "$OUT/reviews-$FULL_PREFIX.log" 2>&1 \
       || log "arm.sh reported failures — gating and scoring what finished"

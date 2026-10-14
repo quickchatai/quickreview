@@ -34,6 +34,10 @@
 #   QCR_BENCH_PROVIDER=digitalocean   QuickReview reviews on Gradient (judge credentials stay separate).
 #                            Key: digitalocean.env, DIGITALOCEAN_API_KEY, passed via --env-file;
 #                            QCR_BENCH_DIGITALOCEAN_ENV=FILE overrides. See docs/DIGITALOCEAN.md.
+#   QCR_BENCH_PROVIDER=google         QuickReview reviews on the Gemini API (pi's built-in google
+#                            provider, plus the models src/bench/auth.ts googleModels adds).
+#                            Key: google.env, GEMINI_API_KEY, passed via --env-file;
+#                            QCR_BENCH_GOOGLE_ENV=FILE overrides.
 #   QCR_BENCH_CONFIG=FILE    `build`: the config baked in (default: your install's config.toml,
 #                            else the checkout's config.example.toml — README "Reproduce")
 #   QCR_BENCH_OCR_EFFORT=L   the OCR arm's reasoning effort (low|medium|high|xhigh|max; default medium)
@@ -140,6 +144,10 @@ AUTH_MODE="${QCR_BENCH_AUTH:-login}"
 OPENAI_ENV="${QCR_BENCH_OPENAI_ENV:-$HERE/openai.env}"
 PROVIDER="${QCR_BENCH_PROVIDER:-}"
 DIGITALOCEAN_ENV="${QCR_BENCH_DIGITALOCEAN_ENV:-$HERE/digitalocean.env}"
+GOOGLE_ENV="${QCR_BENCH_GOOGLE_ENV:-$HERE/google.env}"
+# A review provider's key file and key variable (src/bench/auth.ts BENCH_PROVIDERS).
+provider_env() { case "$1" in digitalocean) echo "$DIGITALOCEAN_ENV" ;; google) echo "$GOOGLE_ENV" ;; esac; }
+provider_key() { case "$1" in digitalocean) echo DIGITALOCEAN_API_KEY ;; google) echo GEMINI_API_KEY ;; esac; }
 CPUS="${QCR_BENCH_CPUS:-4}"
 MEMORY="${QCR_BENCH_MEMORY:-8g}"
 
@@ -210,7 +218,7 @@ CLAUDE_ENV="${QCR_BENCH_CLAUDE_ENV:-$HERE/claude.env}"
 # First character alphanumeric: `.`, `..` and dotfile ids would mount the wrong dir.
 [[ -z "$RUN" || "$RUN" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "--run must start with [A-Za-z0-9] and use only [A-Za-z0-9._-]"
 [[ "$AUTH_MODE" == login || "$AUTH_MODE" == api-key ]] || die "QCR_BENCH_AUTH must be login | api-key"
-[[ -z "$PROVIDER" || "$PROVIDER" == digitalocean ]] || die "QCR_BENCH_PROVIDER must be digitalocean or unset"
+[[ -z "$PROVIDER" || "$PROVIDER" == digitalocean || "$PROVIDER" == google ]] || die "QCR_BENCH_PROVIDER must be digitalocean | google or unset"
 [[ -z "$PROVIDER" || "$ARM" == qcr ]] || die "QCR_BENCH_PROVIDER is supported only by the QuickReview arm"
 [[ "$LINE_K" =~ ^[0-9]{1,3}$ ]] || die "--line-k must be a small non-negative integer"
 [[ "$PHASE" =~ ^(all|init|case|finish)$ ]] || die "--phase must be all | init | case | finish"
@@ -377,8 +385,9 @@ case "$cmd" in
     docker version --format 'docker {{.Server.Version}}' || die "docker not reachable"
     docker image inspect "$IMAGE" --format "image $IMAGE {{.Id}} built {{.Created}}" 2>/dev/null || echo "image $IMAGE: not built (arm $ARM)"
     docker volume inspect "$REPOS_VOLUME" >/dev/null 2>&1 && echo "repos volume $REPOS_VOLUME: present" || echo "repos volume $REPOS_VOLUME: not created yet"
-    if [[ "$PROVIDER" == digitalocean ]]; then
-      echo "review provider: DigitalOcean — key file $DIGITALOCEAN_ENV: $([[ -f "$DIGITALOCEAN_ENV" ]] && echo present || echo MISSING)"
+    if [[ -n "$PROVIDER" ]]; then
+      pe="$(provider_env "$PROVIDER")"
+      echo "review provider: $PROVIDER — key file $pe: $([[ -f "$pe" ]] && echo present || echo MISSING)"
     elif [[ "$AUTH_MODE" == api-key ]]; then
       echo "auth: API key (QCR_BENCH_AUTH=api-key) — key file $OPENAI_ENV: $([[ -f "$OPENAI_ENV" ]] && echo present || echo MISSING)"
     else
@@ -496,8 +505,8 @@ case "$cmd" in
       # fingerprint (and its models) as every case container does, so a
       # resume keeps exactly the cases this configuration produced.
       am=(); [[ "$AUTH_MODE" == api-key ]] && am=(-e QCR_BENCH_AUTH=api-key)
-      if [[ "$PROVIDER" == digitalocean ]]; then
-        am=(-e QCR_BENCH_AUTH=api-key -e QCR_BENCH_PROVIDER=digitalocean)
+      if [[ -n "$PROVIDER" ]]; then
+        am=(-e QCR_BENCH_AUTH=api-key -e QCR_BENCH_PROVIDER="$PROVIDER")
       fi
       args=("${HARDEN[@]}" ${am[@]+"${am[@]}"} --network none --mount "type=bind,src=$d,dst=/bench-out"
         ${PRIV[@]+"${PRIV[@]}"}
@@ -505,11 +514,12 @@ case "$cmd" in
       record "${args[@]}"
       exec docker run "${args[@]}"
     fi
-    if [[ "$PROVIDER" == digitalocean ]]; then
-      [[ -f "$DIGITALOCEAN_ENV" && ! -L "$DIGITALOCEAN_ENV" ]] || die "DigitalOcean needs a regular key file: $DIGITALOCEAN_ENV"
-      grep -qE '^DIGITALOCEAN_API_KEY=.+' "$DIGITALOCEAN_ENV" || die "$DIGITALOCEAN_ENV must set DIGITALOCEAN_API_KEY"
-      [[ " ${EXTRA[*]-} " == *digitalocean/* ]] || die "DigitalOcean review needs --config models.*=digitalocean/<model>"
-      AUTH=(-e QCR_BENCH_AUTH=api-key -e QCR_BENCH_PROVIDER=digitalocean --env-file "$DIGITALOCEAN_ENV")
+    if [[ -n "$PROVIDER" ]]; then
+      pe="$(provider_env "$PROVIDER")" pk="$(provider_key "$PROVIDER")"
+      [[ -f "$pe" && ! -L "$pe" ]] || die "$PROVIDER needs a regular key file: $pe"
+      grep -qE "^$pk=.+" "$pe" || die "$pe must set $pk"
+      [[ " ${EXTRA[*]-} " == *"$PROVIDER/"* ]] || die "$PROVIDER review needs --config models.*=$PROVIDER/<model>"
+      AUTH=(-e QCR_BENCH_AUTH=api-key -e QCR_BENCH_PROVIDER="$PROVIDER" --env-file "$pe")
     elif [[ "$ARM" == claude ]]; then
       # No pi login: Claude Code's own credential, and a disk-backed /work for
       # the case repos (no CLAUDE.md above it — Claude Code reads parent dirs).

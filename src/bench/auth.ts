@@ -91,11 +91,51 @@ export function digitalOceanModels() {
   };
 }
 
-export function benchProvider(env: NodeJS.ProcessEnv = process.env): "digitalocean" | undefined {
+/** Gemini models pi 1.0.0's bundled catalog predates, added to its BUILT-IN
+ * `google` provider (pi: "a `models` entry adds or replaces a model with the
+ * same ID on that provider") — the native Gemini API, `GEMINI_API_KEY`, pi's
+ * own Google request handling. Limits and list prices from Google's Gemini API
+ * pricing page (2026-10-14; the introductory rates, which double on
+ * 2026-12-01). Thinking levels as pi lists them for the Gemini Pro line:
+ * low/medium/high, no off/minimal/xhigh/max. */
+export function googleModels() {
+  return {
+    providers: {
+      google: {
+        models: [
+          {
+            id: "gemini-4-argon",
+            name: "Gemini 4 Argon",
+            api: "google-generative-ai",
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 1048576,
+            maxTokens: 65536,
+            cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
+            thinkingLevelMap: { off: null, minimal: null, xhigh: null, max: null },
+          },
+        ],
+      },
+    },
+  };
+}
+
+/** The review providers an API-key bench run can use besides OpenAI/Anthropic:
+ * the key a sandbox's pi needs (by name; the value rides bench.sh's --env-file)
+ * and the models.json the sandbox gets. */
+export const BENCH_PROVIDERS = {
+  digitalocean: { keyVar: "DIGITALOCEAN_API_KEY", models: digitalOceanModels },
+  google: { keyVar: "GEMINI_API_KEY", models: googleModels },
+} as const;
+export type BenchProviderId = keyof typeof BENCH_PROVIDERS;
+
+export function benchProvider(env: NodeJS.ProcessEnv = process.env): BenchProviderId | undefined {
   const provider = env["QCR_BENCH_PROVIDER"];
   if (!provider) return undefined;
-  if (provider === "digitalocean") return provider;
-  throw new Error("QCR_BENCH_PROVIDER must be digitalocean or unset");
+  if (Object.hasOwn(BENCH_PROVIDERS, provider)) return provider as BenchProviderId;
+  throw new Error(
+    `QCR_BENCH_PROVIDER must be ${Object.keys(BENCH_PROVIDERS).join(" | ")} or unset`,
+  );
 }
 
 /** The sandbox's credential route, from `QCR_BENCH_AUTH` (unset = login). */
@@ -117,17 +157,18 @@ export function modelForAuth(spec: string, mode: BenchAuthMode = benchAuthMode()
  * published fingerprint is unchanged), `{ auth: "api-key" }` on the key route. */
 export function authFingerprint(mode: BenchAuthMode = benchAuthMode()): {
   auth?: "api-key";
-  inference?: { provider: "digitalocean"; config_sha256: string };
+  inference?: { provider: BenchProviderId; config_sha256: string };
 } {
+  const provider = benchProvider();
   return mode === "api-key"
     ? {
         auth: "api-key",
-        ...(benchProvider() === "digitalocean"
+        ...(provider
           ? {
               inference: {
-                provider: "digitalocean" as const,
+                provider,
                 config_sha256: createHash("sha256")
-                  .update(JSON.stringify(digitalOceanModels()))
+                  .update(JSON.stringify(BENCH_PROVIDERS[provider].models()))
                   .digest("hex"),
               },
             }
@@ -145,10 +186,8 @@ export function apiKeyEnv(
 ): Record<string, string> {
   if (mode !== "api-key") return {};
   const out: Record<string, string> = {};
-  const keys =
-    benchProvider(env) === "digitalocean"
-      ? ["DIGITALOCEAN_API_KEY"]
-      : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
+  const provider = benchProvider(env);
+  const keys = provider ? [BENCH_PROVIDERS[provider].keyVar] : ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"];
   for (const k of keys) {
     const v = env[k];
     if (v) out[k] = v;
@@ -231,7 +270,8 @@ export function syncBenchAuth(o: {
 }): { expiresAt: number | null } {
   // Each sandbox owns this file. Switching routes must not keep an earlier
   // provider active (pi loads models.json independently of auth.json).
-  if (benchProvider() !== "digitalocean") rmSync(join(o.dstDir, "models.json"), { force: true });
+  const provider = benchProvider();
+  if (!provider) rmSync(join(o.dstDir, "models.json"), { force: true });
   if ((o.mode ?? benchAuthMode()) === "api-key") {
     // No login: an empty auth.json, so pi takes each provider's key from the
     // environment. Nothing is read from srcDir (bench.sh mounts nothing there).
@@ -241,10 +281,10 @@ export function syncBenchAuth(o: {
     const { settings, trust } = benchSettings(o.root);
     writeFileSync(join(o.dstDir, "settings.json"), settings);
     writeFileSync(join(o.dstDir, "trust.json"), trust);
-    if (benchProvider() === "digitalocean") {
+    if (provider) {
       writeFileSync(
         join(o.dstDir, "models.json"),
-        JSON.stringify(digitalOceanModels(), null, 2) + "\n",
+        JSON.stringify(BENCH_PROVIDERS[provider].models(), null, 2) + "\n",
         { mode: 0o600 },
       );
       chmodSync(join(o.dstDir, "models.json"), 0o600);

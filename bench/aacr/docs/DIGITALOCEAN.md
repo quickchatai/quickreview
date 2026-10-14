@@ -81,6 +81,32 @@ first 10 PRs of the 2026-10-14 full run timed out at 75. The driver passes
 part of a run's fingerprint, so a resume keeps finished PRs and re-runs the
 timed-out ones.
 
+## Gemini 4 Argon on the Gemini API
+
+`MODEL=gemini-4-argon` runs every reviewer call on Google's Gemini API
+(`QCR_BENCH_PROVIDER=google`). pi 1.0.0's bundled catalog predates Argon, so
+`googleModels()` in `src/bench/auth.ts` adds it to pi's BUILT-IN `google`
+provider — the native Gemini API with pi's own request handling, no pi upgrade.
+Its thinking levels are low, medium and high (the Gemini Pro line's), so every
+tier runs as asked. Prices: $2.00 input, $10.00 output (thinking included),
+$0.10 cached input per 1M tokens until 2026-11-30, double from 2026-12-01.
+
+Store the key once, in your own terminal, from the repository root:
+
+```bash
+(
+  set +x
+  umask 077
+  IFS= read -r -s -p 'Gemini API key: ' GEMINI_BENCH_KEY
+  printf '\n'
+  printf 'GEMINI_API_KEY=%s\n' "$GEMINI_BENCH_KEY" > bench/aacr/google.env
+)
+```
+
+`bench/aacr/google.env` is git-ignored and reaches only the review containers,
+by `--env-file`; judging never sees it. Then
+`MODEL=gemini-4-argon bench/aacr/openmodels/openbench.sh preflight` and `smoke --go`.
+
 ## The driver
 
 `bench/aacr/openmodels/openbench.sh` runs everything below as fixed steps; the

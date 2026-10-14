@@ -48,6 +48,9 @@ deploy/ansible/inventory.ini
 # DigitalOcean benchmark model access key, supplied locally via --env-file.
 /bench/aacr/digitalocean.env
 
+# Gemini API key for open/other-model benchmark reviews (QCR_BENCH_PROVIDER=google).
+/bench/aacr/google.env
+
 # Worktree build artifacts: agents symlink node_modules into a worktree (a symlink is
 # not matched by `node_modules/`) and keep an incremental tsbuildinfo beside it.
 node_modules

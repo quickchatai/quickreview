@@ -35,6 +35,7 @@ import {
   benchAuthMode,
   benchProvider,
   digitalOceanModels,
+  googleModels,
   modelForAuth,
   syncBenchAuth,
 } from "../src/bench/auth.js";
@@ -73,6 +74,43 @@ function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
 }
 
 describe("the switch", () => {
+  it("Google admits the Gemini route and forwards only GEMINI_API_KEY", () => {
+    expect(benchProvider({ QCR_BENCH_PROVIDER: "google" })).toBe("google");
+    expect(() => benchProvider({ QCR_BENCH_PROVIDER: "other" })).toThrow(/google/);
+    const env = {
+      QCR_BENCH_PROVIDER: "google",
+      GEMINI_API_KEY: "fake-gemini",
+      DIGITALOCEAN_API_KEY: "fake-gradient",
+      OPENAI_API_KEY: "fake-openai",
+    };
+    expect(apiKeyEnv("api-key", env)).toEqual({ GEMINI_API_KEY: "fake-gemini" });
+    expect(apiKeyEnv("login", env)).toEqual({});
+  });
+
+  it("Google provisions Argon on pi's built-in google provider and fingerprints it apart from DigitalOcean", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "bench-google-"));
+    try {
+      withEnv({ QCR_BENCH_PROVIDER: "google", GEMINI_API_KEY: "fake-secret" }, () => {
+        const fp = authFingerprint("api-key");
+        expect(fp.inference?.provider).toBe("google");
+        expect(JSON.stringify(fp)).not.toContain("fake-secret");
+        syncBenchAuth({ srcDir: join(tmp, "absent"), dstDir: tmp, root: "/r", needMs: 0, mode: "api-key" });
+        const models = JSON.parse(readFileSync(join(tmp, "models.json"), "utf8"));
+        expect(models).toEqual(googleModels());
+        // Added to the BUILT-IN provider: no baseUrl or key of its own, the native Gemini API.
+        expect(Object.keys(models.providers)).toEqual(["google"]);
+        expect(models.providers.google.baseUrl).toBeUndefined();
+        const argon = models.providers.google.models.find((m: { id: string }) => m.id === "gemini-4-argon");
+        expect(argon.api).toBe("google-generative-ai");
+      });
+      withEnv({ QCR_BENCH_PROVIDER: "digitalocean", DIGITALOCEAN_API_KEY: "x" }, () => {
+        expect(authFingerprint("api-key").inference?.provider).toBe("digitalocean");
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("DigitalOcean admits only the named provider and forwards only its credential", () => {
     expect(benchProvider({})).toBeUndefined();
     expect(() => benchProvider({ QCR_BENCH_PROVIDER: "other" })).toThrow(/digitalocean/);
@@ -417,7 +455,10 @@ describe("the host side (bench.sh, ext.sh)", () => {
   const sh = readFileSync(join(ROOT, "bench", "aacr", "bench.sh"), "utf8");
   const ext = readFileSync(join(ROOT, "bench", "aacr", "ext", "ext.sh"), "utf8");
 
-  it("DigitalOcean passes the key file only to review case containers; bookkeeping has the same provider fingerprint", () => {
+  it.each([
+    { provider: "digitalocean", keyVar: "DIGITALOCEAN_API_KEY", envVar: "QCR_BENCH_DIGITALOCEAN_ENV", model: "digitalocean/glm-5.3-flash" },
+    { provider: "google", keyVar: "GEMINI_API_KEY", envVar: "QCR_BENCH_GOOGLE_ENV", model: "google/gemini-4-argon" },
+  ])("$provider passes the key file only to review case containers; bookkeeping has the same provider fingerprint", ({ provider, keyVar, envVar, model }) => {
     const tmp = mkdtempSync(join(tmpdir(), "bench-gradient-shell-"));
     try {
       const bin = join(tmp, "bin");
@@ -425,8 +466,8 @@ describe("the host side (bench.sh, ext.sh)", () => {
       const log = join(tmp, "docker.log");
       writeFileSync(join(bin, "docker"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${log}"\n`);
       chmodSync(join(bin, "docker"), 0o755);
-      const keyFile = join(tmp, "digitalocean.env");
-      writeFileSync(keyFile, "DIGITALOCEAN_API_KEY=fake-gradient-secret\n");
+      const keyFile = join(tmp, `${provider}.env`);
+      writeFileSync(keyFile, `${keyVar}=fake-gradient-secret\n`);
       for (const phase of ["init", "case", "finish"]) {
         const r = spawnSync(
           "bash",
@@ -440,15 +481,15 @@ describe("the host side (bench.sh, ext.sh)", () => {
             "--set",
             "smoke10",
             "--config",
-            "models.conversation=digitalocean/glm-5.3-flash",
+            `models.conversation=${model}`,
           ],
           {
             env: {
               PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
               HOME: tmp,
               QCR_BENCH_RUNS_DIR: join(tmp, "runs"),
-              QCR_BENCH_PROVIDER: "digitalocean",
-              QCR_BENCH_DIGITALOCEAN_ENV: keyFile,
+              QCR_BENCH_PROVIDER: provider,
+              [envVar]: keyFile,
             },
             encoding: "utf8",
           },
@@ -459,7 +500,7 @@ describe("the host side (bench.sh, ext.sh)", () => {
           .split("\n")
           .filter((l) => l.startsWith("run "))
           .at(-1)!;
-        expect(call).toContain("QCR_BENCH_PROVIDER=digitalocean");
+        expect(call).toContain(`QCR_BENCH_PROVIDER=${provider}`);
         expect(call).toContain("QCR_BENCH_AUTH=api-key");
         expect(call).not.toContain("fake-gradient-secret");
         expect(call).not.toContain("pi-agent-src");

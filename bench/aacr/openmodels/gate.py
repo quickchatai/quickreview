@@ -6,7 +6,7 @@
 For every run <P>-<set>: run.json finished, every PR of the set present,
 status ok, every planned lens's FINAL attempt successful (lensfinal.py — a
 transient provider error that a retry recovered is reported, never a failure),
-the fingerprint and every recorded assistant message naming digitalocean/<ID>
+the fingerprint and every recorded assistant message naming <provider>/<ID>
 (ID from models.py).
 
 --strict (the smoke): any failure exits 1, so nothing is scored.
@@ -60,7 +60,7 @@ def main() -> int:
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--out")
     a = ap.parse_args()
-    MODEL, PRICE = f"digitalocean/{a.model}", MODELS[a.model]["price"]
+    MODEL, PRICE = f"{MODELS[a.model]['provider']}/{a.model}", MODELS[a.model]["price"]
 
     report, wrong_model, failed = {"prefix": a.prefix, "sets": {}}, False, 0
     for s in a.sets.split(","):
