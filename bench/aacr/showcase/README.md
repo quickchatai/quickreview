@@ -144,6 +144,121 @@ caveat behind an image is in `out/v3/NUMBERS.md`.
 | ![](out/v3/idea-skip-nits.png) | ![](out/v3/idea-funnel.png) |
 | ![](out/v3/idea-price-per-bug.png) | ![](out/v3/idea-uncredited.png) |
 
+## v4: the publishers' own chart formats, and an infographic library
+
+```sh
+QCR_BENCH_RUNS_DIR=<runs dir> uv run bench/aacr/showcase/refresh_v4.py   # data/v4.json
+uv run bench/aacr/showcase/make_charts_v4.py   # out/v4/ (images, NUMBERS.md, index.html, bug-value.html), BUG-VALUE.md
+```
+
+v3's new angles were hard to read. v4 uses only the forms the vendors and the benchmarks already publish:
+sorted bars, the precision/recall scatter, leaderboard tables, and bars by severity. QuickReview is drawn
+into each of them. CHART-RESEARCH.md has the research behind this: what makes a chart readable, and who
+publishes what.
+
+Every image has:
+- a title that is the takeaway;
+- one line saying what is measured, out of what, and which way is better;
+- direct labels;
+- one source line.
+
+QuickReview is the only coloured mark, and every tool a benchmark tested is drawn. Open
+`out/v4/index.html` to browse the whole library, light or dark. `out/v4/NUMBERS.md` holds every number.
+
+**Benchmark charts**
+
+- **Martian Code Review Bench** (Greptile's and Augment's 50 PRs, scored by Martian's own pipeline).
+  - `martian-recall`: *"Highest recall of 21 code reviewers."* Martian's leaderboard, sorted by recall.
+  - `martian-scatter` (honest): *"Most thorough of 21, and the noisiest."* Martian's own "most balanced" scatter:
+    precision across, recall up.
+  - `martian-leaderboard` (honest): *"15th of 21 on Martian's default ranking."* Martian's table, sorted by F2
+    as its site sorts it.
+- **Qodo PR-Review-Bench** (100 PRs, 580 injected issues, 13 reviewers).
+  - `qodo-f1`: *"3rd of 13 on Qodo's benchmark, behind only Qodo."* Qodo's own F1 bar chart.
+  - `qodo-functional`: *"Most functional bugs found of 13 reviewers."*
+  - `qodo-scatter` (honest): *"As thorough as the best, but the least precise."* Qodo's recall–precision
+    scatter.
+- **AACR-Bench** (185 PRs; our verified key of 520 defects unless noted).
+  - `aacr-found`: *"Most defects found, even in fast mode."* Greptile-style catch-rate bars.
+  - `aacr-severity`: *"Ahead at every severity."* Greptile's by-severity view, as three panels.
+  - `aacr-leaderboard`: *"Top F1 of 7 on AACR-Bench's own score."* Laid out like Alibaba's open-code-review
+    leaderboard; QuickReview's row is the Oct 1 build.
+  - `aacr-cost`, `aacr-time` (honest): *"Finds the most, at 4–31× the cost"* and *"… at 8–23× the time."*
+    Artificial Analysis-style scatters with a Pareto line.
+- **All three:** `standings`: *"Most found on all 3 benchmarks, least precise on 2."* A model-card results
+  table.
+
+**What a found bug is worth** (`value-*`; the mini report `BUG-VALUE.md`, also `out/v4/bug-value.html`)
+
+The report puts prices on recall-first review. The cost of a review is model spend plus the reader's time,
+both from AACR-Bench. The cost of a miss comes from the published evidence in `data/value.json`, with each
+figure's source and how solid it is; the "IBM 100×" figure is left out as unsourced. Every number in the report is
+computed when it renders.
+
+- `value-escapes`: *"Lets the fewest serious defects through."* 7 per 100 PRs against 19–59.
+- `value-review-cost` (honest): *"A review's real cost is reading time, not tokens."* QuickReview is the most
+  expensive review at $8.15 a PR in all.
+- `value-price`: *"Pays for itself if a missed serious defect costs $25."* Its extra cost per extra serious catch,
+  against each of the six.
+- `value-ladder`: *"One more catch: $10–25. Fixing after release: $1,244."* Review against the cost of a miss, on
+  one log scale, out to outages and breaches.
+- `value-total`: *"Cheapest per 100 PRs if 1 in 10 misses reaches production."* A stated scenario, not a
+  measurement. The break-even is 1 in 40.
+
+**Infographics: how we measured** (`how-*`)
+
+- `how-aacr`: *"Same PRs, same sandbox, one judge for all."* The AACR-Bench run from PRs to scores.
+- `how-key`: *"Defects checked in code, blind to who found them."* How the 520-defect key was built, with "no human
+  check yet" on it.
+- `how-fair`: *"Same PRs, key and judge for all; caveats shown."* What was the same for every reviewer, and what
+  was not.
+- `how-martian`, `how-qodo`: how QuickReview was placed on each external benchmark, and how our judge was
+  calibrated against the publisher's.
+- `how-scoring`: *"Finding raises recall; extra comments lower precision."* Recall and precision in one picture,
+  and how each benchmark counts.
+
+**Infographics: how QuickReview works** (`system-overview` and the rest)
+
+- `system-overview`: *"How QuickReview reviews a pull request."* From the trigger to the posted review, and the
+  loop back through what your team does with the comments.
+- `review-round`: *"Read widely, filter hard, post one review."* Inside one round: 20.9 lens findings per PR
+  become 6.9 posted.
+- `lenses`: *"29 specialists, each looking for one kind of problem."*
+- `safety`: *"Every GitHub write is checked before it lands."* One gate and five guards.
+- `lifecycle`: *"Five states, and none waits for a human verdict."*
+- `learning-loop`: *"Learns from what your team does with its comments."*
+- `extensibility`: *"Where you can extend it."* Sixteen extension points around a frozen review core.
+- `deployment`: *"One container, one local port, nothing else exposed."*
+- `setup-scan`: *"From a new repo to a tuned reviewer."*
+
+The infographics' code is `infographics_v4.py` (the conventions, two exemplars) and `info_bench_v4.py`,
+`info_system_v4.py` and `info_platform_v4.py`, all built from the parts in `diagram_v4.py`. Every label was
+checked against the code and the bench docs; the counts on them come from the same data files as the charts.
+
+**To share:** `out/v4/index.html` (the whole library, about 6 MB) and `out/v4/bug-value.html` (the report) are
+each one self-contained file. Every image is embedded as lossless WebP, in light and dark. Each page follows the
+viewer's theme or a switch, and enlarges an image on click. Send either file as it is; nothing else is needed.
+
+**Choices v4 makes that the images only state briefly**
+
+- **Martian's judge.**
+  - The other tools are at Martian's published GPT-5.2-judge scores, from the benchmark's public repo
+    (commit of 2026-08-30).
+  - QuickReview is graded by our gpt-6.1-sol judge, which matches GPT-5.2's recall within a point on the
+    three tools both judges graded; on precision ours is 2–4 points stricter.
+  - Martian's site defaults to its Opus 4.5 judge, which credits every tool more. We cannot place QuickReview
+    on that view without running that judge (MISSING-DATA.md §15).
+  - Gitar is left out: its row in the repo scores only 98 of the 158 goldens. Martian's live site has a newer
+    run for it.
+- **Qodo's rule.** All 13 reviewers are graded by one judge of ours, matching issues by meaning. That is the
+  rule under which our judge reproduces Qodo's published F1, within 4.2 points for all nine vendor runs and
+  within 1.5 for six.
+  - Under the stricter ±5-line rule (v3's `official-qodo`, the paper's primary rule), QuickReview is 4th on F1
+    and 2nd on recall. It is still first on functional bugs. NUMBERS.md has both.
+- **AACR-Bench's own score.** It ran on the Oct 1 build only, so `aacr-leaderboard` shows that build.
+- **Tuning.** QuickReview was tuned on misses from these AACR PRs, which every AACR image's source line says.
+  The cuts that hold out of sample are in v3's `idea-robust`.
+
 The rest of this README describes v1 (the annotated versions in `out/`), the data and the gaps;
 all of it applies to v2 and v3.
 
@@ -168,7 +283,15 @@ all of it applies to v2 and v3.
 | `data/v3.json` | GENERATED by `refresh_v3.py`. |
 | `make_charts_v3.py`, `ideas_v3.py` | v3: the `radar-*`, `honest-*`, `official-*` and `idea-*` figures, into `out/v3/` with `out/v3/NUMBERS.md`. |
 | `MISSING-DATA.md` | the graphs we cannot draw yet: what each needs, what it takes, who must approve it, and the risks. |
-| `out/` | the rendered figures and `NUMBERS.md`, the table view of every chart (v2 in `out/v2/`, v3 in `out/v3/`). |
+| `refresh_v4.py` | builds `data/v4.json`: Martian's published leaderboard (every tool, each of its three judges, matches by severity) beside QuickReview's run, and the three tools both judges graded. |
+| `data/v4.json` | GENERATED by `refresh_v4.py`. |
+| `data/published.json` | hand-kept: the scores Qodo printed, which the Qodo images' source line compares our judge with. |
+| `make_charts_v4.py`, `theme_v4.py` | v4's charts and look; a full run also writes `out/v4/NUMBERS.md` and `out/v4/index.html` (the gallery). |
+| `diagram_v4.py`, `infographics_v4.py`, `info_*_v4.py` | v4's infographics: the drawing parts, then the figures (benchmarks, the system, the platform). |
+| `CHART-RESEARCH.md` | what makes a benchmark chart readable, and the charts the vendors and benchmarks publish. |
+| `value_v4.py`, `data/value.json` | the "what a found bug is worth" charts and report; the hand-kept costs and assumptions, each with its source. |
+| `BUG-VALUE.md` | GENERATED: the mini report on recall-first review (also `out/v4/bug-value.html`). |
+| `out/` | the rendered figures and `NUMBERS.md`, the table view of every chart (v2 in `out/v2/`, v3 in `out/v3/`, v4 in `out/v4/` with its gallery `index.html`). |
 
 Colour does one job: **QuickReview is blue; every other tool is grey** — darker for closed-source
 products, lighter for open-source tools, always with a legend. The blue/grey pair passes the dataviz

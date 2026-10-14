@@ -1,0 +1,17 @@
+{
+ "_doc": "Hand-kept: scores the benchmark publishers printed themselves, so a v4 chart can show how close our judge comes to theirs. Each block names its source. Percent values as printed.",
+ "qodo": {
+  "_source": "Qodo, 'How we built a real-world benchmark for AI code review' (2026-02-04), results table 'Agent Performance Comparison'; the F1 column matches ext/QODO-BENCH.md 'Qodo published F1'",
+  "tools": {
+   "qodo-exhaustive": {"precision": 63.8, "recall": 56.7, "f1": 60.1},
+   "qodo-precise": {"precision": 74.5, "recall": 44.2, "f1": 55.4},
+   "augment": {"precision": 70.6, "recall": 32.1, "f1": 44.1},
+   "github-copilot": {"precision": 50.1, "recall": 37.4, "f1": 42.8},
+   "cursor-bugbot": {"precision": 78.5, "recall": 26.2, "f1": 39.3},
+   "greptile": {"precision": 68.5, "recall": 27.2, "f1": 39.0},
+   "codex-cloud": {"precision": 83.0, "recall": 24.3, "f1": 37.6},
+   "coderabbit": {"precision": 53.7, "recall": 19.0, "f1": 28.0},
+   "sentry": {"precision": 85.3, "recall": 13.8, "f1": 23.7}
+  }
+ }
+}

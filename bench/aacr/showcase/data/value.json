@@ -1,0 +1,53 @@
+{
+ "_doc": "Hand-kept assumptions and published figures for the 'what is a found bug worth' charts (value_v4.py) and BUG-VALUE.md. Every value names its source and how solid it is; change one and re-render to see the charts, titles and report move. Money in US dollars.",
+ "engineer_usd_per_hour": {
+  "value": 95,
+  "source": "US BLS: software developers' median pay $135,980 a year (May 2025, Occupational Outlook Handbook); employer costs about 1.28x that net of paid leave (BLS Employer Costs for Employee Compensation, Sep 2026); about 1,830 hours actually worked a year. About $95 per hour worked."
+ },
+ "reading_words_per_minute": {
+  "value": 200,
+  "source": "below the 238 words a minute average for silent reading of non-fiction (Brysbaert 2019, Journal of Memory and Language, a meta-analysis), because review comments quote code"
+ },
+ "triage_seconds_per_comment": {
+  "value": 30,
+  "source": "an assumption, on top of reading: about 50 s in all for an average QuickReview comment. The one measurement we found is shorter: reviewers took a median 16-28 s to evaluate an LLM review comment, reading included (Olewicki et al. 2024, a preprint), so this overstates QuickReview's reading cost"
+ },
+ "fix_hours": {
+  "coding": 2.4,
+  "post_release": 13.1,
+  "source": "NIST Planning Report 02-3 (2002): hours to fix a bug found in coding or unit test against one found after release. Weak evidence: a 2002 survey of a handful of developers, effort only, no outage or customer cost"
+ },
+ "escape_share": {
+  "value": 0.1,
+  "label": "1 in 10",
+  "source": "a scenario, not a measurement: one missed serious defect in ten reaches production and costs the extra post-release hours; the other nine cost nothing more. Nobody has measured this share for code review."
+ },
+ "ladder": {
+  "title_fmt": "One more catch: {catch}. Fixing after release: {release}",
+  "source_line": "Fix hours: NIST Planning Report 02-3 (2002), a small survey, effort only. Outage: Uptime Institute Annual Outage Analysis 2025, operators' own estimates.\nBreach: IBM/Ponemon Cost of a Data Breach 2025, all causes, few of them code. Engineer time at $95 an hour (BLS). Ours: AACR-Bench, see value-price.",
+  "rungs": [
+   {
+    "label": "Fix a bug found in coding",
+    "hours": 2.4,
+    "short_source": "NIST 2002: 2.4 engineer-hours"
+   },
+   {
+    "label": "Fix a bug found after release",
+    "hours": 13.1,
+    "short_source": "NIST 2002: 13.1 engineer-hours"
+   },
+   {
+    "label": "A significant outage",
+    "low": 100000,
+    "high": 1000000,
+    "short_source": "Uptime 2025: over $100k for 54%"
+   },
+   {
+    "label": "A data breach",
+    "low": 4440000,
+    "high": 4440000,
+    "short_source": "IBM 2025: $4.44M average, all causes"
+   }
+  ]
+ }
+}

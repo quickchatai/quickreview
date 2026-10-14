@@ -1,0 +1,1222 @@
+{
+ "generated": "2026-10-14",
+ "martian": {
+  "calibration": {
+   "claude-code": {
+    "anthropic_claude-opus-4-5-20251101": {
+     "by_severity": {
+      "Critical": 7,
+      "High": 28,
+      "Low": 11,
+      "Medium": 30
+     },
+     "f1": 0.47200000000000003,
+     "f2": 0.47700000000000004,
+     "fn": 82,
+     "fp": 88,
+     "precision": 0.46299999999999997,
+     "recall": 0.48100000000000004,
+     "tp": 76
+    },
+    "anthropic_claude-sonnet-4-5-20250929": {
+     "by_severity": {
+      "Critical": 5,
+      "High": 23,
+      "Low": 11,
+      "Medium": 26
+     },
+     "f1": 0.387,
+     "f2": 0.401,
+     "fn": 93,
+     "fp": 113,
+     "precision": 0.365,
+     "recall": 0.41100000000000003,
+     "tp": 65
+    },
+    "openai_gpt-5.2": {
+     "by_severity": {
+      "Critical": 5,
+      "High": 24,
+      "Low": 9,
+      "Medium": 27
+     },
+     "f1": 0.406,
+     "f2": 0.409,
+     "fn": 93,
+     "fp": 97,
+     "precision": 0.401,
+     "recall": 0.41100000000000003,
+     "tp": 65
+    },
+    "ours": {
+     "by_severity": {
+      "Critical": 5,
+      "High": 23,
+      "Low": 9,
+      "Medium": 28
+     },
+     "f1": 0.38690476190476186,
+     "f2": 0.40123456790123463,
+     "fn": 93,
+     "fp": 113,
+     "precision": 0.3651685393258427,
+     "recall": 0.41139240506329117,
+     "tp": 65
+    }
+   },
+   "cubic-v2": {
+    "anthropic_claude-opus-4-5-20251101": {
+     "by_severity": {
+      "Critical": 10,
+      "High": 38,
+      "Low": 19,
+      "Medium": 37
+     },
+     "f1": 0.636,
+     "f2": 0.649,
+     "fn": 54,
+     "fp": 65,
+     "precision": 0.615,
+     "recall": 0.6579999999999999,
+     "tp": 104
+    },
+    "anthropic_claude-sonnet-4-5-20250929": {
+     "by_severity": {
+      "Critical": 8,
+      "High": 34,
+      "Low": 19,
+      "Medium": 35
+     },
+     "f1": 0.585,
+     "f2": 0.599,
+     "fn": 62,
+     "fp": 74,
+     "precision": 0.565,
+     "recall": 0.608,
+     "tp": 96
+    },
+    "openai_gpt-5.2": {
+     "by_severity": {
+      "Critical": 9,
+      "High": 35,
+      "Low": 19,
+      "Medium": 33
+     },
+     "f1": 0.5870000000000001,
+     "f2": 0.599,
+     "fn": 62,
+     "fp": 73,
+     "precision": 0.568,
+     "recall": 0.608,
+     "tp": 96
+    },
+    "ours": {
+     "by_severity": {
+      "Critical": 8,
+      "High": 34,
+      "Low": 18,
+      "Medium": 35
+     },
+     "f1": 0.5705705705705706,
+     "f2": 0.5885997521685253,
+     "fn": 63,
+     "fp": 80,
+     "precision": 0.5428571428571428,
+     "recall": 0.6012658227848101,
+     "tp": 95
+    }
+   },
+   "qodo-extended-v2": {
+    "anthropic_claude-opus-4-5-20251101": {
+     "by_severity": {
+      "Critical": 9,
+      "High": 40,
+      "Low": 16,
+      "Medium": 37
+     },
+     "f1": 0.6579999999999999,
+     "f2": 0.6509999999999999,
+     "fn": 56,
+     "fp": 50,
+     "precision": 0.6709999999999999,
+     "recall": 0.6459999999999999,
+     "tp": 102
+    },
+    "anthropic_claude-sonnet-4-5-20250929": {
+     "by_severity": {
+      "Critical": 9,
+      "High": 33,
+      "Low": 14,
+      "Medium": 34
+     },
+     "f1": 0.5660000000000001,
+     "f2": 0.568,
+     "fn": 68,
+     "fp": 70,
+     "precision": 0.562,
+     "recall": 0.57,
+     "tp": 90
+    },
+    "openai_gpt-5.2": {
+     "by_severity": {
+      "Critical": 8,
+      "High": 37,
+      "Low": 14,
+      "Medium": 35
+     },
+     "f1": 0.589,
+     "f2": 0.593,
+     "fn": 64,
+     "fp": 67,
+     "precision": 0.584,
+     "recall": 0.595,
+     "tp": 94
+    },
+    "ours": {
+     "by_severity": {
+      "Critical": 9,
+      "High": 37,
+      "Low": 12,
+      "Medium": 37
+     },
+     "f1": 0.5810397553516818,
+     "f2": 0.5930087390761548,
+     "fn": 63,
+     "fp": 74,
+     "precision": 0.5621301775147929,
+     "recall": 0.6012658227848101,
+     "tp": 95
+    }
+   }
+  },
+  "core_categories": [
+   "api",
+   "bug",
+   "concurrency",
+   "data",
+   "doc_defect",
+   "perf",
+   "security",
+   "test_gap"
+  ],
+  "default_beta": 2.0,
+  "default_judge": "anthropic_claude-opus-4-5-20251101",
+  "display_names": {
+   "augment": "Augment",
+   "baz": "Baz",
+   "bugbot": "Cursor Bugbot",
+   "claude": "Claude Code",
+   "claude-code": "Claude Code (CLI)",
+   "codeant-v2": "CodeAnt",
+   "coderabbit": "CodeRabbit",
+   "copilot": "GitHub Copilot",
+   "cubic-v2": "Cubic v2",
+   "devin": "Devin",
+   "entelligence": "Entelligence",
+   "gemini": "Gemini",
+   "gemini-v2": "Gemini",
+   "gitlab": "GitLab Duo Code Review",
+   "graphite": "Graphite",
+   "greptile": "Greptile",
+   "greptile-v4-1": "Greptile v4",
+   "kg": "KG",
+   "kodus-v2": "Kodus",
+   "macroscope": "Macroscope",
+   "mesa": "Mesa",
+   "propel": "Propel",
+   "qodo": "Qodo",
+   "qodo-extended-v2": "Qodo Extended",
+   "qodo-v2": "Qodo v2",
+   "sourcery": "Sourcery"
+  },
+  "goldens": 158,
+  "goldens_by_severity": {
+   "Critical": 12,
+   "High": 54,
+   "Low": 33,
+   "Medium": 59
+  },
+  "judges": {
+   "anthropic_claude-opus-4-5-20251101": {
+    "label": "Claude Opus 4.5",
+    "tools": {
+     "augment": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 41,
+       "Low": 15,
+       "Medium": 39
+      },
+      "f1": 0.622,
+      "f2": 0.64,
+      "fn": 55,
+      "fp": 70,
+      "precision": 0.595,
+      "recall": 0.652,
+      "tp": 103
+     },
+     "baz": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 25,
+       "Low": 8,
+       "Medium": 18
+      },
+      "f1": 0.465,
+      "f2": 0.405,
+      "fn": 99,
+      "fp": 37,
+      "precision": 0.615,
+      "recall": 0.373,
+      "tp": 59
+     },
+     "bugbot": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 33,
+       "Low": 9,
+       "Medium": 25
+      },
+      "f1": 0.514,
+      "f2": 0.486,
+      "fn": 84,
+      "fp": 56,
+      "precision": 0.569,
+      "recall": 0.46799999999999997,
+      "tp": 74
+     },
+     "claude": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 21,
+       "Low": 10,
+       "Medium": 22
+      },
+      "f1": 0.40399999999999997,
+      "f2": 0.389,
+      "fn": 98,
+      "fp": 79,
+      "precision": 0.43200000000000005,
+      "recall": 0.38,
+      "tp": 60
+     },
+     "claude-code": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 28,
+       "Low": 11,
+       "Medium": 30
+      },
+      "f1": 0.47200000000000003,
+      "f2": 0.47700000000000004,
+      "fn": 82,
+      "fp": 88,
+      "precision": 0.46299999999999997,
+      "recall": 0.48100000000000004,
+      "tp": 76
+     },
+     "codeant-v2": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 25,
+       "Low": 8,
+       "Medium": 26
+      },
+      "f1": 0.406,
+      "f2": 0.409,
+      "fn": 93,
+      "fp": 97,
+      "precision": 0.401,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "coderabbit": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 34,
+       "Low": 13,
+       "Medium": 39
+      },
+      "f1": 0.42200000000000004,
+      "f2": 0.511,
+      "fn": 64,
+      "fp": 194,
+      "precision": 0.326,
+      "recall": 0.595,
+      "tp": 94
+     },
+     "copilot-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 38,
+       "Low": 16,
+       "Medium": 42
+      },
+      "f1": 0.48700000000000004,
+      "f2": 0.58,
+      "fn": 53,
+      "fp": 168,
+      "precision": 0.385,
+      "recall": 0.665,
+      "tp": 105
+     },
+     "cubic-v2": {
+      "by_severity": {
+       "Critical": 10,
+       "High": 38,
+       "Low": 19,
+       "Medium": 37
+      },
+      "f1": 0.636,
+      "f2": 0.649,
+      "fn": 54,
+      "fp": 65,
+      "precision": 0.615,
+      "recall": 0.6579999999999999,
+      "tp": 104
+     },
+     "devin": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 27,
+       "Low": 7,
+       "Medium": 25
+      },
+      "f1": 0.516,
+      "f2": 0.44799999999999995,
+      "fn": 93,
+      "fp": 29,
+      "precision": 0.691,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "gemini-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 28,
+       "Low": 14,
+       "Medium": 36
+      },
+      "f1": 0.49700000000000005,
+      "f2": 0.528,
+      "fn": 71,
+      "fp": 105,
+      "precision": 0.45299999999999996,
+      "recall": 0.551,
+      "tp": 87
+     },
+     "gitar": {
+      "by_severity": {
+       "Critical": 2,
+       "High": 14,
+       "Low": 8,
+       "Medium": 20
+      },
+      "f1": 0.413,
+      "f2": 0.434,
+      "fn": 54,
+      "fp": 71,
+      "precision": 0.38299999999999995,
+      "recall": 0.449,
+      "tp": 44
+     },
+     "gitlab": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 28,
+       "Low": 16,
+       "Medium": 32
+      },
+      "f1": 0.53,
+      "f2": 0.527,
+      "fn": 75,
+      "fp": 72,
+      "precision": 0.535,
+      "recall": 0.525,
+      "tp": 83
+     },
+     "graphite": {
+      "by_severity": {
+       "Critical": 1,
+       "High": 5,
+       "Low": 1,
+       "Medium": 5
+      },
+      "f1": 0.141,
+      "f2": 0.09300000000000001,
+      "fn": 146,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.076,
+      "tp": 12
+     },
+     "greptile-v4-1": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 30,
+       "Low": 13,
+       "Medium": 30
+      },
+      "f1": 0.511,
+      "f2": 0.512,
+      "fn": 77,
+      "fp": 78,
+      "precision": 0.509,
+      "recall": 0.513,
+      "tp": 81
+     },
+     "kg": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 9,
+       "Low": 1,
+       "Medium": 9
+      },
+      "f1": 0.245,
+      "f2": 0.184,
+      "fn": 133,
+      "fp": 21,
+      "precision": 0.5429999999999999,
+      "recall": 0.158,
+      "tp": 25
+     },
+     "kodus-v2": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 21,
+       "Low": 9,
+       "Medium": 24
+      },
+      "f1": 0.467,
+      "f2": 0.415,
+      "fn": 97,
+      "fp": 42,
+      "precision": 0.5920000000000001,
+      "recall": 0.386,
+      "tp": 61
+     },
+     "macroscope": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 34,
+       "Low": 6,
+       "Medium": 29
+      },
+      "f1": 0.542,
+      "f2": 0.508,
+      "fn": 81,
+      "fp": 49,
+      "precision": 0.611,
+      "recall": 0.48700000000000004,
+      "tp": 77
+     },
+     "qodo-extended-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 40,
+       "Low": 16,
+       "Medium": 37
+      },
+      "f1": 0.6579999999999999,
+      "f2": 0.6509999999999999,
+      "fn": 56,
+      "fp": 50,
+      "precision": 0.6709999999999999,
+      "recall": 0.6459999999999999,
+      "tp": 102
+     },
+     "qodo-v2": {
+      "by_severity": {
+       "Critical": 10,
+       "High": 37,
+       "Low": 15,
+       "Medium": 36
+      },
+      "f1": 0.585,
+      "f2": 0.606,
+      "fn": 60,
+      "fp": 79,
+      "precision": 0.5539999999999999,
+      "recall": 0.62,
+      "tp": 98
+     },
+     "sourcery": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 32,
+       "Low": 17,
+       "Medium": 30
+      },
+      "f1": 0.47,
+      "f2": 0.515,
+      "fn": 71,
+      "fp": 125,
+      "precision": 0.41,
+      "recall": 0.551,
+      "tp": 87
+     }
+    }
+   },
+   "anthropic_claude-sonnet-4-5-20250929": {
+    "label": "Claude Sonnet 4.5",
+    "tools": {
+     "augment": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 39,
+       "Low": 14,
+       "Medium": 37
+      },
+      "f1": 0.5660000000000001,
+      "f2": 0.594,
+      "fn": 61,
+      "fp": 88,
+      "precision": 0.524,
+      "recall": 0.614,
+      "tp": 97
+     },
+     "baz": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 23,
+       "Low": 7,
+       "Medium": 17
+      },
+      "f1": 0.428,
+      "f2": 0.376,
+      "fn": 103,
+      "fp": 44,
+      "precision": 0.556,
+      "recall": 0.348,
+      "tp": 55
+     },
+     "bugbot": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 31,
+       "Low": 8,
+       "Medium": 24
+      },
+      "f1": 0.488,
+      "f2": 0.46,
+      "fn": 88,
+      "fp": 59,
+      "precision": 0.5429999999999999,
+      "recall": 0.44299999999999995,
+      "tp": 70
+     },
+     "claude": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 17,
+       "Low": 9,
+       "Medium": 24
+      },
+      "f1": 0.371,
+      "f2": 0.365,
+      "fn": 101,
+      "fp": 92,
+      "precision": 0.38299999999999995,
+      "recall": 0.361,
+      "tp": 57
+     },
+     "claude-code": {
+      "by_severity": {
+       "Critical": 5,
+       "High": 23,
+       "Low": 11,
+       "Medium": 26
+      },
+      "f1": 0.387,
+      "f2": 0.401,
+      "fn": 93,
+      "fp": 113,
+      "precision": 0.365,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "codeant-v2": {
+      "by_severity": {
+       "Critical": 5,
+       "High": 19,
+       "Low": 7,
+       "Medium": 24
+      },
+      "f1": 0.335,
+      "f2": 0.34299999999999997,
+      "fn": 103,
+      "fp": 115,
+      "precision": 0.324,
+      "recall": 0.348,
+      "tp": 55
+     },
+     "coderabbit": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 34,
+       "Low": 13,
+       "Medium": 37
+      },
+      "f1": 0.428,
+      "f2": 0.509,
+      "fn": 66,
+      "fp": 180,
+      "precision": 0.33799999999999997,
+      "recall": 0.5820000000000001,
+      "tp": 92
+     },
+     "copilot-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 35,
+       "Low": 16,
+       "Medium": 38
+      },
+      "f1": 0.441,
+      "f2": 0.534,
+      "fn": 60,
+      "fp": 188,
+      "precision": 0.34299999999999997,
+      "recall": 0.62,
+      "tp": 98
+     },
+     "cubic-v2": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 34,
+       "Low": 19,
+       "Medium": 35
+      },
+      "f1": 0.585,
+      "f2": 0.599,
+      "fn": 62,
+      "fp": 74,
+      "precision": 0.565,
+      "recall": 0.608,
+      "tp": 96
+     },
+     "devin": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 28,
+       "Low": 6,
+       "Medium": 26
+      },
+      "f1": 0.516,
+      "f2": 0.452,
+      "fn": 92,
+      "fp": 32,
+      "precision": 0.6729999999999999,
+      "recall": 0.418,
+      "tp": 66
+     },
+     "gemini-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 26,
+       "Low": 15,
+       "Medium": 30
+      },
+      "f1": 0.442,
+      "f2": 0.478,
+      "fn": 78,
+      "fp": 124,
+      "precision": 0.392,
+      "recall": 0.506,
+      "tp": 80
+     },
+     "gitar": {
+      "by_severity": {
+       "Critical": 3,
+       "High": 14,
+       "Low": 9,
+       "Medium": 20
+      },
+      "f1": 0.41600000000000004,
+      "f2": 0.447,
+      "fn": 52,
+      "fp": 77,
+      "precision": 0.374,
+      "recall": 0.469,
+      "tp": 46
+     },
+     "gitlab": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 26,
+       "Low": 15,
+       "Medium": 28
+      },
+      "f1": 0.478,
+      "f2": 0.48,
+      "fn": 82,
+      "fp": 84,
+      "precision": 0.475,
+      "recall": 0.48100000000000004,
+      "tp": 76
+     },
+     "graphite": {
+      "by_severity": {
+       "Critical": 1,
+       "High": 5,
+       "Low": 1,
+       "Medium": 5
+      },
+      "f1": 0.141,
+      "f2": 0.09300000000000001,
+      "fn": 146,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.076,
+      "tp": 12
+     },
+     "greptile-v4-1": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 28,
+       "Low": 12,
+       "Medium": 29
+      },
+      "f1": 0.475,
+      "f2": 0.479,
+      "fn": 82,
+      "fp": 86,
+      "precision": 0.469,
+      "recall": 0.48100000000000004,
+      "tp": 76
+     },
+     "kg": {
+      "by_severity": {
+       "Critical": 5,
+       "High": 9,
+       "Low": 1,
+       "Medium": 7
+      },
+      "f1": 0.218,
+      "f2": 0.163,
+      "fn": 136,
+      "fp": 22,
+      "precision": 0.5,
+      "recall": 0.139,
+      "tp": 22
+     },
+     "kodus-v2": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 21,
+       "Low": 9,
+       "Medium": 22
+      },
+      "f1": 0.44799999999999995,
+      "f2": 0.396,
+      "fn": 100,
+      "fp": 43,
+      "precision": 0.574,
+      "recall": 0.36700000000000005,
+      "tp": 58
+     },
+     "macroscope": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 30,
+       "Low": 5,
+       "Medium": 25
+      },
+      "f1": 0.462,
+      "f2": 0.434,
+      "fn": 92,
+      "fp": 62,
+      "precision": 0.516,
+      "recall": 0.418,
+      "tp": 66
+     },
+     "qodo-extended-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 33,
+       "Low": 14,
+       "Medium": 34
+      },
+      "f1": 0.5660000000000001,
+      "f2": 0.568,
+      "fn": 68,
+      "fp": 70,
+      "precision": 0.562,
+      "recall": 0.57,
+      "tp": 90
+     },
+     "qodo-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 35,
+       "Low": 11,
+       "Medium": 34
+      },
+      "f1": 0.513,
+      "f2": 0.542,
+      "fn": 69,
+      "fp": 100,
+      "precision": 0.47100000000000003,
+      "recall": 0.563,
+      "tp": 89
+     },
+     "sourcery": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 28,
+       "Low": 16,
+       "Medium": 26
+      },
+      "f1": 0.42100000000000004,
+      "f2": 0.45799999999999996,
+      "fn": 81,
+      "fp": 131,
+      "precision": 0.37,
+      "recall": 0.48700000000000004,
+      "tp": 77
+     }
+    }
+   },
+   "openai_gpt-5.2": {
+    "label": "GPT-5.2",
+    "tools": {
+     "augment": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 37,
+       "Low": 15,
+       "Medium": 36
+      },
+      "f1": 0.545,
+      "f2": 0.581,
+      "fn": 62,
+      "fp": 98,
+      "precision": 0.495,
+      "recall": 0.608,
+      "tp": 96
+     },
+     "baz": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 21,
+       "Low": 7,
+       "Medium": 16
+      },
+      "f1": 0.38,
+      "f2": 0.348,
+      "fn": 106,
+      "fp": 64,
+      "precision": 0.44799999999999995,
+      "recall": 0.32899999999999996,
+      "tp": 52
+     },
+     "bugbot": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 33,
+       "Low": 9,
+       "Medium": 23
+      },
+      "f1": 0.485,
+      "f2": 0.467,
+      "fn": 86,
+      "fp": 67,
+      "precision": 0.518,
+      "recall": 0.456,
+      "tp": 72
+     },
+     "claude": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 21,
+       "Low": 10,
+       "Medium": 21
+      },
+      "f1": 0.381,
+      "f2": 0.376,
+      "fn": 99,
+      "fp": 93,
+      "precision": 0.38799999999999996,
+      "recall": 0.373,
+      "tp": 59
+     },
+     "claude-code": {
+      "by_severity": {
+       "Critical": 5,
+       "High": 24,
+       "Low": 9,
+       "Medium": 27
+      },
+      "f1": 0.406,
+      "f2": 0.409,
+      "fn": 93,
+      "fp": 97,
+      "precision": 0.401,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "codeant-v2": {
+      "by_severity": {
+       "Critical": 3,
+       "High": 21,
+       "Low": 8,
+       "Medium": 24
+      },
+      "f1": 0.327,
+      "f2": 0.34299999999999997,
+      "fn": 102,
+      "fp": 128,
+      "precision": 0.304,
+      "recall": 0.354,
+      "tp": 56
+     },
+     "coderabbit": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 35,
+       "Low": 14,
+       "Medium": 37
+      },
+      "f1": 0.386,
+      "f2": 0.489,
+      "fn": 64,
+      "fp": 235,
+      "precision": 0.28600000000000003,
+      "recall": 0.595,
+      "tp": 94
+     },
+     "copilot-v2": {
+      "by_severity": {
+       "Critical": 10,
+       "High": 37,
+       "Low": 15,
+       "Medium": 38
+      },
+      "f1": 0.436,
+      "f2": 0.536,
+      "fn": 58,
+      "fp": 201,
+      "precision": 0.332,
+      "recall": 0.633,
+      "tp": 100
+     },
+     "cubic-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 35,
+       "Low": 19,
+       "Medium": 33
+      },
+      "f1": 0.5870000000000001,
+      "f2": 0.599,
+      "fn": 62,
+      "fp": 73,
+      "precision": 0.568,
+      "recall": 0.608,
+      "tp": 96
+     },
+     "devin": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 27,
+       "Low": 7,
+       "Medium": 24
+      },
+      "f1": 0.483,
+      "f2": 0.43700000000000006,
+      "fn": 93,
+      "fp": 46,
+      "precision": 0.586,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "gemini-v2": {
+      "by_severity": {
+       "Critical": 9,
+       "High": 27,
+       "Low": 13,
+       "Medium": 32
+      },
+      "f1": 0.43700000000000006,
+      "f2": 0.479,
+      "fn": 77,
+      "fp": 132,
+      "precision": 0.38,
+      "recall": 0.513,
+      "tp": 81
+     },
+     "gitar": {
+      "by_severity": {
+       "Critical": 3,
+       "High": 14,
+       "Low": 9,
+       "Medium": 18
+      },
+      "f1": 0.38299999999999995,
+      "f2": 0.42,
+      "fn": 54,
+      "fp": 88,
+      "precision": 0.33299999999999996,
+      "recall": 0.449,
+      "tp": 44
+     },
+     "gitlab": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 27,
+       "Low": 16,
+       "Medium": 26
+      },
+      "f1": 0.465,
+      "f2": 0.474,
+      "fn": 82,
+      "fp": 93,
+      "precision": 0.45,
+      "recall": 0.48100000000000004,
+      "tp": 76
+     },
+     "graphite": {
+      "by_severity": {
+       "Critical": 1,
+       "High": 4,
+       "Low": 1,
+       "Medium": 5
+      },
+      "f1": 0.127,
+      "f2": 0.085,
+      "fn": 147,
+      "fp": 4,
+      "precision": 0.733,
+      "recall": 0.07,
+      "tp": 11
+     },
+     "greptile-v4-1": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 29,
+       "Low": 13,
+       "Medium": 27
+      },
+      "f1": 0.45,
+      "f2": 0.46799999999999997,
+      "fn": 82,
+      "fp": 104,
+      "precision": 0.42200000000000004,
+      "recall": 0.48100000000000004,
+      "tp": 76
+     },
+     "kg": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 8,
+       "Low": 1,
+       "Medium": 9
+      },
+      "f1": 0.23800000000000002,
+      "f2": 0.17800000000000002,
+      "fn": 134,
+      "fp": 20,
+      "precision": 0.545,
+      "recall": 0.152,
+      "tp": 24
+     },
+     "kodus-v2": {
+      "by_severity": {
+       "Critical": 6,
+       "High": 20,
+       "Low": 7,
+       "Medium": 21
+      },
+      "f1": 0.414,
+      "f2": 0.36700000000000005,
+      "fn": 104,
+      "fp": 49,
+      "precision": 0.524,
+      "recall": 0.342,
+      "tp": 54
+     },
+     "macroscope": {
+      "by_severity": {
+       "Critical": 7,
+       "High": 29,
+       "Low": 4,
+       "Medium": 25
+      },
+      "f1": 0.447,
+      "f2": 0.425,
+      "fn": 93,
+      "fp": 68,
+      "precision": 0.489,
+      "recall": 0.41100000000000003,
+      "tp": 65
+     },
+     "qodo-extended-v2": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 37,
+       "Low": 14,
+       "Medium": 35
+      },
+      "f1": 0.589,
+      "f2": 0.593,
+      "fn": 64,
+      "fp": 67,
+      "precision": 0.584,
+      "recall": 0.595,
+      "tp": 94
+     },
+     "qodo-v2": {
+      "by_severity": {
+       "Critical": 10,
+       "High": 40,
+       "Low": 15,
+       "Medium": 34
+      },
+      "f1": 0.534,
+      "f2": 0.586,
+      "fn": 59,
+      "fp": 114,
+      "precision": 0.465,
+      "recall": 0.627,
+      "tp": 99
+     },
+     "sourcery": {
+      "by_severity": {
+       "Critical": 8,
+       "High": 31,
+       "Low": 17,
+       "Medium": 23
+      },
+      "f1": 0.419,
+      "f2": 0.46399999999999997,
+      "fn": 79,
+      "fp": 140,
+      "precision": 0.361,
+      "recall": 0.5,
+      "tp": 79
+     }
+    }
+   }
+  },
+  "profile": "core",
+  "prs": 50,
+  "quickreview": {
+   "by_severity": {
+    "Critical": 8,
+    "High": 40,
+    "Low": 16,
+    "Medium": 40
+   },
+   "f1": 0.26065162907268175,
+   "f2": 0.4088050314465409,
+   "fn": 54,
+   "fp": 536,
+   "judge": "gpt-6.1-sol",
+   "precision": 0.1625,
+   "recall": 0.6582278481012658,
+   "run": "final1-martian50",
+   "tp": 104
+  },
+  "snapshot": "ext-data/martian-e616e84/offline"
+ }
+}
