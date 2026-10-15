@@ -7,7 +7,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { safeId, type BenchCase, type PrefetchMeta } from "./aacr.js";
 import type { ExecOptions, ExecResult } from "./exec.js";
-import type { roundMetrics } from "./report.js";
+import { SCORE_TABLE_HEAD, scoreRow, type roundMetrics } from "./report.js";
 
 /** reviewers/codex.py `run_codex_review`: `process_timeout = timeout_minutes
  * * 60 + 60` — the budget the harness gives its CLI reviewers, which the arms
@@ -134,25 +134,11 @@ export async function checkMergeBase(
   };
 }
 
-/** A harness metric: `?` when absent, an integer as is, else two decimals. */
-function fmtMetric(v: number | undefined): string {
-  return v === undefined
-    ? "?"
-    : Number.isInteger(v)
-      ? String(v)
-      : String(Math.round(v * 100) / 100);
-}
-
 /** The AACR score table (average, then every round) from `roundMetrics`. */
 export function aacrScoreTable(m: ReturnType<typeof roundMetrics>, cases: number): string[] {
-  const row = (label: string, s: Record<string, number>): string =>
-    `| ${label} | ${fmtMetric(s["evaluated_instances"])}/${cases} | ${fmtMetric(s["generated_notes"])} | ${fmtMetric(s["matched_semantic_notes"])}/${fmtMetric(s["expected_notes"])} | ${s["semantic_match_rate"]} | ${s["semantic_recall_rate"]} | ${s["semantic_f1"]} | ${s["line_match_rate"]} | ${s["line_recall_rate"]} |`;
-  const L = [
-    "| Round | Evaluated | Generated | Matched | Precision | Recall | F1 | Line P | Line R |",
-    "|---|---|---|---|---|---|---|---|---|",
-  ];
-  if (m.average) L.push(row("**average**", m.average));
-  for (const r of m.rounds) L.push(row(String(r.round), r.summary));
+  const L: string[] = [...SCORE_TABLE_HEAD];
+  if (m.average) L.push(scoreRow("**average**", m.average, cases));
+  for (const r of m.rounds) L.push(scoreRow(String(r.round), r.summary, cases));
   if (!m.average && m.rounds.length === 0) L.push("| — | — | — | — | — | — | — | — | — |");
   return L;
 }
