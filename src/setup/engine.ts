@@ -40,7 +40,6 @@ import {
   historyPage,
   historyThemesState,
   readDigest,
-  readHistoryThemes,
   saveHistoryThemes,
   summarize,
   type HistorySection,
@@ -678,9 +677,14 @@ export class SetupEngine {
     summary: HistorySummary | null;
     page: { section: HistorySection; total: number; offset: number; lines: string[] } | null;
     themes: HistoryThemesFile | null;
+    /** The saved themes file exists but cannot be read — UNKNOWN, never "no
+     * themes saved yet". */
+    themes_error: string | null;
   } {
     const read = readDigest(this.ports.state);
-    const themes = readHistoryThemes(this.ports.state);
+    const saved = historyThemesState(this.ports.state);
+    const themes = saved.state === "ok" ? saved.file : null;
+    const themes_error = saved.state === "unreadable" ? saved.error : null;
     if (read.state !== "ok") {
       return {
         digest: read.state,
@@ -688,6 +692,7 @@ export class SetupEngine {
         summary: null,
         page: null,
         themes,
+        themes_error,
       };
     }
     return {
@@ -701,17 +706,26 @@ export class SetupEngine {
           }
         : null,
       themes,
+      themes_error,
     };
   }
 
   /** Save the companion's themes — the only part of the history that goes on
-   * to memory and the portrait. */
+   * to memory and the portrait. One save at a time: two overlapping saves
+   * would each read the same earlier entries to replace and both write their
+   * own, leaving two sets live while the file holds one. */
   saveHistoryThemes(raw: unknown): Promise<SaveThemesResult> {
-    return saveHistoryThemes(
-      { state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock },
-      raw,
+    const run = this.historySaves.then(() =>
+      saveHistoryThemes(
+        { state: this.ports.state, memory: this.ports.memory, clock: this.ports.clock },
+        raw,
+      ),
     );
+    this.historySaves = run.catch(() => undefined);
+    return run;
   }
+
+  private historySaves: Promise<unknown> = Promise.resolve();
 
   // -- the survey (the run itself is surveyrun.ts) --
 

@@ -19,7 +19,7 @@
 // entries of the run before it.
 import { createHash } from "node:crypto";
 import { CODE_FILE_RE, isSweepSkipped, isTestFile } from "../heuristics.js";
-import { formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
+import { dehashBody, formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
 import type { MemoryEntry } from "../memory/store.js";
 import { isVendored } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
@@ -423,7 +423,7 @@ export function surveyMemoryText(
   // `#word` in the body is de-hashed: the store's tag list reads the whole
   // text, so a note saying "#retired" would read as retired (and a real
   // retire of it would then be a no-op).
-  const body = note.text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
+  const body = dehashBody(note.text);
   return `#${SURVEY_TAG} ${formatEventTags(tags)} — ${body}`;
 }
 

@@ -14,6 +14,13 @@
  * entry's own header follows on the next line. */
 export const IMPORT_TAG = "imported";
 
+/** Body text with every `#word` de-hashed (`#manual` → `manual`): a store's
+ * tag list reads the whole text, so a body that says "#retired" or "#manual"
+ * would otherwise read as one. Writers put this after the header they own. */
+export function dehashBody(text: string): string {
+  return text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
+}
+
 /** One `k=v` token: bare (no `#`), value without whitespace — the ONE
  * grammar every header reader and editor (layout.ts, relayout.ts) uses. */
 export const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;

@@ -206,9 +206,11 @@ export function renderThemes(themes: readonly HistoryTheme[]): string {
 export function renderHistory(h: ReturnType<SetupEngine["history"]>): string {
   const out: string[] = [];
   const saved = (f: HistoryThemesFile | null): string =>
-    f
-      ? `Saved themes (${f.saved_at}, from the digest of ${f.digest_generated_at}):\n${renderThemes(f.themes)}`
-      : "No themes saved yet.";
+    h.themes_error !== null
+      ? `✗ ${h.themes_error}\nSaved themes: UNKNOWN.`
+      : f
+        ? `Saved themes (${f.saved_at}, from the digest of ${f.digest_generated_at}):\n${renderThemes(f.themes)}`
+        : "No themes saved yet.";
   if (h.digest === "absent") {
     out.push(
       "No review history digest in the state home yet. Ask the owner to run `qcr history pull` on his machine — it reads " +

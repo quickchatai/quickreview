@@ -32,7 +32,7 @@
 // (eventtags.ts), and its own `#word`s are de-hashed — so nothing it writes
 // can pin itself or forge a tag. Never `#pinned`: the scan writes no pinned
 // memory (spec, out of scope).
-import { formatEventTags } from "../memory/eventtags.js";
+import { dehashBody as dehash, formatEventTags } from "../memory/eventtags.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { Refusal, StateFs, TrackerSink, TrackerTicket } from "./engine.js";
 import type { FindingsStore, ScanFinding } from "./findings.js";
@@ -58,9 +58,6 @@ const clean = (err: unknown): string => (err instanceof Error ? err.message : St
 
 /** One `k=v` value: no whitespace (it would end the header). */
 const tagValue = (v: string): string => v.trim().replace(/\s+/g, "_") || "-";
-
-/** `#word` → `word`: the store reads tags off the whole text. */
-const dehash = (text: string): string => text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
