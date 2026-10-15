@@ -1728,6 +1728,13 @@ export function assertIanaTimeZone(tz: string, where: string): string {
   return tz;
 }
 
+/** A section carrying its own `timezone` (defaulted from [ops]), returned
+ * once that zone passes `assertIanaTimeZone`. */
+function checkSectionTimeZone<T extends { timezone: string }>(section: T, where: string): T {
+  assertIanaTimeZone(String(section.timezone), where);
+  return section;
+}
+
 /**
  * [ingress] — the webhook ingress shape. `tunnel-file` turns on the
  * hostname-file watcher: a tunnel sidecar writes its assigned bare
@@ -2595,14 +2602,17 @@ export function parseConfig(toml: string): Config {
       ...(req(raw, "daemon") as Partial<Config["daemon"]>),
     } as Config["daemon"],
     // heartbeat_time defaults so older configs keep parsing; the timezone
-    // defaults from [ops], own [eod] value wins.
-    eod: {
-      heartbeat_time: "09:00",
-      pinned_watchdog: true,
-      pinned_watchdog_window_min: 90,
-      timezone: ops.timezone,
-      ...(req(raw, "eod") as Partial<Config["eod"]>),
-    } as Config["eod"],
+    // defaults from [ops], own [eod] value wins — and is checked as [ops] is.
+    eod: checkSectionTimeZone(
+      {
+        heartbeat_time: "09:00",
+        pinned_watchdog: true,
+        pinned_watchdog_window_min: 90,
+        timezone: ops.timezone,
+        ...(req(raw, "eod") as Partial<Config["eod"]>),
+      } as Config["eod"],
+      "[eod] timezone",
+    ),
     caps: parseCaps(req(raw, "caps") as Record<string, unknown>),
     models: parseModels(req(raw, "models") as Record<string, any>, REVIEW_PRESETS[preset].effort),
     pi: parsePiPassDeadline({
@@ -2879,6 +2889,9 @@ function parseSlack(raw: Record<string, any>, defaultTimezone: string): SlackCon
       causes,
     },
   };
+  // An explicit zone is checked as [ops]'s is — when the concierge is on;
+  // a switched-off section is a draft, and nothing reads its clock.
+  if (slack.enabled) checkSectionTimeZone(slack.policy, "[slack.policy] timezone");
   // Token *files* are names under secrets_dir, but an absolute or ~-rooted
   // override must still work — expand here so every reader sees one shape.
   slack.bot_token_file = expandHome(slack.bot_token_file);
