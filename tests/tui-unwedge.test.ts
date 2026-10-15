@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { TuiConfig } from "../src/config.js";
 import {
   CommandFileSender,
+  commandFileName,
   commandPayload,
   commandResultArgv,
   commandWriteArgv,
@@ -163,6 +164,60 @@ describe("the unwedge command channel", () => {
     await s.send("rerun-round", 1, t2.on);
     expect(t2.states[t2.states.length - 1]![0]).toBe("failed");
     expect(t2.states[t2.states.length - 1]![1]).toContain("no result");
+  });
+
+  it("a failed write names its cause — the write script's refusal or the transport's — sanitized to one line", async () => {
+    const ssh: SshRunner = async () => ({
+      ok: false,
+      stdout: "",
+      stderr:
+        "Warning: something\n/opt/quickreview/sandbox/commands/operator is a symlink - refusing\x1b[2J\n",
+      code: 1,
+    });
+    const t = track();
+    await sender(ssh).send("rerun-round", 5, t.on);
+    expect(t.states.at(-1)).toEqual([
+      "failed",
+      "✖ rerun-round #5 failed (write failed: /opt/quickreview/sandbox/commands/operator is a symlink - refusing[2J)",
+    ]);
+    const silent: SshRunner = async () => ({ ok: false, stdout: "", stderr: "", code: 255 });
+    const t2 = track();
+    await sender(silent).send("rerun-round", 5, t2.on);
+    expect(t2.states.at(-1)![1]).toBe("✖ rerun-round #5 failed (write failed: exit 255)");
+  });
+
+  it("a result read mid-write is read again — the completed answer is what the operator sees", async () => {
+    const { ssh } = runner(['{"ok":tr', '{"ok":true,"cancelled_rounds":[3]}']);
+    const t = track();
+    await sender(ssh).send("rerun-round", 9, t.on);
+    expect(t.states.at(-1)).toEqual(["done", "✓ rerun-round #9 — 1 round(s) cancelled"]);
+  });
+
+  it("a result that never reads as an object fails as unreadable at the deadline, never a throw", async () => {
+    const { ssh } = runner(Array(100).fill("null") as string[]);
+    const t = track();
+    let clock = NOW.getTime();
+    const s = new CommandFileSender(
+      cfg,
+      ssh,
+      () => new Date((clock += 5_000)),
+      async () => {},
+    );
+    await expect(s.send("rerun-round", 9, t.on)).resolves.toBeUndefined();
+    expect(t.states.at(-1)).toEqual(["failed", "✖ rerun-round #9 failed (unreadable result)"]);
+  });
+
+  it("names its command files with its own id — never the path another sender's command takes", async () => {
+    const a = runner(['{"ok":true}']);
+    const b = runner(['{"ok":true}']);
+    await sender(a.ssh).send("rerun-round", 1, track().on);
+    await sender(b.ssh).send("rerun-round", 1, track().on);
+    const script = (c: { argv: string[] }): string => c.argv[c.argv.length - 1]!;
+    const nameA = /mv '[^']+' '([^']+)'/.exec(script(a.calls[0]!))![1]!;
+    const nameB = /mv '[^']+' '([^']+)'/.exec(script(b.calls[0]!))![1]!;
+    expect(nameA).toMatch(/^2026-08-21T15-00-00-000Z-tui-unwedge-[0-9a-f]{8}-0000\.json$/);
+    expect(nameA).not.toBe(nameB);
+    expect(commandFileName(NOW, 0)).toBe("2026-08-21T15-00-00-000Z-tui-0000.json");
   });
 
   it("refuses a bad PR number without touching the box at all", async () => {

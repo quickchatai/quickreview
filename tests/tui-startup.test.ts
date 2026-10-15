@@ -1022,6 +1022,27 @@ describe("startup progress", () => {
     expect(lines[3]).toBe("– delta · --no-companion");
   });
 
+  it("a retried step drops the failure it had — a success never paints beside the old error", async () => {
+    const { StartupProgress, startupLines } = await import("../src/tui/startup.js");
+    let now = 0;
+    const p = new StartupProgress([{ key: "pi", label: "companion pi" }], {
+      now: () => now,
+      tickMs: 0,
+    });
+    p.begin("pi");
+    now = 300;
+    p.fail("pi", "spawn failed: no such session");
+    now = 5_000;
+    p.begin("pi");
+    expect(p.steps()[0]).toMatchObject({ state: "running", startedAt: 5_000 });
+    expect(p.steps()[0]!.detail).toBeUndefined();
+    expect(p.steps()[0]!.endedAt).toBeUndefined();
+    now = 5_200;
+    p.done("pi");
+    const line = startupLines(p.steps(), now)[0]!.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(line).toBe("✓ companion pi · 200ms");
+  });
+
   it("distinguishes a step that never completes from one still working", async () => {
     const { STALL_AFTER_MS, StartupProgress, startupLines } = await import("../src/tui/startup.js");
     let now = 0;

@@ -217,6 +217,73 @@ describe("the companion's paste buffers reach the host clipboard (pi /copy)", ()
     sb.stop();
   });
 
+  it("a failed read leaves the buffer new — the next poll reads it again, and a buffer that never reads is given up on", async () => {
+    const calls: string[][] = [];
+    const reads: DockerResult[] = [
+      { ok: false, stdout: "", stderr: "timed out", code: null },
+      { ...OK, stdout: "copied at last" },
+    ];
+    const same = listing("buffer0 100 14");
+    const listings = [listing(), same, same, same];
+    const docker: DockerRunner = async (argv) => {
+      calls.push(argv);
+      if (argv.includes("show-buffer")) return reads.shift()!;
+      return { ...OK, stdout: listings.shift() ?? "" };
+    };
+    const copied: string[] = [];
+    const sb = new CompanionSidebar(CFG, docker, { onCopy: (t) => copied.push(t) });
+    for (let i = 0; i < 4; i++) {
+      await sb.refresh();
+      await settle();
+    }
+    expect(copied).toEqual(["copied at last"]);
+    expect(calls.filter((c) => c.includes("show-buffer"))).toHaveLength(2);
+    sb.stop();
+
+    const failing: string[][] = [];
+    const stuck = new CompanionSidebar(
+      CFG,
+      async (argv) => {
+        failing.push(argv);
+        if (argv.includes("show-buffer")) return { ok: false, stdout: "", stderr: "", code: 1 };
+        return { ...OK, stdout: failing.length === 1 ? listing() : same };
+      },
+      { onCopy: (t) => copied.push(t) },
+    );
+    for (let i = 0; i < 8; i++) {
+      await stuck.refresh();
+      await settle();
+    }
+    expect(failing.filter((c) => c.includes("show-buffer"))).toHaveLength(3);
+    stuck.stop();
+  });
+
+  it("a slow read of an older buffer never overwrites a newer copy that landed first", async () => {
+    let releaseOld: (r: DockerResult) => void = () => undefined;
+    const listings = [
+      listing(),
+      listing("buffer0 100 3"),
+      listing("buffer1 200 3", "buffer0 100 3"),
+    ];
+    const docker: DockerRunner = async (argv) => {
+      if (argv.includes("show-buffer")) {
+        if (argv.includes("buffer0")) return new Promise<DockerResult>((r) => (releaseOld = r));
+        return { ...OK, stdout: "new" };
+      }
+      return { ...OK, stdout: listings.shift() ?? "" };
+    };
+    const copied: string[] = [];
+    const sb = new CompanionSidebar(CFG, docker, { onCopy: (t) => copied.push(t) });
+    await sb.refresh();
+    await sb.refresh(); // buffer0's read starts and hangs
+    await sb.refresh(); // buffer1 appears and reads at once
+    await settle();
+    releaseOld({ ...OK, stdout: "old" });
+    await settle();
+    expect(copied).toEqual(["new"]);
+    sb.stop();
+  });
+
   it("asks for no buffers at all when nobody listens", async () => {
     const calls: string[][] = [];
     const sb = new CompanionSidebar(CFG, async (argv) => (calls.push(argv), OK));

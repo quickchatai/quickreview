@@ -1476,6 +1476,7 @@ export class ScanRunner {
       // Unreadable: answer again rather than never.
     }
     if (prev !== null && parseStopResult(prev)?.request === req.id) return null;
+    const inFlight = this.active?.id ?? null;
     const errors: string[] = [];
     if (!this.active)
       errors.push(
@@ -1492,6 +1493,7 @@ export class ScanRunner {
       at: this.ports.clock().toISOString(),
       ok: errors.length === 0,
       errors,
+      in_flight: inFlight,
     };
     try {
       this.ports.state.write(SCAN_STOP_RESULT_FILE, `${JSON.stringify(result)}\n`);

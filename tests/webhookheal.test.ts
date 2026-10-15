@@ -3,6 +3,7 @@
 // test); the GitHub reads/writes are recorded fakes, never a network.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -153,6 +154,22 @@ describe("hostname-file faults", () => {
     writeFileSync(f.file, "abc.trycloudflare.com\n");
     expect(await f.healer.sweep()).toBe("healed");
   });
+
+  it("a hostname file that exists but cannot be read says so, with its cause — never 'bad content'", async () => {
+    const f = build();
+    mkdirSync(f.file); // EISDIR on every read
+    expect(await f.healer.sweep()).toBe("invalid");
+    expect(f.anomalies).toHaveLength(1);
+    expect(f.anomalies[0]).toMatch(/could not be read \(EISDIR/);
+    expect(f.anomalies[0]).not.toContain("never parsed");
+    expect(f.events[0]).toMatchObject({
+      kind: "webhook_heal_invalid_hostname",
+      payload: { file: f.file, content: "", error: expect.stringMatching(/^EISDIR/) },
+    });
+    // Once per incident, like bad content.
+    expect(await f.healer.sweep()).toBe("invalid");
+    expect(f.anomalies).toHaveLength(1);
+  });
 });
 
 describe("GitHub-side faults — loud, never a crash", () => {
@@ -271,6 +288,24 @@ describe("the watcher (fast path) and its fallbacks", () => {
     const [a, b] = await Promise.all([f.healer.sweep(), f.healer.sweep()]);
     expect(maxInflight).toBe(1);
     expect([a, b].sort()).toEqual(["healed", "noop"]);
+  });
+
+  it("a sweep queued behind one in flight never runs after stop()", async () => {
+    const f = build({ debounceMs: 1 });
+    let release: () => void = () => undefined;
+    f.readConfig.mockImplementationOnce(
+      () => new Promise((r) => (release = () => r({ url: f.remote.url }))),
+    );
+    writeFileSync(f.file, "abc.trycloudflare.com\n");
+    const first = f.healer.sweep();
+    await new Promise((r) => setTimeout(r, 10)); // the first is awaiting GitHub
+    expect(await f.healer.sweep()).toBe("noop"); // queued behind it
+    f.healer.stop(); // daemon shutdown
+    release();
+    await first;
+    await new Promise((r) => setTimeout(r, 30)); // past the debounce
+    expect(f.readConfig).toHaveBeenCalledTimes(2); // the first sweep's GET + read-back
+    expect(f.patches).toHaveLength(1);
   });
 });
 

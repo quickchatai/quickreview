@@ -33,12 +33,12 @@ import { dirname, join } from "node:path";
 import type { CompanionConfig } from "../config.js";
 import { zoneDateString } from "../eod.js";
 import type { StatusSnapshot } from "../state.js";
+import { NO_SERVER } from "../tmux.js";
 import { parseAlert, readPolicyState } from "./alerts.js";
 import {
   CONTAINER,
   companionSessionDir,
-  dockerFailureLine,
-  type DockerResult,
+  dockerFailureLine as execReason,
   type DockerRunner,
 } from "./companion.js";
 
@@ -52,9 +52,6 @@ export type SessionFileLookup =
  * could not fetch are different facts. */
 export type ConversationRead =
   { state: "read"; text: string } | { state: "unreadable"; reason: string };
-
-/** One-line cause from a failed `docker exec`, for the step log. */
-const execReason = (r: DockerResult): string => dockerFailureLine(r);
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -81,6 +78,10 @@ export interface RolloverState {
    * ⇒ the interview fired once and never fires again; resuming an abandoned
    * interview is a conversation with the companion, not a re-delivery. */
   first_run_interviewed?: string;
+  /** Ops-timezone date a due first-run interview could not be delivered (its
+   * template unreadable). Present ⇒ the interview is still owed, whatever
+   * else the state says; cleared by the delivery. */
+  first_run_owed?: string;
 }
 
 /** What a read of the rollover state found. `absent` is a fresh installation;
@@ -137,6 +138,7 @@ export function readRolloverStateFile(path: string): RolloverStateRead {
       ...(typeof raw.first_run_interviewed === "string"
         ? { first_run_interviewed: raw.first_run_interviewed }
         : {}),
+      ...(typeof raw.first_run_owed === "string" ? { first_run_owed: raw.first_run_owed } : {}),
     },
   };
 }
@@ -314,7 +316,8 @@ export function compactConversation(
   ];
   sections.push(`**How it opened**\n${renderTurns(head, half, ownerName)}`);
   if (skipped > 0) sections.push(`…${skipped} turn${skipped === 1 ? "" : "s"} elided…`);
-  if (tail.length > 0) sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName, "newest")}`);
+  if (tail.length > 0)
+    sections.push(`**How it ended**\n${renderTurns(tail, half, ownerName, "newest")}`);
   const out = sections.join("\n\n");
   return out.length <= budget ? out : `${out.slice(0, budget - 1)}…`;
 }
@@ -435,15 +438,26 @@ const PLACEHOLDERS: Array<keyof DayOpenSources> = [
   "alert_knobs",
 ];
 
-/** Fill prompts/companion-day-open.md. An empty source renders as `—`, per the
- * template's own header — a missing carry item is stated, never silent. */
-export function renderDayOpen(template: string, sources: DayOpenSources): string {
+/** Fill a companion template: the model docs stripped, each `{{key}}` in
+ * `keys` replaced by its trimmed source, and an empty source rendered as `—`
+ * — a missing item is stated, never silent. */
+function renderTemplate<K extends string>(
+  template: string,
+  keys: readonly K[],
+  sources: Partial<Record<K, string>>,
+): string {
   let out = stripModelDocs(template);
-  for (const key of PLACEHOLDERS) {
+  for (const key of keys) {
     const value = (sources[key] ?? "").trim();
     out = out.replaceAll(`{{${key}}}`, value === "" ? "—" : value);
   }
   return out;
+}
+
+/** Fill prompts/companion-day-open.md. An empty source renders as `—`, per the
+ * template's own header — a missing carry item is stated, never silent. */
+export function renderDayOpen(template: string, sources: DayOpenSources): string {
+  return renderTemplate(template, PLACEHOLDERS, sources);
 }
 
 /** The inject file the bridge will deliver as the first user message. */
@@ -476,11 +490,13 @@ export function readFirstRunMarker(path: string): FirstRunMarker | undefined {
  *   * a delivered interview never fires again (the state records it);
  *   * no rollover state has ever existed ⇒ first run, interview due — the
  *     fallback that makes the feature work before/without the wizard;
+ *   * an interview found due but not delivered stays due (`first_run_owed`);
  *   * otherwise the wizard's marker decides — its presence on an installation
  *     whose state carries no interview means onboarding finished and the
  *     greeting is owed.
  *
- * An existing installation (state present, no marker) never gets one.
+ * An existing installation (state present, no marker, nothing owed) never
+ * gets one.
  */
 export function interviewDue(
   marker: FirstRunMarker | undefined,
@@ -488,6 +504,7 @@ export function interviewDue(
 ): boolean {
   if (state?.first_run_interviewed) return false;
   if (state === undefined) return true;
+  if (state.first_run_owed) return true;
   return marker !== undefined;
 }
 
@@ -503,12 +520,7 @@ const FIRST_RUN_PLACEHOLDERS: Array<keyof FirstRunSources> = ["date", "owner", "
 /** Fill prompts/companion-first-run.md — same `—`-for-empty discipline as the
  * day-open (the owner label is pre-defaulted, so only the snapshot can be empty). */
 export function renderFirstRun(template: string, sources: FirstRunSources): string {
-  let out = stripModelDocs(template);
-  for (const key of FIRST_RUN_PLACEHOLDERS) {
-    const value = (sources[key] ?? "").trim();
-    out = out.replaceAll(`{{${key}}}`, value === "" ? "—" : value);
-  }
-  return out;
+  return renderTemplate(template, FIRST_RUN_PLACEHOLDERS, sources);
 }
 
 export function firstRunFileName(date: string): string {
@@ -516,6 +528,23 @@ export function firstRunFileName(date: string): string {
 }
 
 // ---- the sequence -----------------------------------------------------------
+
+/**
+ * The in-container listing of the newest conversation in `dir`: its path on
+ * stdout, nothing when there is none — exit 0 either way — and a non-zero
+ * exit with the cause on stderr when the dir cannot be listed. A dir that is
+ * not there is a volume that never held a conversation; one that is there
+ * but unreadable is not the same answer, and `ls`'s own status decides, not
+ * the status of a `head` after it.
+ */
+export function newestSessionScript(dir: string): string {
+  return (
+    `d='${dir}'; [ -e "$d" ] || exit 0; ` +
+    `[ -d "$d" ] && [ -r "$d" ] && [ -x "$d" ] || { echo "cannot list $d" >&2; exit 1; }; ` +
+    `set -- "$d"/*.jsonl; [ -e "$1" ] || exit 0; ` +
+    `out=$(ls -1t -- "$@") || exit 1; printf '%s\n' "$out" | head -1`
+  );
+}
 
 export interface RolloverOptions {
   /** Host path of the last-open-date state file. */
@@ -563,6 +592,12 @@ export interface RolloverReport {
    * so the day was deliberately not recorded and nothing was killed or
    * queued. The next start retries the whole sequence. */
   deferred?: string;
+  /** Set when another start rolled the day over while this one assembled
+   * its context: this start killed and queued nothing — the day is not its. */
+  stoodDown?: string;
+  /** What went wrong without stopping the rollover (a dated archive that
+   * could not be written, with its cause) — for the operator's notice line. */
+  warnings?: string[];
 }
 
 /**
@@ -590,7 +625,7 @@ export class CompanionRollover {
     return todayDate(this.now(), this.env, this.timeZone);
   }
 
-  /** In-container session dir — the one CompanionLifecycle.piArgv() names. */
+  /** In-container session dir — the one pi is given (`companionSessionDir`). */
   private sessionDir(): string {
     return companionSessionDir(this.cfg.session);
   }
@@ -608,6 +643,11 @@ export class CompanionRollover {
    * `companion.ts`). Folding the third into the second would archive nothing,
    * compact zero turns and hand the companion "nothing happened yesterday" as
    * its opening context, then record the day so it never retried.
+   *
+   * The script keeps that line inside the container too: a session dir that
+   * is not there (a fresh volume) or holds no conversation is `none`, but one
+   * that cannot be listed, or a listing that fails, exits non-zero — the
+   * listing's status is its own, never a pipeline tail's.
    */
   async newestSessionFile(): Promise<SessionFileLookup> {
     const res = await this.docker([
@@ -615,18 +655,20 @@ export class CompanionRollover {
       this.cfg.container_name,
       "sh",
       "-c",
-      `ls -1t '${this.sessionDir()}'/*.jsonl 2>/dev/null | head -1`,
+      newestSessionScript(this.sessionDir()),
     ]);
     if (!res.ok) return { state: "unreadable", reason: execReason(res) };
     const file = res.stdout.trim();
     return file === "" ? { state: "none" } : { state: "found", file };
   }
 
-  /** Archive it date-stamped (rotateOverseer pattern), returning the copy's
-   * in-container path. Copy, never move: if anything below fails, the original
-   * conversation is still where pi left it. */
-  async archive(file: string, date: string): Promise<string | undefined> {
-    if (file === "") return undefined;
+  /** Archive it date-stamped (rotateOverseer pattern): the copy's
+   * in-container path, or why the copy failed. Copy, never move: if anything
+   * below fails, the original conversation is still where pi left it. */
+  async archive(
+    file: string,
+    date: string,
+  ): Promise<{ ok: true; dest: string } | { ok: false; reason: string }> {
     const dest = `${this.archiveDir(date)}/session.jsonl`;
     const res = await this.docker([
       "exec",
@@ -635,7 +677,7 @@ export class CompanionRollover {
       "-c",
       `mkdir -p '${this.archiveDir(date)}' && cp '${file}' '${dest}'`,
     ]);
-    return res.ok ? dest : undefined;
+    return res.ok ? { ok: true, dest } : { ok: false, reason: execReason(res) };
   }
 
   /** Read a bounded tail of the conversation file through the docker seam.
@@ -669,15 +711,16 @@ export class CompanionRollover {
       "-t",
       this.cfg.session,
     ]);
-    // tmux words "no server" two ways: `no server running on <sock>` (a stale
-    // socket, ECONNREFUSED) and `error connecting to <sock> (No such file or
-    // directory)` (no socket at all — a freshly started container). Both mean
-    // nothing is running; any other connect error does not.
+    // tmux words "no server" two ways (`NO_SERVER`, shared with the daemon's
+    // tmux): `no server running on <sock>` (a stale socket, ECONNREFUSED) and
+    // `error connecting to <sock> (No such file or directory)` (no socket at
+    // all — a freshly started container). Both mean nothing is running; any
+    // other connect error does not. A missing session on a live server is
+    // the same answer.
     if (
       res.ok ||
-      /can't find session|no server running|session not found|error connecting to .*\(No such file or directory\)/i.test(
-        res.stderr,
-      )
+      NO_SERVER.test(res.stderr) ||
+      /can't find session|session not found/i.test(res.stderr)
     )
       return { state: "killed" };
     return { state: "failed", reason: execReason(res) };
@@ -731,6 +774,7 @@ export class CompanionRollover {
       ...(prior?.first_run_interviewed
         ? { first_run_interviewed: prior.first_run_interviewed }
         : {}),
+      ...(prior?.first_run_owed ? { first_run_owed: prior.first_run_owed } : {}),
     };
     writeRolloverState(this.opts.statePath, written);
     // Returned so `maybeInterview` can add its mark to the row we know we
@@ -743,7 +787,7 @@ export class CompanionRollover {
     const template = readFileSync(this.opts.firstRunTemplatePath!, "utf8");
     return renderFirstRun(template, {
       date,
-      owner: this.opts.ownerName?.trim() || "the operator",
+      owner: ownerLabel(this.opts.ownerName),
       snapshot_summary: snapshotSummary(readSnapshot(this.cfg.feed_dir)),
     });
   }
@@ -768,17 +812,6 @@ export class CompanionRollover {
       ? readFirstRunMarker(this.opts.firstRunMarkerPath)
       : undefined;
     if (!interviewDue(marker, prior)) return {};
-    let interview: string;
-    try {
-      interview = this.buildInterview(today);
-    } catch {
-      steps.push("first-run interview template unreadable — skipped (system unaffected)");
-      return {};
-    }
-    const interviewFile = this.writeInject(firstRunFileName(today), interview);
-    steps.push(`queued first-run interview → ${interviewFile}`);
-    // Mark it delivered so it fires exactly once; later starts run the normal
-    // day-open. An abandoned interview resumes in conversation, never here.
     // `current`, never a re-read: a re-read that came back unreadable would
     // collapse to a fabricated row — `last_open_date: today` stamped over a
     // day we could not see, `last_archive` dropped. `current` is undefined
@@ -788,7 +821,25 @@ export class CompanionRollover {
       last_open_date: today,
       updated_at: this.now().toISOString(),
     };
-    writeRolloverState(this.opts.statePath, { ...state, first_run_interviewed: today });
+    let interview: string;
+    try {
+      interview = this.buildInterview(today);
+    } catch {
+      // Still owed: the no-state fallback that found it due is gone once the
+      // state exists, so the obligation is written down for the next start.
+      if (!state.first_run_owed)
+        writeRolloverState(this.opts.statePath, { ...state, first_run_owed: today });
+      steps.push(
+        "first-run interview template unreadable — skipped (system unaffected); still owed, retried on the next start",
+      );
+      return {};
+    }
+    const interviewFile = this.writeInject(firstRunFileName(today), interview);
+    steps.push(`queued first-run interview → ${interviewFile}`);
+    // Mark it delivered so it fires exactly once; later starts run the normal
+    // day-open. An abandoned interview resumes in conversation, never here.
+    const { first_run_owed: _owed, ...delivered } = state;
+    writeRolloverState(this.opts.statePath, { ...delivered, first_run_interviewed: today });
     return { interviewFile, interview };
   }
 
@@ -811,6 +862,7 @@ export class CompanionRollover {
     let archivedTo: string | undefined;
     let dayOpenFile: string | undefined;
     let dayOpen: string | undefined;
+    const warnings: string[] = [];
 
     // An unreadable state file gates everything below it: read as `first-run`
     // it would record today's date over it and the rollover would never
@@ -840,14 +892,22 @@ export class CompanionRollover {
       }
       const file = lookup.state === "found" ? lookup.file : "";
       steps.push(file === "" ? "no previous conversation found" : `found conversation ${file}`);
-      archivedTo = await this.archive(file, verdict.previous);
       // A failed copy is not a deferral: the conversation is still on the
       // volume and the day-open below is still assembled from the real turns,
       // so nothing fabricated is published. It is only the dated archive that
-      // is missing — and going quiet about that is how it would stay missing.
-      if (archivedTo) steps.push(`archived → ${archivedTo}`);
-      else if (file !== "")
-        steps.push(`archive FAILED — ${file} is unarchived (it remains on the volume)`);
+      // is missing — and going quiet about that is how it would stay missing,
+      // so the cause reaches the operator's notice line (`warnings`).
+      if (file !== "") {
+        const copy = await this.archive(file, verdict.previous);
+        if (copy.ok) {
+          archivedTo = copy.dest;
+          steps.push(`archived → ${archivedTo}`);
+        } else {
+          const warning = `archive FAILED — ${file} is unarchived (it remains on the volume): ${copy.reason}`;
+          steps.push(warning);
+          warnings.push(warning);
+        }
+      }
       const convo = await this.readConversation(file);
       if (convo.state === "unreadable") {
         const deferred = `could not read ${file} (${convo.reason}) — day NOT rolled over; retrying on the next start`;
@@ -858,12 +918,26 @@ export class CompanionRollover {
           archivedTo,
           deferred,
           ...this.maybeInterview(today, prior, current, steps),
+          ...(warnings.length ? { warnings } : {}),
         };
       }
       const turns = parseConversation(convo.text);
       steps.push(`compacted ${turns.length} turn${turns.length === 1 ? "" : "s"}`);
       dayOpen = this.buildDayOpen(today, turns);
       steps.push(`assembled opening context (${dayOpen.length} chars)`);
+      // The verdict was read before the awaits above. A second TUI starting
+      // the same morning may have rolled the day over meanwhile and spawned
+      // the fresh conversation; killing now would end THAT one. Its record
+      // says so — stand down and leave the day to it. This narrows the race,
+      // it does not close it: there is no cross-process lock, so a start
+      // whose re-read lands before the other's record can still kill the
+      // conversation the other start just spawned.
+      const now = readRolloverStateFile(this.opts.statePath);
+      if (now.state === "state" && now.value.last_open_date >= today) {
+        const stoodDown = `another start already rolled the day over to ${now.value.last_open_date} — nothing killed or queued`;
+        steps.push(stoodDown);
+        return { verdict, steps, archivedTo, stoodDown, ...(warnings.length ? { warnings } : {}) };
+      }
       const kill = await this.killSession();
       if (kill.state === "failed") {
         // Yesterday's conversation may still be running: a day-open queued now
@@ -876,6 +950,7 @@ export class CompanionRollover {
           archivedTo,
           deferred,
           ...this.maybeInterview(today, prior, current, steps),
+          ...(warnings.length ? { warnings } : {}),
         };
       }
       steps.push(`killed tmux session ${this.cfg.session}`);
@@ -885,6 +960,14 @@ export class CompanionRollover {
     }
 
     const interview = this.maybeInterview(today, prior, current, steps);
-    return { verdict, steps, archivedTo, dayOpenFile, dayOpen, ...interview };
+    return {
+      verdict,
+      steps,
+      archivedTo,
+      dayOpenFile,
+      dayOpen,
+      ...interview,
+      ...(warnings.length ? { warnings } : {}),
+    };
   }
 }

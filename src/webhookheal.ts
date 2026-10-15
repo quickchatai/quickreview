@@ -12,6 +12,7 @@
 // correctness.
 import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
+import { INGRESS_DEFAULTS } from "./config.js";
 import type { GateResult } from "./gate.js";
 
 /** A bare DNS hostname — no scheme, no path, no port. The sidecar's contract
@@ -32,9 +33,11 @@ export interface WebhookHealDeps {
   /** Overseer anomaly surface — a failure here is never silent. */
   anomaly(detail: string): void;
   log(msg: string, extra?: unknown): void;
-  /** Settle time after a file-change event before the sweep runs. */
+  /** Settle time after a file-change event before the sweep runs; absent ⇒
+   * `[ingress] debounce_ms`'s default. */
   debounceMs?: number;
-  /** The reliable path's cadence. 0 ⇒ no timer (tests drive sweep()). */
+  /** The reliable path's cadence. 0 ⇒ no timer (tests drive sweep());
+   * absent ⇒ `[ingress] sweep_interval_s`'s default. */
   sweepIntervalMs?: number;
   /** Parse retries for partially-written hostname files (verdicts.ts shape). */
   parseRetries?: number;
@@ -42,10 +45,11 @@ export interface WebhookHealDeps {
 }
 
 export type HealOutcome =
-  | "noop" // hostname matches the App's webhook URL already
+  | "noop" // hostname matches the App's webhook URL already — or a sweep was
+  //        already in flight, so this one only queued a re-run (no compare)
   | "healed" // re-pointed and read-back verified
   | "missing" // hostname file absent — sidecar not up yet; logged once
-  | "invalid" // file content never settled into a hostname
+  | "invalid" // the file never read as a hostname: bad content, or a read error
   | "failed"; // read, PATCH, or read-back verification failed
 
 function sleep(ms: number): Promise<void> {
@@ -62,6 +66,8 @@ export class WebhookHealer {
   /** "log once" latches: reset when the condition clears. */
   private missingLogged = false;
   private lastInvalidContent: string | null = null;
+  /** Set by stop(): no sweep is scheduled after it, queued re-runs included. */
+  private stopped = false;
 
   constructor(private readonly deps: WebhookHealDeps) {}
 
@@ -76,6 +82,7 @@ export class WebhookHealer {
   /** fs.watch fast path + periodic sweep (the reliable one). A watch that
    * cannot be established is logged and the sweep carries on alone. */
   start(): void {
+    this.stopped = false;
     try {
       mkdirSync(dirname(this.deps.hostnameFile), { recursive: true });
       this.watcher = watch(dirname(this.deps.hostnameFile), (_event, filename) => {
@@ -92,7 +99,7 @@ export class WebhookHealer {
       this.log("webhookheal: could not watch hostname file — polling sweep continues alone", err);
       this.watcher = null;
     }
-    const intervalMs = this.deps.sweepIntervalMs ?? 300_000;
+    const intervalMs = this.deps.sweepIntervalMs ?? INGRESS_DEFAULTS.sweep_interval_s * 1000;
     if (intervalMs > 0) {
       this.sweepTimer = setInterval(() => {
         void this.sweep().catch((err) => this.log("webhookheal: sweep failed", err));
@@ -104,6 +111,8 @@ export class WebhookHealer {
   }
 
   stop(): void {
+    this.stopped = true;
+    this.rerun = false;
     this.watcher?.close();
     this.watcher = null;
     if (this.sweepTimer) clearInterval(this.sweepTimer);
@@ -115,11 +124,12 @@ export class WebhookHealer {
   /** Debounced trigger for file-change events — quick tunnels write, then
    * sometimes rewrite, within a second or two of coming up. */
   private scheduleSweep(): void {
+    if (this.stopped) return;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
       void this.sweep().catch((err) => this.log("webhookheal: sweep failed", err));
-    }, this.deps.debounceMs ?? 3000);
+    }, this.deps.debounceMs ?? INGRESS_DEFAULTS.debounce_ms);
     this.debounceTimer.unref?.();
   }
 
@@ -132,6 +142,7 @@ export class WebhookHealer {
     const retries = this.deps.parseRetries ?? 3;
     const delay = this.deps.retryDelayMs ?? 40;
     let content: string | null = null;
+    let readError: string | null = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (!existsSync(this.deps.hostnameFile)) {
         if (!this.missingLogged) {
@@ -144,8 +155,14 @@ export class WebhookHealer {
       }
       try {
         content = readFileSync(this.deps.hostnameFile, "utf8");
-      } catch {
-        content = null; // vanished between the existence check and the read
+        readError = null;
+      } catch (err) {
+        // Vanished between the existence check and the read (retried), or a
+        // file that cannot be read at all (EACCES, EISDIR) — kept, so the
+        // report names the fault rather than blaming the content.
+        content = null;
+        const code = (err as NodeJS.ErrnoException).code;
+        readError = `${code ? `${code}: ` : ""}${err instanceof Error ? err.message : String(err)}`;
       }
       const hostname = content?.trim() ?? "";
       if (hostname && HOSTNAME_RE.test(hostname)) {
@@ -159,12 +176,18 @@ export class WebhookHealer {
     // Loud once per distinct bad content — a sidecar stuck writing garbage
     // must not fill the anomaly table on every sweep.
     const bad = (content ?? "").slice(0, 200);
-    if (this.lastInvalidContent !== bad) {
-      this.lastInvalidContent = bad;
-      const detail = `webhook self-heal: hostname file ${this.deps.hostnameFile} never parsed as a bare hostname (content: ${JSON.stringify(bad)})`;
+    const unreadable = content === null && readError !== null ? readError.slice(0, 200) : null;
+    const latch = unreadable !== null ? `\0read:${unreadable}` : bad;
+    if (this.lastInvalidContent !== latch) {
+      this.lastInvalidContent = latch;
+      const detail =
+        unreadable !== null
+          ? `webhook self-heal: hostname file ${this.deps.hostnameFile} could not be read (${unreadable})`
+          : `webhook self-heal: hostname file ${this.deps.hostnameFile} never parsed as a bare hostname (content: ${JSON.stringify(bad)})`;
       this.deps.logEvent("webhook_heal_invalid_hostname", {
         file: this.deps.hostnameFile,
         content: bad,
+        ...(unreadable !== null ? { error: unreadable } : {}),
       });
       this.deps.anomaly(detail);
       this.log(`webhookheal: ${detail}`);
@@ -189,7 +212,7 @@ export class WebhookHealer {
       this.inFlight = false;
       if (this.rerun) {
         this.rerun = false;
-        this.scheduleSweep();
+        this.scheduleSweep(); // nothing after stop()
       }
     }
   }

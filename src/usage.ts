@@ -423,7 +423,30 @@ const GIT_CONFIG_SURFACE_WRITE_RE =
  * and reads these paths all day, and auditing a read would be the routine false
  * line that teaches an operator to skip the event. Mirrors `isPolicySurface` in
  * the guard, kept an independent implementation on purpose. */
-const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)|(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\/\S+)`;
+const POLICY_SURFACE_FILES = [
+  "config.toml",
+  "AGENTS.override.md",
+  "AGENTS.MD",
+  "AGENTS.md",
+  "CLAUDE.MD",
+  "CLAUDE.md",
+] as const;
+const POLICY_SURFACE_DIRS = [
+  "scripts",
+  "dist",
+  "extensions",
+  "prompts",
+  "agents",
+  "seeds",
+  ".pi",
+] as const;
+/** The names above as one regex alternation — the one vocabulary the shell
+ * rule, the write-tool path rule and the pattern expansion below all read. */
+const reAlt = (names: readonly string[]): string =>
+  names.map((n) => n.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")).join("|");
+const POLICY_FILES_ALT = reAlt(POLICY_SURFACE_FILES);
+const POLICY_DIRS_ALT = reAlt(POLICY_SURFACE_DIRS);
+const POLICY_SURFACE_TARGET = String.raw`(?:\S*\/)?(?:(?:${POLICY_FILES_ALT})|(?:${POLICY_DIRS_ALT})\/\S+)`;
 const POLICY_SURFACE_WRITE_RE = new RegExp(
   String.raw`(?:` +
     WRITE_OPERATOR +
@@ -436,8 +459,9 @@ const POLICY_SURFACE_WRITE_RE = new RegExp(
 /** The same policy surface as a WRITE-TOOL target path: `config.toml`
  * or an agent-context file at any depth, or anything under scripts/dist/extensions/prompts/agents/seeds/.pi
  * (the built `state/agents/…` included — `agents/` follows a slash). */
-const POLICY_SURFACE_PATH_RE =
-  /(?:^|\/)(?:config\.toml|AGENTS\.override\.md|AGENTS\.MD|AGENTS\.md|CLAUDE\.MD|CLAUDE\.md)$|(?:^|\/)(?:scripts|dist|extensions|prompts|agents|seeds|\.pi)\//;
+const POLICY_SURFACE_PATH_RE = new RegExp(
+  String.raw`(?:^|\/)(?:${POLICY_FILES_ALT})$|(?:^|\/)(?:${POLICY_DIRS_ALT})\/`,
+);
 
 /**
  * A write landing on a MEMORY-SCOPE file — the same SHAPE again:
@@ -507,19 +531,8 @@ const SURFACE_COMPONENT_NAMES: readonly string[] = [
   "git",
   "config",
   ".gitattributes",
-  "config.toml",
-  "AGENTS.override.md",
-  "AGENTS.md",
-  "AGENTS.MD",
-  "CLAUDE.md",
-  "CLAUDE.MD",
-  "scripts",
-  "dist",
-  "extensions",
-  "prompts",
-  "agents",
-  "seeds",
-  ".pi",
+  ...POLICY_SURFACE_FILES,
+  ...POLICY_SURFACE_DIRS,
   "recall-hints",
   "retired-uris.json",
   "retired-uris.json.tmp-1",
@@ -670,8 +683,19 @@ const AUDIT_READERS: ReadonlySet<string> = new Set([
  */
 const READER_MODE_AUDIT: Readonly<Record<string, RegExp>> = {
   find: /(?:^|\s)-(?:exec|execdir|ok|okdir|delete|fprintf|fprint|fprint0|fls)(?:\s|$)/,
-  sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o(?:\s|$))/,
-  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|['"\s](?:[0-9$,]|\/[^/]*\/)*\s*[wWe]\s/,
+  // `o` is unambiguous in sort's short options, so a cluster carrying it —
+  // its value attached (`-o/tmp/out`) or not — is an output redirect.
+  sort: /(?:^|\s)(?:--(?:output|compress-program)(?:=|\s)|-(?!-)[a-zA-Z]*o)/,
+  // -i/-f; a w/W/e command at a command position (`sed 'e' f`, `1e`, `p;e`) —
+  // a quote counts only where it OPENS a word and a closing quote only before a
+  // word boundary, so a quoted `'w'` inside a pattern is no command, and an
+  // unquoted word ending the segment counts only as sed's first operand, so a
+  // last FILE operand named `e` or `/tmp/e` is none either; and an
+  // s-command whose flag cluster carries `e` anywhere (it runs the pattern
+  // space: `s/x/y/e`, `/ep`, `/eg`, `/eI`) or ends in `w` (writes a file),
+  // with ANY delimiter (`s|..|..|e`, `s#..#..#e` — the backreference) and a
+  // script glued to its flag (`--expression=s/…/e`, `-es/…/e`).
+  sed: /(?:^|\s)(?:--(?:in-place|file)|-(?!-)[a-zA-Z]*[if])|(?:(?:^|\s)(?:--expression=|-[a-zA-Z]*e)?['"]|[;{]|\s(?=\S*\s))(?:[0-9$,]|\/[^/]*\/)*\s*[wWe](?=\s|[;}]|['"](?:\s|$)|$)|(?:^|\s)sed(?:\s+-\S+)*\s+(?:[0-9$,]|\/[^/]*\/)*[wWe]\s*$|(?:['"\s;{=]|(?:^|\s)-[nEsuzr]*e)(?:[0-9$,]|\/[^/]*\/)*\s*s([^\w\s\\])(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1[gpiImMnN0-9]*(?:e[gpiImMnN0-9e]*w?|w)(?=['"\s;}]|$)/,
   // The diff options' `--output=<file>` on any verb, and
   // `git grep`'s `--open-files-in-pager[=<cmd>]` / `-O<cmd>` (any unique
   // abbreviation of the long form; `-O` ending a short cluster).
@@ -708,6 +732,24 @@ function segmentProgram(segment: string): string | null {
   return sawXargs ? "xargs" : null; // bare `xargs` runs echo
 }
 
+/** The `VAR=val` prefixes in front of a segment's program (and of `env`),
+ * space-joined — what `segmentProgram` skips to find the program. */
+function assignmentPrefix(segment: string): string {
+  const out: string[] = [];
+  for (const raw of segment.trim().split(/\s+/)) {
+    const t = raw.replace(/^['"(]+|['")]+$/g, "");
+    if (t.length === 0) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+      out.push(t);
+      continue;
+    }
+    if (t === "env" || (t.startsWith("-") && t.length <= 3)) continue;
+    if (/^\d*[<>]/.test(t)) continue; // a redirection remnant, as segmentProgram skips
+    break;
+  }
+  return out.join(" ");
+}
+
 /** Whether `segment` opens ANSI-C (`$'…'`) or locale (`$"…"`) quoting
  * outside quotes — where it can spell any option; inside quotes `$'`/`$"` is
  * literal. */
@@ -728,6 +770,34 @@ function opensAnsiOrLocaleQuote(segment: string): boolean {
     }
   }
   return false;
+}
+
+/** `segment` with every quote character that sits INSIDE the other kind of
+ * quote (`"…'w'…"`, `'…"w"…'`) replaced by U+0001 — a literal, not a quote, so
+ * the sed rule never reads it as one. Matters where the guard's splitter cuts
+ * a quoted pattern at `(`/`)` and leaves `'w'` at a segment's end. U+0001 is
+ * neither a word nor a space character, so an s-command delimited by it still
+ * reads as one. */
+function maskNestedQuotes(segment: string): string {
+  let out = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      out += c === '"' ? "\u0001" : c;
+    } else if (c === "\\") {
+      out += segment.slice(i, i + 2);
+      i++;
+    } else if (quote === '"') {
+      if (c === '"') quote = null;
+      out += c === "'" ? "\u0001" : c;
+    } else {
+      if (c === "'" || c === '"') quote = c;
+      out += c;
+    }
+  }
+  return out;
 }
 
 /** Which rule, if any, this ONE segment trips. */
@@ -758,10 +828,17 @@ function segmentViolationKind(segment: string): ExecViolationKind | null {
     // Checked BEFORE the reader skip below: these programs are readers by
     // default and writers on a flag, and the flag is the whole point. git's
     // rule reads the DEQUOTED segment, as git receives its options
-    // (`--out"put"=…` is `--output=…`).
-    if (READER_MODE_AUDIT[prog]?.test(prog === "git" ? bare : segment))
-      return "reader_write_or_exec";
-    if (AUDIT_READERS.has(prog)) return null;
+    // (`--out"put"=…` is `--output=…`); sed's reads it with a quote nested in
+    // the other kind masked (`maskNestedQuotes`).
+    const subject = prog === "git" ? bare : prog === "sed" ? maskNestedQuotes(segment) : segment;
+    if (READER_MODE_AUDIT[prog]?.test(subject)) return "reader_write_or_exec";
+    // A reader's ARGUMENTS are patterns, but an assignment PREFIX in front
+    // of it is the environment it runs in — `LD_PRELOAD=… cat f` loads code
+    // whatever cat then reads.
+    if (AUDIT_READERS.has(prog))
+      return GIT_CONFIG_INJECTION_RE.test(assignmentPrefix(segment))
+        ? "git_config_injection"
+        : null;
   }
   // A policy-relocation env prefix (`QCR_CONFIG=` and kin) — checked AFTER the
   // reader skip so `grep QCR_CONFIG=x file` (a read of a config) does not trip
@@ -810,26 +887,39 @@ export function execViolationKind(cmd: string): ExecViolationKind | null {
   return null;
 }
 
-/** Pull every bash toolCall command out of a record, wherever it nests. */
-function bashCommandsIn(value: unknown, out: string[], depth = 8): void {
+/**
+ * Every tool call in a record, wherever it nests (eight levels deep): its
+ * tool name (`toolName`, `name` or `tool`) and the objects its arguments may
+ * ride in — each argument envelope (`arguments`, `input`, `args`, `params`)
+ * that is an object, then the call itself. The ONE reading of the transcript's
+ * tool-call shape; what to pull out of the arguments is the caller's.
+ */
+function forEachToolCall(
+  value: unknown,
+  visit: (toolName: unknown, argObjects: Array<Record<string, unknown>>) => void,
+  depth = 8,
+): void {
   if (depth < 0 || typeof value !== "object" || value === null) return;
   if (Array.isArray(value)) {
-    for (const item of value) bashCommandsIn(item, out, depth - 1);
+    for (const item of value) forEachToolCall(item, visit, depth - 1);
     return;
   }
   const obj = value as Record<string, unknown>;
-  const toolName = obj.toolName ?? obj.name ?? obj.tool;
-  if (toolName === "bash") {
-    for (const argsKey of ["arguments", "input", "args", "params"]) {
-      const args = obj[argsKey];
-      if (typeof args === "object" && args !== null) {
-        const cmd = (args as Record<string, unknown>).command;
-        if (typeof cmd === "string") out.push(cmd);
-      }
-    }
-    if (typeof obj.command === "string") out.push(obj.command);
+  const envelopes: Array<Record<string, unknown>> = [];
+  for (const argsKey of ["arguments", "input", "args", "params"]) {
+    const args = obj[argsKey];
+    if (typeof args === "object" && args !== null) envelopes.push(args as Record<string, unknown>);
   }
-  for (const v of Object.values(obj)) bashCommandsIn(v, out, depth - 1);
+  visit(obj.toolName ?? obj.name ?? obj.tool, [...envelopes, obj]);
+  for (const v of Object.values(obj)) forEachToolCall(v, visit, depth - 1);
+}
+
+/** Pull every bash toolCall command out of a record, wherever it nests. */
+function bashCommandsIn(value: unknown, out: string[]): void {
+  forEachToolCall(value, (toolName, argObjects) => {
+    if (toolName !== "bash") return;
+    for (const a of argObjects) if (typeof a.command === "string") out.push(a.command);
+  });
 }
 
 /** Tool names that write a file, as recorded in the transcript. Mirrors
@@ -851,31 +941,15 @@ const WRITE_TOOL_NAMES = new Set([
  * they ran was innocent, and the payload was a file written with the ordinary
  * write tool, which never appears in a bash command at all.
  */
-function writeTargetsIn(value: unknown, out: string[], depth = 8): void {
-  if (depth < 0 || typeof value !== "object" || value === null) return;
-  if (Array.isArray(value)) {
-    for (const item of value) writeTargetsIn(item, out, depth - 1);
-    return;
-  }
-  const obj = value as Record<string, unknown>;
-  const toolName = obj.toolName ?? obj.name ?? obj.tool;
-  if (typeof toolName === "string" && WRITE_TOOL_NAMES.has(toolName)) {
-    for (const argsKey of ["arguments", "input", "args", "params"]) {
-      const args = obj[argsKey];
-      if (typeof args === "object" && args !== null) {
-        const a = args as Record<string, unknown>;
-        for (const pathKey of ["path", "file_path", "filePath"]) {
-          const p = a[pathKey];
-          if (typeof p === "string") out.push(p);
-        }
+function writeTargetsIn(value: unknown, out: string[]): void {
+  forEachToolCall(value, (toolName, argObjects) => {
+    if (typeof toolName !== "string" || !WRITE_TOOL_NAMES.has(toolName)) return;
+    for (const a of argObjects)
+      for (const pathKey of ["path", "file_path", "filePath"]) {
+        const p = a[pathKey];
+        if (typeof p === "string") out.push(p);
       }
-    }
-    for (const pathKey of ["path", "file_path", "filePath"]) {
-      const p = obj[pathKey];
-      if (typeof p === "string") out.push(p);
-    }
-  }
-  for (const v of Object.values(obj)) writeTargetsIn(v, out, depth - 1);
+  });
 }
 
 export interface ExecViolation {
@@ -920,8 +994,10 @@ export function auditExecViolationDetails(lines: string[]): ExecViolation[] {
   return [...seen].map(([command, kind]) => ({ command, kind }));
 }
 
-/** Bash commands in the given JSONL lines that ran a forbidden executor.
- * Deduplicated, order-preserving; malformed lines skipped. */
+/** The audit items of the given JSONL lines, by their key alone: a bash
+ * command that trips any rule (an executor, a GitHub or git write, a
+ * protected-surface write, …) or `write <path>` for a write-tool target on a
+ * protected surface. Deduplicated, order-preserving; malformed lines skipped. */
 export function auditExecViolations(lines: string[]): string[] {
   return auditExecViolationDetails(lines).map((v) => v.command);
 }

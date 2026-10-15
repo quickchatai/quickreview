@@ -68,11 +68,15 @@ describe("read-only feedback ticket projection", () => {
       join(dir, "FT-0299-done.md"),
       ticket("FT-0299", "resolved", "Done feedback", "2026-08-25T18:00:00Z"),
     );
+    writeFileSync(
+      join(dir, "FT-10000-past-four-digits.md"),
+      ticket("FT-10000", "resolved", "Five-digit id", "2026-08-25T16:00:00Z"),
+    );
     writeFileSync(join(dir, "README.md"), "not a ticket");
 
     // The effort is config, not a literal — callers always name it.
     const tickets = readEffortTickets(root, "review-feedback-loop");
-    expect(tickets.map((t) => t.id)).toEqual(["FT-0300", "FT-0299"]);
+    expect(tickets.map((t) => t.id)).toEqual(["FT-0300", "FT-0299", "FT-10000"]);
     expect(tickets[0]!.path).toContain("FT-0300-open.md");
   });
 

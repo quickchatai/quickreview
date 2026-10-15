@@ -999,11 +999,14 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         // recorded and yesterday's conversation continues. Loud, because a
         // rollover that silently did not happen reads as one that did.
         app.notice(`companion: day rollover DEFERRED — ${report.deferred}`);
+      } else if (report.stoodDown) {
+        app.notice(`companion: ${report.stoodDown}`);
       } else if (report.verdict.kind === "rollover") {
         app.notice(
           `companion: new day ${report.verdict.today} — fresh conversation (${report.steps.length} steps)`,
         );
       }
+      for (const warning of report.warnings ?? []) app.notice(`companion: ${warning}`);
       if (report.interviewFile) {
         app.notice(
           "companion: first start on this installation — greeting + calibration interview queued",
@@ -1013,9 +1016,11 @@ export async function runTui(argv: string | string[] = [], deps: RunTuiDeps = {}
         "rollover",
         report.deferred
           ? `deferred — ${report.deferred}`
-          : report.verdict.kind === "rollover"
-            ? `new day ${report.verdict.today}`
-            : "same day",
+          : report.stoodDown
+            ? "rolled over by another start"
+            : report.verdict.kind === "rollover"
+              ? `new day ${report.verdict.today}`
+              : "same day",
       );
       progress.begin("companion-pi");
       await companion.spawnPi();

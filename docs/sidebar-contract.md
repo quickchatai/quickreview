@@ -8,12 +8,13 @@ decisions (root CLAUDE.md, "The TUI has ONE layout").
 ## Geometry
 
 The frame is composed of an **inner Frame** (the tab, rendered at a reduced
-width) with the **sidebar column appended to its right**. The sidebar owns its
-own left border, so the inner frame keeps its own right border and the two
-simply concatenate.
+width) with the **sidebar column appended to its right**. The two share one
+border cell: the tab renders at `innerWidth(cols)` with its own right border,
+the compositor drops that cell, and the column's own left border is the
+divider (its `┬`/`┴` corners continue the tab's top and bottom rules).
 
 ```
-cols = inner.cols + sidebarWidth(cols, state)
+cols = inner.cols - 1 + sidebarWidth(cols, state)
 ```
 
 - default: half the terminal, clamped to leave `64` columns for the tab
