@@ -137,6 +137,14 @@ describe("install-locator.sh ≡ src/install.ts", () => {
       () => ({ HOME: join(dir, "home"), QCR_CONFIG_HOME: "rel/cfg", QCR_STATE_HOME: "rel/st" }),
     ],
     [
+      "XDG values and HOME are read trimmed, as the reference reads them",
+      () => ({
+        HOME: ` ${join(dir, "home")} `,
+        XDG_CONFIG_HOME: ` ${join(dir, "xdg-config")} `,
+        XDG_STATE_HOME: "  ",
+      }),
+    ],
+    [
       "a RELATIVE XDG value is ignored (the XDG spec)",
       () => ({
         HOME: join(dir, "home"),

@@ -41,13 +41,24 @@ qcr_install_name() {
   printf '%s\n' "$name"
 }
 
-# An XDG base dir: the variable when set AND absolute, else $HOME/<fallback>.
+# Leading and trailing whitespace dropped, as the reference's .trim() does.
+_qcr_trim() { # _qcr_trim <value>
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  printf '%s\n' "$v"
+}
+
+# An XDG base dir: the variable (trimmed) when set AND absolute, else
+# $HOME/<fallback> ($HOME trimmed too).
 _qcr_xdg_base() { # _qcr_xdg_base <value> <fallback-under-home>
-  local value="$1" fallback="$2"
+  local value fallback="$2" home
+  value="$(_qcr_trim "$1")"
   if [[ -n "$value" && "$value" == /* ]]; then
     printf '%s\n' "$value"
   else
-    printf '%s\n' "${HOME:-$(cd ~ && pwd)}/$fallback"
+    home="$(_qcr_trim "${HOME:-}")"
+    printf '%s\n' "${home:-$(cd ~ && pwd)}/$fallback"
   fi
 }
 
@@ -55,9 +66,8 @@ _qcr_xdg_base() { # _qcr_xdg_base <value> <fallback-under-home>
 # companion container points them at its mounts): taken only when set AND
 # absolute, trailing slashes dropped. Prints nothing when it does not apply.
 _qcr_home_override() { # _qcr_home_override <value>
-  local v="$1"
-  v="${v#"${v%%[![:space:]]*}"}"
-  v="${v%"${v##*[![:space:]]}"}"
+  local v
+  v="$(_qcr_trim "$1")"
   [[ -n "$v" && "$v" == /* ]] || return 0
   while [[ "$v" == */ && "$v" != / ]]; do v="${v%/}"; done
   printf '%s\n' "$v"
@@ -167,7 +177,11 @@ qcr_secrets_home() {
   printf '%s\n' "$home/secrets"
 }
 
-_qcr_home_dir() { printf '%s\n' "${HOME:-$(cd ~ && pwd)}"; }
+_qcr_home_dir() {
+  local h
+  h="$(_qcr_trim "${HOME:-}")"
+  printf '%s\n' "${h:-$(cd ~ && pwd)}"
+}
 
 _qcr_expand_home() { # _qcr_expand_home <path>
   local p="$1"
