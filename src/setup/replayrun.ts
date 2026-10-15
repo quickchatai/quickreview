@@ -32,6 +32,7 @@
 // and request), the current run, and the rates measured from finished cases
 // (what later previews price with).
 import { buildPassPlan } from "../dispatch.js";
+import { DOUBT_WORDS } from "../doubtwords.js";
 import { VALIDATE_PASS } from "../include.js";
 import { findStyleGuide } from "../styleguide.js";
 import { findCiLinters } from "../lintconfig.js";
@@ -1008,7 +1009,10 @@ export function validated(
   }
   const kept = findings.length;
   let doubted = 0;
-  for (const d of answer.doubted) {
+  // A validity veto written under KILLED (an older spelling) is still a
+  // doubt, as the daemon's findings record reads it.
+  const vetoes = answer.killed.filter((k) => DOUBT_WORDS.includes(k.word.trim().toLowerCase()));
+  for (const d of [...answer.doubted, ...vetoes]) {
     const at = { path: d.path, start: d.line ?? 1, end: d.line ?? Number.MAX_SAFE_INTEGER };
     const c = candidates.find((x) => !used.has(x) && near(at, x));
     if (!c) continue;

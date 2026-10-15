@@ -1064,6 +1064,17 @@ describe("replay rules", () => {
     expect([v.kept, v.doubted, v.killed]).toEqual([1, 1, 1]);
   });
 
+  it("a validity veto written under KILLED is a doubt, kept — only other kills drop", () => {
+    const cands = [f({ start: 20, end: 20 }), f({ path: "b.py", start: 5, end: 5 })];
+    const v = validated(
+      "FINDINGS pass-validate PR#1 @x\nNONE\nKILLED\n- pass-baseline a.py:20 — refuted: the caller checks it\n- b.py:5 duplicate",
+      "/t",
+      cands,
+    );
+    expect(v.findings.map((x) => [x.path, x.doubt?.word ?? null])).toEqual([["a.py", "refuted"]]);
+    expect([v.kept, v.doubted, v.killed]).toEqual([0, 1, 1]);
+  });
+
   it("a validator's prose that judges nothing kills nothing", () => {
     const v = validated("I could not finish the validation.", "/t", [f({}), f({ path: "b.py" })]);
     expect(v).toMatchObject({ answered: false, findings: [], killed: 0 });
