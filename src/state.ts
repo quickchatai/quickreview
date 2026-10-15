@@ -3362,7 +3362,9 @@ export class StateStore {
 
   /** A terminal command handed back for a fresh delivery (`redeliverRound`,
    * bounded by the round's own `redeliveries`): a new delivery lifecycle, so
-   * the same-session redelivery budget starts again. */
+   * the same-session redelivery budget starts again. A round prompt is
+   * handed back only while its round still runs, as on the other two replay
+   * paths: a round ended meanwhile is never revived. */
   retrySessionCommand(id: string, opts: { inject_path: string; next_check_at: string }): boolean {
     const ts = this.ts();
     return (
@@ -3373,6 +3375,10 @@ export class StateStore {
               updated_at=@ts, next_check_at=@next_check_at, unknown_checks=0, redeliveries=0,
               started_at=NULL, settled_at=NULL, failed_at=NULL, failure=NULL
         WHERE id=@id AND status IN ('acked', 'failed')
+          AND (kind != 'round' OR EXISTS (
+            SELECT 1 FROM rounds r
+             WHERE r.pr = session_commands.pr AND r.round_no = session_commands.round_no
+               AND r.status = 'running'))
           AND NOT EXISTS (
             SELECT 1 FROM session_commands active
              WHERE active.session=session_commands.session

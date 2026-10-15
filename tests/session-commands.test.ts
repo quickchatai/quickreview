@@ -94,7 +94,18 @@ describe("durable PR-session command slot", () => {
 
   it("retries a terminal command under the same id and exact payload evidence", () => {
     const store = open();
-    store.createSessionCommand(input("cmd-a"));
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 5408",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("cmd-a"), round_no: 1 });
     store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:30:00.000Z");
     expect(
       store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no correlated run message"),
@@ -202,6 +213,33 @@ describe("durable PR-session command slot", () => {
 
     store.markRoundCancelled(roundId, "infrastructure recovery", "infrastructure_failure");
     expect(store.blockingSessionCommand("pr-5408")).toBeUndefined();
+  });
+
+  it("never hands a round prompt back once its round has ended", () => {
+    const store = open();
+    store.upsertPr({
+      number: 5408,
+      state: "reviewing",
+      head_sha: "abc",
+      title: "PR 5408",
+      author: "alice",
+      trigger_ts: null,
+      stale_recheck: 0,
+      migration_gate: 0,
+    });
+    const roundId = store.startRound(5408, "first", ["pass-baseline"], 75);
+    store.createSessionCommand({ ...input("cmd-a"), round_no: 1 });
+    store.claimSessionCommand("cmd-a", "bridge-a", "2026-08-27T20:02:00.000Z");
+    store.finishSessionCommand("cmd-a", "bridge-a", "failed", "no start");
+    store.markRoundCancelled(roundId, "operator recovery", "infrastructure_failure");
+
+    expect(
+      store.retrySessionCommand("cmd-a", {
+        inject_path: "/inject/pr-5408/wake--cmd-cmd-a.md",
+        next_check_at: "2026-08-27T20:04:00.000Z",
+      }),
+    ).toBe(false);
+    expect(store.getSessionCommand("cmd-a")?.status).toBe("failed");
   });
 
   it("migrates the pre-supervisor command table without losing its active row", () => {

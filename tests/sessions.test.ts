@@ -1326,6 +1326,9 @@ describe("durable command ownership", () => {
     );
     try {
       const m = manager(undefined, store);
+      // The round the prompt belongs to is still running (dispatch starts
+      // it before the prompt is handed over).
+      store.startRound(42, "first", ["pass-baseline"], 75);
       await m.dispatchRound(order, "ROUND PROMPT BODY");
       const original = store.activeSessionCommand("pr-42")!;
       const bytes = readFileSync(original.payload_path);
