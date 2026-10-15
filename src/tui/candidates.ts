@@ -51,6 +51,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { CapturedComment } from "../capture.js";
+import { parseEventTags } from "../memory/eventtags.js";
+import { normalizeTag } from "../memory/store.js";
 import type { StatusSnapshot } from "../state.js";
 import { MANIFEST_NAME, prSignature, type RoundManifest, type WhyRound } from "./evidence.js";
 
@@ -91,8 +93,7 @@ export const FAMILY_WHY: Record<CandidateFamily, string> = {
   dismissed: "the author threw the bot's review away rather than answering it",
   "no-verdict": "the round died — overdue, malformed, orphaned or cancelled — and nobody was told",
   "repeat-blocks": "the same PR re-blocked round after round; the treadmill, not a fix cycle",
-  "repeat-approvals":
-    "approved, then approved again; the recheck forbids this, so watch it die",
+  "repeat-approvals": "approved, then approved again; the recheck forbids this, so watch it die",
   "long-review": "ten rounds or more, whatever the pattern",
 };
 
@@ -309,7 +310,14 @@ const DISAGREEMENT_KINDS = new Set([
   "human_approved_over_block",
   "human_blocked_after_approve",
 ]);
-const DISMISSAL_KINDS = new Set(["review_dismissed", "bot_comment_deleted", "trigger_withdrawn"]);
+// `review_set_aside` is the feedback ledger's name for a dismissed bot review;
+// `review_dismissed` is kept for a transport that forwards the GitHub word.
+const DISMISSAL_KINDS = new Set([
+  "review_set_aside",
+  "review_dismissed",
+  "bot_comment_deleted",
+  "trigger_withdrawn",
+]);
 
 function firstLine(body: string): string {
   const line = body.split("\n").find((l) => l.trim() !== "") ?? "";
@@ -386,8 +394,9 @@ function errText(err: unknown): string {
 
 /**
  * The store. Same shape as `EvidenceStore`: a plain file, written atomically
- * (temp + rename) so a reader never sees half a list, and re-read from disk on
- * every sweep so it survives a TUI restart with no in-memory state at all.
+ * (temp + rename) so a reader never sees half a list. The sweeper reads it
+ * when it has no list in hand — after a TUI restart, with no in-memory state
+ * at all — and merges onto its own last list otherwise.
  */
 export class CandidateStore {
   constructor(readonly dir: string) {}
@@ -658,27 +667,13 @@ export function adjudicationsFrom(
 ): Map<number, string> {
   const out = new Map<number, string>();
   for (const e of entries) {
-    if (!e.tags.some((t) => t.replace(/^#/, "").toLowerCase() === "adjudication")) continue;
+    if (!e.tags.some((t) => normalizeTag(t) === "adjudication")) continue;
     const first = e.text.split("\n")[0] ?? "";
-    const kv = parseHeaderPairs(first);
+    const kv = parseEventTags(first);
     const pr = Number(kv.pr ?? "");
     if (!Number.isInteger(pr) || pr <= 0) continue;
     const prev = out.get(pr);
     if (!prev || e.ts > prev) out.set(pr, e.ts);
-  }
-  return out;
-}
-
-/** The `k=v` run of a header line. Local rather than imported so this module
- * pulls in no daemon-side code; the grammar is `eventtags.ts`'s, unchanged. */
-function parseHeaderPairs(line: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const token of line.split(/\s+/)) {
-    if (token === "") continue;
-    if (token.startsWith("#")) continue;
-    const m = /^([a-z][a-z0-9_-]*)=(\S+)$/.exec(token);
-    if (!m) break;
-    if (!(m[1]! in out)) out[m[1]!] = m[2]!;
   }
   return out;
 }
