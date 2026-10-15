@@ -48,7 +48,7 @@
 // NEVER A DELETE. A move is a new copy plus a `#retired #moved` stub at the
 // old address; a retirement is the `#retired` tag. Every write is a
 // batch-write with a hash precondition, one per directory.
-import { parseEventTags, parseHashTags } from "./eventtags.js";
+import { EVENT_TAG_RE, parseEventTags, parseHashTags } from "./eventtags.js";
 import {
   EVENTS_AREA,
   PINNED_AREA,
@@ -141,7 +141,6 @@ const PROBE_RE = /^confinement probe [\w:.-]+$/;
 const FEEDBACK_HASH = new Set(["feedback", "feedback-review", "adjudication"]);
 const OPS_HASH = new Set(["bug", "operations", "openviking", "review-ops"]);
 
-const KV_TOKEN = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
 const HASH_TOKEN = /^#([^\s#]+)$/;
 
 /**
@@ -170,14 +169,14 @@ export function looseTags(text: string): { hash: Set<string>; kv: Record<string,
     const line = raw.trim().replace(/^Tags:\s*/i, "");
     if (line === "") continue;
     const tokens = line.split(/\s+/);
-    if (!tokens.every((t) => HASH_TOKEN.test(t) || KV_TOKEN.test(t))) continue;
+    if (!tokens.every((t) => HASH_TOKEN.test(t) || EVENT_TAG_RE.test(t))) continue;
     for (const t of tokens) {
       const h = HASH_TOKEN.exec(t);
       if (h) {
         hash.add(h[1]!.toLowerCase());
         continue;
       }
-      const m = KV_TOKEN.exec(t);
+      const m = EVENT_TAG_RE.exec(t);
       if (m && !(m[1]! in kv)) kv[m[1]!] = m[2]!;
     }
   }

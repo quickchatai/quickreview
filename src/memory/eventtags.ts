@@ -9,8 +9,9 @@
 // The seam carries TEXT, not a tag map (see `store.ts`), so tags ride inside
 // the entry as a leading, machine-parseable run: `#hash #tags k=v k=v prose…`.
 
-/** One `k=v` token: bare (no `#`), value without whitespace. */
-const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
+/** One `k=v` token: bare (no `#`), value without whitespace — the ONE
+ * grammar every header reader and editor (layout.ts, relayout.ts) uses. */
+export const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
 
 /** `k=v k=v …`, declaration order — byte-stable for a given signal. */
 export function formatEventTags(tags: Record<string, string>): string {

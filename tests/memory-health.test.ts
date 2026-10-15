@@ -11,7 +11,9 @@
 import { describe, expect, it } from "vitest";
 import { AnomalyWakePolicy } from "../src/anomalies.js";
 import { StateStore } from "../src/state.js";
+import { MEMORY_DEFAULTS } from "../src/config.js";
 import {
+  MEMORY_HEALTH_DEFAULTS,
   MEMORY_WAKE,
   MemoryHealthMonitor,
   disabledMemoryStatus,
@@ -894,5 +896,14 @@ describe("memory health — scope, retries and the sessions credential", () => {
     h.set("sessions", OK);
     await h.probeAt(2 * MIN);
     expect(h.monitor.currentState()).toBe("healthy");
+  });
+});
+
+describe("memory health — the module's defaults are the config's", () => {
+  it("probe interval, down-after, boot grace and re-wake agree with MEMORY_DEFAULTS", () => {
+    expect(MEMORY_HEALTH_DEFAULTS.intervalMs).toBe(MEMORY_DEFAULTS.probe_interval_s * 1000);
+    expect(MEMORY_HEALTH_DEFAULTS.downAfterMs).toBe(MEMORY_DEFAULTS.down_after_min * MIN);
+    expect(MEMORY_HEALTH_DEFAULTS.bootGraceMs).toBe(MEMORY_DEFAULTS.boot_grace_min * MIN);
+    expect(MEMORY_HEALTH_DEFAULTS.rewakeMs).toBe(MEMORY_DEFAULTS.rewake_h * 60 * MIN);
   });
 });
