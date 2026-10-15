@@ -30,6 +30,7 @@ import {
   locateSecrets,
   migrateConfig,
   migrateProfiles,
+  migrateReport,
   migrateSecrets,
   operatorHome,
   profileMigrateReport,
@@ -225,8 +226,13 @@ describe("migrateConfig", () => {
     const home = { ...env, QCR_CONFIG_HOME: root };
     const cfg = put(join(root, "config.toml"), "live = 1\n");
     const prof = put(join(root, "profiles", "mine", "profile.toml"), "p = 1\n");
-    expect(migrateConfig({ root, env: home })).toEqual({ kind: "already", to: cfg });
+    const outcome = migrateConfig({ root, env: home });
+    expect(outcome).toEqual({ kind: "already", to: cfg, inPlace: true });
     expect(readFileSync(cfg, "utf8")).toBe("live = 1\n");
+    // the report never claims the checkout is empty: the live file is in it
+    const said = migrateReport(outcome).lines.join("\n");
+    expect(said).not.toMatch(/nothing in the checkout/);
+    expect(said).toMatch(/stays/);
     expect(migrateProfiles({ root, env: home })).toEqual([]);
     expect(readFileSync(prof, "utf8")).toBe("p = 1\n");
   });
@@ -476,6 +482,30 @@ describe("migrateProfiles", () => {
     const report = profileMigrateReport([o!]);
     expect(report.code).toBe(0);
     expect(report.lines.join("\n")).toMatch(/link/);
+  });
+
+  it("a home profile whose FILES link into the checkout's is never 'deduplicated' away", () => {
+    const from = putProfile(root, "house", "only copy\n");
+    const to = join(configHome(env), "profiles", "house");
+    mkdirSync(join(to, "addenda"), { recursive: true });
+    symlinkSync(join(from, "addenda", "10-rule.md"), join(to, "addenda", "10-rule.md"));
+    const [o] = migrateProfiles({ root, env });
+    expect(o).toMatchObject({ kind: "aliased", name: "house", from, to });
+    expect(readFileSync(join(from, "addenda", "10-rule.md"), "utf8")).toBe("only copy\n");
+    expect(readFileSync(join(to, "addenda", "10-rule.md"), "utf8")).toBe("only copy\n");
+  });
+
+  it("a sibling link left dangling by an interrupted run still migrates on the re-run", () => {
+    // the state a run stopped between moving house-real and re-pointing house
+    put(join(configHome(env), "profiles", "house-real", "addenda", "10-rule.md"), "real\n");
+    mkdirSync(join(root, "profiles"), { recursive: true });
+    symlinkSync("house-real", join(root, "profiles", "house"));
+    const out = migrateProfiles({ root, env });
+    expect(out.map((o) => [o.kind, o.name])).toEqual([["moved", "house"]]);
+    const home = join(configHome(env), "profiles");
+    expect(readFileSync(join(home, "house", "addenda", "10-rule.md"), "utf8")).toBe("real\n");
+    expect(lstatSync(join(root, "profiles", "house"), { throwIfNoEntry: false })).toBeUndefined();
+    expect(locateProfile({ root, profile: "house", env })).toMatchObject({ source: "home" });
   });
 
   it("a checkout profile that is a symlink to an external pack migrates too (selfscan)", () => {

@@ -32,7 +32,8 @@
 // profile left there is stranded, never read, and `qcr install migrate`
 // moves it.
 //
-// Pure where it can be: `locateConfig` takes the env and an `exists` probe, so
+// Pure where it can be: every locator takes the env as a parameter (and
+// `strandedCheckoutConfig` / `locateProfile` an `exists` / `isDir` probe), so
 // the tests drive it with temp XDG homes and never touch the operator's own.
 import {
   chmodSync,
@@ -43,6 +44,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmdirSync,
@@ -84,10 +86,16 @@ export const CONFIG_FILE = "config.toml";
  * No separators, no leading dot, so `..` and `a/../../b` are unspellable. */
 const SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/** Whether `name` is a plain path segment — the one admission rule behind
+ * `assertPathSegment` and every listing that skips what it would refuse. */
+function isPathSegment(name: string): boolean {
+  return SEGMENT_RE.test(name) && !name.includes("..");
+}
+
 /** Refuse a name that could escape its parent directory. `kind` names what the
  * segment is for, so the error says which knob is wrong. */
 export function assertPathSegment(kind: string, name: string): string {
-  if (!SEGMENT_RE.test(name) || name.includes("..")) {
+  if (!isPathSegment(name)) {
     throw new Error(
       `${kind} ${JSON.stringify(name)} is not a plain name — letters, digits, '.', '_' and '-' only, no path separators or '..'`,
     );
@@ -105,8 +113,12 @@ export function installName(env: InstallEnv = process.env): string {
 function xdgBase(value: string | undefined, env: InstallEnv, fallback: string): string {
   const v = (value ?? "").trim();
   if (v !== "" && isAbsolute(v)) return v;
-  const home = (env.HOME ?? "").trim() || homedir();
-  return join(home, fallback);
+  return join(homeOf(env), fallback);
+}
+
+/** `$HOME`, else the OS's idea of it — the one fallback every derived path uses. */
+function homeOf(env: InstallEnv): string {
+  return (env.HOME ?? "").trim() || homedir();
 }
 
 /** A home override is taken only when it is set AND absolute — a relative
@@ -212,8 +224,10 @@ function samePath(a: string, b: string): boolean {
 export type MigrateOutcome =
   /** The checkout's config.toml is now in the config home. */
   | { kind: "moved"; from: string; to: string }
-  /** Nothing in the checkout, the home already holds the config: done before. */
-  | { kind: "already"; to: string }
+  /** The home already holds the config: done before. `inPlace` when the
+   * checkout's config.toml IS that file (a config home that is the checkout,
+   * or a link) — it stays, being the live config. */
+  | { kind: "already"; to: string; inPlace?: true }
   /** Both hold one and they are byte-identical: the checkout copy is removed. */
   | { kind: "deduplicated"; from: string; to: string }
   /** Both hold one and they differ: nothing is touched, the operator decides. */
@@ -238,7 +252,7 @@ export function migrateConfig(opts: { root: string; env?: InstallEnv }): Migrate
   const inCheckout = existsSync(from);
   const inHome = existsSync(to);
   if (!inCheckout) return inHome ? { kind: "already", to } : { kind: "nothing", to };
-  if (samePath(from, to)) return { kind: "already", to };
+  if (samePath(from, to)) return { kind: "already", to, inPlace: true };
   if (inHome) {
     if (!readFileSync(from).equals(readFileSync(to))) return { kind: "conflict", from, to };
     unlinkSync(from);
@@ -282,7 +296,11 @@ export function migrateReport(outcome: MigrateOutcome): { code: number; lines: s
     case "already":
       return {
         code: 0,
-        lines: [`already migrated: the config is ${outcome.to}; nothing in the checkout`],
+        lines: [
+          outcome.inPlace
+            ? `already migrated: the checkout's config.toml is ${outcome.to} itself — it stays, being the live config`
+            : `already migrated: the config is ${outcome.to}; nothing in the checkout`,
+        ],
       };
     case "deduplicated":
       return {
@@ -442,7 +460,7 @@ export function strandedCheckoutProfiles(opts: { root: string; env?: InstallEnv 
     return [];
   }
   return names
-    .filter((name) => SEGMENT_RE.test(name) && !name.includes(".."))
+    .filter(isPathSegment)
     .map((profile) => strandedCheckoutProfile({ ...opts, profile }))
     .filter((dir): dir is string => dir !== null);
 }
@@ -453,8 +471,9 @@ export type ProfileMigrateOutcome =
   | { kind: "moved"; name: string; from: string; to: string }
   | { kind: "deduplicated"; name: string; from: string; to: string }
   | { kind: "conflict"; name: string; from: string; to: string }
-  /** The home's entry is the checkout's (a symlink to it, or the reverse):
-   * one copy, already read from the home — nothing moved, nothing removed. */
+  /** The home's entry is the checkout's (a symlink to it, or the reverse, or
+   * a home profile whose files link into the checkout's): one copy, already
+   * read from the home — nothing moved, nothing removed. */
   | { kind: "aliased"; name: string; from: string; to: string }
   /** `$QCR_CONFIG` is set: nothing moves (see migrateProfiles). */
   | { kind: "override"; name: string; path: string };
@@ -472,6 +491,39 @@ function treeFiles(dir: string): Map<string, Buffer> {
   };
   walk("");
   return out;
+}
+
+/** Whether `child` is `parent` or lies under it (both already resolved). */
+function within(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel));
+}
+
+/** Whether anything under `dir` is a link resolving into `target` — a home
+ * profile whose files link into the checkout's depends on it, so removing the
+ * checkout copy as a "duplicate" would leave the home's links dangling. A
+ * linked directory is judged by where it points, not walked. */
+function linksInto(dir: string, target: string): boolean {
+  let realTarget: string;
+  try {
+    realTarget = realpathSync(target);
+  } catch {
+    return false;
+  }
+  const walk = (abs: string): boolean => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      const path = join(abs, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          if (within(realTarget, realpathSync(path))) return true;
+        } catch {
+          // a dangling link depends on nothing that exists
+        }
+      } else if (entry.isDirectory() && walk(path)) return true;
+    }
+    return false;
+  };
+  return walk(dir);
 }
 
 function sameTree(a: string, b: string): boolean {
@@ -507,12 +559,34 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   // A config home that IS the checkout: its profiles are already home.
   if (samePath(fromBase, toBase)) return [];
   const outcomes: ProfileMigrateOutcome[] = [];
+  const realBase = realpathSync(fromBase);
+  // A link to a sibling that an earlier, interrupted run already moved into
+  // the home dangles in the checkout; it still names a profile, and that
+  // sibling's new place is where it now points.
+  const movedSibling = (link: string): string | null => {
+    let target: string;
+    try {
+      target = readlinkSync(link);
+    } catch {
+      return null;
+    }
+    const abs = resolve(fromBase, target);
+    for (const base of [fromBase, realBase]) {
+      if (!within(base, abs) || abs === base) continue;
+      const moved = join(toBase, relative(base, abs));
+      if (isDirectory(moved)) return moved;
+    }
+    return null;
+  };
   const names = readdirSync(fromBase, { withFileTypes: true })
     // A symlinked profile dir counts: strandedCheckoutProfile (stat-based)
     // names it, so migrate must have an outcome for it.
     .filter(
       (e) =>
-        (e.isDirectory() || (e.isSymbolicLink() && isDirectory(join(fromBase, e.name)))) &&
+        (e.isDirectory() ||
+          (e.isSymbolicLink() &&
+            (isDirectory(join(fromBase, e.name)) ||
+              movedSibling(join(fromBase, e.name)) !== null))) &&
         !EXAMPLE_PROFILES.includes(e.name),
     )
     .map((e) => e.name)
@@ -524,11 +598,12 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
   // Linked profiles resolve before anything moves, and move last: a link to a
   // sibling in the checkout (`house -> house-real`) must follow that sibling
   // into the home, not point at the spot it was just moved out of.
-  const realBase = realpathSync(fromBase);
   const linkTargets = new Map<string, string>();
   for (const name of names) {
     const from = join(fromBase, name);
-    if (lstatSync(from).isSymbolicLink()) linkTargets.set(name, realpathSync(from));
+    if (!lstatSync(from).isSymbolicLink()) continue;
+    const target = isDirectory(from) ? realpathSync(from) : movedSibling(from);
+    if (target !== null) linkTargets.set(name, target);
   }
   const ordered = [
     ...names.filter((n) => !linkTargets.has(n)),
@@ -546,7 +621,7 @@ export function migrateProfiles(opts: { root: string; env?: InstallEnv }): Profi
     if (existsSync(to)) {
       // Per-name identity: the base-dir check does not see a home profile
       // linked to the checkout's, and "deduplicating" that deletes the only copy.
-      if (samePath(from, to)) {
+      if (samePath(from, to) || (isDirectory(to) && linksInto(to, from))) {
         outcomes.push({ kind: "aliased", name, from, to });
         continue;
       }
@@ -601,7 +676,7 @@ export function profileMigrateReport(outcomes: ProfileMigrateOutcome[]): {
         break;
       case "aliased":
         lines.push(
-          `profile ${o.name}: ${o.to} is a link to ${o.from} (or the reverse) — one copy, already read from the home; nothing moved or removed`,
+          `profile ${o.name}: ${o.to} is a link to ${o.from} (or the reverse, or links into it) — one copy, already read from the home; nothing moved or removed`,
         );
         break;
       case "override":
@@ -650,10 +725,6 @@ export const SECRETS_SUBDIR = "secrets";
 export const KEYS_FILE = "openviking-keys.env";
 /** The legacy default spelling of `secrets_dir`. */
 export const LEGACY_SECRETS_SPELLING = "~/.config/quickreview-bot";
-
-function homeOf(env: InstallEnv): string {
-  return (env.HOME ?? "").trim() || homedir();
-}
 
 function expandHomeIn(path: string, env: InstallEnv): string {
   if (path === "~") return homeOf(env);
