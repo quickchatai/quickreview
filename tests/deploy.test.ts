@@ -318,6 +318,9 @@ describe("deploy.sh --dry-run", () => {
     const r = run(env, ["--dry-run", "rebuild"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("-e rebuild_image=true");
+    // An image that comes out identical recreates nothing, and the code and
+    // config are bind mounts: only a restart puts the shipped tree to work.
+    expect(r.stdout).toContain("-e force_restart=true");
   });
 
   it("plans ssh-only checks in verify mode (cloudflared + container + heartbeat)", () => {
