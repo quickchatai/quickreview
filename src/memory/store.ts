@@ -20,10 +20,11 @@
 //     `content/batch-write` endpoint), so a single `apply` is the honest
 //     shape — and adding an op is a union arm, not an interface break for
 //     every fake in the test suite.
-//   * Writes resolve with a result, they do not reject. A refusal ("stale
+//   * Writes resolve with a result, they never reject. A refusal ("stale
 //     view", "no such batch") is an ordinary answer callers render to the
-//     operator; only a broken transport throws. Callers must never have to
-//     tell those two apart to decide whether the memory changed.
+//     operator, and so is a dead transport. Callers must never have to tell
+//     those two apart to decide whether the memory changed. (A READ may
+//     reject when there is no transport at all.)
 //   * Every addressed op carries an expected-content hash. Memory has other
 //     writers (a live session's own memory writes hold no lock), so a
 //     mutation addressed at content the store no longer holds is refused
@@ -227,6 +228,31 @@ export interface MemoryStore extends MemorySource {
 /** Normalize a tag for comparison: leading `#`s dropped, lowercased. */
 export function normalizeTag(tag: string): string {
   return tag.replace(/^#+/, "").toLowerCase();
+}
+
+/** Every `#tag` token ANYWHERE in an entry's text — what `MemoryEntry.tags`
+ * carries for search and the import's classifier. Never the privileged
+ * reader: placement and event headers read the header alone
+ * (`eventtags.ts` `parseHashTags`). */
+export function tagsOf(text: string): string[] {
+  return [...text.matchAll(/(^|\s)#([\w-]+)/g)].map((m) => m[2]!);
+}
+
+/** Every `[[link]]` token in an entry's text — `MemoryEntry.links`. */
+export function linksOf(text: string): string[] {
+  return [...text.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1]!);
+}
+
+/** A store's `search`: the entries `matchesQuery` admits, cut to
+ * `opts.limit` when one is given (absent or negative: all of them). */
+export function searchEntries(
+  entries: readonly MemoryEntry[],
+  query: string,
+  opts?: MemorySearchOptions,
+): MemoryEntry[] {
+  const hits = entries.filter((e) => matchesQuery(e, query, opts));
+  const limit = opts?.limit;
+  return limit !== undefined && limit >= 0 ? hits.slice(0, limit) : hits;
 }
 
 /** The shared match predicate — case-insensitive substring over the text,

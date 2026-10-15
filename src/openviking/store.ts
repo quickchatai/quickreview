@@ -77,7 +77,10 @@ import {
   withoutHeaderTag,
 } from "../memory/layout.js";
 import {
-  matchesQuery,
+  linksOf,
+  normalizeTag,
+  searchEntries,
+  tagsOf,
   type DocumentPut,
   type DocumentPutResult,
   type MemoryEntry,
@@ -104,8 +107,6 @@ export function sha256Prefixed(body: string): string {
   return `sha256:${createHash("sha256").update(Buffer.from(body, "utf8")).digest("hex")}`;
 }
 
-const TAG_TOKEN_RE = /(^|\s)#([\w-]+)/g;
-const LINK_RE = /\[\[([^\]]+)\]\]/g;
 
 /** An id is a relative path of one to three safe segments ending in a text
  * extension — `<file>`, `<area>/<file>` or `preferences/pinned/<file>`. Anything else is refused rather than turned
@@ -155,9 +156,7 @@ export function stampOf(ts: string): string {
   return `${ts.slice(0, 10).replace(/-/g, "")}T${ts.slice(11).replace(/:/g, "")}`;
 }
 
-export function tagsOf(text: string): string[] {
-  return [...text.matchAll(TAG_TOKEN_RE)].map((m) => m[2]!);
-}
+export { tagsOf };
 
 /**
  * The stored body for an entry: `#tags` first, then the text, then exactly one
@@ -174,7 +173,7 @@ export function renderEntryBody(text: string, addTags: readonly string[] = []): 
   // must not stop the real one landing in the header where readers look.
   const have = new Set(parseHashTags(trimmed));
   const missing = addTags
-    .map((t) => t.replace(/^#+/, "").toLowerCase())
+    .map(normalizeTag)
     .filter((t) => t !== "" && !have.has(t));
   const head = missing.map((t) => `#${t}`).join(" ");
   return `${head === "" ? trimmed : `${head} ${trimmed}`}\n`;
@@ -215,7 +214,7 @@ export function entryFrom(id: string, text: string, modTime: string): MemoryEntr
     block: 0,
     text: trimmed,
     tags,
-    links: [...trimmed.matchAll(LINK_RE)].map((m) => m[1]!),
+    links: linksOf(trimmed),
     // Placement, never text: a pinned entry rides the guaranteed
     // head of every round prompt, and that head reads `preferences/pinned/`
     // alone. An address is chosen by whoever writes the file (a `note` names
@@ -910,9 +909,7 @@ export class OpenVikingStore implements MemoryStore {
    * addressed.
    */
   async search(query: string, opts?: MemorySearchOptions): Promise<MemoryEntry[]> {
-    const hits = (await this.read()).filter((e) => matchesQuery(e, query, opts));
-    const limit = opts?.limit;
-    return limit !== undefined && limit >= 0 ? hits.slice(0, limit) : hits;
+    return searchEntries(await this.read(), query, opts);
   }
 
   /**
