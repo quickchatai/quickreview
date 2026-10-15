@@ -1104,6 +1104,17 @@ export function migrateSecrets(
       case "move":
         ensurePrivateDir(dirname(fileTo));
         if (keepWhole && !f.isKeys) {
+          // A dangling link where the copy would go: a rename replaces it,
+          // a copy never writes through it.
+          if (entryExists(fileTo)) {
+            files.push({
+              name,
+              to: fileTo,
+              outcome: "skipped",
+              why: `${fileTo} is a dangling link; ${kept}`,
+            });
+            break;
+          }
           copyKeepingMode(f.src, fileTo);
           files.push({ name, to: fileTo, outcome: "copied", why: kept });
           break;

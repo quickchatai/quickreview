@@ -966,6 +966,19 @@ describe("migrateSecrets", () => {
     expect(readdirSync(legacy()).sort()).toEqual(["app.pem", "app_id", "webhook_secret"]);
   });
 
+  it("a dir kept whole never copies through a dangling link in the home", () => {
+    put600("app.pem", "RUNNING-PEM\n");
+    put600("app_id", "123\n");
+    mkdirSync(secretsHome(env), { recursive: true });
+    writeFileSync(join(secretsHome(env), "app.pem"), "OTHER-PEM\n");
+    symlinkSync(join(dir, "nowhere"), join(secretsHome(env), "app_id"));
+    const m = migrateSecrets({ env });
+    if (m.kind !== "done") throw new Error(m.kind);
+    expect(m.files.find((f) => f.name === "app_id")).toMatchObject({ outcome: "skipped" });
+    expect(existsSync(join(dir, "nowhere"))).toBe(false);
+    expect(readFileSync(join(legacy(), "app_id"), "utf8")).toBe("123\n");
+  });
+
   it("a dir kept whole gets back what an earlier run moved out, never over a file", () => {
     // The state an earlier migrate left: the conflicting PEM behind, the rest moved.
     put600("app.pem", "RUNNING-PEM\n");
