@@ -634,6 +634,69 @@ describe("the transport is the one decision point", () => {
   });
 });
 
+describe("the ssh transport's probes and restart", () => {
+  function sshWith(answer: (line: string) => ProcessResult) {
+    seedChoices(VM_CHOICES);
+    const calls: string[] = [];
+    const runner = {
+      run: async (_cmd: string, args: string[]): Promise<ProcessResult> => {
+        const line = args.join(" ");
+        calls.push(line);
+        return answer(line);
+      },
+    };
+    const ctx: StepContext = {
+      adapters: baseAdapters(runner),
+      input: {},
+      choices: VM_CHOICES,
+      data: {},
+      recordChoice: () => undefined,
+    };
+    return { calls, ctx };
+  }
+  const ok = (stdout: string): ProcessResult => ({ code: 0, stdout, stderr: "" });
+
+  it("picks its container out of docker's substring filter by EXACT name", async () => {
+    // Only a sibling whose name merely starts with ours is running.
+    const { ctx } = sshWith(() => ok("quickreview-sandbox-backup running\n"));
+    const t = stackTransportFor(ctx);
+    expect((await t.daemonState()).state).toBe("stopped");
+    const [check] = await t.containerChecks(null);
+    expect(check).toMatchObject({ ok: false });
+    expect(check!.detail).toMatch(/is not there at all/);
+    // The real one among siblings is found whatever the row order.
+    const both = sshWith(() => ok("quickreview-sandbox-old exited\nquickreview-sandbox running\n")).ctx;
+    expect((await stackTransportFor(both).containerChecks(null))[0]).toMatchObject({ ok: true });
+  });
+
+  it("the health probe honours the step's health budget", async () => {
+    const { ctx, calls } = sshWith(() => ok('{"ok":true}\n200'));
+    await stackTransportFor(ctx, { healthTimeoutMs: 30_000 }).health();
+    expect(calls.find((c) => c.includes("curl"))).toMatch(/curl -sS -m 30 /);
+  });
+
+  it("a STOPPED deployed container keeps the change owed — never 'nothing to restart'", async () => {
+    const { ctx } = sshWith((line) =>
+      line.includes("ps --all") ? ok("quickreview-sandbox\n") : ok(""),
+    );
+    const r = await stackTransportFor(ctx).restart(() => undefined, false);
+    expect(r.ok).toBe(false);
+    expect(r.detail).toMatch(/exists but is not running/);
+    expect(r.detail).toMatch(/deploy\.sh sync/);
+  });
+
+  it("a server never deployed to has nothing to restart; one Docker cannot answer for is not 'done'", async () => {
+    const never = sshWith(() => ok("quickreview-sandbox-other\n")).ctx;
+    const r = await stackTransportFor(never).restart(() => undefined, false);
+    expect(r).toMatchObject({ ok: true });
+    expect(r.detail).toMatch(/nothing is deployed on the server yet/);
+    const down = sshWith(() => ({ code: 255, stdout: "", stderr: "ssh: connect refused" })).ctx;
+    const u = await stackTransportFor(down).restart(() => undefined, false);
+    expect(u.ok).toBe(false);
+    expect(u.detail).toMatch(/NOT known to be on the server/);
+  });
+});
+
 describe("the layered verification runs over ssh, unchanged", () => {
   interface Layered {
     engine: OnboardingEngine;
