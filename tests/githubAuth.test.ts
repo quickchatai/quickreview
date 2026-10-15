@@ -111,6 +111,14 @@ describe("TokenMinter", () => {
     expect(gh.calls[1]!.init!.method).toBe("POST");
   });
 
+  it("puts a deadline on both of its requests, as the adapter does on every REST call", async () => {
+    const gh = fakeGitHub({ expiresAt: () => new Date(T0 + 3600_000).toISOString() });
+    const minter = new TokenMinter(secretsDir, gh.fetchFn, "https://api.github.com", () => T0);
+    await minter.installationToken();
+    expect(gh.calls).toHaveLength(2);
+    for (const c of gh.calls) expect(c.init!.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("caches the installation id after the first resolve", async () => {
     const gh = fakeGitHub({ expiresAt: () => new Date(T0 + 3600_000).toISOString() });
     const minter = new TokenMinter(secretsDir, gh.fetchFn, "https://api.github.com", () => T0);

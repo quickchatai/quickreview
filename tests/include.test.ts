@@ -91,6 +91,12 @@ describe("expandIncludes", () => {
     );
   });
 
+  it("rejects an empty directive rather than shipping it literally", () => {
+    expect(() => expandIncludes("a {{include:}} b", { root, readFile: fakeFs({}) })).toThrow(
+      /empty include directive/,
+    );
+  });
+
   it("leaves text without directives untouched", () => {
     const text = "no directives here {{not-an-include}}";
     expect(expandIncludes(text, { root, readFile: fakeFs({}) })).toBe(text);
@@ -221,6 +227,13 @@ describe("buildAgents", () => {
     expect(alpha).toContain("# shared\nrules");
     expect(alpha).not.toContain("{{include:");
     expect(alpha).toContain("# Lens: alpha");
+  });
+
+  it("refuses a pass source with no frontmatter — its variants would carry no name, model or tools", () => {
+    writeFileSync(join(root, "agents", "pass-gamma.md"), "# Lens: gamma, no frontmatter\n");
+    expect(() =>
+      buildAgents(join(root, "agents"), join(root, "state", "agents"), { root }),
+    ).toThrow(/pass-gamma\.md has no frontmatter/);
   });
 
   it("writes variant name/model/thinking frontmatter, other fields untouched", () => {
@@ -418,6 +431,12 @@ describe("build-time identity variables", () => {
   it("an unknown variable fails loudly, naming every offender", () => {
     expect(() => expandVariables("a {{nope}} b {{also_nope}}", NEUTRAL_IDENTITY_VARS)).toThrow(
       /unknown build-time variable\(s\): \{\{nope\}\}, \{\{also_nope\}\}/,
+    );
+  });
+
+  it("an inherited property is unknown too, never its function text", () => {
+    expect(() => expandVariables("{{constructor}} {{toString}}", NEUTRAL_IDENTITY_VARS)).toThrow(
+      /unknown build-time variable\(s\): \{\{constructor\}\}, \{\{toString\}\}/,
     );
   });
 

@@ -1061,7 +1061,7 @@ describe("measured round usage", () => {
       const hung = {
         readFile: () => new Promise<Buffer>(() => undefined),
         readDir: () => [],
-        sha256: (data: string) => data,
+        sha256: (data: string | Uint8Array) => String(data),
       };
       const w = watcher({
         integrityFingerprint: (opts) => fingerprintRoundIntegrity(opts, hung),

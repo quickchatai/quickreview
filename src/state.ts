@@ -6409,10 +6409,24 @@ export class StateStore {
 
   // ---- filed items (improvement PRs / issues, cap accounting) -----------
 
-  recordFiledItem(kind: "improvement_pr" | "issue", title: string, ref: string | null): void {
-    this.db
-      .prepare("INSERT INTO filed_items (kind, title, ref, filed_at) VALUES (?, ?, ?, ?)")
-      .run(kind, title, ref, this.ts());
+  /** Charge one cap slot; the row's id, for `settleFiledItem` /
+   * `releaseFiledItem` when the slot was reserved before the creation. */
+  recordFiledItem(kind: "improvement_pr" | "issue", title: string, ref: string | null): number {
+    return Number(
+      this.db
+        .prepare("INSERT INTO filed_items (kind, title, ref, filed_at) VALUES (?, ?, ?, ?)")
+        .run(kind, title, ref, this.ts()).lastInsertRowid,
+    );
+  }
+
+  /** Name what a reserved slot filed, once GitHub answered. */
+  settleFiledItem(id: number, ref: string | null): void {
+    this.db.prepare("UPDATE filed_items SET ref = ? WHERE id = ?").run(ref, id);
+  }
+
+  /** Free a reserved slot whose creation GitHub definitely refused. */
+  releaseFiledItem(id: number): void {
+    this.db.prepare("DELETE FROM filed_items WHERE id = ?").run(id);
   }
 
   filedSince(kind: "improvement_pr" | "issue", sinceIso: string): number {

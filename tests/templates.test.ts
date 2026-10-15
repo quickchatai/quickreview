@@ -75,6 +75,8 @@ describe("render", () => {
   it("throws on an unknown placeholder", () => {
     expect(() => render("{{n}} {{mystery}}", { n: "1" })).toThrow(UnknownPlaceholderError);
     expect(() => render("{{a}} {{b}}", {})).toThrow(/\{\{a\}\}, \{\{b\}\}/);
+    // an inherited property is not a value the caller supplied
+    expect(() => render("{{constructor}}", { n: "1" })).toThrow(UnknownPlaceholderError);
   });
 
   it("lists placeholders used by a template", () => {

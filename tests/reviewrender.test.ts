@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   postedRenderOptions,
+  postedSeverityTag,
   renderPostedReview,
   renderRenderNote,
   renderReviewFromRecord,
@@ -233,6 +234,22 @@ describe("renderReviewFromRecord — a thin record still renders, and says what 
   it("never throws on garbage", () => {
     expect(() => renderReviewFromRecord(null)).not.toThrow();
     expect(renderReviewFromRecord("x").problems).toContain("the record has no findings array");
+  });
+});
+
+describe("numbers read as the record parser reads them", () => {
+  // The parser stores `"0.7"` as 0.7; the renderer must post what it stores.
+  it("a decimal-string confidence counts, not the default of 1", () => {
+    const entry = { severity: "P2", reachability: "routine", posted_as: "deferred" };
+    expect(postedSeverityTag({ ...entry, confidence: 0.7 })).toBe("question");
+    expect(postedSeverityTag({ ...entry, confidence: "0.7" })).toBe("question");
+    expect(
+      parseFindingsRecord(
+        { pr: 1, round_no: 1, findings: [{ ...entry, lens: "pass-x", confidence: "0.7" }] },
+        1,
+        1,
+      ).record?.findings[0]?.confidence,
+    ).toBe(0.7);
   });
 });
 

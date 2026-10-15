@@ -7,17 +7,24 @@
 // A leaf on purpose — no imports. `src/reviewrender.ts` is also the bench's
 // render step, and the bench must not pull the daemon's modules in with it.
 
-function str(val: unknown): string | null {
+/** A record field as a non-empty trimmed string, else null. */
+export function recordString(val: unknown): string | null {
   if (typeof val !== "string") return null;
   const t = val.trim();
   return t.length > 0 ? t : null;
 }
 
-function num(val: unknown): number | null {
+/** A record field as a number — a finite number, or a decimal string a
+ * session wrote (`"0.7"`, `"12"`) — else null. The ONE coercion: the parser
+ * stores what the renderer posts, so a value both read must read alike. */
+export function recordNumber(val: unknown): number | null {
   if (typeof val === "number" && Number.isFinite(val)) return val;
   if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val.trim())) return Number(val.trim());
   return null;
 }
+
+const str = recordString;
+const num = recordNumber;
 
 /**
  * The per-round key of the record entry at `index` of its `findings` array:
@@ -89,7 +96,10 @@ export function parseFindingMarker(
   }
 }
 
+/** Every marker in a body, with the newlines the render route put before it. */
+const FINDING_MARKER_STRIP_RE = new RegExp(`\\n*${FINDING_MARKER_RE.source}`, "g");
+
 /** A body with every marker removed — what the comment reads as without it. */
 export function stripFindingMarkers(body: string): string {
-  return body.replace(/\n*<!--\s*qcr:f=\d+:[A-Za-z0-9%._~]+\s*-->/g, "");
+  return body.replace(FINDING_MARKER_STRIP_RE, "");
 }

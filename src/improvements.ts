@@ -511,24 +511,27 @@ async function fileImprovementPrNow(
       return reject(`gate refused the branch push: ${pushResult.blocked}`, { branch: botBranch });
     const pushed = pushResult.executed;
 
+    // The cap slot is charged BEFORE the request, so a
+    // daemon that dies while GitHub creates the PR still has it spent; only a
+    // definite refusal frees it. A label failure after the creation is a
+    // warning on a real filing, never a rejection that frees the slot.
+    const slot = ctx.store.recordFiledItem("improvement_pr", payload.title, botBranch);
     let pull: Awaited<ReturnType<GitHubAdapter["createPull"]>>;
     try {
       pull = await ctx.adapter.createPull(botBranch, base, payload.title, payload.body);
     } catch (err) {
-      if (!creationMayHaveHappened(err)) throw err;
-      ctx.store.recordFiledItem("improvement_pr", payload.title, botBranch);
+      if (!creationMayHaveHappened(err)) {
+        ctx.store.releaseFiledItem(slot);
+        throw err;
+      }
       return reject(
         `create_pull outcome unknown — the cap slot stays charged: ${(err as Error).message}`,
         { branch: botBranch },
       );
     }
     const prNumber = (pull.response as { number?: number } | undefined)?.number ?? 0;
-    // The PR now exists: record it BEFORE anything else can throw, so the
-    // 1/day + 3/week caps (counted from filed_items alone) see the slot spent.
-    // A label failure after this point is a warning on a real filing, never
-    // a rejection that frees the slot for a second PR.
     const ref = prNumber > 0 ? `#${prNumber}` : botBranch;
-    ctx.store.recordFiledItem("improvement_pr", payload.title, ref);
+    ctx.store.settleFiledItem(slot, ref);
     let labelWarning: string | undefined;
     try {
       await ctx.adapter.addLabel(prNumber, ctx.cfg.github.improvement_label);
@@ -628,6 +631,9 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
     );
   }
 
+  // Charged before the request, as for an improvement PR: a daemon that dies
+  // while GitHub creates the issue still has the slot spent.
+  const slot = ctx.store.recordFiledItem("issue", payload.title, null);
   let result: Awaited<ReturnType<GitHubAdapter["createIssue"]>>;
   try {
     result = await ctx.adapter.createIssue(payload.title, payload.body, [
@@ -635,13 +641,15 @@ async function fileIssueNow(payload: IssuePayload, ctx: IssueContext): Promise<F
     ]);
   } catch (err) {
     const message = (err as Error).message;
-    if (!creationMayHaveHappened(err)) return reject(`create_issue refused: ${message}`);
-    ctx.store.recordFiledItem("issue", payload.title, null);
+    if (!creationMayHaveHappened(err)) {
+      ctx.store.releaseFiledItem(slot);
+      return reject(`create_issue refused: ${message}`);
+    }
     return reject(`create_issue outcome unknown — the cap slot stays charged: ${message}`);
   }
   const issueNumber = (result.response as { number?: number } | undefined)?.number ?? 0;
   const ref = issueNumber > 0 ? `#${issueNumber}` : null;
-  ctx.store.recordFiledItem("issue", payload.title, ref);
+  ctx.store.settleFiledItem(slot, ref);
   ctx.store.logEvent("issue_filed", pr, {
     title: payload.title,
     issue: issueNumber || null,

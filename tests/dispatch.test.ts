@@ -553,7 +553,7 @@ describe("recording at round start", () => {
         fingerprintRoundIntegrity(opts, {
           readFile: () => new Promise<Buffer>(() => undefined),
           readDir: () => [],
-          sha256: (data) => data,
+          sha256: (data) => String(data),
         }),
       integrityBudgetMs: 20,
     });

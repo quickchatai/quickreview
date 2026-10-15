@@ -498,6 +498,9 @@ describe("structured thread decision", () => {
     now = new Date("2026-08-26T09:00:31Z");
     expect(await watcher.handleFile(name)).toBe(true);
     expect(listRecentReviewComments).toHaveBeenCalledTimes(1);
+    // The lookup reads back to the author message the reply answers, however
+    // many comments landed after it.
+    expect(listRecentReviewComments).toHaveBeenCalledWith(77, 5001);
     expect(createReviewCommentReply).toHaveBeenCalledTimes(2);
     expect(ledger.discipline(4000).exchanges).toBe(1);
   });

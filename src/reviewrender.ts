@@ -21,7 +21,7 @@
 // renders the review the record describes.
 import { ASK_HUMAN_TAG, CHECK_THIS_TAG, DEFERRED_TAG, postTag, type Severity } from "./severity.js";
 import { postCheckRecord, type PostCheckMerge } from "./dedup.js";
-import { findingMarker, findingRecordKey } from "./findingkey.js";
+import { findingMarker, findingRecordKey, recordNumber } from "./findingkey.js";
 import {
   firstSentence as policyFirstSentence,
   isDefaultPosting,
@@ -103,10 +103,8 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
-function num(v: unknown): number | null {
-  const n = typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : v;
-  return typeof n === "number" && Number.isFinite(n) ? n : null;
-}
+/** The parser's own coercion: a value the record stores is the value posted. */
+const num = recordNumber;
 
 function firstSentence(text: string): string {
   const m = /^(.+?[.!?])(\s|$)/s.exec(text.trim());

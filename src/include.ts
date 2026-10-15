@@ -29,11 +29,12 @@ import { isAbsolute, resolve, join } from "node:path";
 import { ALLOWED_PROGRAMS } from "../extensions/bash-guard.js";
 import { MODELS_TIER_DEFAULTS, THINKING_LEVELS, type ScanDepth } from "./config.js";
 import { SCAN_DEEP_LENSES } from "./passes.js";
-import { PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
+import { higherTier, PASS_TIER_ORDER, tiersAtOrAbove } from "./types.js";
 import type { PassTier } from "./types.js";
 import type { EcosystemName } from "./ecosystem.js";
+import type { LensTuningMap } from "./lenstuning.js";
 
-const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
+const INCLUDE_RE = /\{\{include:([^}\r\n]*)\}\}/g;
 
 // ---- build-time identity variables ----------------------------------------
 //
@@ -45,9 +46,30 @@ const INCLUDE_RE = /\{\{include:([^}\r\n]+)\}\}/g;
 // (src/templates.ts, src/eod.ts). An unknown `{{…}}` fails the build loudly —
 // a variable that survives to a session is a bug, never prose.
 
-/** Variable pattern shared with templates.ts: bare word, no `:` — include
- * directives (`{{include:path}}`) never match. */
-const VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+/** The `{{name}}` grammar the agent build and the prompt renderer
+ * (src/templates.ts) share: bare word, no `:` — include directives
+ * (`{{include:path}}`) never match. */
+export const VARIABLE_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+/** Substitute every `{{name}}` in `text` from `vars` — the strict core of
+ * `expandVariables` and the renderer's `render`, each throwing its own error
+ * on `unknown`. A name `vars` does not itself hold is unknown, so an
+ * inherited property (`{{constructor}}`) never substitutes function text. */
+export function substituteVariables(
+  text: string,
+  vars: Readonly<Record<string, string>>,
+): { out: string; unknown: string[] } {
+  const unknown = new Set<string>();
+  const out = text.replace(VARIABLE_RE, (match, name: string) => {
+    const v = Object.hasOwn(vars, name) ? vars[name] : undefined;
+    if (v === undefined) {
+      unknown.add(name);
+      return match;
+    }
+    return v;
+  });
+  return { out, unknown: [...unknown] };
+}
 
 /**
  * The neutral fallback values: empty config values degrade to role wording,
@@ -78,19 +100,9 @@ export function identityVars(cfg: {
  * must fail loudly rather than ship a literal `{{…}}` to a session.
  */
 export function expandVariables(text: string, vars: Readonly<Record<string, string>>): string {
-  const unknown = new Set<string>();
-  const out = text.replace(VARIABLE_RE, (match, name: string) => {
-    const v = vars[name];
-    if (v === undefined) {
-      unknown.add(name);
-      return match;
-    }
-    return v;
-  });
-  if (unknown.size > 0) {
-    throw new Error(
-      `unknown build-time variable(s): ${[...unknown].map((n) => `{{${n}}}`).join(", ")}`,
-    );
+  const { out, unknown } = substituteVariables(text, vars);
+  if (unknown.length > 0) {
+    throw new Error(`unknown build-time variable(s): ${unknown.map((n) => `{{${n}}}`).join(", ")}`);
   }
   return out;
 }
@@ -215,15 +227,25 @@ const AGENT_SPAWN_TOOLS = new Set([
  * rather than left empty (an empty list is not the same statement as no list).
  */
 export function stripAgentSpawnTools(frontmatter: string): string {
-  const re = /^tools:[ \t]*(.*)$/m;
-  const m = re.exec(frontmatter);
-  if (!m) return frontmatter;
-  const kept = (m[1] ?? "")
+  const tools = toolsList(frontmatter);
+  if (tools === null) return frontmatter;
+  const kept = tools.filter((t) => !AGENT_SPAWN_TOOLS.has(t.toLowerCase()));
+  if (kept.length === 0) return frontmatter.replace(TOOLS_LINE_RE, "").replace(/\n{2,}/g, "\n");
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${kept.join(", ")}`);
+}
+
+/** A frontmatter's `tools:` line. */
+const TOOLS_LINE_RE = /^tools:[ \t]*(.*)$/m;
+
+/** The names on a frontmatter's `tools:` line, trimmed, empties dropped;
+ * null when there is no such line (no allowlist, not an empty one). */
+function toolsList(frontmatter: string): string[] | null {
+  const m = TOOLS_LINE_RE.exec(frontmatter);
+  if (!m) return null;
+  return (m[1] ?? "")
     .split(",")
     .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !AGENT_SPAWN_TOOLS.has(t.toLowerCase()));
-  if (kept.length === 0) return frontmatter.replace(re, "").replace(/\n{2,}/g, "\n");
-  return frontmatter.replace(re, `tools: ${kept.join(", ")}`);
+    .filter((t) => t.length > 0);
 }
 
 /**
@@ -268,14 +290,10 @@ export function applyMemoryTools(
   frontmatter: string,
   tools: readonly string[] = LEAF_MEMORY_TOOLS,
 ): string {
-  const re = /^tools:[ \t]*(.*)$/m;
-  const m = re.exec(frontmatter);
-  if (!m) return frontmatter;
-  const kept = (m[1] ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !MEMORY_TOOL_RE.test(t));
-  return frontmatter.replace(re, `tools: ${[...kept, ...tools].join(", ")}`);
+  const listed = toolsList(frontmatter);
+  if (listed === null) return frontmatter;
+  const kept = listed.filter((t) => !MEMORY_TOOL_RE.test(t));
+  return frontmatter.replace(TOOLS_LINE_RE, `tools: ${[...kept, ...tools].join(", ")}`);
 }
 
 /** Split a "provider/model:thinking" spec into its model and thinking halves.
@@ -654,6 +672,11 @@ export function configAddenda(review: {
 // built body is shared by every round in flight, so it carries the rule and
 // never one PR's lessons.
 export const LESSON_VALIDATE_ADDENDUM_ID = "lesson-validate";
+
+/** The id of the same-day `[feedback]` validator addendum
+ * (`feedbackDayAddendum`, src/feedback.ts), composed beside the lesson one —
+ * reserved against profile packs by the same name (src/profiles.ts). */
+export const FEEDBACK_DAY_ADDENDUM_ID = "feedback-day-validate";
 /** The one downgrade word a dont-raise lesson licenses (src/findingsrecord.ts
  * DOWNGRADE_WORDS). */
 export const LESSON_SHAPE_WORD = "lesson-shape";
@@ -1777,7 +1800,8 @@ export interface BuildAgentsOptions {
   tiers?: Record<PassTier, string>;
   /** config.models.risk_passes — build only the sol-high variant. */
   riskPasses?: string[];
-  /** config.models.validate_tier — pass-validate's single fixed tier. */
+  /** config.models.validate_tier — pass-validate's lowest built tier: the
+   * validator is built at it and every tier above (`tiersForPass`). */
   validateTier?: PassTier;
   /** Addendum registry to compose from — injected for tests; defaults to
    * `PASS_ADDENDA`. Composition order is the registry's own order. */
@@ -1864,6 +1888,9 @@ export interface BuiltAgent {
  * (the profile's per-lens `effort`): it is kept, and a pinned pass
  * takes ITS pinned tier's entry from it when there is one — a pin moves the
  * tier, the profile still sets the effort. Empty pins ⇒ `overrides` unchanged.
+ * `lenses` is the profile's tuning: its `min_tier` floors a pin exactly as
+ * dispatch's plan floors it (`flooredTier`), so the variant the plan names
+ * runs at the tier the plan records, never at the pin below the floor.
  */
 export function passTierModels(
   passTiers: Readonly<Record<string, PassTier>> | undefined,
@@ -1872,9 +1899,11 @@ export function passTierModels(
   passModels: Readonly<Record<string, string>> = {},
   /** Variants a pin leaves at their OWN tier's spec (`sweepLightVariants`). */
   unpinned: readonly string[] = [],
+  lenses?: LensTuningMap,
 ): Record<string, string> {
   const out: Record<string, string> = { ...overrides };
-  for (const [pass, tier] of Object.entries(passTiers ?? {})) {
+  for (const [pass, pin] of Object.entries(passTiers ?? {})) {
+    const tier = floorTier(lenses, pass, pin);
     const spec = overrides[`${pass}--${tier}`] ?? tiers[tier];
     for (const t of PASS_TIERS)
       if (!unpinned.includes(`${pass}--${t}`)) out[`${pass}--${t}`] = spec;
@@ -1894,9 +1923,22 @@ export function passTierModels(
 
 /** The pass-sweep variant `[review] sweep_light_tier` plans
  * light rows at — exempt from the sweep's tier pin, so that variant runs at
- * its own tier's spec. Empty when the lever is off. */
-export function sweepLightVariants(review: { sweep_light_tier?: string }): string[] {
-  return review.sweep_light_tier ? [`pass-sweep--${review.sweep_light_tier}`] : [];
+ * its own tier's spec. The light tier is floored by the profile's sweep
+ * `min_tier` as dispatch floors it, so the exempt variant is the one the plan
+ * names. Empty when the lever is off. */
+export function sweepLightVariants(
+  review: { sweep_light_tier?: "" | PassTier },
+  lenses?: LensTuningMap,
+): string[] {
+  const light = review.sweep_light_tier;
+  return light ? [`pass-sweep--${floorTier(lenses, "pass-sweep", light)}`] : [];
+}
+
+/** `flooredTier` (src/lenstuning.ts), which this module cannot import at
+ * runtime: the profile's `min_tier` for `pass` raises `tier`, never lowers it. */
+function floorTier(lenses: LensTuningMap | undefined, pass: string, tier: PassTier): PassTier {
+  const floor = lenses?.[pass]?.min_tier;
+  return floor ? higherTier(tier, floor) : tier;
 }
 
 /** The tiers a given pass fans out into.
@@ -1955,10 +1997,15 @@ export function buildAgents(
   }
   mkdirSync(outDir, { recursive: true });
   const built: BuiltAgent[] = [];
-  const memory = opts.memory ?? !(mode === "scan" || opts.readOnlyLeaves === true);
+  // A leaf that loads no extensions: no bash guard, no memory tools.
+  const extensionFree = mode === "scan" || opts.readOnlyLeaves === true;
+  const memory = opts.memory ?? !extensionFree;
   for (const src of sources) {
     const file = src.slice(src.lastIndexOf("/") + 1);
     const doc = splitFrontmatter(read(src));
+    // The variant's name, model, thinking and tools live in the frontmatter:
+    // a source without one would build a file that carries none of them.
+    if (!doc.hasFrontmatter) throw new Error(`buildAgents: ${src} has no frontmatter block`);
     const pass = frontmatterName(doc.frontmatter) ?? file.replace(/\.md$/, "");
     // Variables expand AFTER includes (so pass-common.md's variables resolve
     // too) and over the SEED material only — addenda are code-authored and may
@@ -1989,12 +2036,11 @@ export function buildAgents(
       // removed entirely, and a removed line stays removed), then grant the two
       // read-only memory tools to what remains.
       frontmatter = stripAgentSpawnTools(frontmatter);
-      frontmatter =
-        mode === "scan" || opts.readOnlyLeaves === true
-          ? applyScanLeafTools(frontmatter)
-          : memory
-            ? applyMemoryTools(frontmatter)
-            : frontmatter;
+      frontmatter = extensionFree
+        ? applyScanLeafTools(frontmatter)
+        : memory
+          ? applyMemoryTools(frontmatter)
+          : frontmatter;
       // The full spec ("provider/model:thinking") goes into `model:`.
       // The native subagent extension reads only the `model` frontmatter field
       // and passes it verbatim as `--model`, and pi's CLI accepts the

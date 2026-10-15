@@ -66,7 +66,12 @@ import {
   type StateStore,
 } from "./state.js";
 import { enforceLedgerFreshness } from "./ledgercheck.js";
-import { enforceFindingsRecord, findingsRecordPath, readFindingsRecord } from "./findingsrecord.js";
+import {
+  enforceFindingsRecord,
+  findingsRecordPath,
+  ingestRepairedFindingsRecords,
+  readFindingsRecord,
+} from "./findingsrecord.js";
 import {
   normalizeVerdict,
   type RoundRecoveryDisposition,
@@ -795,6 +800,22 @@ export class VerdictWatcher {
       this.resumeOwedMeasurements();
     } catch (err) {
       this.log("verdicts: resuming owed round measurements failed", err);
+    }
+    // A findings record the round tail nudged for lands after that tail ran.
+    if (this.deps.findingsDir) {
+      try {
+        ingestRepairedFindingsRecords(
+          {
+            store: this.deps.store,
+            findingsDir: this.deps.findingsDir,
+            log: this.log.bind(this),
+            ...(this.deps.onFindingsRecorded ? { onRecorded: this.deps.onFindingsRecorded } : {}),
+          },
+          this.now(),
+        );
+      } catch (err) {
+        this.log("verdicts: storing repaired findings records failed", err);
+      }
     }
     return done.sort();
   }
