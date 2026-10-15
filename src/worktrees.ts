@@ -466,11 +466,19 @@ export type PrOwnedDelta =
     }
   | { ok: false; reason: PrOwnedDeltaUnavailable; detail?: string };
 
-/** The ref that pins a reviewed head against gc. Its own
- * namespace: `refs/qcr/pr-<n>` is a ref already, so `refs/qcr/pr-<n>/…`
- * could not be created. */
+/** Where reviewed-head pins live. Their own namespace: `refs/qcr/pr-<n>` is a
+ * ref already, so `refs/qcr/pr-<n>/…` could not be created. */
+const REVIEWED_HEAD_NAMESPACE = "refs/qcr/reviewed/";
+
+/** Every pin of PR `pr` starts with this — what creation writes and the
+ * PR's removal lists. */
+function reviewedHeadPrefix(pr: number): string {
+  return `${REVIEWED_HEAD_NAMESPACE}pr-${pr}-`;
+}
+
+/** The ref that pins a reviewed head against gc. */
 export function reviewedHeadRef(pr: number, sha: string): string {
-  return `refs/qcr/reviewed/pr-${pr}-${sha.slice(0, 12).toLowerCase()}`;
+  return `${reviewedHeadPrefix(pr)}${sha.slice(0, 12).toLowerCase()}`;
 }
 
 /** Join name-status entries with their patch sections into delta files.
@@ -832,45 +840,30 @@ export class WorktreeManager {
    * commit's real tree names exactly the hand-resolved paths.
    *
    * `degraded: true` means the answer is unknown (old git, missing objects) —
-   * the caller decides what that costs; this reader never guesses.
+   * the caller decides what that costs; this reader never guesses. `reason`
+   * says why, for the caller's log (the failed git command and its stderr
+   * when one failed).
    */
   async resolvedFilesInMerges(
     from: string,
     to: string,
     pr?: number,
-  ): Promise<{ files: string[]; degraded: boolean }> {
-    if (!/^[0-9a-f]{7,40}$/i.test(from) || !/^[0-9a-f]{7,40}$/i.test(to))
-      return { files: [], degraded: true };
+  ): Promise<{ files: string[]; degraded: boolean; reason?: string }> {
+    if (!SHA_RE.test(from) || !SHA_RE.test(to))
+      return { files: [], degraded: true, reason: "not a commit sha" };
     try {
       // A recheck classifies a push minutes after it lands — usually before
       // any round has fetched the new objects into the base clone, so without
-      // a fetch every live recheck would degrade. Fetch on miss: by sha first (GitHub serves reachable want-shas), then the PR
-      // ref as the reliable route for PR-branch heads.
-      const missing = async () => {
-        const out: string[] = [];
-        for (const sha of [from, to]) if (!(await this.hasCommit(sha))) out.push(sha);
-        return out;
-      };
-      let gone = await missing();
-      if (gone.length) {
-        await this.run("git", ["fetch", "--force", "origin", ...gone], { cwd: this.basePath });
-        gone = await missing();
-      }
-      if (gone.length && pr !== undefined) {
-        await this.run(
-          "git",
-          ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`],
-          { cwd: this.basePath },
-        );
-        gone = await missing();
-      }
-      if (gone.length) return { files: [], degraded: true };
+      // a fetch every live recheck would degrade.
+      const gone = await this.fetchMissing([from, to], pr);
+      if (gone.length)
+        return { files: [], degraded: true, reason: `not in the clone: ${gone.join(", ")}` };
       const merges = (await this.git(["rev-list", "--merges", `${from}..${to}`])).stdout
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean);
       const files = new Set<string>();
-      let unverified = false;
+      const unverified: string[] = [];
       for (const m of merges) {
         const parents = (await this.git(["rev-list", "--parents", "-n", "1", m])).stdout
           .trim()
@@ -880,7 +873,7 @@ export class WorktreeManager {
         // compare against: the files it resolved are unknown, so the answer is
         // degraded — the other merges' files still count.
         if (parents.length !== 2) {
-          unverified = true;
+          unverified.push(m);
           continue;
         }
         // merge-tree exits 1 on conflicts while still printing the tree oid —
@@ -889,15 +882,58 @@ export class WorktreeManager {
           cwd: this.basePath,
         });
         const tree = (mt.stdout.split("\n")[0] ?? "").trim();
-        if (!/^[0-9a-f]{40,64}$/.test(tree)) return { files: [...files], degraded: true };
+        if (!/^[0-9a-f]{40,64}$/.test(tree))
+          return {
+            files: [...files],
+            degraded: true,
+            reason: `merge-tree gave no tree for ${m} (exit ${mt.code}): ${mt.stderr.trim().slice(0, 200)}`,
+          };
         // NUL-separated: the names GitHub reports, never git's quoted display.
         const diff = await this.git(["diff", "-z", "--name-only", tree, `${m}^{tree}`]);
         for (const f of diff.stdout.split("\0").filter(Boolean)) files.add(f);
       }
-      return { files: [...files], degraded: unverified };
-    } catch {
-      return { files: [], degraded: true };
+      return unverified.length
+        ? {
+            files: [...files],
+            degraded: true,
+            reason: `merge(s) with other than two parents not verified: ${unverified.join(", ")}`,
+          }
+        : { files: [...files], degraded: false };
+    } catch (err) {
+      return {
+        files: [],
+        degraded: true,
+        reason: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+      };
     }
+  }
+
+  /**
+   * The commits of `shas` the clone still lacks after fetching them on miss:
+   * by sha first (GitHub serves a reachable want-sha), then PR `pr`'s head
+   * ref, the reliable route for PR-branch heads. A fetch that fails is no
+   * throw — the answer is what is still missing.
+   */
+  private async fetchMissing(shas: readonly string[], pr?: number): Promise<string[]> {
+    const missing = async () => {
+      const out: string[] = [];
+      for (const sha of shas) if (!(await this.hasCommit(sha))) out.push(sha);
+      return out;
+    };
+    let gone = await missing();
+    if (gone.length) {
+      await this.run("git", ["fetch", "--force", "origin", ...gone], { cwd: this.basePath });
+      gone = await missing();
+    }
+    if (gone.length && pr !== undefined && Number.isInteger(pr) && pr > 0) {
+      await this.run(
+        "git",
+        ["fetch", "--force", "origin", `+refs/pull/${pr}/head:${this.prRef(pr)}`],
+        { cwd: this.basePath },
+      );
+      gone = await missing();
+    }
+    return gone;
   }
 
   /**
@@ -918,7 +954,7 @@ export class WorktreeManager {
     paths: string[],
     opts: { botLogins?: string[] } = {},
   ): Promise<{ login: string | null; name: string; email: string } | null> {
-    if (!/^[0-9a-f]{7,40}$/i.test(sha) || paths.length === 0) return null;
+    if (!SHA_RE.test(sha) || paths.length === 0) return null;
     const bots = new Set((opts.botLogins ?? []).map((b) => b.toLowerCase()));
     const res = await this.git([
       "--literal-pathspecs",
@@ -1263,7 +1299,7 @@ export class WorktreeManager {
 
   /** True when `sha` is present in the base clone (no fetch needed). */
   async hasCommit(sha: string): Promise<boolean> {
-    if (!/^[0-9a-f]{7,40}$/i.test(sha)) return false;
+    if (!SHA_RE.test(sha)) return false;
     const res = await this.run("git", ["cat-file", "-e", `${sha}^{commit}`], {
       cwd: this.basePath,
     });
@@ -1321,18 +1357,8 @@ export class WorktreeManager {
     try {
       for (const sha of [q.to, q.mergeBase])
         if (!(await this.hasCommit(sha))) return fail("diff-failed", `${sha} not in the clone`);
-      if (!(await this.hasCommit(q.from))) {
-        // Fetch on miss, as resolvedFilesInMerges: by sha (GitHub serves a
-        // reachable want-sha), then the PR ref.
-        await this.run("git", ["fetch", "--force", "origin", q.from], { cwd: this.basePath });
-        if (!(await this.hasCommit(q.from)) && Number.isInteger(q.pr) && q.pr > 0)
-          await this.run(
-            "git",
-            ["fetch", "--force", "origin", `+refs/pull/${q.pr}/head:${this.prRef(q.pr)}`],
-            { cwd: this.basePath },
-          );
-        if (!(await this.hasCommit(q.from))) return fail("old-head-missing");
-      }
+      // Fetch on miss, as resolvedFilesInMerges.
+      if ((await this.fetchMissing([q.from], q.pr)).length) return fail("old-head-missing");
 
       // 1. The base may only have moved forward between the two reviews.
       const anchor =
@@ -1462,10 +1488,10 @@ export class WorktreeManager {
 
   /** The PR's pinned reviewed-head refs. */
   async reviewedHeadRefs(pr: number): Promise<string[]> {
-    const prefix = `refs/qcr/reviewed/pr-${pr}-`;
+    const prefix = reviewedHeadPrefix(pr);
     const res = await this.run(
       "git",
-      ["for-each-ref", "--format=%(refname)", "refs/qcr/reviewed/"],
+      ["for-each-ref", "--format=%(refname)", REVIEWED_HEAD_NAMESPACE],
       {
         cwd: this.basePath,
       },

@@ -37,3 +37,11 @@ describe("wire.ts: onStart's intervals stop with the daemon", () => {
     expect(stop).toMatch(/for \(const t of intervals\) clearInterval\(t\);/);
   });
 });
+
+describe("wire.ts: merge-verify degradation is diagnosable", () => {
+  it("the wiring logs the reader's reason whenever it degrades", () => {
+    expect(wire).toMatch(
+      /resolvedFilesInMerges: async \(from, to, pr\) => \{\s*const res = await sessions\.worktrees\.resolvedFilesInMerges\(from, to, pr\);\s*if \(res\.degraded\)\s*log\([\s\S]*?res\.reason/,
+    );
+  });
+});

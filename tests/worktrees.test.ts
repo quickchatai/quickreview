@@ -420,7 +420,11 @@ describe("resolvedFilesInMerges", () => {
     await m.ensureBaseClone();
     git(join(root, "example-app"), "fetch", "-q", "origin", "side", "master");
     const res = await m.resolvedFilesInMerges(from, to);
-    expect(res).toEqual({ files: ["shared.txt"], degraded: true });
+    expect(res).toEqual({
+      files: ["shared.txt"],
+      degraded: true,
+      reason: `merge(s) with other than two parents not verified: ${to}`,
+    });
   });
 
   it("reports degraded on unusable shas instead of guessing", async () => {
@@ -429,15 +433,20 @@ describe("resolvedFilesInMerges", () => {
     expect(await m.resolvedFilesInMerges("not-a-sha", "also-not")).toEqual({
       files: [],
       degraded: true,
+      reason: "not a commit sha",
     });
+    // The reason names what is missing — the caller's log is the diagnosis.
     expect(
-      (
-        await m.resolvedFilesInMerges(
-          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-          "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-        )
-      ).degraded,
-    ).toBe(true);
+      await m.resolvedFilesInMerges(
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      ),
+    ).toEqual({
+      files: [],
+      degraded: true,
+      reason:
+        "not in the clone: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef, deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    });
   });
 });
 

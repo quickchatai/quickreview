@@ -952,7 +952,17 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     renderRecheckPrompt: renderRecheck,
     // Conflict resolutions are never trivial: git-level auto-merge comparison
     // in the base clone names the hand-resolved files.
-    resolvedFilesInMerges: (from, to, pr) => sessions.worktrees.resolvedFilesInMerges(from, to, pr),
+    // A degraded merge-verify is logged with its reason here (the failed git
+    // command and its stderr when one failed); the callers record the
+    // degradation itself.
+    resolvedFilesInMerges: async (from, to, pr) => {
+      const res = await sessions.worktrees.resolvedFilesInMerges(from, to, pr);
+      if (res.degraded)
+        log(
+          `merge-verify degraded${pr !== undefined ? ` #${pr}` : ""} ${from.slice(0, 7)}→${to.slice(0, 7)}: ${res.reason ?? "unknown"}`,
+        );
+      return res;
+    },
     // Outcome capture: did the code at a posted finding's anchor
     // change? Read-only git in the same base clone, no fetch, memoised.
     outcomeGit: sessions.worktrees,
