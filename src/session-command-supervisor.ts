@@ -165,11 +165,19 @@ export class SessionCommandSupervisor {
     }
   }
 
-  /** Within the finalize grace of the verdict that ended `round`. */
+  /** Within the finalize grace of the verdict FILE that ended `round`. A
+   * round the daemon settled from its posting receipt (the session never
+   * wrote a usable verdict) has no healthy tail to wait for. */
   private inVerdictTail(round: RoundRow): boolean {
     const finished = Date.parse(round.finished_at ?? "");
     if (!Number.isFinite(finished)) return false;
-    return this.now().getTime() < finished + this.finalizeGraceMin() * 60_000;
+    if (this.now().getTime() >= finished + this.finalizeGraceMin() * 60_000) return false;
+    const settledFromReceipt = this.deps.store.db
+      .prepare(
+        "SELECT 1 FROM events WHERE kind = 'verdict_settled_from_receipt' AND pr = ? AND json_extract(payload, '$.round_id') = ? LIMIT 1",
+      )
+      .get(round.pr, round.id);
+    return settledFromReceipt === undefined;
   }
 
   /** `[daemon] round_finalize_grace_min`. */
@@ -210,11 +218,12 @@ export class SessionCommandSupervisor {
         return;
       }
       if (round.status !== "running") {
-        // A round its verdict ended is the session's own finished work: the
-        // verdict file is its last action, and its run settles moments later.
+        // A round its verdict file ended is the session's own finished work:
+        // the file is its last action, and its run settles moments later.
         // That tail is left alone for the finalize grace — killing it would
         // cost a healthy conversation — unless the run already settled (the
-        // bridge died before its ack).
+        // bridge died before its ack) or the round was settled from its
+        // receipt because no verdict came.
         if (
           command.status === "running" &&
           round.status === "done" &&

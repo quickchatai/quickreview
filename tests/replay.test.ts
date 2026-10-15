@@ -363,7 +363,7 @@ describe("one case, end to end", () => {
 
   it("logs a scratch link it could not make, and still runs the case", async () => {
     const io = fakeIo({ answer: { findings: [] } });
-    io.linkDir = (t, l) => (l.endsWith("agents") ? "EPERM: operation not permitted" : undefined);
+    io.linkDir = (_t, l) => (l.endsWith("agents") ? "EPERM: operation not permitted" : undefined);
     const lines: string[] = [];
     await replayer(io, { baseClone: REPO, log: (l) => lines.push(l) }).replay(c());
     expect(lines.filter((l) => l.includes("could not link"))).toEqual([

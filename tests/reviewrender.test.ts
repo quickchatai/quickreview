@@ -254,7 +254,7 @@ describe("the posting cut and the renderer read one posted set and one class", (
       entry({ id: "b", disposition: " Posted ", path: "b.py", title: "Other" }),
     ]);
     const parsed = parseFindingsRecord(rec, 7, 1);
-    expect(parsed.status === "ok" && parsed.record.findings.map((f) => f.disposition)).toEqual([
+    expect(parsed.status === "ok" && parsed.record?.findings.map((f) => f.disposition)).toEqual([
       "posted",
       "posted",
     ]);
@@ -381,10 +381,10 @@ describe("the render-review CLI (what scripts/render-review.sh execs)", () => {
     const broken = renderConfig("/sandbox", "qc-bot", {
       config: () => cfg,
       profilePosting: () => {
-        throw new Error("profile quickchat: [posting] max_comments must be a whole number");
+        throw new Error("profile acme: [posting] max_comments must be a whole number");
       },
     });
-    expect(broken.unread).toBe("profile quickchat: [posting] max_comments must be a whole number");
+    expect(broken.unread).toBe("profile acme: [posting] max_comments must be a whole number");
     expect(broken.cfg.posting).toBeUndefined();
     expect(broken.cfg.github).toEqual({ bot_login: "qc-bot" });
     const fine = renderConfig("/sandbox", undefined, {
