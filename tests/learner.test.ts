@@ -1113,6 +1113,20 @@ describe("the EOD packet", () => {
     expect((await h.learner.prepareEod("2026-10-14")).lines).toContain("2 expired undecided");
   });
 
+  it("a build cut short after its expiry still lists those candidates when the day is rebuilt", async () => {
+    const h = await seeded(harness(), 1);
+    await h.learner.buildPacket("2026-10-07");
+    // what the 10-14 build's expiry committed before it stopped: the rows
+    // expired, no packet and no curation record of them
+    h.store.db
+      .prepare(
+        "UPDATE lesson_candidates SET status = 'expired', decided_at = ?, decided_day = '2026-10-14' WHERE status = 'open'",
+      )
+      .run(new Date().toISOString());
+    const rebuilt = await h.learner.buildPacket("2026-10-14");
+    expect(rebuilt.expired.map((e) => e.label)).toEqual(["c1", "c2"]);
+  });
+
   it("coverage and the balance read UNKNOWN when memory cannot be read — never 'none'", async () => {
     const h = await seeded(harness({ healthy: false }), 1);
     const p = await h.learner.buildPacket("2026-10-07");

@@ -850,10 +850,14 @@ export class Learner {
         offered_day: c.offered_day!,
       });
     }
-    // Candidates expired by an earlier build of the same day stay listed.
+    const newlyExpired = expired.length;
+    // Candidates expired by an earlier build of the same day stay listed —
+    // the ones its record lists, and the ones its expiry committed before
+    // that build was cut short (the rows say so: expired on this day).
     const prior = this.curation(day);
     const priorExpired = prior ? json<number[]>(prior.expired, []) : [];
-    for (const id of priorExpired) {
+    const expiredOnDay = this.candidates("status = 'expired' AND decided_day = ? ORDER BY id", day);
+    for (const id of [...priorExpired, ...expiredOnDay.map((c) => c.id)]) {
       if (expired.some((e) => e.id === id)) continue;
       const c = this.candidates("id = ?", id)[0];
       if (c)
@@ -865,7 +869,7 @@ export class Learner {
           offered_day: c.offered_day ?? day,
         });
     }
-    if (expired.length > priorExpired.length)
+    if (newlyExpired > 0)
       this.store.logEvent("lesson_candidates_expired", null, {
         day,
         ids: expired.map((e) => e.id),
