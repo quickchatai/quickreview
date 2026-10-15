@@ -95,7 +95,7 @@ import {
   writeRecallHint,
   writeRetiredUris,
 } from "./memory/ovsession.js";
-import type { ContextAssembler, RoundMemory } from "./memory/context.js";
+import type { ContextAssembler, RoundMemory, RoundMemorySeed } from "./memory/context.js";
 import { MEMORY_LAYOUT_NOTE, ROUND_SEARCH_AREAS } from "./memory/layout.js";
 import {
   MemoryHealthMonitor,
@@ -624,6 +624,18 @@ export function routeCurationReceipt(
 }
 
 /**
+ * The daemon's round-memory seed, or none when memory is switched off: a
+ * round with no seed renders memory-less without a read, so a deliberate off
+ * never reads as degraded memory in the prompt or the round's record.
+ */
+export function roundMemorySeed(
+  enabled: boolean,
+  seed: RoundMemorySeed,
+): { memory?: RoundMemorySeed } {
+  return enabled ? { memory: seed } : {};
+}
+
+/**
  * The startup orphan sweep's posting debt: a round whose outbox job is still
  * pending owes its review, and the outbox delivers it with no session — the
  * same test the verdict watcher's posting proof reads as posting in flight.
@@ -843,8 +855,10 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
     heuristics: profileHeuristics,
     // Pinned head + one budgeted context block per round. Past the
     // deadline the round dispatches memory-less and logs the gap — memory
-    // never blocks or delays a round.
-    memory: {
+    // never blocks or delays a round. Memory switched off
+    // (`[openviking] enabled = false`) seeds nothing: no read, no
+    // "memory unavailable" note, nothing counted as degraded.
+    ...roundMemorySeed(cfg.openviking.enabled, {
       assembler: lateAssembler,
       maxTokens: cfg.memory.context_tokens,
       timeoutMs: cfg.memory.context_timeout_ms,
@@ -870,7 +884,7 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
       // The round's memory window — the case writer starts no
       // batch from the seed until the lesson selection has taken over.
       activity: roundActivity,
-    },
+    }),
     // The round's lesson selection (shadow ledger; awaited by dispatch only
     // under `delivery = "on"`); and the matcher, told when a round's findings
     // record lands.
@@ -1239,19 +1253,24 @@ export function createProductionDaemon(parts: ProductionParts = buildParts()): D
           log("feedback: agents rebuild for boot-gap signals failed", err);
         }
       }
-      memoryStore = memory;
-      memorySweep = memory;
-      memoryAssembler = openVikingContextAssembler({
-        client: memoryClient,
-        store: memory,
-        // Without quotas the server balances the block across every scope it
-        // holds and a round gets about one memory entry beside two built-in
-        // scope blurbs. The quotas name the corpus;
-        // `context_tokens` stays the budget. See [memory] in config.toml.
-        quotas: cfg.memory.context_quotas,
-        searchTimeoutMs: cfg.openviking.search_timeout_ms,
-        log,
-      });
+      // Memory switched off leaves the holders empty: the round seeds
+      // nothing (above) and the EOD pinned-area watchdog is not built, so a
+      // deliberate off never reads as an outage.
+      if (cfg.openviking.enabled) {
+        memoryStore = memory;
+        memorySweep = memory;
+        memoryAssembler = openVikingContextAssembler({
+          client: memoryClient,
+          store: memory,
+          // Without quotas the server balances the block across every scope it
+          // holds and a round gets about one memory entry beside two built-in
+          // scope blurbs. The quotas name the corpus;
+          // `context_tokens` stays the budget. See [memory] in config.toml.
+          quotas: cfg.memory.context_quotas,
+          searchTimeoutMs: cfg.openviking.search_timeout_ms,
+          log,
+        });
+      }
 
       // The lesson shadow ledger and the round's selection. The
       // ledger (and so the operator's kill switch) always; the selector only
