@@ -45,6 +45,26 @@ describe("slack_threads", () => {
     expect(store.slackThreadForPr(7)?.root_ts).toBe("2.2");
   });
 
+  it("re-binding to a new root resets the old thread's counters; re-binding the same root keeps them", () => {
+    store.upsertSlackThread({ pr: 7, channel: "C1", root_ts: "1.1" });
+    at(60_000);
+    store.touchSlackThread(7);
+    store.upsertSlackThread({ pr: 7, channel: "C1", root_ts: "1.1" });
+    expect(store.slackThreadForPr(7)).toMatchObject({
+      created_at: T0.toISOString(),
+      post_count: 1,
+      last_post_at: clock.toISOString(),
+    });
+    at(120_000);
+    store.upsertSlackThread({ pr: 7, channel: "C1", root_ts: "2.2" });
+    expect(store.slackThreadForPr(7)).toMatchObject({
+      root_ts: "2.2",
+      created_at: clock.toISOString(),
+      post_count: 0,
+      last_post_at: null,
+    });
+  });
+
   it("touch bumps post_count and stamps last_post_at", () => {
     store.upsertSlackThread({ pr: 7, channel: "C1", root_ts: "1.1" });
     at(60_000);

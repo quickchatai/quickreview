@@ -21,7 +21,7 @@
 //     rules would be noise on a Rust PR. `--profile <config.toml [review]
 //     profile>` measures production as deployed.
 
-import { sweepStatusOf, type SweepStatus } from "../sweepstatus.js";
+import { isSweepClaim, sweepStatusOf, type SweepClaim, type SweepStatus } from "../sweepstatus.js";
 import { renderPassTasks } from "../passtasks.js";
 import {
   postedRenderOptions,
@@ -828,7 +828,7 @@ export interface CaseFollowUp {
    * as `followup_sweep_skipped`). Absent until the case has an outcome. */
   executed_phases?: Array<{ agent: string; phase: "delta" | "sweep" | null }>;
   sweep?: {
-    claim: "ran" | "not_owed" | "not_reached" | "skipped" | null;
+    claim: SweepClaim | null;
     status: SweepStatus;
     note?: string;
     sweep_passes: number | null;
@@ -855,13 +855,7 @@ export function followUpOutcomeOf(
   const phaseOf = (p: Record<string, unknown>): "delta" | "sweep" | null =>
     p["phase"] === "delta" || p["phase"] === "sweep" ? p["phase"] : null;
   const rawClaim = outcome["sweep"];
-  const claim =
-    rawClaim === "ran" ||
-    rawClaim === "not_owed" ||
-    rawClaim === "not_reached" ||
-    rawClaim === "skipped"
-      ? rawClaim
-      : null;
+  const claim = isSweepClaim(rawClaim) ? rawClaim : null;
   const sweepPasses = passes ? passes.filter((p) => phaseOf(p) === "sweep").length : null;
   const owed = fu.sweep_owed === true;
   const { status, note } = sweepStatusOf({
