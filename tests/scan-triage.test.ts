@@ -655,6 +655,33 @@ describe("#scan memory: patterns and hotspots, capped per scan; findings never",
     expect(JSON.parse(state.read(SCAN_MEMORY_FILE)!).scans[SHA2].patterns).toHaveLength(1);
   });
 
+  it("a unit named like an object member gets its hotspot like any other", async () => {
+    const { triage } = setup({ units: ["constructor", "toString"] });
+    expect(
+      await triage.writeMemory({
+        hotspots: [{ unit: "constructor", text: "the scheduler: every lens found something here" }],
+      }),
+    ).toMatchObject({
+      ok: true,
+      written: { hotspots: 1 },
+      left: { units_without_hotspot: ["toString"] },
+    });
+  });
+
+  it("each note memory took is counted before the next is awaited", async () => {
+    const { memory, triage, state } = setup();
+    const seen: number[] = [];
+    const apply = memory!.apply.bind(memory!);
+    memory!.apply = async (op) => {
+      const raw = state.read(SCAN_MEMORY_FILE);
+      seen.push(raw === null ? 0 : JSON.parse(raw).scans[SHA2].patterns.length);
+      return apply(op);
+    };
+    await triage.writeMemory({ patterns: [pattern(1), pattern(2), pattern(3)] });
+    // By the time the third note is sent, the first two are on disk.
+    expect(seen).toEqual([0, 1, 2]);
+  });
+
   it("two concurrent calls share one cap record: the second is judged after the first is counted (selfscan 3ec87ec3)", async () => {
     const { memory, triage, state } = setup();
     const [a, b] = await Promise.all([

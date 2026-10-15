@@ -19,8 +19,8 @@
 // entries of the run before it.
 import { createHash } from "node:crypto";
 import { CODE_FILE_RE, isSweepSkipped, isTestFile } from "../heuristics.js";
-import { formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
-import type { MemoryEntry } from "../memory/store.js";
+import { dehash, formatEventTags, parseEventTags, parseHashTags } from "../memory/eventtags.js";
+import { normalizeTag, type MemoryEntry } from "../memory/store.js";
 import { isVendored } from "./facts.js";
 import { assign, splitUnit, type CaseBudget, type UnitCut } from "./unitcut.js";
 
@@ -425,11 +425,7 @@ export function surveyMemoryText(
 ): string {
   const tags: Record<string, string> = { kind: note.kind, unit, run };
   if (head) tags.sha = head.slice(0, 12);
-  // `#word` in the body is de-hashed: the store's tag list reads the whole
-  // text, so a note saying "#retired" would read as retired (and a real
-  // retire of it would then be a no-op).
-  const body = note.text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
-  return `#${SURVEY_TAG} ${formatEventTags(tags)} — ${body}`;
+  return `#${SURVEY_TAG} ${formatEventTags(tags)} — ${dehash(note.text)}`;
 }
 
 /** A live (not retired) survey entry's header, or null for any other entry. */
@@ -440,7 +436,7 @@ export function surveyEntryTags(
   if (
     !hash.includes(SURVEY_TAG) ||
     hash.includes("retired") ||
-    e.tags.some((t) => t.replace(/^#+/, "").toLowerCase() === "retired")
+    e.tags.some((t) => normalizeTag(t) === "retired")
   ) {
     return null;
   }

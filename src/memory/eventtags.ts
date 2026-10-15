@@ -12,6 +12,15 @@
 /** One `k=v` token: bare (no `#`), value without whitespace. */
 const EVENT_TAG_RE = /^([a-z][a-z0-9_-]*)=([^\s]+)$/;
 
+/**
+ * `#word` → `word` in text that follows an engine-written header: the store
+ * reads `#tags` off an entry's text, so a body saying "#retired" or "#pinned"
+ * must not read as one (and a real retire of it would then be a no-op).
+ */
+export function dehash(text: string): string {
+  return text.replace(/(^|\s)#+(?=[\w-])/g, "$1");
+}
+
 /** `k=v k=v …`, declaration order — byte-stable for a given signal. */
 export function formatEventTags(tags: Record<string, string>): string {
   return Object.entries(tags)
