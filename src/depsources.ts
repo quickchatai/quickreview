@@ -971,15 +971,18 @@ const PY_FOREIGN_PIN_PREFIX = "@ ";
 /**
  * uv.lock / poetry.lock: `[[package]]` blocks with `name` and `version`. A
  * line scanner, not a TOML parser — only the block's own top-level keys are
- * read, and local (editable / virtual / directory) packages are first-party.
- * A package from git, a URL or a non-PyPI index maps to `@ <kind> source`
- * (PY_FOREIGN_PIN_PREFIX), never to its bare version.
+ * read, and local (editable / virtual / directory) packages are first-party:
+ * never in the returned pins, and named in `locals` when the caller passes
+ * one, so a workspace member the import scan cannot find on disk is still
+ * never fetched from PyPI. A package from git, a URL or a non-PyPI index maps
+ * to `@ <kind> source` (PY_FOREIGN_PIN_PREFIX), never to its bare version.
  */
-export function parsePythonLock(text: string): Map<string, string> {
+export function parsePythonLock(text: string, locals?: Set<string>): Map<string, string> {
   const out = new Map<string, string>();
   let cur: { name?: string; version?: string; local?: boolean; foreign?: string } | null = null;
   let where: "top" | "source" | "other" = "other";
   const flush = (): void => {
+    if (cur?.name && cur.local) locals?.add(normPy(cur.name));
     if (cur?.name && cur.version && !cur.local) {
       const n = normPy(cur.name);
       if (!out.has(n))
@@ -1208,8 +1211,13 @@ export function parsePyprojectDeps(text: string): Map<string, PyReq> {
       const version = /\bversion\s*=\s*["']([^"']*)["']/.exec(val);
       const path = /\bpath\s*=\s*["']([^"']*)["']/.exec(val);
       const other = /\b(git|url)\s*=\s*["']([^"']*)["']/.exec(val);
+      // A named Poetry source other than PyPI: the same name there is a
+      // different artifact from PyPI's release.
+      const source = /\bsource\s*=\s*["']([^"']*)["']/.exec(val);
       if (path) range = `file:${path[1] ?? ""}`;
       else if (other) range = `@ ${other[2] ?? ""}`;
+      else if (source && !/^pypi$/i.test(source[1] ?? ""))
+        range = `${PY_FOREIGN_PIN_PREFIX}index source`;
       else if (version) range = version[1] ?? "*";
     }
     const pin = /^(?:==)?\s*(\d[0-9A-Za-z.+!_-]*)$/.exec(range);
@@ -1849,6 +1857,8 @@ interface DirInfo {
   npmLocks: NpmLock[];
   pkg: PackageJsonInfo | null;
   pyPins: Map<string, string>;
+  /** Distributions a Python lockfile here records as local (first-party). */
+  pyLocal: Set<string>;
   pyDecl: Map<string, PyReq>;
 }
 
@@ -1882,13 +1892,14 @@ class Resolver {
     const pkg = pkgText !== null ? parsePackageJson(pkgText) : null;
 
     const pyPins = new Map<string, string>();
+    const pyLocal = new Set<string>();
     const pyDecl = new Map<string, PyReq>();
     const pins = (m: Map<string, string>): void => {
       for (const [k, v] of m) if (!pyPins.has(k)) pyPins.set(k, v);
     };
     for (const f of ["uv.lock", "poetry.lock"]) {
       const t = read(f);
-      if (t !== null) pins(parsePythonLock(t));
+      if (t !== null) pins(parsePythonLock(t, pyLocal));
     }
     const pipfile = read("Pipfile.lock");
     if (pipfile !== null) pins(parsePipfileLock(pipfile));
@@ -1910,7 +1921,7 @@ class Resolver {
     if (pyproject !== null)
       for (const [k, r] of parsePyprojectDeps(pyproject)) if (!pyDecl.has(k)) pyDecl.set(k, r);
 
-    const info: DirInfo = { npmLocks, pkg, pyPins, pyDecl };
+    const info: DirInfo = { npmLocks, pkg, pyPins, pyLocal, pyDecl };
     this.dirs.set(rel, info);
     return info;
   }
@@ -1962,16 +1973,31 @@ class Resolver {
   /** A Python distribution (normalised name) as seen from one file. */
   pyDist(dist: string, relFile: string): Resolved | null | "first-party" {
     let pin: string | undefined;
+    let pinDepth = -1;
+    let local = false;
     let decl: PyReq | undefined;
-    for (const d of ancestors(relDirOf(relFile))) {
+    let declDepth = -1;
+    ancestors(relDirOf(relFile)).forEach((d, depth) => {
       const info = this.dir(d);
-      pin ??= info.pyPins.get(dist);
-      decl ??= info.pyDecl.get(dist);
-    }
-    if (decl && isLocalRange(decl.range)) return "first-party";
+      // The nearest lockfile that knows the name decides: a pin, or local.
+      if (pin === undefined && !local) {
+        pin = info.pyPins.get(dist);
+        if (pin !== undefined) pinDepth = depth;
+        else local = info.pyLocal.has(dist);
+      }
+      if (decl === undefined) {
+        decl = info.pyDecl.get(dist);
+        if (decl !== undefined) declDepth = depth;
+      }
+    });
+    if (local || (decl && isLocalRange(decl.range))) return "first-party";
     // Locked to git / a URL / a private index: a non-registry range, so
     // preparation skips it rather than substituting PyPI's release.
     if (pin?.startsWith(PY_FOREIGN_PIN_PREFIX)) return { name: dist, version: null, range: pin };
+    // A nearer declaration naming a non-registry source (a direct reference,
+    // a private index) is not what an ancestor's public pin installs here.
+    if (decl && isNonRegistryRange(decl.range) && (pin === undefined || pinDepth > declDepth))
+      return { name: dist, version: null, range: decl.range };
     if (pin === undefined && !decl) return null;
     const version = pin ?? decl?.pin ?? null;
     return decl ? { name: dist, version, range: decl.range } : { name: dist, version };

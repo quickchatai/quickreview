@@ -1003,6 +1003,68 @@ describe("planDependencyRequests", () => {
     ]);
   });
 
+  it("python: a workspace member a lockfile records as local is first-party, wherever its source lives", () => {
+    const root = tree({
+      "pyproject.toml": '[project]\ndependencies = ["requests", "httpx"]\n',
+      "uv.lock": [
+        "[[package]]",
+        'name = "requests"',
+        'version = "0.1.0"',
+        'source = { editable = "packages/requests" }',
+        "",
+        "[[package]]",
+        'name = "httpx"',
+        'version = "0.27.0"',
+      ].join("\n"),
+      "packages/requests/src/requests/__init__.py": "",
+      "svc/app.py": "import requests\nimport httpx\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "svc/app.py", status: "modified" }]).map(
+        (r) => r.name,
+      ),
+    ).toEqual(["httpx"]);
+  });
+
+  it("python: a nearer non-registry declaration is never satisfied by an ancestor's public pin", () => {
+    const root = tree({
+      "requirements.txt": "requests==2.31.0\n",
+      "svc/requirements.txt": "requests @ git+https://example.org/requests.git\n",
+      "svc/app.py": "import requests\n",
+      "web/app.py": "import requests\n",
+    });
+    expect(
+      planDependencyRequests(root, [
+        { filename: "svc/app.py", status: "modified" },
+        { filename: "web/app.py", status: "modified" },
+      ]).map((r) => [r.name, r.version, r.range]),
+    ).toEqual([
+      ["requests", null, "@ git+https://example.org/requests.git"],
+      ["requests", "2.31.0", "==2.31.0"],
+    ]);
+  });
+
+  it("python: a Poetry dependency on a named non-PyPI source is not pinned to PyPI", () => {
+    const root = tree({
+      "pyproject.toml": [
+        "[tool.poetry.dependencies]",
+        'requests = { version = "2.31.0", source = "internal" }',
+        'httpx = { version = "0.27.0", source = "PyPI" }',
+      ].join("\n"),
+      "app.py": "import requests\nimport httpx\n",
+    });
+    expect(
+      planDependencyRequests(root, [{ filename: "app.py", status: "modified" }]).map((r) => [
+        r.name,
+        r.version,
+        r.range,
+      ]),
+    ).toEqual([
+      ["httpx", "0.27.0", "0.27.0"],
+      ["requests", null, "@ index source"],
+    ]);
+  });
+
   it("names at most three importing files, then +N more", () => {
     const files: Record<string, string> = {
       "package.json": JSON.stringify({ dependencies: { lodash: "^4" } }),
